@@ -6,6 +6,14 @@
   gap: 2px;
   padding: 0 6px 0 8px;
   border-bottom: 1px solid var(--line);
+  container-type: inline-size;
+}
+/* The default 280 px column: tighter tabs, so all three labels and the widen button fit without cutting anything (QA m8). */
+@container (max-width: 340px) {
+  .pane-tabs .pane-tab {
+    padding: 0 6px;
+    gap: 4px;
+  }
 }
 .pane-tab {
   position: relative;
@@ -20,6 +28,15 @@
   font-size: 12.5px;
   font-weight: 550;
   color: var(--muted);
+  /* a narrow column (280 px) squeezes the tabs, never pushes the widen button out of the column (QA m8) */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.pane-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .pane-tab:hover {
   color: var(--text);
@@ -49,6 +66,7 @@
   outline-offset: -2px;
 }
 .pane-badge {
+  flex: 0 0 auto;
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
@@ -63,7 +81,9 @@
 .pane-expand {
   margin-left: auto;
   align-self: center;
+  flex: 0 0 28px; /* never squeezed by the tabs (QA m8) */
   width: 28px;
+  min-width: 28px;
   height: 28px;
   padding: 0;
   border: 0;
@@ -87,8 +107,9 @@
 }
 @media (min-width: 1100px) {
   .pane-tabs {
-    height: var(--hd-h, 48px);
-    min-height: var(--hd-h, 48px);
+    /* the chat title's row height, but never a tall band when a narrowed chat column wraps its header to two rows (QA m9) */
+    height: min(var(--hd-h, 48px), 56px);
+    min-height: min(var(--hd-h, 48px), 56px);
   }
   /* the tab row now takes the chat title's row; the Subagents heading is an ordinary 28 px heading below it */
   .sa-heading {
@@ -107,6 +128,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
 }
 .cg-bar {
   flex: 0 0 auto;
@@ -120,16 +142,25 @@
   border-bottom: 1px solid var(--line);
 }
 .cg-scope {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-weight: 600;
   color: var(--text-4);
 }
+/* "Unified" only says how the diff is drawn: plain text, not a toggle (QA m7). */
 .cg-mode {
-  padding: 0 8px;
-  line-height: 20px;
-  border-radius: 10px;
-  background: var(--panel-2);
+  flex: 0 0 auto;
   color: var(--text-dim);
   font-size: 11px;
+}
+/* A narrow column (a worktree chat's longer heading at 280 px): the mode word gives way first (QA c4). */
+@container (max-width: 320px) {
+  .cg-mode {
+    display: none;
+  }
 }
 .cg-sum {
   flex: 1 1 auto;
@@ -255,23 +286,48 @@
 .st-C {
   color: #ff9f6e;
 }
+/* A long path keeps its start (the top folder) and the file name; the middle of the folder part is what gets cut (QA c5). */
 .cg-path {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
 }
 .cg-path-in {
-  direction: ltr;
-  unicode-bidi: isolate;
+  display: flex;
+  min-width: 0;
   color: var(--text-muted);
 }
+.cg-path-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cg-path-in b {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 550;
   color: var(--text);
+}
+/* A file with conflict markers waiting to be resolved (QA m6). */
+.cg-conflict {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #ff9f6e22;
+  color: #ff9f6e;
+  font-size: 11px;
+  line-height: 16px;
+}
+/* The button after the listed files that lists the next ones (QA M5). */
+.cg-more {
+  display: block;
+  margin: 8px 12px 0;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 .cg-file .cg-add,
 .cg-file .cg-del,
@@ -461,21 +517,26 @@
   }
 }
 
-/* Footer of the Changes tab: one row. Status line on the left; Discard, then Merge, on the right (changes-ui.js, merge-ui.js) */
+/* Footer of the Changes tab: the status line on a row of its own (full width, so a long conflict line wraps normally), then
+   Discard and Merge on the right (changes-ui.js, merge-ui.js) */
 .cg-foot {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 8px 10px;
   padding: 8px 12px;
   border-top: 1px solid var(--line);
 }
-.cg-foot[hidden] {
+.cg-foot[hidden],
+.cg-foot-status[hidden] {
   display: none;
 }
 .cg-foot-status {
-  flex: 1 1 auto;
+  flex: 1 1 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .cg-discard {
   padding: 5px 10px;
@@ -513,6 +574,31 @@
 .cg-merge-btn[hidden],
 .cg-discard[hidden] {
   display: none;
+}
+/* The in-page confirmation before Discard or Merge (QA m4, m5): it takes the footer while it is open. */
+.cg-foot.asking > .cg-discard,
+.cg-foot.asking > .cg-merge-btn {
+  display: none;
+}
+.cg-confirm {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.cg-confirm-q {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-5);
+  overflow-wrap: anywhere;
+}
+.cg-confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.cg-confirm-row > button {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 /* Stage E2: buttons in Studio's note after a clash, and the amber clash line (reuses the ownership bar) */
 .note-actions {

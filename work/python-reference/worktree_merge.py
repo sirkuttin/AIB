@@ -817,10 +817,10 @@ def status(studio, chat_id):
             return dict(out, enabled=False, state='merging', message='Merging…')
         recorded = chat.record.get('mergeConflicts') or []
         if merge_in_progress(chat.wt) or (recorded and check_resolution(chat, recorded)):
-            return dict(out, enabled=False, state='conflicts', message=WAITING)
+            return dict(out, enabled=False, state='conflicts', message=WAITING, files=list(recorded))
         clashes = worktree_sync.open_clashes(chat.record)   # read only: Merge itself clears the resolved ones
         if clashes:
-            return dict(out, enabled=False, state='conflicts', message=worktree_sync.clash_line(clashes))
+            return dict(out, enabled=False, state='conflicts', message=worktree_sync.clash_line(clashes), files=clashes)
         if not worktrees.touched_paths(chat.wt, chat.user):   # the chat's own work: the worktree against U, line-ending noise ignored
             return dict(out, enabled=False, state='nochanges', message='Nothing to merge yet')
         reason = chat.idle_reason()

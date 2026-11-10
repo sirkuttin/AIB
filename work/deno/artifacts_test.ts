@@ -190,6 +190,27 @@ Deno.test('store: restore copies forward; source and diff', () => {
   assertEquals(changed, false);
 });
 
+Deno.test('store: a last line without a line break is its own line with the no-newline marker (QA M3)', () => {
+  const { tmp, clock, store, make } = storeFixture();
+  using _ = tmp;
+  let m = make('<html>\n<p>v1</p>');
+  clock.t += 10;
+  [m] = store.addVersion(m.id, enc('<html>\n<p>v2</p>'));
+  assertEquals(
+    store.diff(m.id, 1, 2).diff,
+    '--- v1\n+++ v2\n@@ -1,2 +1,2 @@\n <html>\n-<p>v1</p>\n\\ No newline at end of file\n+<p>v2</p>\n\\ No newline at end of file\n',
+  );
+  clock.t += 10;
+  [m] = store.addVersion(m.id, enc('<html>\n<p>v2</p>\n'));
+  assertEquals(
+    store.diff(m.id, 2, 3).diff,
+    '--- v2\n+++ v3\n@@ -1,2 +1,2 @@\n <html>\n-<p>v2</p>\n\\ No newline at end of file\n+<p>v2</p>\n',
+  );
+  clock.t += 10;
+  [m] = store.addVersion(m.id, enc('<head>\n<p>v2</p>'));
+  assert(store.diff(m.id, 3, 4).diff.endsWith('+<p>v2</p>\n\\ No newline at end of file\n'));
+});
+
 Deno.test('store: source is capped and binary kinds are refused', () => {
   const { tmp, store } = storeFixture();
   using _ = tmp;

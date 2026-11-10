@@ -92,7 +92,29 @@ test('status letters, counts and chip text', () => {
   assert.equal(C.chipParts(null), null);
   assert.equal(C.badge(0), '');
   assert.equal(C.badge(4), '4');
-  assert.equal(C.badge(250), '99+');
+  assert.equal(C.badge(250), '250', 'QA M5: the tab shows the true count');
+  assert.equal(C.badge(1200), '999+');
+  // QA M5: the server's totals count every file, also those on pages not listed yet; unread new files make the count "+N+"
+  const paged = {
+    git: true,
+    files: [{ added: 1 }],
+    filesTotal: 361,
+    totals: { files: 361, added: 400, removed: 2, partial: true },
+  };
+  assert.deepEqual(C.totalsOf(paged), { files: 361, added: 400, removed: 2, partial: true });
+  assert.equal(C.chipText(C.totalsOf(paged)), 'Changes \u00b7 361 files +400+ \u22122');
+  assert.equal(C.moreLeft(paged), 360);
+  assert.equal(C.moreText(360), 'Show the next 300 (360 not listed yet)');
+  assert.equal(C.moreText(61), 'Show the last 61 (61 not listed yet)');
+  assert.equal(C.moreText(0), '');
+  assert.equal(
+    C.mergeQuestion(361, 'main'),
+    'Merge all 361 changed files into main? Edits the chat has not committed yet are committed first.',
+  );
+  assert.equal(
+    C.mergeQuestion(1, 'dev'),
+    'Merge the 1 changed file into dev? Edits the chat has not committed yet are committed first.',
+  );
   assert.equal(C.stripText(3), '3 changed');
   assert.equal(C.stripText(0), '');
 });
@@ -229,6 +251,13 @@ class El {
   focus() {
     if (this.ownerDoc) this.ownerDoc.activeElement = this;
   }
+  remove() {
+    if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this);
+    this.parentNode = null;
+  }
+  key(k) {
+    for (const f of this.listeners.keydown || []) f({ key: k, preventDefault() {}, stopPropagation() {} });
+  }
   contains(n) {
     for (let x = n; x; x = x.parentNode) if (x === this) return true;
     return false;
@@ -266,18 +295,38 @@ const DIFF = (p) => ({
 });
 function setup(opts) {
   opts = opts || {};
-  const calls = [];
+  const calls = [],
+    posts = [];
   let files = FILES;
   const ok = (body) => ({ ok: true, status: 200, json: async () => body });
-  const fetchImpl = async (url) => {
+  const fetchImpl = async (url, init) => {
     calls.push(url);
+    if (init && init.method === 'POST') posts.push([url, JSON.parse(init.body)]);
     if (url.includes('/bootstrap')) return ok({ token: 't' });
+    if (url.includes('/worktree-discard')) return ok({ ok: true, removed: true });
+    if (url.includes('/api/live/worktree?')) return ok(opts.status || { worktree: false });
+    if (url.includes('/worktree/merge')) return ok({ ok: true, state: 'merged' });
+    if (opts.paged) {
+      const off = Number((/offset=(\d+)/.exec(url) || [0, 0])[1]),
+        all = opts.paged;
+      return ok({
+        git: true,
+        scope: opts.scope,
+        files: all.slice(off, off + 300),
+        filesTotal: all.length,
+        offset: off,
+        totals: { files: all.length, added: all.length, removed: 0 },
+        truncated: off + 300 < all.length,
+      });
+    }
     if (url.includes('/changes/file')) {
       if (opts.hold) await opts.hold;
       if (opts.fail) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
       return ok(DIFF(decodeURIComponent(/path=([^&]*)/.exec(url)[1])));
     }
-    return ok(opts.scope ? { git: true, scope: opts.scope, files } : { git: true, files });
+    const body = opts.scope ? { git: true, scope: opts.scope, files } : { git: true, files };
+    if (opts.branch) body.worktree = { branch: opts.branch };
+    return ok(body);
   };
   const ids = {};
   const doc = { activeElement: null };
@@ -318,10 +367,13 @@ function setup(opts) {
     setInterval: () => 1,
     clearInterval() {},
   };
+  if (opts.status) win.AgentMergeUI = require(path.join(APP_DIR, 'merge-ui.js'));
   C.init(win);
   C.sync({ id: 'chat1', busy: false });
   return {
     calls,
+    posts,
+    win,
     ids,
     setFiles: (f) => {
       files = f;
@@ -468,4 +520,117 @@ test('Discard exists only for a chat with its own branch that has changes, and a
   );
   assert.match(C.discardNote({ pending: true }), /the next time it starts/);
   assert.match(C.discardNote({ removed: true }), /read it but not continue/);
+});
+
+/* ---- QA right column: paging, in-page confirmations, conflict badge, discarded chats ---- */
+const many = (n) =>
+  Array.from({ length: n }, (_, i) => ({
+    path: 'f' + String(i).padStart(4, '0') + '.txt',
+    status: 'U',
+    added: 1,
+    removed: 0,
+  }));
+const pane = (t) => t.ids.subagentsPane;
+
+test('QA M5: every file is reachable: "Show the last 61" lists the next page, and the tab counts all files', async () => {
+  const t = setup({ paged: many(361) });
+  t.ui().show('changes');
+  await flush();
+  assert.equal(rows(t).length, 300);
+  const more = pane(t).querySelector('.cg-more');
+  assert.ok(more, 'a button lists the rest');
+  assert.equal(more.textContent, 'Show the last 61 (61 not listed yet)');
+  assert.equal(pane(t).querySelector('.pane-badge').textContent, '361');
+  more.click();
+  await flush();
+  assert.ok(t.calls.some((u) => u.includes('offset=300')));
+  assert.equal(rows(t).length, 361);
+  assert.ok(
+    rows(t).some((r) => r.dataset.path === 'f0360.txt'),
+    'the last file is listed',
+  );
+  assert.equal(pane(t).querySelector('.cg-more'), null);
+  await reload(t);
+  assert.equal(rows(t).length, 361, 'a refresh keeps the pages you opened');
+});
+
+test('QA m4: Discard asks in the page, never with window.confirm; Cancel posts nothing, Discard posts once', async () => {
+  const t = setup({ scope: 'branch', branch: 'studio/x' });
+  t.win.confirm = () => {
+    throw new Error('window.confirm must not be used');
+  };
+  t.ui().show('changes');
+  await flush();
+  const btn = pane(t).querySelector('.cg-discard');
+  assert.ok(btn && !btn.hidden);
+  btn.click();
+  await flush();
+  let box = pane(t).querySelector('.cg-confirm');
+  assert.ok(box, 'an in-page question');
+  assert.equal(box.attrs.role, 'alertdialog');
+  assert.match(box.textContent, /deletes its branch studio\/x/);
+  assert.ok(pane(t).querySelector('.cg-foot').classList.contains('asking'), 'Discard and Merge step aside');
+  box.querySelector('.cg-confirm-no').click();
+  await flush();
+  assert.equal(pane(t).querySelector('.cg-confirm'), null);
+  assert.equal(t.posts.length, 0);
+  btn.click();
+  await flush();
+  box = pane(t).querySelector('.cg-confirm');
+  box.key('Escape');
+  await flush();
+  assert.equal(t.posts.length, 0, 'Escape cancels');
+  btn.click();
+  await flush();
+  pane(t).querySelector('.cg-confirm-yes').click();
+  await flush();
+  assert.equal(t.posts.length, 1);
+  assert.deepEqual(t.posts[0], ['/api/live/worktree-discard', { id: 'chat1', confirm: true }]);
+  assert.match(pane(t).querySelector('.cg-foot-note').textContent, /read it but not continue/);
+  assert.match(pane(t).querySelector('.cg-note').textContent, /discarded with its branch/);
+});
+
+test('QA M4: a discarded chat: the Changes tab says so instead of "not available yet" and reads nothing more', async () => {
+  const t = setup({ scope: 'branch', branch: 'studio/x' });
+  t.ui().show('changes');
+  await flush();
+  const before = t.calls.length;
+  C.sync({ id: 'chat1', busy: false, discarded: true });
+  await reload(t);
+  assert.match(pane(t).querySelector('.cg-note').textContent, /discarded with its branch/);
+  assert.equal(rows(t).length, 0);
+  assert.equal(t.calls.filter((u, i) => i >= before && u.includes('/api/live/changes?')).length, 0);
+});
+
+test('QA m5 + m6: Merge asks first with the file count; a conflicted file has a conflict badge', async () => {
+  const status = { worktree: true, base: 'main', label: 'Merge into main', enabled: true, state: 'ready', message: '' };
+  const t = setup({ scope: 'branch', branch: 'studio/x', status });
+  t.ui().show('changes');
+  await flush();
+  const merge = pane(t).querySelector('.cg-merge-btn');
+  assert.ok(merge && !merge.hidden);
+  merge.click();
+  await flush();
+  const box = pane(t).querySelector('.cg-confirm');
+  assert.ok(box);
+  assert.match(box.textContent, /Merge all 3 changed files into main\?/);
+  box.querySelector('.cg-confirm-no').click();
+  await flush();
+  assert.equal(t.posts.length, 0, 'cancelled: nothing merged');
+  merge.click();
+  await flush();
+  pane(t).querySelector('.cg-confirm-yes').click();
+  await flush();
+  assert.equal(t.posts.filter((p) => p[0].includes('/worktree/merge')).length, 1);
+  const c = setup({
+    scope: 'branch',
+    branch: 'studio/x',
+    status: { ...status, enabled: false, state: 'conflicts', message: 'Waiting', files: ['src/b.js'] },
+  });
+  c.ui().show('changes');
+  await flush();
+  assert.deepEqual(
+    rows(c).map((r) => !!r.querySelector('.cg-conflict')),
+    [false, true, false],
+  );
 });

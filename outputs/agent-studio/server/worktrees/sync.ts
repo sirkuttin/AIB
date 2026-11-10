@@ -529,7 +529,7 @@ function shownList(files: string[], limit: number): string {
 
 export function clashLine(files: string[]): string {
   return `Waiting for the chat to resolve a clash with your edits in ${shownList(files, 12)}. ` +
-    'It is combining your version and its own in its copy; Merge is available once the conflict markers are gone.';
+    'It was asked to combine your version and its own in its copy; Merge is available once the conflict markers are gone.';
 }
 
 /**

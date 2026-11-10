@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import itertools
 import time
 import sys
 
@@ -53,6 +54,7 @@ def auth_ok():
 last_mcp = []
 session_cwd = ''
 session_name = 'fake-session'
+EDIT_IDS = itertools.count(1)  # a fresh tool call id for every edit: the page keys rows by id, a reused one merged edits into one row
 
 
 def SID():
@@ -255,13 +257,14 @@ def worktree_turn(key, prompt_text, blocks):
         target = cwd / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(text.replace('\\n', '\n').encode('utf-8'))
-        update({'sessionUpdate': 'tool_call', 'toolCallId': 'e1', 'title': 'Write ' + path, 'kind': 'edit', 'status': 'completed', 'content': [{'type': 'diff', 'path': str(target), 'oldText': None, 'newText': text}]})
+        update({'sessionUpdate': 'tool_call', 'toolCallId': 'edit-%d' % next(EDIT_IDS), 'title': 'Write ' + path, 'kind': 'edit', 'status': 'completed', 'content': [{'type': 'diff', 'path': str(target), 'oldText': None, 'newText': text}]})
         say('edited ' + path)
     elif prompt_text.startswith('delete:'):
         (cwd / prompt_text[7:]).unlink()
         say('deleted ' + prompt_text[7:])
     elif prompt_text.startswith('commit:'):
-        git = ['git', '-c', 'user.name=fake-agent', '-c', 'user.email=t@t', '-c', 'core.autocrlf=false']
+        # the repository's own line-ending setting applies, as for a real agent (forcing core.autocrlf=false committed CRLF on Windows)
+        git = ['git', '-c', 'user.name=fake-agent', '-c', 'user.email=t@t']
         subprocess.run(git + ['add', '-A'], cwd=str(cwd), check=True, capture_output=True)
         subprocess.run(git + ['commit', '-m', prompt_text[7:]], cwd=str(cwd), check=True, capture_output=True)
         say('committed ' + subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(cwd), capture_output=True, text=True).stdout.strip())

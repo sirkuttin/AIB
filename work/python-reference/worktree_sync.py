@@ -396,7 +396,7 @@ def open_clashes(record):
 def clash_line(files):
     shown = ', '.join(files[:12]) + (' and more' if len(files) > 12 else '')
     return (f'Waiting for the chat to resolve a clash with your edits in {shown}. '
-            f'It is combining your version and its own in its copy; Merge is available once the conflict markers are gone.')
+            f'It was asked to combine your version and its own in its copy; Merge is available once the conflict markers are gone.')
 
 
 def settle_conflicts(registry, record):

@@ -31,6 +31,7 @@
       status = null,
       ctx = { id: '', busy: false, files: 0, branchView: false },
       merging = false,
+      asking = false,
       sig = '',
       seq = 0,
       result = '';
@@ -82,7 +83,22 @@
       paint();
     }
     button.addEventListener('click', async () => {
-      if (merging || button.disabled) return;
+      if (merging || button.disabled || asking) return;
+      /* A short in-page confirmation that says how many files go in (changes-ui.js draws it). */
+      if (opts.confirm) {
+        asking = true;
+        let sure = false;
+        try {
+          sure = await opts.confirm({ files: ctx.files, base: (status && status.base) || 'main' });
+        } finally {
+          asking = false;
+        }
+        if (!sure) {
+          if (!button.hidden && button.focus) button.focus();
+          return;
+        }
+        if (merging || button.disabled) return;
+      }
       merging = true;
       result = '';
       paint();
@@ -102,6 +118,8 @@
       paint();
     });
     return {
+      /* Files the server names as conflicted (unresolved merge or clash), for the badge on their rows. */
+      conflicts: () => (status && status.state === 'conflicts' && Array.isArray(status.files) ? status.files : []),
       update(next) {
         const n = Object.assign({}, ctx, next || {});
         const s = [n.id, n.busy, n.files, n.branchView].join('|');

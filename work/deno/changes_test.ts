@@ -141,6 +141,20 @@ test('the file cap marks the listing truncated', async () => {
   assertEquals(data.files!.length, MAX_FILES);
   assert(data.truncated);
   assertEquals(data.filesTotal, MAX_FILES + 5);
+  // QA M5: the totals count every file (new files off the page are not read: partial), and the next page reaches the rest.
+  assertEquals(data.totals, { files: MAX_FILES + 5, added: MAX_FILES, removed: 0, partial: true });
+  const rest = await getChanges(r.repo, null, MAX_FILES);
+  assertEquals(rest.offset, MAX_FILES);
+  assertEquals(rest.files!.map((f) => f.path), ['f0300.txt', 'f0301.txt', 'f0302.txt', 'f0303.txt', 'f0304.txt']);
+  assertEquals(rest.truncated, false);
+  assertEquals(rest.totals!.files, MAX_FILES + 5);
+  git(r.repo, 'add', '-A');
+  git(r.repo, 'commit', '-qm', 'many');
+  for (let i = 0; i < MAX_FILES + 5; i++) write(r.p(`f${String(i).padStart(4, '0')}.txt`), 'y\n');
+  const tracked = await getChanges(r.repo);
+  assertEquals(tracked.totals, { files: MAX_FILES + 5, added: MAX_FILES + 5, removed: MAX_FILES + 5 }); // numstat counts them all
+  await using py = new PyParity();
+  assertEquals(await getChanges(r.repo, null, MAX_FILES), await py.call('changes', 'get_changes', [r.repo, null, MAX_FILES]));
 });
 
 test('the diff size cap', async () => {

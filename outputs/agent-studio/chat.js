@@ -22,6 +22,26 @@
     }
   }
   const aliases = stored('studio-conversation-names', {});
+  /* QA M4: chats whose worktree was discarded from the Changes tab (provider:sessionId -> {at, row}). Such a chat stays in the list,
+     readable, but cannot be continued: the composer is off with a note, and it has no branch any more. The list row is kept here
+     (this browser) so the chat does not vanish when the agent has no saved transcript Studio can list. */
+  const DISCARDED_KEY = 'studio-discarded-chats-v1';
+  const discardedChats = new Map(Object.entries(stored(DISCARDED_KEY, {}) || {}));
+  const isDiscarded = (c) => !!c && (c.discarded || discardedChats.has(aliasKeyOf(c)));
+  function aliasKeyOf(c) {
+    return c.provider + ':' + (c.sessionId || c.id || c.key);
+  }
+  function rememberDiscarded(c) {
+    const row = { ...c, discarded: true, worktree: null, live: c.live ? { ...c.live, closed: true, worktree: null } : c.live };
+    delete row.elsewhere;
+    discardedChats.set(aliasKeyOf(c), { at: Date.now() / 1000, row });
+    const keep = [...discardedChats.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, 50);
+    try {
+      localStorage.setItem(DISCARDED_KEY, JSON.stringify(Object.fromEntries(keep)));
+    } catch {}
+    return row;
+  }
+  const DISCARDED_NOTE = 'This chat\u2019s worktree was discarded: you can read it, but not continue it.';
   let token = '',
     current = '',
     selected = null,
@@ -636,6 +656,11 @@
     }
     return response.body;
   }
+  /* "This connection is not ready" + " Your draft..." needs a full stop between them (QA M4). */
+  const sentence = (m) => {
+    const t = String(m || '').trim();
+    return !t || /[.!?\u2026:]$/.test(t) ? t : t + '.';
+  };
   function fail(error) {
     $('error').textContent = error.message;
     $('error').hidden = false;
@@ -755,6 +780,22 @@
           subagentCount: 0,
         });
       }
+    /* A discarded chat keeps its place: its saved transcript row if the agent wrote one, else the row remembered at Discard. */
+    for (const [key, d] of discardedChats) {
+      const have = conversations.find((c) => aliasKey(c) === key);
+      if (have) {
+        have.discarded = true;
+        have.worktree = null;
+      } else if (d && d.row && d.row.provider) {
+        // Studio still holds the closed connection for a while: its messages are readable. After that, only a note.
+        const held = d.row.live && live.connections.find((l) => l.id === d.row.live.id);
+        conversations.push(
+          held
+            ? { ...d.row, discarded: true, live: { ...held, closed: true, worktree: null } }
+            : { ...d.row, discarded: true, live: undefined, key: 'discarded:' + key },
+        );
+      }
+    }
     annotateElsewhere();
     if (selected) {
       const updated = conversations.find((c) => aliasKey(c) === aliasKey(selected));
@@ -923,6 +964,7 @@
             id: current || selected.provider + ':' + selected.id,
             busy: !!(current && snapshot && !snapshot.closed && snapshot.busy),
             cwd: selected.cwd || '',
+            discarded: isDiscarded(selected),
           }
         : null,
     );
@@ -933,16 +975,20 @@
       images = selectedAttachments().length,
       hasContent = !!$('prompt').value.trim() || images > 0;
     const opening = continuingKey === aliasKey(selected),
-      sending = sendingKey === aliasKey(selected);
-    $('prompt').disabled = opening || sending;
-    $('prompt').placeholder = 'Message ' + nameOf(selected.provider) + '… Enter to send';
+      sending = sendingKey === aliasKey(selected),
+      gone = isDiscarded(selected);
+    $('prompt').disabled = opening || sending || gone;
+    $('prompt').placeholder = gone ? DISCARDED_NOTE : 'Message ' + nameOf(selected.provider) + '… Enter to send';
+    $('prompt').title = gone ? DISCARDED_NOTE : '';
     const busy = !!(connected && snapshot.busy);
     const queueMode = busy || (connected && snapshot?.queue?.items?.length > 0);
     $('send').textContent = opening ? 'Opening…' : queueMode ? 'Queue' : 'Send';
     $('send').hidden = false;
-    $('send').disabled = connected
-      ? connectionIssue || sending || !hasContent || (images > 0 && !imageCapability())
-      : opening || !selected.id || !selected.cwd || !hasContent;
+    $('send').disabled =
+      gone ||
+      (connected
+        ? connectionIssue || sending || !hasContent || (images > 0 && !imageCapability())
+        : opening || !selected.id || !selected.cwd || !hasContent);
     $('cancel').hidden = !busy;
     $('cancel').disabled = !busy;
     const turn = window.AgentAttentionUI?.render(
@@ -989,7 +1035,7 @@
         failures: connected ? snapshot.changeFailures : null,
         commands: snapshot?.breadth?.commands,
         usage: connected ? snapshot.breadth?.usage : null,
-        branch: window.AgentHeaderUI?.branchOf(selected.cwd, renderHeader) || '',
+        branch: gone ? '' : window.AgentHeaderUI?.branchOf(selected.cwd, renderHeader) || '',
         cwd: selected.cwd,
         agent: nameOf(selected.provider),
         agentId: selected.provider,
@@ -1763,7 +1809,7 @@
   async function subBack() {
     const prev = subTrail.pop();
     if (!prev) {
-      closeInspector();
+      closeAndRefocus();
       return;
     }
     const keep = subTrail;
@@ -1830,9 +1876,56 @@
     }
     box.replaceChildren(frag);
   }
+  /* QA m11: a saved chat whose transcript launched a subagent (an Agent / Task call) lists it even when Studio found no transcript
+     file of its own for it (the roster only knows subagents with a file). Such a row opens to a note, not a history. */
+  function withLaunched(list, evs, key) {
+    const have = (list || []).filter((a) => !a.main),
+      ids = new Set(have.map((a) => a.toolUseId).filter(Boolean)),
+      names = new Set(have.map((a) => String(a.description || a.name || '').trim()).filter(Boolean)),
+      extra = [];
+    for (const e of evs || []) {
+      if (e.kind !== 'tool' || !/^(agent|task)$/i.test(String(e.label || ''))) continue;
+      if (e.callId && ids.has(e.callId)) continue;
+      let input = {};
+      try {
+        input = JSON.parse(e.text || '{}') || {};
+      } catch {}
+      const name = String(input.description || input.prompt || 'Subagent')
+        .trim()
+        .split('\n')[0]
+        .slice(0, 120);
+      if (names.has(name)) continue;
+      names.add(name);
+      extra.push({
+        key: key + '#launched:' + (e.callId || extra.length),
+        name,
+        description: name,
+        agentType: typeof input.subagent_type === 'string' ? input.subagent_type : '',
+        main: false,
+        active: false,
+        source: 'saved',
+        launchedOnly: true,
+        finished: false, // no transcript says how it ended: "Not marked finished"
+        created: e.time || 0,
+        modified: e.time || 0,
+        depth: 1,
+      });
+    }
+    return extra.length ? [...(list || []), ...extra] : list;
+  }
   async function refreshSubagent() {
     if (!subSelection) return;
     const target = subSelection.key;
+    if (subSelection.launchedOnly) {
+      renderSubHead();
+      if (subSignature !== target) {
+        subSignature = target;
+        $('submessages').replaceChildren(
+          text('p', 'Launched by this chat. Studio has no saved transcript of this subagent to show.', 'empty-state'),
+        );
+      }
+      return;
+    }
     if (subSelection.live && !snapshot) {
       closeInspector();
       return;
@@ -1892,7 +1985,7 @@
       } else {
         const [w, roster] = await Promise.all([pollHistory(key), get('/api/agents', { session: key })]);
         if (selected?.key !== key) return;
-        agents = roster.agents;
+        agents = withLaunched(roster.agents, w.events, key);
         renderMainHistory(w, key);
         $('settings').replaceChildren();
         $('approvals').replaceChildren();
@@ -2486,7 +2579,7 @@
         await refresh();
       }
     } catch (error) {
-      fail(Error(error.message + ' Your draft has been kept.'));
+      fail(Error(sentence(error.message) + ' Your draft has been kept.'));
     } finally {
       continuingKey = '';
       renderHeader();
@@ -2573,7 +2666,7 @@
       }
       await refresh();
     } catch (error) {
-      fail(Error(error.message + ' Your draft has been kept.'));
+      fail(Error(sentence(error.message) + ' Your draft has been kept.'));
     } finally {
       sendingKey = '';
       renderHeader();
@@ -2605,8 +2698,18 @@
       fail(e);
     }
   };
-  $('closeSubchat').onclick = () => closeInspector();
-  $('subchatBack').onclick = () => subBack().catch(fail);
+  $('closeSubchat').onclick = () => closeAndRefocus();
+  $('subchatBack').onclick = () =>
+    subBack()
+      .then(() => {
+        // QA m10: the keyboard stays in the history (on Back), or goes back to the row it was opened from
+        const ae = document.activeElement;
+        if (!ae || ae === document.body || !ae.isConnected) {
+          if (inspectorOpen()) $('subchatBack').focus({ preventScroll: true });
+          else refocusRow();
+        }
+      })
+      .catch(fail);
   window.addEventListener('keydown', (e) => {
     if (
       e.key === 'Escape' &&
@@ -2617,7 +2720,10 @@
       !e.target?.isContentEditable
     ) {
       e.preventDefault();
-      closeInspector();
+      const ae = document.activeElement,
+        inside = !!ae && typeof $('subchatPane').contains === 'function' && $('subchatPane').contains(ae);
+      if (inside) closeAndRefocus();
+      else closeInspector();
     }
   });
   $('thinking').onchange = () => window.AgentChatView.setThinking($('thinking').checked);
@@ -2907,6 +3013,24 @@
     },
     true,
   );
+  /* QA m10: after Close (or Back from the first item, or Escape inside it) the focus goes to the row the history was opened from,
+     else to the Activity tab: never to <body>. */
+  let lastOpened = { agent: '', command: '' };
+  function refocusRow() {
+    const pick = (box, key) =>
+      key && box ? [...box.querySelectorAll('[data-key]')].find((n) => n.dataset.key === key && n.offsetParent) : null;
+    const target =
+      pick($('subagentList'), lastOpened.agent) ||
+      pick($('runningCommandList'), lastOpened.command) ||
+      $('paneTab-activity') ||
+      $('prompt');
+    target?.focus?.({ preventScroll: true });
+  }
+  function closeAndRefocus() {
+    lastOpened = { agent: subSelection?.key || '', command: selectedCommand?.id || '' };
+    closeInspector();
+    refocusRow();
+  }
   function closeInspector() {
     subTrail = [];
     subSelection = null;
@@ -2917,9 +3041,11 @@
     renderCommands();
   }
   function isPseudoKey(key) {
-    return /^(agent|recovered):/.test(key || '');
+    return /^(agent|recovered|discarded):/.test(key || '');
   }
   function pseudoNote(c) {
+    if (isDiscarded(c) && !c.recovered)
+      return 'This chat\u2019s worktree was discarded. Studio has no saved transcript of it to show, and it cannot be continued.';
     return c.recovered
       ? c.recovered.reconnecting
         ? 'Studio is reconnecting this conversation after the restart. Its history loads from the agent; nothing is sent.'
@@ -3200,7 +3326,12 @@
   };
   $('discoverSessions').onclick = discoverSessions;
   // A chat's worktree was discarded from the Changes tab: its connection is closed now, so show the list and the chat as they are.
-  window.addEventListener('agent-studio:worktree-discarded', () => {
+  window.addEventListener('agent-studio:worktree-discarded', (e) => {
+    const id = e?.detail?.id || '';
+    if (selected && (id === current || id === aliasKey(selected) || !id)) {
+      selected = rememberDiscarded(selected);
+      renderHeader();
+    }
     sidebarSignature = '';
     Promise.resolve()
       .then(() => refresh())
