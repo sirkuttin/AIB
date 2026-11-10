@@ -1,5 +1,5 @@
 """Plain-data wrappers around worktrees.py and worktree_merge.py for the Deno parity and interop tests
-(work/deno/worktrees_test.ts, work/deno/worktree_merge_test.ts). Only temp folders and temp git repos are ever passed in.
+(work/deno/worktrees_test.ts, work/deno/worktree_merge*_test.ts). Only temp folders and temp git repos are ever passed in.
 
 set_env(env)                                   sets (None: removes) environment variables, e.g. fixed git dates so both sides make the same commits
 registry(state_dir, method, args, kwargs)      Registry(state_dir).<method>(...)
