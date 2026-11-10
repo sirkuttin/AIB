@@ -342,3 +342,18 @@ t('Linux AppImage: the built app starts its host as $APPIMAGE host (its own moun
   if (Deno.build.os === 'linux') assertEquals(cmd.slice(0, 2), ['/home/me/AIB.AppImage', 'host']);
   else assertEquals(cmd, hostCommand(o, true, {}), 'elsewhere APPIMAGE means nothing');
 });
+
+t('a forced stop (the app\'s "stop them and quit") and the tray\'s Stop chats and quit mark the stop as deliberate; a plain stop does not (QA 4 #8)', async () => {
+  for (const [how, want] of [['plain', false], ['force', true], ['tray', true]] as const) {
+    const dir = Deno.makeTempDirSync({ prefix: 'aib-lifecycle-' });
+    const host = new AgentHost({ ompCommand: 'unused', stateDir: dir, port: 0 } as never, 30, 0, {});
+    try {
+      if (how === 'tray') host.stopAll('tray');
+      else host.opStop({ by: 'test', force: how === 'force' });
+      assertEquals(host.studio.deliberateStop, want, how);
+    } finally {
+      await host.studio.close();
+      Deno.removeSync(dir, { recursive: true });
+    }
+  }
+});

@@ -16,7 +16,16 @@ export const TOKEN_HEADER = 'X-Agent-Host-Token';
 export const MAX_RPC_BYTES = 64 * 1024 * 1024;
 export const LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const LOG_KEEP = 2;
-export const APP_ID = Deno.env.get('AIB_APP_ID') || 'studio-dev';
+/** The built app's identifier (deno.json desktop.app.identifier, tools/build.ts APP_IDENTIFIER). */
+export const DESKTOP_APP_ID = 'dev.aib.app';
+/**
+ * Which product a host belongs to (agent-host.json appId, sameProduct): `dev.aib.app` for the built app, `studio-dev` for a source
+ * run (`deno run`), so the two never count as the same product. AIB_APP_ID overrides it (tests).
+ */
+export function appIdFor(exe: string = Deno.execPath(), override: string | undefined = Deno.env.get('AIB_APP_ID')): string {
+  return override || (isCompiled(exe) ? DESKTOP_APP_ID : 'studio-dev');
+}
+export const APP_ID = appIdFor();
 export { APP_VERSION };
 
 const isWindows = Deno.build.os === 'windows';

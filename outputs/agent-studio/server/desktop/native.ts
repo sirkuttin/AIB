@@ -142,7 +142,7 @@ function invisibleWindow(): WindowHandle {
  */
 export function tameStartupWindow(): void {
   try {
-    keepHidden(invisibleWindow(), 'startup window');
+    keepHidden(invisibleWindow(), 'startup window', true);
   } catch { /* no window system: nothing to hide */ }
 }
 

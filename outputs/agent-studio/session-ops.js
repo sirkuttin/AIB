@@ -124,12 +124,12 @@
       op === 'delete'
         ? {
             title: 'Delete this session?',
-            text: 'This asks the agent to permanently delete the session and its saved history. It cannot be undone from Studio. Studio will disconnect.',
+            text: 'This asks the agent to permanently delete the session and its saved history. It cannot be undone from AIB. AIB will disconnect.',
             action: 'Delete session',
           }
         : {
             title: 'Close this session on the agent?',
-            text: 'This tells the agent to release the session. Studio will disconnect; you can continue it later if the agent keeps its history.',
+            text: 'This tells the agent to release the session. AIB will disconnect; you can continue it later if the agent keeps its history.',
             action: 'Close session',
           };
     d.appendChild(el('h2', delta.title));

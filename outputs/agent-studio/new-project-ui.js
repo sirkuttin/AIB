@@ -91,7 +91,7 @@
     name.id = 'npName';
     name.autocomplete = 'off';
     name.maxLength = 60;
-    const nameNote = el('p', 'Only the name shown in Studio. The folder is never renamed.', 'np-note');
+    const nameNote = el('p', 'Only the name shown in AIB. The folder is never renamed.', 'np-note');
 
     const errorLine = el('p', null, 'np-error');
     errorLine.setAttribute('role', 'alert');

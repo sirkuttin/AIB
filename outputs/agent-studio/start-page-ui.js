@@ -35,7 +35,7 @@
     const own = el('p', null, 'sp-note');
     own.append(
       el('strong', 'Use my own install'),
-      ' If you install an adapter yourself, Studio finds it. Run one of these in a terminal, then choose Check again in ',
+      ' If you install an adapter yourself, AIB finds it. Run one of these in a terminal, then choose Check again in ',
       link('Settings', () => S.open('agents')),
       '.',
     );
@@ -59,22 +59,25 @@
       el('p', 'Every good administration starts with a cabinet.', 'sp-subtitle'),
       el(
         'p',
-        "Studio talks to coding agents you already use. Pick one: Studio installs what it needs, then you sign in with that agent's own account.",
+        "AIB talks to coding agents you already use. Pick one: AIB installs what it needs, then you sign in with that agent's own account.",
         'sp-lead',
       ),
     );
     const box = el('div', null, 'sp-agents');
-    for (const a of rows) box.append(S.agentRow(a, { sharedBlock: true }));
-    frag.append(box);
-    const node = rows.find((a) => S.trouble(a) === 'node'); // the Node.js line, once for the whole page
-    if (node) {
-      const line = el('p', node.installBlock + ' Install Node.js from nodejs.org, then ', 'sp-note');
-      line.append(
-        link('Check again', () => S.recheck()),
-        '.',
-      );
-      frag.append(line);
+    // The Node.js line, once for the whole page, right under the last (turned-on) agent that needs it.
+    const needNode = rows.filter((a) => a.enabled && S.trouble(a) === 'node');
+    for (const a of rows) {
+      box.append(S.agentRow(a, { sharedBlock: true }));
+      if (needNode.length && a === needNode[needNode.length - 1]) {
+        const line = el('p', a.installBlock + ' Install Node.js from nodejs.org, then ', 'sp-note sp-node');
+        line.append(
+          link('Check again', () => S.recheck()),
+          '.',
+        );
+        box.append(line);
+      }
     }
+    frag.append(box);
     if (allStuck(rows, S.trouble)) frag.append(stuckPanel(rows, S));
     const more = el('p', null, 'sp-more');
     more.append(link('See more agents', () => S.open('agents')));
@@ -82,7 +85,7 @@
       more,
       el(
         'p',
-        'Once one agent is ready, this page is replaced by the normal new-chat screen. You can add more agents any time in Settings → AIB linking.',
+        'Once one agent is ready, this page is replaced by the normal new-chat screen. You can add more agents any time in Settings → Agents.',
         'sp-foot',
       ),
     );

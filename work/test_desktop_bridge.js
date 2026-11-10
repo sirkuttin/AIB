@@ -224,3 +224,21 @@ test('the amber update line', () => {
     'never an Install button where it cannot install',
   );
 });
+
+test('the Settings card: a source run says updates come through the desktop app, and a failed check says when (QA 4 #11, #12)', () => {
+  const src = { state: 'unconfigured', current: '0.1.0-beta.2', desktop: false, configured: false };
+  assert.equal(U.sourceRun(src), true);
+  assert.match(U.cardLine(src), /^You have AIB 0\.1\.0-beta\.2\. This copy runs from source/);
+  assert.match(U.cardLine(src), /updates come through the AIB desktop app/);
+  assert.equal(U.sourceRun({ ...src, configured: true }), false, 'a source run pointed at a release page still checks');
+  assert.equal(U.sourceRun({ ...src, desktop: true }), false);
+  const now = new Date(2026, 10, 10, 15, 0).getTime();
+  const tried = new Date(2026, 10, 10, 14, 5).getTime() / 1000;
+  const off = { state: 'error', current: '0.1.0', error: 'Could not reach GitHub to check for updates.', lastCheck: tried, autoCheck: true, retryAt: tried + 3600, desktop: true };
+  const line = U.cardLine(off, now);
+  assert.match(line, /^Could not reach GitHub to check for updates\. \(Tried today at /);
+  assert.match(line, /AIB tries again today at /);
+  assert.doesNotMatch(U.cardLine({ ...off, autoCheck: false }, now), /tries again/, 'no promise when automatic checks are off');
+  assert.match(U.atTime(new Date(2026, 10, 8, 9, 30).getTime() / 1000, now), / at /);
+  assert.doesNotMatch(U.atTime(new Date(2026, 10, 8, 9, 30).getTime() / 1000, now), /today/);
+});

@@ -27,6 +27,7 @@ import {
   pickAsset,
   pickRelease,
   platformKey,
+  RETRY_INTERVAL,
   postUpdateCheck,
   postUpdateInstall,
   defaultRepo,
@@ -952,6 +953,12 @@ type PyService = {
   launched: unknown[];
 };
 
+/** status() without the Deno-only fields (retryAt, desktop), for comparing with the Python reference. */
+function pyView(status: object): Record<string, unknown> {
+  const { retryAt: _r, desktop: _d, ...rest } = status as Record<string, unknown>;
+  return rest;
+}
+
 Deno.test("state.json: refusals and odd files read the same in Deno and Python", async () => {
   await using py = new PyParity();
   await using fake = await FakeGitHub.start();
@@ -966,7 +973,7 @@ Deno.test("state.json: refusals and odd files read the same in Deno and Python",
         ((await py.call("updater_shim", "service", [a.e.dir, null], {
           base: bad.base,
         })) as PyService).status,
-        a.e.service().status(),
+        pyView(a.e.service().status()),
       );
     } finally {
       await bad.server.shutdown();
@@ -988,7 +995,7 @@ Deno.test("state.json: refusals and odd files read the same in Deno and Python",
       }) as PyService;
       const mine = a.e.service();
       assertEquals(mine.state, theirs.state, text);
-      assertEquals(mine.status(), theirs.status, text);
+      assertEquals(pyView(mine.status()), theirs.status, text);
     }
   }
 });
@@ -1565,6 +1572,88 @@ function exists(p: string): boolean {
   try {
     Deno.lstatSync(p);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---- QA 4: retry sooner, clean up after an install, say when it failed ----------------------------------------------------
+Deno.test("a failed automatic check for a passing reason (offline) is tried again after an hour, not a day", async () => {
+  using env = new Env();
+  env.base(DEAD);
+  const svc = env.service();
+  const st = await svc.check();
+  assertEquals([st.state, st.errorCode], ["error", "offline"]);
+  assertEquals(st.lastCheck, env.clock.now(), "when it failed, for the card");
+  assertEquals(st.retryAt, env.clock.now() + RETRY_INTERVAL);
+  assertEquals(svc.due(), false);
+  env.clock.t += RETRY_INTERVAL - 1;
+  assertEquals(svc.due(), false);
+  env.clock.t += 1;
+  assertEquals(svc.due(), true, "an hour later it is due again");
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  const ok = await svc.check();
+  assertEquals([ok.state, ok.retryAt], ["ready", null]);
+  assertEquals(svc.due(), false, "after a good check: a day again");
+  env.clock.t += RETRY_INTERVAL;
+  assertEquals(svc.due(), false);
+});
+
+Deno.test("a checksum refusal still waits a day, and leaves no empty version folder", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start({ sumsHash: "f".repeat(64) });
+  env.base(fake.base);
+  const svc = env.service();
+  const st = await svc.check();
+  assertEquals([st.state, st.retryAt], ["refused", null]);
+  env.clock.t += RETRY_INTERVAL;
+  assertEquals(svc.due(), false);
+  assertEquals(
+    [...Deno.readDirSync(env.dir + "/updates")].filter((e) => e.isDirectory).map((e) => e.name),
+    [],
+    "the refused download's folder is gone",
+  );
+});
+
+Deno.test("after the update is installed, the next start deletes the downloaded file and forgets it", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  const before = env.service();
+  const st = await before.check();
+  assertEquals(st.state, "ready");
+  const path = String(st.available!.path);
+  assert(isFileSync(path));
+  Deno.mkdirSync(env.dir + "/updates/0.0.9"); // an older leftover
+  Deno.writeTextFileSync(env.dir + "/updates/0.0.9/old.zip", "x");
+  Deno.mkdirSync(env.dir + "/updates/9.9.9"); // a newer one (not this version): kept
+  Deno.writeTextFileSync(env.dir + "/updates/9.9.9/keep.zip", "x");
+  // Same version, not yet installed: nothing is removed.
+  assertEquals(before.cleanup().sort(), ["0.0.9"]);
+  assert(isFileSync(path), "the ready download stays until it is installed");
+  // The new version runs now (current = the downloaded one).
+  const after = env.service({ current: "0.1.0-beta.2" });
+  assertEquals(after.cleanup(), ["0.1.0-beta.2"]);
+  assert(!isFileSync(path), "the installed zip is deleted");
+  assertEquals(after.state.downloaded, null);
+  assertEquals(after.state.found, null);
+  const saved = JSON.parse(Deno.readTextFileSync(env.dir + "/updates/state.json"));
+  assertEquals([saved.downloaded, saved.found], [null, null], "state.json forgets it too");
+  assert(isFileSync(env.dir + "/updates/9.9.9/keep.zip"));
+  assert(isFileSync(env.dir + "/updates/state.json"));
+  assertEquals(after.status().state, "none");
+});
+
+Deno.test("status says whether this is the desktop app (a source run never updates itself)", () => {
+  using env = new Env();
+  assertEquals(env.service({ app: { desktop: false, pid: 1, exe: "deno" } }).status().desktop, false);
+  assertEquals(env.service({ app: APP }).status().desktop, true);
+});
+
+function isFileSync(p: string): boolean {
+  try {
+    return Deno.statSync(p).isFile;
   } catch {
     return false;
   }

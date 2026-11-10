@@ -77,8 +77,11 @@ export function closeDecision(busy: number | null): CloseDecision {
 }
 
 export function closeQuestion(busy: number | null): string {
-  const head = busy === null || busy < 1 ? 'Chats may still be working.' : `${busy} chat${busy === 1 ? ' is' : 's are'} still working.`;
-  return `${head}\n\nOK: stop them and quit AIB.\nCancel: keep them running; AIB stays in the tray.`;
+  // The native box (MessageBoxW) has fixed OK/Cancel labels, so the lines say what each one does.
+  const one = busy === 1;
+  const head = busy === null || busy < 1 ? 'Chats may still be working.' : `${busy} chat${one ? ' is' : 's are'} still working.`;
+  const it = one ? 'it' : 'them';
+  return `${head}\n\nOK: stop ${it} and quit AIB.\nCancel: keep ${it} running; AIB stays in the tray.`;
 }
 
 export interface Geometry {
@@ -177,7 +180,7 @@ export function parseProbe(value: unknown): { href: string; title: string } | nu
  * Keeps a window that must never be seen (the app's keeper; the runtime's startup window in a non-window mode) on about:blank and
  * hidden: now, and again whenever it loads another page or gets focus. Returns the window.
  */
-export function keepHidden(win: WindowHandle, label: string): WindowHandle {
+export function keepHidden(win: WindowHandle, label: string, quiet = false): WindowHandle {
   const hide = () => {
     try {
       win.hide();
@@ -187,7 +190,10 @@ export function keepHidden(win: WindowHandle, label: string): WindowHandle {
     hide();
     void win.evaluate('location.href').then((href) => {
       if (typeof href === 'string' && href !== KEEPER_URL) {
-        log.warning('%s: loaded %s; hidden and sent back to %s', label, href, KEEPER_URL);
+        // quiet: the runtime's own startup window in a process with no app window, which the runtime sends to its serve address
+        // once by design; that is expected, so it is a plain info line, not a warning.
+        if (quiet) log.info('%s: the runtime opened %s in it; hidden and back on %s', label, href, KEEPER_URL);
+        else log.warning('%s: loaded %s; hidden and sent back to %s', label, href, KEEPER_URL);
         win.navigate(KEEPER_URL);
       }
     });
@@ -527,6 +533,7 @@ export class DesktopApp {
     } finally {
       this.#asking = false;
     }
+    log.info('close: answered %s', ok ? 'OK (stop the chats and quit)' : 'Cancel (keep the chats running; AIB stays in the tray)');
     if (!ok) return 'tray';
     await this.quit(true);
     return 'stop';
@@ -536,7 +543,7 @@ export class DesktopApp {
     if (this.#quitting) return;
     this.#quitting = true;
     this.stop();
-    log.info('quitting (stop agents: %s)', stopAgents);
+    log.info('quitting: %s', stopAgents ? 'stopping the working chats and the agent host' : 'no chat is stopped (an idle agent host stops, a busy one keeps running)');
     try {
       await this.options.stopHost?.(stopAgents);
     } catch { /* not running, or refused: quit anyway */ }

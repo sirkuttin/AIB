@@ -307,6 +307,7 @@ export class AgentHost {
   stopAll(by: string): void {
     log.announce('agent_host', 'forced stop asked by %s (%s working)', by, this.studio.workingList().length);
     this.stopReason ||= `Stop chats and quit (${by})`;
+    this.studio.deliberateStop = true;
     this.stopEvent.set();
   }
 
@@ -326,6 +327,7 @@ export class AgentHost {
     if (args.force) log.announce('agent_host', 'forced stop asked by %s (%s working)', by, busy.length);
     else log.announce('agent_host', 'stop asked by %s: nothing working, stopping', by);
     this.stopReason ||= `asked to stop by ${by}${args.force ? ' (forced)' : ''}`;
+    if (args.force) this.studio.deliberateStop = true; // the chats were stopped on purpose (the app's "stop them and quit")
     this.stopEvent.set();
     return { stopping: true, forced: busy.length > 0, active: busy };
   }

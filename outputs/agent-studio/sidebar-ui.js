@@ -34,7 +34,7 @@
   const prevConn = new Map(); // conversation key -> live connection id seen at the last look
   const prevBusy = new Map(); // conversation key -> was busy at the last look
   const derivedEnded = new Map(); // conversation key -> when this page saw a turn end (fallback without server attention)
-  let baseTitle = 'Agent Studio',
+  let baseTitle = 'AIB',
     saveTimer = null;
 
   function read(name, fallback) {
@@ -276,7 +276,7 @@
   // The page owns the base tab title (the open conversation's name); this adds the "(n) " prefix.
   let lastList = [];
   function setBase(title) {
-    baseTitle = String(title || 'Agent Studio');
+    baseTitle = String(title || 'AIB');
     updateTitle(lastList);
   }
   function updateTitle(list) {
@@ -624,7 +624,7 @@
     if (!(first > 0)) write('epoch', epoch);
     const d = doc();
     if (d) {
-      baseTitle = String(d.title || 'Agent Studio').replace(/^\(\d+\)\s*/, '') || 'Agent Studio';
+      baseTitle = String(d.title || 'AIB').replace(/^\(\d+\)\s*/, '') || 'AIB';
       const seen = () => {
         if (host && looking()) {
           const s = host.getSelected && host.getSelected();

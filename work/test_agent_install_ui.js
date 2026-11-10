@@ -272,7 +272,11 @@ test('Uninstall asks first; Cancel in the question sends nothing', async () => {
   assert.equal(asked.length, 1);
   assert.match(asked[0], /^Uninstall Codex\?/);
   assert.match(asked[0], /deletes the copy AIB installed/);
-  assert.ok(!calls.some((c) => c[1] === 'agents/install/uninstall'));
+  assert.deepEqual(
+    calls.filter((c) => c[1] === 'agents/install/uninstall'),
+    [['post', 'agents/install/uninstall', { agent: 'codex', check: true }]],
+    'only the refusal check was asked; nothing was uninstalled',
+  );
 });
 
 test('Uninstall confirmed: posts the agent, then reads the list again', async () => {
@@ -283,8 +287,12 @@ test('Uninstall confirmed: posts the agent, then reads the list again', async ()
   UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
   await flush();
   await flush();
-  assert.deepEqual(calls.find((c) => c[1] === 'agents/install/uninstall'), ['post', 'agents/install/uninstall', { agent: 'codex' }]);
-  const after = calls.findIndex((c) => c[1] === 'agents/install/uninstall');
+  const posts = calls.filter((c) => c[1] === 'agents/install/uninstall');
+  assert.deepEqual(posts, [
+    ['post', 'agents/install/uninstall', { agent: 'codex', check: true }],
+    ['post', 'agents/install/uninstall', { agent: 'codex' }],
+  ]);
+  const after = calls.findIndex((c) => c[1] === 'agents/install/uninstall' && !c[2].check);
   assert.ok(calls.slice(after).some((c) => c[1] === '/api/live/settings'), 'the list is read again');
   assert.deepEqual(buttons(UI.agentRow(UI._state.data.agents[0], { uninstall: true })), ['Install'], 'back to Install');
 });
@@ -300,4 +308,93 @@ test('a refused Uninstall (a chat is open) shows the server\'s line on the row',
   const row = UI.agentRow(studioRow(), { uninstall: true });
   assert.match(row.textContent, /Codex has a chat open in AIB\. Close it first/);
   assert.ok(buttons(row).includes('Uninstall'), 'it can be tried again');
+});
+
+test('a refusal the server can know comes before the question, which is then never asked (QA 4 #4)', async () => {
+  const { UI, ctx, calls, replies } = setup([studioRow()]);
+  const asked = [];
+  ctx.confirm = (text) => (asked.push(text), true);
+  replies['agents/install/uninstall'] = (body) => {
+    if (body.check) throw new Error("Codex has a chat open in AIB. End that chat's session first, then uninstall.");
+    throw new Error('never sent');
+  };
+  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  await flush();
+  assert.deepEqual(asked, [], 'no confirm question for something that cannot happen');
+  assert.ok(!calls.some((c) => c[1] === 'agents/install/uninstall' && !c[2].check));
+  assert.match(UI.agentRow(studioRow(), { uninstall: true }).textContent, /End that chat's session first/);
+});
+
+test('a host that does not know the check (404) still asks and uninstalls', async () => {
+  const { UI, ctx, calls, replies } = setup([studioRow()]);
+  ctx.confirm = () => true;
+  replies['agents/install/uninstall'] = (body) => {
+    if (body.check) throw Object.assign(new Error('Not found'), { status: 404 });
+    return { state: 'idle', removed: ['2.6.0'] };
+  };
+  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  await flush();
+  await flush();
+  assert.ok(calls.some((c) => c[1] === 'agents/install/uninstall' && !c[2].check));
+});
+
+test('an uninstall refusal goes away once its cause is gone: the list reload asks again (QA 4 #3)', async () => {
+  const { UI, ctx, replies } = setup([studioRow()]);
+  ctx.confirm = () => true;
+  let open = true;
+  replies['agents/install/uninstall'] = (body) => {
+    if (open) throw new Error('Codex has a chat open in AIB.');
+    return body.check ? { state: 'idle', removed: [] } : { state: 'idle', removed: ['2.6.0'] };
+  };
+  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  await flush();
+  assert.match(UI.agentRow(studioRow(), { uninstall: true }).textContent, /has a chat open/);
+  open = false; // the chat was ended
+  await UI.load(true);
+  await flush();
+  assert.doesNotMatch(UI.agentRow(studioRow(), { uninstall: true }).textContent, /has a chat open/, 'stale refusal cleared');
+});
+
+test("the question's promise about saved chats matches the agent: Claude Code keeps them in the list, Codex does not (QA 4 #4)", async () => {
+  for (const [id, name, want, not] of [
+    ['claude', 'Claude Code', /Saved chats stay in the list\./, /shows them only/],
+    ['codex', 'Codex', /Codex keeps its own saved chats, but AIB shows them only while they are open here\./, /stay in the list/],
+  ]) {
+    const a = studioRow({ id, name });
+    const { UI, ctx } = setup([a]);
+    const asked = [];
+    ctx.confirm = (text) => (asked.push(text), false);
+    UI.agentRow(a, { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+    await flush();
+    assert.match(asked[0], want, name);
+    assert.doesNotMatch(asked[0], not, name);
+  }
+});
+
+test('Settings page: one name for the agents page, the full version, an Updates card that keeps its heading, the layout frame (QA 4 #1, #5, #13, #16)', async () => {
+  const shell = page();
+  const ctx = load(shell, ['updates-ui.js', 'settings-ui.js']);
+  const UI = ctx.AgentSettingsUI;
+  const get = async (p) => {
+    if (p === '/api/live/settings') return { revision: 'r', settings: { defaults: {}, server: {} }, agents: [] };
+    if (p === '/api/live/bootstrap') return { server: { version: '0.1.0-beta.2', versionLabel: 'AIB 0.1.0 beta' }, stateDir: 'C:/x' };
+    if (p === '/api/live/update') return { state: 'none', current: '0.1.0-beta.2', desktop: true, configured: true };
+    return {};
+  };
+  UI.init({ get, post: async () => ({}), registryChanged() {} });
+  ctx.AibUpdates.init({ get, post: async () => ({}) }, null);
+  const pageNode = shell.body.querySelector('.st-page');
+  assert.ok(pageNode.querySelector('.st-frame').querySelector('.st-nav'), 'nav and settings sit in the frame the size container query lays out');
+  UI.open('agents');
+  await flush();
+  assert.equal(pageNode.querySelector('.st-head').querySelector('h2').textContent, 'Agents', 'the heading is the nav name, not "AIB linking"');
+  UI.open('server');
+  await flush();
+  await flush();
+  assert.match(pageNode.textContent, /AIB 0\.1\.0-beta\.2/, 'the full version, beta number included');
+  assert.doesNotMatch(pageNode.textContent, /AIB 0\.1\.0 beta(?!\.)/);
+  const updates = pageNode.querySelectorAll('.st-card').find((c) => c.querySelector('.st-updates'));
+  assert.ok(updates, 'the Updates card');
+  ctx.AibUpdates.refresh && (await ctx.AibUpdates.refresh());
+  assert.equal(updates.querySelector('h3').textContent, 'Updates', 'a redraw of the card keeps its heading');
 });

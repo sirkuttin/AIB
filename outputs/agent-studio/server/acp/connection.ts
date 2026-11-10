@@ -336,6 +336,8 @@ const defaultCaps: CapsFactory = (
 export interface Receipt {
   fingerprint: string;
   state: string;
+  /** Set once session/prompt was written to the agent: a deliberate stop then knows the agent had the message. */
+  sent?: boolean;
 }
 
 /** The Recovery hook Studio installs (state/recovery.ts). Never throws into the caller. */
@@ -1483,6 +1485,8 @@ export class Connection {
       if (this.cancelSeq >= seq) { // cancelled while the hook above was still working: the agent never had this turn
         result = { stopReason: 'cancelled' };
       } else {
+        const receipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
+        if (receipt) receipt.sent = true;
         result = await this.request('session/prompt', {
           sessionId: this.sessionId,
           prompt: blocks,

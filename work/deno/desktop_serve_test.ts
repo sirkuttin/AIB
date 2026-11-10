@@ -5,7 +5,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { implementation, serve } from '../../outputs/agent-studio/server/platform/http_serve.ts';
-import { redirectTarget, servePort, startRedirect } from '../../outputs/agent-studio/server/desktop/serve_address.ts';
+import { redirectTarget, servePort, startBlank, startRedirect } from '../../outputs/agent-studio/server/desktop/serve_address.ts';
 import { DENO, Fixture, MAIN, TEST_OPTIONS, until } from './_host_fixture.ts';
 
 function withImpl<T>(impl: 'node' | 'deno', fn: () => Promise<T>): Promise<T> {
@@ -216,3 +216,26 @@ Deno.test({
     }
   },
 });
+
+for (const impl of ['node', 'deno'] as const) {
+  Deno.test({
+    name: `blank listener (${impl}): a process with no app window answers the runtime's port with an empty page (QA 4 #19)`,
+    ...TEST_OPTIONS,
+    fn: () =>
+      withImpl(impl, async () => {
+        const probe = Deno.listen({ hostname: '127.0.0.1', port: 0 });
+        const port = (probe.addr as Deno.NetAddr).port;
+        probe.close();
+        const server = startBlank(port)!;
+        try {
+          assert(server, 'bound');
+          const r = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' });
+          assertEquals(r.status, 200, 'the runtime finds a server at once: no "Server not ready after 15s"');
+          assertEquals(await r.text(), '<!doctype html><title>AIB</title>');
+          assertEquals(startBlank(port), null, 'a port that cannot be bound is skipped, never thrown');
+        } finally {
+          await server?.shutdown();
+        }
+      }),
+  });
+}

@@ -210,7 +210,7 @@
   }
   const discardNote = (result) =>
     result && result.pending
-      ? 'The branch is marked for removal. A file is in use, so Studio finishes it the next time it starts.'
+      ? 'The branch is marked for removal. A file is in use, so AIB finishes it the next time it starts.'
       : 'Removed. The chat stays in the list; you can read it but not continue it.';
   /* Narrow strip chip. */
   const stripText = (n) => (num(n) ? num(n) + ' changed' : '');
@@ -438,7 +438,7 @@
     async function getToken(force) {
       if (token && !force) return token;
       const r = await win.fetch('/api/live/bootstrap');
-      if (!r.ok) throw new Error('Studio is not reachable');
+      if (!r.ok) throw new Error('AIB is not reachable');
       token = (await r.json()).token || '';
       return token;
     }

@@ -74,11 +74,24 @@
     };
   }
 
+  // When something happened, for the card: "today at 14:05" or the date and time. seconds: since the epoch.
+  function atTime(seconds, now) {
+    if (!seconds) return '';
+    const d = new Date(seconds * 1000),
+      n = new Date(now || Date.now());
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === n.toDateString() ? 'today at ' + time : d.toLocaleDateString() + ' at ' + time;
+  }
+  // A source run (deno run, no desktop app) with no update source: updates come through the desktop app, so the card's controls
+  // are off. (A source run pointed at a release page with AIB_UPDATE_REPO still checks, for testing.)
+  const sourceRun = (status) => !!status && status.desktop === false && !status.configured;
   // The status line in the Settings card.
-  function cardLine(status) {
+  function cardLine(status, now) {
     if (!status) return 'Loading…';
     const cur = 'You have AIB ' + status.current + '.';
     if (status.checking) return 'Checking…';
+    if (sourceRun(status))
+      return cur + ' This copy runs from source, so it does not update itself: updates come through the AIB desktop app.';
     switch (status.state) {
       case 'ready':
         return 'AIB ' + status.available.version + ' is downloaded and verified. ' + cur;
@@ -86,8 +99,14 @@
         return 'AIB ' + status.available.version + ' is available; downloading it. ' + cur;
       case 'refused':
         return status.error || 'The update was refused because its checksum did not match. Nothing was installed.';
-      case 'error':
-        return status.error || 'Could not check for updates.';
+      case 'error': {
+        const at = atTime(status.lastCheck, now);
+        return (
+          (status.error || 'Could not check for updates.') +
+          (at ? ' (Tried ' + at + '.)' : '') +
+          (status.retryAt && status.autoCheck ? ' AIB tries again ' + atTime(status.retryAt, now) + '.' : '')
+        );
+      }
       case 'unconfigured':
         return cur + ' Updates start once AIB has a public release page.';
       default:
@@ -188,17 +207,20 @@
   function fillCard(box, opts) {
     box.replaceChildren();
     const auto = opts.autoCheck();
+    const off = sourceRun(S.status);
     const label = el('label', null, 'st-toggle'),
       cb = el('input');
     cb.type = 'checkbox';
     cb.checked = !!auto;
+    cb.disabled = off;
     cb.addEventListener('change', () => opts.saveAuto(cb.checked));
     label.append(cb, el('span', 'Automatically check for updates'));
     box.append(label, el('p', 'Checks GitHub once a day for a newer version.', 'st-note'));
     const row = el('div', null, 'st-row');
     const b = el('button', 'Check for updates');
     b.type = 'button';
-    b.disabled = !!(S.status && S.status.checking);
+    b.disabled = off || !!(S.status && S.status.checking);
+    if (off) b.title = 'Updates come through the AIB desktop app';
     b.addEventListener('click', check);
     row.append(b);
     const st = S.status;
@@ -232,7 +254,7 @@
     schedule(FIRST_POLL_MS);
   }
 
-  const api = { init, renderCard, refresh, check, banner, cardLine, act, _state: S };
+  const api = { init, renderCard, refresh, check, banner, cardLine, atTime, sourceRun, act, _state: S };
   root.AibUpdates = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

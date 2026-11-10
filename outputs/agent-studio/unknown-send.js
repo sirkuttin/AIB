@@ -35,7 +35,7 @@
     }
     return out;
   }
-  const WARNING = '⚠ Studio restarted while this was being sent. The agent may not have received it.';
+  const WARNING = '⚠ AIB restarted while this was being sent. The agent may not have received it.';
   function make(tag, cls, label) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;

@@ -35,7 +35,7 @@ import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
-import { servePort, startRedirect } from './desktop/serve_address.ts';
+import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -116,7 +116,10 @@ export async function main(argv: string[]): Promise<void> {
     runtimePort = servePort(Deno.env.get('DENO_SERVE_ADDRESS'));
     Deno.env.delete('DENO_SERVE_ADDRESS');
   } catch { /* no env access */ }
-  if (isDesktopApp() && (NO_WINDOW.has(argv[0]) || argv.includes('--stop-host'))) (await import('./desktop/native.ts')).tameStartupWindow();
+  if (isDesktopApp() && (NO_WINDOW.has(argv[0]) || argv.includes('--stop-host'))) {
+    (await import('./desktop/native.ts')).tameStartupWindow();
+    if (runtimePort) startBlank(runtimePort); // the runtime's wait for its server ends at once, and its window loads an empty page
+  }
   if (argv[0] === 'host') Deno.exit(await hostMain(argv.slice(1)));
   if (argv[0] === 'mcp-artifact') Deno.exit(await (await import('./artifacts/mcp.ts')).main());
   if (argv[0] === 'deploy') Deno.exit(await (await import('./host/deploy.ts')).main(argv.slice(1)));

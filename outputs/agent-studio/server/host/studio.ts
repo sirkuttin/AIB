@@ -905,10 +905,10 @@ export class Studio {
       if (action === 'start') return [200, { ...(await this.installer.start(agentId)), ok: true }];
       if (action === 'cancel') return [200, { ...(await this.installer.cancel(agentId)), ok: true }];
       if (action === 'status') return [200, { ...(await this.installer.status(agentId)), ok: true }];
-      if (action === 'uninstall') { // Deno only: refused while a chat with the agent is open here or its sign-in runs
+      if (action === 'uninstall' || action === 'uninstall-check') { // Deno only: refused while a chat with the agent is open here or its sign-in runs
         const open = [...this.connections.values()].filter((c) => c.provider === agentId && !c.closed).length;
         const signing = typeof agentId === 'string' && !!this.signer?.jobs.get(agentId)?.alive;
-        return [200, { ...(await this.installer.uninstall(agentId, open, signing)), ok: true }];
+        return [200, { ...(await this.installer.uninstall(agentId, open, signing, action === 'uninstall-check')), ok: true }];
       }
       return [404, { error: 'Not found' }];
     } catch (error) {
@@ -1052,10 +1052,25 @@ export class Studio {
     return [200, { ok: true }];
   }
 
+  /**
+   * Set when the person chose to stop the working chats (the app's "stop them and quit", the tray's Stop chats and quit, a forced
+   * stop). close() then records a message the agent already had as delivered, so the next start shows no "restarted while this was
+   * being sent" warning for a turn that was stopped on purpose.
+   */
+  deliberateStop = false;
+
   /** Stop everything this Studio runs. The recovery list is kept (orderly shutdown), so the next start can reconnect. */
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    if (this.deliberateStop && this.store) {
+      for (const c of this.connections.values()) {
+        if (!c.sessionId) continue;
+        for (const [id, r] of c.promptReceipts) {
+          if (r.state === 'working' && r.sent) this.store.setReceipt(c.provider, c.sessionId, id, r.fingerprint, 'finished');
+        }
+      }
+    }
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;

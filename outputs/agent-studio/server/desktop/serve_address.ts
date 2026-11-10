@@ -41,6 +41,30 @@ export function redirectHandler(pageUrl: string) {
   };
 }
 
+/**
+ * A process with no app window (`AIB host`, `serve`, ...): the runtime still waits for a server on its port and then sends its
+ * hidden startup window there; with nothing listening it logs "Server not ready after 15s" and the window shows an error page.
+ * This answers loopback requests with an empty page instead, so the wait ends at once and the window loads nothing.
+ */
+export function blankHandler() {
+  return (_request: Request, info: { remoteAddr: { hostname: string } }): Response => {
+    if (!LOOPBACK.has(info.remoteAddr.hostname)) return new Response('Forbidden', { status: 403 });
+    return new Response('<!doctype html><title>AIB</title>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  };
+}
+
+/** Listen on 127.0.0.1:port with blankHandler. Null when the port can't be bound (not fatal: only the runtime's wait is longer). */
+export function startBlank(port: number): Server | null {
+  try {
+    return serve({ hostname: '127.0.0.1', port }, blankHandler());
+  } catch {
+    return null;
+  }
+}
+
 /** Listen on 127.0.0.1:port and redirect to pageUrl. Null (logged) when the port can't be bound. */
 export function startRedirect(port: number, pageUrl: string): Server | null {
   try {

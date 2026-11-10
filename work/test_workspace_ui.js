@@ -191,3 +191,18 @@ test('syncing the same list twice does not redraw the strip', () => {
   t.sync(list, list[0]);
   assert.deepEqual(t.shell.byId.chatTabs.children, strip, 'an unchanged signature leaves the DOM alone');
 });
+
+test('a shown chat the list no longer has keeps its tab: never "No open chats" over an open chat (QA 4)', () => {
+  const fresh = conv('n1', 'C:/work/alpha', { title: 'New conversation', live: liveChat() });
+  const t = setup({ conversations: [fresh] });
+  t.sync([fresh], fresh);
+  assert.equal(tabLabels(t.shell).length, 1);
+  // Its session was ended; the agent does not list it (yet), but the page still shows it.
+  const ended = Object.assign({}, fresh, { live: null });
+  t.sync([], ended);
+  assert.equal(tabLabels(t.shell).length, 1, 'the tab stays while the chat is shown');
+  assert.match(tabLabels(t.shell)[0], /New conversation/);
+  assert.doesNotMatch(t.shell.byId.chatTabs.textContent, /No open chats/);
+  t.sync([], null); // another view: the phantom tab goes
+  assert.equal(tabLabels(t.shell).length, 0);
+});

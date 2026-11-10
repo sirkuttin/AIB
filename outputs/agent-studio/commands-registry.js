@@ -215,10 +215,10 @@
       keywords: ['reasoning', 'thoughts'],
     }),
     chatAction('handoff', 'Continue with another agent…', { keywords: ['handoff', 'switch agent', 'claude', 'omp'] }),
-    chatAction('end', 'End Studio session', {
-      keywords: ['stop', 'disconnect', 'close'],
+    chatAction('end', "End this chat's session", {
+      keywords: ['stop', 'disconnect', 'close', 'end session', 'studio session'],
       danger: true,
-      confirm: 'end the Studio session',
+      confirm: "end this chat's session",
     }),
     chatAction('archive', 'Archive this chat', { keywords: ['hide', 'put away'] }),
     chatAction('unarchive', 'Unarchive this chat', { keywords: ['restore'] }),

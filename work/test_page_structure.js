@@ -162,3 +162,14 @@ test('the info button has an accessible name', () => {
   assert.equal(node.tag, 'button');
   assert.ok((node.attrs['aria-label'] ?? '').trim());
 });
+
+test('the page is called AIB: its title, and the chat title suffix (QA 4 #6)', () => {
+  const fsx = require('node:fs');
+  const pathx = require('node:path');
+  const { APP: dirx } = require('./_paths');
+  const html = fsx.readFileSync(pathx.join(dirx, 'chat.html'), 'utf8');
+  assert.match(html, /<title>AIB<\/title>/);
+  assert.doesNotMatch(html, /Agent Studio|End Studio session/);
+  const chat = fsx.readFileSync(pathx.join(dirx, 'chat.js'), 'utf8');
+  assert.match(chat, /' · AIB'/);
+});

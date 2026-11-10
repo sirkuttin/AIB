@@ -19,7 +19,7 @@ account, no telemetry, and your data stays with you.
 - **One list for everything.** Chats you start in AIB and your saved Claude Code and OMP conversations, with search (Ctrl+K).
 - **One copy per chat.** *"A chat divided against itself cannot stand."* In a git project, each chat works in its own
   worktree on its own branch, so two agents never overwrite each other. The **Changes** view brings a chat's work back into
-  your project when you're ready. On by default.
+  your project when you're ready. Always on in a git project; there is no switch for it.
 - **Agents keep running.** Agents live in a separate background process (the *agent host*), so closing, restarting or
   updating the app doesn't cut off a turn.
 - **Agent setup built in.** AIB installs its own copy of the Claude Code and Codex adapters and runs each agent's own
@@ -36,7 +36,7 @@ Download the file for your system from the [releases page](https://github.com/si
 - **macOS:** unzip, move `AIB.app` to Applications, then right-click it and choose **Open** the first time.
 - **Linux:** the AppImage (`chmod +x`, then run it) or the `.deb` (`sudo apt install ./AIB-…deb`).
 
-You also need **Node.js** (the agent adapters are small Node programs). The first page sets up your agents: install or
+You also need **Node.js 22 or newer** (the agent adapters are small Node programs). The first page sets up your agents: install or
 link Claude Code and Codex, sign in, pick a project folder, and start a chat.
 
 ## Security model

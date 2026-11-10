@@ -472,7 +472,7 @@
                 extra.append(
                   'You can still ask Claude Code for another one: send ',
                   el(doc, 'code', '/model opus'),
-                  ' (or sonnet, haiku, or a full model id). Studio then shows the model the agent reports. ',
+                  ' (or sonnet, haiku, or a full model id). AIB then shows the model the agent reports. ',
                 );
                 const insert = el(doc, 'button', 'Start a /model message', 'chip-insert');
                 insert.type = 'button';

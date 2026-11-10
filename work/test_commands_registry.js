@@ -157,7 +157,7 @@ test('confirmStep: first Enter arms with a prompt, second runs; other actions ru
       null,
       acts.find((a) => a.id === 'chat:end'),
     ).prompt,
-    'Press Enter again to end the Studio session',
+    "Press Enter again to end this chat's session",
   );
 });
 

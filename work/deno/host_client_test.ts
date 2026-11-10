@@ -5,8 +5,11 @@
 import { assert, assertEquals } from './_assert.ts';
 import { APP, PY_REF_DIR, PyParity, python } from './_parity.ts';
 import {
+  APP_ID,
+  appIdFor,
   binaryHash,
   CODE_ROOT,
+  DESKTOP_APP_ID,
   codeRootFor,
   codeWarning,
   findHost,
@@ -19,6 +22,7 @@ import {
   replaceHostHint,
   restartHostHint,
   rotateLog,
+  sameProduct,
   sourceHash,
   stopHost,
   writeInfo,
@@ -270,4 +274,17 @@ Deno.test('findOrStart starts the host in launchDir() by default (a real folder)
       }
     }
   }
+});
+
+Deno.test('appId: the built app says dev.aib.app, a source run studio-dev, so the two are never the same product (QA 4 #7)', () => {
+  assertEquals(appIdFor('C:\\AIB\\AIB.exe', undefined), DESKTOP_APP_ID);
+  assertEquals(DESKTOP_APP_ID, 'dev.aib.app');
+  assertEquals(appIdFor('/opt/aib/aib', undefined), 'dev.aib.app');
+  assertEquals(appIdFor('C:\\deno\\deno.exe', undefined), 'studio-dev');
+  assertEquals(appIdFor('/usr/bin/deno', undefined), 'studio-dev');
+  assertEquals(appIdFor('C:\\AIB\\AIB.exe', 'custom'), 'custom', 'AIB_APP_ID still wins');
+  assertEquals(APP_ID, 'studio-dev', 'tests run from source');
+  const host = { appId: 'dev.aib.app', runtime: 'deno' };
+  assert(!sameProduct(host), 'a source run does not attach to the app as its own product');
+  assert(sameProduct(host, appIdFor('C:\\AIB\\AIB.exe', undefined)), 'the app does');
 });

@@ -80,11 +80,11 @@ test('it has the heading, the subtitle, the text, the footer and a See more agen
   assert.match(text, /Every good administration starts with a cabinet\./);
   assert.match(
     text,
-    /Studio talks to coding agents you already use\. Pick one: Studio installs what it needs, then you sign in with that agent's own account\./,
+    /AIB talks to coding agents you already use\. Pick one: AIB installs what it needs, then you sign in with that agent's own account\./,
   );
   assert.match(
     text,
-    /Once one agent is ready, this page is replaced by the normal new-chat screen\. You can add more agents any time in Settings → AIB linking\./,
+    /Once one agent is ready, this page is replaced by the normal new-chat screen\. You can add more agents any time in Settings → Agents\./,
   );
   const more = s.box.querySelectorAll('button').find((b) => b.textContent === 'See more agents');
   more.click();
@@ -288,4 +288,35 @@ test('the start page has the standard 16px side padding at narrow widths', () =>
   const css = fs.readFileSync(path.join(APP, 'start-page.css'), 'utf8');
   assert.match(css, /padding:\s*36px 16px 24px/);
   assert.match(css, /box-sizing:\s*border-box/);
+});
+
+test('a turned-off agent shows as Turned off with a Turn on button, never as ready (QA 4 #2)', async () => {
+  const s = setup([row('claude', { enabled: false, found: true, launcherSource: 'studio', problem: '' }), row('codex'), row('omp')]);
+  await s.UI.load();
+  assert.equal(shows(s), true, 'an agent that is off does not count as set up');
+  const claude = s.box.querySelectorAll('.st-agent').find((n) => /Claude Code/.test(n.textContent));
+  assert.match(claude.textContent, /Turned off/);
+  assert.doesNotMatch(claude.textContent, /Not checked|Found|Ready/, 'no readiness badge for an agent that is off');
+  const on = claude.querySelectorAll('button').find((b) => b.textContent === 'Turn on');
+  assert.ok(on, 'Turn on is offered on the start page');
+  s.state.agents = [row('claude', { found: true, launcherSource: 'studio', problem: '' }), row('codex'), row('omp')];
+  on.click();
+  await flush();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(s.calls.find((c) => c[0] === 'post' && c[1] === 'settings' && c[2].agents))),
+    ['post', 'settings', { agents: { enabled: { claude: true } } }],
+    'on/off only',
+  );
+  assert.equal(shows(s), false, 'turned on and ready: the page hands over to New chat');
+});
+
+test('the Node.js line sits right under the agent that needs it, not after the list (QA 4 #19)', async () => {
+  const block = 'Node.js 22 or newer is needed to install this agent.';
+  const s = setup([row('claude', { installBlock: block }), row('codex', { installBlock: block }), row('omp')]);
+  await s.UI.load();
+  const kids = s.box.querySelector('.sp-agents').children;
+  const at = kids.findIndex((n) => n.className && n.className.includes('sp-node'));
+  assert.ok(at > 0, 'inside the agent list');
+  assert.match(kids[at - 1].textContent, /Codex/, 'right after the last agent that needs Node.js');
+  assert.equal(s.box.querySelectorAll('.sp-node').length, 1, 'once for the page');
 });

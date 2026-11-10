@@ -92,7 +92,7 @@ Deno.test('close decision: only a known zero quits without asking', () => {
     closeQuestion(2),
     '2 chats are still working.\n\nOK: stop them and quit AIB.\nCancel: keep them running; AIB stays in the tray.',
   );
-  assert(closeQuestion(1).startsWith('1 chat is still working.'));
+  assertEquals(closeQuestion(1), '1 chat is still working.\n\nOK: stop it and quit AIB.\nCancel: keep it running; AIB stays in the tray.');
   assert(closeQuestion(null).startsWith('Chats may still be working.'));
 });
 

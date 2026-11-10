@@ -9,7 +9,7 @@
     if (className) node.className = className;
     return node;
   };
-  const NO_PROOF = 'No other app was detected using this conversation, but Studio cannot prove it is free.';
+  const NO_PROOF = 'No other app was detected using this conversation, but AIB cannot prove it is free.';
   // Shown instead of NO_PROOF when part of the check cannot run on this system, so "nothing found" is never implied.
   const UNKNOWN = "Can't tell if this chat is open elsewhere on this system.";
   const BADGE = { owned_elsewhere: 'In use elsewhere', possibly_active: 'May be active elsewhere' };
@@ -107,7 +107,7 @@
           'p',
           blocked
             ? 'Stop it in that app first, then continue here. Nothing was opened or sent.'
-            : 'Studio cannot prove either way. Continuing while another app is also using the conversation can interleave or lose messages. Nothing has been opened or sent yet.',
+            : 'AIB cannot prove either way. Continuing while another app is also using the conversation can interleave or lose messages. Nothing has been opened or sent yet.',
           'ownership-advice',
         ),
       );
