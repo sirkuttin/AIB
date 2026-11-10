@@ -54,7 +54,7 @@ function wrapWindow(win: Any): WindowHandle {
 
 /** Windows: MessageBoxW on a worker thread (FFI nonblocking), so the web server keeps answering while the question is open.
  * (The runtime's confirm() blocks the whole event loop.) OK/Cancel, warning icon, Cancel is the default button, on top. */
-function windowsAsk(): ((message: string) => Promise<boolean>) | null {
+export function windowsAsk(): ((message: string) => Promise<boolean>) | null {
   try {
     const lib = Deno.dlopen('user32.dll', {
       MessageBoxW: { parameters: ['pointer', 'buffer', 'buffer', 'u32'], result: 'i32', nonblocking: true },

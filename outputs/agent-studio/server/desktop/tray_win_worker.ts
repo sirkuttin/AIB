@@ -12,9 +12,14 @@ import {
   NIF_TIP,
   NIM_ADD,
   NIM_DELETE,
+  NIM_MODIFY,
   notifyIconData,
   TRAY_CALLBACK,
+  TRAY_COMMAND,
+  TRAY_HIDE,
   TRAY_REMOVE,
+  TRAY_SET_ICON,
+  TRAY_SHOW,
   TRAY_WINDOW_CLASS,
   trayEvent,
   type TrayWorkerMessage,
@@ -32,6 +37,7 @@ const wide = (s: string) => {
 function run(start: TrayWorkerStart): void {
   const user = Deno.dlopen('user32.dll', {
     RegisterClassExW: { parameters: ['buffer'], result: 'u16' },
+    UnregisterClassW: { parameters: ['buffer', 'pointer'], result: 'i32' },
     CreateWindowExW: {
       parameters: ['u32', 'buffer', 'buffer', 'u32', 'i32', 'i32', 'i32', 'i32', 'pointer', 'pointer', 'pointer', 'pointer'],
       result: 'pointer',
@@ -65,17 +71,22 @@ function run(start: TrayWorkerStart): void {
 
   // The icon: the app's PNG (CreateIconFromResourceEx takes PNG data since Vista), else the stock application icon.
   const cx = u.GetSystemMetrics(SM_CXSMICON) || 16, cy = u.GetSystemMetrics(SM_CYSMICON) || 16;
-  let hIcon = start.icon.length
-    ? u.CreateIconFromResourceEx(new Uint8Array(start.icon), start.icon.length, 1, 0x00030000, cx, cy, 0)
-    : null;
-  if (!hIcon) hIcon = u.LoadIconW(null, Deno.UnsafePointer.create(32512n)); // IDI_APPLICATION
-  const iconValue = BigInt(Deno.UnsafePointer.value(hIcon));
+  const makeIcon = (png: Uint8Array) => {
+    let h = png.length ? u.CreateIconFromResourceEx(new Uint8Array(png), png.length, 1, 0x00030000, cx, cy, 0) : null;
+    if (!h) h = u.LoadIconW(null, Deno.UnsafePointer.create(32512n)); // IDI_APPLICATION
+    return BigInt(Deno.UnsafePointer.value(h));
+  };
+  const icons = [start.icon, ...(start.altIcons ?? [])].map(makeIcon);
+  let iconValue = icons[0];
 
   const menu = u.CreatePopupMenu();
-  start.items.forEach((item, i) => u.AppendMenuW(menu, MF_STRING, BigInt(menuCommand(i)), wide(item.label)));
+  const MF_GRAYED = 0x1;
+  start.items.forEach((item, i) => u.AppendMenuW(menu, MF_STRING | (item.disabled ? MF_GRAYED : 0), BigInt(menuCommand(i)), wide(item.label)));
 
   const taskbarCreated = u.RegisterWindowMessageW(wide('TaskbarCreated'));
   let hwndValue = 0n;
+  let shown = !start.hidden;
+  const tip = start.tooltip;
   const addIcon = () =>
     shell.symbols.Shell_NotifyIconW(
       NIM_ADD,
@@ -84,7 +95,7 @@ function run(start: TrayWorkerStart): void {
         flags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
         callbackMessage: TRAY_CALLBACK,
         hIcon: iconValue,
-        tip: start.tooltip,
+        tip,
       }),
     ) !== 0;
 
@@ -97,7 +108,7 @@ function run(start: TrayWorkerStart): void {
     const command = u.TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt[0], pt[1], 0, hwnd, null);
     u.PostMessageW(hwnd, WM_NULL, 0n, 0n);
     const id = chosenItem(start.items, command);
-    if (id) post({ type: 'menu', id });
+    if (id && !start.items[command - 1]?.disabled) post({ type: 'menu', id });
   };
 
   const wndProc = new Deno.UnsafeCallback(
@@ -110,6 +121,30 @@ function run(start: TrayWorkerStart): void {
           else if (what === 'menu') showMenu(hwnd);
           return 0n;
         }
+        if (msg === TRAY_SHOW) {
+          if (!shown) shown = addIcon();
+          return 0n;
+        }
+        if (msg === TRAY_HIDE) {
+          if (shown) shell.symbols.Shell_NotifyIconW(NIM_DELETE, notifyIconData({ hwnd: hwndValue, flags: 0 }));
+          shown = false;
+          return 0n;
+        }
+        if (msg === TRAY_SET_ICON) {
+          const next = icons[Number(wParam)];
+          if (next !== undefined && next !== iconValue) {
+            iconValue = next;
+            if (shown) shell.symbols.Shell_NotifyIconW(NIM_MODIFY, notifyIconData({ hwnd: hwndValue, flags: NIF_ICON, hIcon: iconValue }));
+          }
+          return 0n;
+        }
+        if (msg === TRAY_COMMAND) {
+          const item = start.items[Number(wParam) - 1];
+          if (item?.disabled) return 0n;
+          const id = chosenItem(start.items, Number(wParam));
+          if (id) post({ type: 'menu', id });
+          return 0n;
+        }
         if (msg === TRAY_REMOVE) {
           shell.symbols.Shell_NotifyIconW(NIM_DELETE, notifyIconData({ hwnd: hwndValue, flags: 0 }));
           u.DestroyWindow(hwnd);
@@ -120,7 +155,7 @@ function run(start: TrayWorkerStart): void {
           return 0n;
         }
         if (taskbarCreated && msg === taskbarCreated) {
-          addIcon(); // Explorer restarted: the icon must be added again
+          if (shown) addIcon(); // Explorer restarted: the icon must be added again
           return 0n;
         }
       } catch (error) {
@@ -144,13 +179,20 @@ function run(start: TrayWorkerStart): void {
   if (!hwnd) throw new Error('CreateWindowExW failed');
   hwndValue = BigInt(Deno.UnsafePointer.value(hwnd));
 
-  post({ type: 'ready', hwnd: String(hwndValue), added: addIcon() });
+  post({
+    type: 'ready',
+    hwnd: String(hwndValue),
+    added: shown ? (shown = addIcon()) : false,
+    menu: String(BigInt(Deno.UnsafePointer.value(menu))),
+    icons: icons.map(String),
+  });
 
   const msg = new Uint8Array(48); // MSG
   while (u.GetMessageW(msg, null, 0, 0) > 0) {
     u.TranslateMessage(msg);
     u.DispatchMessageW(msg);
   }
+  u.UnregisterClassW(className, hInstance); // a later tray in this process registers the class again with its own procedure
   wndProc.close();
   self.close();
 }

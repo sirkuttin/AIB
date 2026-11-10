@@ -12,8 +12,10 @@ import {
   HostOSError,
   HostUnavailable,
   HostValueError,
+  DENO_SOURCE_HASH,
   pidAlive,
   readInfo,
+  RUNTIME,
 } from './host_client.ts';
 
 import type { Live, LiveBackend } from './backend.ts';
@@ -28,6 +30,15 @@ export interface HostProxyOptions {
   heartbeatSeconds?: number;
   /** The kind of host `command` starts ('deno' or 'python'); see findOrStart. Unset: attach to either kind. */
   runtime?: string | null;
+  /** How this app was started (program and arguments), sent with every attach: the host's tray "Open AIB" runs it. */
+  launch?: string[] | null;
+  /**
+   * The built app: a host of this runtime running other code (the previous version, left running through an update because chats
+   * were working) is asked to stop as soon as none of its chats is working, and a host of this version is started in its place.
+   */
+  retireOlderHost?: boolean;
+  /** Called after an older host was retired (the app then deletes the old version's files). */
+  onRetired?: () => void;
 }
 
 const isPermanent = (error: HostUnavailable) => ['host_stopped', 'host_incompatible', 'host_waiting'].includes(error.code);
@@ -67,7 +78,9 @@ export class HostProxy implements LiveBackend {
   }
 
   #attachArgs() {
-    return { pid: Deno.pid, webInstanceId: this.options.webInstanceId, port: this.options.port };
+    const args: Record<string, unknown> = { pid: Deno.pid, webInstanceId: this.options.webInstanceId, port: this.options.port };
+    if (this.options.launch?.length) args.launch = this.options.launch;
+    return args;
   }
 
   async #attach(): Promise<void> {
@@ -81,7 +94,49 @@ export class HostProxy implements LiveBackend {
     try {
       if (this.client === null) await this.call('info', null, 5);
       else await this.call('attach', this.#attachArgs(), 5);
+      if (this.options.retireOlderHost) await this.retireOlderHost();
     } catch { /* shown on the next page request */ }
+  }
+
+  #retiring = false;
+
+  /**
+   * After an update with chats working, the new app attached to the previous version's host (same file path, same protocol). Once
+   * none of that host's chats is working, ask it to stop (it refuses if one started meanwhile) and start a host of this version.
+   * Returns true when it was replaced. Open chats that were idle are reconnected by the new host from the recovery list.
+   */
+  async retireOlderHost(): Promise<boolean> {
+    if (this.#retiring || this.#stopped || this.client === null) return false;
+    this.#retiring = true;
+    try {
+      const info = await this.call('info', null, 5) as Live;
+      this.hostInfo = info;
+      if (String(info.runtime ?? '') !== RUNTIME || !info.sourceHash || info.sourceHash === await DENO_SOURCE_HASH()) return false;
+      if (Array.isArray(info.active) && info.active.length) return false; // still working: the next heartbeat looks again
+      const stopping = await this.client.call('stop', { force: false }, 10) as Live | null;
+      if (!stopping?.stopping) return false;
+      const say = this.options.say ?? ((m: string) => console.log(m));
+      say(`Replacing the agent host of AIB ${info.version ?? '(older)'} (process ${info.pid}): none of its chats is working.`);
+      const deadline = Date.now() + 25_000;
+      while (pidAlive(info.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+      this.client = null;
+      const [client, live] = await findOrStart(this.options.stateDir, this.options.command, {
+        say,
+        takeover: false,
+        runtime: this.options.runtime ?? null,
+      });
+      this.client = client;
+      this.hostInfo = live;
+      this.lastError = null;
+      this.waitingChats = 0;
+      await this.#attach();
+      this.options.onRetired?.();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.#retiring = false;
+    }
   }
 
   /** The channel failed before the request was sent: find the (new) host, or restart one that crashed. Serialized. */

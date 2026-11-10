@@ -23,7 +23,15 @@
     if (later && later.has(v) && !status.installWhenIdle && !notice) return { show: false, text: '', buttons: [] };
     const name = 'AIB ' + v;
     if (notice && notice.kind === 'installing')
-      return { show: true, text: 'Installing ' + name + '. AIB will close and open again by itself.', buttons: [] };
+      return {
+        show: true,
+        text:
+          'Installing ' +
+          name +
+          '. AIB will close and open again by itself.' +
+          (notice.chats > 0 ? ' Your working chats keep running.' : ''),
+        buttons: [],
+      };
     if (status.installWhenIdle)
       return {
         show: true,
@@ -152,7 +160,7 @@
   function install(whenIdle) {
     return Promise.resolve(S.host.post('update/install', { whenIdle: !!whenIdle })).then(
       (res) => {
-        S.notice = res && res.state === 'installing' ? { kind: 'installing' } : null;
+        S.notice = res && res.state === 'installing' ? { kind: 'installing', chats: Number(res.chats) || 0 } : null;
         return refresh();
       },
       (err) => {

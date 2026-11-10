@@ -17,6 +17,7 @@ import {
   readInfo,
 } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { attachHost } from '../../outputs/agent-studio/server/host/host_proxy.ts';
+import { DENO_SOURCE_HASH } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { PY_REF_DIR } from './_parity.ts';
 
 const t = (name: string, fn: () => Promise<void>) => Deno.test({ name, ...TEST_OPTIONS, fn });
@@ -193,6 +194,45 @@ t('a server whose host was taken over yields and never takes it back', async () 
     await assertRejects(() => proxy.call('info', null, 5), HostForeignRoot);
     assertEquals(calls(fx).filter((c) => c === 'stop').length, before);
     assertEquals((await readInfo(fx.state))!.pid, theirs.pid, 'no second host of ours');
+  } finally {
+    await proxy.close();
+  }
+});
+
+t('after an update: the new app attaches to the old version host (same path) and retires it once no chat works there', async () => {
+  await using fx = new Fixture();
+  const old = await oldHost(fx, 1, CODE_ROOT, APP_ID); // same file path, older code (sourceHash "x"), a chat working
+  const own = [...ownHost(fx), await DENO_SOURCE_HASH()];
+  let retired = 0;
+  const said: string[] = [];
+  const proxy = await attachHost({
+    stateDir: fx.state,
+    command: own,
+    port: null,
+    webInstanceId: 'web-new',
+    runtime: 'deno',
+    retireOlderHost: true,
+    heartbeatSeconds: 0.3,
+    onRetired: () => void retired++,
+    say: (m) => said.push(m),
+    launch: ['AIB.exe', 'serve'],
+  });
+  try {
+    assertEquals(proxy.client?.pid, old.pid, 'attached to the running host: its chat keeps streaming');
+    await new Promise((r) => setTimeout(r, 1500));
+    assert(pidAlive(old.pid), 'never stopped while its chat works');
+    assert(!calls(fx).includes('stop'), 'not even asked');
+    assert(calls(fx).includes('attach'));
+    setActive(fx, 0);
+    await until(() => retired === 1, 'retired', 30);
+    await until(() => !pidAlive(old.pid), 'old host gone', 30);
+    const info = await readInfo(fx.state);
+    assert(info && info.pid !== old.pid && info.sourceHash === await DENO_SOURCE_HASH(), 'a host of this version runs now');
+    assertEquals(proxy.client?.pid, info!.pid);
+    assert(said.some((m) => m.startsWith('Replacing the agent host of AIB 0.0.9')), said.join(' | '));
+    await new Promise((r) => setTimeout(r, 1000));
+    assertEquals(retired, 1, 'a host of this version is never retired');
+    await track(fx);
   } finally {
     await proxy.close();
   }

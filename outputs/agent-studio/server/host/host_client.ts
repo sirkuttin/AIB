@@ -492,7 +492,7 @@ async function takeOver(stateDir: string, foreign: HostForeignRoot, say: (m: str
   const info = foreign.info as HostInfo;
   let result: unknown;
   try {
-    result = await new HostClient(info).call('stop', { force: false }, 15);
+    result = await new HostClient(info).call('stop', { force: false, by: `AIB ${APP_VERSION} (${APP_ID}, pid ${Deno.pid}) taking over` }, 15);
   } catch (error) {
     if (!(error instanceof HostUnavailable)) throw error;
     if (error.code === 'host_auth' || (pidAlive(info.pid) && error.delivered)) {
@@ -620,12 +620,12 @@ export interface StopResult {
 }
 
 /** Ask the host to stop. Never kills a process. */
-export async function stopHost(stateDir: string, force = false, waitSeconds = 20): Promise<StopResult> {
+export async function stopHost(stateDir: string, force = false, waitSeconds = 20, by = 'a stop request'): Promise<StopResult> {
   const info = await readInfo(stateDir);
   if (!info) return { stopped: false, message: `No agent host is running for ${stateDir}.`, running: false };
   let result: unknown;
   try {
-    result = await new HostClient(info).call('stop', { force }, 15);
+    result = await new HostClient(info).call('stop', { force, by }, 15);
   } catch (error) {
     if (!(error instanceof HostUnavailable)) throw error;
     if (pidAlive(info.pid) && error.delivered) {

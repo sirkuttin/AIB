@@ -52,6 +52,8 @@ export interface HelperArgs {
   kind: UpdateKind;
   /** What is replaced: the install folder (Windows), the .app bundle (macOS), the AppImage file (Linux). */
   target: string;
+  /** The arguments the old app was started with (`serve --port N`, `--state-dir D`, ...): the new one starts with the same. */
+  args?: string[];
 }
 
 export interface StartResult {
@@ -121,7 +123,7 @@ export function defaultAlive(pid: number): boolean {
 /** The new app must not inherit the old one's launch variables (nor an AppImage runtime's, nor deno desktop's serve address). */
 export function cleanEnv(env: Record<string, string> = Deno.env.toObject()): Record<string, string> {
   const drop = new Set(['PYTHONHOME', 'AGENT_STUDIO_LAUNCH_NONCE', 'APPIMAGE', 'APPDIR', 'ARGV0', 'OWD', 'DENO_SERVE_ADDRESS']);
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k) && !k.startsWith('AIB_')));
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k) && (!k.startsWith('AIB_') || k === 'AIB_TEST_TRAY_STATE')));
 }
 
 async function runQuiet(command: string, args: string[], timeoutSeconds: number): Promise<void> {
@@ -332,7 +334,8 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
     return 6;
   }
 
-  const command = kind === 'appimage' ? [target] : [exe];
+  const extra = Array.isArray(args.args) ? (args.args as unknown[]).filter((a): a is string => typeof a === 'string') : [];
+  const command = [kind === 'appimage' ? target : exe, ...extra];
   log(note, `swapped in ${args.version ?? 'the new version'}; starting it`);
   let started: StartResult | null = null;
   let why = '';

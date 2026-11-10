@@ -787,6 +787,31 @@ Deno.test("install is deferred while chats work; when-idle waits, then installs 
   }
 });
 
+Deno.test("with the agent host (chatsKeepRunning) Install now goes ahead while chats work; the new app starts with the same arguments", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  const { svc, launched, quit } = await ready(env, 2, { chatsKeepRunning: true, appArgs: ["serve", "--port", "8901"] });
+  assertEquals(await svc.install(), { state: "installing", chats: 2 });
+  assertEquals([launched.length, quit], [1, [1]]);
+  assertEquals(launched[0].args, ["serve", "--port", "8901"]);
+  {
+    // "Install when chats finish" still waits when asked for.
+    const { svc: s2, launched: l2 } = await ready(env, 1, { chatsKeepRunning: true });
+    assertEquals(await s2.install(true), { state: "waiting", chats: 1 });
+    assertEquals(l2, []);
+  }
+  {
+    // An unknown count is fine too: the chats are in the host, whatever their number.
+    const { svc: s3, state, launched: l3 } = await ready(env, 0, { chatsKeepRunning: true });
+    state.busy = () => {
+      throw new Error("host not answering");
+    };
+    assertEquals((await s3.install()).state, "installing");
+    assertEquals(l3.length, 1);
+  }
+});
+
 Deno.test("automatic checks never install", async () => {
   using env = new Env();
   await using fake = await FakeGitHub.start();
@@ -1047,6 +1072,17 @@ function deps(c: Case, results: (StartResult | Error)[] = [{ code: null }], o: {
     },
   };
 }
+
+Deno.test("helper: the new app starts with the old app's arguments (serve --port, --state-dir)", async () => {
+  const c = await windowsCase();
+  try {
+    const { deps: d } = deps(c);
+    assertEquals(await runHelper({ ...c.args, args: ["serve", "--port", "8901", 7 as unknown as string] }, d), 0);
+    assertEquals(c.started, [[c.args.exe, "serve", "--port", "8901"]], "only string arguments are passed on");
+  } finally {
+    Deno.removeSync(c.dir, { recursive: true });
+  }
+});
 
 function assertOldInstall(app: string) {
   assertEquals(names(app), [".deno-desktop-app", "AIB.dll", "AIB.exe", "AIB.exe.WebView2", "old-only.txt", "sub"]);

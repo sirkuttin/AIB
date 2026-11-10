@@ -4,11 +4,11 @@
  * having N working chats, N read from <state>/fake-active on every call. Working chats make stop refuse, as the real host does.
  * Every op it receives is appended to <state>/fake-calls.log. On a stop it removes its file and exits.
  *
- *   deno run -A _fake_host.ts STATE CODE_ROOT APP_ID VERSION RUNTIME(or "none") PROTOCOL
+ *   deno run -A _fake_host.ts STATE CODE_ROOT APP_ID VERSION RUNTIME(or "none") PROTOCOL [SOURCE_HASH]
  */
 import { HOST_FORMAT, removeInfo, writeInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
 
-const [state, codeRoot, appId, version, runtime, protocol] = Deno.args;
+const [state, codeRoot, appId, version, runtime, protocol, hash = 'x'] = Deno.args;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
 function active(): number {
@@ -26,7 +26,8 @@ const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen: () => {} }
   let result: Record<string, unknown> = {};
   let exit = false;
   if (body.op === 'info') {
-    result = { protocol: Number(protocol), open: busy.length, active: busy, pid: Deno.pid, hostId: 'fake', connections: [] };
+    result = { protocol: Number(protocol), open: busy.length, active: busy, pid: Deno.pid, hostId: 'fake', connections: [], sourceHash: hash, version };
+    if (runtime !== 'none') result.runtime = runtime;
   } else if (body.op === 'stop' && busy.length) result = { stopping: false, active: busy, message: 'busy' };
   else if (body.op === 'stop') {
     result = { stopping: true, active: [] };
@@ -50,7 +51,7 @@ const info: Record<string, unknown> = {
   hostId: 'fake',
   startedAt: Date.now() / 1000,
   codeRoot,
-  sourceHash: 'x',
+  sourceHash: hash,
   appId,
   version,
 };

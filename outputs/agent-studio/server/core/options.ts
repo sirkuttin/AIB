@@ -32,6 +32,10 @@ export interface Options {
   migrateFrom: string | null;
   /** The agent host's own flag (agent_host.py --idle-exit-minutes); the web server passes --host-idle-minutes as this. */
   idleExitMinutes: number;
+  /** The agent host's --tray: its own tray icon while chats work with no app attached (the built app's host). */
+  tray: boolean;
+  /** The agent host's --exit-unattached-seconds: exit this long after the last app left with nothing working (0 = off). */
+  exitUnattachedSeconds: number;
 }
 
 export class UsageError extends Error {}
@@ -105,6 +109,8 @@ const AGENT_FLAGS = [
 export const HOST_FLAGS: Record<string, [keyof Options, Kind]> = {
   ...Object.fromEntries(AGENT_FLAGS.map((flag) => [flag, FLAGS[flag]])),
   '--idle-exit-minutes': ['idleExitMinutes', 'float'],
+  '--tray': ['tray', 'true'],
+  '--exit-unattached-seconds': ['exitUnattachedSeconds', 'float'],
 };
 
 export function defaults(): Options {
@@ -134,6 +140,8 @@ export function defaults(): Options {
     hostIdleMinutes: 30,
     migrateFrom: null,
     idleExitMinutes: 30,
+    tray: false,
+    exitUnattachedSeconds: 0,
   };
 }
 

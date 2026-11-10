@@ -489,6 +489,13 @@ export interface UpdateServiceOptions {
   busyChats?: () => number | Promise<number>;
   /** Ends this web server so the helper can run the installer. The route answers first; the caller defers the real shutdown. */
   quit?: (() => void) | null;
+  /**
+   * True when working chats survive this app quitting (they run in the separate agent host): "Install now" then goes ahead while
+   * chats work, and the new version attaches to the running host. False (in-process mode): an install waits for the chats.
+   */
+  chatsKeepRunning?: boolean;
+  /** The arguments this app was started with; the helper starts the new version with the same ones. Default: Deno.args. */
+  appArgs?: string[];
   /** Starts the detached helper (update_helper.ts). Replaced in tests. */
   launcher?: (args: HelperArgs) => void | Promise<void>;
   current?: string;
@@ -530,7 +537,7 @@ export interface UpdateStatus {
   instructions?: string;
 }
 
-export type InstallResult = { state: 'installing' } | { state: 'waiting'; chats: number };
+export type InstallResult = { state: 'installing'; chats?: number } | { state: 'waiting'; chats: number };
 
 function emptyState(): UpdateState {
   return { lastCheck: 0, found: null, downloaded: null, error: '', code: '', installWhenIdle: false };
@@ -543,6 +550,8 @@ export class UpdateService {
   busyChats: () => number | Promise<number>;
   quit: (() => void) | null;
   launcher: (args: HelperArgs) => void | Promise<void>;
+  readonly chatsKeepRunning: boolean;
+  readonly appArgs: string[];
   readonly current: string;
   readonly env: Env;
   readonly key: PlatformKey | null;
@@ -561,6 +570,8 @@ export class UpdateService {
     this.autoCheck = options.autoCheck ?? (() => true);
     this.busyChats = options.busyChats ?? (() => 0);
     this.quit = options.quit ?? null;
+    this.chatsKeepRunning = !!options.chatsKeepRunning;
+    this.appArgs = [...(options.appArgs ?? Deno.args)];
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
     this.current = options.current ?? APP_VERSION;
     this.env = options.env ?? Deno.env.toObject();
@@ -779,6 +790,11 @@ export class UpdateService {
       this.#save();
     }
     const busy = await this.#busy();
+    if (busy && !whenIdle && this.chatsKeepRunning) {
+      // The chats run in the agent host, which outlives this app: the new version attaches to it, they keep streaming, and the old
+      // host is replaced once none of them is working (host_proxy retireOlderHost).
+      return { ...await this.#go(), chats: busy };
+    }
     if (busy) {
       if (whenIdle) return { state: 'waiting', chats: busy };
       throw new UpdateError(`${busy} chat(s) are working. Install when they finish, or wait.`, 'chats_working', { chats: busy });
@@ -819,6 +835,7 @@ export class UpdateService {
       version: got.version!,
       kind: target.kind,
       target: target.target,
+      args: this.appArgs,
     });
     if (this.quit) this.quit();
     return { state: 'installing' };

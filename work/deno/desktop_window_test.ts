@@ -800,3 +800,64 @@ Deno.test('keeper: put on about:blank and hidden; any load or focus hides it aga
     await a.done();
   }
 });
+
+Deno.test('askOnClose false (the design 4.4 switch): closing or Quit with chats working never asks; the host is asked to stop unforced', async () => {
+  for (const close of [true, false]) {
+    const dir = await Deno.makeTempDir();
+    const { s, shell } = fakeShell(true);
+    const order: string[] = [];
+    const app = new DesktopApp(shell, {
+      url: 'http://127.0.0.1:8890/',
+      stateDir: dir,
+      trayIcon: trayIconPng(),
+      busyCount: () => Promise.resolve(2),
+      stopHost: (force) => (order.push(`stop:${force}`), Promise.resolve({})),
+      quit: (stop) => (order.push(`quit:${stop}`), Promise.resolve()),
+      askOnClose: false,
+      saveDelayMs: 0,
+      watchdogMs: 0,
+    });
+    try {
+      await app.start();
+      if (close) s.windows[0].emit('close');
+      else s.tray!.onMenu('quit');
+      await tick();
+      assertEquals(s.questions, []);
+      assertEquals(order, ['stop:false', 'quit:false'], 'the chats keep running in the agent host');
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test('the first load of our page calls onPageLoaded once (the update health marker)', async () => {
+  const dir = await Deno.makeTempDir();
+  const { s, shell } = fakeShell();
+  let loaded = 0;
+  const app = new DesktopApp(shell, {
+    url: 'http://127.0.0.1:8890/',
+    stateDir: dir,
+    trayIcon: trayIconPng(),
+    busyCount: () => Promise.resolve(0),
+    quit: () => Promise.resolve(),
+    onPageLoaded: () => void loaded++,
+    saveDelayMs: 0,
+    watchdogMs: 0,
+  });
+  try {
+    await app.start();
+    const w = s.windows[0];
+    w.href = 'about:blank';
+    w.emit('load');
+    await tick();
+    assertEquals(loaded, 0, 'not our page yet');
+    w.href = 'http://127.0.0.1:8890/';
+    w.emit('load');
+    w.emit('load');
+    await tick();
+    assertEquals(loaded, 1);
+  } finally {
+    app.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

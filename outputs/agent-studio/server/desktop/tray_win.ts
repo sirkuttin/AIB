@@ -18,6 +18,14 @@ import type { TrayItem } from './window.ts';
 export const WM_APP = 0x8000;
 export const TRAY_CALLBACK = WM_APP + 1;
 export const TRAY_REMOVE = WM_APP + 2;
+/** Show the icon again / take it off the notification area without ending the worker (the agent host's tray comes and goes). */
+export const TRAY_SHOW = WM_APP + 3;
+export const TRAY_HIDE = WM_APP + 4;
+/** Choose menu item wParam (1-based, as menuCommand) without opening the menu: what a menu click does (tests drive the tray so). */
+export const TRAY_COMMAND = WM_APP + 5;
+/** Switch to icon wParam (0 = the start icon, n = altIcons[n - 1]); the worker owns the icons, so it makes the change. */
+export const TRAY_SET_ICON = WM_APP + 6;
+export const MF_GRAYED = 0x1, MF_BYPOSITION = 0x400;
 export const TRAY_UID = 1;
 export const TRAY_WINDOW_CLASS = 'AIBTrayWindow';
 
@@ -68,7 +76,7 @@ export function notifyIconData(
 
 /** What the worker tells the main thread. */
 export type TrayWorkerMessage =
-  | { type: 'ready'; hwnd: string; added: boolean }
+  | { type: 'ready'; hwnd: string; added: boolean; menu: string; icons: string[] }
   | { type: 'failed'; error: string }
   | { type: 'click' }
   | { type: 'menu'; id: string }
@@ -79,11 +87,25 @@ export interface TrayWorkerStart {
   icon: Uint8Array;
   tooltip: string;
   items: TrayItem[];
+  /** Start without the icon (TRAY_SHOW adds it). */
+  hidden?: boolean;
+  /** More images the icon can switch to (setIcon(1) is the first): the host's attention variant. */
+  altIcons?: Uint8Array[];
 }
 
 export interface WindowsTray {
   /** Deletes the icon now (quitting), so no dead icon is left in the notification area. Never throws. */
   remove(): void;
+  /** Adds the icon again after hide(). Never throws. */
+  show(): void;
+  /** Takes the icon off the notification area; the worker stays for a later show(). Never throws. */
+  hide(): void;
+  /** Changes the tooltip (at most 127 characters). Never throws. */
+  setTooltip(tooltip: string): void;
+  /** Switches the image: 0 the start icon, n the n-th of altIcons. Never throws. */
+  setIcon(index: number): void;
+  /** Changes a menu item's text (the host's status line). Never throws. */
+  setItemLabel(index: number, label: string, disabled?: boolean): void;
 }
 
 /**
@@ -98,6 +120,7 @@ export function startWindowsTray(
   onClick: () => void,
   onMenu: (id: string) => void,
   onLog: (message: string) => void = () => {},
+  options: { hidden?: boolean; altIcons?: Uint8Array[] } = {},
 ): Promise<WindowsTray | null> {
   return new Promise((resolve) => {
     let worker: Worker;
@@ -130,11 +153,57 @@ export function startWindowsTray(
         settle(null);
       } else if (m.type === 'ready') {
         onLog(`tray ready (icon added: ${m.added})`);
-        settle({ remove: () => removeTray(BigInt(m.hwnd)) });
+        const hwnd = BigInt(m.hwnd);
+        const menu = BigInt(m.menu);
+        const icons = m.icons.map((i) => BigInt(i));
+        settle({
+          remove: () => removeTray(hwnd),
+          show: () => postToTray(hwnd, TRAY_SHOW),
+          hide: () => postToTray(hwnd, TRAY_HIDE),
+          setTooltip: (tip) => setTrayTooltip(hwnd, tip),
+          setIcon: (index) => {
+            if (icons[index] !== undefined) postToTray(hwnd, TRAY_SET_ICON, BigInt(index));
+          },
+          setItemLabel: (index, label, disabled) => setMenuLabel(menu, index, label, disabled),
+        });
       }
     };
-    worker.postMessage({ icon, tooltip, items } satisfies TrayWorkerStart);
+    worker.postMessage({ icon, tooltip, items, hidden: !!options.hidden, altIcons: options.altIcons ?? [] } satisfies TrayWorkerStart);
   });
+}
+
+/** Posts one of the TRAY_* messages to the worker's window (the worker adds or deletes the icon on its own thread). */
+function postToTray(hwnd: bigint, message: number, wParam = 0n): void {
+  try {
+    const user = Deno.dlopen('user32.dll', {
+      PostMessageW: { parameters: ['pointer', 'u32', 'usize', 'isize'], result: 'i32' },
+    });
+    user.symbols.PostMessageW(Deno.UnsafePointer.create(hwnd), message, wParam, 0n);
+    user.close();
+  } catch { /* the tray is gone */ }
+}
+
+/** NIM_MODIFY with a new tip, from this (main) thread (Shell_NotifyIconW works from any thread). False when the icon isn't shown. */
+function setTrayTooltip(hwnd: bigint, tip: string): boolean {
+  try {
+    const shell = Deno.dlopen('shell32.dll', { Shell_NotifyIconW: { parameters: ['u32', 'buffer'], result: 'i32' } });
+    const ok = shell.symbols.Shell_NotifyIconW(NIM_MODIFY, notifyIconData({ hwnd, flags: NIF_TIP, tip })) !== 0;
+    shell.close();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** ModifyMenuW from this thread (menus are not tied to a thread): the item's new text, greyed when disabled. */
+function setMenuLabel(menu: bigint, index: number, label: string, disabled = false): void {
+  try {
+    const user = Deno.dlopen('user32.dll', { ModifyMenuW: { parameters: ['pointer', 'u32', 'u32', 'usize', 'buffer'], result: 'i32' } });
+    const text = new Uint16Array(label.length + 1);
+    for (let i = 0; i < label.length; i++) text[i] = label.charCodeAt(i);
+    user.symbols.ModifyMenuW(Deno.UnsafePointer.create(menu), index, MF_BYPOSITION | (disabled ? MF_GRAYED : 0), BigInt(menuCommand(index)), text);
+    user.close();
+  } catch { /* the tray is gone */ }
 }
 
 /** Deletes the icon from this (main) thread, which Shell_NotifyIconW allows, then lets the worker's window close itself. */
