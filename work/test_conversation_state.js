@@ -395,7 +395,7 @@ test('sections: pinned (most recently pinned first), main, archived and deleted 
   assert.deepEqual(t.titlesIn(t.byId.connections), ['Gamma', 'Alpha'], 'latest pin first, each chat once');
   assert.deepEqual(t.titlesIn(t.byId.archivedList), ['Beta']);
   assert.equal(sumOf(t.byId.archivedSummary), 'Archived 1');
-  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted (1)');
+  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted1');
   assert.equal(t.ui.count(t.conversations, 'claude'), 2, 'tab count covers the visible list');
 });
 
@@ -432,7 +432,7 @@ test('a live conversation is never hidden by a tombstone', async () => {
     build({ conversations: [live, conv('a2', 'Beta')], entries: { 'claude:a1': E(0, 0, 9, { title: 'Alpha' }) } }),
   );
   assert.deepEqual(t.titlesIn(t.byId.connections), ['Alpha', 'Beta']);
-  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted (0)');
+  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted0');
 });
 
 test('untrusted titles are text only in rows, menus, dialogs and the deleted list', async () => {
@@ -974,7 +974,7 @@ test('delete: one click, no dialog, like Archive; the row leaves the list and ca
   );
   assert.equal(t.server.calls.find((c) => c[0] === 'POST')[2].title, 'Delta');
   assert.deepEqual(t.titlesIn(t.byId.connections), ['Alpha', 'Beta', 'Gamma']);
-  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted (1)');
+  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted1');
   assert.equal(t.log.listRefresh, 1);
   assert.equal(t.document.activeElement.textContent, 'Gamma', 'focus moves to a neighbouring row');
   assert.equal(t.server.entries['claude:a4'].deletedAt > 0, true);
@@ -1031,7 +1031,7 @@ test('Recently deleted: restore returns the row, agent-deleted entries can only 
   );
   t.byId.archivedBox.open = true;
   t.byId.deletedBox.open = true;
-  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted (2)');
+  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted2');
   const rows = t.byId.deletedList.all().filter((n) => n.className === 'deleted-row');
   assert.match(rows[0].textContent, /Snapshot title/);
   assert.match(rows[0].textContent, /transcript is untouched/);
@@ -1043,7 +1043,7 @@ test('Recently deleted: restore returns the row, agent-deleted entries can only 
   assert.equal(rows[0].buttons()[0].attrs['aria-label'], 'Restore: Snapshot title');
   rows[1].buttons()[0].onclick();
   await flush();
-  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted (1)');
+  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted1');
   assert.equal(t.document.activeElement.textContent, 'Restore', 'focus moves to the remaining restore button');
   t.conversations.push(conv('a2', 'Beta'));
   t.byId.deletedList
@@ -1051,7 +1051,7 @@ test('Recently deleted: restore returns the row, agent-deleted entries can only 
     .filter((n) => n.tagName === 'button')[0]
     .onclick();
   await flush();
-  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted (0)');
+  assert.equal(t.byId.deletedSummary.textContent, 'Recently deleted0');
   assert.ok(t.titlesIn(t.byId.connections).includes('Beta'));
   assert.equal(t.document.activeElement.textContent, 'Beta', 'the restored row takes focus');
   assert.deepEqual(
@@ -1194,8 +1194,8 @@ test('Put on hold asks for an optional note inline, Enter submits, Cancel change
   assert.equal(holdLine(t), '\u25B8 \u23F8 On hold \u00B7 1');
   assert.equal(
     t.document.activeElement,
-    t.byId.findChat,
-    'the held row is collapsed away: focus goes to the Find button',
+    holdToggleOf(t),
+    'the held row is collapsed away: focus goes to its project On hold line (QA m9; was the Find button)',
   );
 });
 
@@ -1264,4 +1264,82 @@ test('archived rows offer no hold action, and a pinned+held header reads Pinned 
   t.select(t.conversations[1]);
   t.draw();
   assert.match(t.byId.organizeCurrent.textContent, /^Pinned \u00B7 On hold/);
+});
+
+// ---- QA sidebar round (qa/2-sidebar) ----------------------------------------------------------------------------
+test('QA M4: the pin star is its own item after the title (outside the ellipsis box); the title text is unchanged', async () => {
+  const t = await loaded(build({ entries: { 'claude:a2': E(10) } }));
+  const beta = rowButton(t, 'Beta');
+  const star = beta.children.find((n) => n.className === 'row-pin');
+  assert.ok(star, 'a pinned card has a .row-pin child');
+  assert.equal(star.attrs['aria-label'], 'Pinned');
+  assert.equal(star.textContent, '', 'the glyph is drawn by CSS');
+  assert.equal(beta.textContent, 'Beta');
+  assert.ok(!rowButton(t, 'Alpha').children.some((n) => n.className === 'row-pin'));
+});
+
+test('QA m7: Up / Down move focus between the cards you can see', async () => {
+  const t = await loaded(build());
+  const cards = t.byId.connections.all().filter((n) => n.dataset.key);
+  const titles = cards.map((n) => n.textContent);
+  const down = { key: 'ArrowDown', preventDefault() {} },
+    up = { key: 'ArrowUp', preventDefault() {} };
+  cards[0].fire('keydown', down);
+  assert.equal(t.document.activeElement, cards[1]);
+  cards[1].fire('keydown', up);
+  assert.equal(t.document.activeElement, cards[0]);
+  t.document.activeElement = null;
+  cards[0].fire('keydown', up);
+  assert.equal(t.document.activeElement, null, 'nothing above the first card');
+  cards[cards.length - 1].fire('keydown', down);
+  assert.equal(t.document.activeElement, null, 'nothing below the last card');
+  cards[0].fire('keydown', { key: 'ArrowDown', altKey: true, preventDefault() {} });
+  assert.equal(t.document.activeElement, null, 'Alt+Down stays the page shortcut');
+  assert.equal(titles.length, 4);
+});
+
+test('QA m5 + m9: holding a pinned chat says it unpins; afterwards focus goes to the On hold line, not Find chat', async () => {
+  const t = await loaded(build({ entries: { 'claude:a2': E(10) } }));
+  t.ui._openMenu(moreOf(t, 'Beta'), t.conversations[1], 'row');
+  menuItem(t, 'Hold…').onclick();
+  await flush();
+  const dialog = dialogOf(t);
+  assert.match(dialog.textContent, /putting it on hold unpins it/);
+  dialog.button('Put on hold').onclick();
+  await flush();
+  const toggle = holdToggleOf(t);
+  assert.ok(toggle);
+  assert.equal(t.document.activeElement, toggle, 'the row is folded away: its project On hold line takes focus');
+  // An unpinned chat gets no unpin note.
+  t.ui._openMenu(moreOf(t, 'Gamma'), t.conversations[2], 'row');
+  menuItem(t, 'Hold…').onclick();
+  await flush();
+  assert.doesNotMatch(dialogOf(t).textContent, /unpins/);
+  dialogOf(t).button('Cancel').onclick();
+  await flush();
+});
+
+test('QA c2: an on-hold card keeps "held 10m" as its own item; the full note is the tooltip', async () => {
+  const t = await loaded(build({ entries: { 'claude:a1': H(nowSec() - 600, 'a very long note '.repeat(8)) } }));
+  holdToggleOf(t).onclick();
+  const note = t.byId.connections.all().find((n) => n.className === 'hold-note');
+  assert.ok(note.attrs.title || note.title);
+  assert.match(String(note.title), /held 10m$/);
+});
+
+test('QA m9: an inline rename, even a blank one, leaves focus on the card', async () => {
+  const t = await loaded(build());
+  for (const value of ['Beta two', '']) {
+    t.ui._openMenu(moreOf(t, 'Beta'), t.conversations[1], 'row');
+    menuItem(t, 'Rename').onclick();
+    const row = rowButton(t, 'Beta').parentNode;
+    const input = row.children.find((n) => n.tagName === 'input');
+    input.value = value;
+    input.onkeydown({ key: 'Enter', preventDefault() {} });
+    assert.equal(t.document.activeElement, row.children[0], 'focus on the card after "' + value + '"');
+  }
+  assert.deepEqual(plain(t.log.named), [
+    ['a2', 'Beta two'],
+    ['a2', ''],
+  ]);
 });

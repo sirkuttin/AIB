@@ -2925,6 +2925,14 @@ span.chip-static:hover {
   gap: 8px;
   max-width: min(340px, calc(100vw - 32px));
 }
+/* Without the Activity column (under 1100 px) the bottom-right corner is the composer's Send and Attach: the toasts sit at
+   the top instead, under the tab strip. */
+@media (max-width: 1099px) {
+  .toast-stack {
+    top: 48px;
+    bottom: auto;
+  }
+}
 .toast {
   display: flex;
   align-items: center;
@@ -3367,6 +3375,7 @@ span.chip-static:hover {
 .studio-notice span {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere; /* a long folder path breaks inside the box in a narrow pane */
 }
 .studio-notice button {
   flex: none;

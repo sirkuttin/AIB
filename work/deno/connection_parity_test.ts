@@ -234,6 +234,7 @@ const DROP = new Set([
   'queuedAt',
   'at',
   'turnEndedAt',
+  'busySince',
   'leaseExpiresAt',
 ]);
 

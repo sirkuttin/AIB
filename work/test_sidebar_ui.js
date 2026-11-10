@@ -719,3 +719,78 @@ test('the sidebar reads and writes the shared stored position, and holds it whil
   assert.equal(calls.join(), 'claude:a');
   assert.equal(ctx.ui.statusOf(c).state, 'idle');
 });
+
+// ---- QA sidebar round (qa/2-sidebar) ----------------------------------------------------------------------------
+test('QA m3: "Working · Nm" counts from the server turn start, so a reload does not restart it at 1m', () => {
+  const ctx = setup({ stored: { 'studio-sidebar-epoch': '1' } });
+  init(ctx);
+  const started = new Date(Date.now() - 12 * 60000 - 5000).toISOString().slice(0, 19) + 'Z';
+  const c = conv('a', 'C:\\x', { live: live({ busy: true, attention: { state: 'working', needs: 0, busySince: started } }) });
+  ctx.ui.sync([c], null);
+  assert.equal(ctx.ui.phrase(c).text, 'Working \u00B7 12m');
+  // Without the server time it still counts from when the page first saw it busy.
+  const d = conv('b', 'C:\\x', { live: live({ busy: true }) });
+  ctx.ui.sync([d], null);
+  assert.equal(ctx.ui.phrase(d).text, 'Working');
+});
+
+test('QA m6 + c6: a project heading uses the card dot classes; its unread count is not the amber Needs-you badge', () => {
+  const ctx = setup({ stored: { 'studio-sidebar-epoch': '1' } });
+  init(ctx);
+  const t0 = new Date(Date.now() + 60000).toISOString();
+  const heads = (rows) =>
+    ctx.ui.projectGroups(rows, () => ctx.document.createElement('div')).map((g) => g.all()[0].parentNode);
+  const idle = heads([conv('a', 'C:\\p', { live: live() })])[0];
+  assert.equal(idle.find('status-dot')[0].className, 'status-dot d-idle', 'grey Idle ring like its card');
+  assert.equal(idle.find('status-dot')[0].attrs['aria-label'], 'Idle');
+  const unread = heads([conv('u', 'C:\\q', { live: live({ attention: { state: 'idle', needs: 0, turnEndedAt: t0 } }) })])[0];
+  assert.equal(unread.find('status-count')[0].className, 'status-count count-turn');
+  const needs = heads([conv('n', 'C:\\r', { live: live({ attention: { state: 'needs_you', needs: 1 } }) })])[0];
+  assert.equal(needs.find('status-count')[0].className, 'status-count');
+  assert.equal(needs.find('status-dot')[0].className, 'status-dot d-need');
+  assert.equal(ctx.ui.summarize([conv('s', 'C:\\p')]).label, 'Not running');
+});
+
+test('QA m10: the card tooltip leads with the full title and uses the card status words', () => {
+  const ctx = setup({ stored: { 'studio-sidebar-epoch': '1' } });
+  init(ctx);
+  const c = conv('a', 'C:\\Repos\\App', { live: live() });
+  ctx.ui.sync([c], null);
+  const d = ctx.document,
+    w = d.createElement('div'),
+    b = d.createElement('button'),
+    s = d.createElement('small'),
+    t = d.createElement('span');
+  t.className = 'connection-title';
+  t.textContent = 'A very long chat title that the card cuts off';
+  b.title = 'C:\\Repos\\App\nsession-id';
+  b.append(s, t);
+  w.append(b);
+  ctx.ui.decorateRow(w, c, true);
+  assert.deepEqual(b.title.split('\n'), [
+    'A very long chat title that the card cuts off',
+    'Idle',
+    'C:\\Repos\\App',
+    'session-id',
+  ]);
+  assert.equal(ctx.ui.statusOf(conv('z', 'C:\\x')).label, 'Not running');
+});
+
+test('QA c2: the hold line keeps "· held 2h" as its own item and shows the whole line as a tooltip', () => {
+  const ctx = setup({ stored: { 'studio-sidebar-epoch': '1' } });
+  init(ctx, null);
+  ctx.ui.setFlat(true);
+  const c = conv('a', 'C:\\Repos\\App');
+  ctx.ui.sync([c], null);
+  const d = ctx.document,
+    w = d.createElement('div'),
+    b = d.createElement('button');
+  b.append(d.createElement('small'));
+  w.append(b);
+  const note = 'a long note '.repeat(10).trim();
+  ctx.ui.decorateRow(w, c, false, { hold: note + ' \u00B7 held 2h', holdNote: note, holdAge: 'held 2h' });
+  const line = b.find('hold-note')[0];
+  assert.equal(line.find('hold-text')[0].textContent, note);
+  assert.equal(line.find('hold-age')[0].textContent, ' \u00B7 held 2h');
+  assert.equal(line.title, note + ' \u00B7 held 2h');
+});

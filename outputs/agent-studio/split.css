@@ -69,6 +69,14 @@ body.split-on .ahead {
   min-width: 0;
   min-height: 0;
 }
+/* A last floor for panes side by side when even the narrowest chat list and Activity leave too little room (resize-ui.js
+   normally keeps 360 px per pane): the stage scrolls sideways instead of squeezing a pane into a sliver. */
+.spl.row > :not(.dv) {
+  min-width: 260px;
+}
+.split-stage {
+  overflow-x: auto;
+}
 .dv {
   flex: none;
   position: relative;

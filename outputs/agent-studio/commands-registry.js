@@ -41,36 +41,51 @@
     }
     return Math.max(1, total);
   }
-  // fields: [{text, weight}]. Every whitespace-separated term must match some field.
-  function rank(query, fields) {
+  // fields: [{text, weight, exact}]. Every whitespace-separated term must match some field. An `exact` field (a folder
+  // path) only counts a substring: paths share long prefixes, so scattered letters in them would match almost any word.
+  // rankInfo also says whether every term matched as a substring somewhere (`strong`); strong results always rank above
+  // ones that only matched scattered letters.
+  function rankInfo(query, fields) {
     const terms = String(query || '')
       .trim()
       .toLowerCase()
       .split(/\s+/)
       .filter(Boolean);
-    if (!terms.length) return 0;
-    let sum = 0;
+    if (!terms.length) return { s: 0, strong: true };
+    let sum = 0,
+      strong = true;
     for (const term of terms) {
-      let best = -1;
+      let best = -1,
+        sub = false;
       for (const f of fields) {
-        const s = score(term, f.text);
-        if (s >= 0) best = Math.max(best, s * (f.weight || 1));
+        const text = String(f.text || '').toLowerCase(),
+          isSub = !!text && text.indexOf(term) >= 0;
+        if (f.exact && !isSub) continue;
+        const s = score(term, text);
+        if (s < 0) continue;
+        if (isSub) sub = true;
+        best = Math.max(best, s * (f.weight || 1));
       }
-      if (best < 0) return -1;
+      if (best < 0) return { s: -1, strong: false };
+      if (!sub) strong = false;
       sum += best;
     }
-    return sum;
+    return { s: sum, strong };
   }
+  const rank = (query, fields) => rankInfo(query, fields).s;
+  // Archived chats rank a little below an equal live match, never below scattered-letter matches.
+  const ARCHIVED_PENALTY = 150;
+  const byMatch = (a, b) => Number(b.strong) - Number(a.strong) || b.s - a.s;
   const chatFields = (item) => [
     { text: item.title, weight: 1 },
     { text: item.original, weight: 0.8 },
     { text: item.project, weight: 0.7 },
     { text: item.provider, weight: 0.4 },
-    { text: item.path, weight: 0.25 },
+    { text: item.path, weight: 0.25, exact: true },
   ];
   const projectFields = (p) => [
     { text: p.name, weight: 1 },
-    { text: p.path, weight: 0.3 },
+    { text: p.path, weight: 0.3, exact: true },
   ];
   const actionFields = (a) =>
     [{ text: a.title, weight: 1 }].concat((a.keywords || []).map((k) => ({ text: k, weight: 0.7 })));
@@ -83,13 +98,13 @@
     if (!q) return items.slice().sort(byRecent);
     const scored = [];
     for (const item of items) {
-      const s = rank(q, chatFields(item));
-      if (s >= 0) scored.push({ item, s: s - (item.archived ? 150 : 0) });
+      const m = rankInfo(q, chatFields(item));
+      if (m.s >= 0) scored.push({ item, strong: m.strong, s: m.s - (item.archived ? ARCHIVED_PENALTY : 0) });
     }
     scored.sort(
       (a, b) =>
+        byMatch(a, b) ||
         Number(a.item.archived) - Number(b.item.archived) ||
-        b.s - a.s ||
         b.item.activity - a.item.activity ||
         a.item.title.localeCompare(b.item.title),
     );
@@ -143,23 +158,24 @@
     const want = (k) => p.mode === 'all' || p.mode === k + 's';
     if (want('chat'))
       for (const c of chats) {
-        const s = rank(q, chatFields(c));
-        if (s >= 0) scored.push({ r: tag('chat', c), s: s - (c.archived ? 150 : 0) });
+        const m = rankInfo(q, chatFields(c));
+        if (m.s >= 0)
+          scored.push({ r: tag('chat', c), strong: m.strong, s: m.s - (c.archived ? ARCHIVED_PENALTY : 0) });
       }
     if (want('project'))
       for (const x of projects) {
-        const s = rank(q, projectFields(x));
-        if (s >= 0) scored.push({ r: tag('project', x), s });
+        const m = rankInfo(q, projectFields(x));
+        if (m.s >= 0) scored.push({ r: tag('project', x), strong: m.strong, s: m.s });
       }
     if (want('action'))
       for (const a of actions) {
-        const s = rank(q, actionFields(a));
-        if (s >= 0) scored.push({ r: tag('action', a), s });
+        const m = rankInfo(q, actionFields(a));
+        if (m.s >= 0) scored.push({ r: tag('action', a), strong: m.strong, s: m.s });
       }
     scored.sort(
       (a, b) =>
+        byMatch(a, b) ||
         Number(!!a.r.archived) - Number(!!b.r.archived) ||
-        b.s - a.s ||
         KIND_ORDER[a.r.kind] - KIND_ORDER[b.r.kind] ||
         (b.r.activity || 0) - (a.r.activity || 0) ||
         String(a.r.title || a.r.name || '').localeCompare(String(b.r.title || b.r.name || '')),
@@ -460,6 +476,7 @@
   const api = {
     score,
     rank,
+    rankInfo,
     search,
     MODES,
     MODE_LABEL,

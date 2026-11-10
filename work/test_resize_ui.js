@@ -20,7 +20,8 @@ test('clamp keeps values inside and survives a reversed range', () => {
   assert.equal(R.clamp(5, 10, 3), 10);
 });
 test('side panel limits leave 420 px for the chat', () => {
-  assert.equal(R.maxSide(1920, 280), 1220);
+  assert.equal(R.maxSide(1920, 280), 480); // the chat list stops at 480 px (QA m13)
+  assert.equal(R.maxSide(1000, 280), 300);
   assert.equal(R.maxSide(1100, 280), 400);
   assert.equal(R.maxSide(900, 280), 200);
   assert.equal(R.maxActivity(1920, 240), 1260);
@@ -75,7 +76,7 @@ test('layout defaults, user widths, and a hidden panel', () => {
     activity: 0,
   });
   assert.deepEqual(R.computeLayout({ vw: 1440, side: 9999, activity: 1, sideOn: true, actOn: true }), {
-    side: 800,
+    side: 480,
     activity: 220,
   });
 });
@@ -132,4 +133,19 @@ test('stored sizes: junk becomes defaults', () => {
   });
   assert.deepEqual(R.sanitize('not json'), { side: null, activity: null, composer: null, split: null });
   assert.deepEqual(R.sanitize(null), { side: null, activity: null, composer: null, split: null });
+});
+
+test('QA M3/m13: the chat list stops at 480 px; split panes side by side raise the chat column floor', () => {
+  assert.equal(R.SIDE.max, 480);
+  assert.deepEqual(R.computeLayout({ vw: 1440, side: 724, activity: 280, sideOn: true, actOn: true }), {
+    side: 480,
+    activity: 280,
+  });
+  // Two panes across need 725 px: the chat list and Activity give way before the panes shrink.
+  const two = R.computeLayout({ vw: 1440, side: 480, activity: 400, sideOn: true, actOn: true, minChat: 725 });
+  assert.ok(1440 - two.side - two.activity >= 725, JSON.stringify(two));
+  assert.equal(R.maxSide(1440, 280, 1, 725), 435);
+  assert.equal(R.maxActivity(1440, 240, 1, 725), 475);
+  // A floor under MIN_CHAT changes nothing.
+  assert.equal(R.maxSide(1100, 280, 1, 100), R.maxSide(1100, 280));
 });

@@ -323,10 +323,19 @@
       origin === 'header' ? { keys: [], fallback: 'organizeCurrent' } : { keys: [keyOf(c)], fallback: 'findChat' };
     return guarded(() => call(unpin ? 'unpin' : 'pin', c));
   }
+  // After Hold / Resume from a card: the row itself when it can be seen, else its project's "On hold" line, else Find chat.
+  function holdLineOf(c) {
+    const pk = projectKeyOf(c),
+      tog = holdToggles.get(pk) || (holdToggles.size === 1 ? holdToggles.values().next().value : null);
+    return tog || $('findChat');
+  }
   async function holdToggle(c, origin, editNote) {
-    const held = !!entryOf(c).holdAt;
+    const held = !!entryOf(c).holdAt,
+      pinned = !!entryOf(c).pinnedAt;
     const follow =
-      origin === 'header' ? { keys: [], fallback: 'organizeCurrent' } : { keys: [keyOf(c)], fallback: 'findChat' };
+      origin === 'header'
+        ? { keys: [], fallback: 'organizeCurrent' }
+        : { keys: [keyOf(c)], fallback: () => holdLineOf(c) };
     if (held && !editNote) {
       pendingFocus = follow;
       return guarded(() => call('resume', c));
@@ -340,6 +349,8 @@
           (held
             ? 'stays on hold in its project.'
             : 'moves to the \u201COn hold\u201D line under its project so you can come back to it later.'),
+        // Holding unpins (a chat sits in one place only); say so instead of doing it silently (QA m5).
+        !held && pinned ? 'It is pinned now: putting it on hold unpins it, and Resume does not pin it again.' : '',
       ],
       input: {
         label: 'Note (optional)',
@@ -463,10 +474,19 @@
       done = true;
       const value = input.value.trim();
       renaming = null;
-      input.remove();
+      const key = keyOf(c);
       main.hidden = false;
-      if (save && value !== titleOf(c) && host.setName) host.setName(c, value);
+      // Focus the card before the input goes (removing a focused input drops focus on the page body) and before the
+      // rename redraws the list, so the redraw finds it and focuses the new card.
       if (main.focus) main.focus();
+      input.remove();
+      if (save && value !== titleOf(c) && host.setName) host.setName(c, value);
+      const d = doc(),
+        a = d.activeElement;
+      if (!a || a === d.body || (a.isConnected === false && a !== main) || a.tagName === 'H1') {
+        const back = rendered.find((r) => r.key === key && r.main && r.visible());
+        if (back && back.main.focus) back.main.focus();
+      }
     };
     input.onkeydown = (event) => {
       if (event.key === 'Enter') {
@@ -491,7 +511,15 @@
     if (main.nextSibling && wrapper.insertBefore) wrapper.insertBefore(input, main.nextSibling);
     else wrapper.append(input);
     if (input.focus) input.focus();
-    if (input.select) input.select();
+    // Select everything but keep the start of the title in view (a plain select() scrolls to the end and cuts the first letters).
+    if (input.setSelectionRange) {
+      try {
+        input.setSelectionRange(0, input.value.length, 'backward');
+      } catch (e) {
+        if (input.select) input.select();
+      }
+    } else if (input.select) input.select();
+    input.scrollLeft = 0;
     return true;
   }
 
@@ -758,16 +786,47 @@
   function row(c, ctx, visible, inProject, held) {
     const node = ctx.buildRow(c);
     const e = entryOf(c);
-    const holdText = held && e.holdAt ? (e.holdNote || 'no note') + ' \u00B7 held ' + ago(e.holdAt) : '';
+    const holdNote = e.holdNote || 'no note',
+      holdAge = held && e.holdAt ? 'held ' + ago(e.holdAt) : '',
+      holdText = holdAge ? holdNote + ' \u00B7 ' + holdAge : '';
     // The sidebar card builds its own third line (hold note first, else the last message); without it the note is appended here.
-    const built = sidebar() ? sidebar().decorateRow(node, c, !!inProject, { hold: holdText }) : false;
+    const built = sidebar()
+      ? sidebar().decorateRow(node, c, !!inProject, { hold: holdText, holdNote, holdAge })
+      : false;
     const main = node.children && node.children[0],
       more = node.children && node.children[1];
-    if (e.pinnedAt && main) main.className = (main.className || '') + ' is-pinned';
-    if (holdText && !built && main && main.append) main.append(el('small', holdText, 'hold-note'));
+    if (e.pinnedAt && main) {
+      main.className = (main.className || '') + ' is-pinned';
+      // The star is its own item after the title, outside the title's ellipsis box, so a long title never clips it.
+      if (main.append) {
+        const star = el('span', null, 'row-pin'); // the star glyph is CSS, so the card's text stays the title
+        star.title = 'Pinned';
+        star.setAttribute('role', 'img');
+        star.setAttribute('aria-label', 'Pinned');
+        main.append(star);
+      }
+    }
+    if (holdText && !built && main && main.append) {
+      const note = el('small', holdText, 'hold-note');
+      note.title = holdText;
+      main.append(note);
+    }
     rendered.push({ key: keyOf(c), main, more, visible });
     bindContext(node, c, main);
+    if (main && main.addEventListener) main.addEventListener('keydown', (event) => stepCard(event, keyOf(c)));
     return node;
+  }
+  // Up / Down move between the cards you can see (QA m7): one arrow key instead of two Tab stops per chat.
+  function stepCard(event, key) {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const list = rendered.filter((r) => r.main && !r.deletedItem && r.visible() && !r.main.hidden),
+      at = list.findIndex((r) => r.key === key && r.main === event.currentTarget),
+      i = at >= 0 ? at : list.findIndex((r) => r.key === key);
+    const next = list[i + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (i < 0 || !next) return;
+    if (event.preventDefault) event.preventDefault();
+    next.main.focus();
   }
   function deletedItems(ctx) {
     const known = new Map(ctx.all.map((c) => [keyOf(c), c]));
@@ -799,6 +858,7 @@
     return { node: wrap, button: b };
   }
   let holdSeq = 0;
+  const holdToggles = new Map(); // project key -> its "On hold" line in the list drawn last
   // "\u23F8 On hold \u00B7 n" under a project's active chats; its held rows (dimmed, with their hold note) show when it is
   // expanded. Returns {node, toggleId}; the expanded state is remembered per project key.
   function holdBlock(pkey, rows, ctx, parentVisible) {
@@ -808,6 +868,7 @@
     const tog = el('button', null, 'hold-toggle');
     tog.type = 'button';
     tog.id = 'holdToggle-' + ++holdSeq;
+    holdToggles.set(pkey, tog);
     const caret = el('span', open() ? '\u25BE' : '\u25B8', 'hold-caret');
     caret.setAttribute('aria-hidden', 'true');
     tog.setAttribute('aria-expanded', String(open()));
@@ -838,6 +899,7 @@
           ? 'restore'
           : '';
     rendered = [];
+    holdToggles.clear();
     redrawing = true;
     const archivedOpen = () => {
       const d = $('archivedBox');
@@ -913,7 +975,8 @@
         }
         if (!del.length) df.append(el('p', 'Nothing deleted recently.', 'note'));
         dlist.replaceChildren(df);
-        dsummary.textContent = 'Recently deleted (' + del.length + ')';
+        // Written like "Archived 2": the label, then the count at the right.
+        dsummary.replaceChildren(el('span', 'Recently deleted'), el('span', del.length, 'n'));
       }
     }
     redrawing = false;

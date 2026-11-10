@@ -97,6 +97,7 @@ class Connection:
         self.sequence = 0
         self.busy = False
         self.turn_ended_at = None   # wall-clock time of the last turn_end event (attention summary)
+        self.turn_started_at = None  # wall-clock time the current prompt turn started (attention busySince)
         self.closed = False
         self.initial = {}
         self.image_supported = False
@@ -555,6 +556,7 @@ class Connection:
             if self.busy:
                 raise ValueError('Wait for the current turn, or interrupt it before sending another prompt')
             self.busy = True
+            self.turn_started_at = time.time()
             self.error = ''
             self.prompt_seq += 1
             seq = self.prompt_seq
@@ -1168,8 +1170,9 @@ class Connection:
             needs = len(self.permissions) + len(self.elicitations) + (1 if self.auth else 0)  # includes subagent requests
             state = 'closed' if self.closed else 'needs_you' if needs else 'opening' if not self.ready else 'working' if self.busy else 'idle'
             ended = self.turn_ended_at
-        stamp = datetime.datetime.fromtimestamp(ended, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if ended else None
-        return {'state': state, 'needs': 0 if state == 'closed' else needs, 'turnEndedAt': stamp}
+            started = self.turn_started_at if self.busy and not self.closed else None
+        iso = lambda t: datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if t else None
+        return {'state': state, 'needs': 0 if state == 'closed' else needs, 'turnEndedAt': iso(ended), 'busySince': iso(started)}
 
     def public(self, after=0, light=False):
         """Wire form of this connection. light=True is the sidebar listing: no events and no permission bodies."""

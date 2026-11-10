@@ -135,9 +135,11 @@
     unread: 'Finished, not viewed yet',
     working: 'Working',
     opening: 'Opening',
-    idle: 'Live in Studio, idle',
-    saved: 'Saved',
+    idle: 'Idle',
+    saved: 'Not running',
   };
+  // The same dot classes as the card phrase (status-words.js dotClass), so a project heading and its cards agree.
+  const STATE_DOT = { needs_you: 'd-need', unread: 'd-turn', working: 'd-work', opening: 'd-idle', idle: 'd-idle' };
   const parseTime = (v) => {
     if (!v) return 0;
     const t = typeof v === 'number' ? v : Date.parse(v);
@@ -211,10 +213,11 @@
     if (out.needs) parts.push(out.needs + (out.needs === 1 ? ' item needs you' : ' items need you'));
     if (out.unread) parts.push(out.unread + ' finished, not viewed yet');
     if (out.working) parts.push(out.working + ' working');
-    out.label = parts.join(', ') || (out.live ? 'Live in Studio' : 'Saved');
+    out.label = parts.join(', ') || (out.live ? LABELS.idle : LABELS.saved);
     return out;
   }
-  function dot(state, label, count, dotClass) {
+  // countClass: an extra class for the count badge (the project heading's unread count is not amber: amber means Needs you).
+  function dot(state, label, count, dotClass, countClass) {
     const wrap = el('span', null, 'status-mark');
     if (state !== 'saved') {
       const d = el('span', null, 'status-dot ' + (dotClass || 'st-' + state));
@@ -224,7 +227,7 @@
       wrap.append(d);
     }
     if (count > 0) {
-      const n = el('span', count > 99 ? '99+' : count, 'status-count');
+      const n = el('span', count > 99 ? '99+' : count, 'status-count' + (countClass ? ' ' + countClass : ''));
       n.setAttribute('aria-hidden', 'true');
       wrap.append(n);
     }
@@ -260,8 +263,11 @@
       if (prevBusy.get(key) === true && !busy && prevConn.get(key) === live.id) derivedEnded.set(key, Date.now());
       prevBusy.set(key, busy);
       prevConn.set(key, live.id);
+      // The server's turn start when it sends one (a reload keeps "Working · 12m"); else when this page first saw it busy.
+      const since = parseTime(live.attention && live.attention.busySince);
       if (busy) {
-        if (!busySince.has(key)) busySince.set(key, Date.now());
+        if (since) busySince.set(key, since);
+        else if (!busySince.has(key)) busySince.set(key, Date.now());
       } else busySince.delete(key);
     }
     if (selected && looking()) markViewed(selected);
@@ -378,7 +384,13 @@
         el('span', g.name, 'project-name'),
         el('span', String(g.rows.length), 'project-count'),
       );
-      const badge = dot(sum.state, sum.label, sum.needs || sum.unread);
+      const badge = dot(
+        sum.state,
+        sum.label,
+        sum.needs || sum.unread,
+        STATE_DOT[sum.state],
+        sum.needs ? '' : 'count-turn',
+      );
       head.append(badge);
       wrap.setAttribute('aria-labelledby', id);
       const body = el('div', null, 'project-rows');
@@ -537,7 +549,10 @@
     let held = false;
     if (main.append) {
       main.append(el('span', shortAge(c, s), 'row-age'));
-      main.title = (main.title ? main.title + String.fromCharCode(10) : '') + s.label;
+      // Tooltip: the full title (the card cuts it), the status in the same words as the card, then what was there (folder, id).
+      const t = Array.from(main.children || []).find((n) => /(^|\s)connection-title(\s|$)/.test(n.className || '')),
+        full = t ? String(t.textContent || '') : '';
+      main.title = [full, ph.text || s.label, main.title || ''].filter(Boolean).join(String.fromCharCode(10));
       // Line 2: the phrase in words, the agent muted, and a small subagent chip.
       const line = el('span', null, 'row-status tone-' + ph.tone);
       line.dataset.kind = ph.kind;
@@ -546,13 +561,18 @@
       main.append(line);
       // Line 3: hold note, else the last message; the project name leads it when the list mixes projects.
       const project = !flat && !inProject && p && p.name ? p.name : '';
-      const body = opts && opts.hold ? opts.hold : previewOf(c);
+      const hold = opts && opts.hold ? opts : null;
+      const body = hold ? hold.hold : previewOf(c);
       if (body || project) {
-        const third = el('small', null, (opts && opts.hold ? 'hold-note ' : '') + 'row-line3');
+        const third = el('small', null, (hold ? 'hold-note ' : '') + 'row-line3');
         if (project) third.append(el('span', project + (body ? ' · ' : ''), 'row-project'));
-        if (body) third.append(el('span', body, 'row-preview'));
+        // On hold: the note shortens, "· held 10m" always stays; the whole line is the tooltip.
+        if (hold && hold.holdAge) {
+          third.append(el('span', hold.holdNote || '', 'hold-text'), el('span', ' · ' + hold.holdAge, 'hold-age'));
+          third.title = body;
+        } else if (body) third.append(el('span', body, 'row-preview'));
         main.append(third);
-        held = !!(opts && opts.hold);
+        held = !!hold;
       }
       const branch = branchOf(c);
       if (branch) {

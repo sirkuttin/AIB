@@ -459,3 +459,15 @@ test('there is a ceiling on the number of panes', () => {
   for (let i = 1; i < 40; i++) L = T.drop(L, 'x' + i, T.groups(L.tree)[0].id, i % 2 ? 'right' : 'bottom');
   assert.equal(T.countGroups(L), T.MAX_GROUPS);
 });
+
+test('QA M3: panes across and the stage floor (a row adds up, a column takes its widest child)', () => {
+  const g = () => T.group(['a'], 'a');
+  assert.equal(T.across({ tree: g(), focus: '' }), 1);
+  assert.equal(T.minStageWidth({ tree: g(), focus: '' }), 0);
+  const two = { tree: T.split('row', [g(), g()]), focus: '' };
+  assert.equal(T.across(two), 2);
+  assert.equal(T.minStageWidth(two), 2 * T.MIN_W + 5);
+  const nested = { tree: T.split('row', [g(), T.split('col', [T.split('row', [g(), g()]), g()])]), focus: '' };
+  assert.equal(T.across(nested), 3);
+  assert.equal(T.across({ tree: T.split('col', [g(), g()]), focus: '' }), 1);
+});

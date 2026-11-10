@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from server_under_test import Server, WORK  # noqa: E402
 
 FIXTURE = WORK / 'combined-fixture' / 'agent.py'
-VOLATILE = {'id', 'time', 'instanceId', 'hostId', 'pid', 'startedAt', 'turnEndedAt', 'openedAt', 'lastSeen', 'at', 'queuedAt', 'checkedAt',
+VOLATILE = {'id', 'time', 'instanceId', 'hostId', 'pid', 'startedAt', 'turnEndedAt', 'busySince', 'openedAt', 'lastSeen', 'at', 'queuedAt', 'checkedAt',
             'elapsedMs', 'webInstanceId', 'conversationRevision', 'projectsRevision', 'readStateRevision', 'settingsRevision', 'inUse',
             'leaseId', 'key', 'now'}
 

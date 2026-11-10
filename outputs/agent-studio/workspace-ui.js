@@ -128,6 +128,17 @@
     const l = c && c.last;
     return l && l.kind === 'assistant' && typeof l.text === 'string' ? St().snippetOf(l.text) : '';
   };
+  // When this page first saw each chat blocked on you (seconds). The inbox sorts and ages those rows by it: a blocked chat's
+  // `activity` is "now" on every poll, which reshuffled the inbox between openings.
+  const blockedSince = new Map();
+  function needsSince(key, blocked) {
+    if (!blocked) {
+      blockedSince.delete(key);
+      return 0;
+    }
+    if (!blockedSince.has(key)) blockedSince.set(key, Date.now() / 1000);
+    return blockedSince.get(key);
+  }
   function normalize(c) {
     const S = root.AgentSidebarUI,
       O = root.AgentOrganizeUI;
@@ -150,6 +161,7 @@
       needs: s.needs,
       unread: !!s.unread,
       activity: S.activityOf(c),
+      needsAt: needsSince(keyOf(c), s.state === 'needs_you'),
       pinned: !!e.pinnedAt,
       held: !!e.holdAt,
       holdNote: e.holdNote || '',
@@ -297,13 +309,37 @@
     const env = findBtn('.ws-inbox-btn');
     if (env) env.setAttribute('aria-expanded', String(inboxOpen));
   }
+  // The narrow-window drawer (under 1100 px) is modal: focus moves into it, Tab stays inside (the rest of the page is inert),
+  // and closing it puts focus back on the list button when focus was in the drawer (or nowhere).
+  const drawerEl = () => doc().getElementById('wsAsideMain');
+  const mainEl = () => (doc().querySelector ? doc().querySelector('main') : null);
   function setListOpen(on) {
     const d = doc();
     if (!d.body) return;
+    const was = d.body.classList.contains('ws-list-open');
     d.body.classList.toggle('ws-list-open', !!on);
     if (scrim) scrim.hidden = !on;
     const t = findBtn('.ws-list-toggle');
     if (t) t.setAttribute('aria-expanded', String(!!on));
+    const m = mainEl(),
+      drawer = drawerEl();
+    if (m) m.inert = !!on;
+    if (on && !was && drawer) {
+      const a = d.activeElement;
+      if (!(a && drawer.contains && drawer.contains(a))) {
+        const first =
+          drawer.querySelector('.connection.selected') ||
+          d.getElementById('findChat') ||
+          drawer.querySelector('button:not([hidden]):not(:disabled)');
+        if (first && first.focus) first.focus();
+      }
+    } else if (!on && was) {
+      const a = d.activeElement;
+      if (!a || a === d.body || (drawer && drawer.contains && drawer.contains(a))) {
+        const back = findBtn('.ws-list-toggle');
+        if (back && back.focus) back.focus();
+      }
+    }
   }
   function place(pop, anchor, width) {
     if (!anchor || !anchor.getBoundingClientRect) return;
@@ -427,7 +463,9 @@
     return St()
       .inbox(items)
       .filter((r) => {
-        if (r.key === selectedKey && watching()) return false;
+        // The open chat stays when it is blocked on you (it still needs you, and the badge counts it like the cards do);
+        // a "your turn" you are looking at is seen (seenTurns below).
+        if (r.key === selectedKey && watching() && r.kind !== 'needs') return false;
         if (r.kind === 'yourTurn') {
           const it = itemOf(r.key);
           if (it && (seenTurns[r.key] || 0) >= it.yourTurnAt) return false;
@@ -466,15 +504,23 @@
       'ws-tab' +
         (key === activeKey ? ' on' : '') +
         (item.state === 'needs_you' ? ' needs' : '') +
-        (turn ? ' turn' : ''),
+        (turn ? ' turn' : '') +
+        (item.archived ? ' ws-tab-archived' : ''),
     );
     wrap.dataset.key = key;
     const main = btn(null, 'ws-tab-main');
     main.setAttribute('role', 'tab');
     main.setAttribute('aria-selected', String(key === activeKey));
     main.title =
-      item.title + '\n' + item.projectName + ' \u00B7 ' + (turn ? 'Your turn' : item.label) + '\nClose: Alt+W';
+      item.title +
+      '\n' +
+      item.projectName +
+      ' \u00B7 ' +
+      (turn ? 'Your turn' : item.label) +
+      (item.archived ? '\nArchived: this tab closes when you open another chat' : '') +
+      '\nClose: Alt+W';
     main.append(dotFor(item), el('span', item.title, 'ws-tab-title'));
+    if (item.archived) main.append(el('span', 'Archived', 'ws-tab-flag'));
     main.onclick = () => {
       if (tabSuppress) {
         tabSuppress = false;
@@ -614,7 +660,19 @@
       },
       { passive: false },
     );
-    frag.append(list);
+    // More tabs than fit: arrows at both ends and a fade on the side that hides tabs (wheel and drag still scroll).
+    const back = btn('‹', 'ws-tab-scroll ws-tab-scroll-l', 'Scroll tabs left'),
+      fwd = btn('›', 'ws-tab-scroll ws-tab-scroll-r', 'Scroll tabs right');
+    back.hidden = fwd.hidden = true;
+    back.tabIndex = fwd.tabIndex = -1; // the tabs themselves are reachable; these are for the pointer
+    const page = (dir) => {
+      list.scrollLeft += dir * Math.max(80, Math.round(list.clientWidth * 0.8));
+      overflowMarks(list, back, fwd);
+    };
+    back.onclick = () => page(-1);
+    fwd.onclick = () => page(1);
+    list.addEventListener('scroll', () => overflowMarks(list, back, fwd), { passive: true });
+    frag.append(back, list, fwd);
     const add = btn('+', 'ws-tab-new', 'New chat' + (p ? ' in ' + p.name : '') + ' (Ctrl+Shift+N)');
     add.onclick = () => {
       closeOverlays();
@@ -624,10 +682,50 @@
     };
     frag.append(add);
     frag.append(el('span', null, 'ws-spacer'));
+    // Redrawing replaces every button: a focused one (the list button after the drawer closes, a tab) hands focus to its
+    // new copy instead of dropping it on the page body.
+    const had = doc().activeElement,
+      refocus = had && node.contains && node.contains(had) ? focusSpec(had) : null;
     node.replaceChildren(frag);
     node.dataset.tabs = String(tabs.length);
     list.scrollLeft = keep;
     revealActive(list, node);
+    overflowMarks(list, back, fwd);
+    if (refocus) {
+      const again = node.querySelector ? node.querySelector(refocus) : null;
+      if (again && again.focus) again.focus();
+    }
+  }
+  function focusSpec(n) {
+    for (const cls of ['ws-list-toggle', 'ws-inbox-btn', 'ws-tab-new', 'ws-tab-x', 'ws-tab-main']) {
+      if (!(n.classList && n.classList.contains(cls))) continue;
+      const tab = n.closest ? n.closest('.ws-tab') : null;
+      return tab && tab.dataset && tab.dataset.key
+        ? '.ws-tab[data-key="' + String(tab.dataset.key).replace(/["\\]/g, '\\$&') + '"] .' + cls
+        : '.' + cls;
+    }
+    return null;
+  }
+  // Show the arrows only while the tabs overflow, disable the one at the end you are at, and fade the hidden side.
+  function overflowMarks(list, back, fwd) {
+    if (!list || !back || !fwd) return;
+    const over = list.scrollWidth > list.clientWidth + 1,
+      atStart = list.scrollLeft <= 1,
+      atEnd = list.scrollLeft + list.clientWidth >= list.scrollWidth - 1;
+    back.hidden = fwd.hidden = !over;
+    back.disabled = !over || atStart;
+    fwd.disabled = !over || atEnd;
+    list.classList.toggle('fade-l', over && !atStart);
+    list.classList.toggle('fade-r', over && !atEnd);
+  }
+  // Window or panel resizes change what fits: re-check every strip's arrows.
+  function remarkOverflow() {
+    const d = doc();
+    if (!d.querySelectorAll) return;
+    for (const list of d.querySelectorAll('.ws-tablist')) {
+      const strip0 = list.parentNode;
+      overflowMarks(list, strip0.querySelector('.ws-tab-scroll-l'), strip0.querySelector('.ws-tab-scroll-r'));
+    }
   }
 
   // ---- drag a tab to reorder ---------------------------------------------------------------------------------
@@ -1126,10 +1224,15 @@
       });
       frag.append(notes);
     }
-    if (rows.length)
-      frag.append(
-        el('div', '↑↓ move · R reply · Enter send · E mark handled · O open chat · Esc close', 'ws-inbox-keys'),
-      );
+    // The key line lists only what works on these rows (a question or an approval has no R reply).
+    if (rows.length) {
+      const can = rows.map((r) => (Rp ? Rp.rowActions(r, detailFor(itemOf(r.key))) : { reply: false, handled: false }));
+      const keys = ['↑↓ move'];
+      if (can.some((a) => a.reply)) keys.push('R reply', 'Enter send');
+      if (can.some((a) => a.handled)) keys.push('E mark handled');
+      keys.push('O open chat', 'Esc close');
+      frag.append(el('div', keys.join(' · '), 'ws-inbox-keys'));
+    }
     inboxPop.replaceChildren(frag);
     if (keep && keep.key) {
       const w = rowEl(keep.key);
@@ -1860,14 +1963,20 @@
     if (selectedKey) draft = null;
     const sel = itemOf(selectedKey);
     noteSeenTurn(sel);
+    // An archived chat you open to look at gets a tab while it is open (marked Archived); it goes when you move on.
     if (items.length)
-      commit(St().pruneTabs(ws, new Set(items.filter((i) => !i.archived && !i.deleted).map((i) => i.key))));
+      commit(
+        St().pruneTabs(
+          ws,
+          new Set(items.filter((i) => (!i.archived || i.key === selectedKey) && !i.deleted).map((i) => i.key)),
+        ),
+      );
     if (ws.active !== St().ALL && !projectOfKey(ws.active) && !St().tabsOf(ws, ws.active).length)
       commit(St().setActive(ws, St().ALL));
     notifyChats();
-    if (sel && !sel.archived && !sel.deleted) {
+    if (sel && !sel.deleted) {
       commit(St().openTab(ws, sel.projectKey, sel.key));
-      commit(St().rememberLast(ws, sel.projectKey, sel.key));
+      if (!sel.archived) commit(St().rememberLast(ws, sel.projectKey, sel.key));
     }
     if (root.AgentSidebarUI.setFlat) root.AgentSidebarUI.setFlat(ws.active !== St().ALL);
     syncSplit();
@@ -1911,7 +2020,9 @@
             .tabsOf(ws, A)
             .filter((k) => itemOf(k))
         : [];
-    const valid = ready ? new Set(items.filter((i) => !i.archived && !i.deleted).map((i) => i.key)) : null;
+    const valid = ready
+      ? new Set(items.filter((i) => (!i.archived || i.key === selectedKey) && !i.deleted).map((i) => i.key))
+      : null;
     // The open chat belongs in this layout only when it is this project's (or the layout is the "All chats" one).
     const mine = sel && (A === ALLK || sel.projectKey === A) ? selectedKey : '';
     const r = S().sync({
@@ -2092,6 +2203,14 @@
       root.AgentSidebarUI.setNameHook((key) => (prefs ? St().prefOf(prefs, key).name : ''));
     const d = doc();
     strip = d.getElementById('chatTabs');
+    if (root.addEventListener)
+      root.addEventListener('resize', () => {
+        remarkOverflow();
+        // The drawer (and the inert page behind it) only exists under 1100 px: widening the window closes it.
+        const narrow = root.matchMedia && root.matchMedia('(max-width:1100px)').matches;
+        if (!narrow && d.body && d.body.classList.contains('ws-list-open')) setListOpen(false);
+      });
+    if (strip && typeof root.ResizeObserver === 'function') new root.ResizeObserver(remarkOverflow).observe(strip);
     inboxPop = el('div', null, 'ws-pop ws-inbox');
     inboxPop.id = 'wsInbox';
     inboxPop.setAttribute('role', 'dialog');

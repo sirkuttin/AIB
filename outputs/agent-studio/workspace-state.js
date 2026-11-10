@@ -5,7 +5,7 @@
   // board later) on the same data.
   //
   // Input is a list of "items", one per conversation, already normalised by the page (workspace-ui.js):
-  //   { key, title, projectKey, projectName, projectPath, provider, state, needs, unread, activity,
+  //   { key, title, projectKey, projectName, projectPath, provider, state, needs, unread, activity, needsAt (blocked since, s),
   //     pinned, held, holdNote, archived, deleted, elicitations, auth, yourTurn, yourTurnAt, snippet, projectWorktree, projectScratch }
   //   state is one of needs_you | unread | working | opening | idle | saved (the sidebar's status vocabulary).
   // Workspace state itself is a small JSON-able object:
@@ -397,7 +397,9 @@
           snippet: '',
           line: 'Needs you: ' + (ask || summary),
           handled: !!i.yourTurn,
-          at: base.activity || Number(i.yourTurnAt) || 0,
+          // `activity` of a blocked chat is "now" on every poll, which reshuffled the inbox between openings: use when it
+          // started waiting on you (needsAt, kept by the page) so the order holds still.
+          at: Number(i.needsAt) || base.activity || Number(i.yourTurnAt) || 0,
         });
       } else {
         const snippet = String(i.snippet || '').trim();

@@ -5,7 +5,7 @@
    localStorage per window-width bucket. The pure helpers at the top have node tests; the DOM part starts at init(). */
 (function (root) {
   const DEF = { side: 240, activity: 280 },
-    SIDE = { min: 200, max: Infinity },
+    SIDE = { min: 200, max: 480 }, // a wider chat list only takes room from the chat (QA m13)
     ACT = { min: 220, max: Infinity },
     COMPOSER_MIN = 56,
     COMPOSER_GROW = 200,
@@ -27,11 +27,13 @@
   /* Largest width a side panel may have so the chat column keeps MIN_CHAT next to the other panel (which counts as `other` px). */
   /* `scale` is the interface size (1 = 100 %): default widths and limits grow with it, so the zoomed text keeps its room. */
   const sc = (v, scale) => (scale && scale !== 1 ? Math.round(v * scale) : v);
-  function maxSide(vw, other, scale) {
-    return clamp(vw - (other || 0) - MIN_CHAT, sc(SIDE.min, scale), sc(SIDE.max, scale));
+  /* `minChat`: the chat column's floor when it is more than MIN_CHAT (split panes side by side each need their own room). */
+  const chatFloor = (minChat) => Math.max(MIN_CHAT, num(minChat) ? minChat : 0);
+  function maxSide(vw, other, scale, minChat) {
+    return clamp(vw - (other || 0) - chatFloor(minChat), sc(SIDE.min, scale), sc(SIDE.max, scale));
   }
-  function maxActivity(vw, other, scale) {
-    return clamp(vw - (other || 0) - MIN_CHAT, sc(ACT.min, scale), sc(ACT.max, scale));
+  function maxActivity(vw, other, scale, minChat) {
+    return clamp(vw - (other || 0) - chatFloor(minChat), sc(ACT.min, scale), sc(ACT.max, scale));
   }
   /* Dragging: `raw` is where the edge would be. Past (min - SNAP) the panel collapses; between that and min it stays at min. */
   function dragResult(raw, min, max, collapsible) {
@@ -59,7 +61,8 @@
     const vw = Number(o.vw) || 0,
       sideOn = !!o.sideOn,
       actOn = !!o.actOn,
-      k = o.scale || 1;
+      k = o.scale || 1,
+      minChat = chatFloor(o.minChat);
     const sMin = sc(SIDE.min, k),
       sMax = sc(SIDE.max, k),
       aMin = sc(ACT.min, k),
@@ -67,7 +70,7 @@
     let side = sideOn ? clamp(num(o.side) ? o.side : sc(DEF.side, k), sMin, sMax) : 0;
     const user = clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax);
     let act = actOn ? user : 0;
-    const over = side + act + MIN_CHAT - vw;
+    const over = side + act + minChat - vw;
     if (over > 0) {
       const ss = sideOn ? side - sMin : 0,
         sa = actOn ? act - aMin : 0,
@@ -80,13 +83,13 @@
       }
     }
     if (o.subchat && actOn) {
-      const room = Math.max(0, vw - side - MIN_CHAT),
+      const room = Math.max(0, vw - side - minChat),
         want = Math.min(aMax, Math.max(user, sc(SUBCHAT_W, k)));
       act = Math.max(act, Math.min(want, room));
     }
     /* Changes expanded (the tab row's widen button): about 60% of the window, as far as the chat keeps its minimum. */
     if (o.expand && actOn) {
-      const room = Math.max(0, vw - side - MIN_CHAT);
+      const room = Math.max(0, vw - side - minChat);
       act = Math.max(act, Math.min(Math.round(vw * EXPAND_FRAC), room));
     }
     return { side, activity: act };
@@ -234,6 +237,7 @@
         subchat: body.classList.contains('subchat-open'),
         expand: body.classList.contains('changes-wide'),
         scale: k,
+        minChat: splitFloor(),
       });
       const set = (k, v) => {
         if (rootEl.style.getPropertyValue(k) !== v) rootEl.style.setProperty(k, v);
@@ -257,6 +261,15 @@
         body.classList.toggle('act-split-set', false);
       }
       syncHandles();
+    }
+    /* Split panes side by side: the chat column keeps room for every pane across (split-ui.js says how much). */
+    function splitFloor() {
+      try {
+        const S = win.AgentSplitUI;
+        return S && typeof S.minWidth === 'function' ? Number(S.minWidth()) || 0 : 0;
+      } catch (e) {
+        return 0;
+      }
     }
     function splitTotal() {
       const a = $('subagentList'),
@@ -290,7 +303,7 @@
           return sc(DEF.side, uiK());
         },
         min: () => sc(SIDE.min, uiK()),
-        max: () => maxSide(win.innerWidth, eff.activity, uiK()),
+        max: () => maxSide(win.innerWidth, eff.activity, uiK(), splitFloor()),
         value: () => (sideHidden ? 0 : eff.side),
         rawFrom: (e, g) => e.clientX - g,
         grab: (e) => e.clientX - (sideHidden ? 0 : eff.side),
@@ -319,7 +332,7 @@
           return sc(DEF.activity, uiK());
         },
         min: () => sc(ACT.min, uiK()),
-        max: () => maxActivity(win.innerWidth, eff.side, uiK()),
+        max: () => maxActivity(win.innerWidth, eff.side, uiK(), splitFloor()),
         value: () => (actHidden() ? 0 : eff.activity),
         rawFrom: (e, g) => win.innerWidth - e.clientX - g,
         grab: (e) => win.innerWidth - e.clientX - (actHidden() ? 0 : eff.activity) + 0,

@@ -258,8 +258,11 @@
       return;
     }
     const sig = T().shape(L).split('@')[0];
-    if (!stage || sig !== shapeSig) build();
+    const reshaped = !stage || sig !== shapeSig;
+    if (reshaped) build();
     update();
+    // More or fewer panes across: the chat list and Activity give way so every pane keeps its minimum width (resize-ui.js).
+    if (reshaped && root.ResizeUI && typeof root.ResizeUI.layout === 'function') root.ResizeUI.layout();
   }
   function update() {
     const keep = saveScroll();
@@ -827,6 +830,8 @@
     adoptDrag,
     signature,
     ready: () => !!host,
+    // The chat column's floor while panes sit side by side (0 with one pane or under the narrow width).
+    minWidth: () => (active() ? T().minStageWidth(L) : 0),
     layout: () => L,
     _store: () => store,
   };

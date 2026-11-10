@@ -342,9 +342,24 @@
     if (r.kind === 'project') {
       const W = root.AgentWorkspaceUI;
       if (W && W.selectProject) W.selectProject(r.key);
+      landFocus();
       return;
     }
-    host.open(r.c);
+    Promise.resolve(host.open(r.c)).then(landFocus, landFocus);
+  }
+  // The bar closed and the page redrew under it: the element it would hand focus back to is often gone, which leaves focus
+  // on the page body. Put it in the message box of the chat you picked, else on its card (QA m9).
+  function landFocus() {
+    const d = doc(),
+      a = d.activeElement;
+    if (a && a !== d.body && a.isConnected !== false) return;
+    const box = d.getElementById('prompt');
+    if (box && !box.disabled && box.offsetParent !== null && box.focus) {
+      box.focus();
+      return;
+    }
+    const card = d.querySelector ? d.querySelector('aside .connection.selected') : null;
+    if (card && card.focus) card.focus();
   }
   function open() {
     if (!host) return;
