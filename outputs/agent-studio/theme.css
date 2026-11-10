@@ -1,4 +1,5 @@
-/* Agent Studio colour tokens: every colour the page paints is named here once, so a theme is a different set of values for this one block. Loaded first by chat.html. Documented in docs/FRONTEND.md. */
+/* Agent Studio colour tokens: every colour the page paints is named here once, so a theme is a different set of values for this one block. Loaded first by chat.html. Documented in docs/FRONTEND.md.
+   These are the dark values (the page is dark-only today). A light theme redefines the same names, e.g. in :root[data-theme='light']; the light values of the accent and status pairs are listed in docs/FRONTEND.md. */
 :root {
   /* Text */
   --text: #e5e7ec; /* Default text on the page */
@@ -12,7 +13,7 @@
   --text-dim: #a3a8b6; /* Activity strip and sub-agent card text */
   --muted: #929aaa; /* Muted text (original token) */
   --text-muted: #8a91a3; /* Qualifiers, timestamps, toggles */
-  --text-muted-2: #9195a6; /* Idle status text and dot (also --hd-idle) */
+  --text-muted-2: #9195a6; /* Plan step qualifiers (former idle status colour) */
   --text-faint: #747d90; /* Placeholders, composer notes, context state */
   --text-faint-2: #737e94; /* Message times, turn dividers */
   --text-faint-3: #6d7184; /* Artifact shortcuts and counts */
@@ -41,30 +42,49 @@
   --line-card: #3d4050; /* Thumbnail and queue-row borders */
   --line-field: #343746; /* Input and popup borders */
 
-  /* Accent */
-  --accent: #bba1ff; /* Accent (original token): primary buttons, focus, links */
-  --accent-wash: #2a2438; /* Purple-tinted hover and active fill */
-  --accent-wash-2: #383043; /* Stronger purple hover fill */
-  --accent-wash-3: #2b2752; /* Artifacts pane purple fill */
-  --accent-wash-4: #2b2740; /* Sub-agent command chips and pane badges */
-  --accent-wash-5: #2d243d; /* Selected sub-agent and command card fill */
-  --accent-line: #705a9b; /* Selected and needs-you purple borders */
+  /* Accent: Bay teal, the one accent (primary buttons, links, focus, selection, the active chat). Dark values. */
+  --accent: #2bb3a3; /* Accent (original token): primary button fill, focus rings, selection bars, accent borders */
+  --on-accent: #0b1f1d; /* Text on an --accent fill (primary buttons, badges) */
+  --link: #5ed6c5; /* Links and accent-coloured text on dark fills */
+  --link-underline: #5ed6c580; /* Link underline at rest */
+  --accent-halo: #2bb3a333; /* Soft accent glow (drop target) */
+  --accent-wash: #152e2a; /* Active chat, selected rows, teal hover and active fill */
+  --accent-wash-2: #1f423d; /* Stronger teal hover fill */
+  --accent-wash-3: #173a36; /* Artifacts pane teal fill */
+  --accent-wash-4: #16302d; /* Sub-agent command chips, pane badges, agent letters */
+  --accent-wash-5: #1a3834; /* Selected sub-agent and command card fill */
+  --accent-line: #2a7c72; /* Selected-card and dialog teal borders */
 
   /* Status */
   --danger: #f08a8a; /* Failure dot and new-line marker (also --hd-fail) */
   --danger-text: #f19999; /* Ownership and error-note text */
   --danger-bright: #ffbac6; /* Error text and failed tool status */
   --danger-fill: #d96b82; /* Destructive primary button fill and border */
-  --ok: #7ad19c; /* Turn-running dot and additions (also --hd-turn) */
+  --ok: #7ad19c; /* Additions and change counts (former your-turn dot) */
   --ok-text: #8fd7b2; /* Idle status text and notify-on button */
   --ok-bright: #8be28b; /* Copied tick, added tokens, ok marks */
   --ok-text-2: #8be3ad; /* Completed tool status and added diff lines */
-  --warn: #f0b23e; /* Needs-you dot and stars (also --hd-need) */
-  --warn-text: #e6c27a; /* Hold note, needs-you hover and flash */
+  --warn: #f0b23e; /* Stars and file warnings (former needs-you dot) */
+  --warn-text: #e6c27a; /* Hold note and held-chat text */
   --warn-text-2: #f0c674; /* Recovered and possibly-active badges */
-  --warn-bg: #302a1c; /* Approval, needs-you line and toast fill */
-  --warn-line: #ad8d47; /* Approval and needs-you borders */
-  --info: #5aa9ff; /* Working dot (also --hd-work) */
+  --warn-bg: #302a1c; /* Former approval and needs-you fill; kept for code on other branches */
+  --warn-line: #ad8d47; /* Held and edited queue rows, mismatched setting chips */
+  --info: #5aa9ff; /* Former working dot; kept for code on other branches */
+
+  /* Agent status: the icon's agent lights. Each chip is --status-x text on --status-x-bg (4.5:1 or better,
+     checked by work/test_theme_status.js); -line is a 3:1 border on the panels. Always shown with the status word, never colour alone. */
+  --status-working: #ffc247; /* Working: amber text, dot and spinner */
+  --status-working-bg: #3a2e14; /* Working chip fill and spinner track */
+  --status-working-line: #8a6a1f; /* Working turn-line border */
+  --status-needs: #ff9a80; /* Needs you: coral text and dot */
+  --status-needs-bg: #3d1f18; /* Needs-you chip, approval, turn-line and toast fill; text on a coral badge */
+  --status-needs-line: #b5523d; /* Needs-you borders and row outline */
+  --status-needs-halo: #ff9a804d; /* Halo around the needs-you dot */
+  --status-done: #5ed6c5; /* Done / Your turn / unread: teal text and dot */
+  --status-done-bg: #12302c; /* Done chip fill */
+  --status-done-line: #2a7c72; /* Your-turn turn-line border, unread row outline */
+  --status-idle: #c9c5bb; /* Idle: grey text and dot ring */
+  --status-idle-bg: #26272f; /* Idle chip fill */
 
   /* Plan */
   --plan-dot: #d7d9e3; /* Plan step dots */

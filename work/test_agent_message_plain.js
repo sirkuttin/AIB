@@ -57,7 +57,8 @@ test('user bubbles are unchanged', () => {
   assert.equal(box.border, '1px solid var(--line)');
   assert.equal(box['border-radius'], '9px');
   assert.equal(hex(box.background), '#181a21');
-  assert.deepEqual(decl('.bubble.user'), { background: '#272031', 'border-color': '#4d3c65' }); // not tokenised
+  assert.deepEqual(decl('.bubble.user'), { background: 'var(--panel-2)', 'border-color': 'var(--line-card)' });
+  assert.equal(hex(decl('.bubble.user').background), '#20212a');
   assert.equal(hex(decl('.bubble-head')['border-bottom']), '1px solid #292b35'); // other bubbles keep their title bar
   assert.equal(rules.filter((r) => /\.bubble\.user/.test(r.selector) && /assistant/.test(r.selector)).length, 0);
 });

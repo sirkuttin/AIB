@@ -1,6 +1,6 @@
 'use strict';
 const { APP: APP_DIR } = require('./_paths');
-/* Your own messages keep the purple box but have no visible title bar: the "You" label stays for screen readers,
+/* Your own messages keep their own box (a neutral raised fill since the Bay teal styling) but have no visible title bar: the "You" label stays for screen readers,
    and the time and Copy button float at the top right and show on hover or focus (always on touch). */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,8 +13,8 @@ const rules = cssRules(css);
 const decl = (selector, context) => declarationsFor(rules, selector, context);
 const HEAD = '.bubble.user > .bubble-head';
 
-test('the purple box is unchanged', () => {
-  assert.deepEqual(decl('.bubble.user'), { background: '#272031', 'border-color': '#4d3c65' });
+test('the user box is unchanged', () => {
+  assert.deepEqual(decl('.bubble.user'), { background: 'var(--panel-2)', 'border-color': 'var(--line-card)' });
   const box = decl('.bubble');
   assert.equal(box['border-radius'], '9px');
   assert.equal(box.border, '1px solid var(--line)');

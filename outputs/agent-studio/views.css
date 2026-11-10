@@ -92,7 +92,7 @@ header.vs-narrow > .header-actions {
   text-align: left;
 }
 .steps-toggle:hover {
-  color: var(--accent);
+  color: var(--link);
 }
 .group-steps {
   margin: 4px 0 8px 15px;
@@ -132,7 +132,7 @@ header.vs-narrow > .header-actions {
 .view-spin {
   display: inline-flex;
   flex: none;
-  color: var(--accent);
+  color: var(--status-working);
 }
 .view-line-stopped,
 .view-line-none {
@@ -146,7 +146,7 @@ header.vs-narrow > .header-actions {
 }
 .vl-state {
   flex: none;
-  color: var(--accent);
+  color: var(--status-working);
   font-size: 12px;
 }
 .vl-step {
@@ -294,7 +294,7 @@ header.vs-narrow > .header-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--accent);
+  color: var(--status-working);
 }
 /* the replies of an opened prompt sit on black so they stand apart from the prompts */
 .pv-body {

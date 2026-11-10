@@ -26,7 +26,7 @@
   background: #ffffff08;
 }
 .pane-tab.active {
-  color: #f1ecff;
+  color: var(--text-6);
 }
 .pane-tab.active::after {
   content: '';
@@ -54,7 +54,7 @@
   padding: 0 5px;
   border-radius: 9px;
   background: var(--accent-wash-4);
-  color: var(--accent);
+  color: var(--link);
   font-size: 11px;
   font-weight: 600;
   line-height: 18px;
@@ -436,7 +436,7 @@
     height: 20px;
     border-radius: 10px;
     background: var(--accent-wash-4);
-    color: var(--accent);
+    color: var(--link);
     font-size: 12px;
     cursor: pointer;
   }

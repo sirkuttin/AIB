@@ -109,7 +109,7 @@
   padding: 0 5px;
   border-radius: 4px;
   background: var(--accent-wash-3);
-  color: var(--accent);
+  color: var(--link);
   font:
     10px/16px Consolas,
     'Cascadia Mono',
@@ -385,7 +385,7 @@
   height: 30px;
   border-radius: 6px;
   background: var(--accent-wash-3);
-  color: var(--accent);
+  color: var(--link);
   font:
     600 10px/30px Consolas,
     'Cascadia Mono',
@@ -465,9 +465,9 @@
 }
 /* ⧉ links in replies */
 a.artifact-link {
-  color: var(--accent);
+  color: var(--link);
   text-decoration: underline;
-  text-decoration-color: #a99cff80;
+  text-decoration-color: var(--link-underline);
   text-underline-offset: 2px;
   cursor: pointer;
 }

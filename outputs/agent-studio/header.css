@@ -1,10 +1,10 @@
 /* Chat header, status vocabulary, composer and New chat view (docs/design/review-decisions.html). Loaded last.
    Header: ONE line: name + pencil, then the agent chip and the status chip. Composer: turn line, one box, one chip row. */
 :root {
-  --hd-work: var(--info);
-  --hd-turn: var(--ok);
-  --hd-need: var(--warn);
-  --hd-idle: var(--text-muted-2);
+  --hd-work: var(--status-working);
+  --hd-turn: var(--status-done);
+  --hd-need: var(--status-needs);
+  --hd-idle: var(--status-idle);
   --hd-fail: var(--danger);
 }
 
@@ -185,7 +185,7 @@ header #status {
 #status[data-tone='need']::before,
 #turnStatus[data-tone='need']::before {
   background: var(--hd-need);
-  box-shadow: 0 0 0 3px #f0b23e49;
+  box-shadow: 0 0 0 3px var(--status-needs-halo);
 }
 #status[data-tone='idle'],
 #turnStatus[data-tone='idle'] {
@@ -202,12 +202,12 @@ header #status {
 }
 #status[data-tone='else'],
 #turnStatus[data-tone='else'] {
-  color: var(--hd-need);
+  color: var(--hd-idle);
 }
 #status[data-tone='else']::before,
 #turnStatus[data-tone='else']::before {
   background: transparent;
-  border: 1.5px dashed var(--hd-need);
+  border: 1.5px dashed var(--hd-idle);
 }
 #status[data-tone='bad'],
 #turnStatus[data-tone='bad'] {
@@ -216,6 +216,23 @@ header #status {
 #status[data-tone='bad']::before,
 #turnStatus[data-tone='bad']::before {
   background: var(--hd-fail);
+}
+/* the header chip is filled with its tone's pair (theme.css --status-*-bg); the composer turn line keeps its own fill */
+#status[data-tone='work'] {
+  background: var(--status-working-bg);
+  border-color: var(--status-working-bg);
+}
+#status[data-tone='turn'] {
+  background: var(--status-done-bg);
+  border-color: var(--status-done-bg);
+}
+#status[data-tone='need'] {
+  background: var(--status-needs-bg);
+  border-color: var(--status-needs-bg);
+}
+#status[data-tone='idle'] {
+  background: var(--status-idle-bg);
+  border-color: var(--status-idle-bg);
 }
 @keyframes hd-pulse {
   0%,
@@ -239,11 +256,11 @@ header #status {
 .tone-turn .row-phrase {
   color: var(--hd-turn);
 }
-.tone-need .row-phrase,
-.tone-else .row-phrase {
+.tone-need .row-phrase {
   color: var(--hd-need);
 }
 .tone-idle .row-phrase,
+.tone-else .row-phrase,
 .tone-off .row-phrase {
   color: var(--muted);
 }
@@ -307,7 +324,7 @@ header #status {
   border: 0;
   border-radius: 999px;
   background: var(--accent);
-  color: #15111d;
+  color: var(--on-accent);
   font-weight: 600;
   box-shadow: 0 4px 16px var(--shadow-med);
 }
