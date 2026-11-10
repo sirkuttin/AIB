@@ -65,6 +65,20 @@
     if (e.shiftKey) return { target: 'ui', dir };
     return inChat ? { target: 'chat', dir } : null;
   }
+  /* Page zoom in the desktop app. A browser keeps its own zoom (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel, touchpad pinch) wherever the app
+   does not use those keys; the AIB window (WebView2) would zoom the whole page with them, which the old Tauri app had turned off.
+   In the app every Ctrl+plus/minus and every Ctrl+wheel the text-size handling does not use is swallowed instead. Ctrl+0 outside the
+   chat is left alone: it can only bring the page back to 100 %, the way out if a zoom still happens (inside an artifact frame the
+   page cannot see the events, so a Ctrl+wheel there is not caught). */
+  function isPageZoomKey(e) {
+    if (!e || !e.ctrlKey || e.altKey || e.metaKey) return false;
+    const k = String(e.key == null ? '' : e.key),
+      c = String(e.code == null ? '' : e.code);
+    return (
+      k === '=' || k === '+' || k === '-' || k === '_' || ['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract'].includes(c)
+    );
+  }
+  const isPageZoomWheel = (e) => !!(e && e.ctrlKey && !e.altKey && !e.metaKey);
   /* Ctrl+wheel over the chat: one step per notch. A touchpad sends many small deltas, so they add up to WHEEL_STEP first. */
   const WHEEL_STEP = 60;
   function wheelAction(e, inChat, acc) {
@@ -112,6 +126,8 @@
     sanitize,
     keyAction,
     wheelAction,
+    isPageZoomKey,
+    isPageZoomWheel,
     fontAvailable,
     availableFonts,
     resolveFont,
@@ -130,6 +146,17 @@
     if (!body || rootEl.dataset.textSizeInit) return null;
     rootEl.dataset.textSizeInit = '1';
     const helper = opts.bucketHelper || win.ResizeUI;
+    /* In the desktop app (asked on every event: the window bindings may arrive after the page script ran). */
+    const inApp =
+      typeof opts.desktop === 'function'
+        ? opts.desktop
+        : () => {
+            try {
+              return !!(win.AibDesktop && win.AibDesktop.available());
+            } catch (e) {
+              return false;
+            }
+          };
     const store = () => {
       try {
         return win.localStorage;
@@ -303,7 +330,10 @@
     function onKeydown(e) {
       if (e.defaultPrevented) return;
       const act = keyAction(e, inChatNow());
-      if (!act) return;
+      if (!act) {
+        if (isPageZoomKey(e) && inApp()) e.preventDefault(); // no page zoom in the app window
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       step(act.target, act.dir);
@@ -312,6 +342,7 @@
       const r = wheelAction(e, inChat(e.target), wheelAcc);
       if (!r.handled) {
         wheelAcc = 0;
+        if (isPageZoomWheel(e) && inApp()) e.preventDefault(); // no page zoom in the app window
         return;
       }
       e.preventDefault();

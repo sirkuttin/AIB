@@ -1186,7 +1186,7 @@
     box.append(note('Read-only for now. Press ? anywhere to see this list in a sheet.'));
   }
 
-  // Text size: all of it lives in this browser (per window-width bucket, localStorage) and is owned by textsize-ui.js, not by the server settings.
+  // Text size: owned by textsize-ui.js (per window-width bucket, localStorage), kept in the data folder by view-prefs.js, not by the server settings.
   function renderTextSize(box) {
     const T = root.AgentTextSize;
     if (!T || typeof T.getChat !== 'function') {
@@ -1205,7 +1205,7 @@
     };
     box.append(
       note(
-        'Saved in this browser for the current window width: a laptop screen and a big monitor each remember their own.',
+        'Saved with your AIB data for the current window width: a laptop screen and a big monitor each remember their own.',
       ),
     );
     box.append(

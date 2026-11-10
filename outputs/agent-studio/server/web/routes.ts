@@ -15,12 +15,14 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/terminal                   the chat terminal's WebSocket (terminal_routes.ts)
  *   GET  /api/live/terminal/list              running chat terminals
  *   POST /api/live/terminal/end               end a chat's terminal
+ *   POST /api/live/view-prefs                 save the page's view and appearance preferences (state/view_prefs.ts)
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
   ['GET', '/api/live/terminal', 'write', 'get'],
   ['GET', '/api/live/terminal/list', 'read', 'get'],
   ['POST', '/api/live/terminal/end', 'write', 'body'],
+  ['POST', '/api/live/view-prefs', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
