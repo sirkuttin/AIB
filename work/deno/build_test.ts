@@ -201,8 +201,8 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
 const ICONS_DIR = new URL("../../outputs/agent-studio/icons/", import.meta.url);
 const TILE: [number, number, number] = [0x13, 0x86, 0x7a];
 
-Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, tray PNGs, favicon", async () => {
-  for (const name of ["icon.svg", "icon-small.svg", "tray-light.svg", "tray-dark.svg"]) {
+Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, colour tray PNGs, favicon", async () => {
+  for (const name of ["icon.svg", "icon-small.svg"]) {
     assert((await Deno.readTextFile(`${ICON_SRC}/${name}`)).includes('viewBox="0 0 100 100"'), name);
   }
   const ico = parseIco(await Deno.readFile(new URL("icon.ico", ICONS_DIR)));
@@ -220,15 +220,15 @@ Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, tray PN
     assertEquals(pngSize(png), { width: size, height: size }, file);
     assert(await hasColour(png, TILE), `${file} has #13867A`);
   }
-  // Tray: every image at its size; the dark glyph is white, the light one ink, neither has the tile.
-  assertEquals(Object.keys(TRAY_PNG_BASE64).sort(), TRAY.map((t) => t[0]).sort());
+  // Tray: the colour small icon at 16 and 32 (every taskbar theme); the 32 px one is 32x32.png.
+  assertEquals(Object.keys(TRAY_PNG_BASE64).sort(), ["color-16", "color-32"]);
+  assertEquals(TRAY.map((t) => t[1]), ["icon-small.svg", "icon-small.svg"]);
   const tray = (key: string) => Uint8Array.from(atob(TRAY_PNG_BASE64[key]), (c) => c.charCodeAt(0));
-  for (const [key, , size] of TRAY) assertEquals(pngSize(tray(key)), { width: size, height: size }, key);
-  for (const size of [16, 32]) {
-    assert(await hasColour(tray(`dark-${size}`), [255, 255, 255]), `dark-${size} white`);
-    assert(!(await hasColour(tray(`dark-${size}`), TILE)), `dark-${size} no tile`);
-    assert(await hasColour(tray(`light-${size}`), [0x16, 0x15, 0x1b]), `light-${size} ink`);
+  for (const [key, , size] of TRAY) {
+    assertEquals(pngSize(tray(key)), { width: size, height: size }, key);
+    assert(await hasColour(tray(key), TILE), `${key} has #13867A`);
   }
+  assertEquals([...tray("color-16")], [...ico[0].data], "the 16 px tray image is the .ico's 16 px image");
   assertEquals([...tray("color-32")], [...(await Deno.readFile(new URL("32x32.png", ICONS_DIR)))]);
   // The favicon: icon-small.svg as a data: URL in each page.
   const link = faviconLink(await Deno.readTextFile(`${ICON_SRC}/icon-small.svg`));

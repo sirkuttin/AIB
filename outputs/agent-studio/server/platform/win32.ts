@@ -36,7 +36,7 @@ const kernel32Symbols = {
   GetCurrentProcess: { parameters: [], result: 'pointer' },
 } as const;
 
-/** Security descriptors and tokens (server/platform/acl.ts: the owner-only check of the state folder); the registry (tray_icon.ts). */
+/** Security descriptors and tokens (server/platform/acl.ts: the owner-only check of the state folder). */
 const advapi32Symbols = {
   GetNamedSecurityInfoW: { parameters: ['buffer', 'i32', 'u32', 'buffer', 'buffer', 'buffer', 'buffer', 'buffer'], result: 'u32' },
   GetAclInformation: { parameters: ['pointer', 'buffer', 'u32', 'i32'], result: 'i32' },
@@ -44,8 +44,6 @@ const advapi32Symbols = {
   ConvertSidToStringSidW: { parameters: ['pointer', 'buffer'], result: 'i32' },
   OpenProcessToken: { parameters: ['pointer', 'u32', 'buffer'], result: 'i32' },
   GetTokenInformation: { parameters: ['pointer', 'i32', 'buffer', 'u32', 'buffer'], result: 'i32' },
-  // HKEY (a predefined key is a sign-extended pointer value), sub key, value name, RRF_RT_* flags, type, data, data size -> LSTATUS
-  RegGetValueW: { parameters: ['pointer', 'buffer', 'buffer', 'u32', 'pointer', 'buffer', 'buffer'], result: 'i32' },
 } as const;
 
 const ntdllSymbols = {

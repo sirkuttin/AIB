@@ -16,7 +16,7 @@
  */
 import type { TrayItem } from './window.ts';
 import { startWindowsTray, type WindowsTray } from './tray_win.ts';
-import { trayIconDarkPng, trayIconPng } from './tray_icon.ts';
+import { trayIconPng } from './tray_icon.ts';
 import { withAttentionDot } from './png_badge.ts';
 
 export interface HostTrayView {
@@ -60,7 +60,8 @@ export type HostTrayFactory = (onOpen: () => void, onStop: () => void, onLog: (m
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-/** AIB_TEST_TRAY_STATE: write {role, pid, shown, tooltip, status, attention, items} to <folder>/<role>-<pid>.json. Never throws. */
+/** AIB_TEST_TRAY_STATE: write {role, pid, shown, tooltip, status, attention, items, icons} to <folder>/<role>-<pid>.json (icons:
+ * Windows icon handles, [normal, attention] for the host, [icon] for the app). Never throws. */
 export function writeTrayState(role: string, state: Record<string, unknown>): void {
   let folder: string | undefined;
   try {
@@ -80,8 +81,14 @@ export const nativeHostTray: HostTrayFactory = (onOpen, onStop, onLog) => {
   let view: HostTrayView | null = null; // what should show; null = hidden
   let closed = false;
   let asking = false;
+  let iconHandles: string[] = []; // Windows: the worker's icon handles, for tests that read the icon's pixels
   const report = (shown: boolean) =>
-    writeTrayState('host', { shown, ...(view ?? {}), items: HOST_TRAY_ITEMS.map((i) => (i.id === 'status' ? view?.status ?? '' : i.label)) });
+    writeTrayState('host', {
+      shown,
+      ...(view ?? {}),
+      items: HOST_TRAY_ITEMS.map((i) => (i.id === 'status' ? view?.status ?? '' : i.label)),
+      icons: iconHandles,
+    });
   const confirmStop = async () => {
     if (asking || !view) return;
     asking = true;
@@ -125,6 +132,7 @@ export const nativeHostTray: HostTrayFactory = (onOpen, onStop, onLog) => {
         altIcons: [await withAttentionDot(icon)],
       });
       if (!t) onLog('host tray: could not start the tray icon');
+      if (t) iconHandles = t.icons.map(String);
       if (t && closed) t.remove();
       else tray = t;
       apply();
@@ -166,7 +174,6 @@ export const nativeHostTray: HostTrayFactory = (onOpen, onStop, onLog) => {
             return;
           }
           tray = new D.Tray();
-          if (typeof tray.setIconDark === 'function') tray.setIconDark(trayIconDarkPng());
           tray.addEventListener('click', () => onOpen());
           tray.addEventListener('menuclick', (e: Any) => onMenu(String(e?.detail?.id ?? '')));
         }

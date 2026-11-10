@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The tray icon is the colour AIB icon on light and dark taskbars (the app's and the agent host's), not a one-colour glyph.
+- Windows: the app window shows the AIB icon in its title bar, in Alt+Tab and on its taskbar button.
+
 ## 0.1.0-beta.2 (beta)
 
 - A terminal for each chat, docked under the message box (ConPTY on Windows, a pty elsewhere), and "Run in terminal" on shell

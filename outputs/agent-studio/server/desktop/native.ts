@@ -5,6 +5,8 @@
 import type { Notifier, Shell, TrayItem, WindowHandle } from './window.ts';
 import { isExternal, keepHidden } from './window.ts';
 import { startWindowsTray, type WindowsTray } from './tray_win.ts';
+import { applyAppIcon } from './window_icon_win.ts';
+import { writeTrayState } from './host_tray.ts';
 import { getLogger } from '../core/log.ts';
 
 const log = getLogger('desktop');
@@ -144,6 +146,24 @@ export function tameStartupWindow(): void {
   } catch { /* no window system: nothing to hide */ }
 }
 
+/**
+ * Windows: the runtime's windows have no icon of their own (window_icon_win.ts), so give them AIB.exe's: now, and again shortly
+ * after, since the runtime may make the window on its UI thread a moment after BrowserWindow returns. Setting it twice is harmless.
+ */
+function giveWindowsAppIcon(): void {
+  if (Deno.build.os !== 'windows') return;
+  let logged = false;
+  const apply = () => {
+    const n = applyAppIcon();
+    if (n && !logged) {
+      logged = true;
+      log.info('window icon: set on %s window(s)', n);
+    }
+  };
+  apply();
+  for (const ms of [100, 500, 2000]) setTimeout(apply, ms);
+}
+
 export function nativeShell(): Shell {
   const ask = (Deno.build.os === 'windows' ? windowsAsk() : null) ??
     ((message: string) => Promise.resolve(G.confirm(message) === true));
@@ -156,25 +176,22 @@ export function nativeShell(): Shell {
     items: TrayItem[],
     onClick: () => void,
     onMenu: (id: string) => void,
-    iconDark: Uint8Array | null,
   ) => {
     tray = new D.Tray();
     try {
       tray.setIcon(icon);
     } catch { /* the OS default */ }
-    // Dark mode (macOS, Linux): the white glyph. setIconDark is in Deno 2.9.8; older runtimes keep the one icon.
-    if (iconDark && typeof tray.setIconDark === 'function') {
-      try {
-        tray.setIconDark(iconDark);
-      } catch { /* the light icon stays */ }
-    }
     tray.setTooltip(tooltip);
     tray.setMenu(items.map((i) => ({ item: { label: i.label, id: i.id, enabled: true } })));
     tray.addEventListener('click', () => onClick());
     tray.addEventListener('menuclick', (e: Any) => onMenu(String(e?.detail?.id ?? '')));
   };
   return {
-    createWindow: (o) => wrapWindow(new D.BrowserWindow({ title: o.title, width: o.width, height: o.height })),
+    createWindow: (o) => {
+      const win = wrapWindow(new D.BrowserWindow({ title: o.title, width: o.width, height: o.height }));
+      giveWindowsAppIcon();
+      return win;
+    },
     createKeeper() {
       if (keeper) return keeper;
       // DesktopApp.keepKeeperHidden keeps it on about:blank and hides it again on any load or focus (and the watchdog when
@@ -187,18 +204,18 @@ export function nativeShell(): Shell {
       items: TrayItem[],
       onClick: () => void,
       onMenu: (id: string) => void,
-      iconDark?: Uint8Array | null,
     ) {
       // Windows: Deno.Tray's icon never gets its clicks (tray_win.ts), so AIB runs its own icon on a worker thread; Deno.Tray only
       // if that can't start. Elsewhere Deno.Tray.
       if (Deno.build.os === 'windows') {
         void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m)).then((t) => {
           if (t) windowsTray = t;
-          else denoTray(icon, tooltip, items, onClick, onMenu, null);
+          else denoTray(icon, tooltip, items, onClick, onMenu);
+          writeTrayState('app', { shown: true, tooltip, icons: t ? t.icons.map(String) : [] });
         });
         return;
       }
-      denoTray(icon, tooltip, items, onClick, onMenu, iconDark ?? null);
+      denoTray(icon, tooltip, items, onClick, onMenu);
     },
     removeTray() {
       windowsTray?.remove();
