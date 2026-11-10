@@ -1,90 +1,69 @@
-/** server/desktop/tray_icon.ts: which tray image each platform, taskbar theme and scale gets, and the Windows reads behind it. */
+/** server/desktop/tray_icon.ts: the tray gets the colour app icon on every platform and theme, at the size the scale asks for. */
 import { assert, assertEquals } from './_assert.ts';
-import {
-  chooseTrayIcon,
-  chooseTrayIconDark,
-  trayIconBytes,
-  trayIconDarkPng,
-  trayIconPng,
-  windowsSmallIconPx,
-  windowsTaskbarIsLight,
-} from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
-import { pngSize } from '../../tools/build.ts';
+import { chooseTraySize, trayIconBytes, trayIconPng, windowsSmallIconPx } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
+import { iconFromPng, iconPixels } from '../../outputs/agent-studio/server/desktop/window_icon_win.ts';
+import { withAttentionDot } from '../../outputs/agent-studio/server/desktop/png_badge.ts';
+import { decodePng, pngSize } from '../../tools/build.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
+const TILE: [number, number, number] = [0x13, 0x86, 0x7a];
+const near = (rgba: Uint8Array, i: number, rgb: [number, number, number], tol = 10) => rgb.every((c, k) => Math.abs(rgba[i + k] - c) <= tol);
+/** How many opaque pixels are the teal tile colour. */
+const tealCount = (rgba: Uint8Array) => {
+  let n = 0;
+  for (let i = 0; i < rgba.length; i += 4) if (rgba[i + 3] > 200 && near(rgba, i, TILE)) n++;
+  return n;
+};
 
-Deno.test('chooseTrayIcon: Windows follows the taskbar theme (unknown = dark) and the small icon size; elsewhere the colour icon', () => {
-  assertEquals(chooseTrayIcon('windows', false, 16), { art: 'dark', size: 16 });
-  assertEquals(chooseTrayIcon('windows', true, 16), { art: 'light', size: 16 });
-  assertEquals(chooseTrayIcon('windows', null, 16), { art: 'dark', size: 16 });
-  assertEquals(chooseTrayIcon('windows', true, 20), { art: 'light', size: 32 });
-  assertEquals(chooseTrayIcon('windows', false, 24), { art: 'dark', size: 32 });
-  assertEquals(chooseTrayIcon('windows', false, 32), { art: 'dark', size: 32 });
-  assertEquals(chooseTrayIcon('windows', null, 0), { art: 'dark', size: 32 });
+Deno.test('chooseTraySize: Windows 16 px at a 16 px small icon, else 32; macOS and Linux 32', () => {
+  assertEquals(chooseTraySize('windows', 16), 16);
+  assertEquals(chooseTraySize('windows', 20), 32);
+  assertEquals(chooseTraySize('windows', 24), 32);
+  assertEquals(chooseTraySize('windows', 32), 32);
+  assertEquals(chooseTraySize('windows', 0), 32);
   for (const os of ['darwin', 'linux'] as const) {
-    assertEquals(chooseTrayIcon(os, true, 16), { art: 'color', size: 32 });
-    assertEquals(chooseTrayIcon(os, null, 0), { art: 'color', size: 32 });
+    assertEquals(chooseTraySize(os, 16), 32);
+    assertEquals(chooseTraySize(os, 0), 32);
   }
 });
 
-Deno.test('trayIconBytes: a PNG of the chosen size for every choice; trayIconPng gives one of them', () => {
-  for (const art of ['dark', 'light'] as const) {
-    for (const size of [16, 32] as const) assertEquals(pngSize(trayIconBytes({ art, size })), { width: size, height: size });
+Deno.test('trayIconBytes: the colour app icon (teal tile, yellow and coral squares) at 16 and 32; trayIconPng is one of them', async () => {
+  for (const size of [16, 32] as const) {
+    const png = trayIconBytes(size);
+    assertEquals(pngSize(png), { width: size, height: size });
+    const { rgba } = await decodePng(png);
+    assert(tealCount(rgba) > size * size * 0.3, `${size} px: mostly the teal tile`);
+    // The tile fills the middle of the left edge (no white or see-through background there).
+    const left = ((size >> 1) * size + 1) * 4;
+    assert(rgba[left + 3] > 200 && near(rgba, left, TILE), `${size} px: teal at the left edge`);
   }
-  assertEquals(pngSize(trayIconBytes({ art: 'color', size: 32 })), { width: 32, height: 32 });
-  const png = trayIconPng();
-  assertEquals([...png.slice(1, 4)], [0x50, 0x4e, 0x47]);
-  const want = trayIconBytes(chooseTrayIcon(Deno.build.os, windowsTaskbarIsLight(), windowsSmallIconPx()));
-  assertEquals([...png], [...want]);
+  const big = (await decodePng(trayIconBytes(32))).rgba;
+  const has = (rgb: [number, number, number]) => Array.from({ length: big.length / 4 }, (_, i) => i * 4).some((i) => near(big, i, rgb, 12));
+  assert(has([0xff, 0xc2, 0x47]) && has([0xff, 0x7a, 0x59]), 'the two coloured squares');
+  assertEquals([...trayIconPng()], [...trayIconBytes(chooseTraySize(Deno.build.os, windowsSmallIconPx()))]);
+});
+
+Deno.test('the attention variant is the colour icon with the amber dot over its lower right corner', async () => {
+  const png = trayIconBytes(32);
+  const dotted = (await decodePng(await withAttentionDot(png))).rgba;
+  const plain = (await decodePng(png)).rgba;
+  const at = (x: number, y: number) => (y * 32 + x) * 4;
+  assert(near(dotted, at(23, 23), [0xf5, 0x9e, 0x0b], 2), 'amber in the dot');
+  assert(near(dotted, at(6, 16), TILE) && near(plain, at(6, 16), TILE), 'the tile elsewhere is unchanged');
 });
 
 Deno.test({
-  name: 'Windows: RegGetValueW reads SystemUsesLightTheme as reg.exe does; GetSystemMetrics gives the small icon size',
-  ignore: !WINDOWS,
-  fn: async () => {
-    const out = await new Deno.Command('reg', {
-      args: ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'SystemUsesLightTheme'],
-      stdout: 'piped',
-      stderr: 'null',
-      windowsRawArguments: false,
-    }).output();
-    const m = new TextDecoder().decode(out.stdout).match(/SystemUsesLightTheme\s+REG_DWORD\s+0x([0-9a-f]+)/i);
-    assertEquals(windowsTaskbarIsLight(), m ? parseInt(m[1], 16) !== 0 : null);
-    const px = windowsSmallIconPx();
-    assert(px >= 16 && px <= 64, `SM_CXSMICON ${px}`);
-  },
-});
-
-Deno.test('chooseTrayIconDark: macOS and Linux get the white glyph for Deno.Tray.setIconDark; Windows none (its tray follows the taskbar)', () => {
-  assertEquals(chooseTrayIconDark('windows'), null);
-  for (const os of ['darwin', 'linux'] as const) assertEquals(chooseTrayIconDark(os), { art: 'dark', size: 32 });
-  const png = trayIconDarkPng();
-  if (WINDOWS) assertEquals(png, null);
-  else assertEquals(pngSize(png!), { width: 32, height: 32 });
-});
-
-Deno.test({
-  name: 'Windows: the tray worker turns every glyph PNG into an icon at the system small icon size (CreateIconFromResourceEx)',
+  name: 'Windows: the tray worker\'s icon from each PNG (CreateIconFromResourceEx at SM_CXSMICON) is the teal tile',
   ignore: !WINDOWS,
   fn: () => {
-    const u = Deno.dlopen('user32.dll', {
-      CreateIconFromResourceEx: { parameters: ['buffer', 'u32', 'i32', 'u32', 'i32', 'i32', 'u32'], result: 'pointer' },
-      DestroyIcon: { parameters: ['pointer'], result: 'i32' },
-      GetSystemMetrics: { parameters: ['i32'], result: 'i32' },
-    });
-    try {
-      const cx = u.symbols.GetSystemMetrics(49) || 16, cy = u.symbols.GetSystemMetrics(50) || 16;
-      for (const art of ['dark', 'light'] as const) {
-        for (const size of [16, 32] as const) {
-          const png = trayIconBytes({ art, size });
-          // The same call tray_win_worker.ts makes with start.icon.
-          const h = u.symbols.CreateIconFromResourceEx(new Uint8Array(png), png.length, 1, 0x00030000, cx, cy, 0);
-          assert(h !== null, `${art}-${size}: no icon`);
-          u.symbols.DestroyIcon(h);
-        }
-      }
-    } finally {
-      u.close();
+    const px = windowsSmallIconPx();
+    assert(px >= 16 && px <= 64, `SM_CXSMICON ${px}`);
+    for (const size of [16, 32] as const) {
+      const h = iconFromPng(trayIconBytes(size), px, px); // the call tray_win_worker.ts makes with start.icon
+      assert(h !== 0n, `${size}: no icon`);
+      const p = iconPixels(h)!;
+      assertEquals([p.width, p.height], [px, px]);
+      assert(tealCount(p.rgba) > px * px * 0.3, `${size} px PNG: the icon is mostly teal`);
     }
   },
 });

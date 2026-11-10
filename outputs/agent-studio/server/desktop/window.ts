@@ -259,8 +259,8 @@ export interface Shell {
    */
   createKeeper(): WindowHandle;
   /**
-   * The tray icon: a left click calls onClick, its right-click menu (items) calls onMenu with the chosen item's id. iconDark: the
-   * image while the system is in dark mode (Deno.Tray.setIconDark, macOS and Linux), null/absent for none.
+   * The tray icon: a left click calls onClick, its right-click menu (items) calls onMenu with the chosen item's id. The same image
+   * on light and dark taskbars (the colour app icon, tray_icon.ts).
    */
   createTray(
     icon: Uint8Array,
@@ -268,7 +268,6 @@ export interface Shell {
     items: TrayItem[],
     onClick: () => void,
     onMenu: (id: string) => void,
-    iconDark?: Uint8Array | null,
   ): void;
   /** Removes the tray icon (quitting), so no dead icon is left behind. Never throws. */
   removeTray?(): void;
@@ -283,8 +282,6 @@ export interface DesktopOptions {
   url: string;
   stateDir: string;
   trayIcon: Uint8Array;
-  /** The tray image for dark mode (tray_icon.ts trayIconDarkPng: macOS and Linux), or null. */
-  trayIconDark?: Uint8Array | null;
   /** How many chats are working (host.busyConnections().length); a throw counts as unknown. */
   busyCount: () => Promise<number>;
   /**
@@ -345,7 +342,6 @@ export class DesktopApp {
       [{ id: 'open', label: 'Open AIB' }, { id: 'quit', label: 'Quit AIB' }],
       () => void this.showWindow(),
       (id) => void (id === 'open' ? this.showWindow() : id === 'quit' ? this.requestQuit() : undefined),
-      this.options.trayIconDark ?? null,
     );
   }
 

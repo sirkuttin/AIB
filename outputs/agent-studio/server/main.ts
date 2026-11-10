@@ -34,7 +34,7 @@ import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLast
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
-import { trayIconDarkPng, trayIconPng } from './desktop/tray_icon.ts';
+import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startRedirect } from './desktop/serve_address.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -276,7 +276,6 @@ export async function main(argv: string[]): Promise<void> {
       url: `${url}/`,
       stateDir,
       trayIcon: trayIconPng(),
-      trayIconDark: trayIconDarkPng(),
       busyCount: async () => (await host.busyConnections()).length,
       // In-process mode has no separate host: closing stops its agents. Split: OK forces the host down; with nothing working it is
       // stopped too (unforced: a chat that just started keeps it), so no invisible process idles on after the app is gone.

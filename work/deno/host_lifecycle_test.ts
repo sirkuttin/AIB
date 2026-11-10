@@ -87,7 +87,7 @@ t('tooltip, status line and menu: "AIB · N chats running", needs you, the data 
     false,
   ]]);
   assertEquals(stopQuestion(hostTrayView(2, 0)), 'Stop chats and quit AIB?\n\n2 chats running. Their current turn is interrupted.');
-  const png = trayIconBytes({ art: 'dark', size: 32 });
+  const png = trayIconBytes(32);
   const dotted = await withAttentionDot(png);
   const a = (await decodeRgba(png))!, b = (await decodeRgba(dotted))!;
   assertEquals([b.width, b.height], [a.width, a.height]);

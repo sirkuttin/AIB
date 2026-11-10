@@ -43,7 +43,7 @@ import {
   shortcutScript,
   startMenuDir,
 } from '../../outputs/agent-studio/server/desktop/shortcut.ts';
-import { trayIconBytes, trayIconPng } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
+import { trayIconPng } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
 import {
   chosenItem,
   menuCommand,
@@ -211,7 +211,6 @@ function fakeShell(answer = false) {
       onMenu: (id: string) => void;
       tooltip: string;
       icon: Uint8Array;
-      iconDark: Uint8Array | null | undefined;
     },
     questions: [] as string[],
     answer,
@@ -231,8 +230,7 @@ function fakeShell(answer = false) {
       s.keeper.href = 'about:blank';
       return s.keeper;
     },
-    createTray: (icon, tooltip, items, onClick, onMenu, iconDark) =>
-      void (s.tray = { items, onClick, onMenu, tooltip, icon, iconDark }),
+    createTray: (icon, tooltip, items, onClick, onMenu) => void (s.tray = { items, onClick, onMenu, tooltip, icon }),
     removeTray: () => void s.trayRemoved++,
     ask: (m) => (s.questions.push(m), Promise.resolve(s.answer)),
     openExternal: (u) => void s.external.push(u),
@@ -284,33 +282,9 @@ Deno.test('start: one window titled AIB on the page, a keeper, a tray, three bin
     assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', 'Quit AIB']);
     const png = trayIconPng();
     assertEquals([...png.slice(1, 4)], [0x50, 0x4e, 0x47], 'a PNG');
-    assertEquals(s.tray?.icon, png, 'the tray gets the icon tray_icon.ts chose (Windows: the theme glyph for the worker tray)');
-    assertEquals(s.tray?.iconDark, null, 'no dark icon given: none passed on');
+    assertEquals(s.tray?.icon, png, 'the tray gets the colour icon tray_icon.ts chose (16 or 32 px)');
   } finally {
     await done();
-  }
-});
-
-Deno.test('start: the dark-mode tray icon (trayIconDark) reaches createTray for Deno.Tray.setIconDark', async () => {
-  const { s, shell } = fakeShell();
-  const dir = await Deno.makeTempDir();
-  try {
-    const dark = trayIconBytes({ art: 'dark', size: 32 });
-    const app = new DesktopApp(shell, {
-      url: 'http://127.0.0.1:8890/',
-      stateDir: dir,
-      trayIcon: trayIconBytes({ art: 'color', size: 32 }),
-      trayIconDark: dark,
-      busyCount: () => Promise.resolve(0),
-      quit: () => Promise.resolve(),
-      saveDelayMs: 0,
-      watchdogMs: 0,
-    });
-    await app.start();
-    assertEquals(s.tray?.iconDark, dark);
-    assertEquals(s.tray?.icon, trayIconBytes({ art: 'color', size: 32 }));
-  } finally {
-    await Deno.remove(dir, { recursive: true });
   }
 });
 

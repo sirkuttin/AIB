@@ -94,6 +94,8 @@ export interface TrayWorkerStart {
 }
 
 export interface WindowsTray {
+  /** The icon handles the worker made: [start icon, ...altIcons] (tests read their pixels). */
+  icons: bigint[];
   /** Deletes the icon now (quitting), so no dead icon is left in the notification area. Never throws. */
   remove(): void;
   /** Adds the icon again after hide(). Never throws. */
@@ -157,6 +159,7 @@ export function startWindowsTray(
         const menu = BigInt(m.menu);
         const icons = m.icons.map((i) => BigInt(i));
         settle({
+          icons,
           remove: () => removeTray(hwnd),
           show: () => postToTray(hwnd, TRAY_SHOW),
           hide: () => postToTray(hwnd, TRAY_HIDE),
