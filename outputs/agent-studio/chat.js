@@ -153,6 +153,8 @@
   const workspace = (c) => (c.cwd || '').split(/[\\/]/).filter(Boolean).pop() || 'Conversation';
   const aliasKey = (c) => c.provider + ':' + (c.sessionId || c.id || c.key);
   const curKey = () => (selected ? aliasKey(selected) : newDraft ? 'new-chat' : null);
+  /* Run in terminal pastes into the open chat's terminal; split side panes name their chat with the same key (data-mirror). */
+  window.RunInTerminalUI?.init({ current: () => (selected ? aliasKey(selected) : '') });
   /* Condensed chat views (views.js / views-ui.js): the choice is kept per chat under its aliasKey (newest 500). Full until a view is chosen. */
   /* The fallback is the Settings default (Full or Chat) for a chat that has no saved choice of its own. */
   const viewStore = window.ChatViews

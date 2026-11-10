@@ -2339,6 +2339,64 @@ aside #connections {
 .copy-ctl .copied {
   color: var(--ok-bright);
 }
+/* Run in terminal (run-terminal-ui.js): an icon button left of Copy in a code block's corner, and at the right end of a
+   collapsed tool row that ran a command. After a click it reads "Pasted" (or "Not pasted") for 2 s; there is no toast. */
+.run-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.run-term {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 24px;
+  height: 19px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-control);
+  color: #c3cadb;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.run-term svg {
+  display: block;
+  flex: none;
+}
+.run-term:hover,
+.run-term:focus-visible {
+  border-color: var(--accent);
+  color: var(--text-bright);
+}
+.run-term:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.run-term.done {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.run-term.failed {
+  border-color: var(--line-control);
+  color: var(--danger-text);
+}
+.tool-run {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  z-index: 1;
+}
+.tool-toggle:has(~ .tool-run) {
+  padding-right: 40px;
+}
+.tool-toggle:has(~ .tool-run.done),
+.tool-toggle:has(~ .tool-run.failed) {
+  padding-right: 96px;
+}
 .copy-code {
   position: absolute;
   top: 4px;

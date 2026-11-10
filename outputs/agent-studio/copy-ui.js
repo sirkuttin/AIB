@@ -483,7 +483,9 @@
       const small = host.querySelector('small'),
         lang = host.copyLang !== undefined ? host.copyLang : small ? small.textContent : '';
       host.classList.add('has-copy');
-      host.append(makeControl(() => fromCode(pre.textContent, lang), 'copy-code'));
+      const ctl = makeControl(() => fromCode(pre.textContent, lang), 'copy-code');
+      host.append(ctl);
+      if (root.RunInTerminalUI) root.RunInTerminalUI.decorate(host, pre, lang, ctl);
     }
     for (const diff of scope.querySelectorAll('.tool-diff')) {
       if (diff.copyDone || typeof diff.copyCode !== 'string' || !diff.copyCode) continue;
