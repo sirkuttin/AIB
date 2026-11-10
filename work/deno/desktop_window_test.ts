@@ -25,7 +25,15 @@ import {
   type Shell,
   type WindowHandle,
 } from '../../outputs/agent-studio/server/desktop/window.ts';
-import { claim, SIGNAL_FILE, takeSignal, watchSignal } from '../../outputs/agent-studio/server/desktop/single_instance.ts';
+import {
+  alreadyRunning,
+  claim,
+  claimFolder,
+  guardDataFolder,
+  SIGNAL_FILE,
+  takeSignal,
+  watchSignal,
+} from '../../outputs/agent-studio/server/desktop/single_instance.ts';
 import {
   ensureStartMenuShortcut,
   lnkMentions,
@@ -482,6 +490,32 @@ Deno.test('single instance: the second claim signals the first, which shows its 
     assert(third.primary, 'a released lock is free again');
     if (third.primary) third.lock.close();
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('one AIB per folder: a desktop launch while a server owns the folder shows a box, opens no window, exits 2', async () => {
+  const dir = await Deno.makeTempDir();
+  const { s, shell } = fakeShell(true);
+  const server = await claimFolder(dir, { mode: 'server', port: 8913 });
+  try {
+    assert(server.primary);
+    let code: number | null = null;
+    await guardDataFolder(dir, {
+      mode: 'desktop',
+      say: () => {},
+      notice: async (m) => void (await shell.ask(m)), // the box (nativeNotice in the app)
+      exit: (c) => {
+        code = c;
+        throw new Error('exit');
+      },
+    }).catch(() => {});
+    assertEquals(code, 2);
+    assertEquals(s.questions, [alreadyRunning(dir, { pid: Deno.pid, mode: 'server', port: 8913 })]);
+    assertEquals([s.windows.length, s.keepers, s.tray], [0, 0, null], 'no second app: no window, keeper or tray');
+    assertEquals(await takeSignal(dir), false);
+  } finally {
+    if (server.primary) server.release();
     await Deno.remove(dir, { recursive: true });
   }
 });

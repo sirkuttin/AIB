@@ -31,7 +31,7 @@ import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
 import { choosePortPair, DesktopApp, portFree, portGiven } from './desktop/window.ts';
-import { claim, watchSignal } from './desktop/single_instance.ts';
+import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startRedirect } from './desktop/serve_address.ts';
@@ -108,6 +108,16 @@ export async function main(argv: string[]): Promise<void> {
   const mcpServers = loadMcp(options, usage); // studio.finish_agent_options: an invalid --mcp-config is a usage error
   await applyStatePaths(options as never, usage, APP_ROOT, !options.stopHost);
   const stateDir = String(options.stateDir);
+  // One AIB per data folder, whatever the mode: a second desktop launch shows the running app's window and exits; anything else
+  // that finds the folder taken says so and exits with code 2 (desktop/single_instance.ts). Before the log, the host or any state.
+  const folderLock = options.stopHost ? null : await guardDataFolder(stateDir, {
+    mode: desktop ? 'desktop' : 'server',
+    port: desktop ? null : options.port,
+    notice: async (message) => {
+      (await import('./desktop/native.ts')).tameStartupWindow();
+      await nativeNotice(message);
+    },
+  });
   // The desktop app logs at INFO unless a level was asked for (window navigations, the keeper, the redirect: evidence for bugs).
   const levelGiven = args.some((a) => a.startsWith('--log-level')) || !!Deno.env.get(log.ENV_LEVEL);
   log.setup('studio', { level: desktop && !levelGiven ? 'INFO' : options.logLevel, stateDir, filename: 'studio.log' });
@@ -119,11 +129,6 @@ export async function main(argv: string[]): Promise<void> {
     Deno.exit(result.stopped || !result.running ? 0 : 2);
   }
   if (desktop) {
-    // One app per data folder: a second launch shows the running app's window and exits before starting anything.
-    if (!(await claim(stateDir)).primary) {
-      console.log('AIB is already running: its window was asked to show.');
-      Deno.exit(0);
-    }
     if (!portGiven(args)) options.port = choosePortPair(portFree); // like the Tauri app: the first free pair from 8777
   }
   let studio: Studio | null = null;
@@ -173,6 +178,7 @@ export async function main(argv: string[]): Promise<void> {
   const server = new WebServer(ctx);
   const port = await server.listen(options.port);
   const url = `http://127.0.0.1:${port}`;
+  await folderLock?.setPort(port);
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
@@ -195,6 +201,7 @@ export async function main(argv: string[]): Promise<void> {
     await ctx.artifacts.stop().catch(() => {});
     await server.close().catch(() => {});
     await host.close().catch(() => {}); // split: detach only; in-process: stops every agent
+    folderLock?.release();
     Deno.exit(0);
   };
   for (const signal of (Deno.build.os === 'windows' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM']) as Deno.Signal[]) {
