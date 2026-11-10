@@ -13,7 +13,7 @@ function folderOf(url: URL): string {
 /** The app folder (two levels above this file: server/core/ -> app root). */
 export const APP_ROOT = folderOf(new URL('../../', import.meta.url));
 
-export const APP_VERSION = '0.1.0-beta.1';
+export const APP_VERSION = '0.1.0-beta.2';
 const [core, pre] = APP_VERSION.split(/-(.*)/s);
 /** What people see: "AIB 0.1.0 beta". */
 export const VERSION_LABEL = 'AIB ' + core + (pre ? ' ' + pre.split('.')[0] : '');

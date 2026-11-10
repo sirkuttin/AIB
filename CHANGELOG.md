@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-beta.2 (beta)
+
+- A terminal for each chat, docked under the message box (ConPTY on Windows, a pty elsewhere), and "Run in terminal" on shell
+  code blocks in agent replies: it pastes the command and never presses Enter.
+- One AIB per data folder: a second copy on the same folder shows the running app or refuses.
+- New app icon; the Windows tray glyph follows the taskbar theme, and its right-click menu (Open AIB, Quit AIB) now works.
+- The agent host keeps its own tray icon while chats run without the app, exits 10 s after it goes idle, and its agents end with it.
+- Updates: Install now waits for a compatible host, confirms the new copy started, keeps the port and survives a crash mid-swap.
+- Message times and Copy always visible; header and card status agree; the narrow drawer stays on top; saved tool rows get a mark.
+- Host messages name the app instead of Python.
+
 ## 0.1.0-beta.1 (beta)
 
 First release of AIB, the Agent Integration Bay. Beta: not code-signed, expect rough edges.
