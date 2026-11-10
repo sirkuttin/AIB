@@ -46,6 +46,33 @@ The built app starts its host with `--tray --exit-unattached-seconds 10` (`main.
 
 **Starting.** If no host runs, the web server spawns one detached (Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, first with `CREATE_BREAKAWAY_FROM_JOB`, falling back without it; elsewhere a new session). Its log is `<state-dir>/agent-host.log`. One host per state dir is enforced by an OS file lock that disappears if the host dies, so two web servers racing to start one end up with one. The host is configured by the flags of the web server that started it (agents, MCP, client terminal/fs, owner folder); a web server that attaches to an already running host with different settings prints a note and the host keeps its own. Use `--stop-host` to apply new settings.
 
+## The keeper (behind a switch, off by default)
+
+With `AIB_KEEPER=1` in the environment of the web server (the host inherits it), agents run in the keeper (`AIB-keeper`, Go, `keeper/`,
+protocol in `keeper/PROTOCOL.md`) instead of as children of the host. Without it nothing below runs and agents are the host's
+children as described above.
+
+* **Start.** The host's Studio starts the keeper for its data folder on the first chat (`<data>/keeper/`; program: `$AIB_KEEPER_BIN`, or
+  `AIB-keeper` next to the app's program, or in a source run a binary built from `keeper/` with Go into the temp folder). Its orphan
+  command is the host's own command line, so with no host attached for 5 s the keeper starts one. Code: `server/keeper/client.ts`
+  (the protocol), `server/keeper/link.ts` (one connection per Studio, one channel per chat, id `chat-<connection id>`).
+* **The record.** The keeper journals everything the agent says and everything AIB writes. AIB adds notes before acting: `chat` (right
+  after the spawn: provider, folder, worktree, command, MCP list), `receipt` (before each `session/prompt`: the page's message id,
+  fingerprint, text), `fsWrite` and `clientTerminal` (before those client capability calls). Every write carries a once-key
+  (`req:<id>`, `resp:<agent id>:<n>`, `prompt:<message id>`, `cancel:<session>:<turn>`), so the keeper refuses a second copy.
+* **Host crash or restart.** The agent keeps running. The next host (`adoptKeeper`, before the automatic reconnect) attaches to each
+  live channel, replays its record through the same `Connection` code with side effects off (nothing written, no client capability
+  run, no hooks, the saved queue untouched), claims the channel and goes on live under the same connection id: the turn, a question
+  waiting for the person, receipts and the queue (unpaused) come back; answers the old host never sent are sent once. Open pages see a
+  new host id and reload the chat list, as after any host restart. A chat the code cannot rebuild stays listed read-only
+  (`readOnly`, `error` says why) and nothing is sent to it; one that was still opening is stopped.
+* **Keeper death.** Its Job Objects end every agent. Each chat closes with "Interrupted: the keeper ... stopped ..." (receipt `error`,
+  never resent) and is reconnected by `session/load` when automatic reconnect is on.
+* **Not yet:** updating AIB while chats run (step 2), terminals in the keeper (step 3), snapshots/truncation of long journals, stable
+  event ids across a rebuild, artifact and Studio-note events (not in the record, so not rebuilt).
+* Tests: `work/deno/keeper_client_test.ts`, `keeper_studio_test.ts` (rebuild at four points of a turn, keeper death),
+  `keeper_crash_e2e_test.ts` (real web server, host and keeper; host killed, then keeper killed).
+
 ## Failure modes
 
 * **Host crash.** The host file stays but its PID is gone and the port refuses. The web server's next call (or heartbeat, within 10 s) starts a new host, at most once per 5 s. Adapters died with the host, so the page sees a new `instanceId` and the recovery list. A request that did get sent to a host that then dies is *not* retried; the browser's own draft/retry rules apply.

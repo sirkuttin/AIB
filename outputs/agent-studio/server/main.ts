@@ -243,7 +243,10 @@ export async function main(argv: string[]): Promise<void> {
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
-  if (studio) studio.startAutoReconnect();
+  if (studio) {
+    await studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are (AIB_KEEPER=1)
+    studio.startAutoReconnect();
+  }
   try { // artifact tool: agents re-read this when Studio restarts on another port (json.dumps spacing, like studio.py)
     await Deno.writeTextFile(`${stateDir}${sep}artifact-web.json`, `{"url": ${JSON.stringify(url)}, "pid": ${Deno.pid}}`);
   } catch { /* as Python: not fatal */ }

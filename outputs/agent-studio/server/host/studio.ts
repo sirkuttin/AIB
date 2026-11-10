@@ -22,8 +22,10 @@ import { Signer, SignInRefused } from '../agents/signin.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, httpEntry } from '../artifacts/mcp_http.ts';
-import { isCompiled, TESTS_DIR } from '../core/app.ts';
-import { getLogger, registerSecret } from '../core/log.ts';
+import { isCompiled, selfCommand, TESTS_DIR } from '../core/app.ts';
+import { type ChannelInfo, type OrphanCommand } from '../keeper/client.ts';
+import { type KeeperChannel, keeperEnabled, KeeperLink } from '../keeper/link.ts';
+import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
 import { HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
@@ -168,6 +170,8 @@ export interface StudioConstruct {
   /** The recovery file's name part (studio-recovery-<port>.json): the agent host passes 'host'. Default: options.port, else 0. */
   port?: number | string | null;
   connectionFactory?: ConnectionFactory | null;
+  /** The keeper link (tests pass their own). undefined: one when AIB_KEEPER=1 and a state folder is set; null: none. */
+  keeper?: KeeperLink | null;
   /** Shared stores (an --in-process web server passes its own, so both read and write one instance). */
   stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
 }
@@ -217,6 +221,8 @@ export class Studio {
   readonly ready: Promise<void>;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #closed = false;
+  /** Agents run in the keeper (AIB_KEEPER=1) and chats are rebuilt from its record after a restart; null: agents are children. */
+  readonly keeper: KeeperLink | null;
   #mcpHttp: ArtifactMcpHttp | null = null;
 
   constructor(options: StudioOptions, construct: StudioConstruct = {}) {
@@ -262,6 +268,12 @@ export class Studio {
     if (this.hasStateDir) artifactKeys.configure(this.stateDir);
     // The command-line flag can only turn it off; the Settings page can too, read here, so a change applies at the next start.
     this.autoReconnect = (options.autoReconnect ?? true) && this.settings.autoReconnect();
+    this.keeper = construct.keeper !== undefined
+      ? construct.keeper
+      : keeperEnabled() && this.hasStateDir
+      ? new KeeperLink({ dataDir: this.stateDir, orphan: orphanCommand() })
+      : null;
+    if (this.keeper) this.keeper.onLost = (channels) => this.#keeperLost(channels);
   }
 
   // ---- hooks on each connection ------------------------------------------------------------------------------------------
@@ -612,6 +624,7 @@ export class Studio {
       }
       const connectionOptions: ConnectionOptions = {};
       if (Object.keys(env).length) connectionOptions.env = env;
+      if (this.keeper) connectionOptions.keeper = this.keeper;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
@@ -621,16 +634,7 @@ export class Studio {
         c.worktree = plan ? { branch: plan.branch, base: plan.base } : { branch: String(record!.branch), base: String(record!.base ?? '') };
         c.projectRoot = plan ? workspace : String(record!.project); // cwd is the worktree, projectRoot the project
       }
-      c.onRelease = (conn) => this.withdraw(conn);
-      c.onTurnEnd = (conn) => this.turnEnded(conn);
-      if (this.liveSync) {
-        const sync = this.liveSync;
-        c.onTurnStart = (conn) => sync.turnStarted(conn);
-        c.contextForPrompt = (conn) => sync.contextFor(conn);
-        c.contextSent = (conn, token) => sync.contextSent(conn, token);
-      }
-      const caps = c.caps as { configure?: (terminal: boolean, fs: 'read' | 'readwrite' | null) => void };
-      caps.configure?.(!!this.options.enableClientTerminal, this.options.enableClientFs ?? null);
+      this.#wire(c);
       c.sessionLease = lease;
       c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree)];
       c.sessionId = resume || null;
@@ -687,6 +691,133 @@ export class Studio {
       throw error;
     }
     return connection!;
+  }
+
+  /** The Studio's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
+  #wire(c: Connection): void {
+    c.onRelease = (conn) => this.withdraw(conn);
+    c.onTurnEnd = (conn) => this.turnEnded(conn);
+    if (this.liveSync) {
+      const sync = this.liveSync;
+      c.onTurnStart = (conn) => sync.turnStarted(conn);
+      c.contextForPrompt = (conn) => sync.contextFor(conn);
+      c.contextSent = (conn, token) => sync.contextSent(conn, token);
+    }
+    const caps = c.caps as { configure?: (terminal: boolean, fs: 'read' | 'readwrite' | null) => void };
+    caps.configure?.(!!this.options.enableClientTerminal, this.options.enableClientFs ?? null);
+  }
+
+  // ---- the keeper: chats that outlive this process -------------------------------------------------------------------------
+  /**
+   * At start (before the automatic reconnect): every chat whose agent still runs in the keeper is rebuilt from the keeper's record
+   * and goes on live, its turn, question and queue included. Nothing is sent again. Returns how many chats were taken over.
+   * Ended channels older than a week are removed; a live channel without a chat note (an AIB that crashed while starting it)
+   * is stopped.
+   */
+  async adoptKeeper(): Promise<number> {
+    const keeper = this.keeper;
+    if (!keeper) return 0;
+    let client;
+    try {
+      client = await keeper.client(false); // only a keeper that already runs: nothing to take over otherwise
+    } catch (error) {
+      log.warning('keeper: could not reach the keeper: %s', errorText(error));
+      return 0;
+    }
+    if (!client) return 0;
+    let adopted = 0;
+    for (const info of await client.list()) {
+      try {
+        if (info.kind !== 'pipe') continue;
+        if (!info.live) {
+          if (info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
+          continue;
+        }
+        const note = await keeper.firstNote(client, info.channel);
+        if (!note || note.t !== 'chat' || !isStr(note.id) || !isStr(note.provider) || !isStr(note.cwd)) {
+          announce('studio', 'keeper: stopping channel %s: it has no chat record', info.channel);
+          await keeper.stopUnknown(client, info.channel);
+          continue;
+        }
+        if (this.connections.has(note.id)) continue;
+        if (await this.#rebuildChat(info, note)) adopted++;
+      } catch (error) {
+        log.exception(error, 'keeper: taking over channel failed');
+      }
+    }
+    if (adopted) announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
+    return adopted;
+  }
+
+  async #rebuildChat(info: ChannelInfo, note: Json): Promise<boolean> {
+    const command = Array.isArray(note.command) ? note.command.map(String) : [];
+    const cwd = String(note.cwd);
+    const provider = String(note.provider);
+    const c = this.connectionFactory(command, cwd, provider, { keeper: this.keeper, id: String(note.id), rebuild: info, start: false });
+    if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
+    c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
+    this.#wire(c);
+    c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
+    c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;
+    c.recovery = this.recovery as never;
+    this.connections.set(c.id, c);
+    const label = `${provider} ${c.sessionId ?? ''} in ${cwd}`.replace('  ', ' ');
+    try {
+      await c.rebuilt;
+    } catch { /* read-only (rebuildError says why) or the keeper went away */ }
+    try {
+      if (c.closed) return false;
+      if (c.rebuildError) {
+        announce('studio', 'keeper: %s stays read-only: %s', label, c.rebuildError);
+        return false;
+      }
+      if (!c.ready || !c.sessionId) {
+        c.error = 'AIB restarted while this chat was opening, so it was stopped. Open it again.';
+        await c.close();
+        return false;
+      }
+      try {
+        c.sessionLease = await new SessionLease(this.stateDir, provider, c.sessionId).acquire();
+      } catch (error) {
+        log.warning('keeper: no session lease for %s: %s', label, errorText(error));
+      }
+      if (this.recovery) {
+        this.recovery.connectionReady(c);
+        const saved = this.recovery.queues?.get(provider, c.sessionId) ?? [];
+        if (saved.length) await c.queueContinue(saved); // the turn never stopped, so neither does its queue
+      }
+      this.announce(c, 'ready');
+      if (this.liveSync) {
+        try {
+          await this.liveSync.chatOpened(c);
+        } catch (error) {
+          log.exception(error, 'Starting live sync failed');
+        }
+      }
+      announce('studio', 'keeper: rebuilt %s (%s)', label, c.busy ? 'turn running' : 'idle');
+      console.error(`Keeper: continued ${label}`);
+      return true;
+    } finally {
+      c.openDone.set();
+    }
+  }
+
+  /** The keeper went away (its agents ended with it): the chats say "Interrupted" and reconnect with session/load, never resent. */
+  #keeperLost(channels: KeeperChannel[]): void {
+    const ids = new Set(channels.map((ch) => ch.id));
+    const chats = [...this.connections.values()].filter((c) => c.channel && ids.has(c.channel.id) && c.sessionId);
+    announce('studio', 'keeper: the keeper stopped; %s chat(s) were interrupted', chats.length);
+    if (!this.store || !this.autoReconnect || this.#closed) return;
+    for (const c of chats) {
+      const item: [string, string, string] = [c.provider, c.sessionId!, c.cwd];
+      const key = pairKey(c.provider, c.sessionId);
+      if (this.reconnectPending.has(key)) continue;
+      this.reconnectPending.add(key);
+      this.reconnectWorkers.push((async () => {
+        for (let waited = 0; !c.closed && waited < 5000; waited += 50) await new Promise((r) => setTimeout(r, 50));
+        await this.reconnectOne(item, RECONNECT_TRIES, 5);
+      })().catch((error) => log.exception(error, 'keeper: reconnecting an interrupted chat failed')));
+    }
   }
 
   /**
@@ -1075,7 +1206,14 @@ export class Studio {
     if (this.owners) this.owners.withdrawAll();
     if (this.store) this.store.markWorkingUnknown();
     if (this.#mcpHttp) await this.#mcpHttp.close();
+    this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
   }
+}
+
+/** How the keeper starts AIB again when no AIB is attached (keeper rule V1): this very process's command line. */
+export function orphanCommand(): OrphanCommand {
+  const self = selfCommand();
+  return { command: self[0], args: [...self.slice(1), ...Deno.args], cwd: Deno.cwd() };
 }
 
 /** secrets.token_urlsafe(32). */
