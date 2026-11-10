@@ -77,20 +77,31 @@ t('split: a web restart mid-turn keeps the turn, its history and its receipts', 
   await until(async () => !(await web2.state(cid)).busy, 'finished turn');
 });
 
-t('split: two web servers share one host and its guards', async () => {
+t('one AIB per data folder: a second serve on the same folder exits 2 with one line; another --state-dir starts', async () => {
+  // Several web servers on one folder each took the host over and restarted it every few seconds (desktop/single_instance.ts).
   await using fx = new Fixture();
-  const first = await fx.startWeb();
-  const second = await fx.startWeb();
-  assertEquals(first.boot.hostPid, second.boot.hostPid);
-  assertEquals(first.instance, second.instance);
-  const cid = await openConversation(first, fx);
-  await until(async () => ((await second.listing()).connections as Json[]).some((c) => c.id === cid), 'visible through the second');
-  await until(async () => ((await (await fx.host())!.call('info')) as Json).webAttached === 2, 'both web servers attached');
-  assertEquals((await first.post('prompt', { id: cid, text: 'wait', clientMessageId: 'a' }))[0], 200);
-  const [status, payload] = await second.post('prompt', { id: cid, text: 'wait', clientMessageId: 'b' });
-  assertEquals(status, 400);
-  assert(String(payload.error).includes('Wait for the current turn'), String(payload.error));
-  await second.post('cancel', { id: cid });
+  await using other = new Fixture();
+  const first = await fx.startWeb(['--host-port', '8946'], { port: 8942 });
+  const owner = JSON.parse(fx.read(`${fx.state}/aib-owner.json`));
+  assertEquals([owner.pid, owner.mode, owner.port], [first.process.pid, 'server', 8942]);
+  const second = await fx.startWeb(['--host-port', '8946'], { port: 8944, wait: false });
+  const status = await Promise.race([second.process.status, sleep(60_000).then(() => null)]);
+  assert(status, 'the second serve exits by itself');
+  assertEquals(status.code, 2);
+  const lines = fx.read(second.logPath).trim().split(/\r?\n/).filter((l) => !l.startsWith('WARNING: '));
+  assertEquals(lines, [
+    `AIB is already running for this data folder (${fx.state}, pid ${first.process.pid}, server on port 8942). ` +
+    'Quit it first, or use --state-dir for a separate copy.',
+  ]);
+  assertEquals((await first.listing()).connections, [], 'the first one is untouched');
+  assertEquals((await fx.hostInfo())!.pid, first.boot.hostPid, 'and so is its host');
+  // Another data folder is another lock (tests and demo copies run side by side).
+  const third = await other.startWeb(['--host-port', '8947'], { port: 8944 });
+  assert(third.boot.hostPid !== first.boot.hostPid);
+  // A crash (no clean shutdown) leaves the owner file behind but frees the folder.
+  await first.kill();
+  const again = await fx.startWeb(['--host-port', '8946'], { port: 8942 });
+  assertEquals(JSON.parse(fx.read(`${fx.state}/aib-owner.json`)).pid, again.process.pid);
 });
 
 t('split: --stop-host refuses while busy, then stops; a new host offers the chat again', async () => {

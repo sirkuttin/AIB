@@ -52,6 +52,7 @@ import {
 import { writeZip } from "../../tools/build.ts";
 import { kernel32, wide } from "../../outputs/agent-studio/server/platform/win32.ts";
 import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
+import { claimFolder } from "../../outputs/agent-studio/server/desktop/single_instance.ts";
 
 const INSTALLER = "AIB-0.1.0-beta.2-windows-x64.zip";
 const PAYLOAD = new TextEncoder().encode("MZ fake installer bytes".repeat(50));
@@ -1083,6 +1084,46 @@ for (const realTar of WINDOWS ? [true, false] : [false]) {
     }
   });
 }
+
+Deno.test("helper: the old app holds the data folder lock until it exits; the new app then takes it (one AIB per folder)", async () => {
+  const c = await windowsCase();
+  const data = Deno.makeTempDirSync({ prefix: "aib-helper-data-" });
+  // The old app: a real process holding <data>/desktop.lock that quits 1.5 s after it took it.
+  const module = new URL("../../outputs/agent-studio/server/desktop/single_instance.ts", import.meta.url).href;
+  const script = `const m = await import(${JSON.stringify(module)});
+    const h = await m.claimFolder(${JSON.stringify(data)}, { mode: "desktop" });
+    console.log(h.primary ? "locked" : "refused");
+    setTimeout(() => Deno.exit(0), 1500);`;
+  const old = new Deno.Command(Deno.execPath(), { args: ["eval", script], stdout: "piped", stderr: "null", stdin: "null" }).spawn();
+  try {
+    const reader = old.stdout.getReader();
+    assertEquals(new TextDecoder().decode((await reader.read()).value!).trim(), "locked");
+    reader.releaseLock();
+    old.stdout.cancel().catch(() => {});
+    assertEquals((await claimFolder(data, { exitWaitMs: 0 })).primary, false, "while the old app runs the folder is taken");
+    const claims: boolean[] = [];
+    const code = await runHelper({ ...c.args, pid: old.pid }, {
+      stamp: STAMP,
+      unpack: (archive: string, dest: string) => jsUnpack(archive, dest),
+      start: async (command: string[]) => { // the new app's first step: the data folder lock
+        c.started.push(command);
+        const held = await claimFolder(data, { mode: "desktop", exitWaitMs: 0 });
+        claims.push(held.primary);
+        if (held.primary) held.release();
+        return { code: held.primary ? null : 2 };
+      },
+    });
+    assertEquals(code, 0);
+    assertEquals(claims, [true], "the helper waited for the old app; its lock was gone");
+    assertEquals((await old.status).code, 0);
+  } finally {
+    try {
+      old.kill("SIGKILL");
+    } catch { /* exited */ }
+    Deno.removeSync(c.dir, { recursive: true });
+    Deno.removeSync(data, { recursive: true });
+  }
+});
 
 Deno.test("helper: the new app exits with an error or cannot start: every rename is undone and the old app starts again", async () => {
   for (const failure of [{ code: 1 } as StartResult, new Error("cannot start")]) {

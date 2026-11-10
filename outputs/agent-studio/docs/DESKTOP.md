@@ -22,9 +22,12 @@ notifications through the web API, updates as "open the installer" instructions)
   `--stop-host`) open no window. With no `--port` it takes the first pair of free ports in a row from 8777 (the page on P, agent-made
   artifact pages on P + 1; `window.ts` `choosePortPair`), starts the web server, which starts the agent host (`AIB host`, the same
   binary), and opens the window on `http://127.0.0.1:<port>/`.
-- **One app per data folder:** the running app holds an OS file lock on `<data>/desktop.lock` for its whole life (the OS releases it
-  if the app crashes). A second launch that cannot take the lock writes `<data>/desktop-show.signal` and exits; the running app sees
-  the file and shows its window (`single_instance.ts`).
+- **One AIB per data folder:** every AIB web server (this app, `AIB serve`, `--in-process`) holds an OS file lock on
+  `<data>/desktop.lock` for its whole life (the OS releases it if the process crashes) and names itself in `<data>/aib-owner.json`
+  (pid, mode, port; removed on quit, ignored when nobody holds the lock). A second app launch writes `<data>/desktop-show.signal` and
+  exits; the running app sees the file and shows its window. If a `serve` owns the folder instead, the launch shows a message box
+  ("AIB is already running for this data folder ... Quit it first, or use --state-dir for a separate copy.") and exits with code 2;
+  a second `serve` prints that line and exits with code 2. Another `--state-dir` is another lock (`single_instance.ts`).
 - **Window and tray:** closing the window quits when no chat is working. When chats are working it asks: OK stops them and quits,
   Cancel keeps them running and AIB stays in the tray. The tray icon (`tray_icon.ts`, the embedded 32x32 icon) has "Open AIB" and
   "Quit AIB"; Quit asks the same question. A window's close cannot be cancelled in `deno desktop`, so a hidden keeper window keeps
