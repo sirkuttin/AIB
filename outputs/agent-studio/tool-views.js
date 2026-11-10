@@ -563,7 +563,9 @@
     };
     if (a.type === 'shell') {
       if (a.description) box.append(make('div', a.description, 'tool-caption'));
-      box.append(codeBlock(a.command, a.shell === 'shell' ? 'bash' : a.shell, a.shell));
+      const cmd = codeBlock(a.command, a.shell === 'shell' ? 'bash' : a.shell, a.shell);
+      cmd.runCommand = a.command; /* run-terminal-ui.js: this block is a command the person may re-run */
+      box.append(cmd);
       chips(a.rest);
       leftover(a.rest);
     } else if (a.type === 'code') {
