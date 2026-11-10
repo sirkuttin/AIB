@@ -45,8 +45,8 @@
   /* Accent: Bay teal, the one accent (primary buttons, links, focus, selection, the active chat). Dark values. */
   --accent: #2bb3a3; /* Accent (original token): primary button fill, focus rings, selection bars, accent borders */
   --on-accent: #0b1f1d; /* Text on an --accent fill (primary buttons, badges) */
-  --link: #5ed6c5; /* Links and accent-coloured text on dark fills */
-  --link-underline: #5ed6c580; /* Link underline at rest */
+  --link: #33bcab; /* Links and accent-coloured text: the most saturated teal that keeps 4.5:1 on every teal fill */
+  --link-underline: #33bcab80; /* Link underline at rest */
   --accent-halo: #2bb3a333; /* Soft accent glow (drop target) */
   --accent-wash: #152e2a; /* Active chat, selected rows, teal hover and active fill */
   --accent-wash-2: #1f423d; /* Stronger teal hover fill */
@@ -71,19 +71,19 @@
   --warn-line: #ad8d47; /* Held and edited queue rows, mismatched setting chips */
   --info: #5aa9ff; /* Former working dot; kept for code on other branches */
 
-  /* Agent status: the icon's agent lights. Each chip is --status-x text on --status-x-bg (4.5:1 or better,
-     checked by work/test_theme_status.js); -line is a 3:1 border on the panels. Always shown with the status word, never colour alone. */
-  --status-working: #ffc247; /* Working: amber text, dot and spinner */
+  /* Agent status: the icon's agent lights. Text, dots and borders use the icon's saturated colours (amber #ffc247, coral #ff7a59,
+     teal #2bb3a3), which keep 4.5:1 as text on every dark surface; chips fill with --status-x-bg. Checked by work/test_theme_status.js. Always shown with the status word, never colour alone. */
+  --status-working: #ffc247; /* Working: the icon's amber, for text, dot and spinner (also Elsewhere · Working, dashed) */
   --status-working-bg: #3a2e14; /* Working chip fill and spinner track */
-  --status-working-line: #8a6a1f; /* Working turn-line border */
-  --status-needs: #ff9a80; /* Needs you: coral text and dot */
+  --status-working-line: #ffc247; /* Working borders: turn line, elsewhere chip */
+  --status-needs: #ff7a59; /* Needs you: the icon's coral, for text, dot and badges */
   --status-needs-bg: #3d1f18; /* Needs-you chip, approval, turn-line and toast fill; text on a coral badge */
-  --status-needs-line: #b5523d; /* Needs-you borders and row outline */
-  --status-needs-halo: #ff9a804d; /* Halo around the needs-you dot */
-  --status-done: #5ed6c5; /* Done / Your turn / unread: teal text and dot */
+  --status-needs-line: #ff7a59; /* Needs-you borders and row outline */
+  --status-needs-halo: #ff7a594d; /* Halo around the needs-you dot */
+  --status-done: #2bb3a3; /* Done / Your turn / unread: the icon's teal, for text and dot */
   --status-done-bg: #12302c; /* Done chip fill */
-  --status-done-line: #2a7c72; /* Your-turn turn-line border, unread row outline */
-  --status-idle: #c9c5bb; /* Idle: grey text and dot ring */
+  --status-done-line: #2bb3a3; /* Your-turn turn-line border, unread row outline */
+  --status-idle: #c9c5bb; /* Idle and unknown (also Elsewhere · Idle, dashed): grey text and dot ring */
   --status-idle-bg: #26272f; /* Idle chip fill */
 
   /* Plan */

@@ -29,7 +29,7 @@
     needs: { tone: 'need', dot: 'd-need' },
     idle: { tone: 'idle', dot: 'd-idle' },
     'not-running': { tone: 'off', dot: 'd-off' },
-    'elsewhere-working': { tone: 'else', dot: 'd-else' },
+    'elsewhere-working': { tone: 'else-work', dot: 'd-else-work' }, // the Working colour with the dashed elsewhere mark
     'elsewhere-idle': { tone: 'else', dot: 'd-else' },
     reconnecting: { tone: 'idle', dot: 'd-idle' },
     opening: { tone: 'idle', dot: 'd-idle' },

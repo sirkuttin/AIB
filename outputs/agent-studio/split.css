@@ -193,6 +193,14 @@ body.split-resizing-y {
 .mirror-status[data-tone='need']::before {
   background: var(--hd-need);
 }
+.mirror-status[data-tone='else-work'] {
+  color: var(--hd-work);
+  border-color: var(--status-working-line);
+}
+.mirror-status[data-tone='else-work']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-work);
+}
 .mirror-status[data-tone='else']::before {
   background: transparent;
   border: 1.5px dashed var(--hd-idle);

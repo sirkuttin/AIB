@@ -1451,7 +1451,8 @@ aside .connection .row-chip {
 aside .connection .row-status.tone-need .row-phrase {
   color: var(--need);
 }
-aside .connection .row-status.tone-work .row-phrase {
+aside .connection .row-status.tone-work .row-phrase,
+aside .connection .row-status.tone-else-work .row-phrase {
   color: var(--status-working);
 }
 aside .connection .row-status.tone-info .row-phrase {
@@ -1785,6 +1786,9 @@ aside .connection.attn-unread:not(.selected) {
 }
 .status-dot.d-off {
   border: 1px dashed #6b7080;
+}
+.status-dot.d-else-work {
+  border: 2px dashed var(--hd-work, var(--status-working));
 }
 .status-dot.d-else {
   border: 2px dashed var(--status-idle);

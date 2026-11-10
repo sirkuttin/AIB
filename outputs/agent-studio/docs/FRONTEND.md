@@ -69,7 +69,7 @@ Rules for the tokens:
 - A token is shared only where the hex was already identical. Near-identical shades (`#d6d9e2` and `#d7d9e3`, say) have separate tokens or stay literal; nothing was merged. Numbered names (`--text-2`, `--accent-wash-3`) are separate roles within a family that look alike; their purpose column says where each appears.
 - `--line`, `--muted` and `--accent` kept their old names and values; they moved here from `chat.css`.
 - `header.css` keeps its own `--hd-work`, `--hd-turn`, `--hd-need`, `--hd-idle` and `--hd-fail`; they point at `--status-working`, `--status-done`, `--status-needs`, `--status-idle` and `--danger`.
-- **Bay teal styling.** One accent, Bay teal: `--accent` fills primary buttons (text `--on-accent`) and draws focus rings and selection bars; accent-coloured text and links use `--link`; the active chat and selected rows use `--accent-wash`. Status uses the icon's agent lights, always next to the status word: Working amber, Needs you coral, Done / Your turn teal, Idle grey (`--status-<name>` text and dot on `--status-<name>-bg`; `-line` borders). Failed stays `--danger`. `--info` and `--warn-bg` are no longer painted here but stay defined for other code. `work/test_theme_status.js` computes the contrast of every pair (4.5:1 text, 3:1 borders and focus rings).
+- **Bay teal styling.** One accent, Bay teal: `--accent` fills primary buttons (text `--on-accent`) and draws focus rings and selection bars; accent-coloured text and links use `--link`; the active chat and selected rows use `--accent-wash`. Status uses the icon's agent lights, always next to the status word: Working amber, Needs you coral, Done / Your turn teal, Idle grey (`--status-<name>` text and dot on `--status-<name>-bg`; `-line` borders). Text, dots and borders use the icon's saturated colours (amber `#ffc247`, coral `#ff7a59`, teal `#2bb3a3`), which pass 4.5:1 as text on every dark surface. Elsewhere · Working keeps the Working colour with a dashed ring (`tone` `else-work`, dot `d-else-work`); Elsewhere · Idle is grey and dashed. Failed stays `--danger`. `--info` and `--warn-bg` are no longer painted here but stay defined for other code. `work/test_theme_status.js` computes the contrast of every pair (4.5:1 text, 3:1 borders and focus rings).
 - **Light theme (later).** The page is dark-only. A light theme redefines the same names (for example under `:root[data-theme='light']`); the approved light values are `--accent` `#0F766E` (white text, links the same), active chat `#0B3F3A` on `#E3F2EF`, and chips Working `#7A4A00` on `#FFF1D6`, Needs you `#A3341A` on `#FFE4DC`, Done `#0B5A53` on `#DDF1EC`, Idle `#4A4740` on `#ECE9E2`.
 - Colours left literal on purpose (about 200 shades used once or twice, `rgba()` forms, the `#000` mask, the custom properties `--need`, `--ws-bg` and `--sel` in `workspace.css`, and the monitor pages `style.css` and `sidebar.css`, which are a separate page that does not load `theme.css`) are not tokens yet. A new colour in a stylesheet should use an existing token when its role matches, or add one to `theme.css`.
 - `copy-ui.js` keeps literal light colours (`#f3f4f6`, `#d9dce1`, `#c5c9d0`, `#555555`). They style HTML put on the clipboard for other applications, not the page, so they must not follow the page theme.
@@ -113,8 +113,8 @@ Rules for the tokens:
 | `--line-field` | `#343746` | Input and popup borders |
 | `--accent` | `#2bb3a3` | Accent (original token): primary button fill, focus rings, selection bars, accent borders |
 | `--on-accent` | `#0b1f1d` | Text on an --accent fill (primary buttons, badges) |
-| `--link` | `#5ed6c5` | Links and accent-coloured text on dark fills |
-| `--link-underline` | `#5ed6c580` | Link underline at rest |
+| `--link` | `#33bcab` | Links and accent-coloured text: the most saturated teal that keeps 4.5:1 on every teal fill |
+| `--link-underline` | `#33bcab80` | Link underline at rest |
 | `--accent-halo` | `#2bb3a333` | Soft accent glow (drop target) |
 | `--accent-wash` | `#152e2a` | Active chat, selected rows, teal hover and active fill |
 | `--accent-wash-2` | `#1f423d` | Stronger teal hover fill |
@@ -136,17 +136,17 @@ Rules for the tokens:
 | `--warn-bg` | `#302a1c` | Former approval and needs-you fill; kept for code on other branches |
 | `--warn-line` | `#ad8d47` | Held and edited queue rows, mismatched setting chips |
 | `--info` | `#5aa9ff` | Former working dot; kept for code on other branches |
-| `--status-working` | `#ffc247` | Working: amber text, dot and spinner |
+| `--status-working` | `#ffc247` | Working: the icon's amber, for text, dot and spinner (also Elsewhere · Working, dashed) |
 | `--status-working-bg` | `#3a2e14` | Working chip fill and spinner track |
-| `--status-working-line` | `#8a6a1f` | Working turn-line border |
-| `--status-needs` | `#ff9a80` | Needs you: coral text and dot |
+| `--status-working-line` | `#ffc247` | Working borders: turn line, elsewhere chip |
+| `--status-needs` | `#ff7a59` | Needs you: the icon's coral, for text, dot and badges |
 | `--status-needs-bg` | `#3d1f18` | Needs-you chip, approval, turn-line and toast fill; text on a coral badge |
-| `--status-needs-line` | `#b5523d` | Needs-you borders and row outline |
-| `--status-needs-halo` | `#ff9a804d` | Halo around the needs-you dot |
-| `--status-done` | `#5ed6c5` | Done / Your turn / unread: teal text and dot |
+| `--status-needs-line` | `#ff7a59` | Needs-you borders and row outline |
+| `--status-needs-halo` | `#ff7a594d` | Halo around the needs-you dot |
+| `--status-done` | `#2bb3a3` | Done / Your turn / unread: the icon's teal, for text and dot |
 | `--status-done-bg` | `#12302c` | Done chip fill |
-| `--status-done-line` | `#2a7c72` | Your-turn turn-line border, unread row outline |
-| `--status-idle` | `#c9c5bb` | Idle: grey text and dot ring |
+| `--status-done-line` | `#2bb3a3` | Your-turn turn-line border, unread row outline |
+| `--status-idle` | `#c9c5bb` | Idle and unknown (also Elsewhere · Idle, dashed): grey text and dot ring |
 | `--status-idle-bg` | `#26272f` | Idle chip fill |
 | `--plan-dot` | `#d7d9e3` | Plan step dots |
 | `--shadow-strong` | `#000a` | Toast, switcher and popover drop shadow |

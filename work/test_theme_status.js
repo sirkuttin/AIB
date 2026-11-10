@@ -46,14 +46,15 @@ const atLeast = (fg, bg, min) => {
   assert.ok(ratio >= min, `${fg} on ${bg} is ${ratio.toFixed(2)}:1, needs ${min}:1`);
 };
 
+// Text and dots: the icon's saturated agent colours (amber, coral, teal); fills: the board's dark chip fills.
 const CHIPS = {
   working: ['#ffc247', '#3a2e14'],
-  needs: ['#ff9a80', '#3d1f18'],
-  done: ['#5ed6c5', '#12302c'],
+  needs: ['#ff7a59', '#3d1f18'],
+  done: ['#2bb3a3', '#12302c'],
   idle: ['#c9c5bb', '#26272f'],
 };
 
-test('the four status chips have the board colours and meet 4.5:1', () => {
+test('the four status chips use the icon colours on the board fills and meet 4.5:1', () => {
   for (const [name, [fg, bg]] of Object.entries(CHIPS)) {
     assert.equal(tokens[`--status-${name}`].toLowerCase(), fg, `--status-${name}`);
     assert.equal(tokens[`--status-${name}-bg`].toLowerCase(), bg, `--status-${name}-bg`);
@@ -87,6 +88,11 @@ test('status chips and dots paint with the status tokens', () => {
     const mirror = declarationsFor(sheet('split.css'), `.mirror-status[data-tone='${t}']`);
     assert.equal(mirror.background, `var(--status-${name}-bg)`, `split pane chip ${t} fill`);
   }
+  // Elsewhere · Working keeps the Working colour, with a dashed ring; Elsewhere · Idle is grey.
+  assert.equal(colour(declarationsFor(header, "#status[data-tone='else-work']").color), tokens['--status-working']);
+  assert.equal(declarationsFor(header, "#status[data-tone='else-work']::before").border, '1.5px dashed var(--hd-work)');
+  assert.equal(colour(declarationsFor(header, "#status[data-tone='else']").color), tokens['--status-idle']);
+  assert.equal(declarationsFor(sheet('workspace.css'), '.status-dot.d-else-work').border, '2px dashed var(--hd-work, var(--status-working))');
   const settings = sheet('settings.css');
   assert.equal(declarationsFor(settings, '.st-status.ok').background, 'var(--status-done-bg)');
   assert.equal(declarationsFor(settings, '.st-status.warn').background, 'var(--status-needs-bg)');

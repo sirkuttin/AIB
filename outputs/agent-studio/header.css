@@ -209,6 +209,16 @@ header #status {
   background: transparent;
   border: 1.5px dashed var(--hd-idle);
 }
+/* Elsewhere · Working: still the Working colour; the dashed ring says it runs in another app */
+#status[data-tone='else-work'],
+#turnStatus[data-tone='else-work'] {
+  color: var(--hd-work);
+}
+#status[data-tone='else-work']::before,
+#turnStatus[data-tone='else-work']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-work);
+}
 #status[data-tone='bad'],
 #turnStatus[data-tone='bad'] {
   color: var(--hd-fail);
@@ -234,6 +244,9 @@ header #status {
   background: var(--status-idle-bg);
   border-color: var(--status-idle-bg);
 }
+#status[data-tone='else-work'] {
+  border-color: var(--status-working-line);
+}
 @keyframes hd-pulse {
   0%,
   100% {
@@ -250,7 +263,8 @@ header #status {
   }
 }
 /* the same colours on the sidebar card's status phrase */
-.tone-work .row-phrase {
+.tone-work .row-phrase,
+.tone-else-work .row-phrase {
   color: var(--hd-work);
 }
 .tone-turn .row-phrase {
