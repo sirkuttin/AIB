@@ -691,7 +691,7 @@ export class ArtifactStore {
     for (const number of [a, b]) {
       texts.push(splitlinesKeepends(decodeReplace(readPrefix(this.versionFile(manifest, number), MAX_SOURCE_BYTES))));
     }
-    let text = unifiedDiff(texts[0], texts[1], `v${a}`, `v${b}`).join('');
+    let text = withNoEolMarkers(unifiedDiff(texts[0], texts[1], `v${a}`, `v${b}`)).join('');
     if (text && !text.endsWith('\n')) text += '\n';
     return { diff: clip(text, MAX_DIFF_CHARS), truncated: pyLen(text) > MAX_DIFF_CHARS };
   }
@@ -707,6 +707,16 @@ export function splitlinesKeepends(text: string): string[] {
   const out: string[] = [];
   for (const match of text.matchAll(LINE_BREAKS)) if (match[0]) out.push(match[0]);
   return out;
+}
+
+const ENDS_WITH_BREAK = new RegExp(`[${BREAKS}]$`);
+
+/**
+ * A last line without a line break gets one, followed by the "\ No newline at end of file" line, as `diff -u` writes it. Without
+ * this the old and the new last line were glued into one line ("-old+new") and the counts were wrong (Python: the same in diff()).
+ */
+export function withNoEolMarkers(lines: string[]): string[] {
+  return lines.map((line) => (line && !ENDS_WITH_BREAK.test(line) ? line + '\n\\ No newline at end of file\n' : line));
 }
 
 type Block = [number, number, number];

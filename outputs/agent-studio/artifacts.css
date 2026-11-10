@@ -24,6 +24,8 @@
 }
 .ar-bar[hidden],
 .ar-foot[hidden],
+.ar-stage[hidden],
+.ar-fresh[hidden],
 .ar-empty[hidden],
 .ar-avail[hidden],
 .ar-note[hidden],
@@ -93,6 +95,7 @@
 .ar-pick-title {
   flex: 1 1 auto;
   min-width: 0;
+  line-height: 16px; /* the button's line-height 1 clipped descenders ("Demo paqe", QA c1) */
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -138,6 +141,29 @@
   background: #3a2d12;
   color: #f0c36a;
   border-bottom: 1px solid #5a4620;
+}
+/* "New: <title> · Open": a new artifact arrived while you look at another one (QA m2). Quiet: the viewer stays where it is. */
+.ar-fresh {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-5);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.ar-fresh-t {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ar-fresh .ar-switch {
+  flex: 0 0 auto;
+  color: var(--accent);
 }
 .ar-switch {
   padding: 0 4px;
@@ -198,7 +224,8 @@
     12px/18px Consolas,
     'Cascadia Mono',
     monospace;
-  white-space: pre;
+  white-space: pre-wrap; /* long lines wrap: no single endless line (QA c6) */
+  overflow-wrap: anywhere;
   color: #cfd2dc;
   tab-size: 4;
 }

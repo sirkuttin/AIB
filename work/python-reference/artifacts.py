@@ -321,7 +321,9 @@ class ArtifactStore:
         for number in (a, b):
             with open(self.version_file(manifest, number), 'rb') as handle:
                 texts.append(handle.read(MAX_SOURCE_BYTES).decode('utf-8', 'replace').splitlines(keepends=True))
-        text = ''.join(difflib.unified_diff(texts[0], texts[1], f'v{a}', f'v{b}'))
+        # A last line without a line break gets one plus the "\ No newline at end of file" line (else "-old+new" is glued).
+        text = ''.join(line + '\n\\ No newline at end of file\n' if line and line.splitlines() == [line] else line
+                       for line in difflib.unified_diff(texts[0], texts[1], f'v{a}', f'v{b}'))
         if text and not text.endswith('\n'):
             text += '\n'
         return {'diff': text[:MAX_DIFF_CHARS], 'truncated': len(text) > MAX_DIFF_CHARS}

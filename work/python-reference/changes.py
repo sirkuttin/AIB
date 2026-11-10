@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import threading
 
-MAX_FILES = 300                      # files listed; the rest only counted
+MAX_FILES = 300                      # files listed per page (offset picks the page); totals count every file
 MAX_DIFF_BYTES = 200 * 1024          # per-file diff (and untracked file read) cap
 MAX_LIST_BYTES = 4 * 1024 * 1024     # status / numstat output cap
 MAX_LINE_CHARS = 2000                # a diff line longer than this is cut
@@ -242,15 +242,53 @@ def branch_entries(top, prefix, base):
     return entries, cut or cut2
 
 
-def get_changes(cwd, base_commit=None):
+class _Pager:
+    """One page of files and the totals of all of them (lines of new files off this page are not read: totals.partial)."""
+
+    def __init__(self, offset):
+        self.offset, self.files, self.total, self.added, self.removed, self.partial = offset, [], 0, 0, 0, False
+
+    def take(self):
+        index = self.total
+        self.total += 1
+        return self.offset <= index < self.offset + MAX_FILES
+
+    def add(self, item):
+        self.files.append(item)
+        self.added += item['added']
+        self.removed += item['removed']
+        if item.get('partial'):
+            self.partial = True
+
+    def skip(self, stat):
+        if stat:
+            self.added += stat[0]
+            self.removed += stat[1]
+        else:
+            self.partial = True
+
+    def result(self, scope, top, prefix, cut):
+        totals = {'files': self.total, 'added': self.added, 'removed': self.removed}
+        if self.partial:
+            totals['partial'] = True
+        truncated = bool(cut) or self.offset + len(self.files) < self.total
+        return {'git': True, 'scope': scope, 'root': top, 'prefix': prefix, 'files': self.files, 'totals': totals,
+                'filesTotal': self.total, 'offset': self.offset, 'truncated': truncated}
+
+
+def get_changes(cwd, base_commit=None, offset=0):
     """The file list for the folder's uncommitted changes. {'git': False} when the folder is not in a git work tree.
     With base_commit (a worktree chat's recorded base) the scope is 'branch': the working tree against that commit."""
     found = locate(cwd)
     if not found:
         return {'git': False}
     top, prefix, base = found
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        offset = 0
     if base_commit and commit_exists(top, base_commit):
-        return _get_branch_changes(top, prefix, base_commit)
+        return _get_branch_changes(top, prefix, base_commit, offset)
     scope = ['--', prefix.rstrip('/')] if prefix else []
     raw, cut, code = run_git(['status', '--porcelain=v1', '-z', '--untracked-files=all', *scope], top)
     if code != 0 and not cut:
@@ -258,16 +296,13 @@ def get_changes(cwd, base_commit=None):
     entries = parse_status(raw)
     nums, _, ncode = run_git(['diff', base, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', *scope], top)
     stats = parse_numstat(nums) if ncode in (0, 1) or ncode is None else {}
-    truncated = cut
-    files = []
-    total = 0
+    page = _Pager(offset)
     for xy, path, old in entries:
         letter = status_letter(xy)
         if letter != 'U' and path not in stats:
             continue   # e.g. added then deleted again: nothing against HEAD
-        total += 1
-        if len(files) >= MAX_FILES:
-            truncated = True
+        if not page.take():
+            page.skip(None if letter == 'U' else stats[path])
             continue
         item = {'path': path, 'status': letter, 'added': 0, 'removed': 0, 'binary': False}
         if old:
@@ -279,23 +314,19 @@ def get_changes(cwd, base_commit=None):
                 item['partial'] = True
         else:
             item['added'], item['removed'], item['binary'] = stats[path]
-        files.append(item)
-    totals = {'files': len(files), 'added': sum(f['added'] for f in files), 'removed': sum(f['removed'] for f in files)}
-    return {'git': True, 'scope': 'uncommitted', 'root': top, 'prefix': prefix, 'files': files, 'totals': totals,
-            'filesTotal': total, 'truncated': truncated}
+        page.add(item)
+    return page.result('uncommitted', top, prefix, cut)
 
 
-def _get_branch_changes(top, prefix, base):
+def _get_branch_changes(top, prefix, base, offset=0):
     scope = ['--', prefix.rstrip('/')] if prefix else []
-    entries, truncated = branch_entries(top, prefix, base)
+    entries, cut = branch_entries(top, prefix, base)
     nums, _, ncode = run_git(['diff', base, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', *scope], top)
     stats = parse_numstat(nums) if ncode in (0, 1) or ncode is None else {}
-    files = []
-    total = 0
+    page = _Pager(offset)
     for letter, path, old, untracked in entries:
-        total += 1
-        if len(files) >= MAX_FILES:
-            truncated = True
+        if not page.take():
+            page.skip(None if untracked else stats.get(path, (0, 0, False)))
             continue
         item = {'path': path, 'status': letter, 'added': 0, 'removed': 0, 'binary': False}
         if old:
@@ -307,10 +338,8 @@ def _get_branch_changes(top, prefix, base):
                 item['partial'] = True
         else:
             item['added'], item['removed'], item['binary'] = stats.get(path, (0, 0, False))
-        files.append(item)
-    totals = {'files': len(files), 'added': sum(f['added'] for f in files), 'removed': sum(f['removed'] for f in files)}
-    return {'git': True, 'scope': 'branch', 'root': top, 'prefix': prefix, 'files': files, 'totals': totals,
-            'filesTotal': total, 'truncated': truncated}
+        page.add(item)
+    return page.result('branch', top, prefix, cut)
 
 
 def parse_hunks(text):

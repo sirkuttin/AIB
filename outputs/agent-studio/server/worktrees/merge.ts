@@ -1096,11 +1096,11 @@ export async function status(studio: MergeStudio, chatId: unknown): Promise<Reco
     }
     const recorded = Array.isArray(chat.record.mergeConflicts) ? (chat.record.mergeConflicts as string[]) : [];
     if ((await mergeInProgress(chat.wt)) || (recorded.length && (await checkResolution(chat, recorded)))) {
-      return { ...out, enabled: false, state: 'conflicts', message: WAITING };
+      return { ...out, enabled: false, state: 'conflicts', message: WAITING, files: recorded };
     }
     const clashes = openClashes(chat.record); // read only: Merge itself clears the resolved ones
     if (clashes.length) {
-      return { ...out, enabled: false, state: 'conflicts', message: clashLine(clashes) };
+      return { ...out, enabled: false, state: 'conflicts', message: clashLine(clashes), files: clashes };
     }
     if (!(await wt.touchedPaths(chat.wt, chat.user)).length) {
       return { ...out, enabled: false, state: 'nochanges', message: 'Nothing to merge yet' };

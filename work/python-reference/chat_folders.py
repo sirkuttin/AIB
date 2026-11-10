@@ -84,7 +84,8 @@ def changes_response(studio, path, args, headers):
     try:
         if path == '/api/live/changes/file':
             return 200, changes.get_file_diff(cwd, args.get('path', [''])[0], base_commit=base or None)
-        result = changes.get_changes(cwd, base_commit=base or None)
+        offset = args.get('offset', ['0'])[0]
+        result = changes.get_changes(cwd, base_commit=base or None, offset=int(offset) if offset.isdigit() else 0)
         if record and isinstance(result, dict) and result.get('git'):
             result['worktree'] = {'branch': record.get('branch', '')}   # the page offers Discard for a chat with its own branch
         return 200, result

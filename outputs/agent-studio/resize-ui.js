@@ -231,7 +231,8 @@
         activity: sizes.activity,
         sideOn,
         actOn,
-        subchat: body.classList.contains('subchat-open'),
+        /* An open history widens the column only on the Activity tab (on Changes / Artifacts it is hidden: changes-ui.js sets rc-other-tab). */
+        subchat: body.classList.contains('subchat-open') && !body.classList.contains('rc-other-tab'),
         expand: body.classList.contains('changes-wide'),
         scale: k,
       });
@@ -503,8 +504,25 @@
       layout();
       if (id === 'composer') regrow();
     }
+    /* QA c7: a drag past the minimum collapses the column, its handle goes away and the drag ends while the button is still down:
+       the rest of that press must not select text. Text selection stays off from the press on a handle until the button is up. */
+    let pressHeld = false;
+    if (doc && doc.addEventListener) {
+      doc.addEventListener('selectstart', (e) => {
+        if (pressHeld || dragging) e.preventDefault();
+      });
+      const release = () => {
+        pressHeld = false;
+      };
+      win.addEventListener('pointerup', release, true);
+      win.addEventListener('pointercancel', release, true);
+      win.addEventListener('blur', release);
+    }
     function wire(id, h) {
-      h.addEventListener('pointerdown', (e) => startDrag(id, e));
+      h.addEventListener('pointerdown', (e) => {
+        if (e.button === undefined || e.button === 0) pressHeld = true;
+        startDrag(id, e);
+      });
       h.addEventListener('pointermove', moveDrag);
       h.addEventListener('pointerup', (e) => {
         if (dragging && e.pointerId === dragging.pointerId) endDrag(false);

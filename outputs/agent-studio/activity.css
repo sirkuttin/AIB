@@ -152,6 +152,11 @@ body {
   color: var(--muted);
   border-radius: 4px;
 }
+/* A clock: the list of finished processes (QA m12; it used the refresh arrow before). */
+#commandHistoryToggle .history-ico {
+  display: block;
+  margin: auto;
+}
 #commandHistoryToggle:hover,
 #commandHistoryToggle[aria-pressed='true'] {
   color: var(--text);

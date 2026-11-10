@@ -8,7 +8,7 @@ import { clip } from '../core/py.ts';
 import { which } from '../platform/pypath.ts';
 import * as osp from '../platform/ospath.ts';
 
-export const MAX_FILES = 300; // files listed; the rest only counted
+export const MAX_FILES = 300; // files listed per page (offset picks the page); totals count every file
 export const MAX_DIFF_BYTES = 200 * 1024; // per-file diff (and untracked file read) cap
 export const MAX_LIST_BYTES = 4 * 1024 * 1024; // status / numstat output cap
 export const MAX_LINE_CHARS = 2000; // a diff line longer than this is cut
@@ -329,8 +329,9 @@ export interface ChangesResult {
   root?: string;
   prefix?: string;
   files?: FileItem[];
-  totals?: { files: number; added: number; removed: number };
+  totals?: { files: number; added: number; removed: number; partial?: boolean };
   filesTotal?: number;
+  offset?: number;
   truncated?: boolean;
   worktree?: { branch: string };
 }
@@ -342,74 +343,91 @@ function untrackedItem(item: FileItem, top: string, path: string): void {
   if (cutFile) item.partial = true;
 }
 
-function summary(
-  scope: 'uncommitted' | 'branch',
-  top: string,
-  prefix: string,
-  files: FileItem[],
-  total: number,
-  truncated: boolean,
-): ChangesResult {
-  const totals = { files: files.length, added: files.reduce((s, f) => s + f.added, 0), removed: files.reduce((s, f) => s + f.removed, 0) };
-  return { git: true, scope, root: top, prefix, files, totals, filesTotal: total, truncated };
+/** One page of files and the totals of all of them (lines of new files off this page are not read: totals.partial). */
+class Pager {
+  readonly files: FileItem[] = [];
+  total = 0;
+  added = 0;
+  removed = 0;
+  partial = false;
+  constructor(readonly offset: number) {}
+  /** True when the file at the next index is on this page (counted either way). */
+  take(): boolean {
+    const index = this.total++;
+    return index >= this.offset && index < this.offset + MAX_FILES;
+  }
+  add(item: FileItem): void {
+    this.files.push(item);
+    this.added += item.added;
+    this.removed += item.removed;
+    if (item.partial) this.partial = true;
+  }
+  /** A file off this page: counted from numstat, or (a new file) not read at all. */
+  skip(stat: Stat | null): void {
+    if (stat) {
+      this.added += stat[0];
+      this.removed += stat[1];
+    } else this.partial = true;
+  }
+  result(scope: 'uncommitted' | 'branch', top: string, prefix: string, cut: boolean): ChangesResult {
+    const totals: ChangesResult['totals'] = { files: this.total, added: this.added, removed: this.removed };
+    if (this.partial) totals.partial = true;
+    const truncated = cut || this.offset + this.files.length < this.total; // more files after this page (or git's output was cut)
+    return { git: true, scope, root: top, prefix, files: this.files, totals, filesTotal: this.total, offset: this.offset, truncated };
+  }
 }
 
 /**
  * The file list for the folder's uncommitted changes. {git: false} when the folder is not in a git work tree. With baseCommit (a
  * worktree chat's recorded base) the scope is 'branch': the working tree against that commit.
  */
-export async function getChanges(cwd: string, baseCommit: string | null = null): Promise<ChangesResult> {
+export async function getChanges(cwd: string, baseCommit: string | null = null, offset = 0): Promise<ChangesResult> {
   const found = await locate(cwd);
   if (!found) return { git: false };
   const [top, prefix, base] = found;
-  if (baseCommit && await commitExists(top, baseCommit)) return await getBranchChanges(top, prefix, baseCommit);
+  offset = Math.max(0, Math.floor(Number(offset) || 0));
+  if (baseCommit && await commitExists(top, baseCommit)) return await getBranchChanges(top, prefix, baseCommit, offset);
   const scope = prefix ? ['--', prefix.replace(/\/+$/, '')] : [];
   const [raw, cut, code] = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all', ...scope], top);
   if (code !== 0 && !cut) throw new ChangesError('git status failed', 'git_failed');
   const entries = parseStatus(raw);
   const [nums, , ncode] = await runGit(['diff', base, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', ...scope], top);
   const stats = ncode === 0 || ncode === 1 || ncode === null ? parseNumstat(nums) : new Map<string, Stat>();
-  let truncated = cut;
-  const files: FileItem[] = [];
-  let total = 0;
+  const page = new Pager(offset);
   for (const [xy, path, old] of entries) {
     const letter = statusLetter(xy);
     if (letter !== 'U' && !stats.has(path)) continue; // e.g. added then deleted again: nothing against HEAD
-    total++;
-    if (files.length >= MAX_FILES) {
-      truncated = true;
+    if (!page.take()) {
+      page.skip(letter === 'U' ? null : stats.get(path)!);
       continue;
     }
     const item: FileItem = { path, status: letter, added: 0, removed: 0, binary: false };
     if (old) item.oldPath = old;
     if (letter === 'U') untrackedItem(item, top, path);
     else [item.added, item.removed, item.binary] = stats.get(path)!;
-    files.push(item);
+    page.add(item);
   }
-  return summary('uncommitted', top, prefix, files, total, truncated);
+  return page.result('uncommitted', top, prefix, cut);
 }
 
-async function getBranchChanges(top: string, prefix: string, base: string): Promise<ChangesResult> {
+async function getBranchChanges(top: string, prefix: string, base: string, offset: number): Promise<ChangesResult> {
   const scope = prefix ? ['--', prefix.replace(/\/+$/, '')] : [];
   const [entries, cut] = await branchEntries(top, prefix, base);
-  let truncated = cut;
   const [nums, , ncode] = await runGit(['diff', base, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', ...scope], top);
   const stats = ncode === 0 || ncode === 1 || ncode === null ? parseNumstat(nums) : new Map<string, Stat>();
-  const files: FileItem[] = [];
-  let total = 0;
+  const page = new Pager(offset);
   for (const [letter, path, old, untracked] of entries) {
-    total++;
-    if (files.length >= MAX_FILES) {
-      truncated = true;
+    if (!page.take()) {
+      page.skip(untracked ? null : stats.get(path) ?? [0, 0, false]);
       continue;
     }
     const item: FileItem = { path, status: letter, added: 0, removed: 0, binary: false };
     if (old) item.oldPath = old;
     if (untracked) untrackedItem(item, top, path);
     else [item.added, item.removed, item.binary] = stats.get(path) ?? [0, 0, false];
-    files.push(item);
+    page.add(item);
   }
-  return summary('branch', top, prefix, files, total, truncated);
+  return page.result('branch', top, prefix, cut);
 }
 
 export interface Hunk {

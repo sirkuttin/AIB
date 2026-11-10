@@ -422,20 +422,39 @@
       canOpen: !!id && !failed,
     };
   }
-  /* A file written by a tool row inside the project's outputs/ folder: the artifact the watcher made for it (if it exists yet). */
-  function outputsCardModel(path, artifacts, nowMs) {
+  /* The version a write made: the first version saved at or after the write (the watcher saves it a moment later), else the
+     newest one before it. Without a time (a replayed row), the n-th write card of the same file is version n. Never above latest. */
+  function writtenVersion(versions, at, ordinal, latest) {
+    latest = Math.max(1, num(latest) || 1);
+    const t = Number(at),
+      vs = (Array.isArray(versions) ? versions : [])
+        .filter((v) => num(v.n) && Number(v.at) > 0)
+        .sort((a, b) => num(a.n) - num(b.n));
+    if (t > 0 && vs.length) {
+      const after = vs.find((v) => Number(v.at) >= t - 2);
+      if (after) return Math.min(latest, num(after.n));
+      return Math.min(latest, num(vs[vs.length - 1].n));
+    }
+    if (num(ordinal)) return Math.min(latest, num(ordinal));
+    return latest;
+  }
+  /* A file written by a tool row inside the project's outputs/ folder: the artifact the watcher made for it (if it exists yet).
+     `version` is the version that write made (an old card keeps showing it), else the latest. */
+  function outputsCardModel(path, artifacts, nowMs, version) {
     const art = (artifacts || []).find((a) => sameFile(a.sourcePath, path));
     if (!art) return null;
     const info = kindInfo(art.kind),
-      v = num(art.version) || 1,
-      t = relTime(art.updatedAt, nowMs);
+      latest = num(art.version) || 1,
+      v = version >= 1 && version < latest ? Math.floor(version) : latest,
+      t = v === latest ? relTime(art.updatedAt, nowMs) : '';
     return {
       id: art.id,
       kind: art.kind,
       badge: info.badge,
       title: art.title,
       version: v,
-      sub: [info.name, 'v' + v, t ? 'updated ' + t : ''].filter(Boolean).join(' · '),
+      latest,
+      sub: [info.name, 'v' + v, t ? 'updated ' + t : v < latest ? 'now v' + latest : ''].filter(Boolean).join(' · '),
       diffFrom: v >= 2 ? v - 1 : null,
       canOpen: true,
     };
@@ -477,6 +496,9 @@
       return false;
     }
   }
+
+  /* Left edge of a popover anchored at `left`: moved left as far as needed to stay inside a view `width` wide (4 px margins). */
+  const placeLeft = (left, popWidth, width) => Math.max(4, Math.min(num(left), num(width) - num(popWidth) - 4));
 
   /* ---- unified diff -> hunks ------------------------------------------------------------------------------------------- */
   /* [{name, hunks:[{header, lines:[' ctx','+add','-del','\\ note']}]}] */
@@ -570,6 +592,8 @@
     parseResult,
     cardModel,
     outputsCardModel,
+    writtenVersion,
+    placeLeft,
     writeTarget,
     artifactEvent,
     eventHintsArtifact,
@@ -604,6 +628,7 @@
     renderSeq: 0,
     stageKey: '',
     reloadPending: false,
+    fresh: '',
   };
   let ui = null;
   const el = (tag, cls, txt) => {
@@ -656,11 +681,16 @@
   }
 
   /* -- list and live updates -- */
-  /* Until the user picks something, the viewer follows the first artifact (pinned first, then newest). */
+  /* The viewer shows the first artifact (pinned first, then newest) when it shows nothing yet. While you can see it, it never jumps
+     on its own (QA m2): a new artifact is announced in a quiet "New: <title> · Open" bar instead. Out of sight and untouched, it
+     still follows the newest one. */
+  const following = () => !S.visible && !S.userPicked && S.mode === 'page';
   function setList(next) {
+    const before = new Set(S.list.map((a) => a.id));
     S.list = orderArtifacts(next);
     const first = (S.list[0] && S.list[0].id) || '';
-    if (!known(S.selId) || (!S.userPicked && S.selId !== first && !S.extras[S.selId])) {
+    const added = before.size ? S.list.filter((a) => !before.has(a.id)) : [];
+    if (!known(S.selId) || (following() && S.selId !== first && !S.extras[S.selId])) {
       if (S.selId !== first) {
         S.selId = first;
         S.picked = null;
@@ -668,7 +698,11 @@
         S.cmp = null;
         S.dirty = true;
       }
+    } else if (added.length) {
+      const newest = added.slice().sort((a, b) => num(b.updatedAt) - num(a.updatedAt))[0];
+      if (newest.id !== S.selId) S.fresh = newest.id;
     }
+    if (S.fresh && (S.fresh === S.selId || !known(S.fresh))) S.fresh = '';
     paintCount();
     relinkAll();
     refreshCards();
@@ -682,6 +716,7 @@
     const next = Object.assign({}, old, summary);
     const versionChanged = !!old && num(old.version) !== num(next.version);
     if (versionChanged) delete S.items[summary.id];
+    if (versionChanged) holdCompare(summary.id);
     if (inList < 0 && S.extras[summary.id]) {
       S.extras[summary.id] = next;
       paintAll();
@@ -694,6 +729,11 @@
     else list[inList] = next;
     setList(list);
     if (summary.id === S.selId && versionChanged && S.picked == null) paintStage('update');
+  }
+  /* A comparison that was open stays on its two versions when a newer one arrives: "vN is available · Switch" offers the new one. */
+  function holdCompare(id) {
+    if (id !== S.selId || S.mode !== 'compare' || !S.cmp || S.picked != null) return;
+    S.picked = num(S.cmp.to) || null;
   }
   async function loadList() {
     if (!S.mounted || !S.chat.id || S.loading || Date.now() < S.failUntil) return;
@@ -710,6 +750,7 @@
       if (next.map((a) => a.id + ':' + a.version + ':' + (a.pinned ? 1 : 0) + ':' + a.title).join('|') !== prior) {
         const versionChanged = !!cur && num(cur.version) !== num(sel.version);
         if (versionChanged) delete S.items[cur.id];
+        if (versionChanged) holdCompare(cur.id);
         setList(next);
         if (versionChanged && S.picked == null) paintStage('update');
       }
@@ -779,6 +820,7 @@
       S.failUntil = 0;
       S.dirty = true;
       S.stageKey = '';
+      S.fresh = '';
       closePop();
       paintCount();
       paintAll();
@@ -845,6 +887,7 @@
     }
     S.selId = id;
     S.userPicked = true;
+    if (S.fresh === id) S.fresh = '';
     S.mode = 'page';
     S.cmp = null;
     const latest = num(known(id).version) || 1;
@@ -862,6 +905,7 @@
     return true;
   }
   function selectArtifact(id) {
+    if (S.fresh === id) S.fresh = '';
     if (id === S.selId) return;
     S.selId = id;
     S.userPicked = true;
@@ -910,10 +954,12 @@
     const a = current(),
       none = !a;
     ui.bar.hidden = none;
-    ui.foot.hidden = none;
+    ui.foot.hidden = none || S.mode !== 'page' || viewMode(a.kind) !== 'page'; // the sandbox line is about the page view (QA c6)
+    ui.stage.hidden = none; // the empty text starts at the top, no blank band above it (QA c3)
     ui.empty.hidden = !none;
     if (none) {
       ui.avail.hidden = true;
+      ui.fresh.hidden = true;
       return;
     }
     const plain = pickerIsPlain(S.list.length ? S.list : [a]);
@@ -939,6 +985,9 @@
       ui.availText.textContent = av.text + ' · ';
       ui.switchBtn.textContent = av.action;
     }
+    const fresh = S.fresh ? known(S.fresh) : null;
+    ui.fresh.hidden = !fresh;
+    if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
     ui.more.setAttribute('aria-label', 'More');
   }
   function paintAll() {
@@ -1168,7 +1217,8 @@
       ui.pop.style.right = Math.max(4, (vr.right - ar.right) / k) + 'px';
     } else {
       ui.pop.style.right = 'auto';
-      ui.pop.style.left = Math.max(4, (ar.left - vr.left) / k) + 'px';
+      // QA m1: a menu wider than the room right of its button moves left, so it never runs off the column's edge
+      ui.pop.style.left = placeLeft((ar.left - vr.left) / k, ui.pop.offsetWidth, v.offsetWidth) + 'px';
     }
     ui.pop.style.maxHeight = Math.max(120, v.offsetHeight - top - 8) + 'px';
   }
@@ -1258,7 +1308,7 @@
     }
     ui.pop.replaceChildren(frag);
     ui.pop.setAttribute('aria-label', 'Versions');
-    placePop(ui.ver, false);
+    placePop(ui.ver, false); // again: the rows made it wider than the Loading line
     focusFirst();
   }
   function openMenu() {
@@ -1329,6 +1379,7 @@
       S.mode = S.mode === 'source' ? 'page' : 'source';
       S.cmp = null;
       S.dirty = true;
+      paintBar();
       paintStage('open');
     } else if (id === 'compare') {
       if (S.mode === 'compare') {
@@ -1339,6 +1390,7 @@
         S.cmp = { from: Math.max(1, ver - 1), to: ver };
       }
       S.dirty = true;
+      paintBar();
       paintStage('open');
     } else if (id === 'restore') {
       try {
@@ -1409,10 +1461,31 @@
 
   /* -- cards in the chat stream -- */
   const cardSig = (m) => (m ? [m.id, m.title, m.version, m.sub, m.canOpen].join('|') : '');
+  /* QA m3: an old card shows the version its turn wrote, not the newest. Needs the version times (one item read per artifact). */
+  const itemAsked = new Set();
+  function cardVersion(card) {
+    const art = S.list.find((a) => sameFile(a.sourcePath, card.dataset.src));
+    if (!art) return 0;
+    const latest = num(art.version) || 1;
+    if (latest <= 1) return 1;
+    const item = S.items[art.id],
+      at = Number(card.dataset.time) || 0;
+    if (at > 0 && !(item && Array.isArray(item.versions))) {
+      if (!itemAsked.has(art.id + ':' + latest)) {
+        itemAsked.add(art.id + ':' + latest);
+        loadItem(art.id).then(() => refreshCards());
+      }
+      return latest;
+    }
+    const same = [...doc.querySelectorAll('.art-card')].filter(
+      (c) => c.dataset.src && sameFile(c.dataset.src, art.sourcePath),
+    );
+    return writtenVersion(item && item.versions, at, same.indexOf(card) + 1, latest);
+  }
   function paintCard(card) {
     const d = card.dataset;
     let m = null;
-    if (d.src) m = outputsCardModel(d.src, S.list);
+    if (d.src) m = outputsCardModel(d.src, S.list, undefined, cardVersion(card));
     else if (d.op)
       m = cardModel(
         {
@@ -1443,7 +1516,9 @@
     openBtn.type = 'button';
     openBtn.disabled = !m.canOpen;
     openBtn.setAttribute('aria-label', 'Open ' + m.title + ' in the Artifacts viewer');
-    openBtn.addEventListener('click', () => open(m.id));
+    openBtn.addEventListener('click', () =>
+      open(m.id, m.latest && m.version < m.latest ? { version: m.version } : undefined),
+    );
     acts.append(openBtn);
     if (m.diffFrom) {
       const df = el('button', 'art-btn', 'Diff from v' + m.diffFrom);
@@ -1461,8 +1536,10 @@
     card.setAttribute('role', 'group');
     card.setAttribute('aria-label', 'Artifact');
     const d = card.dataset;
-    if (data.src) d.src = data.src;
-    else {
+    if (data.src) {
+      d.src = data.src;
+      if (data.time) d.time = String(data.time);
+    } else {
       d.op = data.op;
       d.id = data.id || '';
       d.title = data.title || '';
@@ -1537,7 +1614,7 @@
         const path = absolutize(written, S.chat.cwd);
         if (S.chat.cwd && isOutputsPath(path, S.chat.cwd)) {
           const wrap = el('div', 'art-tool');
-          wrap.append(box, makeCard({ src: path }));
+          wrap.append(box, makeCard({ src: path, time: Number(row && row.time) || 0 }));
           return wrap;
         }
         if (!S.chat.cwd || relPath(path, S.chat.cwd) !== null) box.append(previewButton(path));
@@ -1744,6 +1821,13 @@
     const switchBtn = el('button', 'ar-switch', 'Switch');
     switchBtn.type = 'button';
     avail.append(availText, switchBtn);
+    const fresh = el('div', 'ar-fresh');
+    fresh.hidden = true;
+    fresh.setAttribute('role', 'status');
+    const freshText = el('span', 'ar-fresh-t', '');
+    const freshOpen = el('button', 'ar-switch ar-fresh-open', 'Open');
+    freshOpen.type = 'button';
+    fresh.append(freshText, freshOpen);
     const noteEl = el('p', 'ar-note');
     noteEl.hidden = true;
     noteEl.setAttribute('role', 'status');
@@ -1757,7 +1841,7 @@
     const pop = el('div', 'ar-pop');
     pop.hidden = true;
     pop.setAttribute('role', 'menu');
-    view.append(bar, avail, noteEl, stage, empty, foot, pop);
+    view.append(bar, avail, fresh, noteEl, stage, empty, foot, pop);
     ui = {
       view,
       bar,
@@ -1768,6 +1852,8 @@
       avail,
       availText,
       switchBtn,
+      fresh,
+      freshText,
       note: noteEl,
       stage,
       empty,
@@ -1786,10 +1872,22 @@
     ext.addEventListener('click', openInBrowser);
     switchBtn.addEventListener('click', () => {
       S.picked = null;
+      if (S.mode === 'compare') {
+        S.mode = 'page';
+        S.cmp = null;
+      }
       S.dirty = true;
       S.stageKey = '';
       paintAll();
       paintStage('open');
+      ver.focus({ preventScroll: true }); // QA m10: the Switch button goes away; the version chip takes the focus
+    });
+    freshOpen.addEventListener('click', () => {
+      const id = S.fresh;
+      S.fresh = '';
+      if (id) selectArtifact(id);
+      paintAll();
+      pick.focus({ preventScroll: true });
     });
     // Escape and outside clicks close the popover; arrows move through its items.
     doc.addEventListener(
@@ -1853,7 +1951,7 @@
     linkify,
     open,
     upsert,
-    state: () => ({ chat: S.chat, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode }),
+    state: () => ({ chat: S.chat, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh }),
     _S: S,
   });
   root.ArtifactsUI = api2;

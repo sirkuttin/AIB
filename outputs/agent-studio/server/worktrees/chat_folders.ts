@@ -133,7 +133,8 @@ export async function changesResponse(
   if (scope === 'branch' && !base) return [400, { error: 'This chat has no branch of its own.', code: 'bad_scope' }];
   try {
     if (path === '/api/live/changes/file') return [200, await changes.getFileDiff(cwd, first(args, 'path', ''), base || null)];
-    const result = await changes.getChanges(cwd, base || null);
+    const offset = first(args, 'offset', '0');
+    const result = await changes.getChanges(cwd, base || null, /^\d+$/.test(offset) ? Number(offset) : 0);
     if (record && result.git) result.worktree = { branch: isStr(record.branch) ? record.branch : '' }; // the page offers Discard
     return [200, result];
   } catch (error) {

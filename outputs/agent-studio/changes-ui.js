@@ -77,14 +77,34 @@
   /* "+86" / "−21" counts, with a trailing "+" when the file was only partly read. */
   const addText = (f) => '+' + num(f && f.added) + (f && f.partial ? '+' : '');
   const delText = (f) => MINUS + num(f && f.removed);
+  /* The server's totals count every changed file, also those past the listed pages (totals.partial: lines of new files that
+     were not read are missing, shown as "+N+"). Without them, or once every file is listed, the listed files are counted. */
   function totalsOf(data) {
-    const files = (data && data.files) || [];
+    const files = (data && data.files) || [],
+      t = data && data.totals;
+    if (t && typeof t.files === 'number' && t.files > files.length) {
+      const out = { files: num(t.files), added: num(t.added), removed: num(t.removed) };
+      if (t.partial) out.partial = true;
+      return out;
+    }
     return {
       files: files.length,
       added: files.reduce((a, f) => a + num(f.added), 0),
       removed: files.reduce((a, f) => a + num(f.removed), 0),
     };
   }
+  /* Files the server has not listed yet (its next pages of 300), and the label of the button that lists them. */
+  const PAGE = 300;
+  const moreLeft = (data) =>
+    data && data.git ? Math.max(0, num(data.filesTotal) - ((data.files || []).length || 0)) : 0;
+  const moreText = (left) =>
+    left
+      ? 'Show ' +
+        (left > PAGE ? 'the next ' + PAGE : left === 1 ? 'the last file' : 'the last ' + left) +
+        ' (' +
+        left +
+        ' not listed yet)'
+      : '';
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
   /* Header chip pieces: "Changes · 4 files +86 −21" (nothing when there are no changes). */
   function chipParts(totals) {
@@ -93,7 +113,7 @@
     return {
       label: 'Changes',
       files: plural(num(t.files), 'file', 'files'),
-      added: '+' + num(t.added),
+      added: '+' + num(t.added) + (t.partial ? '+' : ''),
       removed: MINUS + num(t.removed),
     };
   }
@@ -101,14 +121,66 @@
     const c = chipParts(totals);
     return c ? c.label + ' \u00b7 ' + c.files + ' ' + c.added + ' ' + c.removed : '';
   };
-  /* Tab badge: only above zero, "99+" for big numbers. */
+  /* Tab badge: only above zero, the true count up to 999. */
   const badge = (n) => {
     n = num(n);
-    return n ? (n > 99 ? '99+' : String(n)) : '';
+    return n ? (n > 999 ? '999+' : String(n)) : '';
   };
   /* The one confirmation before Discard, and the line after it. The Discard button exists only for a chat with its own branch that has changes. */
   const discardQuestion = (branch) =>
     'Discard this chat\u2019s changes? This deletes its branch ' + branch + ' and can\u2019t be undone.';
+  /* The short confirmation before Merge: how many files go into the base branch. */
+  const mergeQuestion = (files, base) =>
+    'Merge ' +
+    (num(files) === 1 ? 'the 1 changed file' : 'all ' + num(files) + ' changed files') +
+    ' into ' +
+    (base || 'main') +
+    '? Edits the chat has not committed yet are committed first.';
+  /* An in-page confirmation (never the blocking window.confirm, which freezes every chat's page work): a short question with two
+     buttons, shown inside `host`. Escape or Cancel answer false. Resolves once; the box removes itself. */
+  function askInPage(doc, host, o) {
+    return new Promise((resolve) => {
+      const box = doc.createElement('div');
+      box.className = 'cg-confirm';
+      box.setAttribute('role', 'alertdialog');
+      const q = doc.createElement('p');
+      q.className = 'cg-confirm-q';
+      q.textContent = o.text;
+      q.id = 'cgConfirmQ' + ++askSeq;
+      box.setAttribute('aria-describedby', q.id);
+      box.setAttribute('aria-label', o.label || 'Confirm');
+      const row = doc.createElement('div');
+      row.className = 'cg-confirm-row';
+      const no = doc.createElement('button'),
+        yes = doc.createElement('button');
+      no.type = yes.type = 'button';
+      no.className = 'cg-confirm-no';
+      no.textContent = o.cancel || 'Cancel';
+      yes.className = o.danger ? 'cg-confirm-yes cg-discard' : 'cg-confirm-yes primary';
+      yes.textContent = o.ok || 'OK';
+      row.append(no, yes);
+      box.append(q, row);
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        box.remove();
+        resolve(v);
+      };
+      no.addEventListener('click', () => finish(false));
+      yes.addEventListener('click', () => finish(true));
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          finish(false);
+        }
+      });
+      host.append(box);
+      (o.danger ? no : yes).focus && (o.danger ? no : yes).focus();
+    });
+  }
+  let askSeq = 0;
   const canDiscard = (data) =>
     !!(data && data.git && data.worktree && data.worktree.branch && (data.files || []).length);
   /* The footer of the Changes tab, one row: status line (left), Discard…, then Merge (right). Returns the parts; merge-ui.js drives the line and the button. */
@@ -189,6 +261,9 @@
     return (open || []).filter((p) => have.has(p));
   };
   const pure = {
+    moreLeft,
+    moreText,
+    mergeQuestion,
     toggleOpen,
     pruneOpen,
     TABS,
@@ -253,7 +328,9 @@
       detailSeq = 0,
       autoOpened = false,
       token = '',
-      discarding = false;
+      discarding = false,
+      pages = 1,
+      loadingMore = false;
     const editors = () => {
       const e = win.AgentEditors;
       return e && typeof e.open === 'function' ? e : null;
@@ -282,7 +359,7 @@
     const artBadge = el('span', 'pane-badge');
     artBadge.hidden = true;
     tabArtifacts.append(artBadge);
-    const expandBtn = el('button', 'pane-expand', '\u2922');
+    const expandBtn = el('button', 'pane-expand', '\u21e4');
     expandBtn.type = 'button';
     expandBtn.title = 'Widen this column';
     expandBtn.setAttribute('aria-label', 'Widen this column');
@@ -380,10 +457,32 @@
       }
       return body;
     }
+    /* One in-page question at a time, in the footer; Discard and Merge step aside while it is open. */
+    let asking = false;
+    async function ask(o) {
+      if (asking) return false;
+      asking = true;
+      paintFoot();
+      try {
+        return await askInPage(doc, foot, o);
+      } finally {
+        asking = false;
+        paintFoot();
+      }
+    }
     async function discard() {
       const branch = data && data.worktree && data.worktree.branch;
-      if (!branch || !chat.id || discarding) return;
-      if (typeof win.confirm === 'function' && !win.confirm(discardQuestion(branch))) return;
+      if (!branch || !chat.id || discarding || asking) return;
+      const sure = await ask({
+        text: discardQuestion(branch),
+        ok: 'Discard',
+        danger: true,
+        label: 'Discard this chat',
+      });
+      if (!sure) {
+        if (!discardBtn.hidden) discardBtn.focus();
+        return;
+      }
       const id = chat.id;
       discarding = true;
       footNote.textContent = '';
@@ -402,6 +501,7 @@
         if (!r.ok) throw new Error(body.error || 'Request failed (' + r.status + ')');
         footNote.textContent = discardNote(body);
         footNote.classList.remove('err');
+        if (id === chat.id) chat = Object.assign({}, chat, { discarded: true, busy: false });
         try {
           win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id } }));
         } catch (e) {}
@@ -419,8 +519,40 @@
         .map(([k, v]) => k + '=' + encodeURIComponent(v))
         .join('&');
 
+    /* "Show the next 300": one more page, appended to what is listed. */
+    async function loadMore() {
+      if (!chat.id || !data || !moreLeft(data) || loadingMore) return;
+      const id = chat.id,
+        mine = seq,
+        before = data.files.length;
+      loadingMore = true;
+      paintList(true);
+      try {
+        const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: data.files.length }));
+        if (mine !== seq || id !== chat.id || !data) return;
+        if (more.git && (more.files || []).length) {
+          pages++;
+          data = Object.assign({}, data, more, { files: data.files.concat(more.files), offset: 0 });
+        }
+      } catch (e) {
+        if (mine === seq) error = e.message;
+      } finally {
+        loadingMore = false;
+      }
+      paintAll();
+      const ae = doc.activeElement;
+      if (!ae || !list.contains(ae)) {
+        const first = list.querySelectorAll('.cg-file')[before]; // the first newly listed file, for the keyboard
+        if (first) first.focus({ preventScroll: true });
+      }
+    }
     async function load(force) {
       if (!chat.id) {
+        return;
+      }
+      if (chat.discarded) {
+        data = null;
+        paintAll();
         return;
       }
       const now = Date.now();
@@ -433,6 +565,13 @@
       try {
         const next = await api('/api/live/changes?' + q({ id, scope: 'uncommitted' }));
         if (mine !== seq || id !== chat.id) return;
+        /* The pages you asked for with "Show the next 300" stay listed across refreshes. */
+        for (let p = 1; p < pages && next.git && moreLeft(next); p++) {
+          const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: next.files.length }));
+          if (mine !== seq || id !== chat.id) return;
+          if (!more.git || !(more.files || []).length) break;
+          Object.assign(next, more, { files: next.files.concat(more.files), offset: 0 });
+        }
         data = next;
         loadedFor = id;
         error = '';
@@ -499,7 +638,7 @@
       if (t && t.files) {
         sum.append(
           el('span', '', plural(t.files, 'file', 'files') + ' '),
-          el('span', 'cg-add', pure.addText({ added: t.added })),
+          el('span', 'cg-add', pure.addText({ added: t.added, partial: t.partial })),
           doc.createTextNode(' '),
           el('span', 'cg-del', MINUS + t.removed),
         );
@@ -528,13 +667,18 @@
       stripChip.hidden = !n;
     }
     function paintFoot() {
-      foot.hidden = !canDiscard(data) && !footNote.textContent && parts.merge.hidden && !parts.mergeLine.textContent;
+      foot.classList.toggle('asking', asking);
+      foot.hidden =
+        !asking && !canDiscard(data) && !footNote.textContent && parts.merge.hidden && !parts.mergeLine.textContent;
       discardBtn.hidden = !canDiscard(data);
       discardBtn.disabled = discarding;
+      parts.status.hidden = !footNote.textContent && !parts.mergeLine.textContent; // its own row only when it says something
     }
     function paintNote() {
       let msg = '';
       if (!chat.id) msg = 'Open a chat to see what it changed.';
+      else if (chat.discarded)
+        msg = 'This chat’s changes were discarded with its branch: there is nothing left to show.';
       else if (data && data.git === false) msg = 'No git here: the Changes view needs a git repository.';
       else if (data && data.unknown) msg = 'Changes are not available for this chat yet.';
       else if (error) msg = 'Could not read the changes: ' + error;
@@ -542,14 +686,10 @@
       else if (data.git && !files().length) msg = 'No uncommitted changes.';
       note.textContent = msg;
       note.hidden = !msg;
-      if (data && data.git && data.truncated) {
+      /* More files than listed: the button at the end of the list shows the rest. Only when git's own output was cut is there no way on. */
+      if (data && data.git && data.truncated && !moreLeft(data)) {
         note.textContent =
-          (msg ? msg + ' ' : '') +
-          'Showing the first ' +
-          files().length +
-          ' of ' +
-          (data.filesTotal || 'many') +
-          ' changed files.';
+          (msg ? msg + ' ' : '') + 'Git reported more changes than Studio can read; some files are not listed.';
         note.hidden = false;
       }
     }
@@ -567,11 +707,15 @@
       b.title = f.path + (f.oldPath ? '\n(was ' + f.oldPath + ')' : '') + '\n' + info.label;
       const path = el('span', 'cg-path'),
         inner = el('span', 'cg-path-in');
-      inner.append(doc.createTextNode(p.dir), el('b', '', p.base));
+      inner.append(el('span', 'cg-path-dir', p.dir), el('b', '', p.base)); // the folder part shrinks first, the name stays
       path.append(inner);
       const caret = el('span', 'cg-caret', isOpen ? '\u25be' : '\u25b8');
       caret.setAttribute('aria-hidden', 'true');
       b.append(caret, el('span', 'cg-st ' + info.cls, info.letter), path);
+      if (conflicted().includes(f.path)) {
+        b.append(el('span', 'cg-conflict', 'conflict'));
+        b.title += '\nHas conflict markers: Merge waits until the chat resolves them';
+      }
       if (f.binary) b.append(el('span', 'cg-bin', 'binary'));
       else b.append(el('span', 'cg-add', addText(f)), el('span', 'cg-del', delText(f)));
       b.onclick = () => toggle(f);
@@ -580,9 +724,24 @@
       return item;
     }
     let listSig = '';
-    function paintList() {
+    /* Files the Merge status names as conflicted (merge-ui.js). */
+    const conflicted = () => (mergeUi && mergeUi.conflicts ? mergeUi.conflicts() : []);
+    function moreRow() {
+      const left = moreLeft(data);
+      if (!left) return null;
+      const b = el('button', 'cg-more', loadingMore ? 'Listing…' : moreText(left));
+      b.type = 'button';
+      b.disabled = loadingMore;
+      b.addEventListener('click', loadMore);
+      return b;
+    }
+    function paintList(force) {
       const fs = files();
       const sig = JSON.stringify([
+        force ? Math.random() : 0,
+        moreLeft(data),
+        loadingMore,
+        conflicted(),
         open,
         fs.map(fileSignature),
         fs.map((f) => {
@@ -595,12 +754,14 @@
       const top = list.scrollTop,
         ae = doc.activeElement,
         focus = ae && list.contains(ae) ? ae.dataset.path : null;
-      list.replaceChildren(...fs.map(rowFor));
+      const more = moreRow(),
+        moreHad = ae && ae.classList && ae.classList.contains('cg-more');
+      list.replaceChildren(...fs.map(rowFor), ...(more ? [more] : []));
       list.scrollTop = top;
       if (focus) {
         const n = [...list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === focus);
         if (n) n.focus({ preventScroll: true });
-      }
+      } else if (moreHad && more) more.focus({ preventScroll: true });
       list.hidden = !fs.length;
     }
     function diffRows(h, f, detail) {
@@ -684,7 +845,11 @@
           line: parts.mergeLine,
           button: parts.merge,
           reload: () => load(true),
-          onPaint: paintFoot,
+          onPaint: () => {
+            paintFoot();
+            paintList();
+          },
+          confirm: (o) => ask({ text: mergeQuestion(o.files, o.base), ok: 'Merge', label: 'Merge this chat' }),
         });
       if (mergeUi)
         mergeUi.update({
@@ -725,7 +890,10 @@
       expandBtn.hidden = !wide || narrow();
       expandBtn.setAttribute('aria-pressed', state.expanded ? 'true' : 'false');
       expandBtn.title = state.expanded ? 'Narrow this column again' : 'Widen this column';
+      expandBtn.setAttribute('aria-label', expandBtn.title);
+      expandBtn.textContent = state.expanded ? '⇥' : '⇤'; // QA m8: widen pulls the edge left, narrow pushes it back
       body.classList.toggle('changes-wide', wide && state.expanded && !narrow());
+      body.classList.toggle('rc-other-tab', wide); // resize-ui.js: an open subagent history no longer widens the column here
       if (AR()) AR().setVisible(art && paneVisible());
       schedule();
     }
@@ -841,10 +1009,16 @@
     /* -- chat.js feeds this on every header render: {id, busy} for the open chat, or null -- */
     function sync(ctx) {
       const id = ctx && typeof ctx.id === 'string' ? ctx.id : '',
-        busy = !!(ctx && ctx.busy);
+        busy = !!(ctx && ctx.busy),
+        discarded = !!(ctx && ctx.discarded);
       const changed = id !== chat.id,
-        ended = turnEnded(chat.busy, busy);
-      chat = { id, busy };
+        ended = turnEnded(chat.busy, busy),
+        gone = discarded && !chat.discarded && !changed;
+      chat = { id, busy, discarded };
+      if (gone) {
+        data = null; // the branch is gone: the Changes view says so instead of "not available yet"
+        paintAll();
+      }
       pushMerge();
       if (AR()) AR().sync(id ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '' } : null);
       if (changed) {
@@ -856,6 +1030,7 @@
         footNote.textContent = '';
         open = [];
         cache = new Map();
+        pages = 1;
         autoOpened = false;
         listSig = '';
         lastFetch = 0;
@@ -881,6 +1056,7 @@
   const api = {
     ...pure,
     discardQuestion,
+    askInPage,
     canDiscard,
     footer,
     discardNote,
