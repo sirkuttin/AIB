@@ -45,10 +45,11 @@
   /* Accent: Bay teal, the one accent (primary buttons, links, focus, selection, the active chat). Dark values. */
   --accent: #2bb3a3; /* Accent (original token): primary button fill, focus rings, selection bars, accent borders */
   --on-accent: #0b1f1d; /* Text on an --accent fill (primary buttons, badges) */
+  --on-accent-disabled: #8fd9cf; /* Text on a disabled primary button (on --accent-wash-2) */
   --link: #33bcab; /* Links and accent-coloured text: the most saturated teal that keeps 4.5:1 on every teal fill */
   --link-underline: #33bcab80; /* Link underline at rest */
   --accent-halo: #2bb3a333; /* Soft accent glow (drop target) */
-  --accent-wash: #152e2a; /* Active chat, selected rows, teal hover and active fill */
+  --accent-wash: #17332f; /* Active chat, selected rows, teal hover and active fill */
   --accent-wash-2: #1f423d; /* Stronger teal hover fill */
   --accent-wash-3: #173a36; /* Artifacts pane teal fill */
   --accent-wash-4: #16302d; /* Sub-agent command chips, pane badges, agent letters */
@@ -74,7 +75,8 @@
   /* Agent status: the icon's agent lights. Text, dots and borders use the icon's saturated colours (amber #ffc247, coral #ff7a59,
      teal #2bb3a3), which keep 4.5:1 as text on every dark surface; chips fill with --status-x-bg. Checked by work/test_theme_status.js. Always shown with the status word, never colour alone. */
   --status-working: #ffc247; /* Working: the icon's amber, for text, dot and spinner (also Elsewhere · Working, dashed) */
-  --status-working-bg: #3a2e14; /* Working chip fill and spinner track */
+  --status-working-bg: #3a2e14; /* Working chip fill */
+  --status-working-track: #ffc24740; /* Working spinner track (the spinner's head is --status-working) */
   --status-working-line: #ffc247; /* Working borders: turn line, elsewhere chip */
   --status-needs: #ff7a59; /* Needs you: the icon's coral, for text, dot and badges */
   --status-needs-bg: #3d1f18; /* Needs-you chip, approval, turn-line and toast fill; text on a coral badge */

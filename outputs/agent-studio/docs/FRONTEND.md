@@ -62,7 +62,7 @@ Stylesheets load before the scripts; their order is the `<link>` order in `chat.
 
 ## Colour tokens
 
-`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (76 tokens). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
+`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (78 tokens). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
 
 Rules for the tokens:
 
@@ -113,10 +113,11 @@ Rules for the tokens:
 | `--line-field` | `#343746` | Input and popup borders |
 | `--accent` | `#2bb3a3` | Accent (original token): primary button fill, focus rings, selection bars, accent borders |
 | `--on-accent` | `#0b1f1d` | Text on an --accent fill (primary buttons, badges) |
+| `--on-accent-disabled` | `#8fd9cf` | Text on a disabled primary button (on --accent-wash-2) |
 | `--link` | `#33bcab` | Links and accent-coloured text: the most saturated teal that keeps 4.5:1 on every teal fill |
 | `--link-underline` | `#33bcab80` | Link underline at rest |
 | `--accent-halo` | `#2bb3a333` | Soft accent glow (drop target) |
-| `--accent-wash` | `#152e2a` | Active chat, selected rows, teal hover and active fill |
+| `--accent-wash` | `#17332f` | Active chat, selected rows, teal hover and active fill |
 | `--accent-wash-2` | `#1f423d` | Stronger teal hover fill |
 | `--accent-wash-3` | `#173a36` | Artifacts pane teal fill |
 | `--accent-wash-4` | `#16302d` | Sub-agent command chips, pane badges, agent letters |
@@ -137,7 +138,8 @@ Rules for the tokens:
 | `--warn-line` | `#ad8d47` | Held and edited queue rows, mismatched setting chips |
 | `--info` | `#5aa9ff` | Former working dot; kept for code on other branches |
 | `--status-working` | `#ffc247` | Working: the icon's amber, for text, dot and spinner (also Elsewhere · Working, dashed) |
-| `--status-working-bg` | `#3a2e14` | Working chip fill and spinner track |
+| `--status-working-bg` | `#3a2e14` | Working chip fill |
+| `--status-working-track` | `#ffc24740` | Working spinner track (the spinner's head is --status-working) |
 | `--status-working-line` | `#ffc247` | Working borders: turn line, elsewhere chip |
 | `--status-needs` | `#ff7a59` | Needs you: the icon's coral, for text, dot and badges |
 | `--status-needs-bg` | `#3d1f18` | Needs-you chip, approval, turn-line and toast fill; text on a coral badge |

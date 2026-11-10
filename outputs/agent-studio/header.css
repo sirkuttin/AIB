@@ -107,13 +107,14 @@ header .hd-line h1:focus-visible {
   flex: none;
   display: inline-flex;
   align-items: center;
-  height: 22px;
+  height: 24px;
   padding: 0 9px;
   font-size: 12px;
-  line-height: 20px;
+  font-weight: 600;
+  line-height: 22px;
   color: var(--text-2);
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 12px;
   background: var(--panel-2);
   white-space: nowrap;
 }
@@ -137,15 +138,16 @@ header #status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: 24px;
   max-width: 220px;
   margin: 0;
   padding: 0 10px;
   font-size: 12px;
-  line-height: 20px;
+  font-weight: 600;
+  line-height: 22px;
   color: var(--muted);
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 12px;
   background: transparent;
   white-space: nowrap;
   overflow: hidden;
@@ -245,7 +247,8 @@ header #status {
   border-color: var(--status-idle-bg);
 }
 #status[data-tone='else-work'] {
-  border-color: var(--status-working-line);
+  background: var(--status-working-bg);
+  border: 1px dashed var(--status-working);
 }
 @keyframes hd-pulse {
   0%,
@@ -253,7 +256,7 @@ header #status {
     opacity: 1;
   }
   50% {
-    opacity: 0.35;
+    opacity: 0.55;
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -233,9 +233,10 @@ body.settings-open .side-settings {
 }
 .st-status {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   border-radius: 9px;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border: 1px solid var(--line-control);
 }
 .st-status.dim {

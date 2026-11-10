@@ -61,6 +61,18 @@ button:disabled {
   border-color: var(--accent);
   font-weight: 600;
 }
+/* disabled primary (Send / Queue with nothing to send): a solid teal wash with readable text, not a half-transparent button */
+.primary:disabled {
+  opacity: 1;
+  background: var(--accent-wash-2);
+  border-color: var(--accent-line);
+  color: var(--on-accent-disabled);
+}
+/* the ring stands off the teal button so it stays visible */
+.primary:focus-visible {
+  outline: 2px solid var(--text-bright);
+  outline-offset: 2px;
+}
 #new {
   width: 100%;
   margin-bottom: 22px;
@@ -311,7 +323,7 @@ input[type='checkbox'] {
 }
 .approval {
   border: 1px solid var(--status-needs-line);
-  background: var(--status-needs-bg);
+  background: var(--panel-2);
   border-radius: 7px;
   padding: 15px;
   margin-bottom: 12px;
@@ -1230,7 +1242,7 @@ body > main {
   display: none;
 }
 .elicitation-card {
-  background: var(--bg-popover);
+  background: var(--panel-2);
   border: 1px solid var(--status-needs-line);
   border-radius: 9px;
   margin: 10px 0;
@@ -1240,6 +1252,18 @@ body > main {
   font-size: 13px;
   margin: 0 0 9px;
   color: var(--text-6);
+}
+/* question and approval cards: a plain panel with a coral border and a small coral dot before the title */
+.elicitation-heading::before,
+.approval h3::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 7px 1px 0;
+  border-radius: 50%;
+  background: var(--status-needs);
+  vertical-align: middle;
 }
 .elicitation-message {
   white-space: pre-wrap;
@@ -1431,6 +1455,7 @@ body > main {
 }
 .tool-status {
   font-size: 11px;
+  font-weight: 600;
   border-radius: 999px;
   padding: 1px 8px;
   background: var(--status-idle-bg);
@@ -2665,7 +2690,7 @@ aside #connections {
   line-height: 1;
 }
 .mark-ok {
-  color: var(--ok-bright);
+  color: var(--status-done);
 }
 .mark-failed {
   color: #ff6b6b;
@@ -2685,7 +2710,7 @@ aside #connections {
 @keyframes toolpulse {
   0%,
   100% {
-    opacity: 0.25;
+    opacity: 0.55;
   }
   50% {
     opacity: 1;
@@ -3051,7 +3076,7 @@ span.chip-static:hover {
   box-sizing: border-box;
 }
 .st-working {
-  border: 2px solid var(--status-working-bg);
+  border: 2px solid var(--status-working-track);
   border-top-color: var(--status-working);
   animation: status-spin 0.9s linear infinite;
 }

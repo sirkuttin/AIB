@@ -1370,34 +1370,61 @@ aside .project-rows .connection,
 aside .connection:has(.hold-note) {
   display: flex;
   flex-wrap: wrap;
-  align-content: center;
+  align-content: flex-start;
   align-items: center;
-  gap: 2px 6px;
+  gap: 4px 8px;
   height: auto;
-  min-height: 56px;
-  max-height: 72px;
-  padding: 6px 8px;
+  min-height: 0;
+  max-height: none;
+  padding: 8px 10px;
+  border-radius: 8px;
   overflow: hidden;
   line-height: 18px;
 }
 aside .conversation-row {
-  margin: 0 0 2px;
+  margin: 0 0 4px;
 }
 aside .conversation-row .connection {
-  padding-right: 8px;
+  padding-right: 10px;
 }
+/* the mark column is always 14 px: the count badge OR the dot, never both, so titles share one left edge */
 aside .connection .status-mark {
   order: 0;
+  flex: 0 0 14px;
+  width: 14px;
   min-width: 14px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+aside .connection .status-mark:has(.status-count) .status-dot,
+.project-head .status-mark:has(.status-count) .status-dot {
+  /* hidden from sight only: the dot carries the status label for screen readers (the count is aria-hidden) */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  box-shadow: none;
+}
+aside .connection .status-count {
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font-size: 10px;
+  line-height: 14px;
+  border-radius: 7px;
+  font-weight: 700;
 }
 aside .connection .connection-title,
 aside .project-rows .connection .connection-title {
   order: 1;
   flex: 1 1 0;
   margin: 0;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 550;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
 }
 aside .connection .row-age {
   order: 2;
@@ -1409,6 +1436,9 @@ aside .connection .row-age {
 aside .connection .row-meta-text {
   display: none;
 }
+aside .connection.selected .row-age {
+  color: var(--muted);
+}
 aside .connection .row-status {
   order: 3;
   flex: 0 0 100%;
@@ -1416,9 +1446,9 @@ aside .connection .row-status {
   align-items: center;
   gap: 0;
   min-width: 0;
-  padding-left: 20px;
+  padding-left: 22px;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 16px;
   white-space: nowrap;
 }
 aside .connection .row-phrase {
@@ -1434,9 +1464,9 @@ aside .connection .row-agent {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
-  color: var(--muted);
+  color: var(--text-dim);
 }
 aside .connection .row-chip {
   flex: none;
@@ -1446,6 +1476,7 @@ aside .connection .row-chip {
   background: #2a2c38;
   color: var(--text-3);
   font-size: 11px;
+  font-weight: 600;
   line-height: 16px;
 }
 aside .connection .row-status.tone-need .row-phrase {
@@ -1477,8 +1508,8 @@ aside .connection .hold-note {
   display: block;
   min-width: 0;
   margin: 0;
-  padding-left: 20px;
-  font-size: 11px;
+  padding-left: 22px;
+  font-size: 12px;
   line-height: 16px;
   color: var(--muted);
   white-space: nowrap;
@@ -1766,9 +1797,9 @@ aside .connection.attn-unread:not(.selected) {
 
 /* ---- status dots (classes come from status-words.js dotClass; same colours as the header chip) ---------------- */
 .status-dot.d-work {
-  width: 9px;
-  height: 9px;
-  border: 2px solid var(--status-working-bg);
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--status-working-track);
   border-top-color: var(--hd-work, var(--status-working));
   animation: status-spin 0.9s linear infinite;
 }

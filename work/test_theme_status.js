@@ -24,6 +24,7 @@ function colour(value) {
     v = tokens[m[1]] ?? hd[m[1]];
     assert.ok(v, `${m[1]} is defined`);
   }
+  if (/^#[0-9a-f]{3}$/i.test(v)) v = '#' + [...v.slice(1)].map((c) => c + c).join('');
   assert.match(v, /^#[0-9a-f]{6}$/i, `${value} resolves to an opaque colour`);
   return v;
 }
@@ -76,7 +77,9 @@ test('Bay teal accent: buttons, links, focus and the active chat', () => {
   for (const s of ['--bg', '--panel', '--bg-composer', '--accent-wash', '--accent-wash-2', '--accent-wash-3', '--accent-wash-4', '--accent-wash-5'])
     atLeast('var(--link)', `var(${s})`, 4.5);
   for (const s of ['--bg', '--panel', '--bg-field', '--accent-wash']) atLeast('var(--accent)', `var(${s})`, 3); // focus rings
-  for (const t of ['--text', '--muted', '--text-muted']) atLeast(`var(${t})`, 'var(--accent-wash)', 4.5); // active chat row text
+  for (const t of ['--text', '--muted', '--text-dim']) atLeast(`var(${t})`, 'var(--accent-wash)', 4.5); // active chat row text
+  assert.equal(tokens['--accent-wash'].toLowerCase(), '#17332f'); // the board's active chat
+  atLeast('var(--on-accent-disabled)', 'var(--accent-wash-2)', 4.5); // disabled Send / Queue
 });
 
 test('status chips and dots paint with the status tokens', () => {
@@ -104,4 +107,52 @@ test('status chips and dots paint with the status tokens', () => {
   const activity = sheet('activity.css');
   assert.equal(declarationsFor(activity, '.sa-working .sa-dot').background, 'var(--status-working)');
   assert.equal(declarationsFor(activity, '.sa-completed .sa-dot').background, 'var(--status-done)');
+});
+
+test('disabled and focused primary buttons, spinners and cards follow the design review', () => {
+  const chat = sheet('chat.css');
+  const disabled = declarationsFor(chat, '.primary:disabled');
+  assert.equal(disabled.opacity, '1', 'no half-transparent teal');
+  assert.equal(disabled.background, 'var(--accent-wash-2)');
+  assert.equal(disabled.color, 'var(--on-accent-disabled)');
+  const focus = declarationsFor(chat, '.primary:focus-visible');
+  assert.equal(focus.outline, '2px solid var(--text-bright)');
+  assert.equal(focus['outline-offset'], '2px');
+  atLeast('var(--text-bright)', 'var(--bg-composer)', 3);
+  // the spinner track is a translucent amber, not the near-invisible chip fill
+  assert.match(tokens['--status-working-track'], /^#ffc247[0-9a-f]{2}$/i);
+  assert.equal(declarationsFor(sheet('workspace.css'), '.status-dot.d-work').border, '2px solid var(--status-working-track)');
+  assert.equal(declarationsFor(chat, '.st-working').border, '2px solid var(--status-working-track)');
+  // approval and question cards: a plain panel with a coral border, not a coral block
+  assert.equal(declarationsFor(chat, '.approval').background, 'var(--panel-2)');
+  assert.equal(declarationsFor(chat, '.elicitation-card').background, 'var(--panel-2)');
+  assert.equal(declarationsFor(chat, '.approval h3::before').background, 'var(--status-needs)');
+  for (const fg of ['--text', '--muted', '--status-needs']) atLeast(`var(${fg})`, 'var(--panel-2)', 4.5);
+});
+
+test('sidebar chat cards: one 14 px mark column, roomier spacing, one step larger type', () => {
+  const ws = sheet('workspace.css');
+  const card = declarationsFor(ws, 'aside .connection');
+  assert.equal(card.padding, '8px 10px');
+  assert.equal(card.gap, '4px 8px');
+  assert.equal(card['align-content'], 'flex-start');
+  assert.equal(card['min-height'], '0');
+  assert.equal(card['max-height'], 'none');
+  assert.equal(declarationsFor(ws, 'aside .conversation-row').margin, '0 0 4px');
+  const mark = declarationsFor(ws, 'aside .connection .status-mark');
+  assert.equal(mark.flex, '0 0 14px');
+  assert.equal(mark.width, '14px');
+  // a count badge replaces the dot (the dot stays for screen readers, out of sight)
+  assert.equal(declarationsFor(ws, 'aside .connection .status-mark:has(.status-count) .status-dot').position, 'absolute');
+  assert.equal(declarationsFor(ws, 'aside .connection .status-count')['min-width'], '14px');
+  const title = declarationsFor(ws, 'aside .connection .connection-title');
+  assert.deepEqual([title['font-size'], title['line-height'], title['font-weight']], ['14px', '20px', '600']);
+  for (const sel of ['aside .connection .row-status', 'aside .connection .row-line3']) {
+    assert.equal(declarationsFor(ws, sel)['padding-left'], '22px', sel); // 14 px mark + 8 px gap
+    assert.equal(declarationsFor(ws, sel)['font-size'], '12px', sel);
+  }
+  assert.equal(declarationsFor(ws, 'aside .connection .row-agent')['font-size'], '12px');
+  const chip = declarationsFor(header, 'header #status');
+  assert.deepEqual([chip.height, chip['font-weight']], ['24px', '600']);
+  assert.equal(declarationsFor(sheet('settings.css'), '.st-status')['font-weight'], '600');
 });
