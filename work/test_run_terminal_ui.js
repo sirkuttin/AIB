@@ -92,13 +92,6 @@ test('an unlabelled block counts only as one command line', () => {
   assert.equal(R.commandText('git ' + 'x'.repeat(500), ''), null);
 });
 
-test('tool commands are pasted as they are, without trailing newlines', () => {
-  assert.equal(R.toolCommandText('npm test\n'), 'npm test');
-  assert.equal(R.toolCommandText('cd a && \\\n  make\r\n'), 'cd a && \\\n  make');
-  assert.equal(R.toolCommandText('  \n'), null);
-  assert.equal(R.toolCommandText(undefined), null);
-});
-
 /* ---- the page: buttons through copy-ui.js, pastes through window.AibTerminal ---- */
 function setup({ terminal = true, current = 'claude:abc' } = {}) {
   const shell = page();
@@ -217,8 +210,8 @@ test('a failed paste is reported, not thrown', async () => {
   assert.equal(box.querySelectorAll('.run-term-note').length, 0);
 });
 
-test('tool calls that ran a command get the button on the command, not on their output', async () => {
-  const { shell, ctx, buttons, pastes, flush } = setup();
+test('tool calls never get the button: not in the expanded view, not on the collapsed row', () => {
+  const { shell, ctx, buttons } = setup();
   const view = ctx.ToolViews.renderCall({
     name: 'Bash',
     input: { command: 'npm test -- --grep x\n', description: 'Run tests' },
@@ -226,12 +219,7 @@ test('tool calls that ran a command get the button on the command, not on their 
   });
   shell.byId.messages.append(view);
   ctx.CopyUI.decorateCode(view);
-  const found = buttons(view);
-  assert.equal(found.length, 1);
-  assert.ok(!found[0].closest('.tool-result'), 'not on the output');
-  found[0].click();
-  await flush();
-  assert.deepEqual(pastes, [['claude:abc', 'npm test -- --grep x']]);
+  assert.equal(buttons(view).length, 0, 'expanded Bash call');
   /* live ACP tool calls (raw) too */
   const raw = ctx.ToolViews.render({
     kind: 'execute',
@@ -241,38 +229,35 @@ test('tool calls that ran a command get the button on the command, not on their 
     _meta: {},
   });
   ctx.CopyUI.decorateCode(raw);
-  assert.equal(buttons(raw).length, 1);
-  /* other tools' code blocks never get one */
+  assert.equal(buttons(raw).length, 0, 'expanded ACP execute call');
   const write = ctx.ToolViews.renderCall({ name: 'Write', input: { file_path: 'a.sh', content: 'npm test' } });
   ctx.CopyUI.decorateCode(write);
   assert.equal(buttons(write).length, 0);
-});
-
-test('collapsed tool rows that ran a command get the button with its tooltip; others do not', async () => {
-  const { shell, ctx, buttons, pastes, flush } = setup();
+  /* collapsed rows */
   const line = ctx.ToolViews.line(
     { role: 'tool', call: { name: 'Bash', input: { command: 'deno task test --filter pty' } } },
     () => shell.document.createElement('div'),
   );
   shell.byId.messages.append(line);
-  const found = buttons(line);
-  assert.equal(found.length, 1);
-  assert.ok(found[0].classList.contains('tool-run'));
-  assert.equal(found[0].getAttribute('aria-label'), 'Run in terminal: deno task test --filter pty');
-  assert.match(found[0].title, /Pastes the command\. Nothing runs until you press Enter\./);
-  found[0].click();
-  await flush();
-  assert.deepEqual(pastes, [['claude:abc', 'deno task test --filter pty']]);
-  assert.equal(found[0].textContent, 'Pasted');
-  const read = ctx.ToolViews.line({ role: 'tool', call: { name: 'Read', input: { file_path: 'a.ts' } } }, () =>
-    shell.document.createElement('div'),
-  );
-  assert.equal(buttons(read).length, 0);
-  const raw = ctx.ToolViews.line(
+  ctx.CopyUI.decorateCode(line);
+  assert.equal(buttons(line).length, 0, 'collapsed Bash row');
+  const rawLine = ctx.ToolViews.line(
     { role: 'tool', raw: { kind: 'execute', title: 'bash', rawInput: { command: 'ls' } } },
     () => shell.document.createElement('div'),
   );
-  assert.equal(buttons(raw).length, 1);
+  assert.equal(buttons(rawLine).length, 0, 'collapsed ACP row');
+  assert.equal(ctx.RunInTerminalUI.decorateLine, undefined, 'the tool-row hook is gone');
+});
+
+test('a shell code block in an agent reply still gets the button; a tool row beside it does not', () => {
+  const { shell, ctx, markdown, buttons } = setup();
+  const line = ctx.ToolViews.line({ role: 'tool', call: { name: 'Bash', input: { command: 'npm test' } } }, () =>
+    shell.document.createElement('div'),
+  );
+  shell.byId.messages.append(line);
+  const reply = markdown('Now run:\n\n```bash\nnpm test\n```');
+  assert.equal(buttons(line).length, 0);
+  assert.equal(buttons(reply).length, 1);
 });
 
 test('decorating twice adds one button', () => {

@@ -88,14 +88,18 @@ test('a linked-session report (reminders plus a side-sessions-event) is a collap
     assert.match(n.body, /finished a turn/);
   }
   const started = S.classifyUser(
-    '<system-reminder>\nThe user started your proposal task_0001 as session local_1.\n</system-reminder>\n' + LINKED_NOW,
+    '<system-reminder>\nThe user started your proposal task_0001 as session local_1.\n</system-reminder>\n' +
+      LINKED_NOW,
   );
   assert.equal(S.noteTitle(started), 'System note · Linked sessions');
-  assert.equal(S.noteTitle(S.classifyUser('<ide_opened_file>The user opened a.ts</ide_opened_file>')), 'System note · IDE context');
+  assert.equal(
+    S.noteTitle(S.classifyUser('<ide_opened_file>The user opened a.ts</ide_opened_file>')),
+    'System note · IDE context',
+  );
 });
-test('a turn mixing the person\'s words with reminders splits into the words and a note', () => {
+test("a turn mixing the person's words with reminders splits into the words and a note", () => {
   const real = LINKED_REPORT + LINKED_NOW + '\n\n\nYes, restart it';
-  assert.equal(S.classifyUser(real), null, 'not a note as a whole: it carries the person\'s words');
+  assert.equal(S.classifyUser(real), null, "not a note as a whole: it carries the person's words");
   const split = S.splitInjected(real);
   assert.equal(split.text, 'Yes, restart it');
   assert.equal(split.note.kind, 'system');
@@ -108,7 +112,10 @@ test('a turn mixing the person\'s words with reminders splits into the words and
   // a block between the person's words is their text, and one block never swallows the words up to a later block
   const pasted = 'look at <system-reminder>x</system-reminder> this';
   assert.equal(S.splitInjected(pasted), null);
-  assert.equal(S.stripInjected('<system-reminder>a</system-reminder> words <system-reminder>b</system-reminder>'), 'words');
+  assert.equal(
+    S.stripInjected('<system-reminder>a</system-reminder> words <system-reminder>b</system-reminder>'),
+    'words',
+  );
   assert.equal(S.splitInjected('no tags here'), null);
   assert.equal(S.splitInjected(null), null);
 });
@@ -156,21 +163,15 @@ test('row windowing: newest 150 rows, then chunks of 100', () => {
   assert.deepEqual(S.windowRows(-5, -5), { start: 0, hidden: 0, reveal: 0, nextExtra: 0 });
 });
 
-test('copy buttons are hover/focus only in the stylesheet', () => {
+test('copy buttons always show: no hover-only reveal in the stylesheet', () => {
   // Reads the rules (selector -> declarations), so the spelling of the stylesheet does not matter.
   const rules = cssRules(fs.readFileSync(path.join(APP_DIR, 'stream.css'), 'utf8'));
-  assert.equal(
-    declarationsFor(rules, '.bubble .copy-message').opacity,
-    '0',
-    'hidden until the bubble is hovered or focused',
-  );
-  assert.equal(declarationsFor(rules, '.bubble:hover .copy-message').opacity, '1');
-  assert.equal(declarationsFor(rules, '.bubble:focus-within .copy-message').opacity, '1');
-  assert.equal(
-    declarationsFor(rules, '.bubble .copy-message', '@media (hover: none)').opacity,
-    '1',
-    'touch screens have no hover, so always visible',
-  );
+  assert.equal(declarationsFor(rules, '.bubble .copy-message').opacity, undefined);
+  assert.deepEqual(declarationsFor(rules, '.bubble:hover .copy-message'), {});
+  assert.deepEqual(declarationsFor(rules, '.bubble .copy-message', '@media (hover: none)'), {});
+  /* injected-note cards: the time is 12px and muted, like message times */
+  assert.equal(declarationsFor(rules, '.msg-note-toggle time')['font-size'], '12px');
+  assert.equal(declarationsFor(rules, '.msg-note-toggle time').color, 'var(--muted)');
 });
 test('the CSS reader ignores spelling: comments, layout, selector lists and at-rules', () => {
   const rules = cssRules(
