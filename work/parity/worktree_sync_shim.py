@@ -1,4 +1,4 @@
-"""Plain-data wrappers around worktree_sync.py for the Deno parity and interop tests (work/deno/worktree_sync_test.ts).
+"""Plain-data wrappers around worktree_sync.py for the Deno parity and interop tests (work/deno/worktree_sync*_test.ts).
 Only temp folders and temp git repos are ever passed in. Nothing here starts a thread: scans are run one at a time by the caller, so
 both sides see exactly the same sequence of edits.
 

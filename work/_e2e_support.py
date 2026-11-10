@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 import pathlib
+import random
 import signal
 import socket
 import subprocess
@@ -27,9 +28,19 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
 def free_port():
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
+    """A free port for a web server, with port + 1 free too (its artifact origin). Picked at random below the OS's ephemeral range
+    (Windows and Linux hand those out to every `port 0` socket, almost in sequence), so a server or agent host another test process
+    starts at the same moment cannot take it between this probe and the server binding it. Never 8767/8768/8777/8778."""
+    for _ in range(200):
+        port = random.randrange(20000, 40000, 2)
+        try:
+            with socket.socket() as probe, socket.socket() as origin:
+                probe.bind(('127.0.0.1', port))
+                origin.bind(('127.0.0.1', port + 1))
+            return port
+        except OSError:
+            continue
+    raise AssertionError('no free port pair in 20000-39999')
 
 
 def http_json(method, port, path, token=None, body=None, timeout=30):

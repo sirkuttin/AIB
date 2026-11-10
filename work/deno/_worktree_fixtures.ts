@@ -1,5 +1,5 @@
 /**
- * Temp git repos and a fake studio for the worktree tests (work/deno/worktrees_test.ts, worktree_merge_test.ts), as
+ * Temp git repos and a fake studio for the worktree tests (work/deno/worktrees_test.ts, worktree_merge*_test.ts, worktree_sync*_test.ts), as
  * work/test_worktree_chat.py builds them: a repo with tracked.txt and a .gitignore, a temp state folder. Only temp folders.
  */
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
