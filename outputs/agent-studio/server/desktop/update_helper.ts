@@ -388,7 +388,9 @@ export function installTarget(
  * old version, or the helper itself) runs from them; otherwise that stamp waits for the next start. Returns the paths removed. A
  * no-op outside the desktop app unless `target` is given (tests).
  */
-export function removeUpdateLeftovers(options: { target?: InstallTarget | null; desktop?: boolean } = {}): string[] {
+export function removeUpdateLeftovers(
+  options: { target?: InstallTarget | null; desktop?: boolean; os?: string; processes?: () => string[] | null } = {},
+): string[] {
   const removed: string[] = [];
   try {
     if (!(options.desktop ?? isDesktopApp()) && !options.target) return removed;
@@ -416,7 +418,12 @@ export function removeUpdateLeftovers(options: { target?: InstallTarget | null; 
       const stamp = m[0];
       groups.set(stamp, [...(groups.get(stamp) ?? []), join(folder, e.name)]);
     }
+    // macOS: deleting a bundle never fails while a process runs from it, so look first (an agent host left on the old version).
+    const os = options.os ?? Deno.build.os;
+    const running = os === 'darwin' ? (options.processes ?? runningExecutables)() : [];
     for (const paths of groups.values()) {
+      const slash = (x: string) => x.replaceAll(String.fromCharCode(92), '/');
+      if (running === null || running.some((exe) => paths.some((p) => slash(exe).startsWith(slash(p) + '/')))) continue;
       // Executables first: if one is still running it cannot be deleted, and the rest of its version stays with it.
       const exes = paths.filter((p) => /\.exe\.old-/i.test(p));
       if (!exes.every(remove)) continue;
@@ -424,6 +431,17 @@ export function removeUpdateLeftovers(options: { target?: InstallTarget | null; 
     }
   } catch { /* never stops the app from starting */ }
   return removed;
+}
+
+/** macOS: the full executable path of every running process (`ps -axo comm=`), or null when unknown (then nothing is deleted). */
+export function runningExecutables(): string[] | null {
+  try {
+    const out = new Deno.Command('/bin/ps', { args: ['-axo', 'comm='], stdout: 'piped', stderr: 'null' }).outputSync();
+    if (!out.success) return null;
+    return new TextDecoder().decode(out.stdout).split('\n').map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
 }
 
 /** `AIB update-helper <json>` (main.ts) and `deno run update_helper.ts <json>` (dev). */

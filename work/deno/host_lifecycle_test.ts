@@ -335,3 +335,10 @@ t('log: announce lines reach the file at the default WARNING level', () => {
     Deno.removeSync(dir, { recursive: true });
   }
 });
+
+t('Linux AppImage: the built app starts its host as $APPIMAGE host (its own mount), never from the app mount', () => {
+  const o = parseOptions(['--state-dir', 'X']);
+  const cmd = hostCommand(o, true, { APPIMAGE: '/home/me/AIB.AppImage' });
+  if (Deno.build.os === 'linux') assertEquals(cmd.slice(0, 2), ['/home/me/AIB.AppImage', 'host']);
+  else assertEquals(cmd, hostCommand(o, true, {}), 'elsewhere APPIMAGE means nothing');
+});

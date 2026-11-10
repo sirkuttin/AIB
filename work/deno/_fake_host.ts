@@ -26,7 +26,7 @@ const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen: () => {} }
   let result: Record<string, unknown> = {};
   let exit = false;
   if (body.op === 'info') {
-    result = { protocol: Number(protocol), open: busy.length, active: busy, pid: Deno.pid, hostId: 'fake', connections: [], sourceHash: hash, version };
+    result = { protocol: Number(protocol), open: busy.length, active: busy, pid: Deno.pid, hostId: 'fake', connections: [], sourceHash: hash, version, appId };
     if (runtime !== 'none') result.runtime = runtime;
   } else if (body.op === 'stop' && busy.length) result = { stopping: false, active: busy, message: 'busy' };
   else if (body.op === 'stop') {

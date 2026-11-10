@@ -12,10 +12,11 @@ import {
   HostOSError,
   HostUnavailable,
   HostValueError,
+  APP_VERSION,
   DENO_SOURCE_HASH,
   pidAlive,
   readInfo,
-  RUNTIME,
+  sameProduct,
 } from './host_client.ts';
 
 import type { Live, LiveBackend } from './backend.ts';
@@ -32,6 +33,8 @@ export interface HostProxyOptions {
   runtime?: string | null;
   /** How this app was started (program and arguments), sent with every attach: the host's tray "Open AIB" runs it. */
   launch?: string[] | null;
+  /** This app's version, sent with attach (the host logs it). */
+  version?: string;
   /**
    * The built app: a host of this runtime running other code (the previous version, left running through an update because chats
    * were working) is asked to stop as soon as none of its chats is working, and a host of this version is started in its place.
@@ -80,6 +83,7 @@ export class HostProxy implements LiveBackend {
   #attachArgs() {
     const args: Record<string, unknown> = { pid: Deno.pid, webInstanceId: this.options.webInstanceId, port: this.options.port };
     if (this.options.launch?.length) args.launch = this.options.launch;
+    if (this.options.version) args.version = this.options.version;
     return args;
   }
 
@@ -99,6 +103,7 @@ export class HostProxy implements LiveBackend {
   }
 
   #retiring = false;
+  #drainLogged = -1;
 
   /**
    * After an update with chats working, the new app attached to the previous version's host (same file path, same protocol). Once
@@ -111,12 +116,18 @@ export class HostProxy implements LiveBackend {
     try {
       const info = await this.call('info', null, 5) as Live;
       this.hostInfo = info;
-      if (String(info.runtime ?? '') !== RUNTIME || !info.sourceHash || info.sourceHash === await DENO_SOURCE_HASH()) return false;
-      if (Array.isArray(info.active) && info.active.length) return false; // still working: the next heartbeat looks again
-      const stopping = await this.client.call('stop', { force: false }, 10) as Live | null;
-      if (!stopping?.stopping) return false;
+      if (!sameProduct(info) || !info.sourceHash || info.sourceHash === await DENO_SOURCE_HASH()) return false;
       const say = this.options.say ?? ((m: string) => console.log(m));
-      say(`Replacing the agent host of AIB ${info.version ?? '(older)'} (process ${info.pid}): none of its chats is working.`);
+      const working = typeof info.working === 'number' ? info.working : Array.isArray(info.active) ? info.active.length : 0;
+      if (working) { // still working: the next heartbeat looks again
+        if (this.#drainLogged !== working) say(`Drain: waiting for the agent host of AIB ${info.version ?? '(older)'} (process ${info.pid}): ${working} working.`);
+        this.#drainLogged = working;
+        return false;
+      }
+      const by = `AIB ${APP_VERSION} (pid ${Deno.pid}) handing over from ${info.version ?? 'an older version'}`;
+      const stopping = await this.client.call('stop', { force: false, by }, 10) as Live | null;
+      if (!stopping?.stopping) return false;
+      say(`Drain: handing over from the agent host of AIB ${info.version ?? '(older)'} (process ${info.pid}): nothing is working.`);
       const deadline = Date.now() + 25_000;
       while (pidAlive(info.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
       this.client = null;
@@ -130,6 +141,8 @@ export class HostProxy implements LiveBackend {
       this.lastError = null;
       this.waitingChats = 0;
       await this.#attach();
+      say(`Drain: handover done; agent host process ${client.pid} (AIB ${live.version ?? APP_VERSION}) runs now.`);
+      this.#drainLogged = -1;
       this.options.onRetired?.();
       return true;
     } catch {

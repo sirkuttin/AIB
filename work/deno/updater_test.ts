@@ -52,6 +52,7 @@ import {
 import { writeZip } from "../../tools/build.ts";
 import { kernel32, wide } from "../../outputs/agent-studio/server/platform/win32.ts";
 import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
+import { PROTOCOL_VERSION } from "../../outputs/agent-studio/server/host/host_client.ts";
 import { claimFolder } from "../../outputs/agent-studio/server/desktop/single_instance.ts";
 
 const INSTALLER = "AIB-0.1.0-beta.2-windows-x64.zip";
@@ -88,6 +89,8 @@ interface FakeOptions {
   sumsHash?: string;
   sumsName?: string;
   withSums?: boolean;
+  /** A release.json asset with this text (listed in SHA256SUMS). */
+  info?: string;
 }
 
 /** Serves /repos/acme/aib/releases and the asset downloads; counts every request. */
@@ -111,6 +114,9 @@ class FakeGitHub {
             size: payload.length,
             url: this.base + "/assets/1",
           }];
+          if (o.info !== undefined) {
+            assets.push({ name: "release.json", state: "uploaded", size: o.info.length, url: this.base + "/assets/3" });
+          }
           if (o.withSums !== false) {
             assets.push({
               name: "SHA256SUMS",
@@ -126,6 +132,7 @@ class FakeGitHub {
             headers: { "Content-Type": "application/octet-stream" },
           });
         }
+        if (path === "/assets/3" && o.info !== undefined) return new Response(o.info);
         if (path === "/assets/2") {
           return new Response(sums, {
             headers: { "Content-Type": "application/octet-stream" },
@@ -141,7 +148,7 @@ class FakeGitHub {
     return new FakeGitHub(
       `${want}  ${o.sumsName ?? INSTALLER}\n${
         "0".repeat(64)
-      }  something-else.dmg\n`,
+      }  something-else.dmg\n${o.info !== undefined ? `${await sha(new TextEncoder().encode(o.info))}  release.json\n` : ""}`,
       o,
     );
   }
@@ -789,7 +796,7 @@ Deno.test("install is deferred while chats work; when-idle waits, then installs 
 
 Deno.test("with the agent host (chatsKeepRunning) Install now goes ahead while chats work; the new app starts with the same arguments", async () => {
   using env = new Env();
-  await using fake = await FakeGitHub.start();
+  await using fake = await FakeGitHub.start({ info: JSON.stringify({ version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION }) });
   env.base(fake.base);
   const { svc, launched, quit } = await ready(env, 2, { chatsKeepRunning: true, appArgs: ["serve", "--port", "8901"] });
   assertEquals(await svc.install(), { state: "installing", chats: 2 });
@@ -809,6 +816,25 @@ Deno.test("with the agent host (chatsKeepRunning) Install now goes ahead while c
     };
     assertEquals((await s3.install()).state, "installing");
     assertEquals(l3.length, 1);
+  }
+});
+
+Deno.test("Install now while chats work needs a release that speaks this agent-host protocol (release.json); otherwise it waits", async () => {
+  const cases: [string | undefined, string][] = [
+    [JSON.stringify({ protocol: PROTOCOL_VERSION + 1 }), "This update changes how AIB runs agents, so it waits until no chat is working (2 now)."],
+    [undefined, "AIB cannot tell whether this update can take over running chats, so it waits until no chat is working (2 now)."],
+    ['{"protocol": 1', "AIB cannot tell whether"],
+  ];
+  for (const [info, text] of cases) {
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ info });
+    env.base(fake.base);
+    const { svc, launched } = await ready(env, 2, { chatsKeepRunning: true });
+    const error = await assertRejects(() => svc.install(), UpdateError) as UpdateError;
+    assertEquals(error.code, "chats_working");
+    assert(error.message.startsWith(text), error.message);
+    assertEquals(launched, []);
+    assertEquals((await svc.install(true)).state, "waiting", "Install when chats finish stays available");
   }
 });
 
@@ -1352,6 +1378,23 @@ Deno.test("removeUpdateLeftovers: old files and unpack folders go, the app and i
     Deno.mkdirSync(`${dir}/Apps/Other.app.old-${STAMP}`);
     assertEquals(removeUpdateLeftovers({ target: { kind: "macos-zip", target: `${dir}/Apps/AIB.app` } }).length, 1);
     assertEquals(names(`${dir}/Apps`), ["AIB.app", `Other.app.old-${STAMP}`]);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("removeUpdateLeftovers (macOS): an old bundle a process still runs from (the old agent host) is kept; unknown keeps all", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "aib-leftovers-mac-" });
+  try {
+    const old = `${dir}/AIB.app.old-${STAMP}`;
+    Deno.mkdirSync(`${old}/Contents/MacOS`, { recursive: true });
+    Deno.mkdirSync(`${dir}/AIB.app/Contents`, { recursive: true });
+    const target = { kind: "macos-zip" as const, target: `${dir}/AIB.app` };
+    const running = [`${old}/Contents/MacOS/AIB`, "/usr/bin/zsh"];
+    assertEquals(removeUpdateLeftovers({ target, os: "darwin", processes: () => running }), [], "the old host runs from it");
+    assertEquals(removeUpdateLeftovers({ target, os: "darwin", processes: () => null }), [], "process list unknown: keep");
+    assertEquals(removeUpdateLeftovers({ target, os: "darwin", processes: () => ["/usr/bin/zsh"] }).length, 1, "nothing runs from it");
+    assertEquals(names(dir), ["AIB.app"], "deleted");
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }

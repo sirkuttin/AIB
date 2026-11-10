@@ -44,9 +44,12 @@ const NO_WINDOW = new Set(['host', 'mcp-artifact', 'deploy', 'update-helper', 's
 export { selfCommand };
 
 /** remote_studio.host_command: the command line that starts an agent host configured like this web server. */
-export function hostCommand(o: Options, compiled = isCompiled()): string[] {
+export function hostCommand(o: Options, compiled = isCompiled(), env: Record<string, string | undefined> = envObject()): string[] {
+  // Linux AppImage: `$APPIMAGE host`, its own mount. Deno.execPath() is inside the app's FUSE mount, which goes away when the app
+  // exits: a host left running "to finish the chats" would lose its program (docs/agent-host.md, "Lifecycle").
+  const self = compiled && Deno.build.os === 'linux' && env.APPIMAGE ? [env.APPIMAGE] : selfCommand();
   const command = [
-    ...selfCommand(),
+    ...self,
     'host',
     '--state-dir',
     String(o.stateDir),
@@ -74,6 +77,14 @@ export function hostCommand(o: Options, compiled = isCompiled()): string[] {
   // no app is attached, so it never lingers invisibly (docs/agent-host.md, "Lifecycle"). A source run keeps the idle timer only.
   if (compiled) command.push('--tray', '--exit-unattached-seconds', String(APP_HOST_EXIT_SECONDS));
   return command;
+}
+
+function envObject(): Record<string, string | undefined> {
+  try {
+    return Deno.env.toObject();
+  } catch {
+    return {};
+  }
 }
 
 /** How long the built app's host stays after the last app left with no chat working. */
@@ -157,7 +168,8 @@ export async function main(argv: string[]): Promise<void> {
       // The built app: tell the host how to start this app again (its tray's Open AIB), and retire a host left by the previous
       // version (after an update) as soon as none of its chats is working.
       launch: isCompiled() ? [Deno.execPath(), ...Deno.args] : null,
-      retireOlderHost: isCompiled(),
+      version: APP_VERSION,
+      retireOlderHost: true, // drain then hand over: a same-product host running other code (an update, a code change)
       onRetired: isDesktopApp() ? () => void import('./desktop/update_helper.ts').then((m) => m.removeUpdateLeftovers()) : undefined,
       say: (m) => {
         console.log(m);

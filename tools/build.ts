@@ -18,6 +18,7 @@
  */
 import { createHash } from 'node:crypto';
 import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
+import { PROTOCOL_VERSION } from '../outputs/agent-studio/server/host/host_client.ts';
 import { fixAppImage, fixDeb } from './linux_package.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
@@ -330,6 +331,13 @@ export async function setStagedVersion(stageDir: string, version: string): Promi
   const next = text.replace(/export const APP_VERSION = '[^']*';/, `export const APP_VERSION = '${version}';`);
   if (next === text) throw new Error('could not set the version in the staged app.ts');
   await Deno.writeTextFile(path, next);
+}
+
+export const RELEASE_INFO = 'release.json';
+
+/** {version, protocol, appId}: the agent-host protocol this version speaks (host_client PROTOCOL_VERSION). */
+export function releaseInfo(version: string): string {
+  return JSON.stringify({ version, protocol: PROTOCOL_VERSION, appId: APP_IDENTIFIER });
 }
 
 export async function stage(stageDir: string, version: string): Promise<string[]> {
@@ -788,6 +796,10 @@ export async function main(argv: string[]): Promise<number> {
     const exe = argv.includes('--no-smoke') ? null : runnable(t, work);
     if (exe) console.log(`  ${t.id} smoke check: ${await smokeCheck(exe)}`);
   }
+  // release.json: what the updater of a running AIB reads before "Install now" while chats work (can the new version attach to
+  // the running agent host?). Listed in SHA256SUMS like every asset.
+  await Deno.writeTextFile(`${out}/${RELEASE_INFO}`, releaseInfo(version) + '\n');
+  names.push(RELEASE_INFO);
   const rows: Built[] = [];
   for (const name of names) {
     const path = `${out}/${name}`;

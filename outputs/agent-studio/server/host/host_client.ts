@@ -188,6 +188,7 @@ export async function codeWarning(hostInfo: unknown): Promise<string> {
   const info = hostInfo as Record<string, unknown>;
   if (!info.pid && !info.hostId) return '';
   const theirs = info.sourceHash;
+  if (sameProduct(info) && theirs && theirs !== await sourceHashFor(hostRuntime(info))) return drainNote(info);
   if (theirs === undefined || theirs === null) {
     return `The running agent host was started by an older version of AIB. To use the current code, restart it: ${restartHostHint()}.`;
   }
@@ -195,6 +196,25 @@ export async function codeWarning(hostInfo: unknown): Promise<string> {
     return `The running agent host is running older code than this web server. When no conversation is working, restart it: ${restartHostHint()}.`;
   }
   return '';
+}
+
+/**
+ * Same product: a host this program may simply attach to and later hand over from (docs/agent-host.md, "Which host an app uses"):
+ * the same appId (dev.aib.app for the built app, studio-dev for a source run) and a Deno host. Any version and any code folder or
+ * exe path: an update, a moved install folder or a second extracted copy all attach and drain instead of going degraded.
+ */
+export function sameProduct(info: Record<string, unknown> | null | undefined, appId = APP_ID): boolean {
+  return !!info && info.appId === appId && hostRuntime(info) === RUNTIME;
+}
+
+/** The page's note while a same-product host from other code still runs chats (replaces the "older code, restart it" warning). */
+export function drainNote(info: Record<string, unknown>): string {
+  const active = Array.isArray(info.active) ? info.active.length : Number(info.working) || 0;
+  const working = active ? ` (${active} chat${active === 1 ? '' : 's'} working)` : '';
+  const theirs = typeof info.version === 'string' && info.version ? info.version : '';
+  return theirs && theirs !== APP_VERSION
+    ? `Agents are running on AIB ${theirs}${working}. They switch to AIB ${APP_VERSION} by themselves when none is working.`
+    : `Agents are running on older code of this AIB${working}. They switch to this code by themselves when none is working.`;
 }
 
 export const infoPath = (stateDir: string) => joinPath(stateDir, INFO_NAME);
@@ -440,7 +460,7 @@ export async function findHost(stateDir: string, runtime: string | null = null):
   const info = await readInfo(stateDir);
   if (!info) return null;
   const root = info.codeRoot;
-  if (root && normcase(String(root)) !== CODE_ROOT && pidAlive(info.pid)) {
+  if (root && normcase(String(root)) !== CODE_ROOT && !sameProduct(info) && pidAlive(info.pid)) {
     throw new HostForeignRoot(
       `The agent host for this state folder (process ${pyStr(info.pid)}, ${
         who(info)

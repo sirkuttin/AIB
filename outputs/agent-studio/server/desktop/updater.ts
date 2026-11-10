@@ -26,6 +26,7 @@ import { writeJsonAtomic } from '../core/fs.ts';
 import { APP_VERSION, isDesktopApp } from '../core/app.ts';
 import { spawnDetached } from '../platform/spawn_detached.ts';
 import { cleanEnv, type HelperArgs, type InstallTarget, installTarget } from './update_helper.ts';
+import { PROTOCOL_VERSION } from '../host/host_client.ts';
 
 const envGet = (name: string): string | undefined => {
   try {
@@ -45,6 +46,8 @@ export const API_BASE = 'https://api.github.com';
 export const BASE_ENV = 'AIB_UPDATE_API_BASE';
 export const CHECK_INTERVAL = 24 * 3600;
 export const MAX_SUMS_BYTES = 64 * 1024;
+/** The release's small description asset ({version, protocol}), checked against SHA256SUMS like the installer. */
+export const RELEASE_INFO_NAME = 'release.json';
 export const MAX_INSTALLER_BYTES = 600 * 1024 * 1024;
 export const MAX_RELEASES_BYTES = 4 * 1024 * 1024;
 export const REQUEST_TIMEOUT = 30;
@@ -199,6 +202,8 @@ export interface Found {
   page: string;
   installer: { name: string; url: string; size: number };
   sums: { name: string; url: string };
+  /** release.json (tools/build.ts): {version, protocol}; present in releases built from beta.2 on. */
+  info?: { name: string; url: string };
 }
 
 /** int() of a JSON value (Python truncates floats and parses digit strings; anything else raises). */
@@ -243,6 +248,8 @@ export function pickRelease(
         installer: { name: installer.name as string, url: installer.url as string, size: pyInt(pyOr(installer.size, 0)) },
         sums: { name: SUMS_NAME, url: sums.url as string },
       };
+      const info = assets.find((a) => a.name === RELEASE_INFO_NAME && uploaded(a) && pyTruthy(a.url));
+      if (info) best.info = { name: RELEASE_INFO_NAME, url: info.url as string };
     }
   }
   return best;
@@ -262,6 +269,10 @@ export function checksumFor(text: string, filename: string): string {
     throw new UpdateError(`The release has no checksum (or an ambiguous one) for ${filename}, so it was not trusted.`, 'no_checksum');
   }
   return found[0];
+}
+
+export function bytesSha256(data: Uint8Array): Promise<string> {
+  return Promise.resolve(createHash('sha256').update(data).digest('hex'));
 }
 
 export async function fileSha256(path: string): Promise<string> {
@@ -471,6 +482,8 @@ export interface Downloaded {
   name: string;
   path: string;
   sha256: string;
+  /** The agent-host protocol of that version (from its release.json), when the release said. */
+  hostProtocol?: number;
 }
 
 export interface UpdateState {
@@ -771,6 +784,16 @@ export class UpdateService {
       );
     }
     this.state.downloaded = { version: found.version, name, path: dest, sha256: have };
+    if (found.info) {
+      // The agent-host protocol the new version speaks: Install now keeps working chats only when it can attach to this host.
+      try {
+        const raw = await readLimited(found.info.url, 'application/octet-stream', MAX_SUMS_BYTES, this.fetch);
+        if (await bytesSha256(raw) === checksumFor(sums, RELEASE_INFO_NAME)) {
+          const protocol = JSON.parse(new TextDecoder().decode(raw)).protocol;
+          if (Number.isInteger(protocol)) this.state.downloaded.hostProtocol = protocol;
+        }
+      } catch { /* unknown: Install now then waits for the chats */ }
+    }
     this.#save();
   }
 
@@ -790,16 +813,33 @@ export class UpdateService {
       this.#save();
     }
     const busy = await this.#busy();
-    if (busy && !whenIdle && this.chatsKeepRunning) {
+    const keeps = this.keepsChats();
+    if (busy && !whenIdle && keeps === true) {
       // The chats run in the agent host, which outlives this app: the new version attaches to it, they keep streaming, and the old
-      // host is replaced once none of them is working (host_proxy retireOlderHost).
+      // host is handed over once none of them is working (host_proxy retireOlderHost).
       return { ...await this.#go(), chats: busy };
     }
     if (busy) {
       if (whenIdle) return { state: 'waiting', chats: busy };
-      throw new UpdateError(`${busy} chat(s) are working. Install when they finish, or wait.`, 'chats_working', { chats: busy });
+      const why = keeps === 'protocol'
+        ? `This update changes how AIB runs agents, so it waits until no chat is working (${busy} now).`
+        : keeps === 'unknown'
+        ? `AIB cannot tell whether this update can take over running chats, so it waits until no chat is working (${busy} now).`
+        : `${busy} chat(s) are working. Install when they finish, or wait.`;
+      throw new UpdateError(why, 'chats_working', { chats: busy });
     }
     return await this.#go();
+  }
+
+  /**
+   * Can Install now leave working chats running? true; 'off' (in-process: the agents die with the app); 'protocol' (the new version
+   * speaks another agent-host protocol, so it could not attach to the running host); 'unknown' (the release has no release.json).
+   */
+  keepsChats(): true | 'off' | 'protocol' | 'unknown' {
+    if (!this.chatsKeepRunning) return 'off';
+    const protocol = this.state.downloaded?.hostProtocol;
+    if (protocol === undefined || protocol === null) return 'unknown';
+    return protocol === PROTOCOL_VERSION ? true : 'protocol';
   }
 
   cancelWait(): UpdateStatus {
