@@ -26,6 +26,10 @@ Deno.test('streaming and explicit approval', async () => {
   await c.prompt('fixture prompt');
   await until(() => c.permissions.size);
   assert(c.busy);
+  // QA m3: the turn's start time travels with the attention summary, so a reloaded page keeps counting from it.
+  const since = (c.attention() as Json).busySince as string;
+  assert(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(since), String(since));
+  assert(Math.abs(Date.parse(since) - Date.now()) < 60_000);
   const key = c.permissions.keys().next().value!;
   assertThrows(() => c.permission(key, 'not-a-real-option'), ValueError);
   assert(c.permissions.has(key));
@@ -34,6 +38,7 @@ Deno.test('streaming and explicit approval', async () => {
   assert(updateTexts(c).includes('Fixture response'));
   assert(events(c, 'turn_end').length);
   assertEquals(c.permissions.size, 0);
+  assertEquals((c.attention() as Json).busySince, null);
 });
 
 Deno.test('busy guard, interrupt and cursor', async () => {

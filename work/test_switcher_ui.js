@@ -505,3 +505,21 @@ test('shortcut sheet is also the Keyboard shortcuts action, and Ctrl+K swaps bac
   assert.equal(sheet.open, false);
   assert.equal(b.dialog.open, true);
 });
+
+test('QA m9: choosing a chat in Ctrl+K puts focus in its message box, not on the page body', async () => {
+  const rows = [conv('claude', 'a', 'Alpha one', 'C:\a')];
+  const ctx = setup(rows);
+  const prompt = ctx.document.createElement('textarea');
+  prompt.offsetParent = {};
+  ctx.document.getElementById = (id) => (id === 'prompt' ? prompt : null);
+  ctx.ui.open();
+  const dialog = ctx.document.body.children[0],
+    input = dialog.children[0];
+  input.listeners.keydown[0](key('Tab'));
+  input.listeners.keydown[0](key('Tab')); // Chats only
+  ctx.document.activeElement = ctx.document.body; // the redraw after opening dropped focus
+  input.listeners.keydown[0](key('Enter'));
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(ctx.opened, ['claude:a']);
+  assert.equal(ctx.document.activeElement, prompt);
+});

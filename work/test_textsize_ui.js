@@ -434,9 +434,9 @@ test('resize-ui: panel widths and limits grow with the interface size, unchanged
   assert.equal(R.sc(240, 1), 240);
   assert.equal(R.sc(240, undefined), 240);
   assert.equal(R.sc(240, 1.2), 288);
-  assert.equal(R.maxSide(1920, 280), 1220);
-  assert.equal(R.maxSide(1920, 280, 1), 1220);
-  assert.equal(R.maxSide(1920, 280, 1.5), 1220); // no fixed cap: only the chat's 420 px
+  assert.equal(R.maxSide(1920, 280), 480); // the chat list stops at 480 px (QA m13), scaled with the interface
+  assert.equal(R.maxSide(1920, 280, 1), 480);
+  assert.equal(R.maxSide(1920, 280, 1.5), 720);
   assert.equal(R.maxActivity(1100, 240, 1.5), Math.max(330, Math.min(900, 1100 - 240 - 420)));
   const base = { vw: 1500, side: null, activity: null, sideOn: true, actOn: true };
   assert.deepEqual(R.computeLayout(base), { side: 240, activity: 280 });

@@ -324,7 +324,8 @@ Deno.test({
     const c = await manager.connect('omp', lab.dir);
     const listed = await manager.liveList();
     const entry = (listed.connections as Json[]).find((x) => x.id === c.id)!;
-    assertEquals(Object.keys(entry.attention as Json).sort(), ['needs', 'state', 'turnEndedAt']);
+    assertEquals(Object.keys(entry.attention as Json).sort(), ['busySince', 'needs', 'state', 'turnEndedAt']);
+    assertEquals((entry.attention as Json).busySince, null);
     assertEquals((entry.attention as Json).state, 'idle');
     assert(!('events' in entry) && !('permissions' in entry));
 

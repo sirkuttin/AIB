@@ -66,6 +66,21 @@
     return out;
   }
   const countGroups = (layout) => (layout && layout.tree ? groups(layout.tree).length : 0);
+  // How many panes sit side by side at the widest point (a row adds its children up, a column takes its widest child).
+  function across(layout) {
+    const go = (n) =>
+      !n || n.k !== 's'
+        ? 1
+        : n.dir === 'row'
+          ? n.ch.reduce((sum, c) => sum + go(c), 0)
+          : Math.max(1, ...n.ch.map(go));
+    return layout && layout.tree ? go(layout.tree) : 0;
+  }
+  // The narrowest the split stage may get: MIN_W per pane across plus the 5 px dividers between them.
+  const minStageWidth = (layout) => {
+    const n = across(layout);
+    return n > 1 ? n * MIN_W + (n - 1) * 5 : 0;
+  };
   function find(tree, id) {
     let hit = null;
     const go = (n, p) => {
@@ -498,6 +513,8 @@
     single,
     groups,
     countGroups,
+    across,
+    minStageWidth,
     find,
     holder,
     focused,

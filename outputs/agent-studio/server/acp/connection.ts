@@ -552,6 +552,8 @@ export class Connection {
   busy = false;
   /** Wall-clock time of the last turn_end event (attention summary). */
   turnEndedAt: number | null = null;
+  /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
+  turnStartedAt: number | null = null;
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -1424,6 +1426,7 @@ export class Connection {
       );
     }
     this.busy = true;
+    this.turnStartedAt = now();
     this.error = '';
     this.promptSeq += 1;
     const seq = this.promptSeq;
@@ -2390,9 +2393,14 @@ export class Connection {
     const needs = this.permissions.size + this.elicitations.size +
       (this.auth ? 1 : 0); // includes subagent requests
     const state = this.closed ? 'closed' : needs ? 'needs_you' : !this.ready ? 'opening' : this.busy ? 'working' : 'idle';
-    const ended = this.turnEndedAt;
-    const stamp = ended ? new Date(Math.floor(ended) * 1000).toISOString().slice(0, 19) + 'Z' : null;
-    return { state, needs: state === 'closed' ? 0 : needs, turnEndedAt: stamp };
+    const iso = (t: number | null) => t ? new Date(Math.floor(t) * 1000).toISOString().slice(0, 19) + 'Z' : null;
+    const started = this.busy && !this.closed ? this.turnStartedAt : null;
+    return {
+      state,
+      needs: state === 'closed' ? 0 : needs,
+      turnEndedAt: iso(this.turnEndedAt),
+      busySince: iso(started),
+    };
   }
 
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */

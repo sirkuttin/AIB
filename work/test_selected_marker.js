@@ -39,7 +39,10 @@ test('the card keeps its size, padding and radius: only position: relative is ne
 });
 
 test('needs-you / unread outlines on the selected card are the 1px outline only', () => {
-  assert.equal(decl('aside .connection.selected.attn-needs_you')['box-shadow'], 'inset 0 0 0 1px var(--accent-line)');
+  // QA c1: needs-you is a thin amber outline, so it no longer looks like the purple focus ring or the selected card.
+  const amber = 'inset 0 0 0 1px color-mix(in srgb, var(--need) 55%, transparent)';
+  assert.equal(decl('aside .connection.selected.attn-needs_you')['box-shadow'], amber);
+  assert.equal(decl('aside .connection.attn-needs_you:not(.selected)')['box-shadow'], amber);
   assert.equal(decl('aside .connection.selected.attn-unread')['box-shadow'], 'inset 0 0 0 1px #3d5f86');
   for (const r of rules) {
     if (/\.connection/.test(r.selector) && r.declarations['box-shadow']) {

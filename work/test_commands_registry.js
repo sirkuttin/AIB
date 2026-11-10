@@ -279,3 +279,30 @@ test('sheet model: four groups, registry shortcuts plus the static ones, absent 
   );
   assert.ok(none.includes('?'));
 });
+
+test('QA M1: an archived title match beats scattered letters and path matches, even past the result limit', () => {
+  const longRoot = 'C:\\Users\\someone\\AppData\\Local\\Temp\\agent-studio-demo-8813\\projects\\';
+  const chats = [];
+  for (let i = 0; i < 60; i++)
+    chats.push(
+      chatItem('Chat ' + i + ' about refactoring the session cookies', {
+        path: longRoot + 'proj' + i,
+        project: 'proj' + i,
+        activity: 1000 + i,
+      }),
+    );
+  chats.push(
+    chatItem('Old spike: try the legacy parser', { archived: true, activity: 1, path: longRoot + 'beta', project: 'beta' }),
+  );
+  const projects = chats.slice(0, 15).map((c, i) => ({ key: 'p' + i, name: c.project, path: c.path }));
+  for (const q of ['parser', 'old', 'legacy']) {
+    const r = C.compose({ chats, projects, actions: [] }, q, 'all');
+    assert.equal(r[0] && r[0].title, 'Old spike: try the legacy parser', q + ' ranks the archived chat first');
+    assert.ok(!r.some((x) => x.kind === 'project'), q + ': project paths only match on a substring');
+  }
+  // A folder path still matches on a real substring.
+  const byPath = C.compose({ chats: [], projects: [{ key: 'x', name: 'App', path: 'D:\\Work\\billing-api' }], actions: [] }, 'billing', 'all');
+  assert.equal(byPath.length, 1);
+  // search() (the chats-only switcher) follows the same rule.
+  assert.equal(C.search(chats, 'parser')[0].title, 'Old spike: try the legacy parser');
+});
