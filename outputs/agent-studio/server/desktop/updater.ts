@@ -271,6 +271,11 @@ export function checksumFor(text: string, filename: string): string {
   return found[0];
 }
 
+/** <data>/updates/started-<version>.ok: the new app writes it once it is up; the update helper waits for it (update_helper.ts). */
+export function startedMarker(updatesDir: string, version: string): string {
+  return join(updatesDir, `started-${version}.ok`);
+}
+
 export function bytesSha256(data: Uint8Array): Promise<string> {
   return Promise.resolve(createHash('sha256').update(data).digest('hex'));
 }
@@ -876,6 +881,7 @@ export class UpdateService {
       kind: target.kind,
       target: target.target,
       args: this.appArgs,
+      marker: startedMarker(this.root, got.version!),
     });
     if (this.quit) this.quit();
     return { state: 'installing' };

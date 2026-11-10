@@ -201,3 +201,38 @@ Deno.test('path helpers', () => {
   assertEquals(basename('/a/b/'), 'b');
   assertEquals(join('a', 'b', 'c').split(/[\\/]/), ['a', 'b', 'c']);
 });
+
+Deno.test({
+  name: 'ProcessTree (Windows): agents end when the process that owns their job dies (a crashed agent host leaves no orphan agent)',
+  ignore: !win,
+  async fn() {
+    // A stand-in "host": it starts an "agent" (with a child of its own) through ProcessTree, prints the pids, and waits to be killed.
+    const tree = new URL('../../outputs/agent-studio/server/platform/process_tree.ts', import.meta.url).href;
+    const code = `import { ProcessTree } from ${JSON.stringify(tree)};
+const grand = "setTimeout(() => {}, 60000) // kill-on-close-grandchild";
+const agentCode = "const g = new Deno.Command(Deno.execPath(), { args: ['eval', " + JSON.stringify(grand) + "], stdout: 'null', stderr: 'null' }).spawn(); console.log(g.pid); setTimeout(() => {}, 60000)";
+const agent = new Deno.Command(Deno.execPath(), { args: ['eval', agentCode], stdout: 'piped', stderr: 'null', stdin: 'null' }).spawn();
+const t = new ProcessTree(agent);
+const reader = agent.stdout.pipeThrough(new TextDecoderStream()).getReader();
+const { value } = await reader.read();
+console.log(JSON.stringify({ agent: agent.pid, grandchild: Number((value ?? '').trim()), job: t.hasJob }));
+setTimeout(() => {}, 60000);`;
+    const host = new Deno.Command(Deno.execPath(), { args: ['eval', code], stdout: 'piped', stderr: 'null', stdin: 'null' }).spawn();
+    const pids = JSON.parse(await firstLine(host));
+    try {
+      assert(pids.job, 'the agent joined a job');
+      assert(processAlive(pids.agent) === true && processAlive(pids.grandchild) === true, 'running before the crash');
+      host.kill('SIGKILL'); // TerminateProcess: no cleanup code runs in the "host"
+      await host.status;
+      await host.stdout.cancel().catch(() => {});
+      assert(await gone(pids.agent), 'the agent outlived its crashed host');
+      assert(await gone(pids.grandchild), "the agent's child outlived the crashed host");
+    } finally {
+      for (const pid of [pids.agent, pids.grandchild]) {
+        try {
+          Deno.kill(pid, 'SIGKILL');
+        } catch { /* gone, as it should be */ }
+      }
+    }
+  },
+});

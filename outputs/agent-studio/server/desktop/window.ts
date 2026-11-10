@@ -37,6 +37,23 @@ export function choosePortPair(isFree: (port: number) => boolean, start = FIRST_
   throw new Error(`No two free ports in a row between ${start} and ${start + tries}`);
 }
 
+export const LAST_PORT_FILE = 'desktop-port.json';
+
+/** The port pair the app used last time (desktop-port.json), when both ports are free now; else null. */
+export function lastPortPair(stateDir: string, isFree: (port: number) => boolean): number | null {
+  try {
+    const port = JSON.parse(Deno.readTextFileSync(`${stateDir}${SEP}${LAST_PORT_FILE}`)).port;
+    if (Number.isInteger(port) && port > 0 && port < 65535 && isFree(port) && isFree(port + 1)) return port;
+  } catch { /* none yet */ }
+  return null;
+}
+
+export function saveLastPort(stateDir: string, port: number): void {
+  try {
+    Deno.writeTextFileSync(`${stateDir}${SEP}${LAST_PORT_FILE}`, JSON.stringify({ port }));
+  } catch { /* not fatal */ }
+}
+
 /** True when nothing listens on 127.0.0.1:port right now. */
 export function portFree(port: number): boolean {
   try {

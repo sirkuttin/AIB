@@ -44,6 +44,8 @@ import {
   installTarget,
   main as helperMain,
   removeUpdateLeftovers,
+  JOURNAL_NAME,
+  recoverInterruptedUpdate,
   rollback,
   run as runHelper,
   type StartResult,
@@ -1470,3 +1472,100 @@ Deno.test("the repository: sirkuttin/AIB for the desktop app, none for deno run,
     else Deno.env.set(REPO_ENV, saved);
   }
 });
+
+// ---- beta.2 helper rules: start confirmation, crash-safe journal, a tray presence ----------------------------------------
+
+Deno.test("helper: success needs the new app's start confirmation (marker); none in time puts the old version back", async () => {
+  for (const confirmed of [true, false]) {
+    const c = await windowsCase();
+    try {
+      const marker = `${c.dir}/started-0.2.0.ok`;
+      Deno.writeTextFileSync(marker, "stale from an earlier try");
+      const seen: (string | undefined)[] = [];
+      const trays: string[] = [];
+      const code = await runHelper({ ...c.args, marker }, {
+        alive: () => false,
+        sleep: () => {},
+        stamp: STAMP,
+        unpack: (archive: string, dest: string) => jsUnpack(archive, dest),
+        tray: (tip) => (trays.push(`show ${tip}`), () => void trays.push("hide")),
+        start: (command: string[], _env: Record<string, string>, m?: string) => {
+          c.started.push(command);
+          seen.push(m);
+          assert(!exists(m!), "a stale marker never counts");
+          return Promise.resolve(confirmed ? { code: null, confirmed: true } : { code: null, confirmed: false });
+        },
+      });
+      assertEquals(seen[0], marker);
+      assertEquals(trays, ["show Updating AIB to 0.2.0...", "hide"], "a tray icon for the helper's whole life");
+      if (confirmed) {
+        assertEquals(code, 0);
+        assertEquals(read(`${c.app}/AIB.exe`), "new exe");
+        assert(read(`${c.dir}/install.log`).includes("the new version is running (it confirmed its start)"));
+      } else {
+        assertEquals(code, 7);
+        assertOldInstall(c.app);
+        assert(read(`${c.dir}/install.log`).includes("no start confirmation within 60 s"), read(`${c.dir}/install.log`));
+      }
+      assert(!exists(`${c.dir}/${JOURNAL_NAME}`), "the journal is gone once the outcome is settled");
+    } finally {
+      Deno.removeSync(c.dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("helper: the swap journal is on disk before each rename; a cut-off update is undone at the next start", async () => {
+  const c = await windowsCase();
+  try {
+    let snapshots = 0;
+    // Crash the helper (an exception out of start stands in for "killed") right after the swap: the journal must hold every step.
+    const crash = new Error("helper killed");
+    const code = await runHelper(c.args, {
+      alive: () => false,
+      sleep: () => {},
+      stamp: STAMP,
+      unpack: (archive: string, dest: string) => jsUnpack(archive, dest),
+      tray: () => () => {},
+      start: () => {
+        const j = JSON.parse(read(`${c.dir}/${JOURNAL_NAME}`));
+        snapshots = j.steps.length;
+        assertEquals(j.helperPid, Deno.pid);
+        // Simulate the crash: copy the journal aside, it is what a killed helper leaves behind.
+        Deno.copyFileSync(`${c.dir}/${JOURNAL_NAME}`, `${c.dir}/journal.crash`);
+        return Promise.reject(crash);
+      },
+    });
+    assertEquals(code, 7, "(this run rolled back by itself)");
+    assert(snapshots >= 4, `every top-level entry was journaled (${snapshots})`);
+    // Now replay what a crash would have left: redo the swap from the copy, put the journal back, and recover as AIB's start does.
+    const j = JSON.parse(read(`${c.dir}/journal.crash`));
+    const steps = j.steps as { path: string; aside: string | null; from: string }[];
+    const stage = `${c.app}/.aib-update-${STAMP}/AIB`;
+    Deno.mkdirSync(stage, { recursive: true });
+    for (const s of steps) Deno.writeTextFileSync(s.from, `new ${s.path.split(/[\/]/).pop()}`);
+    for (const s of steps.slice(0, 2)) { // the helper finished two steps ...
+      if (s.aside && exists(s.path)) Deno.renameSync(s.path, s.aside);
+      Deno.renameSync(s.from, s.path);
+    }
+    // ... and died right after journaling the third (both of its renames recorded, neither done).
+    Deno.writeTextFileSync(`${c.dir}/${JOURNAL_NAME}`, JSON.stringify({ ...j, steps: steps.slice(0, 3), helperPid: 999999 }));
+    assertEquals(recoverInterruptedUpdate(c.dir, () => false), true);
+    assertOldInstall(c.app);
+    assert(!exists(`${c.dir}/${JOURNAL_NAME}`));
+    assert(read(`${c.dir}/install.log`).includes("an interrupted update to 0.2.0 was found at start; the previous version was put back"));
+    assertEquals(recoverInterruptedUpdate(c.dir), false, "nothing to undo now");
+    Deno.writeTextFileSync(`${c.dir}/${JOURNAL_NAME}`, JSON.stringify({ ...j, helperPid: 1 }));
+    assertEquals(recoverInterruptedUpdate(c.dir, () => true), false, "a helper still at work is left alone");
+  } finally {
+    Deno.removeSync(c.dir, { recursive: true });
+  }
+});
+
+function exists(p: string): boolean {
+  try {
+    Deno.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -14,7 +14,7 @@
  * old app) already running for the state folder is recognised and taken over once no chat works there (host_client.ts findHost);
  * this program never starts one.
  */
-import { APP_ROOT, APP_VERSION, isCompiled, isDesktopApp, selfCommand } from './core/app.ts';
+import { APP_ROOT, APP_VERSION, isCompiled, isDesktopApp, launchDir, selfCommand } from './core/app.ts';
 import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
@@ -30,7 +30,8 @@ import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
-import { choosePortPair, DesktopApp, portFree, portGiven } from './desktop/window.ts';
+import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
+import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconDarkPng, trayIconPng } from './desktop/tray_icon.ts';
@@ -77,6 +78,16 @@ export function hostCommand(o: Options, compiled = isCompiled(), env: Record<str
   // no app is attached, so it never lingers invisibly (docs/agent-host.md, "Lifecycle"). A source run keeps the idle timer only.
   if (compiled) command.push('--tray', '--exit-unattached-seconds', String(APP_HOST_EXIT_SECONDS));
   return command;
+}
+
+/** <data>/updates/started-<APP_VERSION>.ok: tells a waiting update helper this version is up (built app only). Never throws. */
+function writeStartedMarker(stateDir: string): void {
+  if (!isCompiled()) return;
+  try {
+    Deno.mkdirSync(`${stateDir}${sep}updates`, { recursive: true });
+    Deno.writeTextFileSync(startedMarker(`${stateDir}${sep}updates`, APP_VERSION), String(Date.now()));
+    log.announce('studio', 'started: wrote the start confirmation for AIB %s', APP_VERSION);
+  } catch { /* no update waits on it, or the folder is unwritable */ }
 }
 
 function envObject(): Record<string, string | undefined> {
@@ -146,8 +157,21 @@ export async function main(argv: string[]): Promise<void> {
     for (const item of (result.active ?? []) as Record<string, unknown>[]) console.log(`  ${item.provider} in ${item.cwd}: ${item.state}`);
     Deno.exit(result.stopped || !result.running ? 0 : 2);
   }
+  if (desktop && isDesktopApp()) {
+    // An update cut off in the middle of its file swap: put the previous version back and start that (it is whole again).
+    const { recoverInterruptedUpdate } = await import('./desktop/update_helper.ts');
+    if (recoverInterruptedUpdate(`${stateDir}${sep}updates`)) {
+      log.announce('studio', 'an interrupted update was undone; starting AIB again');
+      folderLock?.release();
+      const { spawnDetached } = await import('./platform/spawn_detached.ts');
+      (await spawnDetached([Deno.execPath(), ...Deno.args], `${stateDir}${sep}updates${sep}restart.log`, launchDir())).close();
+      Deno.exit(0);
+    }
+  }
   if (desktop) {
-    if (!portGiven(args)) options.port = choosePortPair(portFree); // like the Tauri app: the first free pair from 8777
+    // The same port as last time when it is free, so the page's origin (and its localStorage drafts) stays the same across restarts
+    // and updates; else the first free pair from 8777, like the Tauri app.
+    if (!portGiven(args)) options.port = lastPortPair(stateDir, portFree) ?? choosePortPair(portFree);
   }
   let studio: Studio | null = null;
   let host: LiveBackend;
@@ -214,6 +238,7 @@ export async function main(argv: string[]): Promise<void> {
   const port = await server.listen(options.port);
   const url = `http://127.0.0.1:${port}`;
   await folderLock?.setPort(port);
+  if (desktop) saveLastPort(stateDir, port);
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
@@ -261,12 +286,14 @@ export async function main(argv: string[]): Promise<void> {
         return result;
       },
       quit: () => close('the app was quit'),
+      onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
     });
     await app.start(); // the window navigates now: the server already listens
     await watchSignal(stateDir, () => void app.showWindow());
     void ensureStartMenuShortcut(Deno.execPath());
     return;
   }
+  writeStartedMarker(stateDir); // `serve`: up once it listens
   if (options.open) {
     const opener = Deno.build.os === 'windows'
       ? ['cmd', '/c', 'start', '', url]

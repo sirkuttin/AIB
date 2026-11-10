@@ -5,6 +5,8 @@
 import { assert, assertEquals } from './_assert.ts';
 import {
   choosePortPair,
+  lastPortPair,
+  saveLastPort,
   cleanGeometry,
   closeDecision,
   closeQuestion,
@@ -858,6 +860,20 @@ Deno.test('the first load of our page calls onPageLoaded once (the update health
     assertEquals(loaded, 1);
   } finally {
     app.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('the last port is reused when free (same origin, so localStorage drafts survive a restart or an update)', async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    assertEquals(lastPortPair(dir, () => true), null, 'nothing saved yet');
+    saveLastPort(dir, 8781);
+    assertEquals(lastPortPair(dir, () => true), 8781);
+    assertEquals(lastPortPair(dir, (p) => p !== 8782), null, 'its artifact port is taken: choose again');
+    Deno.writeTextFileSync(`${dir}/desktop-port.json`, '{"port": "x"}');
+    assertEquals(lastPortPair(dir, () => true), null);
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
