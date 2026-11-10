@@ -564,7 +564,6 @@
     if (a.type === 'shell') {
       if (a.description) box.append(make('div', a.description, 'tool-caption'));
       const cmd = codeBlock(a.command, a.shell === 'shell' ? 'bash' : a.shell, a.shell);
-      cmd.runCommand = a.command; /* run-terminal-ui.js: this block is a command the person may re-run */
       box.append(cmd);
       chips(a.rest);
       leftover(a.rest);
@@ -841,6 +840,7 @@
       inp = asObject(c.input);
       a = analyze(name, c.input);
       if (c.result) status = c.result.isError || resultFailed(c.result.text) ? 'failed' : 'ok';
+      else status = c.running ? 'running' : 'pending'; // no result yet: running only when the chat says another app is on it (chat.js markRunningCall)
     }
     if (!a) return { label: 'tool', text: oneLine(row.label || 'Tool'), status };
     const t = a.type;
@@ -896,16 +896,6 @@
     path argument for read / write / edit calls. A line comes only from a location or a Read offset. */
   const FILE_TYPES = new Set(['read', 'write', 'edit', 'patch']);
   const posInt = (v) => (Number.isInteger(v) && v > 0 ? v : null);
-  /* The shell command a tool row ran, or '' (run-terminal-ui.js offers it on the collapsed row). */
-  function commandOf(row) {
-    const a =
-      row && row.raw
-        ? analyze(toolNameOf(row.raw), asObject(row.raw.rawInput) || {})
-        : row && row.call
-          ? analyze(row.call.name, row.call.input)
-          : null;
-    return a && a.type === 'shell' ? a.command : '';
-  }
   function fileTarget(row) {
     let path = '',
       lineNo = null;
@@ -1030,7 +1020,6 @@
       if (pics.length > 3) thumbs.append(make('span', '+' + (pics.length - 3), 'tool-thumbs-more'));
       box.append(thumbs);
     }
-    if (root.RunInTerminalUI) root.RunInTerminalUI.decorateLine(box, commandOf(row));
     const E = root.AgentEditors,
       target = E ? fileTarget(row) : null;
     if (target) {
@@ -1136,7 +1125,6 @@
   }
   root.ToolViews = {
     fileTarget,
-    commandOf,
     line,
     groupRows,
     summarize,

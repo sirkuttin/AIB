@@ -1,6 +1,6 @@
 'use strict';
 const { APP: APP_DIR } = require('./_paths');
-/* Agent messages are plain text on the page (no box, no visible title bar); the time shows on hover or focus. User bubbles keep their box. */
+/* Agent messages are plain text on the page (no box, no visible title bar); the time always shows. User bubbles keep their box. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -10,10 +10,7 @@ const { cssRules, declarationsFor } = require('./css_rules.js');
 const rules = cssRules(fs.readFileSync(path.join(APP_DIR, 'chat.css'), 'utf8'));
 const decl = (selector, context) => declarationsFor(rules, selector, context);
 /* Colours are named in theme.css (var(--token)); these checks care about the colour, so resolve the names. */
-const tokens = declarationsFor(
-  cssRules(fs.readFileSync(path.join(APP_DIR, 'theme.css'), 'utf8')),
-  ':root',
-);
+const tokens = declarationsFor(cssRules(fs.readFileSync(path.join(APP_DIR, 'theme.css'), 'utf8')), ':root');
 const hex = (value) => String(value).replace(/var\((--[\w-]+)\)/g, (all, name) => tokens[name] ?? all);
 
 test('assistant bubbles have no border, background or card shape', () => {
@@ -34,15 +31,14 @@ test('assistant header is kept for screen readers but not drawn', () => {
   assert.notEqual(label.display, 'none');
 });
 
-test('assistant time is hidden until hover or focus, then muted 10px at the top right', () => {
-  const time = decl('.bubble.assistant > .bubble-head > time');
-  assert.equal(time.opacity, '0');
-  assert.equal(hex(time.color), '#737e94');
-  assert.equal(time['font-size'], '10px');
+test('assistant time always shows, muted 12px at the top right', () => {
+  const time = { ...decl('.bubble-head time'), ...decl('.bubble.assistant > .bubble-head > time') };
+  assert.equal(time.opacity, undefined);
+  assert.equal(hex(time.color), '#929aaa');
+  assert.equal(time['font-size'], '12px');
   assert.equal(decl('.bubble.assistant > .bubble-head').right, '0');
-  assert.equal(decl('.bubble.assistant:hover > .bubble-head > time').opacity, '1');
-  assert.equal(decl('.bubble.assistant:focus-within > .bubble-head > time').opacity, '1');
-  assert.equal(decl('.bubble.assistant > .bubble-head > time', '@media (hover: none)').opacity, '1');
+  assert.deepEqual(decl('.bubble.assistant:hover > .bubble-head > time'), {});
+  assert.deepEqual(decl('.bubble.assistant:focus-within > .bubble-head > time'), {});
 });
 
 test('assistant text keeps the user bubble text metrics', () => {

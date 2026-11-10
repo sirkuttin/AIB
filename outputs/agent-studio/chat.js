@@ -962,6 +962,9 @@
         hint: ownershipHints[selected.provider + ':' + selected.id],
         recovered: !!selected.recovered,
         reconnecting: !!(selected.recovered?.reconnecting || selected.live?.reconnecting),
+        // The steady verdict (conversation.elsewhere, set by annotateElsewhere) is what the sidebar card reads too, so the
+        // header and the card say the same words; the raw facts below only count while there is no steady verdict.
+        elsewhere: selected.elsewhere,
         elsewhereWorking:
           !!window.AgentStatusWords?.elsewhereWorking(ownershipHints[selected.provider + ':' + selected.id]) ||
           actCounts.working > 0 ||
@@ -1387,11 +1390,25 @@
     const ctx = (data.context || []).map((e) => ({ ...toRow(e), ctx: true })),
       rows = data.events.filter((e) => thinkingOn() || e.kind !== 'thinking').map(toRow);
     const paired = window.ToolViews?.pairSaved ? window.ToolViews.pairSaved([...ctx, ...rows]) : [...ctx, ...rows];
+    markRunningCall(paired, key);
     const out = window.PlanUI ? window.PlanUI.fold(paired, { working: savedWorking(key) }) : paired;
     /* Only the main view's pinned plan keeps a plan card from the context, and only while it has work left; everything else from the context is dropped. */
     return ctx.length
       ? out.filter((r) => !r.ctx || (dock && r.role === 'plan' && r.entries.some((x) => x.status !== 'completed')))
       : out;
+  }
+  /* A saved transcript has no live tool status: a call without a result is shown as pending (•). While the chat is shown
+     "Elsewhere · Working" (the same steady conversation.elsewhere the header and card read), its last call is the one the
+     other app is running: call.running makes ToolViews draw it as running. */
+  function markRunningCall(rows, key) {
+    const c = conversations.find((x) => x.key === key);
+    if (!elsewhereLocked(c)) return;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.ctx || r.role !== 'tool' || !r.call) continue;
+      if (!r.call.result) r.call.running = true;
+      return;
+    }
   }
   function savedWorking(key) {
     const c = conversations.find((x) => x.key === key);
@@ -4080,6 +4097,7 @@
     viewOf,
     viewStore,
     rowStatus,
+    renderHeader,
     safeImageBlock,
     showRows,
     sortAgents,
@@ -4150,6 +4168,12 @@
       },
       set provider(v) {
         provider = v;
+      },
+      get ownershipHints() {
+        return ownershipHints;
+      },
+      set ownershipHints(v) {
+        ownershipHints = v;
       },
       get selected() {
         return selected;

@@ -1318,6 +1318,11 @@ aside .connection .hold-note {
 @media (max-width: 1100px) {
   body > aside {
     width: 0;
+    /* Restated here because the plain `body > aside` rule above (z-index 5, overflow hidden) comes after the first
+       <=1100 px block and wins over it. The aside's stacking context holds the drawer (.aside-main), so it must sit over
+       the Activity strip (#subagentsPane, 6) and the scrim (.ws-scrim, 35), or the open drawer draws under both. */
+    z-index: 40;
+    overflow: visible;
   }
   body > main {
     padding-left: 0;

@@ -270,7 +270,8 @@ input[type='checkbox'] {
 }
 .bubble-head time {
   margin-left: auto;
-  color: var(--text-faint-2);
+  color: var(--muted); /* 5.5:1 on the purple user box, more on the page */
+  font-size: 12px;
 }
 .bubble pre {
   font-family:
@@ -2316,14 +2317,17 @@ aside #connections {
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg-control);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
 }
 .copy-ctl button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   background: none;
   border: 0;
   color: #c3cadb;
-  padding: 3px 7px;
+  padding: 0 9px;
   cursor: pointer;
   font: inherit;
 }
@@ -2334,13 +2338,13 @@ aside #connections {
 }
 .copy-ctl .copy-more {
   border-left: 1px solid var(--line);
-  padding: 3px 5px;
+  padding: 0 7px;
 }
 .copy-ctl .copied {
   color: var(--ok-bright);
 }
-/* Run in terminal (run-terminal-ui.js): an icon button left of Copy in a code block's corner, and at the right end of a
-   collapsed tool row that ran a command. After a click it reads "Pasted" (or "Not pasted") for 2 s; there is no toast. */
+/* Run in terminal (run-terminal-ui.js): an icon button left of Copy in the corner of a shell code block in an agent reply
+   (never on tool rows). Same height as the copy control (24 px button + its border). After a click it reads "Pasted" (or "Not pasted") for 2 s; there is no toast. */
 .run-acts {
   display: inline-flex;
   align-items: center;
@@ -2351,15 +2355,15 @@ aside #connections {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-width: 24px;
-  height: 19px;
-  padding: 0 5px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--bg-control);
   color: #c3cadb;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
@@ -2384,36 +2388,11 @@ aside #connections {
   border-color: var(--line-control);
   color: var(--danger-text);
 }
-.tool-run {
-  position: absolute;
-  top: 3px;
-  right: 6px;
-  z-index: 1;
-}
-.tool-toggle:has(~ .tool-run) {
-  padding-right: 40px;
-}
-.tool-toggle:has(~ .tool-run.done),
-.tool-toggle:has(~ .tool-run.failed) {
-  padding-right: 96px;
-}
 .copy-code {
   position: absolute;
   top: 4px;
   right: 6px;
   z-index: 1;
-  opacity: 0.35;
-  transition: opacity 0.12s;
-}
-.has-copy:hover > .copy-code,
-.has-copy:focus-within > .copy-code,
-.copy-code:focus-within {
-  opacity: 1;
-}
-@media (hover: none) {
-  .copy-code {
-    opacity: 1;
-  }
 }
 .markdown-code,
 .code-block,
@@ -3401,7 +3380,7 @@ span.chip-static:hover {
 }
 
 /* Agent messages are plain text on the page: no box, no title bar. The header stays in the DOM (the screen-reader name
-   "Assistant") but its label is visually hidden; the time and copy button show at the top-right on hover or focus. */
+   "Assistant") but its label is visually hidden; the time and copy button always show at the top-right. */
 .bubble.assistant {
   position: relative;
   border: 0;
@@ -3433,19 +3412,6 @@ span.chip-static:hover {
 }
 .bubble.assistant > .bubble-head > time {
   margin-left: 0;
-  color: var(--text-faint-2);
-  font-size: 10px;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.bubble.assistant:hover > .bubble-head > time,
-.bubble.assistant:focus-within > .bubble-head > time {
-  opacity: 1;
-}
-@media (hover: none) {
-  .bubble.assistant > .bubble-head > time {
-    opacity: 1;
-  }
 }
 .bubble.assistant > .markdown,
 .bubble.assistant > pre {
@@ -3458,7 +3424,7 @@ span.chip-static:hover {
 }
 
 /* Your messages keep the purple box but lose the title bar. The header stays in the DOM (the screen-reader name "You")
-   with its label visually hidden; the time and copy button float at the top-right and show on hover or focus. They are
+   with its label visually hidden; the time and copy button float at the top-right and always show. They are
    floated, so the first lines of text wrap around them and never run underneath. */
 .bubble.user > .bubble-head {
   float: right;
@@ -3480,22 +3446,4 @@ span.chip-static:hover {
 .bubble.user > .bubble-head > time,
 .bubble.user > .bubble-head > .copy-ctl {
   margin-left: 0;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.bubble.user > .bubble-head > time {
-  color: #737e94;
-  font-size: 10px;
-}
-.bubble.user:hover > .bubble-head > time,
-.bubble.user:hover > .bubble-head > .copy-ctl,
-.bubble.user:focus-within > .bubble-head > time,
-.bubble.user:focus-within > .bubble-head > .copy-ctl {
-  opacity: 1;
-}
-@media (hover: none) {
-  .bubble.user > .bubble-head > time,
-  .bubble.user > .bubble-head > .copy-ctl {
-    opacity: 1;
-  }
 }

@@ -1,5 +1,5 @@
-/* "Run in terminal": a small button next to the copy button on shell commands in agent replies and on tool calls that ran a
-   command. It pastes the command into this chat's terminal (window.AibTerminal, the per-chat terminal panel) and never presses
+/* "Run in terminal": a small button next to the copy button on shell commands in agent replies (never on the agent's own tool
+   calls). It pastes the command into this chat's terminal (window.AibTerminal, the per-chat terminal panel) and never presses
    Enter: the person reads it and runs it. Without window.AibTerminal there is no button.
    commandText() is pure: which code gets a button and what text is pasted. decorate() is called by copy-ui.js per code block. */
 (function (root) {
@@ -106,12 +106,6 @@
     if (line.length > 400 || !looksLikeCommand(line)) return null;
     return trimEnd(line.trim());
   }
-  /* A command an agent's tool call ran: pasted as it is, without trailing newlines. */
-  function toolCommandText(command) {
-    const text = trimEnd(String(command ?? '').replace(/\r\n?/g, '\n')).replace(/^\n+/, '');
-    return text.trim() ? text : null;
-  }
-
   /* ---- Page side ---- */
   const doc = () => root.document || globalThis.document;
   let host = { current: () => '' };
@@ -134,9 +128,8 @@
     }
   }
   const hasClass = (node, name) => (' ' + (node.className || '') + ' ').includes(' ' + name + ' ');
-  /* The text a decorated block pastes, or null: tool calls mark their command block (runCommand); Markdown fences go by language. */
+  /* The text a decorated block pastes, or null: only Markdown fences in replies, by language. Tool-call code never gets one. */
   function textForBlock(block, pre, lang) {
-    if (typeof block.runCommand === 'string') return toolCommandText(block.runCommand);
     if (!hasClass(block, 'markdown-code')) return null;
     return commandText(pre ? pre.textContent : '', lang);
   }
@@ -259,26 +252,11 @@
     } else block.append(btn);
     return btn;
   }
-  /* tool-views.js line(): the collapsed row of a tool call that ran a command gets the button at its right end. */
-  function decorateLine(line, command) {
-    if (!line || line.runDone || !terminal()) return null;
-    const text = toolCommandText(command);
-    if (text == null) return null;
-    line.runDone = true;
-    const btn = makeButton(line, text, 'tool-run');
-    btn.runLabel = LABEL + ': ' + (text.length > 80 ? text.slice(0, 79) + '…' : text).replace(/\s+/g, ' ');
-    idle(btn);
-    line.append(btn);
-    return btn;
-  }
-
   const api = {
     commandText,
-    toolCommandText,
     textForBlock,
     conversationFor,
     decorate,
-    decorateLine,
     run,
     init,
     SHELL_LANGS,

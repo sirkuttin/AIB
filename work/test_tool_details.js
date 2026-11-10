@@ -295,9 +295,9 @@ test('summaries: shell skips cd/variable prefixes, file tools use verb + file na
   assert.equal(S(callRow('mcp__rea__open_binary', { path: 'x.exe' })).text, 'open binary: x.exe');
 });
 
-test('status: derived from the matching result, none when unknown, live statuses map', () => {
+test('status: derived from the matching result, pending (•) when there is no result yet, live statuses map', () => {
   const st = (r) => TV.summarize(r).status;
-  assert.equal(st(callRow('Bash', { command: 'ls' })), '');
+  assert.equal(st(callRow('Bash', { command: 'ls' })), 'pending'); // a saved call without a result: pending, never a blank mark (running only via call.running, see test_status_drawer_toolmark.js)
   assert.equal(st(callRow('Bash', { command: 'ls' }, { text: 'ok', isError: false })), 'ok');
   assert.equal(st(callRow('Bash', { command: 'ls' }, { text: 'boom', isError: true })), 'failed');
   assert.equal(st(callRow('Bash', { command: 'ls' }, { text: 'Exit code 2\nbad', isError: false })), 'failed');

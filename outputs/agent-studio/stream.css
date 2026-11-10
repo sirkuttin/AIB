@@ -1,4 +1,4 @@
-/* Message stream: thin turn divider, collapsed injected-text cards, hover-only copy buttons, "Show earlier messages". */
+/* Message stream: thin turn divider, collapsed injected-text cards, "Show earlier messages". */
 .turn-divider {
   display: flex;
   align-items: center;
@@ -59,8 +59,8 @@
 }
 .msg-note-toggle time {
   flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--text-faint-2);
+  font-size: 12px;
+  color: var(--muted);
 }
 .msg-note-body {
   padding: 8px 14px 12px;
@@ -84,23 +84,6 @@
 .show-earlier:hover,
 .show-earlier:focus-visible {
   background: var(--hover-2);
-}
-/* Copy buttons appear on hover or keyboard focus inside the message (always on touch screens, or while a menu is open). */
-.bubble .copy-message {
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.bubble:hover .copy-message,
-.bubble:focus-within .copy-message,
-.bubble .copy-message:focus-within,
-.bubble .copy-message:has([aria-expanded='true']),
-.bubble .copy-message .copied {
-  opacity: 1;
-}
-@media (hover: none) {
-  .bubble .copy-message {
-    opacity: 1;
-  }
 }
 .unknown-send .bubble {
   margin-bottom: 4px;
