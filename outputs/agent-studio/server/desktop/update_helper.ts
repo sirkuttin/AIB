@@ -15,9 +15,13 @@
  *   appimage     target = the AppImage file ($APPIMAGE). The new file is copied beside it, made executable, and renamed over it
  *                (the old one becomes <name>.old-<stamp>). The updater starts this helper from the new AppImage, so the old one's
  *                mount can go away.
- * If any rename fails, or the new app cannot start (it cannot be spawned or exits with an error within STARTUP_SECONDS), every rename
- * is undone and the old app is started again. Leftovers (*.old-*, .aib-update-*) are deleted by the new app at startup:
- * removeUpdateLeftovers().
+ * If any rename fails, or the new app does not confirm its start (it writes the `marker` file, <data>/updates/started-<ver>.ok,
+ * once its window has loaded the page, or once a `serve` listens; MARKER_SECONDS at most) or exits with an error first, every
+ * rename is undone and the old app is started again. Without a marker (older callers) "still running after STARTUP_SECONDS"
+ * counts as started. Each rename is recorded in `journal` (install-journal.json next to the log) BEFORE it happens, so an update
+ * cut off in the middle (power loss, the helper killed) is undone by the next AIB start: recoverInterruptedUpdate(). While it
+ * works the helper shows a tray icon "Updating AIB to <ver>..." (it never runs invisibly). Leftovers (*.old-*, .aib-update-*)
+ * are deleted by the new app at startup: removeUpdateLeftovers().
  *
  * Exit codes: 0 updated and started; 1 bad arguments; 2 the app did not quit; 3 package unreadable; 4 checksum changed; 5 could not
  * unpack (or the package has no app in it); 6 could not swap (rolled back); 7 the new app could not start (rolled back).
@@ -32,6 +36,9 @@ export const WAIT_FOR_APP_SECONDS = 90;
 export const UNPACK_TIMEOUT_SECONDS = 600;
 /** The new app counts as started when it is still running (or exited with 0) this long after the spawn. */
 export const STARTUP_SECONDS = 8;
+/** How long the helper waits for the new app's "page loaded" marker. */
+export const MARKER_SECONDS = 60;
+export const JOURNAL_NAME = 'install-journal.json';
 /** Never moved or replaced in the Windows install folder: WebView2's profile (localStorage) for AIB.exe. */
 export const KEEP = /\.WebView2$/i;
 export const LEFTOVER = /\.old-\d{8}-\d{6}(-\d+)?$/;
@@ -52,11 +59,17 @@ export interface HelperArgs {
   kind: UpdateKind;
   /** What is replaced: the install folder (Windows), the .app bundle (macOS), the AppImage file (Linux). */
   target: string;
+  /** The arguments the old app was started with (`serve --port N`, `--state-dir D`, ...): the new one starts with the same. */
+  args?: string[];
+  /** The file the new app writes once it is up (<data>/updates/started-<ver>.ok): the only proof of a good start. */
+  marker?: string;
 }
 
 export interface StartResult {
   /** Exit code when the process ended within the startup window; null while it still runs. */
   code: number | null;
+  /** With a marker: true once the new app wrote it. */
+  confirmed?: boolean;
 }
 
 export interface HelperDeps {
@@ -65,8 +78,13 @@ export interface HelperDeps {
   sleep?: (seconds: number) => void | Promise<void>;
   /** Unpack the archive into dest (a new, empty folder). Throws on failure. */
   unpack?: (archive: string, dest: string, kind: UpdateKind) => Promise<void>;
-  /** Start the app detached and hidden; resolve once it has exited or STARTUP_SECONDS passed. Throws when it cannot start. */
-  start?: (command: string[], env: Record<string, string>) => Promise<StartResult>;
+  /**
+   * Start the app detached and hidden; resolve once it confirmed (marker), exited with an error, or the wait ran out. Throws when it
+   * cannot start.
+   */
+  start?: (command: string[], env: Record<string, string>, marker?: string) => Promise<StartResult>;
+  /** The helper's tray icon (tests: a fake). Returns a close function. */
+  tray?: (tooltip: string) => () => void;
   /** The <stamp> in .old-<stamp> (tests pin it). */
   stamp?: string;
 }
@@ -121,7 +139,7 @@ export function defaultAlive(pid: number): boolean {
 /** The new app must not inherit the old one's launch variables (nor an AppImage runtime's, nor deno desktop's serve address). */
 export function cleanEnv(env: Record<string, string> = Deno.env.toObject()): Record<string, string> {
   const drop = new Set(['PYTHONHOME', 'AGENT_STUDIO_LAUNCH_NONCE', 'APPIMAGE', 'APPDIR', 'ARGV0', 'OWD', 'DENO_SERVE_ADDRESS']);
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k) && !k.startsWith('AIB_')));
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k) && (!k.startsWith('AIB_') || k === 'AIB_TEST_TRAY_STATE')));
 }
 
 async function runQuiet(command: string, args: string[], timeoutSeconds: number): Promise<void> {
@@ -153,24 +171,79 @@ export async function defaultUnpack(archive: string, dest: string, kind: UpdateK
   }
 }
 
-/** Start detached with no console (platform/spawn_detached), then watch it for STARTUP_SECONDS. */
+/**
+ * Start detached with no console (platform/spawn_detached), then watch it: with a marker, until the marker appears (confirmed), the
+ * app exits with an error, or MARKER_SECONDS pass; without one, for STARTUP_SECONDS.
+ */
 export async function defaultStart(
   command: string[],
   env: Record<string, string>,
   sleep: (seconds: number) => void | Promise<void> = sleepFor,
+  marker?: string,
 ): Promise<StartResult> {
   const temp = env.TEMP || env.TMPDIR || env.TMP || (Deno.build.os === 'windows' ? 'C:\\Windows\\Temp' : '/tmp');
   const child = await spawnDetached(command, join(temp, 'aib-update-start.log'), dirname(command[0]), env);
   try {
-    for (let waited = 0; waited < STARTUP_SECONDS; waited += 0.25) {
+    const limit = marker ? MARKER_SECONDS : STARTUP_SECONDS;
+    for (let waited = 0; waited < limit; waited += 0.25) {
+      if (marker && exists(marker)) return { code: child.exitCode(), confirmed: true };
       const code = child.exitCode();
-      if (code !== null) return { code };
+      if (code !== null && (!marker || code !== 0)) return { code };
       await sleep(0.25);
     }
-    return { code: child.exitCode() };
+    return marker ? { code: child.exitCode(), confirmed: exists(marker) } : { code: child.exitCode() };
   } finally {
     child.close();
   }
+}
+
+/** The helper's tray icon: "Updating AIB to <ver>..." for its whole life. Never throws; returns the function that removes it. */
+export function helperTray(tooltip: string): () => void {
+  let close = () => {};
+  let closed = false;
+  void (async () => {
+    try {
+      const { writeTrayState } = await import('./host_tray.ts');
+      writeTrayState('helper', { shown: true, tooltip });
+      const prev = close;
+      close = () => {
+        prev();
+        writeTrayState('helper', { shown: false, tooltip });
+      };
+      const { trayIconPng } = await import('./tray_icon.ts');
+      if (Deno.build.os === 'windows') {
+        const { startWindowsTray } = await import('./tray_win.ts');
+        const t = await startWindowsTray(trayIconPng(), tooltip, [], () => {}, () => {});
+        if (t && closed) t.remove();
+        else if (t) {
+          const prev2 = close;
+          close = () => {
+            prev2();
+            t.remove();
+          };
+        }
+        return;
+      }
+      // deno-lint-ignore no-explicit-any
+      const D = Deno as any;
+      if (typeof D.Tray !== 'function') return;
+      const tray = new D.Tray();
+      tray.setIcon(trayIconPng());
+      tray.setTooltip(tooltip);
+      const prev3 = close;
+      close = () => {
+        prev3();
+        try {
+          tray.destroy?.();
+        } catch { /* gone */ }
+      };
+      if (closed) close();
+    } catch { /* no tray here: the helper is short-lived anyway */ }
+  })();
+  return () => {
+    closed = true;
+    close();
+  };
 }
 
 const sleepFor = (seconds: number) => new Promise<void>((resolve) => setTimeout(resolve, seconds * 1000));
@@ -192,29 +265,34 @@ export interface SwapStep {
   from: string;
 }
 
-/** Put `replacement` at `path`, the old one aside as <path>.old-<stamp>. Appends to journal before each rename. */
-function swapOne(path: string, replacement: string, stamp: string, journal: SwapStep[]): void {
+/** Called before every rename with the journal as it will be after it: install-journal.json is written then (crash safety). */
+export type Persist = (journal: SwapStep[]) => void;
+
+/** Put `replacement` at `path`, the old one aside as <path>.old-<stamp>. Appends to journal (and persists it) before each rename. */
+function swapOne(path: string, replacement: string, stamp: string, journal: SwapStep[], persist: Persist = () => {}): void {
   const step: SwapStep = { path, aside: null, placed: false, from: replacement };
   journal.push(step);
   if (exists(path)) {
     const aside = `${path}.old-${stamp}`;
-    Deno.renameSync(path, aside);
     step.aside = aside;
+    persist(journal);
+    Deno.renameSync(path, aside);
   }
-  Deno.renameSync(replacement, path);
   step.placed = true;
+  persist(journal);
+  Deno.renameSync(replacement, path);
 }
 
 /** Windows: each top-level entry of newDir replaces the one of the same name in installDir; the WebView2 folder is never touched. */
-export function swapFolder(installDir: string, newDir: string, stamp: string, journal: SwapStep[] = []): SwapStep[] {
+export function swapFolder(installDir: string, newDir: string, stamp: string, journal: SwapStep[] = [], persist?: Persist): SwapStep[] {
   const names = [...Deno.readDirSync(newDir)].map((e) => e.name).filter((n) => !KEEP.test(n)).sort();
-  for (const name of names) swapOne(join(installDir, name), join(newDir, name), stamp, journal);
+  for (const name of names) swapOne(join(installDir, name), join(newDir, name), stamp, journal, persist);
   return journal;
 }
 
 /** macOS bundle or Linux AppImage: the one path is replaced. */
-export function swapPath(target: string, replacement: string, stamp: string, journal: SwapStep[] = []): SwapStep[] {
-  swapOne(target, replacement, stamp, journal);
+export function swapPath(target: string, replacement: string, stamp: string, journal: SwapStep[] = [], persist?: Persist): SwapStep[] {
+  swapOne(target, replacement, stamp, journal, persist);
   return journal;
 }
 
@@ -223,6 +301,9 @@ export function rollback(journal: SwapStep[], stamp: string): string[] {
   const failed: string[] = [];
   for (const step of [...journal].reverse()) {
     try {
+      // A step is persisted just BEFORE its rename, so after a crash the last one may not have happened: check the files.
+      if (step.placed && exists(step.from)) step.placed = false; // the new file never left the unpack folder
+      if (step.aside && !exists(step.aside)) step.aside = null; // the old file was never moved aside
       if (step.placed) {
         // The new one goes back where it came from (or aside, if that is gone), then the old one returns.
         try {
@@ -254,7 +335,7 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
   const alive = deps.alive ?? defaultAlive;
   const sleep = deps.sleep ?? sleepFor;
   const unpack = deps.unpack ?? defaultUnpack;
-  const start = deps.start ?? ((command, env) => defaultStart(command, env, sleep));
+  const start = deps.start ?? ((command, env, marker) => defaultStart(command, env, sleep, marker));
   const stamp = deps.stamp ?? stampNow();
   const note = typeof args.log === 'string' && args.log ? args.log : undefined;
   const installer = String(args.installer ?? '');
@@ -267,6 +348,44 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
     log(note, `update to ${args.version ?? 'None'}: missing or unknown kind, target or exe; nothing was changed`);
     return 1;
   }
+  const closeTray = (deps.tray ?? (deps.start ? () => () => {} : helperTray))(`Updating AIB to ${args.version ?? 'a new version'}...`);
+  try {
+    return await runSteps(args, deps, { alive, sleep, unpack, start, stamp, note, installer, want, pid, exe, kind, target });
+  } finally {
+    closeTray();
+  }
+}
+
+interface Steps {
+  alive: (pid: number) => boolean;
+  sleep: (seconds: number) => void | Promise<void>;
+  unpack: (archive: string, dest: string, kind: UpdateKind) => Promise<void>;
+  start: (command: string[], env: Record<string, string>, marker?: string) => Promise<StartResult>;
+  stamp: string;
+  note: string | undefined;
+  installer: string;
+  want: string;
+  pid: unknown;
+  exe: string;
+  kind: UpdateKind;
+  target: string;
+}
+
+async function runSteps(args: Partial<HelperArgs> | Record<string, unknown>, _deps: HelperDeps, c: Steps): Promise<number> {
+  const { alive, sleep, unpack, start, stamp, note, installer, want, pid, exe, kind, target } = c;
+  const journalPath = note ? join(dirname(note), JOURNAL_NAME) : null;
+  const persist: Persist = (journal) => {
+    if (!journalPath) return;
+    const data = JSON.stringify({ format: 1, helperPid: Deno.pid, version: args.version ?? null, stamp, kind, target, exe, steps: journal });
+    Deno.writeTextFileSync(`${journalPath}.tmp`, data);
+    Deno.renameSync(`${journalPath}.tmp`, journalPath);
+  };
+  const dropJournal = () => {
+    if (!journalPath) return;
+    try {
+      Deno.removeSync(journalPath);
+    } catch { /* none */ }
+  };
   log(note, `update to ${args.version ?? 'None'}: waiting for the app (pid ${pid ?? 'None'}) to quit`);
   let waited = 0;
   while (pid && alive(Number(pid))) {
@@ -288,6 +407,7 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
     log(note, 'the update does not match its verified checksum; nothing was changed');
     return 4;
   }
+  log(note, 'the app has quit; unpacking');
 
   // Unpack next to what it replaces (same volume, so the swap is renames only).
   const stage = kind === 'windows-zip' ? join(target, STAGE_PREFIX + stamp) : join(dirname(target), STAGE_PREFIX + stamp);
@@ -322,35 +442,85 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
   const restore = (why: string) => {
     const failed = rollback(journal, stamp);
     dropStage();
+    if (!failed.length) dropJournal();
     log(note, failed.length ? `${why}; could NOT restore: ${failed.join(', ')}` : `${why}; the old version was put back`);
   };
   try {
-    if (kind === 'windows-zip') swapFolder(target, replacement, stamp, journal);
-    else swapPath(target, replacement, stamp, journal);
+    if (kind === 'windows-zip') swapFolder(target, replacement, stamp, journal, persist);
+    else swapPath(target, replacement, stamp, journal, persist);
   } catch (error) {
     restore(`could not swap the files (${error instanceof Error ? error.message : error})`);
     return 6;
   }
 
-  const command = kind === 'appimage' ? [target] : [exe];
-  log(note, `swapped in ${args.version ?? 'the new version'}; starting it`);
+  const extra = Array.isArray(args.args) ? (args.args as unknown[]).filter((a): a is string => typeof a === 'string') : [];
+  const command = [kind === 'appimage' ? target : exe, ...extra];
+  const marker = typeof args.marker === 'string' && args.marker ? args.marker : undefined;
+  if (marker) {
+    try {
+      Deno.removeSync(marker);
+    } catch { /* none yet */ }
+  }
+  log(note, `swapped in ${args.version ?? 'the new version'}; starting it${marker ? ' and waiting for it to confirm its start' : ''}`);
   let started: StartResult | null = null;
   let why = '';
   try {
-    started = await start(command, cleanEnv());
+    started = await start(command, cleanEnv(), marker);
   } catch (error) {
     why = error instanceof Error ? error.message : String(error);
   }
-  if (started && (started.code === null || started.code === 0)) {
+  const ok = started && (marker ? started.confirmed === true : started.code === null || started.code === 0);
+  if (ok) {
     dropStage();
-    log(note, 'the new version is running');
+    dropJournal();
+    log(note, marker ? 'the new version is running (it confirmed its start)' : 'the new version is running');
     return 0;
   }
-  restore(`the new version could not start (${started ? `exit code ${started.code}` : why})`);
+  restore(
+    `the new version could not start (${
+      started ? (marker && !started.confirmed && started.code === null ? `no start confirmation within ${MARKER_SECONDS} s` : `exit code ${started.code}`) : why
+    })`,
+  );
   try {
     await start(command, cleanEnv()); // the old version again
   } catch { /* the person starts it by hand */ }
   return 7;
+}
+
+/**
+ * At AIB start: an update cut off in the middle of its swap (the helper died, power loss) left install-journal.json. When its helper
+ * is gone, undo every recorded rename (the old version comes back whole) and return true: the caller then starts AIB again, since
+ * this process may have been started from a half-swapped folder. False when there was nothing to undo. Never throws.
+ */
+export function recoverInterruptedUpdate(updatesDir: string, alive: (pid: number) => boolean = defaultAlive): boolean {
+  const path = join(updatesDir, JOURNAL_NAME);
+  const logPath = join(updatesDir, 'install.log');
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(Deno.readTextFileSync(path));
+  } catch {
+    return false;
+  }
+  try {
+    if (typeof data.helperPid === 'number' && data.helperPid !== Deno.pid && alive(data.helperPid)) return false; // still at work
+    const steps = Array.isArray(data.steps) ? data.steps as SwapStep[] : [];
+    const failed = rollback(steps, String(data.stamp ?? stampNow()));
+    if (data.kind === 'windows-zip' && typeof data.target === 'string' && typeof data.stamp === 'string') {
+      try {
+        Deno.removeSync(join(data.target, STAGE_PREFIX + data.stamp), { recursive: true });
+      } catch { /* removeUpdateLeftovers gets it later */ }
+    }
+    log(
+      logPath,
+      failed.length
+        ? `an interrupted update to ${data.version ?? '?'} was found at start; could NOT restore: ${failed.join(', ')}`
+        : `an interrupted update to ${data.version ?? '?'} was found at start; the previous version was put back`,
+    );
+    Deno.removeSync(path);
+    return steps.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 // ---- where the app is installed, and the cleanup the new app runs at startup ------------------------------------------
@@ -385,7 +555,9 @@ export function installTarget(
  * old version, or the helper itself) runs from them; otherwise that stamp waits for the next start. Returns the paths removed. A
  * no-op outside the desktop app unless `target` is given (tests).
  */
-export function removeUpdateLeftovers(options: { target?: InstallTarget | null; desktop?: boolean } = {}): string[] {
+export function removeUpdateLeftovers(
+  options: { target?: InstallTarget | null; desktop?: boolean; os?: string; processes?: () => string[] | null } = {},
+): string[] {
   const removed: string[] = [];
   try {
     if (!(options.desktop ?? isDesktopApp()) && !options.target) return removed;
@@ -413,7 +585,12 @@ export function removeUpdateLeftovers(options: { target?: InstallTarget | null; 
       const stamp = m[0];
       groups.set(stamp, [...(groups.get(stamp) ?? []), join(folder, e.name)]);
     }
+    // macOS: deleting a bundle never fails while a process runs from it, so look first (an agent host left on the old version).
+    const os = options.os ?? Deno.build.os;
+    const running = os === 'darwin' ? (options.processes ?? runningExecutables)() : [];
     for (const paths of groups.values()) {
+      const slash = (x: string) => x.replaceAll(String.fromCharCode(92), '/');
+      if (running === null || running.some((exe) => paths.some((p) => slash(exe).startsWith(slash(p) + '/')))) continue;
       // Executables first: if one is still running it cannot be deleted, and the rest of its version stays with it.
       const exes = paths.filter((p) => /\.exe\.old-/i.test(p));
       if (!exes.every(remove)) continue;
@@ -421,6 +598,17 @@ export function removeUpdateLeftovers(options: { target?: InstallTarget | null; 
     }
   } catch { /* never stops the app from starting */ }
   return removed;
+}
+
+/** macOS: the full executable path of every running process (`ps -axo comm=`), or null when unknown (then nothing is deleted). */
+export function runningExecutables(): string[] | null {
+  try {
+    const out = new Deno.Command('/bin/ps', { args: ['-axo', 'comm='], stdout: 'piped', stderr: 'null' }).outputSync();
+    if (!out.success) return null;
+    return new TextDecoder().decode(out.stdout).split('\n').map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
 }
 
 /** `AIB update-helper <json>` (main.ts) and `deno run update_helper.ts <json>` (dev). */

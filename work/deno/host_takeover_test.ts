@@ -17,6 +17,7 @@ import {
   readInfo,
 } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { attachHost } from '../../outputs/agent-studio/server/host/host_proxy.ts';
+import { codeWarning, DENO_SOURCE_HASH } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { PY_REF_DIR } from './_parity.ts';
 
 const t = (name: string, fn: () => Promise<void>) => Deno.test({ name, ...TEST_OPTIONS, fn });
@@ -39,7 +40,7 @@ function ownHost(fx: Fixture): string[] {
 }
 
 /** Start an "old" fake host and wait for its file. */
-async function oldHost(fx: Fixture, active: number, codeRoot = 'C:/other/checkout', appId = 'studio-dev', runtime = 'deno') {
+async function oldHost(fx: Fixture, active: number, codeRoot = 'C:/other/checkout', appId = 'dev.aib.app', runtime = 'deno') {
   setActive(fx, active);
   const [child] = fx.spawn(
     [DENO, 'run', '-A', '--quiet', FAKE_HOST, fx.state, codeRoot, appId, '0.0.9', runtime, String(PROTOCOL_VERSION)],
@@ -193,6 +194,61 @@ t('a server whose host was taken over yields and never takes it back', async () 
     await assertRejects(() => proxy.call('info', null, 5), HostForeignRoot);
     assertEquals(calls(fx).filter((c) => c === 'stop').length, before);
     assertEquals((await readInfo(fx.state))!.pid, theirs.pid, 'no second host of ours');
+  } finally {
+    await proxy.close();
+  }
+});
+
+t('after an update: the new app attaches to the old version host (same path) and retires it once no chat works there', async () => {
+  await using fx = new Fixture();
+  const old = await oldHost(fx, 1, CODE_ROOT, APP_ID); // same file path, older code (sourceHash "x"), a chat working
+  const own = [...ownHost(fx), await DENO_SOURCE_HASH()];
+  let retired = 0;
+  const said: string[] = [];
+  const proxy = await attachHost({
+    stateDir: fx.state,
+    command: own,
+    port: null,
+    webInstanceId: 'web-new',
+    runtime: 'deno',
+    retireOlderHost: true,
+    heartbeatSeconds: 0.3,
+    onRetired: () => void retired++,
+    say: (m) => said.push(m),
+    launch: ['AIB.exe', 'serve'],
+  });
+  try {
+    assertEquals(proxy.client?.pid, old.pid, 'attached to the running host: its chat keeps streaming');
+    await new Promise((r) => setTimeout(r, 1500));
+    assert(pidAlive(old.pid), 'never stopped while its chat works');
+    assert(!calls(fx).includes('stop'), 'not even asked');
+    assert(calls(fx).includes('attach'));
+    setActive(fx, 0);
+    await until(() => retired === 1, 'retired', 30);
+    await until(() => !pidAlive(old.pid), 'old host gone', 30);
+    const info = await readInfo(fx.state);
+    assert(info && info.pid !== old.pid && info.sourceHash === await DENO_SOURCE_HASH(), 'a host of this version runs now');
+    assertEquals(proxy.client?.pid, info!.pid);
+    assert(said.some((m) => m.startsWith('Drain: handing over from the agent host of AIB 0.0.9')), said.join(' | '));
+    await new Promise((r) => setTimeout(r, 1000));
+    assertEquals(retired, 1, 'a host of this version is never retired');
+    await track(fx);
+  } finally {
+    await proxy.close();
+  }
+});
+
+t('same product, another code folder or exe path (a moved install, a second copy): attaches even while busy, never degraded', async () => {
+  await using fx = new Fixture();
+  const old = await oldHost(fx, 2, 'C:/Users/someone/apps/AIB/AIB.exe', APP_ID);
+  const proxy = await attachHost({ stateDir: fx.state, command: ownHost(fx), port: null, webInstanceId: 'w', runtime: 'deno' });
+  try {
+    assertEquals(proxy.client?.pid, old.pid, 'attached, not HostBusy');
+    assertEquals(proxy.lastError, null);
+    assertEquals(proxy.waitingChats, 0);
+    assert(!calls(fx).includes('stop'), 'a busy host of our own product is never asked to stop');
+    const note = await codeWarning({ ...(await readInfo(fx.state))!, active: [{}, {}] });
+    assertEquals(note, `Agents are running on AIB 0.0.9 (2 chats working). They switch to AIB ${APP_VERSION} by themselves when none is working.`);
   } finally {
     await proxy.close();
   }

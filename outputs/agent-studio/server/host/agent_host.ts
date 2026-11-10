@@ -39,6 +39,9 @@ import { ensureHiddenConsole } from '../platform/console.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { join } from '../platform/ospath.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
+import { spawnDetached } from '../platform/spawn_detached.ts';
+import { type HostTray, type HostTrayFactory, hostTrayView } from '../desktop/host_tray.ts';
+import { samePath, userStateDir } from '../state/paths.ts';
 
 type Json = Record<string, unknown>;
 const logger = log.getLogger('agent_host');
@@ -85,10 +88,27 @@ interface WebServer {
   seen: number;
 }
 
+/**
+ * How a host started by the built app behaves once no app is attached (docs/agent-host.md, "Lifecycle"):
+ *   tray                   shows the host's own tray icon while chats are working and no app is attached (it never runs invisibly).
+ *   exitUnattachedSeconds  exits when no app is attached and no chat is working for this long (0 = off; the app passes 15).
+ *   launch                 what "Open AIB" runs until an app tells the host how it was started (attach `launch`).
+ *   hardExit               ends the process when a stop takes longer than STOP_DEADLINE_SECONDS (a hung agent must not keep it).
+ *   spawn                  starts the app for "Open AIB" (tests replace it).
+ */
+export interface HostLifecycle {
+  tray?: HostTrayFactory | null;
+  exitUnattachedSeconds?: number;
+  launch?: string[] | null;
+  hardExit?: (() => void) | null;
+  spawn?: (command: string[]) => Promise<void> | void;
+}
+
 type Op = (args: Json) => unknown;
 
 export class AgentHost {
-  static ATTACH_FRESH_SECONDS = 45; // a web server that has not called in this long is not "attached"
+  static ATTACH_FRESH_SECONDS = 25; // a web server that has not called in this long is not "attached" (it heartbeats every 10 s)
+  static STOP_DEADLINE_SECONDS = 20;
   readonly studio: Studio;
   readonly token: string;
   readonly startedAt = Date.now() / 1000;
@@ -96,13 +116,24 @@ export class AgentHost {
   readonly web = new Map<string, WebServer>(); // web server instance id -> {pid, port, seen}
   readonly stopEvent = new ThreadEvent();
   idleSince: number | null = null;
+  /** Since when no app has been attached while no chat works (the short exit of an app's host). */
+  unattachedSince: number | null = null;
+  /** Why the host is stopping (logged). */
+  stopReason = '';
+  tray: HostTray | null = null;
+  trayShown = false;
+  /** How the last app that attached was started (program and arguments): what "Open AIB" runs. */
+  appLaunch: string[] | null = null;
+  readonly exitUnattachedSeconds: number;
   lease: SessionLease | null = null;
   server: HttpServer | null = null;
   port = 0;
   readonly ops: Record<string, Op>;
 
-  constructor(readonly options: StudioOptions, idleExitMinutes = 30, readonly hostPort = 0) {
+  constructor(readonly options: StudioOptions, idleExitMinutes = 30, readonly hostPort = 0, readonly lifecycle: HostLifecycle = {}) {
     this.studio = new Studio(options, { port: 'host' });
+    this.exitUnattachedSeconds = Math.max(0, Number(lifecycle.exitUnattachedSeconds ?? 0)) || 0;
+    this.appLaunch = lifecycle.launch?.length ? [...lifecycle.launch] : null;
     migrateInProcessRecovery(this.studio.store);
     this.token = newToken();
     this.idleExitSeconds = Math.max(0, Number(idleExitMinutes)) * 60;
@@ -158,6 +189,7 @@ export class AgentHost {
       version: APP_VERSION,
       open: (info.connections as unknown[]).length,
       active: busy,
+      working: this.studio.workingList().length,
       webAttached: this.webAttached(),
       idleExitMinutes: this.idleExitSeconds / 60,
       startedWith: this.startedWith(),
@@ -180,18 +212,108 @@ export class AgentHost {
   }
 
   opAttach(args: Json): Json {
-    this.web.set(webKey(args), { pid: args.pid ?? null, port: args.port ?? null, seen: Date.now() / 1000 });
+    const key = webKey(args);
+    if (!this.web.has(key)) {
+      log.announce('agent_host', 'app attached (pid %s, AIB %s, port %s)', args.pid ?? null, args.version ?? '?', args.port ?? null);
+    }
+    this.web.set(key, { pid: args.pid ?? null, port: args.port ?? null, seen: Date.now() / 1000 });
+    const launch = args.launch;
+    if (Array.isArray(launch) && launch.length && launch.length <= 64 && launch.every((a) => typeof a === 'string' && a.length < 4096)) {
+      this.appLaunch = [...launch];
+    }
+    this.lifecycleCheck(); // the host's tray icon goes away at once
     return { attached: true, webServers: this.webAttached() };
   }
 
   opDetach(args: Json): Json {
-    this.web.delete(webKey(args));
+    if (this.web.delete(webKey(args))) {
+      log.announce('agent_host', 'app detached (pid %s); %s working', args.pid ?? null, this.studio.workingList().length);
+    }
+    this.lifecycleCheck(); // the tray icon shows at once when chats are working
     return { detached: true };
   }
 
+  /**
+   * The app-host rules, run every second and on attach/detach. Shows the tray icon while chats work with no app attached and hides
+   * it otherwise; returns true when the host should exit now (no app and nothing working for exitUnattachedSeconds).
+   */
+  lifecycleCheck(now = Date.now() / 1000): boolean {
+    const attached = this.webAttached() > 0;
+    const working = attached ? [] : this.studio.workingList();
+    const needsYou = working.filter((w) => w.state === 'needs_you').length;
+    if (this.lifecycle.tray) {
+      if (!attached && working.length > 0) {
+        this.tray ??= this.lifecycle.tray(() => void this.openApp(), () => this.stopAll('the tray menu'), (m) => logger.warning('%s', m));
+        const view = hostTrayView(working.length, needsYou, this.dataNote());
+        const key = JSON.stringify(view);
+        if (key !== this.#trayKey) {
+          log.announce('agent_host', '%s tray icon: %s (no app attached)', this.trayShown ? 'updated' : 'shown', view.tooltip);
+          this.#trayKey = key;
+        }
+        this.tray.show(view);
+        this.trayShown = true;
+      } else if (this.trayShown) {
+        this.tray?.hide();
+        this.trayShown = false;
+        this.#trayKey = '';
+        log.announce('agent_host', 'tray icon hidden: %s', attached ? 'an app attached' : 'nothing is working');
+      }
+    }
+    if (!this.exitUnattachedSeconds || attached || working.length > 0) {
+      if (this.unattachedSince !== null) {
+        log.announce('agent_host', 'idle countdown cancelled: %s', attached ? 'an app attached' : `${working.length} working (${working.map((w) => w.state).join(', ')})`);
+      }
+      this.unattachedSince = null;
+      return false;
+    }
+    if (this.unattachedSince === null) {
+      this.unattachedSince = now;
+      log.announce('agent_host', 'idle countdown started: no app attached and nothing working; exiting in %s s', this.exitUnattachedSeconds);
+    }
+    return now - this.unattachedSince >= this.exitUnattachedSeconds;
+  }
+
+  #trayKey = '';
+
+  /** "data: <folder>" for the tooltip when the data folder is not the per-user default (demo and test copies never look real). */
+  dataNote(): string {
+    try {
+      const dir = String(this.studio.stateDir);
+      return samePath(dir, userStateDir()) ? '' : dir;
+    } catch {
+      return '';
+    }
+  }
+
+  /** Tray "Open AIB" (or a click on the icon): start the app the way it was last started; a running app just shows its window. */
+  async openApp(): Promise<void> {
+    const command = this.appLaunch ?? [Deno.execPath()];
+    log.announce('agent_host', 'tray: Open AIB (%s)', command.join(' '));
+    try {
+      if (this.lifecycle.spawn) {
+        await this.lifecycle.spawn(command);
+        return;
+      }
+      const env = Object.fromEntries(Object.entries(Deno.env.toObject()).filter(([k]) => k !== 'DENO_SERVE_ADDRESS'));
+      const folder = command[0].replace(/[\\/][^\\/]*$/, '') || '.';
+      const child = await spawnDetached(command, join(String(this.studio.stateDir), 'app-launch.log'), folder, env);
+      child.close();
+    } catch (error) {
+      logger.exception(error, 'Open AIB: could not start the app');
+    }
+  }
+
+  /** Tray "Stop chats and quit" (confirmed by the tray): stop every agent and this host. */
+  stopAll(by: string): void {
+    log.announce('agent_host', 'forced stop asked by %s (%s working)', by, this.studio.workingList().length);
+    this.stopReason ||= `Stop chats and quit (${by})`;
+    this.stopEvent.set();
+  }
+
   opStop(args: Json): Json {
-    const busy = this.studio.busyList();
+    const busy = args.force ? this.studio.busyList() : this.studio.workingList();
     if (busy.length && !args.force) {
+      log.announce('agent_host', 'stop asked by %s refused: %s working', typeof args.by === 'string' ? args.by.slice(0, 200) : 'a stop request', busy.length);
       const names = busy.map((b) => `${b.provider} in ${b.cwd} (${b.state})`).join('; ');
       return {
         stopping: false,
@@ -200,6 +322,10 @@ export class AgentHost {
           `Refusing to stop the agent host: ${busy.length} conversation(s) are working, opening or waiting for you: ${names}. Use --force to stop anyway.`,
       };
     }
+    const by = typeof args.by === 'string' && args.by ? args.by.slice(0, 200) : 'a stop request';
+    if (args.force) log.announce('agent_host', 'forced stop asked by %s (%s working)', by, busy.length);
+    else log.announce('agent_host', 'stop asked by %s: nothing working, stopping', by);
+    this.stopReason ||= `asked to stop by ${by}${args.force ? ' (forced)' : ''}`;
     this.stopEvent.set();
     return { stopping: true, forced: busy.length > 0, active: busy };
   }
@@ -309,12 +435,18 @@ export class AgentHost {
   async run(): Promise<void> {
     const path = logPath(this.studio.stateDir);
     let checked = 0;
-    while (!(await this.stopEvent.wait(2000))) {
+    const tick = this.lifecycle.tray || this.exitUnattachedSeconds ? 1000 : 2000;
+    while (!(await this.stopEvent.wait(tick))) {
       if (Date.now() / 1000 - checked > 60) { // the log is held open by this process, so rotate it by copy-and-truncate
         checked = Date.now() / 1000;
         await rotateLog(path, LOG_MAX_BYTES, LOG_KEEP, true);
       }
+      if (this.lifecycleCheck()) {
+        this.stopReason = `no app attached and no chat working for ${this.exitUnattachedSeconds} s`;
+        break;
+      }
       if (this.idleCheck()) {
+        this.stopReason = 'idle with no conversations and no web server';
         console.log('Agent host: idle with no conversations and no web server; exiting.');
         break;
       }
@@ -323,6 +455,20 @@ export class AgentHost {
   }
 
   async shutdown(): Promise<void> {
+    log.announce('agent_host', 'stopping: %s; %s were working', this.stopReason || 'signal', this.studio.workingList().length);
+    // Bounded: an agent that never closes must not leave this process running after its host file is gone.
+    const hardExit = this.lifecycle.hardExit;
+    const guard = hardExit
+      ? setTimeout(() => {
+        log.announce('agent_host', 'stopping took longer than %s s; exiting anyway', AgentHost.STOP_DEADLINE_SECONDS);
+        hardExit();
+      }, AgentHost.STOP_DEADLINE_SECONDS * 1000)
+      : undefined;
+    try {
+      this.tray?.close();
+    } catch { /* gone */ }
+    this.tray = null;
+    this.trayShown = false;
     await removeInfo(this.studio.stateDir, Deno.pid); // first, so web servers see a stop and not a crash
     await sleep(200); // let the reply to a stop request leave
     if (this.server) {
@@ -331,6 +477,7 @@ export class AgentHost {
     }
     await this.studio.close();
     this.lease?.release();
+    clearTimeout(guard);
   }
 }
 
@@ -414,7 +561,12 @@ export async function hostMain(argv: string[]): Promise<number> {
   // stderr only: the web server starts the host with stdout and stderr going to <state>/agent-host.log, which is rotated by
   // copy-and-truncate, so a second handle on that file would fight the rotation.
   log.setup('agent-host', { level: options.logLevel });
-  const host = new AgentHost(studioOptions(options, mcpServers), options.idleExitMinutes, options.hostPort);
+  const tray = options.tray ? (await import('../desktop/host_tray.ts')).nativeHostTray : null;
+  const host = new AgentHost(studioOptions(options, mcpServers), options.idleExitMinutes, options.hostPort, {
+    tray,
+    exitUnattachedSeconds: options.exitUnattachedSeconds,
+    hardExit: () => Deno.exit(0),
+  });
   log.registerSecret(host.token);
   let port: number;
   try {
@@ -436,7 +588,18 @@ export async function hostMain(argv: string[]): Promise<number> {
     } catch { /* not supported here */ }
   }
   console.log(`Agent host ${Deno.pid} protocol ${PROTOCOL_VERSION} on 127.0.0.1:${port}, state ${host.studio.stateDir}`);
+  log.announce(
+    'agent_host',
+    'AIB %s agent host started (pid %s, program %s, data %s, tray %s, exits %s)',
+    APP_VERSION,
+    Deno.pid,
+    Deno.execPath(),
+    host.studio.stateDir,
+    options.tray ? 'on' : 'off',
+    options.exitUnattachedSeconds ? `${options.exitUnattachedSeconds} s after the last app leaves with nothing working` : `after ${options.idleExitMinutes} min idle`,
+  );
   await host.run();
+  log.announce('agent_host', 'agent host stopped');
   console.log('Agent host stopped.');
   return 0;
 }

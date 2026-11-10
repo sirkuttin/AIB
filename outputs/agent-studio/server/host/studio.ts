@@ -805,6 +805,22 @@ export class Studio {
     return busy;
   }
 
+  /**
+   * Everything that keeps an app's agent host alive with no app attached (docs/agent-host.md "Lifecycle"): busyList (a turn running,
+   * an agent opening, a chat waiting for the person) plus chats with queued prompts and running agent install or sign-in jobs. A chat
+   * that is open but idle is not in it.
+   */
+  workingList(): Json[] {
+    const working = this.busyList();
+    const listed = new Set(working.map((w) => w.id));
+    for (const c of [...this.connections.values()]) {
+      if (!c.closed && !listed.has(c.id) && c.queue.items.length) working.push({ id: c.id, provider: c.provider, cwd: c.cwd, state: 'queued' });
+    }
+    for (const [agent, job] of this.installer?.jobs ?? []) if (job.alive) working.push({ id: `install:${agent}`, provider: agent, cwd: '', state: 'installing' });
+    for (const [agent, job] of this.signer?.jobs ?? []) if (job.alive) working.push({ id: `signin:${agent}`, provider: agent, cwd: '', state: 'needs_you' });
+    return working;
+  }
+
   busyConnections(): Promise<Json[]> {
     return Promise.resolve(this.busyList());
   }

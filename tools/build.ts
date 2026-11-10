@@ -7,6 +7,7 @@
  *   SHA256SUMS                                           sha256sum format over all of them
  *
  * Usage (from anywhere): deno run -A tools/build.ts [--targets all|windows-x64,macos-arm64,...] [--out dist/] [--keep] [--no-smoke]
+ *                       [--version V]   (a test build that reports version V; default APP_VERSION)
  *
  * The version is APP_VERSION (server/core/app.ts). For the target this machine runs, the build starts the app headless (`AIB serve
  * --in-process`, temp state folder, a free port from 8920, no window) and checks that it serves the page.
@@ -17,6 +18,7 @@
  */
 import { createHash } from 'node:crypto';
 import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
+import { PROTOCOL_VERSION } from '../outputs/agent-studio/server/host/host_client.ts';
 import { fixAppImage, fixDeb } from './linux_package.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
@@ -317,6 +319,25 @@ export function stagedConfig(appConfig: Record<string, unknown>, version: string
     version,
     desktop: { ...desktop, app: { ...(desktop.app as object ?? {}), name: APP_NAME, identifier: APP_IDENTIFIER } },
   };
+}
+
+/**
+ * `--version V` (test builds, e.g. the update end-to-end test's "next version"): the staged copy's APP_VERSION becomes V, so the
+ * built app reports it. The source tree is never changed.
+ */
+export async function setStagedVersion(stageDir: string, version: string): Promise<void> {
+  const path = `${stageDir}/server/core/app.ts`;
+  const text = await Deno.readTextFile(path);
+  const next = text.replace(/export const APP_VERSION = '[^']*';/, `export const APP_VERSION = '${version}';`);
+  if (next === text) throw new Error('could not set the version in the staged app.ts');
+  await Deno.writeTextFile(path, next);
+}
+
+export const RELEASE_INFO = 'release.json';
+
+/** {version, protocol, appId}: the agent-host protocol this version speaks (host_client PROTOCOL_VERSION). */
+export function releaseInfo(version: string): string {
+  return JSON.stringify({ version, protocol: PROTOCOL_VERSION, appId: APP_IDENTIFIER });
 }
 
 export async function stage(stageDir: string, version: string): Promise<string[]> {
@@ -759,11 +780,13 @@ export async function main(argv: string[]): Promise<number> {
   const outArg = argValue(argv, '--out', `${REPO}/dist`);
   const out = outArg.replaceAll('\\', '/').replace(/\/$/, '');
   const keep = argv.includes('--keep');
-  const version = APP_VERSION;
+  const version = argValue(argv, '--version', APP_VERSION);
+  if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(version)) throw new Error(`--version ${version}: not a version like 0.1.0-beta.2`);
   await Deno.mkdir(out, { recursive: true });
   const stageDir = `${out}/.stage`;
   const work = `${out}/.build`;
   const included = await stage(stageDir, version);
+  if (version !== APP_VERSION) await setStagedVersion(stageDir, version);
   console.log(`AIB ${version}: staged ${included.length} entries; building ${targets.map((t) => t.id).join(', ')}`);
   const names: string[] = [];
   for (const t of targets) {
@@ -773,6 +796,10 @@ export async function main(argv: string[]): Promise<number> {
     const exe = argv.includes('--no-smoke') ? null : runnable(t, work);
     if (exe) console.log(`  ${t.id} smoke check: ${await smokeCheck(exe)}`);
   }
+  // release.json: what the updater of a running AIB reads before "Install now" while chats work (can the new version attach to
+  // the running agent host?). Listed in SHA256SUMS like every asset.
+  await Deno.writeTextFile(`${out}/${RELEASE_INFO}`, releaseInfo(version) + '\n');
+  names.push(RELEASE_INFO);
   const rows: Built[] = [];
   for (const name of names) {
     const path = `${out}/${name}`;

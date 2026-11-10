@@ -206,6 +206,13 @@ test('the amber update line', () => {
     busy.buttons.map((x) => x.label),
     ['Install when chats finish', 'Later'],
   );
+  const installing = U.banner(ready, new Set(), { kind: 'installing', chats: 2 });
+  assert.equal(installing.text, 'Installing AIB 0.1.2. AIB will close and open again by itself. Your working chats keep running.');
+  assert.deepEqual(installing.buttons, []);
+  assert.equal(
+    U.banner(ready, new Set(), { kind: 'installing', chats: 0 }).text,
+    'Installing AIB 0.1.2. AIB will close and open again by itself.',
+  );
   const waiting = U.banner(Object.assign({}, ready, { installWhenIdle: true }), new Set(['0.1.2']));
   assert.equal(waiting.show, true, 'a waiting install stays visible');
   assert.match(waiting.text, /will install when your chats finish/);

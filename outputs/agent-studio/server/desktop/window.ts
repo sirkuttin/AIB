@@ -37,6 +37,23 @@ export function choosePortPair(isFree: (port: number) => boolean, start = FIRST_
   throw new Error(`No two free ports in a row between ${start} and ${start + tries}`);
 }
 
+export const LAST_PORT_FILE = 'desktop-port.json';
+
+/** The port pair the app used last time (desktop-port.json), when both ports are free now; else null. */
+export function lastPortPair(stateDir: string, isFree: (port: number) => boolean): number | null {
+  try {
+    const port = JSON.parse(Deno.readTextFileSync(`${stateDir}${SEP}${LAST_PORT_FILE}`)).port;
+    if (Number.isInteger(port) && port > 0 && port < 65535 && isFree(port) && isFree(port + 1)) return port;
+  } catch { /* none yet */ }
+  return null;
+}
+
+export function saveLastPort(stateDir: string, port: number): void {
+  try {
+    Deno.writeTextFileSync(`${stateDir}${SEP}${LAST_PORT_FILE}`, JSON.stringify({ port }));
+  } catch { /* not fatal */ }
+}
+
 /** True when nothing listens on 127.0.0.1:port right now. */
 export function portFree(port: number): boolean {
   try {
@@ -222,6 +239,8 @@ export interface WindowHandle {
 export interface TrayItem {
   id: string;
   label: string;
+  /** Shown greyed out and never chosen (a status line). */
+  disabled?: boolean;
 }
 
 export interface Notifier {
@@ -269,11 +288,19 @@ export interface DesktopOptions {
   /** How many chats are working (host.busyConnections().length); a throw counts as unknown. */
   busyCount: () => Promise<number>;
   /**
-   * Ask the agent host to stop (host_client.stopHost). Quitting always calls it first, so nothing is left running invisibly once the
-   * window and tray are gone: forced after OK ("stop them and quit"), unforced when no chat was working, so a chat that started in
-   * the meantime makes the host refuse and keep running. A refusal or failure never holds the quit up.
+   * Ask the agent host to stop (host_client.stopHost). Quitting always calls it first: forced after OK ("stop them and quit"),
+   * unforced otherwise, so an idle host goes at once and a host with chats working refuses and keeps them running (under its own
+   * tray icon; it exits by itself a few seconds after the last one finishes). A refusal or failure never holds the quit up.
    */
   stopHost?: (force: boolean) => Promise<unknown>;
+  /**
+   * True (default, today's behaviour): closing the window or Quit AIB while chats work asks "OK: stop them and quit / Cancel: keep
+   * them running in the tray". False: no question; the app quits and the working chats go on in the agent host, under the host's
+   * own tray icon (docs/app-lifecycle design 4.4, waiting for the owner's decision). Only with a separate host (stopHost given).
+   */
+  askOnClose?: boolean;
+  /** The window loaded our page (the update helper's health marker is written then). */
+  onPageLoaded?: () => void;
   /** The normal close path (the web server). stopAgents: OK was chosen. Never returns in the real app (Deno.exit). */
   quit: (stopAgents: boolean) => Promise<void>;
   saveDelayMs?: number;
@@ -288,6 +315,7 @@ export class DesktopApp {
   window: WindowHandle | null = null;
   #quitting = false;
   #asking = false;
+  #loadedOnce = false;
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
   readonly origin: string;
   readonly geometryPath: string;
@@ -426,7 +454,15 @@ export class DesktopApp {
     if (!page) return null; // can't read it now: the next load or watchdog tick looks again
     const decision = pageDecision(page.href, this.origin);
     if (why === 'load') log.info('window: loaded %s (%s)', page.href, decision);
-    if (decision === 'ours') return decision;
+    if (decision === 'ours') {
+      if (why === 'load' && !this.#loadedOnce) {
+        this.#loadedOnce = true;
+        try {
+          this.options.onPageLoaded?.();
+        } catch { /* not fatal */ }
+      }
+      return decision;
+    }
     if (win !== this.window || win.isClosed() || this.#quitting) return decision;
     if (decision === 'external') {
       log.info('window: %s is an outside site: opening it in the browser', page.href);
@@ -468,10 +504,20 @@ export class DesktopApp {
     await this.decide();
   }
 
-  /** 'quit' (nothing working), 'stop' (OK: stop the agents and quit) or 'tray' (Cancel, or a question already open). */
+  /**
+   * 'quit' (nothing working), 'stop' (OK: stop the agents and quit) or 'tray' (Cancel, or a question already open). With
+   * askOnClose false and a separate agent host (stopHost given), closing never asks and never stops a chat: the app quits, the host
+   * keeps the working chats running and shows its own tray icon until they finish or an app attaches again.
+   */
   async decide(): Promise<'quit' | 'stop' | 'tray'> {
     if (this.#asking) return 'tray';
     const busy = await this.busy();
+    if (this.options.stopHost && this.options.askOnClose === false) {
+      log.info('close: %s chat(s) working; %s', busy ?? 'unknown', busy === 0 ? 'stopping the agent host' : 'they keep running in the agent host');
+      await this.quit(false);
+      return 'quit';
+    }
+    log.info('close: %s chat(s) working; %s', busy ?? 'unknown', closeDecision(busy) === 'quit' ? 'quitting' : 'asking');
     if (closeDecision(busy) === 'quit') {
       await this.quit(false);
       return 'quit';

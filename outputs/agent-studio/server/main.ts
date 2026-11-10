@@ -14,7 +14,7 @@
  * old app) already running for the state folder is recognised and taken over once no chat works there (host_client.ts findHost);
  * this program never starts one.
  */
-import { APP_ROOT, APP_VERSION, isDesktopApp, selfCommand } from './core/app.ts';
+import { APP_ROOT, APP_VERSION, isCompiled, isDesktopApp, launchDir, selfCommand } from './core/app.ts';
 import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
@@ -30,7 +30,8 @@ import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
-import { choosePortPair, DesktopApp, portFree, portGiven } from './desktop/window.ts';
+import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
+import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconDarkPng, trayIconPng } from './desktop/tray_icon.ts';
@@ -44,9 +45,12 @@ const NO_WINDOW = new Set(['host', 'mcp-artifact', 'deploy', 'update-helper', 's
 export { selfCommand };
 
 /** remote_studio.host_command: the command line that starts an agent host configured like this web server. */
-export function hostCommand(o: Options): string[] {
+export function hostCommand(o: Options, compiled = isCompiled(), env: Record<string, string | undefined> = envObject()): string[] {
+  // Linux AppImage: `$APPIMAGE host`, its own mount. Deno.execPath() is inside the app's FUSE mount, which goes away when the app
+  // exits: a host left running "to finish the chats" would lose its program (docs/agent-host.md, "Lifecycle").
+  const self = compiled && Deno.build.os === 'linux' && env.APPIMAGE ? [env.APPIMAGE] : selfCommand();
   const command = [
-    ...selfCommand(),
+    ...self,
     'host',
     '--state-dir',
     String(o.stateDir),
@@ -70,8 +74,32 @@ export function hostCommand(o: Options): string[] {
   if (o.enableClientFs) command.push('--enable-client-fs', o.enableClientFs);
   if (o.mcpConfig) command.push('--mcp-config', o.mcpConfig);
   command.push('--host-port', String(o.hostPort), '--idle-exit-minutes', String(o.hostIdleMinutes));
+  // The built app's host (window or serve): its own tray icon while chats run with no app, and a short exit once nothing works and
+  // no app is attached, so it never lingers invisibly (docs/agent-host.md, "Lifecycle"). A source run keeps the idle timer only.
+  if (compiled) command.push('--tray', '--exit-unattached-seconds', String(APP_HOST_EXIT_SECONDS));
   return command;
 }
+
+/** <data>/updates/started-<APP_VERSION>.ok: tells a waiting update helper this version is up (built app only). Never throws. */
+function writeStartedMarker(stateDir: string): void {
+  if (!isCompiled()) return;
+  try {
+    Deno.mkdirSync(`${stateDir}${sep}updates`, { recursive: true });
+    Deno.writeTextFileSync(startedMarker(`${stateDir}${sep}updates`, APP_VERSION), String(Date.now()));
+    log.announce('studio', 'started: wrote the start confirmation for AIB %s', APP_VERSION);
+  } catch { /* no update waits on it, or the folder is unwritable */ }
+}
+
+function envObject(): Record<string, string | undefined> {
+  try {
+    return Deno.env.toObject();
+  } catch {
+    return {};
+  }
+}
+
+/** How long the built app's host stays after the last app left with no chat working. */
+export const APP_HOST_EXIT_SECONDS = 10;
 
 function usage(message: string): never {
   console.error(`usage: aib [serve] [options]\naib: error: ${message}`);
@@ -97,7 +125,8 @@ export async function main(argv: string[]): Promise<void> {
   const args = argv[0] === 'serve' ? argv.slice(1) : argv;
   const desktop = isDesktopApp() && argv[0] !== 'serve'; // the window only for a plain `AIB [options]` launch
   // After an update: delete the previous version's *.old-<stamp> files once nothing runs from them (never throws; desktop app only).
-  if (desktop) (await import('./desktop/update_helper.ts')).removeUpdateLeftovers();
+  // (`serve` of the built app too: an update keeps the arguments, so a served app updates the same way.)
+  if (isDesktopApp() && !argv.includes('--stop-host')) (await import('./desktop/update_helper.ts')).removeUpdateLeftovers();
   let options: Options;
   try {
     options = parseOptions(args);
@@ -123,13 +152,26 @@ export async function main(argv: string[]): Promise<void> {
   log.setup('studio', { level: desktop && !levelGiven ? 'INFO' : options.logLevel, stateDir, filename: 'studio.log' });
   if (!Deno.env.get(log.ENV_LEVEL)) Deno.env.set(log.ENV_LEVEL, String(options.logLevel)); // a host this server starts logs alike
   if (options.stopHost) {
-    const result = await stopHost(stateDir, options.force);
+    const result = await stopHost(stateDir, options.force, 20, `AIB --stop-host${options.force ? ' --force' : ''} (pid ${Deno.pid})`);
     console.log(result.message);
     for (const item of (result.active ?? []) as Record<string, unknown>[]) console.log(`  ${item.provider} in ${item.cwd}: ${item.state}`);
     Deno.exit(result.stopped || !result.running ? 0 : 2);
   }
+  if (desktop && isDesktopApp()) {
+    // An update cut off in the middle of its file swap: put the previous version back and start that (it is whole again).
+    const { recoverInterruptedUpdate } = await import('./desktop/update_helper.ts');
+    if (recoverInterruptedUpdate(`${stateDir}${sep}updates`)) {
+      log.announce('studio', 'an interrupted update was undone; starting AIB again');
+      folderLock?.release();
+      const { spawnDetached } = await import('./platform/spawn_detached.ts');
+      (await spawnDetached([Deno.execPath(), ...Deno.args], `${stateDir}${sep}updates${sep}restart.log`, launchDir())).close();
+      Deno.exit(0);
+    }
+  }
   if (desktop) {
-    if (!portGiven(args)) options.port = choosePortPair(portFree); // like the Tauri app: the first free pair from 8777
+    // The same port as last time when it is free, so the page's origin (and its localStorage drafts) stays the same across restarts
+    // and updates; else the first free pair from 8777, like the Tauri app.
+    if (!portGiven(args)) options.port = lastPortPair(stateDir, portFree) ?? choosePortPair(portFree);
   }
   let studio: Studio | null = null;
   let host: LiveBackend;
@@ -141,11 +183,27 @@ export async function main(argv: string[]): Promise<void> {
     webInstanceId = studio.instanceId;
   } else {
     webInstanceId = crypto.randomUUID().replaceAll('-', '');
-    host = await attachHost({ stateDir, command: hostCommand(options), port: options.port, webInstanceId, runtime: 'deno' });
+    host = await attachHost({
+      stateDir,
+      command: hostCommand(options),
+      port: options.port,
+      webInstanceId,
+      runtime: 'deno',
+      // The built app: tell the host how to start this app again (its tray's Open AIB), and retire a host left by the previous
+      // version (after an update) as soon as none of its chats is working.
+      launch: isCompiled() ? [Deno.execPath(), ...Deno.args] : null,
+      version: APP_VERSION,
+      retireOlderHost: true, // drain then hand over: a same-product host running other code (an update, a code change)
+      onRetired: isDesktopApp() ? () => void import('./desktop/update_helper.ts').then((m) => m.removeUpdateLeftovers()) : undefined,
+      say: (m) => {
+        console.log(m);
+        log.announce('studio', '%s', m);
+      },
+    });
   }
   configureArtifactKeys(stateDir); // artifact tool: the same shared secret as the agent host
   let closing = false;
-  let close = async () => {};
+  let close = async (_why?: string) => {};
   const ctx = makeContext({
     stateDir,
     host,
@@ -155,7 +213,7 @@ export async function main(argv: string[]): Promise<void> {
     transcripts: await openSource(options.ompSessions, options.claudeProjects),
     claudeProjects: options.claudeProjects,
     ompSessions: options.ompSessions,
-    shutdown: () => void close(),
+    shutdown: () => void close('shutdown requested'),
     agentOptions: options as never,
     stores: studio
       ? { conversations: studio.conversations, projectPrefs: studio.projectPrefs, readState: studio.readState, settings: studio.settings }
@@ -172,13 +230,15 @@ export async function main(argv: string[]): Promise<void> {
   ctx.updates = new UpdateService(stateDir, {
     autoCheck: () => ctx.settings.autoUpdateCheck(),
     busyChats: async () => (await host.busyConnections()).length,
-    quit: () => void setTimeout(() => void close(), 50),
+    quit: () => void setTimeout(() => void close('installing an update'), 50),
+    chatsKeepRunning: !options.inProcess, // the agent host outlives this app: an update never stops a working chat
   });
   log.registerSecret(ctx.token);
   const server = new WebServer(ctx);
   const port = await server.listen(options.port);
   const url = `http://127.0.0.1:${port}`;
   await folderLock?.setPort(port);
+  if (desktop) saveLastPort(stateDir, port);
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
@@ -194,9 +254,10 @@ export async function main(argv: string[]): Promise<void> {
       `Agent Studio: ${url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (deno run -A server/main.ts --stop-host ends the host).`,
     );
   }
-  close = async () => {
+  close = async (why = 'quit') => {
     if (closing) return;
     closing = true;
+    log.announce('studio', 'closing (%s)', why);
     ctx.updates.stop();
     await ctx.artifacts.stop().catch(() => {});
     await server.close().catch(() => {});
@@ -206,7 +267,7 @@ export async function main(argv: string[]): Promise<void> {
   };
   for (const signal of (Deno.build.os === 'windows' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM']) as Deno.Signal[]) {
     try {
-      Deno.addSignalListener(signal, () => void close());
+      Deno.addSignalListener(signal, () => void close(`signal ${signal}`));
     } catch { /* not supported here */ }
   }
   if (desktop) {
@@ -219,14 +280,20 @@ export async function main(argv: string[]): Promise<void> {
       busyCount: async () => (await host.busyConnections()).length,
       // In-process mode has no separate host: closing stops its agents. Split: OK forces the host down; with nothing working it is
       // stopped too (unforced: a chat that just started keeps it), so no invisible process idles on after the app is gone.
-      stopHost: options.inProcess ? undefined : (force) => stopHost(stateDir, force, 5),
-      quit: () => close(),
+      stopHost: options.inProcess ? undefined : async (force) => {
+        const result = await stopHost(stateDir, force, 5, `the app quitting (pid ${Deno.pid}${force ? ', OK: stop them' : ''})`);
+        log.announce('studio', 'quit: agent host %s', result.stopped ? 'stopped' : `kept (${result.message})`);
+        return result;
+      },
+      quit: () => close('the app was quit'),
+      onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
     });
     await app.start(); // the window navigates now: the server already listens
     await watchSignal(stateDir, () => void app.showWindow());
     void ensureStartMenuShortcut(Deno.execPath());
     return;
   }
+  writeStartedMarker(stateDir); // `serve`: up once it listens
   if (options.open) {
     const opener = Deno.build.os === 'windows'
       ? ['cmd', '/c', 'start', '', url]

@@ -44,6 +44,8 @@ import {
   installTarget,
   main as helperMain,
   removeUpdateLeftovers,
+  JOURNAL_NAME,
+  recoverInterruptedUpdate,
   rollback,
   run as runHelper,
   type StartResult,
@@ -52,6 +54,7 @@ import {
 import { writeZip } from "../../tools/build.ts";
 import { kernel32, wide } from "../../outputs/agent-studio/server/platform/win32.ts";
 import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
+import { PROTOCOL_VERSION } from "../../outputs/agent-studio/server/host/host_client.ts";
 import { claimFolder } from "../../outputs/agent-studio/server/desktop/single_instance.ts";
 
 const INSTALLER = "AIB-0.1.0-beta.2-windows-x64.zip";
@@ -88,6 +91,8 @@ interface FakeOptions {
   sumsHash?: string;
   sumsName?: string;
   withSums?: boolean;
+  /** A release.json asset with this text (listed in SHA256SUMS). */
+  info?: string;
 }
 
 /** Serves /repos/acme/aib/releases and the asset downloads; counts every request. */
@@ -111,6 +116,9 @@ class FakeGitHub {
             size: payload.length,
             url: this.base + "/assets/1",
           }];
+          if (o.info !== undefined) {
+            assets.push({ name: "release.json", state: "uploaded", size: o.info.length, url: this.base + "/assets/3" });
+          }
           if (o.withSums !== false) {
             assets.push({
               name: "SHA256SUMS",
@@ -126,6 +134,7 @@ class FakeGitHub {
             headers: { "Content-Type": "application/octet-stream" },
           });
         }
+        if (path === "/assets/3" && o.info !== undefined) return new Response(o.info);
         if (path === "/assets/2") {
           return new Response(sums, {
             headers: { "Content-Type": "application/octet-stream" },
@@ -141,7 +150,7 @@ class FakeGitHub {
     return new FakeGitHub(
       `${want}  ${o.sumsName ?? INSTALLER}\n${
         "0".repeat(64)
-      }  something-else.dmg\n`,
+      }  something-else.dmg\n${o.info !== undefined ? `${await sha(new TextEncoder().encode(o.info))}  release.json\n` : ""}`,
       o,
     );
   }
@@ -787,6 +796,50 @@ Deno.test("install is deferred while chats work; when-idle waits, then installs 
   }
 });
 
+Deno.test("with the agent host (chatsKeepRunning) Install now goes ahead while chats work; the new app starts with the same arguments", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start({ info: JSON.stringify({ version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION }) });
+  env.base(fake.base);
+  const { svc, launched, quit } = await ready(env, 2, { chatsKeepRunning: true, appArgs: ["serve", "--port", "8901"] });
+  assertEquals(await svc.install(), { state: "installing", chats: 2 });
+  assertEquals([launched.length, quit], [1, [1]]);
+  assertEquals(launched[0].args, ["serve", "--port", "8901"]);
+  {
+    // "Install when chats finish" still waits when asked for.
+    const { svc: s2, launched: l2 } = await ready(env, 1, { chatsKeepRunning: true });
+    assertEquals(await s2.install(true), { state: "waiting", chats: 1 });
+    assertEquals(l2, []);
+  }
+  {
+    // An unknown count is fine too: the chats are in the host, whatever their number.
+    const { svc: s3, state, launched: l3 } = await ready(env, 0, { chatsKeepRunning: true });
+    state.busy = () => {
+      throw new Error("host not answering");
+    };
+    assertEquals((await s3.install()).state, "installing");
+    assertEquals(l3.length, 1);
+  }
+});
+
+Deno.test("Install now while chats work needs a release that speaks this agent-host protocol (release.json); otherwise it waits", async () => {
+  const cases: [string | undefined, string][] = [
+    [JSON.stringify({ protocol: PROTOCOL_VERSION + 1 }), "This update changes how AIB runs agents, so it waits until no chat is working (2 now)."],
+    [undefined, "AIB cannot tell whether this update can take over running chats, so it waits until no chat is working (2 now)."],
+    ['{"protocol": 1', "AIB cannot tell whether"],
+  ];
+  for (const [info, text] of cases) {
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ info });
+    env.base(fake.base);
+    const { svc, launched } = await ready(env, 2, { chatsKeepRunning: true });
+    const error = await assertRejects(() => svc.install(), UpdateError) as UpdateError;
+    assertEquals(error.code, "chats_working");
+    assert(error.message.startsWith(text), error.message);
+    assertEquals(launched, []);
+    assertEquals((await svc.install(true)).state, "waiting", "Install when chats finish stays available");
+  }
+});
+
 Deno.test("automatic checks never install", async () => {
   using env = new Env();
   await using fake = await FakeGitHub.start();
@@ -1047,6 +1100,17 @@ function deps(c: Case, results: (StartResult | Error)[] = [{ code: null }], o: {
     },
   };
 }
+
+Deno.test("helper: the new app starts with the old app's arguments (serve --port, --state-dir)", async () => {
+  const c = await windowsCase();
+  try {
+    const { deps: d } = deps(c);
+    assertEquals(await runHelper({ ...c.args, args: ["serve", "--port", "8901", 7 as unknown as string] }, d), 0);
+    assertEquals(c.started, [[c.args.exe, "serve", "--port", "8901"]], "only string arguments are passed on");
+  } finally {
+    Deno.removeSync(c.dir, { recursive: true });
+  }
+});
 
 function assertOldInstall(app: string) {
   assertEquals(names(app), [".deno-desktop-app", "AIB.dll", "AIB.exe", "AIB.exe.WebView2", "old-only.txt", "sub"]);
@@ -1321,6 +1385,23 @@ Deno.test("removeUpdateLeftovers: old files and unpack folders go, the app and i
   }
 });
 
+Deno.test("removeUpdateLeftovers (macOS): an old bundle a process still runs from (the old agent host) is kept; unknown keeps all", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "aib-leftovers-mac-" });
+  try {
+    const old = `${dir}/AIB.app.old-${STAMP}`;
+    Deno.mkdirSync(`${old}/Contents/MacOS`, { recursive: true });
+    Deno.mkdirSync(`${dir}/AIB.app/Contents`, { recursive: true });
+    const target = { kind: "macos-zip" as const, target: `${dir}/AIB.app` };
+    const running = [`${old}/Contents/MacOS/AIB`, "/usr/bin/zsh"];
+    assertEquals(removeUpdateLeftovers({ target, os: "darwin", processes: () => running }), [], "the old host runs from it");
+    assertEquals(removeUpdateLeftovers({ target, os: "darwin", processes: () => null }), [], "process list unknown: keep");
+    assertEquals(removeUpdateLeftovers({ target, os: "darwin", processes: () => ["/usr/bin/zsh"] }).length, 1, "nothing runs from it");
+    assertEquals(names(dir), ["AIB.app"], "deleted");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 Deno.test({
   name: "removeUpdateLeftovers (Windows): a version whose old exe cannot be deleted (still running) is kept whole",
   ignore: !WINDOWS,
@@ -1391,3 +1472,100 @@ Deno.test("the repository: sirkuttin/AIB for the desktop app, none for deno run,
     else Deno.env.set(REPO_ENV, saved);
   }
 });
+
+// ---- beta.2 helper rules: start confirmation, crash-safe journal, a tray presence ----------------------------------------
+
+Deno.test("helper: success needs the new app's start confirmation (marker); none in time puts the old version back", async () => {
+  for (const confirmed of [true, false]) {
+    const c = await windowsCase();
+    try {
+      const marker = `${c.dir}/started-0.2.0.ok`;
+      Deno.writeTextFileSync(marker, "stale from an earlier try");
+      const seen: (string | undefined)[] = [];
+      const trays: string[] = [];
+      const code = await runHelper({ ...c.args, marker }, {
+        alive: () => false,
+        sleep: () => {},
+        stamp: STAMP,
+        unpack: (archive: string, dest: string) => jsUnpack(archive, dest),
+        tray: (tip) => (trays.push(`show ${tip}`), () => void trays.push("hide")),
+        start: (command: string[], _env: Record<string, string>, m?: string) => {
+          c.started.push(command);
+          seen.push(m);
+          assert(!exists(m!), "a stale marker never counts");
+          return Promise.resolve(confirmed ? { code: null, confirmed: true } : { code: null, confirmed: false });
+        },
+      });
+      assertEquals(seen[0], marker);
+      assertEquals(trays, ["show Updating AIB to 0.2.0...", "hide"], "a tray icon for the helper's whole life");
+      if (confirmed) {
+        assertEquals(code, 0);
+        assertEquals(read(`${c.app}/AIB.exe`), "new exe");
+        assert(read(`${c.dir}/install.log`).includes("the new version is running (it confirmed its start)"));
+      } else {
+        assertEquals(code, 7);
+        assertOldInstall(c.app);
+        assert(read(`${c.dir}/install.log`).includes("no start confirmation within 60 s"), read(`${c.dir}/install.log`));
+      }
+      assert(!exists(`${c.dir}/${JOURNAL_NAME}`), "the journal is gone once the outcome is settled");
+    } finally {
+      Deno.removeSync(c.dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("helper: the swap journal is on disk before each rename; a cut-off update is undone at the next start", async () => {
+  const c = await windowsCase();
+  try {
+    let snapshots = 0;
+    // Crash the helper (an exception out of start stands in for "killed") right after the swap: the journal must hold every step.
+    const crash = new Error("helper killed");
+    const code = await runHelper(c.args, {
+      alive: () => false,
+      sleep: () => {},
+      stamp: STAMP,
+      unpack: (archive: string, dest: string) => jsUnpack(archive, dest),
+      tray: () => () => {},
+      start: () => {
+        const j = JSON.parse(read(`${c.dir}/${JOURNAL_NAME}`));
+        snapshots = j.steps.length;
+        assertEquals(j.helperPid, Deno.pid);
+        // Simulate the crash: copy the journal aside, it is what a killed helper leaves behind.
+        Deno.copyFileSync(`${c.dir}/${JOURNAL_NAME}`, `${c.dir}/journal.crash`);
+        return Promise.reject(crash);
+      },
+    });
+    assertEquals(code, 7, "(this run rolled back by itself)");
+    assert(snapshots >= 4, `every top-level entry was journaled (${snapshots})`);
+    // Now replay what a crash would have left: redo the swap from the copy, put the journal back, and recover as AIB's start does.
+    const j = JSON.parse(read(`${c.dir}/journal.crash`));
+    const steps = j.steps as { path: string; aside: string | null; from: string }[];
+    const stage = `${c.app}/.aib-update-${STAMP}/AIB`;
+    Deno.mkdirSync(stage, { recursive: true });
+    for (const s of steps) Deno.writeTextFileSync(s.from, `new ${s.path.split(/[\/]/).pop()}`);
+    for (const s of steps.slice(0, 2)) { // the helper finished two steps ...
+      if (s.aside && exists(s.path)) Deno.renameSync(s.path, s.aside);
+      Deno.renameSync(s.from, s.path);
+    }
+    // ... and died right after journaling the third (both of its renames recorded, neither done).
+    Deno.writeTextFileSync(`${c.dir}/${JOURNAL_NAME}`, JSON.stringify({ ...j, steps: steps.slice(0, 3), helperPid: 999999 }));
+    assertEquals(recoverInterruptedUpdate(c.dir, () => false), true);
+    assertOldInstall(c.app);
+    assert(!exists(`${c.dir}/${JOURNAL_NAME}`));
+    assert(read(`${c.dir}/install.log`).includes("an interrupted update to 0.2.0 was found at start; the previous version was put back"));
+    assertEquals(recoverInterruptedUpdate(c.dir), false, "nothing to undo now");
+    Deno.writeTextFileSync(`${c.dir}/${JOURNAL_NAME}`, JSON.stringify({ ...j, helperPid: 1 }));
+    assertEquals(recoverInterruptedUpdate(c.dir, () => true), false, "a helper still at work is left alone");
+  } finally {
+    Deno.removeSync(c.dir, { recursive: true });
+  }
+});
+
+function exists(p: string): boolean {
+  try {
+    Deno.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
