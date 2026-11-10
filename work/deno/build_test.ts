@@ -2,18 +2,26 @@
  * tools/build.ts at unit level (no `deno desktop` run here): asset names for every target and that the updater picks them,
  * SHA256SUMS format (and that the updater reads it), the size guard, the zip writer's unix modes and contents, the .icns header,
  * what is staged, the generated app icon files (tools/make_icons.ts), the Linux package fixes (tools/linux_package.ts), and the Windows launcher icon (.ico parser, group-icon bytes, and embedding into a copy of where.exe).
+ * The keeper step: Go target names and build flags per target, adding the keeper to a .deb and an AppImage (multi-block file),
+ * and (when Go is installed) a real keeper build for this machine that answers `version`.
  */
-import { assert, assertEquals, assertThrows } from "./_assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "./_assert.ts";
 import {
   APP_VERSION,
 } from "../../outputs/agent-studio/server/core/app.ts";
 import {
   assetNames,
+  buildKeeper,
   checkSize,
+  DEB_KEEPER_PATH,
   crc32,
   decodePng,
   embedWindowsIcon,
+  goCommand,
+  goTarget,
   groupIconBytes,
+  keeperBuildArgs,
+  keeperFile,
   makeIcns,
   makeIco,
   modeFor,
@@ -37,6 +45,9 @@ import {
   pickAsset,
 } from "../../outputs/agent-studio/server/desktop/updater.ts";
 import {
+  addTarFile,
+  addToAppImage,
+  addToDeb,
   appImageOffset,
   editTar,
   fixAppImage,
@@ -545,4 +556,110 @@ Deno.test("ELF programs get 0755 and ELF shared libraries 0644, in the .deb and 
   } finally {
     Deno.removeSync(dir2, { recursive: true });
   }
+});
+
+// ---- the keeper step -----------------------------------------------------------------------------------------------------
+
+Deno.test("keeper: Go target, file name and build flags for each of the six targets", () => {
+  const got = TARGETS.map((t) => `${t.id} ${goTarget(t).GOOS}/${goTarget(t).GOARCH} ${keeperFile(t)}`);
+  assertEquals(got, [
+    "windows-x64 windows/amd64 AIB-keeper.exe",
+    "windows-arm64 windows/arm64 AIB-keeper.exe",
+    "macos-x64 darwin/amd64 AIB-keeper",
+    "macos-arm64 darwin/arm64 AIB-keeper",
+    "linux-x64 linux/amd64 AIB-keeper",
+    "linux-arm64 linux/arm64 AIB-keeper",
+  ]);
+  for (const t of TARGETS) {
+    const args = keeperBuildArgs(t, "out");
+    assertEquals(args.slice(0, 2), ["build", "-trimpath"]);
+    assertEquals(args[3].includes("-H windowsgui"), t.os === "windows"); // a Windows keeper can never get a console window
+  }
+  assertEquals(DEB_KEEPER_PATH, "usr/lib/aib/AIB-keeper"); // next to the app's program, usr/lib/aib/aib
+});
+
+Deno.test("keeper: added to a tar (new entry before the end blocks, or replacing one) and to a .deb", async () => {
+  const tar = tarOf([["./usr/lib/aib/aib", ELF + "prog"], ["./usr/share/applications/aib.desktop", "Name=AIB\n"]]);
+  const data = new Uint8Array(1300).map((_, i) => i % 251);
+  const added = addTarFile(tar, DEB_KEEPER_PATH, data, 0o755);
+  const body = tar.length - 1024; // tarOf ends with two zero blocks
+  assertEquals(added.subarray(0, body), tar.subarray(0, body)); // every existing byte kept
+  const header = added.subarray(body, body + 512);
+  assertEquals(td.decode(header.subarray(0, 25)), "./usr/lib/aib/AIB-keeper\0");
+  assertEquals(td.decode(header.subarray(100, 108)), "0000755\0");
+  assertEquals(parseInt(td.decode(header.subarray(124, 135)), 8), 1300);
+  const sum = header.reduce((a, b, i) => a + (i >= 148 && i < 156 ? 0x20 : b), 0);
+  assertEquals(parseInt(td.decode(header.subarray(148, 154)), 8), sum);
+  assertEquals(added.subarray(body + 512, body + 512 + 1300), data);
+  assert(added.subarray(added.length - 1024).every((b) => b === 0));
+  // A second add replaces it rather than adding another entry.
+  const again = addTarFile(added, DEB_KEEPER_PATH, new Uint8Array([1, 2, 3]), 0o755);
+  const paths: string[] = [];
+  editTar(again, (p) => (paths.push(p), false), (_p, d) => d);
+  assertEquals(paths, ["usr/lib/aib/aib", "usr/share/applications/aib.desktop", "usr/lib/aib/AIB-keeper"]);
+
+  const dir = Deno.makeTempDirSync({ prefix: "aib-build-debkeeper-" });
+  try {
+    const deb = `${dir}/aib.deb`;
+    Deno.writeFileSync(deb, arOf([["debian-binary", te.encode("2.0\n")], ["control.tar.gz", new Uint8Array([1])], ["data.tar.gz", await gz(tar, "gzip")]]));
+    await addToDeb(deb, DEB_KEEPER_PATH, data, 0o755);
+    const members = readAr(Deno.readFileSync(deb));
+    const inner = await gz(members.find((m) => m.name === "data.tar.gz")!.data, "gunzip");
+    let keeper: Uint8Array | null = null;
+    editTar(inner, (p) => p === "usr/lib/aib/AIB-keeper", (_p, d) => (keeper = d.slice(), d));
+    assertEquals(keeper, data);
+    await assertRejects(() => addToDeb(deb, "opt/elsewhere/AIB-keeper", data, 0o755)); // a layout change fails the build
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("keeper: added at the top of an AppImage as a multi-block file, 0755, read back intact", async () => {
+  const file = (name: string, text: string, mode = 0o644): SqNode => ({ name, kind: "file", mode, uid: 0, gid: 0, mtime: 0, nlink: 1, newData: te.encode(text) });
+  const root: SqNode = { name: "", kind: "dir", mode: 0o755, uid: 0, gid: 0, mtime: 0, nlink: 2, children: [file("AIB", ELF + "prog", 0o755), file("AppRun", "#!/bin/sh\n", 0o755)] };
+  const elf = new Uint8Array(64);
+  elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  new DataView(elf.buffer).setBigUint64(0x28, 64n, true);
+  const image = writeSquashfs(emptySquashfs(root));
+  const app = new Uint8Array(64 + image.length);
+  app.set(elf);
+  app.set(image, 64);
+  const keeper = new Uint8Array(131072 * 2 + 777).map((_, i) => (i * 7) % 256); // three blocks, the last one short
+  const dir = Deno.makeTempDirSync({ prefix: "aib-build-appkeeper-" });
+  try {
+    const path = `${dir}/AIB.AppImage`;
+    Deno.writeFileSync(path, app);
+    await addToAppImage(path, "AIB-keeper", keeper, 0o755);
+    const fs = readSquashfs(Deno.readFileSync(path).subarray(64));
+    const kid = (n: string) => fs.root.children!.find((c) => c.name === n)!;
+    assertEquals(kid("AIB-keeper").mode, 0o755);
+    assertEquals(readSqFile(fs, kid("AIB-keeper")), keeper);
+    assertEquals(td.decode(readSqFile(fs, kid("AIB"))), ELF + "prog");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+let goWorks = false;
+try {
+  goWorks = new Deno.Command(goCommand(), { args: ["version"], stdout: "null", stderr: "null" }).outputSync().success;
+} catch { /* no Go here */ }
+
+Deno.test({
+  name: "keeper: a real build for this machine answers `version` (skipped without Go)",
+  ignore: !goWorks,
+  fn: async () => {
+    const t = TARGETS.find((t) => t.triple === Deno.build.target);
+    if (!t) return;
+    const dir = Deno.makeTempDirSync({ prefix: "aib-build-keeper-" });
+    try {
+      const exe = `${dir}/${keeperFile(t)}`;
+      const bytes = await buildKeeper(t, exe);
+      assert(bytes > 1e6 && bytes < 20e6, `keeper is ${bytes} bytes`);
+      const out = await new Deno.Command(exe, { args: ["version"], stdout: "piped", stderr: "null" }).output();
+      assert(td.decode(out.stdout).startsWith("AIB keeper "), td.decode(out.stdout));
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
+    }
+  },
 });

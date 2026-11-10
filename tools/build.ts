@@ -6,6 +6,9 @@
  *   AIB-<version>-linux-x64.AppImage, -linux-arm64.AppImage, -linux-x64.deb, -linux-arm64.deb
  *   SHA256SUMS                                           sha256sum format over all of them
  *
+ * Each package also carries the keeper (keeper/, Go, built with CGO off for the target) next to the app's program: AIB/AIB-keeper.exe,
+ * AIB.app/Contents/MacOS/AIB-keeper, AIB-keeper at the AppImage's top level, usr/lib/aib/AIB-keeper in the .deb. Needs Go ($GO or go).
+ *
  * Usage (from anywhere): deno run -A tools/build.ts [--targets all|windows-x64,macos-arm64,...] [--out dist/] [--keep] [--no-smoke]
  *
  * The version is APP_VERSION (server/core/app.ts). For the target this machine runs, the build starts the app headless (`AIB serve
@@ -17,7 +20,7 @@
  */
 import { createHash } from 'node:crypto';
 import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
-import { fixAppImage, fixDeb } from './linux_package.ts';
+import { addToAppImage, addToDeb, fixAppImage, fixDeb } from './linux_package.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
 export const APP_NAME = 'AIB';
@@ -289,6 +292,51 @@ const HERE = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(
 export const REPO = HERE.replace(/\/tools$/, '');
 export const APP_DIR = `${REPO}/outputs/agent-studio`;
 export const ICONS = `${APP_DIR}/icons`; // the app icon in every size the packages need
+
+// ---- the keeper (keeper/, Go): built for each target and placed next to the app's program ---------------------------------
+export const KEEPER_DIR = `${REPO}/keeper`;
+export const KEEPER_NAME = 'AIB-keeper';
+/** Where the keeper goes inside the .deb: next to the app's program (usr/lib/aib/aib). */
+export const DEB_KEEPER_PATH = 'usr/lib/aib/AIB-keeper';
+
+export function goTarget(t: Target): { GOOS: string; GOARCH: string } {
+  return { GOOS: t.os === 'macos' ? 'darwin' : t.os, GOARCH: t.arch === 'x64' ? 'amd64' : 'arm64' };
+}
+
+export function keeperFile(t: Target): string {
+  return t.os === 'windows' ? `${KEEPER_NAME}.exe` : KEEPER_NAME;
+}
+
+/** `go build` arguments: stripped, no local paths, and on Windows a GUI-subsystem program (it can never get a console window). */
+export function keeperBuildArgs(t: Target, output: string): string[] {
+  return ['build', '-trimpath', '-ldflags', t.os === 'windows' ? '-s -w -H windowsgui' : '-s -w', '-o', output, '.'];
+}
+
+/** The go command: $GO, else Go's default Windows install folder, else `go` on PATH. */
+export function goCommand(): string {
+  const env = Deno.env.get('GO');
+  if (env) return env;
+  if (Deno.build.os === 'windows') {
+    try {
+      Deno.statSync('C:/Program Files/Go/bin/go.exe');
+      return 'C:/Program Files/Go/bin/go.exe';
+    } catch { /* not there */ }
+  }
+  return 'go';
+}
+
+/** Builds the keeper for a target (CGO off, so every target builds from any machine). Returns its size in bytes. */
+export async function buildKeeper(t: Target, output: string): Promise<number> {
+  const out = await new Deno.Command(goCommand(), {
+    args: keeperBuildArgs(t, output),
+    cwd: KEEPER_DIR,
+    env: { CGO_ENABLED: '0', ...goTarget(t) },
+    stdout: 'piped',
+    stderr: 'piped',
+  }).output();
+  if (!out.success) throw new Error(`go build of the keeper failed for ${t.id}:\n${new TextDecoder().decode(out.stderr).slice(-2000)}`);
+  return (await Deno.stat(output)).size;
+}
 
 /**
  * The top-level names of outputs/agent-studio that go into the app: code, page files, vendored page libraries (vendor/: xterm.js and
@@ -651,20 +699,27 @@ async function buildTarget(target: Target, version: string, stageDir: string, in
   await Deno.remove(dir, { recursive: true }).catch(() => {});
   await Deno.mkdir(dir, { recursive: true });
   const names = assetNames(version, target);
+  const keeperBytes = (bytes: number) => console.log(`  ${target.id} keeper: ${(bytes / 1048576).toFixed(1)} MB`);
   if (target.os === 'windows') {
     await desktop(stageDir, included, target, `${dir}/${APP_NAME}`);
     embedWindowsIcon(`${dir}/${APP_NAME}/${APP_NAME}.exe`, await Deno.readFile(`${ICONS}/icon.ico`)); // --icon leaves the exe's icon as is
+    keeperBytes(await buildKeeper(target, `${dir}/${APP_NAME}/${keeperFile(target)}`)); // AIB/AIB-keeper.exe
     await zipFolder(`${dir}/${APP_NAME}`, `${out}/${names[0]}`, APP_NAME);
   } else if (target.os === 'macos') {
     await desktop(stageDir, included, target, `${dir}/${APP_NAME}`); // deno desktop adds .app (AIB.app → AIB.app.app)
+    keeperBytes(await buildKeeper(target, `${dir}/${APP_NAME}.app/Contents/MacOS/${keeperFile(target)}`)); // zipped 0755
     await zipFolder(`${dir}/${APP_NAME}.app`, `${out}/${names[0]}`, `${APP_NAME}.app`);
   } else {
+    keeperBytes(await buildKeeper(target, `${dir}/${keeperFile(target)}`));
+    const keeper = await Deno.readFile(`${dir}/${keeperFile(target)}`);
     await desktop(stageDir, included, target, `${dir}/${APP_NAME}.AppImage`);
     await fixAppImage(`${dir}/${APP_NAME}.AppImage`, APP_NAME, APP_IDENTIFIER); // .DirIcon, root 0755, Name/StartupWMClass
+    await addToAppImage(`${dir}/${APP_NAME}.AppImage`, keeperFile(target), keeper, 0o755); // next to the top-level AIB
     await Deno.copyFile(`${dir}/${APP_NAME}.AppImage`, `${out}/${names[0]}`);
     await Deno.mkdir(`${dir}/deb`, { recursive: true });
     await desktop(stageDir, included, target, `${dir}/deb/aib.deb`);
     await fixDeb(`${dir}/deb/aib.deb`, APP_NAME); // deno desktop writes Name=aib
+    await addToDeb(`${dir}/deb/aib.deb`, DEB_KEEPER_PATH, keeper, 0o755);
     await Deno.copyFile(`${dir}/deb/aib.deb`, `${out}/${names[1]}`);
   }
   return names;
