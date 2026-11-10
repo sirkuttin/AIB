@@ -109,8 +109,10 @@ function setup({ terminal = true, current = 'claude:abc' } = {}) {
     ctx.AibTerminal = {
       open: async () => {},
       isOpen: () => false,
+      /* Like terminal-ui.js: resolves true when pasted, false when the person chose Cancel on the busy warning. */
       paste: async (id, text) => {
         pastes.push([id, text]);
+        return true;
       },
     };
   ctx.RunInTerminalUI.init({ current: () => current });
@@ -284,4 +286,58 @@ test('run() pastes the text without a trailing newline', async () => {
   const { ctx, pastes } = setup();
   assert.equal(await ctx.RunInTerminalUI.run('claude:abc', 'echo hi\n\n'), true);
   assert.deepEqual(pastes, [['claude:abc', 'echo hi']]);
+});
+
+/* Join with terminal-ui.js (AibTerminal.paste): true = pasted, false = the person chose Cancel on the busy warning, rejection = failed. */
+test('Cancel on the busy warning (paste resolves false): no Pasted state, the button goes quietly back to idle', async () => {
+  const { ctx, markdown, buttons, pastes, flush } = setup();
+  ctx.AibTerminal.paste = async (id, text) => {
+    pastes.push([id, text]);
+    return false;
+  };
+  const box = markdown('```bash\nnpm test\n```');
+  buttons(box)[0].click();
+  await flush();
+  const btn = buttons(box)[0];
+  assert.deepEqual(pastes, [['claude:abc', 'npm test']]);
+  assert.ok(!/Pasted/.test(btn.textContent), 'not shown as pasted');
+  assert.ok(!btn.classList.contains('done'));
+  assert.ok(!btn.classList.contains('failed'), 'cancelling is not a failure');
+  assert.equal(btn.getAttribute('aria-label'), 'Run in terminal');
+  assert.equal(await ctx.RunInTerminalUI.run('claude:abc', 'ls'), false);
+});
+
+test('run() resolves true only when paste() resolves true', async () => {
+  const { ctx } = setup();
+  ctx.AibTerminal.paste = async () => undefined;
+  assert.equal(await ctx.RunInTerminalUI.run('claude:abc', 'ls'), false);
+  ctx.AibTerminal.paste = async () => true;
+  assert.equal(await ctx.RunInTerminalUI.run('claude:abc', 'ls'), true);
+  ctx.AibTerminal.paste = async () => {
+    throw new Error('no pty');
+  };
+  await assert.rejects(() => ctx.RunInTerminalUI.run('claude:abc', 'ls'));
+});
+
+test('terminal-ui.js and run-terminal-ui.js use the same chat key (provider:sessionId) and load in order in chat.html', () => {
+  const fs = require('node:fs');
+  const dir = APP;
+  const chat = fs.readFileSync(path.join(dir, 'chat.js'), 'utf8');
+  assert.match(chat, /const aliasKey = \(c\) => c\.provider \+ ':' \+ \(c\.sessionId \|\| c\.id \|\| c\.key\);/);
+  assert.match(chat, /RunInTerminalUI\?\.init\(\{ current: \(\) => \(selected \? aliasKey\(selected\) : ''\) \}\)/);
+  assert.match(chat, /AibTerminal\?\.init\(\{\s*current: \(\) =>\s*selected\s*\?\s*\{\s*key: aliasKey\(selected\)/);
+  const split = fs.readFileSync(path.join(dir, 'split-ui.js'), 'utf8');
+  assert.match(split, /dataset\.mirror = key/);
+  const html = fs.readFileSync(path.join(dir, 'chat.html'), 'utf8');
+  const scripts = [...html.matchAll(/<script src="\/([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(scripts[0], 'terminal-ui.js', 'terminal-ui.js loads first');
+  const md = scripts.indexOf('markdown.js');
+  assert.ok(md > 0 && scripts[md + 1] === 'run-terminal-ui.js', 'run-terminal-ui.js right after markdown.js');
+  assert.ok(scripts.indexOf('run-terminal-ui.js') < scripts.indexOf('copy-ui.js'));
+  assert.ok(scripts.indexOf('run-terminal-ui.js') < scripts.indexOf('tool-views.js'));
+  assert.equal(scripts[scripts.length - 1], 'chat.js');
+  assert.equal(new Set(scripts).size, scripts.length, 'no script twice');
+  for (const s of scripts) assert.ok(fs.existsSync(path.join(dir, s)), s + ' exists');
+  assert.match(html, /<link rel="icon"/);
+  assert.match(html, /<link rel="stylesheet" href="\/terminal\.css">/);
 });

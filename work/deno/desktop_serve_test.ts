@@ -147,3 +147,72 @@ Deno.test({
     );
   },
 });
+
+/** Is a process still running? (tasklist on Windows: Deno.kill cannot probe there.) */
+function running(pid: number): boolean {
+  if (Deno.build.os === 'windows') {
+    const out = new Deno.Command('tasklist', { args: ['/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV'], stdout: 'piped', stderr: 'null' })
+      .outputSync();
+    return new TextDecoder().decode(out.stdout).includes(`"${pid}"`);
+  }
+  try {
+    Deno.kill(pid, 'SIGCONT');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test({
+  name: 'main.ts: the data-folder lock holds while a chat terminal runs; quitting (close()) ends the shell and frees the folder',
+  ...TEST_OPTIONS,
+  fn: async () => {
+    await using fx = new Fixture();
+    const port = 8812;
+    const args = ['run', '-A', '--quiet', MAIN, 'serve', '--in-process', '--port', String(port), '--state-dir', fx.state];
+    const [web] = fx.spawn([DENO, ...args], 'serve');
+    const origin = `http://127.0.0.1:${port}`;
+    const boot = await until(async () => {
+      const r = await fetch(`${origin}/api/live/bootstrap`);
+      return r.status === 200 ? await r.json() : (await r.body?.cancel(), null);
+    }, 'bootstrap', 60);
+    const token = String(boot.token);
+
+    // The lock came first: a second serve on the same folder refuses with code 2 while this one runs.
+    const [second] = fx.spawn([DENO, ...args.map((a) => (a === String(port) ? String(port + 2) : a))], 'second');
+    assertEquals((await second.status).code, 2);
+
+    // A chat's terminal (terminal/sessions.ts) inside that server.
+    // @ts-ignore: Deno's WebSocket takes headers
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/live/terminal?key=claude%3Ajoin&cwd=${encodeURIComponent(fx.workspace)}`, {
+      protocols: ['aib-terminal', 'aib-token.' + token],
+      headers: { Origin: origin },
+    });
+    const messages: { type?: string }[] = [];
+    ws.onmessage = (e: MessageEvent) => typeof e.data === 'string' && messages.push(JSON.parse(e.data));
+    const closed = new Promise<void>((r) => ws.addEventListener('close', () => r()));
+    await until(() => messages.some((m) => m.type === 'ready'), 'terminal ready', 30);
+    const list = await (await fetch(`${origin}/api/live/terminal/list`, { headers: { 'X-Studio-Token': token } })).json();
+    const pids = list.terminals.map((t: { pid: number }) => t.pid);
+    assertEquals(pids.length, 1);
+    assert(running(pids[0]), 'the shell runs');
+
+    // Quit through the normal close path (the same close() the tray's Quit and Ctrl+C run).
+    const r = await fetch(`${origin}/api/live/shutdown`, {
+      method: 'POST',
+      headers: { 'X-Studio-Token': token, Origin: origin, 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    await r.body?.cancel();
+    assertEquals((await web.status).code, 0);
+    await closed;
+    await until(() => !running(pids[0]), 'the shell ended with the server', 10);
+    const { claimFolder } = await import('../../outputs/agent-studio/server/desktop/single_instance.ts');
+    const claim = await claimFolder(fx.state, { mode: 'server', port: 8813 });
+    try {
+      assert(claim.primary, 'the folder lock was released');
+    } finally {
+      if (claim.primary) claim.release();
+    }
+  },
+});

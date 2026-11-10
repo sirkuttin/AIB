@@ -5,7 +5,9 @@
  * Windows: a one-colour glyph that matches the taskbar: white (tray-dark.svg) on a dark taskbar, ink (tray-light.svg) on a light one
  * (HKCU\...\Themes\Personalize SystemUsesLightTheme; unknown counts as dark, Windows' default). 16 px when the system's small icon
  * is 16 px (100% scaling), else 32 px, which Windows scales down to 20/24 px.
- * macOS and Linux: the full-colour small app icon at 32 px (Deno.Tray has no template-image option; the panel scales it).
+ * macOS and Linux: the full-colour small app icon at 32 px (Deno.Tray has no template-image option; the panel scales it), and, where
+ * Deno.Tray has setIconDark (Deno 2.9.8 does), the white glyph (tray-dark.svg, 32 px) while the system is in dark mode
+ * (trayIconDarkPng). The colour icon stays the light-mode one because it reads on any panel, also a dark panel in light mode.
  */
 import { advapi32, user32, wide } from '../platform/win32.ts';
 import { TRAY_PNG_BASE64 } from './tray_icon_data.ts';
@@ -62,6 +64,17 @@ export function windowsSmallIconPx(): number {
   } catch {
     return 0;
   }
+}
+
+/** The dark-mode tray image for Deno.Tray.setIconDark: macOS and Linux only (Windows' own tray follows the taskbar instead). */
+export function chooseTrayIconDark(os: typeof Deno.build.os): TrayChoice | null {
+  return os === 'windows' ? null : { art: 'dark', size: 32 };
+}
+
+/** The PNG for Deno.Tray.setIconDark on this system, or null (Windows). */
+export function trayIconDarkPng(): Uint8Array | null {
+  const choice = chooseTrayIconDark(Deno.build.os);
+  return choice ? trayIconBytes(choice) : null;
 }
 
 /** The tray PNG for this machine, read now (the taskbar theme and scaling at start-up). */

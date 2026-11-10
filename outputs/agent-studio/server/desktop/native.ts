@@ -150,11 +150,24 @@ export function nativeShell(): Shell {
   let keeper: WindowHandle | null = null;
   let tray: Any = null; // held for the app's life, so the native icon is never collected
   let windowsTray: WindowsTray | null = null;
-  const denoTray = (icon: Uint8Array, tooltip: string, items: TrayItem[], onClick: () => void, onMenu: (id: string) => void) => {
+  const denoTray = (
+    icon: Uint8Array,
+    tooltip: string,
+    items: TrayItem[],
+    onClick: () => void,
+    onMenu: (id: string) => void,
+    iconDark: Uint8Array | null,
+  ) => {
     tray = new D.Tray();
     try {
       tray.setIcon(icon);
     } catch { /* the OS default */ }
+    // Dark mode (macOS, Linux): the white glyph. setIconDark is in Deno 2.9.8; older runtimes keep the one icon.
+    if (iconDark && typeof tray.setIconDark === 'function') {
+      try {
+        tray.setIconDark(iconDark);
+      } catch { /* the light icon stays */ }
+    }
     tray.setTooltip(tooltip);
     tray.setMenu(items.map((i) => ({ item: { label: i.label, id: i.id, enabled: true } })));
     tray.addEventListener('click', () => onClick());
@@ -168,17 +181,24 @@ export function nativeShell(): Shell {
       // isVisible() says it shows).
       return keeper = invisibleWindow();
     },
-    createTray(icon: Uint8Array, tooltip: string, items: TrayItem[], onClick: () => void, onMenu: (id: string) => void) {
+    createTray(
+      icon: Uint8Array,
+      tooltip: string,
+      items: TrayItem[],
+      onClick: () => void,
+      onMenu: (id: string) => void,
+      iconDark?: Uint8Array | null,
+    ) {
       // Windows: Deno.Tray's icon never gets its clicks (tray_win.ts), so AIB runs its own icon on a worker thread; Deno.Tray only
       // if that can't start. Elsewhere Deno.Tray.
       if (Deno.build.os === 'windows') {
         void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m)).then((t) => {
           if (t) windowsTray = t;
-          else denoTray(icon, tooltip, items, onClick, onMenu);
+          else denoTray(icon, tooltip, items, onClick, onMenu, null);
         });
         return;
       }
-      denoTray(icon, tooltip, items, onClick, onMenu);
+      denoTray(icon, tooltip, items, onClick, onMenu, iconDark ?? null);
     },
     removeTray() {
       windowsTray?.remove();

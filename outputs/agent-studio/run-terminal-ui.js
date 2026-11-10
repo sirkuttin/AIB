@@ -201,12 +201,13 @@
       idle(btn);
     }, STATE_MS);
   }
-  /* Pastes text into the chat's terminal. Resolves true when pasted. Never adds Enter. */
+  /* Pastes text into the chat's terminal. Never adds Enter. Resolves true only when AibTerminal.paste() says it pasted (true);
+     false when there is nothing to paste into, or the person chose Cancel on the terminal's "command still running" warning
+     (paste() resolved false). Rejects when paste() rejects. */
   async function run(conversationId, text) {
     const T = terminal();
     if (!T || !conversationId || !text) return false;
-    await T.paste(conversationId, trimEnd(text));
-    return true;
+    return (await T.paste(conversationId, trimEnd(text))) === true;
   }
   function makeButton(anchor, text, extraClass) {
     const btn = doc().createElement('button');
@@ -222,9 +223,18 @@
         show(btn, 'failed', 'No chat', 'Not pasted: open a chat to use its terminal');
         return;
       }
+      if (!terminal()) {
+        show(btn, 'failed', 'Not pasted', 'Not pasted: the terminal is not available');
+        return;
+      }
       try {
+        /* false: the person chose Cancel on the busy warning, so nothing was pasted and there is nothing to report. */
         if (await run(id, text)) show(btn, 'done', 'Pasted', 'Pasted into the terminal');
-        else show(btn, 'failed', 'Not pasted', 'Not pasted: the terminal is not available');
+        else {
+          if (btn.runTimer) clearTimeout(btn.runTimer);
+          btn.runTimer = null;
+          idle(btn);
+        }
       } catch {
         show(btn, 'failed', 'Not pasted', 'Not pasted: the terminal could not be opened');
       }

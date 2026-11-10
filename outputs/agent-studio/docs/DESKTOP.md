@@ -29,7 +29,7 @@ notifications through the web API, updates as "open the installer" instructions)
   ("AIB is already running for this data folder ... Quit it first, or use --state-dir for a separate copy.") and exits with code 2;
   a second `serve` prints that line and exits with code 2. Another `--state-dir` is another lock (`single_instance.ts`).
 - **Window and tray:** closing the window quits when no chat is working. When chats are working it asks: OK stops them and quits,
-  Cancel keeps them running and AIB stays in the tray. The tray icon (`tray_icon.ts`, the embedded 32x32 icon) has "Open AIB" and
+  Cancel keeps them running and AIB stays in the tray. The tray icon (`tray_icon.ts`, embedded PNGs; see Icons below) has "Open AIB" and
   "Quit AIB"; Quit asks the same question. A window's close cannot be cancelled in `deno desktop`, so a hidden keeper window keeps
   the program alive while it lives in the tray, and a new window is made when the person comes back (`window.ts`, tested with a fake
   shell in `work/deno/desktop_window_test.ts`; the real shell is `native.ts`). On Windows the tray icon is AIB's own
@@ -143,8 +143,9 @@ Icons come from `icons/` (`icon.ico` for Windows, an `.icns` made from the PNGs 
 The icon art is the SVG masters in `icons/src/` (`icon.svg` from 40 px up, `icon-small.svg` for 16-32 px, `tray-light.svg` /
 `tray-dark.svg` the one-colour tray glyphs). `deno task icons` (`tools/make_icons.ts`, resvg as WebAssembly, nothing to install)
 renders them into `icon.ico`, the PNGs, `server/desktop/tray_icon_data.ts` and the pages' favicon; commit what it writes. The
-Windows tray shows the white glyph on a dark taskbar and the ink glyph on a light one (16 or 32 px by scaling); macOS and Linux
-show the colour icon.
+Windows tray shows the white glyph on a dark taskbar and the ink glyph on a light one (16 or 32 px by SM_CXSMICON; the tray
+worker gets that PNG and makes the icon at the system's small icon size); macOS and Linux show the colour icon, and the white glyph
+while the system is in dark mode (`Deno.Tray.setIconDark`, `trayIconDarkPng`).
 
 Releases are built locally and uploaded by hand; there is no CI workflow.
 
