@@ -1,7 +1,7 @@
 /**
  * tools/build.ts at unit level (no `deno desktop` run here): asset names for every target and that the updater picks them,
  * SHA256SUMS format (and that the updater reads it), the size guard, the zip writer's unix modes and contents, the .icns header,
- * what is staged, the Linux package fixes (tools/linux_package.ts), and the Windows launcher icon (.ico parser, group-icon bytes, and embedding into a copy of where.exe).
+ * what is staged, the generated app icon files (tools/make_icons.ts), the Linux package fixes (tools/linux_package.ts), and the Windows launcher icon (.ico parser, group-icon bytes, and embedding into a copy of where.exe).
  */
 import { assert, assertEquals, assertThrows } from "./_assert.ts";
 import {
@@ -11,12 +11,15 @@ import {
   assetNames,
   checkSize,
   crc32,
+  decodePng,
   embedWindowsIcon,
   groupIconBytes,
   makeIcns,
+  makeIco,
   modeFor,
   parseIco,
   parseTargets,
+  pngSize,
   readIconResources,
   readZipListing,
   sha256sums,
@@ -27,6 +30,8 @@ import {
   writeZip,
   zipFolder,
 } from "../../tools/build.ts";
+import { FAVICON_PAGES, faviconLink, hasColour, ICO_SIZES, icoMaster, ICON_SRC, PNGS, TRAY } from "../../tools/make_icons.ts";
+import { TRAY_PNG_BASE64 } from "../../outputs/agent-studio/server/desktop/tray_icon_data.ts";
 import {
   checksumFor,
   pickAsset,
@@ -192,6 +197,50 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
   });
 });
 
+const ICONS_DIR = new URL("../../outputs/agent-studio/icons/", import.meta.url);
+const TILE: [number, number, number] = [0x13, 0x86, 0x7a];
+
+Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, tray PNGs, favicon", async () => {
+  for (const name of ["icon.svg", "icon-small.svg", "tray-light.svg", "tray-dark.svg"]) {
+    assert((await Deno.readTextFile(`${ICON_SRC}/${name}`)).includes('viewBox="0 0 100 100"'), name);
+  }
+  const ico = parseIco(await Deno.readFile(new URL("icon.ico", ICONS_DIR)));
+  assertEquals(ico.map((i) => [i.width, i.height, i.bitCount]), ICO_SIZES.map((s) => [s & 0xff, s & 0xff, 32]));
+  for (const [n, img] of ico.entries()) assertEquals(pngSize(img.data), { width: ICO_SIZES[n], height: ICO_SIZES[n] });
+  assertEquals(ICO_SIZES.map(icoMaster), [...Array(4).fill("icon-small.svg"), ...Array(5).fill("icon.svg")]);
+  // The 16 px image is not blank and carries the tile colour; so do the big ones.
+  const small = await decodePng(ico[0].data);
+  assert(Array.from({ length: 256 }, (_, i) => small.rgba[i * 4 + 3]).filter((a) => a > 200).length > 150, "16 px mostly opaque");
+  for (const img of [ico[0], ico[3], ico[8]]) assert(await hasColour(img.data, TILE), `${img.width} px has #13867A`);
+  // The 32 px .ico image is the same art as 32x32.png (same master, same size).
+  assertEquals([...(await Deno.readFile(new URL("32x32.png", ICONS_DIR)))], [...ico[3].data]);
+  for (const [file, , size] of PNGS) {
+    const png = await Deno.readFile(new URL(file, ICONS_DIR));
+    assertEquals(pngSize(png), { width: size, height: size }, file);
+    assert(await hasColour(png, TILE), `${file} has #13867A`);
+  }
+  // Tray: every image at its size; the dark glyph is white, the light one ink, neither has the tile.
+  assertEquals(Object.keys(TRAY_PNG_BASE64).sort(), TRAY.map((t) => t[0]).sort());
+  const tray = (key: string) => Uint8Array.from(atob(TRAY_PNG_BASE64[key]), (c) => c.charCodeAt(0));
+  for (const [key, , size] of TRAY) assertEquals(pngSize(tray(key)), { width: size, height: size }, key);
+  for (const size of [16, 32]) {
+    assert(await hasColour(tray(`dark-${size}`), [255, 255, 255]), `dark-${size} white`);
+    assert(!(await hasColour(tray(`dark-${size}`), TILE)), `dark-${size} no tile`);
+    assert(await hasColour(tray(`light-${size}`), [0x16, 0x15, 0x1b]), `light-${size} ink`);
+  }
+  assertEquals([...tray("color-32")], [...(await Deno.readFile(new URL("32x32.png", ICONS_DIR)))]);
+  // The favicon: icon-small.svg as a data: URL in each page.
+  const link = faviconLink(await Deno.readTextFile(`${ICON_SRC}/icon-small.svg`));
+  for (const page of FAVICON_PAGES) {
+    const html = await Deno.readTextFile(new URL(`../../outputs/agent-studio/${page}`, import.meta.url));
+    assertEquals(html.split('<link rel="icon"').length, 2, page);
+    assert(html.includes(link), page);
+  }
+  // makeIco writes what parseIco reads.
+  const again = parseIco(makeIco(ico.map((i) => i.data)));
+  assertEquals(again.map((i) => i.data.length), ico.map((i) => i.data.length));
+});
+
 /** A tiny .ico: one 16x16 PNG-style entry (planes/bit count left 0, read from IHDR) and one 32x32 BMP entry. */
 function tinyIco(): Uint8Array {
   const png = new Uint8Array(33);
@@ -237,9 +286,9 @@ Deno.test("the .ico parser and the RT_GROUP_ICON bytes", async () => {
   assertEquals([...group.subarray(6, 10)], [16, 16, 0, 0]);
   assertEquals([v.getUint16(10, true), v.getUint16(12, true), v.getUint32(14, true), v.getUint16(18, true)], [1, 32, 33, 1]);
   assertEquals([v.getUint16(20 + 4, true), v.getUint32(20 + 8, true), v.getUint16(20 + 12, true)], [1, images[1].data.length, 2]);
-  // The real app icon: six PNG images, 256 written as 0.
+  // The real app icon: nine PNG images, 256 written as 0.
   const app = parseIco(await Deno.readFile(new URL("../../outputs/agent-studio/icons/icon.ico", import.meta.url)));
-  assertEquals(app.map((i) => i.width), [16, 32, 48, 64, 128, 0]);
+  assertEquals(app.map((i) => i.width), [16, 20, 24, 32, 40, 48, 64, 128, 0]);
   assertThrows(() => parseIco(new Uint8Array([0, 0, 2, 0, 1, 0])));
   assertThrows(() => parseIco(new Uint8Array([0, 0, 1, 0, 1, 0])));
 });

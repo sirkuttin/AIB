@@ -4,11 +4,12 @@
   "desktop": { "app": { "name": "AIB", "identifier": "dev.aib.app" } },
   "tasks": {
     "test": "deno test -A ../../work/deno/",
-    "check": "deno check server/ ../../work/deno/ ../../tools/build.ts",
+    "check": "deno check server/ ../../work/deno/ ../../tools/build.ts ../../tools/make_icons.ts",
     "lint": "deno lint",
-    "build": "deno run -A ../../tools/build.ts"
+    "build": "deno run -A ../../tools/build.ts",
+    "icons": "deno run -A --node-modules-dir=none --no-lock ../../tools/make_icons.ts"
   },
-  "fmt": { "lineWidth": 140, "singleQuote": true, "include": ["server/", "../../work/deno/", "../../tools/build.ts"] },
-  "lint": { "include": ["server/", "../../work/deno/", "../../tools/build.ts"] },
+  "fmt": { "lineWidth": 140, "singleQuote": true, "include": ["server/", "../../work/deno/", "../../tools/build.ts", "../../tools/make_icons.ts"] },
+  "lint": { "include": ["server/", "../../work/deno/", "../../tools/build.ts", "../../tools/make_icons.ts"] },
   "exclude": ["node_modules/", "public/", "agent_locks/", "docs/"]
 }

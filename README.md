@@ -85,7 +85,7 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 | --- | --- |
 | `outputs/agent-studio/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `state/` the data files, `transcripts/` saved chats, `worktrees/` one copy per chat, `artifacts/`, `agents/`, `ownership/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
 | `outputs/agent-studio/*.js, *.css, *.html` | The page. |
-| `outputs/agent-studio/icons/` | The app icon in every size the packages need. |
+| `outputs/agent-studio/icons/` | The app icon in every size the packages need, rendered from the SVG masters in `icons/src/` by `tools/make_icons.ts`. |
 | `tools/` | `build.ts` (the six-target build) and `linux_package.ts`. |
 | `work/deno/` | Deno unit tests, and parity tests that compare against the Python reference. |
 | `work/contract/` | HTTP-only contract tests. |

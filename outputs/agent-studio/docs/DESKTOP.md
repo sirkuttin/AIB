@@ -119,6 +119,12 @@ For the target the machine runs, the build starts the app headless (`AIB serve -
 Icons come from `icons/` (`icon.ico` for Windows, an `.icns` made from the PNGs for macOS, `icon.png` for Linux). Tests:
 `work/deno/build_test.ts`.
 
+The icon art is the SVG masters in `icons/src/` (`icon.svg` from 40 px up, `icon-small.svg` for 16-32 px, `tray-light.svg` /
+`tray-dark.svg` the one-colour tray glyphs). `deno task icons` (`tools/make_icons.ts`, resvg as WebAssembly, nothing to install)
+renders them into `icon.ico`, the PNGs, `server/desktop/tray_icon_data.ts` and the pages' favicon; commit what it writes. The
+Windows tray shows the white glyph on a dark taskbar and the ink glyph on a light one (16 or 32 px by scaling); macOS and Linux
+show the colour icon.
+
 Releases are built locally and uploaded by hand; there is no CI workflow.
 
 ## Not done yet

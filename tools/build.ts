@@ -377,6 +377,73 @@ export function parseIco(ico: Uint8Array): IcoImage[] {
   return images;
 }
 
+/** Width and height of a PNG, from its IHDR. */
+export function pngSize(png: Uint8Array): { width: number; height: number } {
+  const v = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  if (png.length < 24 || png[0] !== 0x89 || png[1] !== 0x50) throw new Error('not a PNG');
+  return { width: v.getUint32(16), height: v.getUint32(20) };
+}
+
+/** An .ico of square PNG images (Vista and later read PNG entries at every size), in the order given; 256 px is written as 0. */
+export function makeIco(pngs: Uint8Array[]): Uint8Array {
+  const total = 6 + 16 * pngs.length + pngs.reduce((n, d) => n + d.length, 0);
+  const out = new Uint8Array(total);
+  const v = new DataView(out.buffer);
+  v.setUint16(2, 1, true);
+  v.setUint16(4, pngs.length, true);
+  let offset = 6 + 16 * pngs.length;
+  pngs.forEach((png, i) => {
+    const { width, height } = pngSize(png);
+    if (width > 256 || height > 256) throw new Error(`an .ico image can be at most 256 px (got ${width}x${height})`);
+    const p = 6 + 16 * i;
+    out.set([width & 0xff, height & 0xff, 0, 0], p);
+    v.setUint16(p + 4, 1, true); // planes
+    v.setUint16(p + 6, 32, true); // bit count
+    v.setUint32(p + 8, png.length, true);
+    v.setUint32(p + 12, offset, true);
+    out.set(png, offset);
+    offset += png.length;
+  });
+  return out;
+}
+
+/** The RGBA pixels of an 8-bit RGB or RGBA, non-interlaced PNG (what the icon renderer writes); for checks, not a general decoder. */
+export async function decodePng(png: Uint8Array): Promise<{ width: number; height: number; rgba: Uint8Array }> {
+  const { width, height } = pngSize(png);
+  const v = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const [depth, type, interlace] = [png[24], png[25], png[28]];
+  if (depth !== 8 || (type !== 6 && type !== 2) || interlace !== 0) throw new Error(`unsupported PNG (depth ${depth}, type ${type})`);
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  for (let p = 8; p + 8 <= png.length;) {
+    const len = v.getUint32(p);
+    const kind = String.fromCharCode(...png.subarray(p + 4, p + 8));
+    if (kind === 'IDAT') parts.push(png.slice(p + 8, p + 8 + len));
+    if (kind === 'IEND') break;
+    p += 12 + len;
+  }
+  const inflated = new Blob(parts).stream().pipeThrough(new DecompressionStream('deflate'));
+  const raw = new Uint8Array(await new Response(inflated).arrayBuffer());
+  const bpp = type === 6 ? 4 : 3, stride = width * bpp;
+  const rows = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    const row = rows.subarray(y * stride, (y + 1) * stride);
+    const up = y ? rows.subarray((y - 1) * stride, y * stride) : new Uint8Array(stride);
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? row[x - bpp] : 0, b = up[x], c = x >= bpp ? up[x - bpp] : 0;
+      const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+      const pred = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][filter];
+      if (pred === undefined) throw new Error(`bad PNG filter ${filter}`);
+      row[x] = (src[x] + pred) & 0xff;
+    }
+  }
+  if (type === 6) return { width, height, rgba: rows };
+  const rgba = new Uint8Array(width * height * 4);
+  for (let i = 0; i < width * height; i++) rgba.set([rows[i * 3], rows[i * 3 + 1], rows[i * 3 + 2], 255], i * 4);
+  return { width, height, rgba };
+}
+
 /** An RT_GROUP_ICON resource: GRPICONDIR, then a GRPICONDIRENTRY per image naming its RT_ICON id (firstId, firstId+1, ...). */
 export function groupIconBytes(images: IcoImage[], firstId = 1): Uint8Array {
   const out = new Uint8Array(6 + 14 * images.length);
