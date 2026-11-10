@@ -55,8 +55,8 @@
     const f = facts || {},
       now = f.now || Date.now();
     if (f.reconnecting && !(f.connected && !f.opening))
-      return make('reconnecting', 'Reconnecting…', 'Studio is reloading this chat after the restart. Nothing is sent.');
-    if (f.issue) return make('reconnecting', 'Reconnecting…', 'Connection lost; Studio is trying to reconnect.');
+      return make('reconnecting', 'Reconnecting…', 'AIB is reloading this chat after the restart. Nothing is sent.');
+    if (f.issue) return make('reconnecting', 'Reconnecting…', 'Connection lost; AIB is trying to reconnect.');
     if (f.connected) {
       const needs = Math.max(0, Number(f.needs) || 0);
       if (f.failed && !needs)
@@ -68,7 +68,7 @@
           detail: kind + (more > 0 ? ' +' + more : ''),
         });
       }
-      if (f.opening) return make('opening', 'Opening…', 'Studio is starting the agent.');
+      if (f.opening) return make('opening', 'Opening…', 'AIB is starting the agent.');
       if (f.busy) {
         const t = f.busySince ? elapsedWords(now - f.busySince) : '';
         return make('working', t ? 'Working · ' + t : 'Working', 'The agent is busy on your last message.', {
@@ -78,7 +78,7 @@
       if (f.yourTurn) return make('your-turn', 'Your turn', 'It finished and is waiting for you. Shows in the inbox.');
       return make('idle', 'Idle', 'Connected, nothing pending.');
     }
-    if (f.opening) return make('opening', 'Opening…', 'Studio is starting the agent.');
+    if (f.opening) return make('opening', 'Opening…', 'AIB is starting the agent.');
     // conversation.elsewhere = {working, confirmed, verdict} (steady, set by the ownership code) beats raw verdict facts.
     const ew = f.elsewhere && typeof f.elsewhere === 'object' ? f.elsewhere : null;
     if (ELSEWHERE[ew ? ew.verdict : f.verdict]) {
@@ -91,9 +91,9 @@
           );
     }
     let title = NOT_RUNNING_TITLE;
-    if (f.recovered) title = 'It was open in Studio before the server restarted. Send a message to reconnect it.';
+    if (f.recovered) title = 'It was open in AIB before the server restarted. Send a message to reconnect it.';
     else if (f.recent) title = 'Written a moment ago; not confirmed to be running. ' + NOT_RUNNING_TITLE;
-    else if (f.agentList) title = 'The agent listed this chat; Studio has not read it. ' + NOT_RUNNING_TITLE;
+    else if (f.agentList) title = 'The agent listed this chat; AIB has not read it. ' + NOT_RUNNING_TITLE;
     return make('not-running', 'Not running', title);
   }
 

@@ -200,7 +200,7 @@
     if (info.kind === 'subagent') return 'Subagent: ' + info.name;
     if (info.kind === 'unknown')
       return (
-        'This request comes from a session Studio does not recognize (' + info.name + '). Answer only if you expect it.'
+        'This request comes from a session AIB does not recognize (' + info.name + '). Answer only if you expect it.'
       );
     return '';
   }
@@ -254,7 +254,7 @@
         el(
           'p',
           'elicitation-description',
-          "This agent requires sign-in but did not offer a method Studio can complete. Sign in with the agent's own tool, then choose Retry.",
+          "This agent requires sign-in but did not offer a method AIB can complete. Sign in with the agent's own tool, then choose Retry.",
         ),
       );
     auth.methods.forEach((m) => {
@@ -271,7 +271,7 @@
         box.appendChild(go);
       } else
         box.appendChild(
-          el('p', 'auth-instructions', m.instructions || 'Complete this sign-in outside Studio, then choose Retry.'),
+          el('p', 'auth-instructions', m.instructions || 'Complete this sign-in outside AIB, then choose Retry.'),
         );
       card.appendChild(box);
     });
@@ -348,13 +348,13 @@
         target = isUrl ? safeUrl(p.url) : null;
       let openLink = null;
       if (isUrl) {
-        if (!target) issue = "This request's link is not a plain http(s) address, so Studio will not open it.";
+        if (!target) issue = "This request's link is not a plain http(s) address, so AIB will not open it.";
         else {
           card.appendChild(
             el(
               'p',
               'elicitation-description',
-              'The agent wants you to visit this address. Studio does not open it automatically.',
+              'The agent wants you to visit this address. AIB does not open it automatically.',
             ),
           );
           card.appendChild(urlLine(target));

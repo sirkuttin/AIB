@@ -401,10 +401,13 @@ export class Installer {
   }
 
   /** The allow-list entry for an agent id. Only ids that are known agents are looked at, so an id never becomes part of a path. */
-  entry(agentId: unknown): AllowEntry {
+  entry(agentId: unknown, verb = ''): AllowEntry {
     const known = typeof agentId === 'string' && Object.prototype.hasOwnProperty.call(adapters.STUDIO_PACKAGES, agentId);
     const found = known ? this.allowList()[agentId as string] : null;
-    if (!isDict(found) || !found.package || !found.version) throw new InstallRefused('Studio cannot install that agent.');
+    if (!isDict(found) || !found.package || !found.version) {
+      // (Python's wording for an install; an uninstall says what was asked.)
+      throw new InstallRefused(verb ? `AIB cannot ${verb} that agent.` : 'Studio cannot install that agent.');
+    }
     return found as AllowEntry;
   }
 
@@ -547,11 +550,12 @@ export class Installer {
    * touched: an entry that is a link, or that resolves outside it, is left alone, and an install AIB did not make (a global npm
    * package, a launcher in Settings) is never looked at. Refused, with one plain line, while chats with the agent are open
    * (`openChats`, counted by the caller), while its sign-in runs (`signinRunning`), or while an install of it runs.
+   * `check`: run every refusal but remove nothing (the page asks first, so a refusal it can know shows before its confirm question).
    * (No Python counterpart: the Python server has no uninstall.)
    */
-  uninstall(agentId: unknown, openChats = 0, signinRunning = false): Promise<InstallView & { removed: string[] }> {
+  uninstall(agentId: unknown, openChats = 0, signinRunning = false, check = false): Promise<InstallView & { removed: string[] }> {
     try {
-      this.entry(agentId);
+      this.entry(agentId, 'uninstall');
     } catch (error) {
       return Promise.reject(error);
     }
@@ -565,9 +569,9 @@ export class Installer {
       }
       if (openChats > 0) {
         throw new InstallRefused(
-          `${name} has ${openChats === 1 ? 'a chat' : `${openChats} chats`} open in AIB. Close ${
-            openChats === 1 ? 'it' : 'them'
-          } first (wait for any work to finish), then uninstall.`,
+          `${name} has ${openChats === 1 ? 'a chat' : `${openChats} chats`} open in AIB. End ${
+            openChats === 1 ? "that chat's session" : 'their sessions'
+          } first (in the chat list, the chat's menu: End this chat's session; wait for any work to finish), then uninstall.`,
         );
       }
       if (signinRunning) throw new InstallRefused(`A sign-in to ${name} is running. Finish or cancel it, then uninstall.`);
@@ -588,6 +592,7 @@ export class Installer {
         }
       } catch { /* no folder: nothing installed */ }
       if (!folders.length) throw new InstallRefused(`AIB has not installed ${name} itself, so there is nothing to uninstall.`);
+      if (check) return { ...IDLE, agent: id, removed: [] };
       const removed: string[] = [];
       for (const [version, folder] of folders) {
         try {

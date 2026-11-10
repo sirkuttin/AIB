@@ -427,7 +427,7 @@ test('command bar: Delete and End Studio session need a second Enter; moving or 
   e.type('>end studio');
   e.press('Enter');
   assert.deepEqual(e.calls, []);
-  assert.equal(e.dialog.find('switcher-sub')[0].textContent, 'Press Enter again to end the Studio session');
+  assert.equal(e.dialog.find('switcher-sub')[0].textContent, "Press Enter again to end this chat's session");
   e.press('Enter');
   assert.deepEqual(e.calls, ['end:a']);
 });

@@ -5,7 +5,7 @@
    The pure helpers at the top have node tests (work/test_artifacts_ui.js); the page part below mounts from changes-ui.js. */
 (function (root) {
   const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads';
-  const FOOTER = 'Sandboxed · no access to Studio · CDN scripts only';
+  const FOOTER = 'Sandboxed · no access to AIB · CDN scripts only';
   const num = (v) => Math.max(0, Number(v) || 0);
   const MINUS = '−';
 
@@ -627,7 +627,7 @@
   async function getToken(force) {
     if (S.token && !force) return S.token;
     const r = await win.fetch('/api/live/bootstrap');
-    if (!r.ok) throw new Error('Studio is not reachable');
+    if (!r.ok) throw new Error('AIB is not reachable');
     const b = await r.json();
     S.token = b.token || '';
     if (b.artifactOrigin) S.origin = b.artifactOrigin;

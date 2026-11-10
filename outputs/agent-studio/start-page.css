@@ -84,3 +84,14 @@ body.new-chat.start-page #turnRow {
 body.new-chat.start-page #viewSwitch {
   display: none;
 }
+/* A turned-off agent (agentRow on the start page): its name is dimmed, its Turn on button is not. */
+#startPage .st-agent.off {
+  opacity: 1;
+}
+#startPage .st-agent.off :is(.st-letter, strong, .st-tag) {
+  opacity: 0.65;
+}
+/* The Node.js line sits right under the agent that needs it. */
+#startPage .sp-agents .sp-node {
+  margin: -4px 2px 10px;
+}

@@ -607,7 +607,7 @@ test('the menu has exactly the drawn items in the drawn order, with separators, 
     '-',
     'Show thinking',
     'Continue with another agent\u2026',
-    'End Studio session',
+    "End this chat's session",
     '-',
     'Archive',
     'Delete',
@@ -756,7 +756,7 @@ test('Continue with another agent hands the chat to the page, and End Studio ses
   menuItem(t, 'Continue with another agent\u2026').onclick();
   assert.deepEqual(t.log.handoff, ['a1']);
   t.ui._openMenu(moreOf(t, 'Alpha'), live, 'row');
-  menuItem(t, 'End Studio session').onclick();
+  menuItem(t, "End this chat's session").onclick();
   await flush();
   assert.deepEqual(t.log.ended, ['a1']);
   assert.deepEqual(
@@ -765,7 +765,7 @@ test('Continue with another agent hands the chat to the page, and End Studio ses
     'ending a session marks nothing',
   );
   t.ui._openMenu(moreOf(t, 'Beta'), t.conversations[1], 'row');
-  assert.equal(menuItem(t, 'End Studio session'), undefined);
+  assert.equal(menuItem(t, "End this chat's session"), undefined);
 });
 
 test('your turn: the flag comes from the server entry, ignores parked chats, and only acting clears it', async () => {
@@ -906,7 +906,7 @@ test('archiving a live conversation asks first: cancel, keep running, or end the
   for (const [label, expectEnded, expectArchived] of [
     ['Cancel', false, false],
     ['Keep running and archive', false, true],
-    ['End Studio session and archive', true, true],
+    ["End this chat's session and archive", true, true],
   ]) {
     const t = await loaded(mk());
     t.ui._openMenu(moreOf(t, 'Alpha'), t.conversations[0], 'row');
@@ -914,10 +914,10 @@ test('archiving a live conversation asks first: cancel, keep running, or end the
     await flush();
     const dialog = dialogOf(t);
     assert.equal(dialog.open, true);
-    assert.match(dialog.textContent, /live in Studio/);
+    assert.match(dialog.textContent, /live in AIB/);
     assert.deepEqual(
       dialog.buttons().map((b) => b.textContent),
-      ['Cancel', 'Keep running and archive', 'End Studio session and archive'],
+      ['Cancel', 'Keep running and archive', "End this chat's session and archive"],
     );
     assert.equal(t.document.activeElement.textContent, 'Cancel', 'the safe choice has focus');
     assert.equal(
@@ -946,7 +946,7 @@ test('if ending the session fails, nothing is archived and the error is shown', 
   t.ui._openMenu(moreOf(t, 'Alpha'), t.conversations[0], 'row');
   menuItem(t, 'Archive').onclick();
   await flush();
-  dialogOf(t).button('End Studio session and archive').onclick();
+  dialogOf(t).button("End this chat's session and archive").onclick();
   await flush();
   assert.deepEqual(t.log.fail, ['could not disconnect']);
   assert.deepEqual(t.server.entries, {});
@@ -1264,4 +1264,29 @@ test('archived rows offer no hold action, and a pinned+held header reads Pinned 
   t.select(t.conversations[1]);
   t.draw();
   assert.match(t.byId.organizeCurrent.textContent, /^Pinned \u00B7 On hold/);
+});
+
+test('the row menu closes on a click anywhere else and on Escape wherever the focus is, before Settings takes the key (QA 4)', async () => {
+  const t = await loaded(build({ entries: {} }));
+  const alpha = t.conversations[0];
+  const isOpen = () => !!t.document.body.all().find((n) => n.attrs.role === 'menu');
+  const fire = (type, target, extra = {}) => {
+    let stopped = false,
+      prevented = false;
+    const event = Object.assign(
+      { type, target, preventDefault: () => (prevented = true), stopPropagation: () => (stopped = true) },
+      extra,
+    );
+    for (const fn of t.document.listeners[type] || []) fn(event);
+    return { stopped, prevented };
+  };
+  t.ui._openMenu(moreOf(t, 'Alpha'), alpha, 'row');
+  assert.equal(isOpen(), true);
+  fire('click', t.document.body); // a click with no pointer press first (keyboard, script)
+  assert.equal(isOpen(), false, 'a click elsewhere closes it');
+  t.ui._openMenu(moreOf(t, 'Alpha'), alpha, 'row');
+  const esc = fire('keydown', t.document.body, { key: 'Escape' }); // the focus went elsewhere (Settings' search box)
+  assert.equal(isOpen(), false, 'Escape closes the menu');
+  assert.deepEqual(esc, { stopped: true, prevented: true }, 'and Settings never sees that Escape');
+  assert.deepEqual(fire('keydown', t.document.body, { key: 'Escape' }), { stopped: false, prevented: false }, 'no menu: left alone');
 });

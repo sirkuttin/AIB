@@ -34,7 +34,7 @@
   const prevConn = new Map(); // conversation key -> live connection id seen at the last look
   const prevBusy = new Map(); // conversation key -> was busy at the last look
   const derivedEnded = new Map(); // conversation key -> when this page saw a turn end (fallback without server attention)
-  let baseTitle = 'Agent Studio',
+  let baseTitle = 'AIB',
     saveTimer = null;
 
   function read(name, fallback) {
@@ -135,7 +135,7 @@
     unread: 'Finished, not viewed yet',
     working: 'Working',
     opening: 'Opening',
-    idle: 'Live in Studio, idle',
+    idle: 'Live in AIB, idle',
     saved: 'Saved',
   };
   const parseTime = (v) => {
@@ -211,7 +211,7 @@
     if (out.needs) parts.push(out.needs + (out.needs === 1 ? ' item needs you' : ' items need you'));
     if (out.unread) parts.push(out.unread + ' finished, not viewed yet');
     if (out.working) parts.push(out.working + ' working');
-    out.label = parts.join(', ') || (out.live ? 'Live in Studio' : 'Saved');
+    out.label = parts.join(', ') || (out.live ? 'Live in AIB' : 'Saved');
     return out;
   }
   function dot(state, label, count, dotClass) {
@@ -270,7 +270,7 @@
   // The page owns the base tab title (the open conversation's name); this adds the "(n) " prefix.
   let lastList = [];
   function setBase(title) {
-    baseTitle = String(title || 'Agent Studio');
+    baseTitle = String(title || 'AIB');
     updateTitle(lastList);
   }
   function updateTitle(list) {
@@ -604,7 +604,7 @@
     if (!(first > 0)) write('epoch', epoch);
     const d = doc();
     if (d) {
-      baseTitle = String(d.title || 'Agent Studio').replace(/^\(\d+\)\s*/, '') || 'Agent Studio';
+      baseTitle = String(d.title || 'AIB').replace(/^\(\d+\)\s*/, '') || 'AIB';
       const seen = () => {
         if (host && looking()) {
           const s = host.getSelected && host.getSelected();

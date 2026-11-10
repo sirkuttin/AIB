@@ -372,15 +372,15 @@
         : { keys: neighbours(c), fallback: 'archivedSummary' };
     if (isLive(c)) {
       const choice = await ask({
-        title: 'This conversation is live in Studio',
+        title: 'This conversation is live in AIB',
         paragraphs: [
           '“' + titleOf(c) + '” is connected to its agent right now.',
-          'You can end the Studio session as you archive it, or keep it running and archive it anyway. Archiving never disconnects it on its own.',
+          "You can end this chat's session as you archive it, or keep it running and archive it anyway. Archiving never disconnects it on its own.",
         ],
         actions: [
           { label: 'Cancel', value: 'cancel' },
           { label: 'Keep running and archive', value: 'keep' },
-          { label: 'End Studio session and archive', value: 'end', danger: true },
+          { label: "End this chat's session and archive", value: 'end', danger: true },
         ],
         focus: 'cancel',
       });
@@ -561,7 +561,7 @@
     if (o.handoff) out.push({ id: 'handoff', label: 'Continue with another agent\u2026' });
     if (o.editor && c && typeof c.cwd === 'string' && c.cwd)
       out.push({ id: 'editor', label: 'Open folder in ' + o.editor });
-    if (isLive(c)) out.push({ id: 'end', label: 'End Studio session' });
+    if (isLive(c)) out.push({ id: 'end', label: "End this chat's session" });
     if (can) {
       sep();
       out.push(e.archivedAt ? { id: 'unarchive', label: 'Unarchive' } : { id: 'archive', label: 'Archive' });
@@ -789,7 +789,7 @@
     const when = new Date(item.e.deletedAt * 1000);
     const note = item.e.agentDeleted
       ? 'Also deleted from the agent — cannot be restored.'
-      : 'Hidden from Studio. The agent’s transcript is untouched.';
+      : 'Hidden from AIB. The agent’s transcript is untouched.';
     wrap.append(el('small', (isNaN(+when) ? '' : 'Deleted ' + when.toLocaleString() + '. ') + note, 'deleted-note'));
     const b = el('button', item.e.agentDeleted ? 'Remove from list' : 'Restore', 'restore-chat');
     b.type = 'button';
@@ -967,12 +967,27 @@
         const s = host.getSelected();
         if (s) openMenu(header, s, 'header');
       };
-    doc().addEventListener('pointerdown', (event) => {
+    // A press or a click anywhere else closes the menu (a click with no pointer press first, e.g. from the keyboard or a script,
+    // counts too), and Escape closes it wherever the focus went, before Settings or a dialog behind it can take the key.
+    const outside = (event) => {
       if (!menu) return;
       const t = event.target;
       if (t === menuTrigger || (menu.contains && menu.contains(t))) return;
       closeMenu(false);
-    });
+    };
+    doc().addEventListener('pointerdown', outside);
+    doc().addEventListener('click', outside, true);
+    doc().addEventListener(
+      'keydown',
+      (event) => {
+        if (!menu || event.key !== 'Escape') return;
+        if (menu.contains && menu.contains(event.target)) return; // the menu's own handler closes it and refocuses
+        event.preventDefault();
+        if (event.stopPropagation) event.stopPropagation();
+        closeMenu(true);
+      },
+      true,
+    );
   }
 
   const api = {

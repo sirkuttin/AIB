@@ -453,16 +453,16 @@ test('a truncated or rewritten transcript resets its history window', async () =
   assert.deepEqual([w.start, w.end, w.events.length], [0, 10, 10]);
 });
 
-test('saved rows say Saved and never claim a running agent; live rows say Live in Studio', () => {
+test('saved rows say Saved and never claim a running agent; live rows say Live in AIB', () => {
   const h = harness({});
   const saved = flat(h.run("rowStatus({key:'k',provider:'omp',modified:Date.now()/1000-5})"));
   assert.match(saved, /Saved/);
   assert.match(saved, /not confirmed running/);
   assert.doesNotMatch(saved, /Live/);
   const live = flat(h.run('rowStatus({live:{busy:true}})'));
-  assert.match(live, /Live in Studio/);
+  assert.match(live, /Live in AIB/);
   assert.match(live, /Working/);
-  assert.match(flat(h.run('rowStatus({recovered:{}})')), /Was open in Studio before restart/);
+  assert.match(flat(h.run('rowStatus({recovered:{}})')), /Was open in AIB before restart/);
   assert.match(flat(h.run('rowStatus({recovered:{reconnecting:true}})')), /Reconnecting/);
   assert.match(flat(h.run("rowStatus({source:'agent'})")), /Not read locally/);
   assert.equal(h.run('agentStateLabel({live:false,active:true})'), 'Written recently · not confirmed running');

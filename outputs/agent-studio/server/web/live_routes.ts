@@ -68,7 +68,11 @@ export function liveRoutes(): Map<string, LiveHandler> {
   routes.set('POST /api/live/agents/install', (ctx, _url, body) => ctx.host.installCall('start', installAgent(body)));
   routes.set('POST /api/live/agents/install/cancel', (ctx, _url, body) => ctx.host.installCall('cancel', installAgent(body)));
   // Deno only (routes.ts DENO_ONLY): a Python agent host answers the unknown action with 404, so nothing is removed there.
-  routes.set('POST /api/live/agents/install/uninstall', (ctx, _url, body) => ctx.host.installCall('uninstall', installAgent(body)));
+  // {check: true}: every refusal, nothing removed (the page asks this before its confirm question).
+  routes.set(
+    'POST /api/live/agents/install/uninstall',
+    (ctx, _url, body) => ctx.host.installCall(body?.check === true ? 'uninstall-check' : 'uninstall', installAgent(body)),
+  );
   routes.set('GET /api/live/agents/signin', (ctx, url) => ctx.host.signinCall('status', arg(url, 'agent')));
   routes.set('POST /api/live/agents/signin', (ctx, _url, body) => ctx.host.signinCall('start', installAgent(body)));
   routes.set('POST /api/live/agents/signin/cancel', (ctx, _url, body) => ctx.host.signinCall('cancel', installAgent(body)));

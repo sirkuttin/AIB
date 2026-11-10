@@ -19,14 +19,14 @@
     { id: 'editors', label: 'Editors' },
     { id: 'keyboard', label: 'Keyboard' },
     { id: 'appearance', label: 'Appearance' },
-    { id: 'server', label: 'Studio server' },
+    { id: 'server', label: 'AIB server' },
   ];
   // Every searchable setting. label + keywords are what the search box matches; `title` is the heading drawn on its card.
   const INDEX = [
     {
       id: 'agents-list',
       section: 'agents',
-      label: 'Agents Studio knows',
+      label: 'Agents AIB knows',
       keywords: [
         'found',
         'not found',
@@ -161,7 +161,7 @@
   ];
   const sectionLabel = (id) => (SECTIONS.find((s) => s.id === id) || { label: id }).label;
   // Page headings that differ from the short name in the section list.
-  const PAGE_HEADINGS = { agents: 'AIB linking' };
+  const PAGE_HEADINGS = {};
   const pageHeading = (id) => PAGE_HEADINGS[id] || sectionLabel(id);
 
   // ---- search ----------------------------------------------------------------------------------------------------
@@ -225,6 +225,7 @@
     S.rev = data.revision || '';
     syncInstalls(data.agents);
     syncSignins(data.agents);
+    recheckUninstallRefusals();
     const AC = root.AgentChoice;
     if (AC) {
       if (AC.setRegistry) AC.setRegistry(data.agents);
@@ -510,32 +511,77 @@
         },
       );
   }
-  function uninstallAgent(a) {
-    const ok =
-      typeof root.confirm === 'function'
-        ? root.confirm(
-            'Uninstall ' +
-              a.name +
-              '? This deletes the copy AIB installed on this PC. Saved chats stay in the list; to use ' +
-              a.name +
-              ' again, install it again here.',
-          )
-        : false;
-    if (!ok) return Promise.resolve();
-    delete installs[a.id];
+  // What the confirm question promises about saved chats: AIB lists saved Claude Code and OMP chats from their transcripts; other
+  // agents' chats show only once opened here, so their promise is narrower.
+  const LISTS_SAVED_CHATS = ['claude', 'omp'];
+  function uninstallQuestion(a) {
+    const chats = LISTS_SAVED_CHATS.includes(a.id)
+      ? ' Saved chats stay in the list.'
+      : ' ' + a.name + ' keeps its own saved chats, but AIB shows them only while they are open here.';
+    return (
+      'Uninstall ' +
+      a.name +
+      '? This deletes the copy AIB installed on this PC.' +
+      chats +
+      ' To use ' +
+      a.name +
+      ' again, install it again here.'
+    );
+  }
+  const uninstallRefused = (a, error) => {
+    installs[a.id] = {
+      state: 'refused',
+      uninstall: true,
+      message: (error && error.message) || 'The agent could not be uninstalled.',
+    };
+    repaint();
+  };
+  // Every refusal the server can know (a chat open, a sign-in or install running, nothing installed) comes before the question.
+  // A host that does not know the check (404) just goes on to the question; the real uninstall still refuses then.
+  function uninstallCheck(a) {
     return Promise.resolve()
-      .then(() => S.host.post('agents/install/uninstall', { agent: a.id }))
+      .then(() => S.host.post('agents/install/uninstall', { agent: a.id, check: true }))
       .then(
-        () => {
-          delete installs[a.id];
-          delete signins[a.id];
-          return load(true);
-        },
-        (error) => {
-          installs[a.id] = { state: 'refused', message: (error && error.message) || 'The agent could not be uninstalled.' };
-          repaint();
-        },
+        () => null,
+        (error) => (error && error.status === 404 ? null : error || Error('The agent could not be uninstalled.')),
       );
+  }
+  function uninstallAgent(a) {
+    return uninstallCheck(a).then((refusal) => {
+      if (refusal) return uninstallRefused(a, refusal);
+      if (installs[a.id] && installs[a.id].uninstall) {
+        delete installs[a.id]; // the earlier refusal's cause is gone
+        repaint();
+      }
+      const ok = typeof root.confirm === 'function' ? root.confirm(uninstallQuestion(a)) : false;
+      if (!ok) return;
+      delete installs[a.id];
+      return Promise.resolve()
+        .then(() => S.host.post('agents/install/uninstall', { agent: a.id }))
+        .then(
+          () => {
+            delete installs[a.id];
+            delete signins[a.id];
+            return load(true);
+          },
+          (error) => uninstallRefused(a, error),
+        );
+    });
+  }
+  // An uninstall refusal stays only while its cause does: after each reload of the list it is asked again, and cleared (or updated)
+  // by the answer.
+  function recheckUninstallRefusals() {
+    for (const a of agents()) {
+      const job = installs[a.id];
+      if (!job || !job.uninstall) continue;
+      uninstallCheck(a).then((refusal) => {
+        if (installs[a.id] !== job) return;
+        if (!refusal) delete installs[a.id];
+        else if (refusal.message && refusal.message !== job.message) job.message = refusal.message;
+        else return;
+        repaint();
+      });
+    }
   }
   function cancelInstall(a) {
     return Promise.resolve()
@@ -654,6 +700,16 @@
       running = installRunning(a),
       refused = !!job && job.state === 'refused';
     const waiting = !running && signinWaiting(a);
+    // The start page has no On/Off switch (.st-actions is hidden there): a turned-off agent says so and offers Turn on, instead of
+    // looking ready (Found, Not checked) while the page says no agent is set up.
+    if (shared && !a.enabled && !running && !waiting) {
+      head.append(
+        el('span', 'Turned off', 'st-status dim'),
+        button('Turn on', () => saveQuiet(togglePatch(a.id, true)), 'st-primary'),
+      );
+      row.append(head, note('Turned off in Settings, so new chats cannot use it. Turn it on to set it up here.', 'dim'));
+      return row;
+    }
     if (running) head.append(button('Cancel', () => cancelInstall(a), 'st-cancel'));
     else if (waiting)
       head.append(
@@ -678,7 +734,7 @@
         note(
           'Finish signing in to ' +
             a.name +
-            ' in the window that opened. Studio does not see your password or sign-in details.',
+            ' in the window that opened. AIB does not see your password or sign-in details.',
         ),
       );
     } else {
@@ -944,7 +1000,7 @@
     for (const a of orderAgents(list)) box.append(agentRow(a, { sharedBlock: true, uninstall: true })); // Settings only, not the start page
     box.append(
       note(
-        '"Found" means the program exists. Sign-in state comes from a quick status check Studio runs when Settings opens and after an install or sign-in; agents with no status check show Not checked. Saved chats and transcripts are found for Claude Code and OMP only; chats with agents you add appear in the list once opened here.',
+        '"Found" means the program exists. Sign-in state comes from a quick status check AIB runs when Settings opens and after an install or sign-in; agents with no status check show Not checked. Saved chats and transcripts are found for Claude Code and OMP only; chats with agents you add appear in the list once opened here.',
       ),
     );
   }
@@ -1129,7 +1185,7 @@
     if (!eds.length) {
       box.append(
         note(
-          'No editor found. Studio looks for VS Code, Cursor, Windsurf and Devin on PATH and in their usual install folders.',
+          'No editor found. AIB looks for VS Code, Cursor, Windsurf and Devin on PATH and in their usual install folders.',
         ),
       );
     } else {
@@ -1336,7 +1392,9 @@
   function renderUpdates(box) {
     const server = () => (S.data && S.data.settings.server) || {};
     if (!root.AibUpdates) return;
-    root.AibUpdates.renderCard(box, {
+    const slot = el('div', null, 'st-updates'); // the card redraws only this, so its heading stays
+    box.append(slot);
+    root.AibUpdates.renderCard(slot, {
       autoCheck: () => server().autoUpdateCheck !== false,
       saveAuto: (v) => saveQuiet({ server: { autoUpdateCheck: v } }),
     });
@@ -1345,7 +1403,7 @@
     const b = S.boot || {},
       sv = b.server || {};
     const rows = [
-      ['Version', sv.versionLabel || sv.version],
+      ['Version', sv.version ? 'AIB ' + sv.version : sv.versionLabel], // the full version, beta number included, as Updates shows it
       ['About', sv.aboutLine],
       ['State folder', b.stateDir || 'unknown'],
       ['Web server PID', b.pid],
@@ -1419,7 +1477,7 @@
     'text-size': 'Text size',
     'default-view': 'Default chat view',
     'auto-reconnect': 'Reconnect after a restart',
-    'server-info': 'This Studio',
+    'server-info': 'About AIB',
     updates: 'Updates',
     'server-restart': 'Restart the web server',
   };
@@ -1456,7 +1514,11 @@
     head.append(title, close);
     const content = el('div', null, 'st-content');
     body.append(head, content);
-    page.append(nav, body);
+    // The page is a size container (settings.css): when it is too narrow for the section list beside the settings (a big
+    // Interface size in a small window), the list moves above them instead of squeezing them.
+    const frame = el('div', null, 'st-frame');
+    frame.append(nav, body);
+    page.append(frame);
     S.page = page;
     S.nav = list;
     S.content = content;

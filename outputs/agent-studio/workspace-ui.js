@@ -166,7 +166,10 @@
       elicReqs: lv && Array.isArray(lv.elicitations) ? lv.elicitations : [],
     };
   }
-  const itemOf = (key) => byKey.get(key) || null;
+  // shown: the chat on screen when the list no longer has it (a new chat whose session was ended and that the agent does not list
+  // yet). It keeps its tab while it is shown, so the strip never says "No open chats" over an open chat.
+  let shown = null;
+  const itemOf = (key) => byKey.get(key) || (shown && key && shown.key === key ? shown : null);
   const convOf = (key) => (host.conversations() || []).find((c) => keyOf(c) === key) || null;
   // The project whose tabs the strip shows (a draft pins it to the project the new chat starts in).
   const activeProjectKey = () => St().stripProject(ws, (itemOf(selectedKey) || {}).projectKey, draft ? draft.pk : '');
@@ -1689,7 +1692,7 @@
     label.htmlFor = 'wsRenameInput';
     const note = el(
       'p',
-      'Only the name shown in Studio changes. The folder is not renamed. Leave empty to use the folder name (' +
+      'Only the name shown in AIB changes. The folder is not renamed. Leave empty to use the folder name (' +
         p.autoName +
         ').',
     );
@@ -1858,10 +1861,21 @@
     }
     selectedKey = selected ? keyOf(selected) : '';
     if (selectedKey) draft = null;
+    shown = selectedKey && !byKey.has(selectedKey) && selected.provider ? normalize(selected) : null;
     const sel = itemOf(selectedKey);
     noteSeenTurn(sel);
     if (items.length)
-      commit(St().pruneTabs(ws, new Set(items.filter((i) => !i.archived && !i.deleted).map((i) => i.key))));
+      commit(
+        St().pruneTabs(
+          ws,
+          new Set(
+            items
+              .filter((i) => !i.archived && !i.deleted)
+              .map((i) => i.key)
+              .concat(shown ? [shown.key] : []),
+          ),
+        ),
+      );
     if (ws.active !== St().ALL && !projectOfKey(ws.active) && !St().tabsOf(ws, ws.active).length)
       commit(St().setActive(ws, St().ALL));
     notifyChats();

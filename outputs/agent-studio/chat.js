@@ -514,7 +514,7 @@
     } catch (error) {
       if (error.name === 'AbortError')
         throw Error('Request timed out. Your draft is saved; check the conversation before retrying.');
-      if (error instanceof SyntaxError) throw Error('Studio returned an unexpected response. Your draft is saved.');
+      if (error instanceof SyntaxError) throw Error('AIB returned an unexpected response. Your draft is saved.');
       throw Error('Connection lost. Your draft is saved; check the conversation before retrying.');
     } finally {
       clearTimeout(timer);
@@ -564,10 +564,10 @@
     if (m && m.kind !== 'sandbox' && (m.state === 'waiting' || m.state === 'failed' || m.state === 'blocked'))
       parts.push(
         (m.state === 'waiting'
-          ? 'Moving Studio’s data to its new folder is waiting'
-          : 'Moving Studio’s data to its new folder did not happen') +
+          ? 'Moving AIB’s data to its new folder is waiting'
+          : 'Moving AIB’s data to its new folder did not happen') +
           (m.reason ? ': ' + m.reason : '') +
-          '. Studio keeps using the old folder for now and tries again the next time it starts with no chats running.',
+          '. AIB keeps using the old folder for now and tries again the next time it starts with no chats running.',
       );
     if (b && b.hostTakeoverWaiting > 0)
       parts.push(
@@ -625,8 +625,8 @@
       } catch {}
       throw Error(
         refreshed
-          ? 'Studio session refreshed. Retry this action explicitly; it was not sent again automatically.'
-          : 'Studio could not refresh its session. Check the local server; your draft is saved.',
+          ? 'AIB session refreshed. Retry this action explicitly; it was not sent again automatically.'
+          : 'AIB could not refresh its session. Check the local server; your draft is saved.',
       );
     }
     if (!response.ok) {
@@ -673,8 +673,8 @@
       fail(
         Error(
           live.autoReconnect
-            ? 'Studio was restarted. Conversations that were open are reconnecting by themselves. Nothing was sent again.'
-            : 'Studio was restarted. Conversations that were open can be reconnected from the list. Nothing was sent again.',
+            ? 'AIB was restarted. Conversations that were open are reconnecting by themselves. Nothing was sent again.'
+            : 'AIB was restarted. Conversations that were open can be reconnected from the list. Nothing was sent again.',
         ),
       );
     } else if (live.instanceId && !instanceId) instanceId = live.instanceId;
@@ -1043,7 +1043,7 @@
     renderAttachments();
     applyElsewhereGuard();
     {
-      const pageTitle = titleOf(selected) + ' · Agent Studio';
+      const pageTitle = titleOf(selected) + ' · AIB';
       if (window.AgentSidebarUI) window.AgentSidebarUI.setBase(pageTitle);
       else document.title = pageTitle;
     }
@@ -1481,7 +1481,7 @@
         value = event.data.message;
       } else if (event.kind === 'studio_note') {
         role = 'notice';
-        label = 'Studio';
+        label = 'AIB';
         value = event.data.message;
         if (Array.isArray(event.data.actions) && event.data.actions.length) actions = event.data.actions;
       } else if (event.kind === 'turn_end') {
@@ -1917,7 +1917,7 @@
         renderHeader();
         fail(
           Error(
-            'The Studio server no longer has this connection. Your draft is saved. Continue only after checking that the chat is not still running elsewhere.',
+            'The AIB server no longer has this connection. Your draft is saved. Continue only after checking that the chat is not still running elsewhere.',
           ),
         );
       } else {
@@ -1961,7 +1961,7 @@
       const script = document.createElement('script');
       script.src = '/elicitation-ui.js';
       script.onload = resolve;
-      script.onerror = () => reject(Error('Question controls could not be loaded. Refresh Studio to retry.'));
+      script.onerror = () => reject(Error('Question controls could not be loaded. Refresh AIB to retry.'));
       document.head.append(script);
     });
   }
@@ -2793,7 +2793,7 @@
       if (selected?.key !== key) return;
       commands = data.commands;
       noteCommands(
-        'Saved and inferred: status comes from saved agent events, not from a live Studio connection or an operating-system process check.',
+        'Saved and inferred: status comes from saved agent events, not from a live AIB connection or an operating-system process check.',
       );
       renderCommands();
       if (selectedCommand) {
@@ -2915,9 +2915,9 @@
   function pseudoNote(c) {
     return c.recovered
       ? c.recovered.reconnecting
-        ? 'Studio is reconnecting this conversation after the restart. Its history loads from the agent; nothing is sent.'
-        : 'This conversation was open in Studio before the server restarted. Studio has no local transcript for it. Send a message to ask the agent to load it again.'
-      : 'The agent listed this conversation, but Studio has no local transcript for it. Continue it to ask the agent to load its history; nothing is sent until you send a message.';
+        ? 'AIB is reconnecting this conversation after the restart. Its history loads from the agent; nothing is sent.'
+        : 'This conversation was open in AIB before the server restarted. AIB has no local transcript for it. Send a message to ask the agent to load it again.'
+      : 'The agent listed this conversation, but AIB has no local transcript for it. Continue it to ask the agent to load its history; nothing is sent until you send a message.';
   }
   function rowStatus(c) {
     const box = text('small', '', 'connection-state');
@@ -2925,7 +2925,7 @@
       box.className += ' owned-status';
       box.append(
         text('span', '● ' + (c.live.busy ? 'Working' : 'Ready'), 'badge badge-live'),
-        text('span', ' Live in Studio', 'status-detail'),
+        text('span', ' Live in AIB', 'status-detail'),
       );
       return box;
     }
@@ -2934,7 +2934,7 @@
         text('span', c.recovered.reconnecting ? 'Reconnecting…' : 'Not running', 'badge badge-recovered'),
         text(
           'span',
-          c.recovered.reconnecting ? ' Studio is reconnecting it' : ' Was open in Studio before restart',
+          c.recovered.reconnecting ? ' AIB is reconnecting it' : ' Was open in AIB before restart',
           'status-detail',
         ),
       );
@@ -3646,7 +3646,7 @@
   // ---- Message stream, history notice and chats running in another app ----
   let historyNoticeOn = false;
   const HISTORY_NOTICE =
-    'Studio keeps only the most recent 6,000 live events in memory. Earlier history stays in the agent\u2019s saved transcript.';
+    'AIB keeps only the most recent 6,000 live events in memory. Earlier history stays in the agent\u2019s saved transcript.';
   // Read by the header (Ctx chip tooltip): the notice is no longer drawn in the message stream.
   window.AgentChatView = Object.assign(window.AgentChatView || {}, {
     notices: () => (historyNoticeOn ? [HISTORY_NOTICE] : []),

@@ -642,7 +642,10 @@ Deno.test({
     await using t = base();
     const [folder] = makeInstall(t.state, 'codex', '2.6.0', CODEX_PKG);
     const one = await assertRejects(() => t.installer.uninstall('codex', 1), InstallRefused);
-    assertEquals(one.message, 'Codex has a chat open in AIB. Close it first (wait for any work to finish), then uninstall.');
+    assertEquals(
+      one.message,
+      "Codex has a chat open in AIB. End that chat's session first (in the chat list, the chat's menu: End this chat's session; wait for any work to finish), then uninstall.",
+    );
     const two = await assertRejects(() => t.installer.uninstall('codex', 2), InstallRefused);
     assert(two.message.includes('2 chats open'), two.message);
     const signing = await assertRejects(() => t.installer.uninstall('codex', 0, true), InstallRefused);
@@ -651,7 +654,8 @@ Deno.test({
     const busy = await assertRejects(() => t.installer.uninstall('codex'), InstallRefused);
     assert(busy.message.includes('being installed right now'), busy.message);
     Deno.removeSync(join(t.state, 'agents', 'codex', installer.LOCK_NAME));
-    await assertRejects(() => t.installer.uninstall('omp'), InstallRefused);
+    const omp = await assertRejects(() => t.installer.uninstall('omp'), InstallRefused);
+    assertEquals(omp.message, 'AIB cannot uninstall that agent.', 'an uninstall says uninstall, not install');
     await assertRejects(() => t.installer.uninstall('../codex'), InstallRefused);
     assert(exists(join(folder, '.complete')), 'nothing was removed by a refusal');
   },
@@ -673,13 +677,42 @@ Deno.test({
       assertEquals([code, refused.code], [409, 'install_refused']);
       assert(String(refused.error).includes('Codex has a chat open'), String(refused.error));
       assert(exists(folder));
+      const [checkCode, checked] = await studio.installCall('uninstall-check', 'codex') as [number, Record<string, unknown>];
+      assertEquals([checkCode, checked.code], [409, 'install_refused'], 'the check runs the same refusals');
       chat.closed = true;
+      const [fine, check] = await studio.installCall('uninstall-check', 'codex') as [number, Record<string, unknown>];
+      assertEquals([fine, check.ok, check.removed], [200, true, []]);
+      assert(exists(folder), 'a check removes nothing');
       const [ok, done] = await studio.installCall('uninstall', 'codex') as [number, Record<string, unknown>];
       assertEquals([ok, done.ok, done.removed], [200, true, ['2.6.0']]);
       assert(!exists(folder));
       studio.connections.clear();
     } finally {
       await studio.close().catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  name: 'a deliberate stop records a prompt the agent already had as delivered; any other stop leaves it unknown (QA 4 #8)',
+  ...sanitize,
+  fn: async () => {
+    for (const deliberate of [true, false]) {
+      using dir = tempDir();
+      const state = join(dir.root, 'state');
+      const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
+      const receipts = new Map([
+        ['sent-1', { fingerprint: 'f1', state: 'working', sent: true }],
+        ['queued-2', { fingerprint: 'f2', state: 'working' }], // still before session/prompt: the agent never had it
+      ]);
+      studio.store!.setReceipt('claude', 's1', 'sent-1', 'f1', 'working');
+      studio.store!.setReceipt('claude', 's1', 'queued-2', 'f2', 'working');
+      studio.connections.set('c1', { id: 'c1', provider: 'claude', sessionId: 's1', closed: false, promptReceipts: receipts, close: async () => {} } as never);
+      studio.deliberateStop = deliberate;
+      await studio.close();
+      const unknown = studio.store!.unknownReceipts('claude', 's1').map((u) => u.clientMessageId).sort();
+      assertEquals(unknown, deliberate ? ['queued-2'] : ['queued-2', 'sent-1'], deliberate ? 'stopped on purpose' : 'any other stop');
+      if (deliberate) assertEquals(studio.store!.receipt('claude', 's1', 'sent-1')?.state, 'finished');
     }
   },
 });

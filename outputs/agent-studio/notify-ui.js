@@ -84,7 +84,7 @@
     if (list.length === 1)
       return {
         tag: TAG,
-        title: list[0].title || 'Agent Studio',
+        title: list[0].title || 'AIB',
         body: list[0].kind === 'needs' ? 'Needs you' : 'Your turn',
         target: { type: 'chat', key: list[0].key },
       };
@@ -406,7 +406,7 @@
     pop.append(
       el(
         'p',
-        "Only when Studio isn't in front. While you are looking at Studio, the badge and the list show what needs you.",
+        "Only when AIB isn't in front. While you are looking at AIB, the badge and the list show what needs you.",
         'note',
       ),
     );
@@ -445,7 +445,7 @@
       const t = el('button', 'Send a test notification');
       t.type = 'button';
       t.addEventListener('click', () =>
-        showDesktop({ startedAt: Date.now(), entries: [{ key: '', title: 'Agent Studio', kind: 'turn' }] }),
+        showDesktop({ startedAt: Date.now(), entries: [{ key: '', title: 'AIB', kind: 'turn' }] }),
       );
       pop.append(t);
     }

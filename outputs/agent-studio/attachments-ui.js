@@ -247,7 +247,7 @@
         continue;
       }
       if (!feature) {
-        rejected.push(name + ': this Studio server does not support file attachments');
+        rejected.push(name + ': this AIB server does not support file attachments');
         continue;
       }
       if (!Number.isFinite(file.size) || file.size < 1) {
@@ -345,7 +345,7 @@
     );
   }
   function note({ imageFeature, snapshot, hasItems }) {
-    if (!imageFeature) return 'This Studio server does not support attachments.';
+    if (!imageFeature) return 'This AIB server does not support attachments.';
     const caps = snapshot?.promptCapabilities || {},
       sends = [];
     sends.push(

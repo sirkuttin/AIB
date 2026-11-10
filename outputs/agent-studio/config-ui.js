@@ -125,7 +125,7 @@
     value = typeof value === 'string' ? value : value === undefined ? '' : JSON.stringify(value);
     const label = el(doc, 'label', option.name || option.id, 'config-readonly');
     label.title =
-      'Setting type “' + String(option.type).slice(0, 40) + '” is not supported by Studio, so it is read-only.';
+      'Setting type “' + String(option.type).slice(0, 40) + '” is not supported by AIB, so it is read-only.';
     label.appendChild(el(doc, 'span', String(value).slice(0, 200) + ' (read-only)'));
     return label;
   }

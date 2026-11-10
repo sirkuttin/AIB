@@ -31,6 +31,10 @@
     return w < 1400 ? '<1400' : w < 1800 ? '<1800' : '>=1800';
   }
   const storageKey = (width, helper) => 'studio-textsize-v1:' + bucketKey(width, helper);
+  /* The last values set in any bucket: a bucket with nothing stored of its own starts from these, so maximizing the window (another
+     bucket) does not look like the setting was lost. Once a bucket has its own values they stay its own. */
+  const LAST_KEY = 'studio-textsize-v1:last';
+  const pickStored = (own, last) => (own != null && own !== '' ? own : last);
   const DEFAULTS = Object.freeze({ chat: 100, ui: 100, font: '', spacing: 'comfortable' });
   /* Stored values: out-of-range numbers are clamped, unknown fonts/spacings mean "default". Never throws. */
   function sanitize(raw) {
@@ -123,6 +127,8 @@
     stepPct,
     bucketKey,
     storageKey,
+    LAST_KEY,
+    pickStored,
     sanitize,
     keyAction,
     wheelAction,
@@ -180,7 +186,8 @@
     };
     const keyNow = () => storageKey(win.innerWidth, helper);
     let bucket = bucketKey(win.innerWidth, helper);
-    let state = { ...sanitize(read(keyNow())) };
+    const readBucket = () => pickStored(read(keyNow()), read(LAST_KEY));
+    let state = { ...sanitize(readBucket()) };
     let available = null;
     const subs = new Set();
     let lastTarget = null,
@@ -278,7 +285,9 @@
       }, 1400);
     }
     function persist() {
-      write(keyNow(), JSON.stringify(state));
+      const json = JSON.stringify(state);
+      write(keyNow(), json);
+      write(LAST_KEY, json);
     }
     function emit(which) {
       const snap = { ...state };
@@ -353,7 +362,7 @@
       const b = bucketKey(win.innerWidth, helper);
       if (b === bucket) return;
       bucket = b;
-      const next = sanitize(read(keyNow()));
+      const next = sanitize(readBucket());
       const prev = state;
       if (next.chat === prev.chat && next.ui === prev.ui && next.font === prev.font && next.spacing === prev.spacing)
         return;

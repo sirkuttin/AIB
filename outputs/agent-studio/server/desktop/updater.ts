@@ -45,6 +45,10 @@ export const API_BASE = 'https://api.github.com';
 /** Test hook: a local fake release server (http://127.0.0.1:PORT). */
 export const BASE_ENV = 'AIB_UPDATE_API_BASE';
 export const CHECK_INTERVAL = 24 * 3600;
+/** An automatic check that failed for a passing reason (no network, GitHub busy) is tried again after this, not a day later. */
+export const RETRY_INTERVAL = 3600;
+/** The error codes RETRY_INTERVAL applies to; a refusal (checksum, bad name, unsupported platform) waits the full day. */
+export const RETRYABLE_CODES: ReadonlySet<string> = new Set(['offline', 'http_error', 'bad_response', 'bad_download']);
 export const MAX_SUMS_BYTES = 64 * 1024;
 /** The release's small description asset ({version, protocol}), checked against SHA256SUMS like the installer. */
 export const RELEASE_INFO_NAME = 'release.json';
@@ -463,6 +467,23 @@ export function parentOf(path: string): string {
   return head;
 }
 
+/** A folder name under <data>/updates that a version download made (0.1.0, 0.1.0-beta.3, ...). */
+const VERSION_DIR = /^v?\d+\.\d+\.\d+[A-Za-z0-9.+-]*$/;
+
+function isEmptyDir(path: string): boolean {
+  try {
+    for (const _ of Deno.readDirSync(path)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sameDir(a: string, b: string): boolean {
+  const norm = (p: string) => (WINDOWS ? p.replaceAll('/', '\\').toLowerCase() : p).replace(/[\\/]+$/, '');
+  return norm(a) === norm(b);
+}
+
 function isFile(path: unknown): boolean {
   if (typeof path !== 'string' || !path) return false;
   try {
@@ -547,6 +568,10 @@ export interface UpdateStatus {
   lastCheck: number | null;
   error: string;
   errorCode: string;
+  /** Deno only: when the next automatic check is due after a passing failure (RETRY_INTERVAL), else null. */
+  retryAt: number | null;
+  /** Deno only: this is the desktop app (false: a source run, which never updates itself). */
+  desktop: boolean;
   installWhenIdle: boolean;
   state: 'none' | 'refused' | 'ready' | 'found' | 'error' | 'unconfigured';
   platform: string[] | null;
@@ -685,6 +710,8 @@ export class UpdateService {
       lastCheck: this.state.lastCheck || null,
       error: this.state.error,
       errorCode: this.state.code,
+      retryAt: this.#retrying() ? this.state.lastCheck + RETRY_INTERVAL : null,
+      desktop: !!this.app.desktop,
       installWhenIdle: !!this.state.installWhenIdle,
       state: 'none',
       platform: this.key ? [...this.key] : null,
@@ -722,7 +749,53 @@ export class UpdateService {
 
   // -- checking
   due(): boolean {
-    return this.now() - this.state.lastCheck >= CHECK_INTERVAL;
+    return this.now() - this.state.lastCheck >= (this.#retrying() ? RETRY_INTERVAL : CHECK_INTERVAL);
+  }
+
+  /** The last check failed for a passing reason (offline, GitHub busy): the next automatic one comes after RETRY_INTERVAL. */
+  #retrying(): boolean {
+    return !!this.state.error && RETRYABLE_CODES.has(this.state.code) && !!this.state.lastCheck;
+  }
+
+  /**
+   * Remove what an earlier update left behind (called once at start): the downloaded files of the version now running, or of an
+   * older one, are deleted with their folder, and state.json forgets them. Only version folders directly under <data>/updates are
+   * looked at (their names must parse as a version and compare at or below this one); logs, markers and state.json stay. A folder
+   * left empty by a refused or broken download is removed too. Never throws. Returns the folder names removed.
+   */
+  cleanup(): string[] {
+    const removed: string[] = [];
+    const atOrBelow = (version: unknown) => {
+      try {
+        return compare(String(version ?? ''), this.current) <= 0;
+      } catch {
+        return false;
+      }
+    };
+    if (this.state.downloaded && atOrBelow(this.state.downloaded.version)) {
+      this.state.downloaded = null; // installed (this is that version now) or older: nothing left to offer
+      if (this.state.found && atOrBelow(this.state.found.version)) this.state.found = null;
+      this.state.installWhenIdle = false;
+      this.#save();
+    }
+    let entries: Deno.DirEntry[] = [];
+    try {
+      entries = [...Deno.readDirSync(this.root)];
+    } catch {
+      return removed;
+    }
+    const keep = this.state.downloaded ? parentOf(this.state.downloaded.path ?? '') : '';
+    for (const entry of entries) {
+      if (!entry.isDirectory || entry.isSymlink || !VERSION_DIR.test(entry.name)) continue;
+      const folder = join(this.root, entry.name);
+      if (keep && sameDir(folder, keep)) continue;
+      if (!atOrBelow(entry.name) && !isEmptyDir(folder)) continue;
+      try {
+        Deno.removeSync(folder, { recursive: true });
+        removed.push(entry.name);
+      } catch { /* in use: the next start tries again */ }
+    }
+    return removed;
   }
 
   /**
@@ -775,6 +848,14 @@ export class UpdateService {
     if (got && got.version === found.version && isFile(got.path ?? '') && await fileSha256(got.path) === got.sha256) return;
     const folder = join(this.root, found.version);
     await Deno.mkdir(folder, { recursive: true });
+    try {
+      await this.#downloadInto(found, folder);
+    } finally {
+      if (isEmptyDir(folder)) await Deno.remove(folder).catch(() => {}); // a refused or broken download leaves no empty folder
+    }
+  }
+
+  async #downloadInto(found: Found, folder: string): Promise<void> {
     const name = found.installer.name;
     if (!NAME_OK.test(name)) throw new UpdateError('The release names its installer in an unexpected way.', 'bad_name');
     const sums = new TextDecoder().decode(await readLimited(found.sums.url, 'application/octet-stream', MAX_SUMS_BYTES, this.fetch));
@@ -916,6 +997,7 @@ export class UpdateService {
   // -- the background loop (not started by tests)
   start(): void {
     if (this.#timer !== null || this.#stopped) return;
+    this.cleanup();
     const schedule = (seconds: number) => {
       if (this.#stopped) return;
       const timer = setTimeout(async () => {

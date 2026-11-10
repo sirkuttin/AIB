@@ -283,11 +283,32 @@ test('bucket persistence: each window-width bucket keeps its own sizes; a resize
   assert.equal(p.props['--chat-scale'], '0.9');
   p.win.innerWidth = 1000;
   p.listeners.win.resize();
-  assert.equal(ctl.getChat(), 100);
-  assert.deepEqual(p.attrs, {}); // an empty bucket is all defaults
+  // A bucket with nothing of its own starts from the last values set (150 % / 110 % / Roomy in <1800), not from the defaults.
+  assert.deepEqual(ctl.get(), { chat: 150, ui: 110, font: '', spacing: 'roomy' });
+  assert.equal(p.store.get('studio-textsize-v1:<1400'), undefined, 'carried, not written: the bucket has no values of its own yet');
   p.win.innerWidth = 1700;
   p.listeners.win.resize();
   assert.equal(ctl.getChat(), 150);
+});
+test('text size: maximizing into a bucket with no values keeps the last size; a bucket keeps its own once set', () => {
+  const p = fakePage(1300);
+  const ctl = T.init(p.win, { fonts: [] });
+  ctl.setUi(130);
+  ctl.setChat(120);
+  assert.equal(JSON.parse(p.store.get(T.LAST_KEY)).ui, 130);
+  p.win.innerWidth = 1920; // maximized: another bucket, nothing stored there
+  p.listeners.win.resize();
+  assert.equal(ctl.getUi(), 130, 'not reset to 100 %');
+  assert.equal(ctl.getChat(), 120);
+  ctl.setUi(110); // set here: from now on this bucket has its own
+  p.win.innerWidth = 1300;
+  p.listeners.win.resize();
+  assert.equal(ctl.getUi(), 130, 'the first bucket kept its own value');
+  p.win.innerWidth = 1920;
+  p.listeners.win.resize();
+  assert.equal(ctl.getUi(), 110);
+  assert.equal(T.pickStored(null, '{"ui":120}'), '{"ui":120}');
+  assert.equal(T.pickStored('{"ui":90}', '{"ui":120}'), '{"ui":90}');
 });
 test('storage that throws never breaks it', () => {
   const p = fakePage(1500);
