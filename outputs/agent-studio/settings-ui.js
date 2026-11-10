@@ -1374,11 +1374,13 @@
     if (b.hostProblem) box.append(note(b.hostProblem, 'bad'));
   }
   function renderServerRestart(box) {
-    box.append(
-      note(
-        'Restarting is done from a terminal, not from this page, so that a running turn is never cut off by accident: run python deploy.py (web server only; agents keep working), or python deploy.py --host to also restart the agent host once nothing is working. See docs/agent-host.md.',
-      ),
-    );
+    box.append(note(serverRestartText(!!(root.AibDesktop && root.AibDesktop.available()))));
+  }
+  // In the desktop app: quit and start again (it asks before stopping chats that are working). From source: deploy in a terminal.
+  function serverRestartText(desktopApp) {
+    return desktopApp
+      ? 'Restarting is not done from this page, so that a running turn is never cut off by accident: quit AIB (tray icon > Quit AIB) and start it again. AIB asks before it stops chats that are working.'
+      : 'Restarting is done from a terminal, not from this page, so that a running turn is never cut off by accident: run "deno run -A outputs/agent-studio/server/main.ts deploy" (web server only; agents keep working), or add --host to also restart the agent host once nothing is working. See docs/agent-host.md.';
   }
   function flash(text) {
     S.flash = text;
@@ -1669,6 +1671,7 @@
     envForSave,
     SECTIONS,
     INDEX,
+    serverRestartText,
     _state: S,
   };
   root.AgentSettingsUI = api;

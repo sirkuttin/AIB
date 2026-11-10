@@ -15,6 +15,7 @@ import {
   PROTOCOL_VERSION,
   readInfo,
   removeInfo,
+  replaceHostHint,
   TOKEN_HEADER,
   writeInfo,
 } from '../../outputs/agent-studio/server/host/host_client.ts';
@@ -340,6 +341,7 @@ t('a host speaking another protocol is reported, left running, and the web serve
     } catch (error) {
       assert(error instanceof HostIncompatible, String(error));
       assert(error.message.includes('protocol 99') && error.message.includes('working or waiting'), error.message);
+      assert(error.message.endsWith(`Finish or interrupt the work, then ${replaceHostHint()}.`), error.message);
     }
     const web = await fx.startWeb();
     assert(String(web.boot.hostProblem).includes('protocol 99'));

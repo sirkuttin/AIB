@@ -442,3 +442,11 @@ test('editing starts with names only; a blank value keeps the stored one, a type
   ]);
   assert.deepEqual(S.envRowsFrom(undefined), []);
 });
+
+test('restart note: the app says quit and start again; a source run names the deno deploy command; no Python programs', () => {
+  const app = S.serverRestartText(true);
+  const source = S.serverRestartText(false);
+  assert.match(app, /quit AIB \(tray icon > Quit AIB\) and start it again/);
+  assert.match(source, /deno run -A outputs\/agent-studio\/server\/main\.ts deploy/);
+  for (const text of [app, source]) assert.doesNotMatch(text, /\.py\b|python/i);
+});

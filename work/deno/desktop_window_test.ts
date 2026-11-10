@@ -34,6 +34,14 @@ import {
   startMenuDir,
 } from '../../outputs/agent-studio/server/desktop/shortcut.ts';
 import { trayIconPng } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
+import {
+  chosenItem,
+  menuCommand,
+  notifyIconData,
+  NOTIFYICONDATAW_SIZE,
+  TRAY_CALLBACK,
+  trayEvent,
+} from '../../outputs/agent-studio/server/desktop/tray_win.ts';
 import { pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { DENO, FAKE_HOST, Fixture, TEST_OPTIONS, until } from './_host_fixture.ts';
 
@@ -192,6 +200,7 @@ function fakeShell(answer = false) {
     answer,
     external: [] as string[],
     notes: [] as [string, string][],
+    trayRemoved: 0,
   };
   const shell: Shell = {
     createWindow: (o) => {
@@ -206,6 +215,7 @@ function fakeShell(answer = false) {
       return s.keeper;
     },
     createTray: (_icon, tooltip, items, onClick, onMenu) => void (s.tray = { items, onClick, onMenu, tooltip }),
+    removeTray: () => void s.trayRemoved++,
     ask: (m) => (s.questions.push(m), Promise.resolve(s.answer)),
     openExternal: (u) => void s.external.push(u),
     notifier: {
@@ -237,6 +247,8 @@ async function makeApp(
     saveDelayMs: 0,
     watchdogMs: 0,
   };
+  const removeTray = shell.removeTray!;
+  shell.removeTray = () => (order.push('tray removed'), removeTray());
   const app = new DesktopApp(shell, options);
   await app.start();
   return { app, s, quits, stops, order, dir, done: () => Deno.remove(dir, { recursive: true }) };
@@ -311,6 +323,65 @@ Deno.test('OK stops the agents and quits; an unreadable count asks too', async (
   } finally {
     await b.done();
   }
+});
+
+Deno.test('tray: icon, tooltip AIB, menu Open AIB / Quit AIB; left click and Open show the window, Quit asks', async () => {
+  const a = await makeApp(() => Promise.resolve(2), false);
+  try {
+    assertEquals(a.s.tray?.tooltip, 'AIB');
+    assertEquals(a.s.tray?.items, [{ id: 'open', label: 'Open AIB' }, { id: 'quit', label: 'Quit AIB' }]);
+    a.s.windows[0].emit('close'); // 2 working, Cancel: AIB stays in the tray with no window
+    await tick();
+    assertEquals(a.s.windows[0].closed, true);
+    a.s.tray!.onClick();
+    await tick();
+    assertEquals(a.s.windows.length, 2, 'a left click makes a new window');
+    a.s.windows[1].emit('close');
+    await tick();
+    a.s.tray!.onMenu('open');
+    await tick();
+    assertEquals(a.s.windows.length, 3, 'Open AIB makes a new window');
+    a.s.tray!.onMenu('nonsense');
+    await tick();
+    assertEquals(a.s.windows.length, 3, 'an unknown id does nothing');
+    const asked = a.s.questions.length;
+    a.s.tray!.onMenu('quit');
+    await tick();
+    assertEquals(a.s.questions.length, asked + 1, 'Quit AIB asks while chats work');
+    assertEquals(a.quits, []);
+    assertEquals(a.s.trayRemoved, 0, 'Cancel keeps the tray icon');
+    a.s.answer = true;
+    a.s.tray!.onMenu('quit');
+    await tick();
+    assertEquals(a.quits, [true]);
+    assertEquals(a.s.trayRemoved, 1, 'quitting removes the icon');
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('Windows tray: callback events, menu commands and the NOTIFYICONDATAW layout', () => {
+  assertEquals(trayEvent(0x0202), 'click'); // WM_LBUTTONUP
+  assertEquals(trayEvent(0x0205), 'menu'); // WM_RBUTTONUP
+  assertEquals(trayEvent(0x007b), 'menu'); // WM_CONTEXTMENU
+  assertEquals(trayEvent(0x0200), null); // WM_MOUSEMOVE
+  assertEquals(trayEvent(0x0203), null); // WM_LBUTTONDBLCLK
+  assertEquals(trayEvent(0x12340205n), 'menu', 'only the low word counts');
+  const items = [{ id: 'open', label: 'Open AIB' }, { id: 'quit', label: 'Quit AIB' }];
+  assertEquals(items.map((_, i) => menuCommand(i)), [1, 2]);
+  assertEquals([chosenItem(items, 0), chosenItem(items, 1), chosenItem(items, 2), chosenItem(items, 3)], [null, 'open', 'quit', null]);
+  const nid = notifyIconData({ hwnd: 0x1234n, flags: 7, callbackMessage: TRAY_CALLBACK, hIcon: 0xabcdn, tip: 'AIB' + 'x'.repeat(200) });
+  const v = new DataView(nid.buffer);
+  assertEquals(nid.length, NOTIFYICONDATAW_SIZE);
+  assertEquals(v.getUint32(0, true), 976);
+  assertEquals(v.getBigUint64(8, true), 0x1234n);
+  assertEquals(v.getUint32(16, true), 1);
+  assertEquals(v.getUint32(20, true), 7);
+  assertEquals(v.getUint32(24, true), TRAY_CALLBACK);
+  assertEquals(v.getBigUint64(32, true), 0xabcdn);
+  assertEquals(String.fromCharCode(v.getUint16(40, true), v.getUint16(42, true), v.getUint16(44, true)), 'AIB');
+  assertEquals(v.getUint16(40 + 126 * 2, true), 'x'.charCodeAt(0));
+  assertEquals(v.getUint16(40 + 127 * 2, true), 0, 'the tooltip keeps its terminating zero');
 });
 
 Deno.test('tray Quit asks the same question; with nothing working it just quits', async () => {
@@ -484,7 +555,7 @@ Deno.test('quitting stops the agent host too: unforced with nothing working, for
   try {
     a.s.windows[0].emit('close');
     await tick();
-    assertEquals(a.order, ['stop:false', 'quit'], 'nothing left running invisibly once the window is gone');
+    assertEquals(a.order, ['stop:false', 'tray removed', 'quit'], 'nothing left running invisibly once the window is gone');
   } finally {
     await a.done();
   }
@@ -492,7 +563,7 @@ Deno.test('quitting stops the agent host too: unforced with nothing working, for
   try {
     b.s.windows[0].emit('close');
     await tick();
-    assertEquals(b.order, ['stop:true', 'quit']);
+    assertEquals(b.order, ['stop:true', 'tray removed', 'quit']);
   } finally {
     await b.done();
   }
@@ -509,7 +580,7 @@ Deno.test('quitting stops the agent host too: unforced with nothing working, for
   try {
     d.s.tray!.onMenu('quit');
     await tick();
-    assertEquals(d.order, ['stop:false', 'quit'], 'a refusal or failure never holds the quit up');
+    assertEquals(d.order, ['stop:false', 'tray removed', 'quit'], 'a refusal or failure never holds the quit up');
   } finally {
     await d.done();
   }

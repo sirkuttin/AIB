@@ -16,6 +16,8 @@ import {
   normcase,
   PROTOCOL_VERSION,
   readInfo,
+  replaceHostHint,
+  restartHostHint,
   rotateLog,
   sourceHash,
   stopHost,
@@ -53,6 +55,28 @@ Deno.test('app constants, code root and source hash match Python', async () => {
   assert((await codeWarning({ pid: 1, sourceHash: 'x' })).includes('older code'));
   assert((await codeWarning({ pid: 1 })).includes('older version'));
   assertEquals(await codeWarning({}), '');
+});
+
+Deno.test('restart hints name the Deno app, never the Python programs', async () => {
+  assertEquals(restartHostHint(true), 'quit AIB and start it again, or run "AIB --stop-host"');
+  assertEquals(restartHostHint(false), 'run "deno run -A outputs/agent-studio/server/main.ts --stop-host"');
+  assertEquals(replaceHostHint(true), 'quit AIB and start it again (or run "AIB --stop-host", then start AIB)');
+  assertEquals(
+    replaceHostHint(false),
+    'run "deno run -A outputs/agent-studio/server/main.ts --stop-host" (or "deno run -A outputs/agent-studio/server/main.ts deploy --host") and restart the web server',
+  );
+  const source = restartHostHint(); // these tests run from source
+  assertEquals(
+    await codeWarning({ pid: 1 }),
+    `The running agent host was started by an older version of AIB. To use the current code, restart it: ${source}.`,
+  );
+  assertEquals(
+    await codeWarning({ pid: 1, sourceHash: 'x' }),
+    `The running agent host is running older code than this web server. When no conversation is working, restart it: ${source}.`,
+  );
+  for (const text of [restartHostHint(true), restartHostHint(false), replaceHostHint(true), replaceHostHint(false)]) {
+    assert(!/\.py\b|python/i.test(text), text);
+  }
 });
 
 Deno.test('quoteWindowsArg matches subprocess.list2cmdline', async () => {

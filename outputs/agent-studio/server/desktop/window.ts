@@ -239,7 +239,10 @@ export interface Shell {
    * when no window is left, even while servers run. DesktopApp keeps it on about:blank and hidden (keepKeeperHidden).
    */
   createKeeper(): WindowHandle;
+  /** The tray icon: a left click calls onClick, its right-click menu (items) calls onMenu with the chosen item's id. */
   createTray(icon: Uint8Array, tooltip: string, items: TrayItem[], onClick: () => void, onMenu: (id: string) => void): void;
+  /** Removes the tray icon (quitting), so no dead icon is left behind. Never throws. */
+  removeTray?(): void;
   /** A native OK/Cancel question; Cancel is the default button. Resolves true for OK. Must not block the event loop. */
   ask(message: string): Promise<boolean>;
   openExternal(url: string): void;
@@ -482,6 +485,9 @@ export class DesktopApp {
     try {
       await this.options.stopHost?.(stopAgents);
     } catch { /* not running, or refused: quit anyway */ }
+    try {
+      this.shell.removeTray?.();
+    } catch { /* quitting anyway */ }
     await this.options.quit(stopAgents);
   }
 }
