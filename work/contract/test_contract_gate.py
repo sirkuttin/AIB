@@ -101,7 +101,11 @@ class GateContract(unittest.TestCase):
         page = self.server.request('GET', '/', {'Host': f'127.0.0.1:{self.server.port}', 'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate'})
         self.assertEqual(page.status, 200)
         self.assertEqual(page.headers['content-type'], 'text/html; charset=utf-8')
-        self.assertEqual(page.body, (APP / 'chat.html').read_bytes())
+        # The Deno server adds the saved view preferences as a JSON data block (server/web/server.ts withViewPrefs); the rest is the file.
+        served = re.sub(rb'<script type="application/json" id="aibViewPrefs">[^<]*</script>', b'', page.body)
+        self.assertEqual(served, (APP / 'chat.html').read_bytes())
+        if server_kind() != 'python':
+            self.assertIn(b'<script type="application/json" id="aibViewPrefs">{"prefs":{', page.body)
         scripts = re.findall(r'<script[^>]+src="/?([a-z0-9-]+\.js)"', page.text)
         styles = re.findall(r'<link[^>]+href="/?([a-z0-9-]+\.css)"', page.text)
         self.assertGreater(len(scripts), 10)

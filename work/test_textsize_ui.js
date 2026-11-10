@@ -346,6 +346,90 @@ test('keydown handler: acts by focus/pointer scope and swallows only handled key
   assert.equal(e.pd, undefined);
 });
 
+test('page zoom: in the desktop app stray Ctrl+plus/minus/0 and Ctrl+wheel are swallowed; in a browser they are left alone', () => {
+  assert.equal(T.isPageZoomKey(key({ key: '=', code: 'Equal' })), true);
+  assert.equal(T.isPageZoomKey(key({ key: '-', code: 'NumpadSubtract' })), true);
+  assert.equal(
+    T.isPageZoomKey(key({ key: '0', code: 'Digit0' })),
+    false,
+    'Ctrl+0 only resets the page zoom: left alone',
+  );
+  assert.equal(T.isPageZoomKey(key({ key: 'b', code: 'KeyB' })), false);
+  assert.equal(T.isPageZoomKey(key({ key: '=', code: 'Equal', ctrlKey: false })), false);
+  assert.equal(T.isPageZoomKey(key({ key: '=', code: 'Equal', altKey: true })), false);
+  assert.equal(T.isPageZoomWheel({ ctrlKey: true, deltaY: -100 }), true);
+  assert.equal(T.isPageZoomWheel({ ctrlKey: false, deltaY: -100 }), false);
+  const wheel = (target, o) => ({
+    target,
+    ctrlKey: true,
+    altKey: false,
+    metaKey: false,
+    shiftKey: false,
+    deltaY: -100,
+    preventDefault() {
+      this.pd = true;
+    },
+    ...o,
+  });
+  for (const app of [true, false]) {
+    const p = fakePage(1500);
+    const ctl = T.init(p.win, { fonts: [], desktop: () => app });
+    const kd = p.listeners.doc.keydown,
+      wh = p.listeners.doc.wheel;
+    // outside the chat: the app swallows the browser zoom keys and wheel, a browser keeps them
+    p.doc.activeElement = p.outEl;
+    for (const k of [
+      { key: '=', code: 'Equal' },
+      { key: '-', code: 'Minus' },
+      { key: '+', code: 'NumpadAdd' },
+    ]) {
+      const e = key(k);
+      kd(e);
+      assert.equal(e.pd, app ? true : undefined, JSON.stringify(k) + ' app=' + app);
+    }
+    const reset = key({ key: '0', code: 'Digit0' });
+    kd(reset);
+    assert.equal(reset.pd, undefined, 'Ctrl+0 outside the chat still resets a page zoom');
+    let e = wheel(p.outEl);
+    wh(e);
+    assert.equal(e.pd, app ? true : undefined);
+    assert.equal(ctl.getChat(), 100);
+    // the app's own text-size keys still work and still change the size (both modes)
+    e = key({ key: '+', code: 'Equal', shiftKey: true });
+    kd(e);
+    assert.equal(ctl.getUi(), 110);
+    assert.equal(e.pd, true);
+    p.doc.activeElement = p.inChatEl;
+    e = key({ key: '=', code: 'Equal' });
+    kd(e);
+    assert.equal(ctl.getChat(), 110);
+    e = wheel(p.inChatEl);
+    wh(e);
+    assert.equal(e.pd, true);
+    assert.equal(ctl.getChat(), 120);
+    // Ctrl+Shift+wheel over the chat is not a text-size gesture: the app still keeps the page from zooming
+    e = wheel(p.inChatEl, { shiftKey: true });
+    wh(e);
+    assert.equal(e.pd, app ? true : undefined);
+    // a plain wheel (scrolling) and plain keys are never touched
+    e = wheel(p.outEl, { ctrlKey: false });
+    wh(e);
+    assert.equal(e.pd, undefined);
+    e = key({ key: 'b', code: 'KeyB' });
+    kd(e);
+    assert.equal(e.pd, undefined);
+  }
+});
+test('page zoom: the app is detected through the desktop bridge when no override is given', () => {
+  const p = fakePage(1500);
+  p.win.AibDesktop = { available: () => true };
+  T.init(p.win, { fonts: [] });
+  p.doc.activeElement = p.outEl;
+  const e = key({ key: '-', code: 'Minus' });
+  p.listeners.doc.keydown(e);
+  assert.equal(e.pd, true);
+});
+
 test('resize-ui: panel widths and limits grow with the interface size, unchanged at 100 %', () => {
   assert.equal(R.sc(240, 1), 240);
   assert.equal(R.sc(240, undefined), 240);

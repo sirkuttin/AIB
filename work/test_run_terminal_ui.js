@@ -315,7 +315,8 @@ test('terminal-ui.js and run-terminal-ui.js use the same chat key (provider:sess
   assert.match(split, /dataset\.mirror = key/);
   const html = fs.readFileSync(path.join(dir, 'chat.html'), 'utf8');
   const scripts = [...html.matchAll(/<script src="\/([^"]+)"/g)].map((m) => m[1]);
-  assert.equal(scripts[0], 'terminal-ui.js', 'terminal-ui.js loads first');
+  assert.equal(scripts[0], 'view-prefs.js', 'view-prefs.js loads first (it fills localStorage for every other script)');
+  assert.equal(scripts[1], 'terminal-ui.js', 'terminal-ui.js loads first after it');
   const md = scripts.indexOf('markdown.js');
   assert.ok(md > 0 && scripts[md + 1] === 'run-terminal-ui.js', 'run-terminal-ui.js right after markdown.js');
   assert.ok(scripts.indexOf('run-terminal-ui.js') < scripts.indexOf('copy-ui.js'));

@@ -8,6 +8,7 @@ import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts
 import type { LiveBackend } from '../host/backend.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
+import { ViewPrefs } from '../state/view_prefs.ts';
 import { authorize, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
@@ -57,6 +58,18 @@ export function studioAsset(path: string): string | null {
   }
 }
 
+/**
+ * chat.html with the saved view preferences in a JSON data block (`<script type="application/json" id="aibViewPrefs">`) before
+ * </head>, for view-prefs.js to put into localStorage before any other page script reads it. A data block is not run, so the
+ * page's CSP (script-src 'self') is unchanged; '<' is escaped so no value can close the block.
+ */
+export function withViewPrefs(html: string, prefs: Record<string, string>): string {
+  const at = html.indexOf('</head>');
+  if (at < 0) return html;
+  const data = JSON.stringify({ prefs }).replace(/</g, '\\u003c');
+  return html.slice(0, at) + '<script type="application/json" id="aibViewPrefs">' + data + '</script>' + html.slice(at);
+}
+
 function contentType(name: string): string {
   return (name.endsWith('.html') ? 'text/html' : name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8';
 }
@@ -86,6 +99,8 @@ export interface WebContext {
   agentOptions: AgentOptions;
   launcher: Launcher;
   folderMemory: FolderMemory;
+  /** The page's view and appearance preferences (state/view_prefs.ts): served inside chat.html, saved by POST /api/live/view-prefs. */
+  viewPrefs: ViewPrefs;
   artifacts: Artifacts;
   /** This server's gate (set once it listens): the own-gate routes call it after reading the body. */
   gate: Gate | null;
@@ -119,6 +134,11 @@ export class WebServer {
     this.native.set('POST /api/live/read-state', async (c, _url, body) => {
       await c.readState.update(body);
       return this.json(200, { ...c.readState.public(), ok: true });
+    });
+    this.native.set('POST /api/live/view-prefs', async (c, _url, body) => {
+      await c.viewPrefs.update(body);
+      const view = c.viewPrefs.public();
+      return this.json(200, { revision: view.revision, warning: view.warning, ok: true });
     });
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, c.projectPrefs.public()));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
@@ -260,6 +280,10 @@ export class WebServer {
         const handler = this.native.get(`GET ${path}`);
         if (handler) return await handler(this.ctx, url, null, request);
         const asset = studioAsset(path);
+        if (asset === 'chat.html') {
+          const page = withViewPrefs(await Deno.readTextFile(APP_ROOT + sep + asset), this.ctx.viewPrefs.public().prefs);
+          return this.bytes(200, new TextEncoder().encode(page), contentType(asset));
+        }
         if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
         if (routeKind('GET', path) === 'monitor') {
           const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), {
@@ -374,6 +398,7 @@ export function makeContext(
     agentOptions: options.agentOptions ?? { stateDir: options.stateDir },
     launcher: null as unknown as Launcher,
     folderMemory: new FolderMemory(options.stateDir),
+    viewPrefs: new ViewPrefs(options.stateDir),
     artifacts: null as unknown as Artifacts,
     gate: null,
     editorList: {},
