@@ -167,6 +167,21 @@ export class HostOSError extends Error {}
 
 export type HostInfo = Record<string, unknown> & { port: number; token: string; pid?: number };
 
+/** The source-run command line (from the repository root), for messages that tell the person what to run. */
+export const SOURCE_COMMAND = 'deno run -A outputs/agent-studio/server/main.ts';
+
+/** How to restart the agent host: in the app (a built binary), quit and start it again; from source, `--stop-host`. */
+export function restartHostHint(compiled = isCompiled()): string {
+  return compiled ? 'quit AIB and start it again, or run "AIB --stop-host"' : `run "${SOURCE_COMMAND} --stop-host"`;
+}
+
+/** How to replace an incompatible agent host and the web server with it. */
+export function replaceHostHint(compiled = isCompiled()): string {
+  return compiled
+    ? 'quit AIB and start it again (or run "AIB --stop-host", then start AIB)'
+    : `run "${SOURCE_COMMAND} --stop-host" (or "${SOURCE_COMMAND} deploy --host") and restart the web server`;
+}
+
 /** A sentence when the running host loaded different code than this process, else ''. */
 export async function codeWarning(hostInfo: unknown): Promise<string> {
   if (typeof hostInfo !== 'object' || hostInfo === null) return '';
@@ -174,10 +189,10 @@ export async function codeWarning(hostInfo: unknown): Promise<string> {
   if (!info.pid && !info.hostId) return '';
   const theirs = info.sourceHash;
   if (theirs === undefined || theirs === null) {
-    return 'The running agent host was started by an older version of Agent Studio. Restart it (python studio.py --stop-host) to use the current code.';
+    return `The running agent host was started by an older version of AIB. To use the current code, restart it: ${restartHostHint()}.`;
   }
   if (theirs !== await sourceHashFor(hostRuntime(info))) {
-    return 'The running agent host is running older code than this web server. Restart it (python studio.py --stop-host) when no conversation is working.';
+    return `The running agent host is running older code than this web server. When no conversation is working, restart it: ${restartHostHint()}.`;
   }
   return '';
 }
@@ -399,7 +414,7 @@ function incompatible(live: Record<string, unknown>, info: HostInfo): HostIncomp
     `The running agent host (process ${pyStr(info.pid)}) speaks protocol ${
       pyStr(live.protocol)
     }; this web server needs protocol ${PROTOCOL_VERSION}.${note} ` +
-      'Finish or interrupt the work, then run "python studio.py --stop-host" (or deploy.py --host) and restart the web server.',
+      `Finish or interrupt the work, then ${replaceHostHint()}.`,
     live,
   );
 }

@@ -29,7 +29,11 @@ notifications through the web API, updates as "open the installer" instructions)
   Cancel keeps them running and AIB stays in the tray. The tray icon (`tray_icon.ts`, the embedded 32x32 icon) has "Open AIB" and
   "Quit AIB"; Quit asks the same question. A window's close cannot be cancelled in `deno desktop`, so a hidden keeper window keeps
   the program alive while it lives in the tray, and a new window is made when the person comes back (`window.ts`, tested with a fake
-  shell in `work/deno/desktop_window_test.ts`; the real shell is `native.ts`).
+  shell in `work/deno/desktop_window_test.ts`; the real shell is `native.ts`). On Windows the tray icon is AIB's own
+  (`tray_win.ts`, `tray_win_worker.ts`): Deno 2.9.8's `Deno.Tray` puts the icon's message window on the JavaScript thread, which
+  never reads Windows messages, so its menu and clicks never arrive. AIB's icon lives on a worker thread with a real message loop
+  (left click opens the window, right click shows the menu, the web server keeps answering while the menu is open) and is removed
+  when AIB quits. Other systems use `Deno.Tray`.
 - **Links:** `window.open` and `target=_blank` links open in the system browser; `desktop-bridge.js` turns plain clicks on links to
   another origin into `window.open`, and the window's load check is the safety net for anything else.
 - **Folder picker:** `deno desktop` has no native folder dialog, so "Browse..." uses the server's picker in the app too

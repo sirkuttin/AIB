@@ -4,6 +4,10 @@
  */
 import type { Notifier, Shell, TrayItem, WindowHandle } from './window.ts';
 import { isExternal, keepHidden } from './window.ts';
+import { startWindowsTray, type WindowsTray } from './tray_win.ts';
+import { getLogger } from '../core/log.ts';
+
+const log = getLogger('desktop');
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -144,7 +148,18 @@ export function nativeShell(): Shell {
   const ask = (Deno.build.os === 'windows' ? windowsAsk() : null) ??
     ((message: string) => Promise.resolve(G.confirm(message) === true));
   let keeper: WindowHandle | null = null;
-  let tray: Any = null;
+  let tray: Any = null; // held for the app's life, so the native icon is never collected
+  let windowsTray: WindowsTray | null = null;
+  const denoTray = (icon: Uint8Array, tooltip: string, items: TrayItem[], onClick: () => void, onMenu: (id: string) => void) => {
+    tray = new D.Tray();
+    try {
+      tray.setIcon(icon);
+    } catch { /* the OS default */ }
+    tray.setTooltip(tooltip);
+    tray.setMenu(items.map((i) => ({ item: { label: i.label, id: i.id, enabled: true } })));
+    tray.addEventListener('click', () => onClick());
+    tray.addEventListener('menuclick', (e: Any) => onMenu(String(e?.detail?.id ?? '')));
+  };
   return {
     createWindow: (o) => wrapWindow(new D.BrowserWindow({ title: o.title, width: o.width, height: o.height })),
     createKeeper() {
@@ -154,14 +169,23 @@ export function nativeShell(): Shell {
       return keeper = invisibleWindow();
     },
     createTray(icon: Uint8Array, tooltip: string, items: TrayItem[], onClick: () => void, onMenu: (id: string) => void) {
-      tray = new D.Tray();
+      // Windows: Deno.Tray's icon never gets its clicks (tray_win.ts), so AIB runs its own icon on a worker thread; Deno.Tray only
+      // if that can't start. Elsewhere Deno.Tray.
+      if (Deno.build.os === 'windows') {
+        void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m)).then((t) => {
+          if (t) windowsTray = t;
+          else denoTray(icon, tooltip, items, onClick, onMenu);
+        });
+        return;
+      }
+      denoTray(icon, tooltip, items, onClick, onMenu);
+    },
+    removeTray() {
+      windowsTray?.remove();
+      windowsTray = null;
       try {
-        tray.setIcon(icon);
-      } catch { /* the OS default */ }
-      tray.setTooltip(tooltip);
-      tray.setMenu(items.map((i) => ({ item: { label: i.label, id: i.id, enabled: true } })));
-      tray.addEventListener('click', () => onClick());
-      tray.addEventListener('menuclick', (e: Any) => onMenu(String(e?.detail?.id ?? '')));
+        tray?.destroy?.();
+      } catch { /* gone */ }
     },
     ask,
     openExternal,
