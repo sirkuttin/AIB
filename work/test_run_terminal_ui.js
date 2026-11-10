@@ -138,10 +138,13 @@ test('shell fences get the button, next to the copy button; other code does not'
     assert.equal(btn.getAttribute('aria-label'), 'Run in terminal');
     assert.equal(btn.type, 'button');
     assert.equal(btn.tagName, 'BUTTON'); /* a real button: reachable with Tab, Enter and Space */
-    const ctl = btn.parentNode;
-    assert.ok(ctl.classList.contains('copy-ctl'), 'inside the copy control');
-    assert.equal(ctl.firstChild, btn, 'in front of Copy');
-    assert.ok(ctl.querySelector('.copy-main'));
+    const group = btn.parentNode;
+    assert.ok(group.classList.contains('copy-code'), 'in the code block corner, where Copy was');
+    assert.equal(group.firstChild, btn, 'left of Copy');
+    assert.ok(group.children[1].classList.contains('copy-ctl') && group.children[1].querySelector('.copy-main'));
+    assert.ok(!group.children[1].classList.contains('copy-code'), 'one corner group, not two');
+    assert.equal(btn.textContent, '', 'icon only');
+    assert.match(btn.title, /Nothing runs until you press Enter/);
     assert.ok(btn.querySelector('svg'), 'inline icon');
     assert.equal(btn.querySelector('svg').getAttribute('stroke'), 'currentColor');
   }
@@ -154,16 +157,24 @@ test('no window.AibTerminal: no button', () => {
   assert.ok(box.querySelector('.copy-main'), 'copy still there');
 });
 
-test('clicking pastes into this chat with the right text and no Enter, and says so', async () => {
-  const { markdown, buttons, pastes, flush } = setup();
+test('clicking pastes into this chat with the right text and no Enter; the button reads Pasted for 2 s, no toast', async () => {
+  const { shell, ctx, markdown, buttons, pastes, flush } = setup();
   const box = markdown('```console\n$ npm test\n> agent-studio@1 test\nok\n$ npm run lint\n```');
   buttons(box)[0].click();
   await flush();
   assert.deepEqual(pastes, [['claude:abc', 'npm test\nnpm run lint']]);
   assert.ok(!/[\r\n]$/.test(pastes[0][1]), 'no Enter at the end');
-  const note = box.querySelector('.run-term-note');
-  assert.equal(note.textContent, 'Pasted into terminal, press Enter to run');
-  assert.equal(note.getAttribute('role'), 'status');
+  const btn = buttons(box)[0];
+  assert.equal(btn.textContent, 'Pasted');
+  assert.ok(btn.classList.contains('done'));
+  assert.equal(btn.getAttribute('aria-label'), 'Pasted into the terminal');
+  assert.equal(box.all().filter((n) => n.getAttribute('role') === 'status').length, 0, 'no toast or note');
+  assert.ok(!/Pasted/.test(ctx.CopyUI.toPlain(box)), 'copying the message leaves the button out');
+  assert.equal(ctx.RunInTerminalUI.STATE_MS, 2000);
+  shell.window.runTimers();
+  assert.equal(btn.textContent, '');
+  assert.ok(!btn.classList.contains('done'));
+  assert.equal(btn.getAttribute('aria-label'), 'Run in terminal');
 });
 
 test('a split side pane pastes into its own chat', async () => {
@@ -178,13 +189,16 @@ test('a split side pane pastes into its own chat', async () => {
   assert.deepEqual(pastes, [['omp:other', 'ls -la']]);
 });
 
-test('no open chat: nothing pasted, a note says why', async () => {
+test('no open chat: nothing pasted, the button says so briefly', async () => {
   const { markdown, buttons, pastes, flush } = setup({ current: '' });
   const box = markdown('```bash\nnpm test\n```');
   buttons(box)[0].click();
   await flush();
   assert.deepEqual(pastes, []);
-  assert.match(box.querySelector('.run-term-note').textContent, /Open a chat/);
+  const btn = buttons(box)[0];
+  assert.equal(btn.textContent, 'No chat');
+  assert.ok(btn.classList.contains('failed'));
+  assert.match(btn.getAttribute('aria-label'), /open a chat/);
 });
 
 test('a failed paste is reported, not thrown', async () => {
@@ -195,7 +209,10 @@ test('a failed paste is reported, not thrown', async () => {
   const box = markdown('```bash\nnpm test\n```');
   buttons(box)[0].click();
   await flush();
-  assert.equal(box.querySelector('.run-term-note').textContent, 'Could not open the terminal');
+  const btn = buttons(box)[0];
+  assert.equal(btn.textContent, 'Not pasted');
+  assert.match(btn.getAttribute('aria-label'), /could not be opened/);
+  assert.equal(box.querySelectorAll('.run-term-note').length, 0);
 });
 
 test('tool calls that ran a command get the button on the command, not on their output', async () => {
@@ -227,6 +244,33 @@ test('tool calls that ran a command get the button on the command, not on their 
   const write = ctx.ToolViews.renderCall({ name: 'Write', input: { file_path: 'a.sh', content: 'npm test' } });
   ctx.CopyUI.decorateCode(write);
   assert.equal(buttons(write).length, 0);
+});
+
+test('collapsed tool rows that ran a command get the button with its tooltip; others do not', async () => {
+  const { shell, ctx, buttons, pastes, flush } = setup();
+  const line = ctx.ToolViews.line(
+    { role: 'tool', call: { name: 'Bash', input: { command: 'deno task test --filter pty' } } },
+    () => shell.document.createElement('div'),
+  );
+  shell.byId.messages.append(line);
+  const found = buttons(line);
+  assert.equal(found.length, 1);
+  assert.ok(found[0].classList.contains('tool-run'));
+  assert.equal(found[0].getAttribute('aria-label'), 'Run in terminal: deno task test --filter pty');
+  assert.match(found[0].title, /Pastes the command\. Nothing runs until you press Enter\./);
+  found[0].click();
+  await flush();
+  assert.deepEqual(pastes, [['claude:abc', 'deno task test --filter pty']]);
+  assert.equal(found[0].textContent, 'Pasted');
+  const read = ctx.ToolViews.line({ role: 'tool', call: { name: 'Read', input: { file_path: 'a.ts' } } }, () =>
+    shell.document.createElement('div'),
+  );
+  assert.equal(buttons(read).length, 0);
+  const raw = ctx.ToolViews.line(
+    { role: 'tool', raw: { kind: 'execute', title: 'bash', rawInput: { command: 'ls' } } },
+    () => shell.document.createElement('div'),
+  );
+  assert.equal(buttons(raw).length, 1);
 });
 
 test('decorating twice adds one button', () => {

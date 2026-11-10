@@ -141,8 +141,14 @@
     return commandText(pre ? pre.textContent : '', lang);
   }
   const NS = 'http://www.w3.org/2000/svg';
-  /* A terminal prompt: a window with ">_", stroke only, like the app's other inline icons. */
-  function icon() {
+  /* The design's icons (16 px grid, stroke only): a terminal window with an arrow out of its corner, and the "Pasted" tick. */
+  const RUN_PATHS = [
+    'M8.25 2.75h-4.5a2 2 0 0 0-2 2v6.5a2 2 0 0 0 2 2h8.5a2 2 0 0 0 2-2v-3.5',
+    'M4.75 7.25 6.5 8.75l-1.75 1.5',
+    'M14.25 1.75 10 6M10 3.5V6h2.5',
+  ];
+  const TICK_PATHS = ['M3.5 8.5 6.5 11.5 12.5 4.5'];
+  function icon(paths, width) {
     const d = doc();
     if (!d.createElementNS) return null;
     const svg = d.createElementNS(NS, 'svg');
@@ -154,35 +160,46 @@
       ['focusable', 'false'],
       ['fill', 'none'],
       ['stroke', 'currentColor'],
-      ['stroke-width', '1.5'],
+      ['stroke-width', width],
       ['stroke-linecap', 'round'],
       ['stroke-linejoin', 'round'],
     ])
       svg.setAttribute(k, v);
-    const path = d.createElementNS(NS, 'path');
-    path.setAttribute('d', 'M2 3h12v10H2zM4.5 6.5 6.5 8.5l-2 2M8 10.5h3.5');
-    svg.append(path);
+    for (const d0 of paths) {
+      const path = d.createElementNS(NS, 'path');
+      path.setAttribute('d', d0);
+      svg.append(path);
+    }
     return svg;
   }
-  const NOTE_MS = 2500;
-  function note(block, message, failed) {
-    const d = doc();
-    let n = block.runNote;
-    if (!n) {
-      n = d.createElement('span');
-      n.className = 'run-term-note';
-      n.setAttribute('role', 'status');
-      block.runNote = n;
-      block.append(n);
+  const LABEL = 'Run in terminal',
+    TIP = 'Run in terminal. Pastes the command. Nothing runs until you press Enter.',
+    STATE_MS = 2000;
+  /* Idle: the icon alone. After a click the button itself says what happened for about 2 s, then goes back (no toast). */
+  function idle(btn) {
+    btn.className = btn.runBase;
+    btn.replaceChildren();
+    const svg = icon(RUN_PATHS, '1.5');
+    if (svg) btn.append(svg);
+    else btn.textContent = '>_';
+    btn.title = TIP;
+    btn.setAttribute('aria-label', btn.runLabel);
+  }
+  function show(btn, state, text, label) {
+    btn.className = btn.runBase + ' ' + state;
+    btn.replaceChildren();
+    if (state === 'done') {
+      const svg = icon(TICK_PATHS, '1.75');
+      if (svg) btn.append(svg);
     }
-    n.textContent = message;
-    n.className = 'run-term-note' + (failed ? ' failed' : '');
-    n.hidden = false;
-    if (n.timer) clearTimeout(n.timer);
-    n.timer = setTimeout(() => {
-      n.hidden = true;
-      n.textContent = '';
-    }, NOTE_MS);
+    btn.append(text);
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    if (btn.runTimer) clearTimeout(btn.runTimer);
+    btn.runTimer = setTimeout(() => {
+      btn.runTimer = null;
+      idle(btn);
+    }, STATE_MS);
   }
   /* Pastes text into the chat's terminal. Resolves true when pasted. Never adds Enter. */
   async function run(conversationId, text) {
@@ -191,46 +208,72 @@
     await T.paste(conversationId, trimEnd(text));
     return true;
   }
-  function makeButton(block, getText) {
+  function makeButton(anchor, text, extraClass) {
     const btn = doc().createElement('button');
     btn.type = 'button';
-    btn.className = 'run-term';
-    btn.title = 'Run in terminal (pastes the command; you press Enter)';
-    btn.setAttribute('aria-label', 'Run in terminal');
-    const svg = icon();
-    if (svg) btn.append(svg);
-    else btn.textContent = '>_';
+    btn.runBase = 'run-term' + (extraClass ? ' ' + extraClass : '');
+    btn.runLabel = LABEL;
+    idle(btn);
     btn.addEventListener('click', async (event) => {
       event.stopPropagation();
       event.preventDefault();
-      const id = conversationFor(block);
+      const id = conversationFor(anchor);
       if (!id) {
-        note(block, 'Open a chat to use its terminal', true);
+        show(btn, 'failed', 'No chat', 'Not pasted: open a chat to use its terminal');
         return;
       }
       try {
-        if (await run(id, getText())) note(block, 'Pasted into terminal, press Enter to run');
-        else note(block, 'Terminal not available', true);
+        if (await run(id, text)) show(btn, 'done', 'Pasted', 'Pasted into the terminal');
+        else show(btn, 'failed', 'Not pasted', 'Not pasted: the terminal is not available');
       } catch {
-        note(block, 'Could not open the terminal', true);
+        show(btn, 'failed', 'Not pasted', 'Not pasted: the terminal could not be opened');
       }
     });
     return btn;
   }
-  /* copy-ui.js decorateCode(): block is the code box, pre its <pre>, lang the fence label, ctl the copy control. */
+  /* copy-ui.js decorateCode(): block is the code box, pre its <pre>, lang the fence label, ctl the copy control.
+     The button goes left of Copy: both move into one corner group that takes over the copy control's place and fade. It carries
+     copy-ctl so copying the message never picks up its "Pasted" text. */
   function decorate(block, pre, lang, ctl) {
     if (!block || block.runDone || !terminal()) return null;
     const text = textForBlock(block, pre, lang);
     if (text == null) return null;
     block.runDone = true;
-    const btn = makeButton(block, () => text);
-    if (ctl && ctl.firstChild) ctl.insertBefore(btn, ctl.firstChild);
-    else if (ctl) ctl.append(btn);
-    else block.append(btn);
+    const btn = makeButton(block, text, 'copy-ctl');
+    if (ctl && ctl.parentNode === block) {
+      const group = doc().createElement('span');
+      group.className = 'copy-code run-acts';
+      block.insertBefore(group, ctl);
+      ctl.classList.remove('copy-code');
+      group.append(btn, ctl);
+    } else block.append(btn);
+    return btn;
+  }
+  /* tool-views.js line(): the collapsed row of a tool call that ran a command gets the button at its right end. */
+  function decorateLine(line, command) {
+    if (!line || line.runDone || !terminal()) return null;
+    const text = toolCommandText(command);
+    if (text == null) return null;
+    line.runDone = true;
+    const btn = makeButton(line, text, 'tool-run');
+    btn.runLabel = LABEL + ': ' + (text.length > 80 ? text.slice(0, 79) + '…' : text).replace(/\s+/g, ' ');
+    idle(btn);
+    line.append(btn);
     return btn;
   }
 
-  const api = { commandText, toolCommandText, textForBlock, conversationFor, decorate, run, init, SHELL_LANGS };
+  const api = {
+    commandText,
+    toolCommandText,
+    textForBlock,
+    conversationFor,
+    decorate,
+    decorateLine,
+    run,
+    init,
+    SHELL_LANGS,
+    STATE_MS,
+  };
   root.RunInTerminalUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
