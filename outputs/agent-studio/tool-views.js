@@ -841,6 +841,7 @@
       inp = asObject(c.input);
       a = analyze(name, c.input);
       if (c.result) status = c.result.isError || resultFailed(c.result.text) ? 'failed' : 'ok';
+      else status = c.running ? 'running' : 'pending'; // no result yet: running only when the chat says another app is on it (chat.js markRunningCall)
     }
     if (!a) return { label: 'tool', text: oneLine(row.label || 'Tool'), status };
     const t = a.type;
