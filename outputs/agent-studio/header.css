@@ -1,0 +1,608 @@
+/* Chat header, status vocabulary, composer and New chat view (docs/design/review-decisions.html). Loaded last.
+   Header: ONE line: name + pencil, then the agent chip and the status chip. Composer: turn line, one box, one chip row. */
+:root {
+  --hd-work: var(--info);
+  --hd-turn: var(--ok);
+  --hd-need: var(--warn);
+  --hd-idle: var(--text-muted-2);
+  --hd-fail: var(--danger);
+}
+
+/* Nothing here is shown: older code still looks these elements up. */
+#legacyControls[hidden],
+#legacyComposer[hidden],
+#subtitle[hidden] {
+  display: none !important;
+}
+
+/* ---- header ---------------------------------------------------------------------------------------------- */
+header {
+  position: relative;
+  flex-wrap: nowrap;
+  align-items: center;
+  padding: 6px 16px;
+  min-height: 48px;
+  gap: 8px;
+}
+header > div.hd-main:first-child {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.hd-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+header .hd-line h1 {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 48px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  border-radius: 4px;
+}
+header .hd-line h1:hover {
+  background: #ffffff0d;
+}
+header .hd-line h1:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.hd-title-input {
+  width: min(420px, 60vw);
+  height: 24px;
+  padding: 0 6px;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: var(--bg-field);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+}
+#renameCurrent {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 22px;
+}
+#renameCurrent:hover,
+#renameCurrent:focus-visible {
+  color: var(--text-bright);
+  background: var(--hover-overlay);
+}
+#renameCurrent[hidden] {
+  display: none;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 6px;
+  max-width: none;
+}
+.vend {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+.vend.hd-branch {
+  height: 18px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+}
+.vend[hidden] {
+  display: none;
+}
+
+/* status chip + composer turn line: one look, keyed by the shared vocabulary (status-words.js tone) */
+.header-actions #status,
+header #status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  max-width: 220px;
+  margin: 0;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#status::before,
+#turnStatus::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: var(--hd-idle);
+}
+#status[data-tone='work'],
+#turnStatus[data-tone='work'] {
+  color: var(--hd-work);
+}
+#status[data-tone='work']::before,
+#turnStatus[data-tone='work']::before {
+  background: var(--hd-work);
+  animation: hd-pulse 1.6s infinite;
+}
+#status[data-tone='turn'],
+#turnStatus[data-tone='turn'] {
+  color: var(--hd-turn);
+}
+#status[data-tone='turn']::before,
+#turnStatus[data-tone='turn']::before {
+  background: var(--hd-turn);
+}
+#status[data-tone='need'],
+#turnStatus[data-tone='need'] {
+  color: var(--hd-need);
+}
+#status[data-tone='need']::before,
+#turnStatus[data-tone='need']::before {
+  background: var(--hd-need);
+  box-shadow: 0 0 0 3px #f0b23e49;
+}
+#status[data-tone='idle'],
+#turnStatus[data-tone='idle'] {
+  color: var(--hd-idle);
+}
+#status[data-tone='off'],
+#turnStatus[data-tone='off'] {
+  color: var(--muted);
+}
+#status[data-tone='off']::before,
+#turnStatus[data-tone='off']::before {
+  background: transparent;
+  border: 1.5px solid var(--muted);
+}
+#status[data-tone='else'],
+#turnStatus[data-tone='else'] {
+  color: var(--hd-need);
+}
+#status[data-tone='else']::before,
+#turnStatus[data-tone='else']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-need);
+}
+#status[data-tone='bad'],
+#turnStatus[data-tone='bad'] {
+  color: var(--hd-fail);
+}
+#status[data-tone='bad']::before,
+#turnStatus[data-tone='bad']::before {
+  background: var(--hd-fail);
+}
+@keyframes hd-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #status::before,
+  #turnStatus::before {
+    animation: none !important;
+  }
+}
+/* the same colours on the sidebar card's status phrase */
+.tone-work .row-phrase {
+  color: var(--hd-work);
+}
+.tone-turn .row-phrase {
+  color: var(--hd-turn);
+}
+.tone-need .row-phrase,
+.tone-else .row-phrase {
+  color: var(--hd-need);
+}
+.tone-idle .row-phrase,
+.tone-off .row-phrase {
+  color: var(--muted);
+}
+
+/* ownership bar: 28 px, dismissible, only while the notice applies */
+.ownership-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  flex: none;
+  padding: 0 4px 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: #1b1a17;
+}
+.ownership-bar:has(#ownershipHint[hidden]) {
+  display: none;
+}
+.ownership-bar .ownership-hint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 28px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ownership-dismiss {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 26px;
+}
+.ownership-dismiss:hover,
+.ownership-dismiss:focus-visible {
+  color: var(--text-bright);
+  background: var(--hover-overlay);
+}
+
+/* ---- follow: the floating "New messages" button ---------------------------------------------------------- */
+.jump-wrap {
+  position: relative;
+  flex: none;
+  height: 0;
+  z-index: 5;
+}
+.jump-new {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 5px 14px;
+  font-size: 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #15111d;
+  font-weight: 600;
+  box-shadow: 0 4px 16px var(--shadow-med);
+}
+.jump-new[hidden] {
+  display: none;
+}
+
+/* ---- composer -------------------------------------------------------------------------------------------- */
+.turn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 16px 0;
+  min-height: 22px;
+}
+#turnStatus {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+#turnStatus[data-kind='needs'] {
+  background: transparent;
+  border: 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+#turnStatus .turn-detail {
+  margin-left: 4px;
+}
+.mark-handled {
+  margin: 0;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 20px;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-3);
+}
+.mark-handled[hidden] {
+  display: none;
+}
+#promptForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0 8px;
+  margin: 6px 16px 0;
+  padding: 0 8px 0 0;
+}
+#promptForm > .attachment-list,
+#promptForm > .slash-hint {
+  grid-column: 1/-1;
+}
+#promptForm > .slash-hint {
+  padding: 4px 12px 0;
+}
+#promptForm #prompt {
+  grid-column: 1;
+  min-height: var(--composer-h, 56px);
+}
+#promptForm .composer-actions {
+  grid-column: 2;
+  justify-content: flex-end;
+  padding: 0 0 8px;
+  gap: 6px;
+}
+#promptForm .composer-actions button {
+  height: 32px;
+  padding: 0 14px;
+}
+#promptForm .composer-actions button[hidden] {
+  display: none;
+}
+/* Interrupt takes Send's place while the agent is working */
+#cancel {
+  border-color: #7a4c4c;
+  color: #f2b8b8;
+  background: transparent;
+}
+.composer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 16px 8px;
+}
+.composer-row .composer-chips {
+  display: contents;
+}
+.composer-row .composer-chips[hidden] {
+  display: none;
+}
+.composer-row .chip {
+  height: 26px;
+  padding: 0 10px;
+}
+.composer-row .chip-wrap {
+  display: inline-flex;
+}
+.chip-tone-high .chip-v {
+  color: var(--hd-fail);
+}
+.chip-ctx,
+.chip-branch,
+.chip-agent {
+  cursor: default;
+}
+.composer-row .chip-more {
+  padding: 0 8px;
+}
+.composer-row .chip-branch {
+  max-width: 150px;
+}
+/* value-only chips like the mockup; the label stays in the tooltip and for screen readers */
+.composer-row .chip-agent .chip-k,
+.composer-row .chip-model .chip-k,
+.composer-row .chip-mode .chip-k {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* Ctx details tooltip: context, cost, session id, notices. Shown on hover or keyboard focus. */
+.chip-tip {
+  display: none;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  max-width: min(420px, 80vw);
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-2);
+  background: var(--bg-composer);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px var(--shadow-soft);
+  pointer-events: none;
+}
+.chip-tip-line {
+  overflow-wrap: anywhere;
+}
+.chip-wrap:hover > .chip-tip,
+.chip-ctx:focus-visible + .chip-tip,
+.chip-ctx:focus + .chip-tip {
+  display: flex;
+}
+/* Attach lives inside the message box, next to Send, so it is easy to find. */
+#promptForm .composer-actions .composer-attach {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #3f4150;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+#promptForm .composer-actions .composer-attach:hover,
+#promptForm .composer-actions .composer-attach:focus-visible {
+  background: #262836;
+  color: var(--text-bright);
+}
+
+/* ---- New chat: the name in italics, a small centred form, the box ----------------------------------------- */
+.new-chat-form {
+  display: none;
+}
+body.new-chat .new-chat-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 16px;
+}
+body.new-chat #messages,
+body.new-chat .jump-wrap,
+body.new-chat #turnRow,
+body.new-chat #status,
+body.new-chat .vend,
+body.new-chat #renameCurrent,
+body.new-chat .ownership-bar {
+  display: none;
+}
+body.new-chat header .hd-line h1 {
+  font-style: italic;
+  cursor: default;
+}
+body.new-chat header .hd-line h1:hover {
+  background: transparent;
+}
+.nc-grid {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: center;
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+}
+.nc-grid label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.nc-grid select {
+  width: 100%;
+  max-width: none;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+}
+.nc-grid select:disabled {
+  opacity: 0.6;
+}
+.nc-folder {
+  width: 100%;
+  max-width: 380px;
+  margin: 14px auto 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.nc-folder-input {
+  width: 100%;
+  max-width: 380px;
+  margin: 8px auto 0;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-field);
+  border: 1px solid var(--line-field);
+  border-radius: 6px;
+}
+.nc-folder-input[hidden] {
+  display: none;
+}
+body.new-chat #attachImages {
+  display: inline-flex;
+  align-items: center;
+}
+body.new-chat #attachmentList:not([hidden]) {
+  display: flex;
+}
+
+/* ---- narrow: stay on one header row ---------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  header {
+    padding: 6px 12px;
+    gap: 6px;
+  }
+  .header-actions {
+    gap: 4px;
+  }
+  .header-actions #status,
+  header #status {
+    max-width: 150px;
+    padding: 0 8px;
+  }
+  .composer-row .chip {
+    max-width: 170px;
+  }
+  .composer-row .chip-branch .chip-k {
+    display: none;
+  }
+}
+
+#ownershipBar {
+  display: none !important;
+}

@@ -1,0 +1,33 @@
+/* No scrollbars inside the chat history: long blocks are clamped with a toggle instead (clamp-ui.js). Loaded last. */
+#messages pre,
+#submessages pre,
+#messages .client-terminal-output,
+#submessages .client-terminal-output {
+  max-height: none !important;
+  overflow-y: visible !important;
+  overflow-x: auto;
+}
+#messages .clamp-on,
+#submessages .clamp-on {
+  max-height: calc(12 * 1.5em) !important;
+  overflow: hidden !important;
+  -webkit-mask-image: linear-gradient(#000 65%, transparent);
+  mask-image: linear-gradient(#000 65%, transparent);
+}
+.clamp-toggle {
+  display: block;
+  margin: 2px 0 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: #b9a7ff;
+  background: transparent;
+  border: 1px solid #3a3550;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.clamp-toggle:hover,
+.clamp-toggle:focus-visible {
+  background: #2a2540;
+  color: #d8ccff;
+}

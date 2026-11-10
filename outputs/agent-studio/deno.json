@@ -1,0 +1,14 @@
+{
+  "nodeModulesDir": "none",
+  "compilerOptions": { "strict": true },
+  "desktop": { "app": { "name": "AIB", "identifier": "dev.aib.app" } },
+  "tasks": {
+    "test": "deno test -A ../../work/deno/",
+    "check": "deno check server/ ../../work/deno/ ../../tools/build.ts",
+    "lint": "deno lint",
+    "build": "deno run -A ../../tools/build.ts"
+  },
+  "fmt": { "lineWidth": 140, "singleQuote": true, "include": ["server/", "../../work/deno/", "../../tools/build.ts"] },
+  "lint": { "include": ["server/", "../../work/deno/", "../../tools/build.ts"] },
+  "exclude": ["node_modules/", "public/", "agent_locks/", "docs/"]
+}

@@ -1,0 +1,2075 @@
+/* Project workspace (Concept A) and the density pass from docs/design/density.md.
+   Loaded after chat.css so it overrides the older sidebar rules without editing their long one-line sources.
+   Scales: spacing 4/8/12/16/24, type 11/12/13/14, rows 28 (headings) / 32 (chats) / 44 (hold note), radius 6.
+   Activity pane (#subagentsPane) and its CSS are deliberately not touched here. */
+:root {
+  --need: #f2b24a;
+  --ws-bg: #121317;
+  --sel: #2b2340;
+}
+
+/* ---- sidebar = project rail + slim list -------------------------------------------------------------------- */
+/* The aside keeps its own width (rail 48 + list 252) whatever the grid track in chat.css says: the main column spans
+   the aside track and pads itself, so the Activity pane's tracks are left exactly as they are. */
+
+/* chrome above the list: about 96 px */
+aside #connections {
+  flex: 1;
+  min-height: 100px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+}
+
+/* ---- conversation rows: 32 px, one line --------------------------------------------------------------------- */
+aside .conversation-row {
+  position: relative;
+  margin: 0;
+}
+aside .connection,
+aside .project-rows .connection {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 8px 0 8px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  overflow: hidden;
+}
+aside .connection:hover {
+  background: var(--hover);
+}
+aside .connection.selected {
+  background: var(--sel);
+  box-shadow: inset 3px 0 0 #a98be2;
+}
+aside .connection:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+aside .connection.attn-needs_you,
+aside .connection.attn-unread {
+  border: 0;
+}
+aside .connection-workspace {
+  display: contents;
+}
+aside .connection .status-mark {
+  order: 0;
+  flex: none;
+  min-width: 14px;
+  justify-content: center;
+}
+aside .connection-title {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  display: block;
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+aside .connection .row-meta-text {
+  order: 2;
+  flex: none;
+  max-width: 72px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-rows .row-meta-text,
+body.ws-project-active .row-meta-text {
+  display: none;
+}
+aside .connection .row-age {
+  order: 4;
+  flex: none;
+  min-width: 24px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+aside .connection .connection-state {
+  display: none;
+}
+aside .connection .hold-note {
+  order: 6;
+  flex: 0 0 100%;
+  display: block;
+  margin: -2px 0 0;
+  padding-left: 22px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+aside .connection:has(.hold-note) {
+  flex-wrap: wrap;
+  align-content: center;
+  height: auto;
+  min-height: 44px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+aside .connection:has(.hold-note) .connection-title {
+  flex: 1 1 0;
+}
+aside .rename-chat {
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0;
+  background: var(--hover);
+  border: 0;
+}
+aside .conversation-row:hover .rename-chat,
+aside .conversation-row:focus-within .rename-chat,
+aside .rename-chat:focus-visible {
+  opacity: 1;
+}
+aside .conversation-row:hover .row-age,
+aside .conversation-row:focus-within .row-age {
+  visibility: hidden;
+}
+aside .conversation-row .connection {
+  padding-right: 8px;
+}
+/* needs-you wins a scan: bigger amber dot with a halo (all status dots share this, tabs and inbox included) */
+.status-dot {
+  width: 8px;
+  height: 8px;
+}
+.st-needs_you {
+  width: 12px;
+  height: 12px;
+  background: var(--need);
+  box-shadow: 0 0 0 3px #f2b24a4d;
+}
+.status-count {
+  background: var(--need);
+  color: #24180a;
+  font-size: 11px;
+}
+
+/* ---- headings, groups, accordions -------------------------------------------------------------------------- */
+aside .list-group,
+aside .project-group {
+  margin: 0;
+}
+.project-head {
+  height: 32px;
+  padding: 0 12px;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.project-caret {
+  font-size: 11px;
+  width: 12px;
+}
+.project-count {
+  font-size: 11px;
+}
+.project-rows {
+  padding-left: 0;
+  margin-left: 0;
+  border-left: 0;
+}
+.archived-box {
+  margin-top: 0;
+  padding-top: 0;
+}
+.archived-box > summary,
+.deleted-box > summary {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.discover-box {
+  padding: 4px 0 0;
+}
+details.side-more {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+details.side-more > summary {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  list-style: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+details.side-more[open] {
+  padding-bottom: 8px;
+}
+details.side-more .monitor {
+  margin: 4px 12px;
+  font-size: 12px;
+}
+details.side-more .note {
+  margin: 4px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+@media (max-height: 900px) {
+  details.side-more .note {
+    display: none;
+  }
+}
+
+/* ---- tab strip --------------------------------------------------------------------------------------------- */
+.ws-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  height: 40px;
+  padding: 8px 8px 0;
+  background: var(--ws-bg);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.ws-tablist {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.ws-tablist::-webkit-scrollbar {
+  display: none;
+}
+.ws-tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 90px;
+  max-width: 220px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: #1b1c23;
+  position: relative;
+}
+.ws-tab:hover {
+  background: var(--hover);
+}
+.ws-tab.on {
+  background: var(--bg);
+  border-color: var(--line);
+  height: 33px;
+  margin-bottom: -1px;
+}
+.ws-tab-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 12px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px 0 0 0;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-2);
+}
+.ws-tab.on .ws-tab-main {
+  color: var(--text-bright);
+}
+.ws-tab-main:focus-visible,
+.ws-tab-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ws-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-tab-x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0;
+}
+.ws-tab:hover .ws-tab-x,
+.ws-tab.on .ws-tab-x,
+.ws-tab-x:focus-visible {
+  opacity: 1;
+}
+.ws-tab-x:hover {
+  background: var(--accent-wash-2);
+  color: var(--text-bright);
+}
+.ws-tabs-empty {
+  align-self: center;
+  padding: 0 8px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ws-list-toggle {
+  display: none;
+}
+.ws-spacer {
+  flex: 1;
+}
+.ws-pop {
+  position: fixed;
+  z-index: 60;
+  width: 360px;
+  max-width: calc(100vw - 16px);
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  padding: 4px;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow-strong);
+}
+.ws-pop-empty {
+  margin: 0;
+  padding: 8px 8px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.ws-inbox-row:hover,
+.ws-pop-row:hover,
+.ws-inbox-row:focus-visible,
+.ws-pop-row:focus-visible {
+  background: var(--accent-wash);
+}
+.ws-inbox-row:focus-visible,
+.ws-pop-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ws-inbox-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.ws-inbox-title {
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-inbox-sub {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-scrim {
+  display: none;
+}
+
+/* ---- main header and composer (density.md section 7) ------------------------------------------------------- */
+header {
+  padding: 8px 16px;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+}
+header > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 12px;
+  min-width: 0;
+  flex: 1;
+}
+header h1 {
+  display: block;
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+}
+header p#subtitle {
+  flex: 1 1 120px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+header .ownership-hint,
+header .session-strip {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-actions {
+  flex-wrap: nowrap;
+  max-width: none;
+  align-items: center;
+}
+.header-actions button,
+#connectionMenu summary {
+  min-width: 28px;
+  min-height: 28px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+#renameCurrent {
+  width: 28px;
+  padding: 0;
+  font-size: 14px;
+}
+.header-actions #status,
+header #status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #2f4a3c;
+  border-radius: 999px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-toolbar {
+  height: 32px;
+  padding: 0 16px;
+}
+.chat-toolbar label,
+#contextState,
+.badge,
+.status-detail,
+aside .eyebrow {
+  font-size: 11px;
+}
+#promptForm {
+  margin: 8px 16px 0;
+}
+#prompt {
+  min-height: var(--composer-h, 56px);
+  max-height: min(max(200px, var(--composer-h, 0px)), 50vh);
+  padding: 8px 12px;
+  resize: none;
+  overflow-y: auto;
+}
+.composer-actions {
+  padding: 4px 8px;
+  gap: 8px;
+}
+.composer-help {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
+}
+.composer-help[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text-bright);
+}
+.composer-chips {
+  padding: 0 12px 8px;
+}
+.composer-note {
+  display: none;
+  margin: 4px 16px 8px;
+  font-size: 11px;
+}
+body.show-composer-help .composer-note {
+  display: block;
+}
+#messages {
+  padding: 8px 16px 16px;
+}
+
+/* ---- about 1000 px: rail shrinks, the list slides over from the tab strip --------------------------------- */
+@media (max-width: 1100px) {
+  body > aside {
+    width: 0;
+    overflow: visible;
+    z-index: 40;
+  }
+  body > main {
+    padding-left: 0;
+  }
+  .ws-list-toggle {
+    display: inline-flex;
+  }
+  .aside-main {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 300px;
+    max-width: calc(100vw - 8px);
+    z-index: 45;
+    padding-top: 12px;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    box-shadow: 8px 0 32px var(--shadow-med);
+    transform: translateX(-110%);
+    visibility: hidden;
+    transition:
+      transform 0.15s ease,
+      visibility 0s linear 0.15s;
+  }
+  body.ws-list-open .aside-main {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.15s ease;
+  }
+  .ws-scrim:not([hidden]) {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: #0006;
+  }
+  header {
+    padding: 8px 16px;
+  }
+  header h1 {
+    font-size: 14px;
+  }
+  .header-actions {
+    max-width: none;
+  }
+  #messages {
+    padding: 8px 16px 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aside-main {
+    transition: none !important;
+  }
+  .ws-working {
+    animation: none;
+  }
+  .ws-tab-draft .ws-tab-title {
+    font-style: italic;
+  }
+}
+
+/* Agent chip and the new-chat state: the composer alone, with a one-line folder bar and a More options toggle. */
+.chip-agent .chip-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #33324a;
+  color: #d9ccff;
+  font-size: 10px;
+  font-weight: 600;
+}
+.chip-agent-picker {
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  padding: 2px 4px 2px 9px;
+  cursor: pointer;
+}
+.chip-agent-select {
+  width: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 1px 2px;
+  margin: 0;
+  cursor: pointer;
+  max-width: 130px;
+}
+.chip-agent-select option {
+  background: #1a1b22;
+  color: var(--text);
+}
+.chip-pop-agent {
+  min-width: 300px;
+  gap: 6px;
+}
+.chip-pop-agent .chip-handoff {
+  white-space: nowrap;
+  margin: 0;
+}
+.chip-handoff-summary {
+  flex-direction: row;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.new-chat-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 24px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.new-chat-bar[hidden] {
+  display: none;
+}
+.new-chat-bar #newChatFolder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.new-chat-bar button {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+body.new-chat #chat > .chat-toolbar,
+body.new-chat #settings,
+body.new-chat #historyNote,
+body.new-chat #approvals,
+body.new-chat #questions,
+body.new-chat #turnStatus,
+body.new-chat #attachImages,
+body.new-chat #attachmentNote,
+body.new-chat #attachmentList {
+  display: none;
+}
+body.new-chat #setup {
+  padding-bottom: 6px;
+}
+
+/* ---- v2: rail 60 (52 narrow), list 240, mockup top and sections (docs/design/layout-concepts.html concept A) ------- */
+body > aside {
+  display: flex;
+  flex-direction: row;
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--side-w, 240px);
+  justify-self: start;
+  position: relative;
+  z-index: 5;
+  padding: 0;
+  overflow: hidden;
+  min-width: 0;
+}
+body > main {
+  grid-column: 1 / 3;
+  padding-left: var(--side-w, 240px);
+}
+/* The chat column is the second grid column: it keeps at least 420 px whatever the side panels are doing (resize-ui.js clamps them). */
+@media (min-width: 1101px) {
+  body {
+    grid-template-columns: var(--side-w, 240px) minmax(420px, 1fr);
+  }
+}
+.aside-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px 0;
+}
+
+.side-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 48px;
+  padding: 10px 4px 6px;
+  flex: none;
+}
+.ws-proj-btn {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.ws-proj-btn:hover,
+.ws-proj-btn[aria-expanded='true'] {
+  background: var(--hover);
+}
+.ws-proj-btn:focus-visible,
+.ws-newproj:focus-visible,
+.ws-prow-main:focus-visible,
+.ws-prow-more:focus-visible,
+.ws-menu-item:focus-visible,
+.ws-inbox-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ws-list-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-caret {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ws-newproj {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 1px dashed #4a4c5b;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+}
+.ws-newproj:hover {
+  background: var(--hover);
+  color: var(--text-bright);
+}
+/* project dropdown */
+.ws-pmenu {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow-strong);
+}
+.ws-pfilter {
+  flex: none;
+  margin: 2px 2px 6px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+}
+.ws-plist {
+  overflow: auto;
+  min-height: 0;
+}
+.ws-prow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.ws-prow:hover,
+.ws-prow.cur {
+  background: var(--accent-wash);
+}
+.ws-prow-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  border-radius: 6px;
+}
+.ws-prow-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-prow.cur .ws-prow-name {
+  font-weight: 600;
+}
+.ws-prow-more {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0;
+}
+.ws-prow:hover .ws-prow-more,
+.ws-prow:focus-within .ws-prow-more {
+  opacity: 1;
+}
+.ws-prow-more:hover {
+  background: var(--accent-wash-2);
+  color: var(--text-bright);
+}
+.ws-badge {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--need);
+  color: #1b1300;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.ws-working,
+.ws-unread {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 5px;
+  border-radius: 50%;
+}
+.ws-working {
+  background: #6fb4ff;
+  animation: ws-pulse 1.6s infinite;
+}
+.ws-unread {
+  background: var(--ok-text);
+}
+@keyframes ws-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.ws-phidden {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  margin-top: 4px;
+  padding: 0 8px;
+  border: 0;
+  border-top: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+.ws-prow.hidden-row .ws-prow-name {
+  color: var(--muted);
+}
+.ws-pempty {
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ws-prow.drag-src {
+  opacity: 0.55;
+  z-index: 2;
+  background: var(--accent-wash);
+  pointer-events: none;
+}
+.ws-drop {
+  position: fixed;
+  z-index: 70;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+body.ws-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+/* per-project menu and rename */
+.ws-menu,
+.ws-rename {
+  position: fixed;
+  z-index: 80;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow-strong);
+}
+.ws-menu-head {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.ws-menu-item:hover:not(:disabled) {
+  background: var(--accent-wash);
+}
+.ws-menu-item:disabled {
+  color: #6b7080;
+  cursor: default;
+}
+.ws-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line-strong);
+}
+.ws-menu-item[aria-checked='true']::before {
+  content: '¹3';
+  margin-right: 6px;
+  color: var(--accent);
+}
+.ws-rename {
+  width: 280px;
+  padding: 10px;
+}
+.ws-rename label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.ws-rename input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+}
+.ws-rename p {
+  margin: 6px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ws-rename .row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.ws-rename button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+/* inbox envelope at the left end of the tab strip */
+.ws-inbox-btn {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+}
+.ws-inbox-btn:hover {
+  background: var(--hover);
+}
+.ws-inbox-btn.has {
+  color: var(--need);
+  border-color: var(--need);
+}
+.ws-inbox-btn .ws-badge {
+  position: absolute;
+  right: -6px;
+  top: -6px;
+  box-shadow: 0 0 0 2px var(--ws-bg);
+}
+.find-chat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 8px);
+  height: 28px;
+  margin: 0 4px 8px;
+  padding: 0 8px;
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  background: #1b1c23;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-align: left;
+}
+.find-chat:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.find-chat span {
+  flex: 1;
+}
+.find-chat kbd {
+  font:
+    11px Consolas,
+    monospace;
+  border: 1px solid var(--line-control);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: #cfd3df;
+  background: var(--bg-inset);
+}
+aside #connections {
+  flex: 1;
+  min-height: 100px;
+  margin: 0 -8px 0 0;
+  padding: 0 8px 0 0;
+  overflow: auto;
+}
+
+/* sections: Pinned / Chats n / Archived n. Held chats sit under their project behind a small "On hold" line. */
+aside .list-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+aside .list-heading .n,
+.hold-toggle .n,
+.archived-box > summary .n,
+.deleted-box > summary .n {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.hold-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 12px 0 20px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hold-toggle:hover {
+  background: var(--hover);
+}
+.hold-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.hold-caret {
+  width: 10px;
+}
+.hold-rows[hidden] {
+  display: none;
+}
+.hold-rows .connection {
+  opacity: 0.75;
+}
+.hold-rows .connection:hover,
+.hold-rows .connection:focus-within,
+.hold-rows .connection.selected {
+  opacity: 1;
+}
+.project-folder {
+  font-size: 11px;
+  opacity: 0.7;
+  flex: none;
+  line-height: 1;
+}
+.archived-box > summary,
+.deleted-box > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.archived-box > summary::before,
+.deleted-box > summary::before {
+  width: 10px;
+}
+aside .project-group {
+  margin-top: 0;
+}
+/* a pinned chat carries a small star after its title; an on-hold row is 44 px, two lines: "note . held 3h" */
+aside .connection.is-pinned .connection-title::after {
+  content: ' \2605';
+  color: var(--warn-text);
+  font-size: 11px;
+}
+aside .connection .hold-note {
+  order: 6;
+  flex: 0 0 100%;
+  display: block;
+  margin: -2px 0 0;
+  padding-left: 20px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* inbox popover: grouped by project, question text under the title */
+.ws-pop {
+  position: fixed;
+  z-index: 60;
+  width: 360px;
+  max-width: calc(100vw - 16px);
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  padding: 4px;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow-strong);
+}
+.ws-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ws-pop-head .n {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.ws-pop-group {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ws-pop-foot {
+  padding: 8px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line-strong);
+  font-size: 12px;
+  color: var(--muted);
+}
+.ws-inbox-row,
+.ws-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+.ws-notify {
+  border-top: 1px solid var(--line-strong);
+  font-size: 12px;
+}
+.ws-notify > summary {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ws-notify-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 8px 8px;
+}
+.ws-notify-body .note {
+  margin: 0;
+  font-size: 11px;
+}
+@media (max-width: 1100px) {
+  body > aside {
+    width: 0;
+  }
+  body > main {
+    padding-left: 0;
+  }
+}
+.ws-tab-new,
+.ws-list-toggle {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.ws-tab-new:hover,
+.ws-list-toggle:hover {
+  background: var(--hover);
+  border: 0;
+}
+.ws-list-toggle {
+  display: none;
+}
+.ws-tab-plus {
+  color: var(--muted);
+  width: 10px;
+  text-align: center;
+}
+.ws-glyph {
+  font-size: 16px;
+}
+@media (max-width: 1100px) {
+  .ws-list-toggle {
+    display: inline-flex;
+  }
+}
+
+/* ---- chat list cards (replaces the 32 px one-line rows; keep this block last) ------------------------------
+   Line 1: status dot, title, age.  Line 2: status phrase in words + agent (+ subagent chip).  Line 3 (optional):
+   hold note or last message, with the project name in front in the all-chats view.  Smallest type 11 px. */
+aside .connection,
+aside .project-rows .connection,
+aside .connection:has(.hold-note) {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: center;
+  gap: 2px 6px;
+  height: auto;
+  min-height: 56px;
+  max-height: 72px;
+  padding: 6px 8px;
+  overflow: hidden;
+  line-height: 18px;
+}
+aside .conversation-row {
+  margin: 0 0 2px;
+}
+aside .conversation-row .connection {
+  padding-right: 8px;
+}
+aside .connection .status-mark {
+  order: 0;
+  min-width: 14px;
+}
+aside .connection .connection-title,
+aside .project-rows .connection .connection-title {
+  order: 1;
+  flex: 1 1 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 550;
+}
+aside .connection .row-age {
+  order: 2;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+aside .connection .row-meta-text {
+  display: none;
+}
+aside .connection .row-status {
+  order: 3;
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+aside .connection .row-phrase {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+aside .connection .row-agent {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+aside .connection .row-chip {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #2a2c38;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 16px;
+}
+aside .connection .row-status.tone-need .row-phrase {
+  color: var(--need);
+}
+aside .connection .row-status.tone-work .row-phrase {
+  color: var(--accent);
+}
+aside .connection .row-status.tone-info .row-phrase {
+  color: #8fb8ef;
+}
+aside .connection .row-status.tone-ok .row-phrase {
+  color: #79d6ae;
+}
+aside .connection .row-status.tone-warn .row-phrase {
+  color: var(--warn-text);
+}
+aside .connection .row-status.tone-bad .row-phrase {
+  color: var(--danger-text);
+}
+aside .connection .row-status.tone-muted .row-phrase {
+  color: var(--muted);
+}
+aside .connection .row-line3,
+aside .connection .hold-note {
+  order: 4;
+  flex: 0 0 100%;
+  display: block;
+  min-width: 0;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+aside .connection .row-line3 .row-project {
+  color: #aeb4c4;
+}
+aside .connection .hold-note {
+  color: var(--warn-text);
+}
+aside .rename-chat {
+  top: 3px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  transform: none;
+}
+aside .connection.selected.attn-needs_you {
+  box-shadow:
+    inset 3px 0 0 #a98be2,
+    inset 0 0 0 1px var(--accent-line);
+}
+aside .connection.selected.attn-unread {
+  box-shadow:
+    inset 3px 0 0 #a98be2,
+    inset 0 0 0 1px #3d5f86;
+}
+aside .connection.attn-needs_you:not(.selected) {
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+aside .connection.attn-unread:not(.selected) {
+  box-shadow: inset 0 0 0 1px #3d5f86;
+}
+
+/* ---- New project dialog (modal) ---- */
+.np-dialog {
+  width: min(480px, calc(100vw - 24px));
+  padding: 18px 20px;
+  background: var(--bg-popover);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px #000c;
+}
+.np-dialog::backdrop {
+  background: var(--shadow-med);
+}
+.np-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.np-form h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.np-form label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.np-form input[type='text'] {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+}
+.np-form input[aria-invalid='true'] {
+  border-color: #c25f5f;
+}
+.np-form input:focus-visible,
+.np-form button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.np-row {
+  display: flex;
+  gap: 8px;
+}
+.np-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.np-browse {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.np-hint {
+  min-height: 18px;
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+}
+.np-hint.ok {
+  color: #79d6ae;
+}
+.np-hint.error {
+  color: var(--danger-text);
+}
+.np-form .np-git {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.np-git input {
+  width: auto;
+  margin: 0;
+}
+.np-git-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+.np-note {
+  margin: 2px 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.np-error {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--danger-text);
+}
+.np-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.np-actions button {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+.np-primary {
+  background: #6a4fc2;
+  border-color: #8a6fe0;
+  color: var(--text-bright);
+}
+.np-primary:disabled {
+  opacity: 0.45;
+}
+
+/* ---- tabs: fit-to-title, sideways scroll, drag to reorder (keep this block last) ------------------------------ */
+.ws-tab-title {
+  max-width: 170px;
+}
+.ws-tab-main {
+  cursor: default;
+}
+.ws-tab.drag-src {
+  opacity: 0.85;
+  z-index: 3;
+  box-shadow: 0 4px 14px var(--shadow-med);
+  pointer-events: none;
+}
+.ws-tab-drop {
+  position: fixed;
+  z-index: 70;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.ws-tab-drop[hidden] {
+  display: none;
+}
+.ws-strip-proj {
+  flex: none;
+  align-self: center;
+  max-width: 120px;
+  margin: 0 2px 4px 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- inbox: one flat list ----------------------------------------------------------------------------------- */
+.ws-inbox-item {
+  position: relative;
+  border-radius: 6px;
+}
+.ws-inbox-item:hover {
+  background: var(--accent-wash);
+}
+.ws-inbox-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.ws-inbox-top .ws-inbox-title {
+  flex: 1;
+  min-width: 0;
+}
+.ws-inbox-age {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ws-inbox-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ws-inbox-proj {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-inbox-handled {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 1;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: underline;
+}
+.ws-inbox-handled:hover,
+.ws-inbox-handled:focus-visible {
+  background: var(--accent-wash-2);
+}
+.ws-inbox-item.turn .ws-inbox-proj {
+  padding-right: 84px;
+}
+
+/* ---- conversation menu (right-click on a card or a tab, the card's three dots) --------------------------------- */
+.organize-menu {
+  min-width: 220px;
+}
+.organize-menu button[aria-checked='true']::before {
+  content: '\2713';
+  display: inline-block;
+  width: 16px;
+  margin-left: -4px;
+}
+.organize-menu button[aria-checked='false']::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  margin-left: -4px;
+}
+.organize-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+.rename-inline {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 6px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+/* ---- status dots (classes come from status-words.js dotClass; same colours as the header chip) ---------------- */
+.status-dot.d-work {
+  width: 9px;
+  height: 9px;
+  border: 2px solid #4b4560;
+  border-top-color: var(--hd-work, var(--info));
+  animation: status-spin 0.9s linear infinite;
+}
+.status-dot.d-turn {
+  background: var(--hd-turn, var(--ok));
+}
+.status-dot.d-need {
+  width: 12px;
+  height: 12px;
+  background: var(--hd-need, var(--warn));
+  box-shadow: 0 0 0 3px #f2b24a4d;
+}
+.status-dot.d-idle {
+  border: 2px solid var(--hd-idle, var(--text-muted-2));
+}
+.status-dot.d-off {
+  border: 1px dashed #6b7080;
+}
+.status-dot.d-else {
+  border: 2px solid #8a9be0;
+}
+.status-dot.d-fail {
+  background: var(--hd-fail, var(--danger));
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.d-work {
+    animation: none;
+    border-style: dotted;
+  }
+}
+.ws-rename-proj {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 22px;
+}
+.ws-rename-proj:hover,
+.ws-rename-proj:focus-visible {
+  color: var(--text-bright);
+  background: var(--hover-overlay);
+}
+.ws-rename-proj:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ws-rename-proj[hidden] {
+  display: none;
+}
+.ws-proj-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  margin: 0 4px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: inherit;
+  background: var(--bg-field);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+}
+
+/* ---- Resizable layout (resize-ui.js): sash handles like VS Code ------------------------------------------------
+   --side-w / --activity-w / --composer-h / --act-split are set on <html> by the script; the numbers here are only fallbacks. */
+.rs-handle {
+  position: fixed;
+  z-index: 30;
+  background: transparent;
+  touch-action: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.rs-handle[hidden] {
+  display: none;
+}
+.rs-handle::after {
+  content: '';
+  position: absolute;
+  background: transparent;
+  transition: background-color 0.1s ease 0.15s;
+}
+.rs-v {
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+}
+.rs-v::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+}
+.rs-h {
+  height: 7px;
+  cursor: row-resize;
+}
+.rs-h::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 1px;
+}
+.rs-handle:hover::after,
+.rs-handle.rs-active::after,
+.rs-handle:focus-visible::after {
+  background: var(--accent);
+}
+.rs-v:hover::after,
+.rs-v.rs-active::after,
+.rs-v:focus-visible::after {
+  left: 2px;
+  width: 3px;
+}
+.rs-h:hover::after,
+.rs-h.rs-active::after,
+.rs-h:focus-visible::after {
+  top: 2px;
+  height: 3px;
+}
+.rs-side {
+  left: calc(var(--side-w, 240px) - 3px);
+}
+.rs-side.rs-collapsed {
+  left: 0;
+  width: 6px;
+}
+.rs-activity {
+  top: var(--tabs-h, 40px);
+  right: calc(var(--activity-w, 280px) - 4px);
+  transition: right 0.18s ease;
+}
+#promptForm {
+  position: relative;
+}
+/* The box clips its children, so the handle sits just inside its top edge. */
+.rs-composer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 6px;
+  z-index: 3;
+}
+.rs-composer::after {
+  top: 0;
+}
+.rs-composer:hover::after,
+.rs-composer.rs-active::after,
+.rs-composer:focus-visible::after {
+  top: 0;
+}
+.rs-split {
+  position: relative;
+  order: 2;
+  flex: 0 0 7px;
+  margin: -3px 0;
+  z-index: 3;
+}
+body.rs-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: col-resize;
+  transition: none !important;
+}
+body.rs-dragging[data-rs-axis='y'] {
+  cursor: row-resize;
+}
+body.rs-dragging .rs-activity,
+body.rs-dragging .rs-handle::after {
+  transition: none;
+}
+body.rs-dragging iframe {
+  pointer-events: none;
+}
+.rs-handle:hover::after {
+  transition-delay: 0.15s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rs-handle::after,
+  .rs-activity {
+    transition: none !important;
+  }
+}
+@media (min-width: 1101px) {
+  body.side-off > aside {
+    visibility: hidden;
+  }
+  body.side-off .ws-list-toggle {
+    display: inline-flex;
+  }
+}
+@media (max-width: 1099px) {
+  .rs-split,
+  .rs-side,
+  .rs-activity {
+    display: none !important;
+  }
+}
+/* All chats: project group heads carry the same project menu as the dropdown. */
+.project-head-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.project-head-row .project-head {
+  flex: 1;
+  min-width: 0;
+}
+.project-more {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0;
+}
+.project-head-row:hover .project-more,
+.project-more:focus-visible,
+.project-more[aria-expanded='true'] {
+  opacity: 1;
+}
+.project-more:hover {
+  background: var(--accent-wash-2);
+  color: var(--text-bright);
+}
+.ws-notify-body .notify-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.ws-notify-body .notify-row select {
+  max-width: 60%;
+  font-size: 12px;
+}
+.ws-notify-body .note.warn {
+  color: #e0b36a;
+}
+.ws-notify-body .notify-muted-head {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.ws-notify-body .notify-muted {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ws-notify-body .notify-muted-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ws-notify-body .notify-muted button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* Beta marker: sits in the sidebar's top padding (absolutely placed, so nothing else moves). */
+aside {
+  position: relative;
+}
+.beta-tag {
+  position: absolute;
+  top: 7px;
+  left: 18px;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+  user-select: none;
+}
+/* Room for the tag above the project name (the tag sits in the sidebar's top corner). */
+.beta-tag ~ .aside-main .side-top {
+  height: auto;
+  padding-top: 32px;
+}
+.beta-tag b {
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 3px;
+}

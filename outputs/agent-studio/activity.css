@@ -1,0 +1,624 @@
+/* Activity column (right): Subagents and Processes regions with their own scroll, a drill-in history that widens the column, and a slim in-flow strip below 1100 px. */
+:root {
+  --activity-w: 280px;
+}
+body {
+  grid-auto-columns: var(--activity-w);
+  transition: grid-auto-columns 0.18s ease;
+}
+/* While a subagent history is open resize-ui.js widens --activity-w to max(your width, 480) as far as there is room. */
+@media (prefers-reduced-motion: reduce) {
+  body {
+    transition: none;
+  }
+}
+/* Wide: main spans all three columns (its tab strip crosses over Activity); everything under the strip except this column keeps clear of it.
+   The column starts below the tab strip, on the chat title's row (--tabs-h / --hd-h are measured by activity-ui.js). */
+@media (min-width: 1100px) {
+  html body > main {
+    grid-column: 1 / 4;
+  }
+  body > main > :not(#chatTabs) {
+    margin-right: var(--activity-w);
+    transition: margin-right 0.18s ease;
+  }
+  body.activity-off > main > :not(#chatTabs) {
+    margin-right: 0;
+  }
+  body.rs-dragging > main > :not(#chatTabs) {
+    transition: none;
+  }
+}
+@media (min-width: 1100px) and (prefers-reduced-motion: reduce) {
+  body > main > :not(#chatTabs) {
+    transition: none;
+  }
+}
+#subagentsPane {
+  grid-column: 3;
+  grid-row: 1;
+  margin-top: var(--tabs-h, 40px);
+  z-index: 6;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: #15161c;
+  overflow: hidden;
+}
+#activityStrip {
+  display: none;
+}
+.activity-hide {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+.activity-hide:hover,
+.activity-hide:focus-visible {
+  color: var(--text);
+  background: var(--hover-2);
+}
+#activityBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#activityBody > .subagent-section-heading,
+#subagentsPane > .note {
+  display: none;
+}
+/* Two regions fill the column: Subagents slightly taller than Processes, each at least 96 px with its own scroll. */
+#subagentList {
+  order: 1;
+  flex: 1.2 1 0;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+#subagentList > .sa-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  padding: 0 0 6px;
+}
+.empty-state.sa-empty,
+#subagentList > .empty-state,
+#runningCommandList > .empty-state {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+#commandSection {
+  order: 3;
+  flex: 1 1 0;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  max-height: none;
+}
+#commandSection .command-heading {
+  height: 28px;
+  padding: 0 6px 0 12px;
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+#commandSection .command-heading h3,
+.sa-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 28px;
+}
+#commandSection .running-command-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  padding: 0 0 6px;
+  gap: 0;
+  scrollbar-width: thin;
+  display: block;
+}
+#commandHistoryToggle {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  border-radius: 4px;
+}
+#commandHistoryToggle:hover,
+#commandHistoryToggle[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--hover-2);
+}
+#commandStatusNote {
+  margin: 0;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--danger-text);
+}
+#clientCaps {
+  order: 4;
+  flex: 0 0 auto;
+}
+/* A dragged split fixes the Subagents height (it still gives way to the 96 px floor of Processes). */
+body.act-split-set #subagentList {
+  flex: 0 1 var(--act-split);
+}
+body.subchat-open .rs-split {
+  display: none;
+}
+.sa-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  margin-top: 4px;
+  position: relative;
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+}
+/* Wide: the Subagents heading is the column's top row: the chat title's height, with the same bottom divider. */
+@media (min-width: 1100px) {
+  .sa-heading {
+    height: var(--hd-h, 48px);
+    min-height: var(--hd-h, 48px);
+    margin-top: 0;
+    padding: 0 6px 0 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sa-heading .activity-hide {
+    margin-left: auto;
+  }
+}
+.sa-qualifier {
+  margin-left: 4px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.sa-failed-count {
+  color: var(--danger-text);
+  font-weight: 550;
+}
+.sa-none {
+  margin: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sa-card,
+.command-card.sa-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 8px);
+  height: 28px;
+  margin: 0 4px;
+  padding: 0 8px 0 calc(8px + var(--depth, 0) * 14px);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.sa-card:hover {
+  background: var(--bg-card-hover);
+}
+.sa-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 450;
+  color: var(--text-dim);
+}
+.sa-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4b4f5d;
+}
+.sa-working .sa-dot,
+.proc-running .sa-dot {
+  background: var(--accent);
+  animation: toolpulse 1.4s ease-in-out infinite;
+}
+.sa-probable .sa-dot {
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  animation: none;
+}
+.sa-working .sa-title {
+  color: #f1ecff;
+  font-weight: 550;
+}
+.sa-when {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.sa-working .sa-when,
+.proc-running .sa-when {
+  color: #a79fbd;
+}
+.sa-cmd {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-wash-4);
+  color: var(--accent);
+}
+.sa-failed .sa-dot,
+.proc-failed .sa-dot {
+  background: #d9666e;
+}
+.sa-failed .sa-title {
+  color: #f3b3b8;
+  font-weight: 550;
+}
+.sa-failed .sa-when,
+.proc-failed .sa-when {
+  color: var(--danger-text);
+}
+.subagent-card.sa-card.selected,
+.proc-row.selected {
+  background: var(--accent-wash-5);
+}
+.sa-toggle {
+  cursor: pointer;
+}
+.sa-toggle .sa-title {
+  color: var(--text-muted);
+}
+.sa-toggle:hover .sa-title {
+  color: var(--text-4);
+}
+.sa-caret {
+  flex: 0 0 auto;
+  width: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.sa-toggle .sa-caret {
+  margin-right: 0;
+}
+/* Processes: one 28 px line, the agent's description (prose, so the interface font), right-aligned duration; the command is on hover. */
+.proc-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font:
+    12px/1.2 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  color: #b4b9c8;
+}
+.proc-running .proc-title {
+  color: var(--text);
+}
+.proc-failed .proc-title {
+  color: #f3b3b8;
+}
+.proc-row.sa-card .sa-dot {
+  margin-left: 0;
+}
+.sa-card:focus-visible,
+.activity-hide:focus-visible,
+#commandHistoryToggle:focus-visible,
+#activityStrip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sa-dot {
+    animation: none !important;
+  }
+}
+/* Hide / show (wide screens only; below 1100 px the strip is already one line). */
+.activity-reveal {
+  display: none;
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 15;
+  writing-mode: vertical-rl;
+  padding: 10px 5px;
+  font-size: 11px;
+  border-radius: 6px 0 0 6px;
+  border-right: 0;
+  background: var(--bg-card-hover);
+}
+@media (min-width: 1100px) {
+  body.activity-off #subagentsPane {
+    display: none;
+  }
+  body.activity-off .activity-reveal {
+    display: block;
+  }
+}
+/* History drills in: the column replaces its lists with the item's history, widens, and nothing overlaps the chat. */
+/* While a history is open the Processes section stays at the bottom of the column, never under 120 px; the subagent list gives way. */
+body.subchat-open #subagentList {
+  display: none;
+}
+body.subchat-open #activityBody {
+  display: contents;
+}
+body.subchat-open #commandSection {
+  flex: 0 1 170px;
+  min-height: 120px;
+  max-height: 45%;
+}
+#subchatPane {
+  position: static;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: auto;
+  min-width: 0;
+  border-left: 0;
+  box-shadow: none;
+}
+#subchatPane > .pane-heading {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 6px 8px;
+  gap: 6px;
+  align-items: center;
+}
+#subchatPane > .pane-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+#subchatPane .pane-heading .eyebrow {
+  display: none;
+}
+#subchatTitle {
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#subchatStatus {
+  margin: 1px 0 0;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#subchatBack {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+}
+#closeSubchat {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+#subchatPane #submessages {
+  padding: 10px 12px 16px;
+}
+.subchat-links {
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow: auto;
+  padding: 4px 12px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.subchat-links h3 {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 8px 0 2px;
+  font-weight: 600;
+}
+.sub-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-5);
+}
+.sub-link:hover {
+  background: var(--hover-2);
+}
+.sub-link-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-link-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sub-link-state.running {
+  color: var(--accent);
+}
+.subchat-note {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+}
+/* Narrow: the column becomes a one-line chip strip above the composer; it expands in place (about 220 px), never floats. */
+@media (max-width: 1099px) {
+  #subagentsPane {
+    grid-column: auto;
+    grid-row: auto;
+    flex: 0 0 auto;
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .activity-hide,
+  .activity-reveal {
+    display: none !important;
+  }
+  #subagentsPane {
+    margin-top: 0;
+  }
+  #activityStrip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    height: 32px;
+    margin: 0;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: left;
+    color: var(--text-dim);
+  }
+  #activityStrip:hover {
+    background: var(--bg-card-hover);
+  }
+  .activity-chips {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .ac-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .ac-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4b4f5d;
+  }
+  .ac-sub.working .ac-dot {
+    background: var(--accent);
+    animation: toolpulse 1.4s ease-in-out infinite;
+  }
+  .ac-chip + .ac-chip::before {
+    content: '\00B7';
+    margin-right: 8px;
+    color: #5a5f70;
+  }
+  .ac-failed,
+  .ac-proc {
+    color: var(--muted);
+  }
+  .ac-failed.has {
+    color: var(--danger-text);
+  }
+  .ac-proc.has {
+    color: var(--text-5);
+  }
+  .ac-none {
+    color: var(--muted);
+  }
+  .ac-chev::after {
+    content: '\25B4';
+    font-size: 13px;
+    color: var(--muted);
+  }
+  #subagentsPane.open .ac-chev::after {
+    content: '\25BE';
+  }
+  #activityBody {
+    display: none;
+  }
+  #subagentsPane.open #activityBody {
+    display: flex;
+    flex: 0 0 auto;
+    height: 220px;
+  }
+  body.subchat-open #subagentsPane:not(.open) #activityBody {
+    display: none;
+  }
+  body.subchat-open #subagentsPane.open #activityBody {
+    display: contents;
+  }
+  body.subchat-open #subagentsPane.open #commandSection {
+    flex: 0 0 120px;
+    height: 120px;
+    max-height: none;
+  }
+  #subagentsPane:not(.open) #subchatPane {
+    display: none;
+  }
+  #subagentsPane.open #subchatPane:not([hidden]) {
+    flex: 0 0 auto;
+    height: min(50vh, 360px);
+  }
+  body {
+    grid-auto-columns: auto;
+  }
+}

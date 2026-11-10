@@ -1,0 +1,12 @@
+# Prettier covers only outputs/agent-studio/*.js, outputs/agent-studio/*.css and work/*.js (see the format script).
+# Everything else is ignored.
+node_modules/
+package-lock.json
+*.html
+*.py
+*.md
+*.min.js
+*.min.css
+**/docs/
+work/agent-studio-state/
+eslint.config.js

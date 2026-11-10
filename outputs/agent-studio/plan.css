@@ -1,0 +1,170 @@
+/* Plan checklist card (plan-ui.js). Wraps long items; never scrolls inside. */
+.bubble.plan {
+  padding: 8px 10px;
+}
+.bubble.plan .bubble-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.plan-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+.plan-list {
+  list-style: none;
+  margin: 6px 0 2px;
+  padding: 0;
+}
+.plan-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  align-items: flex-start;
+  padding: 2px 0;
+  line-height: 1.4;
+}
+.plan-item .plan-text {
+  flex: 1 1 0;
+}
+.plan-note {
+  flex-basis: 100%;
+  padding-left: 24px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.plan-mark {
+  flex: none;
+  width: 16px;
+  height: 1.4em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+.plan-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.plan-completed .plan-mark {
+  color: var(--ok-bright);
+}
+.plan-completed .plan-text {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: #5d6272;
+}
+.plan-pending {
+  color: var(--muted);
+}
+.plan-in_progress .plan-text {
+  color: #f0eaff;
+  font-weight: 600;
+}
+.plan-spin::before,
+.plan-dot::before,
+.plan-pend::before {
+  content: '';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+/* Like Claude's app: the current step spins while work runs; when nothing runs it is a circle with three centred dots;
+   a step to do is a dashed circle. */
+.plan-dot::before {
+  border: 1.5px solid var(--plan-dot);
+  background:
+    radial-gradient(circle at 22% 50%, var(--plan-dot) 0 0.9px, transparent 1.2px),
+    radial-gradient(circle at 50% 50%, var(--plan-dot) 0 0.9px, transparent 1.2px),
+    radial-gradient(circle at 78% 50%, var(--plan-dot) 0 0.9px, transparent 1.2px);
+}
+.plan-spin::before {
+  border: 1.5px solid rgba(215, 217, 227, 0.25);
+  border-top-color: var(--plan-dot);
+  border-right-color: var(--plan-dot);
+  animation: plan-spin 0.9s linear infinite;
+}
+.plan-pend::before {
+  border: 1.5px dashed var(--text-faint-3);
+}
+@keyframes plan-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes plan-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-spin::before {
+    animation-duration: 3s;
+  }
+}
+
+/* The desktop app's end-of-turn "next step" box: recap, one question, read-only answer buttons. */
+.bubble.nextstep {
+  padding: 8px 12px;
+  border-color: var(--line-card);
+}
+.nextstep-recap {
+  margin: 4px 0 0;
+  color: var(--text-7);
+}
+.nextstep-ask {
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+.nextstep-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 2px;
+}
+.nextstep-btn {
+  border: 1px dashed var(--line-card);
+  border-radius: 999px;
+  padding: 3px 12px;
+  background: transparent;
+  color: var(--text-muted-2);
+  font: inherit;
+  cursor: not-allowed;
+}
+.nextstep-btn.primary {
+  border-style: solid;
+  border-color: #55586a;
+  color: var(--text-7);
+}
+.nextstep-note {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-faint-3);
+}
+
+/* The current plan pinned above the message box while it has unfinished steps. */
+.plan-dock {
+  margin: 6px 14px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-card);
+  border-radius: 10px;
+  background: #17181f;
+}
+.plan-dock-head {
+  font-size: 12px;
+  color: var(--text-muted-2);
+  margin-bottom: 4px;
+}
+.plan-dock .plan-list {
+  margin: 0;
+}
+.plan-dock .plan-more {
+  list-style: none;
+  color: var(--text-muted-2);
+  font-size: 12px;
+  padding-left: 22px;
+}

@@ -1,0 +1,76 @@
+/* Agent Studio colour tokens: every colour the page paints is named here once, so a theme is a different set of values for this one block. Loaded first by chat.html. Documented in docs/FRONTEND.md. */
+:root {
+  /* Text */
+  --text: #e5e7ec; /* Default text on the page */
+  --text-bright: #fff; /* Brightest text: on solid buttons and viewer controls */
+  --text-2: #d6d9e2; /* Chip, tab and vendor-label text */
+  --text-3: #c9cbd6; /* Secondary labels: sidebar summaries, inbox button */
+  --text-4: #d8dbe4; /* Pane headings on hover, file-group scope */
+  --text-5: #c8cbd6; /* Link-like body text in the activity and changes panes */
+  --text-6: #e6e7ee; /* Artifact list titles and picker text */
+  --text-7: #c9ccd8; /* Artifact version and next-step recap text */
+  --text-dim: #a3a8b6; /* Activity strip and sub-agent card text */
+  --muted: #929aaa; /* Muted text (original token) */
+  --text-muted: #8a91a3; /* Qualifiers, timestamps, toggles */
+  --text-muted-2: #9195a6; /* Idle status text and dot (also --hd-idle) */
+  --text-faint: #747d90; /* Placeholders, composer notes, context state */
+  --text-faint-2: #737e94; /* Message times, turn dividers */
+  --text-faint-3: #6d7184; /* Artifact shortcuts and counts */
+
+  /* Surface */
+  --bg: #101114; /* Page background; deepest wells (provider tabs, attachment image wells) */
+  --panel: #17181e; /* Sidebar, switcher and dialog panels */
+  --panel-2: #20212a; /* Raised blocks: rename dialog, attachment cards, file badges */
+  --bg-inset: #14151a; /* Small inset fields: project filter, rename input, kbd chips */
+  --code-bg: #14151b; /* Code blocks, diffs, resource links */
+  --code-bg-inline: #1b1c24; /* Inline code, table heads, diff summaries */
+  --bg-field: #1c1e27; /* Inputs, slash popup, open tool rows */
+  --bg-popover: #1d1e28; /* Toasts and popovers */
+  --bg-composer: #1a1b24; /* Prompt form and small popups */
+  --bg-control: #20222b; /* Copy controls and menus */
+  --bg-row: #16171d; /* Turn lines, message notes, queue rows on hover */
+  --bg-card-hover: #1d1e26; /* Activity cards and strip on hover */
+  --hover: #23252f; /* Hover fill for sidebar rows, tabs, buttons */
+  --hover-2: #25222e; /* Hover fill for sub-agent cards and activity buttons */
+  --hover-overlay: #ffffff14; /* Translucent white hover wash on header icon buttons */
+
+  /* Line */
+  --line: #2d2e39; /* Default hairline border (original token) */
+  --line-strong: #414051; /* Panel, form and card borders */
+  --line-control: #3a3c49; /* Button and badge borders */
+  --line-card: #3d4050; /* Thumbnail and queue-row borders */
+  --line-field: #343746; /* Input and popup borders */
+
+  /* Accent */
+  --accent: #bba1ff; /* Accent (original token): primary buttons, focus, links */
+  --accent-wash: #2a2438; /* Purple-tinted hover and active fill */
+  --accent-wash-2: #383043; /* Stronger purple hover fill */
+  --accent-wash-3: #2b2752; /* Artifacts pane purple fill */
+  --accent-wash-4: #2b2740; /* Sub-agent command chips and pane badges */
+  --accent-wash-5: #2d243d; /* Selected sub-agent and command card fill */
+  --accent-line: #705a9b; /* Selected and needs-you purple borders */
+
+  /* Status */
+  --danger: #f08a8a; /* Failure dot and new-line marker (also --hd-fail) */
+  --danger-text: #f19999; /* Ownership and error-note text */
+  --danger-bright: #ffbac6; /* Error text and failed tool status */
+  --danger-fill: #d96b82; /* Destructive primary button fill and border */
+  --ok: #7ad19c; /* Turn-running dot and additions (also --hd-turn) */
+  --ok-text: #8fd7b2; /* Idle status text and notify-on button */
+  --ok-bright: #8be28b; /* Copied tick, added tokens, ok marks */
+  --ok-text-2: #8be3ad; /* Completed tool status and added diff lines */
+  --warn: #f0b23e; /* Needs-you dot and stars (also --hd-need) */
+  --warn-text: #e6c27a; /* Hold note, needs-you hover and flash */
+  --warn-text-2: #f0c674; /* Recovered and possibly-active badges */
+  --warn-bg: #302a1c; /* Approval, needs-you line and toast fill */
+  --warn-line: #ad8d47; /* Approval and needs-you borders */
+  --info: #5aa9ff; /* Working dot (also --hd-work) */
+
+  /* Plan */
+  --plan-dot: #d7d9e3; /* Plan step dots */
+
+  /* Shadow */
+  --shadow-strong: #000a; /* Toast, switcher and popover drop shadow */
+  --shadow-med: #0009; /* Menu shadow and switcher backdrop */
+  --shadow-soft: #0008; /* Chip popover shadow */
+}

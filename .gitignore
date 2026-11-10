@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.log
+work/agent-studio-state/
+work/*-fixture/state/
+work/*-fixture/claude/
+work/*-fixture/omp/
+node_modules/
+.claude/
+work/ownership-fixture/data/
+work/deploy-fixture/
+# Pages and files agents make for viewing (artifacts) land loose in outputs/; Studio's artifact store keeps their versions.
+# Projects in outputs/ subfolders stay tracked.
+/outputs/*.html
+/outputs/*.htm
+/outputs/*.md
+/outputs/*.svg
+/outputs/*.png
+/outputs/*.jpg
+/outputs/*.jpeg
+/outputs/*.gif
+/outputs/*.webp
+/outputs/*.pdf
+work/*-fixture/owners/
+dist/
+# Secrets never belong in the repository.
+.env*
+*.pem
+*.key

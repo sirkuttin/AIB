@@ -1,0 +1,86 @@
+/* First-run start page (start-page-ui.js): replaces the empty New chat form while no agent is ready. */
+#startPage {
+  display: none;
+}
+body.new-chat.start-page #startPage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 36px 16px 24px;
+  box-sizing: border-box;
+}
+body.new-chat.start-page #newChatForm,
+body.new-chat.start-page #promptForm,
+body.new-chat.start-page .composer-row,
+body.new-chat.start-page #legacyComposer,
+body.new-chat.start-page #newChatBar,
+body.new-chat.start-page #planDock,
+body.new-chat.start-page #queueBox,
+body.new-chat.start-page #turnRow {
+  display: none;
+}
+#startPage .sp-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+#startPage .sp-subtitle {
+  margin: 0 0 18px;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--muted);
+}
+#startPage .sp-lead {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#startPage .st-actions {
+  display: none; /* On/Off, Edit and Remove belong to Settings */
+}
+#startPage .sp-more,
+#startPage .sp-foot,
+#startPage .sp-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+#startPage .sp-more {
+  font-size: 13px;
+}
+#startPage .sp-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+#startPage .sp-stuck {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #262833;
+  border-radius: 8px;
+}
+#startPage .sp-command {
+  display: block;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--hover);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+/* No chat to switch yet: the header's view switch comes back with the normal New chat form. */
+body.new-chat.start-page #viewSwitch {
+  display: none;
+}

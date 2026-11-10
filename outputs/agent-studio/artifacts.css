@@ -1,0 +1,479 @@
+/* Artifacts (artifacts-ui.js): the third right-column tab with its one-row viewer, and the cards / Preview button / links in the chat stream.
+   The tab row itself is styled in changes.css. Nothing here applies to a chat without artifacts except the empty-state text in the tab. */
+#subagentsPane.tab-artifacts #activityBody {
+  display: none !important;
+}
+.artifacts-pane {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.artifacts-pane[hidden] {
+  display: none;
+}
+.ar-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.ar-bar[hidden],
+.ar-foot[hidden],
+.ar-empty[hidden],
+.ar-avail[hidden],
+.ar-note[hidden],
+.ar-pop[hidden] {
+  display: none;
+}
+.ar-pick,
+.ar-ver,
+.ar-ico {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-card);
+  border-radius: 6px;
+  background: #1e1f28;
+  color: var(--text-6);
+  font-size: 12px;
+  line-height: 1;
+  min-width: 0;
+}
+.ar-pick {
+  flex: 1 1 auto;
+  max-width: 260px;
+  font-weight: 600;
+}
+.ar-pick:hover:not(:disabled),
+.ar-ver:hover:not(:disabled),
+.ar-ico:hover,
+.ar-pick[aria-expanded='true'],
+.ar-ver[aria-expanded='true'],
+.ar-ico[aria-expanded='true'] {
+  border-color: var(--accent);
+  background: var(--accent-wash-3);
+}
+.ar-pick.plain,
+.ar-ver.plain {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+}
+.ar-pick:disabled,
+.ar-ver:disabled {
+  opacity: 1;
+}
+.ar-ver {
+  flex: 0 0 auto;
+  font-weight: 500;
+  color: var(--text-7);
+}
+.ar-ver.old {
+  color: #f0c36a;
+  border-color: #6b5a2c;
+}
+.ar-ico {
+  flex: 0 0 auto;
+  width: 28px;
+  justify-content: center;
+  padding: 0;
+  font-size: 15px;
+}
+.ar-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.ar-pick-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.ar-caret {
+  margin-left: auto;
+  color: var(--muted);
+  font-weight: 400;
+}
+.ar-k {
+  flex: 0 0 auto;
+  min-width: 34px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent-wash-3);
+  color: var(--accent);
+  font:
+    10px/16px Consolas,
+    'Cascadia Mono',
+    monospace;
+  text-align: center;
+  font-weight: 400;
+}
+.ar-pick:focus-visible,
+.ar-ver:focus-visible,
+.ar-ico:focus-visible,
+.ar-it:focus-visible,
+.ar-switch:focus-visible,
+.art-btn:focus-visible,
+.art-preview:focus-visible,
+.artifact-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ar-avail {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 12px;
+  font-size: 12px;
+  background: #3a2d12;
+  color: #f0c36a;
+  border-bottom: 1px solid #5a4620;
+}
+.ar-switch {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: #ffd98a;
+  text-decoration: underline;
+  font-size: 12px;
+}
+.ar-note {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-5);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.ar-stage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.ar-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--text-bright);
+  color-scheme: normal;
+}
+.ar-frame.loading {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  visibility: hidden;
+}
+.ar-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  object-fit: contain;
+  background: var(--text-bright);
+}
+.ar-textwrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.ar-pre {
+  margin: 0;
+  padding: 10px 12px;
+  font:
+    12px/18px Consolas,
+    'Cascadia Mono',
+    monospace;
+  white-space: pre;
+  color: #cfd2dc;
+  tab-size: 4;
+}
+.ar-msg {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ar-diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ar-diff-head {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-4);
+  border-bottom: 1px solid var(--line);
+}
+.ar-diff .cg-lines {
+  flex: 1 1 auto;
+}
+.ar-empty {
+  flex: 1 1 auto;
+  padding: 18px 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ar-empty p {
+  margin: 0 0 6px;
+}
+.ar-empty-t {
+  font-weight: 600;
+  color: var(--text-4);
+}
+.ar-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  font:
+    11px/1.4 Consolas,
+    'Cascadia Mono',
+    monospace;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+/* picker / versions / more menu */
+.ar-pop {
+  position: absolute;
+  z-index: 20;
+  min-width: 210px;
+  max-width: calc(100% - 8px);
+  width: max-content;
+  overflow: auto;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: #1e1f28;
+  border: 1px solid var(--line-card);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px #0006;
+  font-size: 12px;
+  scrollbar-width: thin;
+}
+.ar-gh {
+  padding: 6px 8px 2px;
+  font:
+    600 10px 'Segoe UI',
+    system-ui,
+    sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint-3);
+}
+.ar-it {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-6);
+  font-size: 12px;
+  text-align: left;
+}
+.ar-it:hover,
+.ar-it:focus-visible {
+  background: var(--accent-wash-3);
+}
+.ar-it.on {
+  background: var(--accent-wash-3);
+}
+.ar-it-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ar-it-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ar-star {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  color: var(--text-faint-3);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ar-star.on {
+  color: var(--warn);
+}
+.ar-star:hover {
+  background: var(--hover-overlay);
+  color: var(--warn);
+}
+.ar-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: #2c2e3a;
+}
+.ar-kb {
+  margin-left: auto;
+  color: var(--text-faint-3);
+  font:
+    10.5px Consolas,
+    monospace;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ar-frame {
+    transition: none;
+  }
+}
+/* narrow strip layout: same rules as the Changes pane */
+@media (max-width: 1099px) {
+  #subagentsPane:not(.open) .artifacts-pane {
+    display: none;
+  }
+  #subagentsPane.open .artifacts-pane:not([hidden]) {
+    flex: 0 0 auto;
+    height: min(60vh, 420px);
+  }
+}
+/* ---- in the chat stream (inside #messages, so the chat text size scales them) ---- */
+.art-tool {
+  margin: 3px 0;
+}
+.art-tool > .tool-line {
+  margin-bottom: 0;
+}
+.art-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-card);
+  border-radius: 8px;
+  background: #17181f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.art-card[hidden] {
+  display: none;
+}
+.art-card-ic {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--accent-wash-3);
+  color: var(--accent);
+  font:
+    600 10px/30px Consolas,
+    'Cascadia Mono',
+    monospace;
+  text-align: center;
+  text-transform: lowercase;
+}
+.art-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.art-card-title {
+  font-weight: 600;
+  color: var(--text-6);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.art-card-sub {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.art-card-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.art-btn {
+  padding: 1px 9px;
+  border: 1px solid var(--line-card);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-6);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.art-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-wash-3);
+}
+.art-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.art-preview {
+  position: absolute;
+  top: 2px;
+  right: 68px;
+  z-index: 1;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.art-preview:hover:not(:disabled),
+.art-preview:focus-visible {
+  color: var(--text);
+  background: var(--bg-field);
+}
+.art-preview:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.tool-line:has(.art-preview) .tool-toggle {
+  padding-right: 140px;
+}
+/* ⧉ links in replies */
+a.artifact-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: #a99cff80;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+a.artifact-link:hover {
+  text-decoration-color: var(--accent);
+}
+a.artifact-link code {
+  color: inherit;
+}

@@ -1,0 +1,355 @@
+/**
+ * The Deno web server (studio.py's web side, web_handler.py's dispatch). One gate for every request (security.ts), then the route:
+ * the live routes answered by the agent host (live_routes.ts), the Studio routes (studio_routes.ts), the transcript viewer
+ * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here; stage B's private Python web server is gone.
+ * The HTTP API is identical to the Python server's; work/contract/ checks it against both servers.
+ */
+import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts';
+import type { LiveBackend } from '../host/backend.ts';
+import { HostUnavailable } from '../host/host_client.ts';
+import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
+import { authorize, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
+import { routeKind, ROUTES } from './routes.ts';
+import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
+import { liveRoutes } from './live_routes.ts';
+import { chatStudioOf, makeLauncher, ownGatePost, type StudioHandler, studioOf, studioRoutes } from './studio_routes.ts';
+import { type AgentOptions, notices } from './shared.ts';
+import { check as checkArtifactKey } from '../artifacts/keys.ts';
+import { Artifacts } from './artifact_wiring.ts';
+import type { Launcher } from '../desktop/editors.ts';
+import { FolderMemory } from '../desktop/folders.ts';
+import { Refused } from '../worktrees/merge.ts';
+import { EditorError } from '../desktop/editors.ts';
+import type { UpdateService } from '../desktop/updater.ts';
+import { MAX_PROMPT_BODY_BYTES } from '../acp/attachments.ts';
+import { pathStr } from '../platform/pypath.ts';
+import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
+
+/** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
+const WEB_STARTED = Date.now() / 1000;
+const sep = Deno.build.os === 'windows' ? '\\' : '/';
+const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
+const MONITOR_ASSETS = new Set(['app.js', 'style.css', 'sidebar.js', 'sidebar.css']);
+const MAX_BODY = 1_000_000;
+
+/** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
+export function studioAsset(path: string): string | null {
+  if (path === '/' || path === '/chat.html') return 'chat.html';
+  const match = path.match(ASSET_NAME);
+  if (!match || MONITOR_ASSETS.has(match[1])) return null;
+  try {
+    return Deno.statSync(APP_ROOT + sep + match[1]).isFile ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function contentType(name: string): string {
+  return (name.endsWith('.html') ? 'text/html' : name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8';
+}
+
+export interface WebContext {
+  token: string;
+  webInstanceId: string;
+  port: number;
+  /** The --port flag as given (bootstrap reports it as webPort, like Python: 0 when any free port was asked for). */
+  cliPort: number;
+  host: LiveBackend;
+  /** The update checker and installer (updater.ts), started by main.ts. */
+  updates: UpdateService;
+  conversations: ConversationState;
+  projectPrefs: ProjectPrefs;
+  readState: ReadState;
+  settings: SettingsStore;
+  /** The transcript viewer's data (monitor.py): OMP sessions and Claude Code projects. */
+  transcripts: Source;
+  /** The transcript folders (for the model-in-use lookup of /api/live/state). */
+  options: { claudeProjects: string; ompSessions: string };
+  /** Called after POST /api/live/shutdown has been answered: the normal close path (the agent host keeps running). */
+  shutdown: () => void;
+  /** The state folder (worktree registry, clash and sync files, folder memory, artifacts). */
+  stateDir: string;
+  /** The agent options the Settings agent list reads (launchers, node, state folder, migration). */
+  agentOptions: AgentOptions;
+  launcher: Launcher;
+  folderMemory: FolderMemory;
+  artifacts: Artifacts;
+  /** This server's gate (set once it listens): the own-gate routes call it after reading the body. */
+  gate: Gate | null;
+  /** The live list the editor roots read (refreshed before each editor request). */
+  editorList: Record<string, unknown>;
+}
+
+type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
+
+export class WebServer {
+  gate!: Gate;
+  #server: HttpServer | null = null;
+  readonly native = new Map<string, Handler>();
+
+  constructor(readonly ctx: WebContext) {
+    this.native.set('GET /api/live/list', async (c) => {
+      const listing = await c.host.liveList();
+      return this.json(200, {
+        ...listing,
+        conversationRevision: c.conversations.revision(),
+        projectsRevision: c.projectPrefs.revision(),
+        readStateRevision: c.readState.revision(),
+        settingsRevision: c.settings.revision(),
+        webInstanceId: c.webInstanceId,
+      });
+    });
+    this.native.set('GET /api/live/conversation-state', (c) => this.json(200, c.conversations.public()));
+    this.native.set('GET /api/live/read-state', (c) => this.json(200, c.readState.public()));
+    this.native.set('POST /api/live/read-state', async (c, _url, body) => {
+      await c.readState.update(body);
+      return this.json(200, { ...c.readState.public(), ok: true });
+    });
+    this.native.set('GET /api/live/project-prefs', (c) => this.json(200, c.projectPrefs.public()));
+    this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
+      await c.projectPrefs.update(body);
+      return this.json(200, { ...c.projectPrefs.public(), ok: true });
+    });
+    for (const [key, handler] of liveRoutes()) {
+      this.native.set(key, async (c, url, body) => {
+        const [status, payload] = await handler(c, url, body);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of studioRoutes()) {
+      this.native.set(key, async (c, url, body, request) => {
+        const [status, payload] = await (handler as StudioHandler)(c, url, body, request);
+        return this.json(status, payload);
+      });
+    }
+    this.native.set('GET /api/live/bootstrap', async (c) => this.json(200, await this.bootstrap(c)));
+  }
+
+  /**
+   * web_handler.get_bootstrap, key for key. server.python (sys.version in Python) is kept as '' so the keys match; this server runs
+   * no Python of its own.
+   */
+  async bootstrap(c: WebContext): Promise<Record<string, unknown>> {
+    const info = await c.host.liveInfo();
+    const startedWith = (info.startedWith && typeof info.startedWith === 'object' ? info.startedWith : {}) as Record<string, unknown>;
+    if (!('connections' in info)) throw Object.assign(new Error("'connections'"), { name: 'KeyError' });
+    return {
+      token: c.token,
+      instanceId: info.instanceId,
+      webInstanceId: c.webInstanceId,
+      pid: Deno.pid,
+      launchNonce: Deno.env.get('AGENT_STUDIO_LAUNCH_NONCE') ?? '',
+      hostMode: c.host.hostMode,
+      hostPid: info.pid ?? null,
+      stateDir: pathStr(c.stateDir),
+      artifactOrigin: this.artifactOrigin,
+      server: {
+        version: APP_VERSION,
+        versionLabel: VERSION_LABEL,
+        aboutLine: ABOUT_LINE,
+        protocol: info.protocol ?? null,
+        hostFormat: info.format ?? null,
+        hostStartedAt: info.startedAt ?? null,
+        webStartedAt: WEB_STARTED,
+        hostAutoReconnect: startedWith.autoReconnect ?? null,
+        python: '',
+        webPort: c.cliPort,
+      },
+      features: {
+        promptReceipts: true,
+        sessionLeases: true,
+        formElicitation: true,
+        asyncConnect: true,
+        imageAttachments: true,
+        fileAttachments: true,
+        urlElicitation: true,
+        authentication: true,
+        setupRequests: true,
+        requestWithdrawal: true,
+        acpBreadth: true,
+        durableRecovery: info.durableRecovery ?? false,
+        sessionDiscovery: true,
+        subagentCancel: 'when_advertised',
+        externalOwnership: 'best_effort',
+        ownershipEvidence: true,
+        ownerAnnouncements: info.ownerAnnouncements ?? false,
+        conversationOrganize: true,
+      },
+      connections: info.connections,
+      ...(await notices(studioOf(c))),
+      ...(info.unavailable ? { hostProblem: info.unavailable } : {}),
+    };
+  }
+
+  get artifactOrigin(): string {
+    return this.ctx.artifacts?.store.origin ?? '';
+  }
+
+  json(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json; charset=utf-8', ...securityHeaders(this.artifactOrigin) },
+    });
+  }
+
+  bytes(status: number, body: Uint8Array<ArrayBuffer>, type: string): Response {
+    return new Response(body, { status, headers: { 'Content-Type': type, ...securityHeaders(this.artifactOrigin) } });
+  }
+
+  /** Listen on 127.0.0.1:port (0 = any free port). Resolves with the port. */
+  listen(port: number): Promise<number> {
+    return new Promise((resolve) => {
+      this.#server = serve({
+        hostname: '127.0.0.1',
+        port,
+        onListen: ({ port }) => {
+          this.ctx.port = port;
+          this.gate = new Gate(port, () => this.ctx.token);
+          this.ctx.gate = this.gate;
+          resolve(port);
+        },
+      }, (request) => this.handle(request));
+    });
+  }
+
+  async handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method.toUpperCase() === 'HEAD' ? 'GET' : request.method.toUpperCase();
+    try {
+      if (method === 'POST' && (routeKind('POST', path) === 'own-gate' || path.startsWith('/api/live/artifacts/'))) {
+        // These check the agent tool key after reading the body (web_handler.post_artifacts / post_worktree_tool).
+        const [status, payload] = await ownGatePost(this.ctx, request, url);
+        return this.json(status, payload);
+      }
+      const scope = ROUTES.scopeFor(method, path);
+      const conversationId = url.searchParams.get('conversationId');
+      const allowed = authorize({ method, path, headers: request.headers }, this.gate, scope, conversationId, checkArtifactKey);
+      if (allowed instanceof Refusal) {
+        await drain(request);
+        return this.json(allowed.status, { error: allowed.message(path) });
+      }
+      void (allowed as Principal);
+      if (method === 'GET') {
+        const handler = this.native.get(`GET ${path}`);
+        if (handler) return await handler(this.ctx, url, null, request);
+        const asset = studioAsset(path);
+        if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
+        if (routeKind('GET', path) === 'monitor') {
+          const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), {
+            token: () => this.ctx.token,
+            appRoot: APP_ROOT,
+          });
+          if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
+          return new Response(JSON.stringify(reply.body), {
+            status: reply.status,
+            headers: { 'Content-Type': reply.contentType, ...securityHeaders(this.artifactOrigin) },
+          });
+        }
+        return this.json(404, { error: 'Not found' });
+      }
+      if (method === 'POST' && path === '/api/live/shutdown') {
+        await drain(request);
+        setTimeout(() => this.ctx.shutdown(), 50); // answer first; serve() then runs the normal close path
+        return this.json(200, { ok: true });
+      }
+      if (method === 'POST') {
+        const handler = this.native.get(`POST ${path}`);
+        const raw = await readBody(request, path === '/api/live/prompt' ? MAX_PROMPT_BODY_BYTES : MAX_BODY);
+        if (raw === null || raw.byteLength === 0) return this.json(400, { error: 'Invalid request size' });
+        let body: unknown;
+        try {
+          body = JSON.parse(new TextDecoder().decode(raw));
+        } catch (error) {
+          return this.json(400, { error: pythonJsonError(error) });
+        }
+        if (typeof body !== 'object' || body === null || Array.isArray(body)) return this.json(400, { error: 'Invalid request' });
+        if (!handler) return this.json(404, { error: 'Not found' });
+        return await handler(this.ctx, url, body as Record<string, unknown>, request);
+      }
+      await drain(request); // the gate refuses every other method (no route has one)
+      return this.json(404, { error: 'Not found' });
+    } catch (error) {
+      if (error instanceof HostUnavailable) return this.json(503, { error: error.message, code: error.code });
+      if (error instanceof Refused || error instanceof EditorError) {
+        return this.json(error.status, { error: error.message, code: error.code });
+      }
+      if (error instanceof Error && ['FolderError', 'EditorError', 'RuntimeError', 'TimeoutError'].includes(error.name)) {
+        return this.json(400, { error: error.message });
+      }
+      if (error instanceof Error && ['ValueError', 'TypeError', 'KeyError', 'OSError', 'RangeError'].includes(error.name)) {
+        return this.json(400, { error: error.message });
+      }
+      if (error instanceof Error && error.constructor.name.endsWith('ValueError')) return this.json(400, { error: error.message });
+      console.error('Request failed', path, error);
+      return this.json(500, { error: 'Internal error' });
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.#server?.shutdown();
+  }
+}
+
+/** The body up to `limit` bytes, or null when it is larger (the connection is then answered without reading the rest). */
+async function readBody(request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const declared = Number(request.headers.get('Content-Length') ?? '0');
+  if (declared > limit) return null;
+  return new Uint8Array(await request.arrayBuffer());
+}
+
+async function drain(request: Request): Promise<void> {
+  try {
+    await request.body?.cancel();
+  } catch { /* nothing to read */ }
+}
+
+/** Python's json.loads error text is shown for a broken body; close enough for a person, and only `error` is a contract. */
+function pythonJsonError(error: unknown): string {
+  return `Expecting value: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+export function makeContext(
+  options: {
+    stateDir: string;
+    host: LiveBackend;
+    updates: UpdateService;
+    webInstanceId: string;
+    cliPort: number;
+    transcripts: Source;
+    claudeProjects: string;
+    ompSessions: string;
+    shutdown: () => void;
+    agentOptions?: AgentOptions;
+    /** Stores to share (an --in-process Studio passes its own, so one instance of each file is read and written). */
+    stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
+  },
+): WebContext {
+  const ctx: WebContext = {
+    token: newToken(),
+    webInstanceId: options.webInstanceId,
+    port: 0,
+    cliPort: options.cliPort,
+    host: options.host,
+    updates: options.updates,
+    conversations: options.stores?.conversations ?? new ConversationState(options.stateDir),
+    projectPrefs: options.stores?.projectPrefs ?? new ProjectPrefs(options.stateDir),
+    readState: options.stores?.readState ?? new ReadState(options.stateDir),
+    settings: options.stores?.settings ?? new SettingsStore(options.stateDir),
+    transcripts: options.transcripts,
+    options: { claudeProjects: options.claudeProjects, ompSessions: options.ompSessions },
+    shutdown: options.shutdown,
+    stateDir: options.stateDir,
+    agentOptions: options.agentOptions ?? { stateDir: options.stateDir },
+    launcher: null as unknown as Launcher,
+    folderMemory: new FolderMemory(options.stateDir),
+    artifacts: null as unknown as Artifacts,
+    gate: null,
+    editorList: {},
+  };
+  ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
+  ctx.artifacts = new Artifacts(options.stateDir, options.host, () => ctx.token, () => chatStudioOf(ctx));
+  return ctx;
+}
+
+export { TOKEN_HEADER };

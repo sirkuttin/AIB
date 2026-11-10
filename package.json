@@ -1,0 +1,15 @@
+{
+  "name": "agent-studio",
+  "private": true,
+  "description": "Agent Studio page checks. The app has no build step; this file only runs the Node tests and the linter.",
+  "scripts": {
+    "test":"node --test work/test_*.js",
+    "lint": "eslint outputs/agent-studio eslint.config.js",
+    "format": "prettier --write \"outputs/agent-studio/*.{js,css}\" \"work/*.js\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "prettier": "3.9.10"
+  }
+}

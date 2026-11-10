@@ -1,0 +1,136 @@
+/* Text size (textsize-ui.js). Every rule here is switched on by an attribute on <html> that exists only when a value is not the
+   default, so at 100 % / 100 % / default font / Comfortable this file changes nothing. Scaling uses CSS zoom on containers. */
+
+/* Chat text: messages, tables/lists/tool rows/code (all inside #messages), subagent history and its command output, queued
+   messages and the message box. */
+html[data-chat-scaled] :is(#messages, #submessages, #commandDetails, #queueBox, #promptForm) {
+  zoom: var(--chat-scale);
+}
+
+/* Interface: the chat list, tab strip, header, Activity column, the rest of the chat column, menus and dialogs.
+   The panel widths themselves are multiplied in resize-ui.js, so the zoomed content has room to match. */
+html[data-ui-scaled]
+  :is(
+    body > aside > *,
+    body > main > :not(#chat),
+    #chat > :not(#messages):not(#queueBox):not(#promptForm),
+    #subagentsPane > :not(#subchatPane),
+    #subchatPane > :not(#submessages):not(#commandDetails),
+    body > dialog,
+    body > .toast-stack,
+    body > .ws-pop,
+    body > .ws-pmenu,
+    body > .ws-menu,
+    body > .organize-menu
+  ) {
+  zoom: var(--ui-scale);
+}
+/* The wide layout leaves --activity-w of room on the right of each chat-column block; a zoomed block multiplies its own margin. */
+@media (min-width: 1100px) {
+  html[data-ui-scaled] body > main > :not(#chatTabs):not(#chat) {
+    margin-right: calc(var(--activity-w) / var(--ui-scale));
+  }
+  html[data-ui-scaled] body.activity-off > main > :not(#chatTabs):not(#chat) {
+    margin-right: 0;
+  }
+}
+/* Viewport-relative heights inside zoomed blocks would grow with the zoom; keep them a share of the window. */
+html[data-ui-scaled] #subagentsPane #commandSection {
+  max-height: calc(38vh / var(--ui-scale));
+}
+html[data-ui-scaled] aside #archivedScroll {
+  max-height: calc(38vh / var(--ui-scale));
+}
+
+/* Long lines stay readable: once the chat text is not 100 %, replies keep a line length of about 100 characters (tables and code
+   already scroll in their own box). */
+html[data-chat-scaled] #messages .markdown :is(p, li, blockquote, h3, h4, h5, h6) {
+  max-width: 100ch;
+}
+
+/* Code font: chosen from a fixed list, applied to everything that shows code, commands or output in the chat. */
+html[data-code-font]
+  :is(
+    .markdown code,
+    .markdown pre,
+    .markdown-code pre,
+    .bubble.tool pre,
+    .bubble.notice pre,
+    .bubble.result pre,
+    .bubble.error pre,
+    .bubble.assignment pre,
+    .approval pre,
+    #commandDetails,
+    .command-code,
+    .tool-locations,
+    .tool-terminal,
+    .diff-path,
+    .diff-body,
+    .elicitation-url,
+    .auth-instructions,
+    .bubble .file-card pre,
+    .code-block pre,
+    .tool-path-text,
+    .inline-code,
+    .tool-line-text,
+    .copy-manual-text,
+    .client-terminal-output
+  ) {
+  font-family: var(--code-font), Consolas, monospace !important;
+}
+
+/* Line spacing. Comfortable is the page as it is today (no rule); these two are the others. */
+html[data-line-spacing='compact'] .markdown {
+  line-height: 1.35;
+}
+html[data-line-spacing='compact'] .bubble pre {
+  line-height: 1.55;
+}
+html[data-line-spacing='compact'] #prompt {
+  line-height: 1.45;
+}
+html[data-line-spacing='compact'] .code-block pre {
+  line-height: 1.3;
+}
+html[data-line-spacing='roomy'] .markdown {
+  line-height: 1.8;
+}
+html[data-line-spacing='roomy'] .bubble pre {
+  line-height: 2.05;
+}
+html[data-line-spacing='roomy'] #prompt {
+  line-height: 1.95;
+}
+html[data-line-spacing='roomy'] .code-block pre {
+  line-height: 1.65;
+}
+
+/* The brief "Chat text 120%" badge. */
+.textsize-badge {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: #f0e5ff;
+  border: 1px solid var(--accent-line);
+  font:
+    600 13px Segoe UI,
+    system-ui,
+    sans-serif;
+  box-shadow: 0 6px 24px var(--shadow-strong);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.textsize-badge.on {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .textsize-badge {
+    transition: none;
+  }
+}

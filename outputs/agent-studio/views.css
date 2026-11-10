@@ -1,0 +1,312 @@
+/* Condensed chat views (views.js, views-ui.js): the switch in the chat header and the groups it draws. Colours from theme.css. */
+.view-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+.view-switch[hidden] {
+  display: none;
+}
+.vs-group {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line-control);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.vs-opt {
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.vs-opt:hover {
+  color: var(--text);
+}
+.vs-opt.on {
+  background: var(--accent-wash-4);
+  color: var(--text-bright);
+}
+.vs-opt[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.vs-opt:focus-visible,
+.vs-select:focus-visible,
+.steps-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.vs-select {
+  display: none;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line-control);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* The switch collapses by the header's own width, not the window's: a split pane is narrow in a wide window.
+   views-ui.js watches the header and sets vs-compact (<= 820px: the <select>) and vs-narrow (<= 680px: chips on a second line).
+   The chat title keeps a readable minimum while the switch shows. */
+header:has(.view-switch:not([hidden])) .hd-main {
+  min-width: 120px;
+}
+.vs-select {
+  max-width: 96px;
+}
+header.vs-compact .vs-group {
+  display: none;
+}
+header.vs-compact .vs-select {
+  display: inline-block;
+}
+header.vs-narrow {
+  flex-wrap: wrap;
+}
+header.vs-narrow > .header-actions {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+}
+
+/* groups in Chat */
+.steps-block {
+  margin: 2px 0 6px;
+}
+.steps-toggle {
+  padding: 3px 15px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.steps-toggle:hover {
+  color: var(--accent);
+}
+.group-steps {
+  margin: 4px 0 8px 15px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+.group-steps[hidden] {
+  display: none;
+}
+.group-earlier {
+  margin: 10px 0 2px;
+  padding: 2px 15px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.bg-tag {
+  margin: 6px 15px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.view-line {
+  margin: 4px 0 8px;
+  padding: 8px 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-row);
+  color: var(--text-3);
+  font-size: 12px;
+}
+/* "Working…" on a running turn: the plan card's spinner (plan.css .plan-spin) before the word */
+.view-line-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.view-spin {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
+}
+.view-line-stopped,
+.view-line-none {
+  color: var(--text-muted);
+}
+
+/* The live line (Chat): spinner, "Working", the current step, "step N · m:ss" at the right.
+   The step is drawn like a tool row's kind badge and text (chat.css .tool-line-kind / .tool-line-text). */
+.view-live {
+  min-width: 0;
+}
+.vl-state {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+.vl-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-3);
+}
+.vl-step .tool-line-text {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12px;
+}
+.vl-thinking {
+  color: var(--muted);
+  font-style: italic;
+}
+.vl-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Prompts: the find box, then one accordion per prompt */
+.prompt-find {
+  flex: none;
+  padding: 8px 15px 0;
+}
+.prompt-find[hidden] {
+  display: none;
+}
+.pf-box {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--line-control);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.pf-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  outline: none;
+}
+.pf-box:focus-within {
+  border-color: var(--accent);
+}
+.pf-note {
+  display: block;
+  padding: 2px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pf-note:empty {
+  display: none;
+}
+.pv-item {
+  margin: 6px 0;
+  border: 1px solid var(--accent-line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.pv-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border: 0;
+  background: var(--accent-wash-5);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pv-stub {
+  margin: 6px 0;
+  border: 1px solid var(--accent-line);
+  border-radius: 9px;
+}
+.pv-head:hover {
+  background: var(--accent-wash-2);
+}
+.pv-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.pv-arrow {
+  flex: none;
+  color: var(--muted);
+}
+.pv-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pv-chips {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+.pv-chip {
+  max-width: 120px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  color: var(--text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pv-err {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  color: var(--danger-text);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pv-meta {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pv-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+}
+/* the replies of an opened prompt sit on black so they stand apart from the prompts */
+.pv-body {
+  padding: 4px 6px 10px;
+  background: #000000;
+}
+.pv-body[hidden] {
+  display: none;
+}
+
+/* a fold with a failed step: ✗ before the words and the count in the error colour */
+.steps-toggle .sf-x,
+.steps-toggle .sf-failed {
+  color: var(--danger-text);
+}

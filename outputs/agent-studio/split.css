@@ -1,0 +1,299 @@
+/* Split view (docs/design/split-view.html). With one pane none of the pane rules apply: only the Activity header at the bottom shows. */
+
+/* ---- Activity column header: the open chat of the focused pane, with its status dot ---- */
+.ahead {
+  order: -1;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: var(--hd-h, 48px);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ahead .ahead-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ahead .status-dot,
+.ahead .ws-tab-plus {
+  flex: none;
+}
+@media (max-width: 1099px) {
+  #subagentsPane:not(.open) .ahead {
+    display: none;
+  }
+}
+/* Only split view needs it (which pane's chat the column shows); with one pane the tabs sit in the chat title's row. */
+body:not(.split-on) .ahead {
+  display: none;
+}
+
+/* ---- The stage: panes in a nested split ---- */
+body.split-on #subagentsPane {
+  margin-top: 0;
+}
+body.split-on .ahead {
+  height: var(--tabs-h, 40px);
+}
+.split-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  background: var(--bg);
+}
+.split-stage > * {
+  flex: 1 1 0;
+}
+.spl {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.spl.row {
+  flex-direction: row;
+}
+.spl.col {
+  flex-direction: column;
+}
+.spl > * {
+  min-width: 0;
+  min-height: 0;
+}
+.dv {
+  flex: none;
+  position: relative;
+  z-index: 3;
+  background: var(--line);
+}
+.spl.row > .dv {
+  width: 5px;
+  cursor: col-resize;
+}
+.spl.col > .dv {
+  height: 5px;
+  cursor: row-resize;
+}
+.dv:hover,
+.dv.on {
+  background: #4a4660;
+}
+body.split-resizing-x,
+body.split-resizing-y {
+  user-select: none;
+}
+body.split-resizing-x {
+  cursor: col-resize;
+}
+body.split-resizing-y {
+  cursor: row-resize;
+}
+.pane {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+/* The focused pane has a thin accent line on top. */
+.pane.foc::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent);
+  z-index: 4;
+  pointer-events: none;
+}
+.pane-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+.pane:not(.foc) .ws-tab.on {
+  background: #181a21;
+}
+
+/* ---- A pane that is not focused: a live copy of its chat. Clicking it focuses it. ---- */
+.mirror {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  cursor: default;
+}
+.mirror-head {
+  flex: none;
+}
+.mirror-head .hd-line h1 {
+  cursor: default;
+}
+.mirror-head .hd-line h1:hover {
+  background: transparent;
+}
+.mirror-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  max-width: 220px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mirror-status::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hd-idle);
+}
+.mirror-status[data-tone='work'] {
+  color: var(--hd-work);
+}
+.mirror-status[data-tone='work']::before {
+  background: var(--hd-work);
+}
+.mirror-status[data-tone='turn'] {
+  color: var(--hd-turn);
+}
+.mirror-status[data-tone='turn']::before {
+  background: var(--hd-turn);
+}
+.mirror-status[data-tone='need'],
+.mirror-status[data-tone='else'] {
+  color: var(--hd-need);
+}
+.mirror-status[data-tone='need']::before {
+  background: var(--hd-need);
+}
+.mirror-status[data-tone='else']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-need);
+}
+.mirror-status[data-tone='bad'] {
+  color: var(--hd-fail);
+}
+.mirror-status[data-tone='bad']::before {
+  background: var(--hd-fail);
+}
+.mirror-msgs {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 16px 16px;
+  scrollbar-width: thin;
+}
+.mirror-comp {
+  flex: none;
+  margin: 6px 16px 8px;
+  min-height: 66px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--bg-composer);
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1.7;
+  overflow: hidden;
+  white-space: pre-wrap;
+  text-overflow: ellipsis;
+  cursor: text;
+  max-height: 120px;
+}
+.mirror-comp.has-draft {
+  color: var(--text-7);
+}
+
+/* ---- Dragging a tab or a chat card ---- */
+body.split-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+.ws-tab.split-lift {
+  opacity: 0.4;
+}
+.split-hint {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  background: rgba(187, 161, 255, 0.22);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  transition:
+    left 0.08s ease-out,
+    top 0.08s ease-out,
+    width 0.08s ease-out,
+    height 0.08s ease-out;
+}
+.split-hint .lbl {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-wash-3);
+  color: #f0e5ff;
+  font:
+    600 11px Segoe UI,
+    system-ui,
+    sans-serif;
+  white-space: nowrap;
+}
+.split-ins {
+  position: fixed;
+  z-index: 60;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.split-ghost {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: #1e1f28;
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .split-hint {
+    transition: none;
+  }
+}

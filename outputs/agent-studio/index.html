@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><title>Agent Watch</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/sidebar.css"><script src="/sidebar.js" defer></script></head><body><div class="shell"><aside class="navigation">
+<div class="intro"><span class="eyebrow">YOUR AGENT WORKSPACE</span><p>Agent Studio</p><a class="new-chat" href="/chat.html">＋ New ACP chat</a></div>
+<div class="tabs" role="tablist" aria-label="Agent provider"><button role="tab" id="omp" aria-selected="true">OMP <span id="ompCount">0</span></button><button role="tab" id="claude" aria-selected="false">Claude Code <span id="claudeCount">0</span></button></div>
+<input id="search" type="search" aria-label="Find conversations" placeholder="Find a conversation…">
+<div class="list-heading"><span id="listTitle">OMP CHATS</span><span id="visibleCount"></span></div>
+<div id="error" role="alert" hidden></div><div id="chats" aria-label="Main conversations"></div>
+<footer><span class="dot"></span><span id="connection">Reading saved activity</span><p>Select a chat to open its agents and transcript.</p></footer>
+</aside><section class="viewer"><div class="viewer-bar"><span id="currentChat">Agent Watch</span><a id="openTab" class="hidden" target="_blank" rel="noopener">Open in separate tab ↗</a></div><iframe id="conversation" title="Conversation agents and transcript" src="/conversation.html"></iframe><div id="welcome"><h1>A window into your agents.</h1><p>Choose OMP or Claude Code, then select a conversation.<br>Your agents keep working while you watch.</p></div></section></div></body></html>

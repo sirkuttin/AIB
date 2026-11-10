@@ -1,0 +1,543 @@
+/* Changes tab (changes-ui.js): the tab row at the top of the right column, the file list, the unified diff, and the header and strip chips. */
+.pane-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 6px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.pane-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--muted);
+}
+.pane-tab:hover {
+  color: var(--text);
+  background: #ffffff08;
+}
+.pane-tab.active {
+  color: #f1ecff;
+}
+.pane-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.pane-tab:focus-visible,
+.pane-expand:focus-visible,
+.cg-refresh:focus-visible,
+.cg-file:focus-visible,
+.cg-open:focus-visible,
+.changes-chip:focus-visible,
+.ac-changed:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.pane-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent-wash-4);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+.pane-expand {
+  margin-left: auto;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.pane-expand:hover,
+.pane-expand[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--hover-2);
+}
+.pane-expand[hidden],
+.pane-badge[hidden],
+.changes-chip[hidden],
+.ac-changed[hidden],
+.changes-pane[hidden] {
+  display: none;
+}
+@media (min-width: 1100px) {
+  .pane-tabs {
+    height: var(--hd-h, 48px);
+    min-height: var(--hd-h, 48px);
+  }
+  /* the tab row now takes the chat title's row; the Subagents heading is an ordinary 28 px heading below it */
+  .sa-heading {
+    height: 28px;
+    min-height: 28px;
+    margin-top: 4px;
+    border-bottom: 0;
+  }
+}
+/* Changes replaces the Activity body while its tab is open. */
+#subagentsPane.tab-changes #activityBody {
+  display: none !important;
+}
+.changes-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cg-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.cg-scope {
+  font-weight: 600;
+  color: var(--text-4);
+}
+.cg-mode {
+  padding: 0 8px;
+  line-height: 20px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cg-sum {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cg-refresh {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.cg-refresh:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-2);
+}
+.cg-refresh.spin {
+  animation: cg-spin 1s linear infinite;
+}
+@keyframes cg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cg-refresh.spin {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+.cg-add {
+  color: var(--ok);
+}
+.cg-del {
+  color: var(--danger);
+}
+.cg-note {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+/* the list is the panel's one scroll area; an open file's diff sits right under its row */
+.cg-files {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0 12px;
+  scrollbar-width: thin;
+}
+.cg-files[hidden] {
+  display: none;
+}
+.cg-item {
+  display: block;
+}
+.cg-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: #15161c;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-5);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.cg-file:hover {
+  background: var(--bg-card-hover);
+}
+.cg-file.open {
+  background: var(--accent-wash-5);
+  border-bottom-color: #23242f;
+}
+.cg-caret {
+  flex: 0 0 auto;
+  width: 10px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.cg-st {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font:
+    600 11px/16px Consolas,
+    'Cascadia Mono',
+    monospace;
+  color: var(--text-dim);
+}
+.st-M {
+  color: #e3b95c;
+}
+.st-A,
+.st-U {
+  color: var(--ok);
+}
+.st-D {
+  color: var(--danger);
+}
+.st-R {
+  color: #8fb8ff;
+}
+.st-C {
+  color: #ff9f6e;
+}
+.cg-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.cg-path-in {
+  direction: ltr;
+  unicode-bidi: isolate;
+  color: var(--text-muted);
+}
+.cg-path-in b {
+  font-weight: 550;
+  color: var(--text);
+}
+.cg-file .cg-add,
+.cg-file .cg-del,
+.cg-bin {
+  flex: 0 0 auto;
+  font:
+    11px/16px Consolas,
+    'Cascadia Mono',
+    monospace;
+}
+.cg-bin {
+  color: var(--muted);
+}
+.cg-diff {
+  display: block;
+}
+.cg-was {
+  margin: 0;
+  padding: 4px 12px 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 11px;
+}
+.cg-open {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 20px;
+}
+.cg-open:hover {
+  background: var(--accent-wash-4);
+  color: var(--text-bright);
+}
+.cg-msg {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cg-msg.cg-err {
+  color: var(--danger);
+}
+.cg-lines {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  font:
+    12px/18px Consolas,
+    'Cascadia Mono',
+    monospace;
+  scrollbar-width: thin;
+}
+.cg-hunk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+  width: 100%;
+  position: sticky;
+  left: 0;
+  padding: 2px 10px 2px 12px;
+  background: #1b1c26;
+  color: var(--text-muted);
+  font-size: 11px;
+  border-top: 1px solid #23242f;
+  border-bottom: 1px solid #23242f;
+}
+.cg-hunk-h {
+  flex: 1 1 auto;
+  white-space: pre;
+}
+.cg-hunk .cg-open {
+  font-family:
+    Segoe UI,
+    system-ui,
+    sans-serif;
+}
+.cg-row {
+  display: flex;
+  min-width: max-content;
+}
+.cg-no {
+  flex: 0 0 40px;
+  padding: 0 6px;
+  text-align: right;
+  color: #5f6475;
+  user-select: none;
+  background: var(--code-bg);
+}
+.cg-sign {
+  flex: 0 0 16px;
+  text-align: center;
+  user-select: none;
+  color: #7b8194;
+}
+.cg-text {
+  flex: 1 0 auto;
+  padding-right: 16px;
+  white-space: pre;
+  color: #cfd2dc;
+}
+.cg-row.cg-add {
+  background: #17301f;
+}
+.cg-row.cg-add .cg-no {
+  background: #1a3a25;
+  color: #6fae86;
+}
+.cg-row.cg-add .cg-sign {
+  color: var(--ok);
+}
+.cg-row.cg-del {
+  background: #35191d;
+}
+.cg-row.cg-del .cg-no {
+  background: #44202a;
+  color: #b87480;
+}
+.cg-row.cg-del .cg-sign {
+  color: var(--danger);
+}
+.cg-row.cg-note .cg-text {
+  color: var(--muted);
+  font-style: italic;
+}
+/* Chips */
+.changes-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+.changes-chip:hover {
+  background: var(--accent-wash-4);
+}
+.ac-changed {
+  display: none;
+}
+@media (max-width: 1099px) {
+  .ac-changed:not([hidden]) {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    margin-left: 8px;
+    padding: 0 8px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--accent-wash-4);
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  /* the tab row appears with the expanded strip area; Changes fills it */
+  #subagentsPane:not(.open) .pane-tabs,
+  #subagentsPane:not(.open) .changes-pane {
+    display: none;
+  }
+  .pane-tabs {
+    height: 34px;
+    order: 0;
+  }
+  #activityStrip {
+    order: -1;
+  }
+  #subagentsPane.open .changes-pane:not([hidden]) {
+    flex: 0 0 auto;
+    height: min(50vh, 360px);
+  }
+  body.subchat-open #subagentsPane:not(.open) .pane-tabs {
+    display: none;
+  }
+}
+
+/* Footer of the Changes tab: one row. Status line on the left; Discard, then Merge, on the right (changes-ui.js, merge-ui.js) */
+.cg-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.cg-foot[hidden] {
+  display: none;
+}
+.cg-foot-status {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cg-discard {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #f0a0b0;
+  border-color: #8f3b4d;
+  background: transparent;
+}
+.cg-discard:hover:not(:disabled) {
+  border-color: var(--danger-fill);
+  background: #2a1a20;
+}
+.cg-foot-note {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.cg-foot-note.err {
+  color: #f0a0b0;
+}
+.cg-merge-line[hidden] {
+  display: none;
+}
+.cg-merge-line {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.cg-merge-btn {
+  flex: 0 0 auto;
+}
+.cg-discard {
+  flex: 0 0 auto;
+}
+.cg-merge-btn[hidden],
+.cg-discard[hidden] {
+  display: none;
+}
+/* Stage E2: buttons in Studio's note after a clash, and the amber clash line (reuses the ownership bar) */
+.note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 12px;
+}
+.note-action {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.note-actions-result {
+  font-size: 12px;
+  color: var(--muted);
+}
+.clash-bar[hidden] {
+  display: none;
+}
+.clash-resume {
+  margin-left: 8px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.clash-resume[hidden] {
+  display: none;
+}

@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "note": "The only agent packages Studio installs for the user. Each is pinned to one exact version. The lockfile (agent_locks/<id>.package-lock.json, made with npm install --package-lock-only) pins every dependency with its integrity hash, so the install runs `npm ci`. Change a version only after reviewing it, and regenerate its lockfile in the same commit. packageBytes is the approximate size on disk after install; the install needs 2x that free, or minFreeBytes when that is larger (the Claude SDK ships a 349 MB binary).",
+  "agents": {
+    "claude": {
+      "package": "@agentclientprotocol/claude-agent-acp",
+      "version": "0.102.0",
+      "lockfile": "agent_locks/claude.package-lock.json",
+      "packageBytes": 420000000,
+      "minFreeBytes": 1073741824
+    },
+    "codex": {
+      "package": "@agentclientprotocol/codex-acp",
+      "version": "2.6.0",
+      "lockfile": "agent_locks/codex.package-lock.json",
+      "packageBytes": 300000000,
+      "minFreeBytes": 0
+    }
+  }
+}

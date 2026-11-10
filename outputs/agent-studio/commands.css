@@ -1,0 +1,90 @@
+/* Command bar (Ctrl+K) and the shortcut sheet (?). Builds on the .switcher styles in chat.css. */
+.switcher-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px 0;
+}
+.switcher-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.switcher-tab:hover {
+  color: var(--text);
+}
+.switcher-tab.on {
+  background: var(--accent-wash);
+  color: var(--text);
+  border-color: var(--line-control);
+}
+.switcher-text {
+  flex: 1;
+}
+.switcher-ico {
+  min-width: 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.switcher-kind {
+  font-size: 10px;
+  color: var(--muted);
+  flex: none;
+}
+.switcher-key {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+}
+.switcher-key kbd,
+.sheet-rows kbd {
+  font:
+    10px Consolas,
+    monospace;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--bg-control);
+  color: #c9ccd6;
+}
+.switcher-sub.warn {
+  color: #f0a0a0;
+}
+.switcher-item.danger.active {
+  background: #3a2226;
+}
+.sheet {
+  padding: 14px 18px;
+}
+.sheet-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.sheet-group h3 {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sheet-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sheet-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.sheet .switcher-hint {
+  padding: 10px 0 0;
+}
