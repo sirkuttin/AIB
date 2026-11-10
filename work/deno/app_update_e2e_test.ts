@@ -165,13 +165,22 @@ Deno.test({
       assertEquals((await httpJson('GET', PORT, '/api/live/update', tokenB))[1].current, NEXT, 'B runs');
       assertEquals(bootB.hostPid, hostA.pid, 'B attached to the running host of A');
       assert((await state(tokenB)).busy, 'the chat is still working, now seen through B');
-      const log = Deno.readTextFileSync(`${fx.state}\\updates\\install.log`);
-      assert(log.includes('the new version is running (it confirmed its start)'), log);
+      await until(
+        () => Deno.readTextFileSync(`${fx.state}\\updates\\install.log`).includes('the new version is running (it confirmed its start)'),
+        'the helper saw the start confirmation (B loaded its page)',
+        60,
+      );
       assertEquals(await until(() => cdpEval(`localStorage.getItem('aib-e2e-draft')`), 'localStorage read', 60), 'kept across the update');
       const old = () => [...Deno.readDirSync(app)].map((e) => e.name).filter((n) => /\.old-\d{8}-\d{6}/.test(n));
       assert(old().some((n) => n.startsWith('AIB.exe.old-')), "the old exe the host runs from is kept: " + old().join(', '));
       const helperTray = [...Deno.readDirSync(trays)].find((e) => e.name.startsWith('helper-'));
       assert(helperTray, 'the update helper showed a tray icon');
+      // The host showed its own icon in the gap between A and B (a chat working, no app), and hid it when B attached.
+      const hostLogGap = Deno.readTextFileSync(`${fx.state}/agent-host.log`);
+      assert(hostLogGap.includes('shown tray icon: AIB · 1 chat running'), hostLogGap.slice(-3000));
+      assert(hostLogGap.includes('tray icon hidden: an app attached'), hostLogGap.slice(-3000));
+      const hostTray = JSON.parse(Deno.readTextFileSync(`${trays}/host-${hostA.pid}.json`));
+      assertEquals([hostTray.shown, hostTray.items], [false, ['Open AIB', '', 'Stop chats and quit']]);
 
       // ---- the turn ends; B drains and hands over to a host of its own version
       assertEquals((await post(PORT, tokenB, 'cancel', { id: cid }))[0], 200);
@@ -189,7 +198,9 @@ Deno.test({
       assert(studioLog.includes('Drain: handing over from the agent host of AIB'), studioLog.slice(-3000));
       assert(studioLog.includes('closing (installing an update)'), 'A logged why it quit');
 
-      // ---- close B's window with nothing working: no AIB process left
+      // ---- close B's window with nothing working: no AIB process left. The new host reconnects the idle chat in the background
+      // first ("opening" counts as working, and closing then asks): wait until nothing works.
+      await until(async () => ((await new HostClient(hostB).call('busy', null, 10) as Json).busy as unknown[]).length === 0, 'reconnect done', 60);
       const win = desk.windows().find((w) => w.pid === owner.pid && w.title === 'AIB' && w.visible);
       assert(win, 'B has its window');
       desk.post(win!, 0x10); // WM_CLOSE: the person closes the window
@@ -205,6 +216,86 @@ Deno.test({
         }
       }
       await releases.shutdown();
+      await new Promise((r) => setTimeout(r, 1500));
+      desk.close();
+    }
+  },
+});
+
+Deno.test({
+  name: 'real binary: the app crashes with a chat working; the host shows its tray (no window of its own); Stop chats and quit asks, then ends everything',
+  ignore: !SLOW,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await using fx = new Fixture();
+    const dist = `${fx.root}/dist`, install = `${fx.root}/install`, trays = `${fx.root}/trays`;
+    await build(dist);
+    Deno.mkdirSync(install);
+    Deno.mkdirSync(trays);
+    await new Deno.Command('C:/Windows/System32/tar.exe', { args: ['-xf', `${dist}/AIB-${APP_VERSION}-windows-x64.zip`, '-C', install] })
+      .output();
+    const app = `${install}/AIB`;
+    const desk = new HiddenDesktop();
+    const saved = Deno.env.toObject();
+    const env: Record<string, string> = {
+      AGENT_STUDIO_STATE_DIR: fx.state,
+      APPDATA: `${fx.root}/appdata`,
+      LOCALAPPDATA: `${fx.root}/localappdata`,
+      AIB_TEST_TRAY_STATE: trays,
+      AGENT_STUDIO_ALLOW_REAL_AGENT: '1',
+    };
+    for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+    const pids = new Set<number>();
+    try {
+      for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
+      const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
+      const aPid = desk.spawn([`${app}/AIB.exe`, '--port', String(PORT + 4), ...flags], app);
+      pids.add(aPid);
+      for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
+      const boot = await until(async () => {
+        const [s, b] = await httpJson('GET', PORT + 4, '/api/live/bootstrap', null, undefined, 3000);
+        return s === 200 ? b : null;
+      }, 'app up', 60);
+      const token = String(boot.token);
+      const host = (await readInfo(fx.state))!;
+      pids.add(host.pid!);
+      const post = (name: string, body: unknown) => httpJson('POST', PORT + 4, '/api/live/' + name, token, body);
+      const [, conn] = await post('connect', { provider: 'claude', cwd: fx.workspace, background: true });
+      const cid = String(conn.id);
+      await until(async () => (await httpJson('GET', PORT + 4, `/api/live/state?id=${cid}`, token))[1].ready, 'chat ready', 60);
+      await post('prompt', { id: cid, text: 'wait', clientMessageId: 'crash-1' });
+      await until(async () => (await httpJson('GET', PORT + 4, `/api/live/state?id=${cid}`, token))[1].busy, 'working');
+      Deno.kill(aPid, 'SIGKILL'); // the app crashes: no detach
+      const started = Date.now();
+      const trayFile = `${trays}/host-${host.pid}.json`;
+      await until(() => JSON.parse(Deno.readTextFileSync(trayFile)).shown === true, 'host tray shown', 45);
+      const after = (Date.now() - started) / 1000;
+      assert(after >= 20 && after <= 35, `shown once the missed heartbeats count (25 s): ${after}`);
+      const tray = JSON.parse(Deno.readTextFileSync(trayFile));
+      assertEquals(tray.tooltip, `AIB · 1 chat running (data: ${fx.state})`);
+      // The tray worker's (hidden) window appears a moment after the state file says "shown".
+      const trayWindow = await until(() => desk.windows().find((w) => w.pid === host.pid && w.cls === 'AIBTrayWindow'), 'tray worker window', 15);
+      const hostWindows = desk.windows().filter((w) => w.pid === host.pid);
+      assert(!hostWindows.some((w) => w.visible), 'the host has no visible window: ' + JSON.stringify(hostWindows.map((w) => w.cls)));
+      desk.post(trayWindow!, 0x8000 + 5, 3n); // TRAY_COMMAND: menu item 3, Stop chats and quit
+      const box = await until(() => desk.windows().find((w) => w.pid === host.pid && w.cls === '#32770' && w.visible), 'the confirm box', 15);
+      assert(pidAlive(host.pid!), 'nothing stops before the answer');
+      desk.post(box, 0x111, 1n); // WM_COMMAND IDOK
+      await until(() => !pidAlive(host.pid!), 'host stopped', 30);
+      await until(async () => (await processesUnder(install)).length === 0, 'no AIB process left', 15);
+      const log = Deno.readTextFileSync(`${fx.state}/agent-host.log`);
+      assert(log.includes('forced stop asked by the tray menu'), log.slice(-2000));
+    } finally {
+      for (const [k] of Object.entries(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
+      for (const [pid] of await processesUnder(install).catch(() => [] as [number, string][])) pids.add(pid);
+      for (const pid of pids) {
+        if (pidAlive(pid)) {
+          try {
+            Deno.kill(pid, 'SIGKILL');
+          } catch { /* gone */ }
+        }
+      }
       await new Promise((r) => setTimeout(r, 1500));
       desk.close();
     }
