@@ -1310,6 +1310,12 @@ body > main {
   background: var(--accent);
   color: var(--on-accent);
 }
+/* the question card's Submit is a .primary button: keep its disabled wash over the first-child fill above */
+.elicitation-actions button.primary:disabled {
+  background: var(--accent-wash-2);
+  border-color: var(--accent-line);
+  color: var(--on-accent-disabled);
+}
 .elicitation-error,
 .elicitation-issue {
   font-size: 12px;

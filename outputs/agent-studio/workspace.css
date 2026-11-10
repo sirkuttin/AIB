@@ -1372,11 +1372,11 @@ aside .connection:has(.hold-note) {
   flex-wrap: wrap;
   align-content: flex-start;
   align-items: center;
-  gap: 4px 8px;
+  gap: 2px 8px;
   height: auto;
   min-height: 0;
   max-height: none;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-radius: 8px;
   overflow: hidden;
   line-height: 18px;
@@ -1393,7 +1393,7 @@ aside .connection .status-mark {
   flex: 0 0 14px;
   width: 14px;
   min-width: 14px;
-  height: 20px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1423,7 +1423,7 @@ aside .project-rows .connection .connection-title {
   flex: 1 1 0;
   margin: 0;
   font-size: 14px;
-  line-height: 20px;
+  line-height: 18px;
   font-weight: 600;
 }
 aside .connection .row-age {

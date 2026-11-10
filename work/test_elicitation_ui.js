@@ -131,6 +131,8 @@ let latestContext = {
 };
 window.AgentElicitationUI.render(root, [req], latestContext);
 assert.ok(card.textContent.includes('approved (required)'));
+// Submit is a primary button (teal fill, the disabled wash and the white focus ring); Decline and Cancel are not.
+assert.deepEqual(card.children.find((n) => n.className === 'elicitation-actions').children.map((b) => b.className || ''), ['primary', '', '']);
 // Required false checkbox is a valid explicit boolean answer.
 card.children.find((n) => n.className === 'elicitation-actions').children[0].click();
 setImmediate(async () => {

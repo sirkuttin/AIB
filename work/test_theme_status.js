@@ -128,13 +128,17 @@ test('disabled and focused primary buttons, spinners and cards follow the design
   assert.equal(declarationsFor(chat, '.elicitation-card').background, 'var(--panel-2)');
   assert.equal(declarationsFor(chat, '.approval h3::before').background, 'var(--status-needs)');
   for (const fg of ['--text', '--muted', '--status-needs']) atLeast(`var(${fg})`, 'var(--panel-2)', 4.5);
+  // the question card's Submit keeps the disabled wash, not the first-child teal fill
+  const qDisabled = declarationsFor(chat, '.elicitation-actions button.primary:disabled');
+  assert.equal(qDisabled.background, 'var(--accent-wash-2)');
+  assert.equal(qDisabled.color, 'var(--on-accent-disabled)');
 });
 
-test('sidebar chat cards: one 14 px mark column, roomier spacing, one step larger type', () => {
+test('sidebar chat cards: one 14 px mark column, compact spacing, one step larger type', () => {
   const ws = sheet('workspace.css');
   const card = declarationsFor(ws, 'aside .connection');
-  assert.equal(card.padding, '8px 10px');
-  assert.equal(card.gap, '4px 8px');
+  assert.equal(card.padding, '6px 10px');
+  assert.equal(card.gap, '2px 8px');
   assert.equal(card['align-content'], 'flex-start');
   assert.equal(card['min-height'], '0');
   assert.equal(card['max-height'], 'none');
@@ -146,7 +150,7 @@ test('sidebar chat cards: one 14 px mark column, roomier spacing, one step large
   assert.equal(declarationsFor(ws, 'aside .connection .status-mark:has(.status-count) .status-dot').position, 'absolute');
   assert.equal(declarationsFor(ws, 'aside .connection .status-count')['min-width'], '14px');
   const title = declarationsFor(ws, 'aside .connection .connection-title');
-  assert.deepEqual([title['font-size'], title['line-height'], title['font-weight']], ['14px', '20px', '600']);
+  assert.deepEqual([title['font-size'], title['line-height'], title['font-weight']], ['14px', '18px', '600']);
   for (const sel of ['aside .connection .row-status', 'aside .connection .row-line3']) {
     assert.equal(declarationsFor(ws, sel)['padding-left'], '22px', sel); // 14 px mark + 8 px gap
     assert.equal(declarationsFor(ws, sel)['font-size'], '12px', sel);
