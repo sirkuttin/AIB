@@ -798,10 +798,16 @@
         reveal();
       }
     });
-    /* A subagent history opens inside the Activity tab. */
+    /* A subagent history opens inside the Activity tab: opening one shows that tab. Only the moment it opens counts; while it
+       stays open you can switch to Changes or Artifacts (CSS hides it there) and come back to it, so later class changes on
+       <body> must not pull you back to Activity. chat.js also calls show('activity') when it opens a history. */
+    let subchatWas = body.classList.contains('subchat-open');
     if (typeof win.MutationObserver === 'function') {
       new win.MutationObserver(() => {
-        if (body.classList.contains('subchat-open') && state.tab !== 'activity') {
+        const now = body.classList.contains('subchat-open'),
+          opened = now && !subchatWas;
+        subchatWas = now;
+        if (opened && state.tab !== 'activity') {
           state = tabState(state, { type: 'subchat', open: true });
           apply();
         }
