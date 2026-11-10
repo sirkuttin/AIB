@@ -53,6 +53,27 @@ notifications through the web API, updates as "open the installer" instructions)
   `~/Library/Application Support/AgentStudio`, Linux `$XDG_STATE_HOME/agent-studio` or `~/.local/state/agent-studio`), the same as
   `deno run -A server/main.ts`, so there is one set of chats. `AGENT_STUDIO_STATE_DIR` (a test run) wins for both.
 
+## Chat terminals
+
+Each chat can open a terminal (the button at the right of the chat header, Ctrl+` or Ctrl+J): a real shell in the chat's folder (its
+worktree when it has one), shown in a panel under the message box. Code: `server/platform/pty.ts` (Windows ConPTY in
+`pty_windows.ts`; macOS/Linux openpty + posix_spawn in `pty_posix.ts`, not yet run on a real Mac or Linux machine),
+`server/terminal/sessions.ts` (one shell per chat, at most 8, the wire protocol), `server/web/terminal_routes.ts` (a WebSocket on the
+page's origin behind the same gate as every route; the page token rides as a subprotocol), `server/platform/websocket.ts` (also the
+handshake and framing for the desktop binary's node:http listeners), `terminal-ui.js` and `terminal.css` (the page). Tests:
+`work/deno/terminal_test.ts`, `work/test_terminal_ui.js`.
+
+- **Shell:** Windows: PowerShell 7 (`pwsh.exe` on PATH), else Windows PowerShell; macOS/Linux: `$SHELL -l`, else `/bin/bash -l`. The
+  "Use Windows PowerShell" button asks for Windows PowerShell explicitly.
+- **No windows:** the console host behind ConPTY runs headless; nothing appears on screen.
+- **Lifetime:** shells live in the web server process. Closing the window to the tray keeps them; quitting AIB ends them all
+  (`WebServer.close`); on Windows each shell and everything it starts is in a Job Object that also ends them if AIB dies.
+- **Paste:** text pasted into a terminal (Ctrl+V, or "Run in terminal") never runs by itself: no trailing Enter, and several lines are
+  entered without running (PowerShell: Shift+Enter between lines; bash/zsh: bracketed paste). When a command is still running, the
+  page asks "Paste anyway / Cancel" first. "Running" (`Pty.busy`): on Windows the shell's Job Object holds more than the shell; on
+  macOS/Linux the terminal's foreground process group is not the shell's. Built-in commands that run inside the shell are not seen.
+- Nothing typed in or printed by a terminal goes to an agent.
+
 ## Host takeover
 
 The dev server and the desktop app (and any two code folders) share one agent host per data folder, recorded in

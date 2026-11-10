@@ -12,9 +12,15 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  * Routes the Deno server has and the Python web server does not: the ONLY allowed difference from Python's table. The parity test
  * (web_server_test.ts) compares ROUTE_LIST minus these with Python's, and checks this list stays exactly this.
  *   POST /api/live/agents/install/uninstall   remove AIB's own install of an agent (installer.ts Installer.uninstall)
+ *   GET  /api/live/terminal                   the chat terminal's WebSocket (terminal_routes.ts)
+ *   GET  /api/live/terminal/list              running chat terminals
+ *   POST /api/live/terminal/end               end a chat's terminal
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
+  ['GET', '/api/live/terminal', 'write', 'get'],
+  ['GET', '/api/live/terminal/list', 'read', 'get'],
+  ['POST', '/api/live/terminal/end', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

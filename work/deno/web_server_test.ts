@@ -10,7 +10,12 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
   await using py = new PyParity();
   const routes = await py.call('shims', 'studio_routes') as [string, string, string][];
   // The one documented exception: routes the Python server does not have (routes.ts DENO_ONLY). Kept to exactly this list.
-  assertEquals(DENO_ONLY.map(([m, p]) => `${m} ${p}`), ['POST /api/live/agents/install/uninstall']);
+  assertEquals(DENO_ONLY.map(([m, p]) => `${m} ${p}`), [
+    'POST /api/live/agents/install/uninstall',
+    'GET /api/live/terminal',
+    'GET /api/live/terminal/list',
+    'POST /api/live/terminal/end',
+  ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
   assertEquals(ROUTE_LIST.filter(([m, p]) => !denoOnly.has(`${m} ${p}`)).map(([m, p, s]) => [m, p, s]), routes);
   const kinds = new Map((await py.call('shims', 'studio_route_kinds') as [string, string, string][]).map(([m, p, k]) => [`${m} ${p}`, k]));

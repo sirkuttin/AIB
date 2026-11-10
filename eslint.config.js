@@ -18,7 +18,7 @@ const browser = read([
 
 
 module.exports = [
-  { ignores: ['node_modules/**', '**/*.min.js', 'outputs/agent-studio/docs/**'] },
+  { ignores: ['node_modules/**', '**/*.min.js', 'outputs/agent-studio/docs/**', 'outputs/agent-studio/vendor/**'] },   // vendor/: third-party files, unmodified
   {
     files: ['outputs/agent-studio/**/*.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: { ...browser, ...read(['module']) } },   // module: the "also usable from node" line at the end of most scripts

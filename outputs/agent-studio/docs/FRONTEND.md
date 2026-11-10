@@ -15,6 +15,7 @@ The page (`chat.html`) is plain JavaScript and CSS served as they are. There is 
 
 | # | Script | Global | What it does |
 |---|---|---|---|
+| 0 | `terminal-ui.js` | `AibTerminal` | The terminal of each chat: the header button, the panel under the message box (one shell per chat, kept by the server), its states (ended, failed, folder missing, too many), the sidebar icon. Its interface (`open`, `paste`, `isOpen`, ...) is documented at the top of the file; "Run in terminal" uses it. Loads the vendored xterm.js (`vendor/xterm/`) on first use. First, so it exists before any message is drawn. |
 | 1 | `markdown.js` | `AgentMarkdown` | A deliberately small Markdown subset for agent messages. Raw HTML stays text; images never fetch remote resources. |
 | 2 | `tool-views.js` | `ToolViews` | Views for tool calls, diffs and non-text content; pairs saved tool calls with their results. Everything goes in with `textContent`. |
 | 3 | `editors-ui.js` | `AgentEditors` | "Open in editor": which editors the PC has, the default one, and the menu items that open a folder or a file at a line. |
@@ -62,7 +63,7 @@ Stylesheets load before the scripts; their order is the `<link>` order in `chat.
 
 ## Colour tokens
 
-`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (60 tokens). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
+`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (71 tokens: the first 60 from step 1, then the terminal's). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
 
 Rules for the tokens:
 
@@ -134,6 +135,21 @@ Rules for the tokens:
 | `--shadow-strong` | `#000a` | Toast, switcher and popover drop shadow |
 | `--shadow-med` | `#0009` | Menu shadow and switcher backdrop |
 | `--shadow-soft` | `#0008` | Chip popover shadow |
+| `--term-bg` | `#0c0d10` | Terminal panel and xterm background |
+| `--term-sel` | `#3d3456` | xterm selection |
+| `--term-green` | `#7ad19c` | xterm green |
+| `--term-blue` | `#7cb7ff` | xterm blue |
+| `--term-yellow` | `#e6c27a` | xterm yellow |
+| `--term-red` | `#f19999` | xterm red |
+| `--term-cyan` | `#7fd3d8` | xterm cyan |
+| `--term-dim` | `#8a91a3` | xterm bright black (prompts, dim text) |
+| `--accent-ink` | `#17111f` | Text on a solid accent button |
+| `--bad-fill` | `#3a1820` | "Didn't start" shell chip fill |
+| `--bad-line` | `#7a3a48` | "Didn't start" shell chip border |
+
+## Vendored libraries
+
+`vendor/xterm/` holds xterm.js 5.5.0 with its fit and canvas addons, unmodified, with their MIT licenses and `VERSIONS.txt` (versions and SHA-256). The server serves only `vendor/xterm/<name>.js|css`; `tools/build.ts` stages `vendor/` into the app. `terminal-ui.js` loads them when a terminal is first opened. The canvas renderer is used because xterm's default DOM renderer inserts `<style>` elements, which the page's CSP (`style-src 'self'`) refuses. ESLint ignores `vendor/`.
 
 ## Page behaviour worth knowing
 
