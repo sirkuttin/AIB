@@ -73,4 +73,17 @@
   --shadow-strong: #000a; /* Toast, switcher and popover drop shadow */
   --shadow-med: #0009; /* Menu shadow and switcher backdrop */
   --shadow-soft: #0008; /* Chip popover shadow */
+
+  /* Terminal (terminal.css, and xterm's colours through terminal-ui.js) */
+  --term-bg: #0c0d10; /* Terminal panel and xterm background */
+  --term-sel: #3d3456; /* xterm selection */
+  --term-green: #7ad19c; /* xterm green */
+  --term-blue: #7cb7ff; /* xterm blue */
+  --term-yellow: #e6c27a; /* xterm yellow */
+  --term-red: #f19999; /* xterm red */
+  --term-cyan: #7fd3d8; /* xterm cyan */
+  --term-dim: #8a91a3; /* xterm bright black (prompts, dim text) */
+  --accent-ink: #17111f; /* Text on a solid accent button (Start new session, Try again) */
+  --bad-fill: #3a1820; /* "Didn't start" shell chip fill */
+  --bad-line: #7a3a48; /* "Didn't start" shell chip border */
 }

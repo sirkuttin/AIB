@@ -290,9 +290,12 @@ export const REPO = HERE.replace(/\/tools$/, '');
 export const APP_DIR = `${REPO}/outputs/agent-studio`;
 export const ICONS = `${APP_DIR}/icons`; // the app icon in every size the packages need
 
-/** The top-level names of outputs/agent-studio that go into the app: code, page files, the agent allow-list and its lockfiles. */
+/**
+ * The top-level names of outputs/agent-studio that go into the app: code, page files, vendored page libraries (vendor/: xterm.js and
+ * its licenses), the agent allow-list and its lockfiles.
+ */
 export function stagedName(name: string, isDir: boolean): boolean {
-  if (isDir) return ['server', 'agent_locks'].includes(name);
+  if (isDir) return ['server', 'agent_locks', 'vendor'].includes(name);
   return /\.(js|css|html)$/.test(name) || name === 'agent_versions.json';
 }
 

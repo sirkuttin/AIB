@@ -16,9 +16,10 @@
  * is logged, not thrown.
  */
 import http from 'node:http';
-import { Readable } from 'node:stream';
+import { type Duplex, Readable } from 'node:stream';
 import { isDesktopApp } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
+import { completeNodeUpgrade, registerNodeUpgrade } from './websocket.ts';
 
 const log = getLogger('http_serve');
 
@@ -133,6 +134,43 @@ function nodeServe(options: ServeOptions, handler: ServeHandler): Server {
     }
     await send(req, res, response);
   }
+
+  // WebSocket handshakes (websocket.ts): the handler answers as under Deno.serve; upgradeWebSocket's answer switches the socket over.
+  server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Uint8Array) => {
+    void (async () => {
+      let response: Response;
+      try {
+        const headers = new Headers();
+        for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+        const target = req.url ?? '/';
+        const url = /^https?:\/\//i.test(target) ? target : `http://${headers.get('host') || `${hostname}:${port}`}${target}`;
+        const request = new Request(url, { method: (req.method ?? 'GET').toUpperCase(), headers });
+        Object.defineProperty(request, 'url', { value: url, enumerable: true });
+        registerNodeUpgrade(request, socket, new Uint8Array(head));
+        const info: ServeInfo = {
+          remoteAddr: { hostname: plainAddress(req.socket.remoteAddress), port: req.socket.remotePort ?? 0, transport: 'tcp' },
+        };
+        try {
+          response = await handler(request, info);
+        } catch (error) {
+          response = await onError(error);
+        }
+      } catch (error) {
+        log.exception(error, 'upgrade request could not be read');
+        response = new Response('Bad Request', { status: 400 });
+      }
+      if (completeNodeUpgrade(response)) return;
+      const body = new Uint8Array(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+      const CRLF = '\r\n';
+      let reply = `HTTP/1.1 ${response.status} ${response.statusText || 'Refused'}${CRLF}`;
+      response.headers.forEach((value, name) => (reply += `${name}: ${value}${CRLF}`));
+      reply += `content-length: ${body.length}${CRLF}connection: close${CRLF}${CRLF}`;
+      try {
+        socket.write(reply);
+        socket.end(body);
+      } catch { /* gone */ }
+    })();
+  });
 
   let failed = false;
   server.on('error', (error) => {

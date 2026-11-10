@@ -1,0 +1,556 @@
+/* The per-chat terminal (terminal-ui.js): the header button, the panel docked under the message box, the sidebar icon.
+   Every colour is a theme.css token (--term-* for the terminal itself). Dark theme only for now. */
+
+/* ---- header button: far right of the chat header ---- */
+.aib-term-toggle-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.aib-term-toggle-wrap[hidden] {
+  display: none;
+}
+.aib-term-hsep {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: var(--line);
+}
+.aib-term-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex: none;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.aib-term-toggle .aib-term-icon {
+  width: 16px;
+  height: 16px;
+}
+.aib-term-toggle:hover {
+  color: var(--text-bright);
+  background: var(--hover-overlay);
+}
+.aib-term-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.aib-term-toggle.is-on {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent-line);
+}
+.aib-term-live {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.aib-term-live[hidden] {
+  display: none;
+}
+.aib-term-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px var(--shadow-strong);
+  pointer-events: none;
+}
+.aib-term-tip[hidden] {
+  display: none;
+}
+.aib-term-tip-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+.aib-term-tip-note {
+  color: var(--muted);
+}
+.aib-term-tip-note:empty {
+  display: none;
+}
+.aib-term-tip kbd {
+  font: 11px var(--code-font), Consolas, monospace;
+  padding: 0 4px;
+  color: var(--text-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-control);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+/* ---- the panel ---- */
+.aib-term-dock {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 300px;
+  min-height: 0;
+  margin-top: 8px;
+  background: var(--term-bg);
+  border-top: 1px solid var(--line-strong);
+}
+.aib-term-dock[hidden] {
+  display: none;
+}
+.aib-term-divider {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  height: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  outline: none;
+  touch-action: none;
+}
+.aib-term-divider i {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.aib-term-divider:hover i,
+.aib-term-dock.is-resizing .aib-term-divider i {
+  background: var(--accent-line);
+}
+.aib-term-divider:focus-visible {
+  top: -2px;
+  border-top: 2px solid var(--accent);
+}
+.aib-term-divider:focus-visible i {
+  background: var(--accent);
+}
+
+.aib-term-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.aib-term-head .aib-term-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.aib-term-name {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+.aib-term-name .aib-term-icon {
+  color: var(--muted);
+}
+.aib-term-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  font: 12px var(--code-font), 'Cascadia Mono', Consolas, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: copy;
+  overflow: hidden;
+}
+.aib-term-path:hover,
+.aib-term-path:focus-visible {
+  background: var(--hover-overlay);
+}
+.aib-term-path.is-copied {
+  color: var(--ok);
+}
+.aib-term-path-icon {
+  display: inline-flex;
+  flex: none;
+}
+.aib-term-path-icon .aib-term-icon {
+  width: 14px;
+  height: 14px;
+}
+.aib-term-path-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aib-term-path-last {
+  font-weight: 400;
+  color: var(--text);
+}
+.aib-term-path.is-missing,
+.aib-term-path.is-missing .aib-term-path-last {
+  color: var(--warn-text);
+}
+.aib-term-path.is-missing .aib-term-path-last {
+  text-decoration: line-through;
+}
+.aib-term-path-dot {
+  display: none;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.aib-term-path-dot.is-off {
+  background: transparent;
+  border: 1.5px solid var(--muted);
+}
+.aib-term-path-dot.is-bad {
+  background: var(--danger);
+}
+.aib-term-shell {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.aib-term-shell i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.aib-term-shell.is-off i {
+  background: transparent;
+  border: 1.5px solid var(--muted);
+}
+.aib-term-shell.is-bad {
+  color: var(--danger-bright);
+  background: var(--bad-fill);
+  border-color: var(--bad-line);
+}
+.aib-term-shell.is-bad i {
+  background: var(--danger);
+}
+.aib-term-grow {
+  flex: 1 1 auto;
+}
+.aib-term-slot {
+  display: inline-flex;
+  flex: none;
+}
+.aib-term-slot:empty {
+  display: none;
+}
+.aib-term-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: none;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.aib-term-btn .aib-term-icon {
+  width: 16px;
+  height: 16px;
+}
+.aib-term-btn:hover {
+  color: var(--text-bright);
+  background: var(--hover-overlay);
+}
+.aib-term-btn:focus-visible,
+.aib-term-path:focus-visible,
+.aib-term-act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.aib-term-end:not(.is-close):hover {
+  color: var(--danger-bright);
+}
+
+/* ---- body: the terminal, and the messages that replace it ---- */
+.aib-term-body {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.aib-term-views {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.aib-term-view {
+  position: absolute;
+  inset: 8px 4px 6px 14px;
+}
+.aib-term-view[hidden] {
+  display: none;
+}
+.aib-term-view .xterm {
+  height: 100%;
+}
+.aib-term-view .xterm-viewport {
+  background-color: var(--term-bg) !important; /* xterm sets it inline from the theme; same value */
+  scrollbar-width: thin;
+}
+
+.aib-term-warn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px var(--shadow-strong);
+}
+.aib-term-warn[hidden] {
+  display: none;
+}
+.aib-term-warn .aib-term-act {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.aib-term-msg {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 16px 24px;
+  overflow: auto;
+}
+.aib-term-msg[hidden] {
+  display: none;
+}
+.aib-term-msg h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.aib-term-msg h3 .aib-term-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.aib-term-msg h3.is-bad .aib-term-icon {
+  color: var(--danger);
+}
+.aib-term-msg h3.is-warn .aib-term-icon {
+  color: var(--warn);
+}
+.aib-term-msg p {
+  max-width: 760px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.aib-term-mono {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px 8px;
+  font: 12.5px var(--code-font), 'Cascadia Mono', Consolas, monospace;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.aib-term-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.aib-term-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  background: var(--bg-control);
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.aib-term-act .aib-term-icon {
+  width: 14px;
+  height: 14px;
+}
+.aib-term-act:hover {
+  background: var(--hover);
+}
+.aib-term-act.is-primary {
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.aib-term-list {
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.aib-term-li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+  padding: 0 4px 0 12px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--line);
+}
+.aib-term-li:first-child {
+  border-top: 0;
+}
+.aib-term-li-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aib-term-li-folder {
+  font: 12px var(--code-font), 'Cascadia Mono', Consolas, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.aib-term-li-idle {
+  width: 80px;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+.aib-term-li .aib-term-act {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.aib-term-ended {
+  flex: none;
+  padding: 0 14px 10px;
+}
+.aib-term-ended[hidden] {
+  display: none;
+}
+.aib-term-endline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aib-term-endline::before,
+.aib-term-endline::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+/* ---- sidebar: a chat with a running terminal ---- */
+.aib-term-row-icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-left: 6px;
+  vertical-align: -2px;
+  color: var(--muted);
+}
+
+/* ---- narrow window: the folder name only, the shell in its tooltip and as a dot ---- */
+@media (max-width: 900px) {
+  .aib-term-head {
+    gap: 4px;
+    padding: 0 4px 0 10px;
+  }
+  .aib-term-name-text,
+  .aib-term-shell,
+  .aib-term-path-prefix,
+  .aib-term-path-icon {
+    display: none;
+  }
+  .aib-term-path {
+    padding: 0 6px;
+    color: var(--text);
+  }
+  .aib-term-path-dot {
+    display: inline-block;
+  }
+}

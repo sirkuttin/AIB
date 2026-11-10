@@ -173,6 +173,7 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
     ["server", true, true],
     ["icons", true, false],
     ["agent_locks", true, true],
+    ["vendor", true, true],
     ["docs", true, false],
     ["public", true, false],
     ["__pycache__", true, false],

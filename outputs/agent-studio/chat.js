@@ -810,6 +810,7 @@
         c.elsewhere && c.elsewhere.working,
         window.AgentSidebarUI?.rowSig(c),
         c.last?.text?.length || 0,
+        !!window.AibTerminal?.hasSession(aliasKey(c)),
       ]),
       org ? org.signature() : '',
     ]);
@@ -839,6 +840,8 @@
       text('span', titleOf(c), 'connection-title'),
       rowStatus(c),
     );
+    const termIcon = window.AibTerminal?.rowIcon(aliasKey(c));
+    if (termIcon) button.querySelector('.connection-title')?.append(termIcon);
     button.title = c.cwd + '\n' + c.id;
     button.onclick = () => openConversation(c);
     button.addEventListener('pointerdown', (e) => window.AgentSplitUI?.startCardDrag(e, aliasKey(c)));
@@ -911,6 +914,7 @@
   }
   function renderHeader() {
     window.ChatViewsUI?.sync();
+    window.AibTerminal?.sync();
     window.AgentChangesUI?.sync(
       selected && (current || selected.id)
         ? {
@@ -2216,6 +2220,7 @@
     if (typing && $('ncFolderInput').value !== $('cwd').value) $('ncFolderInput').value = $('cwd').value;
   }
   function renderNewChat() {
+    window.AibTerminal?.sync();
     if (!newDraft || selected) return;
     const f = newChatFolder();
     ensureNewBranch(f.cwd);
@@ -3534,6 +3539,50 @@
         if (key && lastMainRows.length) mirrorEntry(key).rows = lastMainRows;
       },
       wake: () => setTimeout(tickMirrors, 60),
+    },
+  });
+  /* The chat's own terminal (terminal-ui.js), keyed by aliasKey like split panes' data-mirror. Its cwd is the chat's working folder
+     (a live chat's cwd is its worktree when it has one). Nothing typed in it goes to the agent. */
+  window.AibTerminal?.init({
+    current: () =>
+      selected
+        ? {
+            key: aliasKey(selected),
+            cwd: selected.live?.cwd || selected.cwd || '',
+            project: selected.live?.projectRoot || selected.projectRoot || '',
+            title: titleOf(selected),
+          }
+        : null,
+    titleOf: (key) => {
+      const c = conversations.find((x) => aliasKey(x) === key);
+      return c ? titleOf(c) : '';
+    },
+    token: async () => {
+      if (!token) await refreshToken();
+      return token;
+    },
+    refreshToken,
+    get: (path) => get('/api/live/' + path),
+    post,
+    changed: () => {
+      sidebarSignature = '';
+      renderConversations();
+    },
+    focusComposer: () => $('prompt').focus(),
+    select: async (key) => {
+      if (selected && aliasKey(selected) === key) return true;
+      // A split side pane showing that chat: focus it (its chat becomes the open one); else open the chat here.
+      const pane = [...document.querySelectorAll('.mirror-msgs')].find((m) => m.dataset.mirror === key);
+      let group = '';
+      for (let n = pane; n && !group; n = n.parentNode) group = n.dataset?.g || '';
+      if (group && window.AgentSplitUI?.focusPane) window.AgentSplitUI.focusPane(group);
+      else {
+        const c = conversations.find((x) => aliasKey(x) === key);
+        if (!c) return false;
+        await openConversation(c);
+      }
+      for (let i = 0; i < 50 && !(selected && aliasKey(selected) === key); i++) await new Promise((r) => setTimeout(r, 100));
+      return !!selected && aliasKey(selected) === key;
     },
   });
   // Settings page: the agent list and the defaults for new chats come from the server (Settings is the source of truth).

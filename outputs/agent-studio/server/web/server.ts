@@ -24,6 +24,8 @@ import type { UpdateService } from '../desktop/updater.ts';
 import { MAX_PROMPT_BODY_BYTES } from '../acp/attachments.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
+import { TerminalSessions } from '../terminal/sessions.ts';
+import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -32,9 +34,20 @@ const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
 const MONITOR_ASSETS = new Set(['app.js', 'style.css', 'sidebar.js', 'sidebar.css']);
 const MAX_BODY = 1_000_000;
 
+/** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
+const VENDOR_ASSET = /^\/vendor\/xterm\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
+
 /** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
 export function studioAsset(path: string): string | null {
   if (path === '/' || path === '/chat.html') return 'chat.html';
+  const vendored = path.match(VENDOR_ASSET);
+  if (vendored) {
+    try {
+      return Deno.statSync(`${APP_ROOT}${sep}vendor${sep}xterm${sep}${vendored[1]}`).isFile ? `vendor/xterm/${vendored[1]}` : null;
+    } catch {
+      return null;
+    }
+  }
   const match = path.match(ASSET_NAME);
   if (!match || MONITOR_ASSETS.has(match[1])) return null;
   try {
@@ -78,6 +91,8 @@ export interface WebContext {
   gate: Gate | null;
   /** The live list the editor roots read (refreshed before each editor request). */
   editorList: Record<string, unknown>;
+  /** The chats' terminal shells (terminal/sessions.ts); ended when this server closes. */
+  terminals: TerminalSessions;
 }
 
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
@@ -119,6 +134,12 @@ export class WebServer {
     for (const [key, handler] of studioRoutes()) {
       this.native.set(key, async (c, url, body, request) => {
         const [status, payload] = await (handler as StudioHandler)(c, url, body, request);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of terminalRoutes()) {
+      this.native.set(key, async (c, url, body) => {
+        const [status, payload] = await handler(c, url, body);
         return this.json(status, payload);
       });
     }
@@ -206,6 +227,7 @@ export class WebServer {
           this.ctx.port = port;
           this.gate = new Gate(port, () => this.ctx.token);
           this.ctx.gate = this.gate;
+          globalThis.addEventListener('unload', this.#onUnload);
           resolve(port);
         },
       }, (request) => this.handle(request));
@@ -217,6 +239,10 @@ export class WebServer {
     const path = url.pathname;
     const method = request.method.toUpperCase() === 'HEAD' ? 'GET' : request.method.toUpperCase();
     try {
+      if (method === 'GET' && path === TERMINAL_SOCKET) {
+        const answer = terminalSocket(this.ctx, request, url);
+        return 'response' in answer ? answer.response : this.json(answer.refused[0], answer.refused[1]);
+      }
       if (method === 'POST' && (routeKind('POST', path) === 'own-gate' || path.startsWith('/api/live/artifacts/'))) {
         // These check the agent tool key after reading the body (web_handler.post_artifacts / post_worktree_tool).
         const [status, payload] = await ownGatePost(this.ctx, request, url);
@@ -287,8 +313,13 @@ export class WebServer {
   }
 
   async close(): Promise<void> {
+    globalThis.removeEventListener('unload', this.#onUnload);
+    await this.ctx.terminals.endAll();
     await this.#server?.shutdown();
   }
+
+  /** The process is exiting without close() (Deno.exit): stop every terminal shell now, so none is left behind. */
+  readonly #onUnload = () => this.ctx.terminals.terminateAllNow();
 }
 
 /** The body up to `limit` bytes, or null when it is larger (the connection is then answered without reading the rest). */
@@ -346,6 +377,7 @@ export function makeContext(
     artifacts: null as unknown as Artifacts,
     gate: null,
     editorList: {},
+    terminals: new TerminalSessions(),
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(options.stateDir, options.host, () => ctx.token, () => chatStudioOf(ctx));
