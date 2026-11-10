@@ -1,0 +1,212 @@
+/**
+ * Real binaries, end to end (slow: two `deno desktop` builds; run with AIB_SLOW_TESTS=1, Windows only). Everything runs on an
+ * invisible desktop (_hidden_desktop.ts) with a temp data folder, temp APPDATA/LOCALAPPDATA and ports 8912/8913 (CDP 8931).
+ *
+ *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.99 (B); install A from its zip into a temp folder.
+ *   2. Start A (the desktop app, no --port: it reuses the port saved in desktop-port.json). Write a localStorage key through the
+ *      WebView2 DevTools port (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS), open a chat with the fake agent and start a turn that waits.
+ *   3. Check for updates against a local fake release server serving B (zip, SHA256SUMS, release.json) and click Install now while
+ *      the chat works: A quits, the update helper swaps the files (journaled, with its tray presence), starts B and waits for B's
+ *      start confirmation.
+ *   4. B comes up on the same port, attaches to A's agent host (same product), the chat is still working there, the localStorage
+ *      key is still readable, and the old version's files the host runs from are not deleted.
+ *   5. The turn is cancelled through B: B drains, the old host stops, a host of B's version takes over, the old files go.
+ *   6. Closing B's window with nothing working leaves no AIB process within seconds. Logs tell the story.
+ */
+import { assert, assertEquals } from './_assert.ts';
+import { Fixture, httpJson, until } from './_host_fixture.ts';
+import { HiddenDesktop } from './_hidden_desktop.ts';
+import { HostClient, pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+
+const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
+const PORT = 8912;
+const CDP = 8931;
+const NEXT = '0.1.0-beta.99';
+type Json = Record<string, unknown>;
+
+async function build(out: string, version?: string): Promise<void> {
+  const args = ['run', '-A', `${REPO_ROOT}\\tools\\build.ts`, '--targets', 'windows-x64', '--out', out, '--no-smoke'];
+  if (version) args.push('--version', version);
+  const r = await new Deno.Command(Deno.execPath(), { args, stdout: 'piped', stderr: 'piped' }).output();
+  if (!r.success) throw new Error(`build failed: ${new TextDecoder().decode(r.stderr)}`);
+}
+
+async function cdpEval(expression: string): Promise<unknown> {
+  const targets = await (await fetch(`http://127.0.0.1:${CDP}/json/list`)).json() as Json[];
+  const page = targets.find((t) => t.type === 'page' && String(t.url).startsWith(`http://127.0.0.1:${PORT}`));
+  if (!page) throw new Error('no page target yet');
+  const ws = new WebSocket(String(page.webSocketDebuggerUrl));
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+  try {
+    const answer = new Promise<Json>((resolve) => (ws.onmessage = (e) => resolve(JSON.parse(e.data))));
+    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
+    const reply = await answer;
+    return ((reply.result as Json)?.result as Json)?.value;
+  } finally {
+    ws.close();
+  }
+}
+
+/** Every process whose program is under `folder` (Win32_Process), as [pid, path]. */
+async function processesUnder(folder: string): Promise<[number, string][]> {
+  const script = `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${
+    folder.replaceAll("'", "''")
+  }', 'OrdinalIgnoreCase') } | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }`;
+  const r = await new Deno.Command('powershell', { args: ['-NoProfile', '-NonInteractive', '-Command', script], stdout: 'piped' }).output();
+  return new TextDecoder().decode(r.stdout).split(/\r?\n/).filter(Boolean).map((l) => {
+    const [pid, path] = l.split('|');
+    return [Number(pid), path];
+  });
+}
+
+function fakeReleases(dist: string): Deno.HttpServer<Deno.NetAddr> {
+  const zip = `AIB-${NEXT}-windows-x64.zip`;
+  const files: Record<string, string> = { '/a/zip': zip, '/a/sums': 'SHA256SUMS', '/a/info': 'release.json' };
+  const box: { port: number } = { port: 0 };
+  const server: Deno.HttpServer<Deno.NetAddr> = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, (req): Response => {
+    const path = new URL(req.url).pathname;
+    const base: string = `http://127.0.0.1:${box.port}`;
+    if (path.startsWith('/repos/acme/aib/releases')) {
+      const asset = (name: string, url: string): Json => ({ name, state: 'uploaded', size: Deno.statSync(`${dist}\\${name}`).size, url: base + url });
+      return Response.json([{
+        tag_name: `v${NEXT}`,
+        draft: false,
+        prerelease: true,
+        html_url: '',
+        assets: [asset(zip, '/a/zip'), asset('SHA256SUMS', '/a/sums'), asset('release.json', '/a/info')],
+      }]);
+    }
+    if (files[path]) return new Response(Deno.readFileSync(`${dist}\\${files[path]}`));
+    return new Response('no', { status: 404 });
+  });
+  box.port = server.addr.port;
+  return server;
+}
+
+Deno.test({
+  name: 'real binaries: Install now while a chat works keeps it running, keeps localStorage and the port, then hands the host over',
+  ignore: !SLOW,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await using fx = new Fixture();
+    const distA = `${fx.root}\\distA`, distB = `${fx.root}\\distB`, install = `${fx.root}\\install`, trays = `${fx.root}\\trays`;
+    await Promise.all([build(distA), build(distB, NEXT)]);
+    Deno.mkdirSync(install);
+    Deno.mkdirSync(trays);
+    const tar = await new Deno.Command('C:\\Windows\\System32\\tar.exe', {
+      args: ['-xf', `${distA}\\AIB-${APP_VERSION}-windows-x64.zip`, '-C', install],
+    }).output();
+    assert(tar.success, 'unzip A');
+    const app = `${install}\\AIB`;
+    const exe = `${app}\\AIB.exe`;
+    const releases = fakeReleases(distB);
+    const desk = new HiddenDesktop();
+    const saved = Deno.env.toObject();
+    const env: Record<string, string> = {
+      AGENT_STUDIO_STATE_DIR: fx.state,
+      APPDATA: `${fx.root}\\appdata`,
+      LOCALAPPDATA: `${fx.root}\\localappdata`,
+      AIB_UPDATE_API_BASE: `http://127.0.0.1:${releases.addr.port}`,
+      AIB_UPDATE_REPO: 'acme/aib',
+      AIB_TEST_TRAY_STATE: trays,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}`,
+      // The built app cannot see work/ (its code is embedded), so its test guard is told the agent is the fake one (fake_acp.py).
+      AGENT_STUDIO_ALLOW_REAL_AGENT: '1',
+    };
+    for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+    Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT })); // "the port used last time"
+    const pids = new Set<number>();
+    try {
+      for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
+      const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
+      const aPid = desk.spawn([exe, ...flags], app);
+      pids.add(aPid);
+      for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
+
+      // ---- A runs, a chat works, a draft is in localStorage
+      const bootA = await until(async () => {
+        const [s, b] = await httpJson('GET', PORT, '/api/live/bootstrap', null, undefined, 3000);
+        return s === 200 ? b : null;
+      }, 'A on the saved port', 60);
+      const tokenA = String(bootA.token);
+      const hostA = (await readInfo(fx.state))!;
+      pids.add(hostA.pid!);
+      await until(() => cdpEval(`localStorage.setItem('aib-e2e-draft', 'kept across the update'), 'ok'`), 'localStorage write', 60);
+      const post = (port: number, token: string, name: string, body: unknown) => httpJson('POST', port, '/api/live/' + name, token, body);
+      const [cs, conn] = await post(PORT, tokenA, 'connect', { provider: 'claude', cwd: fx.workspace, background: true });
+      assertEquals(cs, 200, JSON.stringify(conn));
+      const cid = String(conn.id);
+      const state = async (token: string) => (await httpJson('GET', PORT, `/api/live/state?id=${cid}`, token))[1];
+      await until(async () => (await state(tokenA)).ready, 'chat ready', 60);
+      assertEquals((await post(PORT, tokenA, 'prompt', { id: cid, text: 'wait', clientMessageId: 'e2e-1' }))[0], 200);
+      await until(async () => (await state(tokenA)).busy, 'turn working');
+
+      // ---- Install now while it works
+      await post(PORT, tokenA, 'update/check', {});
+      await until(async () => (await httpJson('GET', PORT, '/api/live/update', tokenA))[1].state === 'ready', 'update ready', 120);
+      const [is, installing] = await post(PORT, tokenA, 'update/install', {});
+      assertEquals([is, installing.state, installing.chats], [200, 'installing', 1], JSON.stringify(installing));
+      await until(() => !pidAlive(aPid), 'A quit', 60);
+      assert(pidAlive(hostA.pid!), "the agent host outlived A's quit");
+
+      // ---- B: same port, same host, the chat still works, the draft is there
+      const bootB = await until(async () => {
+        const [s, b] = await httpJson('GET', PORT, '/api/live/bootstrap', null, undefined, 3000);
+        return s === 200 && b.token !== tokenA ? b : null;
+      }, 'B on the same port', 120);
+      const tokenB = String(bootB.token);
+      const owner = JSON.parse(Deno.readTextFileSync(`${fx.state}\\aib-owner.json`));
+      pids.add(owner.pid);
+      assertEquals((await httpJson('GET', PORT, '/api/live/update', tokenB))[1].current, NEXT, 'B runs');
+      assertEquals(bootB.hostPid, hostA.pid, 'B attached to the running host of A');
+      assert((await state(tokenB)).busy, 'the chat is still working, now seen through B');
+      const log = Deno.readTextFileSync(`${fx.state}\\updates\\install.log`);
+      assert(log.includes('the new version is running (it confirmed its start)'), log);
+      assertEquals(await until(() => cdpEval(`localStorage.getItem('aib-e2e-draft')`), 'localStorage read', 60), 'kept across the update');
+      const old = () => [...Deno.readDirSync(app)].map((e) => e.name).filter((n) => /\.old-\d{8}-\d{6}/.test(n));
+      assert(old().some((n) => n.startsWith('AIB.exe.old-')), "the old exe the host runs from is kept: " + old().join(', '));
+      const helperTray = [...Deno.readDirSync(trays)].find((e) => e.name.startsWith('helper-'));
+      assert(helperTray, 'the update helper showed a tray icon');
+
+      // ---- the turn ends; B drains and hands over to a host of its own version
+      assertEquals((await post(PORT, tokenB, 'cancel', { id: cid }))[0], 200);
+      const hostB = await until(async () => {
+        const info = await readInfo(fx.state);
+        return info && info.pid !== hostA.pid ? info : null;
+      }, 'handover to a new host', 60);
+      pids.add(hostB.pid!);
+      await until(() => !pidAlive(hostA.pid!), 'old host gone', 30);
+      assertEquals((await new HostClient(hostB).call('info', null, 10) as Json).version, NEXT);
+      await until(() => old().length === 0, 'the old version files deleted once nothing runs from them', 30);
+      const hostLog = Deno.readTextFileSync(`${fx.state}\\agent-host.log`);
+      assert(/stop asked by AIB 0\.1\.0-beta\.99 \(pid \d+\) handing over/.test(hostLog), hostLog.slice(-3000));
+      const studioLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
+      assert(studioLog.includes('Drain: handing over from the agent host of AIB'), studioLog.slice(-3000));
+      assert(studioLog.includes('closing (installing an update)'), 'A logged why it quit');
+
+      // ---- close B's window with nothing working: no AIB process left
+      const win = desk.windows().find((w) => w.pid === owner.pid && w.title === 'AIB' && w.visible);
+      assert(win, 'B has its window');
+      desk.post(win!, 0x10); // WM_CLOSE: the person closes the window
+      await until(async () => (await processesUnder(install)).length === 0, 'no AIB process left', 30);
+    } finally {
+      for (const [k] of Object.entries(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
+      for (const [pid] of await processesUnder(install).catch(() => [] as [number, string][])) pids.add(pid);
+      for (const pid of pids) {
+        if (pidAlive(pid)) {
+          try {
+            Deno.kill(pid, 'SIGKILL');
+          } catch { /* gone */ }
+        }
+      }
+      await releases.shutdown();
+      await new Promise((r) => setTimeout(r, 1500));
+      desk.close();
+    }
+  },
+});

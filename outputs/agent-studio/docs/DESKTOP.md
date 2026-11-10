@@ -45,7 +45,9 @@ notifications through the web API, updates as "open the installer" instructions)
   them through `desktop-bridge.js` (`window.AibDesktop`) and the web Notification API in a browser. Every frame of the window can call
   the bindings (artifact iframes too), so they only show notifications, rate-limited.
 - **Agent host:** a separate long-lived process by design (`AIB host`). Closing the window does not cut off a turn when the person
-  chose to keep chats running; an idle host exits on its own after its idle time.
+  chose to keep chats running. With no app attached the host shows its own tray icon while something works and exits 10 s after
+  nothing does (docs/agent-host.md, "Lifecycle of the built app's host"). The close question stays for now (`askOnClose`; false
+  gives design 4.4's "no question, the chats go on under the host's icon").
 - **No console windows:** on Windows the app and every child it starts share one hidden console (`platform/console.ts`).
 - **Start menu (Windows):** on first run the app adds `AIB.lnk` to the per-user Start menu, pointing at the running `AIB.exe`
   (`shortcut.ts`). Not on macOS or Linux.
@@ -107,7 +109,13 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
   equal the one line for exactly that file name in the release's `SHA256SUMS` asset; otherwise the file is deleted and refused.
 - **Notify:** an amber line, "AIB 0.1.x is ready to install. Install now / Later". Nothing installs without that click.
 - **Install in place:** Windows (the per-user zip), macOS (the zipped `AIB.app`) and Linux when running from an AppImage. "Install
-  now" needs no chat to be working (otherwise "Install when chats finish"). AIB starts `AIB update-helper` detached and quits; the
+  now" works while chats work when the release's `release.json` (written by `tools/build.ts`, checked against `SHA256SUMS`) names
+  this agent-host protocol: the app quits, the chats keep running in the host, the new version attaches to it and hands it over once
+  nothing works. Otherwise (or for an older release without `release.json`) it says why and offers "Install when chats finish". The
+  helper journals each rename to `updates/install-journal.json` before doing it (the next start undoes a cut-off swap), shows a tray
+  icon "Updating AIB to X...", and counts the update as good only when the new app writes `updates/started-<ver>.ok` (page loaded,
+  or `serve` listening) within 60 s. It starts the new app with the old app's arguments. The app reuses its last port
+  (`desktop-port.json`) so the page origin, and its localStorage drafts, survive. AIB starts `AIB update-helper` detached and quits; the
   helper waits for the app to exit, re-checks the hash, swaps the files (the old ones are renamed, not deleted, so a host still
   running from them keeps running), starts the new AIB, and rolls everything back if the new app cannot start. Its log is
   `<data>/updates/install.log`. The new app deletes the leftovers at startup.
