@@ -396,6 +396,11 @@ body.subchat-open #commandSection {
   min-height: 120px;
   max-height: 45%;
 }
+/* The history belongs to the Activity tab: on Changes or Artifacts it stays open but out of sight, at every width. */
+#subagentsPane.tab-changes #subchatPane,
+#subagentsPane.tab-artifacts #subchatPane {
+  display: none !important;
+}
 #subchatPane {
   position: static;
   flex: 1 1 auto;

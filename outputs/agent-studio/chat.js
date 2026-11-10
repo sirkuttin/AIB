@@ -1753,6 +1753,7 @@
     subFetch = { key: '', at: 0 };
     $('subchatPane').hidden = false;
     document.body.classList.add('subchat-open');
+    window.AgentChangesUI?.show('activity'); // the history lives in the Activity tab
     window.ActivityUI?.drill(true);
     renderSubHead();
     renderAgents();
@@ -2610,7 +2611,7 @@
     if (
       e.key === 'Escape' &&
       !e.defaultPrevented &&
-      !$('subchatPane').hidden &&
+      inspectorShown() &&
       !document.querySelector('dialog[open]') &&
       !/^(INPUT|SELECT)$/.test(e.target?.tagName || '') &&
       !e.target?.isContentEditable
@@ -2819,6 +2820,7 @@
     commandSignature = '';
     $('subchatPane').hidden = false;
     document.body.classList.add('subchat-open');
+    window.AgentChangesUI?.show('activity'); // the history lives in the Activity tab
     window.ActivityUI?.drill(true);
     $('inspectorEyebrow').textContent = 'COMMAND DETAILS';
     $('subchatTitle').textContent = task.title;
@@ -2876,6 +2878,11 @@
   function inspectorOpen() {
     return !$('subchatPane').hidden;
   }
+  // Open and on screen: on the Changes or Artifacts tab the history stays open (CSS hides it) for when you come back to Activity.
+  function inspectorShown() {
+    const pane = $('subagentsPane');
+    return inspectorOpen() && !pane.classList.contains('tab-changes') && !pane.classList.contains('tab-artifacts');
+  }
   function toggleSubagent(agent) {
     if (inspectorOpen() && subSelection?.key === agent?.key) {
       closeInspector();
@@ -2894,7 +2901,7 @@
     'pointerdown',
     (e) => {
       const t = e.target;
-      if (!inspectorOpen() || !t?.closest) return;
+      if (!inspectorShown() || !t?.closest) return;
       if (t.closest('#subchatPane,#subagentsPane,dialog,[role="menu"]')) return;
       if (t.closest('main')) closeInspector();
     },
