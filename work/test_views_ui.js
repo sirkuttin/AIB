@@ -288,3 +288,64 @@ test('a fold with a failed step stands out: a ✗ and "N failed" in the error co
   const css = fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/views.css'), 'utf8');
   assert.match(css, /\.sf-failed\s*\{[^}]*var\(--danger-text\)/);
 });
+
+test('Chat and Prompts fold a turn\'s steps once: no inner "N steps" group inside "Show steps", live or replayed, across a background-task note', () => {
+  const note = user(
+    '<task-notification><task-id>b1</task-id><status>completed</status><summary>Build done</summary></task-notification>',
+    5,
+  );
+  /* replayed from a saved transcript: tool rows carry `call`; live: they carry the ACP `raw` tool call */
+  const saved = (name, time) => tool(name, time);
+  const live = (name, time) => ({
+    role: 'tool',
+    label: name,
+    value: '{}',
+    time,
+    raw: { toolCallId: 'c' + time, title: name, kind: 'execute', status: 'completed' },
+  });
+  for (const [how, t] of [
+    ['replayed', saved],
+    ['live', live],
+  ]) {
+    const page = chatPage();
+    const box = page.element('messages');
+    const rows = [
+      user('build it', 1),
+      asst('Started.', 2),
+      t('Bash', 3),
+      t('Read', 3.1),
+      t('Grep', 3.2),
+      note, // dropped from the fold, so the five tool rows sit side by side inside it
+      t('Bash', 5.1),
+      t('Read', 5.2),
+      asst('The build passed.', 6),
+    ];
+    /* Full: a run of more than 3 tool rows is one "N steps" group (the only fold there); the note is drawn, so leave it out */
+    page.hook.showRows(box, rows.filter((r) => r !== note), 'main');
+    assert.ok(byClass(box, 'tool-group').length >= 1, how + ': Full keeps its "N steps" group');
+    page.hook.setView('chat');
+    page.hook.showRows(box, rows, 'main');
+    const toggles = byClass(box, 'steps-toggle');
+    assert.equal(toggles.length, 1, how + ': one fold');
+    assert.match(toggles[0].textContent, /Show steps \(5 tool calls\)/);
+    toggles[0].listeners.click();
+    assert.match(toggles[0].textContent, /^▾ Hide steps \(5 tool calls\)/);
+    const list = byClass(box, 'group-steps')[0];
+    assert.equal(list.hidden, false);
+    assert.equal(byClass(list, 'tool-group').length, 0, how + ': no second "N steps" fold inside');
+    assert.doesNotMatch(flat(list), /5 steps/, how);
+    assert.equal(list.children.length, 5, how + ': the five rows are drawn directly');
+    /* Prompts: the open prompt is the fold; its rows are drawn directly, no inner "N steps" group */
+    page.hook.setView('prompts');
+    const plain = rows.filter((r) => r !== note);
+    page.hook.showRows(box, plain, 'main');
+    const head = byClass(box, 'pv-head')[0];
+    assert.ok(head, how + ': the prompt is drawn');
+    if (byClass(box, 'pv-body')[0].hidden) head.listeners.click();
+    const pbody = byClass(box, 'pv-body')[0];
+    assert.equal(pbody.hidden, false, how + ': the prompt is open');
+    assert.equal(byClass(pbody, 'tool-group').length, 0, how + ': no "N steps" fold inside the open prompt');
+    assert.doesNotMatch(flat(pbody), /\d+ steps/, how);
+    assert.equal(pbody.children.length, plain.length - 1, how + ': every reply row is drawn directly');
+  }
+});
