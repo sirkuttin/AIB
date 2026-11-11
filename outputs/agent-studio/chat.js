@@ -970,6 +970,15 @@
     renderConversations();
     await refresh();
   }
+  /* Why the Changes tab's Merge button may not ask this chat to merge (it never resumes a chat on its own), or ''. */
+  function mergeBlockedReason(c) {
+    if (!c) return '';
+    if (c.elsewhere && !current) return 'This chat is open in another app. Merge it there';
+    if (window.AgentOrganizeUI?.bucket?.(c) === 'archived') return 'This chat is archived. Unarchive it to merge its work';
+    if (current && snapshot && snapshot.readOnly) return "This chat is read only, so it can't merge";
+    if (!current || (snapshot && snapshot.closed)) return 'This chat is closed. Continue it to merge its work';
+    return '';
+  }
   function renderHeader() {
     window.ChatViewsUI?.sync();
     window.AibTerminal?.sync();
@@ -981,6 +990,7 @@
             busy: !!(current && snapshot && !snapshot.closed && snapshot.busy),
             cwd: selected.cwd || '',
             discarded: isDiscarded(selected),
+            mergeBlocked: mergeBlockedReason(selected),
           }
         : null,
     );

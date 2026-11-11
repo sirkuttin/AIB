@@ -233,3 +233,24 @@ test('mirrorShouldReset: shrink, Thinking toggle, other history window, evicted 
   assert.equal(S.mirrorShouldReset(prev, { ...prev, histStart: 60 }), true);
   assert.equal(S.mirrorShouldReset(prev, { ...prev, key: 'b' }), true);
 });
+
+// The Changes tab's Merge button sends this exact message (server/worktrees/merge_request.ts mergeRequestText).
+const MERGE_REQUEST =
+  "Merge this chat's work into main with AIB's merge tool (merge_into_project). If main has moved and there are conflicts, " +
+  'resolve them in this worktree and call it again. Then say in one line what landed.';
+
+test('the Merge button\'s message is a compact "Merge requested" chip, live and after a reload', () => {
+  const note = S.classifyUser(MERGE_REQUEST);
+  assert.deepEqual(note, { kind: 'merge', from: '', summary: 'Merge requested', body: MERGE_REQUEST });
+  assert.equal(S.noteTitle(note), 'Merge requested');
+  assert.equal(S.classifyUser(MERGE_REQUEST.replaceAll('main', 'release/2.0')).kind, 'merge');
+  // a saved transcript may carry the harness's reminders on the same turn: the words are still the chip
+  const saved = '<system-reminder>be brief</system-reminder>\n' + MERGE_REQUEST;
+  const split = S.splitInjected(saved);
+  assert.equal(split.text, MERGE_REQUEST);
+  assert.equal(S.classifyUser(split.text).kind, 'merge');
+  // anything added to it, or the user typing about merging, stays a normal message
+  assert.equal(S.classifyUser(MERGE_REQUEST + ' Also delete the tests.'), null);
+  assert.equal(S.classifyUser('yes, merge it'), null);
+  assert.equal(S.classifyUser(MERGE_REQUEST.replace('If main', 'If dev')), null);
+});

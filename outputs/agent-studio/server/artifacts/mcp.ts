@@ -100,9 +100,11 @@ export const WORKTREE_TOOLS: Json[] = [
     name: 'merge_into_project',
     title: "Merge this chat's work into the project",
     description:
-      'Merge the work of this chat (done in its own copy of the project, on its own branch) into the project. Call it ONLY after you asked the user ' +
-      "whether to merge and they said yes. It merges this chat's own work and nothing else. The reply says how many commits were merged, or exactly " +
-      'why nothing was merged (for example: the chat is busy, or conflicts need resolving first).',
+      'Merge the work of this chat (done in its own copy of the project, on its own branch) into the project. It works only after the user pressed ' +
+      'Merge into main (or their base branch) in the Changes tab; AIB then sends you a message asking you to merge. A "yes" typed in the chat is not ' +
+      'enough, and the permission ends when your work changes after the click or the user sends a new message. Without it nothing is merged and the ' +
+      "reply tells you to point the user to that button. It merges this chat's own work and nothing else. The reply says how many commits were " +
+      'merged, or exactly why nothing was merged (for example: conflicts to resolve, or a terminal you started is still running) and what to do.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

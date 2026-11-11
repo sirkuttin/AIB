@@ -22,6 +22,8 @@ const HARNESS_TEXT = [
   /^\[handback-send-enforce\]/,
   /^Base directory for this skill:/i,
   /^The coordinator sent a message while you were working:\s*[\s\S]*?\s*Address this before completing your current task\.$/i,
+  // the Changes tab's Merge button (merge_request.ts MERGE_REQUEST): a "Merge requested" chip, not something the user typed
+  /^Merge this chat's work into (\S+) with AIB's merge tool \(merge_into_project\)\. If \1 has moved and there are conflicts, resolve them in this worktree and call it again\. Then say in one line what landed\.$/,
 ];
 const TASK_NOTE = /<task-notification\b[^>]*>[\s\S]*?<\/task-notification>/gi;
 const TASK_NOTE_START = /^<task-notification\b/i;

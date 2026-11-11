@@ -80,6 +80,9 @@
   const SYSTEM_NOTICE = /^\[SYSTEM NOTIFICATION - NOT USER INPUT\]/;
   const HANDBACK_NUDGE = /^\[handback-send-enforce\]/;
   const SKILL_LOAD = /^Base directory for this skill:/i;
+  /* The Changes tab's Merge button sends this exact message (merge_request.ts mergeRequestText): a "Merge requested" chip. */
+  const MERGE_REQUEST =
+    /^Merge this chat's work into (\S+) with AIB's merge tool \(merge_into_project\)\. If \1 has moved and there are conflicts, resolve them in this worktree and call it again\. Then say in one line what landed\.$/;
   const COORDINATOR =
     /^The coordinator sent a message while you were working:\s*([\s\S]*?)\s*Address this before completing your current task\.$/i;
   const attr = (attrs, name) => {
@@ -157,6 +160,7 @@
     }
     m = COORDINATOR.exec(s);
     if (m) return { kind: 'agent', from: '', fromName: 'coordinator', body: m[1].trim() };
+    if (MERGE_REQUEST.test(s)) return { kind: 'merge', from: '', summary: 'Merge requested', body: s };
     if (COMPACTED.test(s))
       return { kind: 'system', from: '', summary: 'Conversation summary', body: s.replace(SELF_CLOSED, '') };
     if (SKILL_LOAD.test(s)) return { kind: 'system', from: '', summary: 'Skill instructions', body: s };
@@ -259,6 +263,7 @@
       .slice(0, 8);
   /* Card title. resolve(from) may map an agent id to a friendly name. */
   function noteTitle(note, resolve) {
+    if (note.kind === 'merge') return 'Merge requested';
     const name = (resolve && note.from && resolve(note.from)) || '';
     if (note.kind === 'subagent')
       return name

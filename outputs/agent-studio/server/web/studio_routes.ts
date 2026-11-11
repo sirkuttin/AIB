@@ -77,6 +77,19 @@ function mergeStudio(ctx: WebContext): merge.MergeStudio {
   };
 }
 
+/** '' or why the Merge button may not ask this chat: archived, or running in another app (the page shows the same reasons). */
+function requestBlockedHere(ctx: WebContext, state: Record<string, unknown>): string {
+  const provider = typeof state.provider === 'string' ? state.provider : '';
+  const sessionId = typeof state.sessionId === 'string' ? state.sessionId : '';
+  if (provider && sessionId) {
+    try {
+      const entry = ctx.conversations.public().entries[`${provider}:${sessionId}`];
+      if (entry && entry.archivedAt) return 'This chat is archived. Unarchive it to merge its work';
+    } catch { /* the marks could not be read: the page's own check still holds */ }
+  }
+  return '';
+}
+
 /** The editor launcher, as studio.create_server builds it: roots are the folders Studio knows, preferred the Settings default. */
 export function makeLauncher(ctx: () => WebContext, listing: () => Json): Launcher {
   return new Launcher(
@@ -201,6 +214,10 @@ export function studioRoutes(): Map<string, StudioHandler> {
     const title = typeof body?.title === 'string' ? body.title : '';
     return refusedReply(() => merge.merge(mergeStudio(ctx), body?.id, title));
   });
+  // The Changes tab's Merge button: a one-shot merge permission for this chat, then the chat is asked to merge (merge_request.ts).
+  routes.set('POST /api/live/worktree/merge-request', (ctx, _url, body) => {
+    return refusedReply(() => merge.requestMerge(mergeStudio(ctx), body?.id, { blocked: (state) => requestBlockedHere(ctx, state) }));
+  });
   routes.set('POST /api/live/worktree/clash', async (ctx, _url, body) => {
     if (body?.action === 'resume-sync') return [200, { ok: true, resumed: await merge.resumeSync(ctx.stateDir, body.project) }];
     return refusedReply(() => merge.resolveClash(mergeStudio(ctx), body?.id, typeof body?.action === 'string' ? body.action : ''));
@@ -281,7 +298,7 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     const allowed = gateFor(ctx, request, path, conversation);
     if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
     const action = typeof body.action === 'string' ? body.action : 'merge';
-    if (action === 'merge') return await refusedReply(() => merge.merge(mergeStudio(ctx), conversation, '', true));
+    if (action === 'merge') return await refusedReply(() => merge.mergeFromTool(mergeStudio(ctx), conversation));
     return await refusedReply(() => merge.resolveClash(mergeStudio(ctx), conversation, action, true));
   }
   // /api/live/artifacts/*: publish is for the agent tool (its key, bound to the body's conversation), the rest for the page.

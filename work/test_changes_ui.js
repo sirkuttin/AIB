@@ -109,11 +109,11 @@ test('status letters, counts and chip text', () => {
   assert.equal(C.moreText(0), '');
   assert.equal(
     C.mergeQuestion(361, 'main'),
-    'Merge all 361 changed files into main? Edits the chat has not committed yet are committed first.',
+    'Ask the chat to merge all 361 changed files into main? Edits it has not committed yet are committed first.',
   );
   assert.equal(
     C.mergeQuestion(1, 'dev'),
-    'Merge the 1 changed file into dev? Edits the chat has not committed yet are committed first.',
+    'Ask the chat to merge the 1 changed file into dev? Edits it has not committed yet are committed first.',
   );
   assert.equal(C.stripText(3), '3 changed');
   assert.equal(C.stripText(0), '');
@@ -613,7 +613,7 @@ test('QA m5 + m6: Merge asks first with the file count; a conflicted file has a 
   await flush();
   const box = pane(t).querySelector('.cg-confirm');
   assert.ok(box);
-  assert.match(box.textContent, /Merge all 3 changed files into main\?/);
+  assert.match(box.textContent, /Ask the chat to merge all 3 changed files into main\?/);
   box.querySelector('.cg-confirm-no').click();
   await flush();
   assert.equal(t.posts.length, 0, 'cancelled: nothing merged');

@@ -547,8 +547,8 @@ export const ARTIFACT_PROMPT =
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
-  'When you finish a piece of work, ask the user whether to merge it into the project. Merge only after they say yes, ' +
-  'by calling the merge_into_project tool. Never merge on your own.';
+  'When you finish a piece of work, tell the user they can merge it into {base} with the Merge button in the Changes tab. ' +
+  'Call the merge_into_project tool only when AIB asks you to after they pressed it; it refuses otherwise. Never merge on your own.';
 
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
@@ -658,6 +658,8 @@ export class Connection {
   contextForPrompt: ((connection: Connection) => unknown) | null = null;
   /** Studio hook: (connection, token) once the prompt went through; the note is not sent again. */
   contextSent: ((connection: Connection, token: unknown) => unknown) | null = null;
+  /** Studio hook: a prompt is about to reach the agent (text and clientMessageId as given); the merge permission ends on the user's own. */
+  onUserPrompt: ((connection: Connection, text: unknown, clientMessageId: string | null) => unknown) | null = null;
   /** Studio hook: withdraw the owner announcement when the conversation stops. */
   onRelease: Hook | null = null;
   /** The agent's last stderr lines (at most 30, each at most 2000 characters). */
@@ -2395,6 +2397,13 @@ export class Connection {
       );
     }
     const seq = this.#startTurn(clientMessageId, fingerprint);
+    if (this.onUserPrompt) {
+      try {
+        this.onUserPrompt(this, text, clientMessageId);
+      } catch (error) {
+        log.exception(error, 'on_user_prompt hook failed');
+      }
+    }
     await this.#drainPending(); // changes still queued from a finished turn go first; a failure is reported but never drops this prompt
     const userEvent: Json = {
       text,
@@ -3051,7 +3060,7 @@ export class Connection {
         content.push({
           type: 'text',
           text: WORKTREE_PROMPT.replace('{branch}', worktree.branch ?? '')
-            .replace('{base}', worktree.base || 'the project branch'),
+            .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
       out.systemPrompt = { mode: 'append', content };
