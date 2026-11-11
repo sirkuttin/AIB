@@ -1829,7 +1829,18 @@
     paintAll();
   }
 
+  /* Files view, "Open in Artifacts" on a file no chat has registered: the deliberate action that registers it in the open chat
+     (the same route the old Preview used), then shows it. */
+  async function registerFile(path) {
+    if (!S.chat.id || !path) throw new Error('Open a chat first');
+    const s = await api('/api/live/artifacts/preview', { conversationId: S.chat.id, path });
+    if (!s || !s.id) return null;
+    upsert(s);
+    await open(s.id);
+    return s;
+  }
   const api2 = Object.assign({}, pure, {
+    registerFile,
     mount,
     sync,
     setVisible,

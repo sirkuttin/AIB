@@ -3706,6 +3706,7 @@
     aliasKey,
     titleOf,
     getJson: get,
+    notice: (m) => fail(Error(m)),
     conversations: () => conversations,
     open: async (c) => {
       await openConversation(c);

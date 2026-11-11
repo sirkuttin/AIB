@@ -195,22 +195,77 @@
     if (!d || !d.git) return null;
     return { map: F().changesMap(d.files || [], d.prefix || ''), prefix: d.prefix || '' };
   }
+  // Files is a project view: a file is an artifact when ANY chat of the project registered it. The Artifacts viewer only lists the
+  // open chat's artifacts (GET /api/live/artifacts is per chat), so the other chats' lists are fetched here too, at most every 30 s.
+  const ART_TTL = 30000;
+  const projectArts = new Map(); // chat id -> {at, list, loading}
+  function loadProjectArtifacts(force) {
+    if (!host) return;
+    const now = Date.now();
+    for (const c of projectChats().slice(0, 40)) {
+      const id = c.key; // artifacts are kept under the chat's lasting key (provider:sessionId)
+      const rec = projectArts.get(id);
+      if (rec && (rec.loading || (!force && now - rec.at < ART_TTL))) continue;
+      const next = { at: now, list: rec ? rec.list : [], loading: true };
+      projectArts.set(id, next);
+      Promise.resolve(host.getJson('/api/live/artifacts', { conversationId: id })).then(
+        (r) => {
+          next.list = (r && Array.isArray(r.artifacts) ? r.artifacts : []).map((a) => Object.assign({}, a, { ownerKey: c.key }));
+          next.loading = false;
+          next.at = Date.now();
+          paint();
+          if (view === 'file') drawMain();
+          if (beside.active) drawBeside();
+        },
+        () => {
+          next.loading = false;
+        },
+      );
+    }
+  }
+  function projectArtifactList() {
+    const A = AR(),
+      st = A && A.state ? A.state() : null,
+      seen = new Set(),
+      out = [];
+    for (const a of ((st && st.list) || []).concat(...Array.from(projectArts.values()).map((r) => r.list)))
+      if (a && a.id && !seen.has(a.id)) {
+        seen.add(a.id);
+        out.push(a);
+      }
+    return out;
+  }
   function artifactSet(rootDir) {
     const out = new Set();
-    const A = AR();
-    const st = A && A.state ? A.state() : null;
-    if (!st || !rootDir) return out;
-    for (const a of st.list || []) {
-      const rel = a && a.sourcePath ? F().relTo(a.sourcePath, rootDir) : null;
+    if (!rootDir) return out;
+    for (const a of projectArtifactList()) {
+      const rel = a.sourcePath ? F().relTo(a.sourcePath, rootDir) : null;
       if (rel) out.add(rel);
     }
     return out;
   }
-  const artifactFor = (rootDir, rel) => {
-    const A = AR(),
-      st = A && A.state ? A.state() : null;
-    return ((st && st.list) || []).find((a) => a && a.sourcePath && F().relTo(a.sourcePath, rootDir) === rel) || null;
-  };
+  const artifactFor = (rootDir, rel) =>
+    (rootDir && projectArtifactList().find((a) => a.sourcePath && F().relTo(a.sourcePath, rootDir) === rel)) || null;
+  // "Open in Artifacts": an artifact of any chat opens in the open chat's viewer (it can show another chat's artifact by id, so you
+  // keep your place); a page file no chat registered yet is registered in the open chat first, which is the deliberate action.
+  function openInArtifacts(art, abs) {
+    const A = AR();
+    if (!A) return Promise.resolve(false);
+    if (art) return Promise.resolve(A.open(art.id));
+    if (!A.registerFile || !abs) return Promise.resolve(false);
+    return A.registerFile(abs).then(
+      (s) => {
+        if (chat) projectArts.delete(chat.key);
+        loadProjectArtifacts(true);
+        paint();
+        return !!s;
+      },
+      (e) => {
+        if (host && host.notice) host.notice('Could not open in Artifacts: ' + ((e && e.message) || 'request failed'));
+        return false;
+      },
+    );
+  }
   async function runSearch() {
     const scope = currentScope(),
       q = query.trim(),
@@ -381,6 +436,7 @@
     paintSwitch();
     els.pane.hidden = mode !== 'files';
     if (mode !== 'files') return;
+    loadProjectArtifacts(false);
     const { rows, scope, tree, changes } = rowsNow();
     const lab = F().scopeLabel(scope);
     els.scopeBtn.replaceChildren(el('span', lab.lbl, 'lbl'), el('b', lab.name), el('span', '▾', 'fx-caretdown'));
@@ -827,6 +883,7 @@
   // One file, read only: header (breadcrumb, change badge, which copy and chat), tools, the code or picture, a footer.
   function renderView(box, tab, where) {
     const redraw = () => (where === 'beside' ? drawBeside() : drawMain());
+    loadProjectArtifacts(false);
     const r = ensureRead(tab, redraw),
       d = r.data;
     const head = el('div', null, 'sf-fv-head');
@@ -873,10 +930,15 @@
       k.onclick = () => keepTab(tab.id);
       tools.append(k);
     }
-    const art = d ? artifactFor(treeOf(tab.scope).root || (d && d.root) || '', tab.path) || artifactFor(d.root, tab.path) : null;
-    if (art) {
-      const a = btn('⧉ Open in Artifacts', 'fx-btn link', 'Open this artifact in the Artifacts viewer');
-      a.onclick = () => AR().open(art.id);
+    const art = d ? artifactFor(treeOf(tab.scope).root || d.root || '', tab.path) || artifactFor(d.root, tab.path) : null;
+    // Every page file (html, svg, md) can open in Artifacts; one no chat registered yet is registered in the open chat on click.
+    if (art || (d && d.page && !d.binary && !d.tooBig)) {
+      const a = btn(
+        '⧉ Open in Artifacts',
+        'fx-btn link',
+        art ? 'Open this artifact in the Artifacts viewer' : "Add this file to the open chat's artifacts and show it",
+      );
+      a.onclick = () => openInArtifacts(art, d.abs);
       tools.append(a);
     }
     tools.append(el('span', null, 'fx-spacer'));
@@ -1064,7 +1126,7 @@
   function openArtifactOf(scope, rel) {
     const t = treeOf(scope),
       a = artifactFor(t.root, rel);
-    if (a && AR()) AR().open(a.id);
+    if (a) openInArtifacts(a, '');
   }
 
   // ---- paths in replies ----------------------------------------------------------------------------------------------------
@@ -1350,6 +1412,7 @@
     _reset: () => {
       trees.clear();
       reads.clear();
+      projectArts.clear();
       exists.clear();
       tabsByProject = {};
       beside = F().emptyTabs();

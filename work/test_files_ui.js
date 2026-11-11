@@ -63,9 +63,15 @@ function setup(o) {
       focusFile: (p) => focused.push(p),
     }),
   };
+  const registered = [];
   ctx.AgentArtifactsUI = {
-    state: () => ({ list: [{ id: 'art1', sourcePath: ROOT + '/outputs/bar-charts.html' }] }),
+    state: () => ({ list: opts.ownList || [{ id: 'art1', sourcePath: ROOT + '/outputs/bar-charts.html' }] }),
     open: (id) => opened.push(id),
+    registerFile: async (abs) => {
+      registered.push(abs);
+      (opts.arts = opts.arts || {})['claude:a1'] = [{ id: 'new1', sourcePath: abs }];
+      return { id: 'new1' };
+    },
   };
   const list = opts.list || [conv('a1', ROOT), conv('a2', ROOT), conv('b1', 'C:/work/beta')];
   const getJson = async (path, q) => {
@@ -78,7 +84,8 @@ function setup(o) {
     if (path === '/api/live/files/search')
       return { root: ROOT, matches: [{ path: 'outputs/bar-charts.html', name: 'bar-charts.html', dir: 'outputs' }], total: 1 };
     if (path === '/api/live/files/read')
-      return { root: ROOT, path: q.path, abs: ROOT + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: false, text: 'a = 1\nb = 2\n', lines: 2, viewUrl: '' };
+      return { root: ROOT, path: q.path, abs: ROOT + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: '' };
+    if (path === '/api/live/artifacts') return { artifacts: (opts.arts || {})[q.conversationId] || [] };
     return {};
   };
   const W = ctx.AgentWorkspaceUI;
@@ -101,7 +108,7 @@ function setup(o) {
   FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, conversations: () => list, open: async () => {} });
   W.sync(list, list[0]);
   FU.sync(list[0]);
-  return { shell, ctx, W, FU, calls, list, focused, opened };
+  return { shell, ctx, W, FU, calls, list, focused, opened, registered };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const rows = (t) => t.shell.body.querySelectorAll('.fx-row').filter((r) => r.dataset.path);
@@ -348,4 +355,57 @@ test('files-state: badges, link candidates, dedupe and relTo', () => {
   assert.equal(FS.relTo('.git/config', 'C:/work/alpha'), null);
   assert.equal(FS.dedupe(FS.pathCandidates('a.md then ./a.md then A.md'), 'C:/w').length, 1);
   assert.ok(FS.opensBeside(1280) && !FS.opensBeside(1279));
+});
+
+test("⧉ counts any chat of the project: a file another chat registered is marked, and opens in the open chat's viewer", async () => {
+  // The open chat (a1) has no artifacts of its own; a2 made bar-charts.html. The Artifacts viewer only knows a1's list.
+  const t = setup({ ownList: [], arts: { 'claude:a2': [{ id: 'other1', sourcePath: ROOT + '/outputs/bar-charts.html' }] } });
+  t.FU.setMode('files');
+  await flush();
+  const asked = t.calls.filter((c) => c.path === '/api/live/artifacts').map((c) => c.q.conversationId);
+  assert.ok(asked.includes('claude:a1') && asked.includes('claude:a2'), 'every chat of the project is asked');
+  assert.ok(!asked.includes('claude:b1'), 'not chats of other projects');
+  rowOf(t, 'outputs').click();
+  await flush();
+  const mark = rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art');
+  assert.ok(mark, 'marked although the open chat did not register it');
+  mark.click();
+  assert.deepEqual(t.opened, ['other1'], 'opened by id in the current viewer');
+  // the file view has the button too
+  rowOf(t, 'outputs/bar-charts.html').click();
+  await flush();
+  const b = t.shell.body.querySelector('#fileView').querySelectorAll('.fx-btn').find((x) => /Open in Artifacts/.test(x.textContent));
+  assert.ok(b);
+  b.click();
+  await flush();
+  assert.deepEqual(t.opened, ['other1', 'other1']);
+  assert.deepEqual(t.registered, [], 'an existing artifact is never registered again');
+});
+
+test('Open in Artifacts shows for every page file; on one no chat registered it registers it in the open chat, then the ⧉ appears', async () => {
+  const t = setup({ ownList: [] });
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'outputs').click();
+  await flush();
+  assert.equal(rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art'), null, 'not an artifact yet: no marker');
+  rowOf(t, 'outputs/bar-charts.html').click();
+  await flush();
+  const view = t.shell.body.querySelector('#fileView');
+  const b = view.querySelectorAll('.fx-btn').find((x) => /Open in Artifacts/.test(x.textContent));
+  assert.ok(b, 'shown for an html file');
+  b.click();
+  await flush();
+  await flush();
+  assert.deepEqual(t.registered, [ROOT + '/outputs/bar-charts.html'], 'registered in the open chat on click');
+  assert.ok(rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art'), 'now marked');
+  // not for a file that has no page
+  rowOf(t, 'README.md').click();
+  await flush();
+  rowOf(t, 'scripts').click();
+  await flush();
+  rowOf(t, 'scripts/load_sales.py').click();
+  await flush();
+  const v2 = t.shell.body.querySelector('#fileView');
+  assert.equal(v2.querySelectorAll('.fx-btn').filter((x) => /Open in Artifacts/.test(x.textContent)).length, 0, 'a .py file has no page');
 });
