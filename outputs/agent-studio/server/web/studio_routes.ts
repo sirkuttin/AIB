@@ -19,6 +19,7 @@ import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { ROUTES } from './routes.ts';
 import type { WebContext } from './server.ts';
+import { bringBack, restoreFolders } from './project_routes.ts';
 
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
@@ -112,7 +113,12 @@ export function studioRoutes(): Map<string, StudioHandler> {
     await ctx.settings.update(body);
     return [200, { ...(await settingsView(studioOf(ctx))), ok: true }];
   });
-  routes.set('POST /api/live/conversation-state', (ctx, _url, body) => conversationAction(studioOf(ctx), body));
+  routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
+    const folders = restoreFolders(ctx.conversations, body);
+    const reply = await conversationAction(studioOf(ctx), body);
+    if (reply[0] === 200) await bringBack(ctx.removedProjects, folders); // restoring a chat brings its removed project back
+    return reply;
+  });
   // ---- editors ----
   routes.set('GET /api/live/editors', async (ctx, url) => {
     await refreshList(ctx);

@@ -50,6 +50,7 @@
   let draft = null; // the temporary "New chat" tab: {pk: project it will start in, from: chat key we came from, blank: add-project} or null
   const liveIds = new Map(); // chat key -> live connection id, to follow a new chat whose key changes once it has a session id
   let blankNext = false; // the next new-chat view is "add a project": no project folder is pre-filled
+  let nextPk = ''; // the next new-chat view starts in this project (the "+" on a project heading)
 
   function read() {
     try {
@@ -206,7 +207,7 @@
     }
   }
   function rebuildProjects() {
-    const real = St().buildProjects(items);
+    const real = St().buildProjects(items.filter((i) => !removedProject(i.projectKey) || i.liveId));
     if (items.length) {
       const left = St().prunePending(pending, new Set(real.map((p) => p.key)));
       if (Object.keys(left).length !== Object.keys(pending).length) {
@@ -401,6 +402,21 @@
     return svg;
   }
   const ENVELOPE = 'M3 5.5h14v9H3zM3.5 6l6.5 5 6.5-5';
+  // Project = folder, as on the project headings: one folder for a project, stacked folders for "All chats".
+  const FOLDER = 'M2.5 5.5a1 1 0 0 1 1-1h4l1.5 2h7.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1z';
+  const FOLDERS =
+    'M2 8a1 1 0 0 1 1-1h3.5l1.5 1.8h6a1 1 0 0 1 1 1V16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zM5 4.8V4a1 1 0 0 1 1-1h3l1.5 1.8H17a1 1 0 0 1 1 1V13';
+  function projIcon(all) {
+    const cls = 'ws-proj-ico ' + (all ? 'all' : 'one');
+    if (!doc().createElementNS) {
+      const sp = el('span', null, cls);
+      sp.setAttribute('aria-hidden', 'true');
+      return sp;
+    }
+    const ic = svgIcon(all ? FOLDERS : FOLDER);
+    ic.setAttribute('class', cls);
+    return ic;
+  }
 
   // The window's project colour: a 3 px stripe across the very top and the active tab's top edge follow the project the strip shows.
   // With "All chats" and no open chat there is no single project, so the stripe is neutral.
@@ -417,6 +433,11 @@
       trigger = projBtn();
     const p = ws.active === St().ALL ? null : projectOfKey(ws.active);
     if (name) name.textContent = p ? p.name : 'All chats';
+    if (name && name.parentNode && name.parentNode.insertBefore) {
+      const old = name.parentNode.querySelector ? name.parentNode.querySelector('.ws-proj-ico') : null;
+      if (old && old.remove) old.remove();
+      name.parentNode.insertBefore(projIcon(!p), name);
+    }
     if (trigger) {
       trigger.title = (p ? p.name + '\n' + (p.path || 'No folder') + '\n' : '') + 'Switch project (Ctrl+P)';
       trigger.setAttribute('aria-label', 'Project: ' + (p ? p.name : 'All chats') + '. Switch project (Ctrl+P)');
@@ -1276,6 +1297,10 @@
     saveChain = Promise.resolve(),
     loadingPrefs = null;
   let hiddenOpen = false; // the "Hidden (n)" group in the dropdown is expanded
+  // Projects removed from AIB ("Delete project…"), from the server with the preferences: their chats stay out of every list
+  // until a new chat starts in the folder or one of its chats is restored (the server then forgets the removal).
+  let removedKeys = new Set();
+  const removedProject = (pk) => !!pk && removedKeys.has(pk);
   function readLocalPrefs() {
     try {
       const raw = root.localStorage.getItem(PREFS_LOCAL);
@@ -1300,6 +1325,8 @@
   }
   function adoptPrefs(r) {
     prefs = St().sanitizePrefs(r);
+    const rm = r && r.removed && typeof r.removed === 'object' && !Array.isArray(r.removed) ? r.removed : null;
+    if (rm) removedKeys = new Set(Object.keys(rm));
     prefsRev = (r && r.revision) || prefsRev;
     prefsVer++;
     if (host) {
@@ -1384,6 +1411,42 @@
       next = St().nudge(keys, pk, dir);
     if (next.join('\n') !== keys.join('\n')) reorderTo(next);
   }
+  // "Delete project…": the in-page question (delete-project-ui.js), then stop its chats, remove it on the server (and its folder
+  // when ticked), and move its chats to Recently deleted (organize-ui.js deleteMany).
+  function deleteProject(pk, returnTo) {
+    const p = projectOfKey(pk),
+      D = root.AgentDeleteProjectUI,
+      O = root.AgentOrganizeUI;
+    if (!p || !D || !host) return null;
+    const chats = items
+      .filter((i) => i.projectKey === pk && !i.deleted)
+      .map((i) => convOf(i.key))
+      .filter(Boolean);
+    const running = chats.filter((c) => c.live && !c.live.closed).length;
+    const others = projects.filter((q) => q.key !== pk && q.path).map((q) => q.path);
+    const post = (body) =>
+      Promise.resolve(host.postJson('project-remove', Object.assign({ path: p.path, projects: others }, body)));
+    return D.show({
+      name: p.name,
+      path: p.path,
+      chats: chats.length,
+      running,
+      returnTo,
+      check: () => post({ check: true }),
+      confirm: async (choice) => {
+        const remove = () => post({ disk: !!choice.disk, expect: choice.expect || '' });
+        if (O && O.deleteMany) await O.deleteMany(chats, remove);
+        else await remove();
+        removedKeys.add(pk);
+        if (ws.active === pk) commit(St().setActive(ws, St().ALL));
+        rebuildProjects();
+        lastSig = '';
+        prefsRev = '';
+        syncPrefs('');
+        host.rerender();
+      },
+    });
+  }
   function hideProject(pk, hidden) {
     if (hidden && ws.active === pk) commit(St().setActive(ws, St().ALL));
     setPrefOf(pk, { hidden: !!hidden });
@@ -1450,7 +1513,7 @@
       p.name + (p.waiting ? ', ' + p.waiting + ' need you' : '') + (hiddenRow ? ', hidden' : ''),
     );
     main.setAttribute('aria-pressed', String(ws.active === p.key));
-    main.append(el('span', p.name, 'ws-prow-name'));
+    main.append(projIcon(false), el('span', p.name, 'ws-prow-name'));
     const b = badgeFor(p.waiting, p.working, p.unread);
     if (b) {
       b.setAttribute('aria-hidden', 'true');
@@ -1498,7 +1561,7 @@
         'All chats\n' + T.total + ' chats, ' + T.waiting + ' need you, ' + T.working + ' working',
       );
       main.setAttribute('aria-pressed', String(ws.active === St().ALL));
-      main.append(el('span', 'All chats', 'ws-prow-name'));
+      main.append(projIcon(true), el('span', 'All chats', 'ws-prow-name'));
       const b = badgeFor(T.waiting, T.working, 0);
       if (b) {
         b.setAttribute('aria-hidden', 'true');
@@ -1689,6 +1752,12 @@
     );
     item('Copy folder path', () => copyText(p.path || ''), !p.path);
     addEditorItems(m, p, pk, item, () => ctx === m && openCtxMenu(pk, x, y, returnTo));
+    if (root.AgentDeleteProjectUI && p.path) {
+      const sep = el('div', null, 'ws-menu-sep');
+      sep.setAttribute('role', 'separator');
+      m.append(sep);
+      item('Delete project…', () => deleteProject(pk, returnTo)).classList.add('ws-menu-danger');
+    }
     m.addEventListener('keydown', (e) => {
       const items = Array.from(m.querySelectorAll('button:not(:disabled)')),
         at2 = items.indexOf(doc().activeElement);
@@ -2081,7 +2150,7 @@
   // "New chat" tab; the new chat starts in the project of the tab we were on.
   function noteNewChat(prev) {
     if (!host || !ws) return;
-    const prevPk = prev ? projectKeyOf(prev) : (draft && draft.pk) || '';
+    const prevPk = nextPk || (prev ? projectKeyOf(prev) : (draft && draft.pk) || '');
     const from = prev ? keyOf(prev) : draft ? draft.from : '';
     if (blankNext) {
       blankNext = false;
@@ -2089,6 +2158,20 @@
     } else draft = { pk: St().draftProject(ws, prevPk), from, blank: false };
     if (splitReady()) S().noteDraft(ws.active);
     lastSig = '';
+  }
+  // "+" on a project heading (or on the Chats row): the New chat view with that project's folder. pk '' (the Chats row in
+  // "All chats") is the plain New chat: the project of the chat you were on, else the last one. The rail stays where it is.
+  function newChatIn(pk) {
+    const nb = host ? doc().getElementById('new') : null;
+    if (!nb) return false;
+    closeOverlays();
+    nextPk = pk && pk !== St().ALL ? pk : '';
+    try {
+      nb.click();
+    } finally {
+      nextPk = '';
+    }
+    return true;
   }
   // "+" in the list header: the New project dialog. When it finishes the project is added (pending until its first chat
   // exists), given its display name, selected in the dropdown, and either its last chat opens or a new chat starts in it.
@@ -2184,11 +2267,13 @@
   const inProject = (c) => {
     const active = ws ? ws.active : St().ALL,
       pk = projectKeyOf(c);
+    if (removedProject(pk) && !(c.live && !c.live.closed)) return false;
     if (active === St().ALL && hiddenProject(pk)) return false;
     // Worktree and scratch folders are hidden from "All chats" too (same rule as the dropdown); Ctrl+K and the inbox still reach them.
     if (active === St().ALL) {
       const proj = projectOfKey(pk),
-        k = kindOfPath((proj && proj.path) || (S ? S.rootOf(c) : c.cwd) || '');
+        SB = root.AgentSidebarUI,
+        k = kindOfPath((proj && proj.path) || (SB ? SB.rootOf(c) : c.cwd) || ''); // S() is the split view, not the sidebar
       if (k.worktree || k.scratch) return false;
     }
     return St().inProject({ projectKey: pk }, active);
@@ -2468,6 +2553,8 @@
     refresh,
     paletteProjects,
     focusNewChatIn,
+    newChatIn,
+    deleteProject,
     projectOrder,
     openProjectCtx,
     init,

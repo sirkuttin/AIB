@@ -7,6 +7,7 @@ import { pyInt } from '../transcripts/pycompat.ts';
 import { modelInUse } from '../transcripts/store.ts';
 import { refuseNetworkPath } from './security.ts';
 import type { WebContext } from './server.ts';
+import { afterConnect } from './project_routes.ts';
 
 /** Studio.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to Python's set. */
 export const LIVE_POST_OPS = [
@@ -86,6 +87,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
   for (const name of LIVE_POST_OPS) {
     routes.set(`POST /api/live/${name}`, async (ctx, _url, body) => {
       const [status, payload] = await ctx.host.liveCall(name, body);
+      if (name === 'connect') await afterConnect(ctx.removedProjects, body, status); // a new chat brings a removed project back
       if (name === 'session-op' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
         const p = payload as Json;
         const deleted = p._deleted;

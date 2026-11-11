@@ -427,6 +427,35 @@
       focusNow();
     });
   }
+  // "Delete project…": stop every running chat of the project, run between() (the server removes the project, and its folder
+  // when asked), then move every chat to Recently deleted, where each can be restored as usual. One list refresh at the end.
+  async function deleteMany(list, between) {
+    const sel = host.getSelected && host.getSelected(),
+      selKey = sel ? keyOf(sel) : '';
+    for (const c of list) if (isLive(c)) await host.endSession(c);
+    if (between) await between();
+    const S = root.AgentSidebarUI;
+    let failed = 0;
+    for (const c of list) {
+      try {
+        await host.post('conversation-state', {
+          action: 'delete',
+          provider: c.provider,
+          sessionId: sessionIdOf(c),
+          title: titleOf(c),
+          cwd: c.cwd || '',
+          projectRoot: S && S.rootOf ? S.rootOf(c) : '',
+        });
+      } catch (e) {
+        failed++;
+      }
+    }
+    await fetchState();
+    if (selKey && list.some((c) => keyOf(c) === selKey)) host.closeSelected();
+    host.rerender();
+    await host.refreshList();
+    return { failed };
+  }
   function markHandled(c) {
     if (!c || !markable(c)) return Promise.resolve();
     return guarded(() => call('handled', c));
@@ -775,6 +804,22 @@
     h.append(el('span', label), el('span', n, 'n'));
     return h;
   }
+  // The "Chats n" row: a "+" after the count starts a new chat in the project the list shows ("All chats": the plain
+  // New chat, in the project of the chat you were on or the last one).
+  function chatsHeading(n) {
+    const h = heading('mainHeading', 'Chats', n);
+    const W = root.AgentWorkspaceUI;
+    if (!W || !W.newChatIn) return h;
+    const p = W.activeProject && !(sidebar() && sidebar().isGrouping()) ? W.activeProject() : null;
+    const label = 'New chat' + (p ? ' in ' + p.name : '');
+    const add = el('button', '+', 'list-add');
+    add.type = 'button';
+    add.title = label;
+    add.setAttribute('aria-label', label);
+    add.onclick = () => W.newChatIn(p ? p.key : '');
+    h.append(add);
+    return h;
+  }
   function group(id, label, rows, ctx, visible) {
     const wrap = el('div', null, 'list-group');
     wrap.setAttribute('role', 'group');
@@ -915,7 +960,7 @@
     if (view.main.length || view.hold.length || (projects && view.pinned.length)) {
       if (projects) {
         const listed = view.pinned.concat(view.main);
-        if (listed.length) frag.append(heading('mainHeading', 'Chats', listed.length));
+        if (listed.length) frag.append(chatsHeading(listed.length));
         const held = (r) => holdBlock(r.key, r.rows, ctx, r.visible).node;
         for (const g of sidebar().projectGroups(listed, (c, visible) => row(c, ctx, visible, true), {
           forceOpen: !!ctx.query,
@@ -928,7 +973,7 @@
         wrap.setAttribute('role', 'group');
         if (view.main.length) {
           wrap.setAttribute('aria-labelledby', 'mainHeading');
-          wrap.append(heading('mainHeading', 'Chats', view.main.length));
+          wrap.append(chatsHeading(view.main.length));
         }
         for (const c of view.main) wrap.append(row(c, ctx, always));
         if (view.hold.length) {
@@ -1069,6 +1114,7 @@
     run: (id, c, origin) => runItem(id, c, origin || 'header'),
     thinkingState,
     markHandled,
+    deleteMany,
     flag,
     yourTurn: yourTurnOf,
     menuModel,

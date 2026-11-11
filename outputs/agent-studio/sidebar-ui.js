@@ -391,7 +391,10 @@
         STATE_DOT[sum.state],
         sum.needs ? '' : 'count-turn',
       );
-      head.append(badge);
+      // The badge sits beside the toggle (not in it) so the "+" can follow the count; the toggle still names it.
+      badge.id = id + '-state';
+      head.setAttribute('aria-describedby', badge.id);
+      badge.onclick = () => head.onclick && head.onclick(); // the mark keeps its tooltip and still toggles
       wrap.setAttribute('aria-labelledby', id);
       const body = el('div', null, 'project-rows');
       for (const c of g.rows) body.append(makeRow(c, open));
@@ -410,6 +413,20 @@
       const W2 = typeof window !== 'undefined' ? window.AgentWorkspaceUI : null;
       const headRow = el('div', null, 'project-head-row');
       headRow.append(head);
+      // "+" right after the count: a new chat in this project (its folder pre-filled). The toggle's hit area covers the
+      // whole row (CSS ::after); the "+" sits above it, so clicking it never opens or closes the project.
+      if (W2 && W2.newChatIn && g.key) {
+        const add = el('button', '+', 'project-add');
+        add.type = 'button';
+        add.title = 'New chat in ' + g.name;
+        add.setAttribute('aria-label', 'New chat in ' + g.name);
+        add.onclick = (e) => {
+          if (e && e.stopPropagation) e.stopPropagation();
+          W2.newChatIn(g.key);
+        };
+        headRow.append(add);
+      }
+      headRow.append(badge);
       if (W2 && W2.openProjectCtx && g.key) {
         const more = el('button', '⋯', 'project-more');
         more.type = 'button';

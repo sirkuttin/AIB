@@ -32,7 +32,12 @@
     return c.provider + ':' + (c.sessionId || c.id || c.key);
   }
   function rememberDiscarded(c) {
-    const row = { ...c, discarded: true, worktree: null, live: c.live ? { ...c.live, closed: true, worktree: null } : c.live };
+    const row = {
+      ...c,
+      discarded: true,
+      worktree: null,
+      live: c.live ? { ...c.live, closed: true, worktree: null } : c.live,
+    };
     delete row.elsewhere;
     discardedChats.set(aliasKeyOf(c), { at: Date.now() / 1000, row });
     const keep = [...discardedChats.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, 50);
@@ -640,7 +645,9 @@
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
         body: JSON.stringify(data),
       },
-      path === 'connect' || path === 'discover' || path === 'agent-options' ? 120000 : 30000,
+      path === 'connect' || path === 'discover' || path === 'agent-options' || path === 'project-remove'
+        ? 120000
+        : 30000,
     );
     if (response.status === 403) {
       let refreshed = false;
@@ -2488,7 +2495,8 @@
         ),
       };
     else if (lists.mode) settings.configOptions.push(option('mode', 'mode', 'Mode', lists.mode, newDraft.mode));
-    if (lists.effort) settings.configOptions.push(option('effort', 'thought_level', 'Effort', lists.effort, newDraft.effort));
+    if (lists.effort)
+      settings.configOptions.push(option('effort', 'thought_level', 'Effort', lists.effort, newDraft.effort));
     return settings;
   }
   function pickNewAgent(id) {
@@ -2599,7 +2607,12 @@
     if (!lists.model)
       extraChips.push(
         lists.loading
-          ? { id: 'model', label: 'Model', value: 'Checking\u2026', title: 'Asking ' + name + ' which models it offers\u2026' }
+          ? {
+              id: 'model',
+              label: 'Model',
+              value: 'Checking\u2026',
+              title: 'Asking ' + name + ' which models it offers\u2026',
+            }
           : {
               id: 'model',
               label: 'Model',
