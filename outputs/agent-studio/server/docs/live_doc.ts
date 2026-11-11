@@ -186,9 +186,8 @@ export class LiveDoc {
   #afterTransaction(tr: Y.Transaction): void {
     if (tr.changed.size === 0 && tr.deleteSet.clients.size === 0) return;
     const origin = tr.origin as Origin | WsLink | null;
-    const by = origin && this.#sockets.has(origin as WsLink)
-      ? 'user'
-      : origin && typeof origin === 'object' && 'kind' in origin && (origin.kind === 'agent' || origin.kind === 'file' || origin.kind === 'user')
+    const by = origin && this.#sockets.has(origin as WsLink) ? 'user' : origin && typeof origin === 'object' && 'kind' in origin &&
+        (origin.kind === 'agent' || origin.kind === 'file' || origin.kind === 'user')
       ? (origin.kind === 'file' ? 'file' : origin.name)
       : origin === null || (origin as Origin)?.kind === 'system'
       ? null
@@ -279,7 +278,9 @@ export class LiveDoc {
     if (typeof op.ifRev !== 'number' || (needsHash && typeof op.ifHash !== 'string')) {
       throw new DocRefusal(
         'missing_guard',
-        `op ${index}: a whole-block ${op.op} needs ${needsHash ? '"ifHash" (the block\'s h) and ' : ''}"ifRev" (the rev of the read that showed it)`,
+        `op ${index}: a whole-block ${op.op} needs ${
+          needsHash ? '"ifHash" (the block\'s h) and ' : ''
+        }"ifRev" (the rev of the read that showed it)`,
         { op: index },
       );
     }
@@ -289,11 +290,15 @@ export class LiveDoc {
       const view = this.view(el);
       const changedAfter = (this.#blockRev.get(id) ?? 0) > op.ifRev || op.ifRev > this.rev;
       if (changedAfter || (needsHash && view.h !== op.ifHash)) {
-        throw new DocRefusal('guard_mismatch', `op ${index}: block ${id} changed after your read; it is shown as it stands now. Their edit wins.`, {
-          op: index,
-          block: view,
-          rev: this.rev,
-        });
+        throw new DocRefusal(
+          'guard_mismatch',
+          `op ${index}: block ${id} changed after your read; it is shown as it stands now. Their edit wins.`,
+          {
+            op: index,
+            block: view,
+            rev: this.rev,
+          },
+        );
       }
     }
   }
@@ -370,7 +375,9 @@ export class LiveDoc {
 function textOfSource(source: Source | undefined, index: number): { text: string; as: string } {
   const from = source?.from;
   if (!from || typeof from !== 'object' || from.kind !== 'inline' || typeof from.content !== 'string') {
-    throw new DocRefusal('bad_op', `op ${index}: give the text as {"from":{"kind":"inline","content":"…"},"as":"text"|"markdown"}`, { op: index });
+    throw new DocRefusal('bad_op', `op ${index}: give the text as {"from":{"kind":"inline","content":"…"},"as":"text"|"markdown"}`, {
+      op: index,
+    });
   }
   const as = source!.as ?? 'markdown';
   if (as !== 'text' && as !== 'markdown') throw new DocRefusal('bad_op', `op ${index}: "as" must be "text" or "markdown"`, { op: index });
@@ -407,10 +414,14 @@ function locate(frag: Y.XmlFragment, target: { text: string; nth?: number }, ind
       if (--left === 0) return { el, at };
     }
   }
-  throw new DocRefusal('find_none', `op ${index}: the words "${target.text}" are not in the doc as it stands; read that block again and quote what it says now`, {
-    op: index,
-    text: target.text,
-  });
+  throw new DocRefusal(
+    'find_none',
+    `op ${index}: the words "${target.text}" are not in the doc as it stands; read that block again and quote what it says now`,
+    {
+      op: index,
+      text: target.text,
+    },
+  );
 }
 
 function sourceSpecs(source: Source | undefined, index: number): BlockSpec[] {
@@ -445,10 +456,14 @@ function applyOps(frag: Y.XmlFragment, ops: Op[], mark: Attrs | null): void {
       }
       return;
     }
-    if (t.kind !== 'blocks' || !Array.isArray(t.ids) || !t.ids.length) throw new DocRefusal('bad_op', `op ${index}: unknown target`, { op: index });
+    if (t.kind !== 'blocks' || !Array.isArray(t.ids) || !t.ids.length) {
+      throw new DocRefusal('bad_op', `op ${index}: unknown target`, { op: index });
+    }
     if (op.op === 'delete') {
       const found = t.ids.map((id) => findBlock(frag, id, index)).sort((a, b) => b.at - a.at);
-      if (topLevel(frag).length - found.length < 1) throw new DocRefusal('last_block', `op ${index}: a doc keeps at least one block`, { op: index });
+      if (topLevel(frag).length - found.length < 1) {
+        throw new DocRefusal('last_block', `op ${index}: a doc keeps at least one block`, { op: index });
+      }
       for (const f of found) frag.delete(f.at, 1);
       return;
     }
@@ -457,13 +472,19 @@ function applyOps(frag: Y.XmlFragment, ops: Op[], mark: Attrs | null): void {
     const { text, as } = textOfSource(op.with, index);
     if (as === 'text') {
       if (!TEXTBLOCKS.has(el.nodeName)) {
-        throw new DocRefusal('bad_op', `op ${index}: "as":"text" re-words a paragraph, heading or code block; use "as":"markdown" for a ${el.nodeName}`, { op: index });
+        throw new DocRefusal(
+          'bad_op',
+          `op ${index}: "as":"text" re-words a paragraph, heading or code block; use "as":"markdown" for a ${el.nodeName}`,
+          { op: index },
+        );
       }
       if (!text) throw new DocRefusal('bad_op', `op ${index}: never replace with empty content; delete the block instead`, { op: index });
       applyTextEdits(el, diffText(blockText(elementToSpec(el)), text), mark);
     } else {
       const specs = parseMarkdown(text);
-      if (!specs.length) throw new DocRefusal('bad_op', `op ${index}: never replace with empty content; delete the block instead`, { op: index });
+      if (!specs.length) {
+        throw new DocRefusal('bad_op', `op ${index}: never replace with empty content; delete the block instead`, { op: index });
+      }
       frag.delete(at, 1);
       frag.insert(at, specs.map((s) => specToElement(s, mark)));
     }

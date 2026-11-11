@@ -6,7 +6,14 @@
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from '../../outputs/agent-studio/server/docs/vendor/yjs.js';
 import { DocRefusal, FIELD, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { diffText, docToMarkdown, elementToSpec, parseMarkdown, specToElement, specToMarkdown } from '../../outputs/agent-studio/server/docs/blocks.ts';
+import {
+  diffText,
+  docToMarkdown,
+  elementToSpec,
+  parseMarkdown,
+  specToElement,
+  specToMarkdown,
+} from '../../outputs/agent-studio/server/docs/blocks.ts';
 import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
 import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
 
@@ -28,12 +35,11 @@ class UserClient {
   constructor(readonly live: LiveDoc) {
     this.frag = this.doc.getXmlFragment(FIELD);
     this.undo = new Y.UndoManager(this.frag, { trackedOrigins: new Set([this.typing]), captureTimeout: 0 });
-    const client = this;
     this.link = {
       onmessage: null,
       onclose: null,
       isOpen: true,
-      send: (data) => client.#receive(data as Uint8Array),
+      send: (data) => this.#receive(data as Uint8Array),
       close: () => {},
     };
     this.doc.on('update', (update, origin) => {
@@ -113,7 +119,7 @@ function paragraphs(live: LiveDoc): View[] {
   return (live.read() as { blocks: View[] }).blocks;
 }
 
-Deno.test('a guarded rewrite from before the user typed is refused with guard_mismatch, and the user\'s text survives', () => {
+Deno.test("a guarded rewrite from before the user typed is refused with guard_mismatch, and the user's text survives", () => {
   const live = seeded(`# Plan\n\n${PARA}\n\nSecond paragraph.`);
   const user = new UserClient(live);
   const read = live.read() as { rev: number; blocks: View[] };
@@ -138,7 +144,10 @@ Deno.test('a guarded rewrite from before the user typed is refused with guard_mi
   assertEquals(user.text(p.id), 'The launch moves to October 6th after the legal review.');
   assertEquals((live.read([p.id]) as { blocks: View[] }).blocks[0].md, 'The launch moves to October 6th after the legal review.');
   // Redone from what stands (the refusal's h and rev), it goes through.
-  const ok = live.edit([{ ...rewrite, ifHash: shown.h, ifRev: (refused.toJSON() as { rev: number }).rev }], live.originFor('agent', 'claude'));
+  const ok = live.edit(
+    [{ ...rewrite, ifHash: shown.h, ifRev: (refused.toJSON() as { rev: number }).rev }],
+    live.originFor('agent', 'claude'),
+  );
   assertEquals(ok.ok, true);
   assertEquals(user.text(p.id), 'Launch is in November.');
 });
@@ -186,7 +195,11 @@ Deno.test('a find whose words the user just changed is refused find_none', () =>
   const [p] = paragraphs(live);
   user.doc.transact(() => (user.block(p.id).get(0) as Y.XmlText).delete(PARA.indexOf('October'), 3), user.typing);
   const refused = refusal(() =>
-    live.edit([{ op: 'replace', target: { kind: 'find', text: 'October' }, with: { from: { kind: 'inline', content: 'Nov' }, as: 'text' } }], live.originFor('agent', 'a'))
+    live.edit([{
+      op: 'replace',
+      target: { kind: 'find', text: 'October' },
+      with: { from: { kind: 'inline', content: 'Nov' }, as: 'text' },
+    }], live.originFor('agent', 'a'))
   );
   assertEquals(refused.code, 'find_none');
   assertEquals(user.text(p.id), 'The launch moves to ober after the legal review.');
@@ -199,10 +212,19 @@ Deno.test('a call is atomic: one bad op and nothing changed', () => {
   const blocks = paragraphs(live);
   const refused = refusal(() =>
     live.edit([
-      { op: 'insert', target: { kind: 'blocks', ids: [blocks[0].id] }, side: 'after', source: { from: { kind: 'inline', content: '- a\n- b' }, as: 'markdown' } },
+      {
+        op: 'insert',
+        target: { kind: 'blocks', ids: [blocks[0].id] },
+        side: 'after',
+        source: { from: { kind: 'inline', content: '- a\n- b' }, as: 'markdown' },
+      },
       { op: 'replace', target: { kind: 'find', text: 'October' }, with: { from: { kind: 'inline', content: 'November' }, as: 'text' } },
       { op: 'delete', target: { kind: 'blocks', ids: [blocks[2].id] }, ifHash: blocks[2].h, ifRev: live.rev },
-      { op: 'replace', target: { kind: 'find', text: 'words that are not there' }, with: { from: { kind: 'inline', content: 'x' }, as: 'text' } },
+      {
+        op: 'replace',
+        target: { kind: 'find', text: 'words that are not there' },
+        with: { from: { kind: 'inline', content: 'x' }, as: 'text' },
+      },
     ], live.originFor('agent', 'claude'))
   );
   assertEquals(refused.code, 'find_none');
@@ -227,7 +249,10 @@ Deno.test('doc_changes returns only the changed blocks, with deleted ones marked
   const read = live.read() as { rev: number; blocks: View[] };
   const [, one, two, three] = read.blocks;
   user.type(one.id, 3, ' more');
-  live.edit([{ op: 'delete', target: { kind: 'blocks', ids: [three.id] }, ifHash: three.h, ifRev: read.rev }], live.originFor('agent', 'claude'));
+  live.edit(
+    [{ op: 'delete', target: { kind: 'blocks', ids: [three.id] }, ifHash: three.h, ifRev: read.rev }],
+    live.originFor('agent', 'claude'),
+  );
   const delta = live.changes(read.rev) as { rev: number; changed: (View & { by: string; after: string })[]; gone: string[] };
   assertEquals(delta.changed.map((b) => [b.id, b.md, b.by]), [[one.id, 'One more.', 'user']]);
   assertEquals(delta.changed[0].after, read.blocks[0].id);
@@ -236,14 +261,18 @@ Deno.test('doc_changes returns only the changed blocks, with deleted ones marked
   assertEquals((live.changes(delta.rev) as { changed: unknown[]; gone: unknown[] }).changed.length, 0);
 });
 
-Deno.test('the user\'s undo never takes back the agent\'s edits; the agent\'s undo only its own', () => {
+Deno.test("the user's undo never takes back the agent's edits; the agent's undo only its own", () => {
   const live = seeded(PARA);
   const user = new UserClient(live);
   const [p] = paragraphs(live);
   user.type(p.id, 0, 'Note: ');
   const agent = live.originFor('agent', 'claude');
   const agentUndo = live.undoFor(agent);
-  live.edit([{ op: 'replace', target: { kind: 'find', text: 'legal review' }, with: { from: { kind: 'inline', content: 'security review' }, as: 'text' } }], agent);
+  live.edit([{
+    op: 'replace',
+    target: { kind: 'find', text: 'legal review' },
+    with: { from: { kind: 'inline', content: 'security review' }, as: 'text' },
+  }], agent);
   user.type(p.id, user.text(p.id).length, ' Done.');
   assertEquals(user.text(p.id), 'Note: The launch moves to October after the security review. Done.');
   user.undo.undo();
@@ -256,7 +285,8 @@ Deno.test('the user\'s undo never takes back the agent\'s edits; the agent\'s un
 });
 
 Deno.test('Markdown round trip and the word diff', () => {
-  const md = '# Title\n\nSome **bold** and *italic* and `code` text.\n\n- one\n- two\n\n1. first\n2. second\n\n> quoted\n\n```ts\nconst x = 1;\n```\n\n---\n';
+  const md =
+    '# Title\n\nSome **bold** and *italic* and `code` text.\n\n- one\n- two\n\n1. first\n2. second\n\n> quoted\n\n```ts\nconst x = 1;\n```\n\n---\n';
   assertEquals(docToMarkdown(parseMarkdown(md)), md);
   const live = seeded(md);
   assertEquals(docToMarkdown(live.specs()), md);
@@ -281,12 +311,20 @@ Deno.test('the Markdown copy is written into the project; a file-tool edit to an
   const store = new DocStore(dirs.state, { idleMs: 60_000 });
   try {
     await Deno.mkdir(`${dirs.project}${sep}docs`);
-    await Deno.writeTextFile(`${dirs.project}${sep}docs${sep}plan.md`, '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n');
+    await Deno.writeTextFile(
+      `${dirs.project}${sep}docs${sep}plan.md`,
+      '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n',
+    );
     const doc = await store.open(dirs.project, 'plan');
     assertEquals(doc.mirrorPath, `${dirs.project}${sep}docs${sep}plan.md`);
     const user = new UserClient(doc.live);
     const [, alpha, beta, gamma] = paragraphs(doc.live);
-    doc.live.edit([{ op: 'insert', target: { kind: 'root' }, side: 'end', source: { from: { kind: 'inline', content: 'Delta from the agent.' }, as: 'markdown' } }], doc.live.originFor('agent', 'claude'));
+    doc.live.edit([{
+      op: 'insert',
+      target: { kind: 'root' },
+      side: 'end',
+      source: { from: { kind: 'inline', content: 'Delta from the agent.' }, as: 'markdown' },
+    }], doc.live.originFor('agent', 'claude'));
     await store.flush(doc);
     const mirrored = await Deno.readTextFile(doc.mirrorPath);
     assertEquals(mirrored, '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n\nDelta from the agent.\n');
@@ -297,7 +335,12 @@ Deno.test('the Markdown copy is written into the project; a file-tool edit to an
       '# Plan\n\nAlpha paragraph, edited on disk.\n\nBeta paragraph from the file tool.\n\nGamma paragraph.\n\nNew block from the file.\n\nDelta from the agent.\n',
     );
     const skipped = await store.syncMirror(doc);
-    assertEquals(skipped.map((s) => [s.reason, s.id, s.now, s.file]), [['user_changed', beta.id, 'Beta (user) paragraph.', 'Beta paragraph from the file tool.']]);
+    assertEquals(skipped.map((s) => [s.reason, s.id, s.now, s.file]), [[
+      'user_changed',
+      beta.id,
+      'Beta (user) paragraph.',
+      'Beta paragraph from the file tool.',
+    ]]);
     const blocks = paragraphs(doc.live);
     assertEquals(blocks.map((b) => b.md), [
       '# Plan',

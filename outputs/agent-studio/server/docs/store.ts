@@ -109,7 +109,18 @@ export class DocStore {
       saved = null;
     }
     const live = new LiveDoc(state, saved);
-    const doc: OpenDoc = { id, name, projectRoot, mirrorPath, live, mirror: saved?.mirror ?? { text: '', blocks: [] }, skipped: [], dirty: false, timer: null, busy: Promise.resolve() };
+    const doc: OpenDoc = {
+      id,
+      name,
+      projectRoot,
+      mirrorPath,
+      live,
+      mirror: saved?.mirror ?? { text: '', blocks: [] },
+      skipped: [],
+      dirty: false,
+      timer: null,
+      busy: Promise.resolve(),
+    };
     if (!state) {
       // A new doc: start from the Markdown copy if the project already has one, else one empty paragraph.
       let text = '';
@@ -177,7 +188,10 @@ export class DocStore {
     const dir = this.#dir(doc.id);
     await Deno.mkdir(dir, { recursive: true });
     await writeAtomic(`${dir}${sep}doc.bin`, doc.live.encode());
-    await writeAtomic(`${dir}${sep}meta.json`, JSON.stringify({ ...doc.live.meta(), name: doc.name, projectRoot: doc.projectRoot, mirror: doc.mirror }));
+    await writeAtomic(
+      `${dir}${sep}meta.json`,
+      JSON.stringify({ ...doc.live.meta(), name: doc.name, projectRoot: doc.projectRoot, mirror: doc.mirror }),
+    );
   }
 
   /**
@@ -213,8 +227,18 @@ export class DocStore {
       }
       if (pair.kind === 'insert') {
         const op: Op = anchor && current.has(anchor)
-          ? { op: 'insert', target: { kind: 'blocks', ids: [anchor] }, side: 'after', source: { from: { kind: 'inline', content: after[pair.b!] }, as: 'markdown' } }
-          : { op: 'insert', target: { kind: 'root' }, side: anchor ? 'end' : 'start', source: { from: { kind: 'inline', content: after[pair.b!] }, as: 'markdown' } };
+          ? {
+            op: 'insert',
+            target: { kind: 'blocks', ids: [anchor] },
+            side: 'after',
+            source: { from: { kind: 'inline', content: after[pair.b!] }, as: 'markdown' },
+          }
+          : {
+            op: 'insert',
+            target: { kind: 'root' },
+            side: anchor ? 'end' : 'start',
+            source: { from: { kind: 'inline', content: after[pair.b!] }, as: 'markdown' },
+          };
         const ack = live.edit([op], origin) as { changed: { id: string }[] };
         anchor = ack.changed.at(-1)?.id ?? anchor;
         continue;
@@ -223,7 +247,14 @@ export class DocStore {
       const block = current.get(old.id);
       const wanted = pair.kind === 'delete' ? '' : after[pair.b!];
       if (!block || block.md !== old.md) {
-        skipped.push({ at: new Date().toISOString(), reason: block ? 'user_changed' : 'block_gone', id: old.id, mirror: old.md, now: block?.md ?? '', file: wanted });
+        skipped.push({
+          at: new Date().toISOString(),
+          reason: block ? 'user_changed' : 'block_gone',
+          id: old.id,
+          mirror: old.md,
+          now: block?.md ?? '',
+          file: wanted,
+        });
         if (block) anchor = old.id;
         continue;
       }
@@ -283,7 +314,11 @@ interface Pair {
 export function align(a: string[], b: string[]): Pair[] {
   const n = a.length, m = b.length;
   const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
   const out: Pair[] = [];
   let i = 0, j = 0;
   const gap = (ia: number, ja: number) => {

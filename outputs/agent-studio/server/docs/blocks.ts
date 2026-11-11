@@ -168,7 +168,8 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const RULE = /^(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const BULLET = /^([-*+])\s+/;
 const ORDERED = /^(\d{1,9})[.)]\s+/;
-const startsBlock = (line: string) => FENCE.test(line) || HEADING.test(line) || RULE.test(line) || line.startsWith('>') || BULLET.test(line) || ORDERED.test(line);
+const startsBlock = (line: string) =>
+  FENCE.test(line) || HEADING.test(line) || RULE.test(line) || line.startsWith('>') || BULLET.test(line) || ORDERED.test(line);
 
 function parseLines(lines: string[]): BlockSpec[] {
   const out: BlockSpec[] = [];
@@ -208,8 +209,9 @@ function parseLines(lines: string[]): BlockSpec[] {
         i++;
         while (i < lines.length) {
           const next = lines[i];
-          if (next.startsWith(' '.repeat(pad)) || (next.startsWith('  ') && next.trim())) body.push(next.replace(new RegExp(`^ {1,${pad}}`), ''));
-          else if (!next.trim() && i + 1 < lines.length && lines[i + 1].startsWith('  ')) body.push('');
+          if (next.startsWith(' '.repeat(pad)) || (next.startsWith('  ') && next.trim())) {
+            body.push(next.replace(new RegExp(`^ {1,${pad}}`), ''));
+          } else if (!next.trim() && i + 1 < lines.length && lines[i + 1].startsWith('  ')) body.push('');
           else break;
           i++;
         }

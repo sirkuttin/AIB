@@ -20,6 +20,7 @@ import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { ROUTES } from './routes.ts';
 import type { WebContext } from './server.ts';
 import { bringBack, restoreFolders } from './project_routes.ts';
+import { DOCS_TOOL, docsTool } from './docs_routes.ts';
 
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
@@ -283,6 +284,14 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     const action = typeof body.action === 'string' ? body.action : 'merge';
     if (action === 'merge') return await refusedReply(() => merge.merge(mergeStudio(ctx), conversation, '', true));
     return await refusedReply(() => merge.resolveClash(mergeStudio(ctx), conversation, action, true));
+  }
+  if (path === DOCS_TOOL) { // an agent's doc tool: the key is bound to the body's conversation, as for publish
+    const [body, bad] = await ownGateBody(request, 4 * 1024 * 1024);
+    if (bad) return bad;
+    const allowed = gateFor(ctx, request, path, body.conversationId);
+    if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
+    await ctx.artifacts.prepare(true, body.conversationId);
+    return await docsTool(ctx, body);
   }
   // /api/live/artifacts/*: publish is for the agent tool (its key, bound to the body's conversation), the rest for the page.
   const toolRoute = ROUTES.scopeFor('POST', path) === SCOPE_ARTIFACTS_TOOL;

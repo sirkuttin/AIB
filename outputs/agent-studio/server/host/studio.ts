@@ -651,6 +651,7 @@ export class Studio {
       STUDIO_CONVERSATION_ID: conversationId,
     };
     if (worktree) env.STUDIO_WORKTREE = '1'; // only a worktree chat is offered the merge tools
+    if (Deno.env.get('AIB_DOCS') === '1') env.STUDIO_DOCS = '1'; // the local-docs spike: offer doc_read / doc_changes / doc_edit
     return [{
       name: 'studio_artifact',
       ...artifactToolCommand(), // `<deno> run -A --quiet main.ts mcp-artifact` (or `<binary> mcp-artifact`): artifacts/mcp.ts
