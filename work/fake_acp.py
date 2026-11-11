@@ -32,8 +32,16 @@ parser.add_argument('--subagent', action='store_true', help='Announce a cancella
 parser.add_argument('--replay-history', action='store_true', help='session/load re-sends two history messages (one user, one agent) before it answers, like real agents do')
 parser.add_argument('--demo', action='store_true', help='Demo triggers: stream, html, plan, help (see work/demo-studio/README.md); also remembers the session folder')
 parser.add_argument('--models', action='store_true', help="A long model list, three modes with descriptions and an effort setting (implies --breadth's config options); a prompt 'settings?' replies with the current model, mode and effort; session/new calls are counted in the reply too")
+parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
+parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 args = parser.parse_args()
+if args.fixture_login:
+    if args.auth_file:
+        with open(args.auth_file, 'w', encoding='utf-8') as _f:
+            _f.write('signed in')
+    print('Fixture terminal login: signed in.', flush=True)
+    sys.exit(0)
 if args.child_pid_file:
     import subprocess
     _child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -394,7 +402,12 @@ for line in sys.stdin:
         if args.list_sessions:
             capabilities.setdefault('sessionCapabilities', {})['list'] = {}
         init = {'protocolVersion': args.protocol_version, 'agentCapabilities': capabilities}
-        if args.auth_required:
+        if args.auth_required and args.beta_auth:
+            wants_terminal = bool(((params.get('clientCapabilities') or {}).get('auth') or {}).get('terminal'))
+            init['authMethods'] = [{'id': 'gemini-api-key', 'name': 'Use an API key', 'description': 'Key in _meta.api-key'}]
+            if wants_terminal:
+                init['authMethods'].insert(0, {'id': 'fixture-terminal-login', 'name': 'Sign in in a terminal', 'type': 'terminal', 'args': ['--fixture-login']})
+        elif args.auth_required:
             init['authMethods'] = [{'id': 'fixture-login', 'name': 'Fixture sign-in', 'description': 'In-app fixture sign-in'},
                 {'id': 'fixture-terminal', 'name': 'Fixture terminal login', 'description': 'Run in a terminal', '_meta': {'terminal-auth': {'command': 'fixture-cli', 'args': ['login']}}}]
         result(key, init)
@@ -402,6 +415,16 @@ for line in sys.stdin:
             emit({'id': 'setup-question', 'method': 'elicitation/create', 'params': {
                 'requestId': 'fixture-setup', 'mode': 'form', 'message': 'Fixture setup: confirm workspace label.',
                 'requestedSchema': {'type': 'object', 'properties': {'label': {'type': 'string', 'title': 'Workspace label'}}, 'required': ['label']}}})
+    elif method == 'authenticate' and args.beta_auth:
+        key_given = ((params.get('_meta') or {}).get('api-key') or '') if isinstance(params.get('_meta'), dict) else ''
+        if params.get('methodId') == 'gemini-api-key' and key_given:
+            authenticated = True
+            if args.auth_file:
+                with open(args.auth_file, 'w', encoding='utf-8') as _f:
+                    _f.write('api key')
+            result(key, {})
+        else:
+            emit({'id': key, 'error': {'code': -32602, 'message': 'Fixture sign-in needs an API key in _meta.api-key'}})
     elif method == 'authenticate':
         if args.auth_reject or params.get('methodId') != 'fixture-login':
             emit({'id': key, 'error': {'code': -32602, 'message': 'Fixture sign-in rejected'}})

@@ -11,9 +11,17 @@
  */
 import { clip, isDict, isStr, pyLen, pySplit, pyStr, pyStrip, ValueError } from '../core/py.ts';
 import { executable, expandUser, isAbsolute, isFile, resolvePath, which } from '../platform/pypath.ts';
+import { BETA_IDS, BETA_NAMES, isBeta } from './beta_catalog.ts';
 
 export const BUILTIN_IDS = ['omp', 'claude', 'codex'] as const;
 export const BUILTIN_NAMES: Record<string, string> = { omp: 'OMP', claude: 'Claude Code', codex: 'Codex' };
+/** The Beta agents (beta_catalog.ts): known to AIB like the built-ins, off until turned on. */
+export { BETA_IDS, BETA_NAMES, isBeta };
+
+/** The name people know an agent id by (built-in or Beta), else the id itself. */
+export function agentName(id: string): string {
+  return BUILTIN_NAMES[id] ?? BETA_NAMES[id] ?? id;
+}
 export const CUSTOM_PREFIX = 'custom-';
 /** re.match(r'^custom-[a-z0-9]+(?:-[a-z0-9]+)*$'): Python's '$' also matches before one final newline. */
 export const ID_RE = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*\n?$/;
@@ -46,7 +54,7 @@ export function isBuiltin(value: unknown): boolean {
 
 /** A provider id Studio can store and launch: a built-in or a well-formed user-agent id. */
 export function isProvider(value: unknown): value is string {
-  return isStr(value) && (isBuiltin(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
+  return isStr(value) && (isBuiltin(value) || isBeta(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
 }
 
 export function isCustom(value: unknown): value is string {

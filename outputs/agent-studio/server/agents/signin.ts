@@ -220,6 +220,10 @@ export function codexAuthState(env: Record<string, string>): SignState {
 
 export class HandshakeError extends Error {
   override name = 'HandshakeError';
+  /** The JSON-RPC error code when the agent answered with an error (-32000 is ACP's auth_required). */
+  constructor(message: string, readonly code: number | null = null) {
+    super(message);
+  }
 }
 
 /** Lines of a stream, read with a timeout: a string, null at the end, undefined when nothing came in time. */
@@ -323,7 +327,10 @@ export class Handshake {
       if ('method' in message && 'id' in message) { // the agent asks the client for something: this client offers nothing
         await this.#send({ id: message.id, error: { code: -32601, message: 'Method not found' } });
       } else if (message.id === mine && !('method' in message)) {
-        if (isDict(message.error)) throw new HandshakeError(clip(pyStr(message.error.message || 'The agent refused.'), 200));
+        if (isDict(message.error)) {
+          const code = typeof message.error.code === 'number' ? message.error.code : null;
+          throw new HandshakeError(clip(pyStr(message.error.message || 'The agent refused.'), 200), code);
+        }
         return message.result ?? null;
       }
     }

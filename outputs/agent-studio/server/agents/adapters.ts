@@ -17,6 +17,7 @@
  * The lookups are async only because `npm root -g` runs a program (with a timeout). Rows and messages are Python's exactly.
  */
 import { commandStatus } from './agent_registry.ts';
+import { BETA_AGENTS } from './beta_catalog.ts';
 import { expandUser, isAbsolute, isFile, pathStr, resolvePath, which } from '../platform/pypath.ts';
 import { pathOf, realpath } from '../state/paths.ts';
 import { pyCompare } from '../core/py.ts';
@@ -24,7 +25,7 @@ import { pyCompare } from '../core/py.ts';
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 
-export type Package = readonly [name: string, entry: string];
+export type Package = readonly [name: string, entry: string, bin?: string];
 export const CLAUDE_PACKAGE: Package = ['@agentclientprotocol/claude-agent-acp', 'dist/index.js'];
 export const CODEX_PACKAGE: Package = ['@zed-industries/codex-acp', 'bin/codex-acp.js'];
 /** Studio's own installs: the package names that may sit in <version>/node_modules/, current name first, each with the known entry
@@ -33,6 +34,18 @@ export const STUDIO_PACKAGES: Readonly<Record<string, readonly Package[]>> = {
   claude: [CLAUDE_PACKAGE],
   codex: [['@agentclientprotocol/codex-acp', 'dist/index.js'], ['@zed-industries/codex-acp', 'bin/codex-acp.js']],
 };
+/** The Beta agents that ship on npm (beta_catalog.ts): installed into the same folders as the built-ins; `bin` says which of the
+ * package's programs runs. Kept apart from STUDIO_PACKAGES, which stays the built-in list (sign-in checks, the Python port). */
+export const BETA_PACKAGES: Readonly<Record<string, readonly Package[]>> = Object.fromEntries(
+  BETA_AGENTS.filter((a) => a.npm).map((a) => [a.id, [[a.npm!.package, a.npm!.entry, a.npm!.bin] as Package]]),
+);
+/** Every agent AIB can install itself: the built-ins, then the Beta npm agents. */
+export function installPackages(agentId: string): readonly Package[] | null {
+  const own = Object.prototype.hasOwnProperty;
+  if (own.call(STUDIO_PACKAGES, agentId)) return STUDIO_PACKAGES[agentId];
+  if (own.call(BETA_PACKAGES, agentId)) return BETA_PACKAGES[agentId];
+  return null;
+}
 export const COMPLETE_MARKER = '.complete';
 export const CLAUDE_INSTALL = 'npm i -g @agentclientprotocol/claude-agent-acp';
 export const CODEX_INSTALL = 'npm i -g @agentclientprotocol/codex-acp';
@@ -342,8 +355,12 @@ export function inside(path: string, folder: string): boolean {
 
 /** The entry file of one package in a version folder, from its package.json `bin` (else the known path), or ''. */
 export function packageEntry(versionDir: string, pkg: Package): string {
-  const [name, known] = pkg;
-  const folder = pathOf(versionDir, 'node_modules', ...name.split('/'));
+  return packageEntryIn(pathOf(versionDir, 'node_modules', ...pkg[0].split('/')), versionDir, pkg);
+}
+
+/** The entry file of a package folder (package.json `bin`, else the known path), only when it stays inside `within`; else ''. */
+export function packageEntryIn(folder: string, within: string, pkg: Package): string {
+  const [name, known, bin] = pkg;
   let data: unknown;
   try {
     data = JSON.parse(Deno.readTextFileSync(pathOf(folder, 'package.json')));
@@ -353,14 +370,14 @@ export function packageEntry(versionDir: string, pkg: Package): string {
   let declared: unknown = typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>).bin : null;
   if (typeof declared === 'object' && declared !== null && !Array.isArray(declared)) {
     const bins = declared as Record<string, unknown>;
-    const short = name.split('/').pop()!;
+    const short = bin && Object.prototype.hasOwnProperty.call(bins, bin) ? bin : name.split('/').pop()!;
     declared = (Object.prototype.hasOwnProperty.call(bins, short) && bins[short]) ||
       Object.values(bins).find((v) => typeof v === 'string' && v) || null;
   }
   const relative = typeof declared === 'string' && declared ? declared : known;
   const candidate = pathOf(folder, relative);
-  if (!inside(candidate, versionDir)) {
-    console.warn(`Ignoring ${name}: its entry file ${relative} is outside ${versionDir}`);
+  if (!inside(candidate, within)) {
+    console.warn(`Ignoring ${name}: its entry file ${relative} is outside ${within}`);
     return '';
   }
   return isFile(candidate) ? realpath(candidate) : '';
@@ -375,9 +392,10 @@ export interface StudioInstall {
 
 /** Studio's own install of an agent: the newest complete version that has a usable entry file, or null. Reads the disk every call. */
 export function findStudioInstall(agentId: string, stateDir: string | null | undefined): StudioInstall | null {
-  if (!stateDir || !Object.prototype.hasOwnProperty.call(STUDIO_PACKAGES, agentId)) return null;
+  const packages = installPackages(agentId);
+  if (!stateDir || !packages) return null;
   for (const folder of completeVersions(stateDir, agentId)) {
-    for (const pkg of STUDIO_PACKAGES[agentId]) {
+    for (const pkg of packages) {
       const entry = packageEntry(folder, pkg);
       if (entry) return { entry, version: folder.slice(folder.lastIndexOf(SEP) + 1), dir: folder, package: pkg[0] };
     }

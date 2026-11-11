@@ -9,6 +9,8 @@ import * as adapters from '../agents/adapters.ts';
 import { BUILTIN_NAMES, commandStatus, type CustomAgent, hiddenEnv, letterOf } from '../agents/agent_registry.ts';
 import * as installer from '../agents/installer.ts';
 import * as signin from '../agents/signin.ts';
+import { BETA_AGENTS } from '../agents/beta_catalog.ts';
+import { resolveBeta } from '../agents/beta_agents.ts';
 import { isDict, ValueError } from '../core/py.ts';
 import { codeWarning, HostUnavailable } from '../host/host_client.ts';
 import { packageContext, packageLabel } from '../state/paths.ts';
@@ -26,7 +28,9 @@ export interface AgentOptions {
 
 export interface SettingsLike {
   launcher(agentId: string): string;
-  snapshot(): { agents: { builtin: Record<string, boolean>; custom: CustomAgent[] } };
+  snapshot(): {
+    agents: { builtin: Record<string, boolean>; custom: CustomAgent[]; beta?: Record<string, boolean>; betaKeys?: Record<string, string> };
+  };
   public(): Record<string, unknown>;
 }
 
@@ -166,6 +170,7 @@ export async function describeAgents(
       signin: row.found ? signinView(options, agentId, state[agentId] ?? '') : null,
     });
   }
+  out.push(...(await describeBeta(options, snap, state, block, sizes)));
   for (const a of snap.agents.custom) {
     const [found, problem] = commandStatus(a.command);
     out.push({
@@ -183,6 +188,78 @@ export async function describeAgents(
       resolved: found,
       problem,
       status: state[a.id] ?? '',
+    });
+  }
+  return out;
+}
+
+/** The Status column of a Beta agent, from disk only: the cache its sign-in check wrote and its sign-in job; an open chat wins. */
+export function betaSigninView(options: AgentOptions, agentId: string, liveStatus = ''): SigninView | null {
+  const stateDir = options.stateDir;
+  if (!stateDir) return null;
+  const cached = signin.readCached(stateDir, agentId);
+  const job = signin.readJob(stateDir, agentId);
+  return { state: signin.effectiveState(cached.state, liveStatus), checkedAt: cached.checkedAt, job: job.state !== 'idle' ? job : null };
+}
+
+/** The Install job of a Beta npm agent while it runs or after it failed (the same files as the built-ins' installs), else null. */
+function betaInstallState(options: AgentOptions, agentId: string): installer.InstallView | null {
+  if (!options.stateDir || !Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agentId)) return null;
+  const view = installer.readStatus(options.stateDir, agentId);
+  return view.state === 'running' || view.state === 'failed' ? view : null;
+}
+
+/**
+ * The Beta agents' rows (after the built-ins, before the agents the person added): the same fields as a built-in row, plus eta: true
+ * and etaInfo (the card's cost line, note, install command and docs link, how sign-in works, whether an API key is stored). Off until
+ * turned on. A row is drawn for every Beta agent, found or not; looking one up never starts it.
+ */
+export async function describeBeta(
+  options: AgentOptions,
+  snap: ReturnType<SettingsLike['snapshot']>,
+  state: Record<string, string> = {},
+  block = '',
+  sizes: Record<string, unknown> = {},
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  const on = snap.agents.beta ?? {};
+  const keys = snap.agents.betaKeys ?? {};
+  for (const agent of BETA_AGENTS) {
+    const row = await resolveBeta(agent.id, { stateDir: options.stateDir ?? null, nodeCommand: options.nodeCommand || '' });
+    const installable = !!agent.npm && Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agent.id);
+    out.push({
+      id: agent.id,
+      name: agent.name,
+      letter: agent.letter,
+      builtin: false,
+      beta: true,
+      enabled: on[agent.id] === true,
+      command: row.text,
+      launcher: row.text,
+      launcherSource: row.source,
+      args: [...agent.args],
+      env: [],
+      found: row.found,
+      resolved: row.found ? row.path : '',
+      problem: row.problem,
+      status: state[agent.id] ?? '',
+      install: installState(options, agent.id) ?? betaInstallState(options, agent.id),
+      installable,
+      installBlock: installable && row.source === 'missing' ? block : '',
+      installHint: '',
+      packageBytes: sizes[agent.id] || 0,
+      signin: row.found ? betaSigninView(options, agent.id, state[agent.id] ?? '') : null,
+      betaInfo: {
+        cost: agent.cost,
+        note: agent.note ?? '',
+        license: agent.license,
+        installCommand: agent.install,
+        docs: agent.docs,
+        signin: agent.signin.kind,
+        signinCommand: agent.signin.terminalArgs ? [...agent.signin.terminalArgs] : [],
+        keyEnv: agent.signin.keyEnv ?? '',
+        keySet: !!keys[agent.id],
+      },
     });
   }
   return out;

@@ -301,6 +301,7 @@ export class TerminalSessions {
     cols: unknown,
     rows: unknown,
     shellChoice: unknown = '',
+    command: ShellSpec | null = null,
   ): { session: TerminalSession; resumed: boolean } {
     if (this.#closed) throw new TerminalError('AIB is closing.', 'closing');
     const k = checkKey(key);
@@ -310,7 +311,8 @@ export class TerminalSessions {
     if (this.#sessions.size >= this.#max) {
       throw new TerminalError(`${this.#max} terminals are already open.`, 'too_many', { max: this.#max, terminals: this.list() });
     }
-    const shell = shellChoice === 'windows-powershell' && Deno.build.os === 'windows' ? windowsPowerShell() : this.#shell();
+    // command: a program to run instead of a shell (a Beta agent's sign-in, server/web/terminal_routes.ts); it ends with that program.
+    const shell = command ?? (shellChoice === 'windows-powershell' && Deno.build.os === 'windows' ? windowsPowerShell() : this.#shell());
     const size = clampSize(cols, rows);
     let pty: Pty;
     try {
@@ -326,9 +328,17 @@ export class TerminalSessions {
   }
 
   /** Attach a socket: open (or reuse) the shell, or tell the page why not and close the socket. */
-  attach(link: WsLink, key: unknown, cwd: unknown, cols: unknown, rows: unknown, shell: unknown = ''): TerminalSession | null {
+  attach(
+    link: WsLink,
+    key: unknown,
+    cwd: unknown,
+    cols: unknown,
+    rows: unknown,
+    shell: unknown = '',
+    command: ShellSpec | null = null,
+  ): TerminalSession | null {
     try {
-      const { session, resumed } = this.open(key, cwd, cols, rows, shell);
+      const { session, resumed } = this.open(key, cwd, cols, rows, shell, command);
       session.attach(link, resumed);
       if (resumed) {
         const size = clampSize(cols, rows);

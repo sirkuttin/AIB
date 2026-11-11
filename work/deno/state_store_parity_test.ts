@@ -270,7 +270,7 @@ Deno.test('parity: SettingsStore sequences and errors', async () => {
     c('update', { agents: { upsert: agent('', {}) } }),
     c('update', { agents: { upsert: agent('Three', { enabled: 'yes' }) } }),
     c('update', { agents: { upsert: { ...agent('X'), id: 'custom-missing' } } }),
-    c('update', { defaults: { agent: 'gemini' } }),
+    c('update', { defaults: { agent: 'nonesuch' } }), // not 'gemini': that is a Beta agent in the Deno port (beta_catalog.ts)
     c('update', { defaults: { migrated: 'yes' } }),
     c('update', { defaults: { byAgent: { zzz: { model: 'm' } } } }),
     c('update', { defaults: { byAgent: { omp: { model: 5 } } } }),

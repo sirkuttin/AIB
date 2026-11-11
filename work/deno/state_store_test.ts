@@ -601,7 +601,7 @@ Deno.test('registry: ids are slugs and unique', () => {
   assertEquals(registry.makeId('My Agent', ['custom-my-agent']), 'custom-my-agent-2');
   assertEquals(registry.makeId('???', []), 'custom-agent');
   assert(registry.isProvider('omp') && registry.isProvider('custom-a-1'));
-  for (const bad of ['custom-', 'custom-A', 'custom-a_b', 'custom--a', 'custom-a:b', 'gemini', '', null, 5, 'custom-' + 'a'.repeat(60)]) {
+  for (const bad of ['custom-', 'custom-A', 'custom-a_b', 'custom--a', 'custom-a:b', 'nonesuch', '', null, 5, 'custom-' + 'a'.repeat(60)]) {
     assert(!registry.isProvider(bad), String(bad));
   }
   assert(registry.isProvider('custom-a\n'), "Python's re '$' matches before a final newline");
@@ -742,7 +742,7 @@ Deno.test('settings: a refused patch changes nothing', async () => {
     },
     { agents: { remove: 'custom-missing' } },
     { agents: { upsert: 'x' } },
-    { defaults: { agent: 'gemini' } },
+    { defaults: { agent: 'nonesuch' } }, // ('gemini' is a Beta agent now)
     {
       defaults: { projects: { '': { agent: 'omp' } } },
     },

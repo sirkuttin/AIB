@@ -551,7 +551,9 @@ html[data-ui-scaled] .st-page {
   transition: width 0.4s ease;
 }
 .st-note .st-link,
-.st-agent-head .st-link {
+.st-agent-head .st-link,
+.st-beta-install .st-link,
+.st-beta-term-head .st-link {
   margin: 0 0 0 4px;
   padding: 0;
   border: 0;
@@ -731,4 +733,75 @@ html[data-ui-scaled] .st-page {
   .st-head {
     padding: 12px 16px 8px;
   }
+}
+
+/* ---- Beta agents (settings-ui.js renderAgentsBeta): the card's lead line, each agent's cost line, the install command when the
+   agent is missing, the API key box, and the sign-in terminal panel (ACP terminal auth; an xterm from terminal-ui.js runSignin). */
+.st-beta-lead {
+  margin: 0 0 10px;
+}
+.st-beta-cost {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.st-beta-install {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.st-beta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+.st-beta-row button {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.st-beta-command .st-command {
+  margin: 2px 0 0;
+  user-select: all;
+}
+.st-beta-docs {
+  font-size: 12px;
+}
+.st-beta-key {
+  margin: 8px 0 0;
+}
+.st-beta-key .st-beta-row input {
+  min-width: 220px;
+  flex: 1 1 220px;
+}
+.st-beta-term {
+  margin: 8px 0 0;
+  border: 1px solid var(--st-agent-line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.st-beta-term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.st-beta-term-title {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  font:
+    12px Consolas,
+    monospace;
+}
+.st-beta-term-view {
+  height: 220px;
+  background: var(--term-bg);
+  padding: 4px;
+}
+.st-beta-term > .st-note {
+  margin: 4px 8px 6px;
 }

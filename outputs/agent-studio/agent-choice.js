@@ -9,6 +9,11 @@
     { id: 'codex', name: 'Codex', letter: 'X', builtin: true, enabled: true },
   ];
   const ID_RE = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+  // The Beta agents (server/agents/beta_catalog.ts): known to AIB, untested by us, off until turned on in Settings. They are listed after
+  // the tested agents (and the ones you added), under a "Beta" group label in the agent menus.
+  const BETA_IDS = ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo'];
+  const BETA_GROUP = 'Beta';
+  const isBeta = (id) => BETA_IDS.includes(id);
   // AGENTS: the agents a new chat can use (enabled ones). ALL: every agent Studio knows, including ones turned off in Settings,
   // so existing chats still show the right name. Both are updated IN PLACE by setRegistry, so other modules can hold them.
   const AGENTS = BUILTINS.map((a) => Object.assign({}, a));
@@ -21,9 +26,29 @@
   // Built-ins are never dropped (a list that omits them still shows them, on); unknown or malformed rows are skipped.
   function mergeRegistry(serverAgents) {
     const all = BUILTINS.map((a) => Object.assign({}, a));
+    const beta = [];
     for (const row of Array.isArray(serverAgents) ? serverAgents : []) {
       if (!row || typeof row.id !== 'string') continue;
       const at = all.findIndex((a) => a.id === row.id);
+      if (row.beta === true && isBeta(row.id)) {
+        if (beta.some((a) => a.id === row.id)) continue;
+        const name =
+          String(row.name == null ? '' : row.name)
+            .trim()
+            .slice(0, 40) || row.id;
+        beta.push({
+          id: row.id,
+          name,
+          letter: String(row.letter || name.charAt(0) || '?')
+            .charAt(0)
+            .toUpperCase(),
+          builtin: false,
+          beta: true,
+          group: BETA_GROUP,
+          enabled: row.enabled === true && row.found !== false && !needsSignIn(row), // off unless turned on
+        });
+        continue;
+      }
       if (at >= 0) {
         if (all[at].builtin) all[at].enabled = row.enabled !== false && row.found !== false && !needsSignIn(row); // not installed or needs sign-in: listed in Settings, not offered for new chats
         continue;
@@ -43,7 +68,16 @@
         enabled: row.enabled !== false && row.found !== false && !needsSignIn(row),
       });
     }
+    all.push(...beta); // after the tested agents and the ones you added
     return { all, enabled: all.filter((a) => a.enabled) };
+  }
+  // The rows an agent menu lists, with the Beta group label on the Beta agents ({value, name, group}).
+  function menuItems(list) {
+    return (Array.isArray(list) ? list : []).map((a) => ({
+      value: a.id,
+      name: a.name,
+      group: a.beta ? BETA_GROUP : '',
+    }));
   }
   // True when at least one enabled agent in the server's list can start a chat: found, and not "Needs sign-in". "Not checked" is ready.
   // An unreadable or empty list says true, so the first-run start page never shows for a list nobody could read.
@@ -343,6 +377,10 @@
     ALL,
     BUILTINS,
     mergeRegistry,
+    menuItems,
+    BETA_IDS,
+    BETA_GROUP,
+    isBeta,
     anyReady,
     setRegistry,
     setDefaults,

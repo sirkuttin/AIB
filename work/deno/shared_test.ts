@@ -10,6 +10,7 @@ import { FAKE_SIGNIN, join, makeInstall, PY, PY_REAL, tempDir, touch } from './_
 import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
 import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
 import * as signin from '../../outputs/agent-studio/server/agents/signin.ts';
+import { BETA_IDS } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
 import * as shared from '../../outputs/agent-studio/server/web/shared.ts';
 import { ConversationState, SettingsStore } from '../../outputs/agent-studio/server/state/store.ts';
 import { HostUnavailable } from '../../outputs/agent-studio/server/host/host_client.ts';
@@ -218,7 +219,8 @@ Deno.test('the agent list matches Python on the same fixture', async () => {
       claudeLauncher: opts.claude_launcher,
       codexLauncher: opts.codex_launcher,
     };
-    const mine = await shared.describeAgents(options, new SettingsStore(settingsDir), connections);
+    // The Beta agents' rows are Deno only (beta_catalog.ts): the Python list has none.
+    const mine = (await shared.describeAgents(options, new SettingsStore(settingsDir), connections)).filter((r) => !r.beta);
     const theirs = await py.call('agents_shim', 'describe', [m.state, settingsDir, opts, connections, [m.modules], '', false, block]);
     assertEquals(mine, theirs, JSON.stringify(opts));
   }
@@ -248,7 +250,7 @@ Deno.test('settingsView: the stored settings, the list and the notices; an unrea
     waitingChats: 2,
   });
   const view = await shared.settingsView(ctx);
-  assertEquals((view.agents as { id: string }[]).map((a) => a.id), ['omp', 'claude', 'codex']);
+  assertEquals((view.agents as { id: string }[]).map((a) => a.id), ['omp', 'claude', 'codex', ...BETA_IDS]);
   assert(typeof view.revision === 'string' && 'settings' in view && 'warning' in view);
   assertEquals(view.migration, { state: 'none' });
   assertEquals(view.hostTakeoverWaiting, 2);

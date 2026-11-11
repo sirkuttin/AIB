@@ -48,6 +48,28 @@
       ],
     },
     {
+      id: 'agents-beta',
+      section: 'agents',
+      label: 'Beta agents',
+      keywords: [
+        'beta',
+        'untested',
+        'github copilot',
+        'copilot',
+        'opencode',
+        'gemini',
+        'qwen',
+        'cursor',
+        'goose',
+        'mistral',
+        'vibe',
+        'cline',
+        'kimi',
+        'kilo',
+        'api key',
+      ],
+    },
+    {
       id: 'agents-add',
       section: 'agents',
       label: 'Add an ACP agent',
@@ -467,7 +489,7 @@
   const installBlock = (a) => (a.installable && !a.found && a.launcherSource === 'missing' && a.installBlock) || '';
   const canInstall = (a) => !!a.installable && !a.found && a.launcherSource === 'missing' && !installBlock(a);
   // Uninstall only for the copy AIB installed itself (Studio's own install is what this row runs), never for one the person made.
-  const canUninstall = (a) => !!a.builtin && !!a.installable && a.launcherSource === 'studio';
+  const canUninstall = (a) => (!!a.builtin || !!a.beta) && !!a.installable && a.launcherSource === 'studio';
   const repaint = () => {
     if (S.open) renderAll();
     notify();
@@ -628,7 +650,14 @@
     const job = signinOf(a);
     return !!job && job.state === 'waiting';
   };
-  const canSignIn = (a) => !!a.found && !!a.signin && a.signin.state === 'signin' && !signinWaiting(a);
+  // A Beta agent can also be signed in while Not checked (its check runs only once it is on); one that signs in with an API key only
+  // has the key box.
+  const canSignIn = (a) =>
+    !!a.found &&
+    !!a.signin &&
+    !signinWaiting(a) &&
+    (a.signin.state === 'signin' || (!!a.beta && a.signin.state !== 'ready')) &&
+    !(a.beta && betaInfo(a).signin === 'key');
   function syncSignins(list) {
     for (const a of list || []) {
       const job = a.signin && a.signin.job;
@@ -662,6 +691,7 @@
     return load().finally(releaseHold);
   }
   function startSignin(a) {
+    if (a.beta && betaInfo(a).signin === 'terminal') return startTerminalSignin(a);
     signins[a.id] = { state: 'waiting' };
     repaint();
     return Promise.resolve()
@@ -715,18 +745,17 @@
     const shared = !!(opts && opts.sharedBlock);
     const row = el('div', null, 'st-agent' + (a.enabled ? '' : ' off'));
     const head = el('div', null, 'st-agent-head');
-    head.append(
-      el('span', a.letter || '?', 'st-letter'),
-      el('strong', a.name),
-      el('span', a.builtin ? 'Built in' : 'Added by you', 'st-tag'),
-    );
+    head.append(el('span', a.letter || '?', 'st-letter'), el('strong', a.name));
+    // Beta agents carry no tag: the section heading says Beta.
+    if (!a.beta) head.append(el('span', a.builtin ? 'Built in' : 'Added by you', 'st-tag'));
     const job = installOf(a),
       running = installRunning(a),
       refused = !!job && job.state === 'refused';
     const waiting = !running && signinWaiting(a);
     // The start page has no On/Off switch (.st-actions is hidden there): a turned-off agent says so and offers Turn on, instead of
     // looking ready (Found, Not checked) while the page says no agent is set up.
-    if (shared && !a.enabled && !running && !waiting) {
+    // A Beta card keeps its full look while off (cost, install command, the Off switch): that is what you decide from.
+    if (shared && !a.enabled && !a.beta && !running && !waiting) {
       head.append(
         el('span', 'Turned off', 'st-status dim'),
         button('Turn on', () => saveQuiet(togglePatch(a.id, true)), 'st-primary'),
@@ -747,7 +776,8 @@
       const st = statusText(a);
       head.append(el('span', st.text, 'st-status ' + st.cls));
       if (canSignIn(a)) head.append(button('Sign in', () => startSignin(a), 'st-primary'));
-      if (a.found && a.signin) head.append(button('Check again', () => checkSignins(true), 'st-link'));
+      if (a.found && a.signin)
+        head.append(button('Check again', () => (a.beta ? checkOne(a) : checkSignins(true)), 'st-link'));
       if (canInstall(a))
         head.append(
           button(job && (job.state === 'failed' || refused) ? 'Retry' : 'Install', () => startInstall(a), 'st-primary'),
@@ -759,9 +789,13 @@
     } else if (waiting) {
       row.append(
         note(
-          'Finish signing in to ' +
-            a.name +
-            ' in the window that opened. AIB does not see your password or sign-in details.',
+          a.beta
+            ? 'Finish signing in to ' +
+                a.name +
+                ' in your browser if it opened one. AIB does not see your password or sign-in details.'
+            : 'Finish signing in to ' +
+                a.name +
+                ' in the window that opened. AIB does not see your password or sign-in details.',
         ),
       );
     } else {
@@ -795,10 +829,16 @@
           button('Check again', () => load(true), 'st-link'),
         );
         row.append(line);
-      } else if (!a.found && a.problem && !(a.installable && /^Not installed/.test(a.problem)))
+      } else if (
+        !a.found &&
+        a.problem &&
+        !(a.installable && /^Not installed/.test(a.problem)) &&
+        !(a.beta && /^Not installed/.test(a.problem)) // the Beta card shows the install command itself
+      )
         row.append(note(a.problem, canInstall(a) || (a.installable && a.launcherSource === 'missing') ? 'dim' : 'bad'));
     }
-    if (!a.builtin) {
+    if (a.beta) betaLines(a, row);
+    if (!a.builtin && !a.beta) {
       const bits = [];
       if (a.args && a.args.length) bits.push(a.args.length + (a.args.length === 1 ? ' argument' : ' arguments'));
       if (a.env && a.env.length)
@@ -816,7 +856,7 @@
     if (opts && opts.uninstall && canUninstall(a) && !running && !waiting) {
       actions.append(button('Uninstall', () => uninstallAgent(a), 'st-danger'));
     }
-    if (!a.builtin) {
+    if (!a.builtin && !a.beta) {
       actions.append(
         button('Edit', () => {
           S.form = formFrom(a);
@@ -1015,7 +1055,7 @@
     const list = agents();
     if (!list.length)
       box.append(note(S.loadError ? 'The agent list could not be read from the server: ' + S.loadError : 'Loading…'));
-    const blocked = list.find((a) => installBlock(a));
+    const blocked = list.find((a) => !a.beta && installBlock(a));
     if (blocked) {
       const line = note(blocked.installBlock + (blocked.installHint ? ' ' + blocked.installHint : ''), 'dim');
       line.append(
@@ -1024,13 +1064,210 @@
       );
       box.append(line);
     }
-    for (const a of orderAgents(list)) box.append(agentRow(a, { sharedBlock: true, uninstall: true })); // Settings only, not the start page
+    // The tested agents and the ones you added; the Beta agents have their own card (renderAgentsBeta).
+    for (const a of orderAgents(list.filter((x) => !x.beta)))
+      box.append(agentRow(a, { sharedBlock: true, uninstall: true })); // Settings only, not the start page
     box.append(
       note(
         '"Found" means the program exists. Sign-in state comes from a quick status check AIB runs when Settings opens and after an install or sign-in; agents with no status check show Not checked. Saved chats and transcripts are found for Claude Code and OMP only; chats with agents you add appear in the list once opened here.',
       ),
     );
   }
+  // ---- Beta agents -----------------------------------------------------------------------------------------------
+  // ACP agents AIB knows but we have not tested (server/agents/beta_catalog.ts). Off until turned on. The heading says Beta; the
+  // cards carry no tag. Each card: status, Install (npm agents) or the official install command and docs link, the cost line, Sign in
+  // (an AIB terminal panel for terminal-type sign-ins, ACP authenticate for agent-type ones) and an API key box where the agent takes one.
+  const BETA_NOTE = "These connect the same way but haven't been tested by us yet. Tell us what breaks.";
+  const betaInfo = (a) => (a && a.betaInfo) || {};
+  const betaAgents = () => agents().filter((a) => a.beta);
+  function renderAgentsBeta(box) {
+    box.append(note(BETA_NOTE, 'st-beta-lead'));
+    const list = betaAgents();
+    if (!list.length)
+      box.append(note(S.loadError ? 'The agent list could not be read from the server: ' + S.loadError : 'Loading…'));
+    const blocked = list.find((a) => installBlock(a));
+    if (blocked) {
+      const line = note(blocked.installBlock, 'dim');
+      line.append(
+        ' ',
+        button('Check again', () => load(true), 'st-link'),
+      );
+      box.append(line);
+    }
+    for (const a of list) box.append(agentRow(a, { sharedBlock: true, uninstall: true }));
+  }
+  function copyText(text, b) {
+    const done = () => {
+      b.textContent = 'Copied';
+      root.setTimeout(() => (b.textContent = 'Copy'), 1200);
+    };
+    try {
+      const p = root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText(text);
+      if (p && p.then) p.then(done, () => {});
+      else done();
+    } catch (e) {
+      /* no clipboard: the command stays selectable */
+    }
+  }
+  // The card's own lines: cost, the agent's note, how to install it when it is missing, the API key box, the sign-in terminal.
+  function betaLines(a, row) {
+    const info = betaInfo(a);
+    if (info.cost) row.append(el('p', info.cost, 'st-beta-cost'));
+    if (info.note) row.append(note(info.note, 'dim'));
+    if (!a.found && !installRunning(a)) {
+      const how = el('div', null, 'st-beta-install');
+      how.append(el('span', canInstall(a) ? 'Or install it yourself:' : 'Install it with:', 'st-hint'));
+      const line = el('div', null, 'st-beta-row st-beta-command');
+      const code = el('code', info.installCommand || '', 'st-command');
+      const copy = button('Copy', () => copyText(info.installCommand || '', copy), 'st-link');
+      copy.setAttribute('aria-label', 'Copy the install command of ' + a.name);
+      line.append(code, copy);
+      how.append(line);
+      if (info.docs) {
+        const link = el('a', 'Install instructions', 'st-link st-beta-docs');
+        link.href = info.docs;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        how.append(link);
+      }
+      const again = button('Check again', () => load(true), 'st-link');
+      how.append(' ', again);
+      row.append(how);
+    }
+    if (info.keyEnv) row.append(keyBox(a, info));
+    const term = betaTerms[a.id];
+    if (term) row.append(term.node);
+  }
+  // The API key box: the key is saved with the settings (plain text in the state folder, like an added agent's environment values),
+  // passed to the agent as its environment variable, and never shown again on this page.
+  const keyDrafts = {};
+  function keyBox(a, info) {
+    const wrap = el('div', null, 'st-field st-beta-key');
+    const label = el('span', 'API key (' + info.keyEnv + ')', 'st-label');
+    const line = el('div', null, 'st-beta-row');
+    const input = el('input');
+    input.type = 'password';
+    input.autocomplete = 'new-password';
+    input.spellcheck = false;
+    input.value = keyDrafts[a.id] || '';
+    input.placeholder = info.keySet ? '•••• (stored)' : 'Paste a key';
+    input.setAttribute('aria-label', 'API key for ' + a.name);
+    input.addEventListener('input', () => {
+      keyDrafts[a.id] = input.value;
+    });
+    const store = button(
+      'Save key',
+      () => {
+        const value = (keyDrafts[a.id] || '').trim();
+        if (!value) return;
+        save({ agents: { betaKey: { [a.id]: value } } }).then(
+          () => {
+            delete keyDrafts[a.id];
+            if (a.enabled) checkOne(a);
+          },
+          () => {},
+        );
+      },
+      'st-primary',
+    );
+    line.append(input, store);
+    if (info.keySet)
+      line.append(button('Remove key', () => saveQuiet({ agents: { betaKey: { [a.id]: null } } }), 'st-danger'));
+    wrap.append(
+      label,
+      line,
+      el(
+        'span',
+        'Stored as plain text in the state folder' +
+          (S.boot && S.boot.stateDir ? ' (' + S.boot.stateDir + ')' : '') +
+          ' and passed to ' +
+          a.name +
+          ' as ' +
+          info.keyEnv +
+          '. Never shown again here.',
+        'st-hint',
+      ),
+    );
+    return wrap;
+  }
+  // One agent's sign-in check (force), then the list again.
+  function checkOne(a) {
+    hold++;
+    return Promise.resolve()
+      .then(() => S.host.post('agents/signin/check', { agent: a.id, force: true }))
+      .then(
+        () => load(),
+        () => load(),
+      )
+      .finally(releaseHold);
+  }
+  // Terminal-type sign-in (ACP auth type "terminal"): the agent host reads the agent's own login command, the page runs it in an AIB
+  // terminal panel on this card (never a separate window). Exit code 0: the sign-in is checked again.
+  const betaTerms = {}; // agent id -> {node, run, state: running|done|failed, message}; the node is kept across repaints
+  function startTerminalSignin(a) {
+    const T = root.AibTerminal;
+    signins[a.id] = { state: 'idle' };
+    return Promise.resolve()
+      .then(() => S.host.post('agents/signin', { agent: a.id }))
+      .then(
+        (answer) => {
+          if (!T || !T.runSignin) throw Error('The terminal is not available on this page.');
+          closeTerminal(a.id);
+          const node = el('div', null, 'st-beta-term');
+          const head = el('div', null, 'st-beta-term-head');
+          const title = el('span', 'Signing in: ' + ((answer && answer.command) || a.name), 'st-beta-term-title');
+          const stop = button('Close', () => closeTerminal(a.id, true), 'st-link');
+          head.append(title, stop);
+          const view = el('div', null, 'st-beta-term-view');
+          const status = el('p', 'Starting…', 'st-note');
+          status.setAttribute('role', 'status');
+          node.append(head, view, status);
+          const entry = { node, status, run: null };
+          betaTerms[a.id] = entry;
+          repaint();
+          entry.run = T.runSignin(view, a.id, {
+            onReady: () =>
+              (status.textContent = 'Finish the sign-in in this terminal. AIB does not see what you type here.'),
+            onExit: (code) => {
+              if (code === 0) {
+                status.textContent = 'The sign-in finished. Checking…';
+                checkOne(a).then(() => {
+                  if (betaTerms[a.id] === entry) closeTerminal(a.id);
+                });
+              } else {
+                status.textContent = 'The sign-in did not finish (it ended with code ' + code + '). Try again.';
+                status.className = 'st-note bad';
+              }
+            },
+            onError: (message) => {
+              status.textContent = message;
+              status.className = 'st-note bad';
+            },
+          });
+        },
+        (error) => {
+          signins[a.id] = { state: 'failed', message: (error && error.message) || 'The sign-in could not be started.' };
+          repaint();
+        },
+      )
+      .catch((error) => {
+        signins[a.id] = { state: 'failed', message: (error && error.message) || 'The sign-in could not be started.' };
+        repaint();
+      });
+  }
+  function closeTerminal(id, paint) {
+    const entry = betaTerms[id];
+    if (!entry) return;
+    delete betaTerms[id];
+    try {
+      if (entry.run) entry.run.close();
+    } catch (e) {
+      /* already closed */
+    }
+    if (entry.node && entry.node.remove) entry.node.remove();
+    if (paint) repaint();
+  }
+
   function renderAgentsAdd(box) {
     if (S.form && !S.form.id) {
       box.append(agentForm());
@@ -1572,6 +1809,7 @@
 
   const RENDER = {
     'agents-list': renderAgentsList,
+    'agents-beta': renderAgentsBeta,
     'agents-add': renderAgentsAdd,
     'default-agent': renderDefaultAgent,
     'default-picks': renderDefaultPicks,
@@ -1589,6 +1827,7 @@
   };
   const TITLES = {
     'agents-list': 'Agents',
+    'agents-beta': 'Beta agents',
     'agents-add': 'Add an ACP agent',
     'default-agent': 'Default agent',
     'default-picks': 'Default model and mode',
@@ -1852,6 +2091,8 @@
     orderAgents,
     installBlockOf: installBlock,
     agentRow, // one agent's row (status, Install / Cancel / Retry); a start page can draw the same row
+    renderAgentsBeta,
+    BETA_NOTE,
     togglePatch,
     envRowsFrom,
     envForSave,

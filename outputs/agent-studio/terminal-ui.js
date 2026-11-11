@@ -1189,6 +1189,107 @@
     }
   }
 
+  /* ---- a sign-in terminal (Settings > AIB Linking > Beta agents) ------------------------------------------------------------ */
+
+  /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
+  function signinUrl(loc, agentId, cols, rows) {
+    const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+    const q = new URLSearchParams({ signin: agentId, cols: String(cols || 80), rows: String(rows || 24) });
+    return scheme + '//' + loc.host + '/api/live/terminal?' + q;
+  }
+  /**
+   * runSignin(box, agentId, hooks): run a Beta agent's own sign-in command (ACP terminal auth) in an AIB terminal inside `box`
+   * (a ConPTY on the server: no window ever opens). hooks: {onReady(), onExit(code), onError(message)}. Returns {close()}, which ends
+   * the command. Same look and keys as the chat terminal (copy with Ctrl+Shift+C); nothing typed here goes to an agent chat.
+   */
+  function runSignin(box, agentId, hooks) {
+    const h = hooks || {};
+    const run = { ws: null, term: null, closed: false, done: false };
+    const fail = (message) => {
+      if (run.done) return;
+      run.done = true;
+      if (h.onError) h.onError(message);
+    };
+    loadXterm()
+      .then((lib) => {
+        if (run.closed) return;
+        const style = root.getComputedStyle ? root.getComputedStyle(doc().documentElement || doc().body) : null;
+        const read = (name) => (style && style.getPropertyValue ? style.getPropertyValue(name) : '');
+        const font = (read('--code-font') || '').trim();
+        const term = new lib.Terminal({
+          cursorBlink: true,
+          fontFamily: (font ? font + ', ' : '') + "'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace",
+          fontSize: 13,
+          lineHeight: 1.15,
+          scrollback: 2000,
+          theme: themeFrom(read),
+        });
+        if (lib.CanvasAddon) term.loadAddon(new lib.CanvasAddon()); // before open(): the DOM renderer's <style> breaks our CSP
+        const fit = lib.FitAddon ? new lib.FitAddon() : null;
+        if (fit) term.loadAddon(fit);
+        term.open(box);
+        try {
+          if (fit) fit.fit();
+        } catch {}
+        run.term = term;
+        if (term.attachCustomKeyEventHandler)
+          term.attachCustomKeyEventHandler((ev) => {
+            const key = String(ev.key || '').toLowerCase();
+            if (ev.type === 'keydown' && ev.ctrlKey && ev.shiftKey && key === 'c') {
+              copySelection(term);
+              return false;
+            }
+            return true;
+          });
+        if (!host || !host.token) throw Error('The terminal is not ready yet. Open a chat once, then try again.');
+        return Promise.resolve(host.token()).then((token) => {
+          if (run.closed) return;
+          const WS = (host && host.WebSocket) || root.WebSocket;
+          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows), protocols(token));
+          ws.binaryType = 'arraybuffer';
+          run.ws = ws;
+          term.onData((data) => {
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data }));
+          });
+          term.onResize(({ cols, rows }) => {
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+          });
+          ws.onmessage = (ev) => {
+            if (typeof ev.data !== 'string') return term.write(new Uint8Array(ev.data));
+            let m = null;
+            try {
+              m = JSON.parse(ev.data);
+            } catch {
+              return;
+            }
+            if (m.type === 'ready') {
+              if (h.onReady) h.onReady();
+              if (term.focus) term.focus();
+            } else if (m.type === 'exit' && !run.done) {
+              run.done = true;
+              if (h.onExit) h.onExit(Number(m.code));
+            } else if (m.type === 'error') fail(String(m.message || 'The sign-in could not start.'));
+          };
+          ws.onclose = () => {
+            if (!run.closed) fail('The sign-in terminal closed before the sign-in finished.');
+          };
+        });
+      })
+      .catch((error) => fail((error && error.message) || String(error)));
+    return {
+      close() {
+        run.closed = true;
+        run.done = true;
+        try {
+          if (run.ws) run.ws.close();
+        } catch {}
+        try {
+          if (run.term) run.term.dispose();
+        } catch {}
+      },
+    };
+  }
+
   const api = {
     init,
     sync,
@@ -1201,6 +1302,8 @@
     end,
     toggle,
     retheme,
+    runSignin,
+    signinUrl,
     socketUrl,
     protocols,
     themeFrom,

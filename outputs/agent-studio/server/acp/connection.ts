@@ -41,6 +41,7 @@ import {
 } from './attachments.ts';
 import { WriteTracker } from '../artifacts/artifacts.ts';
 import { findOption as findPickOption } from '../state/agent_options.ts';
+import { betaAgent } from '../agents/beta_catalog.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
@@ -1854,7 +1855,7 @@ export class Connection {
         auth.working = true;
         auth.error = '';
         try {
-          await this.setupRequest('authenticate', { methodId }, 120);
+          await this.setupRequest('authenticate', this.authenticateParams(methodId), 120);
           this.#checkSetupAbort();
           return;
         } catch (failure) {
@@ -1870,6 +1871,44 @@ export class Connection {
     } finally {
       this.auth = null;
     }
+  }
+
+  /**
+   * The params of ACP uthenticate. A Beta agent whose API key method takes the key in _meta['api-key'] (Gemini) gets the key AIB
+   * passes in its environment (Settings > AIB Linking > Beta agents); every other method is just {methodId}.
+   */
+  authenticateParams(methodId: unknown): Json {
+    const params: Json = { methodId };
+    const agent = betaAgent(this.provider);
+    const keyEnv = agent?.signin.keyEnv;
+    const key = keyEnv && this.env ? this.env[keyEnv] : '';
+    if (agent && key && agent.signin.keyMethod && agent.signin.keyMethod === methodId) params._meta = { 'api-key': key };
+    return params;
+  }
+
+  /**
+   * Beta agents whose session/new reports a model they do not use until the client sets one (GitHub Copilot CLI, github/copilot-cli#5363):
+   * right after session/new (and the New chat picks), set the model explicitly to the one the agent reports, through its model config
+   * option, else through session/set_model (the models shape). A refusal is logged, never thrown: the chat still opens. True = sent.
+   */
+  async applyModelQuirk(): Promise<boolean> {
+    if (!betaAgent(this.provider)?.setModelAfterNew || !this.sessionId) return false;
+    try {
+      const option = findPickOption(this.settings, 'model');
+      if (option && isStr(option.currentValue) && option.currentValue) {
+        await this.setConfig(option.id, option.currentValue);
+        return true;
+      }
+      const models = isDict(this.settings.models) ? this.settings.models as Json : null;
+      const current = models && isStr(models.currentModelId) ? models.currentModelId : '';
+      if (current) {
+        await this.request('session/set_model', { sessionId: this.sessionId, modelId: current });
+        return true;
+      }
+    } catch (error) {
+      log.warning('Setting the model of %s after session/new failed: %s', this.provider, errorText(error));
+    }
+    return false;
   }
 
   /** Called from the HTTP layer: choose an in-app method, retry after an external sign-in, or cancel. */
@@ -1947,6 +1986,7 @@ export class Connection {
       // rebuild replays their answers and never sends them again.
       this.startSettings = structuredClone(result) as Json;
       await this.applyStartPicks();
+      await this.applyModelQuirk();
       this.#checkSetupAbort();
     }
     this.#markReady();
