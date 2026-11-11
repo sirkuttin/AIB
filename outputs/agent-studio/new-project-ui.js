@@ -2,8 +2,9 @@
   'use strict';
   // The "New project" dialog: pick or type a folder, optionally give a name, and the server checks both live. With a name the project
   // is <folder>\<name>, made inside the folder (or used when it is already there); without one it is the folder itself (made when only
-  // its parent exists). Folders are only ever made by the server, one level, optional git init. A live line says what Create will do. Decisions about what the hint says live in
-  // workspace-state.js (hintState, smartStart); this file draws the dialog and talks to /api/live/folders/*.
+  // its parent exists). Folders are only ever made by the server, one level, optional git init. A live line says what Create will do.
+  // Decisions about what the hint and that line say live in workspace-state.js (hintState, smartStart); this file draws the dialog
+  // and talks to /api/live/folders/*.
   const doc = () => root.document;
   const St = () => root.AgentWorkspaceState;
   const el = (tag, content, cls) => {
