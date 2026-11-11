@@ -307,3 +307,26 @@ test('signInBeta fails plainly for an agent that does not sign in through a term
   assert.equal(await done, false);
   assert.ok(UI.isOpen(), 'Settings stays open with the reason on the card');
 });
+
+test('closing Settings during a sign-in a chat started ends it: the chat button is released and the sign-in program ended', async () => {
+  const list = LIST().map((a) =>
+    a.id === 'opencode' ? { ...a, enabled: true, found: true, launcherSource: 'path', problem: '' } : a,
+  );
+  const { UI, ctx, posts } = await openSettings(list);
+  UI.close();
+  let closed = 0;
+  ctx.AibTerminal = { runSignin: () => ({ close: () => closed++ }) };
+  const done = UI.signInBeta('opencode');
+  await flush();
+  await flush();
+  assert.ok(UI.isOpen());
+  UI.close(); // Esc and the × both close the page this way
+  assert.equal(
+    await done,
+    false,
+    'treated as "the sign-in did not finish": the chat shows Try again and its button works again',
+  );
+  assert.equal(closed, 1, 'the sign-in panel is ended');
+  await flush();
+  assert.deepEqual(plain(posts.find((p) => p[0] === 'terminal/end')), ['terminal/end', { key: 'signin:opencode' }]);
+});

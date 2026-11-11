@@ -1229,7 +1229,7 @@
           const status = el('p', 'Starting…', 'st-note');
           status.setAttribute('role', 'status');
           node.append(head, view, status);
-          const entry = { node, status, run: null, done };
+          const entry = { node, status, run: null, done, fromChat: !!(opts && opts.onDone) };
           betaTerms[a.id] = entry;
           repaint();
           entry.run = T.runSignin(view, a.id, {
@@ -1302,6 +1302,10 @@
       /* already closed */
     }
     if (entry.node && entry.node.remove) entry.node.remove();
+    // End the sign-in program too (the server keeps a terminal running after its socket closes).
+    Promise.resolve()
+      .then(() => S.host.post('terminal/end', { key: 'signin:' + id }))
+      .catch(() => {});
     if (paint) repaint();
   }
 
@@ -2053,6 +2057,8 @@
     if (!S.page || !S.open) return;
     S.open = false;
     S.page.hidden = true;
+    // A sign-in a chat started ends with Settings: the chat's Sign in button is released and says to try again.
+    for (const id of Object.keys(betaTerms)) if (betaTerms[id].fromChat) closeTerminal(id);
     doc().body.classList.remove('settings-open');
     S.form = null;
     S.error = '';
