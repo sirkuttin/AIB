@@ -427,6 +427,35 @@
       focusNow();
     });
   }
+  // "Delete project…": stop every running chat of the project, run between() (the server removes the project, and its folder
+  // when asked), then move every chat to Recently deleted, where each can be restored as usual. One list refresh at the end.
+  async function deleteMany(list, between) {
+    const sel = host.getSelected && host.getSelected(),
+      selKey = sel ? keyOf(sel) : '';
+    for (const c of list) if (isLive(c)) await host.endSession(c);
+    if (between) await between();
+    const S = root.AgentSidebarUI;
+    let failed = 0;
+    for (const c of list) {
+      try {
+        await host.post('conversation-state', {
+          action: 'delete',
+          provider: c.provider,
+          sessionId: sessionIdOf(c),
+          title: titleOf(c),
+          cwd: c.cwd || '',
+          projectRoot: S && S.rootOf ? S.rootOf(c) : '',
+        });
+      } catch (e) {
+        failed++;
+      }
+    }
+    await fetchState();
+    if (selKey && list.some((c) => keyOf(c) === selKey)) host.closeSelected();
+    host.rerender();
+    await host.refreshList();
+    return { failed };
+  }
   function markHandled(c) {
     if (!c || !markable(c)) return Promise.resolve();
     return guarded(() => call('handled', c));
@@ -1085,6 +1114,7 @@
     run: (id, c, origin) => runItem(id, c, origin || 'header'),
     thinkingState,
     markHandled,
+    deleteMany,
     flag,
     yourTurn: yourTurnOf,
     menuModel,

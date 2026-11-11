@@ -2398,3 +2398,74 @@ aside #archivedScroll {
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* "Delete project…" (delete-project-ui.js): an in-page question over the page, the Discard question's buttons. */
+.ws-menu-item.ws-menu-danger:not(:disabled) {
+  color: var(--danger-text);
+}
+.dp-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: var(--shadow-strong);
+}
+.dp-dialog {
+  position: fixed;
+  z-index: 81;
+  top: 18vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 32px));
+  max-height: 70vh;
+  overflow: auto;
+  padding: 16px 18px;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow-strong);
+}
+.dp-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.dp-main,
+.dp-running,
+.dp-note,
+.dp-warn,
+.dp-error {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.dp-note {
+  color: var(--muted);
+}
+.dp-warn,
+.dp-error {
+  color: var(--danger-text);
+}
+.dp-dialog .dp-disk {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+}
+.dp-dialog .dp-disk input {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
+.dp-disk input:disabled + span {
+  color: var(--muted);
+}
+.dp-row {
+  margin-top: 4px;
+}

@@ -28,6 +28,8 @@ import { pathStr } from '../platform/pypath.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { TerminalSessions } from '../terminal/sessions.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
+import { RemovedProjects } from '../desktop/project_delete.ts';
+import { projectRemove } from './project_routes.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -71,6 +73,14 @@ export function withViewPrefs(html: string, prefs: Record<string, string>): stri
   return html.slice(0, at) + '<script type="application/json" id="aibViewPrefs">' + data + '</script>' + html.slice(at);
 }
 
+/** The project preferences plus the removed projects, under one revision (the list route reports the same one). */
+function projectsRevision(c: WebContext): string {
+  return `${c.projectPrefs.revision()}+${c.removedProjects.revision()}`;
+}
+function projectsView(c: WebContext): Record<string, unknown> {
+  return { ...c.projectPrefs.public(), removed: c.removedProjects.public().removed, revision: projectsRevision(c) };
+}
+
 function contentType(name: string): string {
   return (name.endsWith('.html') ? 'text/html' : name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8';
 }
@@ -86,6 +96,8 @@ export interface WebContext {
   updates: UpdateService;
   conversations: ConversationState;
   projectPrefs: ProjectPrefs;
+  /** Projects removed from AIB ("Delete project…"): served with the project preferences. */
+  removedProjects: RemovedProjects;
   readState: ReadState;
   settings: SettingsStore;
   /** The transcript viewer's data (monitor.py): OMP sessions and Claude Code projects. */
@@ -124,7 +136,7 @@ export class WebServer {
       return this.json(200, {
         ...listing,
         conversationRevision: c.conversations.revision(),
-        projectsRevision: c.projectPrefs.revision(),
+        projectsRevision: projectsRevision(c),
         readStateRevision: c.readState.revision(),
         settingsRevision: c.settings.revision(),
         webInstanceId: c.webInstanceId,
@@ -141,10 +153,14 @@ export class WebServer {
       const view = c.viewPrefs.public();
       return this.json(200, { revision: view.revision, warning: view.warning, ok: true });
     });
-    this.native.set('GET /api/live/project-prefs', (c) => this.json(200, c.projectPrefs.public()));
+    this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
       await c.projectPrefs.update(body);
-      return this.json(200, { ...c.projectPrefs.public(), ok: true });
+      return this.json(200, { ...projectsView(c), ok: true });
+    });
+    this.native.set('POST /api/live/project-remove', async (c, _url, body) => {
+      const [status, payload] = await projectRemove(c, body);
+      return this.json(status, payload);
     });
     for (const [key, handler] of liveRoutes()) {
       this.native.set(key, async (c, url, body) => {
@@ -393,6 +409,7 @@ export function makeContext(
     updates: options.updates,
     conversations: options.stores?.conversations ?? new ConversationState(options.stateDir),
     projectPrefs: options.stores?.projectPrefs ?? new ProjectPrefs(options.stateDir),
+    removedProjects: new RemovedProjects(options.stateDir),
     readState: options.stores?.readState ?? new ReadState(options.stateDir),
     settings: options.stores?.settings ?? new SettingsStore(options.stateDir),
     transcripts: options.transcripts,

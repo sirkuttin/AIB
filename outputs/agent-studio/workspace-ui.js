@@ -207,7 +207,7 @@
     }
   }
   function rebuildProjects() {
-    const real = St().buildProjects(items);
+    const real = St().buildProjects(items.filter((i) => !removedProject(i.projectKey) || i.liveId));
     if (items.length) {
       const left = St().prunePending(pending, new Set(real.map((p) => p.key)));
       if (Object.keys(left).length !== Object.keys(pending).length) {
@@ -1297,6 +1297,10 @@
     saveChain = Promise.resolve(),
     loadingPrefs = null;
   let hiddenOpen = false; // the "Hidden (n)" group in the dropdown is expanded
+  // Projects removed from AIB ("Delete project…"), from the server with the preferences: their chats stay out of every list
+  // until a new chat starts in the folder or one of its chats is restored (the server then forgets the removal).
+  let removedKeys = new Set();
+  const removedProject = (pk) => !!pk && removedKeys.has(pk);
   function readLocalPrefs() {
     try {
       const raw = root.localStorage.getItem(PREFS_LOCAL);
@@ -1321,6 +1325,8 @@
   }
   function adoptPrefs(r) {
     prefs = St().sanitizePrefs(r);
+    const rm = r && r.removed && typeof r.removed === 'object' && !Array.isArray(r.removed) ? r.removed : null;
+    if (rm) removedKeys = new Set(Object.keys(rm));
     prefsRev = (r && r.revision) || prefsRev;
     prefsVer++;
     if (host) {
@@ -1404,6 +1410,42 @@
     const keys = visibleKeys(),
       next = St().nudge(keys, pk, dir);
     if (next.join('\n') !== keys.join('\n')) reorderTo(next);
+  }
+  // "Delete project…": the in-page question (delete-project-ui.js), then stop its chats, remove it on the server (and its folder
+  // when ticked), and move its chats to Recently deleted (organize-ui.js deleteMany).
+  function deleteProject(pk, returnTo) {
+    const p = projectOfKey(pk),
+      D = root.AgentDeleteProjectUI,
+      O = root.AgentOrganizeUI;
+    if (!p || !D || !host) return null;
+    const chats = items
+      .filter((i) => i.projectKey === pk && !i.deleted)
+      .map((i) => convOf(i.key))
+      .filter(Boolean);
+    const running = chats.filter((c) => c.live && !c.live.closed).length;
+    const others = projects.filter((q) => q.key !== pk && q.path).map((q) => q.path);
+    const post = (body) =>
+      Promise.resolve(host.postJson('project-remove', Object.assign({ path: p.path, projects: others }, body)));
+    return D.show({
+      name: p.name,
+      path: p.path,
+      chats: chats.length,
+      running,
+      returnTo,
+      check: () => post({ check: true }),
+      confirm: async (choice) => {
+        const remove = () => post({ disk: !!choice.disk, expect: choice.expect || '' });
+        if (O && O.deleteMany) await O.deleteMany(chats, remove);
+        else await remove();
+        removedKeys.add(pk);
+        if (ws.active === pk) commit(St().setActive(ws, St().ALL));
+        rebuildProjects();
+        lastSig = '';
+        prefsRev = '';
+        syncPrefs('');
+        host.rerender();
+      },
+    });
   }
   function hideProject(pk, hidden) {
     if (hidden && ws.active === pk) commit(St().setActive(ws, St().ALL));
@@ -1710,6 +1752,12 @@
     );
     item('Copy folder path', () => copyText(p.path || ''), !p.path);
     addEditorItems(m, p, pk, item, () => ctx === m && openCtxMenu(pk, x, y, returnTo));
+    if (root.AgentDeleteProjectUI && p.path) {
+      const sep = el('div', null, 'ws-menu-sep');
+      sep.setAttribute('role', 'separator');
+      m.append(sep);
+      item('Delete project…', () => deleteProject(pk, returnTo)).classList.add('ws-menu-danger');
+    }
     m.addEventListener('keydown', (e) => {
       const items = Array.from(m.querySelectorAll('button:not(:disabled)')),
         at2 = items.indexOf(doc().activeElement);
@@ -2219,11 +2267,13 @@
   const inProject = (c) => {
     const active = ws ? ws.active : St().ALL,
       pk = projectKeyOf(c);
+    if (removedProject(pk) && !(c.live && !c.live.closed)) return false;
     if (active === St().ALL && hiddenProject(pk)) return false;
     // Worktree and scratch folders are hidden from "All chats" too (same rule as the dropdown); Ctrl+K and the inbox still reach them.
     if (active === St().ALL) {
       const proj = projectOfKey(pk),
-        k = kindOfPath((proj && proj.path) || (S ? S.rootOf(c) : c.cwd) || '');
+        SB = root.AgentSidebarUI,
+        k = kindOfPath((proj && proj.path) || (SB ? SB.rootOf(c) : c.cwd) || ''); // S() is the split view, not the sidebar
       if (k.worktree || k.scratch) return false;
     }
     return St().inProject({ projectKey: pk }, active);
@@ -2504,6 +2554,7 @@
     paletteProjects,
     focusNewChatIn,
     newChatIn,
+    deleteProject,
     projectOrder,
     openProjectCtx,
     init,
