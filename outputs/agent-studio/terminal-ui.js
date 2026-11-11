@@ -55,14 +55,18 @@
   const DEFAULT_HEIGHT = 300;
   const STEP = 24;
   const BUSY_TIMEOUT = 1500;
+  /** After AIB restarted (an update, a crash), the page reconnects to the shell the keeper kept: tries, 1 s apart. */
+  const RESUME_TRIES = 45;
+  const RESUME_EVERY = 1000;
 
   /* ---- pure ---------------------------------------------------------------------------------------------------------------- */
 
   /** The socket address for a chat (same origin as the page). */
-  function socketUrl(loc, key, cwd, cols, rows, shell) {
+  function socketUrl(loc, key, cwd, cols, rows, shell, resume) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
     const q = new URLSearchParams({ key, cwd: cwd || '', cols: String(cols || 80), rows: String(rows || 24) });
     if (shell) q.set('shell', shell);
+    if (resume) q.set('resume', '1'); // only a shell that still runs: reconnecting never starts a new one
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
   }
   /** The subprotocols the page offers: the terminal protocol and the page token (a WebSocket cannot carry headers). */
@@ -520,6 +524,7 @@
       connecting: ['is-off', ' · starting'],
       exited: ['is-off', ' · ended'],
       closed: ['is-off', ' · disconnected'],
+      reconnecting: ['is-off', ' · reconnecting'],
       failed: ['is-bad', ' · didn’t start'],
       missing: ['is-off', ' · not started'],
       limit: ['is-off', ' · not started'],
@@ -817,6 +822,7 @@
     term.open(e.box);
     e.box.hidden = shownKey !== e.key;
     term.onData((data) => {
+      if (e.status === 'reconnecting') return; // AIB is restarting; the shell is still there
       if (e.status === 'closed') {
         ensure(e).catch(() => {}); // any key reconnects
         return;
@@ -865,7 +871,29 @@
     } catch {}
   }
 
-  function connect(e, retry) {
+  /**
+   * The socket closed while the shell ran: AIB restarted (an update, a crash). The shell lives on in the keeper, so reconnect quietly
+   * to that same shell (resume: never a new one); its recent output is replayed, so the screen looks as before. Only when it does not
+   * come back does the old line ask for a key.
+   */
+  function resumeAfterRestart(e, tries) {
+    const later = root.setTimeout || setTimeout;
+    later(() => {
+      if (e.status !== 'reconnecting' || e.ws) return; // discarded, or already back
+      connect(e, true, true).then(
+        () => {},
+        (error) => {
+          if (e.status !== 'reconnecting') return;
+          if (!(error && error.gone) && tries + 1 < RESUME_TRIES) return resumeAfterRestart(e, tries + 1);
+          e.status = 'closed';
+          if (e.term) e.term.write('\r\n\x1b[2m[Disconnected. Press any key to reconnect.]\x1b[0m\r\n');
+          changed();
+        },
+      );
+    }, RESUME_EVERY);
+  }
+
+  function connect(e, retry, resume) {
     return new Promise((resolve, reject) => {
       let settled = false;
       const done = (error) => {
@@ -879,7 +907,7 @@
           const WS = (host && host.WebSocket) || root.WebSocket;
           const t = e.term;
           const ws = new WS(
-            socketUrl(root.location, e.key, e.cwd, t && t.cols, t && t.rows, e.shellChoice),
+            socketUrl(root.location, e.key, e.cwd, t && t.cols, t && t.rows, e.shellChoice, resume),
             protocols(token),
           );
           ws.binaryType = 'arraybuffer';
@@ -918,6 +946,11 @@
             } else if (m.type === 'busy') {
               const waiter = e.busyWaiters && e.busyWaiters.get(m.id);
               if (waiter) waiter(!!m.busy);
+            } else if (m.type === 'error' && resume) {
+              refused = true; // reconnecting after a restart: no panel; resumeAfterRestart decides
+              const error = Error(String(m.message || 'The terminal is no longer running.'));
+              error.gone = m.code === 'gone';
+              done(error);
             } else if (m.type === 'error') {
               refused = true;
               e.error = m;
@@ -935,10 +968,11 @@
               // Refused before attaching: most likely a stale page token after a Studio restart. Try once with a fresh one.
               if (retry && host.refreshToken) {
                 Promise.resolve(host.refreshToken())
-                  .then(() => connect(e, false))
+                  .then(() => connect(e, false, resume))
                   .then(() => done(), done);
                 return;
               }
+              if (resume) return done(Error('AIB is not back yet'));
               e.status = 'failed';
               e.error = { message: 'Could not connect to the terminal. Is AIB still running?' };
               render();
@@ -946,14 +980,15 @@
               return;
             }
             if (e.status === 'ready') {
-              e.status = 'closed';
+              e.status = 'reconnecting';
               running.delete(e.key);
-              if (e.term) e.term.write('\r\n\x1b[2m[Disconnected. Press any key to reconnect.]\x1b[0m\r\n');
               changed();
+              resumeAfterRestart(e, 0);
             }
           };
         })
         .catch((error) => {
+          if (resume) return done(error instanceof Error ? error : Error(String(error))); // AIB not back yet: try again later
           e.status = 'failed';
           e.error = { message: error && error.message ? error.message : String(error) };
           render();

@@ -125,7 +125,7 @@ Must be the first frame, within 10 s.
 ```json
 → {"op":"hello","id":1,"token":"9c1f…","min":1,"max":1,"client":"AIB 0.2.3"}
 ← {"ok":true,"re":1,"protocol":1,"keeper":"1.0.0","pid":4242,
-   "features":["pty","notes","truncate","orphan","signal","once","channel-ids"]}
+   "features":["pty","notes","truncate","orphan","signal","once","channel-ids","scrollback","labels"]}
 ```
 
 `min`/`max` is the protocol range the client speaks (`max` 0 = same as `min`). Errors (each closes the connection):
@@ -139,11 +139,13 @@ Must be the first frame, within 10 s.
 ← {"ok":true,"re":2,"channels":[
    {"channel":"c1","kind":"pipe","pid":5120,"command":"C:\\…\\claude-code-acp.exe","args":["--x"],"cwd":"C:\\proj",
     "created":1794312000000,"live":true,"exitCode":null,"epoch":2,"first":1,"last":118,"owner":false},
+   {"channel":"pty-1f…","kind":"pty","pid":6100,"command":"pwsh.exe","label":"{…}","created":1794312000200,"live":true,
+    "exitCode":null,"epoch":1,"first":3301,"last":5210,"owner":false},
    {"channel":"t7","kind":"pty","pid":6000,"command":"pwsh.exe","created":1794312000500,"live":false,
     "ended":1794312009000,"exitCode":0,"reason":"exit","epoch":1,"first":1,"last":40,"owner":true}]}
 ```
 
-Ordered by `created`. `first`/`last` are the oldest and newest stored seq (`last` is 0 and `first` 1 for an empty journal).
+Ordered by `created`. `label` is there only when the spawn gave one (keeper 1.2.0). `first`/`last` are the oldest and newest stored seq (`last` is 0 and `first` 1 for an empty journal).
 `reason` (ended channels): `exit` (it ended by itself), `killed` (kill op), `shutdown` (keeper shut down), `orphaned` (no
 client came back, section 6), `keeper_lost` (the previous keeper died while it ran; written by the next keeper at start).
 Channels from earlier keepers stay listed (ended) until removed with `truncate`.
@@ -175,6 +177,8 @@ Starts a process. The spawning connection becomes the owner with `epoch` 1.
 | `cwd` | Working folder; empty = the keeper's. |
 | `env` | The **complete** environment as an object. Omitted: the keeper's own environment (which is from when the keeper started, so AIB should normally send it). |
 | `pty` | Omitted: pipes (stdin, stdout, stderr). Given: a terminal of `cols` × `rows` (1..32767): Windows ConPTY, POSIX openpty with the child as session leader. |
+| `scrollback` | Optional (feature `scrollback`, keeper 1.2.0), bytes 65536..268435456: a **bounded journal**. The keeper keeps at least the newest `scrollback` bytes of this channel's records (record overhead included) and at most about a quarter more; older records go a whole segment (a quarter of `scrollback`) at a time, and a reader from an older seq gets a `gap`. Meant for terminals, whose old output is not needed. Omitted: the normal journal (only `truncate` and `--max-channel-bytes` remove anything). Out of range: `bad_request`. |
+| `label` | Optional (feature `labels`, keeper 1.2.0), at most 16 KiB, no NUL: opaque text the keeper stores and shows in `list` (and `channels.json`), never reads. Unlike a note it is never dropped from the journal, so it suits what a client needs to find a bounded channel again. |
 
 Every child is hidden: Windows pipes children get `CREATE_NO_WINDOW` (a console without a window, inherited by the console
 programs it starts); pty children run on a headless pseudo console. Every child is in its own Windows Job Object with
@@ -260,6 +264,8 @@ Errors: `fenced`, `ended`, `unsupported` (a pty), `busy`.
 → {"op":"resize","id":10,"channel":"term-r17","epoch":1,"cols":100,"rows":40}
 ← {"ok":true,"re":10,"seq":57}
 ```
+
+`once` (keeper 1.2.0) works as for `write`: a key already used on the channel is refused with `duplicate` and the size is not changed.
 
 Recorded as a `resize` record with body `{"cols":100,"rows":40}`. Errors: `fenced`, `ended`, `unsupported` (pipes),
 `bad_request`, `failed`.
@@ -385,3 +391,6 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
 - keeper 1.1.0 (protocol still 1): the separate `AIB-keeper mcp-forward <address file>` subcommand, a generic stdio-to-HTTP MCP
   forwarder agents run as their MCP server (`mcpforward.go`; `mcp-forward --check` prints `mcp-forward 1`). It never runs inside a
   serving keeper and adds nothing to the wire protocol.
+- keeper 1.2.0 (protocol still 1): spawn's `scrollback` (feature `scrollback`) and `label` (feature `labels`, shown in `list`), and
+  `once` on `resize`. AIB runs its chat terminals and agents' client terminals in the keeper only when both features are there; with
+  an older keeper they run inside AIB as before.

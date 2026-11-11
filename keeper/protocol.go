@@ -26,6 +26,9 @@ import (
 
 const (
 	protocolVersion = 1
+	maxLabel        = 16 << 10
+	minScrollback   = 64 << 10
+	maxScrollback   = 256 << 20
 	maxHeader       = 64 << 10
 	maxBody         = 16 << 20
 )
@@ -33,10 +36,11 @@ const (
 // keeperVersion is this program's version. A var only so a test build can stamp another one
 // (go build -ldflags "-X main.keeperVersion=1.1.1"); releases use the value here.
 // 1.1.0: the `mcp-forward` subcommand (no protocol change).
-var keeperVersion = "1.1.0"
+// 1.2.0: spawn's `scrollback` (a bounded journal, for terminals) and `label` (opaque text shown in list); `once` on resize.
+var keeperVersion = "1.2.0"
 
 // features are advertised in hello. Additions only.
-var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids"}
+var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels"}
 
 var errFrame = errors.New("bad frame")
 
@@ -104,6 +108,8 @@ type request struct {
 	Env                map[string]string `json:"env"`
 	WindowsCommandLine string            `json:"windowsCommandLine"`
 	Pty                *ptySize          `json:"pty"`
+	Scrollback         int64             `json:"scrollback"`
+	Label              string            `json:"label"`
 
 	From   uint64 `json:"from"`
 	Epoch  uint64 `json:"epoch"`

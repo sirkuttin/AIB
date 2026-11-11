@@ -88,6 +88,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "AIB-keeper: --data is required")
 		os.Exit(2)
 	}
+	allowCtrlC()
 	k, err := newKeeper(o)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "AIB-keeper:", err)

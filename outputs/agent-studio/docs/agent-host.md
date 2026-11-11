@@ -155,8 +155,48 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   page (`chat.js`) starts its event list again only when `eventsId` changes. While the Studio takes chats over from the keeper at start
   (now begun before the web server listens), `/api/live/state` for a chat it does not know yet waits for that (at most 20 s) instead
   of answering "connection not found", so an open page keeps its chat without reloading the list.
-* **Not yet:** terminals in the keeper (step 3); real runs on macOS and Linux (the keeper, the forwarder, the tray-only start);
-  snapshots during a long turn; client terminals' events in the record.
+* **Chat terminals in the keeper** (keeper step 3, test K9; keeper 1.2.0). A chat's terminal shell runs in the keeper as a `pty`
+  channel (`server/terminal/keeper_pty.ts` `KeeperPty`, used by `sessions.ts`; id `pty-<random>`): ConPTY on Windows, openpty
+  elsewhere, hidden, in its own Job Object / process group, so killing the keeper kills its terminals (K3). The spawn asks for a
+  **bounded journal** (`scrollback`: the newest 2 MiB of the shell's record, `TERMINAL_SCROLLBACK`; the keeper drops older output a
+  half-MiB segment at a time) and a `label` (JSON: chat key, folder, shell, start time, id), which `list` shows and which, unlike a
+  note, is never dropped. The web server has its own keeper connection for terminals (`main.ts` `terminalKeeper`, with the same orphan
+  command). At start, before it listens, AIB takes over every live shell it finds by its label (`TerminalSessions.adoptKeeper`): it
+  attaches from the start of what the keeper still has, feeds the output into the session's replay buffer and PromptWatch and the
+  recorded typing into PromptWatch (so a command that still runs is still "busy"), then claims the channel; the page attaches as to
+  any running shell (`resumed`, same pid and session id). Ended terminal channels are removed; a second shell for the same chat is
+  stopped. Quitting AIB ends every shell and removes its channel (`endAll`); Install now leaves them running (`WebServer.close(true)`
+  -> `releaseAll`: the page sockets close with 1012 and the page reconnects); a crash leaves them for the AIB the keeper starts.
+  "Session ended" is sent only for the shell's own `exit` record (or the keeper dying, which ends the shell). The page reconnects
+  after a restart with `resume=1` (attach only to a running shell; none: code `gone`, nothing started). The keeper cannot see a
+  shell's process tree, so for a shell in the keeper `Pty.busy` is false and PromptWatch alone says whether a command runs
+  (PowerShell and cmd prompts; other shells are never called busy). A tray-only AIB does not idle-quit while a terminal command runs.
+  Input is written as it is typed, without once-keys (nothing retries it, and each key would stay in the keeper's memory); the keeper
+  supports `once` on pty writes and resizes for writes that must not repeat. On Windows the keeper turns Ctrl+C handling back on at
+  start (`allowCtrlC`): being started with `CREATE_NEW_PROCESS_GROUP` had made every child ignore it.
+  A Beta agent's sign-in terminal (`signin=<agent>`, a program instead of a shell) always runs inside AIB: it is short-lived and
+  ends with the sign-in, so there is nothing to keep through a restart.
+  **Fallback:** a keeper without `pty`, `scrollback` and `labels` (1.1.0, beta.4's), one that refuses the spawn, or the keeper off:
+  shells run inside AIB as before (they end with it), logged once ("keeper: terminals run inside AIB (the running keeper (1.1.0)
+  lacks scrollback, labels); they end when AIB restarts"). An older keeper with no live channel is replaced by the shipped one at the
+  next spawn, as for chats.
+* **Client terminals in the keeper** (`server/acp/keeper_terminal.ts`). When the chat's agent runs in the keeper, `terminal/create`
+  writes a `clientTerminal` note first (`rpc`, `terminalId`, `channel` `ct-<id>`, session, argv, folder, output limit; `channel` null
+  when the terminal runs inside AIB: keeper too old), then the keeper runs the command (pipes, stdin closed at once, a bounded journal
+  of the output limit plus a quarter plus 64 KiB, a label naming the chat). A takeover reads the notes while replaying the chat and,
+  before answering anything, re-attaches each noted terminal still in the keeper (`KeeperClientTerminal.adopt`: output rebuilt from
+  the record, then claimed), so `terminal/output`, `wait_for_exit`, `kill` and `release` the agent sends (or had pending) are answered
+  from the same process. A pending `terminal/create` with a note is answered with the noted id when that terminal is there, started
+  once under the noted id when the old AIB stopped between note and spawn (the keeper refuses a second spawn of a channel id), and
+  answered "The terminal was lost when AIB restarted" only for notes without a channel (a terminal inside AIB, or beta.4's notes).
+  `release` writes a `clientTerminalReleased` note, kills the terminal and removes its channel; closing the chat does the same for all
+  of them. Studio's takeover skips `ct-` channels and afterwards stops and removes those whose chat is gone.
+* **Not yet:** real runs on macOS and Linux (the keeper, the forwarder, the tray-only start, terminals in the keeper); snapshots
+  during a long turn; client terminals' events in the record; Install now with two builds and a running terminal (covered by the
+  unit test of `releaseAll` and the K9 crash e2e, not end to end).
+* Terminal tests: `keeper/pty_test.go`, `pty_windows_test.go` (once-keys, exit and kill, the scrollback bound and label, the tree
+  dying with the keeper, Ctrl+C), `work/deno/keeper_terminal_test.ts` (takeover after a crash, exit, release, the fallback with the real
+  beta.4 keeper built from git), `keeper_client_terminal_test.ts`, `keeper_terminal_e2e_test.ts` (K9, `AIB_SLOW_TESTS=1`).
 * Tests: `work/deno/keeper_client_test.ts`, `keeper_studio_test.ts` (rebuild at four points of a turn, keeper death, release for an
   update, newer and older keepers), `keeper_gaps_test.ts` (the start decision, `AIB_KEEPER=0`, an old saved setting
   ignored, the fallback when the keeper cannot run, chats kept by a Studio without the keeper, the

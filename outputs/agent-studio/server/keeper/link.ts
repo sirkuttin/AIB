@@ -261,12 +261,28 @@ export class KeeperLink {
     }
   }
 
-  /** Start an agent in the keeper. Returns at once; operations wait for the spawn. `first` runs right after it (the chat note). */
-  spawn(spec: SpawnSpec & { channel: string }, listener: KeeperChannelListener, first?: () => Json | null): KeeperChannel {
+  /**
+   * Start an agent (or a terminal) in the keeper. Returns at once; operations wait for the spawn. `first` runs right after it (the
+   * chat note). `needs`: features the keeper must offer for this spawn; without them it fails with KeeperError `unsupported` (the
+   * listener's spawnFailed) and nothing is started.
+   */
+  spawn(
+    spec: SpawnSpec & { channel: string },
+    listener: KeeperChannelListener,
+    first?: () => Json | null,
+    needs?: readonly string[],
+  ): KeeperChannel {
     const channel = new KeeperChannel(spec.channel, listener);
     this.channels.set(channel.id, channel);
     channel.start(async () => {
       const client = await this.check();
+      const missing = needs ? missingFeatures(client.features, needs) : [];
+      if (missing.length) {
+        throw new KeeperError(
+          'unsupported',
+          `the running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')}`,
+        );
+      }
       channel.client = client;
       const answer = await client.spawn(spec);
       channel.pid = answer.pid;
@@ -461,6 +477,13 @@ export class KeeperChannel {
 
   closeStdin(): Promise<void> {
     return this.#op((c) => c.closeStdin(this.id, this.epoch)).catch(() => {});
+  }
+
+  /** A terminal's new size (ptys). Never throws. */
+  resize(cols: number, rows: number): Promise<void> {
+    return this.#op(async (c) => {
+      await c.resize(this.id, this.epoch, cols, rows);
+    }).catch(() => {});
   }
 
   /** Kill the whole process tree (Windows: its Job Object). */

@@ -61,6 +61,10 @@ export interface SpawnSpec {
   env?: Record<string, string>;
   windowsCommandLine?: string;
   pty?: { cols: number; rows: number };
+  /** Keeper 1.2.0 (`scrollback`): keep only about the newest N bytes of this channel's record (terminals). */
+  scrollback?: number;
+  /** Keeper 1.2.0 (`labels`): opaque text shown in `list` (what AIB needs to find the channel again). */
+  label?: string;
 }
 
 /** One `list` entry. */
@@ -71,6 +75,8 @@ export interface ChannelInfo {
   command: string;
   args?: string[];
   cwd?: string;
+  /** The spawn's label (keeper 1.2.0). */
+  label?: string;
   created: number;
   live: boolean;
   ended?: number;
@@ -389,8 +395,8 @@ export class KeeperClient {
     await this.request({ op: 'closeStdin', channel, epoch });
   }
 
-  async resize(channel: string, epoch: number, cols: number, rows: number): Promise<number> {
-    return Number((await this.request({ op: 'resize', channel, epoch, cols, rows })).seq);
+  async resize(channel: string, epoch: number, cols: number, rows: number, once?: string): Promise<number> {
+    return Number((await this.request({ op: 'resize', channel, epoch, cols, rows, ...(once ? { once } : {}) })).seq);
   }
 
   async signal(channel: string, epoch: number, signal: string): Promise<void> {

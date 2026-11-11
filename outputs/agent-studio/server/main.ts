@@ -20,11 +20,11 @@ import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
 import './state/migrate.ts'; // registers the data move with paths.ts
 import { leaveSplitHost, pidAlive, readInfo, SOURCE_COMMAND, stopHost } from './host/host_client.ts';
-import { decideKeeper } from './keeper/link.ts';
-import { PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
+import { decideKeeper, KeeperLink } from './keeper/link.ts';
+import { keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
-import { Studio } from './host/studio.ts';
+import { orphanCommand, Studio } from './host/studio.ts';
 import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
 import { UpdateService } from './desktop/updater.ts';
 import { makeContext, WebServer } from './web/server.ts';
@@ -234,6 +234,11 @@ export async function main(argv: string[]): Promise<void> {
     });
   }
   configureArtifactKeys(stateDir); // artifact tool: the same shared secret as the agent host
+  // The chats' terminal shells run in the keeper too (keeper 1.2.0+), so they outlive a restart, crash or update of AIB. With the
+  // keeper off but one still running for the folder, its shells are taken over and new ones start inside AIB.
+  const terminalKeeper = keeperOn || keeperRunning(stateDir)
+    ? new KeeperLink({ dataDir: stateDir, ...(studio ? { orphan: orphanCommand() } : {}) })
+    : null;
   let closing = false;
   let close = async (_why?: string, _release?: boolean) => {};
   const ctx = makeContext({
@@ -247,6 +252,7 @@ export async function main(argv: string[]): Promise<void> {
     ompSessions: options.ompSessions,
     shutdown: () => void close('shutdown requested'),
     agentOptions: options as never,
+    terminalKeeper,
     stores: studio
       ? { conversations: studio.conversations, projectPrefs: studio.projectPrefs, readState: studio.readState, settings: studio.settings }
       : undefined,
@@ -280,6 +286,8 @@ export async function main(argv: string[]): Promise<void> {
       : null,
   });
   log.registerSecret(ctx.token);
+  if (terminalKeeper && !keeperOn) ctx.terminals.keeperProblem = 'the keeper is off';
+  await ctx.terminals.adoptKeeper(); // shells an earlier AIB left in the keeper: taken over before the page can ask for them
   const server = new WebServer(ctx);
   const port = await server.listen(options.port);
   const url = `http://127.0.0.1:${port}`;
@@ -309,7 +317,7 @@ export async function main(argv: string[]): Promise<void> {
     log.announce('studio', 'closing (%s)%s', why, release && studio ? '; leaving the chats in the keeper' : '');
     ctx.updates.stop();
     await ctx.artifacts.stop().catch(() => {});
-    await server.close().catch(() => {});
+    await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
     // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
     if (release && studio) await studio.release().catch(() => {});
     else await host.close().catch(() => {});
@@ -339,6 +347,7 @@ export async function main(argv: string[]): Promise<void> {
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
+      terminalsBusy: () => ctx.terminals.busyCount(), // a tray-only AIB does not quit under a command running in a terminal
       trayCounts: studio
         ? () => {
           const working = studio!.workingList();

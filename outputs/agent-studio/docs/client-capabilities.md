@@ -24,7 +24,7 @@ Without a flag, the matching requests receive the same JSON-RPC error as before 
 - The working directory must resolve inside the workspace (default: the workspace itself).
 - The process gets a minimal environment (PATH, system folders, temp folders and similar) plus only the variables the agent lists in `env`. Studio's own environment, including any tokens, is not passed on.
 - Output is kept up to `outputByteLimit` (the oldest bytes are dropped first, `truncated` is reported), and never more than 4 MiB regardless of the request. Up to 8 terminals per conversation.
-- Processes are killed (with their child processes) on `terminal/release`, when the conversation closes or its agent disconnects, and when Studio shuts down. The Activity pane lists each live terminal: command, folder, status, exit code and the last part of its output.
+- Processes are killed (with their child processes) on `terminal/release`, when the conversation closes or its agent disconnects, and when Studio shuts down. When the conversation's agent runs in the keeper, its terminals run there too and keep running through an AIB restart or update; the next AIB answers `terminal/output`, `wait_for_exit`, `kill` and `release` from the same process (agent-host.md, "Client terminals in the keeper"). The Activity pane lists each live terminal: command, folder, status, exit code and the last part of its output.
 
 ## Risks, in plain language
 
