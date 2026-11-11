@@ -237,7 +237,7 @@ export async function describeBeta(
   probe: SetupProbe = defaultProbe(options.nodeCommand || ''),
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
-  const on = snap.agents.beta ?? {};
+  const off = snap.agents.betaOff ?? {};
   const keys = snap.agents.betaKeys ?? {};
   const keyStorage = options.stateDir ? keyStoreFor(options.stateDir).note : ''; // where a saved key is kept, never the key
   for (const agent of BETA_AGENTS) {
@@ -251,7 +251,8 @@ export async function describeBeta(
       letter: agent.letter,
       builtin: false,
       beta: true,
-      enabled: on[agent.id] === true,
+      enabled: off[agent.id] !== true && row.found, // on unless turned off on purpose; an agent that is not installed is listed off
+      userOff: off[agent.id] === true,
       command: row.text,
       launcher: row.text,
       launcherSource: row.source,

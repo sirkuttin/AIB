@@ -1346,7 +1346,15 @@
             }
             if (m.type === 'ready') {
               if (h.onReady) h.onReady();
-              if (term.focus) term.focus();
+              // preventScroll: focusing the terminal must not scroll the Settings page away from the card it sits in.
+              const ta = box && box.querySelector ? box.querySelector('textarea') : null;
+              if (ta && ta.focus) {
+                try {
+                  ta.focus({ preventScroll: true });
+                } catch {
+                  ta.focus();
+                }
+              } else if (term.focus) term.focus();
             } else if (m.type === 'exit' && !run.done) {
               run.done = true;
               if (h.onExit) h.onExit(Number(m.code));

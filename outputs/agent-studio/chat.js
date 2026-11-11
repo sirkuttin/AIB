@@ -2613,7 +2613,8 @@
         ...items.flatMap((item) => {
           const option = document.createElement('option');
           option.value = item.value;
-          option.textContent = item.name;
+          option.textContent = item.reason ? item.name + ' — ' + item.reason : item.name;
+          if (item.disabled) option.disabled = true;
           if (!item.group) return [option];
           if (groups.has(item.group)) {
             groups.get(item.group).append(option);
@@ -2642,7 +2643,8 @@
     if (!lists.loading || lists.model) if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
     if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
     if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
-    fillSelect($('ncAgent'), AgentChoice.menuItems(AgentChoice.AGENTS), newDraft.provider);
+    fillSelect($('ncAgent'), AgentChoice.menuRows(), newDraft.provider);
+    $('ncSetup').hidden = !AgentChoice.UNAVAILABLE.length;
     fillSelect($('ncModel'), models, newDraft.model);
     fillSelect($('ncMode'), modes, newDraft.mode);
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
@@ -2709,16 +2711,19 @@
         settings,
         agent: name,
         agentId: newDraft.provider,
-        agents: AgentChoice.AGENTS.map((a) => ({
-          id: a.id,
+        agents: AgentChoice.menuRows().map((a) => ({
+          id: a.value,
           name: a.name,
-          group: a.beta ? AgentChoice.BETA_GROUP : '',
+          group: a.group,
+          disabled: !!a.disabled,
+          reason: a.reason || '',
         })),
         extraChips,
       },
       {
         disabled: startingNew,
         onAgent: pickNewAgent,
+        onSetup: openAgentSetup,
         onMode: (value) => {
           if (newDraft) newDraft.mode = value;
         },
@@ -2733,6 +2738,11 @@
     );
     renderAttachments();
   }
+  // "Set up in Settings ›": Settings > AIB Linking, at the card of the agent that is not ready yet.
+  function openAgentSetup() {
+    window.AgentSettingsUI?.openAgent?.(AgentChoice.setupTarget());
+  }
+  $('ncSetup').onclick = openAgentSetup;
   $('ncAgent').onchange = () => pickNewAgent($('ncAgent').value);
   $('ncModel').onchange = () => {
     if (newDraft) newDraft.model = $('ncModel').value;

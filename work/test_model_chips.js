@@ -884,3 +884,35 @@ test('the Ctx chip carries the session details as a hover / focus tooltip, kept 
   assert.equal(tip.getAttribute('role'), 'tooltip');
   assert.equal(tip.textContent, 'Session ID s-1');
 });
+
+test('the New chat Agent menu lists agents that are not ready greyed with the reason, and one "Set up in Settings" link opens Settings', () => {
+  const picked = [];
+  let setups = 0;
+  const { box, doc } = renderChips(
+    {
+      id: 'new-chat',
+      agent: 'Codex',
+      agentId: 'codex',
+      agents: [
+        { id: 'codex', name: 'Codex' },
+        { id: 'kimi', name: 'Kimi Code', group: 'Beta' },
+        { id: 'gemini', name: 'Gemini CLI', group: 'Beta', disabled: true, reason: 'Needs sign-in' },
+      ],
+    },
+    { onAgent: (id) => picked.push(id), onSetup: () => setups++ },
+  );
+  box.find('.chip-agent')[0].click();
+  const rows = rowsOf(doc);
+  assert.deepEqual(rows.map((r) => r.getAttribute('aria-disabled')), [undefined, undefined, 'true']);
+  assert.equal(rows[2].find('.chip-menu-tag')[0].textContent, 'Needs sign-in');
+  rows[2].click();
+  assert.deepEqual(picked, [], 'a greyed agent cannot be chosen');
+  rows[1].click();
+  assert.deepEqual(picked, ['kimi'], 'a Ready Beta agent can');
+  box.find('.chip-agent')[0].click();
+  const link = menuOf(doc).find('.chip-setup');
+  assert.equal(link.length, 1);
+  assert.equal(link[0].textContent, 'Set up in Settings ›');
+  link[0].click();
+  assert.equal(setups, 1);
+});

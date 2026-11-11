@@ -639,3 +639,103 @@ test('the Beta card CSS: the key link is a teal st-link, line-start links sit on
     "the app's disabled primary (chat.css .primary:disabled), not 50% opacity",
   );
 });
+
+// The page scroll: a repaint replaces every node, which used to drop the scroll position (the page is empty for a moment) and the
+// focus (the clicked button is gone), so the window jumped away from the card you clicked. The fake DOM has no layout, so this one
+// simulates it: rows are 150px tall from y=100, the content scrolls, and replacing its children clamps the scroll to 0.
+test('Install on a card that is not the first keeps the scroll position, the card where it was, and the focus on the card', async () => {
+  const list = setupList();
+  const { shell, ctx, betaRow } = await openSettings(list);
+  const content = shell.body.querySelector('.st-content');
+  const proto = Object.getPrototypeOf(content);
+  const realRect = proto.getBoundingClientRect;
+  const realReplace = content.replaceChildren;
+  const scrolled = [];
+  try {
+    content.scrollTop = 400;
+    content.replaceChildren = function (...n) {
+      this.scrollTop = 0; // the empty page clamps the scroll
+      return realReplace.apply(this, n);
+    };
+    proto.getBoundingClientRect = function () {
+      if (this === content) return { top: 0, bottom: 700, left: 0, right: 800, width: 800, height: 700 };
+      const rows = content.querySelectorAll('.st-agent');
+      const i = rows.indexOf(this);
+      if (i >= 0) {
+        const top = 100 + i * 150 - content.scrollTop;
+        return { top, bottom: top + 150, left: 0, right: 800, width: 800, height: 150 };
+      }
+      const row = this.closest && this.closest('.st-agent');
+      if (row && this.matches('.st-beta-term')) {
+        const top = row.getBoundingClientRect().top + 30;
+        return { top, bottom: top + 50, left: 0, right: 800, width: 800, height: 50 };
+      }
+      return realRect.call(this);
+    };
+    ctx.AibTerminal = { runSetup: () => ({ close() {} }) };
+    const row = betaRow('Cursor CLI');
+    const topBefore = row.getBoundingClientRect().top;
+    const install = buttonOf(row, 'Install');
+    install.focus();
+    // Anything that scrolls an element into view or focuses something else is a jump.
+    for (const n of shell.body.all()) n.scrollIntoView = () => scrolled.push(n);
+    install.click();
+    await flush();
+    const after = betaRow('Cursor CLI');
+    assert.ok(after.querySelector('.st-beta-term'), 'the panel opened on the card');
+    assert.equal(content.scrollTop, 400, 'the scroll position is kept');
+    assert.equal(after.getBoundingClientRect().top, topBefore, 'the clicked card is where it was on screen');
+    assert.ok(after.contains(shell.document.activeElement), 'focus is still on the card');
+    assert.equal(scrolled.length, 0, 'nothing was scrolled into view');
+    // Cancel/Close on the same card: same again.
+    buttonOf(after.querySelector('.st-beta-term'), 'Close').click();
+    await flush();
+    assert.equal(content.scrollTop, 400);
+    assert.equal(betaRow('Cursor CLI').getBoundingClientRect().top, topBefore);
+    assert.ok(betaRow('Cursor CLI').contains(shell.document.activeElement), 'focus stays on the card after Close');
+  } finally {
+    proto.getBoundingClientRect = realRect;
+  }
+});
+
+test('Install that works turns the agent On at once, even if it had been turned Off before; a Ready one nobody turned off needs no click', async () => {
+  const list = setupList();
+  const cursor = list.findIndex((a) => a.id === 'cursor');
+  list[cursor] = { ...list[cursor], userOff: true };
+  const { ctx, betaRow, posts } = await openSettings(list);
+  const runs = [];
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push(h), { close() {} }) };
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  list[cursor] = { ...list[cursor], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
+  runs[0].onExit(0);
+  await flush();
+  await flush();
+  assert.ok(
+    posts.some((p) => p[0] === 'settings' && JSON.stringify(p[1]) === JSON.stringify({ agents: { enabled: { cursor: true } } })),
+    'the Off is cleared by the install',
+  );
+  // An agent that is Ready and was never turned off: no settings change is needed, nothing is posted for it.
+  const before = posts.length;
+  const { posts: other } = await openSettings(setupList());
+  assert.equal(other.filter((p) => p[0] === 'settings').length, 0);
+  assert.equal(before > 0, true);
+});
+
+test('"Set up in Settings" (UI.openAgent) opens AIB Linking and brings that card into view', async () => {
+  const { shell, UI, betaRow } = await openSettings(setupList());
+  UI.close && UI.close();
+  const seen = [];
+  const proto = Object.getPrototypeOf(shell.body);
+  const real = proto.scrollIntoView;
+  proto.scrollIntoView = function () {
+    seen.push(this.dataset && this.dataset.agent);
+  };
+  try {
+    await UI.openAgent('cursor');
+  } finally {
+    proto.scrollIntoView = real;
+  }
+  assert.ok(seen.includes('cursor'), 'the card of that agent is scrolled into view');
+  assert.ok(betaRow('Cursor CLI'));
+});
