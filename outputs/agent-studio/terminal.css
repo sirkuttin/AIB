@@ -23,8 +23,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 38px; /* owner: "fairly bigger" (was 30 px with a 16 px icon) */
+  height: 34px;
   padding: 0;
   flex: none;
   color: var(--muted);
@@ -34,8 +34,8 @@
   cursor: pointer;
 }
 .aib-term-toggle .aib-term-icon {
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
 }
 .aib-term-toggle:hover {
   color: var(--text-bright);
@@ -54,8 +54,8 @@
   position: absolute;
   top: 3px;
   right: 3px;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--ok);
   box-shadow: 0 0 0 2px var(--bg);
