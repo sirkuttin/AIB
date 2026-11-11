@@ -63,13 +63,17 @@ function setup(o) {
       focusFile: (p) => focused.push(p),
     }),
   };
-  const registered = [];
+  const registered = [],
+    registeredIn = [];
   ctx.AgentArtifactsUI = {
     state: () => ({ list: opts.ownList || [{ id: 'art1', sourcePath: ROOT + '/outputs/bar-charts.html' }] }),
-    open: (id) => opened.push(id),
-    registerFile: async (abs) => {
+    open: (id) => (opened.push(id), !opts.openFails),
+    registerFile: async (abs, chatId) => {
       registered.push(abs);
-      (opts.arts = opts.arts || {})['claude:a1'] = [{ id: 'new1', sourcePath: abs }];
+      registeredIn.push(chatId);
+      if (opts.registerFail) throw new Error(opts.registerFail);
+      (opts.arts = opts.arts || {})[chatId || 'claude:a1'] = [{ id: 'new1', sourcePath: abs }];
+      opened.push('new1'); // the real one opens it in the right column
       return { id: 'new1' };
     },
   };
@@ -79,12 +83,17 @@ function setup(o) {
     if (path === '/api/live/files/list') {
       const l = (opts.listing || LISTING)[q.dir];
       if (!l) throw Object.assign(new Error('Not found'), { status: 404 });
-      return { root: ROOT, dir: q.dir, git: true, entries: l };
+      const own = q.root === 'chat' ? list.find((c) => 'claude:' + c.id === q.id) : null;
+      return { root: own ? own.cwd : ROOT, dir: q.dir, git: true, entries: l };
     }
     if (path === '/api/live/files/search')
       return { root: ROOT, matches: [{ path: 'outputs/bar-charts.html', name: 'bar-charts.html', dir: 'outputs' }], total: 1 };
-    if (path === '/api/live/files/read')
-      return { root: ROOT, path: q.path, abs: ROOT + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: '' };
+    if (path === '/api/live/files/read') {
+      // a chat's own copy ('chat' root) is that chat's folder; the main folder is ROOT
+      const own = q.root === 'chat' ? list.find((c) => 'claude:' + c.id === q.id) : null,
+        base = own ? own.cwd : ROOT;
+      return { root: base, path: q.path, abs: base + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: '' };
+    }
     if (path === '/api/live/files/outside') {
       const r = (opts.outside || {})[q.path];
       if (!r) throw Object.assign(new Error('This chat never named that file'), { status: 403 });
@@ -111,10 +120,17 @@ function setup(o) {
     quickPrompt() {},
   });
   const FU = ctx.AgentFilesUI;
-  FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, conversations: () => list, open: async () => {} });
+  // notice: what chat.js passes (fail): the page's #error line, inside <main>, shows the message.
+  const notice = (m) => {
+    const e = shell.byId.error;
+    if (!e) return;
+    e.textContent = m;
+    e.hidden = false;
+  };
+  FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, notice, conversations: () => list, open: async () => {} });
   W.sync(list, list[0]);
   FU.sync(list[0]);
-  return { shell, ctx, W, FU, calls, list, focused, opened, registered };
+  return { shell, ctx, W, FU, calls, list, focused, opened, registered, registeredIn };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const rows = (t) => t.shell.body.querySelectorAll('.fx-row').filter((r) => r.dataset.path);
@@ -404,6 +420,8 @@ test('Open in Artifacts shows for every page file; on one no chat registered it 
   await flush();
   await flush();
   assert.deepEqual(t.registered, [ROOT + '/outputs/bar-charts.html'], 'registered in the open chat on click');
+  assert.deepEqual(t.registeredIn, ['claude:a1'], 'the open chat works in this folder');
+  assert.deepEqual(t.opened, ['new1'], 'and it is shown in the Artifacts tab');
   assert.ok(rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art'), 'now marked');
   // not for a file that has no page
   rowOf(t, 'README.md').click();
@@ -414,6 +432,115 @@ test('Open in Artifacts shows for every page file; on one no chat registered it 
   await flush();
   const v2 = t.shell.body.querySelector('#fileView');
   assert.equal(v2.querySelectorAll('.fx-btn').filter((x) => /Open in Artifacts/.test(x.textContent)).length, 0, 'a .py file has no page');
+});
+
+const artBtn = (t) => t.shell.body.querySelector('#fileView').querySelectorAll('.fx-btn').find((x) => /Open in Artifacts/.test(x.textContent));
+async function openHtml(t) {
+  rowOf(t, 'outputs').click();
+  await flush();
+  rowOf(t, 'outputs/bar-charts.html').click();
+  await flush();
+  await flush();
+}
+
+test("Open in Artifacts from a file tab in another chat's copy registers it in THAT chat and shows it, not in the open chat", async () => {
+  // The owner's case: chat a1 is open (main folder); the Files sidebar browses chat w1's copy (⎇ ec360be) and a file of it is a tab.
+  const wt = conv('w1', ROOT + '/.claude/worktrees/proto', { projectRoot: ROOT, worktree: { branch: 'ec360be' }, title: 'Prototype' });
+  const t = setup({ ownList: [], list: [conv('a1', ROOT), wt] });
+  t.FU.setMode('files');
+  await flush();
+  t.shell.body.querySelector('.fx-scope').click();
+  t.shell.body.querySelector('.fx-menu').querySelectorAll('.fx-menu-it').find((b) => /Prototype/.test(b.textContent)).click();
+  await flush();
+  await openHtml(t);
+  assert.ok(t.shell.body.classList.contains('sf-file-on'), 'a file tab is showing, not the chat');
+  const b = artBtn(t);
+  assert.ok(b && !b.disabled, 'the button works here');
+  assert.match(b.title, /"Prototype"/, 'its tooltip names the chat that will keep it');
+  b.click();
+  await flush();
+  await flush();
+  assert.deepEqual(t.registered, [ROOT + '/.claude/worktrees/proto/outputs/bar-charts.html']);
+  assert.deepEqual(t.registeredIn, ['claude:w1'], "registered in the copy's chat: the open chat's folder does not hold the file");
+  assert.deepEqual(t.opened, ['new1'], 'shown in the Artifacts tab');
+  assert.equal(t.shell.body.querySelector('.sf-fv-alert'), null, 'no error');
+  assert.ok(t.shell.body.classList.contains('sf-file-on'), 'the file tab stays open; the artifact shows in the right column');
+});
+
+test('Open in Artifacts with no chat working in the folder is disabled and its tooltip says why', async () => {
+  // Only a worktree chat: its copy's files can be registered, the main folder's cannot (no chat works there).
+  const wt = conv('w1', ROOT + '/.claude/worktrees/proto', { projectRoot: ROOT, worktree: { branch: 'ec360be' }, title: 'Prototype' });
+  const t = setup({ ownList: [], list: [wt] });
+  t.FU.setMode('files');
+  await flush();
+  t.shell.body.querySelector('.fx-scope').click();
+  t.shell.body.querySelector('.fx-menu').querySelectorAll('.fx-menu-it').find((b) => /Main folder/.test(b.textContent)).click();
+  await flush();
+  await openHtml(t);
+  const b = artBtn(t);
+  assert.ok(b, 'still shown, so it is clear the feature exists');
+  assert.equal(b.disabled, true);
+  assert.match(b.title, /No chat works in this folder/);
+  assert.deepEqual(t.registered, []);
+});
+
+test('a failed Open in Artifacts shows an alert in the file view (the page error line is hidden while a file shows); × dismisses it', async () => {
+  const t = setup({ ownList: [], registerFail: 'That file does not exist.' });
+  t.FU.setMode('files');
+  await flush();
+  await openHtml(t);
+  artBtn(t).click();
+  await flush();
+  await flush();
+  const alert = t.shell.body.querySelector('#fileView').querySelector('.sf-fv-alert');
+  assert.ok(alert, 'a visible notice, never silence');
+  assert.equal(alert.getAttribute('role'), 'alert');
+  assert.match(alert.textContent, /Could not open in Artifacts: That file does not exist\./);
+  alert.querySelector('.sf-fv-alert-x').click();
+  assert.equal(t.shell.body.querySelector('#fileView').querySelector('.sf-fv-alert'), null);
+});
+
+test("an error notice raised while a file tab shows is visible: files.css's file-on rule spares the page's error and notice lines", async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { cssRules, declarationsFor } = require('./css_rules.js');
+  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/files.css'), 'utf8'));
+  // Every "body.sf-file-on main > :not(#a):not(#b)…" rule that hides: the ids it spares.
+  const hiders = rules
+    .filter((r) => r.context === '' && /^body\.sf-file-on main > :not\(/.test(r.selector) && /^none/.test(r.declarations.display || ''))
+    .map((r) => [...r.selector.matchAll(/:not\(#([\w-]+)\)/g)].map((m) => m[1]));
+  assert.ok(hiders.length, 'the rule that swaps the chat for the file is there');
+  const hiddenByCss = (el, body) =>
+    body.classList.contains('sf-file-on') && el.parentNode && el.parentNode.tagName === 'MAIN' && hiders.some((ids) => !ids.includes(el.id));
+  const visible = (el, body) => !el.hidden && !hiddenByCss(el, body);
+
+  const t = setup({ openFails: true, arts: { 'claude:a1': [] } });
+  const main = t.shell.body.querySelector('main');
+  // the page's lines, as chat.html has them: direct children of <main>
+  const mk = (id) => {
+    const n = t.shell.make('div', id, main);
+    n.hidden = true;
+    return n;
+  };
+  const error = mk('error');
+  mk('updateBanner');
+  mk('studioNotice');
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'outputs').click();
+  await flush();
+  rowOf(t, 'outputs/bar-charts.html').click();
+  await flush();
+  assert.ok(t.shell.body.classList.contains('sf-file-on'), 'a file tab is showing');
+  assert.ok(hiddenByCss(t.shell.byId.messages, t.shell.body), 'the chat is hidden behind the file');
+  // the ⧉ marker in the tree: its viewer refuses, which raises the page notice (no file-view alert on this path)
+  rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art').click();
+  await flush();
+  await flush();
+  assert.match(error.textContent, /Could not open in Artifacts/);
+  assert.ok(visible(error, t.shell.body), 'the error line shows over the file view');
+  for (const id of ['updateBanner', 'studioNotice']) assert.ok(!hiddenByCss(t.shell.byId[id], t.shell.body), id + ' is spared too');
+  assert.equal(declarationsFor(rules, 'body.sf-file-on main > #fileView').order, '1', 'the file view sits under the notices');
 });
 
 // ---- write / edit rows: the open-file icon and the clickable path ----------------------------------------------------------

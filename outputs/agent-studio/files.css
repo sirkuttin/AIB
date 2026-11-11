@@ -349,8 +349,13 @@ body:not(.sf-files-mode) #filesPane {
 }
 
 /* ---- the file view: replaces the chat in the middle while a file tab is on ---- */
-body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside) {
+/* The page's error line and notices stay: an error raised while a file shows must not be silent. They sit under the tabs, above
+   the file (the file view is moved after them). */
+body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside):not(#error):not(#updateBanner):not(#studioNotice) {
   display: none !important;
+}
+body.sf-file-on main > #fileView {
+  order: 1;
 }
 .sf-fileview {
   flex: 1 1 auto;
@@ -412,6 +417,33 @@ body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside) {
   min-height: 44px;
   padding: 6px 14px 6px 16px;
   border-bottom: 1px solid var(--line);
+}
+/* A failed "Open in Artifacts", under the toolbar. */
+.sf-fv-alert {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px 6px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--error-bg);
+  color: var(--danger-text);
+  font-size: 13px;
+}
+.sf-fv-alert > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sf-fv-alert-x {
+  flex: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
 }
 .fx-seg {
   display: inline-flex;

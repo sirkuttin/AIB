@@ -27,7 +27,12 @@ export class Artifacts {
   #refreshing: Promise<void> | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(stateDir: string, readonly host: LiveBackend, tokenGetter: () => string, readonly chatStudio: () => ChatStudio) {
+  constructor(
+    stateDir: string,
+    readonly host: LiveBackend,
+    tokenGetter: () => string,
+    readonly chatStudio: (chat: string) => ChatStudio | Promise<ChatStudio>,
+  ) {
     this.store = new ArtifactStore(stateDir + sep + 'artifacts');
     this.service = new Service(this.store, tokenGetter, (ident) => this.#cwd.get(ident) ?? null, {
       emit: (chat, data) => this.emitToChat(chat, data),
@@ -135,7 +140,9 @@ export class Artifacts {
     }
     if (typeof conversationId === 'string' && conversationId && conversationId.length <= 600) {
       const chat = this.service.chat(conversationId);
-      this.#cwd.set(chat, await artifactFolder(this.chatStudio(), this.connectionOf(chat) || chat));
+      // chatStudio(chat) also knows the folder a saved chat's transcript is filed under, so a chat that is not running right now
+      // (Files view, "Open in Artifacts") still has its folder, as it does for the Changes and Files routes.
+      this.#cwd.set(chat, await artifactFolder(await this.chatStudio(chat), this.connectionOf(chat) || chat));
       if (this.#cwd.size > 200) this.#cwd.delete(this.#cwd.keys().next().value!);
     }
   }
