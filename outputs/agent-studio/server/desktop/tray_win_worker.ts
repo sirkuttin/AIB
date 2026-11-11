@@ -22,6 +22,7 @@ import {
   TRAY_SHOW,
   TRAY_WINDOW_CLASS,
   trayEvent,
+  trayMessageText,
   type TrayWorkerMessage,
   type TrayWorkerStart,
 } from './tray_win.ts';
@@ -111,10 +112,19 @@ function run(start: TrayWorkerStart): void {
     if (id && !start.items[command - 1]?.disabled) post({ type: 'menu', id });
   };
 
+  const WM_APP = 0x8000, WM_MOUSEMOVE = 0x0200;
+  let lastWasMove = false;
   const wndProc = new Deno.UnsafeCallback(
     { parameters: ['pointer', 'u32', 'usize', 'isize'], result: 'isize' } as const,
     (hwnd, msg, wParam, lParam) => {
       try {
+        // Every message of ours (and Explorer's TaskbarCreated) goes to studio.log; the mouse moving over the icon only once per run
+        // of moves, so hovering can't flood the log.
+        if (msg >= WM_APP || (taskbarCreated && msg === taskbarCreated)) {
+          const move = msg === TRAY_CALLBACK && trayEvent(lParam) === null && (Number(BigInt.asUintN(64, BigInt(lParam)) & 0xffffn) === WM_MOUSEMOVE);
+          if (!move || !lastWasMove) post({ type: 'log', message: trayMessageText(msg, wParam, lParam) });
+          lastWasMove = move;
+        }
         if (msg === TRAY_CALLBACK) {
           const what = trayEvent(lParam);
           if (what === 'click') post({ type: 'click' });
