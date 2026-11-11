@@ -11,6 +11,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
   const routes = await py.call('shims', 'studio_routes') as [string, string, string][];
   // The one documented exception: routes the Python server does not have (routes.ts DENO_ONLY). Kept to exactly this list.
   assertEquals(DENO_ONLY.map(([m, p]) => `${m} ${p}`), [
+    'POST /api/live/worktree/merge-request',
     'POST /api/live/agents/install/uninstall',
     'GET /api/live/terminal',
     'GET /api/live/terminal/list',

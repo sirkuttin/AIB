@@ -23,8 +23,10 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/files/search               the Files view: file names matching a filter
  *   GET  /api/live/files/read                 the Files view: one file, read only
  *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
+ *   POST /api/live/worktree/merge-request     the Changes tab's Merge button: a one-shot merge permission, then the chat is asked to merge
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
+  ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
   ['GET', '/api/live/terminal', 'write', 'get'],
   ['GET', '/api/live/terminal/list', 'read', 'get'],
