@@ -1,0 +1,16 @@
+{
+  "name": "aib-drawing-build",
+  "private": true,
+  "description": "Build-time only: bundles Excalidraw + the AIB drawing binding into outputs/agent-studio/vendor/excalidraw/. node_modules stays here, gitignored.",
+  "type": "module",
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "3.6.0",
+    "esbuild": "0.28.2",
+    "linkedom": "^0.18.15",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  }
+}

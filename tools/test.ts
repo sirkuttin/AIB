@@ -37,6 +37,7 @@ export const SLOW: Record<string, number> = {
   'artifact_mcp_test.ts': 17,
   'monitor_golden_test.ts': 16,
   'host_proxy_test.ts': 16,
+  'drawing_page_test.ts': 15, // a headless Chrome or Edge on the drawing page
 };
 /** Rough serial seconds of the slower fast-tier files, so they start first too. Unlisted files count as 3 s. */
 const HINT: Record<string, number> = {

@@ -59,8 +59,12 @@ Deno.test("the doc tools are always offered, and a call goes to Studio's doc rou
       'doc_restore',
     ];
     assertEquals([...DOC_TOOL_NAMES], docTools);
-    assertEquals(names(await list(false)), ['publish', 'update', 'list', ...docTools]);
-    assertEquals(names(await list(true)), ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...docTools]);
+    const drawingTools = ['drawing_create', 'drawing_read', 'drawing_edit', 'drawing_from_mermaid'];
+    assertEquals(names(await list(false)), ['publish', 'update', 'list', ...docTools, ...drawingTools]);
+    assertEquals(
+      names(await list(true)),
+      ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...docTools, ...drawingTools],
+    );
     const call = async (name: string, args: Json) => {
       const r = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }, ctxFor(url));
       const result = r!.result as { content: { text: string }[]; isError?: boolean };

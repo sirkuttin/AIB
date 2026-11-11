@@ -46,11 +46,24 @@ const MAX_BODY = 1_000_000;
 
 /** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
 const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
+/** The drawing page's Excalidraw bundle (tools/drawing/build.mjs): its code-split chunks, its CSS and its fonts. The server-only
+ * Mermaid converter is not served. */
+const EXCALIDRAW_ASSET = /^\/vendor\/excalidraw\/((?:chunks\/|assets\/|fonts\/[A-Za-z]+\/)?[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:js|css|woff2))$/;
 
 /** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
 export function studioAsset(path: string): string | null {
   if (path === '/' || path === '/chat.html') return 'chat.html';
   if (path === '/doc.html') return 'doc.html'; // the local docs' editor page (a test page until the UI lands)
+  const excalidraw = path.match(EXCALIDRAW_ASSET);
+  if (excalidraw && !excalidraw[1].includes('..') && excalidraw[1] !== 'mermaid_headless.js') {
+    try {
+      return Deno.statSync(`${APP_ROOT}${sep}vendor${sep}excalidraw${sep}${excalidraw[1].replace(/\//g, sep)}`).isFile
+        ? `vendor/excalidraw/${excalidraw[1]}`
+        : null;
+    } catch {
+      return null;
+    }
+  }
   const vendored = path.match(VENDOR_ASSET);
   if (vendored) {
     try {
@@ -107,6 +120,7 @@ function projectsView(c: WebContext): Record<string, unknown> {
 }
 
 function contentType(name: string): string {
+  if (name.endsWith('.woff2')) return 'font/woff2';
   return (name.endsWith('.html') ? 'text/html' : name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8';
 }
 

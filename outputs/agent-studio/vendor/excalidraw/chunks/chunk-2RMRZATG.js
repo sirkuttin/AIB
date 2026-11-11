@@ -1,0 +1,1 @@
+import{b as u}from"./chunk-AJA5RW2O.js";var n=/[\t ]*accDescr(?:[\t ]*:(?:[^\n\r]*?(?=%%)|[^\n\r]*)|\s*({))/y;function f(){let e=!1;return(r,c)=>{n.lastIndex=c;let t=n.exec(r);if(t===null)return-1;let a=n.lastIndex;if(t[1]===void 0)return a;if(e)return-1;let i=r.indexOf("}",a);return e=i===-1,i+1||-1}}function s(e="ACC_DESCR"){return{...u,name:e,scanner:f}}export{s as a};

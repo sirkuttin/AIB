@@ -14,6 +14,7 @@ import { ARTIFACT_PROMPT, Connection } from '../../outputs/agent-studio/server/a
 import { selectMcpServers, validateMcpServers } from '../../outputs/agent-studio/server/acp/breadth.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
 import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
+import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
 import { pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
 
 const WIN = Deno.build.os === 'windows';
@@ -25,8 +26,9 @@ Deno.env.set('AGENT_STUDIO_TEST', '1');
 
 type Json = Record<string, unknown>;
 
-/** The doc tools (doc_*) are Deno only: the Python reference has none. */
-const DOCS = [...DOC_TOOL_NAMES];
+/** The doc tools (doc_*) and drawing tools (drawing_*) are Deno only: the Python reference has none. */
+const DOCS = [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES];
+const DENO_ONLY_TOOLS = new Set(DOCS);
 
 /**
  * A Deno reply line with the Deno-only tools taken out of a tools/list result, re-dumped the way the server dumps it, so it can be
@@ -41,7 +43,7 @@ function maskDenoOnly(line: string): string {
   }
   const tools = (reply?.result as Json | undefined)?.tools;
   if (!Array.isArray(tools)) return line;
-  (reply.result as Json).tools = tools.filter((t) => !DOC_TOOL_NAMES.has((t as Json).name as string));
+  (reply.result as Json).tools = tools.filter((t) => !DENO_ONLY_TOOLS.has((t as Json).name as string));
   return pyJsonDumps(reply, false);
 }
 
