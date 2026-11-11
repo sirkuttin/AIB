@@ -188,19 +188,94 @@ test('agentRow is exported for a later start page', () => {
 
 const lines = (row) => row.querySelectorAll('.st-note').map((n) => n.textContent);
 
-test('Node missing or too old: one grey line and Check again before any click, no Install or Retry', async () => {
+// Node.js missing or too old (an intended change from "no Install"): the card says what it needs, like a Beta card.
+const NODE = (state, version = '') => ({
+  id: 'node',
+  name: 'Node.js',
+  need: 'Node.js 22 or newer',
+  state,
+  version,
+  min: '22',
+  command: 'winget install -e --id OpenJS.NodeJS.LTS',
+  installLabel: 'Install Node.js 26 (LTS)',
+  page: 'https://nodejs.org/en/download',
+  source: '',
+});
+const nodeSetup = (state, version) => ({
+  kind: 'npm',
+  command: '',
+  source: '',
+  uninstallDocs: '',
+  prereqs: [NODE(state, version)],
+  blockedBy: state === 'found' ? '' : 'Install Node.js first',
+});
+
+test('Node missing or too old: Install shows but is off, "Install Node.js first" under the header, Needs first with its installer', async () => {
   const block = 'Node.js 22 or newer is needed to install this agent.';
-  const { UI, calls, replies } = setup([agent({ installBlock: block })]);
-  const row = UI.agentRow(agent({ installBlock: block }));
-  assert.deepEqual(buttons(row), ['Check again']);
-  assert.deepEqual(lines(row), [block + ' Check again']);
-  assert.equal(row.querySelector('.st-note').className, 'st-note dim');
+  const missing = agent({ installBlock: block, setup: nodeSetup('missing') });
+  const { UI, calls, replies } = setup([missing]);
+  const row = UI.agentRow(missing);
+  assert.deepEqual(buttons(row), ['Install', 'Install Node.js 26 (LTS)', 'Check again']);
+  const install = row.querySelector('.st-agent-head').querySelector('.st-primary');
+  assert.equal([install.textContent, install.disabled].join(), 'Install,true');
+  assert.equal(row.querySelector('.st-beta-blocked').textContent, 'Install Node.js first');
+  assert.equal(row.querySelector('.st-beta-need-text').textContent, 'Node.js 22 or newer: missing');
+  assert.equal(
+    row.querySelector('.st-beta-need').querySelector('code').textContent,
+    'winget install -e --id OpenJS.NodeJS.LTS',
+  );
+  assert.ok(!row.textContent.includes(block), 'the old grey line is replaced by Needs first');
+  const old = UI.agentRow(agent({ installBlock: block, setup: nodeSetup('old', '20.11.1') }));
+  assert.equal(old.querySelector('.st-beta-need-text').textContent, 'Node.js 22 or newer: too old (20.11.1)');
   assert.equal(calls.length, 0, 'nothing was posted');
-  replies.settings = () => ({ revision: 'r', settings: { defaults: {} }, agents: [agent()] });
-  row.querySelector('button').click();
+  replies.settings = () => ({
+    revision: 'r',
+    settings: { defaults: {} },
+    agents: [agent({ setup: nodeSetup('found', '26.13.1') })],
+  });
+  row
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Check again')
+    .click();
   await flush();
   assert.deepEqual(calls.at(-1), ['get', '/api/live/settings', { recheck: '1' }]);
-  assert.deepEqual(buttons(UI.agentRow(UI._state.data.agents[0])), ['Install']);
+  const ready = UI.agentRow(UI._state.data.agents[0]);
+  assert.deepEqual(buttons(ready), ['Install']);
+  assert.equal(ready.querySelector('.st-primary').disabled, false);
+  assert.equal(ready.querySelector('.st-beta-needs'), null, 'Node.js found: no list on a built-in card');
+});
+
+test("Install Node.js on a built-in card runs in the card's terminal (prereq:node); after exit 0 the check runs again", async () => {
+  const missing = agent({ installBlock: 'x', setup: nodeSetup('missing') });
+  const { UI, ctx, calls, replies } = setup([missing]);
+  UI._state.data = { agents: [missing] };
+  const runs = [];
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push([id, step, h]), { close() {} }) };
+  UI.agentRow(missing)
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Install Node.js 26 (LTS)')
+    .click();
+  assert.deepEqual(
+    runs.map((r) => [r[0], r[1]]),
+    [['codex', 'prereq:node']],
+  );
+  replies.settings = () => ({
+    revision: 'r',
+    settings: { defaults: {} },
+    agents: [agent({ setup: nodeSetup('found', '26.13.1') })],
+  });
+  runs[0][2].onExit(0);
+  await flush();
+  await flush();
+  const after = calls.slice(-2);
+  assert.deepEqual(
+    after,
+    [
+      ['get', '/api/live/settings', { recheck: '1' }],
+      ['post', 'terminal/end', { key: 'setup:codex' }],
+    ],
+    'checked again (PATH re-read), then Node.js found: the panel closes',
+  );
 });
 
 test('a failure line wins over the block and the adapter text; only one line shows', () => {
@@ -235,10 +310,7 @@ test('progress copy: an estimate from packageBytes, none when the size is unknow
 });
 
 test('settings.css: the installer rules use theme tokens, no raw hex', () => {
-  const css = require('node:fs').readFileSync(
-    require('node:path').join(APP_DIR, 'settings.css'),
-    'utf8',
-  );
+  const css = require('node:fs').readFileSync(require('node:path').join(APP_DIR, 'settings.css'), 'utf8');
   const start = css.indexOf('.st-agent-head button {');
   assert.ok(start > 0);
   assert.doesNotMatch(css.slice(start), /#[0-9a-fA-F]{3,8}/);
@@ -246,19 +318,31 @@ test('settings.css: the installer rules use theme tokens, no raw hex', () => {
 
 // ---- Uninstall: only AIB's own install, only in Settings, confirmed first ----
 
-const studioRow = (extra = {}) => agent({ found: true, problem: '', launcherSource: 'studio', launcher: "AIB's own install 2.6.0", ...extra });
+const studioRow = (extra = {}) =>
+  agent({ found: true, problem: '', launcherSource: 'studio', launcher: "AIB's own install 2.6.0", ...extra });
 
 test('Uninstall is offered in Settings only for the copy AIB installed itself', () => {
   const { UI } = setup([]);
   const settings = { sharedBlock: true, uninstall: true };
   assert.ok(buttons(UI.agentRow(studioRow(), settings)).includes('Uninstall'));
-  assert.equal(UI.agentRow(studioRow(), settings).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').className, 'st-danger');
+  assert.equal(
+    UI.agentRow(studioRow(), settings)
+      .querySelectorAll('button')
+      .find((b) => b.textContent === 'Uninstall').className,
+    'st-danger',
+  );
   for (const source of ['installed', 'path', 'settings', 'flag', 'missing']) {
     assert.ok(!buttons(UI.agentRow(studioRow({ launcherSource: source }), settings)).includes('Uninstall'), source);
   }
-  assert.ok(!buttons(UI.agentRow(studioRow({ installable: false }), settings)).includes('Uninstall'), 'OMP is never installed by AIB');
+  assert.ok(
+    !buttons(UI.agentRow(studioRow({ installable: false }), settings)).includes('Uninstall'),
+    'OMP is never installed by AIB',
+  );
   assert.ok(!buttons(UI.agentRow(studioRow({ builtin: false }), settings)).includes('Uninstall'));
-  assert.ok(!buttons(UI.agentRow(studioRow(), { sharedBlock: true })).includes('Uninstall'), 'the start page draws no Uninstall');
+  assert.ok(
+    !buttons(UI.agentRow(studioRow(), { sharedBlock: true })).includes('Uninstall'),
+    'the start page draws no Uninstall',
+  );
   const running = studioRow({ install: { state: 'running', stage: 'downloading', percent: 40 } });
   assert.deepEqual(buttons(UI.agentRow(running, settings)), ['Cancel'], 'not while an install runs');
 });
@@ -267,7 +351,10 @@ test('Uninstall asks first; Cancel in the question sends nothing', async () => {
   const { UI, ctx, calls } = setup([studioRow()]);
   const asked = [];
   ctx.confirm = (text) => (asked.push(text), false);
-  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  UI.agentRow(studioRow(), { uninstall: true })
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Uninstall')
+    .click();
   await flush();
   assert.equal(asked.length, 1);
   assert.match(asked[0], /^Uninstall Codex\?/);
@@ -284,7 +371,10 @@ test('Uninstall confirmed: posts the agent, then reads the list again', async ()
   ctx.confirm = () => true;
   replies['agents/install/uninstall'] = () => ({ state: 'idle', removed: ['2.6.0'] });
   replies.settings = () => ({ revision: 'r2', settings: { defaults: {} }, agents: [agent()] });
-  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  UI.agentRow(studioRow(), { uninstall: true })
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Uninstall')
+    .click();
   await flush();
   await flush();
   const posts = calls.filter((c) => c[1] === 'agents/install/uninstall');
@@ -293,17 +383,23 @@ test('Uninstall confirmed: posts the agent, then reads the list again', async ()
     ['post', 'agents/install/uninstall', { agent: 'codex' }],
   ]);
   const after = calls.findIndex((c) => c[1] === 'agents/install/uninstall' && !c[2].check);
-  assert.ok(calls.slice(after).some((c) => c[1] === '/api/live/settings'), 'the list is read again');
+  assert.ok(
+    calls.slice(after).some((c) => c[1] === '/api/live/settings'),
+    'the list is read again',
+  );
   assert.deepEqual(buttons(UI.agentRow(UI._state.data.agents[0], { uninstall: true })), ['Install'], 'back to Install');
 });
 
-test('a refused Uninstall (a chat is open) shows the server\'s line on the row', async () => {
+test("a refused Uninstall (a chat is open) shows the server's line on the row", async () => {
   const { UI, ctx, replies } = setup([studioRow()]);
   ctx.confirm = () => true;
   replies['agents/install/uninstall'] = () => {
     throw new Error('Codex has a chat open in AIB. Close it first (wait for any work to finish), then uninstall.');
   };
-  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  UI.agentRow(studioRow(), { uninstall: true })
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Uninstall')
+    .click();
   await flush();
   const row = UI.agentRow(studioRow(), { uninstall: true });
   assert.match(row.textContent, /Codex has a chat open in AIB\. Close it first/);
@@ -318,7 +414,10 @@ test('a refusal the server can know comes before the question, which is then nev
     if (body.check) throw new Error("Codex has a chat open in AIB. End that chat's session first, then uninstall.");
     throw new Error('never sent');
   };
-  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  UI.agentRow(studioRow(), { uninstall: true })
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Uninstall')
+    .click();
   await flush();
   assert.deepEqual(asked, [], 'no confirm question for something that cannot happen');
   assert.ok(!calls.some((c) => c[1] === 'agents/install/uninstall' && !c[2].check));
@@ -332,7 +431,10 @@ test('a host that does not know the check (404) still asks and uninstalls', asyn
     if (body.check) throw Object.assign(new Error('Not found'), { status: 404 });
     return { state: 'idle', removed: ['2.6.0'] };
   };
-  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  UI.agentRow(studioRow(), { uninstall: true })
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Uninstall')
+    .click();
   await flush();
   await flush();
   assert.ok(calls.some((c) => c[1] === 'agents/install/uninstall' && !c[2].check));
@@ -346,25 +448,40 @@ test('an uninstall refusal goes away once its cause is gone: the list reload ask
     if (open) throw new Error('Codex has a chat open in AIB.');
     return body.check ? { state: 'idle', removed: [] } : { state: 'idle', removed: ['2.6.0'] };
   };
-  UI.agentRow(studioRow(), { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+  UI.agentRow(studioRow(), { uninstall: true })
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Uninstall')
+    .click();
   await flush();
   assert.match(UI.agentRow(studioRow(), { uninstall: true }).textContent, /has a chat open/);
   open = false; // the chat was ended
   await UI.load(true);
   await flush();
-  assert.doesNotMatch(UI.agentRow(studioRow(), { uninstall: true }).textContent, /has a chat open/, 'stale refusal cleared');
+  assert.doesNotMatch(
+    UI.agentRow(studioRow(), { uninstall: true }).textContent,
+    /has a chat open/,
+    'stale refusal cleared',
+  );
 });
 
 test("the question's promise about saved chats matches the agent: Claude Code keeps them in the list, Codex does not (QA 4 #4)", async () => {
   for (const [id, name, want, not] of [
     ['claude', 'Claude Code', /Saved chats stay in the list\./, /shows them only/],
-    ['codex', 'Codex', /Codex keeps its own saved chats, but AIB shows them only while they are open here\./, /stay in the list/],
+    [
+      'codex',
+      'Codex',
+      /Codex keeps its own saved chats, but AIB shows them only while they are open here\./,
+      /stay in the list/,
+    ],
   ]) {
     const a = studioRow({ id, name });
     const { UI, ctx } = setup([a]);
     const asked = [];
     ctx.confirm = (text) => (asked.push(text), false);
-    UI.agentRow(a, { uninstall: true }).querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
+    UI.agentRow(a, { uninstall: true })
+      .querySelectorAll('button')
+      .find((b) => b.textContent === 'Uninstall')
+      .click();
     await flush();
     assert.match(asked[0], want, name);
     assert.doesNotMatch(asked[0], not, name);
@@ -377,17 +494,25 @@ test('Settings page: one name for the agents page, the full version, an Updates 
   const UI = ctx.AgentSettingsUI;
   const get = async (p) => {
     if (p === '/api/live/settings') return { revision: 'r', settings: { defaults: {}, server: {} }, agents: [] };
-    if (p === '/api/live/bootstrap') return { server: { version: '0.1.0-beta.2', versionLabel: 'AIB 0.1.0 beta' }, stateDir: 'C:/x' };
+    if (p === '/api/live/bootstrap')
+      return { server: { version: '0.1.0-beta.2', versionLabel: 'AIB 0.1.0 beta' }, stateDir: 'C:/x' };
     if (p === '/api/live/update') return { state: 'none', current: '0.1.0-beta.2', desktop: true, configured: true };
     return {};
   };
   UI.init({ get, post: async () => ({}), registryChanged() {} });
   ctx.AibUpdates.init({ get, post: async () => ({}) }, null);
   const pageNode = shell.body.querySelector('.st-page');
-  assert.ok(pageNode.querySelector('.st-frame').querySelector('.st-nav'), 'nav and settings sit in the frame the size container query lays out');
+  assert.ok(
+    pageNode.querySelector('.st-frame').querySelector('.st-nav'),
+    'nav and settings sit in the frame the size container query lays out',
+  );
   UI.open('agents');
   await flush();
-  assert.equal(pageNode.querySelector('.st-head').querySelector('h2').textContent, 'AIB Linking', 'the heading is the nav name (owner: AIB Linking)');
+  assert.equal(
+    pageNode.querySelector('.st-head').querySelector('h2').textContent,
+    'AIB Linking',
+    'the heading is the nav name (owner: AIB Linking)',
+  );
   UI.open('server');
   await flush();
   await flush();

@@ -8,6 +8,7 @@ import { join, tempDir, touch } from './_agents.ts';
 import { betaAgent, type OsName } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
 import { nativeProgram, resolveBeta } from '../../outputs/agent-studio/server/agents/beta_agents.ts';
 import {
+  builtinSetup,
   checkPrereq,
   expandWindowsVars,
   hasWinget,
@@ -455,4 +456,23 @@ Deno.test("OpenCode installs with npm into AIB's folder and runs its platform bi
   if (Deno.build.os === 'windows' && Deno.build.arch === 'x86_64') {
     assertEquals(Installer.verify(version, '@opencode/cli', '2.2.7'), '');
   }
+});
+
+Deno.test('built-in npm agents (Claude Code, Codex) need Node.js too: the same Needs first, and the card terminal installs it', async () => {
+  using dir = tempDir();
+  const win = probe('windows', { PATH: wingetDir(dir.root), LOCALAPPDATA: join(dir.root, 'none') });
+  const view = await builtinSetup(win);
+  assertEquals([view.kind, view.blockedBy, view.prereqs.map((p) => [p.need, p.state, p.installLabel])], [
+    'npm',
+    'Install Node.js first',
+    [['Node.js 22 or newer', 'missing', `Install Node.js ${NODE_LTS_MAJOR} (LTS)`]],
+  ]);
+  const node = 'C:/node/node.exe';
+  assertEquals((await builtinSetup(probe('windows', { PATH: '' }, node, { [node]: 'v26.13.1' }))).blockedBy, '');
+  assertEquals((await builtinSetup(probe('windows', { PATH: '' }, node, { [node]: 'v20.1.0' }))).prereqs[0].state, 'old');
+  for (const id of ['claude', 'codex']) {
+    assertEquals((await setupCommand(id, 'prereq:node', win) as ShellSpec).args.at(-1), 'winget install -e --id OpenJS.NodeJS.LTS');
+    assertEquals(await setupCommand(id, 'install', win), 'AIB installs that agent itself: choose Install.');
+  }
+  assertEquals(await setupCommand('omp', 'prereq:node', win), 'AIB does not know that agent.');
 });

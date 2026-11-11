@@ -778,15 +778,17 @@
       if (canSignIn(a)) head.append(button('Sign in', () => startSignin(a), 'st-primary'));
       if (a.found && a.signin)
         head.append(button('Check again', () => (a.beta ? checkOne(a) : checkSignins(true)), 'st-link'));
-      if (a.beta && !a.found && betaInfo(a).setup) betaInstallButton(a, head, job, refused);
+      if (!a.found && setupOf(a)) betaInstallButton(a, head, job, refused);
       else if (canInstall(a))
         head.append(
           button(job && (job.state === 'failed' || refused) ? 'Retry' : 'Install', () => startInstall(a), 'st-primary'),
         );
     }
     row.append(head);
-    const blockedBy = a.beta && !a.found && !running && (betaInfo(a).setup || {}).blockedBy;
+    const blockedBy = !a.found && !running && (setupOf(a) || {}).blockedBy;
     if (blockedBy) row.append(note(blockedBy, 'dim st-beta-blocked'));
+    // A built-in AIB installs (Claude Code, Codex) that cannot install yet: the same "Needs first:" as a Beta card, on the card.
+    if (blockedBy && !a.beta) row.append(needsFirst(a, setupOf(a), true));
     if (running) {
       row.append(progressBar(a, job), note(progressText(a, job)));
     } else if (waiting) {
@@ -823,7 +825,10 @@
       const block = installBlock(a);
       if (job && job.state === 'failed') row.append(note(job.message || 'The install failed.', 'bad'));
       else if (refused) row.append(note(job.message, 'bad'));
-      else if (block && shared) {
+      else if (block && setupOf(a)) {
+        // "Needs first:" above says it; only the do-it-yourself npm line stays
+        if (a.installHint) row.append(note(a.installHint, 'dim'));
+      } else if (block && shared) {
         /* drawn once by the page */
       } else if (block) {
         const line = note(block + (a.installHint ? ' ' + a.installHint : ''), 'dim');
@@ -841,6 +846,7 @@
         row.append(note(a.problem, canInstall(a) || (a.installable && a.launcherSource === 'missing') ? 'dim' : 'bad'));
     }
     if (a.beta) betaLines(a, row);
+    else if (betaTerms[a.id]) row.append(betaTerms[a.id].node); // a built-in's Node.js install runs in the card's terminal
     if (!a.builtin && !a.beta) {
       const bits = [];
       if (a.args && a.args.length) bits.push(a.args.length + (a.args.length === 1 ? ' argument' : ' arguments'));
@@ -1058,7 +1064,7 @@
     const list = agents();
     if (!list.length)
       box.append(note(S.loadError ? 'The agent list could not be read from the server: ' + S.loadError : 'Loading…'));
-    const blocked = list.find((a) => !a.beta && installBlock(a));
+    const blocked = list.find((a) => !a.beta && installBlock(a) && !setupOf(a)); // a card with setup says it itself
     if (blocked) {
       const line = note(blocked.installBlock + (blocked.installHint ? ' ' + blocked.installHint : ''), 'dim');
       line.append(
@@ -1082,6 +1088,8 @@
   // (an AIB terminal panel for terminal-type sign-ins, ACP authenticate for agent-type ones) and an API key box where the agent takes one.
   const BETA_NOTE = "These connect the same way but haven't been tested by us yet. Tell us what breaks.";
   const betaInfo = (a) => (a && a.betaInfo) || {};
+  // What a card needs before it can install (server/agents/beta_setup.ts): a Beta agent's betaInfo.setup, or a built-in's setup.
+  const setupOf = (a) => (a ? (a.beta ? betaInfo(a).setup : a.setup) : null) || null;
   const betaAgents = () => agents().filter((a) => a.beta);
   function renderAgentsBeta(box) {
     box.append(note(BETA_NOTE, 'st-beta-lead'));
@@ -1169,7 +1177,7 @@
         ? 'too old' + (p.version ? ' (' + p.version + ')' : '')
         : 'missing');
   // "Needs first:" each prerequisite with its state; a missing or too-old one shows its installer command and an Install button.
-  function needsFirst(a, setup) {
+  function needsFirst(a, setup, withCheck) {
     const box = el('div', null, 'st-beta-needs');
     box.append(el('span', 'Needs first:', 'st-hint'));
     const list = el('ul', null, 'st-beta-needs-list');
@@ -1189,12 +1197,13 @@
       list.append(item);
     }
     box.append(list);
+    if (withCheck) box.append(button('Check again', () => load(true), 'st-link'));
     return box;
   }
   // The head's Install for a Beta card that is not installed: AIB's own npm install, or the vendor's installer in the card's terminal.
   // Off while a prerequisite is missing, with the reason next to it.
   function betaInstallButton(a, head, job, refused) {
-    const setup = betaInfo(a).setup;
+    const setup = setupOf(a);
     if (!setup || setup.kind === 'none' || (setup.kind === 'npm' && !a.installable)) return;
     const retry = !!job && (job.state === 'failed' || refused);
     const go = button(
@@ -1243,7 +1252,7 @@
         status.textContent = 'Installed. Checking…';
         return load(true).then(() => {
           const now = fresh();
-          const need = prereq && ((betaInfo(now).setup || {}).prereqs || []).find((p) => p.id === prereq.id);
+          const need = prereq && ((setupOf(now) || {}).prereqs || []).find((p) => p.id === prereq.id);
           const seen = prereq ? !need || need.state === 'found' : now.found;
           if (seen) {
             if (betaTerms[a.id] === entry) closeTerminal(a.id);

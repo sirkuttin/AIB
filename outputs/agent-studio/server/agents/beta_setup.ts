@@ -315,6 +315,22 @@ export async function setupView(
   };
 }
 
+/** The built-in agents AIB installs with npm (Claude Code, Codex): they need Node.js, like the Beta npm agents. OMP has no npm install. */
+export const BUILTIN_NPM: readonly string[] = ['claude', 'codex'];
+
+/** A built-in npm agent's card setup when it is not installed: Node.js (MIN_NODE_MAJOR) is its one prerequisite. */
+export async function builtinSetup(probe: SetupProbe): Promise<SetupView> {
+  const node = await checkPrereq('node', String(MIN_NODE_MAJOR), probe);
+  return {
+    kind: 'npm',
+    command: '',
+    source: '',
+    uninstallDocs: '',
+    prereqs: [node],
+    blockedBy: node.state === 'found' ? '' : `Install ${node.name} first`,
+  };
+}
+
 /** How a step runs in a terminal: Windows PowerShell -Command, or bash / sh -c. */
 export function stepShell(
   step: BetaSetupStep,
@@ -350,6 +366,12 @@ export async function setupCommand(
   what: string,
   probe: SetupProbe,
 ): Promise<ShellSpec | string> {
+  if (BUILTIN_NPM.includes(agentId)) {
+    if (what !== 'prereq:node') return 'AIB installs that agent itself: choose Install.';
+    const step = PREREQS.node.install(probe.os, hasWinget(probe.env, probe.os)).step;
+    if (!step) return `AIB has no installer it can run for Node.js here. Get it from ${PREREQS.node.page}`;
+    return stepShell(step, probe.os, probe.env);
+  }
   const agent = betaAgent(agentId);
   if (!agent) return 'AIB does not know that agent.';
   const plan = installPlan(agent, probe.os);
