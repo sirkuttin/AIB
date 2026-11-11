@@ -20,6 +20,7 @@ import {
   currentValue,
   type McpServer,
   newState,
+  optionValues,
   publicState,
   selectMcpServers,
   sessionCapabilities,
@@ -39,6 +40,7 @@ import {
   validateImageAttachments,
 } from './attachments.ts';
 import { WriteTracker } from '../artifacts/artifacts.ts';
+import { findOption as findPickOption } from '../state/agent_options.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
@@ -565,6 +567,15 @@ export class Connection {
     embeddedContext: false,
   };
   settings: Json = {};
+  /**
+   * The model / mode / effort the person picked on the New chat page: {model?, mode?, effort?} (values, not config ids). Applied by
+   * setup() right after session/new and before the connection is ready, so the first prompt already runs with them.
+   */
+  startPicks: Partial<Record<'model' | 'mode' | 'effort', string>> | null = null;
+  /** What happened to each start pick: {kind, value, ok, message?}. Sent to the page in public(). */
+  pickResults: Json[] = [];
+  /** The session/new reply's settings before any pick was applied (the agent's defaults); null for a reopened chat. */
+  startSettings: Json | null = null;
   /** Setting key -> change queued during a turn; the host owns it (survives web-server restarts). */
   pendingChanges = new Map<string, PendingChange>();
   /** The last few queued changes the agent refused: {seq, key, ..., message, time}. */
@@ -1256,11 +1267,72 @@ export class Connection {
     }
     Object.assign(this.settings, result);
     this.knownSessions.add(this.sessionId);
+    if (!resume) {
+      this.startSettings = structuredClone(result) as Json;
+      await this.applyStartPicks();
+      this.#checkSetupAbort();
+    }
     this.ready = true;
     this.event('connected', {
       sessionId: this.sessionId,
       provider: this.provider,
     });
+  }
+
+  /**
+   * Apply the New chat page's picks to the session that was just made, each validated against what the agent reports NOW (a remembered
+   * model may be gone). A pick equal to the current value is skipped. A refusal is recorded, never thrown: the chat still opens, with
+   * the agent's own setting, and the page says which pick did not apply.
+   */
+  async applyStartPicks(): Promise<Json[]> {
+    const picks = this.startPicks;
+    this.pickResults = [];
+    if (!picks) return this.pickResults;
+    for (const kind of ['model', 'mode', 'effort'] as const) {
+      const value = picks[kind];
+      if (!isStr(value) || !value) continue;
+      const entry: Json = { kind, value, ok: false };
+      try {
+        const modes = isDict(this.settings.modes) ? this.settings.modes : null;
+        if (kind === 'mode' && modes && Array.isArray(modes.availableModes) && modes.availableModes.length) {
+          checkMode(this.settings, value);
+          if (modes.currentModeId !== value) await this.setMode(value);
+        } else {
+          const option = findPickOption(this.settings, kind);
+          if (!option) throw new ValueError(`This agent does not offer a ${kind} setting in this chat`);
+          entry.configId = option.id;
+          if (!optionValues(option).includes(value)) throw new ValueError('No longer offered by the agent');
+          if (option.currentValue !== value) await this.setConfig(option.id, value);
+        }
+        entry.ok = true;
+      } catch (error) {
+        entry.message = error instanceof Error ? error.message : String(error);
+        if (!(error instanceof RpcError) && !(error instanceof ValueError) && !(error instanceof TypeError)) {
+          log.exception(error, 'Applying a start pick failed');
+        }
+      }
+      this.pickResults.push(entry);
+    }
+    return this.pickResults;
+  }
+
+  /**
+   * A quiet look at what a new session of this agent offers: initialize, session/new in this folder with no MCP servers, read the
+   * reply, close the session when the agent can. Never signs in: an agent that needs sign-in simply has no list. The caller closes
+   * the process. Returns the session/new reply (sessionId, modes, configOptions, ...).
+   */
+  async probeSettings(timeoutSeconds = 30): Promise<Json> {
+    await this.initializeForDiscovery();
+    const result = await this.request('session/new', { cwd: this.cwd, mcpServers: [] }, timeoutSeconds);
+    if (!isDict(result)) throw new ValueError('The agent returned an invalid session response');
+    const sid = get(result, 'sessionId');
+    const caps = sessionCapabilities(this.initial);
+    if (isStr(sid) && sid && caps.ops.includes('close')) {
+      try {
+        await this.request('session/close', { sessionId: sid }, 5);
+      } catch { /* the process is ended next anyway */ }
+    }
+    return result;
   }
 
   /** Initialize only (no session) so session/list can run in a short-lived process. */
@@ -2458,6 +2530,7 @@ export class Connection {
       clientCaps: this.caps.public(),
       unknownReceipts: this.unknownReceipts(),
     };
+    if (this.pickResults.length) data.pickResults = this.pickResults.map((v) => ({ ...v })); // a new chat's start picks (Deno only)
     if (this.worktree) data.worktree = { ...this.worktree }; // only a worktree chat has this key; the page does not show it yet
     return data;
   }

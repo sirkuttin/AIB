@@ -1,9 +1,11 @@
 (function (root) {
   'use strict';
-  // Compact setting chips under the message box: agent (read-only), model, mode, effort, branch, context % (with the
-  // session-details tooltip: context, cost, session id, notices). No Project chip, no agent switcher: a chat keeps its agent.
-  // Choices come from the same advertised settings as the settings panel and are rendered by config-ui.js
-  // (AgentConfigUI.render), so validation is shared. While a turn runs a pick is queued by the agent host ("pending
+  // Compact setting chips under the message box: agent (read-only in a chat), model, mode, effort, branch, context % (with
+  // the session-details tooltip: context, cost, session id, notices). No Project chip: a chat keeps its agent; only the New
+  // chat page (opts.onAgent) lets the Agent chip pick one.
+  // A chip with choices opens a menu that lists them directly (one row each, the current one checked, one click picks and
+  // closes; arrow keys, Enter, Escape and type-ahead). Choices come from the same advertised settings as the settings panel
+  // (config-ui.js flatChoices), and the host validates them. While a turn runs a pick is queued by the agent host ("pending
   // change") and applied when the turn ends; the chip shows it with a cancel. The Model chip shows the model the
   // replies really come from (read from the agent's transcript by the server) when that is known, with a warning when
   // the agent advertises a different one. Agent text uses textContent only.
@@ -213,6 +215,15 @@
           (v) => choiceName(effortOption, v),
         );
     for (const c of [modelChip, modeChip, effortChip]) if (c) chips.push(c);
+    // Read-only stand-ins the caller adds (the New chat page while it asks the agent for its lists): {id, label, value, title}.
+    for (const x of Array.isArray(model.extraChips) ? model.extraChips : [])
+      if (x && typeof x.id === 'string' && !chips.some((c) => c.id === x.id))
+        chips.push({
+          id: x.id,
+          label: String(x.label || ''),
+          value: String(x.value || ''),
+          title: String(x.title || ''),
+        });
     // No Project chip: the project dropdown above the chat list already names it (owner decision).
     const branch = typeof model.branch === 'string' ? model.branch.trim() : '';
     if (branch && model.cwd) chips.push({ id: 'branch', label: 'Branch', value: branch, title: 'Branch: ' + branch });
@@ -234,6 +245,7 @@
         letter: String(model.agent).charAt(0).toUpperCase(),
         value: model.agent + (model.account ? ' \u00B7 ' + model.account : ''),
         title: model.account ? model.agent + ' account ' + model.account : model.agent,
+        agents: Array.isArray(model.agents) ? model.agents : null,
       });
     const hasPanel = !!(
       settings &&
@@ -243,13 +255,207 @@
     return { chips, hasPanel };
   }
 
-  const view = { open: null, signature: '', panelOpen: false, wired: false, seen: new Set() };
+  const view = { open: null, signature: '', panelOpen: false, seen: new Set() };
 
-  function closePop() {
-    if (view.open) {
-      view.open.remove();
-      view.open = null;
+  // ---- the choice menu ---------------------------------------------------------------------------------------------
+  // One menu at a time, on <body> (position: fixed), so it is never clipped by the composer and can be kept on screen.
+  // spec: {label, items: [{value, name, description?, group?, disabled?, tag?}], current, disabled, notes: [string],
+  //        extra: Node, onPick(value)}. Looks like the row ⋯ menu (.organize-menu).
+  const menu = { node: null, trigger: null, off: null, typed: '', typedAt: 0 };
+
+  function closeMenu(focusBack) {
+    const node = menu.node,
+      trigger = menu.trigger;
+    if (!node) return;
+    menu.node = null;
+    menu.trigger = null;
+    if (menu.off) menu.off();
+    menu.off = null;
+    node.remove();
+    view.open = null;
+    if (trigger && trigger.setAttribute) trigger.setAttribute('aria-expanded', 'false');
+    if (focusBack && trigger && trigger.focus && trigger.isConnected !== false) trigger.focus();
+  }
+  const closePop = () => closeMenu(false);
+
+  // Where the menu goes: above the chip when there is room (the chips sit at the bottom of the window), else below; always
+  // inside the window with an 8 px margin, the list scrolling when it is taller than the room. Pure, so it can be tested.
+  function place(rect, size, viewport) {
+    const m = 8,
+      vw = viewport.width,
+      vh = viewport.height;
+    const above = rect.top - m - 4,
+      below = vh - rect.bottom - m - 4;
+    const up = size.height <= above || above >= below;
+    const room = Math.max(80, up ? above : below);
+    const height = Math.min(size.height, room);
+    const width = Math.min(size.width, vw - 2 * m);
+    const top = up ? Math.max(m, rect.top - 4 - height) : Math.min(vh - m - height, rect.bottom + 4);
+    const left = Math.max(m, Math.min(vw - m - width, rect.left));
+    return { top: Math.round(top), left: Math.round(left), maxHeight: Math.floor(room), up };
+  }
+
+  function openMenu(doc, trigger, spec) {
+    closeMenu(false);
+    menu.typed = '';
+    const win = doc.defaultView || root;
+    const node = el(doc, 'div', null, 'organize-menu chip-menu');
+    node.setAttribute('role', 'menu');
+    node.setAttribute('aria-label', spec.label);
+    if (trigger.id) node.setAttribute('aria-labelledby', trigger.id);
+    const head = el(doc, 'div', spec.label, 'chip-menu-head');
+    head.setAttribute('role', 'presentation');
+    const list = el(doc, 'div', null, 'chip-menu-list');
+    list.setAttribute('role', 'presentation');
+    const buttons = [];
+    let group = null;
+    for (const item of spec.items) {
+      if (item.group && item.group !== group) {
+        const g = el(doc, 'div', item.group, 'chip-menu-group');
+        g.setAttribute('role', 'presentation');
+        list.appendChild(g);
+      }
+      group = item.group || null;
+      const checked = item.value === spec.current;
+      const b = el(doc, 'button', null, 'chip-menu-item' + (checked ? ' checked' : ''));
+      b.type = 'button';
+      b.tabIndex = -1;
+      b.setAttribute('role', 'menuitemradio');
+      b.setAttribute('aria-checked', String(checked));
+      const off = !!(spec.disabled || item.disabled);
+      if (off) b.setAttribute('aria-disabled', 'true');
+      if (!b.dataset) b.dataset = {};
+      b.dataset.value = item.value;
+      const mark = el(doc, 'span', checked ? '\u2713' : '', 'chip-menu-check');
+      mark.setAttribute('aria-hidden', 'true');
+      const body = el(doc, 'span', null, 'chip-menu-text');
+      const name = el(doc, 'span', item.name, 'chip-menu-name');
+      if (item.tag) name.appendChild(el(doc, 'span', item.tag, 'chip-menu-tag'));
+      body.appendChild(name);
+      if (item.description) body.appendChild(el(doc, 'span', item.description, 'chip-menu-desc'));
+      b.append(mark, body);
+      b.addEventListener('click', () => {
+        if (off) return;
+        closeMenu(true);
+        spec.onPick(item.value);
+      });
+      list.appendChild(b);
+      buttons.push(b);
     }
+    node.append(head, list);
+    for (const text of spec.notes || [])
+      if (text) node.appendChild(el(doc, 'span', text, 'chip-menu-note config-note'));
+    if (spec.extra) node.appendChild(spec.extra);
+    const usable = buttons.filter((b) => b.getAttribute('aria-disabled') !== 'true');
+    const focusAt = (b) => {
+      if (!b) return;
+      b.focus();
+      if (b.scrollIntoView) b.scrollIntoView({ block: 'nearest' });
+    };
+    node.addEventListener('keydown', (event) => {
+      const pool = usable.length ? usable : buttons;
+      const at = pool.indexOf(doc.activeElement);
+      const go = (i) => {
+        event.preventDefault();
+        if (pool.length) focusAt(pool[(i + pool.length) % pool.length]);
+      };
+      if (event.key === 'ArrowDown') go(at + 1);
+      else if (event.key === 'ArrowUp') go(at < 0 ? -1 : at - 1);
+      else if (event.key === 'Home') go(0);
+      else if (event.key === 'End') go(-1);
+      else if (event.key === 'Escape') {
+        event.preventDefault();
+        if (event.stopPropagation) event.stopPropagation();
+        closeMenu(true);
+      } else if (event.key === 'Tab') closeMenu(false);
+      else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        const b = doc.activeElement;
+        if (buttons.includes(b)) b.click();
+      } else if (event.key && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        // Type-ahead: the next row whose name starts with what was typed in the last second.
+        const t = Date.now();
+        menu.typed = (t - menu.typedAt < 1000 ? menu.typed : '') + event.key.toLowerCase();
+        menu.typedAt = t;
+        const nameOf = (b) => (b.querySelector('.chip-menu-name') || b).textContent.trim().toLowerCase();
+        // The same letter again moves on to the next match; several letters match a prefix from the row in focus.
+        const q = /^(.)\1+$/.test(menu.typed) ? menu.typed[0] : menu.typed;
+        const start = q.length > 1 ? Math.max(0, at) : at + 1;
+        for (let k = 0; k < pool.length; k++) {
+          const b = pool[(start + k) % pool.length];
+          if (nameOf(b).startsWith(q)) {
+            event.preventDefault();
+            focusAt(b);
+            break;
+          }
+        }
+      }
+    });
+    doc.body.appendChild(node);
+    menu.node = node;
+    menu.trigger = trigger;
+    view.open = node;
+    trigger.setAttribute('aria-expanded', 'true');
+    const rect = trigger.getBoundingClientRect
+      ? trigger.getBoundingClientRect()
+      : { top: 600, bottom: 626, left: 0, right: 0 };
+    const where = place(
+      rect,
+      { width: node.offsetWidth || 240, height: node.offsetHeight || 200 },
+      { width: win.innerWidth || 1200, height: win.innerHeight || 800 },
+    );
+    node.style.maxHeight = where.maxHeight + 'px';
+    node.style.left = where.left + 'px';
+    node.style.top = where.top + 'px';
+    node.classList.toggle('chip-menu-up', where.up);
+    if (root.AgentTextSize && root.AgentTextSize.fitPopup) root.AgentTextSize.fitPopup(node);
+    // A pointer press outside closes it (the chip itself toggles it on click); so does resizing the window.
+    const outside = (e) => {
+      if (!node.contains(e.target) && !(trigger.contains && trigger.contains(e.target))) closeMenu(false);
+    };
+    const resized = () => closeMenu(false);
+    doc.addEventListener('mousedown', outside, true);
+    if (win.addEventListener) win.addEventListener('resize', resized);
+    menu.off = () => {
+      doc.removeEventListener('mousedown', outside, true);
+      if (win.removeEventListener) win.removeEventListener('resize', resized);
+    };
+    focusAt(buttons.find((b) => b.getAttribute('aria-checked') === 'true') || usable[0] || buttons[0]);
+    return node;
+  }
+
+  // The rows a chip's menu lists, from its subset of the settings: session modes, or one select config option (groups flattened
+  // with their names; the model in use when the agent does not list it comes first, marked and not pickable).
+  function menuItems(subset) {
+    const modes = subset.modes;
+    if (modes && Array.isArray(modes.availableModes) && modes.availableModes.length) {
+      return {
+        kind: 'mode',
+        current: modes.currentModeId,
+        items: modes.availableModes
+          .filter((m) => m && typeof m.id === 'string')
+          .map((m) => ({ value: m.id, name: m.name || m.id, description: m.description || '' })),
+      };
+    }
+    const option = subset.configOptions[0],
+      items = [];
+    for (const item of Array.isArray(option.options) ? option.options : []) {
+      if (item && Array.isArray(item.options)) {
+        const group = String(item.name || item.group || '');
+        for (const o of item.options)
+          if (o && typeof o.value === 'string')
+            items.push({ value: o.value, name: o.name || o.value, description: o.description || '', group });
+      } else if (item && typeof item.value === 'string')
+        items.push({ value: item.value, name: item.name || item.value, description: item.description || '' });
+    }
+    if (!items.some((i) => i.value === option.currentValue))
+      items.unshift({
+        value: String(option.currentValue),
+        name: option.unlistedLabel || String(option.currentValue),
+        tag: option.unlistedLabel ? 'in use' : '',
+        disabled: !!option.unlistedLabel,
+      });
+    return { kind: 'config', option, current: option.currentValue, items };
   }
 
   // Queued changes the agent refused: say so once, in words ("it stays on ...": the chip already shows the real value).
@@ -315,6 +521,39 @@
     return wrap;
   }
 
+  // The Agent chip on the New chat page: the same menu, listing the agents a new chat can use.
+  function agentPicker(doc, chip, o) {
+    const wrap = el(doc, 'span', null, 'chip-wrap chip-wrap-agent');
+    const button = el(doc, 'button', null, 'chip chip-agent');
+    button.type = 'button';
+    button.id = 'chip-agent';
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', 'false');
+    button.title = 'Agent for this new chat: ' + chip.value;
+    button.append(
+      el(doc, 'span', 'Agent', 'chip-k'),
+      el(doc, 'span', chip.letter, 'chip-icon'),
+      el(doc, 'span', chip.value, 'chip-v'),
+      el(doc, 'span', '\u25BE', 'chip-caret'),
+    );
+    if (o.disabled) button.classList.add('chip-locked');
+    button.addEventListener('click', () => {
+      if (menu.node && menu.trigger === button) return closeMenu(true);
+      openMenu(doc, button, {
+        label: 'Agent',
+        items: chip.agents.map((a) => ({ value: a.id, name: a.name })),
+        current: chip.agentId,
+        disabled: !!o.disabled,
+        notes: [],
+        onPick: (id) => {
+          if (id !== chip.agentId) o.onAgent(id);
+        },
+      });
+    });
+    wrap.append(button);
+    return wrap;
+  }
+
   // The Ctx chip's hover / focus tooltip: one line per detail. Pure CSS shows it (see header.css .chip-tip).
   function fillTip(doc, tip, lines) {
     tip.replaceChildren(...lines.map((line) => el(doc, 'span', line, 'chip-tip-line')));
@@ -361,24 +600,27 @@
     }
     view.signature = signature;
     view.staticSig = staticSig;
+    // A chip that had the focus (a pick just closed its menu and the chips are rebuilt for the new value) keeps it.
+    const active = doc.activeElement,
+      inMenu = !!(menu.node && active && menu.node.contains(active));
+    const refocus =
+      active && ((box.contains && box.contains(active)) || inMenu)
+        ? inMenu && menu.trigger
+          ? menu.trigger.id
+          : active.id
+        : '';
     closePop();
     box.replaceChildren();
     box.hidden = !d.chips.length && !d.hasPanel;
-    if (!view.wired) {
-      view.wired = true;
-      doc.addEventListener('click', (e) => {
-        if (view.open && !view.open.contains(e.target) && !(e.target.closest && e.target.closest('.chip-wrap')))
-          closePop();
-      });
-      doc.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && view.open) closePop();
-      });
-    }
     const after = () => {
       view.signature = '';
       return o.afterChange && o.afterChange();
     };
     for (const chip of d.chips) {
+      if (chip.kind && o.onAgent && chip.agents && chip.agents.length) {
+        box.append(agentPicker(doc, chip, o));
+        continue;
+      }
       if (chip.kind) {
         box.append(agentChip(doc, chip));
         continue;
@@ -398,7 +640,9 @@
       );
       if (interactive) {
         button.type = 'button';
-        button.setAttribute('aria-haspopup', 'true');
+        button.id = 'chip-' + chip.id;
+        button.setAttribute('aria-haspopup', 'menu');
+        button.setAttribute('aria-expanded', 'false');
       }
       button.append(el(doc, 'span', chip.label, 'chip-k'));
       if (chip.warn) {
@@ -444,52 +688,48 @@
       }
       if (interactive)
         button.addEventListener('click', () => {
-          const wasOpen = view.open && view.open.parentNode === wrap;
-          closePop();
-          if (wasOpen) return;
-          const pop = el(doc, 'div', null, 'chip-pop');
-          pop.setAttribute('role', 'dialog');
-          pop.setAttribute('aria-label', chip.label);
-          const ropts = {
-            disabled: !!o.disabled,
-            queueing: !!o.busy,
-            onMode: o.onMode,
-            onConfig: o.onConfig,
-            onCancelPending: o.onCancelPending,
-            onError: o.onError,
-            afterChange: () => {
-              closePop();
-              return after();
-            },
-          };
-          if (chip.pending) ropts.pending = { [chip.pending.key]: chip.pending.value };
-          if (chip.id === 'model') {
-            const option = chip.subset.configOptions[0];
-            if (root.AgentConfigUI.flatChoices(option).length <= 1) {
-              ropts.note = 'This agent offers no other models for this conversation.';
-              if (hasModelCommand && o.onInsertText) {
-                const extra = el(doc, 'span', null, 'config-note');
-                extra.append(
-                  'You can still ask Claude Code for another one: send ',
-                  el(doc, 'code', '/model opus'),
-                  ' (or sonnet, haiku, or a full model id). AIB then shows the model the agent reports. ',
-                );
-                const insert = el(doc, 'button', 'Start a /model message', 'chip-insert');
-                insert.type = 'button';
-                insert.addEventListener('click', () => {
-                  closePop();
-                  o.onInsertText('/model ');
-                });
-                extra.append(insert);
-                ropts.extra = extra;
-              }
+          if (menu.node && menu.trigger === button) return closeMenu(true);
+          const rows = menuItems(chip.subset);
+          const shown = chip.pending ? chip.pending.value : rows.current;
+          for (const r of rows.items) if (chip.pending && r.value === chip.pending.value) r.tag = 'after this turn';
+          const notes = [];
+          if (o.disabled) notes.push('Settings change between turns.');
+          else if (o.busy) notes.push('The agent is working: what you pick is queued and applied when this turn ends.');
+          let extra = null;
+          if (chip.id === 'model' && rows.items.filter((r) => !r.disabled).length <= 1) {
+            notes.push('This agent offers no other models for this conversation.');
+            if (hasModelCommand && o.onInsertText) {
+              extra = el(doc, 'span', null, 'config-note chip-menu-note');
+              extra.append(
+                'You can still ask Claude Code for another one: send ',
+                el(doc, 'code', '/model opus'),
+                ' (or sonnet, haiku, or a full model id). AIB then shows the model the agent reports. ',
+              );
+              const insert = el(doc, 'button', 'Start a /model message', 'chip-insert');
+              insert.type = 'button';
+              insert.addEventListener('click', () => {
+                closeMenu(false);
+                o.onInsertText('/model ');
+              });
+              extra.append(insert);
             }
           }
-          root.AgentConfigUI.render(pop, chip.subset, ropts);
-          wrap.append(pop);
-          view.open = pop;
-          const select = pop.querySelector('select');
-          if (select && select.focus) select.focus();
+          openMenu(doc, button, {
+            label: chip.label,
+            items: rows.items,
+            current: shown,
+            disabled: !!o.disabled,
+            notes,
+            extra,
+            // Exactly what the old drop-down did: nothing for the value already shown, else onMode / onConfig, then refresh.
+            onPick: (value) => {
+              if (value === shown) return;
+              Promise.resolve()
+                .then(() => (rows.kind === 'mode' ? o.onMode(value) : o.onConfig(rows.option.id, value, 'select')))
+                .then(after)
+                .catch((e) => o.onError && o.onError(e));
+            },
+          });
         });
       box.append(wrap);
     }
@@ -507,9 +747,24 @@
       });
       box.append(more);
     }
+    if (refocus && doc.getElementById) {
+      const again = doc.getElementById(refocus);
+      if (again && box.contains(again) && again.focus) again.focus();
+    }
   }
 
-  const api = { lastSegment, parseModel, friendlyModel, sameModel, describe, render };
+  const api = {
+    lastSegment,
+    parseModel,
+    friendlyModel,
+    sameModel,
+    describe,
+    render,
+    menuItems,
+    place,
+    openMenu,
+    closeMenu,
+  };
   root.AgentComposerChips = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

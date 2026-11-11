@@ -2,6 +2,7 @@
 
 Studio starts OMP as `<omp-command> acp`, so a leading "acp" argument is accepted and ignored.
 """
+import os
 import pathlib
 import runpy
 import sys
@@ -13,4 +14,6 @@ if any(arg in ('-h', '--help') for arg in sys.argv[1:]):
     sys.exit(0)
 fixture = pathlib.Path(__file__).resolve().parents[1] / 'fake_acp.py'
 sys.argv = [str(fixture), '--images', '--rich', '--breadth', '--subagent', '--list-sessions', '--demo']
+if os.environ.get('AIB_DEMO_MODELS'):   # a long model list, three modes and an effort setting (the chip menus)
+    sys.argv.append('--models')
 runpy.run_path(str(fixture), run_name='__main__')

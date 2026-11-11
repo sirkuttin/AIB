@@ -123,7 +123,8 @@
     newDraft = null,
     startingNew = false,
     lastMainRows = [];
-  const attachmentStore = new Map(),
+  const newOptions = new Map(), // agent|folder -> the lists a new chat can offer (wantNewOptions)
+    attachmentStore = new Map(),
     MAX_IMAGES = 4,
     MAX_IMAGE_BYTES = 5 * 1024 * 1024,
     MAX_TOTAL_IMAGE_BYTES = 15 * 1024 * 1024,
@@ -637,7 +638,7 @@
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
         body: JSON.stringify(data),
       },
-      path === 'connect' || path === 'discover' ? 120000 : 30000,
+      path === 'connect' || path === 'discover' || path === 'agent-options' ? 120000 : 30000,
     );
     if (response.status === 403) {
       let refreshed = false;
@@ -2376,7 +2377,9 @@
       picked: !!o.provider,
       model: '',
       mode: '',
+      effort: '',
     };
+    newOptions.clear(); // asked again each time: an open chat may have reported newer lists since
     applyDefaultPicks(folder);
     $('prompt').value = o.prefill || '';
     mainSignature = 'new';
@@ -2405,12 +2408,94 @@
     $('prompt').focus();
   }
   let newBranch = { cwd: '', branch: '' };
+  // ---- what a new chat can offer before its session exists ----
+  // The host remembers the model / mode / effort lists each agent reported (in the data folder, per agent and per folder) and,
+  // when it has none, asks the agent once with a quiet probe. agent|cwd -> {loading, options, problem}.
+  function wantNewOptions(agent, cwd) {
+    const key = agent + '|' + (cwd || '');
+    if (newOptions.has(key)) return newOptions.get(key);
+    const entry = { loading: true, options: null, problem: '' };
+    newOptions.set(key, entry);
+    post('agent-options', { agent, cwd: cwd || '', probe: true })
+      .then((r) => {
+        entry.options = r && r.options && typeof r.options === 'object' ? r.options : null;
+        entry.problem = (r && r.probeError) || '';
+      })
+      .catch((error) => {
+        entry.problem = error.message; // an older agent host: the lists this browser remembered still work
+      })
+      .finally(() => {
+        entry.loading = false;
+        if (newDraft && !selected) renderNewChat();
+      });
+    return entry;
+  }
+  // {model, mode, effort} lists ({kind, configId?, current?, choices:[{value, name, description?, group?}]}) for the draft, and
+  // whether they are still being asked for. The browser's own memory is the fallback.
+  function newChatLists(cwd) {
+    const entry = wantNewOptions(newDraft.provider, cwd),
+      got = entry.options || {},
+      local = AgentChoice.loadOptions(localStorage, newDraft.provider);
+    const ok = (x) => (x && Array.isArray(x.choices) && x.choices.length ? x : null);
+    return {
+      model: ok(got.model) || ok(local.model),
+      mode: ok(got.mode) || ok(local.mode),
+      effort: ok(got.effort),
+      loading: entry.loading,
+    };
+  }
+  // "Default" leaves the agent's own setting alone; it names that setting when the agent reported it.
+  function defaultName(list) {
+    const hit = list && list.current && list.choices.find((c) => c.value === list.current);
+    return hit ? 'Default (' + hit.name + ')' : 'Default';
+  }
+  // The chips' view of the draft: the remembered lists as advertised settings, with a "Default" row first and the picks as
+  // the current values, so the New chat page uses the same chips and menus as a chat.
+  function draftSettings(lists) {
+    const settings = { configOptions: [] };
+    const option = (id, category, name, list, value) => {
+      const options = [{ value: '', name: defaultName(list), description: 'The agent\u2019s own setting' }];
+      const groups = new Map();
+      for (const c of list.choices) {
+        const row = { value: c.value, name: c.name, description: c.description || '' };
+        if (!c.group) options.push(row);
+        else {
+          if (!groups.has(c.group)) {
+            groups.set(c.group, { name: c.group, options: [] });
+            options.push(groups.get(c.group));
+          }
+          groups.get(c.group).options.push(row);
+        }
+      }
+      return { id, name, category, type: 'select', currentValue: value, options };
+    };
+    if (lists.model) settings.configOptions.push(option('model', 'model', 'Model', lists.model, newDraft.model));
+    if (lists.mode && lists.mode.kind === 'mode')
+      settings.modes = {
+        currentModeId: newDraft.mode,
+        availableModes: [{ id: '', name: defaultName(lists.mode), description: 'The agent\u2019s own setting' }].concat(
+          lists.mode.choices.map((c) => ({ id: c.value, name: c.name, description: c.description || '' })),
+        ),
+      };
+    else if (lists.mode) settings.configOptions.push(option('mode', 'mode', 'Mode', lists.mode, newDraft.mode));
+    if (lists.effort) settings.configOptions.push(option('effort', 'thought_level', 'Effort', lists.effort, newDraft.effort));
+    return settings;
+  }
+  function pickNewAgent(id) {
+    if (!newDraft || !AgentChoice.isAgent(id)) return;
+    newDraft.provider = id;
+    newDraft.picked = true;
+    applyDefaultPicks(newChatFolder().cwd);
+    AgentChoice.saveChoice(localStorage, id, newChatFolder().cwd);
+    renderNewChat();
+  }
   // The model and mode a new chat starts with come from Settings > Defaults (per project, else per agent); '' = the agent's own setting.
   function applyDefaultPicks(cwd) {
     if (!newDraft) return;
     const d = AgentChoice.defaultPicks(cwd, newDraft.provider);
     newDraft.model = d.model;
     newDraft.mode = d.mode;
+    newDraft.effort = '';
   }
   function ensureNewBranch(cwd) {
     if (!cwd || newBranch.cwd === cwd) return;
@@ -2440,12 +2525,19 @@
     }
     select.value = value;
   }
-  function renderNewChatForm(f) {
-    const options = AgentChoice.loadOptions(localStorage, newDraft.provider),
-      models = AgentChoice.pickList(options.model),
-      modes = AgentChoice.pickList(options.mode);
-    if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
-    if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
+  function renderNewChatForm(f, lists) {
+    const named = (list) => {
+      const rows = AgentChoice.pickList(list);
+      rows[0] = { value: '', name: defaultName(list) };
+      return rows;
+    };
+    const models = named(lists.model),
+      modes = named(lists.mode),
+      efforts = named(lists.effort);
+    // A pick the agent no longer lists (or one for another agent) goes back to Default; nothing is dropped while still loading.
+    if (!lists.loading || lists.model) if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
+    if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
+    if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
     fillSelect(
       $('ncAgent'),
       AgentChoice.AGENTS.map((a) => ({ value: a.id, name: a.name })),
@@ -2479,7 +2571,8 @@
       has = !!$('prompt').value.trim() || selectedAttachments('new-chat').length > 0;
     $('title').textContent = 'New chat';
     $('status').textContent = '';
-    renderNewChatForm(f);
+    const lists = newChatLists(f.cwd);
+    renderNewChatForm(f, lists);
     $('prompt').disabled = startingNew;
     $('prompt').placeholder = 'Message ' + name + ' to start the chat… Enter to send';
     $('send').hidden = false;
@@ -2489,23 +2582,56 @@
     if ($('provider').value !== newDraft.provider) $('provider').value = newDraft.provider;
     $('composerNote').textContent =
       'Enter to start the chat and send · Shift+Enter for a new line. The agent connects only when you send.';
-    window.AgentComposerChips?.render($('composerChips'), { id: 'new-chat' }, {});
+    // The same chips as a chat, from the remembered lists: Agent (a menu here), Model, Mode, Effort. Picks go into the draft and
+    // are applied by the host as soon as the session exists, before the first message is sent.
+    const settings = draftSettings(lists),
+      extraChips = [];
+    if (!lists.model)
+      extraChips.push(
+        lists.loading
+          ? { id: 'model', label: 'Model', value: 'Checking\u2026', title: 'Asking ' + name + ' which models it offers\u2026' }
+          : {
+              id: 'model',
+              label: 'Model',
+              value: 'Default',
+              title: name + ' has not reported its models yet. They appear here once a chat with it has opened.',
+            },
+      );
+    window.AgentComposerChips?.render(
+      $('composerChips'),
+      {
+        id: 'new-chat',
+        settings,
+        agent: name,
+        agentId: newDraft.provider,
+        agents: AgentChoice.AGENTS.map((a) => ({ id: a.id, name: a.name })),
+        extraChips,
+      },
+      {
+        disabled: startingNew,
+        onAgent: pickNewAgent,
+        onMode: (value) => {
+          if (newDraft) newDraft.mode = value;
+        },
+        onConfig: (id, value) => {
+          if (newDraft && (id === 'model' || id === 'mode' || id === 'effort')) newDraft[id] = value;
+        },
+        onError: fail,
+        afterChange: () => {
+          if (newDraft && !selected) renderNewChat();
+        },
+      },
+    );
     renderAttachments();
   }
-  $('ncAgent').onchange = () => {
-    const id = $('ncAgent').value;
-    if (!newDraft || !AgentChoice.isAgent(id)) return;
-    newDraft.provider = id;
-    newDraft.picked = true;
-    applyDefaultPicks(newChatFolder().cwd);
-    AgentChoice.saveChoice(localStorage, id, newChatFolder().cwd);
-    renderNewChat();
-  };
+  $('ncAgent').onchange = () => pickNewAgent($('ncAgent').value);
   $('ncModel').onchange = () => {
     if (newDraft) newDraft.model = $('ncModel').value;
+    if (newDraft && !selected) renderNewChat();
   };
   $('ncMode').onchange = () => {
     if (newDraft) newDraft.mode = $('ncMode').value;
+    if (newDraft && !selected) renderNewChat();
   };
   $('ncFolderInput').addEventListener('input', () => {
     $('cwd').value = $('ncFolderInput').value;
@@ -2543,29 +2669,29 @@
     const f = newChatFolder(),
       draft = $('prompt').value,
       provider0 = newDraft.provider,
-      picks = { model: newDraft.model, mode: newDraft.mode };
+      picks = { model: newDraft.model, mode: newDraft.mode, effort: newDraft.effort },
+      pickLists = newChatLists(f.cwd);
     if (!f.cwd || (!draft.trim() && !selectedAttachments('new-chat').length)) return;
     startingNew = true;
     clearError();
     renderNewChat();
     try {
-      const result = await connectAndWait({ provider: provider0, cwd: f.cwd, resume: '' });
+      // The host applies the picks right after the session starts and before it is ready, so the first prompt runs with them.
+      const result = await connectAndWait({ provider: provider0, cwd: f.cwd, resume: '', picks });
       if (f.source === 'input')
         try {
           localStorage.setItem('studio-cwd', f.cwd);
         } catch {}
       AgentChoice.saveChoice(localStorage, provider0, f.cwd);
-      // The chosen model and mode go in right after the session starts and before the first prompt (applied now: the agent is idle).
-      const problems = [];
-      for (const step of AgentChoice.applyPlan(AgentChoice.loadOptions(localStorage, provider0), picks)) {
-        try {
-          await (step.op === 'mode'
-            ? post('mode', { id: result.id, modeId: step.modeId })
-            : post('config', { id: result.id, configId: step.configId, value: step.value }));
-        } catch (error) {
-          problems.push(error.message);
-        }
-      }
+      // A pick the agent refused, or no longer offers, is named; the chat runs with the agent's own setting for it.
+      const label = { model: 'Model', mode: 'Mode', effort: 'Effort' };
+      const problems = (Array.isArray(result.pickResults) ? result.pickResults : [])
+        .filter((r) => r && !r.ok)
+        .map((r) => {
+          const list = pickLists[r.kind],
+            hit = list && list.choices.find((c) => c.value === r.value);
+          return (label[r.kind] || 'Setting') + ' ' + (hit ? hit.name : r.value) + ': ' + (r.message || 'refused');
+        });
       await listConversations();
       const c = conversations.find((x) => x.live?.id === result.id);
       if (!c)

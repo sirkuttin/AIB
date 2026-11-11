@@ -18,7 +18,8 @@ import { QueueStore } from '../acp/msgqueue.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
 import * as adapters from '../agents/adapters.ts';
 import { Installer, InstallRefused } from '../agents/installer.ts';
-import { Signer, SignInRefused } from '../agents/signin.ts';
+import { readCached as readSignIn, Signer, SignInRefused } from '../agents/signin.ts';
+import { AgentOptionsCache } from '../state/agent_options.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, httpEntry } from '../artifacts/mcp_http.ts';
@@ -162,6 +163,27 @@ export type OwnerProbe = (provider: string, sessionId: string, excludedPids?: It
 export interface ConnectOptions {
   background?: boolean;
   continueAnyway?: boolean;
+  /** The New chat page's picks, applied before the first prompt (Connection.startPicks). New chats only. */
+  picks?: Partial<Record<'model' | 'mode' | 'effort', string>> | null;
+}
+
+/** A failed or empty probe is not tried again for this long (seconds) for the same agent and folder. */
+export const PROBE_COOLDOWN_SECONDS = 10 * 60;
+/** The whole quiet probe (start, initialize, session/new, close) may take at most this long (seconds). */
+export const PROBE_TIMEOUT_SECONDS = 40;
+
+/** body.picks of a connect request: {model?, mode?, effort?} with short string values, else null. */
+export function readPicks(value: unknown): ConnectOptions['picks'] {
+  if (value === undefined || value === null) return null;
+  if (!isDict(value)) throw new ValueError('picks must be an object');
+  const out: Partial<Record<'model' | 'mode' | 'effort', string>> = {};
+  for (const kind of ['model', 'mode', 'effort'] as const) {
+    const v = value[kind];
+    if (v === undefined || v === null || v === '') continue;
+    if (!isStr(v) || pyLen(v) > 300) throw new ValueError(`picks.${kind} must be a short string`);
+    out[kind] = v;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 export interface StudioConstruct {
@@ -215,6 +237,11 @@ export class Studio {
   readonly waitingChats = 0;
   /** Cleaning up half-made worktrees (Python does it in __init__); connect waits for it. */
   readonly ready: Promise<void>;
+  /** The model / mode / effort lists each agent reported (state/agent_options.ts). */
+  readonly agentOptions: AgentOptionsCache;
+  /** Running quiet probes by agent|folder, and when each last failed (seconds). */
+  readonly #probes = new Map<string, Promise<void>>();
+  readonly #probeFailed = new Map<string, number>();
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #closed = false;
   #mcpHttp: ArtifactMcpHttp | null = null;
@@ -246,6 +273,7 @@ export class Studio {
     this.projectPrefs = stores.projectPrefs ?? new ProjectPrefs(dir);
     this.readState = stores.readState ?? new ReadState(dir);
     this.settings = stores.settings ?? new SettingsStore(dir);
+    this.agentOptions = new AgentOptionsCache(dir);
     const manager = this.hasStateDir ? new wt.Manager(this.stateDir) : null; // worktree per chat (hidden flag)
     this.worktrees = manager;
     this.ready = (async () => {
@@ -568,6 +596,80 @@ export class Studio {
     }
   }
 
+  // ---- model / mode / effort lists for new chats ---------------------------------------------------------------------------
+  /** Remember the lists this connection's agent reports (a new chat's defaults come from its session/new reply). Never throws. */
+  rememberOptions(c: Connection): void {
+    try {
+      const folder = c.projectRoot || c.cwd;
+      if (c.startSettings) this.agentOptions.record(c.provider, folder, c.startSettings, true);
+      this.agentOptions.record(c.provider, folder, c.settings, false);
+    } catch (error) {
+      log.exception(error, 'Remembering the model lists failed');
+    }
+  }
+
+  /**
+   * POST /api/live/agent-options {agent, cwd?, probe?}: the model / mode / effort lists a new chat of this agent can offer, from
+   * memory. An open chat of the agent refreshes the memory first. With probe=true and nothing remembered, a quiet probe runs once
+   * (hidden process, initialize + session/new with no MCP servers, closed again; never a sign-in, never a prompt), at most one at a
+   * time per agent and folder, and not again for PROBE_COOLDOWN_SECONDS after it failed or found nothing.
+   */
+  async agentOptionsFor(body: Json): Promise<Json> {
+    const agent = body.agent;
+    if (!isStr(agent) || !agentRegistry.isProvider(agent)) throw new ValueError('Choose an agent');
+    const cwd = isStr(body.cwd) && pyLen(body.cwd) <= 1024 ? body.cwd : '';
+    for (const c of this.connections.values()) {
+      if (c.provider === agent && c.ready && !c.closed) this.rememberOptions(c);
+    }
+    let hit = this.agentOptions.lookup(agent, cwd);
+    if (hit || body.probe !== true) return { agent, options: hit, probed: false };
+    const key = `${agent}|${cwd}`;
+    const failedAt = this.#probeFailed.get(key);
+    if (failedAt !== undefined && this.clock() - failedAt < PROBE_COOLDOWN_SECONDS) {
+      return { agent, options: null, probed: false, probeError: 'tried recently' };
+    }
+    if (this.hasStateDir && readSignIn(this.stateDir, agent).state === 'signin') {
+      return { agent, options: null, probed: false, probeError: 'needs sign-in' };
+    }
+    let problem = '';
+    let running = this.#probes.get(key);
+    if (!running) {
+      running = this.#probe(agent, cwd)
+        .catch((error) => {
+          problem = errorText(error);
+          this.#probeFailed.set(key, this.clock());
+        })
+        .finally(() => this.#probes.delete(key));
+      this.#probes.set(key, running);
+    }
+    await running;
+    hit = this.agentOptions.lookup(agent, cwd);
+    if (!hit && !this.#probeFailed.has(key)) this.#probeFailed.set(key, this.clock());
+    return { agent, options: hit, probed: true, ...(problem ? { probeError: problem } : {}) };
+  }
+
+  async #probe(agent: string, cwd: string): Promise<void> {
+    const [command, env] = await this.agentLaunch(agent, true);
+    const folder = cwd && isdir(cwd) ? realpath(expandUser(cwd)) : home();
+    const probe = Object.keys(env).length
+      ? this.connectionFactory(command, folder, agent, { env })
+      : this.connectionFactory(command, folder, agent);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const settings = await Promise.race([
+        probe.probeSettings(PROBE_TIMEOUT_SECONDS - 5),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new ValueError('The agent did not answer in time')), PROBE_TIMEOUT_SECONDS * 1000);
+        }),
+      ]);
+      this.agentOptions.record(agent, cwd && isdir(cwd) ? cwd : null, settings, true);
+      log.info('Read the model lists of %s with a quiet probe', agent);
+    } finally {
+      clearTimeout(timer);
+      await probe.close();
+    }
+  }
+
   // ---- connect ------------------------------------------------------------------------------------------------------------
   async connect(provider: string, cwd: string, resume: string | null = null, options: ConnectOptions = {}): Promise<Connection> {
     const background = options.background ?? false;
@@ -634,6 +736,7 @@ export class Studio {
       c.sessionLease = lease;
       c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree)];
       c.sessionId = resume || null;
+      if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
       this.connections.set(c.id, c);
       if (resume) this.announce(c, 'opening'); // claim before session/load so other clients can see it
@@ -651,6 +754,7 @@ export class Studio {
             c.sessionLease = newLease;
           }
           if (c.closed) throw new Error('The agent disconnected while opening the conversation');
+          this.rememberOptions(c);
           if (this.recovery) this.recovery.connectionReady(c);
           this.announce(c, 'ready');
           if (this.liveSync) {
@@ -974,9 +1078,11 @@ export class Studio {
       const connection = await this.connect(provider as string, cwd as string, (body.resume ?? null) as string | null, {
         background,
         continueAnyway,
+        picks: readPicks(body.picks),
       });
       return [200, connection.public()];
     }
+    if (name === 'agent-options') return [200, await this.agentOptionsFor(body)]; // POST /api/live/agent-options (web/live_routes.ts)
     if (name === 'discover') return [200, await this.listAgentSessions(need(body, 'provider'), body.cwd ?? null, body.cursor ?? null)];
     if (name === 'forget') return [200, { ok: true, forgotten: this.forgetRecovered(body.provider, body.sessionId) }];
     if (name === 'worktree-note') { // internal (worktrees/merge.ts): not in LIVE_POST_OPS, so no page route reaches it
@@ -1039,8 +1145,14 @@ export class Studio {
     else if (name === 'authenticate') connection.answerAuth(need(body, 'action'), body.methodId ?? null);
     else if (name === 'elicitation') connection.answerElicitation(need(body, 'key'), need(body, 'action'), body.content ?? null);
     else if (name === 'config') {
-      return [200, { ok: true, ...(await connection.changeSetting('config', need(body, 'configId'), need(body, 'value'))) }]; // queued during a turn
-    } else if (name === 'mode') return [200, { ok: true, ...(await connection.changeSetting('mode', null, need(body, 'modeId'))) }];
+      const result = await connection.changeSetting('config', need(body, 'configId'), need(body, 'value')); // queued during a turn
+      this.rememberOptions(connection);
+      return [200, { ok: true, ...result }];
+    } else if (name === 'mode') {
+      const result = await connection.changeSetting('mode', null, need(body, 'modeId'));
+      this.rememberOptions(connection);
+      return [200, { ok: true, ...result }];
+    }
     else if (name === 'cancel-pending') return [200, { ok: true, pendingChanges: connection.cancelPending(need(body, 'key')) }];
     else if (name === 'session-op') {
       const deletedRef = body.op === 'delete' ? [connection.provider, connection.sessionId] : null;

@@ -31,6 +31,7 @@ parser.add_argument('--require-config-type', action='store_true', help="session/
 parser.add_argument('--subagent', action='store_true', help='Announce a cancellable child session when the prompt is "delegate"')
 parser.add_argument('--replay-history', action='store_true', help='session/load re-sends two history messages (one user, one agent) before it answers, like real agents do')
 parser.add_argument('--demo', action='store_true', help='Demo triggers: stream, html, plan, help (see work/demo-studio/README.md); also remembers the session folder')
+parser.add_argument('--models', action='store_true', help="A long model list, three modes with descriptions and an effort setting (implies --breadth's config options); a prompt 'settings?' replies with the current model, mode and effort; session/new calls are counted in the reply too")
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 args = parser.parse_args()
 if args.child_pid_file:
@@ -71,6 +72,32 @@ config_options = [
     {'id': 'verbose', 'name': 'Verbose', 'type': 'boolean', 'currentValue': False},
     {'id': 'dial', 'name': 'Dial', 'type': 'slider', 'currentValue': 7},
 ]
+
+
+MODEL_NAMES = ['Sol 6.1', 'Sol 6.1 Mini', 'Terra 5', 'Terra 5 Fast', 'Luna 4', 'Luna 4 Long', 'Vesta 3', 'Vesta 3 Code',
+               'Orion 2', 'Orion 2 Vision', 'Atlas 1', 'Atlas 1 Max', 'Nova 7', 'Nova 7 Lite', 'Pulsar 9', 'Quasar 8']
+modes = {'currentModeId': 'code', 'availableModes': [{'id': 'code', 'name': 'Code'}]}
+session_news = 0
+if args.models:
+    args.breadth = True
+    config_options = [
+        {'id': 'model', 'name': 'Model', 'category': 'model', 'type': 'select', 'currentValue': 'sol-6-1', 'options': [
+            dict({'value': n.lower().replace(' ', '-').replace('.', '-'), 'name': n}, **({'description': 'Recommended for most work'} if i == 0 else {'description': 'Larger context window, slower'} if 'Long' in n else {}))
+            for i, n in enumerate(MODEL_NAMES)]},
+        {'id': 'reasoning_effort', 'name': 'Effort', 'category': 'thought_level', 'type': 'select', 'currentValue': 'medium', 'options': [
+            {'value': 'low', 'name': 'Low'}, {'value': 'medium', 'name': 'Medium'}, {'value': 'high', 'name': 'High', 'description': 'Thinks longer before it answers'}]},
+        {'id': 'verbose', 'name': 'Verbose', 'type': 'boolean', 'currentValue': False},
+    ]
+    modes = {'currentModeId': 'auto', 'availableModes': [
+        {'id': 'ask', 'name': 'Ask first', 'description': 'Asks before every edit and command'},
+        {'id': 'auto', 'name': 'Auto review', 'description': 'Edits files; asks before commands outside the folder'},
+        {'id': 'full', 'name': 'Full access', 'description': 'Edits and runs anything without asking'}]}
+
+
+def current_settings_text():
+    model = next((o['currentValue'] for o in config_options if o['id'] == 'model'), '')
+    effort = next((o['currentValue'] for o in config_options if o.get('category') == 'thought_level'), '')
+    return 'Fixture settings: model=%s mode=%s effort=%s sessions=%d' % (model, modes['currentModeId'], effort, session_news)
 
 
 def update(value):
@@ -360,7 +387,9 @@ for line in sys.stdin:
             if args.replay_history and method == 'session/load':
                 update({'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': 'old question'}})
                 update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'old answer'}})
-            session_result = {'sessionId': session_name, 'modes': {'currentModeId': 'code', 'availableModes': [{'id': 'code', 'name': 'Code'}]}}
+            if method == 'session/new':
+                session_news += 1
+            session_result = {'sessionId': session_name, 'modes': json.loads(json.dumps(modes))}
             if args.breadth:
                 session_result['configOptions'] = config_options
             result(key, session_result)
@@ -393,6 +422,10 @@ for line in sys.stdin:
         images = [block for block in blocks if block.get('type') == 'image']
         attached = [block for block in blocks if block.get('type') in ('resource', 'audio') or (block.get('type') == 'text' and block.get('text', '').startswith('Attached file:'))]
         prompt_text = next((block.get('text', '') for block in blocks if block.get('type') == 'text' and not block.get('text', '').startswith('<studio-context>')), '')   # Studio's live-sync note comes first and is not the user's words
+        if args.models and prompt_text.strip() == 'settings?':
+            update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': current_settings_text()}})
+            result(key, {'stopReason': 'end_turn'})
+            continue
         if args.demo and prompt_text.strip().lower() in DEMO_WORDS and not images and not attached:
             demo_turn(key, prompt_text.strip().lower())
         elif args.client_caps and prompt_text.startswith('caps:'):
@@ -536,6 +569,11 @@ for line in sys.stdin:
     elif method in ('session/set_mode', 'session/set_config_option') and args.reject_config:
         emit({'id': key, 'error': {'code': -32602, 'message': 'Fixture refuses this setting'}})
     elif method == 'session/set_mode':
+        if args.models:
+            if params.get('modeId') not in [m['id'] for m in modes['availableModes']]:
+                emit({'id': key, 'error': {'code': -32602, 'message': 'Unknown mode'}})
+                continue
+            modes['currentModeId'] = params.get('modeId')
         result(key, {})
     elif method == 'session/set_config_option' and args.require_config_type and params.get('type') not in ('id', 'boolean'):
         emit({'id': key, 'error': {'code': -32602, 'message': 'Invalid params: missing field `type`'}})

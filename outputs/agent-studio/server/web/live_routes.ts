@@ -81,6 +81,8 @@ export function liveRoutes(): Map<string, LiveHandler> {
     if (typeof agent !== 'string') throw new ValueError('agent must be text');
     return ctx.host.signinCall('check', agent, body?.force === true);
   });
+  // Deno only (routes.ts DENO_ONLY): the model / mode / effort lists a new chat can offer, before its session exists.
+  routes.set('POST /api/live/agent-options', (ctx, _url, body) => ctx.host.liveCall('agent-options', body ?? {}));
   for (const name of LIVE_POST_OPS) {
     routes.set(`POST /api/live/${name}`, async (ctx, _url, body) => {
       const [status, payload] = await ctx.host.liveCall(name, body);

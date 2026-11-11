@@ -27,6 +27,29 @@ class Node {
     this.checked = false;
     this.label = '';
     this.type = '';
+    this.style = {};
+    this.dataset = {};
+    this.tabIndex = 0;
+    const self = this;
+    this.classList = {
+      toggle(name, on) {
+        const set = new Set(String(self.className).split(/\s+/).filter(Boolean));
+        if (on === undefined ? !set.has(name) : on) set.add(name);
+        else set.delete(name);
+        self.className = [...set].join(' ');
+      },
+      add(name) {
+        this.toggle(name, true);
+      },
+      contains(name) {
+        return String(self.className).split(/\s+/).includes(name);
+      },
+    };
+  }
+  get isConnected() {
+    let x = this;
+    while (x.parent) x = x.parent;
+    return x === this.ownerDocument.body || x === this.ownerDocument.root;
   }
   get textContent() {
     return this.own + this.children.map((c) => c.textContent).join('');
@@ -96,7 +119,20 @@ class Node {
   querySelector(sel) {
     return this.find(sel)[0] || null;
   }
-  focus() {}
+  focus() {
+    this.ownerDocument.activeElement = this;
+  }
+  scrollIntoView() {}
+  removeEventListener(name, fn) {
+    this.listeners[name] = (this.listeners[name] || []).filter((f) => f !== fn);
+  }
+  key(key, extra = {}) {
+    const event = Object.assign({ key, target: this, prevented: false }, extra);
+    event.preventDefault = () => (event.prevented = true);
+    event.stopPropagation = () => {};
+    for (let x = this; x; x = x.parent) for (const fn of x.listeners.keydown || []) fn(event);
+    return event;
+  }
   click() {
     for (const fn of this.listeners.click || []) fn({ target: this });
   }
@@ -105,9 +141,36 @@ class Node {
   }
 }
 function makeDoc() {
-  const doc = { createElement: (tag) => new Node(tag, doc), addEventListener() {} };
+  const listeners = {};
+  const doc = {
+    createElement: (tag) => new Node(tag, doc),
+    addEventListener: (name, fn) => (listeners[name] = listeners[name] || []).push(fn),
+    removeEventListener: (name, fn) => (listeners[name] = (listeners[name] || []).filter((f) => f !== fn)),
+    fire: (name, target) => (listeners[name] || []).slice().forEach((fn) => fn({ target })),
+    listeners,
+    activeElement: null,
+    defaultView: { innerWidth: 1440, innerHeight: 900 },
+  };
+  doc.getElementById = (id) => {
+    const walk = (n) => {
+      if (n.id === id) return n;
+      for (const c of n.children) {
+        const hit = walk(c);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return walk(doc.body);
+  };
+  doc.body = new Node('body', doc);
+  doc.root = new Node('main', doc);
+  doc.body.appendChild(doc.root);
   return doc;
 }
+// The open choice menu (on <body>) and its rows.
+const menuOf = (doc) => doc.body.find('.chip-menu')[0] || null;
+const rowsOf = (doc) => (menuOf(doc) ? menuOf(doc).find('.chip-menu-item') : []);
+const rowText = (r) => r.find('.chip-menu-name')[0].textContent;
 const settle = () => new Promise((r) => setImmediate(r));
 
 const modelOption = (over = {}) => ({
@@ -277,6 +340,7 @@ function renderChips(model, opts = {}) {
   const doc = makeDoc(),
     box = doc.createElement('div'),
     panel = doc.createElement('div');
+  doc.root.appendChild(box);
   const o = Object.assign({ settingsPanel: panel, disabled: false, busy: false, onError() {}, afterChange() {} }, opts);
   chips.render(box, model, o);
   return { doc, box, o };
@@ -331,7 +395,7 @@ test('rendered chip: pending label "→ after this turn" and a cancel button tha
   assert.deepEqual(cancelled, ['config:model']);
 });
 
-test('chips stay usable while the agent works: a pick during a turn goes to onConfig and the popup explains the queue', async () => {
+test('chips stay usable while the agent works: a pick during a turn goes to onConfig and the menu explains the queue', async () => {
   const picks = [];
   const settings = {
     configOptions: [
@@ -344,7 +408,7 @@ test('chips stay usable while the agent works: a pick during a turn goes to onCo
       }),
     ],
   };
-  const { box } = renderChips(
+  const { box, doc } = renderChips(
     { id: 'c3', settings },
     {
       busy: true,
@@ -358,18 +422,18 @@ test('chips stay usable while the agent works: a pick during a turn goes to onCo
   const button = box.find('.chip-model')[0];
   assert.ok(button.title.includes('applied when this turn ends'));
   button.click();
-  const pop = box.find('.chip-pop')[0];
-  const select = pop.find('select')[0];
-  assert.equal(select.disabled, false);
-  assert.ok(pop.textContent.includes('queued and applied when this turn ends'));
-  select.value = 'opus';
-  select.fire('change');
+  const menu = menuOf(doc);
+  assert.ok(menu, 'the menu opens on one click');
+  assert.equal(menu.find('select').length, 0, 'no drop-down inside the menu');
+  assert.ok(menu.textContent.includes('queued and applied when this turn ends'));
+  assert.equal(rowsOf(doc).length, 2);
+  rowsOf(doc)[1].click();
+  assert.equal(menuOf(doc), null, 'one click picks and closes');
   await settle();
   assert.deepEqual(picks, [['model', 'opus', 'select']]);
 });
 
-test('popup of a chip whose pick is queued shows the queued value as selected, marked, with its own cancel', () => {
-  const cancelled = [];
+test('the menu of a chip whose pick is queued checks the queued value and marks it "after this turn"', () => {
   const settings = {
     configOptions: [
       modelOption({
@@ -381,33 +445,38 @@ test('popup of a chip whose pick is queued shows the queued value as selected, m
       }),
     ],
   };
-  const { box } = renderChips(
+  const { box, doc } = renderChips(
     { id: 'c4', settings, pending: [{ key: 'config:model', value: 'opus' }] },
-    {
-      busy: true,
-      onCancelPending: (k) => {
-        cancelled.push(k);
-        return Promise.resolve();
-      },
-    },
+    { busy: true, onCancelPending: () => Promise.resolve() },
   );
   box.find('.chip-model')[0].click();
-  const pop = box.find('.chip-pop')[0];
-  assert.equal(pop.find('select')[0].value, 'opus');
-  assert.ok(pop.find('.config-queued')[0].textContent.includes('after this turn'));
-  pop.find('.config-queued-cancel')[0].click();
-  assert.deepEqual(cancelled, []); // asynchronous: runs in a microtask
-  return settle().then(() => assert.deepEqual(cancelled, ['config:model']));
+  const rows = rowsOf(doc);
+  assert.deepEqual(
+    rows.map((r) => r.getAttribute('aria-checked')),
+    ['false', 'true'],
+  );
+  assert.ok(rows[1].textContent.includes('after this turn'));
+  assert.equal(box.find('.chip-cancel').length, 1, 'the chip keeps its own cancel');
 });
 
-test('with a mismatch the popup lists the in-use model as a disabled "(in use)" entry and keeps the advertised choices', () => {
-  const { box } = renderChips({ id: 'c5', settings: { configOptions: [modelOption()] }, inUse: OPUS });
+test('with a mismatch the menu lists the in-use model first, checked and not pickable, then the advertised choices', () => {
+  const picks = [];
+  const { box, doc } = renderChips(
+    { id: 'c5', settings: { configOptions: [modelOption()] }, inUse: OPUS },
+    { onConfig: (...a) => picks.push(a) },
+  );
   box.find('.chip-model')[0].click();
-  const select = box.find('.chip-pop')[0].find('select')[0];
-  const options = select.children.map((o) => [o.value, o.textContent, o.disabled]);
-  assert.deepEqual(options[0], ['claude-opus-5-5', 'Opus 5.5 (in use)', true]);
-  assert.deepEqual(options[1], ['sonnet', 'Sonnet 5.5', false]);
-  assert.equal(select.value, 'claude-opus-5-5');
+  const rows = rowsOf(doc);
+  assert.deepEqual(
+    rows.map((r) => [r.dataset.value, rowText(r), r.getAttribute('aria-checked'), r.getAttribute('aria-disabled')]),
+    [
+      ['claude-opus-5-5', 'Opus 5.5in use', 'true', 'true'],
+      ['sonnet', 'Sonnet 5.5', 'false', undefined],
+    ],
+  );
+  rows[0].click();
+  assert.ok(menuOf(doc), 'a disabled row does nothing');
+  assert.deepEqual(picks, []);
 });
 
 test('a single advertised model says so, and offers /model only when the agent has that command', () => {
@@ -415,17 +484,18 @@ test('a single advertised model says so, and offers /model only when the agent h
   const model = { id: 'c6', settings: { configOptions: [modelOption()] } };
   let r = renderChips(model, { onInsertText: (t) => insert.push(t) });
   r.box.find('.chip-model')[0].click();
-  let pop = r.box.find('.chip-pop')[0];
-  assert.ok(pop.textContent.includes('This agent offers no other models for this conversation.'));
-  assert.equal(pop.find('.chip-insert').length, 0, 'no /model command advertised: no suggestion');
+  let menu = menuOf(r.doc);
+  assert.ok(menu.textContent.includes('This agent offers no other models for this conversation.'));
+  assert.equal(menu.find('.chip-insert').length, 0, 'no /model command advertised: no suggestion');
   r = renderChips(Object.assign({}, model, { commands: [{ name: 'compact' }, { name: 'model' }] }), {
     onInsertText: (t) => insert.push(t),
   });
   r.box.find('.chip-model')[0].click();
-  pop = r.box.find('.chip-pop')[0];
-  assert.ok(pop.textContent.includes('/model opus'));
-  pop.find('.chip-insert')[0].click();
+  menu = menuOf(r.doc);
+  assert.ok(menu.textContent.includes('/model opus'));
+  menu.find('.chip-insert')[0].click();
   assert.deepEqual(insert, ['/model ']);
+  assert.equal(menuOf(r.doc), null);
   const two = renderChips({
     id: 'c7',
     settings: {
@@ -440,7 +510,260 @@ test('a single advertised model says so, and offers /model only when the agent h
     },
   });
   two.box.find('.chip-model')[0].click();
-  assert.ok(!two.box.find('.chip-pop')[0].textContent.includes('no other models'));
+  assert.ok(!menuOf(two.doc).textContent.includes('no other models'));
+});
+
+// ---- the choice menu: rows, roles, keyboard, placement -----------------------------------------------------------
+const RICH = {
+  modes: {
+    currentModeId: 'auto',
+    availableModes: [
+      { id: 'ask', name: 'Ask first', description: 'Asks before every edit' },
+      { id: 'auto', name: 'Auto review' },
+      { id: 'full', name: 'Full access' },
+    ],
+  },
+  configOptions: [
+    modelOption({
+      currentValue: 'fast',
+      options: [
+        { group: 'g1', name: 'Small', options: [{ value: 'fast', name: 'Fast' }] },
+        {
+          group: 'g2',
+          name: 'Large',
+          options: [
+            { value: 'deep', name: 'Deep', description: 'Slow' },
+            { value: 'dense', name: 'Dense' },
+          ],
+        },
+      ],
+    }),
+    {
+      id: 'reasoning_effort',
+      name: 'Effort',
+      category: 'thought_level',
+      type: 'select',
+      currentValue: 'low',
+      options: [
+        { value: 'low', name: 'Low' },
+        { value: 'medium', name: 'Medium' },
+        { value: 'high', name: 'High' },
+      ],
+    },
+  ],
+};
+
+function richChips(opts = {}) {
+  const calls = [];
+  const r = renderChips(
+    { id: 'm1', settings: RICH },
+    Object.assign(
+      {
+        onMode: (id) => calls.push(['mode', id]),
+        onConfig: (id, value, type) => calls.push(['config', id, value, type]),
+      },
+      opts,
+    ),
+  );
+  return Object.assign(r, { calls });
+}
+
+test('every choice chip (model, mode, effort) opens the same kind of menu: ARIA roles, a check on the current row', () => {
+  const r = richChips();
+  for (const [id, label, current, count] of [
+    ['model', 'Model', 'Fast', 3],
+    ['mode', 'Mode', 'Auto review', 3],
+    ['effort', 'Effort', 'Low', 3],
+  ]) {
+    const chip = r.box.find('.chip-' + id)[0];
+    assert.equal(chip.getAttribute('aria-haspopup'), 'menu');
+    chip.click();
+    assert.equal(chip.getAttribute('aria-expanded'), 'true');
+    const menu = menuOf(r.doc);
+    assert.equal(menu.getAttribute('role'), 'menu');
+    assert.equal(menu.getAttribute('aria-label'), label);
+    assert.ok(menu.className.includes('organize-menu'), 'the row ⋯ menu look');
+    const rows = rowsOf(r.doc);
+    assert.equal(rows.length, count);
+    assert.ok(rows.every((x) => x.getAttribute('role') === 'menuitemradio'));
+    const checked = rows.filter((x) => x.getAttribute('aria-checked') === 'true');
+    assert.equal(checked.length, 1);
+    assert.equal(rowText(checked[0]), current);
+    assert.equal(checked[0].find('.chip-menu-check')[0].textContent, '\u2713');
+    assert.equal(r.doc.activeElement, checked[0], 'focus starts on the current row');
+    chip.click();
+    assert.equal(menuOf(r.doc), null, 'a second click on the chip closes it');
+    assert.equal(chip.getAttribute('aria-expanded'), 'false');
+  }
+});
+
+test('descriptions show under their option; groups get a heading', () => {
+  const r = richChips();
+  r.box.find('.chip-model')[0].click();
+  const menu = menuOf(r.doc);
+  assert.deepEqual(
+    menu.find('.chip-menu-group').map((g) => g.textContent),
+    ['Small', 'Large'],
+  );
+  const deep = rowsOf(r.doc).find((x) => x.dataset.value === 'deep');
+  assert.equal(deep.find('.chip-menu-desc')[0].textContent, 'Slow');
+  r.box.find('.chip-mode')[0].click();
+  assert.equal(rowsOf(r.doc)[0].find('.chip-menu-desc')[0].textContent, 'Asks before every edit');
+});
+
+test('picking a mode calls onMode, an effort calls onConfig; the value already chosen calls nothing', async () => {
+  const r = richChips();
+  r.box.find('.chip-mode')[0].click();
+  rowsOf(r.doc)[2].click();
+  r.box.find('.chip-effort')[0].click();
+  rowsOf(r.doc)[0].click(); // Low: already chosen
+  r.box.find('.chip-effort')[0].click();
+  rowsOf(r.doc)[2].click();
+  await settle();
+  assert.deepEqual(r.calls, [
+    ['mode', 'full'],
+    ['config', 'reasoning_effort', 'high', 'select'],
+  ]);
+});
+
+test('keyboard: Up / Down move (wrapping), Home / End, Enter picks, Escape closes and puts focus back on the chip', async () => {
+  const r = richChips();
+  const chip = r.box.find('.chip-effort')[0];
+  chip.click();
+  const rows = rowsOf(r.doc);
+  assert.equal(r.doc.activeElement, rows[0]);
+  r.doc.activeElement.key('ArrowDown');
+  assert.equal(r.doc.activeElement, rows[1]);
+  r.doc.activeElement.key('ArrowDown');
+  r.doc.activeElement.key('ArrowDown');
+  assert.equal(r.doc.activeElement, rows[0], 'wraps to the top');
+  r.doc.activeElement.key('ArrowUp');
+  assert.equal(r.doc.activeElement, rows[2], 'wraps to the bottom');
+  r.doc.activeElement.key('Home');
+  assert.equal(r.doc.activeElement, rows[0]);
+  r.doc.activeElement.key('End');
+  assert.equal(r.doc.activeElement, rows[2]);
+  const esc = r.doc.activeElement.key('Escape');
+  assert.ok(esc.prevented);
+  assert.equal(menuOf(r.doc), null);
+  assert.equal(r.doc.activeElement, chip, 'focus returns to the chip');
+  chip.click();
+  r.doc.activeElement.key('ArrowDown');
+  const enter = r.doc.activeElement.key('Enter');
+  assert.ok(enter.prevented);
+  assert.equal(menuOf(r.doc), null);
+  assert.equal(r.doc.activeElement, chip, 'after a pick, focus is back on the chip');
+  await settle();
+  assert.deepEqual(r.calls, [['config', 'reasoning_effort', 'medium', 'select']]);
+});
+
+test('after a pick the chips are rebuilt with the new value and the focus stays on that chip', async () => {
+  const settings = JSON.parse(JSON.stringify(RICH));
+  const doc = makeDoc(),
+    box = doc.createElement('div');
+  doc.root.appendChild(box);
+  const o = {
+    onConfig: (id, value) => {
+      settings.configOptions[1].currentValue = value;
+    },
+    onError() {},
+    afterChange: () => chips.render(box, { id: 'f1', settings }, o),
+  };
+  chips.render(box, { id: 'f1', settings }, o);
+  box.find('.chip-effort')[0].click();
+  doc.activeElement.key('End');
+  doc.activeElement.key('Enter');
+  await settle();
+  const chip = box.find('.chip-effort')[0];
+  assert.ok(chip.textContent.includes('High'), chip.textContent);
+  assert.equal(doc.activeElement, chip, 'the rebuilt chip has the focus');
+});
+
+test('keyboard: type-ahead jumps to the next row starting with the typed letters', () => {
+  const r = richChips();
+  r.box.find('.chip-model')[0].click();
+  const rows = rowsOf(r.doc);
+  r.doc.activeElement.key('d');
+  assert.equal(rowText(r.doc.activeElement), 'Deep');
+  r.doc.activeElement.key('d');
+  assert.equal(rowText(r.doc.activeElement), 'Dense', 'the same letter again: the next match');
+  r.doc.activeElement.key('Escape');
+  r.box.find('.chip-model')[0].click();
+  r.doc.activeElement.key('d');
+  r.doc.activeElement.key('e');
+  r.doc.activeElement.key('n');
+  assert.equal(rowText(r.doc.activeElement), 'Dense', 'several letters typed quickly match a prefix');
+  assert.equal(rows.length, 3);
+});
+
+test('between turns of a closed chat the rows are shown but cannot be picked, with the reason', () => {
+  const r = richChips({ disabled: true });
+  r.box.find('.chip-mode')[0].click();
+  const rows = rowsOf(r.doc);
+  assert.ok(rows.every((x) => x.getAttribute('aria-disabled') === 'true'));
+  assert.ok(menuOf(r.doc).textContent.includes('Settings change between turns.'));
+  rows[0].click();
+  assert.deepEqual(r.calls, []);
+});
+
+test('a pointer press outside closes the menu without a pick; a re-render closes it too', () => {
+  const r = richChips();
+  r.box.find('.chip-mode')[0].click();
+  r.doc.fire('mousedown', r.box.find('.chip-mode')[0]); // on the chip: left to its click
+  assert.ok(menuOf(r.doc));
+  r.doc.fire('mousedown', r.doc.root);
+  assert.equal(menuOf(r.doc), null);
+  assert.equal((r.doc.listeners.mousedown || []).length, 0, 'its document listener is removed');
+});
+
+test('placement: above the chip when there is room, below otherwise, always inside the window, long lists scroll', () => {
+  const vp = { width: 1440, height: 900 };
+  let p = chips.place({ top: 840, bottom: 866, left: 300 }, { width: 240, height: 300 }, vp);
+  assert.ok(p.up);
+  assert.equal(p.top, 840 - 4 - 300);
+  assert.equal(p.left, 300);
+  p = chips.place({ top: 40, bottom: 66, left: 1400 }, { width: 240, height: 300 }, vp);
+  assert.ok(!p.up);
+  assert.equal(p.top, 70);
+  assert.equal(p.left, 1440 - 8 - 240, 'pushed back inside the right edge');
+  p = chips.place({ top: 840, bottom: 866, left: 10 }, { width: 240, height: 2000 }, vp);
+  assert.ok(p.up);
+  assert.equal(p.top, 8);
+  assert.equal(p.maxHeight, 840 - 12, 'taller than the room: capped, the list scrolls');
+  p = chips.place({ top: 700, bottom: 726, left: 600 }, { width: 900, height: 200 }, { width: 760, height: 800 });
+  assert.equal(p.left, 8, 'narrow window: as far left as needed');
+});
+
+test('the New chat page: stand-in chips while the lists load, and an Agent chip that is a menu of agents', () => {
+  const picked = [];
+  const { box, doc } = renderChips(
+    {
+      id: 'new-chat',
+      agent: 'Codex',
+      agentId: 'codex',
+      agents: [
+        { id: 'claude', name: 'Claude Code' },
+        { id: 'codex', name: 'Codex' },
+      ],
+      extraChips: [{ id: 'model', label: 'Model', value: 'Checking\u2026', title: 'Asking Codex' }],
+    },
+    { onAgent: (id) => picked.push(id) },
+  );
+  assert.equal(box.find('.chip-model')[0].tag, 'span', 'a stand-in is read-only');
+  assert.ok(box.find('.chip-model')[0].textContent.includes('Checking'));
+  const agent = box.find('.chip-agent')[0];
+  assert.equal(agent.tag, 'button');
+  agent.click();
+  const rows = rowsOf(doc);
+  assert.deepEqual(
+    rows.map((x) => [rowText(x), x.getAttribute('aria-checked')]),
+    [
+      ['Claude Code', 'false'],
+      ['Codex', 'true'],
+    ],
+  );
+  rows[0].click();
+  assert.deepEqual(picked, ['claude']);
 });
 
 test('a refused queued change is reported once, in words, and not repeated for the same failure', () => {
@@ -528,7 +851,7 @@ test('an existing chat shows its agent first, read-only: no picker, no menu', ()
   assert.ok(first.textContent.includes('Claude Code') && first.textContent.includes('C'));
   assert.equal(box.find('select').length, 0, 'no picker once a chat exists');
   assert.equal(first.find('button').length, 0, 'read-only: nothing to click');
-  assert.equal(box.find('.chip-pop-agent').length, 0);
+  assert.equal(box.find('.chip-menu').length, 0);
 });
 
 test('the Ctx chip carries the session details as a hover / focus tooltip, kept current in place', () => {

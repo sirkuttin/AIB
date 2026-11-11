@@ -16,6 +16,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/terminal/list              running chat terminals
  *   POST /api/live/terminal/end               end a chat's terminal
  *   POST /api/live/view-prefs                 save the page's view and appearance preferences (state/view_prefs.ts)
+ *   POST /api/live/agent-options              the model / mode / effort lists a new chat can offer (state/agent_options.ts)
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
@@ -23,6 +24,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/terminal/list', 'read', 'get'],
   ['POST', '/api/live/terminal/end', 'write', 'body'],
   ['POST', '/api/live/view-prefs', 'write', 'body'],
+  ['POST', '/api/live/agent-options', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

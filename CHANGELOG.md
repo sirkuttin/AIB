@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Composer chips (Agent on the New chat page, Model, Mode, Effort) open a menu that lists the choices directly: one click
+  picks, the current one is checked, descriptions show under their option, arrow keys / Enter / Escape / type-ahead work.
+- A new chat offers the agent's models, modes and effort before its first message: AIB remembers the lists each agent
+  reported (agent-options.json in the data folder) and, when it has none, asks the agent once with a quiet session/new.
+  The picks are applied as soon as the session exists, before the first message is sent; a pick the agent no longer
+  offers or refuses is named and the chat starts with the agent's own setting.
+
 ## 0.1.0-beta.3 (beta)
 
 - The tray icon is the colour AIB icon on light and dark taskbars (the app's and the agent host's), not a one-colour glyph.

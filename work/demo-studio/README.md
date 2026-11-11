@@ -23,6 +23,9 @@ Studio runs in-process (`--in-process --no-auto-reconnect --no-owner-announcemen
 (`work/demo-studio/agent.py`) is both the Claude launcher (`--node-command` is the current Python) and the OMP command
 (a tiny `omp.cmd` / `omp` launcher in the demo folder), so either agent in "New chat" works.
 
+Set `AIB_DEMO_MODELS=1` before starting to give the fixture agent a long model list (16 models), three modes with
+descriptions and an effort setting, for checking the composer chip menus.
+
 Keep the demo folder out of paths containing `.claude/worktrees` or `scratch-*`: Studio hides those folders from
 "All chats", which makes the sidebar look empty (this was the "No saved conversations yet" problem). `start.py` refuses
 such a location and tells you to pass `--dir`.

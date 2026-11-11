@@ -2193,3 +2193,97 @@ aside .connection .hold-note .row-project {
   padding-left: 26px;
   padding-right: 12px;
 }
+
+/* ---- choice menus of the composer chips (composer-chips.js openMenu) --------------------------------------------------
+   The row ⋯ menu's look (.organize-menu): one row per choice, a check on the current one, a short description under an
+   option when the agent gives one. The list scrolls inside the menu when it is taller than the room on screen. */
+.organize-menu.chip-menu {
+  min-width: 210px;
+  max-width: min(360px, calc(100vw - 16px));
+  gap: 0;
+  padding: 4px;
+  overflow: hidden;
+}
+.chip-menu-head {
+  padding: 4px 10px 4px 30px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chip-menu-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chip-menu-group {
+  padding: 8px 10px 2px 30px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.organize-menu .chip-menu-item {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 10px 6px 6px;
+  color: var(--text);
+}
+.organize-menu.chip-menu button[aria-checked] {
+  padding-right: 10px;
+}
+.organize-menu.chip-menu button[aria-checked='true']::before {
+  content: none;
+}
+.organize-menu .chip-menu-item[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.6;
+}
+.organize-menu .chip-menu-item[aria-disabled='true']:hover {
+  background: transparent;
+}
+.chip-menu-check {
+  flex: none;
+  width: 20px;
+  color: var(--accent);
+  line-height: 18px;
+  text-align: center;
+}
+.chip-menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.chip-menu-name {
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.chip-menu-item.checked .chip-menu-name {
+  color: var(--text-bright, var(--text));
+}
+.chip-menu-desc {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.chip-menu-tag {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chip-menu .chip-menu-note {
+  display: block;
+  flex: none;
+  max-width: 320px;
+  padding: 6px 10px 4px 30px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
