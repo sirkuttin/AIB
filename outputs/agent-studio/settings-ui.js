@@ -119,6 +119,12 @@
       keywords: ['auto reconnect', 'restart', 'recover', 'open before', 'no-auto-reconnect'],
     },
     {
+      id: 'keeper',
+      section: 'server',
+      label: 'Keep chats running through updates and restarts (keeper)',
+      keywords: ['keeper', 'update', 'restart', 'crash', 'keep running', 'install now', 'one process', 'AIB_KEEPER'],
+    },
+    {
       id: 'server-info',
       section: 'server',
       label: 'State folder, versions and process IDs',
@@ -1389,6 +1395,31 @@
     if (typeof running === 'boolean')
       box.append(note('The agent host that is running now started with this ' + (running ? 'on' : 'off') + '.'));
   }
+  // The keeper switch (server.keeper, off by default for now). It applies at the next start; AIB_KEEPER=1/0 overrides it.
+  function renderKeeper(box) {
+    const saved = !!(S.data && S.data.settings.server && S.data.settings.server.keeper === true);
+    box.append(
+      toggle('Keep chats running through updates and restarts (keeper)', saved, (v) => saveQuiet({ server: { keeper: v } })),
+    );
+    box.append(
+      note(
+        'Running chats are held by a small separate program, the keeper, so restarting AIB, a crash of AIB or Install now never stops them: the next AIB takes them over where they are. Applies the next time AIB starts.',
+      ),
+    );
+    box.append(
+      note(
+        'Turning it off never stops a chat: chats the keeper holds keep running there until they end, and new chats run as before.',
+      ),
+    );
+    const b = S.boot || {},
+      sv = b.server || {};
+    if (sv.keeperOverride === true || sv.keeperOverride === false)
+      box.append(
+        note('AIB_KEEPER=' + (sv.keeperOverride ? '1' : '0') + ' is set where AIB was started; it wins over this switch.'),
+      );
+    else if (b.hostMode)
+      box.append(note('Running now: ' + (b.hostMode === 'keeper' ? 'on (one process; the keeper holds the chats).' : 'off.')));
+  }
   function renderUpdates(box) {
     const server = () => (S.data && S.data.settings.server) || {};
     if (!root.AibUpdates) return;
@@ -1408,7 +1439,7 @@
       ['State folder', b.stateDir || 'unknown'],
       ['Web server PID', b.pid],
       ['Agent host PID', b.hostPid],
-      ['Mode', b.hostMode === 'split' ? 'Web server and separate agent host' : b.hostMode],
+      ['Mode', b.hostMode === 'split' ? 'Web server and separate agent host' : b.hostMode === 'keeper' ? 'One process; running agents are held by the keeper' : b.hostMode],
       ['Web server port', sv.webPort],
       ['Web server started', sv.webStartedAt ? when(sv.webStartedAt) : ''],
       ['Agent host started', sv.hostStartedAt ? when(sv.hostStartedAt) : ''],
@@ -1461,6 +1492,7 @@
     'text-size': renderTextSize,
     'default-view': renderDefaultView,
     'auto-reconnect': renderAutoReconnect,
+    keeper: renderKeeper,
     'server-info': renderServerInfo,
     updates: renderUpdates,
     'server-restart': renderServerRestart,
@@ -1477,6 +1509,7 @@
     'text-size': 'Text size',
     'default-view': 'Default chat view',
     'auto-reconnect': 'Reconnect after a restart',
+    keeper: 'Keep chats running (keeper)',
     'server-info': 'About AIB',
     updates: 'Updates',
     'server-restart': 'Restart the web server',

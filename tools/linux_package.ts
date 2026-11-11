@@ -182,6 +182,67 @@ export async function fixDeb(path: string, name: string): Promise<string[]> {
   return [...edited, ...modes.map((m) => `mode ${m}`)];
 }
 
+/** One regular file as a tar entry: a ustar header (owner root) and the data padded to 512 bytes. */
+export function tarEntry(path: string, data: Uint8Array, mode: number, mtime = Math.floor(Date.now() / 1000)): Uint8Array {
+  if (enc.encode(path).length > 100) throw new Error(`tar path too long: ${path}`);
+  const h = new Uint8Array(512);
+  const put = (at: number, text: string) => h.set(enc.encode(text), at);
+  put(0, path);
+  put(100, mode.toString(8).padStart(7, '0') + '\0');
+  put(108, '0000000\0');
+  put(116, '0000000\0');
+  put(124, data.length.toString(8).padStart(11, '0') + '\0');
+  put(136, mtime.toString(8).padStart(11, '0') + '\0');
+  h[156] = 0x30;
+  put(257, 'ustar\u000000');
+  put(265, 'root');
+  put(297, 'root');
+  h.fill(0x20, 148, 156);
+  put(148, h.reduce((a, b) => a + b, 0).toString(8).padStart(6, '0') + '\0 ');
+  const body = new Uint8Array(Math.ceil(data.length / 512) * 512);
+  body.set(data);
+  return concat([h, body]);
+}
+
+/**
+ * Adds a regular file to a tar (before its end-of-archive blocks), written the way the tar's own entries are ("./usr/..." or
+ * "usr/..."); a file already at that path gets the new data and mode instead. Every other byte is kept.
+ */
+export function addTarFile(tar: Uint8Array, path: string, data: Uint8Array, mode: number): Uint8Array {
+  const norm = path.replace(/^\.\//, '');
+  let found = false;
+  const edited = editTar(tar, (p) => p === norm && (found = true), () => data, (p) => (p === norm ? mode : null));
+  if (found) return edited.tar;
+  let p = 0;
+  let dotSlash = false;
+  while (p + 512 <= tar.length) {
+    const header = tar.subarray(p, p + 512);
+    if (header.every((b) => b === 0)) break;
+    if (p === 0) dotSlash = dec.decode(header.subarray(0, 2)) === './';
+    const size = parseInt(dec.decode(header.subarray(124, 136)).replace(/\0.*$/s, '').trim() || '0', 8);
+    p += 512 + Math.ceil(size / 512) * 512;
+  }
+  const end = p + 1024 <= tar.length ? tar.subarray(p) : new Uint8Array(1024);
+  return concat([tar.subarray(0, p), tarEntry((dotSlash ? './' : '') + norm, data, mode), end]);
+}
+
+/** Adds a file to a .deb's data.tar.gz (rewritten in place). Its folder must already be in the package. */
+export async function addToDeb(path: string, relPath: string, data: Uint8Array, mode: number): Promise<void> {
+  const members = readAr(await Deno.readFile(path));
+  const member = members.find((m) => m.name === 'data.tar.gz');
+  if (!member) throw new Error(`${path}: no data.tar.gz member`);
+  const tar = await gunzip(member.data);
+  const folder = relPath.replace(/[^/]*$/, '');
+  let has = false;
+  editTar(tar, (p) => {
+    if (p.startsWith(folder)) has = true;
+    return false;
+  }, (_p, d) => d);
+  if (!has) throw new Error(`${path}: nothing in ${folder}; did the package layout change?`);
+  member.data = await gzip(addTarFile(tar, relPath, data, mode));
+  await Deno.writeFile(path, writeAr(members));
+}
+
 // ---- squashfs (AppImage) -----------------------------------------------------------------------------------------------
 
 const META = 8192;
@@ -494,19 +555,19 @@ function le(size: number, fill: (v: DataView) => void): Uint8Array {
 export function writeSquashfs(fs: Squashfs): Uint8Array {
   const tail: Uint8Array[] = [];
   let end = fs.dataEnd;
-  // New file contents: one uncompressed block each, appended to the data area (a file under one block needs no fragment).
+  // New file contents: uncompressed blocks appended to the data area; the last block may be short (no fragment needed).
   const fresh = (node: SqNode) => {
     if (node.kind === 'dir') return node.children!.forEach(fresh);
     if (!node.newData) return;
-    if (node.newData.length >= fs.blockSize) {
-      throw new Error('replacement files must be smaller than one block');
-    }
     node.blocksStart = BigInt(end);
     node.fileSize = BigInt(node.newData.length);
     node.sparse = 0n;
     node.fragment = NONE32;
     node.fragOffset = 0;
-    node.blockSizes = node.newData.length ? [node.newData.length | 0x1000000] : [];
+    node.blockSizes = [];
+    for (let at = 0; at < node.newData.length; at += fs.blockSize) {
+      node.blockSizes.push(Math.min(fs.blockSize, node.newData.length - at) | 0x1000000);
+    }
     tail.push(node.newData);
     end += node.newData.length;
   };
@@ -735,4 +796,17 @@ export async function fixAppImage(
     concat([file.subarray(0, offset), writeSquashfs(fs)]),
   );
   return changed;
+}
+
+/** Adds a file at the top of an AppImage's squashfs (next to the app's program), or replaces one there. Rewritten in place. */
+export async function addToAppImage(path: string, name: string, data: Uint8Array, mode: number): Promise<void> {
+  const file = await Deno.readFile(path);
+  const offset = appImageOffset(file);
+  const fs = readSquashfs(file.subarray(offset));
+  const root = fs.root;
+  const existing = root.children!.find((c) => c.name === name);
+  if (existing && existing.kind !== 'file') throw new Error(`${path}: ${name} exists and is not a file`);
+  if (existing) existing.newData = data, existing.mode = mode;
+  else root.children!.push({ name, kind: 'file', mode, uid: root.uid, gid: root.gid, mtime: root.mtime, nlink: 1, newData: data });
+  await Deno.writeFile(path, concat([file.subarray(0, offset), writeSquashfs(fs)]));
 }

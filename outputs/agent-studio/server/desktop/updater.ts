@@ -27,6 +27,7 @@ import { APP_VERSION, isDesktopApp } from '../core/app.ts';
 import { spawnDetached } from '../platform/spawn_detached.ts';
 import { cleanEnv, type HelperArgs, type InstallTarget, installTarget } from './update_helper.ts';
 import { PROTOCOL_VERSION } from '../host/host_client.ts';
+import { missingFeatures } from '../keeper/client.ts';
 
 const envGet = (name: string): string | undefined => {
   try {
@@ -510,6 +511,23 @@ export interface Downloaded {
   sha256: string;
   /** The agent-host protocol of that version (from its release.json), when the release said. */
   hostProtocol?: number;
+  /**
+   * What that version needs of a running keeper to take chats over from it (release.json `keeper`: the keeper protocols it speaks
+   * and the keeper features it needs). Absent: a version that cannot take chats over from a keeper.
+   */
+  keeper?: { protocols: number[]; needs: string[] };
+}
+
+/** The keeper this app's chats run in, as Install now needs to know it (UpdateServiceOptions.keeper). */
+export interface KeeperState {
+  /** '' when every working chat runs in this keeper and this app is connected to it; otherwise why not. */
+  reason: string;
+  /** The keeper's protocol and hello features (what the new version's release.json is checked against). */
+  protocol: number;
+  features: string[];
+  version: string;
+  /** The data folder whose keeper it is: the update helper stays connected to it while the files are swapped. */
+  dataDir: string;
 }
 
 export interface UpdateState {
@@ -526,8 +544,18 @@ export interface UpdateServiceOptions {
   autoCheck?: () => boolean;
   /** How many chats are working; a throw (or rejection) counts as unknown, which defers the install. */
   busyChats?: () => number | Promise<number>;
-  /** Ends this web server so the helper can run the installer. The route answers first; the caller defers the real shutdown. */
-  quit?: (() => void) | null;
+  /**
+   * Ends this web server so the helper can run the installer. The route answers first; the caller defers the real shutdown. `release`
+   * true: the chats run in the keeper and the new version takes them over, so this app leaves them running (Studio.release) instead
+   * of stopping them.
+   */
+  quit?: ((release?: boolean) => void) | null;
+  /**
+   * The keeper the chats run in (one AIB process with AIB_KEEPER=1), or null/undefined when there is none. With it, Install now goes
+   * ahead while chats work when the new version can take them over from this keeper (its release.json `keeper`), and the app
+   * releases them instead of stopping them. A throw counts as "no".
+   */
+  keeper?: (() => Promise<KeeperState | null>) | null;
   /**
    * True when working chats survive this app quitting (they run in the separate agent host): "Install now" then goes ahead while
    * chats work, and the new version attaches to the running host. False (in-process mode): an install waits for the chats.
@@ -591,9 +619,10 @@ export class UpdateService {
   readonly root: string;
   autoCheck: () => boolean;
   busyChats: () => number | Promise<number>;
-  quit: (() => void) | null;
+  quit: ((release?: boolean) => void) | null;
   launcher: (args: HelperArgs) => void | Promise<void>;
   readonly chatsKeepRunning: boolean;
+  readonly keeper: (() => Promise<KeeperState | null>) | null;
   readonly appArgs: string[];
   readonly current: string;
   readonly env: Env;
@@ -614,7 +643,9 @@ export class UpdateService {
     this.busyChats = options.busyChats ?? (() => 0);
     this.quit = options.quit ?? null;
     this.chatsKeepRunning = !!options.chatsKeepRunning;
-    this.appArgs = [...(options.appArgs ?? Deno.args)];
+    this.keeper = options.keeper ?? null;
+    // A tray-only start (the keeper's orphan restart) is not how the person runs AIB: the new version opens its window again.
+    this.appArgs = [...(options.appArgs ?? Deno.args)].filter((a) => a !== '--start-in-tray');
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
     this.current = options.current ?? APP_VERSION;
     this.env = options.env ?? Deno.env.toObject();
@@ -875,8 +906,15 @@ export class UpdateService {
       try {
         const raw = await readLimited(found.info.url, 'application/octet-stream', MAX_SUMS_BYTES, this.fetch);
         if (await bytesSha256(raw) === checksumFor(sums, RELEASE_INFO_NAME)) {
-          const protocol = JSON.parse(new TextDecoder().decode(raw)).protocol;
-          if (Number.isInteger(protocol)) this.state.downloaded.hostProtocol = protocol;
+          const info = JSON.parse(new TextDecoder().decode(raw));
+          if (Number.isInteger(info.protocol)) this.state.downloaded.hostProtocol = info.protocol;
+          const k = info.keeper;
+          if (isDict(k) && Array.isArray(k.protocols) && Array.isArray(k.needs)) {
+            this.state.downloaded.keeper = {
+              protocols: k.protocols.filter((p: unknown) => Number.isInteger(p)),
+              needs: k.needs.filter((f: unknown) => typeof f === 'string'),
+            };
+          }
         }
       } catch { /* unknown: Install now then waits for the chats */ }
     }
@@ -899,6 +937,12 @@ export class UpdateService {
       this.#save();
     }
     const busy = await this.#busy();
+    const handover = await this.keeperHandover();
+    if (handover === true && !whenIdle) {
+      // The chats run in the keeper, which outlives this app: the app leaves them there (release), the helper keeps the keeper
+      // company while it swaps the files, and the new version takes every chat over from the keeper's record. Nothing waits.
+      return busy ? { ...await this.#go(true), chats: busy } : await this.#go(true);
+    }
     const keeps = this.keepsChats();
     if (busy && !whenIdle && keeps === true) {
       // The chats run in the agent host, which outlives this app: the new version attaches to it, they keep streaming, and the old
@@ -907,15 +951,43 @@ export class UpdateService {
     }
     if (busy) {
       if (whenIdle) return { state: 'waiting', chats: busy };
-      const why = keeps === 'protocol'
+      const why = handover !== 'off' && handover !== true
+        ? `${KEEPER_WHY[handover] ?? 'This update cannot take the running chats over'}, so it waits until no chat is working (${busy} now).`
+        : keeps === 'protocol'
         ? `This update changes how AIB runs agents, so it waits until no chat is working (${busy} now).`
         : keeps === 'unknown'
         ? `AIB cannot tell whether this update can take over running chats, so it waits until no chat is working (${busy} now).`
         : `${busy} chat(s) are working. Install when they finish, or wait.`;
       throw new UpdateError(why, 'chats_working', { chats: busy });
     }
-    return await this.#go();
+    return await this.#go(handover === true);
   }
+
+  /**
+   * Can Install now leave every chat running in the keeper for the new version to take over? true; otherwise why not: 'off' (no
+   * keeper: the agent-host rules apply), 'release' (the new version's release.json says nothing about the keeper: an older build),
+   * 'protocol' / 'features' (the running keeper is too old for the new version), 'outside' (a working chat runs outside the keeper,
+   * or this app lost the keeper), 'unknown' (the keeper could not be asked).
+   */
+  async keeperHandover(): Promise<true | 'off' | 'release' | 'protocol' | 'features' | 'outside' | 'unknown'> {
+    if (!this.keeper) return 'off';
+    let state: KeeperState | null;
+    try {
+      state = await this.keeper();
+    } catch {
+      return 'unknown';
+    }
+    if (!state) return 'off';
+    if (state.reason) return 'outside';
+    const wants = this.state.downloaded?.keeper;
+    if (!wants) return 'release';
+    if (!wants.protocols.includes(state.protocol)) return 'protocol';
+    if (missingFeatures(state.features, wants.needs).length) return 'features';
+    this.#keeperData = state.dataDir;
+    return true;
+  }
+
+  #keeperData = '';
 
   /**
    * Can Install now leave working chats running? true; 'off' (in-process: the agents die with the app); 'protocol' (the new version
@@ -942,7 +1014,7 @@ export class UpdateService {
     }
   }
 
-  async #go(): Promise<InstallResult> {
+  async #go(release = false): Promise<InstallResult> {
     const got = this.state.downloaded ?? ({} as Partial<Downloaded>);
     const path = got.path ?? '';
     if (!path || !isFile(path) || await fileSha256(path) !== got.sha256) {
@@ -963,8 +1035,9 @@ export class UpdateService {
       target: target.target,
       args: this.appArgs,
       marker: startedMarker(this.root, got.version!),
+      ...(release && this.#keeperData ? { keeper: this.#keeperData } : {}),
     });
-    if (this.quit) this.quit();
+    if (this.quit) this.quit(release);
     return { state: 'installing' };
   }
 
@@ -1020,7 +1093,9 @@ export class UpdateService {
   /** One pass: an automatic check when one is due, and the install the person asked to wait for once no chat is working. */
   async tick(): Promise<void> {
     await this.check(false);
-    if (this.state.installWhenIdle && this.status().state === 'ready' && !await this.#busy()) await this.#go();
+    if (this.state.installWhenIdle && this.status().state === 'ready' && !await this.#busy()) {
+      await this.#go(await this.keeperHandover() === true); // idle chats in the keeper are left to the new version too
+    }
   }
 }
 
@@ -1037,6 +1112,15 @@ export function postUpdateCheck(service: UpdateService, _body: Record<string, un
   service.check(true).catch(() => {});
   return [200, { ...service.status(), checking: true }];
 }
+
+/** Why Install now cannot leave the chats in the keeper (the start of the "waits until no chat is working" message). */
+const KEEPER_WHY: Record<string, string> = {
+  release: 'This update cannot take running chats over from the keeper',
+  protocol: 'The running keeper is too old for this update to take its chats over',
+  features: 'The running keeper is too old for this update to take its chats over',
+  outside: 'Some working chats do not run in the keeper',
+  unknown: 'AIB cannot tell whether the keeper can hand its chats to this update',
+};
 
 const INSTALL_STATUS: Record<string, number> = { chats_working: 409, not_ready: 409, manual: 400 };
 

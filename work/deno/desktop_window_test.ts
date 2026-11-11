@@ -25,8 +25,12 @@ import {
   rateLimiter,
   saveGeometry,
   type Shell,
+  TRAY_ONLY_ITEMS,
+  trayOnlyView,
   type WindowHandle,
 } from '../../outputs/agent-studio/server/desktop/window.ts';
+import { orphanCommand } from '../../outputs/agent-studio/server/host/studio.ts';
+import { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
 import {
   alreadyRunning,
   claim,
@@ -848,6 +852,147 @@ Deno.test('the last port is reused when free (same origin, so localStorage draft
     Deno.writeTextFileSync(`${dir}/desktop-port.json`, '{"port": "x"}');
     assertEquals(lastPortPair(dir, () => true), null);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ---------- keeper gap 2: the keeper's orphan restart starts AIB in the tray, never with a window ----------
+
+async function trayOnlyApp(counts: { working: number; needsYou: number }, answer = false, idleMs = 10_000) {
+  const dir = await Deno.makeTempDir();
+  const { s, shell } = fakeShell(answer);
+  const updates: [string, number, string][] = [];
+  shell.updateTray = (tooltip, index, label) => void updates.push([tooltip, index, label]);
+  const quits: boolean[] = [];
+  const app = new DesktopApp(shell, {
+    url: 'http://127.0.0.1:8890/',
+    stateDir: dir,
+    trayIcon: trayIconPng(),
+    busyCount: () => Promise.resolve(counts.working),
+    trayCounts: () => Promise.resolve({ ...counts }),
+    quit: (stop) => (quits.push(stop), Promise.resolve()),
+    saveDelayMs: 0,
+    watchdogMs: 0,
+    startInTray: true,
+    trayPollMs: 0,
+    trayIdleQuitMs: idleMs,
+  });
+  await app.start();
+  return { app, s, updates, quits, done: () => (app.stop(), Deno.remove(dir, { recursive: true })) };
+}
+
+Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu Open AIB / status / Stop chats and quit', async () => {
+  const counts = { working: 2, needsYou: 1 };
+  const { app, s, updates, quits, done } = await trayOnlyApp(counts);
+  try {
+    assertEquals(s.windows.length, 0, 'nothing pops up over the person\'s work');
+    assertEquals(s.keepers, 1, 'the hidden keeper window keeps the runtime alive');
+    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', '', 'Stop chats and quit']);
+    assertEquals(TRAY_ONLY_ITEMS.map((i) => !!i.disabled), [false, true, false], 'the status line is greyed');
+    assertEquals(updates.at(-1), ['AIB · 1 chat needs you, 1 running', 1, '1 chat needs you, 1 running']);
+    counts.needsYou = 0;
+    await app.trayTick();
+    assertEquals(updates.at(-1), ['AIB · 2 chats running', 1, '2 chats running']);
+    // A left click or Open AIB makes the window as usual.
+    s.tray!.onMenu('open');
+    await until(() => s.windows.length === 1, 'the window opens');
+    assertEquals(s.windows[0].urls, ['http://127.0.0.1:8890/']);
+    assertEquals(quits, []);
+  } finally {
+    await done();
+  }
+});
+
+Deno.test('tray-only start: Stop chats and quit asks first; Cancel keeps everything, OK stops the chats and quits', async () => {
+  const counts = { working: 1, needsYou: 0 };
+  const cancel = await trayOnlyApp(counts, false);
+  try {
+    cancel.s.tray!.onMenu('stop');
+    await until(() => cancel.s.questions.length === 1, 'the question');
+    assert(cancel.s.questions[0].startsWith('Stop chats and quit AIB?'), cancel.s.questions[0]);
+    assert(cancel.s.questions[0].includes('1 chat running'), cancel.s.questions[0]);
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(cancel.quits, []);
+  } finally {
+    await cancel.done();
+  }
+  const ok = await trayOnlyApp(counts, true);
+  try {
+    ok.s.tray!.onMenu('stop');
+    await until(() => ok.quits.length === 1, 'quit');
+    assertEquals(ok.quits, [true], 'stop the agents');
+    assertEquals(ok.s.trayRemoved, 1, 'no dead icon left behind');
+  } finally {
+    await ok.done();
+  }
+});
+
+Deno.test('tray-only start: quits by itself once nothing has worked for a while, unless the window was opened', async () => {
+  const counts = { working: 1, needsYou: 0 };
+  const a = await trayOnlyApp(counts, false, 5000);
+  try {
+    const t0 = Date.now();
+    await a.app.trayTick(t0);
+    counts.working = 0;
+    await a.app.trayTick(t0 + 1000);
+    await a.app.trayTick(t0 + 5500);
+    assertEquals(a.quits, [], 'not yet: idle for 4.5 s');
+    await a.app.trayTick(t0 + 6100);
+    assertEquals(a.quits, [false], 'idle 5.1 s: quit, chats not stopped by force');
+  } finally {
+    await a.done();
+  }
+  const b = await trayOnlyApp({ working: 0, needsYou: 0 }, false, 5000);
+  try {
+    b.s.tray!.onClick();
+    await until(() => b.s.windows.length === 1, 'the window opens');
+    const t0 = Date.now();
+    await b.app.trayTick(t0);
+    await b.app.trayTick(t0 + 60_000);
+    assertEquals(b.quits, [], 'the person opened the window: AIB stays');
+  } finally {
+    await b.done();
+  }
+  assertEquals(trayOnlyView(0, 0).status, 'No chat is working');
+});
+
+Deno.test('tray-only start: the orphan command adds --start-in-tray for the desktop app only; an update drops it again', () => {
+  assertEquals(orphanCommand([], true).args!.slice(-1), ['--start-in-tray']);
+  assertEquals(orphanCommand(['--port', '8821'], true).args!.slice(-3), ['--port', '8821', '--start-in-tray']);
+  assertEquals(orphanCommand(['--start-in-tray'], true).args!.filter((a) => a === '--start-in-tray').length, 1);
+  assert(!orphanCommand(['serve', '--port', '8821'], true).args!.includes('--start-in-tray'), 'serve has no window to keep away');
+  assert(!orphanCommand([], false).args!.includes('--start-in-tray'), 'a source run has no window either');
+  const dir = Deno.makeTempDirSync();
+  try {
+    const service = new UpdateService(dir, { appArgs: ['--port', '8821', '--start-in-tray'], autoCheck: () => false });
+    assertEquals(service.appArgs, ['--port', '8821'], 'the new version opens its window again');
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test('tray-only start: a data folder already taken exits quietly (no window asked to show, no message box)', async () => {
+  const dir = await Deno.makeTempDir();
+  const { s, shell } = fakeShell(true);
+  const other = await claimFolder(dir, { mode: 'desktop' });
+  try {
+    assert(other.primary);
+    let code: number | null = null;
+    await guardDataFolder(dir, {
+      mode: 'desktop',
+      quiet: true,
+      say: () => {},
+      notice: async (m) => void (await shell.ask(m)),
+      exit: (c) => {
+        code = c;
+        throw new Error('exit');
+      },
+    }).catch(() => {});
+    assertEquals(code, 0);
+    assertEquals(s.questions, [], 'no message box');
+    assertEquals(await takeSignal(dir), false, 'the running app is not asked to show its window');
+  } finally {
+    if (other.primary) other.release();
     await Deno.remove(dir, { recursive: true });
   }
 });

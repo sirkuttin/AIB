@@ -1,4 +1,5 @@
 """Contract: the auth gate, page files and bootstrap, over HTTP only (runs against either server; see server_under_test.py)."""
+import os
 import pathlib
 import re
 import sys
@@ -40,6 +41,11 @@ class GateContract(unittest.TestCase):
         with Server(kind='python') as reference:
             mine, theirs = self.server.bootstrap().json(), reference.bootstrap().json()
         self.assertEqual(sorted(mine), sorted(theirs))
+        # 'keeperOverride' is Deno-only (AIB_KEEPER=1/0 set where AIB started; the reference has no keeper): sent only with an override.
+        override = mine['server'].pop('keeperOverride', None)
+        if override is not None:
+            self.assertIn(os.environ.get('AIB_KEEPER'), ('0', '1'))
+            self.assertIs(override, os.environ['AIB_KEEPER'] == '1')
         self.assertEqual(sorted(mine['server']), sorted(theirs['server']))
         self.assertEqual(sorted(mine['features']), sorted(theirs['features']))
         for key in ('launchNonce', 'connections', 'migration', 'hostTakeoverWaiting', 'sandboxNotice', 'hostCodeWarning', 'packageContext'):

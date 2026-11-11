@@ -71,7 +71,13 @@ export function writeTrayState(role: string, state: Record<string, unknown>): vo
   try {
     const sep = Deno.build.os === 'windows' ? '\\' : '/';
     const path = `${folder}${sep}${role}-${Deno.pid}.json`;
-    Deno.writeTextFileSync(`${path}.tmp`, JSON.stringify({ role, pid: Deno.pid, at: Date.now(), ...state }));
+    // Merged over what this process wrote before: the app's icon is reported from two places (native.ts once the Windows icon is up,
+    // with its icon handles; window.ts with the tray-only status line), and the later write must not drop the other's fields.
+    let before: Record<string, unknown> = {};
+    try {
+      before = JSON.parse(Deno.readTextFileSync(path));
+    } catch { /* first write */ }
+    Deno.writeTextFileSync(`${path}.tmp`, JSON.stringify({ ...before, role, pid: Deno.pid, at: Date.now(), ...state }));
     Deno.renameSync(`${path}.tmp`, path);
   } catch { /* tests only */ }
 }

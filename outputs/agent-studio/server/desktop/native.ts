@@ -170,6 +170,8 @@ export function nativeShell(): Shell {
   let keeper: WindowHandle | null = null;
   let tray: Any = null; // held for the app's life, so the native icon is never collected
   let windowsTray: WindowsTray | null = null;
+  let trayItems: TrayItem[] = [];
+  const menuOf = (items: TrayItem[]) => items.map((i) => ({ item: { label: i.label, id: i.id, enabled: !i.disabled } }));
   const denoTray = (
     icon: Uint8Array,
     tooltip: string,
@@ -182,7 +184,7 @@ export function nativeShell(): Shell {
       tray.setIcon(icon);
     } catch { /* the OS default */ }
     tray.setTooltip(tooltip);
-    tray.setMenu(items.map((i) => ({ item: { label: i.label, id: i.id, enabled: true } })));
+    tray.setMenu(menuOf(items));
     tray.addEventListener('click', () => onClick());
     tray.addEventListener('menuclick', (e: Any) => onMenu(String(e?.detail?.id ?? '')));
   };
@@ -207,6 +209,7 @@ export function nativeShell(): Shell {
     ) {
       // Windows: Deno.Tray's icon never gets its clicks (tray_win.ts), so AIB runs its own icon on a worker thread; Deno.Tray only
       // if that can't start. Elsewhere Deno.Tray.
+      trayItems = items.map((i) => ({ ...i }));
       if (Deno.build.os === 'windows') {
         void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m)).then((t) => {
           if (t) windowsTray = t;
@@ -216,6 +219,18 @@ export function nativeShell(): Shell {
         return;
       }
       denoTray(icon, tooltip, items, onClick, onMenu);
+    },
+    updateTray(tooltip: string, index: number, label: string) {
+      if (trayItems[index]) trayItems[index].label = label;
+      if (windowsTray) {
+        windowsTray.setItemLabel(index, label, !!trayItems[index]?.disabled);
+        windowsTray.setTooltip(tooltip);
+        return;
+      }
+      try {
+        tray?.setTooltip(tooltip);
+        tray?.setMenu(menuOf(trayItems));
+      } catch { /* not fatal */ }
     },
     removeTray() {
       windowsTray?.remove();
