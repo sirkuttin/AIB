@@ -35,6 +35,7 @@ export interface SettingsLike {
       builtin: Record<string, boolean>;
       custom: CustomAgent[];
       beta?: Record<string, boolean>;
+      betaOff?: Record<string, boolean>;
       betaKeys?: Record<string, string>;
       betaUrls?: Record<string, string>;
     };
