@@ -48,6 +48,15 @@ const EDIT_HELP = 'Ops, applied in order, all or nothing (a refused call changed
   '{"op":"table_col_delete",…,"at":<col>,"ifRev":<rev>}; merged cells: {"op":"table_merge",…,"cells":[[<row>,<col>],[<row>,<col>]],' +
   '"ifRev":<rev>} (two corners, 0-based squares, row 0 = the first row), {"op":"table_split",…,"at":[<row>,<col>],"ifRev":<rev>}, ' +
   '{"op":"table_header",…,"row":true|false,"col":true|false,"ifRev":<rev>}; split merged cells before adding or removing rows/columns\n' +
+  '- charts (bar or line; the chart owns its numbers, a small table inside it): make one "as":"blocks" with ' +
+  '[{"type":"chart","attrs":{"title":"Conversion by week","chartType":"bar"|"line","caption":"…"},"data":[["Week","Old form","Checkout v2"],["Week 1",3.1,3.3],["Week 2",3.0,3.4]]}] ' +
+  '(row 0 = series names, column 0 = labels, up to 6 series, numbers or empty cells), or copy a table\'s numbers once: ' +
+  '{"op":"chart_from_table","target":{"kind":"blocks","ids":["<table id>"]},"attrs":{"title":"…","chartType":"line"}} (a new chart ' +
+  'after the table; later table edits do not change it). doc_read shows a chart\'s `data` and its table\'s rows and cells with ids and ' +
+  'h: change one number with a replace of that cell\'s paragraph ("as":"text", its ifHash + ifRev; a number the user changed after ' +
+  'your read is refused: theirs stays), rows and series with table_row_insert/delete and table_col_insert/delete on the chart\'s ' +
+  'table id, title/type/caption with set on the chart id ({"title":"…"}, {"chartType":"line"}, {"caption":"…"}). A word in a number ' +
+  'cell or a 7th series is refused bad_chart.\n' +
   'Refusals: missing_guard, guard_mismatch (shows the block as it stands: their edit wins), find_none (read again, quote what it says ' +
   'now), block_gone, atom_in_range (a break/image/HTML tag inside the changed words: quote around it), cell_count, last_block, bad_op. ' +
   '"force":true only when the user told you to overwrite their text.\n' +
@@ -87,7 +96,7 @@ export const DOC_TOOLS: Json[] = [
       'default the first). mode "outline" (the pages with their ids, titles and block counts, then the page\'s headings + top-level ' +
       'blocks with a preview: start here), "full" (default: every block of the page in order with `id`, `h`, `md`; lists, quotes ' +
       'and tables list their `kids`; callouts, columns and toggles too; `attrs`: callout variant, column width, cell colspan/rowspan, ' +
-      'align; `styles`: coloured/highlighted char ranges), "block" + id (that block, on any page, and all inside it, with its whole Markdown), "search" + ' +
+      'align, chart title/chartType/caption; `styles`: coloured/highlighted char ranges; a chart\'s `data`: its numbers as rows), "block" + id (that block, on any page, and all inside it, with its whole Markdown), "search" + ' +
       'query (text blocks holding the words, with char ranges and `page`; every page unless "page"). Keep the `rev`: guards and ' +
       'doc_changes use it. ' + DOC_INSTRUCTIONS,
     inputSchema: {

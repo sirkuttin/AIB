@@ -18,6 +18,12 @@
  * guard, so typing in a callout moves the callout's `sub` and an agent's guarded rewrite of it is refused. Colour, highlight and
  * alignment are part of a block's content (its h); a merge or split of table cells is guarded by every cell it touches.
  *
+ * Charts (charts.ts) hold their numbers in a table inside the chart block, so every number is a cell with its own id and guard: an
+ * agent's change to a number the user changed after the agent's read is refused (the user's number stays), changes to other cells
+ * land with the agent's mark (the page tints them). An agent's (or a file's) edit that leaves a chart that is not one (a word in a
+ * number cell, more than MAX_SERIES series, merged cells) is refused; the user's own typing never is. chart_from_table copies a
+ * table's numbers once into a new chart.
+ *
  * Who wrote what. Every transaction has an origin: a page socket (the user), an agent's origin object, the file sync, an agent's
  * undo manager. Text an agent writes carries the agentEdit mark with its name. Undo is per author: the page's undo tracks only its
  * own edits; an agent's doc_undo takes back only its own last call, and only if nobody changed those blocks since.
@@ -62,7 +68,8 @@ import {
   tableGrid,
   TEXTBLOCKS,
 } from './markdown.ts';
-import { ALIGNS, CALLOUT_VARIANTS, HIGHLIGHTS, TEXT_COLORS } from './schema.ts';
+import { ALIGNS, CALLOUT_VARIANTS, CHART_TYPES, HIGHLIGHTS, TEXT_COLORS } from './schema.ts';
+import { CHART_ID, chartFromTable, chartProblem, chartRows, chartTable, newChartId } from './charts.ts';
 import type { WsLink } from '../platform/websocket.ts';
 import { anyDeleted, Comments } from './comments.ts';
 
@@ -128,10 +135,11 @@ export const CONTAINERS = new Set([
   'columns',
   'column',
   'toggle',
+  'chart',
 ]);
 const CELLS = new Set(['tableCell', 'tableHeader']);
 /** Containers that go away with their last child (a list without items, a quote without blocks, a row without cells). */
-const EMPTY_GOES = new Set(['blockquote', 'bulletList', 'orderedList', 'taskList', 'table', 'tableRow', 'callout']);
+const EMPTY_GOES = new Set(['blockquote', 'bulletList', 'orderedList', 'taskList', 'table', 'tableRow', 'callout', 'chart']);
 const MAX_GONE = 5000;
 
 /** Who made a change. One object per author, so Y.UndoManager can track it. */
@@ -167,6 +175,8 @@ export interface BlockView {
   depth?: number;
   /** Who changed it last: 'user', an agent's name, 'file' (a file tool edited the Markdown copy). */
   by?: string;
+  /** A chart: its numbers as they stand, row 0 the series names, column 0 the labels (each cell is a block of the chart's table). */
+  data?: string[][];
 }
 
 /** A refused call: nothing changed. `code` mirrors Claude Docs (missing_guard, guard_mismatch, find_none, block_gone, ...). */
@@ -256,6 +266,7 @@ const OPS = new Set([
   'table_merge',
   'table_split',
   'table_header',
+  'chart_from_table',
 ]);
 /** Table ops guarded by ifRev on the cells they touch (no ifHash). */
 const TABLE_GUARDED = new Set(['table_row_delete', 'table_col_delete', 'table_merge', 'table_split', 'table_header']);
@@ -687,6 +698,11 @@ export class LiveDoc {
       v.kids = [...e.kids];
       const a = this.#attrsOf(e);
       if (a) v.attrs = a;
+      if (e.el!.nodeName === 'chart') {
+        try {
+          v.data = chartRows(jsonOf(e.el!).content?.[0] ?? { type: 'table' });
+        } catch { /* unreadable mid-change */ }
+      }
     } else {
       v.md = e.md;
       const align = e.el!.getAttribute('align');
@@ -918,9 +934,11 @@ export class LiveDoc {
         }
       }
       : undefined;
+    const chartsBefore = chartsIn(copyFrag);
     try {
       copy.transact(() => applyOps(dry, ops as Op[], afterOp));
       validate(dry);
+      checkCharts(copyFrag, chartsBefore);
     } finally {
       copy.destroy();
     }
@@ -1287,7 +1305,7 @@ export class LiveDoc {
     const target = op.target;
     if (!target || typeof target !== 'object') throw new DocRefusal('bad_op', `op ${index}: missing "target"`, { op: index });
     if (
-      op.op === 'insert' || op.op === 'table_row_insert' || op.op === 'table_col_insert'
+      op.op === 'insert' || op.op === 'table_row_insert' || op.op === 'table_col_insert' || op.op === 'chart_from_table'
     ) {
       if (target.kind === 'blocks') {
         for (const id of idsOf(target, index)) this.#onPage(id, page, index);
@@ -1577,8 +1595,18 @@ function shorthand(node: unknown, index: number): PMJson {
   if (!node || typeof node !== 'object' || typeof (node as PMJson).type !== 'string') {
     throw new DocRefusal('bad_op', `op ${index}: each block is an object with a "type"`, { op: index });
   }
-  const { md, summary, ...rest } = node as PMJson & { md?: unknown; summary?: unknown };
+  const { md, summary, data, ...rest } = node as PMJson & { md?: unknown; summary?: unknown; data?: unknown };
   const out: PMJson = { ...rest };
+  if (data !== undefined) {
+    if (out.type !== 'chart' || !Array.isArray(data) || !data.length || !data.every((r) => Array.isArray(r))) {
+      throw new DocRefusal(
+        'bad_op',
+        `op ${index}: "data" is a chart's numbers: rows, the first one the series names ([["Week","Old","New"],["Week 1",3.1,3.3]])`,
+        { op: index },
+      );
+    }
+    out.content = [chartTable(data as unknown[][])];
+  }
   if (md !== undefined) {
     if (typeof md !== 'string') throw new DocRefusal('bad_op', `op ${index}: "md" is Markdown, a string`, { op: index });
     if (TEXTBLOCKS.has(out.type)) out.content = md ? parseInline(md) : [];
@@ -1720,7 +1748,7 @@ function insertAt(
   mark: boolean,
 ): Y.XmlElement[] {
   const parentType = nameOf(ctx, parent);
-  const ready = mark ? nodes.map((n) => withMark(n, ctx.mark, parentType)) : nodes;
+  const ready = (mark ? nodes.map((n) => withMark(n, ctx.mark, parentType)) : nodes).map(withChartIds);
   for (const n of ready) {
     try {
       schema.nodeFromJSON(n).check();
@@ -1913,6 +1941,10 @@ const SET_CHECKS: Record<string, (v: unknown) => boolean> = {
   intent: (v) => typeof v === 'string',
   variant: (v) => CALLOUT_VARIANTS.includes(v as string),
   width: (v) => v === null || (typeof v === 'number' && v >= 0.1 && v <= 0.9),
+  chartType: (v) => CHART_TYPES.includes(v as string),
+  title: (v) => typeof v === 'string' && v.length <= 200,
+  caption: (v) => typeof v === 'string' && v.length <= 500,
+  chart: () => false, // a chart's id is AIB's
 };
 const KINDS: Record<string, string> = { bullet: 'bulletList', ordered: 'orderedList', check: 'taskList' };
 
@@ -1955,6 +1987,8 @@ function applyOp(ctx: Ctx, op: Op, index: number): void {
         return setOp(ctx, op, index);
       case 'style':
         return styleOp(ctx, op, index);
+      case 'chart_from_table':
+        return chartFromTableOp(ctx, op, index);
       default:
         return tableOp(ctx, op, index);
     }
@@ -2328,4 +2362,60 @@ function validate(ctx: Ctx): void {
       );
     }
   }
+}
+
+/** A chart without an id gets one (the file of its picture is named by it). */
+function withChartIds(n: PMJson): PMJson {
+  if (n.type === 'chart') {
+    const id = String(n.attrs?.chart ?? '');
+    return CHART_ID.test(id) ? n : { ...n, attrs: { ...(n.attrs ?? {}), chart: newChartId() } };
+  }
+  return n.content ? { ...n, content: n.content.map(withChartIds) } : n;
+}
+
+/** The charts of a page (element -> its content), to tell which ones a call made or changed. */
+function chartsIn(frag: Y.XmlFragment): Map<Y.XmlElement, string> {
+  const out = new Map<Y.XmlElement, string>();
+  const walk = (p: Y.XmlFragment) => {
+    for (const c of p.toArray()) {
+      if (!(c instanceof Y.XmlElement)) continue;
+      if (c.nodeName === 'chart') out.set(c, c.toString());
+      else if (CONTAINERS.has(c.nodeName)) walk(c);
+    }
+  };
+  walk(frag);
+  return out;
+}
+
+/** After the dry run: every chart the ops made or changed is still a chart (numbers in its number cells, up to MAX_SERIES series). */
+function checkCharts(frag: Y.XmlFragment, before: Map<Y.XmlElement, string>): void {
+  for (const [el, now] of chartsIn(frag)) {
+    if (before.get(el) === now) continue;
+    const problem = chartProblem(jsonOf(el));
+    if (problem) throw new DocRefusal('bad_chart', `Not changed: ${problem}.`);
+  }
+}
+
+/**
+ * chart_from_table: a new chart right after the table (after the callout it sits in: a callout holds no chart), with a copy of the
+ * table's cells as they stand. A copy, once: the chart keeps its own numbers; later edits to the table leave it alone.
+ */
+function chartFromTableOp(ctx: Ctx, op: Op, index: number): void {
+  const ids = idsOf(op.target, index);
+  const table = need(ctx, ids[0], index);
+  if (table.nodeName !== 'table') throw new DocRefusal('bad_op', `op ${index}: chart_from_table targets a table's id`, { op: index });
+  if ((table.parent as Y.XmlElement | null)?.nodeName === 'chart') {
+    throw new DocRefusal('bad_op', `op ${index}: that table is a chart's numbers already`, { op: index });
+  }
+  const a = (op.attrs ?? {}) as Attrs;
+  for (const k of Object.keys(a)) {
+    if (!['title', 'chartType', 'caption'].includes(k) || !SET_CHECKS[k](a[k])) {
+      throw new DocRefusal('bad_op', `op ${index}: chart_from_table takes "attrs" title, chartType (bar|line), caption`, { op: index });
+    }
+  }
+  let anchor: Y.XmlElement = table;
+  for (let p = anchor.parent; p instanceof Y.XmlElement && p.nodeName === 'callout'; p = anchor.parent) anchor = p;
+  const { parent, at } = parentOf(anchor);
+  const chart = chartFromTable(jsonOf(table), a as { title?: string; chartType?: string; caption?: string });
+  insertAt(ctx, parent, op.side === 'before' ? at : at + 1, [chart], true);
 }

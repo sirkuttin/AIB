@@ -20,6 +20,10 @@
  *   textColor   mark, `color` by name (TEXT_COLORS); highlight: mark, `color` by name (HIGHLIGHTS: no teal or blue, the agent tints)
  *   align       left | center | right on paragraphs and headings (table cells have TipTap's own `align`); cells merge with
  *               colspan/rowspan, header row/column = tableHeader cells
+ *   chart       a bar or line chart that owns its numbers: a small table inside it (row 0 = the series names, column 0 = the labels,
+ *               up to MAX_SERIES series, number cells; every cell has its own id and guard like any table's). `chart` is its id (its
+ *               picture next to the Markdown copies: assets/<chart>.chart.svg, server/docs/charts.ts), `chartType` bar | line,
+ *               `title`, `caption`. "Make chart from this table" copies a table's numbers once: no live link
  * Changes here change both sides: rebuild the page bundle (tools/docs-vendor) in the same commit.
  */
 import { type AnyExtension, Extension, Mark, mergeAttributes, Node } from '@tiptap/core';
@@ -37,12 +41,15 @@ interface DomEl {
 
 export const AGENT_MARK = 'agentEdit';
 /** Bumped whenever the schema changes; the page refuses to bind to a server with another one. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const CALLOUT_VARIANTS = ['info', 'warning', 'success'];
 export const TEXT_COLORS = ['grey', 'red', 'orange', 'green', 'blue', 'purple'];
 export const HIGHLIGHTS = ['yellow', 'green', 'pink', 'purple', 'grey'];
 export const ALIGNS = ['left', 'center', 'right'];
+export const CHART_TYPES = ['bar', 'line'];
+/** A chart's series (number columns after the label column). */
+export const MAX_SERIES = 6;
 /** The blocks a callout holds. */
 const CALLOUT_CONTENT = '(paragraph | heading | bulletList | orderedList | taskList | codeBlock | horizontalRule | pending)+';
 
@@ -178,6 +185,42 @@ export const Toggle = Node.create({
   renderHTML: () => ['div', { 'data-toggle': '', class: 'toggle' }, 0],
 });
 
+/** A chart: its data is the table inside it (row 0 series names, column 0 labels); the page draws it from that table. */
+export const Chart = Node.create({
+  name: 'chart',
+  group: 'block',
+  content: 'table',
+  isolating: true,
+  defining: true,
+  draggable: true,
+  addAttributes() {
+    return {
+      chart: { default: '', parseHTML: (el: DomEl) => el.getAttribute('data-chart') ?? '' },
+      chartType: {
+        default: 'bar',
+        parseHTML: (el: DomEl) => {
+          const t = el.getAttribute('data-chart-type');
+          return t && CHART_TYPES.includes(t) ? t : 'bar';
+        },
+      },
+      title: { default: '', parseHTML: (el: DomEl) => el.getAttribute('data-title') ?? '' },
+      caption: { default: '', parseHTML: (el: DomEl) => el.getAttribute('data-caption') ?? '' },
+    };
+  },
+  parseHTML: () => [{ tag: 'figure[data-chart]' }],
+  renderHTML: ({ node }) => [
+    'figure',
+    {
+      'data-chart': node.attrs.chart,
+      'data-chart-type': node.attrs.chartType,
+      'data-title': node.attrs.title,
+      'data-caption': node.attrs.caption,
+      class: `chart chart-${node.attrs.chartType}`,
+    },
+    0,
+  ],
+});
+
 const colorMark = (name: string, tag: string, names: string[], fallback: string) =>
   Mark.create({
     name,
@@ -255,6 +298,7 @@ export function docExtensions(): AnyExtension[] {
     Columns,
     Column,
     Toggle,
+    Chart,
     TextColor,
     Highlight,
     BlockAlign,

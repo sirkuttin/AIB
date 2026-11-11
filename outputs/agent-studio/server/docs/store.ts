@@ -9,7 +9,7 @@
  *            Agents' file tools may edit them: before every write and every agent call (and on a poll) the store compares each file
  *            with what it last wrote, block by block, and applies only the blocks that changed there, each guarded: a block that
  *            changed in the doc since that copy (the user typed in it) is skipped and recorded in `skipped`, never overwritten.
- *   Assets   <project>/docs/<doc>/assets/: drawings (drawing/assets.ts).
+ *   Assets   <project>/docs/<doc>/assets/: drawings (drawing/assets.ts), charts' pictures <chart>.chart.svg (charts.ts).
  *   Cache    <stateDir>/docs/cache/<key>/doc.bin (the Y.Doc) + meta.json (revs, who changed what, the copies' source maps, the hash of
  *            the doc.aibdoc it was saved with). On open the cache is used only when that hash matches the file; otherwise (a git
  *            pull, a branch switch, a hand edit) the doc is rebuilt from doc.aibdoc. A doc.aibdoc changed on disk while the doc is
@@ -40,6 +40,7 @@ import {
 import { DocRefusal, LiveDoc, type Meta, type Op, type Origin } from './live_doc.ts';
 import type { DocHistory } from './history.ts';
 import { syncDrawings } from './drawing/assets.ts';
+import { fixChartIds, syncCharts } from './charts.ts';
 import {
   AIBDOC,
   type AibDoc,
@@ -642,6 +643,7 @@ export class DocStore {
 
   async #write(doc: OpenDoc): Promise<void> {
     await Deno.mkdir(doc.dir, { recursive: true });
+    fixChartIds(doc.live); // before the copies link their pictures
     const paths = this.#pagePaths(doc);
     const lossy: string[] = [];
     const old: string[] = [];
@@ -669,6 +671,7 @@ export class DocStore {
     doc.lossy = lossy;
     doc.mirrorPath = paths.get(doc.live.firstPage) ?? doc.mirrorPath;
     await syncDrawings(doc);
+    await syncCharts(doc);
     const aib = exportAib(doc.live, doc.title, doc.ids);
     const text = stringifyAib(aib);
     if (text !== doc.aib.text || (await readText(doc.file)) !== text) {

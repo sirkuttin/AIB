@@ -9,7 +9,9 @@
  *      again with more escaping.
  * Rich:  callouts, columns, toggles, text colour, highlight, alignment and merged cells (schema.ts) have no Markdown. Their Markdown is
  *      a readable fallback (richOf: lossy): a callout is a quote starting **Note:** / **Warning:** / **Done:**, columns one after the
- *      other, a toggle its line in bold then its body, colours and alignment dropped, a merged cell's value repeated in each cell.
+ *      other, a toggle its line in bold then its body, colours and alignment dropped, a merged cell's value repeated in each cell, a
+ *      chart its picture (![title](assets/<chart>.chart.svg "caption"), drawn by charts.ts) then its numbers as a table. That picture
+ *      line followed by a table reads back as the chart (bar, its type is not in the Markdown).
  * The file: parseDoc keeps every top-level block's original text (and a list's items', a table's rows'), the blank lines between
  *      them and the line ending. writeDoc writes a doc back reusing the original text of every block whose content is unchanged
  *      (same `sig`), so an untouched file comes out byte for byte and an edit rewrites only the blocks it changed.
@@ -37,7 +39,7 @@ export const TEXTBLOCKS = new Set(['paragraph', 'heading', 'codeBlock', 'pending
 export const LISTS = new Set(['bulletList', 'orderedList', 'taskList']);
 export const ITEMS = new Set(['listItem', 'taskItem']);
 const CELLS = new Set(['tableCell', 'tableHeader']);
-const RICH_NODES = new Set(['callout', 'columns', 'column', 'toggle']);
+const RICH_NODES = new Set(['callout', 'columns', 'column', 'toggle', 'chart']);
 const RICH_MARKS = new Set(['textColor', 'highlight']);
 export const CALLOUT_LABELS: Record<string, string> = { info: 'Note', warning: 'Warning', success: 'Done' };
 
@@ -305,6 +307,37 @@ const para = (content: PMJson[]): PMJson => (content.length ? { type: 'paragraph
 export const DRAWING_SRC = /^(?:\.\/)?(?:[^/\\<>]+\.)?assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.excalidraw\.svg$/;
 export const LEGACY_DRAWING_SRC = /^(?:\.\/)?([^/\\<>]+)\.assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.excalidraw\.svg$/;
 
+/** A chart's picture next to the Markdown copies (server/docs/charts.ts draws it). */
+export const CHART_SRC = /^(?:\.\/)?assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.chart\.svg$/;
+
+export function chartSrc(chart: string): string {
+  return `assets/${chart}.chart.svg`;
+}
+
+/** A paragraph that is just a chart's picture: the chart's id, title and caption; else null. */
+function chartPicture(p: PMJson): { chart: string; title: string; caption: string } | null {
+  if (p.type !== 'paragraph') return null;
+  const img = p.content?.length === 1 ? p.content[0] : null;
+  const a = img?.type === 'image' ? img.attrs ?? {} : null;
+  const m = a && !a.href && !img!.marks?.length ? CHART_SRC.exec(String(a.src ?? '')) : null;
+  return m ? { chart: m[1], title: String(a!.alt ?? ''), caption: String(a!.title ?? '') } : null;
+}
+
+/** A chart's picture line right before a table: the two are the chart (its numbers are the table). */
+function joinCharts(out: Parsed[]): Parsed[] {
+  for (let k = out.length - 2; k >= 0; k--) {
+    const pic = chartPicture(out[k].node);
+    const table = out[k + 1].node;
+    if (!pic || table.type !== 'table') continue;
+    out.splice(k, 2, {
+      node: { type: 'chart', attrs: { chart: pic.chart, chartType: 'bar', title: pic.title, caption: pic.caption }, content: [table] },
+      start: out[k].start,
+      end: out[k + 1].end,
+    });
+  }
+  return out;
+}
+
 /** A paragraph that is just a drawing's picture (no title, no link) is the drawing block. */
 function drawingOf(p: PMJson): PMJson {
   const img = p.content?.length === 1 ? p.content[0] : null;
@@ -494,7 +527,7 @@ function parseBlocks(lines: string[], top = false): Parsed[] {
       } else out.push({ node: drawingOf(para(parseInline(text))), start, end: i });
     }
   }
-  return out;
+  return joinCharts(out);
 }
 
 const TASK = /^\[([ xX])\](?:[ \t]+|$)/;
@@ -1114,6 +1147,15 @@ export function serializeBlock(
       return String(a.text ?? '');
     case 'drawing':
       return serializeInline([{ type: 'image', attrs: { src: a.src, alt: a.caption || null, title: null } }], { level, style });
+    case 'chart': {
+      // its picture, then its numbers as a plain table
+      const pic = serializeInline([{
+        type: 'image',
+        attrs: { src: chartSrc(String(a.chart ?? '')), alt: String(a.title ?? '') || 'Chart', title: String(a.caption ?? '') || null },
+      }], { level, style });
+      const table = node.content?.[0];
+      return table ? pic + '\n\n' + serializeTable(table, {}, level).join('\n') : pic;
+    }
     case 'blockquote':
       return serializeChildren(node.content ?? [], {}, level).split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
     case 'callout': {
