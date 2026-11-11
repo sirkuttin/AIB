@@ -1921,7 +1921,7 @@
       if (subSignature !== target) {
         subSignature = target;
         $('submessages').replaceChildren(
-          text('p', 'Launched by this chat. Studio has no saved transcript of this subagent to show.', 'empty-state'),
+          text('p', 'Launched by this chat. AIB has no saved transcript of this subagent to show.', 'empty-state'),
         );
       }
       return;
@@ -3045,7 +3045,7 @@
   }
   function pseudoNote(c) {
     if (isDiscarded(c) && !c.recovered)
-      return 'This chat\u2019s worktree was discarded. Studio has no saved transcript of it to show, and it cannot be continued.';
+      return 'This chat\u2019s worktree was discarded. AIB has no saved transcript of it to show, and it cannot be continued.';
     return c.recovered
       ? c.recovered.reconnecting
         ? 'AIB is reconnecting this conversation after the restart. Its history loads from the agent; nothing is sent.'

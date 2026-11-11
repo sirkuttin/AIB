@@ -110,7 +110,7 @@ export class ViewPrefs extends JsonFileStore {
       } catch (error) {
         if (!isOSError(error)) throw error;
         this.prefs = before;
-        this.warning = `Studio could not save view preferences: ${errorText(error)}`;
+        this.warning = `AIB could not save view preferences: ${errorText(error)}`;
         throw new ValueError(this.warning);
       }
       this.warning = '';

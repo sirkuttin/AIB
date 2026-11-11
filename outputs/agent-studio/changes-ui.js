@@ -689,7 +689,7 @@
       /* More files than listed: the button at the end of the list shows the rest. Only when git's own output was cut is there no way on. */
       if (data && data.git && data.truncated && !moreLeft(data)) {
         note.textContent =
-          (msg ? msg + ' ' : '') + 'Git reported more changes than Studio can read; some files are not listed.';
+          (msg ? msg + ' ' : '') + 'Git reported more changes than AIB can read; some files are not listed.';
         note.hidden = false;
       }
     }
