@@ -19,17 +19,28 @@ def _re(pattern):
 
 VIEW_CONTEXT_TEST = _re(r'<artifact-view-context\b')
 VIEW_CONTEXT = _re(r'\s*<artifact-view-context\b[^>]*>[\s\S]*?</artifact-view-context\s*>\s*')
-AGENT_MESSAGE = _re(r'^(?:Another Claude session sent a message:\s*)?<agent-message\b([^>]*)>([\s\S]*?)</agent-message>\s*([\s\S]*)\Z')
+AGENT_MESSAGE = _re(r'^(?:Another Claude session sent a message:\s*)?<(agent-message|cross-session-message)\b([^>]*)>([\s\S]*?)</\1>'
+                    r'\s*([\s\S]*)\Z')
 TEAMMATE = _re(r'^<teammate-message\b([^>]*)>([\s\S]*?)</teammate-message>\Z')
 HANDBACK = _re(r'^\s*\[Subagent hand-back\]')
 REPORT_FOLLOWS = _re(r'The report follows:')
-TRAILER = _re(r'^That\s+[“"\']?other Claude session')
+TRAILER = _re(r'^(?:That\s+[“"\']?other Claude session|This came from another Claude session)')
+# Whole user turns the harness writes in plain text (StreamUI.wholeNote): only these exact lead-ins, never one quoted further down.
+HARNESS_TEXT = [
+    _re(r'^(?:<[a-z][\w-]*\s*/>\s*)*(?:The summarized conversation included Artifact content written by people other than you\b'
+        r'[^\n]*\s*)?This session is being continued from a previous conversation\b'),
+    re.compile(r'^\[SYSTEM NOTIFICATION - NOT USER INPUT\]', re.ASCII),
+    re.compile(r'^\[handback-send-enforce\]', re.ASCII),
+    _re(r'^Base directory for this skill:'),
+    _re(r'^The coordinator sent a message while you were working:\s*[\s\S]*?\s*Address this before completing your current task\.\Z'),
+]
 TASK_NOTE = _re(r'<task-notification\b[^>]*>[\s\S]*?</task-notification>')
 TASK_NOTE_START = _re(r'^<task-notification\b')
 # Wrapper blocks the agent's harness injects into a user turn: the same list and peeling as StreamUI (stream-ui.js).
 INJECTED_TAGS = ('system-reminder|side-sessions-event|user-prompt-submit-hook|hook-output|session-start-hook|'
                  'post-tool-use-hook|pre-tool-use-hook|stop-hook|ide_opened_file|ide_selection|ide_diagnostics|'
-                 'environment_details|system_instruction|cross-session-message')
+                 'environment_details|system_instruction|cross-session-message|local-command-caveat|local-command-stdout|'
+                 'local-command-stderr|fork-boilerplate')
 INJECTED_START = _re(r'^<(?:' + INJECTED_TAGS + r')(?![\w-])')
 _BLOCK = r'<(' + INJECTED_TAGS + r')(?![\w-])[^>]*>((?:(?!</\1\s*>)[\s\S])*)</\1\s*>'
 INJECTED_LEAD = _re(r'^\s*' + _BLOCK)
@@ -73,6 +84,8 @@ def strip_injected(text):
     """StreamUI.stripInjected: the person's words of a turn, injected blocks at either end dropped ('' when nothing else is left)."""
     if not ANY_TAG.search(text) or len(_strip(text)) > MAX_CLASSIFIED:   # longer text is left whole, as is_wrapper leaves it
         return text
+    if _whole_wrapper(_strip(text)):   # a relayed message or harness text as a whole: not words with blocks peeled off its ends
+        return text
     rest, count = _peel_injected(text)
     return rest if count else text
 
@@ -82,22 +95,29 @@ def is_wrapper(text):
     s = _strip(text)
     if not s or len(s) > MAX_CLASSIFIED:
         return False
-    m = AGENT_MESSAGE.match(s)
-    if m:
-        rest = _strip(m.group(3))
-        if not rest or TRAILER.search(rest):
-            return True
-    if TEAMMATE.match(s):
-        return True
-    if HANDBACK.search(s) and REPORT_FOLLOWS.search(s):
-        return True
-    if not _strip(TASK_NOTE.sub('', s)) and TASK_NOTE_START.search(s):
+    if _whole_wrapper(s):
         return True
     if INJECTED_START.search(s):
         rest, count = _peel_injected(s)
         if count and not rest:
             return True
     return False
+
+
+def _whole_wrapper(s):
+    """is_wrapper without the "only injected blocks" case: the stripped s is one known wrapper or harness text (StreamUI.wholeNote)."""
+    m = AGENT_MESSAGE.match(s)
+    if m:
+        rest = _strip(m.group(4))
+        if not rest or TRAILER.search(rest):
+            return True
+    if any(r.search(s) for r in HARNESS_TEXT):
+        return True
+    if TEAMMATE.match(s):
+        return True
+    if HANDBACK.search(s) and REPORT_FOLLOWS.search(s):
+        return True
+    return bool(not _strip(TASK_NOTE.sub('', s)) and TASK_NOTE_START.search(s))
 
 
 def has_files(event):
