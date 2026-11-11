@@ -1,26 +1,18 @@
-// The doc editor for AIB's page: TipTap (ProseMirror) bound to a Y.Doc with y-prosemirror, synced to AIB's server over a WebSocket
-// with the y-protocols sync and awareness messages. Exposes window.AIBDocEditor.mount(element, options).
+// The doc editor for AIB's page: TipTap bound to a Y.Doc with @tiptap/y-tiptap (TipTap's Collaboration extension), with the schema
+// of server/docs/schema.ts, synced to AIB's server over a WebSocket with the y-protocols sync and awareness messages.
+// Exposes window.AIBDocEditor: mount(element, options), plus schema checks the server's tests use (schemaSummary, docJSON, encode).
 import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
-import { Editor, Mark, mergeAttributes } from '@tiptap/core';
-import StarterKit from '@tiptap/starter-kit';
+import { Editor, getSchema } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
+import { prosemirrorJSONToYDoc, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { docExtensions, SCHEMA_VERSION, schemaSummary } from '../../outputs/agent-studio/server/docs/schema.ts';
 
 const MSG_SYNC = 0, MSG_AWARENESS = 1;
-
-/** Text an agent wrote: the server sets this mark on it; shown tinted, with the agent's name as a tooltip. Never extends to typing. */
-const AgentEdit = Mark.create({
-  name: 'agentEdit',
-  inclusive: false,
-  addAttributes() {
-    return { by: { default: 'agent', parseHTML: (el) => el.getAttribute('data-by'), renderHTML: (a) => ({ 'data-by': a.by, title: 'Written by ' + a.by }) } };
-  },
-  parseHTML: () => [{ tag: 'span[data-agent-edit]' }],
-  renderHTML: ({ HTMLAttributes }) => ['span', mergeAttributes({ 'data-agent-edit': '', class: 'agent-edit' }, HTMLAttributes), 0],
-});
+const FIELD = 'doc';
 
 /** One doc's socket: sync step 1/2 and updates both ways, awareness both ways, reconnect with backoff. */
 class DocSocket {
@@ -100,7 +92,7 @@ function mount(element, options) {
   const editor = new Editor({
     element,
     injectCSS: false,
-    extensions: [StarterKit.configure({ history: false }), AgentEdit, Collaboration.configure({ document: doc, field: 'doc' })],
+    extensions: [...docExtensions(), Collaboration.configure({ document: doc, field: FIELD })],
   });
   return {
     editor,
@@ -114,4 +106,25 @@ function mount(element, options) {
   };
 }
 
-globalThis.AIBDocEditor = { mount, version: 1 };
+let schema = null;
+const theSchema = () => (schema ??= getSchema(docExtensions()));
+
+globalThis.AIBDocEditor = {
+  mount,
+  version: 2,
+  schemaVersion: SCHEMA_VERSION,
+  /** The schema's plain-data fingerprint (schema.ts schemaSummary), for the server-vs-page check. */
+  schemaSummary: () => schemaSummary(theSchema()),
+  /** A Y.Doc update (the server's state) as the page reads it: ProseMirror JSON, checked against the schema. */
+  docJSON(update) {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, update);
+    const node = yXmlFragmentToProseMirrorRootNode(doc.getXmlFragment(FIELD), theSchema());
+    node.check();
+    return node.toJSON();
+  },
+  /** ProseMirror JSON as the page would write it into a fresh Y.Doc: the update. */
+  encode(json) {
+    return Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(theSchema(), json, FIELD));
+  },
+};

@@ -1,0 +1,252 @@
+/**
+ * Local docs' store: the Markdown copy in the project (rewrites only the changed blocks, keeps the rest byte for byte, CRLF kept),
+ * file-tool edits taken in per block and never over the user, saved state, and history in AIB's artifact versions store.
+ */
+import { assert, assertEquals } from './_assert.ts';
+import * as Y from 'yjs';
+import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
+import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
+import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
+import { DocRefusal } from '../../outputs/agent-studio/server/docs/live_doc.ts';
+import { UserClient } from './_docs.ts';
+
+const sep = Deno.build.os === 'windows' ? '\\' : '/';
+type View = { id: string; h: string; md?: string; type: string; kids?: string[]; parent?: string };
+const top = (doc: { live: { read(): unknown } }): View[] => (doc.live.read() as { blocks: View[] }).blocks.filter((b) => !b.parent);
+const inline = (content: string, as = 'markdown') => ({ from: { kind: 'inline', content }, as });
+
+async function tempDirs() {
+  const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-docs-' })).replace(/^\\\\\?\\/, '');
+  const state = `${root}${sep}state`, project = `${root}${sep}project`;
+  await Deno.mkdir(state), await Deno.mkdir(`${project}${sep}docs`, { recursive: true });
+  return { root, state, project, done: () => Deno.remove(root, { recursive: true }).catch(() => {}) };
+}
+
+/** Lines that differ between two texts (same line count assumed unless lines were added). */
+function changedLines(a: string, b: string): [string, string][] {
+  const x = a.split('\n'), y = b.split('\n');
+  const out: [string, string][] = [];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if (x[i] !== y[i]) out.push([x[i], y[i]]);
+  }
+  return out;
+}
+
+const STYLED = [
+  'Title',
+  '=====',
+  '',
+  '* star bullet one',
+  '* star bullet two',
+  '',
+  '|  Name  | Score |',
+  '|--------|------:|',
+  '|  alpha |     1 |',
+  '|  beta  |     2 |',
+  '',
+  'A paragraph with __strong__ words',
+  'wrapped by hand.',
+  '',
+  '~~~js',
+  'let x = 1;',
+  '~~~',
+  '',
+].join('\r\n');
+
+Deno.test('the Markdown copy rewrites only what changed: the rest keeps its exact bytes (CRLF, star bullets, padded tables)', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    const path = `${dirs.project}${sep}docs${sep}styled.md`;
+    await Deno.writeTextFile(path, STYLED);
+    const doc = await store.open(dirs.project, 'styled');
+    await store.flush(doc);
+    assertEquals(await Deno.readTextFile(path), STYLED);
+    const agent = doc.live.originFor('agent', 'claude');
+    // a re-word in the paragraph: only that block's lines change, still CRLF, still __strong__
+    doc.live.edit([{ op: 'replace', target: { kind: 'find', text: 'by hand' }, with: inline('by the agent', 'text') }], agent);
+    await store.flush(doc);
+    let now = await Deno.readTextFile(path);
+    assertEquals(changedLines(STYLED, now), [['wrapped by hand.\r', 'wrapped by the agent.\r']]);
+    // one list item changes: only its line; the other item and the * bullets stay
+    const list = top(doc).find((b) => b.type === 'bulletList')!;
+    const item = (doc.live.read({ id: list.kids![1] }) as { blocks: View[] }).blocks[0];
+    doc.live.edit([{
+      op: 'replace',
+      target: { kind: 'blocks', ids: [item.id] },
+      ifHash: item.h,
+      ifRev: doc.live.rev,
+      with: inline('star bullet 2', 'text'),
+    }], agent);
+    await store.flush(doc);
+    const before = now;
+    now = await Deno.readTextFile(path);
+    assertEquals(changedLines(before, now), [['* star bullet two\r', '* star bullet 2\r']]);
+    // a table row added: one new line, the padded rows stay padded
+    const table = top(doc).find((b) => b.type === 'table')!;
+    doc.live.edit([{ op: 'table_row_insert', target: { kind: 'blocks', ids: [table.id] }, cells: ['gamma', '3'] }], agent);
+    await store.flush(doc);
+    const lines = (await Deno.readTextFile(path)).split('\r\n');
+    assertEquals(lines.slice(6, 11), [
+      '|  Name  | Score |',
+      '|--------|------:|',
+      '|  alpha |     1 |',
+      '|  beta  |     2 |',
+      '| gamma | 3 |',
+    ]);
+    assert(!(await Deno.readTextFile(path)).replace(/\r\n/g, '').includes('\n'), 'all line ends stay CRLF');
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('a file-tool edit to an untouched block is applied; one to a block the user changed is skipped and kept as data for the UI', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    await Deno.writeTextFile(
+      `${dirs.project}${sep}docs${sep}plan.md`,
+      '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n',
+    );
+    const doc = await store.open(dirs.project, 'plan');
+    const user = new UserClient(doc.live);
+    const [, alpha, beta, gamma] = top(doc);
+    doc.live.edit(
+      [{ op: 'insert', target: { kind: 'root' }, side: 'end', source: inline('Delta from the agent.') }],
+      doc.live.originFor('agent', 'claude'),
+    );
+    await store.flush(doc);
+    assertEquals(
+      await Deno.readTextFile(doc.mirrorPath),
+      '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n\nDelta from the agent.\n',
+    );
+    user.type(beta.id, 4, ' (user)');
+    const fileText = '# Plan\n\nAlpha paragraph, edited on disk.\n\nBeta paragraph from the file tool.\n\nGamma paragraph.\n\n' +
+      'New block from the file.\n\nDelta from the agent.\n';
+    await Deno.writeTextFile(doc.mirrorPath, fileText);
+    const skipped = await store.syncMirror(doc);
+    assertEquals(
+      skipped.map((s) => [s.reason, s.id, s.mirror, s.now, s.file]),
+      [['user_changed', beta.id, 'Beta paragraph.', 'Beta (user) paragraph.', 'Beta paragraph from the file tool.']],
+    );
+    const blocks = top(doc);
+    assertEquals(blocks.map((b) => b.md), [
+      '# Plan',
+      'Alpha paragraph, edited on disk.',
+      'Beta (user) paragraph.',
+      'Gamma paragraph.',
+      'New block from the file.',
+      'Delta from the agent.',
+    ]);
+    assertEquals(blocks[1].id, alpha.id); // re-worded in place: the same block
+    assertEquals(blocks[3].id, gamma.id);
+    assertEquals(user.text(beta.id), 'Beta (user) paragraph.');
+    // the file is written again from the doc: the file tool's other edits stay, the user's text wins in Beta
+    assertEquals(await Deno.readTextFile(doc.mirrorPath), fileText.replace('Beta paragraph from the file tool.', 'Beta (user) paragraph.'));
+    assertEquals((store.info(doc).skipped as unknown[]).length, 1);
+    // saved state: a reopened store has the same blocks, ids and rev
+    const rev = doc.live.rev;
+    await store.close();
+    const again = new DocStore(dirs.state, { idleMs: 60_000 });
+    const reopened = await again.open(dirs.project, 'docs/plan.md');
+    assertEquals(top(reopened).map((b) => [b.id, b.md]), blocks.map((b) => [b.id, b.md]));
+    assertEquals(reopened.live.rev, rev);
+    await again.close();
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('the saved state is compacted (one update, not the keystroke log)', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    const doc = await store.open(dirs.project, 'notes', '');
+    const user = new UserClient(doc.live);
+    const [p] = top(doc);
+    for (let i = 0; i < 300; i++) user.type(p.id, i, 'x');
+    for (let i = 0; i < 250; i++) {
+      user.doc.transact(() => (user.block(p.id).get(0) as Y.XmlText).delete(0, 1), user.typing);
+    }
+    await store.flush(doc);
+    const size = (await Deno.stat(`${dirs.state}${sep}docs${sep}${doc.id}${sep}doc.bin`))
+      .size;
+    assert(size < 2000, `state is ${size} bytes`);
+    assertEquals(await Deno.readTextFile(doc.mirrorPath), 'x'.repeat(50) + '\n');
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('history: snapshots in the artifact versions store with by; read a version; restore only when nothing changed since', async () => {
+  const dirs = await tempDirs();
+  const artifacts = new ArtifactStore(`${dirs.root}${sep}artifacts`);
+  const store = new DocStore(dirs.state, { idleMs: 60_000, snapshotIdleMs: 60_000, history: new ArtifactHistory(() => artifacts) });
+  try {
+    const doc = await store.open(dirs.project, 'plan', '# Plan\n\nFirst words.\n');
+    const user = new UserClient(doc.live);
+    assertEquals(store.history(doc).versions.map((v) => (v as { by: string }).by), ['system']); // created
+    const [, p] = top(doc);
+    user.type(p.id, 0, 'My ');
+    // the agent's edit lands on the user's: what the user did is snapshotted first, by "user"
+    doc.live.edit(
+      [{ op: 'insert', target: { kind: 'root' }, side: 'end', source: inline('Agent words.') }],
+      doc.live.originFor('agent', 'claude'),
+    );
+    store.snapshot(doc);
+    const versions = store.history(doc).versions as { n: number; rev: number; by: string }[];
+    assertEquals(versions.map((v) => v.by), ['system', 'user', 'claude']);
+    assertEquals(versions[2].rev, doc.live.rev);
+    assertEquals(store.readVersion(doc, versions[1].n), '# Plan\n\nMy First words.\n');
+    const manifest = artifacts.get(doc.artifactId!);
+    assertEquals([manifest.kind, manifest.sourcePath], ['md', null]);
+    // restore needs ifRev = latest
+    const latest = doc.live.rev;
+    let refused: DocRefusal | null = null;
+    try {
+      await store.restore(doc, versions[1].n, latest - 1, doc.live.originFor('agent', 'claude'));
+    } catch (error) {
+      refused = error as DocRefusal;
+    }
+    assertEquals(refused?.code, 'guard_mismatch');
+    const done = await store.restore(doc, versions[1].n, latest, doc.live.originFor('agent', 'claude'));
+    assertEquals(done.restored, versions[1].n);
+    assertEquals(await Deno.readTextFile(doc.mirrorPath), '# Plan\n\nMy First words.\n');
+    store.snapshot(doc);
+    const after = store.history(doc).versions as { by: string; note: string }[];
+    assertEquals(after.at(-1)!.by, 'claude');
+    assert(after.at(-1)!.note.includes('restored v2'), after.at(-1)!.note);
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('speed: after a keystroke in a 2,000-block doc, the Markdown copy is written fast and only that line changes', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    const text = Array.from({ length: 2000 }, (_, i) => `Paragraph ${i} with some words.`).join('\n\n') + '\n';
+    await Deno.writeTextFile(`${dirs.project}${sep}docs${sep}big.md`, text);
+    let t = performance.now();
+    const doc = await store.open(dirs.project, 'big');
+    const openMs = performance.now() - t;
+    const user = new UserClient(doc.live);
+    user.type(doc.live.topIds()[1234], 0, 'Edited: ');
+    t = performance.now();
+    await store.flush(doc);
+    const flushMs = performance.now() - t;
+    console.log(`2,000 blocks: open from Markdown ${openMs.toFixed(0)} ms, mirror flush after a keystroke ${flushMs.toFixed(0)} ms`);
+    assertEquals(changedLines(text, await Deno.readTextFile(doc.mirrorPath)), [[
+      'Paragraph 1234 with some words.',
+      'Edited: Paragraph 1234 with some words.',
+    ]]);
+    assert(flushMs < 1000, `flush took ${flushMs} ms`);
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});

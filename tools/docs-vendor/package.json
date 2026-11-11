@@ -1,16 +1,21 @@
 {
   "name": "aib-docs-vendor",
   "private": true,
-  "description": "Builds the vendored Yjs (server) and TipTap editor (page) bundles for AIB's local docs. Run: npm install && node build.mjs",
+  "description": "Builds the page's doc editor bundle (outputs/agent-studio/vendor/docs/editor.js) from the same schema the Deno server uses (server/docs/schema.ts). Versions match outputs/agent-studio/deno.json's imports (a test checks). Run: npm install && node build.mjs",
   "type": "module",
   "dependencies": {
-    "@tiptap/core": "2.27.3",
-    "@tiptap/extension-collaboration": "2.27.3",
-    "@tiptap/pm": "2.27.3",
-    "@tiptap/starter-kit": "2.27.3",
+    "@tiptap/core": "3.33.1",
+    "@tiptap/extension-code": "3.33.1",
+    "@tiptap/extension-collaboration": "3.33.1",
+    "@tiptap/extension-image": "3.33.1",
+    "@tiptap/extension-list": "3.33.1",
+    "@tiptap/extension-table": "3.33.1",
+    "@tiptap/pm": "3.33.1",
+    "@tiptap/starter-kit": "3.33.1",
+    "@tiptap/y-tiptap": "3.3.0",
     "esbuild": "0.25.12",
     "lib0": "0.2.120",
-    "y-prosemirror": "1.3.7",
+    "prosemirror-model": "1.25.13",
     "y-protocols": "1.0.7",
     "yjs": "13.6.33"
   }

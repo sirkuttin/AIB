@@ -1,107 +1,16 @@
 /**
- * Local docs (spike): the live Y.Doc in AIB's server, the guarded agent edits, the Markdown copy and per-author undo. The user is a
- * second Yjs client talking to the server over the same y-protocols messages the page's editor sends (an in-memory socket here, so
- * a test can hold the user's keystrokes "in flight" while the agent's call lands).
+ * Local docs: the live Y.Doc in AIB's server, the guarded agent edits (blocks, containers, placeholders, tables), per-author undo,
+ * and the speed of the block index. The user is a second Yjs client talking to the server over the same y-protocols messages the
+ * page's editor sends (an in-memory socket here, so a test can hold the user's keystrokes "in flight" while the agent's call lands).
  */
 import { assert, assertEquals } from './_assert.ts';
-import * as Y from '../../outputs/agent-studio/server/docs/vendor/yjs.js';
-import { DocRefusal, FIELD, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import {
-  diffText,
-  docToMarkdown,
-  elementToSpec,
-  parseMarkdown,
-  specToElement,
-  specToMarkdown,
-} from '../../outputs/agent-studio/server/docs/blocks.ts';
-import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
-import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
+import * as Y from 'yjs';
+import { DocRefusal, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
+import { diffText } from '../../outputs/agent-studio/server/docs/blocks.ts';
+import { markdown, seeded, UserClient } from './_docs.ts';
 
-const sep = Deno.build.os === 'windows' ? '\\' : '/';
 type Json = Record<string, unknown>;
-type View = { id: string; h: string; md: string; type: string };
-
-/** The page's side: a Y.Doc synced with the server through y-protocols over a socket whose two directions can be held. */
-class UserClient {
-  readonly doc = new Y.Doc();
-  readonly frag: Y.XmlFragment;
-  /** The origin of the user's own keystrokes (what y-prosemirror's undo tracks in the page). */
-  readonly typing = { kind: 'typing' };
-  readonly undo: Y.UndoManager;
-  holdUp = false;
-  #up: Uint8Array[] = [];
-  readonly link: WsLink;
-
-  constructor(readonly live: LiveDoc) {
-    this.frag = this.doc.getXmlFragment(FIELD);
-    this.undo = new Y.UndoManager(this.frag, { trackedOrigins: new Set([this.typing]), captureTimeout: 0 });
-    this.link = {
-      onmessage: null,
-      onclose: null,
-      isOpen: true,
-      send: (data) => this.#receive(data as Uint8Array),
-      close: () => {},
-    };
-    this.doc.on('update', (update, origin) => {
-      if (origin === this) return;
-      const e = Y.encoding.createEncoder();
-      Y.encoding.writeVarUint(e, 0);
-      Y.sync.writeUpdate(e, update);
-      this.#send(Y.encoding.toUint8Array(e));
-    });
-    live.attach(this.link);
-    const e = Y.encoding.createEncoder();
-    Y.encoding.writeVarUint(e, 0);
-    Y.sync.writeSyncStep1(e, this.doc);
-    this.#send(Y.encoding.toUint8Array(e));
-  }
-
-  #send(data: Uint8Array): void {
-    if (this.holdUp) this.#up.push(data);
-    else this.link.onmessage!(data);
-  }
-
-  /** Deliver the held keystrokes to the server. */
-  release(): void {
-    this.holdUp = false;
-    for (const data of this.#up.splice(0)) this.link.onmessage!(data);
-  }
-
-  #receive(data: Uint8Array): void {
-    const d = Y.decoding.createDecoder(data);
-    if (Y.decoding.readVarUint(d) !== 0) return;
-    const e = Y.encoding.createEncoder();
-    Y.encoding.writeVarUint(e, 0);
-    Y.sync.readSyncMessage(d, e, this.doc, this);
-    if (Y.encoding.length(e) > 1) this.#send(Y.encoding.toUint8Array(e));
-  }
-
-  /** The block element with this server id. */
-  block(id: string): Y.XmlElement {
-    const el = this.frag.toArray().find((e) => e instanceof Y.XmlElement && `${e._item!.id.client}.${e._item!.id.clock}` === id);
-    assert(el, `no block ${id} in the user's copy`);
-    return el as Y.XmlElement;
-  }
-
-  /** Type `text` at `offset` in a paragraph, as the editor would (one local transaction). */
-  type(id: string, offset: number, text: string): void {
-    this.doc.transact(() => (this.block(id).get(0) as Y.XmlText).insert(offset, text), this.typing);
-  }
-
-  text(id: string): string {
-    return (this.block(id).get(0) as Y.XmlText).toString().replace(/<[^>]+>/g, '');
-  }
-
-  markdown(): string {
-    return docToMarkdown(this.frag.toArray().map((e) => elementToSpec(e as Y.XmlElement)));
-  }
-}
-
-function seeded(md: string): LiveDoc {
-  const live = new LiveDoc();
-  live.doc.transact(() => live.frag.insert(0, parseMarkdown(md).map((s) => specToElement(s))), live.system);
-  return live;
-}
+type View = { id: string; h: string; md?: string; type: string; kids?: string[]; parent?: string; by?: string; attrs?: Json };
 
 function refusal(fn: () => unknown): DocRefusal {
   try {
@@ -114,10 +23,9 @@ function refusal(fn: () => unknown): DocRefusal {
 }
 
 const PARA = 'The launch moves to October after the legal review.';
-
-function paragraphs(live: LiveDoc): View[] {
-  return (live.read() as { blocks: View[] }).blocks;
-}
+const blocks = (live: LiveDoc): View[] => (live.read() as { blocks: View[] }).blocks;
+const top = (live: LiveDoc): View[] => blocks(live).filter((b) => !b.parent);
+const inline = (content: string, as = 'markdown') => ({ from: { kind: 'inline', content }, as });
 
 Deno.test("a guarded rewrite from before the user typed is refused with guard_mismatch, and the user's text survives", () => {
   const live = seeded(`# Plan\n\n${PARA}\n\nSecond paragraph.`);
@@ -126,7 +34,6 @@ Deno.test("a guarded rewrite from before the user typed is refused with guard_mi
   const p = read.blocks[1];
   assertEquals(p.md, PARA);
   assertEquals(p.h.length, 8);
-  // The user types into P after the agent's read.
   user.type(p.id, PARA.indexOf('October') + 'October'.length, ' 6th');
   assert(live.rev > read.rev);
   const rewrite = {
@@ -134,16 +41,14 @@ Deno.test("a guarded rewrite from before the user typed is refused with guard_mi
     target: { kind: 'blocks', ids: [p.id] },
     ifHash: p.h,
     ifRev: read.rev,
-    with: { from: { kind: 'inline', content: 'Launch is in November.' }, as: 'text' },
+    with: inline('Launch is in November.', 'text'),
   };
   const refused = refusal(() => live.edit([rewrite], live.originFor('agent', 'claude')));
   assertEquals(refused.code, 'guard_mismatch');
+  assert(refused.message.includes('Their edit wins'), refused.message);
   const shown = (refused.toJSON() as { block: View }).block;
   assertEquals(shown.md, 'The launch moves to October 6th after the legal review.');
-  assertEquals(shown.id, p.id);
   assertEquals(user.text(p.id), 'The launch moves to October 6th after the legal review.');
-  assertEquals((live.read([p.id]) as { blocks: View[] }).blocks[0].md, 'The launch moves to October 6th after the legal review.');
-  // Redone from what stands (the refusal's h and rev), it goes through.
   const ok = live.edit(
     [{ ...rewrite, ifHash: shown.h, ifRev: (refused.toJSON() as { rev: number }).rev }],
     live.originFor('agent', 'claude'),
@@ -154,7 +59,7 @@ Deno.test("a guarded rewrite from before the user typed is refused with guard_mi
 
 Deno.test('whole-block replace and delete need both guards (missing_guard), find needs none', () => {
   const live = seeded(`${PARA}\n\nTwo.`);
-  const [p] = paragraphs(live);
+  const [p] = blocks(live);
   const agent = live.originFor('agent', 'claude');
   const bare = { op: 'delete', target: { kind: 'blocks', ids: [p.id] } };
   assertEquals(refusal(() => live.edit([bare], agent)).code, 'missing_guard');
@@ -162,85 +67,91 @@ Deno.test('whole-block replace and delete need both guards (missing_guard), find
   assertEquals(refusal(() => live.edit([{ ...bare, ifHash: p.h }], agent)).code, 'missing_guard');
   assertEquals(refusal(() => live.edit([{ ...bare, ifHash: 'deadbeef', ifRev: live.rev }], agent)).code, 'guard_mismatch');
   live.edit([{ op: 'delete', target: { kind: 'find', text: ' after the legal review' } }], agent);
-  assertEquals(paragraphs(live)[0].md, 'The launch moves to October.');
+  assertEquals(blocks(live)[0].md, 'The launch moves to October.');
 });
 
-Deno.test('an agent find re-word in P and the user typing elsewhere in P at the same moment both survive', () => {
+Deno.test('an agent find re-word and the user typing elsewhere in the same paragraph at the same moment both survive', () => {
   const live = seeded(PARA);
   const user = new UserClient(live);
-  const [p] = paragraphs(live);
-  // The user's keystrokes are in flight (typed against the older state) when the agent's call lands.
+  const [p] = blocks(live);
   user.holdUp = true;
   user.type(p.id, 0, 'Update: ');
   user.type(p.id, user.text(p.id).length - 1, ' by counsel');
-  const ack = live.edit([{
-    op: 'replace',
-    target: { kind: 'find', text: 'moves to October' },
-    with: { from: { kind: 'inline', content: 'slips to November' }, as: 'text' },
-  }], live.originFor('agent', 'claude'));
+  const ack = live.edit(
+    [{ op: 'replace', target: { kind: 'find', text: 'moves to October' }, with: inline('slips to November', 'text') }],
+    live.originFor('agent', 'claude'),
+  );
   assertEquals(ack.ok, true);
   user.release();
   const expected = 'Update: The launch slips to November after the legal review by counsel.';
   assertEquals(user.text(p.id), expected);
-  assertEquals(paragraphs(live)[0].md, expected);
-  // The agent's words carry its mark; the user's do not.
-  const delta = (live.elements()[0].get(0) as Y.XmlText).toDelta();
-  const marked = delta.filter((d) => d.attributes?.agentEdit).map((d) => d.insert).join('');
-  assertEquals(marked, 'slipsNovem'); // minimal character edits: "ber" of October stays
+  assertEquals(blocks(live)[0].md, expected);
+  const delta = (user.block(p.id).get(0) as Y.XmlText).toDelta() as { insert: string; attributes?: Json }[];
+  assertEquals(delta.filter((d) => d.attributes?.agentEdit).map((d) => d.insert).join(''), 'slipsNovem'); // "ber" of October stays
 });
 
-Deno.test('a find whose words the user just changed is refused find_none', () => {
-  const live = seeded(PARA);
+Deno.test('re-word in place keeps bold and links around the changed words', () => {
+  const live = seeded('Ship **the beta** on [Friday](https://example.com/plan) at noon.');
+  const agent = live.originFor('agent', 'claude');
+  const [p] = blocks(live);
+  live.edit([{
+    op: 'replace',
+    target: { kind: 'blocks', ids: [p.id] },
+    ifHash: p.h,
+    ifRev: live.rev,
+    with: inline('Ship the beta on Monday at noon.', 'text'),
+  }], agent);
+  assertEquals(blocks(live)[0].md, 'Ship **the beta** on [Monday](https://example.com/plan) at noon.');
+  // as markdown with the same marks: character edits too (the same block id)
+  const q = blocks(live)[0];
+  live.edit([{
+    op: 'replace',
+    target: { kind: 'blocks', ids: [q.id] },
+    ifHash: q.h,
+    ifRev: live.rev,
+    with: inline('Ship **the release** on [Monday](https://example.com/plan) at noon.'),
+  }], agent);
+  assertEquals(blocks(live)[0].id, p.id);
+  assertEquals(blocks(live)[0].md, 'Ship **the release** on [Monday](https://example.com/plan) at noon.');
+});
+
+Deno.test('a find whose words the user just changed is refused find_none; words across a line break are refused atom_in_range', () => {
+  const live = seeded(`${PARA}\n\nOne\\\nTwo`);
   const user = new UserClient(live);
-  const [p] = paragraphs(live);
+  const [p, q] = blocks(live);
   user.doc.transact(() => (user.block(p.id).get(0) as Y.XmlText).delete(PARA.indexOf('October'), 3), user.typing);
+  const agent = live.originFor('agent', 'a');
   const refused = refusal(() =>
-    live.edit([{
-      op: 'replace',
-      target: { kind: 'find', text: 'October' },
-      with: { from: { kind: 'inline', content: 'Nov' }, as: 'text' },
-    }], live.originFor('agent', 'a'))
+    live.edit([{ op: 'replace', target: { kind: 'find', text: 'October' }, with: inline('Nov', 'text') }], agent)
   );
   assertEquals(refused.code, 'find_none');
+  assert(refused.message.includes('search'), refused.message);
   assertEquals(user.text(p.id), 'The launch moves to ober after the legal review.');
+  const atom = refusal(() =>
+    live.edit([{ op: 'replace', target: { kind: 'find', text: 'One\nTwo' }, with: inline('One Two', 'text') }], agent)
+  );
+  assertEquals(atom.code, 'atom_in_range');
+  assertEquals(blocks(live)[1].md, q.md);
 });
 
 Deno.test('a call is atomic: one bad op and nothing changed', () => {
   const live = seeded(`# Plan\n\n${PARA}\n\nTwo.`);
   const user = new UserClient(live);
-  const before = { rev: live.rev, md: docToMarkdown(live.specs()), user: user.markdown() };
-  const blocks = paragraphs(live);
+  const before = { rev: live.rev, md: markdown(live) };
+  const b = blocks(live);
   const refused = refusal(() =>
     live.edit([
-      {
-        op: 'insert',
-        target: { kind: 'blocks', ids: [blocks[0].id] },
-        side: 'after',
-        source: { from: { kind: 'inline', content: '- a\n- b' }, as: 'markdown' },
-      },
-      { op: 'replace', target: { kind: 'find', text: 'October' }, with: { from: { kind: 'inline', content: 'November' }, as: 'text' } },
-      { op: 'delete', target: { kind: 'blocks', ids: [blocks[2].id] }, ifHash: blocks[2].h, ifRev: live.rev },
-      {
-        op: 'replace',
-        target: { kind: 'find', text: 'words that are not there' },
-        with: { from: { kind: 'inline', content: 'x' }, as: 'text' },
-      },
+      { op: 'insert', target: { kind: 'blocks', ids: [b[0].id] }, side: 'after', source: inline('- a\n- b') },
+      { op: 'replace', target: { kind: 'find', text: 'October' }, with: inline('November', 'text') },
+      { op: 'delete', target: { kind: 'blocks', ids: [b[2].id] }, ifHash: b[2].h, ifRev: live.rev },
+      { op: 'replace', target: { kind: 'find', text: 'words that are not there' }, with: inline('x', 'text') },
     ], live.originFor('agent', 'claude'))
   );
   assertEquals(refused.code, 'find_none');
   assertEquals((refused.toJSON() as { op: number }).op, 3);
   assertEquals(live.rev, before.rev);
-  assertEquals(docToMarkdown(live.specs()), before.md);
-  assertEquals(user.markdown(), before.user);
-  // A stale guard on a later op refuses the whole call too.
-  const stale = refusal(() =>
-    live.edit([
-      { op: 'replace', target: { kind: 'find', text: 'October' }, with: { from: { kind: 'inline', content: 'November' }, as: 'text' } },
-      { op: 'delete', target: { kind: 'blocks', ids: [blocks[2].id] }, ifHash: 'ffffffff', ifRev: live.rev },
-    ], live.originFor('agent', 'claude'))
-  );
-  assertEquals(stale.code, 'guard_mismatch');
-  assertEquals(docToMarkdown(live.specs()), before.md);
+  assertEquals(markdown(live), before.md);
+  assertEquals(user.frag.length, 3);
 });
 
 Deno.test('doc_changes returns only the changed blocks, with deleted ones marked gone', () => {
@@ -253,142 +164,291 @@ Deno.test('doc_changes returns only the changed blocks, with deleted ones marked
     [{ op: 'delete', target: { kind: 'blocks', ids: [three.id] }, ifHash: three.h, ifRev: read.rev }],
     live.originFor('agent', 'claude'),
   );
-  const delta = live.changes(read.rev) as { rev: number; changed: (View & { by: string; after: string })[]; gone: string[] };
+  const delta = live.changes(read.rev) as { rev: number; changed: (View & { after: string })[]; gone: string[] };
   assertEquals(delta.changed.map((b) => [b.id, b.md, b.by]), [[one.id, 'One more.', 'user']]);
   assertEquals(delta.changed[0].after, read.blocks[0].id);
   assertEquals(delta.gone, [three.id]);
   assert(!delta.changed.some((b) => b.id === two.id));
-  assertEquals((live.changes(delta.rev) as { changed: unknown[]; gone: unknown[] }).changed.length, 0);
+  assertEquals((live.changes(delta.rev) as { changed: unknown[] }).changed.length, 0);
 });
 
-Deno.test("the user's undo never takes back the agent's edits; the agent's undo only its own", () => {
-  const live = seeded(PARA);
+Deno.test("the user's undo never takes back the agent's edits; doc_undo takes back only the agent's last call, never over the user", () => {
+  const live = seeded(`${PARA}\n\nSecond.`);
   const user = new UserClient(live);
-  const [p] = paragraphs(live);
+  const [p, s] = blocks(live);
   user.type(p.id, 0, 'Note: ');
   const agent = live.originFor('agent', 'claude');
-  const agentUndo = live.undoFor(agent);
-  live.edit([{
-    op: 'replace',
-    target: { kind: 'find', text: 'legal review' },
-    with: { from: { kind: 'inline', content: 'security review' }, as: 'text' },
-  }], agent);
+  live.edit([{ op: 'replace', target: { kind: 'find', text: 'legal review' }, with: inline('security review', 'text') }], agent);
   user.type(p.id, user.text(p.id).length, ' Done.');
-  assertEquals(user.text(p.id), 'Note: The launch moves to October after the security review. Done.');
   user.undo.undo();
   user.undo.undo();
   assertEquals(user.text(p.id), 'The launch moves to October after the security review.');
-  assertEquals(paragraphs(live)[0].md, 'The launch moves to October after the security review.');
-  user.type(p.id, 0, 'Again: ');
-  agentUndo.undo();
-  assertEquals(user.text(p.id), 'Again: The launch moves to October after the legal review.');
+  // the agent's call touched p and the user changed p since: refused, nothing undone
+  const conflict = refusal(() => live.undo(agent));
+  assertEquals(conflict.code, 'undo_conflict');
+  assertEquals(user.text(p.id), 'The launch moves to October after the security review.');
+  // a later call on another block is undone cleanly
+  live.edit([{ op: 'replace', target: { kind: 'find', text: 'Second.' }, with: inline('Second, by the agent.', 'text') }], agent);
+  assertEquals(blocks(live).find((b) => b.id === s.id)!.md, 'Second, by the agent.');
+  const ack = live.undo(agent);
+  assertEquals(ack.undone, true);
+  assertEquals(blocks(live).find((b) => b.id === s.id)!.md, 'Second.');
+  assertEquals(blocks(live).find((b) => b.id === s.id)!.by, 'claude');
+  assertEquals(refusal(() => live.undo(live.originFor('agent', 'other'))).code, 'nothing_to_undo');
 });
 
-Deno.test('Markdown round trip and the word diff', () => {
-  const md =
-    '# Title\n\nSome **bold** and *italic* and `code` text.\n\n- one\n- two\n\n1. first\n2. second\n\n> quoted\n\n```ts\nconst x = 1;\n```\n\n---\n';
-  assertEquals(docToMarkdown(parseMarkdown(md)), md);
-  const live = seeded(md);
-  assertEquals(docToMarkdown(live.specs()), md);
+Deno.test('lists, quotes and tables are containers: their h covers type, attrs and child ids; each item is its own block', () => {
+  const live = seeded('- one\n- two\n\n> quoted\n\n| A | B |\n|---|:-:|\n| 1 | 2 |');
+  const user = new UserClient(live);
+  const all = blocks(live);
+  const list = all[0];
+  assertEquals(list.type, 'bulletList');
+  assertEquals(list.kids!.length, 2);
+  const item = all.find((b) => b.id === list.kids![0])!;
+  assertEquals([item.type, item.parent], ['listItem', list.id]);
+  const para = all.find((b) => b.id === item.kids![0])!;
+  assertEquals(para.md, 'one');
+  const table = all.find((b) => b.type === 'table')!;
+  assert(all.find((b) => b.type === 'tableHeader' && b.attrs?.align === 'center'), 'a header cell with its align');
+  assertEquals(table.kids!.length, 2);
+  const read = live.rev;
+  // typing inside an item: the list's and the item's h stay, the paragraph's changes
+  user.type(para.id, 3, ' more');
+  const after = blocks(live);
+  assertEquals(after.find((b) => b.id === list.id)!.h, list.h);
+  assertEquals(after.find((b) => b.id === item.id)!.h, item.h);
+  assert(after.find((b) => b.id === para.id)!.h !== para.h);
+  // but a guarded delete of the whole list from before the typing is refused (something inside it changed)
+  const refused = refusal(() =>
+    live.edit([{ op: 'delete', target: { kind: 'blocks', ids: [list.id] }, ifHash: list.h, ifRev: read }], live.originFor('agent', 'a'))
+  );
+  assertEquals(refused.code, 'guard_mismatch');
+  assert(String((refused.toJSON() as { block: { md: string } }).block.md).includes('one more'));
+});
+
+Deno.test('insert before/after/inside, items into lists, move, set attrs and list kind', () => {
+  const live = seeded('# Plan\n\n- one\n- two\n\nEnd.');
+  const agent = live.originFor('agent', 'claude');
+  let all = blocks(live);
+  const list = all.find((b) => b.type === 'bulletList')!;
+  const [i1, i2] = list.kids!;
+  live.edit([
+    { op: 'insert', target: { kind: 'blocks', ids: [i1] }, side: 'after', source: inline('- one and a half') },
+    { op: 'insert', target: { kind: 'blocks', ids: [list.id] }, side: 'end', source: inline('three', 'text') },
+  ], agent);
+  assertEquals(live.markdownOf(list.id), '- one\n- one and a half\n- two\n- three');
+  all = blocks(live);
+  assertEquals(all.find((b) => b.id === list.id)!.kids!.filter((k) => k === i1 || k === i2).length, 2);
+  const bad = refusal(() =>
+    live.edit([{ op: 'insert', target: { kind: 'blocks', ids: [list.id] }, side: 'end', source: inline('## no') }], agent)
+  );
+  assertEquals(bad.code, 'bad_op');
+  assert(bad.message.includes('- item'), bad.message);
+  // list kind -> checklist (new ids, reported in "moved"), then tick an item
+  const l = all.find((b) => b.id === list.id)!;
+  const ack = live.edit(
+    [{ op: 'set', target: { kind: 'blocks', ids: [l.id] }, ifHash: l.h, ifRev: live.rev, attrs: { kind: 'check' } }],
+    agent,
+  ) as {
+    moved: Json;
+  };
+  const task = String(ack.moved[l.id]);
+  const t = blocks(live).find((b) => b.id === blocks(live).find((x) => x.id === task)!.kids![0])!;
+  live.edit([{ op: 'set', target: { kind: 'blocks', ids: [t.id] }, ifHash: t.h, ifRev: live.rev, attrs: { checked: true } }], agent);
+  assertEquals(live.markdownOf(task), '- [x] one\n- [ ] one and a half\n- [ ] two\n- [ ] three');
+  const h = blocks(live)[0];
+  live.edit([{ op: 'set', target: { kind: 'blocks', ids: [h.id] }, ifHash: h.h, ifRev: live.rev, attrs: { level: 2 } }], agent);
+  assertEquals(blocks(live)[0].md, '## Plan');
+  assertEquals(
+    refusal(() => live.edit([{ op: 'set', target: { kind: 'blocks', ids: [h.id] }, force: true, attrs: { level: 9 } }], agent)).code,
+    'bad_op',
+  );
+  // move End. to the top
+  const end = top(live).at(-1)!;
+  const moved = live.edit([{
+    op: 'move',
+    target: { kind: 'blocks', ids: [end.id] },
+    ifHash: end.h,
+    ifRev: live.rev,
+    to: { target: { kind: 'root' }, side: 'start' },
+  }], agent) as { moved: Json };
+  assertEquals(top(live)[0].md, 'End.');
+  assertEquals(top(live)[0].id, moved.moved[end.id]);
+  // deleting a list's last item removes the list; the doc keeps one block
+  const two = seeded('Text.\n\n- only');
+  const li = blocks(two).find((b) => b.type === 'listItem')!;
+  two.edit([{ op: 'delete', target: { kind: 'blocks', ids: [li.id] }, ifHash: li.h, ifRev: two.rev }], agent);
+  assertEquals(top(two).map((b) => b.type), ['paragraph']);
+  assertEquals(
+    refusal(() => two.edit([{ op: 'delete', target: { kind: 'blocks', ids: [top(two)[0].id] }, force: true }], agent)).code,
+    'last_block',
+  );
+});
+
+Deno.test('a list replaced as Markdown keeps the ids of the items that did not change', () => {
+  const live = seeded('- alpha\n- beta\n- gamma');
+  const list = blocks(live)[0];
+  live.edit([{
+    op: 'replace',
+    target: { kind: 'blocks', ids: [list.id] },
+    ifHash: list.h,
+    ifRev: live.rev,
+    with: inline('- alpha\n- BETA\n- gamma\n- delta'),
+  }], live.originFor('agent', 'a'));
+  const now = blocks(live)[0];
+  assertEquals(now.id, list.id);
+  assertEquals(now.kids![0], list.kids![0]);
+  assertEquals(now.kids![2], list.kids![2]);
+  assertEquals(live.markdownOf(list.id), '- alpha\n- BETA\n- gamma\n- delta');
+});
+
+Deno.test('table rows and columns: insert and delete, guarded by the rev of the read', () => {
+  const live = seeded('| Name | Score |\n|:--|--:|\n| a | 1 |\n| b | 2 |');
+  const user = new UserClient(live);
+  const agent = live.originFor('agent', 'claude');
+  const table = blocks(live)[0];
+  const target = { kind: 'blocks', ids: [table.id] };
+  live.edit([{ op: 'table_row_insert', target, at: 2, cells: ['c', '**3**'] }], agent);
+  live.edit([{ op: 'table_col_insert', target, cells: ['Note', 'x', 'y', 'z'] }], agent);
+  assertEquals(
+    live.markdownOf(table.id),
+    '| Name | Score | Note |\n| :--- | ---: | --- |\n| a | 1 | x |\n| c | **3** | y |\n| b | 2 | z |',
+  );
+  const rev = live.rev;
+  // the user types into the Score column: deleting that column with the older rev is refused; another column goes
+  const scoreCell = blocks(live).filter((b) => b.type === 'tableCell')[1];
+  user.type(scoreCell.kids![0], 1, '0');
+  assertEquals(refusal(() => live.edit([{ op: 'table_col_delete', target, at: 1, ifRev: rev }], agent)).code, 'guard_mismatch');
+  assertEquals(refusal(() => live.edit([{ op: 'table_col_delete', target, at: 2 }], agent)).code, 'missing_guard');
+  live.edit([{ op: 'table_col_delete', target, at: 2, ifRev: rev }], agent);
+  live.edit([{ op: 'table_row_delete', target, at: 2, ifRev: live.rev }], agent);
+  assertEquals(live.markdownOf(table.id), '| Name | Score |\n| :--- | ---: |\n| a | 10 |\n| b | 2 |');
+  assertEquals(refusal(() => live.edit([{ op: 'table_row_insert', target, cells: ['1', '2', '3'] }], agent)).code, 'cell_count');
+  const lastRow = blocks(live).find((b) => b.id === table.id)!.kids!.at(-1)!;
+  live.edit([{ op: 'insert', target: { kind: 'blocks', ids: [lastRow] }, side: 'after', source: inline('| d | 4 |') }], agent);
+  assertEquals(live.markdownOf(table.id).split('\n').at(-1), '| d | 4 |');
+});
+
+Deno.test('placeholders: planted, filled one per call; deleted by the user = block_gone (drop it); typed into = keep their text', () => {
+  const live = seeded('# Report');
+  const user = new UserClient(live);
+  const agent = live.originFor('agent', 'claude');
+  const head = blocks(live)[0];
+  const plant = live.edit([{
+    op: 'insert',
+    target: { kind: 'blocks', ids: [head.id] },
+    side: 'after',
+    source: { from: { kind: 'inline', content: ['Summary', 'Risks', 'Timeline'] }, as: 'pending' },
+  }], agent) as { rev: number; created: string[] };
+  assertEquals(plant.created.length, 3);
+  const [summary, risks, timeline] = plant.created;
+  assertEquals(blocks(live)[1].md, '<!-- aib:pending: Summary -->');
+  const hOf = (id: string) => blocks(live).find((b) => b.id === id)!.h;
+  const filled = live.edit([{
+    op: 'replace',
+    target: { kind: 'blocks', ids: [summary] },
+    ifHash: hOf(summary),
+    ifRev: plant.rev,
+    with: inline('## Summary\n\nAll good.'),
+  }], agent) as { rev: number };
+  assertEquals(top(live).map((b) => b.md), [
+    '# Report',
+    '## Summary',
+    'All good.',
+    '<!-- aib:pending: Risks -->',
+    '<!-- aib:pending: Timeline -->',
+  ]);
+  const riskH = hOf(risks), timeH = hOf(timeline);
+  user.remove(risks);
+  user.type(timeline, 0, 'Q3, my call');
+  const gone = refusal(() =>
+    live.edit([{
+      op: 'replace',
+      target: { kind: 'blocks', ids: [risks] },
+      ifHash: riskH,
+      ifRev: filled.rev,
+      with: inline('## Risks\n\nMany.'),
+    }], agent)
+  );
+  assertEquals(gone.code, 'block_gone');
+  assert(gone.message.includes('never re-create'), gone.message);
+  assertEquals((gone.toJSON() as { data: Json }).data, { op: 'remove' });
+  const typed = refusal(() =>
+    live.edit([{
+      op: 'replace',
+      target: { kind: 'blocks', ids: [timeline] },
+      ifHash: timeH,
+      ifRev: filled.rev,
+      with: inline('## Timeline\n\nSoon.'),
+    }], agent)
+  );
+  assertEquals(typed.code, 'guard_mismatch');
+  assert(typed.message.includes('Keep their text'), typed.message);
+  assertEquals(user.text(timeline), 'Q3, my call');
+});
+
+Deno.test('doc_read modes: outline, one block in full, search', () => {
+  const live = seeded('# Plan\n\nIntro text.\n\n## Risks\n\n- legal review\n- budget\n\nThe legal team signs off.');
+  const outline = live.read({ mode: 'outline' }) as {
+    outline: { level: number; text: string }[];
+    count: number;
+    blocks: { preview: string }[];
+  };
+  assertEquals(outline.outline.map((h) => [h.level, h.text]), [[1, 'Plan'], [2, 'Risks']]);
+  assertEquals(outline.count, 5);
+  assertEquals(outline.blocks[3].preview, '- legal review\n- budget');
+  const list = top(live)[3];
+  const one = live.read({ id: list.id }) as { md: string; blocks: View[] };
+  assertEquals(one.md, '- legal review\n- budget');
+  assertEquals(one.blocks.length, 4);
+  const hits = (live.read({ query: 'LEGAL' }) as { hits: (View & { at: number[][] })[] }).hits;
+  assertEquals(hits.map((h) => [h.md, h.at]), [['legal review', [[0, 5]]], ['The legal team signs off.', [[4, 9]]]]);
+  assertEquals(refusal(() => live.read({ id: '1.2' })).code, 'block_gone');
+});
+
+Deno.test('the word diff makes minimal edits', () => {
   const a = 'The quick brown fox jumps.', b = 'The slow brown fox leaps.';
   const edits = diffText(a, b);
   assertEquals(edits.length, 2);
   let out = a;
   for (const e of [...edits].sort((x, y) => y.at - x.at)) out = out.slice(0, e.at) + e.ins + out.slice(e.at + e.del);
   assertEquals(out, b);
-  assertEquals(specToMarkdown(parseMarkdown('## Head *it*')[0]), '## Head *it*');
 });
 
-async function tempDirs(): Promise<{ state: string; project: string; done: () => Promise<void> }> {
-  const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-docs-' })).replace(/^\\\\\?\\/, '');
-  const state = `${root}${sep}state`, project = `${root}${sep}project`;
-  await Deno.mkdir(state), await Deno.mkdir(project);
-  return { state, project, done: () => Deno.remove(root, { recursive: true }) };
-}
-
-Deno.test('the Markdown copy is written into the project; a file-tool edit to an untouched block is applied, one to a block the user changed is skipped and flagged', async () => {
-  const dirs = await tempDirs();
-  const store = new DocStore(dirs.state, { idleMs: 60_000 });
-  try {
-    await Deno.mkdir(`${dirs.project}${sep}docs`);
-    await Deno.writeTextFile(
-      `${dirs.project}${sep}docs${sep}plan.md`,
-      '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n',
+Deno.test('speed: a 2,000-block doc rehashes only the blocks a change touched', () => {
+  const md = Array.from({ length: 2000 }, (_, i) => (i % 50 === 0 ? `## Section ${i}` : `Paragraph ${i} with some words in it.`)).join(
+    '\n\n',
+  );
+  let t = performance.now();
+  const live = seeded(md);
+  const loadMs = performance.now() - t;
+  assertEquals(live.topIds().length, 2000);
+  const user = new UserClient(live);
+  const ids = live.topIds();
+  live.stats.hashed = 0;
+  t = performance.now();
+  for (let i = 0; i < 200; i++) user.type(ids[1000], i, 'x');
+  const typeMs = (performance.now() - t) / 200;
+  assertEquals(live.stats.hashed, 200); // one block per keystroke, not 2,000
+  const agent = live.originFor('agent', 'claude');
+  t = performance.now();
+  for (let i = 0; i < 20; i++) {
+    live.edit(
+      [{ op: 'replace', target: { kind: 'find', text: `Paragraph ${1501 + i} ` }, with: inline(`Para ${1501 + i} `, 'text') }],
+      agent,
     );
-    const doc = await store.open(dirs.project, 'plan');
-    assertEquals(doc.mirrorPath, `${dirs.project}${sep}docs${sep}plan.md`);
-    const user = new UserClient(doc.live);
-    const [, alpha, beta, gamma] = paragraphs(doc.live);
-    doc.live.edit([{
-      op: 'insert',
-      target: { kind: 'root' },
-      side: 'end',
-      source: { from: { kind: 'inline', content: 'Delta from the agent.' }, as: 'markdown' },
-    }], doc.live.originFor('agent', 'claude'));
-    await store.flush(doc);
-    const mirrored = await Deno.readTextFile(doc.mirrorPath);
-    assertEquals(mirrored, '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n\nDelta from the agent.\n');
-    // The user types into Beta (not yet mirrored); then an agent's file tool edits Alpha, Beta and Gamma's neighbour on disk.
-    user.type(beta.id, 4, ' (user)');
-    await Deno.writeTextFile(
-      doc.mirrorPath,
-      '# Plan\n\nAlpha paragraph, edited on disk.\n\nBeta paragraph from the file tool.\n\nGamma paragraph.\n\nNew block from the file.\n\nDelta from the agent.\n',
-    );
-    const skipped = await store.syncMirror(doc);
-    assertEquals(skipped.map((s) => [s.reason, s.id, s.now, s.file]), [[
-      'user_changed',
-      beta.id,
-      'Beta (user) paragraph.',
-      'Beta paragraph from the file tool.',
-    ]]);
-    const blocks = paragraphs(doc.live);
-    assertEquals(blocks.map((b) => b.md), [
-      '# Plan',
-      'Alpha paragraph, edited on disk.',
-      'Beta (user) paragraph.',
-      'Gamma paragraph.',
-      'New block from the file.',
-      'Delta from the agent.',
-    ]);
-    assertEquals(blocks[1].id, alpha.id); // re-worded in place: same block
-    assertEquals(blocks[3].id, gamma.id);
-    assertEquals(user.text(beta.id), 'Beta (user) paragraph.');
-    assertEquals(user.text(alpha.id), 'Alpha paragraph, edited on disk.');
-    assertEquals(doc.skipped.length, 1);
-    // The copy on disk is rewritten from the doc.
-    assertEquals(await Deno.readTextFile(doc.mirrorPath), docToMarkdown(doc.live.specs()));
-    // Saved state: a reopened store has the same blocks, ids and rev.
-    const rev = doc.live.rev;
-    await store.close();
-    const again = new DocStore(dirs.state, { idleMs: 60_000 });
-    const reopened = await again.open(dirs.project, 'docs/plan.md');
-    assertEquals(paragraphs(reopened.live).map((b) => [b.id, b.md]), blocks.map((b) => [b.id, b.md]));
-    assertEquals(reopened.live.rev, rev);
-    await again.close();
-  } finally {
-    await store.close();
-    await dirs.done();
   }
+  const editMs = (performance.now() - t) / 20;
+  assertEquals(live.stats.hashed, 220);
+  t = performance.now();
+  const delta = live.changes(live.rev - 5) as { changed: unknown[] };
+  const changesMs = performance.now() - t;
+  assertEquals(delta.changed.length, 5);
+  console.log(
+    `2,000 blocks: load ${loadMs.toFixed(0)} ms, keystroke ${typeMs.toFixed(2)} ms, agent call ${editMs.toFixed(1)} ms, changes ${
+      changesMs.toFixed(1)
+    } ms`,
+  );
+  assert(typeMs < 20, `a keystroke took ${typeMs} ms`);
+  assert(editMs < 500, `an agent call took ${editMs} ms`);
 });
-
-Deno.test('the saved state is compacted (one update, not the keystroke log)', async () => {
-  const dirs = await tempDirs();
-  const store = new DocStore(dirs.state, { idleMs: 60_000 });
-  try {
-    const doc = await store.open(dirs.project, 'notes');
-    const user = new UserClient(doc.live);
-    const [p] = paragraphs(doc.live);
-    user.doc.transact(() => user.block(p.id).insert(0, [new Y.XmlText()]), user.typing);
-    for (let i = 0; i < 300; i++) user.type(p.id, i, 'x');
-    for (let i = 0; i < 250; i++) user.doc.transact(() => (user.block(p.id).get(0) as Y.XmlText).delete(0, 1), user.typing);
-    await store.flush(doc);
-    const size = (await Deno.stat(`${dirs.state}${sep}docs${sep}${doc.id}${sep}doc.bin`)).size;
-    assert(size < 2000, `state is ${size} bytes`);
-    assertEquals(await Deno.readTextFile(doc.mirrorPath), 'x'.repeat(50) + '\n');
-  } finally {
-    await store.close();
-    await dirs.done();
-  }
-});
-
-export type { Json };

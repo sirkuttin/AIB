@@ -1,6 +1,19 @@
 {
   "nodeModulesDir": "none",
   "compilerOptions": { "strict": true },
+  "imports": {
+    "yjs": "npm:yjs@13.6.33",
+    "y-protocols/": "npm:/y-protocols@1.0.7/",
+    "lib0/": "npm:/lib0@0.2.120/",
+    "prosemirror-model": "npm:prosemirror-model@1.25.13",
+    "@tiptap/core": "npm:@tiptap/core@3.33.1",
+    "@tiptap/starter-kit": "npm:@tiptap/starter-kit@3.33.1",
+    "@tiptap/extension-code": "npm:@tiptap/extension-code@3.33.1",
+    "@tiptap/extension-table": "npm:@tiptap/extension-table@3.33.1",
+    "@tiptap/extension-list": "npm:@tiptap/extension-list@3.33.1",
+    "@tiptap/extension-image": "npm:@tiptap/extension-image@3.33.1",
+    "@tiptap/y-tiptap": "npm:@tiptap/y-tiptap@3.3.0"
+  },
   "desktop": { "app": { "name": "AIB", "identifier": "dev.aib.app" } },
   "tasks": {
     "test": "deno run -A ../../tools/test.ts",
