@@ -31,7 +31,7 @@ Deno.test("a clean merge lands only the chat's commits and keeps the user's edit
   ]);
   const log = runGit(box.project, "log", "--format=%s", `${before}..main`)
     .split("\n").filter(Boolean);
-  assertEquals(log.sort(), ["Studio: work from chat My title", "agent commit"]);
+  assertEquals(log.sort(), ["AIB: work from chat My title", "agent commit"]);
   assert(tree(ctx).includes("committed.txt") && tree(ctx).includes("late.txt"));
   assert(!tree(ctx).includes("mine.txt"), "S is never committed");
   assertEquals(show(ctx, "main:tracked.txt"), "one\n");

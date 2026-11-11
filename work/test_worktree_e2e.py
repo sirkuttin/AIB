@@ -493,7 +493,7 @@ class MergeTests(Shared):
         result = chat.merge('My title')
         self.assertEqual((result['state'], result['commits'], result['message']), ('merged', 2, 'Merged into main (2 commits)'))
         log = git(project, 'log', '--format=%s', f'{before}..main').splitlines()
-        self.assertEqual(log, ['Studio: work from chat My title'], 'the user\'s synced edits moved the chat\'s base, so its work lands as one commit')
+        self.assertEqual(log, ['AIB: work from chat My title'], 'the user\'s synced edits moved the chat\'s base, so its work lands as one commit')
         tree = git(project, 'ls-tree', '-r', '--name-only', 'main').split()
         for name in ('a.txt', 'b.txt'):
             self.assertIn(name, tree)

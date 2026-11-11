@@ -333,10 +333,10 @@ const FAILURES: [RegExp, string][] = [
     'Could not reach the npm registry. Check the internet connection and try again.',
   ],
   [/ENOSPC/i, 'The disk is full.'],
-  [/EACCES|EPERM|EBUSY/i, 'Studio could not write to its install folder. Close programs that may be using it and try again.'],
+  [/EACCES|EPERM|EBUSY/i, 'AIB could not write to its install folder. Close programs that may be using it and try again.'],
   [/E404|E403/i, 'npm could not find that exact version of the adapter.'],
   [/EINTEGRITY/i, 'npm rejected the download because its checksum did not match.'],
-  [/ENOENT.*package-lock|EUSAGE|lock file/i, 'The saved lockfile does not match the package. This is a Studio bug.'],
+  [/ENOENT.*package-lock|EUSAGE|lock file/i, 'The saved lockfile does not match the package. This is an AIB bug.'],
 ];
 // deno-lint-ignore no-control-regex
 const LINE_BREAK = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/;
@@ -406,7 +406,7 @@ export class Installer {
     const found = known ? this.allowList()[agentId as string] : null;
     if (!isDict(found) || !found.package || !found.version) {
       // (Python's wording for an install; an uninstall says what was asked.)
-      throw new InstallRefused(verb ? `AIB cannot ${verb} that agent.` : 'Studio cannot install that agent.');
+      throw new InstallRefused(verb ? `AIB cannot ${verb} that agent.` : 'AIB cannot install that agent.');
     }
     return found as AllowEntry;
   }
@@ -423,7 +423,7 @@ export class Installer {
     const length = [...shown].length;
     if (length > MAX_PATH_CHARS) {
       throw new InstallRefused(
-        `The install folder path is ${length} characters long, over the ${MAX_PATH_CHARS} Windows can handle. Start Studio with a shorter --state-dir.`,
+        `The install folder path is ${length} characters long, over the ${MAX_PATH_CHARS} Windows can handle. Start AIB with a shorter --state-dir.`,
       );
     }
     const node = adapters.findNode(this.nodeCommand);

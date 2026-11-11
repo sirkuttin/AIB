@@ -253,7 +253,7 @@ export function buildConfigRequest(settings: unknown, configId: unknown, value: 
     // ACP v2 adapters require the `type` discriminator: "boolean" for switches, "id" for a choice from a list.
     return { configId, type: 'id', value };
   }
-  throw new ValueError('This setting type is not supported by Studio; it is shown read-only');
+  throw new ValueError('This setting type is not supported by AIB; it is shown read-only');
 }
 
 /** Validate a UI mode request against the advertised modes (when the agent advertised any). */

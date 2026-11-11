@@ -169,7 +169,7 @@ def build_config_request(settings, config_id, value):
             raise ValueError('That is not one of this setting\'s listed values')
         # ACP v2 adapters require the `type` discriminator: "boolean" for switches, "id" for a choice from a list.
         return {'configId': config_id, 'type': 'id', 'value': value}
-    raise ValueError('This setting type is not supported by Studio; it is shown read-only')
+    raise ValueError('This setting type is not supported by AIB; it is shown read-only')
 
 
 def check_mode(settings, mode_id):

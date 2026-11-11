@@ -5,7 +5,7 @@ through live_state / live_call, every git step is run here. The registry record 
 branch, snapshot S and diffBase belong to the chat.
 
   1. refuse while the chat is busy, has queued messages, running terminals or running subagents
-  2. commit what is uncommitted in the worktree ("Studio: work from chat <title>")
+  2. commit what is uncommitted in the worktree ("AIB: work from chat <title>")
   3. base moved past the branch: `git merge <base>` in the worktree; conflicts go to the chat as a prompt, and Studio checks the
      answer itself (no unmerged entries, no conflict markers in the files that conflicted, base is an ancestor of HEAD)
   4. under one lock per repository: re-read base's tip (moved: back to 3), refuse on index.lock or a merge/rebase in the folder
@@ -171,7 +171,7 @@ def _plural(count, word):
 
 def commit_message(title):
     title = re.sub(r'\s+', ' ', str(title or '')).strip()[:80]
-    return f'Studio: work from chat {title}' if title else 'Studio: work from chat'
+    return f'AIB: work from chat {title}' if title else 'AIB: work from chat'
 
 
 def state_idle_reason(state, check_busy=True, check_queue=True):
@@ -386,7 +386,7 @@ def reset_to(chat, tip, folder=None, clash=False):
     root = os.path.normcase(os.path.realpath(str(chat.registry.root)))
     here = os.path.normcase(os.path.realpath(chat.wt))
     if not here.startswith(root + os.sep) or git(['symbolic-ref', '-q', 'HEAD'], chat.wt, check=False).stdout.strip() != f'refs/heads/{chat.branch}':
-        raise Refused('The chat\'s worktree is not where Studio left it; it was not reset', 'reset_refused')
+        raise Refused('The chat\'s worktree is not where AIB left it; it was not reset', 'reset_refused')
     user = rebuild_user_base(chat, tip, folder, clash)
     git(['reset', '--hard', user], chat.wt)
     worktrees.pin_user_base(chat.project, chat.record, user)
@@ -409,7 +409,7 @@ def merge(studio, chat_id, title='', from_tool=False):
         try:
             lock.acquire()
         except OSError:
-            raise Refused("Studio is busy with this chat's workspace; try Merge again", 'busy')
+            raise Refused("AIB is busy with this chat's workspace; try Merge again", 'busy')
         try:
             return _merge(chat, title)
         finally:
@@ -496,7 +496,7 @@ def unstash(folder, stash):
 
 def tree_conflict_line(chat, files):
     shown = ', '.join(files[:12]) + (' and more' if len(files) > 12 else '')
-    return (f'Merging stopped: your changes touch the same lines the user edited in the project folder, in: {shown}. Studio will not decide '
+    return (f'Merging stopped: your changes touch the same lines the user edited in the project folder, in: {shown}. AIB will not decide '
             f'between the two. Rework your change in those files so it keeps what both sides intended, commit it, then merge again. '
             f"Do not discard the user's lines.")
 
@@ -556,7 +556,7 @@ def _land(chat, tip, title):
     try:
         pause.acquire()   # "sync paused": nothing copies the user's edits into a worktree while the project folder is being changed
     except OSError:
-        raise Refused('Studio is still copying edits for this project; try Merge again', 'busy')
+        raise Refused('AIB is still copying edits for this project; try Merge again', 'busy')
     try:
         stash = stash_user_work(chat, folder) if folder else None
         try:
@@ -617,7 +617,7 @@ def clash_note(files, stash_name):
 
 def clash_guidance(chat, files, stash_name, can_edit):
     shown = ', '.join(files[:12]) + (' and more' if len(files) > 12 else '')
-    text = (f'Studio merged this chat into {chat.base}, but the user also had unsaved edits in the project folder, and they clash with the merge in: {shown}. '
+    text = (f'AIB merged this chat into {chat.base}, but the user also had unsaved edits in the project folder, and they clash with the merge in: {shown}. '
             f"The user's edits are safe: they are saved in the git stash named {stash_name}. Explain this to the user in plain words, naming the files. ")
     if can_edit:
         text += (f'Offer to combine the two versions. If the user agrees, edit those files in the project folder ({chat.project}) so they keep what both sides '
@@ -751,7 +751,7 @@ def _keep_mine(chat, found):
     folder, stash = found['folder'], found['record'].get('stash') or {}
     name = found['stash']
     if not _stash_ref(folder, stash):
-        raise Refused(f'The stash {name} is gone, so Studio cannot restore your version. Nothing was changed', 'stash_gone')
+        raise Refused(f'The stash {name} is gone, so AIB cannot restore your version. Nothing was changed', 'stash_gone')
     files = list(found['files'])
     done = []
     with repo_lock(chat.project):

@@ -255,7 +255,7 @@ Deno.test("synced edits are not changes; only the chat's lines land and the fold
   );
   const message = runGit(box.project, "log", "-1", "--format=%B", "main");
   assert(
-    message.includes("Studio: work from chat My chat") &&
+    message.includes("AIB: work from chat My chat") &&
       message.includes("- chat edits f"),
   );
   assertEquals(
@@ -338,7 +338,7 @@ Deno.test("another process holding the locks stops merge; merge holds both while
     assert(await wt.syncPaused(box.state, box.project));
     assertEquals(
       await refused(ctx, "busy"),
-      "Studio is busy with this chat's workspace; try Merge again",
+      "AIB is busy with this chat's workspace; try Merge again",
     );
     assert(!tree(ctx).includes("g.txt"));
   } finally {

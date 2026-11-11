@@ -200,7 +200,7 @@ export class ArtifactMcpHttp {
     const check = this.studio.check ?? artifactKeys.check;
     if (!key || !conversation || !check(key, conversation)) {
       await drain(request);
-      return refused(401, 'Studio refused the artifact key for this conversation');
+      return refused(401, 'AIB refused the artifact key for this conversation');
     }
     if (!/^application\/json\b/i.test(pyStrip(headers.get('content-type') ?? ''))) {
       await drain(request);

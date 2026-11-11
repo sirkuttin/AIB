@@ -186,7 +186,7 @@ def clean_path_text(value, what='path'):
         raise EditorError(f'Invalid {what}')
     text = value.strip()
     if security.is_network_path(text):   #\\server\share, \\?\C:\..., \\.\device: network and device paths are never opened
-        raise EditorError('Network and device paths cannot be opened from Studio', 'path_refused', 403)
+        raise EditorError('Network and device paths cannot be opened from AIB', 'path_refused', 403)
     return text
 
 
@@ -248,7 +248,7 @@ def resolve_inside(raw, roots, base=None, what='path'):
     main = worktree_main(resolved)
     if main and any(_inside(_real(main), r) for r in real_roots):
         return resolved
-    raise EditorError('That location is not inside a project folder Studio knows, so Studio will not open it', 'path_refused', 403)
+    raise EditorError('That location is not inside a project folder AIB knows, so AIB will not open it', 'path_refused', 403)
 
 
 # ---- workspace files ---------------------------------------------------------------------------
@@ -353,19 +353,19 @@ def build_command(entry, kind, path, line=None):
     exe, program = entry['exe'], entry['kind']
     if entry.get('macApp'):   # an installed app without a command-line launcher: `open -a <App> <path>`
         if program == 'editor' and kind == 'file' and not entry['capabilities']['file']:
-            raise EditorError(f"{entry['name']} can only open folders from Studio for now", 'unsupported', 400)
+            raise EditorError(f"{entry['name']} can only open folders from AIB for now", 'unsupported', 400)
         if kind == 'workspace' and not entry['capabilities']['workspace']:
-            raise EditorError(f"{entry['name']} cannot open workspace files from Studio", 'unsupported', 400)
+            raise EditorError(f"{entry['name']} cannot open workspace files from AIB", 'unsupported', 400)
         return [exe, '-a', entry['macApp'], path]
     if program == 'editor':
         caps = entry['capabilities']
         if kind == 'file':
             if not caps['file']:
-                raise EditorError(f"{entry['name']} can only open folders from Studio for now", 'unsupported', 400)
+                raise EditorError(f"{entry['name']} can only open folders from AIB for now", 'unsupported', 400)
             return [exe, '-r', '--goto', f'{path}:{line}'] if line else [exe, '-r', path]
         if kind == 'workspace':
             if not caps['workspace']:
-                raise EditorError(f"{entry['name']} cannot open workspace files from Studio", 'unsupported', 400)
+                raise EditorError(f"{entry['name']} cannot open workspace files from AIB", 'unsupported', 400)
             return [exe, '-r', path]
         return [exe, path] if entry.get('folderOnly') else [exe, '-r', path]
     if program == 'explorer' and entry.get('opener') == 'open':   # macOS Finder: reveal a file, open a folder
@@ -459,7 +459,7 @@ class Launcher:
             if isinstance(root, str) and root and not _is_anchor(_real(root)):
                 if any(_norm(m['path']) == _norm(candidate) for m in find_workspaces(root)) or _inside(candidate, _real(root)):
                     return candidate
-        raise EditorError('That workspace file does not belong to a project Studio knows', 'path_refused', 403)
+        raise EditorError('That workspace file does not belong to a project AIB knows', 'path_refused', 403)
 
     def _start(self, entry, command, path):
         flags = 0

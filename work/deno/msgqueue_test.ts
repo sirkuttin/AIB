@@ -225,7 +225,7 @@ Deno.test('QueueStore ignores unreadable files with a warning and reports save f
     const store = new QueueStore(`${dir}/blocked`, 'q');
     assertEquals(store.warning, 'Saved queued messages were unreadable and were ignored.');
     store.put('p', 's', [{ id: 'a', text: 'x' }]);
-    assert(store.warning.startsWith('Studio could not save queued messages: '), store.warning);
+    assert(store.warning.startsWith('AIB could not save queued messages: '), store.warning);
     assertEquals(store.get('p', 's'), [{ id: 'a', text: 'x' }], 'kept in memory');
   } finally {
     Deno.removeSync(dir, { recursive: true });

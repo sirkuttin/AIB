@@ -25,7 +25,7 @@ export const SUPPORTED_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '20
 export const KINDS = ['html', 'svg', 'md', 'image', 'pdf', 'csv', 'json', 'text'];
 const HTTP_TIMEOUT_MS = 60_000;
 
-export const INSTRUCTIONS = "Use these tools to show the user an HTML page, diagram, report or document in Studio's Artifacts panel. " +
+export const INSTRUCTIONS = "Use these tools to show the user an HTML page, diagram, report or document in AIB's Artifacts panel. " +
   'Do not use them for source code. When you mention an artifact in a reply, write it as a Markdown link ' +
   '[Title](studio-artifact://<id>).';
 
@@ -37,7 +37,7 @@ export const TOOLS: Json[] = [
       'Show the user an HTML page, diagram (SVG), report, Markdown document, image, PDF, CSV or JSON file in the Artifacts panel next to the chat. ' +
       'Use it for anything the user should look at: a generated page, a chart, an explainer, a report. Do NOT use it for source code or files the user ' +
       'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with ' +
-      '`filename` such as "report.html" so Studio knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and ' +
+      '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and ' +
       'unpkg.com are allowed, but the page cannot make network requests, so embed its data inline. To change a page you already published, call `update` with its id ' +
       'instead of publishing a new one. After publishing, mention it in your reply as a Markdown link: [Title](studio-artifact://<id>).',
     inputSchema: {
@@ -109,8 +109,8 @@ export const WORKTREE_TOOLS: Json[] = [
     name: 'resolve_edit_clash',
     title: "Resolve a clash with the user's own edits",
     description:
-      "After a merge, the user's own unsaved edits in the project folder can clash with it; Studio then tells you which files and the name of the stash " +
-      'that keeps their edits. Use `check` after you combined those files yourself in the project folder (Studio looks for leftover conflict markers), ' +
+      "After a merge, the user's own unsaved edits in the project folder can clash with it; AIB then tells you which files and the name of the stash " +
+      'that keeps their edits. Use `check` after you combined those files yourself in the project folder (AIB looks for leftover conflict markers), ' +
       '`keep_mine` only when the user says to keep their version (their edits win in those files), `leave` when the user says they will sort it out themselves.',
     inputSchema: {
       type: 'object',
@@ -363,7 +363,7 @@ async function http(
   for (const root of ctx.roots().map(loopbackUrl)) { // the file wins on retry: Studio may have restarted on another port
     if (root && !roots.includes(root)) roots.push(root);
   }
-  if (!roots.length) throw new ToolError('Studio did not tell the artifact tool where it is running.');
+  if (!roots.length) throw new ToolError('AIB did not tell the artifact tool where it is running.');
   for (const root of roots.slice(0, 2)) {
     const path = route + (query ? '?' + urlencode(query) : '');
     const data = body !== null ? new TextEncoder().encode(pyJsonDumps(body)) : null;
@@ -391,19 +391,19 @@ async function http(
         message = null;
       }
       if (response.status === 401 || response.status === 403) {
-        message = truthy(message) ? message : 'Studio refused the artifact key for this conversation';
+        message = truthy(message) ? message : 'AIB refused the artifact key for this conversation';
       } else if (soft && truthy(message)) {
         return { error: message, status: response.status } as Json;
       }
-      throw new ToolError(`Studio returned ${response.status}: ${pyStr(truthy(message) ? message : response.reason)}`);
+      throw new ToolError(`AIB returned ${response.status}: ${pyStr(truthy(message) ? message : response.reason)}`);
     }
     try {
       return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body)) as unknown;
     } catch {
-      throw new ToolError('Studio returned a reply that is not JSON');
+      throw new ToolError('AIB returned a reply that is not JSON');
     }
   }
-  throw new ToolError(`Could not reach Studio (${last}). It may be restarting; try again in a moment.`);
+  throw new ToolError(`Could not reach AIB (${last}). It may be restarting; try again in a moment.`);
 }
 
 function textResult(sentence: string, data: unknown): Json {
@@ -547,7 +547,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
     return ok({
       protocolVersion: version,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: SERVER_NAME, title: 'Studio artifacts', version: SERVER_VERSION },
+      serverInfo: { name: SERVER_NAME, title: 'AIB artifacts', version: SERVER_VERSION },
       instructions: INSTRUCTIONS,
     });
   }

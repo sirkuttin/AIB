@@ -150,7 +150,7 @@ class JsonFileStore:
         try:
             lock.__enter__()
         except OSError as error:
-            raise ValueError(f'Studio could not save: {error}')
+            raise ValueError(f'AIB could not save: {error}')
         try:
             yield
         finally:
@@ -187,14 +187,14 @@ class StateStore(JsonFileStore):
             return
         if status == 'busy':
             self._unreadable = True   # keep what we have and do not overwrite the file until a read succeeds
-            self.warning = 'Saved Studio recovery state could not be read just now and was left untouched.'
+            self.warning = 'Saved AIB recovery state could not be read just now and was left untouched.'
             return
         if status == 'corrupt':
-            self.warning = 'Saved Studio recovery state was unreadable and was ignored.'
+            self.warning = 'Saved AIB recovery state was unreadable and was ignored.'
             self._quarantine()
             return
         if not isinstance(raw, dict) or raw.get('version') != VERSION:
-            self.warning = 'Saved Studio recovery state has an unknown version and was ignored.'
+            self.warning = 'Saved AIB recovery state has an unknown version and was ignored.'
             return
         for item in raw.get('conversations', [])[:MAX_CONVERSATIONS] if isinstance(raw.get('conversations'), list) else []:
             record = self._clean_conversation(item)
@@ -268,7 +268,7 @@ class StateStore(JsonFileStore):
                     raise
                 self.warning = ''
             except OSError as error:
-                self.warning = f'Studio could not save recovery state: {error}'
+                self.warning = f'AIB could not save recovery state: {error}'
 
     def remember_conversation(self, provider, session_id, cwd, title='', project_root=None):
         if not agent_registry.is_provider(provider) or not isinstance(session_id, str) or not session_id:
@@ -599,7 +599,7 @@ class ConversationState(JsonFileStore):
                 self._save()
             except OSError as error:
                 self.entries = before
-                self.warning = f'Studio could not save pin/archive/delete marks: {error}'
+                self.warning = f'AIB could not save pin/archive/delete marks: {error}'
                 raise ValueError(self.warning)
             self.warning = ''
             self._counter += 1
@@ -800,7 +800,7 @@ class ProjectPrefs(JsonFileStore):
                 self._save()
             except OSError as error:
                 self.projects, self.order = before_projects, before_order
-                self.warning = f'Studio could not save project preferences: {error}'
+                self.warning = f'AIB could not save project preferences: {error}'
                 raise ValueError(self.warning)
             self.warning = ''
             self._counter += 1
@@ -984,7 +984,7 @@ class ReadState(JsonFileStore):
                 self._save()
             except OSError as error:
                 self.chats = before
-                self.warning = f'Studio could not save read positions: {error}'
+                self.warning = f'AIB could not save read positions: {error}'
                 raise ValueError(self.warning)
             self.warning = ''
             self._counter += 1
@@ -1239,7 +1239,7 @@ class SettingsStore(JsonFileStore):
                 self._save()
             except OSError as error:
                 self.data = before
-                self.warning = f'Studio could not save settings: {error}'
+                self.warning = f'AIB could not save settings: {error}'
                 raise ValueError(self.warning)
             self.warning = ''
             self._counter += 1

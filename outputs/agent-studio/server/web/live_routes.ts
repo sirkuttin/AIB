@@ -50,7 +50,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
     const state = await ctx.host.liveState(arg(url, 'id'), pyInt(arg(url, 'after', '0'))) as Json | null;
     if (state === null) {
       return [404, {
-        error: 'This Studio connection is no longer available. Your saved conversation can be continued again.',
+        error: 'This AIB connection is no longer available. Your saved conversation can be continued again.',
         code: 'connection_not_found',
       }];
     }

@@ -90,9 +90,9 @@ export abstract class JsonFileStore {
           await lock.acquire();
         } catch (error) {
           if (error instanceof LockTimeout) {
-            throw new ValueError(`Studio could not save: Timed out waiting for the state file lock (${basename(this.path)}.lock)`);
+            throw new ValueError(`AIB could not save: Timed out waiting for the state file lock (${basename(this.path)}.lock)`);
           }
-          throw new ValueError(`Studio could not save: ${errorText(error)}`);
+          throw new ValueError(`AIB could not save: ${errorText(error)}`);
         }
       }
       try {

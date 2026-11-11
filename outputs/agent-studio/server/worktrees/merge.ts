@@ -228,7 +228,7 @@ function plural(count: number, word: string): string {
 
 export function commitMessage(title: unknown): string {
   const text = clip(pyStrip(pyStr(title || '').replace(new RegExp(`[${PY_SPACE}]+`, 'g'), ' ')), 80);
-  return text ? `Studio: work from chat ${text}` : 'Studio: work from chat';
+  return text ? `AIB: work from chat ${text}` : 'AIB: work from chat';
 }
 
 const RUNNING_STATE = /^(running|working|in[-_ ]progress|active|starting|queued|busy|streaming)$/i;
@@ -543,7 +543,7 @@ async function resetTo(chat: Chat, tip: string, folder: string | null = null, cl
     !here.startsWith(root + (Deno.build.os === 'windows' ? '\\' : '/')) ||
     strip((await git(['symbolic-ref', '-q', 'HEAD'], chat.wt, { check: false })).stdout) !== `refs/heads/${chat.branch}`
   ) {
-    throw new Refused("The chat's worktree is not where Studio left it; it was not reset", 'reset_refused');
+    throw new Refused("The chat's worktree is not where AIB left it; it was not reset", 'reset_refused');
   }
   const user = await rebuildUserBase(chat, tip, folder, clash);
   await git(['reset', '--hard', user], chat.wt);
@@ -580,7 +580,7 @@ export async function merge(studio: MergeStudio, chatId: unknown, title: unknown
     try {
       await lock.acquire();
     } catch {
-      throw new Refused("Studio is busy with this chat's workspace; try Merge again", 'busy');
+      throw new Refused("AIB is busy with this chat's workspace; try Merge again", 'busy');
     }
     try {
       return await mergeRounds(chat, title);
@@ -693,7 +693,7 @@ async function unstash(folder: string, stash: StashRef): Promise<string[]> {
 
 export function treeConflictLine(_chat: unknown, files: string[]): string {
   const shown = shownList(files, 12);
-  return `Merging stopped: your changes touch the same lines the user edited in the project folder, in: ${shown}. Studio will not decide ` +
+  return `Merging stopped: your changes touch the same lines the user edited in the project folder, in: ${shown}. AIB will not decide ` +
     `between the two. Rework your change in those files so it keeps what both sides intended, commit it, then merge again. ` +
     `Do not discard the user's lines.`;
 }
@@ -777,7 +777,7 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
   try {
     await pause.acquire(); // "sync paused": nothing copies the user's edits into a worktree while the project folder is being changed
   } catch {
-    throw new Refused('Studio is still copying edits for this project; try Merge again', 'busy');
+    throw new Refused('AIB is still copying edits for this project; try Merge again', 'busy');
   }
   let stash: StashRef | null = null;
   let clash: string[] = [];
@@ -857,7 +857,7 @@ export function clashNote(files: string[], stashName: string): string {
 export function clashGuidance(chat: { base: string; project: string }, files: string[], stashName: string, canEdit: boolean): string {
   const shown = shownList(files, 12);
   let text =
-    `Studio merged this chat into ${chat.base}, but the user also had unsaved edits in the project folder, and they clash with the merge in: ${shown}. ` +
+    `AIB merged this chat into ${chat.base}, but the user also had unsaved edits in the project folder, and they clash with the merge in: ${shown}. ` +
     `The user's edits are safe: they are saved in the git stash named ${stashName}. Explain this to the user in plain words, naming the files. `;
   if (canEdit) {
     text +=
@@ -1014,7 +1014,7 @@ async function keepMine(chat: Chat, found: Unresolved): Promise<Record<string, u
   const stash = isDict(found.record.stash) ? found.record.stash : {};
   const name = found.stash;
   if (!(await stashRefOf(folder, stash))) {
-    throw new Refused(`The stash ${name} is gone, so Studio cannot restore your version. Nothing was changed`, 'stash_gone');
+    throw new Refused(`The stash ${name} is gone, so AIB cannot restore your version. Nothing was changed`, 'stash_gone');
   }
   const files = [...found.files];
   const done: string[] = [];

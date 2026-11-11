@@ -80,7 +80,7 @@ class RemoteStudio:
             if info is None:
                 if self.client is None and self.last_error is not None:
                     raise self.last_error
-                raise HostUnavailable('The agent host is not running (it was stopped). Restart Agent Studio to start a new one; conversations that were open are listed for reconnecting.', 'host_stopped', False)
+                raise HostUnavailable('The agent host is not running (it was stopped). Restart AIB to start a new one; conversations that were open are listed for reconnecting.', 'host_stopped', False)
             same = self.client is not None and (info['port'], info['token']) == (self.client.port, self.client.token)
             if same and host_client.pid_alive(info.get('pid')):
                 raise error  # alive but not accepting connections: do not start a second one

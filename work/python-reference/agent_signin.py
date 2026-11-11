@@ -218,7 +218,7 @@ class Signer:
     # ---- helpers ------------------------------------------------------------------------------------------------------
     def _agent(self, agent_id):
         if not isinstance(agent_id, str) or agent_id not in adapters.STUDIO_PACKAGES:
-            raise SignInRefused('Studio cannot check or start a sign-in for that agent.')
+            raise SignInRefused('AIB cannot check or start a sign-in for that agent.')
         return agent_id
 
     def _argv(self, agent_id):
@@ -347,7 +347,7 @@ class Signer:
         try:
             handshake = Handshake(argv, env, self.handshake_flags)
             self._track(job, handshake.tree)
-            init = handshake.request('initialize', {'protocolVersion': 1, 'clientInfo': {'name': 'agent-studio', 'title': 'Agent Studio', 'version': '0.1.0'},
+            init = handshake.request('initialize', {'protocolVersion': 1, 'clientInfo': {'name': 'agent-studio', 'title': 'AIB', 'version': '0.1.0'},
                                                     'clientCapabilities': {'fs': {'readTextFile': False, 'writeTextFile': False}, 'terminal': False, 'auth': {'terminal': True}}},
                                      HANDSHAKE_TIMEOUT, job.cancel_event)
             methods = normalize_methods(init.get('authMethods') if isinstance(init, dict) else None)
@@ -363,7 +363,7 @@ class Signer:
         if method is None or (method['kind'] == 'terminal' and not method['args']):
             if handshake:
                 handshake.close()
-            return 'failed', f'{name} did not offer a sign-in that Studio can start. Sign in with the {name} program itself, then choose Check again.', ''
+            return 'failed', f'{name} did not offer a sign-in that AIB can start. Sign in with the {name} program itself, then choose Check again.', ''
         if method['kind'] == 'agent':   # the only case where ACP `authenticate` is sent: the agent opens the browser itself
             try:
                 handshake.request('authenticate', {'methodId': method['id']}, AUTHENTICATE_TIMEOUT, job.cancel_event)

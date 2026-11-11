@@ -209,14 +209,14 @@ def migrate(source, target, say=None, on_file=None):
     if (target / state_paths.MIGRATED_MARKER).exists():
         return _result('done', 'already migrated', source)
     if target.exists() and any(target.iterdir()):
-        return _result('blocked', f'{target} already holds files but was never marked as migrated; move it aside to let Agent Studio migrate', source)
+        return _result('blocked', f'{target} already holds files but was never marked as migrated; move it aside to let AIB migrate', source)
     held = []
     try:
         check_processes(source)
         held = acquire_all_leases(source)
         files, left = plan_files(source)
         _clean_stale_tmp(target)
-        say(f'Moving Agent Studio data from {source} to {target} ({len(files)} files)...')
+        say(f'Moving AIB data from {source} to {target} ({len(files)} files)...')
         tmp, rewritten = _copy(source, target, files, on_file, say)
         record = {'version': 1, 'source': str(source), 'at': time.time(), 'atText': time.strftime('%Y-%m-%d %H:%M:%S %z'), 'files': len(files),
                   'rewrittenPaths': rewritten, 'notCopied': left}
@@ -241,12 +241,12 @@ def migrate(source, target, say=None, on_file=None):
             lease.release()
     try:   # the only change ever made to the old folder
         (source / NOTE_NAME).write_text(
-            f'Agent Studio moved this folder\'s data to:\n  {target}\non {record["atText"]}.\n\n'
+            f'AIB moved this folder\'s data to:\n  {target}\non {record["atText"]}.\n\n'
             'Nothing in this folder was changed or deleted; it is kept as a backup and is no longer used.\n'
-            f'To go back to it (rollback), start Agent Studio with: --state-dir "{source}"\n', encoding='utf-8')
+            f'To go back to it (rollback), start AIB with: --state-dir "{source}"\n', encoding='utf-8')
     except OSError as error:
         say(f'Note: could not write {NOTE_NAME} in {source}: {error}')
-    say(f'Agent Studio data moved to {target}.')
+    say(f'AIB data moved to {target}.')
     return _result('done', '', source, files=len(files), rewrittenPaths=rewritten)
 
 

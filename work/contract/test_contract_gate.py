@@ -57,7 +57,7 @@ class GateContract(unittest.TestCase):
     def test_bootstrap_refuses_a_cross_site_page(self):
         reply = self.server.request('GET', '/api/live/bootstrap', self.server.page_headers(token=False, Sec_Fetch_Site='cross-site'))
         self.assertEqual(reply.status, 403)
-        self.assertEqual(reply.json(), {'error': 'Request must come from the Studio page'})
+        self.assertEqual(reply.json(), {'error': 'Request must come from the AIB page'})
 
     # ---- the gate ----
     def test_api_without_token_is_refused(self):
@@ -70,11 +70,11 @@ class GateContract(unittest.TestCase):
 
     def test_foreign_host_is_refused(self):
         reply = self.server.request('GET', '/api/live/list', self.server.page_headers(Host='evil.example:80'))
-        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Not a Studio address'}))
+        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Not an AIB address'}))
 
     def test_foreign_origin_is_refused(self):
         reply = self.server.request('GET', '/api/live/list', self.server.page_headers(Origin='http://evil.example'))
-        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Request must come from the Studio page'}))
+        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Request must come from the AIB page'}))
 
     def test_navigation_to_an_api_route_is_refused(self):
         reply = self.server.request('GET', '/api/live/list', self.server.page_headers(Sec_Fetch_Mode='navigate'))
@@ -87,7 +87,7 @@ class GateContract(unittest.TestCase):
     def test_post_without_origin_and_fetch_metadata_is_refused(self):
         headers = self.server.page_headers(Origin=None, Sec_Fetch_Site=None)
         reply = self.server.request('POST', '/api/live/read-state', headers, {})
-        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Request must come from the Studio page'}))
+        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Request must come from the AIB page'}))
 
     def test_unknown_api_route_is_404(self):
         for method in ('GET', 'POST'):

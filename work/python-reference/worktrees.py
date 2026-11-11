@@ -36,7 +36,7 @@ PENDING = 'removal-pending'   # registry status of a worktree whose removal star
 GONE_MESSAGE = "This chat's workspace was removed; it can be read but not continued"
 SKIP_DIRS = {'node_modules', '.git'}
 LFS_MAGIC = b'version https://git-lfs.github.com/spec'
-SNAPSHOT_IDENTITY = ['-c', 'user.name=Agent Studio', '-c', 'user.email=studio@localhost', '-c', 'commit.gpgsign=false']
+SNAPSHOT_IDENTITY = ['-c', 'user.name=AIB', '-c', 'user.email=studio@localhost', '-c', 'commit.gpgsign=false']
 
 _ACTIVE = set()   # keys being created by this process right now (startup cleanup must not touch them)
 _ACTIVE_LOCK = threading.Lock()
@@ -450,7 +450,7 @@ def snapshot_commit(project, scratch):
     git(['read-tree', 'HEAD'], project, env=env)
     git(['add', '-A'], project, env=env)
     tree = git(['write-tree'], project, env=env).stdout.strip()
-    return git(['commit-tree', tree, '-p', 'HEAD', '-m', 'Studio snapshot'], project, env=env, identity=True).stdout.strip()
+    return git(['commit-tree', tree, '-p', 'HEAD', '-m', 'AIB snapshot'], project, env=env, identity=True).stdout.strip()
 
 
 # ---- the user base U (stage G1) ----------------------------------------------------------------------------------
@@ -510,7 +510,7 @@ def advance_user_base(record, paths, registry=None):
         shutil.rmtree(scratch, ignore_errors=True)
     result = previous
     if tree != git(['rev-parse', previous + '^{tree}'], project).stdout.strip():
-        result = git(['commit-tree', tree, '-p', previous, '-m', 'Studio: user edits'], project, identity=True).stdout.strip()
+        result = git(['commit-tree', tree, '-p', previous, '-m', 'AIB: user edits'], project, identity=True).stdout.strip()
     pin_user_base(project, record, result)
     if registry is not None and record.get('key'):
         head = git(['rev-parse', '--verify', '-q', 'HEAD'], project, check=False).stdout.strip()
@@ -703,7 +703,7 @@ class Manager:
         root = os.path.normcase(os.path.realpath(str(self.registry.root)))
         inside = path and os.path.normcase(os.path.realpath(path)).startswith(root + os.sep)
         if not inside:
-            log.warning('Not removing %s: it is not under Studio\'s worktrees folder', path)
+            log.warning('Not removing %s: it is not under AIB\'s worktrees folder', path)
             return
         project_ok = project and pathlib.Path(project).is_dir()
         if project_ok:
@@ -767,7 +767,7 @@ class Manager:
         Never touches a folder outside Studio's own worktrees folder."""
         path, project, branch = record.get('path', ''), record.get('project', ''), record.get('branch', '')
         if not self._inside_root(path):
-            log.warning('Not removing %s: it is not under the Studio worktrees folder', path)
+            log.warning('Not removing %s: it is not under the AIB worktrees folder', path)
             return True   # nothing of Studio's to remove; do not keep a record forever
         project_ok = bool(project) and pathlib.Path(project).is_dir() and git(['rev-parse', '--git-dir'], project, check=False).returncode == 0
         if os.path.lexists(_fs(path)):

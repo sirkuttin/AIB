@@ -563,7 +563,7 @@ export class Studio {
 
   /** The HTTP artifact server of this Studio, started on first use. */
   artifactMcpHttp(): ArtifactMcpHttp {
-    if (this.#closed) throw new Error('This Studio is closed');
+    if (this.#closed) throw new Error('This AIB is closed');
     if (!this.#mcpHttp) {
       this.#mcpHttp = new ArtifactMcpHttp({
         conversation: (id) => {
@@ -746,7 +746,7 @@ export class Studio {
     const [command, env] = await this.agentLaunch(provider, !resume);
     for (const connection of this.connections.values()) {
       if (resume && connection.provider === provider && connection.sessionId === resume && !connection.closed) {
-        if (!connection.ready) throw new OwnershipConflict('This conversation is already opening in Studio. Wait for it to finish.');
+        if (!connection.ready) throw new OwnershipConflict('This conversation is already opening in AIB. Wait for it to finish.');
         return connection;
       }
     }

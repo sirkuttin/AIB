@@ -163,7 +163,7 @@ export class HostProxy implements LiveBackend {
     if (info === null) {
       if (this.client === null && this.lastError !== null) throw this.lastError;
       throw new HostUnavailable(
-        'The agent host is not running (it was stopped). Restart Agent Studio to start a new one; conversations that were open are listed for reconnecting.',
+        'The agent host is not running (it was stopped). Restart AIB to start a new one; conversations that were open are listed for reconnecting.',
         'host_stopped',
         false,
       );

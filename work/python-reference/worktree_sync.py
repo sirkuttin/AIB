@@ -1029,9 +1029,9 @@ class LiveSync:
         if paths:
             lines.append(f'The user changed these files since your last turn: {listing(paths)}')
         if clashes:
-            lines.append(f"These files have a clash between your edit and the user's: {listing(clashes)}. Studio put conflict markers in them. "
+            lines.append(f"These files have a clash between your edit and the user's: {listing(clashes)}. AIB put conflict markers in them. "
                          f'Resolve each in your own copy: keep what both intended, remove every conflict marker and save the file. '
-                         f'Studio clears the clash once the markers are gone.')
+                         f'AIB clears the clash once the markers are gone.')
         for kind, text in NOTE_TEXT.items():
             named = [n[0] for n in notes if n[1] == kind]
             if named:

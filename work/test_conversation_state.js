@@ -954,11 +954,11 @@ test('if ending the session fails, nothing is archived and the error is shown', 
 
 test('server errors on an action are reported and the list is refreshed', async () => {
   const t = await loaded(build());
-  t.server.failNext = new Error('Studio could not save');
+  t.server.failNext = new Error('AIB could not save');
   t.ui._openMenu(moreOf(t, 'Alpha'), t.conversations[0], 'row');
   menuItem(t, 'Pin').onclick();
   await flush();
-  assert.deepEqual(t.log.fail, ['Studio could not save']);
+  assert.deepEqual(t.log.fail, ['AIB could not save']);
   assert.deepEqual(t.server.entries, {});
 });
 

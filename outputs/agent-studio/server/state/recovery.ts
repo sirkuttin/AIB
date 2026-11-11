@@ -70,16 +70,16 @@ export class StateStore {
     if (status === 'missing') return;
     if (status === 'busy') {
       this.#unreadable = true; // keep what we have and do not overwrite the file until a read succeeds
-      this.warning = 'Saved Studio recovery state could not be read just now and was left untouched.';
+      this.warning = 'Saved AIB recovery state could not be read just now and was left untouched.';
       return;
     }
     if (status === 'corrupt') {
-      this.warning = 'Saved Studio recovery state was unreadable and was ignored.';
+      this.warning = 'Saved AIB recovery state was unreadable and was ignored.';
       quarantine(this.path);
       return;
     }
     if (!isDict(raw) || raw.version !== VERSION) {
-      this.warning = 'Saved Studio recovery state has an unknown version and was ignored.';
+      this.warning = 'Saved AIB recovery state has an unknown version and was ignored.';
       return;
     }
     for (const item of Array.isArray(raw.conversations) ? raw.conversations.slice(0, MAX_CONVERSATIONS) : []) {
@@ -148,7 +148,7 @@ export class StateStore {
       this.warning = '';
     } catch (error) {
       if (!isOSError(error)) throw error;
-      this.warning = `Studio could not save recovery state: ${errorText(error)}`;
+      this.warning = `AIB could not save recovery state: ${errorText(error)}`;
     }
   }
 

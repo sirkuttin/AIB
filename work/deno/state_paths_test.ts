@@ -380,7 +380,7 @@ Deno.test('adoptSandboxCopy: waits while the sandbox host runs; several copies t
   assertEquals([use, result.state, result.source], [fresh, 'waiting', fresh]);
   assert(String(result.reason).includes('agent host'), String(result.reason));
   assert(messages.some((m) => m.includes('Several sandbox copies')), messages.join('\n'));
-  assert(messages.some((m) => m.startsWith(`Studio data will move from ${fresh} to ${real} at a later start.`)), messages.join('\n'));
+  assert(messages.some((m) => m.startsWith(`AIB data will move from ${fresh} to ${real} at a later start.`)), messages.join('\n'));
   assertEquals(snapshot(fresh), before);
   assert(!exists(real));
 });
@@ -464,7 +464,7 @@ Deno.test('prepare: not attempted runs on the old folder; without a migrate the 
   const unported = await prepare({ env, codeRoot: code, say: (m) => messages.push(m), packageContext: () => null });
   assertEquals([unported.stateDir, unported.migration.state], [old, 'failed']);
   assert(
-    messages[0].startsWith(`Agent Studio data will move to ${userStateDir(env)} at a later start. This run uses ${old}: `),
+    messages[0].startsWith(`AIB data will move to ${userStateDir(env)} at a later start. This run uses ${old}: `),
     messages[0],
   );
 });

@@ -89,7 +89,7 @@ def real_user_state_dir(env=None, platform=None, home=None):
     (a fake env/home, as the tests of this module pass, is fine)."""
     path = user_state_dir(env, platform, home)
     if under_test(env) and same_path(path, user_state_dir()):
-        raise RealFolderBlocked('Refusing to resolve the real per-user Agent Studio folder while running tests '
+        raise RealFolderBlocked('Refusing to resolve the real per-user AIB folder while running tests '
                                 f'({ENV_TEST}=1 or unittest/pytest is loaded). Pass --state-dir or set {ENV_STATE_DIR} to a temp folder.')
     return path
 
@@ -152,7 +152,7 @@ def resolve(cli_state_dir=None, env=None, code_root=None, platform=None, home=No
     chosen = pathlib.Path(os.path.abspath(str(chosen)))
     is_user = same_path(chosen, user_state_dir(env, platform, home))
     if is_user and under_test(env) and same_path(chosen, user_state_dir()):
-        raise RealFolderBlocked(f'Refusing to use the real per-user Agent Studio folder {chosen} while running tests.')
+        raise RealFolderBlocked(f'Refusing to use the real per-user AIB folder {chosen} while running tests.')
     return Resolved(chosen, source, is_user)
 
 
@@ -276,9 +276,9 @@ def adopt_sandbox_copy(target, env=None, platform=None, say=None, attempt=True):
     extra = ''
     if len(copies) > 1:
         extra = f' ({len(copies)} copies were found in app sandboxes; using the newest, from {package})'
-        say(f'Several sandbox copies of the Studio data exist; using the newest: {source}')
+        say(f'Several sandbox copies of the AIB data exist; using the newest: {source}')
     if _has_data(target) or (target / MIGRATED_MARKER).exists():
-        return target, {'state': 'conflict', 'reason': f'{target} and {source} both hold Studio data' + extra,
+        return target, {'state': 'conflict', 'reason': f'{target} and {source} both hold AIB data' + extra,
                         'source': str(source), 'package': package, 'kind': 'sandbox'}
     if not attempt:
         return source, {'state': 'waiting', 'reason': 'not attempted by this command' + extra, 'source': str(source), 'package': package, 'kind': 'sandbox'}
@@ -287,7 +287,7 @@ def adopt_sandbox_copy(target, env=None, platform=None, say=None, attempt=True):
     result.update(kind='sandbox', package=package)
     result['worktreesLeft'] = _count_worktrees(source)   # never moved: a moved git worktree loses its link to the repository
     if result['state'] == 'waiting':
-        say(f'Studio data will move from {source} to {target} at a later start. This run keeps using {source}: {result["reason"]}')
+        say(f'AIB data will move from {source} to {target} at a later start. This run keeps using {source}: {result["reason"]}')
         return source, result
     return target, result
 
@@ -443,7 +443,7 @@ def ensure_private_dir(path, strict=True, say=None):
     if problems:
         text = f'{path} is not private: ' + '; '.join(problems) + '.'
         if strict:
-            raise StateDirInsecure(text + ' Agent Studio will not keep its data there. Fix the folder permissions or choose another --state-dir.')
+            raise StateDirInsecure(text + ' AIB will not keep its data there. Fix the folder permissions or choose another --state-dir.')
         say('WARNING: ' + text)
     return created
 
@@ -486,7 +486,7 @@ def prepare(cli_state_dir=None, migrate_from=None, code_root=None, env=None, att
                 import migrate
                 migration = migrate.migrate(source, target, say=say)
                 if migration['state'] != 'done':
-                    say(f'Agent Studio data will move to {target} at a later start. This run uses {source}: {migration["reason"]}')
+                    say(f'AIB data will move to {target} at a later start. This run uses {source}: {migration["reason"]}')
                     target = source
     final_is_user = same_path(target, resolved.path) and resolved.is_user_folder
     if final_is_user:

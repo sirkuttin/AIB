@@ -66,11 +66,11 @@ export function describeAuthMethods(methods: unknown, provider = ''): AuthMethod
       const names = listOr(item.vars).filter(isDict).map((v) => v.name).filter(isStr);
       instructions = names.length
         ? 'Set ' + names.slice(0, 10).map((n) => `\`${text(n, 80)}\``).join(', ') +
-          ' in the environment that starts the agent, restart Studio, then retry. Studio never asks for secrets.'
-        : 'Configure the credentials this agent documents, restart Studio, then retry.';
+          ' in the environment that starts the agent, restart AIB, then retry. AIB never asks for secrets.'
+        : 'Configure the credentials this agent documents, restart AIB, then retry.';
     } else if (isStr(mtype) && mtype !== 'agent') {
       kind = 'other';
-      instructions = "This sign-in type is not supported inside Studio. Complete it with the agent's own tools, then choose Retry.";
+      instructions = "This sign-in type is not supported inside AIB. Complete it with the agent's own tools, then choose Retry.";
     }
     out.push({ id: item.id, name: text(item.name) || item.id, description: text(item.description, 1000), kind, instructions });
   }

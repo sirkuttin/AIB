@@ -76,7 +76,7 @@ Deno.test('nothing installed says not installed with the install command', async
 Deno.test('the Codex problem text depends on signs of Codex', async () => {
   using _f = fixture();
   const withCodex = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => '', codexPresent: () => true });
-  assertEquals(withCodex.problem, 'The Codex app is on this PC, but Studio needs its ACP adapter.');
+  assertEquals(withCodex.problem, 'The Codex app is on this PC, but AIB needs its ACP adapter.');
   assertEquals([withCodex.found, withCodex.text], [false, 'Not installed']);
   const without = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => '', codexPresent: () => false });
   assert(without.problem.startsWith('Not installed.'));
@@ -329,7 +329,7 @@ Deno.test('Node.js missing is a problem, not a crash', async () => {
 });
 
 Deno.test('the constants the page and the installer rely on', () => {
-  assertEquals(adapters.CODEX_NEEDS_ADAPTER, 'The Codex app is on this PC, but Studio needs its ACP adapter.');
+  assertEquals(adapters.CODEX_NEEDS_ADAPTER, 'The Codex app is on this PC, but AIB needs its ACP adapter.');
   assert(adapters.CODEX_INSTALL.includes('@agentclientprotocol/codex-acp'));
   assertEquals(Object.keys(adapters.STUDIO_PACKAGES), ['claude', 'codex']);
 });

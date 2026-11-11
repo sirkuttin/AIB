@@ -103,8 +103,8 @@ def package_notice(package, state_dir):
     """The amber line when Studio itself runs inside a packaged app's sandbox (its data is then in that app's private folder)."""
     if not package:
         return ''
-    return (f"Studio is running inside {state_paths.package_label(package)}'s sandbox, so its data is stored in that app's private folder ({state_dir}). "
-            'Restart Studio from outside that app to use your normal data folder.')
+    return (f"AIB is running inside {state_paths.package_label(package)}'s sandbox, so its data is stored in that app's private folder ({state_dir}). "
+            'Restart AIB from outside that app to use your normal data folder.')
 
 
 def sandbox_notice(migration):
@@ -118,12 +118,12 @@ def sandbox_notice(migration):
                 'Nothing was deleted there.') if left else ''
     source = m.get('source') or "the Claude app's private folder"
     if m['state'] == 'conflict':
-        return (f"Studio data exists in two places: your normal folder and the Claude app's private folder ({source}). Studio is using the normal folder "
-                'and has not merged or overwritten anything. Decide which one to keep and move the other aside; Studio will not choose for you.')
+        return (f"AIB data exists in two places: your normal folder and the Claude app's private folder ({source}). AIB is using the normal folder "
+                'and has not merged or overwritten anything. Decide which one to keep and move the other aside; AIB will not choose for you.')
     if m['state'] == 'waiting':
         return (f"Waiting to move your data from the Claude app's private folder ({source}): {m.get('reason') or 'something there is still running'}. "
-                'Studio keeps using that folder for now and tries again at its next start, once no chat is working and the agent host there has stopped.')
-    return f"Moving your data from the Claude app's private folder ({source}) did not happen: {m.get('reason') or m['state']}. Studio is using your normal folder."
+                'AIB keeps using that folder for now and tries again at its next start, once no chat is working and the agent host there has stopped.')
+    return f"Moving your data from the Claude app's private folder ({source}) did not happen: {m.get('reason') or m['state']}. AIB is using your normal folder."
 
 
 def notices(self):
@@ -145,7 +145,7 @@ def conversation_action(self, body):
         raise ValueError('Invalid request')
     action, provider, session_id = body.get('action'), body.get('provider'), body.get('sessionId')
     if action == 'delete' and self._studio_owns(provider, session_id):
-        return 409, {'error': 'This conversation is live in Studio. End the Studio session first; nothing was deleted.', 'code': 'session_live'}
+        return 409, {'error': 'This conversation is live in AIB. End the AIB session first; nothing was deleted.', 'code': 'session_live'}
     title, cwd = body.get('title', ''), body.get('cwd', '')
     note, project_root = body.get('note', ''), body.get('projectRoot', '')
     entry = self.conversations.apply(action, provider, session_id, title=title if isinstance(title, str) else '',

@@ -19,7 +19,7 @@ import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
 import './state/migrate.ts'; // registers the data move with paths.ts
-import { leaveSplitHost, pidAlive, readInfo, stopHost } from './host/host_client.ts';
+import { leaveSplitHost, pidAlive, readInfo, SOURCE_COMMAND, stopHost } from './host/host_client.ts';
 import { decideKeeper } from './keeper/link.ts';
 import { PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost } from './host/host_proxy.ts';
@@ -297,10 +297,10 @@ export async function main(argv: string[]): Promise<void> {
     await Deno.writeTextFile(`${stateDir}${sep}artifact-web.json`, `{"url": ${JSON.stringify(url)}, "pid": ${Deno.pid}}`);
   } catch { /* as Python: not fatal */ }
   if (studio) {
-    console.log(`Agent Studio: ${url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.`);
+    console.log(`AIB: ${url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.`);
   } else {
     console.log(
-      `Agent Studio: ${url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (deno run -A server/main.ts --stop-host ends the host).`,
+      `AIB: ${url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (${isCompiled() ? 'AIB' : SOURCE_COMMAND} --stop-host ends the host).`,
     );
   }
   close = async (why = 'quit', release = false) => {

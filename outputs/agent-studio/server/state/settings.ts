@@ -296,7 +296,7 @@ export class SettingsStore extends JsonFileStore {
       } catch (error) {
         if (!isOSError(error)) throw error;
         this.data = before;
-        this.warning = `Studio could not save settings: ${errorText(error)}`;
+        this.warning = `AIB could not save settings: ${errorText(error)}`;
         throw new ValueError(this.warning);
       }
       this.warning = '';

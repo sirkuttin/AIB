@@ -343,7 +343,7 @@ Deno.test({
     const error = await assertRejects(() => t.signer.start('omp'), SignInRefused);
     assertEquals([(error as SignInRefused).code, error.message], [
       'signin_refused',
-      'Studio cannot check or start a sign-in for that agent.',
+      'AIB cannot check or start a sign-in for that agent.',
     ]);
   },
 });

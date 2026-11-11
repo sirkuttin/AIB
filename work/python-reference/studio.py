@@ -375,7 +375,7 @@ class Studio:
             for connection in self.connections.values():
                 if resume and connection.provider == provider and connection.session_id == resume and not connection.closed:
                     if not connection.ready:
-                        raise OwnershipConflict('This conversation is already opening in Studio. Wait for it to finish.')
+                        raise OwnershipConflict('This conversation is already opening in AIB. Wait for it to finish.')
                     return connection
         plan = None
         if resume is None and self.worktrees and self.settings.worktree_per_chat():
@@ -944,9 +944,9 @@ def main():
     except OSError:
         pass
     if options.in_process:
-        print(f'Agent Studio: {url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.', flush=True)
+        print(f'AIB: {url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.', flush=True)
     else:
-        print(f'Agent Studio: {url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (python studio.py --stop-host ends the host).', flush=True)
+        print(f'AIB: {url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (python studio.py --stop-host ends the host).', flush=True)
     runtime = runtime_gc.current_runtime(HERE)
     if runtime is not None:   # the desktop app: drop older versions' runtime folders that no agent host uses any more
         threading.Thread(target=runtime_gc.collect, args=(options.state_dir, runtime), daemon=True, name='runtime-gc').start()

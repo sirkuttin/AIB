@@ -430,7 +430,7 @@ Deno.test('auth required: methods offered, in-app authenticate retries setup', a
   const methods = Object.fromEntries(((pub.auth as Json).methods as Json[]).map((m) => [m.id, m]));
   assertEquals([(methods['fixture-login'] as Json).kind, (methods['fixture-terminal'] as Json).kind], ['agent', 'terminal']);
   assert(((methods['fixture-terminal'] as Json).instructions as string).includes('`fixture-cli login`'));
-  assert(assertThrows(() => c.answerAuth('authenticate', 'fixture-terminal'), ValueError).message.includes('outside Studio'));
+  assert(assertThrows(() => c.answerAuth('authenticate', 'fixture-terminal'), ValueError).message.includes('outside AIB'));
   assert(assertThrows(() => c.answerAuth('authenticate', 'nope'), ValueError).message.includes('Unknown'));
   c.answerAuth('authenticate', 'fixture-login');
   await until(() => c.ready);

@@ -1333,9 +1333,9 @@ export class LiveSync {
     if (paths.length) lines.push(`The user changed these files since your last turn: ${listing(paths)}`);
     if (clashes.length) {
       lines.push(
-        `These files have a clash between your edit and the user's: ${listing(clashes)}. Studio put conflict markers in them. ` +
+        `These files have a clash between your edit and the user's: ${listing(clashes)}. AIB put conflict markers in them. ` +
           'Resolve each in your own copy: keep what both intended, remove every conflict marker and save the file. ' +
-          'Studio clears the clash once the markers are gone.',
+          'AIB clears the clash once the markers are gone.',
       );
     }
     for (const [kind, text] of Object.entries(NOTE_TEXT)) {

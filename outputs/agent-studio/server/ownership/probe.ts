@@ -42,7 +42,7 @@ export const STATE_ORDER: Record<string, number> = { no_evidence: 0, possibly_ac
 export const SESSION_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 export const PROVIDER_RE = /^[a-z0-9_-]{1,32}$/;
 
-export const NO_EVIDENCE_NOTE = 'Studio found no sign of another app using this conversation, but it cannot see every client ' +
+export const NO_EVIDENCE_NOTE = 'AIB found no sign of another app using this conversation, but it cannot see every client ' +
   '(for example an idle session open in another app writes nothing). This is not proof that it is free.';
 
 export type Verdict = 'owned_by_studio' | 'owned_elsewhere' | 'possibly_active' | 'no_evidence';
@@ -214,8 +214,8 @@ const PARENT_LABELS: Record<string, string> = {
   'cmd.exe': 'a terminal',
   'powershell.exe': 'a terminal',
   'pwsh.exe': 'a terminal',
-  'python.exe': 'a Python program (possibly another Agent Studio)',
-  'pythonw.exe': 'a Python program (possibly another Agent Studio)',
+  'python.exe': 'a Python program (possibly another AIB)',
+  'pythonw.exe': 'a Python program (possibly another AIB)',
   'cursor.exe': 'Cursor',
   'windsurf.exe': 'Windsurf',
 };
@@ -762,8 +762,8 @@ export interface ProbeOptions {
 }
 
 const SUMMARIES: Record<Exclude<Verdict, 'owned_by_studio'>, string> = {
-  owned_elsewhere: 'Another app is running this conversation. Studio will not continue it from here.',
-  possibly_active: 'Another app may be using this conversation. Studio cannot be sure either way.',
+  owned_elsewhere: 'Another app is running this conversation. AIB will not continue it from here.',
+  possibly_active: 'Another app may be using this conversation. AIB cannot be sure either way.',
   no_evidence: NO_EVIDENCE_NOTE,
 };
 
@@ -894,7 +894,7 @@ export class OwnershipProbe {
     }
     const info = `Transcript last written ${humanizeAge(age)} ago`;
     if (released !== undefined && modified <= released + RELEASE_GRACE_SECONDS) {
-      return [null, info + ' (by Studio itself, before it released the conversation)'];
+      return [null, info + ' (by AIB itself, before it released the conversation)'];
     }
     let newest = age;
     let label = 'Transcript';
@@ -916,8 +916,8 @@ export class OwnershipProbe {
       } catch { /* OSError: stop looking */ }
     }
     if (newest > ACTIVE_WINDOW_SECONDS) return [null, info + ' (an idle session open in another app would not write anything)'];
-    let text = `${label} was written ${humanizeAge(newest)} ago, and Studio is not the app writing it`;
-    if (before && stat.size > before[0]) text += ` (it grew by ${thousands(stat.size - before[0])} bytes since Studio last looked)`;
+    let text = `${label} was written ${humanizeAge(newest)} ago, and AIB is not the app writing it`;
+    if (before && stat.size > before[0]) text += ` (it grew by ${thousands(stat.size - before[0])} bytes since AIB last looked)`;
     return [{ signal: 'transcript', strength: 'weak', text: text + '.' }, null];
   }
 
@@ -1005,7 +1005,7 @@ export class OwnershipProbe {
         strength: 'weak',
         pid: proc.pid,
         text: `${kind.label} (PID ${proc.pid}${parent ? ', started by ' + parent : ''}) is running in this project folder. ` +
-          'Agent processes do not reveal which conversation they hold, so Studio cannot tell whether it is this one.',
+          'Agent processes do not reveal which conversation they hold, so AIB cannot tell whether it is this one.',
       });
     }
     if (shown.length > 3) {
@@ -1049,7 +1049,7 @@ export class OwnershipProbe {
           strength: 'weak',
           text:
             `${entry.clientName} on ${entry.hostname || 'another computer'} announced this conversation ${humanizeAge(entry.age)} ago. ` +
-            'Studio cannot check a process on another computer.',
+            'AIB cannot check a process on another computer.',
         });
       } else {
         info.push(
@@ -1072,7 +1072,7 @@ export class OwnershipProbe {
     const unavailable: string[] = [];
     const base = { provider, sessionId, reasons, notes, unavailable, checkedAt: started };
     if (this.ownedByStudio(provider, sessionId)) {
-      return { ...base, verdict: 'owned_by_studio', summary: 'This conversation is running in this Studio.' };
+      return { ...base, verdict: 'owned_by_studio', summary: 'This conversation is running in this AIB.' };
     }
     const [extra, info, problems] = this.#registrySignals(provider, sessionId);
     reasons.push(...extra);

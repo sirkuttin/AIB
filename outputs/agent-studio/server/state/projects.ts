@@ -198,7 +198,7 @@ export class ProjectPrefs extends JsonFileStore {
         if (!isOSError(error)) throw error;
         this.projects = beforeProjects;
         this.order = beforeOrder;
-        this.warning = `Studio could not save project preferences: ${errorText(error)}`;
+        this.warning = `AIB could not save project preferences: ${errorText(error)}`;
         throw new ValueError(this.warning);
       }
       this.warning = '';

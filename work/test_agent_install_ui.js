@@ -35,7 +35,7 @@ const agent = (extra = {}) => ({
   found: false,
   launcher: 'Not installed',
   launcherSource: 'missing',
-  problem: 'The Codex app is on this PC, but Studio needs its ACP adapter.',
+  problem: 'The Codex app is on this PC, but AIB needs its ACP adapter.',
   packageBytes: 300000000,
   installable: true,
   install: null,
@@ -50,7 +50,7 @@ test('a missing agent has an Install button and keeps the "needs its adapter" te
   assert.deepEqual(buttons(row), ['Install']);
   assert.equal(row.querySelector('button').className, 'st-primary');
   assert.match(row.textContent, /Not installed/);
-  assert.match(row.textContent, /The Codex app is on this PC, but Studio needs its ACP adapter\./);
+  assert.match(row.textContent, /The Codex app is on this PC, but AIB needs its ACP adapter\./);
   assert.doesNotMatch(row.textContent, /npm i/);
   assert.doesNotMatch(row.textContent, /Launcher/, 'no Not installed launcher line under the Not installed badge');
 });
@@ -210,7 +210,7 @@ test('a failure line wins over the block and the adapter text; only one line sho
     agent({ install: failed, installBlock: 'Node.js 22 or newer is needed to install this agent.' }),
   );
   assert.deepEqual(lines(row), ['The install failed.']);
-  assert.deepEqual(lines(UI.agentRow(agent())), ['The Codex app is on this PC, but Studio needs its ACP adapter.']);
+  assert.deepEqual(lines(UI.agentRow(agent())), ['The Codex app is on this PC, but AIB needs its ACP adapter.']);
 });
 
 test('the npm hint shows only when installs cannot run at all, and names the right package', () => {
@@ -246,7 +246,7 @@ test('settings.css: the installer rules use theme tokens, no raw hex', () => {
 
 // ---- Uninstall: only AIB's own install, only in Settings, confirmed first ----
 
-const studioRow = (extra = {}) => agent({ found: true, problem: '', launcherSource: 'studio', launcher: "Studio's own install 2.6.0", ...extra });
+const studioRow = (extra = {}) => agent({ found: true, problem: '', launcherSource: 'studio', launcher: "AIB's own install 2.6.0", ...extra });
 
 test('Uninstall is offered in Settings only for the copy AIB installed itself', () => {
   const { UI } = setup([]);

@@ -319,7 +319,7 @@ Deno.test('prepare: waiting runs on the old folder with a banner and retries', a
   assertEquals([plan.stateDir, plan.migration.state], [old, 'waiting']);
   assert(plan.migration.reason);
   assert(
-    messages.some((m) => m.startsWith(`Agent Studio data will move to ${userStateDir(env)} at a later start. This run uses ${old}: `)),
+    messages.some((m) => m.startsWith(`AIB data will move to ${userStateDir(env)} at a later start. This run uses ${old}: `)),
   );
   assert(!exists(pathOf(tmp.root, 'local')), 'nothing was created in the per-user location');
   const retry = await prepare({ env, codeRoot: code, say: quiet, packageContext: () => null });
