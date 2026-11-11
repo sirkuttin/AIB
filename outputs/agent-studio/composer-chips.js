@@ -542,7 +542,14 @@
       openMenu(doc, button, {
         label: 'Agent',
         // Beta agents come last, under a "Beta" group label (AgentChoice.menuItems gives them a.group).
-        items: chip.agents.map((a) => ({ value: a.id, name: a.name, group: a.group || '' })),
+        items: chip.agents.map((a) => ({
+          value: a.id,
+          name: a.name,
+          group: a.group || '',
+          disabled: !!a.disabled,
+          tag: a.reason || '',
+        })),
+        extra: setupLink(doc, chip, o),
         current: chip.agentId,
         disabled: !!o.disabled,
         notes: [],
@@ -553,6 +560,18 @@
     });
     wrap.append(button);
     return wrap;
+  }
+
+  // "Set up in Settings ›" at the end of the agent menu when some agents are listed greyed.
+  function setupLink(doc, chip, o) {
+    if (!o.onSetup || !chip.agents.some((a) => a.disabled)) return null;
+    const link = el(doc, 'button', 'Set up in Settings ›', 'chip-insert chip-setup');
+    link.type = 'button';
+    link.addEventListener('click', () => {
+      closeMenu(false);
+      o.onSetup();
+    });
+    return link;
   }
 
   // The Ctx chip's hover / focus tooltip: one line per detail. Pure CSS shows it (see header.css .chip-tip).

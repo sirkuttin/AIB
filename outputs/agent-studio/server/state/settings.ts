@@ -63,7 +63,11 @@ export interface Settings {
   agents: {
     builtin: Record<string, boolean>;
     custom: CustomAgent[];
+    /** Old stores only: a Beta agent turned on. Read and dropped (a Beta agent is on unless betaOff says otherwise). */
     beta?: Record<string, boolean>;
+    /** The Beta agents the person turned Off on purpose. A Beta agent that is Ready is offered in New chat unless it is here; the
+     * catalog's old off-by-default no longer hides it. Present only when not empty, hidden from public(). */
+    betaOff?: Record<string, boolean>;
     betaKeys?: Record<string, string>;
     /** The API address typed for a Beta agent that takes one (Qwen: OPENAI_BASE_URL). Present only when not empty; sealed on disk
      * like betaKeys (key store id `<agentId>-address`). */
@@ -208,7 +212,11 @@ export class SettingsStore extends JsonFileStore {
       if (typeof builtin[agentId] === 'boolean') doc.agents.builtin[agentId] = builtin[agentId] as boolean;
     }
     const beta = isDict(agents.beta) ? agents.beta : {};
-    for (const agentId of BETA_IDS) if (beta[agentId] === true) (doc.agents.beta ??= {})[agentId] = true; // off unless turned on
+    // Migration: the old `beta` map (turned on) is dropped, and an agent that was simply not on was never a choice: both are the default,
+    // which is on. Only an explicit Off (betaOff) is kept.
+    void beta;
+    const off = isDict(agents.betaOff) ? agents.betaOff : {};
+    for (const agentId of BETA_IDS) if (off[agentId] === true) (doc.agents.betaOff ??= {})[agentId] = true;
     const keys = isDict(agents.betaKeys) ? agents.betaKeys : {};
     for (const agentId of BETA_IDS) {
       const key = this.betaKeyValue(keys[agentId]);
@@ -367,6 +375,7 @@ export class SettingsStore extends JsonFileStore {
     for (const agent of shown.agents.custom as unknown as Dict[]) agent.env = hiddenEnv(agent.env); // names only
     // Beta agents: the agent list (/api/live/settings agents rows) says which are on and which have a key; never the key itself.
     delete (shown.agents as Partial<Settings['agents']>).beta;
+    delete (shown.agents as Partial<Settings['agents']>).betaOff;
     delete (shown.agents as Partial<Settings['agents']>).betaKeys;
     delete (shown.agents as Partial<Settings['agents']>).betaUrls; // the agent rows carry it (betaInfo.baseUrl)
     return { revision: `${this.nonce}.${this.counter}`, settings: shown, warning: this.warning };
@@ -380,9 +389,9 @@ export class SettingsStore extends JsonFileStore {
     return this.customAgents().find((a) => a.id === agentId) ?? null;
   }
 
-  /** A Beta agent is off until the person turns it on. */
+  /** A Beta agent is on unless the person turned it off. */
   betaEnabled(agentId: string): boolean {
-    return this.snapshot().agents.beta?.[agentId] === true;
+    return this.snapshot().agents.betaOff?.[agentId] !== true;
   }
 
   /** The API key typed for a Beta agent ('' when none). Never sent to the page. */
@@ -492,8 +501,11 @@ export class SettingsStore extends JsonFileStore {
         continue;
       }
       if (isBeta(agentId)) {
-        if (enabled) (work.agents.beta ??= {})[agentId] = true;
-        else if (work.agents.beta) delete work.agents.beta[agentId];
+        if (work.agents.beta) delete work.agents.beta[agentId];
+        if (enabled) {
+          if (work.agents.betaOff) delete work.agents.betaOff[agentId];
+        } else (work.agents.betaOff ??= {})[agentId] = true;
+        if (work.agents.betaOff && !Object.keys(work.agents.betaOff).length) delete work.agents.betaOff;
         continue;
       }
       const target = work.agents.custom.find((a) => a.id === agentId);

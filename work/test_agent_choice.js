@@ -311,3 +311,36 @@ test('agents that are not installed are not offered for new chats', () => {
   A.setRegistry([]);
   assert.deepEqual(ids(), ['omp', 'claude', 'codex']);
 });
+
+// ---- Beta agents in New chat: Ready ones are offered unless turned Off; the others are listed greyed with the reason ----------------
+const betaRow = (id, extra = {}) => ({ id, name: id, beta: true, enabled: true, found: true, signin: { state: 'ready' }, ...extra });
+
+test('a Ready Beta agent (found, signed in, no explicit Off) is offered in New chat and can be the chosen agent', () => {
+  A.setRegistry([betaRow('kimi', { name: 'Kimi Code' })]);
+  assert.ok(A.AGENTS.some((a) => a.id === 'kimi'));
+  assert.equal(A.isAgent('kimi'), true);
+  assert.equal(A.resolveAgent('kimi'), 'kimi');
+  assert.ok(A.menuRows().some((r) => r.value === 'kimi' && !r.disabled && r.group === 'Beta'));
+  assert.equal(A.UNAVAILABLE.length, 0);
+});
+
+test('a Ready Beta agent the person turned Off is not offered; it is listed greyed as "Turned off in Settings"', () => {
+  A.setRegistry([betaRow('kimi', { name: 'Kimi Code', enabled: false })]);
+  assert.equal(A.isAgent('kimi'), false);
+  assert.equal(A.resolveAgent('kimi'), 'omp');
+  const row = A.menuRows().find((r) => r.value === 'kimi');
+  assert.deepEqual([row.disabled, row.reason], [true, 'Turned off in Settings']);
+});
+
+test('Beta agents that need sign-in or are not installed are listed greyed with the reason, never pickable', () => {
+  A.setRegistry([
+    betaRow('gemini', { name: 'Gemini CLI', signin: { state: 'signin' } }),
+    betaRow('cursor', { name: 'Cursor CLI', found: false, enabled: false, signin: null }),
+  ]);
+  assert.equal(A.isAgent('gemini') || A.isAgent('cursor'), false);
+  const reasons = Object.fromEntries(A.menuRows().filter((r) => r.disabled).map((r) => [r.value, r.reason]));
+  assert.deepEqual(reasons, { gemini: 'Needs sign-in', cursor: 'Not installed' });
+  assert.equal(A.setupTarget(), 'gemini', 'the link opens the installed agent that still needs setting up');
+  A.setRegistry([]);
+  assert.equal(A.UNAVAILABLE.length, 0);
+});

@@ -199,19 +199,20 @@ Deno.test("Cursor's generic `agent` name counts only inside a Cursor folder", as
 
 // ---- settings: off by default, keys hidden -----------------------------------------------------------------------------
 
-Deno.test('Beta agents are off by default; turning one on and storing its key never shows the key to the page', async () => {
+Deno.test('Beta agents are on unless turned off on purpose; turning one off and storing its key never shows the key to the page', async () => {
   using dir = tempDir();
   const store = new SettingsStore(dir.root);
-  for (const id of BETA_IDS) assertEquals(store.betaEnabled(id), false, id);
-  await store.update({ agents: { enabled: { gemini: true } } });
-  assertEquals(store.betaEnabled('gemini'), true);
+  for (const id of BETA_IDS) assertEquals(store.betaEnabled(id), true, id);
+  await store.update({ agents: { enabled: { gemini: false } } });
+  assertEquals(store.betaEnabled('gemini'), false);
   await store.update({ agents: { betaKey: { gemini: 'test-key-not-real' } } });
   assertEquals(store.betaKey('gemini'), 'test-key-not-real');
   const shown = JSON.stringify(store.public());
   assert(!shown.includes('test-key-not-real') && !shown.includes('betaKeys'), shown);
   const again = new SettingsStore(dir.root); // read back from the file
-  assertEquals(again.betaEnabled('gemini'), true);
-  assertEquals(again.betaEnabled('qwen'), false);
+  assertEquals(again.betaEnabled('gemini'), false);
+  assertEquals(again.betaEnabled('qwen'), true);
+  assert(!JSON.stringify(again.public()).includes('betaOff'));
   let refused = '';
   try {
     await store.update({ agents: { betaKey: { opencode: 'x' } } });
@@ -228,12 +229,22 @@ Deno.test('Beta agents are off by default; turning one on and storing its key ne
   const rows = await describeBeta({ stateDir: dir.root }, again.snapshot());
   assertEquals(rows.map((r) => r.id), BETA_IDS);
   const gemini = rows.find((r) => r.id === 'gemini')!;
-  assertEquals([gemini.beta, gemini.builtin, gemini.enabled], [true, false, true]);
+  assertEquals([gemini.beta, gemini.builtin, gemini.enabled, gemini.userOff], [true, false, false, true]);
   assertEquals((gemini.betaInfo as Record<string, unknown>).keySet, true);
   assert(!JSON.stringify(rows).includes('test-key-not-real'));
-  assert(rows.filter((r) => r.id !== 'gemini').every((r) => r.enabled === false));
-  await store.update({ agents: { enabled: { gemini: false }, betaKey: { gemini: null } } });
-  assertEquals([store.betaEnabled('gemini'), store.betaKey('gemini')], [false, '']);
+  assert(rows.filter((r) => r.id !== 'gemini').every((r) => r.userOff === false));
+  await store.update({ agents: { enabled: { gemini: true }, betaKey: { gemini: null } } });
+  assertEquals([store.betaEnabled('gemini'), store.betaKey('gemini')], [true, '']);
+});
+
+Deno.test('migration: an old store (a Beta agent "on", the others simply not on) has every Beta agent on; nothing was turned off', () => {
+  using dir = tempDir();
+  Deno.writeTextFileSync(
+    join(dir.root, 'studio-settings.json'),
+    JSON.stringify({ version: 1, agents: { builtin: {}, custom: [], beta: { gemini: true } } }),
+  );
+  const store = new SettingsStore(dir.root);
+  for (const id of BETA_IDS) assertEquals(store.betaEnabled(id), true, id);
 });
 
 Deno.test('the Beta npm agents are installable from the allow-list (exact registry versions), the built-ins keep their lockfiles', () => {

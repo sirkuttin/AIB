@@ -531,6 +531,7 @@
     hold++;
     return load()
       .then(() => checkSignins(true))
+      .then(() => autoOn(id))
       .finally(releaseHold);
   }
   function startInstall(a) {
@@ -688,7 +689,9 @@
     }
     signins[id] = job && job.state !== 'idle' ? job : { state: 'idle' };
     hold++; // the process ended and the server re-checked the status: read the list again before painting anything
-    return load().finally(releaseHold);
+    return load()
+      .then(() => (job && job.state === 'done' ? autoOn(id) : undefined))
+      .finally(releaseHold);
   }
   function startSignin(a) {
     if (a.beta && betaInfo(a).signin === 'terminal') return startTerminalSignin(a);
@@ -894,6 +897,13 @@
   // Environment values never reach this page: the server sends {name, set: true}. A row keeps `set` (a value is stored) and `value`
   // (only what the user typed this time). Sending a row without a value tells the server to keep the stored one.
   const togglePatch = (id, on) => ({ agents: { enabled: { [id]: !!on } } });
+  // A Beta agent that was installed or signed in from its card is On, even when the person had turned it Off before (the box ticks
+  // itself): that clears the explicit Off.
+  function autoOn(id) {
+    const a = agents().find((x) => x.id === id);
+    if (!a || !a.beta || !a.userOff) return Promise.resolve();
+    return save(togglePatch(id, true), true).catch(() => {});
+  }
   const envRowsFrom = (env) =>
     (Array.isArray(env) ? env : [])
       .filter((e) => e && typeof e.name === 'string')
@@ -1257,6 +1267,7 @@
           const need = prereq && ((setupOf(now) || {}).prereqs || []).find((p) => p.id === prereq.id);
           const seen = prereq ? !need || need.state === 'found' : now.found;
           if (seen) {
+            if (!prereq) autoOn(a.id);
             if (betaTerms[a.id] === entry) closeTerminal(a.id);
           } else {
             const what = prereq ? prereq.name : a.name;
@@ -1428,6 +1439,7 @@
               if (code === 0) {
                 status.textContent = 'The sign-in finished. Checking…';
                 checkOne(a).then(() => {
+                  autoOn(a.id);
                   done(true);
                   if (betaTerms[a.id] === entry) closeTerminal(a.id);
                 });
@@ -2317,6 +2329,22 @@
       }
     }
   }
+  // Open Settings > AIB Linking with the Beta agent's card in view (from a menu that lists the agent as not ready).
+  function openAgent(id) {
+    openPage('agents');
+    const show = () => {
+      const row = rowOf(id);
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+      if (row && row.querySelector) {
+        const b = row.querySelector('button');
+        if (b && b.focus) b.focus({ preventScroll: true });
+      }
+    };
+    show();
+    return Promise.resolve(S.data ? S.data : load()).then(() => {
+      if (S.open) show();
+    });
+  }
   const toggleOpen = (section) => (S.open && !section ? closePage() : openPage(section));
 
   function onKey(event) {
@@ -2359,6 +2387,7 @@
     load,
     sync,
     open: openPage,
+    openAgent,
     close: closePage,
     isOpen: () => S.open,
     onKey,

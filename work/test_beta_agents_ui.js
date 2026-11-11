@@ -697,3 +697,45 @@ test('Install on a card that is not the first keeps the scroll position, the car
     proto.getBoundingClientRect = realRect;
   }
 });
+
+test('Install that works turns the agent On at once, even if it had been turned Off before; a Ready one nobody turned off needs no click', async () => {
+  const list = setupList();
+  const cursor = list.findIndex((a) => a.id === 'cursor');
+  list[cursor] = { ...list[cursor], userOff: true };
+  const { ctx, betaRow, posts } = await openSettings(list);
+  const runs = [];
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push(h), { close() {} }) };
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  list[cursor] = { ...list[cursor], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
+  runs[0].onExit(0);
+  await flush();
+  await flush();
+  assert.ok(
+    posts.some((p) => p[0] === 'settings' && JSON.stringify(p[1]) === JSON.stringify({ agents: { enabled: { cursor: true } } })),
+    'the Off is cleared by the install',
+  );
+  // An agent that is Ready and was never turned off: no settings change is needed, nothing is posted for it.
+  const before = posts.length;
+  const { posts: other } = await openSettings(setupList());
+  assert.equal(other.filter((p) => p[0] === 'settings').length, 0);
+  assert.equal(before > 0, true);
+});
+
+test('"Set up in Settings" (UI.openAgent) opens AIB Linking and brings that card into view', async () => {
+  const { shell, UI, betaRow } = await openSettings(setupList());
+  UI.close && UI.close();
+  const seen = [];
+  const proto = Object.getPrototypeOf(shell.body);
+  const real = proto.scrollIntoView;
+  proto.scrollIntoView = function () {
+    seen.push(this.dataset && this.dataset.agent);
+  };
+  try {
+    await UI.openAgent('cursor');
+  } finally {
+    proto.scrollIntoView = real;
+  }
+  assert.ok(seen.includes('cursor'), 'the card of that agent is scrolled into view');
+  assert.ok(betaRow('Cursor CLI'));
+});
