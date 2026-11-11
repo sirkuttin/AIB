@@ -19,6 +19,9 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/agent-options',
     'POST /api/live/desktop/notify',
     'POST /api/live/project-remove',
+    'GET /api/live/files/list',
+    'GET /api/live/files/search',
+    'GET /api/live/files/read',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
   assertEquals(ROUTE_LIST.filter(([m, p]) => !denoOnly.has(`${m} ${p}`)).map(([m, p, s]) => [m, p, s]), routes);

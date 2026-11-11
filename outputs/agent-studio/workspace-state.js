@@ -310,10 +310,21 @@
     return out;
   }
 
-  // Opening a chat from another project (inbox, switcher, a link) moves the project dropdown to that chat's project. "All chats"
-  // stays on All: you chose to see everything.
+  // ---- one project at a time ---------------------------------------------------------------------
+  // The sidebar always shows one project ("All chats" is gone). A stored "all" (or a project that no longer exists) is moved to the
+  // project of the chat that is open, else the project used most recently, else the first project. projectKeys: the projects the
+  // dropdown lists, in its order. Unchanged while there is no project to pick.
+  function pickActive(st, projectKeys, selectedProjectKey) {
+    const keys = projectKeys || [];
+    if (st.active !== ALL && isStr(st.active) && keys.includes(st.active)) return st;
+    if (st.active !== ALL && isStr(st.active) && (st.tabs[st.active] || []).length && !keys.length) return st;
+    const pick = [selectedProjectKey, st.recent].find((k) => isStr(k) && k !== ALL && keys.includes(k)) || keys[0];
+    return pick ? { ...st, active: pick } : st;
+  }
+
+  // Opening a chat from another project (inbox, switcher, a link) moves the project dropdown to that chat's project.
   function activeAfterOpen(st, pk) {
-    return st.active !== ALL && isStr(pk) && pk !== ALL && st.active !== pk ? { ...st, active: pk } : st;
+    return isStr(pk) && pk !== ALL && st.active !== pk ? { ...st, active: pk } : st;
   }
   // Dropdown filter: case-insensitive match on display name, original folder name or path.
   function filterProjects(projects, query) {
@@ -898,6 +909,7 @@
     buildProjects,
     hueOf,
     activeAfterOpen,
+    pickActive,
     filterProjects,
     stripProject,
     withDraftTab,

@@ -35,6 +35,7 @@
     scrim = null,
     inboxOpen = false;
   const S = () => root.AgentSplitUI;
+  const FU = () => root.AgentFilesUI; // files-ui.js: file tabs after the chat tabs, the file view in the middle
   const splitReady = () => !!(S() && S().ready());
   const splitOn = () => splitReady() && S().active();
   // The envelope and the list button live on the first pane's strip when the window is split.
@@ -91,15 +92,27 @@
     const k = kinds.get(path) || {};
     return { worktree: !!k.worktree || St().isWorktreePath(path), scratch: !!k.scratch || St().isScratchPath(path) };
   }
+  // Worktree folders whose parent repository the server found: their chats are filed under that project (sidebar-ui rootOf).
+  const worktreeParent = (path) => {
+    const k = kinds.get(path);
+    return k && k.worktreeOf ? { of: k.worktreeOf, branch: k.branch || '' } : null;
+  };
   function askKinds() {
     if (!host || !host.getJson) return;
-    const need = Array.from(new Set(items.map((i) => i.projectPath).filter((p) => p && !askedKinds.has(p)))).slice(
+    const need = Array.from(
+      new Set(
+        items
+          .map((i) => i.projectPath)
+          .concat((host.conversations() || []).map((c) => c && (c.projectRoot || c.cwd)))
+          .filter((p) => p && !askedKinds.has(p)),
+      ),
+    ).slice(
       0,
       100,
     );
     if (!need.length) return;
     need.forEach((p) => askedKinds.add(p));
-    Promise.resolve(host.getJson('/api/live/folders/kinds', { paths: JSON.stringify(need) })).then(
+    Promise.resolve(host.getJson('/api/live/folders/kinds', { paths: JSON.stringify(need), parents: '1' })).then(
       (r) => {
         let changed = false;
         for (const k of Object.keys((r && r.kinds) || {})) {
@@ -290,7 +303,8 @@
         handled = true;
       }
     } else if (act.action === 'close') {
-      handled = selectedKey ? closeTabKey(selectedKey) : discardDraft();
+      if (FU() && FU().showingFile && FU().showingFile()) handled = FU().closeActive();
+      else handled = selectedKey ? closeTabKey(selectedKey) : discardDraft();
     }
     if (handled) {
       e.preventDefault();
@@ -432,7 +446,7 @@
     const name = doc().getElementById('wsListName'),
       trigger = projBtn();
     const p = ws.active === St().ALL ? null : projectOfKey(ws.active);
-    if (name) name.textContent = p ? p.name : 'All chats';
+    if (name) name.textContent = p ? p.name : 'No project yet';
     if (name && name.parentNode && name.parentNode.insertBefore) {
       const old = name.parentNode.querySelector ? name.parentNode.querySelector('.ws-proj-ico') : null;
       if (old && old.remove) old.remove();
@@ -440,7 +454,7 @@
     }
     if (trigger) {
       trigger.title = (p ? p.name + '\n' + (p.path || 'No folder') + '\n' : '') + 'Switch project (Ctrl+P)';
-      trigger.setAttribute('aria-label', 'Project: ' + (p ? p.name : 'All chats') + '. Switch project (Ctrl+P)');
+      trigger.setAttribute('aria-label', 'Project: ' + (p ? p.name : 'none yet') + '. Switch project (Ctrl+P)');
     }
     const pen = doc().getElementById('wsRenameProj');
     if (pen) pen.hidden = !p || !!projEdit;
@@ -550,6 +564,7 @@
         tabSuppress = false;
         return;
       }
+      if (FU() && FU().showChat) FU().showChat(); // a file was showing: back to the chat
       if (key !== selectedKey) openKey(key);
     };
     const x = btn('\u00D7', 'ws-tab-x', 'Close tab: ' + item.title + ' (Alt+W)');
@@ -642,7 +657,9 @@
       : St()
           .tabsOf(ws, pk)
           .filter((k) => itemOf(k));
-    const activeKey = pane ? pane.group.active : selectedKey;
+    // While a file tab is showing, no chat tab is the active one.
+    const fileShown = !!(FU() && FU().showingFile && FU().showingFile());
+    const activeKey = pane ? pane.group.active : fileShown ? '' : selectedKey;
     const p = projectOfKey(pk);
     const before = node.querySelector ? node.querySelector('.ws-tablist') : null,
       keep = before ? before.scrollLeft : 0;
@@ -671,8 +688,10 @@
       const n = key === St().DRAFT ? draftNode() : tabNode(key, activeKey);
       if (n) list.append(n);
     }
-    if (!tabs.length && !hasDraft)
+    const fileTabs = (!pane || pane.first) && FU() && FU().stripNodes ? FU().stripNodes() : [];
+    if (!tabs.length && !hasDraft && !fileTabs.length)
       list.append(el('span', p ? 'No open chats in ' + p.name : 'No open chats', 'ws-tabs-empty'));
+    for (const n of fileTabs) list.append(n);
     list.addEventListener(
       'wheel',
       (e) => {
@@ -1438,7 +1457,7 @@
         if (O && O.deleteMany) await O.deleteMany(chats, remove);
         else await remove();
         removedKeys.add(pk);
-        if (ws.active === pk) commit(St().setActive(ws, St().ALL));
+        if (ws.active === pk) commit(St().setActive(ws, otherProject(pk)));
         rebuildProjects();
         lastSig = '';
         prefsRev = '';
@@ -1447,8 +1466,16 @@
       },
     });
   }
+  // The project to show when the one on screen goes away (hidden, deleted): the next visible one in dropdown order.
+  function otherProject(pk) {
+    const vis = St()
+      .visibleProjects(St().dropdownProjects(projects))
+      .map((p) => p.key)
+      .filter((k) => k !== pk);
+    return vis[0] || St().ALL;
+  }
   function hideProject(pk, hidden) {
-    if (hidden && ws.active === pk) commit(St().setActive(ws, St().ALL));
+    if (hidden && ws.active === pk) commit(St().setActive(ws, otherProject(pk)));
     setPrefOf(pk, { hidden: !!hidden });
   }
   function copyText(text) {
@@ -1551,30 +1578,6 @@
       hid = St().filterProjects(St().hiddenProjects(all), q);
     const frag = doc().createDocumentFragment(),
       canMove = !q.trim() && vis.length > 1;
-    if (!q.trim()) {
-      const T = Object.assign({}, St().totals(items), { waiting: waitingFor(null) }); // All chats still counts every chat, hidden folders included
-      const row = el('div', null, 'ws-prow' + (ws.active === St().ALL ? ' cur' : ''));
-      row.dataset.project = St().ALL;
-      const main = btn(
-        null,
-        'ws-prow-main',
-        'All chats\n' + T.total + ' chats, ' + T.waiting + ' need you, ' + T.working + ' working',
-      );
-      main.setAttribute('aria-pressed', String(ws.active === St().ALL));
-      main.append(projIcon(true), el('span', 'All chats', 'ws-prow-name'));
-      const b = badgeFor(T.waiting, T.working, 0);
-      if (b) {
-        b.setAttribute('aria-hidden', 'true');
-        main.append(b);
-      }
-      main.onclick = () => {
-        closeProjMenu(false);
-        selectProject(St().ALL);
-      };
-      main.addEventListener('keydown', (e) => rowKey(e, null, row, false));
-      row.append(main);
-      frag.append(row);
-    }
     for (const p of vis) frag.append(projectRow(p, false, canMove));
     if (!vis.length && !hid.length) frag.append(el('p', 'No project matches.', 'ws-pempty'));
     if (hid.length) {
@@ -1593,9 +1596,29 @@
       if (open) for (const p of hid) frag.append(projectRow(p, true, false));
     }
     projList.replaceChildren(frag);
+    drawProjFoot();
+  }
+  // The dropdown's last line: every project's chats that need you, and the way to the inbox (which lists them all).
+  let projFoot = null;
+  function drawProjFoot() {
+    if (!projFoot) return;
+    const n = waitingFor(null);
+    const text = el(
+      'span',
+      n ? n + (n === 1 ? ' chat needs' : ' chats need') + ' you in all projects' : 'Nothing needs you in any project',
+      'ws-pfoot-text',
+    );
+    const open = btn('Open inbox', 'ws-pfoot-inbox', 'Open the inbox: every chat that needs you (Alt+I)');
+    open.onclick = () => {
+      closeProjMenu(false);
+      toggleInbox(true);
+    };
+    open.addEventListener('keydown', (e) => rowKey(e, null, null, false));
+    projFoot.classList.toggle('has', !!n);
+    projFoot.replaceChildren(text, open);
   }
   const focusables = () =>
-    Array.from(projPop ? projPop.querySelectorAll('input:not([hidden]),.ws-prow-main,.ws-phidden') : []);
+    Array.from(projPop ? projPop.querySelectorAll('input:not([hidden]),.ws-prow-main,.ws-phidden,.ws-pfoot-inbox') : []);
   function stepFocus(from, dir) {
     const list = focusables(),
       at = list.indexOf(from),
@@ -2049,14 +2072,24 @@
           ),
         ),
       );
-    if (ws.active !== St().ALL && !projectOfKey(ws.active) && !St().tabsOf(ws, ws.active).length)
-      commit(St().setActive(ws, St().ALL));
+    // One project at a time: "All chats" (kept by older versions) and projects that are gone move to the open chat's project,
+    // else the most recent one, else the first in the dropdown.
+    if (items.length || projects.length)
+      commit(
+        St().pickActive(
+          ws,
+          St()
+            .dropdownProjects(projects)
+            .map((p) => p.key),
+          sel ? sel.projectKey : '',
+        ),
+      );
     notifyChats();
     if (sel && !sel.deleted) {
       commit(St().openTab(ws, sel.projectKey, sel.key));
       if (!sel.archived) commit(St().rememberLast(ws, sel.projectKey, sel.key));
     }
-    if (root.AgentSidebarUI.setFlat) root.AgentSidebarUI.setFlat(ws.active !== St().ALL);
+    if (root.AgentSidebarUI.setFlat) root.AgentSidebarUI.setFlat(true); // one project: no project headings in the list
     syncSplit();
     const sig =
       St().signature(items, ws, selectedKey) +
@@ -2083,6 +2116,7 @@
     drawStrip();
     drawAhead();
     if (inboxOpen) drawInbox();
+    if (FU() && FU().paint) FU().paint(); // the amber count on the Chats half
     autosize();
   }
   // Keep the split layout of the active project (or of "All chats") in step with the tabs, the open chat and the New chat view.
@@ -2143,6 +2177,7 @@
     commit(St().rememberLast(ws, pk, key));
     commit(St().activeAfterOpen(ws, pk));
     if (splitReady()) S().noteOpened(key, ws.active);
+    if (FU() && FU().showChat) FU().showChat();
     lastSig = '';
     setListOpen(false);
   }
@@ -2284,7 +2319,7 @@
   // the tab we came from. Null for "add project" so the typed folder wins.
   const activeProject = () => {
     if (!ws || (draft && draft.blank)) return null;
-    const pk = ws.active !== St().ALL ? ws.active : draft && draft.pk ? draft.pk : '';
+    const pk = draft && draft.pk && draft.pk !== St().ALL ? draft.pk : ws.active !== St().ALL ? ws.active : '';
     const p = pk ? projectOfKey(pk) : null;
     return p ? { key: p.key, name: p.name, path: p.path || '' } : null;
   };
@@ -2295,6 +2330,7 @@
     prefs = readLocalPrefs() || St().emptyPrefs();
     if (root.AgentSidebarUI && root.AgentSidebarUI.setNameHook)
       root.AgentSidebarUI.setNameHook((key) => (prefs ? St().prefOf(prefs, key).name : ''));
+    if (root.AgentSidebarUI && root.AgentSidebarUI.setWorktreeHook) root.AgentSidebarUI.setWorktreeHook(worktreeParent);
     const d = doc();
     strip = d.getElementById('chatTabs');
     if (root.addEventListener)
@@ -2323,7 +2359,8 @@
     projFilter.autocomplete = 'off';
     projFilter.hidden = true;
     projList = el('div', null, 'ws-plist');
-    projPop.append(projFilter, projList);
+    projFoot = el('div', null, 'ws-pfoot');
+    projPop.append(projFilter, projList, projFoot);
     projFilter.addEventListener('input', () => {
       projQuery = projFilter.value;
       drawProjList();
@@ -2581,6 +2618,17 @@
       root.AgentOrganizeUI && root.AgentOrganizeUI.markHandled
         ? root.AgentOrganizeUI.markHandled(c)
         : Promise.resolve(),
+    // For files-ui.js: the project on screen, its name, its chats that need you, and the narrow-window drawer.
+    currentProject: () => (ws && ws.active !== St().ALL ? ws.active : ''),
+    currentProjectName: () => {
+      const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
+      return p ? p.name : '';
+    },
+    waitingIn: (pk) => (pk ? waitingFor(pk) : 0),
+    closeDrawer: () => setListOpen(false),
+    openDrawer: () => {
+      if (root.matchMedia && root.matchMedia('(max-width:1100px)').matches) setListOpen(true);
+    },
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,

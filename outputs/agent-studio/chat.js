@@ -973,6 +973,7 @@
   function renderHeader() {
     window.ChatViewsUI?.sync();
     window.AibTerminal?.sync();
+    window.AgentFilesUI?.sync(selected && (current || selected.id) ? selected : null);
     window.AgentChangesUI?.sync(
       selected && (current || selected.id)
         ? {
@@ -3699,6 +3700,16 @@
     rerender: () => {
       sidebarSignature = '';
       renderConversations();
+    },
+  });
+  window.AgentFilesUI?.init({
+    aliasKey,
+    titleOf,
+    getJson: get,
+    notice: (m) => fail(Error(m)),
+    conversations: () => conversations,
+    open: async (c) => {
+      await openConversation(c);
     },
   });
   window.AgentSwitcherUI?.init({

@@ -1555,33 +1555,23 @@
     if (!doc) return;
     for (const c of doc.querySelectorAll('.art-card')) paintCard(c);
   }
-  /* Preview button on a file-write row. */
+  /* "Show file" on a file-write row: the file opens in the Files view (beside the chat on wide windows). It never registers an
+     artifact. */
   function previewButton(path) {
-    const b = el('button', 'art-preview', 'Preview');
+    const b = el('button', 'art-preview', 'Show file');
     b.type = 'button';
-    b.title = 'Show this file in the Artifacts viewer';
-    b.addEventListener('click', async (ev) => {
+    b.title = 'Show this file';
+    b.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      if (b.disabled) return;
-      b.disabled = true;
-      b.textContent = 'Opening…';
-      try {
-        const s = await api('/api/live/artifacts/preview', { conversationId: S.chat.id, path });
-        if (s && s.id) {
-          upsert(s);
-          await open(s.id);
-        }
-        b.textContent = 'Preview';
-      } catch (e) {
-        b.textContent = 'Preview failed';
-        b.title = e.message;
-        win.setTimeout(() => {
-          b.textContent = 'Preview';
-          b.title = 'Show this file in the Artifacts viewer';
-        }, 4000);
-      } finally {
-        b.disabled = false;
-      }
+      const FU = win.AgentFilesUI,
+        rel = relPath(path, S.chat.cwd);
+      if (!FU || rel === null) return;
+      const a = doc.createElement('a');
+      a.dataset.filePath = rel.replace(/\\/g, '/');
+      a.dataset.abs = path;
+      const scope = FU.currentScope ? FU.currentScope() : null;
+      a.dataset.scope = JSON.stringify(scope);
+      FU.openLink(a, '');
     });
     return b;
   }
@@ -1629,15 +1619,6 @@
   }
 
   /* -- links in replies -- */
-  function linkNode(text, id, cls) {
-    const a = el('a', 'artifact-link ' + (cls || ''));
-    a.href = '#';
-    a.dataset.artifactId = id;
-    a.title = 'Open in the Artifacts viewer';
-    a.append(el('span', '', '⧉ '), doc.createTextNode(text));
-    return a;
-  }
-  /* Turn plain-text source paths in rendered Markdown into artifact links (markdown.js calls this after every render). */
   /* A viewable file a reply names (C:\proj\report.html, ./out/chart.svg, notes.md …) that is not an artifact yet. Matches inside the
    chat's project folder only, never inside a URL. Returns [{t:'text',v}|{t:'file',v,path}]. */
   const FILE_RE =
@@ -1685,105 +1666,12 @@
     if (pos < text.length) out.push({ t: 'text', v: text.slice(pos) });
     return out.length ? out : [{ t: 'text', v: text }];
   }
-  function fileLink(label, path, wrap) {
-    const a = el('a', 'artifact-link file');
-    a.href = '#';
-    a.dataset.previewPath = path;
-    a.title = 'Open in the Artifacts viewer';
-    a.append(el('span', '', '⧉ '));
-    if (wrap) a.append(wrap);
-    else a.append(doc.createTextNode(label));
-    return a;
-  }
-  function textNodes(container) {
-    const walker = doc.createTreeWalker(container, 4 /* NodeFilter.SHOW_TEXT */),
-      nodes = [];
-    let n;
-    while ((n = walker.nextNode())) {
-      if (!n.nodeValue || n.nodeValue.length < 4) continue;
-      const p = n.parentElement;
-      if (!p || p.closest('a,pre,button')) continue;
-      nodes.push(n);
-    }
-    return nodes;
-  }
-  /* Second pass: viewable files that are not artifacts yet become links that preview them on click. */
-  function linkFiles(container) {
-    const project = S.chat && S.chat.cwd;
-    if (!project) return;
-    for (const t of textNodes(container)) {
-      const segs = fileSegments(t.nodeValue, project);
-      if (!segs.some((x) => x.t === 'file')) continue;
-      const p = t.parentElement;
-      if (p && p.tagName === 'CODE' && segs.length === 1) {
-        const a = fileLink(segs[0].v, segs[0].path, null);
-        a.lastChild.remove();
-        p.replaceWith(a);
-        a.append(p);
-        continue;
-      } // swap first, then move the code inside
-      const frag = doc.createDocumentFragment();
-      for (const x of segs) frag.append(x.t === 'file' ? fileLink(x.v, x.path) : doc.createTextNode(x.v));
-      t.replaceWith(frag);
-    }
-  }
-  async function openFile(link) {
-    const path = link.dataset.previewPath;
-    if (!path || link.dataset.busy) return;
-    link.dataset.busy = '1';
-    const was = link.title;
-    link.title = 'Opening…';
-    try {
-      const s = await api('/api/live/artifacts/preview', { conversationId: S.chat.id, path });
-      if (s && s.id) {
-        upsert(s);
-        link.dataset.artifactId = s.id;
-        delete link.dataset.previewPath;
-        await open(s.id);
-      }
-      link.title = was;
-    } catch (e) {
-      link.title = 'Could not open: ' + e.message;
-      link.classList.add('failed');
-    } finally {
-      delete link.dataset.busy;
-    }
-  }
+  /* Paths in replies: a path to an existing file in the chat's folder becomes a file link (files-ui.js linkPaths). The artifact
+     title links (studio-artifact://, markdown.js) still open the Artifacts viewer. Clicking a path never registers an artifact. */
   function linkify(container) {
     if (!doc || !container) return;
-    const withPath = S.list.filter((a) => a.sourcePath);
-    if (withPath.length) linkArtifacts(container, withPath);
-    linkFiles(container);
-  }
-  function linkArtifacts(container, withPath) {
-    const project = S.chat.cwd;
-    const walker = doc.createTreeWalker(container, 4 /* NodeFilter.SHOW_TEXT */);
-    const nodes = [];
-    let n;
-    while ((n = walker.nextNode())) {
-      if (!n.nodeValue || n.nodeValue.length < 4) continue;
-      const p = n.parentElement;
-      if (!p || p.closest('a,pre,button')) continue;
-      nodes.push(n);
-    }
-    for (const t of nodes) {
-      const segs = linkSegments(t.nodeValue, withPath, project);
-      if (!hasLink(segs)) continue;
-      const p = t.parentElement;
-      if (p && p.tagName === 'CODE' && segs.length === 1) {
-        // `outputs/report.html` on its own: wrap the code in the link
-        const a = el('a', 'artifact-link path');
-        a.href = '#';
-        a.dataset.artifactId = segs[0].id;
-        a.title = 'Open in the Artifacts viewer';
-        p.replaceWith(a);
-        a.append(el('span', '', '⧉ '), p);
-        continue;
-      }
-      const frag = doc.createDocumentFragment();
-      for (const s of segs) frag.append(s.t === 'link' ? linkNode(s.v, s.id, 'path') : doc.createTextNode(s.v));
-      t.replaceWith(frag);
-    }
+    const FU = win && win.AgentFilesUI;
+    if (FU && FU.linkPaths) FU.linkPaths(container);
   }
   let linkSig = '';
   function relinkAll() {
@@ -1925,11 +1813,6 @@
         open(link.dataset.artifactId);
         return;
       }
-      if (link && link.dataset.previewPath) {
-        e.preventDefault();
-        openFile(link);
-        return;
-      }
       if (!ui.pop.hidden && !ui.pop.contains(e.target) && !bar.contains(e.target)) closePop();
     });
     // The page reports its scroll position so a reload can put it back. A sandboxed page has an opaque origin, so the sender is
@@ -1946,7 +1829,18 @@
     paintAll();
   }
 
+  /* Files view, "Open in Artifacts" on a file no chat has registered: the deliberate action that registers it in the open chat
+     (the same route the old Preview used), then shows it. */
+  async function registerFile(path) {
+    if (!S.chat.id || !path) throw new Error('Open a chat first');
+    const s = await api('/api/live/artifacts/preview', { conversationId: S.chat.id, path });
+    if (!s || !s.id) return null;
+    upsert(s);
+    await open(s.id);
+    return s;
+  }
   const api2 = Object.assign({}, pure, {
+    registerFile,
     mount,
     sync,
     setVisible,

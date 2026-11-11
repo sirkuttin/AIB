@@ -59,7 +59,7 @@ export function chatStudioOf(ctx: WebContext, saved: Map<string, string> = new M
 }
 
 /** chat_folders.SAVED_CWD (catalog.session_cwd) for a 'provider:sessionId' id, looked up ahead of the synchronous use. */
-async function savedFolders(ctx: WebContext, ident: string): Promise<Map<string, string>> {
+export async function savedFolders(ctx: WebContext, ident: string): Promise<Map<string, string>> {
   const saved = new Map<string, string>();
   const source = ctx.transcripts as { sessionCwd?: (provider: string, sessionId: string) => Promise<string> };
   if (typeof source.sessionCwd === 'function' && /^[a-z0-9_-]+:/.test(ident) && ident.length <= 600) {
@@ -140,7 +140,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
       const extra = JSON.parse(one(args, 'paths', '[]'));
       if (Array.isArray(extra)) wanted.push(...extra);
     } catch { /* ignored, as Python's ValueError */ }
-    return Promise.resolve([200, { kinds: folders.folderKinds(wanted) }]);
+    return Promise.resolve([200, { kinds: folders.folderKinds(wanted, one(args, 'parents') === '1') }]);
   });
   routes.set('GET /api/live/folders/start', (ctx) => Promise.resolve([200, folders.startFolder(ctx.folderMemory)]));
   routes.set('POST /api/live/folders/create', async (ctx, _url, body) => {

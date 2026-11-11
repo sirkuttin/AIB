@@ -108,7 +108,7 @@ aside .connection .row-age {
   flex: none;
   min-width: 24px;
   text-align: right;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 aside .connection .connection-state {
@@ -413,7 +413,7 @@ details.side-more .note {
   text-overflow: ellipsis;
 }
 .ws-inbox-sub {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
   color: var(--muted);
   white-space: nowrap;
@@ -896,13 +896,39 @@ body > main {
   color: var(--muted);
   font-size: 16px;
   line-height: 1;
-  opacity: 0;
-}
-.ws-prow:hover .ws-prow-more,
-.ws-prow:focus-within .ws-prow-more {
-  opacity: 1;
 }
 .ws-prow-more:hover {
+  background: var(--accent-wash-2);
+  color: var(--text-bright);
+}
+/* The dropdown's footer: chats that need you in every project, and the way into the inbox. */
+.ws-pfoot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin: 4px -4px -4px;
+  padding: 4px 8px 4px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.ws-pfoot.has .ws-pfoot-text {
+  color: var(--text);
+}
+.ws-pfoot-inbox {
+  flex: none;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.ws-pfoot-inbox:hover {
   background: var(--accent-wash-2);
   color: var(--text-bright);
 }
@@ -914,7 +940,7 @@ body > main {
   border-radius: 9px;
   background: var(--need);
   color: var(--ws-badge-text);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
@@ -1123,7 +1149,7 @@ body.ws-dragging {
 }
 .find-chat kbd {
   font:
-    11px Consolas,
+    12px Consolas,
     monospace;
   border: 1px solid var(--line-control);
   border-bottom-width: 2px;
@@ -1772,7 +1798,7 @@ aside .connection.attn-unread:not(.selected) {
 }
 .ws-inbox-age {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .ws-inbox-meta {
@@ -1780,7 +1806,7 @@ aside .connection.attn-unread:not(.selected) {
   align-items: center;
   gap: 8px;
   min-height: 20px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .ws-inbox-proj {

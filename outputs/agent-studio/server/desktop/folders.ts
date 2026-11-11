@@ -16,6 +16,7 @@ import { isNetworkPath } from '../web/security.ts';
 import { which } from '../platform/pypath.ts';
 import * as osp from '../platform/ospath.ts';
 import { nativePath, pureParents, pureStr } from '../transcripts/purepath.ts';
+import { projectOfWorktree } from '../worktrees/worktrees.ts';
 
 export const RESERVED: ReadonlySet<string> = new Set([
   'CON',
@@ -77,15 +78,39 @@ export function isWorktree(path: unknown): boolean {
   return false;
 }
 
-/** {path: {worktree, scratch}} for the dropdown filter; cheap (one stat per folder), bounded, read-only. */
-export function folderKinds(paths: unknown): Record<string, { worktree: boolean; scratch: boolean }> {
-  const out: Record<string, { worktree: boolean; scratch: boolean }> = {};
+export interface FolderKind {
+  worktree: boolean;
+  scratch: boolean;
+  /** Deno only, asked with parents=1: the main checkout a worktree folder belongs to, and its branch. */
+  worktreeOf?: string;
+  branch?: string;
+}
+/**
+ * {path: {worktree, scratch}} for the dropdown filter; cheap (one stat per folder), bounded, read-only. With `parents` (Deno only),
+ * a worktree folder also gets `worktreeOf` (its main checkout) and `branch`, so its chats are filed under the parent repo's project.
+ */
+export function folderKinds(paths: unknown, parents = false): Record<string, FolderKind> {
+  const out: Record<string, FolderKind> = {};
   for (const raw of (Array.isArray(paths) ? paths : []).slice(0, MAX_KINDS)) {
     if (isStr(raw) && pyLen(raw) > 0 && pyLen(raw) <= MAX_PATH_CHARS && !isNetworkPath(raw)) {
-      out[raw] = { worktree: isWorktree(raw), scratch: isScratch(raw) };
+      const kind: FolderKind = { worktree: isWorktree(raw), scratch: isScratch(raw) };
+      if (parents && kind.worktree) {
+        const found = worktreeParent(raw);
+        if (found) [kind.worktreeOf, kind.branch] = found;
+      }
+      out[raw] = kind;
     }
   }
   return out;
+}
+
+/** [main checkout, branch] of a worktree folder (any app's), or null. */
+export function worktreeParent(path: string): [string, string] | null {
+  try {
+    const found = projectOfWorktree(path);
+    if (found && found.project && !isNetworkPath(found.project)) return [found.project, found.branch];
+  } catch { /* unreadable: no parent */ }
+  return null;
 }
 
 /** Hook for a future allow-list of places projects may be created in. Throw FolderError to refuse. Allows all today. */

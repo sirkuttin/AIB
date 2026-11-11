@@ -132,7 +132,7 @@
     dialog.setAttribute('aria-label', 'Command bar');
     input = el('input', null, 'switcher-input');
     input.type = 'text';
-    input.placeholder = 'Find a chat, project or action…  (> for actions)';
+    input.placeholder = 'Find a chat, file, project or action…  (> for actions)';
     input.setAttribute('role', 'combobox');
     input.setAttribute('aria-expanded', 'true');
     input.setAttribute('aria-controls', 'switcherList');
@@ -270,6 +270,7 @@
     ctx = makeCtx();
     const sources = { chats: collect(), projects: ctx.projects, actions: C().buildActions(ctx) };
     results = C().compose(sources, input.value, mode, MAX_RESULTS);
+    results = results.concat(fileResults());
     if (active >= results.length) active = Math.max(0, results.length - 1);
     drawTabs();
     const frag = doc().createDocumentFragment();
@@ -290,6 +291,12 @@
         );
         li.title = r.path || '';
         li.append(text, el('span', 'Chat', 'switcher-kind'));
+      } else if (r.kind === 'file') {
+        li.append(el('span', '▢', 'switcher-ico'));
+        text.append(el('span', r.name, 'switcher-title'));
+        text.append(el('small', (r.dir || 'top folder') + (r.branch ? ' · ⎇ ' + r.branch : ''), 'switcher-sub'));
+        li.title = r.path;
+        li.append(text, el('span', 'File', 'switcher-kind'));
       } else if (r.kind === 'project') {
         li.append(el('span', '▤', 'switcher-ico'));
         text.append(el('span', r.name, 'switcher-title'));
@@ -322,6 +329,36 @@
     list.replaceChildren(frag);
     paintActive();
   }
+  // Files of the current project (files-ui.js search), after the chats: asked once per query, drawn when they arrive.
+  const MAX_FILES = 8;
+  let fileQ = '',
+    fileHits = [];
+  function fileResults() {
+    const FU = root.AgentFilesUI,
+      q = C().parseQuery(input.value, mode);
+    if (!FU || !FU.search || q.mode !== 'all' || String(q.query || '').trim().length < 2) return [];
+    const text = String(q.query).trim();
+    if (text !== fileQ) {
+      fileQ = text;
+      fileHits = [];
+      FU.search(text).then(
+        (r) => {
+          if (fileQ !== text || !dialog || !dialog.open) return;
+          fileHits = (r.matches || []).slice(0, MAX_FILES).map((m) => ({
+            kind: 'file',
+            path: m.path,
+            name: m.name,
+            dir: m.dir,
+            scope: r.scope,
+            branch: r.scope && r.scope.branch,
+          }));
+          draw();
+        },
+        () => {},
+      );
+    }
+    return fileHits;
+  }
   function choose(i) {
     const r = results[i];
     if (!r) return;
@@ -339,6 +376,11 @@
       return;
     }
     close();
+    if (r.kind === 'file') {
+      const FU = root.AgentFilesUI;
+      if (FU && FU.openFile) FU.openFile(r.scope, r.path, { keep: true });
+      return;
+    }
     if (r.kind === 'project') {
       const W = root.AgentWorkspaceUI;
       if (W && W.selectProject) W.selectProject(r.key);

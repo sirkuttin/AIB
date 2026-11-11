@@ -1,6 +1,6 @@
 'use strict';
 // The "+" after a project heading's count (a new chat in that project), the "+" on the Chats row, and the folder icon on
-// the project switcher (stacked folders for "All chats", one folder for a project). Fake DOM, no browser.
+// the project switcher (one folder: the sidebar always shows one project, "All chats" is gone). Fake DOM, no browser.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const D = require('./fake_dom.js');
@@ -90,7 +90,7 @@ test("clicking the + opens New chat with that project's folder, keeps the rail a
   const p = t.W.activeProject();
   assert.equal(p.name, 'beta');
   assert.equal(p.path, 'C:/work/beta', 'the folder is pre-filled from the project');
-  assert.equal(t.W._state().active, 'all', 'the rail stays on All chats');
+  assert.equal(t.W._state().active, t.W._items().find((i) => i.projectName === 'alpha').projectKey, 'the rail stays where it was');
   assert.equal(head.getAttribute('aria-expanded'), 'true', 'still open');
   assert.equal(body.hidden, false);
   // A later plain New chat is not pinned to beta by the +.
@@ -99,15 +99,18 @@ test("clicking the + opens New chat with that project's folder, keeps the rail a
   assert.equal(t.W.activeProject().name, 'alpha');
 });
 
-test('the project switcher shows stacked folders on All chats and one folder on a project, in the button and the list', () => {
+test('no All chats: a stored All moves to the first project, the switcher shows one folder, the list has no All row', () => {
   const t = setup(list);
   const btn = t.shell.byId.wsProjectBtn;
   t.W.selectProject('all');
   t.W.sync(list, null); // the page redraws after rerender()
+  assert.notEqual(t.W._state().active, 'all', 'All chats is never kept');
+  assert.equal(t.shell.byId.wsListName.textContent, 'alpha', 'the first project');
   let ico = btn.querySelectorAll('.ws-proj-ico');
   assert.equal(ico.length, 1, 'one icon, before the label');
-  assert.ok(ico[0].classList.contains('all'));
+  assert.ok(ico[0].classList.contains('one'));
   assert.equal(btn.children.indexOf(ico[0]), btn.children.indexOf(t.shell.byId.wsListName) - 1);
+  assert.equal(btn.querySelectorAll('.ws-badge').length, 0, 'no count on the folder icon');
   const alpha = t.W._items().find((i) => i.projectName === 'alpha').projectKey;
   t.W.selectProject(alpha);
   t.W.sync(list, null);
@@ -117,8 +120,66 @@ test('the project switcher shows stacked folders on All chats and one folder on 
   assert.equal(ico[0].getAttribute('aria-hidden'), 'true');
   t.W.openProjectMenu();
   const rows = t.shell.body.querySelectorAll('.ws-prow-main');
-  assert.ok(rows.length >= 3);
-  assert.ok(rows[0].querySelector('.ws-proj-ico').classList.contains('all'), 'All chats row: stacked folders');
-  for (const r of rows.slice(1)) assert.ok(r.querySelector('.ws-proj-ico').classList.contains('one'));
+  assert.equal(rows.length, 2, 'one row per project, no All chats row');
+  assert.ok(!rows.some((r) => /All chats/.test(r.textContent)));
+  for (const r of rows) assert.ok(r.querySelector('.ws-proj-ico').classList.contains('one'));
   assert.equal(rows[0].children[0].className.split(' ')[0], 'ws-proj-ico', 'the icon comes before the name');
+  assert.equal(t.shell.body.querySelectorAll('.ws-prow-more').length, 2, 'every row has its ⋯');
+  const foot = t.shell.body.querySelector('.ws-pfoot');
+  assert.ok(foot, 'the dropdown has a footer');
+  assert.equal(foot.querySelector('.ws-pfoot-text').textContent, 'Nothing needs you in any project');
+  assert.equal(foot.querySelector('.ws-pfoot-inbox').textContent, 'Open inbox');
+  foot.querySelector('.ws-pfoot-inbox').click();
+  assert.equal(t.shell.body.querySelector('#wsInbox').hidden, false, 'Open inbox opens the inbox');
+});
+
+test('the dropdown footer counts the chats that need you in all projects', () => {
+  const waiting = (c) => Object.assign(c, { yourTurn: true, yourTurnAt: 200 });
+  const l2 = [waiting(conv('a1', 'C:/work/alpha')), conv('a2', 'C:/work/alpha'), waiting(conv('b1', 'C:/work/beta'))];
+  const t = setup(l2);
+  t.W.openProjectMenu();
+  const text = t.shell.body.querySelector('.ws-pfoot-text').textContent;
+  assert.match(text, /^\d+ chats? needs? you in all projects$/);
+});
+
+test('a chat in a git worktree folder AIB did not make is filed under its parent repo and marked with its branch', () => {
+  const wt = conv('w1', 'C:/work/alpha/.claude/worktrees/feat');
+  const l3 = [conv('a1', 'C:/work/alpha'), wt];
+  const shell = D.page({ ids: ['wsProjectBtn', 'wsRenameProj', 'wsNewProject', 'new'] });
+  shell.make('b', 'wsListName', shell.byId.wsProjectBtn);
+  const ctx = D.load(shell, SCRIPTS);
+  const W = ctx.AgentWorkspaceUI;
+  let asked = null;
+  let rerenders = 0;
+  W.init({
+    aliasKey: (c) => c.provider + ':' + c.id,
+    titleOf: (c) => c.title || c.id,
+    conversations: () => l3,
+    rerender() {
+      rerenders++;
+    },
+    getJson: async (path, q) => {
+      asked = { path, q };
+      return { kinds: { 'C:/work/alpha/.claude/worktrees/feat': { worktree: true, scratch: false, worktreeOf: 'C:/work/alpha', branch: 'claude/feat' } } };
+    },
+    postJson: async () => ({}),
+    open: () => true,
+    showStart() {},
+    notice() {},
+    reload() {},
+    quickPrompt() {},
+  });
+  W.sync(l3, null);
+  const S = ctx.AgentSidebarUI;
+  assert.notEqual(S.projectOf(wt).key, S.projectOf(l3[0]).key, 'before the server answers: its own folder');
+  return new Promise((r) => setTimeout(r, 0)).then(() => {
+    assert.equal(asked.path, '/api/live/folders/kinds');
+    assert.equal(asked.q.parents, '1');
+    assert.ok(rerenders > 0);
+    assert.equal(S.projectOf(wt).key, S.projectOf(l3[0]).key, 'filed under the parent repo');
+    assert.equal(S.branchOf(wt), 'claude/feat', 'marked with ⎇ and its branch');
+    W.sync(l3, null);
+    assert.equal(W._items().filter((i) => i.projectName === 'alpha').length, 2);
+    assert.ok(!W._items().some((i) => i.projectWorktree), 'not hidden as a worktree folder any more');
+  });
 });
