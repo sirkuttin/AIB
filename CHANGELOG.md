@@ -31,7 +31,7 @@
 - A chat that follows the newest message keeps following when a question card or the terminal takes space (the plan card was
   hidden under them).
 - Sidebar: a long chat title gets the whole first line; its age moves to the end of the second line.
-- Chat view folds a turn's steps once, not twice.
+- Chat and Prompts views fold a turn's steps once, not twice.
 
 ## 0.1.0-beta.6 (beta)
 
