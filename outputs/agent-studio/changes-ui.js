@@ -129,13 +129,6 @@
   /* The one confirmation before Discard, and the line after it. The Discard button exists only for a chat with its own branch that has changes. */
   const discardQuestion = (branch) =>
     'Discard this chat\u2019s changes? This deletes its branch ' + branch + ' and can\u2019t be undone.';
-  /* The short confirmation before Merge: how many files go into the base branch. */
-  const mergeQuestion = (files, base) =>
-    'Merge ' +
-    (num(files) === 1 ? 'the 1 changed file' : 'all ' + num(files) + ' changed files') +
-    ' into ' +
-    (base || 'main') +
-    '? Edits the chat has not committed yet are committed first.';
   /* An in-page confirmation (never the blocking window.confirm, which freezes every chat's page work): a short question with two
      buttons, shown inside `host`. Escape or Cancel answer false. Resolves once; the box removes itself. */
   function askInPage(doc, host, o) {
@@ -263,7 +256,6 @@
   const pure = {
     moreLeft,
     moreText,
-    mergeQuestion,
     toggleOpen,
     pruneOpen,
     TABS,
@@ -849,7 +841,7 @@
             paintFoot();
             paintList();
           },
-          confirm: (o) => ask({ text: mergeQuestion(o.files, o.base), ok: 'Merge', label: 'Merge this chat' }),
+          // no confirmation: one click asks the chat to merge (the permission is tied to the work at this click)
         });
       if (mergeUi)
         mergeUi.update({
@@ -857,6 +849,8 @@
           busy: chat.busy,
           files: data && data.git ? totalsOf(data).files : 0,
           branchView: !!(data && data.scope === 'branch'),
+          worktree: !!(data && data.worktree && data.worktree.branch),
+          blocked: chat.mergeBlocked || '',
         });
     }
     function paintAll() {
@@ -1010,11 +1004,12 @@
     function sync(ctx) {
       const id = ctx && typeof ctx.id === 'string' ? ctx.id : '',
         busy = !!(ctx && ctx.busy),
-        discarded = !!(ctx && ctx.discarded);
+        discarded = !!(ctx && ctx.discarded),
+        mergeBlocked = ctx && typeof ctx.mergeBlocked === 'string' ? ctx.mergeBlocked : '';
       const changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy),
         gone = discarded && !chat.discarded && !changed;
-      chat = { id, busy, discarded };
+      chat = { id, busy, discarded, mergeBlocked };
       if (gone) {
         data = null; // the branch is gone: the Changes view says so instead of "not available yet"
         paintAll();

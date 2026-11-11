@@ -1804,14 +1804,18 @@
     paintAll();
   }
 
-  /* Files view, "Open in Artifacts" on a file no chat has registered: the deliberate action that registers it in the open chat
-     (the same route the old Preview used), then shows it. */
-  async function registerFile(path) {
-    if (!S.chat.id || !path) throw new Error('Open a chat first');
-    const s = await api('/api/live/artifacts/preview', { conversationId: S.chat.id, path });
+  /* Files view, "Open in Artifacts" on a file no chat has registered: the deliberate action that registers it in a chat (the one
+     files-ui picked, whose folder holds the file; else the open chat), by the same route the old Preview used, then shows it here.
+     Another chat's artifact is shown by id and kept out of the open chat's list. Throws when it cannot be shown. */
+  async function registerFile(path, conversationId) {
+    const id = conversationId || S.chat.id;
+    if (!id) throw new Error('Open a chat first');
+    if (!path) throw new Error('Choose a file');
+    const s = await api('/api/live/artifacts/preview', { conversationId: id, path });
     if (!s || !s.id) return null;
-    upsert(s);
-    await open(s.id);
+    if (id === S.chat.id) upsert(s);
+    else if (!S.list.some((a) => a.id === s.id)) S.extras[s.id] = Object.assign({}, S.extras[s.id], s);
+    if (!(await open(s.id))) throw new Error('the Artifacts viewer could not show it');
     return s;
   }
   const api2 = Object.assign({}, pure, {

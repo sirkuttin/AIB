@@ -102,6 +102,40 @@
     for (const k of Object.keys(theme)) if (!theme[k]) delete theme[k]; // a page without those tokens keeps xterm's own
     return theme;
   }
+  /** Reads the active theme's tokens off <html>, each colour turned into plain #rrggbb / rgba() by the page's own canvas, so
+   *  xterm gets a value it parses whatever form the token has (hex, color-mix(), a named colour). Never cached: a theme switch
+   *  is read fresh. Without a canvas (tests) the raw value is returned. */
+  let probe = null;
+  function plainColour(value) {
+    const v = String(value || '').trim();
+    if (!v || /^#[0-9a-f]{6}$/i.test(v)) return v;
+    try {
+      if (!probe && doc().createElement) {
+        const c = doc().createElement('canvas');
+        c.width = c.height = 1;
+        probe = c.getContext && c.getContext('2d', { willReadFrequently: true });
+      }
+      if (!probe) return v;
+      probe.clearRect(0, 0, 1, 1);
+      probe.fillStyle = '#000';
+      probe.fillStyle = v;
+      probe.fillRect(0, 0, 1, 1);
+      const d = probe.getImageData(0, 0, 1, 1).data;
+      const hex = (n) => n.toString(16).padStart(2, '0');
+      return d[3] === 255
+        ? '#' + hex(d[0]) + hex(d[1]) + hex(d[2])
+        : 'rgba(' + d[0] + ', ' + d[1] + ', ' + d[2] + ', ' + Math.round((d[3] / 255) * 1000) / 1000 + ')';
+    } catch {
+      return v;
+    }
+  }
+  function pageTheme() {
+    const style = root.getComputedStyle ? root.getComputedStyle(doc().documentElement || doc().body) : null;
+    const read = (name) => (style && style.getPropertyValue ? style.getPropertyValue(name) : '');
+    return themeFrom((name) => plainColour(read(name)));
+  }
+  /** Sign-in terminals (Settings > Beta agents) are not chat entries; they follow the theme too. */
+  const signinTerms = new Set();
   function clampHeight(h, max) {
     const n = Math.round(Number(h));
     const top = Math.max(MIN_HEIGHT, Number(max) || 640);
@@ -812,7 +846,7 @@
       fontSize: 13,
       lineHeight: 1.15,
       scrollback: 5000,
-      theme: themeFrom(read),
+      theme: pageTheme(),
     });
     // The canvas renderer goes in before open(): xterm's DOM renderer would insert <style> elements, which our CSP refuses.
     if (lib.CanvasAddon) term.loadAddon(new lib.CanvasAddon());
@@ -1058,7 +1092,7 @@
       else show(cur);
     });
     if (typeof root.MutationObserver === 'function' && doc().documentElement) {
-      new root.MutationObserver(() => retheme()).observe(doc().documentElement, {
+      new root.MutationObserver(() => retheme(true)).observe(doc().documentElement, {
         attributes: true,
         attributeFilter: ['class', 'style', 'data-theme'],
       });
@@ -1114,6 +1148,7 @@
   function show(cur) {
     const e = entryFor(cur);
     e.visible = true;
+    if (e.term && e.term.options) e.term.options.theme = pageTheme(); // the theme on screen now, whenever it was made
     if (STOPPED.has(e.status)) {
       render();
       return;
@@ -1215,21 +1250,32 @@
     else show(cur);
   }
 
-  function retheme() {
-    const style = root.getComputedStyle ? root.getComputedStyle(doc().documentElement || doc().body) : null;
-    const read = (name) => (style && style.getPropertyValue ? style.getPropertyValue(name) : '');
-    const theme = themeFrom(read);
+  // The active theme onto every terminal: chat terminals and sign-in terminals. Called when <html> changes theme (the
+  // observer in init), and when a terminal is shown, so one made before the page's colours were ready never keeps the default.
+  let themeSig = '';
+  function retheme(force) {
+    const theme = pageTheme(),
+      sig = JSON.stringify(theme);
+    if (!force && sig === themeSig) return theme;
+    themeSig = sig;
     for (const e of entries.values()) {
       if (e.term && e.term.options) e.term.options.theme = theme;
     }
+    for (const t of signinTerms) if (t && t.options) t.options.theme = theme;
+    return theme;
   }
 
   /* ---- a sign-in terminal (Settings > AIB Linking > Beta agents) ------------------------------------------------------------ */
 
   /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
-  function signinUrl(loc, agentId, cols, rows) {
+  // step: '' for the sign-in; 'install' or 'prereq:<id>' for a setup terminal (the server picks the command from its catalog).
+  function signinUrl(loc, agentId, cols, rows, step) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-    const q = new URLSearchParams({ signin: agentId, cols: String(cols || 80), rows: String(rows || 24) });
+    const q = new URLSearchParams(
+      step
+        ? { setup: agentId, step, cols: String(cols || 80), rows: String(rows || 24) }
+        : { signin: agentId, cols: String(cols || 80), rows: String(rows || 24) },
+    );
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
   }
   /**
@@ -1257,7 +1303,7 @@
           fontSize: 13,
           lineHeight: 1.15,
           scrollback: 2000,
-          theme: themeFrom(read),
+          theme: pageTheme(),
         });
         if (lib.CanvasAddon) term.loadAddon(new lib.CanvasAddon()); // before open(): the DOM renderer's <style> breaks our CSP
         const fit = lib.FitAddon ? new lib.FitAddon() : null;
@@ -1267,6 +1313,7 @@
           if (fit) fit.fit();
         } catch {}
         run.term = term;
+        signinTerms.add(term);
         if (term.attachCustomKeyEventHandler)
           term.attachCustomKeyEventHandler((ev) => {
             const key = String(ev.key || '').toLowerCase();
@@ -1280,7 +1327,7 @@
         return Promise.resolve(host.token()).then((token) => {
           if (run.closed) return;
           const WS = (host && host.WebSocket) || root.WebSocket;
-          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows), protocols(token));
+          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows, h.step || ''), protocols(token));
           ws.binaryType = 'arraybuffer';
           run.ws = ws;
           term.onData((data) => {
@@ -1299,14 +1346,28 @@
             }
             if (m.type === 'ready') {
               if (h.onReady) h.onReady();
-              if (term.focus) term.focus();
+              // preventScroll: focusing the terminal must not scroll the Settings page away from the card it sits in.
+              const ta = box && box.querySelector ? box.querySelector('textarea') : null;
+              if (ta && ta.focus) {
+                try {
+                  ta.focus({ preventScroll: true });
+                } catch {
+                  ta.focus();
+                }
+              } else if (term.focus) term.focus();
             } else if (m.type === 'exit' && !run.done) {
               run.done = true;
               if (h.onExit) h.onExit(Number(m.code));
-            } else if (m.type === 'error') fail(String(m.message || 'The sign-in could not start.'));
+            } else if (m.type === 'error')
+              fail(String(m.message || (h.step ? 'The install could not start.' : 'The sign-in could not start.')));
           };
           ws.onclose = () => {
-            if (!run.closed) fail('The sign-in terminal closed before the sign-in finished.');
+            if (!run.closed)
+              fail(
+                h.step
+                  ? 'The install terminal closed before the install finished.'
+                  : 'The sign-in terminal closed before the sign-in finished.',
+              );
           };
         });
       })
@@ -1319,7 +1380,10 @@
           if (run.ws) run.ws.close();
         } catch {}
         try {
-          if (run.term) run.term.dispose();
+          if (run.term) {
+            signinTerms.delete(run.term);
+            run.term.dispose();
+          }
         } catch {}
       },
     };
@@ -1337,7 +1401,11 @@
     end,
     toggle,
     retheme,
+    pageTheme,
+    plainColour,
     runSignin,
+    // runSetup(box, agentId, step, hooks): the same terminal for a Beta card's setup step ('install' or 'prereq:<id>').
+    runSetup: (box, agentId, step, hooks) => runSignin(box, agentId, Object.assign({}, hooks, { step })),
     signinUrl,
     socketUrl,
     protocols,

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.0-beta.7 (beta)
+
+- Installing or signing in to a Beta agent turns it On, and a Ready Beta agent shows in New chat unless you turned it off.
+  Agents that aren't ready show greyed out, with the reason and "Set up in Settings ›".
+- Buttons on Settings agent cards keep the card in place (no scroll jump).
+- The first message of a new chat is always sent, even if you switch chats while the agent starts, and links in agent
+  errors are clickable.
+- Merge into main asks the agent: the Changes tab's Merge button sends the chat a fixed merge request (shown as a collapsed
+  "Merge requested" chip) and gives that chat a one-time permission to merge, tied to its work at the click. Without the
+  click, the agent's merge tool merges nothing and points you to the button. A merge that lands uses the permission up;
+  conflicts keep it for the next round; your next own message ends it. No confirmation dialog. The button is off, with the
+  reason, for closed, archived, read-only and Elsewhere chats.
+- Beta agents: every card can install its agent. OpenCode installs with npm (@opencode/cli). Cursor CLI, Goose and Mistral
+  Vibe run the vendor's documented installer in the card's terminal panel, with the command shown first. Cards check what
+  the agent needs first (Node.js 22 or the package's minimum, uv for Mistral Vibe on Windows) and offer "Install Node.js 26
+  (LTS)" or "Install uv" (winget on Windows, official scripts elsewhere); the agent's Install stays off until then. Check
+  again re-reads PATH on Windows.
+- Beta agents: Kimi sign-in runs `kimi acp --login` (it ran `kimi --login`). Cards with an API key box have a "Get an API
+  key" link. The Qwen card has an optional API address (passed as OPENAI_BASE_URL) for Alibaba Model Studio keys. Gemini
+  and Qwen notes and cost lines were checked against the vendors' pages and corrected.
+- Beta agent API keys are encrypted at rest: Windows DPAPI, the macOS login Keychain, the Linux Secret Service (else an
+  owner-only beta-keys.json). Keys from older versions are sealed on load. Settings says where the key is kept.
+- Claude Code and Codex cards show "Needs first: Node.js" with an Install Node.js button and Install off when Node.js is
+  missing or too old, like the Beta cards.
+- Artifacts: Mermaid, Chart.js and Vega / Vega-Lite load from AIB itself, so charts and diagrams work offline. Pages that
+  load them from jsDelivr, unpkg or cdnjs get the local copy; Markdown mermaid blocks are drawn too.
+- Files view: Open in Artifacts works from a file tab (it did nothing) and is off, with the reason, when no chat can hold the
+  file. Errors and notices stay visible while a file tab shows.
+- Approval cards show the command, path or URL itself in a code box, with the agent's description under it.
+- A new chat no longer keeps the previous chat's Changes chip, Merge / Discard and Files.
+- The model menu no longer shows "Default (Default (...))".
+- Tool rows name paths relative to the project, never the chat's worktree folder.
+- Terminal colours follow theme switches, sign-in terminals included.
+- A chat that follows the newest message keeps following when a question card or the terminal takes space (the plan card was
+  hidden under them).
+- Sidebar: a long chat title gets the whole first line; its age moves to the end of the second line.
+- Chat and Prompts views fold a turn's steps once, not twice.
+
 ## 0.1.0-beta.6 (beta)
 
 - Write and edit rows have an open-file button, and the path in the row is clickable: both open the file in the file view

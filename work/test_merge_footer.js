@@ -42,6 +42,53 @@ test('the footer is one row: status line on the left, Discard then Merge on the 
   assert.ok(paints > 0, 'the footer is told to repaint');
 });
 
+test('one click on Merge asks the chat (no confirmation): it posts merge-request (never the direct merge) and shows the answer', async () => {
+  const doc = { createElement: (tag) => new Node(tag, doc) };
+  const parts = footer(doc);
+  const posts = [];
+  const win = {
+    document: doc,
+    fetch: async (url, init) => {
+      if (init && init.method === 'POST') posts.push([url, JSON.parse(init.body)]);
+      const body = /bootstrap/.test(url)
+        ? { token: 't' }
+        : /merge-request/.test(url)
+          ? { ok: true, state: 'requested', queued: true, message: 'Merge requested. The chat merges when it finishes its turn' }
+          : ready;
+      return { ok: true, status: 200, json: async () => body };
+    },
+  };
+  const ui = init({ win, line: parts.mergeLine, button: parts.merge });
+  ui.update({ id: 'c1', busy: true, files: 2, branchView: true, worktree: true });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(parts.merge.disabled, false, 'a busy chat can be asked');
+  parts.merge.dispatch('click');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(posts, [['/api/live/worktree/merge-request', { id: 'c1' }]]);
+  assert.equal(parts.mergeLine.textContent, 'Merge requested. The chat merges when it finishes its turn');
+});
+
+test('a blocked chat: the button is disabled with the reason, and a click sends nothing', async () => {
+  const doc = { createElement: (tag) => new Node(tag, doc) };
+  const parts = footer(doc);
+  const posts = [];
+  const win = {
+    document: doc,
+    fetch: async (url, init) => {
+      if (init && init.method === 'POST') posts.push(url);
+      return { ok: true, status: 200, json: async () => (/bootstrap/.test(url) ? { token: 't' } : ready) };
+    },
+  };
+  const ui = init({ win, line: parts.mergeLine, button: parts.merge, confirm: async () => true });
+  const reason = 'This chat is closed. Continue it to merge its work';
+  ui.update({ id: 'c1', busy: false, files: 2, branchView: true, worktree: true, blocked: reason });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual([parts.merge.hidden, parts.merge.disabled, parts.merge.title, parts.mergeLine.textContent], [false, true, reason, reason]);
+  parts.merge.dispatch('click');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(posts, []);
+});
+
 test('the amber clash line shows only while something is unresolved', () => {
   assert.deepEqual(clashPlan({ unresolved: false }), { show: false, line: '' });
   assert.deepEqual(clashPlan(null), { show: false, line: '' });

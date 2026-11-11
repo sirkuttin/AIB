@@ -438,8 +438,7 @@ def _merge(chat, title):
             if merge_in_progress(chat.wt) or check_resolution(chat, recorded):
                 raise Refused(conflict_line(chat, recorded) if chat.from_tool else WAITING, 'conflicts')
             chat.registry.update(chat.key, mergeConflicts=[])
-        else:
-            commit_pending(chat, title)
+        commit_pending(chat, title)   # a reworked change after a tree-landing conflict may still be uncommitted
         tip = rev(chat.project, f'refs/heads/{chat.base}')
         if not tip:
             raise Refused(f'The branch {chat.base} no longer exists', 'no_base')
@@ -539,6 +538,7 @@ def _land(chat, tip, title):
         built = tree_landing(chat, tip, head, title)
         if built[0] == 'conflicts':
             line = tree_conflict_line(chat, built[1])
+            chat.registry.update(chat.key, mergeConflicts=built[1])   # as the base-merge path: live sync waits for the fix
             if chat.from_tool:   # the agent is mid-turn: the tool's answer is the instruction
                 return {'ok': True, 'state': 'conflicts', 'message': line, 'files': built[1]}
             code, payload = chat.studio.live_call('prompt', {'id': chat.id, 'text': line, 'clientMessageId': 'merge-' + uuid.uuid4().hex})

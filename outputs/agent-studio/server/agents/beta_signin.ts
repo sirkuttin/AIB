@@ -10,13 +10,14 @@
  *   Sign in   agent-type (catalog signin.kind 'agent'): ACP `authenticate` on a short-lived agent process, in the background (the agent may
  *             open the browser). With a stored API key and an advertised key method, the key goes in `_meta['api-key']` (Gemini's shape).
  *             terminal-type ('terminal'): ACP auth type "terminal". AIB reads the agent's advertised terminal method (its args), writes
- *             them to <state>/agents/<id>/signin-terminal.json, and the page runs the agent with those args in an AIB terminal panel
- *             (web server, server/web/terminal_routes.ts: a ConPTY with no window). When it exits 0 the page asks for a check (re-initialize).
- *             No method advertised: the catalog's login args. Never an external console window.
+ *             them (and its `env`) to <state>/agents/<id>/signin-terminal.json, and the page runs the agent's own launch command (program
+ *             and ACP args) with those args appended, as ACP terminal auth says, in an AIB terminal panel (web server,
+ *             server/web/terminal_routes.ts: a ConPTY with no window). When it exits 0 the page asks for a check (re-initialize).
+ *             No method advertised: the catalog's login subcommand right after the program. Never an external console window.
  *             key-type ('key'): nothing to start; the key field and Check again.
  *   Job       <state>/agents/<id>/signin-job.json, the built-ins' format (signin.ts readJob reads it).
  */
-import { type BetaLaunch } from './beta_agents.ts';
+import { type BetaLaunch, signinShown, type TerminalMethod } from './beta_agents.ts';
 import { betaAgent } from './beta_catalog.ts';
 import { agentDir, Flag, Mutex, readJson, writeJson } from './installer.ts';
 import {
@@ -27,6 +28,7 @@ import {
   JOB_NAME,
   type JobView,
   type Method,
+  normalizeMethodEnv,
   normalizeMethods,
   readCached,
   readJob,
@@ -60,11 +62,22 @@ export function cleanTerminalArgs(value: unknown): string[] | null {
   return ok ? [...value as string[]] : null;
 }
 
-/** The terminal sign-in args the agent host saved for the page (fresh and valid), else null: the catalog's args are used then. */
-export function readTerminalArgs(stateDir: string, agentId: string, clock: () => number = now): string[] | null {
+/**
+ * The terminal sign-in the agent host saved for the page (fresh and valid), else null: the catalog's login command is used then.
+ * A file from before `advertised` was saved counts as advertised when it names the agent's method.
+ */
+export function readTerminalMethod(stateDir: string, agentId: string, clock: () => number = now): TerminalMethod | null {
   const saved = readJson(pathOf(agentDir(stateDir, agentId), TERMINAL_NAME));
   if (!saved || typeof saved.at !== 'number' || clock() - saved.at > TERMINAL_MAX_AGE) return null;
-  return cleanTerminalArgs(saved.args);
+  const args = cleanTerminalArgs(saved.args);
+  if (!args) return null;
+  const advertised = typeof saved.advertised === 'boolean' ? saved.advertised : typeof saved.method === 'string' && !!saved.method;
+  return { args, env: advertised ? normalizeMethodEnv(saved.env) : {}, advertised };
+}
+
+/** The args of readTerminalMethod, or null. */
+export function readTerminalArgs(stateDir: string, agentId: string, clock: () => number = now): string[] | null {
+  return readTerminalMethod(stateDir, agentId, clock)?.args.slice() ?? null;
 }
 
 export type BetaLaunchFn = (agentId: string) => Promise<BetaLaunch> | BetaLaunch;
@@ -223,11 +236,19 @@ export class BetaSigner {
         const [methods, shake] = await this.methods(row.argv, id);
         await shake?.close();
         const advertised = methods.find((m) => m.kind === 'terminal' && cleanTerminalArgs(m.args));
-        const args = advertised ? advertised.args : [...(agent.signin.terminalArgs ?? [])];
-        writeJson(pathOf(this.#dir(id), TERMINAL_NAME), { args, method: advertised?.id ?? '', at: now() });
+        // ACP terminal auth: an advertised method's args (and env) go after the agent's own launch command (beta_agents signinWords).
+        const method: TerminalMethod = advertised
+          ? { args: advertised.args, env: advertised.env ?? {}, advertised: true }
+          : { args: [...(agent.signin.terminalArgs ?? [])], env: {}, advertised: false };
+        writeJson(pathOf(this.#dir(id), TERMINAL_NAME), {
+          args: method.args,
+          env: method.env,
+          advertised: method.advertised,
+          method: advertised?.id ?? '',
+          at: now(),
+        });
         this.#clear(id, JOB_NAME);
-        const shown = [...row.base, ...args].map((p) => (p.includes(' ') ? `"${p}"` : p)).join(' ');
-        return { agent: id, state: 'terminal', message: '', command: shown, args };
+        return { agent: id, state: 'terminal', message: '', command: signinShown(row, id, method), args: [...method.args] };
       }
       const job = new Job(id);
       this.jobs.set(id, job);

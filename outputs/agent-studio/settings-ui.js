@@ -531,6 +531,7 @@
     hold++;
     return load()
       .then(() => checkSignins(true))
+      .then(() => autoOn(id))
       .finally(releaseHold);
   }
   function startInstall(a) {
@@ -688,7 +689,9 @@
     }
     signins[id] = job && job.state !== 'idle' ? job : { state: 'idle' };
     hold++; // the process ended and the server re-checked the status: read the list again before painting anything
-    return load().finally(releaseHold);
+    return load()
+      .then(() => (job && job.state === 'done' ? autoOn(id) : undefined))
+      .finally(releaseHold);
   }
   function startSignin(a) {
     if (a.beta && betaInfo(a).signin === 'terminal') return startTerminalSignin(a);
@@ -744,6 +747,7 @@
   function agentRow(a, opts) {
     const shared = !!(opts && opts.sharedBlock);
     const row = el('div', null, 'st-agent' + (a.enabled ? '' : ' off'));
+    row.dataset.agent = a.id; // keepView finds this card again after a repaint
     const head = el('div', null, 'st-agent-head');
     head.append(el('span', a.letter || '?', 'st-letter'), el('strong', a.name));
     // Beta agents carry no tag: the section heading says Beta.
@@ -778,12 +782,17 @@
       if (canSignIn(a)) head.append(button('Sign in', () => startSignin(a), 'st-primary'));
       if (a.found && a.signin)
         head.append(button('Check again', () => (a.beta ? checkOne(a) : checkSignins(true)), 'st-link'));
-      if (canInstall(a))
+      if (!a.found && setupOf(a)) betaInstallButton(a, head, job, refused);
+      else if (canInstall(a))
         head.append(
           button(job && (job.state === 'failed' || refused) ? 'Retry' : 'Install', () => startInstall(a), 'st-primary'),
         );
     }
     row.append(head);
+    const blockedBy = !a.found && !running && (setupOf(a) || {}).blockedBy;
+    if (blockedBy) row.append(note(blockedBy, 'dim st-beta-blocked'));
+    // A built-in AIB installs (Claude Code, Codex) that cannot install yet: the same "Needs first:" as a Beta card, on the card.
+    if (blockedBy && !a.beta) row.append(needsFirst(a, setupOf(a), true));
     if (running) {
       row.append(progressBar(a, job), note(progressText(a, job)));
     } else if (waiting) {
@@ -820,7 +829,10 @@
       const block = installBlock(a);
       if (job && job.state === 'failed') row.append(note(job.message || 'The install failed.', 'bad'));
       else if (refused) row.append(note(job.message, 'bad'));
-      else if (block && shared) {
+      else if (block && setupOf(a)) {
+        // "Needs first:" above says it; only the do-it-yourself npm line stays
+        if (a.installHint) row.append(note(a.installHint, 'dim'));
+      } else if (block && shared) {
         /* drawn once by the page */
       } else if (block) {
         const line = note(block + (a.installHint ? ' ' + a.installHint : ''), 'dim');
@@ -838,6 +850,7 @@
         row.append(note(a.problem, canInstall(a) || (a.installable && a.launcherSource === 'missing') ? 'dim' : 'bad'));
     }
     if (a.beta) betaLines(a, row);
+    else if (betaTerms[a.id]) row.append(betaTerms[a.id].node); // a built-in's Node.js install runs in the card's terminal
     if (!a.builtin && !a.beta) {
       const bits = [];
       if (a.args && a.args.length) bits.push(a.args.length + (a.args.length === 1 ? ' argument' : ' arguments'));
@@ -884,6 +897,13 @@
   // Environment values never reach this page: the server sends {name, set: true}. A row keeps `set` (a value is stored) and `value`
   // (only what the user typed this time). Sending a row without a value tells the server to keep the stored one.
   const togglePatch = (id, on) => ({ agents: { enabled: { [id]: !!on } } });
+  // A Beta agent that was installed or signed in from its card is On, even when the person had turned it Off before (the box ticks
+  // itself): that clears the explicit Off.
+  function autoOn(id) {
+    const a = agents().find((x) => x.id === id);
+    if (!a || !a.beta || !a.userOff) return Promise.resolve();
+    return save(togglePatch(id, true), true).catch(() => {});
+  }
   const envRowsFrom = (env) =>
     (Array.isArray(env) ? env : [])
       .filter((e) => e && typeof e.name === 'string')
@@ -1055,7 +1075,7 @@
     const list = agents();
     if (!list.length)
       box.append(note(S.loadError ? 'The agent list could not be read from the server: ' + S.loadError : 'Loading…'));
-    const blocked = list.find((a) => !a.beta && installBlock(a));
+    const blocked = list.find((a) => !a.beta && installBlock(a) && !setupOf(a)); // a card with setup says it itself
     if (blocked) {
       const line = note(blocked.installBlock + (blocked.installHint ? ' ' + blocked.installHint : ''), 'dim');
       line.append(
@@ -1079,6 +1099,8 @@
   // (an AIB terminal panel for terminal-type sign-ins, ACP authenticate for agent-type ones) and an API key box where the agent takes one.
   const BETA_NOTE = "These connect the same way but haven't been tested by us yet. Tell us what breaks.";
   const betaInfo = (a) => (a && a.betaInfo) || {};
+  // What a card needs before it can install (server/agents/beta_setup.ts): a Beta agent's betaInfo.setup, or a built-in's setup.
+  const setupOf = (a) => (a ? (a.beta ? betaInfo(a).setup : a.setup) : null) || null;
   const betaAgents = () => agents().filter((a) => a.beta);
   function renderAgentsBeta(box) {
     box.append(note(BETA_NOTE, 'st-beta-lead'));
@@ -1115,31 +1137,157 @@
     if (info.cost) row.append(el('p', info.cost, 'st-beta-cost'));
     if (info.note) row.append(note(info.note, 'dim'));
     if (!a.found && !installRunning(a)) {
+      const setup = info.setup || null;
+      if (setup && setup.prereqs && setup.prereqs.length) row.append(needsFirst(a, setup));
       const how = el('div', null, 'st-beta-install');
-      how.append(el('span', canInstall(a) ? 'Or install it yourself:' : 'Install it with:', 'st-hint'));
+      // npm agents: AIB installs the package into its own folder (Install); the global npm command is the do-it-yourself way.
+      // Others: Install runs the vendor's installer for this computer in a terminal on this card; this is that command.
+      const kind = setup ? setup.kind : a.installable ? 'npm' : 'none';
+      const hint =
+        kind === 'npm'
+          ? 'Or install it yourself:'
+          : kind === 'terminal'
+            ? 'Install runs this in a terminal here:'
+            : "AIB can't install this one for you. Run this command, then choose Check again.";
+      how.append(el('span', hint, 'st-hint'));
       const line = el('div', null, 'st-beta-row st-beta-command');
       const code = el('code', info.installCommand || '', 'st-command');
       const copy = button('Copy', () => copyText(info.installCommand || '', copy), 'st-link');
       copy.setAttribute('aria-label', 'Copy the install command of ' + a.name);
       line.append(code, copy);
       how.append(line);
-      if (info.docs) {
-        const link = el('a', 'Install instructions', 'st-link st-beta-docs');
-        link.href = info.docs;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        how.append(link);
-      }
+      if (info.docs) how.append(externalLink('Install instructions', info.docs, 'st-link st-beta-docs'));
       const again = button('Check again', () => load(true), 'st-link');
       how.append(' ', again);
+      if (setup && setup.uninstallDocs)
+        how.append(' ', externalLink('How to uninstall', setup.uninstallDocs, 'st-link st-beta-docs'));
       row.append(how);
     }
+    const msg = setupNotes[a.id];
+    if (msg && !a.found) row.append(note(msg, 'dim'));
     if (info.keyEnv) row.append(keyBox(a, info));
     const term = betaTerms[a.id];
     if (term) row.append(term.node);
   }
-  // The API key box: the key is saved with the settings (plain text in the state folder, like an added agent's environment values),
-  // passed to the agent as its environment variable, and never shown again on this page.
+  // A link to a page on the web: target=_blank, which the desktop app hands to the system browser (desktop-bridge.js).
+  function externalLink(text, href, cls) {
+    const link = el('a', text, cls);
+    link.href = href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
+  }
+  // ---- Beta setup: prerequisites and installs in the card's terminal (server/agents/beta_setup.ts) ------------------------
+  const setupNotes = {}; // agent id -> a line about the last setup step (e.g. installed but not seen until AIB restarts)
+  const prereqText = (p) =>
+    p.need +
+    ': ' +
+    (p.state === 'found'
+      ? 'found' + (p.version ? ' ' + p.version : '')
+      : p.state === 'old'
+        ? 'too old' + (p.version ? ' (' + p.version + ')' : '')
+        : 'missing');
+  // "Needs first:" each prerequisite with its state; a missing or too-old one shows its installer command and an Install button.
+  function needsFirst(a, setup, withCheck) {
+    const box = el('div', null, 'st-beta-needs');
+    box.append(el('span', 'Needs first:', 'st-hint'));
+    const list = el('ul', null, 'st-beta-needs-list');
+    for (const p of setup.prereqs) {
+      const item = el('li', null, 'st-beta-need ' + (p.state === 'found' ? 'ok' : 'bad'));
+      item.append(el('span', prereqText(p), 'st-beta-need-text'));
+      if (p.state !== 'found') {
+        if (p.command) {
+          const line = el('div', null, 'st-beta-row st-beta-command');
+          const busy = !!betaTerms[a.id] && betaTerms[a.id].running;
+          const go = button(p.installLabel, () => startSetup(a, 'prereq:' + p.id, p.command, p), 'st-primary');
+          go.disabled = busy;
+          line.append(el('code', p.command, 'st-command'), go);
+          item.append(line);
+        } else item.append(' ', externalLink('Get ' + p.name, p.page, 'st-link st-beta-docs'));
+      }
+      list.append(item);
+    }
+    box.append(list);
+    if (withCheck) box.append(button('Check again', () => load(true), 'st-link'));
+    return box;
+  }
+  // The head's Install for a Beta card that is not installed: AIB's own npm install, or the vendor's installer in the card's terminal.
+  // Off while a prerequisite is missing, with the reason next to it.
+  function betaInstallButton(a, head, job, refused) {
+    const setup = setupOf(a);
+    if (!setup || setup.kind === 'none' || (setup.kind === 'npm' && !a.installable)) return;
+    const retry = !!job && (job.state === 'failed' || refused);
+    const go = button(
+      retry ? 'Retry' : 'Install',
+      () => (setup.kind === 'npm' ? startInstall(a) : startSetup(a, 'install', setup.command, null)),
+      'st-primary',
+    );
+    const busy = !!betaTerms[a.id] && betaTerms[a.id].running;
+    if (setup.blockedBy || busy) go.disabled = true;
+    if (setup.blockedBy) go.title = setup.blockedBy;
+    head.append(go); // the reason ("Install uv first") is a line under the header (agentRow), so Install keeps its place
+  }
+  // Run one setup step in an AIB terminal on the card: 'install' (the vendor's installer) or 'prereq:<id>'. The command is shown
+  // first; the server runs its own copy of it. Exit 0: Check again (PATH re-read), then the card shows what it finds.
+  function startSetup(a, step, command, prereq) {
+    const T = root.AibTerminal;
+    if (!T || !T.runSetup) {
+      setupNotes[a.id] = 'The terminal is not available on this page.';
+      return repaint();
+    }
+    closeTerminal(a.id);
+    delete setupNotes[a.id];
+    const node = el('div', null, 'st-beta-term');
+    const head = el('div', null, 'st-beta-term-head');
+    head.append(
+      el('span', (prereq ? 'Installing ' + prereq.name + ': ' : 'Installing: ') + command, 'st-beta-term-title'),
+      button('Close', () => closeTerminal(a.id, true), 'st-link'),
+    );
+    const view = el('div', null, 'st-beta-term-view');
+    const status = el('p', 'Starting…', 'st-note');
+    status.setAttribute('role', 'status');
+    node.append(head, view, status);
+    const entry = { node, status, run: null, done: null, key: 'setup:' + a.id, running: true };
+    betaTerms[a.id] = entry;
+    repaint();
+    showPanel(a.id);
+    const fresh = () => agents().find((x) => x.id === a.id) || a;
+    entry.run = T.runSetup(view, a.id, step, {
+      onReady: () => (status.textContent = 'Installing. Answer here if the installer asks something.'),
+      onExit: (code) => {
+        entry.running = false;
+        if (code !== 0) {
+          status.textContent = 'Install failed. See the output above.';
+          status.className = 'st-note bad';
+          return repaint();
+        }
+        status.textContent = 'Installed. Checking…';
+        return load(true).then(() => {
+          const now = fresh();
+          const need = prereq && ((setupOf(now) || {}).prereqs || []).find((p) => p.id === prereq.id);
+          const seen = prereq ? !need || need.state === 'found' : now.found;
+          if (seen) {
+            if (!prereq) autoOn(a.id);
+            if (betaTerms[a.id] === entry) closeTerminal(a.id);
+          } else {
+            const what = prereq ? prereq.name : a.name;
+            status.textContent =
+              'The install finished, but AIB cannot find ' + what + ' yet. Restart AIB, then choose Check again.';
+            status.className = 'st-note warn';
+          }
+          repaint();
+        });
+      },
+      onError: (message) => {
+        entry.running = false;
+        status.textContent = message;
+        status.className = 'st-note bad';
+        repaint();
+      },
+    });
+  }
+  // The API key box: the key is saved encrypted (Windows DPAPI, the macOS Keychain, the Linux keyring; on Linux without a keyring
+  // an owner-only file, which info.keyStorage says), passed to the agent as its environment variable, never shown on this page.
   const keyDrafts = {};
   function keyBox(a, info) {
     const wrap = el('div', null, 'st-field st-beta-key');
@@ -1173,22 +1321,73 @@
     line.append(input, store);
     if (info.keySet)
       line.append(button('Remove key', () => saveQuiet({ agents: { betaKey: { [a.id]: null } } }), 'st-danger'));
+    // The provider's own page where the key is made (beta_catalog.ts keyUrl), opened in the system browser.
+    let getKey = null;
+    if (info.keyUrl) {
+      getKey = externalLink('Get an API key', info.keyUrl, 'st-link st-beta-keylink');
+      getKey.setAttribute('aria-label', 'Get an API key for ' + a.name + ' (opens in your browser)');
+    }
     wrap.append(
+      label,
+      line,
+      ...(getKey ? [getKey] : []),
+      el(
+        'span',
+        (info.keyStorage ? String(info.keyStorage).replace(/\.?$/, '') : 'Saved in the data folder') +
+          '. Passed to ' +
+          a.name +
+          ' as ' +
+          info.keyEnv +
+          '; never shown again here.',
+        'st-hint',
+      ),
+    );
+    if (info.baseUrlEnv) wrap.append(urlBox(a, info));
+    return wrap;
+  }
+  // The optional API address under the key box (Qwen: OPENAI_BASE_URL): saved with the settings like the key, passed to the agent as
+  // its variable. Empty: the agent's own default address.
+  const urlDrafts = {};
+  function urlBox(a, info) {
+    const box = el('div', null, 'st-beta-url');
+    const label = el('span', 'API address (' + info.baseUrlEnv + ', optional)', 'st-label');
+    const line = el('div', null, 'st-beta-row');
+    const input = el('input');
+    input.type = 'url';
+    input.spellcheck = false;
+    input.value = Object.prototype.hasOwnProperty.call(urlDrafts, a.id) ? urlDrafts[a.id] : info.baseUrl || '';
+    input.placeholder = info.baseUrlHint || '';
+    input.setAttribute('aria-label', 'API address for ' + a.name);
+    input.addEventListener('input', () => {
+      urlDrafts[a.id] = input.value;
+    });
+    const store = button(
+      'Save address',
+      () => {
+        const value = (Object.prototype.hasOwnProperty.call(urlDrafts, a.id) ? urlDrafts[a.id] : input.value).trim();
+        save({ agents: { betaUrl: { [a.id]: value || null } } }).then(
+          () => {
+            delete urlDrafts[a.id];
+            if (a.enabled) checkOne(a);
+          },
+          () => {},
+        );
+      },
+      'st-primary',
+    );
+    line.append(input, store);
+    box.append(
       label,
       line,
       el(
         'span',
-        'Stored as plain text in the state folder' +
-          (S.boot && S.boot.stateDir ? ' (' + S.boot.stateDir + ')' : '') +
-          ' and passed to ' +
-          a.name +
-          ' as ' +
-          info.keyEnv +
-          '. Never shown again here.',
+        'Leave empty for OpenAI. For an Alibaba Cloud Model Studio key use ' +
+          (info.baseUrlHint || '') +
+          ' (your workspace ID is on the workspace details page in the Model Studio console).',
         'st-hint',
       ),
     );
-    return wrap;
+    return box;
   }
   // One agent's sign-in check (force), then the list again.
   function checkOne(a) {
@@ -1232,6 +1431,7 @@
           const entry = { node, status, run: null, done, fromChat: !!(opts && opts.onDone) };
           betaTerms[a.id] = entry;
           repaint();
+          showPanel(a.id);
           entry.run = T.runSignin(view, a.id, {
             onReady: () =>
               (status.textContent = 'Finish the sign-in in this terminal. AIB does not see what you type here.'),
@@ -1239,6 +1439,7 @@
               if (code === 0) {
                 status.textContent = 'The sign-in finished. Checking…';
                 checkOne(a).then(() => {
+                  autoOn(a.id);
                   done(true);
                   if (betaTerms[a.id] === entry) closeTerminal(a.id);
                 });
@@ -1304,7 +1505,7 @@
     if (entry.node && entry.node.remove) entry.node.remove();
     // End the sign-in program too (the server keeps a terminal running after its socket closes).
     Promise.resolve()
-      .then(() => S.host.post('terminal/end', { key: 'signin:' + id }))
+      .then(() => S.host.post('terminal/end', { key: entry.key || 'signin:' + id }))
       .catch(() => {});
     if (paint) repaint();
   }
@@ -1997,7 +2198,63 @@
       frag.append(f);
     }
     // Keep typing places: the agent form's focus survives because it is only redrawn by explicit actions.
+    const restoreView = keepView();
     S.content.replaceChildren(frag);
+    restoreView();
+  }
+  const rowOf = (agent) => (S.content ? S.content.querySelectorAll('.st-agent').find((r) => r.dataset && r.dataset.agent === agent) : null);
+  const topOf = (n) => (n && n.getBoundingClientRect ? n.getBoundingClientRect().top : 0);
+  // Redrawing the page replaces every node, which drops the scroll position (the page is briefly empty, so the scroll clamps to 0)
+  // and the focus (the clicked button is gone). keepView() records both before the redraw; the function it returns puts them back:
+  // the same scroll offset, the clicked card at the same place on screen, focus on the button's replacement.
+  function keepView() {
+    const c = S.content;
+    if (!c) return () => {};
+    const scroll = c.scrollTop || 0;
+    const act = doc().activeElement;
+    const inside = act && act !== c && c.contains && c.contains(act);
+    const row = inside && act.closest ? act.closest('.st-agent') : null;
+    const agent = row && row.dataset ? row.dataset.agent : '';
+    const rowTop = row ? topOf(row) : 0;
+    const label = inside ? act.textContent : '';
+    const cls = inside && act.className;
+    return () => {
+      c.scrollTop = scroll;
+      const now = agent ? rowOf(agent) : null;
+      if (inside && !c.contains(doc().activeElement)) {
+        const here = now || c;
+        const buttons = here.querySelectorAll ? here.querySelectorAll('button,input,select,textarea,a') : [];
+        const next =
+          buttons.find((b) => b.textContent === label && b.className === cls) ||
+          buttons.find((b) => b.textContent === label) ||
+          (now ? buttons[0] : null);
+        if (next && next.focus) {
+          try {
+            next.focus({ preventScroll: true });
+          } catch (e) {
+            next.focus();
+          }
+        }
+      }
+      // The card itself keeps its on-screen position even when what is above it changed height.
+      if (now) {
+        const drift = topOf(now) - rowTop;
+        if (drift) c.scrollTop = scroll + drift;
+      }
+    };
+  }
+  // When a card's terminal panel opens below the card: keep the card's top where it is; scroll only as far as it takes to show
+  // the panel's bottom (never past the card's own top).
+  function showPanel(agent) {
+    const c = S.content,
+      row = rowOf(agent),
+      entry = betaTerms[agent];
+    if (!c || !row || !entry || !entry.node || !c.getBoundingClientRect) return;
+    const view = c.getBoundingClientRect();
+    const need = entry.node.getBoundingClientRect().bottom - view.bottom;
+    const room = topOf(row) - view.top;
+    const by = Math.min(need, room);
+    if (by > 0) c.scrollTop = (c.scrollTop || 0) + by;
   }
   function renderAll() {
     if (!S.page) return;
@@ -2072,6 +2329,22 @@
       }
     }
   }
+  // Open Settings > AIB Linking with the Beta agent's card in view (from a menu that lists the agent as not ready).
+  function openAgent(id) {
+    openPage('agents');
+    const show = () => {
+      const row = rowOf(id);
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+      if (row && row.querySelector) {
+        const b = row.querySelector('button');
+        if (b && b.focus) b.focus({ preventScroll: true });
+      }
+    };
+    show();
+    return Promise.resolve(S.data ? S.data : load()).then(() => {
+      if (S.open) show();
+    });
+  }
   const toggleOpen = (section) => (S.open && !section ? closePage() : openPage(section));
 
   function onKey(event) {
@@ -2114,6 +2387,7 @@
     load,
     sync,
     open: openPage,
+    openAgent,
     close: closePage,
     isOpen: () => S.open,
     onKey,

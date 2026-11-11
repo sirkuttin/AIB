@@ -610,6 +610,20 @@ body.new-chat header .hd-line h1:hover {
 .nc-grid select:disabled {
   opacity: 0.6;
 }
+.nc-setup {
+  display: block;
+  margin: 8px auto 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, var(--text));
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.nc-setup[hidden] {
+  display: none;
+}
 .nc-folder {
   width: 100%;
   max-width: 380px;

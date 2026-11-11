@@ -18,6 +18,8 @@
   // so existing chats still show the right name. Both are updated IN PLACE by setRegistry, so other modules can hold them.
   const AGENTS = BUILTINS.map((a) => Object.assign({}, a));
   const ALL = BUILTINS.map((a) => Object.assign({}, a));
+  // Beta agents that cannot start a chat yet (not installed, turned off, needs sign-in): shown greyed with the reason, never pickable.
+  const UNAVAILABLE = [];
 
   // The Status column says "Needs sign-in": not offered for new chats. "Not checked" (and no status at all) stays offered.
   const needsSignIn = (row) => !!row.signin && row.signin.state === 'signin';
@@ -26,7 +28,8 @@
   // Built-ins are never dropped (a list that omits them still shows them, on); unknown or malformed rows are skipped.
   function mergeRegistry(serverAgents) {
     const all = BUILTINS.map((a) => Object.assign({}, a));
-    const beta = [];
+    const beta = [],
+      unavailable = [];
     for (const row of Array.isArray(serverAgents) ? serverAgents : []) {
       if (!row || typeof row.id !== 'string') continue;
       const at = all.findIndex((a) => a.id === row.id);
@@ -45,8 +48,18 @@
           builtin: false,
           beta: true,
           group: BETA_GROUP,
-          enabled: row.enabled === true && row.found !== false && !needsSignIn(row), // off unless turned on
+          // Ready (found, signed in) is offered unless the person turned it Off; the server sends enabled false for that and for an
+          // agent that is not installed.
+          enabled: row.enabled !== false && row.found !== false && !needsSignIn(row),
         });
+        if (!beta[beta.length - 1].enabled)
+          unavailable.push({
+            id: row.id,
+            name: beta[beta.length - 1].name,
+            group: BETA_GROUP,
+            found: row.found !== false,
+            reason: row.found === false ? 'Not installed' : needsSignIn(row) && row.enabled !== false ? 'Needs sign-in' : row.enabled === false ? 'Turned off in Settings' : 'Needs sign-in',
+          });
         continue;
       }
       if (at >= 0) {
@@ -69,7 +82,7 @@
       });
     }
     all.push(...beta); // after the tested agents and the ones you added
-    return { all, enabled: all.filter((a) => a.enabled) };
+    return { all, enabled: all.filter((a) => a.enabled), unavailable };
   }
   // The rows an agent menu lists, with the Beta group label on the Beta agents ({value, name, group}).
   function menuItems(list) {
@@ -79,6 +92,14 @@
       group: a.beta ? BETA_GROUP : '',
     }));
   }
+  // The rows an agent menu lists: the agents a chat can start with, then (Beta group) the ones that cannot yet, disabled, with their reason.
+  function menuRows() {
+    return menuItems(AGENTS).concat(
+      UNAVAILABLE.map((a) => ({ value: a.id, name: a.name, group: BETA_GROUP, disabled: true, reason: a.reason })),
+    );
+  }
+  // The agent the "Set up in Settings" link opens: an installed one that still needs setting up first, else the first listed.
+  const setupTarget = () => (UNAVAILABLE.find((a) => a.found) || UNAVAILABLE[0] || {}).id || '';
   // True when at least one enabled agent in the server's list can start a chat: found, and not "Needs sign-in". "Not checked" is ready.
   // An unreadable or empty list says true, so the first-run start page never shows for a list nobody could read.
   function anyReady(serverAgents) {
@@ -90,6 +111,7 @@
     const m = mergeRegistry(serverAgents);
     const usable = m.enabled.length ? m.enabled : [m.all[0]];
     ALL.splice(0, ALL.length, ...m.all);
+    UNAVAILABLE.splice(0, UNAVAILABLE.length, ...m.unavailable);
     AGENTS.splice(0, AGENTS.length, ...usable);
     return AGENTS;
   }
@@ -378,6 +400,9 @@
     BUILTINS,
     mergeRegistry,
     menuItems,
+    menuRows,
+    setupTarget,
+    UNAVAILABLE,
     BETA_IDS,
     BETA_GROUP,
     isBeta,
@@ -406,6 +431,16 @@
     resolveFolder,
     handoffText,
   };
+  // The "Default" row of a model / mode / effort menu: it leaves the agent's own setting alone and names that setting when the
+  // agent reported it. A name that already says Default ("Default (recommended)", Claude Code's) is shown as it is, never
+  // wrapped again into "Default (Default (recommended))".
+  function defaultLabel(list) {
+    const hit = list && list.current && Array.isArray(list.choices) && list.choices.find((c) => c.value === list.current);
+    const name = hit ? String(hit.name || hit.value || '').trim() : '';
+    if (!name) return 'Default';
+    return /^default(?![a-z0-9])/i.test(name) ? name : 'Default (' + name + ')';
+  }
+  api.defaultLabel = defaultLabel;
   root.AgentChoice = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

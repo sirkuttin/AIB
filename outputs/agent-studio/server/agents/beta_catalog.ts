@@ -30,6 +30,36 @@ export interface BetaNpm {
   readonly bin: string;
   /** The entry file used only when package.json has no usable `bin` (UNCONFIRMED for every package: a guess). */
   readonly entry: string;
+  /** The lowest Node.js the package runs on, when it asks for more than AIB's MIN_NODE_MAJOR (its package.json `engines.node`). */
+  readonly minNode?: string;
+  /**
+   * A package whose bin is a placeholder its postinstall replaces (AIB installs with --ignore-scripts): the program to run is the
+   * native binary in its platform package, which npm installs as an optional dependency. Keyed `<Deno.build.os>-<Deno.build.arch>`;
+   * the value is the path under the install folder's node_modules. Started directly, not with node.
+   */
+  readonly native?: Readonly<Record<string, readonly string[]>>;
+}
+
+export type OsName = 'windows' | 'darwin' | 'linux';
+
+/** One command AIB runs in an AIB terminal panel on the card (the person sees it first and watches its output). */
+export interface BetaSetupStep {
+  /** powershell: Windows PowerShell -Command; bash / sh: -c. */
+  readonly shell: 'powershell' | 'bash' | 'sh';
+  readonly command: string;
+  /** Prerequisites (beta_setup.ts PREREQS ids) that must be on this computer first. */
+  readonly needs?: readonly string[];
+}
+
+/** The vendor's own installer, per OS, for an agent with no npm package AIB can install (from the vendor's docs only). */
+export interface BetaVendorInstall {
+  readonly windows?: BetaSetupStep;
+  readonly darwin?: BetaSetupStep;
+  readonly linux?: BetaSetupStep;
+  /** The official page the commands come from. */
+  readonly source: string;
+  /** The vendor's uninstall instructions, when it documents them (AIB never deletes what it did not install). */
+  readonly uninstallDocs?: string;
 }
 
 export interface BetaKnownPath {
@@ -40,10 +70,18 @@ export interface BetaKnownPath {
 
 export interface BetaSignin {
   readonly kind: SigninKind;
-  /** Arguments of the agent's own login command (terminal), after the agent's program. */
+  /**
+   * Arguments of the agent's own login command (terminal), right after the agent's program (a login subcommand: `copilot login`).
+   * Only used when the agent advertises no terminal auth method; an advertised method's args go after the full ACP launch command.
+   */
   readonly terminalArgs?: readonly string[];
   /** The environment variable an API key goes into. */
   readonly keyEnv?: string;
+  /** The provider's official page where that key is made (the card's "Get an API key" link). Every agent with keyEnv has one. */
+  readonly keyUrl?: string;
+  /** The environment variable an optional API address goes into (the card's "API address" field), with the address to suggest. */
+  readonly baseUrlEnv?: string;
+  readonly baseUrlHint?: string;
   /** The ACP auth method that takes that key in `_meta['api-key']` (Gemini's shape). */
   readonly keyMethod?: string;
   /** The agent-type ACP auth method the Sign in button runs. */
@@ -65,6 +103,8 @@ export interface BetaAgent {
   readonly args: readonly string[];
   readonly install: string;
   readonly docs: string;
+  /** No npm package: Install runs the vendor's installer for this OS in an AIB terminal panel (beta_setup.ts). */
+  readonly vendorInstall?: BetaVendorInstall;
   readonly signin: BetaSignin;
   /** session/new reports a model it does not use until the client sets one (github/copilot-cli#5363): set it right after. */
   readonly setModelAfterNew?: boolean;
@@ -82,6 +122,8 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     name: 'GitHub Copilot CLI',
     letter: 'G',
     license: 'Proprietary',
+    // UNCONFIRMED: "the Free plan works". GitHub's install page (docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/
+    // install-copilot-cli, read 2026-11-11) only says "An active GitHub Copilot subscription" and does not name the plans.
     cost: 'Needs a GitHub Copilot plan (the Free plan works)',
     // registry: npx @github/copilot@1.0.109 --acp. Node 22+ (research). Also `winget install GitHub.Copilot` (a native copilot.exe).
     npm: { package: '@github/copilot', version: '1.0.109', bin: 'copilot', entry: 'index.js' },
@@ -92,7 +134,15 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     install: 'npm install -g @github/copilot',
     docs: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
     // research: authMethods are terminal-type (`copilot login`); a token in COPILOT_GITHUB_TOKEN / GH_TOKEN also works.
-    signin: { kind: 'terminal', terminalArgs: ['login'], keyEnv: 'COPILOT_GITHUB_TOKEN' },
+    // keyUrl: GitHub's "Authenticating GitHub Copilot CLI" (docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/
+    // authenticate-copilot-cli, read 2026-11-11): a fine-grained token owned by your personal account with the Copilot Requests
+    // permission, made at github.com/settings/personal-access-tokens/new; classic ghp_ tokens are not supported.
+    signin: {
+      kind: 'terminal',
+      terminalArgs: ['login'],
+      keyEnv: 'COPILOT_GITHUB_TOKEN',
+      keyUrl: 'https://github.com/settings/personal-access-tokens/new',
+    },
     setModelAfterNew: true,
     modeIdsAreUrls: true,
     vscodeShim: true,
@@ -103,11 +153,30 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     letter: 'O',
     license: 'MIT',
     cost: 'Free CLI · needs an API key',
-    // registry: native binary `opencode acp` (windows-x86_64 and aarch64 builds).
+    // registry: native binary `opencode acp`, version 2.2.7. OpenCode 2 is the npm package @opencode/cli (opencode.ai/docs, read
+    // 2026-11-11: "npm install -g @opencode/cli"; "Windows package managers are not supported"). Its bin (bin/opencode.exe) is a
+    // placeholder its postinstall replaces with the binary of the platform package (@opencode/cli-<os>-<arch>, an optional
+    // dependency, 230-265 MB). AIB installs with --ignore-scripts, so it runs that platform binary itself (`native`). npm also fetches
+    // the -baseline (and on Linux -musl) variants of the same os/cpu, so the install is about twice that size. UNCONFIRMED: the
+    // non-baseline binary needs AVX2 (postinstall picks -baseline without it); a CPU without AVX2 cannot run AIB's install.
+    npm: {
+      package: '@opencode/cli',
+      version: '2.2.7',
+      bin: 'opencode',
+      entry: 'bin/opencode.exe',
+      native: {
+        'windows-x86_64': ['@opencode', 'cli-windows-x64', 'bin', 'opencode.exe'],
+        'windows-aarch64': ['@opencode', 'cli-windows-arm64', 'bin', 'opencode.exe'],
+        'darwin-x86_64': ['@opencode', 'cli-darwin-x64', 'bin', 'opencode'],
+        'darwin-aarch64': ['@opencode', 'cli-darwin-arm64', 'bin', 'opencode'],
+        'linux-x86_64': ['@opencode', 'cli-linux-x64', 'bin', 'opencode'],
+        'linux-aarch64': ['@opencode', 'cli-linux-arm64', 'bin', 'opencode'],
+      },
+    },
     commands: ['opencode'],
     known: [{ base: 'USERPROFILE', parts: ['.opencode', 'bin', 'opencode.exe'] }], // UNCONFIRMED: the install script's folder
     args: ['acp'],
-    install: 'npm install -g opencode-ai',
+    install: 'npm install -g @opencode/cli',
     docs: 'https://opencode.ai/docs/',
     signin: { kind: 'terminal', terminalArgs: ['auth', 'login'] },
   },
@@ -116,8 +185,14 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     name: 'Gemini CLI',
     letter: 'G',
     license: 'Apache-2.0',
-    cost: 'Free CLI · needs an API key or a paid plan',
-    note: 'Free personal Google sign-in moved to Antigravity in June 2026; use an API key or a paid plan.',
+    // Google Developers Blog, "An important update: Transitioning Gemini CLI to Antigravity CLI" (developers.googleblog.com/en/
+    // an-important-update-transitioning-gemini-cli-to-antigravity-cli/, May 19 2026, read 2026-11-11): from June 18 2026 Gemini CLI
+    // stops serving Google AI Pro and Ultra and free Gemini Code Assist for individuals; Code Assist Standard and Enterprise keep it;
+    // it "will remain accessible via paid Gemini and Gemini Enterprise Agent Platform API keys". UNCONFIRMED: whether a free-tier
+    // Gemini API key still works with Gemini CLI (the post says paid keys only), so the card says a paid key.
+    cost: 'Free CLI · needs a paid Gemini API key or a Code Assist Standard or Enterprise licence',
+    note:
+      'Since June 18, 2026 a personal Google sign-in (free, AI Pro or Ultra) no longer works here: Google moved those to Antigravity CLI.',
     // registry: npx @google/gemini-cli@0.68.0 --acp. Node 20+.
     npm: { package: '@google/gemini-cli', version: '0.68.0', bin: 'gemini', entry: 'dist/index.js' },
     commands: ['gemini'],
@@ -127,15 +202,29 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // research: every authMethod is agent-type (Google login, API key with _meta['api-key'], Vertex, gateway).
     // UNCONFIRMED: the method ids 'gemini-api-key' and 'oauth-personal' (Google login); when the agent lists other ids, the Sign in
     // button runs the first one it advertises, and a key still reaches the agent as GEMINI_API_KEY.
-    signin: { kind: 'agent', keyEnv: 'GEMINI_API_KEY', keyMethod: 'gemini-api-key', method: 'oauth-personal' },
+    // keyUrl: Google AI Studio's API keys page, from "Using Gemini API keys" (ai.google.dev/gemini-api/docs/api-key, now
+    // aistudio.google.com/docs/api-key, read 2026-11-11).
+    signin: {
+      kind: 'agent',
+      keyEnv: 'GEMINI_API_KEY',
+      keyMethod: 'gemini-api-key',
+      method: 'oauth-personal',
+      keyUrl: 'https://aistudio.google.com/apikey',
+    },
   },
   {
     id: 'qwen',
     name: 'Qwen Code',
     letter: 'Q',
     license: 'Apache-2.0',
-    cost: 'Free CLI · needs an API key',
-    note: 'The free Qwen sign-in ended in April 2026: use an OpenAI-compatible API key.',
+    // The free Qwen OAuth tier: QwenLM/qwen-code issue #3203 (github.com/QwenLM/qwen-code/issues/3203, by the Qwen Code team,
+    // closed as completed): "Completely close the Qwen OAuth free entry point on 2026-04-15". The auth docs
+    // (qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/, read 2026-11-11) now offer Qwen sign-in only with a Plus or Pro
+    // subscription, or an API key: OPENAI_API_KEY (+ OPENAI_BASE_URL, OPENAI_MODEL) for any OpenAI-compatible provider, Alibaba Cloud
+    // Model Studio among them. The CLI is Apache-2.0 and free; the model use is billed by the key's provider (Alibaba: "Anyone with your
+    // API key can make service requests on your behalf, which may incur charges").
+    cost: "Free CLI · model use is billed by your API key's provider",
+    note: 'The free Qwen sign-in ended on April 15, 2026: use an OpenAI-compatible API key, for example from Alibaba Cloud Model Studio.',
     // registry: npx @qwen-code/qwen-code@0.27.2 --acp --experimental-skills. Node 22+.
     npm: { package: '@qwen-code/qwen-code', version: '0.27.2', bin: 'qwen', entry: 'cli.js' },
     commands: ['qwen'],
@@ -143,7 +232,22 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     args: ['--acp', '--experimental-skills', '--approval-mode', 'default'],
     install: 'npm install -g @qwen-code/qwen-code',
     docs: 'https://qwenlm.github.io/qwen-code-docs/en/users/overview',
-    signin: { kind: 'key', keyEnv: 'OPENAI_API_KEY' },
+    // keyUrl: Alibaba Cloud Model Studio, "Get an API key" (alibabacloud.com/help/en/model-studio/get-api-key, read 2026-11-11), the
+    // international (Singapore) console. Keys are per region. UNCONFIRMED: Qwen Code's default OPENAI_BASE_URL is OpenAI's
+    // (api.openai.com/v1, read from the installed 0.27.2 package); a Model Studio key also needs OPENAI_BASE_URL
+    // https://dashscope-intl.aliyuncs.com/compatible-mode/v1, which AIB does not set.
+    // baseUrlHint: Alibaba Cloud Model Studio, "OpenAI compatibility" (alibabacloud.com/help/en/model-studio/
+    // compatibility-of-openai-with-dashscope, read 2026-11-11): Singapore base_url https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/
+    // compatible-mode/v1 ("Migrate from https://dashscope-intl.aliyuncs.com"); the workspace ID is on the workspace details page in the
+    // Model Studio console. Keys are bound to their region, so the key link is the same Singapore console. Empty: Qwen's default
+    // (OpenAI, api.openai.com/v1).
+    signin: {
+      kind: 'key',
+      keyEnv: 'OPENAI_API_KEY',
+      keyUrl: 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
+      baseUrlEnv: 'OPENAI_BASE_URL',
+      baseUrlHint: 'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+    },
   },
   {
     id: 'cursor',
@@ -154,11 +258,22 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // registry: Windows build is dist-package\cursor-agent.cmd acp (the research said `agent acp`: the same program, also named agent).
     commands: ['cursor-agent', 'agent'],
     pathMustContain: { agent: 'cursor' }, // `agent` is too generic a name: only one that sits in a Cursor folder counts
-    known: [{ base: 'LOCALAPPDATA', parts: ['cursor-agent', 'cursor-agent.cmd'] }], // UNCONFIRMED: the installer's folder
+    // The Windows installer (cursor.com/install?win32=true, read 2026-11-11) puts cursor-agent.cmd in %LOCALAPPDATA%\cursor-agent and adds
+    // that folder to PATH. It also prints that Git for Windows is needed "to run a private worker" (a Cursor feature, not the install).
+    known: [{ base: 'LOCALAPPDATA', parts: ['cursor-agent', 'cursor-agent.cmd'] }],
     args: ['acp'],
     install: "irm 'https://cursor.com/install?win32=true' | iex",
     docs: 'https://cursor.com/docs/cli/acp',
-    signin: { kind: 'agent', method: 'cursor_login', keyEnv: 'CURSOR_API_KEY' },
+    // Cursor CLI docs, Installation (cursor.com/docs/cli/installation, read 2026-11-11). No uninstall instructions there.
+    vendorInstall: {
+      windows: { shell: 'powershell', command: "irm 'https://cursor.com/install?win32=true' | iex" },
+      darwin: { shell: 'bash', command: 'curl https://cursor.com/install -fsS | bash' },
+      linux: { shell: 'bash', command: 'curl https://cursor.com/install -fsS | bash' },
+      source: 'https://cursor.com/docs/cli/installation',
+    },
+    // keyUrl: Cursor CLI docs, Authentication (cursor.com/docs/cli/reference/authentication, read 2026-11-11): "Cursor Dashboard →
+    // API Keys" at cursor.com/dashboard/api. UNCONFIRMED: cost 'Paid plan' (the CLI docs name no plan).
+    signin: { kind: 'agent', method: 'cursor_login', keyEnv: 'CURSOR_API_KEY', keyUrl: 'https://cursor.com/dashboard/api' },
   },
   {
     id: 'goose',
@@ -168,11 +283,31 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     cost: 'Free CLI · needs an API key',
     // registry: native binary goose-package\goose.exe acp.
     commands: ['goose'],
-    known: [{ base: 'USERPROFILE', parts: ['.local', 'bin', 'goose.exe'] }], // UNCONFIRMED: the download script's folder
+    // download_cli.ps1 (read 2026-11-11): installs to $env:GOOSE_BIN_DIR, default $env:USERPROFILE\.local\bin.
+    known: [{ base: 'USERPROFILE', parts: ['.local', 'bin', 'goose.exe'] }],
     args: ['acp'],
-    // research: on Windows the documented install runs this script from Git Bash.
-    install: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash',
+    install: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash',
     docs: 'https://block.github.io/goose/docs/getting-started/installation',
+    // goose docs, Install goose (github.com/block/goose documentation/docs/getting-started/installation.md, read 2026-11-11; the
+    // project moved to github.com/aaif-goose). Windows lists Git Bash, MSYS2 and PowerShell; AIB uses the PowerShell one, which needs
+    // nothing else: the docs download download_cli.ps1 to the current folder and run it; AIB saves it in %TEMP% instead. The scripts end
+    // with `goose configure` (interactive, in the panel). No uninstall steps for the CLI in the docs.
+    vendorInstall: {
+      windows: {
+        shell: 'powershell',
+        command: "$f = Join-Path $env:TEMP 'download_cli.ps1'; " +
+          'Invoke-WebRequest -Uri "https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1" -OutFile $f; & $f',
+      },
+      darwin: {
+        shell: 'bash',
+        command: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash',
+      },
+      linux: {
+        shell: 'bash',
+        command: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash',
+      },
+      source: 'https://block.github.io/goose/docs/getting-started/installation',
+    },
     // research: agent-type (provider and key). UNCONFIRMED: the method ids; the first advertised one runs.
     signin: { kind: 'agent' },
   },
@@ -188,7 +323,20 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     args: [],
     install: 'uv tool install mistral-vibe',
     docs: 'https://github.com/mistralai/mistral-vibe',
-    signin: { kind: 'key', keyEnv: 'MISTRAL_API_KEY' },
+    // Mistral Vibe README (github.com/mistralai/mistral-vibe, read 2026-11-11) and docs.mistral.ai/mistral-vibe/terminal: macOS/Linux
+    // `curl -LsSf https://mistral.ai/vibe/install.sh | bash` (the script installs uv itself when missing, then `uv tool install
+    // mistral-vibe`); Windows: install uv first, then `uv tool install mistral-vibe`. uv fetches a Python (3.12+) when needed, so Python
+    // is not a prerequisite. No uninstall instructions in either.
+    vendorInstall: {
+      windows: { shell: 'powershell', command: 'uv tool install mistral-vibe', needs: ['uv'] },
+      darwin: { shell: 'bash', command: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash' },
+      linux: { shell: 'bash', command: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash' },
+      source: 'https://github.com/mistralai/mistral-vibe#installation',
+    },
+    // keyUrl: Mistral docs, Vibe "API keys and profiles" (docs.mistral.ai/vibe/code/cli/api-keys-profiles, read 2026-11-11): make the
+    // key under Code › Vibe CLI at chat.mistral.ai/code/extensions; "The same key works in Free mode, with a paid plan, or with
+    // pay-as-you-go enabled" (use beyond the plan's monthly amount stops unless pay-as-you-go is on).
+    signin: { kind: 'key', keyEnv: 'MISTRAL_API_KEY', keyUrl: 'https://chat.mistral.ai/code/extensions' },
   },
   {
     id: 'cline',
@@ -212,12 +360,14 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     license: 'MIT',
     cost: 'Free CLI · needs an API key',
     // registry: npx @moonshot-ai/kimi-code@2.5.3 acp. AIB installs the package instead of running npx (npx would download at launch).
-    npm: { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/index.js' },
-    commands: ['kimi-code', 'kimi'], // UNCONFIRMED: the bin name of the package
+    // From the package itself (2.5.3): package.json bin {"kimi": "dist/main.mjs"}; dist/main.mjs has a `login` command and an `acp`
+    // command whose `--login` option is what its advertised terminal auth method runs (`kimi acp --login`).
+    npm: { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs', minNode: '22.19.0' },
+    commands: ['kimi'],
     args: ['acp'],
     install: 'npm install -g @moonshot-ai/kimi-code',
     docs: 'https://moonshotai.github.io/kimi-code/',
-    signin: { kind: 'terminal', terminalArgs: ['login'] }, // UNCONFIRMED: the login subcommand
+    signin: { kind: 'terminal', terminalArgs: ['login'] }, // the fallback when Kimi advertises no terminal method: `kimi login`
   },
   {
     id: 'kilo',

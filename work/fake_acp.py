@@ -5,6 +5,7 @@ import re
 import itertools
 import time
 import sys
+import os
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--setup-question', action='store_true', help='Ask a request-scoped form question during initialize')
@@ -35,12 +36,13 @@ parser.add_argument('--models', action='store_true', help="A long model list, th
 parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
+parser.add_argument('--terminal-env', action='store_true', help="With --beta-auth: the terminal method also advertises env {'AIB_FIXTURE_LOGIN': 'from-agent'} (ACP v1 map shape); --fixture-login writes that variable's value into --auth-file")
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 args = parser.parse_args()
 if args.fixture_login:
     if args.auth_file:
         with open(args.auth_file, 'w', encoding='utf-8') as _f:
-            _f.write('signed in')
+            _f.write('signed in' + (' ' + os.environ['AIB_FIXTURE_LOGIN'] if os.environ.get('AIB_FIXTURE_LOGIN') else ''))
     print('Fixture terminal login: signed in.', flush=True)
     sys.exit(0)
 if args.child_pid_file:
@@ -408,7 +410,10 @@ for line in sys.stdin:
             wants_terminal = bool(((params.get('clientCapabilities') or {}).get('auth') or {}).get('terminal'))
             init['authMethods'] = [{'id': 'gemini-api-key', 'name': 'Use an API key', 'description': 'Key in _meta.api-key'}]
             if wants_terminal:
-                init['authMethods'].insert(0, {'id': 'fixture-terminal-login', 'name': 'Sign in in a terminal', 'type': 'terminal', 'args': ['--fixture-login']})
+                terminal_method = {'id': 'fixture-terminal-login', 'name': 'Sign in in a terminal', 'type': 'terminal', 'args': ['--fixture-login']}
+                if args.terminal_env:
+                    terminal_method['env'] = {'AIB_FIXTURE_LOGIN': 'from-agent'}
+                init['authMethods'].insert(0, terminal_method)
         elif args.auth_required:
             init['authMethods'] = [{'id': 'fixture-login', 'name': 'Fixture sign-in', 'description': 'In-app fixture sign-in'},
                 {'id': 'fixture-terminal', 'name': 'Fixture terminal login', 'description': 'Run in a terminal', '_meta': {'terminal-auth': {'command': 'fixture-cli', 'args': ['login']}}}]

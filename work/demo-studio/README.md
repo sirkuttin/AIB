@@ -74,3 +74,10 @@ are the existing fixture behaviours in `work/fake_acp.py`.
 - State is under `<demo>/state`; the owner's real state is never read or written.
 - The artifact is published through Studio's own API at start-up (`/api/live/artifacts/publish`).
 - `--keep` keeps the artifact and any chats you resumed; without it every start is fresh.
+
+## README screenshots
+
+`readme_shots.py` builds a second, realistic demo (projects storefront and billing-api, chats from Claude Code, Codex and
+the Beta agent OpenCode) for the README pictures, using `showcase_agent.py` as every agent. See the top of
+`readme_shots.py` for the chats, `--release rounding|csv` to let a held turn finish, and `--stop`. Data goes in
+`<temp>/aib-readme-<port>`.

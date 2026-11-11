@@ -1,23 +1,33 @@
 'use strict';
-/* Worktree per chat, stage E: the "Merge into <base>" button in the footer row of the Changes tab (next to Discard). Only a chat that runs in its own
+/* Worktree per chat, stage E: the "Merge into <base>" button (it asks the chat's agent to merge) in the footer row of the Changes tab (next to Discard). Only a chat that runs in its own
    worktree has it (GET /api/live/worktree says so); every other chat sees nothing. changes-ui.js calls mount() once and update()
    whenever its data or the chat's busy state changes. The server decides what is allowed; this file only shows it. */
 (function (root) {
-  /* The footer's content from the server status: {show, enabled, label, line}. Pure. */
+  /* The footer's content from the server status: {show, enabled, label, line, title}. Pure.
+     The button no longer merges by itself: it asks the chat's agent to merge (a "Merge requested" message, queued while it works),
+     so a busy chat is no reason to wait. ctx.blocked (closed, archived, read only, open in another app; chat.js says which) keeps it
+     disabled with that reason, and nothing is sent. */
   function plan(status, ctx) {
     const s = status || {},
       c = ctx || {};
-    if (!s.worktree || !c.branchView) return { show: false, enabled: false, label: '', line: '' };
-    const label = s.label || 'Merge into ' + (s.base || 'main');
-    if (c.merging) return { show: true, enabled: false, label, line: 'Merging…' };
-    if (s.state === 'conflicts') return { show: true, enabled: false, label, line: s.message || '' };
-    if (!c.files && s.state === 'nochanges') return { show: false, enabled: false, label, line: '' };
-    if (!c.files && !s.enabled) return { show: false, enabled: false, label, line: '' };
+    const hidden = { show: false, enabled: false, label: '', line: '', title: '' };
+    if (!(s.worktree || c.worktree) || !c.branchView) return hidden;
+    const label = s.label || 'Merge into ' + (s.base || c.base || 'main');
+    if (c.blocked) {
+      if (!c.files) return Object.assign({}, hidden, { label });
+      return { show: true, enabled: false, label, line: c.blocked, title: c.blocked };
+    }
+    if (!s.worktree) return Object.assign({}, hidden, { label });
+    if (c.merging) return { show: true, enabled: false, label, line: 'Asking the chat to merge…', title: '' };
+    if (s.state === 'conflicts') return { show: true, enabled: false, label, line: s.message || '', title: s.message || '' };
+    if (!c.files && s.state === 'nochanges') return Object.assign({}, hidden, { label });
+    if (!c.files && !s.enabled) return Object.assign({}, hidden, { label });
     return {
       show: true,
-      enabled: !!s.enabled && !c.busy,
+      enabled: !!s.enabled,
       label,
-      line: c.busy ? 'Wait for the chat to finish its turn' : s.message || '',
+      line: s.message || '',
+      title: s.enabled ? 'Ask this chat to merge its work into ' + (s.base || 'main') : s.message || '',
     };
   }
 
@@ -29,9 +39,8 @@
     line.setAttribute && line.setAttribute('role', 'status');
     let token = '',
       status = null,
-      ctx = { id: '', busy: false, files: 0, branchView: false },
+      ctx = { id: '', busy: false, files: 0, branchView: false, worktree: false, blocked: '' },
       merging = false,
-      asking = false,
       sig = '',
       seq = 0,
       result = '';
@@ -60,7 +69,8 @@
       button.hidden = !p.show;
       button.textContent = p.label;
       button.disabled = !p.enabled;
-      line.textContent = result || p.line;
+      button.title = p.title || '';
+      line.textContent = (p.enabled || !p.line ? result : '') || p.line;
       line.hidden = !line.textContent;
       if (opts.onPaint) opts.onPaint();
     }
@@ -83,34 +93,17 @@
       paint();
     }
     button.addEventListener('click', async () => {
-      if (merging || button.disabled || asking) return;
-      /* A short in-page confirmation that says how many files go in (changes-ui.js draws it). */
-      if (opts.confirm) {
-        asking = true;
-        let sure = false;
-        try {
-          sure = await opts.confirm({ files: ctx.files, base: (status && status.base) || 'main' });
-        } finally {
-          asking = false;
-        }
-        if (!sure) {
-          if (!button.hidden && button.focus) button.focus();
-          return;
-        }
-        if (merging || button.disabled) return;
-      }
+      /* No confirmation: one click asks the chat (the permission is tied to the chat's work at this click). */
+      if (merging || button.disabled) return;
       merging = true;
       result = '';
       paint();
-      const titleEl = doc.getElementById('title');
       try {
-        const r = await call('POST', '/api/live/worktree/merge', {
-          id: ctx.id,
-          title: titleEl ? titleEl.textContent : '',
-        });
-        result = r.ok ? (r.data.state === 'merged' ? '' : r.data.message || '') : r.data.error || 'Merge failed';
+        /* The server records a one-shot merge permission and sends the chat the fixed merge message (a "Merge requested" chip). */
+        const r = await call('POST', '/api/live/worktree/merge-request', { id: ctx.id });
+        result = r.ok ? r.data.message || 'Merge requested' : r.data.error || 'Could not ask the chat to merge';
       } catch (e) {
-        result = 'Merge failed: ' + e.message;
+        result = 'Could not ask the chat to merge: ' + e.message;
       }
       merging = false;
       if (opts.reload) opts.reload();
@@ -122,7 +115,7 @@
       conflicts: () => (status && status.state === 'conflicts' && Array.isArray(status.files) ? status.files : []),
       update(next) {
         const n = Object.assign({}, ctx, next || {});
-        const s = [n.id, n.busy, n.files, n.branchView].join('|');
+        const s = [n.id, n.busy, n.files, n.branchView, n.worktree, n.blocked].join('|');
         const changed = s !== sig;
         sig = s;
         if (n.id !== ctx.id) result = '';

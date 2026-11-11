@@ -120,7 +120,10 @@
         btn.title = 'A step in this run failed';
       } else btn.textContent = text;
       list.hidden = !open;
-      if (open && !list.children.length) list.append(...ctx.groupRows(fold.rows, ctx.bubble));
+      /* The fold is the only fold: its rows are drawn one by one, never through groupRows (that would put a second
+         "steps · N steps" fold inside this one whenever more than 3 tool rows sit side by side, e.g. when a note between
+         them is dropped from the fold or a saved transcript has no thinking rows to break the run). */
+      if (open && !list.children.length) list.append(...fold.rows.map((r) => ctx.bubble(r)));
     };
     btn.addEventListener('click', () => {
       if (OPEN.has(fold.key)) OPEN.delete(fold.key);
@@ -249,7 +252,8 @@
       head._arrow.textContent = open ? '▾' : '▸';
       item.className = 'pv-item' + (open ? ' open' : '');
       body.hidden = !open;
-      if (open && !body.children.length) body.append(...ctx.groupRows(unit.rows, ctx.bubble));
+      /* the open prompt is already the fold: its rows are drawn one by one, never in a second "N steps" group */
+      if (open && !body.children.length) body.append(...unit.rows.map((r) => ctx.bubble(r)));
     };
     head.addEventListener('click', () => {
       if (POPEN.has(unit.key)) POPEN.delete(unit.key);
@@ -285,7 +289,7 @@
     b.addEventListener('click', () => ctx.openHit(hit));
     return b;
   }
-  /* ctx: {bubble, groupRows, stubs?: hits on unloaded pages, openHit(hit), query}. */
+  /* ctx: {bubble, stubs?: hits on unloaded pages, openHit(hit), query}. */
   function promptNodes(proj, start, ctx) {
     const out = [];
     for (const hit of ctx.stubs || []) out.push(promptStub(hit, ctx));
@@ -327,7 +331,9 @@
   }
   const syncFind = () => find && find.sync();
 
-  /* ctx: {bubble(row), groupRows(rows, bubble)} from chat.js. Returns the top-level nodes of one unit, in order. */
+  /* ctx: {bubble(row), groupRows(rows, bubble)} from chat.js. Returns the top-level nodes of one unit, in order.
+     (A "Show steps" fold draws its rows flat; so does an open prompt in Prompts.
+     groupRows is for Full only, where it is the only fold.) */
   function unitNodes(unit, ctx) {
     const out = [];
     if (!unit.prompt && unit.earlier) {

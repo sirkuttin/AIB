@@ -37,6 +37,8 @@ export interface BetaLookOptions {
   /** npm global folders (default: adapters.globalRoots, which may run `npm root -g` once). */
   globalRoots?: (node: string) => string[] | Promise<string[]>;
   findNode?: (configured: string) => string;
+  /** `<os>-<arch>` for a `native` npm package (default: this computer's). */
+  platform?: string;
 }
 
 /** Characters cmd.exe would read as syntax. Only fixed catalog arguments and file paths go through it; anything else is refused. */
@@ -129,6 +131,19 @@ async function globalEntry(agent: BetaAgent, node: string, roots: (node: string)
   return '';
 }
 
+/** `<os>-<arch>` of this computer, the key of BetaNpm.native. */
+export function platformKey(): string {
+  return `${Deno.build.os}-${Deno.build.arch}`;
+}
+
+/** The platform binary of a `native` npm package inside an install folder (<state>/agents/<id>/<version>), or '' when missing. */
+export function nativeProgram(agent: BetaAgent, versionDir: string, platform = platformKey()): string {
+  const parts = agent.npm?.native?.[platform];
+  if (!parts) return '';
+  const path = pathOf(versionDir, 'node_modules', ...parts);
+  return isFile(path) ? path : '';
+}
+
 /** How to start this Beta agent. Never throws for a missing program. */
 export async function resolveBeta(id: string, options: BetaLookOptions = {}): Promise<BetaLaunch> {
   const agent = betaAgent(id);
@@ -136,8 +151,15 @@ export async function resolveBeta(id: string, options: BetaLookOptions = {}): Pr
   const env = options.env ?? Deno.env.toObject();
   const windows = options.windows ?? WIN;
   const comspec = env.ComSpec || env.COMSPEC || '';
-  const node = agent.npm ? (options.findNode ?? adapters.findNode)(options.nodeCommand || '') : '';
-  if (agent.npm) {
+  if (agent.npm?.native) {
+    // A package whose bin is a postinstall placeholder (OpenCode): AIB's own install runs its platform binary, no node involved. A
+    // global `npm i -g` ran the postinstall, so its PATH program is the real one (step 3 finds it).
+    const own = adapters.findStudioInstall(id, options.stateDir);
+    const program = own ? nativeProgram(agent, own.dir, options.platform) : '';
+    if (program) return row(agent, [program], 'studio', program, false, `AIB's own install ${own!.version}: ${program}`);
+  }
+  const node = agent.npm && !agent.npm.native ? (options.findNode ?? adapters.findNode)(options.nodeCommand || '') : '';
+  if (agent.npm && !agent.npm.native) {
     const own = adapters.findStudioInstall(id, options.stateDir);
     if (own && node) {
       return row(agent, [node, own.entry], 'studio', own.entry, false, `AIB's own install ${own.version}: ${own.entry} (run with node)`);
@@ -177,13 +199,41 @@ export async function resolveBeta(id: string, options: BetaLookOptions = {}): Pr
   return missing(agent);
 }
 
+/** A terminal sign-in to run: the agent's advertised ACP terminal method (args, env), or the catalog's login command. */
+export interface TerminalMethod {
+  args: readonly string[];
+  env?: Readonly<Record<string, string>>;
+  /** True: from the agent's own initialize.authMethods. False: the catalog's fallback (signin.terminalArgs). */
+  advertised: boolean;
+}
+
 /**
- * The argv of a terminal sign-in: the agent's program with the method's arguments (from the agent's own initialize.authMethods when it
- * advertised one, else the catalog's). Shims go through cmd.exe. null when the agent is not found or has no terminal sign-in.
+ * The words after the program of a terminal sign-in, or null. ACP terminal auth: an advertised method's args go after the agent's own
+ * launch command, its ACP args included (Kimi advertises ['--login'], an option of its `acp` subcommand: `kimi acp --login`). The
+ * catalog's fallback is a login subcommand of the program itself (`copilot login`), so it goes right after the program.
  */
-export function signinArgv(launch: BetaLaunch, agentId: string, methodArgs?: readonly string[] | null): string[] | null {
+function signinWords(launch: BetaLaunch, agentId: string, method?: TerminalMethod | null): string[] | null {
   const agent = betaAgent(agentId);
-  const args = methodArgs && methodArgs.length ? methodArgs : agent?.signin.terminalArgs;
-  if (!agent || !launch.found || !launch.base.length || !args || !args.length) return null;
-  return launch.shim ? shimArgv(launch.base[0], args, launch.comspec) : [...launch.base, ...args];
+  if (!agent || !launch.found || !launch.base.length) return null;
+  if (method && method.advertised && method.args.length) {
+    // launch.argv = base + the ACP args (row()); a shim's argv is cmd.exe /d /c <shim> <ACP args>, so take the catalog's ACP args then.
+    const launchArgs = launch.shim ? agent.args : launch.argv.slice(launch.base.length);
+    return [...launchArgs, ...method.args];
+  }
+  const args = agent.signin.terminalArgs;
+  return args && args.length ? [...args] : null;
+}
+
+/** The argv of a terminal sign-in (signinWords after the program). Shims go through cmd.exe. null when there is nothing to run. */
+export function signinArgv(launch: BetaLaunch, agentId: string, method?: TerminalMethod | null): string[] | null {
+  const words = signinWords(launch, agentId, method);
+  if (!words) return null;
+  return launch.shim ? shimArgv(launch.base[0], words, launch.comspec) : [...launch.base, ...words];
+}
+
+/** The sign-in command as the card shows it: the program and its words, without cmd.exe; '' when there is nothing to run. */
+export function signinShown(launch: BetaLaunch, agentId: string, method?: TerminalMethod | null): string {
+  const words = signinWords(launch, agentId, method);
+  if (!words) return '';
+  return [...launch.base, ...words].map((p) => (p.includes(' ') ? `"${p}"` : p)).join(' ');
 }

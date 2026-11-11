@@ -307,7 +307,7 @@ Deno.test("index.lock or a merge in progress in the base folder is refused and n
   assertEquals((await merge(ctx.studio, ctx.id, "T")).state, "merged");
 });
 
-Deno.test("a busy chat is refused by the button but its own tool may merge", async () => {
+Deno.test("a busy chat is refused by the direct merge but its own tool may merge", async () => {
   using box = new Sandbox();
   const ctx = await chat(box);
   commit(ctx.wt, "committed.txt", "a\n", "agent commit");
@@ -321,7 +321,7 @@ Deno.test("a busy chat is refused by the button but its own tool may merge", asy
     "Wait for the chat to finish its turn",
   );
   const state = await m.status(ctx.studio, ctx.id);
-  assertEquals([state.enabled, state.state], [false, "busy"]);
+  assertEquals([state.enabled, state.state], [true, "ready"], "the button asks the agent: its message is queued");
   const result = await merge(ctx.studio, ctx.id, "T", true);
   assertEquals(result.message, "Merged into main (1 commit)");
   assertEquals(show(ctx, "main:committed.txt"), "a\n");

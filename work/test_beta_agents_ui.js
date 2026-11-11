@@ -72,16 +72,19 @@ async function openSettings(list = LIST()) {
   const ctx = load(shell, ['agent-choice.js', 'settings-ui.js']);
   const UI = ctx.AgentSettingsUI;
   const posts = [];
+  const gets = [];
   UI.init({
-    get: async (path) =>
-      path === '/api/live/settings'
+    get: async (path, params) => {
+      gets.push([path, params || null]);
+      return path === '/api/live/settings'
         ? {
             revision: 'r1',
             warning: '',
             settings: { defaults: { migrated: true, projects: {}, byAgent: {} } },
             agents: list,
           }
-        : {},
+        : {};
+    },
     post: async (name, body) => {
       posts.push([name, body]);
       return {
@@ -98,7 +101,14 @@ async function openSettings(list = LIST()) {
   await flush();
   const cards = shell.body.querySelectorAll('section.st-card');
   const card = (title) => cards.find((c) => (c.querySelector('h3') || {}).textContent === title);
-  return { shell, ctx, UI, posts, card };
+  // The Beta card's row, found again after a repaint.
+  const betaRow = (name) =>
+    shell.body
+      .querySelectorAll('section.st-card')
+      .find((c) => (c.querySelector('h3') || {}).textContent === 'Beta agents')
+      .querySelectorAll('.st-agent')
+      .find((r) => r.querySelector('strong').textContent === name);
+  return { shell, ctx, UI, posts, gets, card, betaRow };
 }
 
 test('AIB Linking has a "Beta agents" card with its one-line note, under the tested agents', async () => {
@@ -173,6 +183,212 @@ test('each Beta card has its cost line; a missing one shows the install command 
   assert.ok(inside(rows[2], '.st-beta-key', 'input'), 'an API key box where the agent takes a key');
   assert.equal(inside(rows[2], '.st-beta-key', 'input').type, 'password');
   assert.equal(rows[1].querySelector('.st-beta-key'), null);
+});
+
+// Beta setup (server/agents/beta_setup.ts betaInfo.setup): every card that is not installed has Install; prerequisites first.
+const setupOf = (kind, command, prereqs = [], blockedBy = '') => ({
+  kind,
+  command,
+  source: '',
+  uninstallDocs: '',
+  prereqs,
+  blockedBy,
+});
+const NODE_MISSING = {
+  id: 'node',
+  name: 'Node.js',
+  need: 'Node.js 22 or newer',
+  state: 'missing',
+  version: '',
+  min: '22',
+  command: 'winget install -e --id OpenJS.NodeJS.LTS',
+  installLabel: 'Install Node.js 26 (LTS)',
+  page: 'https://nodejs.org/en/download',
+  source: '',
+};
+const UV = (state, version = '') => ({
+  id: 'uv',
+  name: 'uv',
+  need: 'uv',
+  state,
+  version,
+  min: '',
+  command: 'winget install --id=astral-sh.uv -e',
+  installLabel: 'Install uv',
+  page: 'https://docs.astral.sh/uv/getting-started/installation/',
+  source: '',
+});
+const CURSOR_CMD = "irm 'https://cursor.com/install?win32=true' | iex";
+function setupList() {
+  const list = LIST();
+  const withSetup = (a, setup, extra = {}) => ({
+    ...a,
+    ...extra,
+    betaInfo: {
+      ...a.betaInfo,
+      installCommand: setup.kind === 'npm' ? a.betaInfo.installCommand : setup.command,
+      setup,
+    },
+  });
+  list[4] = withSetup(
+    list[4],
+    setupOf('npm', 'npm install -g @opencode/cli', [{ ...NODE_MISSING, state: 'found', version: '26.13.1' }]),
+    {
+      installable: true,
+    },
+  );
+  list[5] = withSetup(
+    list[5],
+    setupOf('npm', 'npm install -g @google/gemini-cli', [NODE_MISSING], 'Install Node.js first'),
+    {
+      installable: true,
+    },
+  );
+  list[6] = withSetup(list[6], setupOf('terminal', CURSOR_CMD));
+  list.push(
+    withSetup(
+      beta('vibe', 'Mistral Vibe'),
+      setupOf('terminal', 'uv tool install mistral-vibe', [UV('missing')], 'Install uv first'),
+    ),
+  );
+  return list;
+}
+const buttonOf = (row, text) => row.querySelectorAll('button').find((b) => b.textContent === text);
+
+test('every Beta card that is not installed has Install: npm ones by AIB, the others run the vendor installer here', async () => {
+  const { betaRow } = await openSettings(setupList());
+  const hint = (row) => row.querySelector('.st-beta-install').querySelector('.st-hint').textContent;
+  const opencode = betaRow('OpenCode');
+  assert.ok(buttonOf(opencode, 'Install') && !buttonOf(opencode, 'Install').disabled, 'OpenCode is an npm agent now');
+  assert.equal(hint(opencode), 'Or install it yourself:');
+  assert.equal(opencode.querySelector('.st-beta-need').textContent, 'Node.js 22 or newer: found 26.13.1');
+  const cursor = betaRow('Cursor CLI');
+  assert.ok(buttonOf(cursor, 'Install') && !buttonOf(cursor, 'Install').disabled);
+  assert.equal(hint(cursor), 'Install runs this in a terminal here:');
+  assert.equal(
+    cursor.querySelector('.st-beta-install').querySelector('code').textContent,
+    CURSOR_CMD,
+    'shown before it runs',
+  );
+  assert.equal(cursor.querySelector('.st-beta-needs'), null, 'nothing needed first');
+  assert.doesNotMatch(cursor.textContent, /can't install/);
+});
+
+test('a missing prerequisite: "Needs first" with its install command and button; the agent Install is off with the reason', async () => {
+  const { betaRow } = await openSettings(setupList());
+  const gemini = betaRow('Gemini CLI');
+  assert.equal(gemini.querySelector('.st-beta-needs').querySelector('.st-hint').textContent, 'Needs first:');
+  const need = gemini.querySelector('.st-beta-need');
+  assert.equal(need.querySelector('.st-beta-need-text').textContent, 'Node.js 22 or newer: missing');
+  assert.equal(need.querySelector('code').textContent, 'winget install -e --id OpenJS.NodeJS.LTS');
+  assert.ok(buttonOf(need, 'Install Node.js 26 (LTS)'));
+  assert.equal(buttonOf(gemini, 'Install').disabled, true);
+  assert.equal(gemini.querySelector('.st-beta-blocked').textContent, 'Install Node.js first');
+  const vibe = betaRow('Mistral Vibe');
+  assert.equal(vibe.querySelector('.st-beta-need-text').textContent, 'uv: missing');
+  assert.equal(buttonOf(vibe, 'Install').disabled, true);
+  assert.equal(vibe.querySelector('.st-beta-blocked').textContent, 'Install uv first');
+});
+
+test('Install of a vendor agent runs in the card terminal; exit 0 checks again, a failure keeps the output with one line', async () => {
+  const list = setupList();
+  const { ctx, betaRow, gets, posts } = await openSettings(list);
+  const runs = [];
+  let closed = 0;
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push([id, step, h]), { close: () => closed++ }) };
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  assert.deepEqual(
+    runs.map((r) => [r[0], r[1]]),
+    [['cursor', 'install']],
+  );
+  assert.equal(betaRow('Cursor CLI').querySelector('.st-beta-term-title').textContent, 'Installing: ' + CURSOR_CMD);
+  runs[0][2].onExit(1);
+  await flush();
+  assert.equal(
+    betaRow('Cursor CLI').querySelector('.st-beta-term').querySelector('p').textContent,
+    'Install failed. See the output above.',
+  );
+  assert.equal(closed, 0, 'the output stays');
+
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  const before = gets.length;
+  list[6] = { ...list[6], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
+  runs[1][2].onExit(0);
+  await flush();
+  await flush();
+  assert.deepEqual(plain(gets.slice(before)), [['/api/live/settings', { recheck: '1' }]], 'Check again, PATH re-read');
+  assert.equal(betaRow('Cursor CLI').querySelector('.st-beta-term'), null, 'found: the panel closes');
+  assert.ok(posts.some((p) => p[0] === 'terminal/end' && p[1].key === 'setup:cursor'));
+});
+
+test('Install uv runs its installer; after exit 0 the check sees uv and the agent Install turns on', async () => {
+  const list = setupList();
+  const { ctx, betaRow } = await openSettings(list);
+  const runs = [];
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push([id, step, h]), { close() {} }) };
+  buttonOf(betaRow('Mistral Vibe').querySelector('.st-beta-need'), 'Install uv').click();
+  await flush();
+  assert.deepEqual(
+    runs.map((r) => [r[0], r[1]]),
+    [['vibe', 'prereq:uv']],
+  );
+  assert.equal(
+    betaRow('Mistral Vibe').querySelector('.st-beta-term-title').textContent,
+    'Installing uv: winget install --id=astral-sh.uv -e',
+  );
+  const vibe = list.length - 1;
+  list[vibe] = {
+    ...list[vibe],
+    betaInfo: {
+      ...list[vibe].betaInfo,
+      setup: setupOf('terminal', 'uv tool install mistral-vibe', [UV('found', '0.9.9')]),
+    },
+  };
+  runs[0][2].onExit(0);
+  await flush();
+  await flush();
+  const row = betaRow('Mistral Vibe');
+  assert.equal(row.querySelector('.st-beta-need-text').textContent, 'uv: found 0.9.9');
+  assert.equal(buttonOf(row, 'Install').disabled, false);
+  assert.equal(row.querySelector('.st-beta-blocked'), null);
+  assert.equal(row.querySelector('.st-beta-term'), null);
+});
+
+test('a prerequisite that installed but is not seen yet: the panel says to restart AIB', async () => {
+  const { ctx, betaRow } = await openSettings(setupList());
+  let hooks = null;
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => ((hooks = h), { close() {} }) };
+  buttonOf(betaRow('Gemini CLI').querySelector('.st-beta-need'), 'Install Node.js 26 (LTS)').click();
+  await flush();
+  hooks.onExit(0);
+  await flush();
+  await flush();
+  assert.equal(
+    betaRow('Gemini CLI').querySelector('.st-beta-term').querySelector('p').textContent,
+    'The install finished, but AIB cannot find Node.js yet. Restart AIB, then choose Check again.',
+  );
+});
+
+test("a card with an API key box links to the provider's key page, opened in the browser; no key box, no link", async () => {
+  const list = LIST();
+  list[5] = beta('gemini', 'Gemini CLI', {
+    betaInfo: {
+      ...beta('gemini', 'x').betaInfo,
+      signin: 'agent',
+      keyEnv: 'GEMINI_API_KEY',
+      keyUrl: 'https://aistudio.google.com/apikey',
+    },
+  });
+  const { card } = await openSettings(list);
+  const rows = card('Beta agents').querySelectorAll('.st-agent');
+  const link = inside(rows[2], '.st-beta-key', 'a.st-beta-keylink');
+  assert.equal(link.textContent, 'Get an API key');
+  assert.equal(link.href, 'https://aistudio.google.com/apikey');
+  assert.equal(link.target, '_blank', 'the desktop app hands target=_blank links to the system browser');
+  assert.equal(link.rel, 'noopener noreferrer');
+  assert.equal(rows[1].querySelector('.st-beta-keylink'), null, 'OpenCode has no key box, so no link');
 });
 
 test('the New chat agent menu and the composer agent chip list Beta agents last, under a "Beta" group label', async () => {
@@ -329,4 +545,197 @@ test('closing Settings during a sign-in a chat started ends it: the chat button 
   assert.equal(closed, 1, 'the sign-in panel is ended');
   await flush();
   assert.deepEqual(plain(posts.find((p) => p[0] === 'terminal/end')), ['terminal/end', { key: 'signin:opencode' }]);
+});
+
+test('Qwen: an optional API address under the key box, saved like the key; empty clears it (Qwen then uses OpenAI)', async () => {
+  const HINT = 'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const list = LIST();
+  list.push(
+    beta('qwen', 'Qwen Code', {
+      betaInfo: {
+        ...beta('qwen', 'x').betaInfo,
+        signin: 'key',
+        keyEnv: 'OPENAI_API_KEY',
+        keyUrl: 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
+        baseUrlEnv: 'OPENAI_BASE_URL',
+        baseUrlHint: HINT,
+        baseUrl: '',
+      },
+    }),
+  );
+  const { betaRow, posts } = await openSettings(list);
+  const row = betaRow('Qwen Code');
+  const box = row.querySelector('.st-beta-url');
+  assert.equal(box.querySelector('.st-label').textContent, 'API address (OPENAI_BASE_URL, optional)');
+  const input = box.querySelector('input');
+  assert.equal(input.placeholder, HINT);
+  assert.equal(
+    box.querySelector('.st-hint').textContent,
+    'Leave empty for OpenAI. For an Alibaba Cloud Model Studio key use ' +
+      HINT +
+      ' (your workspace ID is on the workspace details page in the Model Studio console).',
+  );
+  assert.equal(
+    row.querySelector('.st-beta-keylink').href,
+    'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
+    'the key comes from the same (Singapore) Model Studio console',
+  );
+  input.value = 'https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  input.dispatch('input');
+  box
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Save address')
+    .click();
+  await flush();
+  assert.deepEqual(plain(posts.at(-1)), [
+    'settings',
+    { agents: { betaUrl: { qwen: 'https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' } } },
+  ]);
+  const again = betaRow('Qwen Code').querySelector('.st-beta-url');
+  again.querySelector('input').value = '';
+  again.querySelector('input').dispatch('input');
+  again
+    .querySelectorAll('button')
+    .find((b) => b.textContent === 'Save address')
+    .click();
+  await flush();
+  assert.deepEqual(plain(posts.at(-1)), ['settings', { agents: { betaUrl: { qwen: null } } }]);
+  assert.equal(betaRow('Gemini CLI').querySelector('.st-beta-url'), null, 'only agents that take an address');
+});
+
+test('"Install … first" is a line under the header, so Install and the badge keep the same place on every card', async () => {
+  const { betaRow } = await openSettings(setupList());
+  for (const name of ['Gemini CLI', 'Mistral Vibe', 'Cursor CLI']) {
+    const row = betaRow(name);
+    const head = row.querySelector('.st-agent-head');
+    assert.equal(head.querySelector('.st-beta-blocked'), null, name + ': nothing after Install in the header');
+    const kids = head.children.map((n) => n.className || n.tagName);
+    assert.equal(kids.at(-1), 'st-primary', name + ': Install is the last thing in the header');
+  }
+  const gemini = betaRow('Gemini CLI');
+  const after = gemini.children[gemini.children.indexOf(gemini.querySelector('.st-agent-head')) + 1];
+  assert.equal(after.className, 'st-note dim st-beta-blocked');
+  assert.equal(after.textContent, 'Install Node.js first');
+  assert.equal(betaRow('Cursor CLI').querySelector('.st-beta-blocked'), null);
+});
+
+test('the Beta card CSS: the key link is a teal st-link, line-start links sit on the hint edge, disabled Install is readable', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { cssRules, declarationsFor } = require('./css_rules.js');
+  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/settings.css'), 'utf8'));
+  const link = declarationsFor(rules, '.st-beta-key .st-link');
+  assert.deepEqual([link.color, link['text-decoration']], ['var(--link)', 'underline'], 'same as every other st-link');
+  assert.deepEqual(
+    declarationsFor(rules, '.st-beta-key .st-link'),
+    declarationsFor(rules, '.st-beta-install .st-link'),
+  );
+  for (const sel of ['.st-beta-key .st-beta-keylink', '.st-beta-install .st-beta-docs', '.st-beta-row .st-link'])
+    assert.equal(declarationsFor(rules, sel)['margin-left'], '0', sel);
+  const off = declarationsFor(rules, '.st-agent-head .st-primary:disabled');
+  assert.deepEqual(
+    [off.opacity, off.background, off.color],
+    ['1', 'var(--primary-disabled-bg)', 'var(--on-accent-disabled)'],
+    "the app's disabled primary (chat.css .primary:disabled), not 50% opacity",
+  );
+});
+
+// The page scroll: a repaint replaces every node, which used to drop the scroll position (the page is empty for a moment) and the
+// focus (the clicked button is gone), so the window jumped away from the card you clicked. The fake DOM has no layout, so this one
+// simulates it: rows are 150px tall from y=100, the content scrolls, and replacing its children clamps the scroll to 0.
+test('Install on a card that is not the first keeps the scroll position, the card where it was, and the focus on the card', async () => {
+  const list = setupList();
+  const { shell, ctx, betaRow } = await openSettings(list);
+  const content = shell.body.querySelector('.st-content');
+  const proto = Object.getPrototypeOf(content);
+  const realRect = proto.getBoundingClientRect;
+  const realReplace = content.replaceChildren;
+  const scrolled = [];
+  try {
+    content.scrollTop = 400;
+    content.replaceChildren = function (...n) {
+      this.scrollTop = 0; // the empty page clamps the scroll
+      return realReplace.apply(this, n);
+    };
+    proto.getBoundingClientRect = function () {
+      if (this === content) return { top: 0, bottom: 700, left: 0, right: 800, width: 800, height: 700 };
+      const rows = content.querySelectorAll('.st-agent');
+      const i = rows.indexOf(this);
+      if (i >= 0) {
+        const top = 100 + i * 150 - content.scrollTop;
+        return { top, bottom: top + 150, left: 0, right: 800, width: 800, height: 150 };
+      }
+      const row = this.closest && this.closest('.st-agent');
+      if (row && this.matches('.st-beta-term')) {
+        const top = row.getBoundingClientRect().top + 30;
+        return { top, bottom: top + 50, left: 0, right: 800, width: 800, height: 50 };
+      }
+      return realRect.call(this);
+    };
+    ctx.AibTerminal = { runSetup: () => ({ close() {} }) };
+    const row = betaRow('Cursor CLI');
+    const topBefore = row.getBoundingClientRect().top;
+    const install = buttonOf(row, 'Install');
+    install.focus();
+    // Anything that scrolls an element into view or focuses something else is a jump.
+    for (const n of shell.body.all()) n.scrollIntoView = () => scrolled.push(n);
+    install.click();
+    await flush();
+    const after = betaRow('Cursor CLI');
+    assert.ok(after.querySelector('.st-beta-term'), 'the panel opened on the card');
+    assert.equal(content.scrollTop, 400, 'the scroll position is kept');
+    assert.equal(after.getBoundingClientRect().top, topBefore, 'the clicked card is where it was on screen');
+    assert.ok(after.contains(shell.document.activeElement), 'focus is still on the card');
+    assert.equal(scrolled.length, 0, 'nothing was scrolled into view');
+    // Cancel/Close on the same card: same again.
+    buttonOf(after.querySelector('.st-beta-term'), 'Close').click();
+    await flush();
+    assert.equal(content.scrollTop, 400);
+    assert.equal(betaRow('Cursor CLI').getBoundingClientRect().top, topBefore);
+    assert.ok(betaRow('Cursor CLI').contains(shell.document.activeElement), 'focus stays on the card after Close');
+  } finally {
+    proto.getBoundingClientRect = realRect;
+  }
+});
+
+test('Install that works turns the agent On at once, even if it had been turned Off before; a Ready one nobody turned off needs no click', async () => {
+  const list = setupList();
+  const cursor = list.findIndex((a) => a.id === 'cursor');
+  list[cursor] = { ...list[cursor], userOff: true };
+  const { ctx, betaRow, posts } = await openSettings(list);
+  const runs = [];
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push(h), { close() {} }) };
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  list[cursor] = { ...list[cursor], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
+  runs[0].onExit(0);
+  await flush();
+  await flush();
+  assert.ok(
+    posts.some((p) => p[0] === 'settings' && JSON.stringify(p[1]) === JSON.stringify({ agents: { enabled: { cursor: true } } })),
+    'the Off is cleared by the install',
+  );
+  // An agent that is Ready and was never turned off: no settings change is needed, nothing is posted for it.
+  const before = posts.length;
+  const { posts: other } = await openSettings(setupList());
+  assert.equal(other.filter((p) => p[0] === 'settings').length, 0);
+  assert.equal(before > 0, true);
+});
+
+test('"Set up in Settings" (UI.openAgent) opens AIB Linking and brings that card into view', async () => {
+  const { shell, UI, betaRow } = await openSettings(setupList());
+  UI.close && UI.close();
+  const seen = [];
+  const proto = Object.getPrototypeOf(shell.body);
+  const real = proto.scrollIntoView;
+  proto.scrollIntoView = function () {
+    seen.push(this.dataset && this.dataset.agent);
+  };
+  try {
+    await UI.openAgent('cursor');
+  } finally {
+    proto.scrollIntoView = real;
+  }
+  assert.ok(seen.includes('cursor'), 'the card of that agent is scrolled into view');
+  assert.ok(betaRow('Cursor CLI'));
 });

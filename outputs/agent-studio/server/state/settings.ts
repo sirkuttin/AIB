@@ -6,6 +6,9 @@
  * during the transition; each re-reads it when the file changes, so a new agent is launchable without restarting anything).
  * Writes are atomic. `revision` changes on every save, in this process or another, so other windows know to refresh. Agent
  * environment values are stored as plain text: ACP adapters need them. The file is the user's own and lives in the state folder.
+ * Beta agents' API keys are not: on disk each is sealed (secrets.ts: DPAPI on Windows, the Keychain on macOS, the Secret Service
+ * or an owner-only file on Linux); in memory they are plain. A plain key in the file (an older AIB) is sealed as soon as it is read.
+ * A Beta agent's API address (Qwen's OPENAI_BASE_URL, betaUrls) is kept the same way, in the same store, as `<agentId>-address`.
  *
  *   {"version":1,
  *    "agents":   {"builtin": {"omp": true, "claude": true, "codex": true}, "custom": [{id,name,command,args,env,enabled}]},
@@ -40,6 +43,7 @@ import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION
 import { entriesOf, now, put, quarantine, readJsonFile, saveJson } from './json.ts';
 import { ProjectPrefs } from './projects.ts';
 import { DEFAULT_ORDER } from '../desktop/editors.ts';
+import { isSealed, type KeyStore, keyStoreFor } from './secrets.ts';
 
 /** editors.DEFAULT_ORDER: the ids of editors.EDITOR_SPECS. */
 export const EDITOR_IDS: readonly string[] = DEFAULT_ORDER;
@@ -50,10 +54,25 @@ export interface Choice {
   agent?: string;
 }
 
+/** The key store id of a Beta agent's API address: `<agentId>-address` (no Beta agent id ends with it). */
+export const ADDRESS_SUFFIX = '-address';
+
 export interface Settings {
   /** beta / betaKeys: the Beta agents (beta_catalog.ts) turned on, and the API keys typed for them. Present only when not empty (a
    * fresh store matches the Python one), hidden from public(). */
-  agents: { builtin: Record<string, boolean>; custom: CustomAgent[]; beta?: Record<string, boolean>; betaKeys?: Record<string, string> };
+  agents: {
+    builtin: Record<string, boolean>;
+    custom: CustomAgent[];
+    /** Old stores only: a Beta agent turned on. Read and dropped (a Beta agent is on unless betaOff says otherwise). */
+    beta?: Record<string, boolean>;
+    /** The Beta agents the person turned Off on purpose. A Beta agent that is Ready is offered in New chat unless it is here; the
+     * catalog's old off-by-default no longer hides it. Present only when not empty, hidden from public(). */
+    betaOff?: Record<string, boolean>;
+    betaKeys?: Record<string, string>;
+    /** The API address typed for a Beta agent that takes one (Qwen: OPENAI_BASE_URL). Present only when not empty; sealed on disk
+     * like betaKeys (key store id `<agentId>-address`). */
+    betaUrls?: Record<string, string>;
+  };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
   server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean };
   editors: { default: string };
@@ -80,11 +99,74 @@ export class SettingsStore extends JsonFileStore {
   static DEFAULT_VIEWS: readonly string[] = ['full', 'chat'];
 
   data: Settings = SettingsStore.blank();
+  /** Where API keys are kept at rest (null for a store with no folder: nothing is written). */
+  readonly keys: KeyStore | null;
+  /** Plain keys were read from the file: they are sealed by the next save (started right after the load). */
+  #plainOnDisk = false;
+  #migrating: Promise<void> | null = null;
 
   constructor(stateDir: string | null = null) {
     super();
     this.path = stateDir ? inDir(stateDir, (this.constructor as typeof SettingsStore).FILE) : null;
+    this.keys = stateDir ? keyStoreFor(stateDir) : null;
     this.reload();
+  }
+
+  /** Settings > Beta agents: where a saved key is kept, in plain words. */
+  keyStorage(): { kind: string; note: string } {
+    return this.keys ? { kind: this.keys.kind, note: this.keys.note } : { kind: 'memory', note: 'Kept in memory only' };
+  }
+
+  /**
+   * The stored betaKeys and betaUrls of a raw file turned into plain values (sealed forms opened; one that cannot be opened is
+   * dropped). Addresses live in the key store as `<agentId>-address`.
+   */
+  #openKeys(raw: Dict): void {
+    const agents = isDict(raw.agents) ? raw.agents : null;
+    if (!agents) return;
+    for (const [field, suffix] of [['betaKeys', ''], ['betaUrls', ADDRESS_SUFFIX]] as const) {
+      if (!isDict(agents[field])) continue;
+      const open: Dict = {};
+      for (const [agentId, stored] of Object.entries(agents[field] as Dict)) {
+        if (!isStr(stored) || !stored) continue;
+        if (!isSealed(stored)) this.#plainOnDisk = true;
+        const plain = this.keys ? this.keys.open(agentId + suffix, stored) : (isSealed(stored) ? null : stored);
+        if (plain) open[agentId] = plain;
+      }
+      agents[field] = open;
+    }
+  }
+
+  /** Every value the key store holds for these settings: {agentId: key, '<agentId>-address': address}. */
+  static sealable(agents: Settings['agents']): Record<string, string> {
+    const out: Record<string, string> = { ...(agents.betaKeys ?? {}) };
+    for (const [agentId, url] of Object.entries(agents.betaUrls ?? {})) out[agentId + ADDRESS_SUFFIX] = url;
+    return out;
+  }
+
+  /** Seals the plain keys an older AIB left in the file: the outside store first (async), then one save. */
+  #migrateKeys(): void {
+    if (!this.#plainOnDisk || this.#migrating || !this.keys || this.path === null) return;
+    const keys = this.#cls().sealable(this.data.agents);
+    this.#migrating = (async () => {
+      try {
+        for (const [agentId, plain] of Object.entries(keys)) await this.keys!.prepare(agentId, plain);
+        await this.locked(() => {
+          this.sync();
+          if (!this.#plainOnDisk) return;
+          this.#save();
+        });
+      } catch (error) {
+        this.warning = `AIB could not encrypt the saved API keys: ${errorText(error)}`;
+      } finally {
+        this.#migrating = null;
+      }
+    })();
+  }
+
+  /** Resolves when keys found in plain text at load have been sealed (tests; the server never waits for it). */
+  keysSealed(): Promise<void> {
+    return this.#migrating ?? Promise.resolve();
   }
 
   static blank(): Settings {
@@ -130,11 +212,20 @@ export class SettingsStore extends JsonFileStore {
       if (typeof builtin[agentId] === 'boolean') doc.agents.builtin[agentId] = builtin[agentId] as boolean;
     }
     const beta = isDict(agents.beta) ? agents.beta : {};
-    for (const agentId of BETA_IDS) if (beta[agentId] === true) (doc.agents.beta ??= {})[agentId] = true; // off unless turned on
+    // Migration: the old `beta` map (turned on) is dropped, and an agent that was simply not on was never a choice: both are the default,
+    // which is on. Only an explicit Off (betaOff) is kept.
+    void beta;
+    const off = isDict(agents.betaOff) ? agents.betaOff : {};
+    for (const agentId of BETA_IDS) if (off[agentId] === true) (doc.agents.betaOff ??= {})[agentId] = true;
     const keys = isDict(agents.betaKeys) ? agents.betaKeys : {};
     for (const agentId of BETA_IDS) {
       const key = this.betaKeyValue(keys[agentId]);
       if (key && betaAgent(agentId)?.signin.keyEnv) (doc.agents.betaKeys ??= {})[agentId] = key;
+    }
+    const urls = isDict(agents.betaUrls) ? agents.betaUrls : {};
+    for (const agentId of BETA_IDS) {
+      const url = this.betaUrlValue(urls[agentId]);
+      if (url && betaAgent(agentId)?.signin.baseUrlEnv) (doc.agents.betaUrls ??= {})[agentId] = url;
     }
     const taken = new Set<string>();
     for (const item of (Array.isArray(agents.custom) ? agents.custom : []).slice(0, MAX_AGENTS)) {
@@ -186,6 +277,19 @@ export class SettingsStore extends JsonFileStore {
     return pyLen(text) <= MAX_ENV_VALUE ? text : '';
   }
 
+  /** An API address as stored: one http(s) URL, at most 500 characters, no placeholder left in it (<...>, {...}), else ''. */
+  static betaUrlValue(value: unknown): string {
+    if (!isStr(value)) return '';
+    const text = pyStrip(value);
+    if (!text || pyLen(text) > 500 || /[\s<>{}"'`]/.test(text) || !/^https?:\/\//i.test(text)) return '';
+    try {
+      new URL(text);
+    } catch {
+      return '';
+    }
+    return text;
+  }
+
   static launcherPath(value: unknown): string {
     if (!isStr(value)) return '';
     const text = pyStrip(value);
@@ -229,13 +333,32 @@ export class SettingsStore extends JsonFileStore {
       return;
     }
     this.warning = '';
+    this.#plainOnDisk = false;
+    this.#openKeys(raw);
     this.data = this.#cls().cleanDoc(raw);
+    this.#migrateKeys();
   }
 
   #save(): void {
     if (this.path === null) return;
     this.requireReadable();
-    saveJson(this.path, { ...this.data, version: VERSION, savedAt: now() }, '.studio-settings-');
+    const doc = deepCopy(this.data);
+    if (this.keys) {
+      // Never the plain keys or addresses: each one sealed, or kept outside the file. One call for all of them: sealAll forgets
+      // whatever it is not given (the last key went: its outside copy goes too).
+      const sealed = this.keys.sealAll(this.#cls().sealable(doc.agents));
+      const keys: Record<string, string> = {}, urls: Record<string, string> = {};
+      for (const [id, form] of Object.entries(sealed)) {
+        if (id.endsWith(ADDRESS_SUFFIX)) urls[id.slice(0, -ADDRESS_SUFFIX.length)] = form;
+        else keys[id] = form;
+      }
+      if (Object.keys(keys).length) doc.agents.betaKeys = keys;
+      else delete doc.agents.betaKeys;
+      if (Object.keys(urls).length) doc.agents.betaUrls = urls;
+      else delete doc.agents.betaUrls;
+    }
+    saveJson(this.path, { ...doc, version: VERSION, savedAt: now() }, '.studio-settings-');
+    this.#plainOnDisk = false;
     this.seen = this.stamp();
   }
 
@@ -252,7 +375,9 @@ export class SettingsStore extends JsonFileStore {
     for (const agent of shown.agents.custom as unknown as Dict[]) agent.env = hiddenEnv(agent.env); // names only
     // Beta agents: the agent list (/api/live/settings agents rows) says which are on and which have a key; never the key itself.
     delete (shown.agents as Partial<Settings['agents']>).beta;
+    delete (shown.agents as Partial<Settings['agents']>).betaOff;
     delete (shown.agents as Partial<Settings['agents']>).betaKeys;
+    delete (shown.agents as Partial<Settings['agents']>).betaUrls; // the agent rows carry it (betaInfo.baseUrl)
     return { revision: `${this.nonce}.${this.counter}`, settings: shown, warning: this.warning };
   }
 
@@ -264,15 +389,21 @@ export class SettingsStore extends JsonFileStore {
     return this.customAgents().find((a) => a.id === agentId) ?? null;
   }
 
-  /** A Beta agent is off until the person turns it on. */
+  /** A Beta agent is on unless the person turned it off. */
   betaEnabled(agentId: string): boolean {
-    return this.snapshot().agents.beta?.[agentId] === true;
+    return this.snapshot().agents.betaOff?.[agentId] !== true;
   }
 
   /** The API key typed for a Beta agent ('' when none). Never sent to the page. */
   betaKey(agentId: string): string {
     const keys = this.snapshot().agents.betaKeys ?? {};
     return Object.prototype.hasOwnProperty.call(keys, agentId) ? keys[agentId] : '';
+  }
+
+  /** The API address typed for a Beta agent ('' when none: the agent's own default). */
+  betaUrl(agentId: string): string {
+    const urls = this.snapshot().agents.betaUrls ?? {};
+    return Object.prototype.hasOwnProperty.call(urls, agentId) ? urls[agentId] : '';
   }
 
   builtinEnabled(agentId: string): boolean {
@@ -307,8 +438,25 @@ export class SettingsStore extends JsonFileStore {
    * server: {...}, editors: {default}, appearance: {defaultView}, launchers: {claude, codex}}. Nothing is saved unless the whole
    * patch is valid. Resolves true when something changed.
    */
-  update(body: unknown): Promise<boolean> {
-    if (!isDict(body) || !Object.keys(body).length) return Promise.reject(new ValueError('Invalid request'));
+  async update(body: unknown): Promise<boolean> {
+    if (!isDict(body) || !Object.keys(body).length) throw new ValueError('Invalid request');
+    // A new API key goes into the Keychain / keyring first (that needs an async child); the save below then writes its marker.
+    const typed = isDict(body.agents) && isDict(body.agents.betaKey) ? body.agents.betaKey : {};
+    if (this.keys) {
+      for (const [agentId, key] of Object.entries(typed)) {
+        const cleaned = isStr(key) ? this.#cls().betaKeyValue(key) : '';
+        if (cleaned && betaAgent(agentId)?.signin.keyEnv) await this.keys.prepare(agentId, cleaned);
+      }
+      const addresses = isDict(body.agents) && isDict(body.agents.betaUrl) ? body.agents.betaUrl : {};
+      for (const [agentId, url] of Object.entries(addresses)) {
+        const cleaned = this.#cls().betaUrlValue(url);
+        if (cleaned && betaAgent(agentId)?.signin.baseUrlEnv) await this.keys.prepare(agentId + ADDRESS_SUFFIX, cleaned);
+      }
+    }
+    return this.#update(body);
+  }
+
+  #update(body: Dict): Promise<boolean> {
     const known = ['agents', 'defaults', 'server', 'editors', 'appearance', 'launchers'];
     const unknown = Object.keys(body).filter((key) => !known.includes(key));
     if (unknown.length) {
@@ -343,7 +491,9 @@ export class SettingsStore extends JsonFileStore {
 
   #applyAgents(work: Settings, value: unknown): void {
     const patch = section(value, 'agents');
-    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey'])) throw new ValueError('Unknown agents setting');
+    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey', 'betaUrl'])) {
+      throw new ValueError('Unknown agents setting');
+    }
     for (const [agentId, enabled] of Object.entries(section(patch.enabled, 'agents'))) { // on/off only: nothing else is touched
       if (typeof enabled !== 'boolean') throw new ValueError('Agents can only be turned on or off');
       if (isBuiltin(agentId)) {
@@ -351,8 +501,11 @@ export class SettingsStore extends JsonFileStore {
         continue;
       }
       if (isBeta(agentId)) {
-        if (enabled) (work.agents.beta ??= {})[agentId] = true;
-        else if (work.agents.beta) delete work.agents.beta[agentId];
+        if (work.agents.beta) delete work.agents.beta[agentId];
+        if (enabled) {
+          if (work.agents.betaOff) delete work.agents.betaOff[agentId];
+        } else (work.agents.betaOff ??= {})[agentId] = true;
+        if (work.agents.betaOff && !Object.keys(work.agents.betaOff).length) delete work.agents.betaOff;
         continue;
       }
       const target = work.agents.custom.find((a) => a.id === agentId);
@@ -373,6 +526,17 @@ export class SettingsStore extends JsonFileStore {
       const cleaned = this.#cls().betaKeyValue(key);
       if (!cleaned) throw new ValueError('The API key must be one line of text');
       (work.agents.betaKeys ??= {})[agentId] = cleaned;
+    }
+    for (const [agentId, url] of Object.entries(section(patch.betaUrl, 'agents'))) { // {id: 'https://…'} sets it, '' | null clears it
+      const agent = betaAgent(agentId);
+      if (!agent || !agent.signin.baseUrlEnv) throw new ValueError('That agent does not take an API address');
+      if (url === null || url === '') {
+        if (work.agents.betaUrls) delete work.agents.betaUrls[agentId];
+        continue;
+      }
+      const cleaned = this.#cls().betaUrlValue(url);
+      if (!cleaned) throw new ValueError('The API address must be one http:// or https:// address, with your own values filled in');
+      (work.agents.betaUrls ??= {})[agentId] = cleaned;
     }
     const custom = work.agents.custom;
     if ('remove' in patch) {

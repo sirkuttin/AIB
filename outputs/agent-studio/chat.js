@@ -827,7 +827,34 @@
       openConversation(selected).catch(fail);
     }
   }
+  // Tool rows name a chat's folder in the project's words: its own copy (worktree) and its project folder map to the project.
+  function notePlaces(list) {
+    const TV = window.ToolViews,
+      S = window.AgentSidebarUI;
+    if (!TV?.notePlace) return;
+    for (const c of list || []) {
+      if (!c) continue;
+      let name = '';
+      try {
+        name = S?.projectOf ? S.projectOf(c).name : '';
+      } catch {
+        name = '';
+      }
+      const lv = c.live || {},
+        root = lv.projectRoot || c.projectRoot || '';
+      name =
+        name ||
+        String(root || '')
+          .split(/[\\/]/)
+          .filter(Boolean)
+          .pop() ||
+        '';
+      TV.notePlace(lv.cwd || c.cwd, name);
+      TV.notePlace(root, name);
+    }
+  }
   function renderConversations() {
+    notePlaces(conversations);
     window.AgentOrganizeUI?.flag?.(conversations);
     renderDiscover();
     if (newDraft && !selected) renderNewChat();
@@ -882,6 +909,7 @@
       if (!rows.length) box.append(text('p', emptyText, 'note'));
     }
     box.scrollTop = top;
+    window.AgentSidebarUI?.watchTitles?.(box); // each title gets the room its card has (age moves down when it would cut it)
   }
   function makeRow(c) {
     const wrapper = text('div', '', 'conversation-row');
@@ -921,6 +949,7 @@
     $('subagentCount').textContent = '0';
     newDraft = null;
     window.ToolViews?.setScope?.(aliasKey(c)); // open tool rows and step groups belong to this chat
+    notePlaces([c]);
     lastMainRows = [];
     document.body.classList.remove('new-chat');
     $('newChatBar').hidden = true;
@@ -970,7 +999,25 @@
     renderConversations();
     await refresh();
   }
+  /* Why the Changes tab's Merge button may not ask this chat to merge (it never resumes a chat on its own), or ''. */
+  function mergeBlockedReason(c) {
+    if (!c) return '';
+    if (c.elsewhere && !current) return 'This chat is open in another app. Merge it there';
+    if (window.AgentOrganizeUI?.bucket?.(c) === 'archived')
+      return 'This chat is archived. Unarchive it to merge its work';
+    if (current && snapshot && snapshot.readOnly) return "This chat is read only, so it can't merge";
+    if (!current || (snapshot && snapshot.closed)) return 'This chat is closed. Continue it to merge its work';
+    return '';
+  }
   function renderHeader() {
+    syncChatPanels();
+    if (!selected) return;
+    window.AgentBreadth?.sync(current ? snapshot : null, breadthContext());
+    renderHeaderBody();
+  }
+  // The panels that belong to the open chat (views, terminal, Files, Changes with its header chip and Merge / Discard,
+  // Artifacts): fed on every header render, and when a New chat page replaces a chat, so none keeps the chat we left.
+  function syncChatPanels() {
     window.ChatViewsUI?.sync();
     window.AibTerminal?.sync();
     window.AgentFilesUI?.sync(selected && (current || selected.id) ? selected : null);
@@ -981,11 +1028,12 @@
             busy: !!(current && snapshot && !snapshot.closed && snapshot.busy),
             cwd: selected.cwd || '',
             discarded: isDiscarded(selected),
+            mergeBlocked: mergeBlockedReason(selected),
           }
         : null,
     );
-    if (!selected) return;
-    window.AgentBreadth?.sync(current ? snapshot : null, breadthContext());
+  }
+  function renderHeaderBody() {
     if (!window.AgentHeaderUI?.isEditing?.()) $('title').textContent = titleOf(selected);
     const connected = !!current && snapshot && !snapshot.closed,
       images = selectedAttachments().length,
@@ -1199,7 +1247,9 @@
         text('pre', row.value),
       );
       article.append(details);
-    } else if (row.value) article.append(text('pre', row.value));
+    } else if (row.value && row.role === 'notice' && (row.label === 'error' || row.label === 'disconnected'))
+      article.append(linkedPre(row.value)); // an agent's error often names a page to open (a plan to upgrade, a sign-in)
+    else if (row.value) article.append(text('pre', row.value));
     if (row.actions?.length) article.append(clashButtons(row.actions));
     for (const [index, image] of (row.attachments || []).entries()) {
       if (image && image.type === 'studio_file') {
@@ -2281,21 +2331,24 @@
     );
     window.AgentElicitationUI?.renderAuth($('authPrompts'), snapshot.auth, authContext(connection, snapshot));
   }
-  /* What the approval is for, in words (the tool line Studio draws for tool calls), with the raw request folded under Details. */
+  /* What the approval is for, plainly: the verb and the command, path or URL itself (in a code box), the agent's own
+     description under it as a quieter line, and the raw request folded under Details (ToolViews.actionOf). */
   function approvalDetail(params) {
     const call = params.toolCall || null,
       out = [];
-    let s = null;
+    let act = null;
     try {
-      s = call && window.ToolViews?.summarize ? window.ToolViews.summarize({ role: 'tool', raw: call }) : null;
+      act = call && window.ToolViews?.actionOf ? window.ToolViews.actionOf(call) : null;
     } catch {
-      s = null;
+      act = null;
     }
-    if (s && (s.label || s.text)) {
-      const what = text('p', '', 'approval-what');
-      if (s.label) what.append(text('span', s.label, 'tool-line-kind'));
-      what.append(text('span', s.text || call.title || '', 'approval-what-text'));
+    if (act) {
+      const what = text('div', '', 'approval-what' + (act.code ? ' has-code' : ''));
+      what.dataset.kind = act.kind;
+      if (act.verb) what.append(text('span', act.verb, 'approval-verb'));
+      what.append(text(act.code ? 'code' : 'span', act.target, 'approval-target'));
       out.push(what);
+      if (act.note) out.push(text('p', act.note, 'approval-note'));
     } else if (call && call.title) out.push(text('p', String(call.title), 'approval-what'));
     const raw = document.createElement('details');
     raw.className = 'approval-raw';
@@ -2449,6 +2502,7 @@
     $('settings').replaceChildren();
     $('approvals').replaceChildren();
     clearError();
+    syncChatPanels(); // the chat we left: its Changes chip, Merge / Discard, Files and Artifacts go with it
     renderConversations();
     renderNewChat();
     renderAgents();
@@ -2494,8 +2548,7 @@
   }
   // "Default" leaves the agent's own setting alone; it names that setting when the agent reported it.
   function defaultName(list) {
-    const hit = list && list.current && list.choices.find((c) => c.value === list.current);
-    return hit ? 'Default (' + hit.name + ')' : 'Default';
+    return AgentChoice.defaultLabel(list);
   }
   // The chips' view of the draft: the remembered lists as advertised settings, with a "Default" row first and the picks as
   // the current values, so the New chat page uses the same chips and menus as a chat.
@@ -2569,7 +2622,8 @@
         ...items.flatMap((item) => {
           const option = document.createElement('option');
           option.value = item.value;
-          option.textContent = item.name;
+          option.textContent = item.reason ? item.name + ' — ' + item.reason : item.name;
+          if (item.disabled) option.disabled = true;
           if (!item.group) return [option];
           if (groups.has(item.group)) {
             groups.get(item.group).append(option);
@@ -2598,7 +2652,8 @@
     if (!lists.loading || lists.model) if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
     if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
     if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
-    fillSelect($('ncAgent'), AgentChoice.menuItems(AgentChoice.AGENTS), newDraft.provider);
+    fillSelect($('ncAgent'), AgentChoice.menuRows(), newDraft.provider);
+    $('ncSetup').hidden = !AgentChoice.UNAVAILABLE.length;
     fillSelect($('ncModel'), models, newDraft.model);
     fillSelect($('ncMode'), modes, newDraft.mode);
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
@@ -2665,16 +2720,19 @@
         settings,
         agent: name,
         agentId: newDraft.provider,
-        agents: AgentChoice.AGENTS.map((a) => ({
-          id: a.id,
+        agents: AgentChoice.menuRows().map((a) => ({
+          id: a.value,
           name: a.name,
-          group: a.beta ? AgentChoice.BETA_GROUP : '',
+          group: a.group,
+          disabled: !!a.disabled,
+          reason: a.reason || '',
         })),
         extraChips,
       },
       {
         disabled: startingNew,
         onAgent: pickNewAgent,
+        onSetup: openAgentSetup,
         onMode: (value) => {
           if (newDraft) newDraft.mode = value;
         },
@@ -2689,6 +2747,11 @@
     );
     renderAttachments();
   }
+  // "Set up in Settings ›": Settings > AIB Linking, at the card of the agent that is not ready yet.
+  function openAgentSetup() {
+    window.AgentSettingsUI?.openAgent?.(AgentChoice.setupTarget());
+  }
+  $('ncSetup').onclick = openAgentSetup;
   $('ncAgent').onchange = () => pickNewAgent($('ncAgent').value);
   $('ncModel').onchange = () => {
     if (newDraft) newDraft.model = $('ncModel').value;
@@ -2761,7 +2824,12 @@
       const c = conversations.find((x) => x.live?.id === result.id);
       if (!c)
         throw Error('The agent opened, but its conversation is not listed yet. Your message is still in the box.');
-      if (selected) return; // the user moved on to another chat while this one opened; it is in the list
+      if (selected && aliasKey(selected) !== aliasKey(c)) {
+        // The user opened another chat while this one was starting. The message was typed for the new chat, so it still goes
+        // there (this used to return here and the message vanished); the page stays where the user went.
+        await sendFirstInBackground(c, result.id, draft, problems);
+        return;
+      }
       if (provider !== 'all') provider = c.provider;
       viewStore?.adopt('new-chat', aliasKey(c)); // the view picked on the New chat page carries over to the real chat
       await openConversation(c);
@@ -2819,6 +2887,59 @@
       startingNew = false;
       if (newDraft && !selected) renderNewChat();
       else if (selected) renderHeader();
+    }
+  }
+  // Plain text with its http(s) links clickable (only those two schemes; the text itself is never read as markup).
+  function linkedPre(value) {
+    const pre = document.createElement('pre');
+    let last = 0;
+    for (const m of String(value).matchAll(/https?:\/\/[^\s<>"']+/g)) {
+      const url = m[0].replace(/[.,;:!?)\]]+$/, '');
+      if (m.index > last) pre.append(String(value).slice(last, m.index));
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = url;
+      pre.append(link);
+      last = m.index + url.length;
+    }
+    if (last < String(value).length) pre.append(String(value).slice(last));
+    return pre;
+  }
+  // The first message of a chat that opened while the user was looking at another chat: sent without leaving that chat.
+  // A failure is shown and the text is kept as the draft of the new chat, so it never disappears.
+  async function sendFirstInBackground(c, id, draft, problems) {
+    const key = aliasKey(c),
+      pending = (attachmentStore.get('new-chat') || []).slice();
+    attachmentStore.delete('new-chat');
+    try {
+      const fingerprint = await imageFingerprint(pending),
+        clientMessageId = attemptId(key, draft, fingerprint),
+        attachments = await imageBlocks(pending);
+      await post('prompt', { id, text: draft, clientMessageId, attachments });
+      clearAttempt(key, draft, fingerprint);
+      if (problems.length)
+        fail(
+          Error(
+            'Could not apply the chosen settings: ' +
+              problems.join(' · ') +
+              ' The chat started with the agent defaults.',
+          ),
+        );
+    } catch (error) {
+      try {
+        drafts.set(key, draft);
+      } catch {}
+      if (pending.length) attachmentStore.set(key, pending);
+      fail(
+        Error(
+          sentence(error.message) +
+            ' The new ' +
+            nameOf(c.provider) +
+            ' chat is open; your first message is kept as its draft.',
+        ),
+      );
     }
   }
   // Continue this folder in a new chat with the other agent. Nothing is sent: a new chat opens with the agent chosen and,
@@ -4478,6 +4599,19 @@
       if (id === 'messages') syncJump();
     });
   }
+  /* The message list gets shorter when something is pinned under it (a question or approval card, the terminal dock, the queue).
+     Shrinking never scrolls, so a list that was following the newest message was left showing older rows while its last card
+     (a plan) sat hidden under the pinned card. A list that follows keeps following: it stays at its newest row. */
+  if (typeof ResizeObserver === 'function') {
+    const box = $('messages');
+    let lastHeight = box.clientHeight;
+    new ResizeObserver(() => {
+      const h = box.clientHeight;
+      if (h < lastHeight && !box.dataset.paused && box.scrollHeight - box.scrollTop - box.clientHeight > 1)
+        box.scrollTop = box.scrollHeight;
+      lastHeight = h;
+    }).observe(box);
+  }
   /* Reaching the latest message: the line stays a few seconds, dimmed, then goes. */
   function fadeNewLine(box) {
     const l = box.querySelector(':scope > .new-line');
@@ -4599,6 +4733,8 @@
     commandDuration,
     commandState,
     continueConversation,
+    startNewChat,
+    bubbleFull,
     discoverSessions,
     fetchEarlier,
     isRunningCommand,

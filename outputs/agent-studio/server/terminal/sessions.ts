@@ -358,7 +358,13 @@ export class TerminalSessions {
     // command: a program to run instead of a shell (a Beta agent's sign-in, server/web/terminal_routes.ts); it ends with that program.
     const shell = command ?? (shellChoice === 'windows-powershell' && Deno.build.os === 'windows' ? windowsPowerShell() : this.#shell());
     const size = clampSize(cols, rows);
-    const options: PtyOptions = { file: shell.file, args: shell.args, cwd: folder, ...size, env: { AIB_TERMINAL: '1' } };
+    const options: PtyOptions = {
+      file: shell.file,
+      args: shell.args,
+      cwd: folder,
+      ...size,
+      env: { ...(command?.env ?? {}), AIB_TERMINAL: '1' },
+    };
     let pty: Pty;
     let label: TerminalLabel | null = null;
     // A sign-in command stays inside AIB: it is short-lived and ends with the sign-in, so there is nothing to keep through a restart.
