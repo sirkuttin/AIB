@@ -25,9 +25,10 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
 import { forwarderOf } from '../keeper/client.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
-import { type ChannelInfo, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
+import { type ChannelInfo, type KeeperClient, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
 import { type KeeperChannel, KeeperLink, keeperSetting, keeperWanted, noteKeeperProblem } from '../keeper/link.ts';
+import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
@@ -900,9 +901,11 @@ export class Studio {
     }
     if (!client) return 0;
     let adopted = 0;
-    for (const info of await client.list()) {
+    const listed = await client.list();
+    for (const info of listed) {
       try {
         if (info.kind !== 'pipe') continue;
+        if (info.channel.startsWith(CLIENT_TERMINAL_PREFIX)) continue; // an agent's client terminal: its chat takes it over
         if (!info.live) {
           if (info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
           continue;
@@ -919,6 +922,7 @@ export class Studio {
         log.exception(error, 'keeper: taking over channel failed');
       }
     }
+    await this.#dropOrphanTerminals(client, listed);
     if (adopted) {
       announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
       // Their artifact tool is the keeper's forwarder: it needs this Studio's HTTP endpoint and its published address.
@@ -933,6 +937,32 @@ export class Studio {
       }
     }
     return adopted;
+  }
+
+  /**
+   * Client terminals whose chat is gone (it ended while no AIB ran, or could not be taken over): stopped and removed. Those of a chat
+   * that was taken over were re-attached by it (Connection, from its clientTerminal notes) and are left alone.
+   */
+  async #dropOrphanTerminals(client: KeeperClient, listed: ChannelInfo[]): Promise<void> {
+    const keeper = this.keeper!;
+    for (const info of listed) {
+      if (!info.channel.startsWith(CLIENT_TERMINAL_PREFIX) || keeper.channels.has(info.channel)) continue;
+      let chat = '';
+      try {
+        chat = String(JSON.parse(info.label ?? '{}').chat ?? '');
+      } catch { /* no label */ }
+      const owner = chat ? this.connections.get(chat) : undefined;
+      if (owner && !owner.closed) continue; // a read-only chat keeps its agent's terminals as they are
+      try {
+        if (info.live) {
+          announce('studio', 'keeper: stopping client terminal %s: its chat is gone', info.channel);
+          await keeper.stopUnknown(client, info.channel);
+        }
+        await keeper.removeEnded(client, info.channel);
+      } catch (error) {
+        log.warning('keeper: could not remove client terminal %s: %s', info.channel, errorText(error));
+      }
+    }
   }
 
   async #rebuildChat(info: ChannelInfo, note: Json): Promise<boolean> {

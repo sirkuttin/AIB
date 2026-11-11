@@ -177,55 +177,49 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export class Terminal {
+/**
+ * One client terminal as the agent sees it: its output (the newest `limit` bytes) and its exit status. Terminal runs it as a child of
+ * AIB; KeeperClientTerminal (keeper_terminal.ts) in the keeper, where it outlives an AIB restart or update.
+ */
+export abstract class TerminalBase {
   buffer: Uint8Array = new Uint8Array(0);
   truncated = false;
   exitCode: number | null = null;
   signal: string | null = null;
   killed = false;
   released = false;
-  readonly created = Date.now() / 1000;
-  readonly tree: ProcessTree;
+  created = Date.now() / 1000;
   #exited = false;
-  #processDone = false;
   readonly exited: Promise<void>;
+  #resolveExited!: () => void;
 
   constructor(
     readonly id: string,
     readonly sessionId: string,
     readonly argv: string[],
     readonly cwd: string,
-    readonly process: Deno.ChildProcess,
     readonly limit: number,
   ) {
-    this.tree = new ProcessTree(process);
-    const pumps = [this.#pump(process.stdout), this.#pump(process.stderr)];
-    const status = process.status.then((s) => {
-      this.#processDone = true;
-      return s;
-    }, () => null);
-    this.exited = Promise.all([status, ...pumps]).then(([s]) => {
-      if (s) {
-        if (s.signal) {
-          this.exitCode = null;
-          this.signal = String(SIGNALS[s.signal] ?? s.signal);
-        } else this.exitCode = s.code;
-      }
-      this.#exited = true;
-    });
+    this.exited = new Promise((resolve) => (this.#resolveExited = resolve));
   }
 
-  async #pump(stream: ReadableStream<Uint8Array>): Promise<void> {
-    try {
-      for await (const chunk of stream) {
-        const joined = new Uint8Array(this.buffer.length + chunk.length);
-        joined.set(this.buffer);
-        joined.set(chunk, this.buffer.length);
-        const [kept, trimmed] = trimToLimit(joined, this.limit);
-        this.buffer = kept;
-        if (trimmed) this.truncated = true;
-      }
-    } catch { /* the pipe broke: the process is gone */ }
+  /** Output arrived (stdout or stderr, in arrival order): keep the newest `limit` bytes. */
+  protected append(chunk: Uint8Array): void {
+    const joined = new Uint8Array(this.buffer.length + chunk.length);
+    joined.set(this.buffer);
+    joined.set(chunk, this.buffer.length);
+    const [kept, trimmed] = trimToLimit(joined, this.limit);
+    this.buffer = kept;
+    if (trimmed) this.truncated = true;
+  }
+
+  /** The process ended and all its output is in. */
+  protected finish(exitCode: number | null, signal: string | null): void {
+    if (this.#exited) return;
+    this.exitCode = exitCode;
+    this.signal = signal;
+    this.#exited = true;
+    this.#resolveExited();
   }
 
   get isExited(): boolean {
@@ -249,12 +243,78 @@ export class Terminal {
   }
 
   /** Kill the process and everything it started; waits up to 5 s for it to end. */
+  abstract kill(): Promise<void>;
+
+  /** The terminal is gone for good (released, or its chat closed): kill it and drop what is kept of it. */
+  dispose(): Promise<void> {
+    return this.kill();
+  }
+}
+
+/** A client terminal run as a child of AIB (ends with AIB). */
+export class Terminal extends TerminalBase {
+  readonly tree: ProcessTree;
+  #processDone = false;
+
+  constructor(
+    id: string,
+    sessionId: string,
+    argv: string[],
+    cwd: string,
+    readonly process: Deno.ChildProcess,
+    limit: number,
+  ) {
+    super(id, sessionId, argv, cwd, limit);
+    this.tree = new ProcessTree(process);
+    const pumps = [this.#pump(process.stdout), this.#pump(process.stderr)];
+    const status = process.status.then((s) => {
+      this.#processDone = true;
+      return s;
+    }, () => null);
+    void Promise.all([status, ...pumps]).then(([s]) => {
+      if (s?.signal) this.finish(null, String(SIGNALS[s.signal] ?? s.signal));
+      else this.finish(s ? s.code : null, null);
+    });
+  }
+
+  async #pump(stream: ReadableStream<Uint8Array>): Promise<void> {
+    try {
+      for await (const chunk of stream) this.append(chunk);
+    } catch { /* the pipe broke: the process is gone */ }
+  }
+
   async kill(): Promise<void> {
     if (this.#processDone) return;
     this.killed = true;
     this.tree.kill();
     await Promise.race([this.exited, sleep(5000)]);
   }
+}
+
+/** What terminal/create would start, handed to a TerminalBackend. */
+export interface TerminalPlan {
+  /** The agent's request id (the note-first record says which request this terminal answers). */
+  rpc: unknown;
+  terminalId: string;
+  sessionId: string;
+  program: string;
+  args: string[];
+  /** As the agent asked: [command, ...args]. */
+  argv: string[];
+  cwd: string;
+  env: Record<string, string>;
+  limit: number;
+  /** The id was noted by an earlier AIB (a takeover starting a terminal that was noted but never started): no new note. */
+  pinned?: boolean;
+}
+
+/**
+ * Where client terminals run when not as children of AIB: the keeper (Connection gives one when its agent runs there). create()
+ * returns null to let the terminal start as a child of AIB after all; release() runs before a released terminal is disposed.
+ */
+export interface TerminalBackend {
+  create(plan: TerminalPlan): Promise<TerminalBase | null>;
+  release?(terminal: TerminalBase): Promise<void>;
 }
 
 /** shutil.which(cmd, path=...) of Python 3.11 (Windows: the current folder first, PATHEXT). */
@@ -322,7 +382,11 @@ export class ClientCaps {
   knownSession: (sessionId: string) => boolean;
   record: (kind: string, data: Record<string, unknown>) => void;
   writeResponse: ((reply: Record<string, unknown>) => void) | undefined;
-  readonly terminals = new Map<string, Terminal>();
+  readonly terminals = new Map<string, TerminalBase>();
+  /** Set by Connection when its agent runs in the keeper: client terminals start there too (null: children of AIB). */
+  terminalBackend: TerminalBackend | null = null;
+  /** terminal/create request id -> the terminal id an earlier AIB noted for it (pinTerminal). */
+  readonly #pinned = new Map<string, string>();
   readonly writes: WriteEntry[] = [];
   shut = false;
   #queue: Promise<void> = Promise.resolve();
@@ -377,7 +441,7 @@ export class ClientCaps {
       if (!isDict(params)) throw new CapError('params must be an object');
       const sid = params.sessionId;
       if (typeof sid !== 'string' || !this.knownSession(sid)) throw new CapError('Unknown sessionId');
-      const result = await this.call(String(message.method), params);
+      const result = await this.call(String(message.method), params, message.id);
       reply = { jsonrpc: '2.0', id: message.id, result: result ?? null };
     } catch (error) {
       if (error instanceof CapError) {
@@ -397,7 +461,7 @@ export class ClientCaps {
     } catch { /* the connection is gone */ }
   }
 
-  call(method: string, params: Params): Promise<unknown> {
+  call(method: string, params: Params, rpc?: unknown): Promise<unknown> {
     if (!this.handles(method)) return Promise.reject(new CapError(`Client capability not advertised: ${method}`, -32601));
     try {
       switch (method) {
@@ -405,8 +469,11 @@ export class ClientCaps {
           return Promise.resolve(this.fsReadTextFile(params));
         case 'fs/write_text_file':
           return Promise.resolve(this.fsWriteTextFile(params));
-        case 'terminal/create':
-          return Promise.resolve(this.terminalCreate(params));
+        case 'terminal/create': {
+          const pinned = rpc === undefined ? undefined : this.#pinned.get(JSON.stringify(rpc));
+          if (pinned) this.#pinned.delete(JSON.stringify(rpc));
+          return Promise.resolve(this.terminalCreate(params, rpc, pinned));
+        }
         case 'terminal/output':
           return Promise.resolve(this.terminalOutput(params));
         case 'terminal/wait_for_exit':
@@ -539,7 +606,7 @@ export class ClientCaps {
   }
 
   // --- terminals -----------------------------------------------------------------
-  #terminal(params: Params): Terminal {
+  #terminal(params: Params): TerminalBase {
     const id = params.terminalId;
     const terminal = typeof id === 'string' ? this.terminals.get(id) : undefined;
     if (terminal === undefined || terminal.sessionId !== params.sessionId || terminal.released) throw new CapError('Unknown terminalId');
@@ -568,7 +635,12 @@ export class ClientCaps {
     return env;
   }
 
-  terminalCreate(params: Params): { terminalId: string } {
+  /**
+   * Start a client terminal. With a terminalBackend (the agent runs in the keeper) it starts there, its note written first, and
+   * survives an AIB restart; otherwise (or when the backend declines) as a child of AIB. `pinned`: the terminal id an earlier AIB
+   * already noted for this request (a takeover answering it), reused so the keeper never starts a second one.
+   */
+  terminalCreate(params: Params, rpc?: unknown, pinned?: string): { terminalId: string } | Promise<{ terminalId: string }> {
     const command = params.command;
     let args = Object.hasOwn(params, 'args') ? params.args : [];
     if (typeof command !== 'string' || !pyStrip(command) || command.includes('\0') || pyLen(command) > 4096) {
@@ -596,6 +668,40 @@ export class ClientCaps {
     if ([...this.terminals.values()].filter((t) => !t.released).length >= MAX_TERMINALS) {
       throw new CapError(`At most ${MAX_TERMINALS} terminals may be open at once; release one first`);
     }
+    const id = pinned ?? 'term_' + [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const sessionId = params.sessionId as string;
+    if (this.terminalBackend) {
+      const plan: TerminalPlan = {
+        rpc,
+        terminalId: id,
+        sessionId,
+        program,
+        args: argList,
+        argv: [command, ...argList],
+        cwd,
+        env,
+        limit: byteLimit,
+        pinned: !!pinned,
+      };
+      return this.terminalBackend.create(plan).then((terminal) => {
+        if (!terminal) return this.#startLocal(plan, command);
+        if (this.shut) {
+          void terminal.dispose();
+          throw new CapError('Connection is closing', -32603);
+        }
+        this.terminals.set(id, terminal);
+        this.record('client_terminal', { op: 'create', terminalId: id, command, args: argList.slice(0, 20), cwd });
+        return { terminalId: id };
+      });
+    }
+    return this.#startLocal(
+      { rpc, terminalId: id, sessionId, program, args: argList, argv: [command, ...argList], cwd, env, limit: byteLimit },
+      command,
+    );
+  }
+
+  #startLocal(plan: TerminalPlan, command: string): { terminalId: string } {
+    const { program, args: argList, cwd, env, terminalId: id } = plan;
     let process: Deno.ChildProcess;
     try {
       process = new Deno.Command(program, {
@@ -611,8 +717,7 @@ export class ClientCaps {
     } catch (error) {
       throw new CapError(`Could not start command: ${error instanceof Error ? error.message : error}`, -32603);
     }
-    const id = 'term_' + [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
-    this.terminals.set(id, new Terminal(id, params.sessionId as string, [command, ...argList], cwd, process, byteLimit));
+    this.terminals.set(id, new Terminal(id, plan.sessionId, plan.argv, cwd, process, plan.limit));
     this.record('client_terminal', { op: 'create', terminalId: id, command, args: argList.slice(0, 20), cwd });
     return { terminalId: id };
   }
@@ -640,10 +745,21 @@ export class ClientCaps {
   async terminalRelease(params: Params): Promise<null> {
     const terminal = this.#terminal(params);
     terminal.released = true;
-    await terminal.kill();
+    if (this.terminalBackend?.release) await this.terminalBackend.release(terminal); // note first: a takeover knows it is gone
+    await terminal.dispose();
     this.terminals.delete(terminal.id);
     this.record('client_terminal', { op: 'release', terminalId: terminal.id });
     return null;
+  }
+
+  /** Answer this terminal/create request with the terminal id an earlier AIB noted for it (a takeover). */
+  pinTerminal(rpc: unknown, terminalId: string): void {
+    this.#pinned.set(JSON.stringify(rpc), terminalId);
+  }
+
+  /** A terminal an earlier AIB started in the keeper, taken over with its chat (it answers output, wait_for_exit, kill, release). */
+  adoptTerminal(terminal: TerminalBase): void {
+    if (!this.terminals.has(terminal.id)) this.terminals.set(terminal.id, terminal);
   }
 
   // --- cleanup and state ---------------------------------------------------------
@@ -653,7 +769,7 @@ export class ClientCaps {
       t.released = true;
       this.terminals.delete(t.id);
     }
-    await Promise.all(victims.map((t) => t.kill()));
+    await Promise.all(victims.map((t) => t.dispose()));
   }
 
   async shutdown(): Promise<void> {
@@ -661,7 +777,7 @@ export class ClientCaps {
     const victims = [...this.terminals.values()];
     this.terminals.clear();
     for (const t of victims) t.released = true;
-    await Promise.all(victims.map((t) => t.kill()));
+    await Promise.all(victims.map((t) => t.dispose()));
   }
 
   public(): Record<string, unknown> {

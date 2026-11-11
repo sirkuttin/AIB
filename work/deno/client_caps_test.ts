@@ -17,6 +17,7 @@ import {
   MAX_WRITE_BYTES,
   resolveInside,
   TERMINAL_METHODS,
+  type Terminal,
   trimToLimit,
 } from '../../outputs/agent-studio/server/acp/client_caps.ts';
 import { basename, exists, join, normcase, realpath } from '../../outputs/agent-studio/server/platform/ospath.ts';
@@ -470,7 +471,7 @@ capsTest('batch files, missing commands and bad args are refused', async (t) => 
 capsTest('kill, then release, cleans up', async (t) => {
   const c = t.caps({ terminal: true });
   const id = await create(c, ['-c', 'import time;print("up", flush=True);time.sleep(120)']);
-  const pid = c.terminals.get(id)!.process.pid;
+  const pid = (c.terminals.get(id) as Terminal).process.pid;
   for (let i = 0; i < 500 && !(await output(c, id)).output.includes('up'); i++) await sleep(20);
   assertEquals((c.public().terminals as Record<string, unknown>[])[0].status, 'running');
   assertEquals(await c.call('terminal/kill', { sessionId: 's', terminalId: id }), null);

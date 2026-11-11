@@ -10,7 +10,8 @@
  */
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
-import { ClientCaps, type FsMode } from './client_caps.ts';
+import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
+import { clientTerminalChannel, clientTerminalNote, clientTerminalProblem, KeeperClientTerminal } from './keeper_terminal.ts';
 import {
   applyUpdate,
   augmentInitialize,
@@ -686,6 +687,9 @@ export class Connection {
   #receiptNotes = new Map<string, Json>();
   /** fsWrite / clientTerminal notes by the agent request id they are about. */
   #sideNotes = new Map<string, Json>();
+  /** Client terminals the record says were released (their `clientTerminalReleased` notes). */
+  #releasedTerminals = new Set<string>();
+  #terminalProblemLogged = false;
   /** Agent -> client capability requests met while replaying (answered once live, unless the record shows the answer). */
   #deferred: Json[] = [];
   #exitResolve: (() => void) | null = null;
@@ -750,6 +754,8 @@ export class Connection {
       (kind, data) => this.event(kind, data),
       (message) => this.write(message),
     );
+    // In the keeper, the agent's client terminals run there too (note first), so they outlive an AIB restart with the chat.
+    if (this.keeper && this.caps instanceof ClientCaps) this.caps.terminalBackend = this.#terminalBackend();
     // command is always a list (never a shell string).
     this.command = command;
     this.env = options.env ?? null;
@@ -1079,9 +1085,94 @@ export class Connection {
       if (note.ev === 1 && isStr(note.eventsId) && note.eventsId) this.eventsId = note.eventsId;
       return;
     }
+    if (note?.t === 'clientTerminalReleased' && isStr(note.terminalId)) {
+      this.#releasedTerminals.add(note.terminalId);
+      return;
+    }
     if (!note || note.rpc === undefined) return;
     if (note.t === 'receipt') this.#receiptNotes.set(JSON.stringify(note.rpc), note);
     else if (note.t === 'fsWrite' || note.t === 'clientTerminal') this.#sideNotes.set(`${note.t}:${JSON.stringify(note.rpc)}`, note);
+  }
+
+  /**
+   * Client terminals in the keeper (note first): start one for terminal/create after writing its `clientTerminal` note in this chat's
+   * record; null lets it run as a child of AIB (the agent is not in the keeper, or the keeper is too old: the note then says so).
+   */
+  #terminalBackend(): TerminalBackend {
+    return {
+      create: async (plan: TerminalPlan) => {
+        const chat = this.channel;
+        if (!chat || chat.lost || this.rebuildError || !this.keeper) return null;
+        try {
+          await chat.ready;
+        } catch {
+          return null;
+        }
+        const client = chat.client;
+        const problem = !client || client.closed ? 'no keeper connection' : clientTerminalProblem(client.features, client.keeperVersion);
+        if (!plan.pinned) {
+          const note: Json = {
+            t: 'clientTerminal',
+            rpc: plan.rpc,
+            terminalId: plan.terminalId,
+            channel: problem ? null : clientTerminalChannel(plan.terminalId),
+            sessionId: plan.sessionId,
+            argv: plan.argv.slice(0, 50),
+            cwd: plan.cwd,
+            limit: plan.limit,
+          };
+          if (!await chat.sendNote(note)) throw new CapError('AIB could not record the terminal, so it was not started', -32603);
+        }
+        if (problem) {
+          if (!this.#terminalProblemLogged) log.info('keeper: client terminals of %s run inside AIB: %s', this.id, problem);
+          this.#terminalProblemLogged = true;
+          return null;
+        }
+        const terminal = KeeperClientTerminal.spawn(this.keeper, plan, this.id);
+        try {
+          await terminal.ready;
+        } catch (error) {
+          throw new CapError(`Could not start command: ${errorText(error) || errorName(error)}`, -32603);
+        }
+        return terminal;
+      },
+      release: async (terminal: TerminalBase) => {
+        if (terminal instanceof KeeperClientTerminal && this.channel) {
+          await this.channel.sendNote({ t: 'clientTerminalReleased', terminalId: terminal.id });
+        }
+      },
+    };
+  }
+
+  /** After a takeover: re-attach the client terminals the record shows still running in the keeper, before answering anything. */
+  async #adoptClientTerminals(): Promise<void> {
+    const caps = this.caps;
+    if (!(caps instanceof ClientCaps) || !this.keeper || !this.channel?.client) return;
+    const notes = [...this.#sideNotes.values()].map((n) => clientTerminalNote(n)).filter((n) => n && n.channel);
+    if (!notes.length) return;
+    const client = this.channel.client;
+    const channels = new Map((await client.list()).map((info) => [info.channel, info]));
+    for (const note of notes) {
+      const info = channels.get(note!.channel!);
+      if (!info || caps.terminals.has(note!.terminalId)) continue;
+      if (this.#releasedTerminals.has(note!.terminalId)) { // released, but not yet removed when the old AIB stopped
+        try {
+          if (info.live) await this.keeper.stopUnknown(client, info.channel);
+          await this.keeper.removeEnded(client, info.channel);
+        } catch { /* next time */ }
+        continue;
+      }
+      const terminal = KeeperClientTerminal.adopt(this.keeper, note!, info);
+      try {
+        await Promise.race([
+          terminal.ready,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 15000)),
+        ]);
+        caps.adoptTerminal(terminal);
+      } catch (error) {
+        log.warning('keeper: could not take over client terminal %s: %s', note!.terminalId, errorText(error));
+      }
+    }
   }
 
   /** The replay reached the live end: claim the channel (the old AIB can no longer write), send what it never sent, go live. */
@@ -1100,6 +1191,11 @@ export class Connection {
     }
     this.#replaying = false;
     this.#clock = null;
+    try {
+      await this.#adoptClientTerminals(); // terminal/output, wait_for_exit, kill and release are answered from these
+    } catch (error) {
+      log.warning('keeper: taking over client terminals failed: %s', errorText(error));
+    }
     const held = this.#held;
     this.#held = [];
     for (const { message, once } of held) {
@@ -1123,7 +1219,19 @@ export class Connection {
   #answerDeferred(message: Json): void | Promise<void> {
     const key = JSON.stringify(message.id);
     const method = message.method;
-    if (method === 'terminal/create' && this.#sideNotes.has(`clientTerminal:${key}`)) {
+    const terminalNote = method === 'terminal/create' ? clientTerminalNote(this.#sideNotes.get(`clientTerminal:${key}`) ?? null) : null;
+    if (terminalNote) {
+      const caps = this.caps instanceof ClientCaps ? this.caps : null;
+      if (terminalNote.channel && caps?.terminals.has(terminalNote.terminalId)) {
+        // Started before the restart and still there in the keeper: this is its answer.
+        this.write({ jsonrpc: '2.0', id: message.id, result: { terminalId: terminalNote.terminalId } });
+        return;
+      }
+      if (terminalNote.channel && caps?.terminalBackend) {
+        // Noted but never started (the old AIB stopped in between): start it now under the noted id; the keeper refuses a second one.
+        caps.pinTerminal(message.id, terminalNote.terminalId);
+        return this.#dispatchCaps(message);
+      }
       this.write({
         jsonrpc: '2.0',
         id: message.id,
@@ -1309,7 +1417,9 @@ export class Connection {
   /** Answer a client capability request; in the keeper the side effects that cannot be undone get their note first. */
   #dispatchCaps(message: Json): void | Promise<void> {
     const method = message.method;
-    if (this.channel && (method === 'fs/write_text_file' || method === 'terminal/create')) {
+    // terminal/create: with a terminal backend (this chat is in the keeper) the backend writes the note itself, with the channel id.
+    const terminalNoted = method === 'terminal/create' && this.caps instanceof ClientCaps && this.caps.terminalBackend !== null;
+    if (this.channel && !terminalNoted && (method === 'fs/write_text_file' || method === 'terminal/create')) {
       const params = get(message, 'params', {});
       const note: Json = { t: method === 'terminal/create' ? 'clientTerminal' : 'fsWrite', rpc: message.id };
       if (method === 'fs/write_text_file' && isDict(params)) {
