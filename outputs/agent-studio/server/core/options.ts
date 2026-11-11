@@ -34,6 +34,11 @@ export interface Options {
   idleExitMinutes: number;
   /** The agent host's --tray: its own tray icon while chats work with no app attached (the built app's host). */
   tray: boolean;
+  /**
+   * --start-in-tray (the desktop app): start with no window, only the tray icon (Open AIB / Stop chats and quit). The keeper's
+   * orphan restart uses it, so AIB coming back after a crash never puts a window over the person's work.
+   */
+  startInTray: boolean;
   /** The agent host's --exit-unattached-seconds: exit this long after the last app left with nothing working (0 = off). */
   exitUnattachedSeconds: number;
 }
@@ -98,6 +103,7 @@ const FLAGS: Record<string, [keyof Options, Kind]> = {
   '--host-port': ['hostPort', 'int'],
   '--host-idle-minutes': ['hostIdleMinutes', 'float'],
   '--migrate-from': ['migrateFrom', 'path'],
+  '--start-in-tray': ['startInTray', 'true'],
 };
 
 /** agent_host.py's flags: the agent flags (add_agent_arguments), --log-level, --host-port and --idle-exit-minutes. */
@@ -142,6 +148,7 @@ export function defaults(): Options {
     idleExitMinutes: 30,
     tray: false,
     exitUnattachedSeconds: 0,
+    startInTray: false,
   };
 }
 

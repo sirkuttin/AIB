@@ -37,7 +37,8 @@ a new host). Conversations that were open reconnect automatically (unless the se
 "Idle" means nothing is working, opening, or waiting for your answer, and it must stay so for --settle
 seconds (default 15), so a turn between steps is not mistaken for a finished one. A server running with
 --in-process (or an older one without an agent host) owns its agents itself: it always waits, and restarting
-it ends them. The new server is started with exactly the command line the old one had. Front-end-only
+it ends them. With the keeper (AIB_KEEPER=1) the server is one process whose agents run in the keeper: it is
+restarted at once and the new process continues every chat where it was (--host adds nothing). The new server is started with exactly the command line the old one had. Front-end-only
 changes do not need this: refresh the page instead.
 `;
 
@@ -168,10 +169,20 @@ export interface Plan {
   kill_tree: boolean;
 }
 
-/** What a deploy must do for a server in this hostMode ('split', 'in-process', or null for servers that predate the agent host). */
+/**
+ * What a deploy must do for a server in this hostMode ('split', 'in-process', 'keeper', or null for servers that predate the agent
+ * host). 'keeper' is one AIB process whose agents run in the keeper (AIB_KEEPER=1): a restart never touches them (the new process
+ * rebuilds each chat from the keeper's record), so nothing waits, and the process tree is never killed (the keeper was started by
+ * this process and taskkill /T would end it, and every agent with it).
+ */
 export function restartPlan(hostMode: unknown, restartHost = false, wait = false): Plan {
   const split = hostMode === 'split';
-  return { wait: !!(wait || restartHost || !split), stop_host: !!(restartHost && split), kill_tree: !split };
+  const keeper = hostMode === 'keeper';
+  return {
+    wait: !!(wait || (restartHost && split) || (!split && !keeper)),
+    stop_host: !!(restartHost && split),
+    kill_tree: !split && !keeper,
+  };
 }
 
 /** Ask the agent host to stop through `aib --stop-host` (it refuses while anything is working). */
@@ -397,7 +408,11 @@ export async function main(argv: string[], hooks: Hooks & { root?: string } = {}
     const commandLine = commandLineOf(pid);
     const plan = restartPlan(boot.hostMode ?? null, args.host, args.wait);
     if (args.host && boot.hostMode !== 'split') {
-      out('This server runs its agents itself (no agent host), so restarting it is the restart; --host adds nothing.');
+      out(
+        boot.hostMode === 'keeper'
+          ? 'This server has no agent host (its agents run in the keeper), so restarting it is the restart; --host adds nothing.'
+          : 'This server runs its agents itself (no agent host), so restarting it is the restart; --host adds nothing.',
+      );
     }
     out(
       `Studio on port ${args.port}: process ${pid} (${truthy(boot.hostMode) ? pyStr(boot.hostMode) : 'no agent host'})\n  ${commandLine}`,

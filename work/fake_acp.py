@@ -88,8 +88,40 @@ def breadth_announce():
     update({'sessionUpdate': 'notice', 'title': 'Fixture notice', 'description': 'Heads up', 'severity': 'warning'})
 
 
+import threading
+_emit_lock = threading.Lock()
+
+
 def emit(value):
-    print(json.dumps(dict(jsonrpc='2.0', **value)), flush=True)
+    with _emit_lock:   # streaming turns write from their own thread
+        print(json.dumps(dict(jsonrpc='2.0', **value)), flush=True)
+
+
+_received_log = os.environ.get('FAKE_ACP_LOG')   # every line this agent receives, appended (tests count what reached it)
+_mcp_pids = os.environ.get('FAKE_ACP_MCP_PIDS')   # set: start the stdio MCP servers of session/new like a real agent, pids to this file
+_mcp_children = []
+
+
+def start_mcp_servers(servers):
+    """What real agents do with the stdio entries of session/new: start each one as a child (kept running), its pid appended to a file."""
+    import subprocess
+    for server in servers or []:
+        if not isinstance(server, dict) or not server.get('command') or server.get('type') in ('http', 'sse'):
+            continue
+        env = dict(os.environ)
+        for item in server.get('env') or []:
+            env[item.get('name', '')] = item.get('value', '')
+        try:
+            child = subprocess.Popen([server['command'], *(server.get('args') or [])], env=env,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError as error:
+            child = None
+            print(f'fake agent: could not start MCP server {server.get("name")}: {error}', file=sys.stderr, flush=True)
+        if child:
+            _mcp_children.append(child)
+            with open(_mcp_pids, 'a', encoding='utf-8') as f:
+                f.write(f'{child.pid} {server.get("name", "")} {server["command"]}\n')
+stream_answer = {}   # 'stream:' turns: the permission answer, set by the main loop
 
 
 def result(key, value):
@@ -309,6 +341,9 @@ def caps_next():
 
 
 for line in sys.stdin:
+    if _received_log:
+        with open(_received_log, 'a', encoding='utf-8') as _log:
+            _log.write(line if line.endswith(chr(10)) else line + chr(10))
     message = json.loads(line)
     method = message.get('method')
     key = message.get('id')
@@ -357,6 +392,8 @@ for line in sys.stdin:
             session_name = params.get('sessionId', 'fake-session')
             session_cwd = params.get('cwd') or session_cwd
             last_mcp = params.get('mcpServers')
+            if _mcp_pids and method == 'session/new':
+                start_mcp_servers(last_mcp)
             if args.replay_history and method == 'session/load':
                 update({'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': 'old question'}})
                 update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'old answer'}})
@@ -460,6 +497,20 @@ for line in sys.stdin:
             update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 900})
             update({'sessionUpdate': 'current_mode_update', 'currentModeId': 'code'})
             result(key, {'stopReason': 'end_turn'})
+        elif prompt_text.startswith('stream:'):   # 'stream:<n>:<ms>': n chunks, one every ms; halfway it asks a permission and waits
+            count, _, gap = prompt_text[7:].partition(':')
+            def stream(turn_key=key, count=int(count), gap=float(gap or 100) / 1000):
+                for i in range(count):
+                    if i == count // 2:
+                        done = threading.Event()
+                        stream_answer['event'] = done
+                        emit({'id': 'stream-ask', 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': {'title': 'Stream approval', 'toolCallId': 'stream-tool'}, 'options': [{'optionId': 'yes', 'name': 'Allow once', 'kind': 'allow_once'}, {'optionId': 'no', 'name': 'Reject', 'kind': 'reject_once'}]}})
+                        done.wait(600)
+                        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'answer=%s ' % stream_answer.get('outcome')}})
+                    update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'chunk%d ' % i}})
+                    time.sleep(gap)
+                result(turn_key, {'stopReason': 'end_turn'})
+            threading.Thread(target=stream, daemon=True).start()
         elif prompt_text == 'wait':
             waiting['turn'] = key
         elif prompt_text.startswith('sleep:'):  # a turn that ends by itself after N seconds (cancel still ends it early)
@@ -495,6 +546,11 @@ for line in sys.stdin:
         else:
             waiting['permission'] = key
             emit({'id': 'approve-test', 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': {'title': 'Fixture approval', 'toolCallId': 'fake-tool'}, 'options': [{'optionId': 'yes', 'name': 'Allow once', 'kind': 'allow_once'}, {'optionId': 'no', 'name': 'Reject', 'kind': 'reject_once'}]}})
+    elif key == 'stream-ask':
+        outcome = message.get('result', {}).get('outcome', {})
+        stream_answer['outcome'] = outcome.get('optionId') or outcome.get('outcome')
+        if 'event' in stream_answer:
+            stream_answer.pop('event').set()
     elif key == 'url-test':
         emit({'method': 'session/update', 'params': {'sessionId': SID(), 'update': {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture url response: ' + json.dumps(message.get('result', {}), sort_keys=True)}}}})
         result(waiting.pop('url'), {'stopReason': 'end_turn'})

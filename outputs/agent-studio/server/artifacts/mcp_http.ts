@@ -42,6 +42,40 @@ export interface McpHttpStudio {
   urlFile: string;
   /** Key check; default artifacts/keys.ts check. */
   check?(key: string, conversationId: string): boolean;
+  /**
+   * Where to publish this server's URL for the keeper's MCP forwarder (`AIB-keeper mcp-forward <file>`, design 3.7): written when
+   * the server starts, removed when it closes. Agents in the keeper reach the tool through the forwarder, so the tool answers from
+   * whichever AIB runs now (after a restart or an update, on another port).
+   */
+  addressFile?: string;
+}
+
+/** The address file's name in the state folder (FORWARD_FILE): {"url": ..., "pid": ...}. */
+export const FORWARD_FILE = 'artifact-mcp.json';
+/** Address files this process publishes: an `mcp-forward <file>` entry naming one of them is Studio's own tool (connection.ts). */
+const OWN_FORWARD_FILES = new Set<string>();
+
+/** Register an address file as Studio's own (a Studio that gives agents the forwarder, before its server has started). */
+export function ownForwardFile(path: string): void {
+  OWN_FORWARD_FILES.add(path);
+}
+
+/** True for a stdio entry `<keeper program> mcp-forward <file>` whose file is one this process publishes. */
+export function isOwnForwardEntry(command: unknown, args: string[]): boolean {
+  return typeof command === 'string' && args.length === 2 && args[0] === 'mcp-forward' && OWN_FORWARD_FILES.has(args[1]);
+}
+
+/**
+ * The stdio entry an agent in the keeper gets for the artifact tool: the keeper's forwarder (its program lives outside every AIB
+ * version folder), posting to this Studio's HTTP endpoint with the conversation's key, whichever AIB version serves it now.
+ */
+export function forwardEntry(forwarder: string, addressFile: string, key: string, conversationId: string): Json {
+  return {
+    name: SERVER_NAME,
+    command: forwarder,
+    args: ['mcp-forward', addressFile],
+    env: [{ name: 'MCP_FORWARD_HEADERS', value: JSON.stringify({ [KEY_HEADER]: key, [CONVERSATION_HEADER]: conversationId }) }],
+  };
 }
 
 const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -108,6 +142,16 @@ export class ArtifactMcpHttp {
     );
     this.#url = `http://127.0.0.1:${this.#server.addr.port}${MCP_PATH}`;
     OWN_URLS.add(this.#url);
+    const file = this.studio.addressFile;
+    if (file) {
+      OWN_FORWARD_FILES.add(file);
+      try {
+        Deno.writeTextFileSync(`${file}.${Deno.pid}.tmp`, JSON.stringify({ url: this.#url, pid: Deno.pid }));
+        Deno.renameSync(`${file}.${Deno.pid}.tmp`, file);
+      } catch (error) {
+        log.warning('Could not publish the artifact tool address in %s: %s', file, error instanceof Error ? error.message : error);
+      }
+    }
     return this.#url;
   }
 
@@ -124,6 +168,12 @@ export class ArtifactMcpHttp {
     if (!server) return;
     this.#server = null;
     OWN_URLS.delete(this.#url);
+    const file = this.studio.addressFile;
+    if (file) {
+      try { // only our own: a newer AIB may have written its address already
+        if (JSON.parse(Deno.readTextFileSync(file)).pid === Deno.pid) Deno.removeSync(file);
+      } catch { /* gone */ }
+    }
     await Promise.race([server.shutdown().catch(() => {}), new Promise((r) => setTimeout(r, 1000))]);
   }
 

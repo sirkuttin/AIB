@@ -40,8 +40,10 @@ import {
 } from './attachments.ts';
 import { WriteTracker } from '../artifacts/artifacts.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { isOwnMcpUrl } from '../artifacts/mcp_http.ts';
-import { ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
+import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
+import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
+import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
+import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
@@ -260,6 +262,11 @@ export class PyTextLines {
   #parts: string[] = [];
   #pendingCR = false;
 
+  /** No part of a line is waiting for its end (a keeper snapshot is only taken then). */
+  get idle(): boolean {
+    return !this.#parts.length && !this.#pendingCR;
+  }
+
   /** Lines completed by this chunk. `final` flushes: an incomplete UTF-8 sequence becomes U+FFFD and the last line is returned. */
   feed(chunk: Uint8Array | null, final = false): string[] {
     let text = chunk ? this.#decoder.decode(chunk, { stream: !final }) : this.#decoder.decode();
@@ -396,7 +403,22 @@ export interface ConnectionOptions {
   /** false: the chat's worktree is still being made; startProcess() runs once its folder exists. */
   start?: boolean;
   capsFactory?: CapsFactory;
+  /** Run the agent in the keeper instead of as a child of this process (the AIB_KEEPER switch). */
+  keeper?: KeeperLink | null;
+  /** The connection id (a chat rebuilt from the keeper keeps the id it had). */
+  id?: string;
+  /** Rebuild this chat from a live keeper channel instead of starting an agent (needs `keeper`). */
+  rebuild?: ChannelInfo | null;
 }
+
+/** The format of a keeper `snapshot` note this code writes and can restore (its `sv`). */
+export const SNAPSHOT_VERSION = 1;
+/** A snapshot larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
+export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+
+/** Why a keeper-run agent ended without being asked to: the keeper itself went away. */
+export const KEEPER_LOST =
+  'Interrupted: the keeper (the AIB process that holds running agents) stopped, so this agent stopped with it. Nothing was sent again.';
 
 // ---- the test guard -----------------------------------------------------------------------------------------------------------
 
@@ -483,6 +505,28 @@ export function testHomeEnv(command: string[]): Record<string, string> {
   return Object.fromEntries(HOME_VARS.map((name) => [name, testHome!]));
 }
 
+/**
+ * The program a keeper spawn gets: Deno.Command looks a bare name up on PATH itself; the keeper looks in its own PATH, which can
+ * be older than ours, so a bare name is resolved here, with the environment the agent gets.
+ */
+export function resolveProgram(program: string, env: Record<string, string>): string {
+  if (/[\\/]/.test(program)) return resolvePath(program);
+  const win = Deno.build.os === 'windows';
+  const path = env.PATH ?? env.Path ?? Deno.env.get('PATH') ?? '';
+  const exts = win ? ['.exe', '.com', ...(env.PATHEXT ?? '.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase())] : [''];
+  const hasExt = win && /\.[^\\/.]+$/.test(program);
+  for (const dir of path.split(win ? ';' : ':').filter(Boolean)) {
+    for (const ext of hasExt ? [''] : exts) {
+      const candidate = dir.replace(/[\\/]+$/, '') + SEP + program + ext;
+      try {
+        const info = Deno.statSync(candidate);
+        if (info.isFile && (win || ((info.mode ?? 0) & 0o111))) return candidate;
+      } catch { /* not here */ }
+    }
+  }
+  return program;
+}
+
 // ---- the connection -----------------------------------------------------------------------------------------------------------
 
 export const ARTIFACT_PROMPT =
@@ -524,12 +568,13 @@ function isOwnArtifactEntry(entry: unknown): boolean {
   if (!isDict(entry) || entry.name !== 'studio_artifact') return false;
   if (entry.type === 'http') return isOwnMcpUrl(entry.url);
   const args = argStrings(get(entry, 'args'));
+  if (isOwnForwardEntry(entry.command, args)) return true; // the keeper's forwarder to this Studio's HTTP tool
   const own = artifactToolCommand();
   return entry.command === own.command && args.length === own.args.length && args.every((a, i) => a === own.args[i]);
 }
 
 export class Connection {
-  readonly id = crypto.randomUUID().replaceAll('-', '');
+  readonly id: string;
   provider: string;
   cwd: string;
   /** {branch, base} of a chat that runs in its own git worktree. */
@@ -607,8 +652,56 @@ export class Connection {
   readonly command: string[];
   readonly env: Record<string, string> | null;
   closedAt: number | null = null;
+  /** The agent process; for a keeper-run agent a stand-in with only pid and kill (it is not our child). */
   process: Deno.ChildProcess | null = null;
-  tree: ProcessTree | null = null;
+  tree: { kill(): void } | null = null;
+  /** Set when this chat's agent runs in the keeper (AIB_KEEPER=1). */
+  readonly keeper: KeeperLink | null;
+  /** The keeper channel of this chat's agent, or null for a child process. */
+  channel: KeeperChannel | null = null;
+  /** Resolves once a chat rebuilt from the keeper is live again (rejects when it could not be rebuilt). */
+  rebuilt: Promise<void> | null = null;
+  /** Why this chat could not be rebuilt from the keeper's record ('' when it was, or was never rebuilt). It is then read-only. */
+  rebuildError = '';
+  #replaying = false;
+  /** Record time (seconds) while replaying, so rebuilt events keep their original times. */
+  #clock: number | null = null;
+  #outLines = new PyTextLines();
+  #errLines = new PyTextLines();
+  #records: Promise<void> = Promise.resolve();
+  /** Writes held back while replaying: those the record shows were made are dropped, the rest go out once live. */
+  #held: { message: Json; once?: string }[] = [];
+  /** receipt notes by JSON-RPC id of the prompt they announce. */
+  #receiptNotes = new Map<string, Json>();
+  /** fsWrite / clientTerminal notes by the agent request id they are about. */
+  #sideNotes = new Map<string, Json>();
+  /** Agent -> client capability requests met while replaying (answered once live, unless the record shows the answer). */
+  #deferred: Json[] = [];
+  #exitResolve: (() => void) | null = null;
+  /** How often each agent request id was seen (rebuilt identically by a replay): part of an answer's once-key. */
+  #requestsSeen = new Map<string, number>();
+  /**
+   * The id of this chat's event numbering, sent with every state (eventsId): a page whose events came from another numbering starts
+   * its list again. A chat rebuilt from the keeper keeps the id when its record gives the same numbering (a snapshot, or a record
+   * whose events are all in it: `ev` in the chat note), so an open page simply goes on from its cursor.
+   */
+  eventsId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+  /** The last keeper record handled (a snapshot says how far it reaches). */
+  #lastSeq = 0;
+  /** While replaying: records since the newest snapshot (or the start), handled once the replay has caught up. */
+  #replayBuffer: KeeperRecord[] = [];
+  /** While replaying: the newest snapshot note met and its seq. */
+  #replaySnapshot: { note: Json; seq: number } | null = null;
+  /** While replaying: records before this seq were truncated away (0: none). */
+  #replayGapNext = 0;
+  /** The keeper sent `live`: records from here on are handled as they come. */
+  #replayLive = false;
+  #snapshotQueued = false;
+  /** Snapshots written and journal truncations asked for (tests). */
+  snapshots = 0;
+  /** A rebuild: the seq of the snapshot it started from (0: the start of the record) and how many records it replayed after it. */
+  replayedFrom = 0;
+  replayedRecords = 0;
   traceback = '';
   exitCode: number | null = null;
   #stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -630,6 +723,8 @@ export class Connection {
     options: ConnectionOptions = {},
   ) {
     guardRealAgent(command);
+    this.id = options.id ?? crypto.randomUUID().replaceAll('-', '');
+    this.keeper = options.keeper ?? null;
     this.provider = provider;
     this.cwd = String(cwd);
     const found = projectOfWorktree(this.cwd); // a chat in any app's git worktree belongs to the main checkout
@@ -647,7 +742,8 @@ export class Connection {
     // command is always a list (never a shell string).
     this.command = command;
     this.env = options.env ?? null;
-    if (options.start ?? true) this.startProcess();
+    if (options.rebuild && this.keeper) this.#adoptChannel(options.rebuild);
+    else if (options.start ?? true) this.startProcess();
   }
 
   /** Change the folder of an agent that has not started yet (a worktree that could not be made: the chat works in place). */
@@ -661,6 +757,7 @@ export class Connection {
   }
 
   startProcess(): void {
+    if (this.keeper) return this.#startInKeeper();
     const [program, ...args] = this.command;
     const extra = { ...testHomeEnv(this.command), ...(this.env ?? {}) };
     const child = new Deno.Command(program, {
@@ -684,14 +781,552 @@ export class Connection {
     this.#errorTask = this.#readErrors(child.stderr);
   }
 
+  // ---- the agent in the keeper (AIB_KEEPER=1) --------------------------------------------------------------------------------
+  /** Start the agent as a keeper channel. Writes made before the keeper answers wait for it, in order. */
+  #startInKeeper(): void {
+    const [program, ...args] = this.command;
+    const env: Record<string, string> = { ...Deno.env.toObject(), ...testHomeEnv(this.command), ...(this.env ?? {}) };
+    delete env.DENO_SERVE_ADDRESS;
+    const channel = this.keeper!.spawn(
+      { channel: `chat-${this.id}`, command: resolveProgram(program, env), args, cwd: this.cwd, env },
+      this.#keeperListener(),
+      () => this.#chatNote(),
+    );
+    this.#useChannel(channel);
+  }
+
+  /** Rebuild from a live keeper channel an earlier AIB started: replay its record, then claim it and go on live. */
+  #adoptChannel(info: ChannelInfo): void {
+    this.#replaying = true;
+    let settle: [() => void, (error: Error) => void] = [() => {}, () => {}];
+    this.rebuilt = new Promise<void>((resolve, reject) => (settle = [resolve, reject]));
+    this.rebuilt.catch(() => {});
+    this.#settleRebuild = settle;
+    this.#useChannel(this.keeper!.adopt(info, this.#keeperListener()));
+  }
+
+  #settleRebuild: [() => void, (error: Error) => void] | null = null;
+  #endedResolve: (() => void) | null = null;
+  #ended = false;
+  /** True when the keeper itself went away under this chat (the agent ended with it). */
+  interrupted = false;
+
+  #useChannel(channel: KeeperChannel): void {
+    this.channel = channel;
+    const kill = () => void channel.kill();
+    const standIn: Killable = {
+      get pid() {
+        return channel.pid;
+      },
+      kill,
+    };
+    this.process = standIn as Deno.ChildProcess;
+    this.tree = { kill };
+    this.#exited = new Promise<void>((resolve) => (this.#exitResolve = resolve));
+    this.#readTask = new Promise<void>((resolve) => (this.#endedResolve = resolve));
+    this.#errorTask = Promise.resolve();
+  }
+
+  /** The `chat` note: written right after the spawn, so a later AIB knows what this channel is. */
+  #chatNote(): Json {
+    return {
+      t: 'chat',
+      id: this.id,
+      provider: this.provider,
+      cwd: this.cwd,
+      projectRoot: this.projectRoot,
+      worktree: this.worktree,
+      resume: this.sessionId,
+      command: this.command,
+      mcpServers: this.mcpServers,
+      app: APP_VERSION,
+      // Every event of this chat is rebuilt from this record (Studio's own events go in as `event` notes), so a rebuild numbers
+      // them exactly as now and an open page keeps its cursor.
+      ev: 1,
+      eventsId: this.eventsId,
+    };
+  }
+
+  #keeperListener(): KeeperChannelListener {
+    return {
+      record: (record: KeeperRecord) => {
+        if (this.#replaying && !this.#replayLive) return this.#bufferReplay(record);
+        this.#enqueue(() => this.#onRecord(record));
+      },
+      live: () => {
+        this.#replayLive = true;
+        this.#enqueue(() => this.#caughtUp());
+      },
+      gap: (from: number, next: number) => {
+        if (this.#replaying && !this.#replayLive) { // truncated after a snapshot: fine when a snapshot covers it (checked at live)
+          this.#replayGapNext = next;
+          this.#replayBuffer = [];
+          this.#replaySnapshot = null;
+          return;
+        }
+        this.#enqueue(() => {
+          if (this.#replaying) this.#rebuildFailed(new Error(`the record from ${from} to ${next - 1} is no longer kept`));
+          else log.warning('keeper: %s lost records %s..%s', this.id, from, next - 1);
+        });
+      },
+      fenced: () =>
+        this.#enqueue(() => {
+          this.#stdinBroken = true;
+          this.error = 'Another AIB took over this chat; this window no longer sends anything to it.';
+        }),
+      lost: (error: Error | null) => this.#enqueue(() => this.#onLost(error)),
+      spawnFailed: (error: Error) =>
+        this.#enqueue(() => {
+          if (this.#replaying) return this.#rebuildFailed(error);
+          this.#pushStderr(clip(`Could not start the agent in the keeper: ${errorText(error)}`, 2000));
+          this.#exitResolve?.();
+          this.#readerEnded('');
+        }),
+      writeFailed: (error: Error) => {
+        this.#stdinBroken = true;
+        log.warning('keeper: a write to %s failed: %s', this.id, errorText(error));
+      },
+    };
+  }
+
+  /** Records are handled one at a time, in journal order, exactly like lines read from a pipe. */
+  #enqueue(work: () => unknown): void {
+    this.#records = this.#records.then(async () => {
+      await work();
+    }).catch((error) => this.#recordFailed(error));
+  }
+
+  #recordFailed(error: unknown): void {
+    if (this.#ended) return;
+    if (this.#replaying) return this.#rebuildFailed(error);
+    if (isOsOrValueError(error)) {
+      this.error = errorText(error);
+      this.#readerEnded('');
+      return;
+    }
+    const failure = this.#internalFailure(error);
+    this.#readerEnded(failure);
+  }
+
+  #now(): number {
+    return this.#clock ?? now();
+  }
+
+  async #onRecord(record: KeeperRecord): Promise<void> {
+    if (this.#ended) return;
+    try {
+      await this.#handleRecord(record);
+    } finally {
+      if (record.seq > this.#lastSeq) this.#lastSeq = record.seq;
+    }
+  }
+
+  async #handleRecord(record: KeeperRecord): Promise<void> {
+    this.#clock = this.#replaying ? record.time / 1000 : null;
+    if (record.kind === 'out') {
+      for (const line of this.#outLines.feed(record.body)) {
+        const pending = this.#handleLine(line);
+        if (pending) await pending;
+      }
+    } else if (record.kind === 'err') {
+      for (const line of this.#errLines.feed(record.body)) this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
+    } else if (record.kind === 'in') {
+      if (!this.#replaying) return; // our own writes coming back
+      for (const line of new TextDecoder().decode(record.body).split('\n')) {
+        if (line.trim()) this.#replayIn(line);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let a turn that just began reach its wait, as live code would
+    } else if (record.kind === 'note') {
+      if (this.#replaying) this.#replayNote(parseNote(record.body));
+    } else if (record.kind === 'exit') {
+      let code: number | null = null;
+      try {
+        const body = JSON.parse(new TextDecoder().decode(record.body));
+        code = typeof body.code === 'number' ? body.code : null;
+      } catch { /* no code */ }
+      await this.#flushLines();
+      this.exitCode = code;
+      this.#exitResolve?.();
+      if (!this.#replaying) void this.channel?.remove(); // the agent is gone: its record is no longer needed
+      this.#readerEnded('');
+    }
+  }
+
+  async #flushLines(): Promise<void> {
+    for (const line of this.#outLines.feed(null, true)) {
+      const pending = this.#handleLine(line);
+      if (pending) await pending;
+    }
+    for (const line of this.#errLines.feed(null, true)) this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
+  }
+
+  async #onLost(_error: Error | null): Promise<void> {
+    if (this.#ended) return;
+    this.interrupted = true;
+    try {
+      await this.#flushLines();
+    } catch { /* what was cut off stays cut off */ }
+    this.error = KEEPER_LOST;
+    this.#exitResolve?.();
+    this.#settleRebuild?.[1](new Error(KEEPER_LOST));
+    this.#settleRebuild = null;
+    this.#readerEnded(KEEPER_LOST);
+  }
+
+  // ---- rebuilding from the keeper's record ------------------------------------------------------------------------------------
+  /** True while this chat is being rebuilt from the record: nothing is written, spawned or answered. */
+  get replaying(): boolean {
+    return this.#replaying;
+  }
+
+  /** A line AIB wrote to the agent, read back from the record. */
+  #replayIn(line: string): void {
+    let message: unknown;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (!isDict(message)) return;
+    const method = message.method;
+    if (isStr(method) && Object.hasOwn(message, 'id')) return this.#replayRequest(message);
+    if (isStr(method)) {
+      if (method === 'session/cancel') {
+        const sid = get(get(message, 'params', {}) as Json, 'sessionId');
+        if (!this.sessionId || sid === this.sessionId) this.cancelSeq = this.promptSeq;
+      }
+      return;
+    }
+    if (Object.hasOwn(message, 'id')) this.#replayAnswered(message.id);
+  }
+
+  /** A request AIB sent: it is pending until its response shows up in the record (or arrives live). */
+  #replayRequest(message: Json): void {
+    const id = message.id;
+    const method = message.method as string;
+    const params = get(message, 'params', {}) as Json;
+    if (isInt(id) && id > this.counter) this.counter = id; // ids never collide with the old AIB's
+    const entry: Pending = { done: new ThreadEvent(), method, params };
+    this.pending.set(id, entry);
+    if (method === 'session/prompt') return this.#replayTurn(id, entry, params);
+    void entry.done.wait().then(() => {
+      if (this.pending.get(id) === entry) this.pending.delete(id);
+      this.#applyAnswered(method, params, entry.response ?? {});
+    });
+  }
+
+  /** What a response to a replayed request changes: the same state the live code sets after it awaited the request. */
+  #applyAnswered(method: string, params: Json, response: Json): void {
+    if (Object.hasOwn(response, 'error')) return;
+    const result = Object.hasOwn(response, 'result') ? response.result : {};
+    try {
+      if (method === 'initialize') {
+        this.initial = result;
+        this.#applyInitialize();
+      } else if (method === 'session/new' || method === 'session/load' || method === 'session/resume') {
+        this.#applySession(result, method === 'session/new' ? null : get(params, 'sessionId') as string | null);
+      } else if (method === 'session/set_mode') {
+        this.#modes().currentModeId = get(params, 'modeId');
+      } else if (method === 'session/set_config_option' && isDict(result)) {
+        Object.assign(this.settings, result);
+      }
+    } catch (error) {
+      if (this.#replaying) this.#rebuildFailed(error);
+      else log.exception(error, 'Applying a response to a request from before the restart failed');
+    }
+  }
+
+  /** A prompt from the record: the turn starts again here, through the same code, waiting for the same response. */
+  #replayTurn(id: unknown, entry: Pending, params: Json): void {
+    const note = this.#receiptNotes.get(JSON.stringify(id)) ?? null;
+    this.#receiptNotes.delete(JSON.stringify(id));
+    const blocks = get(params, 'prompt', []);
+    const prompt = (Array.isArray(blocks) ? blocks : []).filter(isDict) as Json[];
+    const images = prompt.filter((b) => b.type === 'image') as unknown as ImageBlock[];
+    const said = prompt.find((b) => b.type === 'text' && isStr(b.text) && !b.text.startsWith('<studio-context>'));
+    const text = note && isStr(note.text) ? note.text : said ? String(said.text) : '';
+    const clientMessageId = note && isStr(note.receipt) ? note.receipt : null;
+    const seq = this.#startTurn(clientMessageId, note && isStr(note.fingerprint) ? note.fingerprint : '');
+    const userEvent: Json = { text, attachments: images, sessionId: this.sessionId, clientMessageId };
+    if (note && Array.isArray(note.files) && note.files.length) userEvent.files = note.files;
+    this.event('user', userEvent);
+    this.turn = this.#runTurn(seq, text, [], images, clientMessageId, null, { entry, id });
+  }
+
+  /** AIB answered an agent request: whatever this replay was about to answer for it was answered already. */
+  #replayAnswered(id: unknown): void {
+    const same = (other: unknown) => typeof other === typeof id && pyEq(other, id);
+    this.#held = this.#held.filter((h) => Object.hasOwn(h.message, 'method') || !same(h.message.id));
+    for (const [key, item] of [...this.permissions]) if (same(item.rpcId)) this.permissions.delete(key);
+    for (const [key, item] of [...this.elicitations]) if (same(item.rpcId)) this.elicitations.delete(key);
+    this.#deferred = this.#deferred.filter((m) => !same(m.id));
+  }
+
+  #replayNote(note: Json | null): void {
+    if (note && note.t === 'event' && isStr(note.kind)) return this.event(note.kind, note.data ?? null); // Studio's own event
+    if (note && note.t === 'chat') { // a record that has every event: the rebuild numbers them as before
+      if (note.ev === 1 && isStr(note.eventsId) && note.eventsId) this.eventsId = note.eventsId;
+      return;
+    }
+    if (!note || note.rpc === undefined) return;
+    if (note.t === 'receipt') this.#receiptNotes.set(JSON.stringify(note.rpc), note);
+    else if (note.t === 'fsWrite' || note.t === 'clientTerminal') this.#sideNotes.set(`${note.t}:${JSON.stringify(note.rpc)}`, note);
+  }
+
+  /** The replay reached the live end: claim the channel (the old AIB can no longer write), send what it never sent, go live. */
+  async #caughtUp(): Promise<void> {
+    if (!this.#replaying || this.rebuildError || this.#ended) return;
+    try {
+      await this.#replayFromSnapshot();
+    } catch (error) {
+      return this.#rebuildFailed(error);
+    }
+    if (this.rebuildError || this.#ended) return;
+    try {
+      await this.channel!.claim();
+    } catch (error) {
+      return this.#rebuildFailed(error);
+    }
+    this.#replaying = false;
+    this.#clock = null;
+    const held = this.#held;
+    this.#held = [];
+    for (const { message, once } of held) {
+      try {
+        this.write(message, once); // never resends: each carries its once-key, and the record showed it was not written
+      } catch (error) {
+        log.warning('keeper: could not send a held answer: %s', errorText(error));
+      }
+    }
+    const deferred = this.#deferred;
+    this.#deferred = [];
+    for (const message of deferred) {
+      const answered = this.#answerDeferred(message);
+      if (answered instanceof Promise) answered.catch((error) => log.exception(error, 'Client capability request failed'));
+    }
+    this.#settleRebuild?.[0]();
+    this.#settleRebuild = null;
+  }
+
+  /** A client capability request the old AIB had not answered: answer it now, unless its note says it was already acted on. */
+  #answerDeferred(message: Json): void | Promise<void> {
+    const key = JSON.stringify(message.id);
+    const method = message.method;
+    if (method === 'terminal/create' && this.#sideNotes.has(`clientTerminal:${key}`)) {
+      this.write({
+        jsonrpc: '2.0',
+        id: message.id,
+        error: { code: -32603, message: 'The terminal was lost when AIB restarted. It was not started again.' },
+      });
+      return;
+    }
+    const written = this.#sideNotes.get(`fsWrite:${key}`);
+    if (method === 'fs/write_text_file' && written) {
+      const params = get(message, 'params', {}) as Json;
+      try {
+        const hash = createHash('sha256').update(Deno.readFileSync(String(params.path))).digest('hex');
+        if (hash === written.sha256) {
+          this.write({ jsonrpc: '2.0', id: message.id, result: null }); // the write happened before the restart
+          return;
+        }
+      } catch { /* not there: write it */ }
+    }
+    return this.#dispatchCaps(message);
+  }
+
+  // ---- snapshots: a rebuild starts at the newest one instead of the start of the record -----------------------------------------
+  /** A record met while replaying: kept until the replay has caught up; a snapshot note drops what it already covers. */
+  #bufferReplay(record: KeeperRecord): void {
+    if (record.kind === 'note') {
+      const note = parseNote(record.body);
+      if (note?.t === 'snapshot' && note.sv === SNAPSHOT_VERSION && isDict(note.state) && isInt(note.upTo)) {
+        this.#replaySnapshot = { note, seq: record.seq };
+        const upTo = note.upTo;
+        this.#replayBuffer = this.#replayBuffer.filter((r) => r.seq > upTo);
+        return;
+      }
+    }
+    this.#replayBuffer.push(record);
+  }
+
+  /** At the live end: restore the newest snapshot (if any), then handle the records after it, all with side effects off. */
+  async #replayFromSnapshot(): Promise<void> {
+    const snapshot = this.#replaySnapshot;
+    const records = this.#replayBuffer;
+    this.#replayBuffer = [];
+    this.#replaySnapshot = null;
+    if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
+      throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
+    }
+    if (snapshot) this.#restoreSnapshot(snapshot.note);
+    this.replayedFrom = snapshot ? snapshot.seq : 0;
+    for (const record of records) {
+      if (this.rebuildError || this.#ended) return;
+      // AIB's own writes and notes before the snapshot note were made before it was taken: the snapshot has them already.
+      if (snapshot && record.seq < snapshot.seq && (record.kind === 'in' || record.kind === 'note')) continue;
+      this.replayedRecords += 1;
+      await this.#onRecord(record);
+    }
+  }
+
+  /** The state a snapshot note carries, put back exactly (what the replay of everything before `upTo` would have rebuilt). */
+  #restoreSnapshot(note: Json): void {
+    const s = note.state as Json;
+    const entries = (value: unknown) => (Array.isArray(value) ? value.filter((e) => Array.isArray(e) && e.length === 2) : []);
+    this.initial = s.initial ?? {};
+    if (isDict(this.initial) && Object.keys(this.initial).length) this.#applyInitialize();
+    this.sessionId = isStr(s.sessionId) ? s.sessionId : null;
+    this.ready = s.ready === true;
+    this.settings = isDict(s.settings) ? s.settings : {};
+    this.knownSessions = new Set(Array.isArray(s.knownSessions) ? s.knownSessions.filter(isStr) : []);
+    this.counter = isInt(s.counter) ? s.counter : 0;
+    this.promptSeq = isInt(s.promptSeq) ? s.promptSeq : 0;
+    this.cancelSeq = isInt(s.cancelSeq) ? s.cancelSeq : 0;
+    this.changeSeq = isInt(s.changeSeq) ? s.changeSeq : 0;
+    this.changeFailures = Array.isArray(s.changeFailures) ? s.changeFailures.filter(isDict) as Json[] : [];
+    this.turnEndedAt = typeof s.turnEndedAt === 'number' ? s.turnEndedAt : null;
+    this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
+    this.sequence = isInt(s.sequence) ? s.sequence : 0;
+    this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
+    this.subagents = new Map(entries(s.subagents) as [string, Json][]);
+    const b = isDict(s.breadth) ? s.breadth : {};
+    this.breadth = {
+      ...newState(),
+      ...b,
+      compaction: new Map(entries(b.compaction) as [string, never][]),
+    } as BreadthState;
+    this.writes.paths.clear();
+    for (const [k, v] of entries(isDict(s.writes) ? s.writes.paths : null)) this.writes.paths.set(k as string, v as number);
+    this.writes.calls.clear();
+    for (const [k] of entries(isDict(s.writes) ? s.writes.calls : null)) this.writes.calls.set(k as string, true);
+    this.promptReceipts = new Map(entries(s.promptReceipts) as [string, Receipt][]);
+    this.#requestsSeen = new Map(entries(s.requestsSeen) as [string, number][]);
+    this.withdrawn = new Map(entries(s.withdrawn) as [string, string][]);
+    this.stderr = Array.isArray(s.stderr) ? s.stderr.filter(isStr) : [];
+    if (isStr(s.eventsId) && s.eventsId) this.eventsId = s.eventsId;
+    this.#lastSeq = note.upTo as number;
+  }
+
+  /** Take a snapshot once the record queue has handled what it holds now (so `upTo` is exact). */
+  #scheduleSnapshot(): void {
+    if (!this.channel || this.#replaying || this.#snapshotQueued) return;
+    this.#snapshotQueued = true;
+    this.#enqueue(() => {
+      this.#snapshotQueued = false;
+      return this.#writeSnapshot();
+    });
+  }
+
+  /** Nothing is in flight: no turn, request, question, sign-in or held answer, and no line half read. */
+  #quiet(): boolean {
+    return this.ready && !this.busy && !this.closed && !this.#replaying && !this.rebuildError && !this.auth &&
+      this.pending.size === 0 && this.permissions.size === 0 && this.elicitations.size === 0 && !this.#deferred.length &&
+      !this.#held.length && this.#outLines.idle && this.#errLines.idle;
+  }
+
+  /** The state as a snapshot note, or null when it is too large to store. */
+  snapshotNote(): Json | null {
+    const state: Json = {
+      initial: this.initial,
+      sessionId: this.sessionId,
+      ready: this.ready,
+      settings: this.settings,
+      knownSessions: [...this.knownSessions],
+      counter: this.counter,
+      promptSeq: this.promptSeq,
+      cancelSeq: this.cancelSeq,
+      changeSeq: this.changeSeq,
+      changeFailures: this.changeFailures,
+      turnEndedAt: this.turnEndedAt,
+      events: this.events,
+      sequence: this.sequence,
+      subagents: [...this.subagents],
+      breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
+      writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
+      promptReceipts: [...this.promptReceipts],
+      requestsSeen: [...this.#requestsSeen],
+      withdrawn: [...this.withdrawn],
+      stderr: this.stderr,
+      eventsId: this.eventsId,
+    };
+    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state };
+    return JSON.stringify(note).length > MAX_SNAPSHOT_BYTES ? null : note;
+  }
+
+  /**
+   * Write a snapshot note when the chat is quiet (a turn just ended), then let the keeper drop the journal segments before it
+   * (truncate), so a rebuild reads and replays only what came after. Never throws.
+   */
+  async #writeSnapshot(): Promise<void> {
+    const channel = this.channel;
+    if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
+    let note: Json | null;
+    try {
+      note = this.snapshotNote();
+    } catch (error) {
+      log.exception(error, 'keeper: making a snapshot failed');
+      return;
+    }
+    if (!note) {
+      log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
+      return;
+    }
+    const seq = await channel.snapshot(note);
+    if (seq === null) return;
+    this.snapshots += 1;
+    await channel.truncate((note.upTo as number) + 1); // records after upTo are still needed (they may come before the note)
+  }
+
+  /** The record cannot be rebuilt by this code: keep showing the chat, never write to it. */
+  #rebuildFailed(error: unknown): void {
+    if (this.rebuildError) return;
+    log.exception(error, 'Rebuilding a chat from the keeper record failed');
+    this.rebuildError = `AIB could not continue this chat after the restart (${
+      errorText(error) || errorName(error)
+    }). The agent goes on in the background; nothing is sent to it from here. Close the chat to stop it.`;
+    this.error = this.rebuildError;
+    this.#held = [];
+    this.#deferred = [];
+    this.#settleRebuild?.[1](error instanceof Error ? error : new Error(String(error)));
+    this.#settleRebuild = null;
+  }
+
+  #refuseReadOnly(): void {
+    if (this.rebuildError) throw new ValueError(this.rebuildError);
+  }
+
+  /** Answer a client capability request; in the keeper the side effects that cannot be undone get their note first. */
+  #dispatchCaps(message: Json): void | Promise<void> {
+    const method = message.method;
+    if (this.channel && (method === 'fs/write_text_file' || method === 'terminal/create')) {
+      const params = get(message, 'params', {});
+      const note: Json = { t: method === 'terminal/create' ? 'clientTerminal' : 'fsWrite', rpc: message.id };
+      if (method === 'fs/write_text_file' && isDict(params)) {
+        note.path = params.path;
+        note.sha256 = createHash('sha256').update(ENCODER.encode(isStr(params.content) ? params.content : '')).digest('hex');
+      }
+      return this.channel.sendNote(note).then(() => this.caps.dispatch(message));
+    }
+    return this.caps.dispatch(message);
+  }
+
   /** Returncode once the agent exited (Popen.poll()). */
   poll(): number | null {
     return this.exitCode;
   }
 
+  /**
+   * An event Studio makes itself (not from the agent: an artifact, a Studio note, a session op). In the keeper it also goes into the
+   * record as an `event` note, so a rebuild has it in the same place and numbers every later event the same.
+   */
+  recordedEvent(kind: string, data: unknown): void {
+    if (this.channel && !this.#replaying && !this.rebuildError) void this.channel.sendNote({ t: 'event', kind, data });
+    this.event(kind, data);
+  }
+
   event(kind: string, data: unknown): void {
     this.sequence += 1;
-    const item: Json = { seq: this.sequence, kind, data, time: now() };
+    const item: Json = { seq: this.sequence, kind, data, time: this.#now() };
     // History the agent re-sends on session/load: 'time' is the reconnect, not when it was said.
     if (kind === 'update' && !this.ready && this.sessionId) item.replay = true;
     if (this.events.length >= MAX_EVENTS) {
@@ -733,7 +1368,19 @@ export class Connection {
   }
 
   /** One JSON-RPC message to the agent. Writes go out in call order; throws when the agent's stdin is known to be gone. */
-  write(message: unknown): void {
+  write(message: unknown, once?: string): void {
+    if (this.channel) {
+      if (this.#stdinClosed) throw new ValueError('I/O operation on closed file.');
+      if (this.#stdinBroken) throw new BrokenPipeError('[Errno 32] Broken pipe');
+      if (this.rebuildError) return; // read-only: nothing reaches the agent from here
+      const key = once ?? this.#onceKey(message as Json);
+      if (this.#replaying) {
+        this.#held.push({ message: message as Json, once: key });
+        return;
+      }
+      void this.channel.write(ENCODER.encode(JSON.stringify(message) + '\n'), key);
+      return;
+    }
     const writer = this.#stdin;
     if (writer === null || this.#stdinClosed) {
       throw new ValueError('I/O operation on closed file.');
@@ -744,10 +1391,29 @@ export class Connection {
     });
   }
 
+  /**
+   * The once-key a keeper write carries, so it can never reach the agent twice (a later AIB that resends it is refused): answers
+   * by the agent's request id, requests by our id, a cancel by turn.
+   */
+  #onceKey(message: Json): string | undefined {
+    if (!isDict(message)) return undefined;
+    if (!Object.hasOwn(message, 'method')) {
+      if (!Object.hasOwn(message, 'id')) return undefined;
+      const id = JSON.stringify(message.id); // agents may reuse a request id in a later turn: the key counts its uses
+      return `resp:${id}:${this.#requestsSeen.get(id) ?? 0}`;
+    }
+    if (Object.hasOwn(message, 'id')) return `req:${JSON.stringify(message.id)}`;
+    if (message.method === 'session/cancel') {
+      return `cancel:${JSON.stringify(get(get(message, 'params', {}) as Json, 'sessionId'))}:${this.promptSeq}`;
+    }
+    return undefined;
+  }
+
   async request(
     method: string,
     params: unknown,
     timeout = 30,
+    options: { once?: string; note?: (id: number) => Json | null } = {},
   ): Promise<unknown> {
     if (method === 'initialize') params = augmentInitialize(params as Json);
     this.counter += 1;
@@ -755,24 +1421,39 @@ export class Connection {
     const entry: Pending = { done: new ThreadEvent(), method, params };
     this.pending.set(key, entry);
     try {
-      this.write({ jsonrpc: '2.0', id: key, method, params });
+      const note = this.channel && options.note ? options.note(key) : null;
+      if (note) void this.channel!.sendNote(note); // goes out before the write: the record says what it is first
+      this.write({ jsonrpc: '2.0', id: key, method, params }, options.once);
       if (!(await entry.done.wait(timeout * 1000))) {
         throw new TimeoutError(
           `${method} did not respond within ${timeout} seconds`,
         );
       }
-      const result = entry.response!;
-      if (Object.hasOwn(result, 'error')) {
-        const error = result.error;
-        throw new RuntimeError(
-          pyStr(
-            isDict(error) && Object.hasOwn(error, 'message') ? error.message : error,
-          ),
-        );
-      }
-      return Object.hasOwn(result, 'result') ? result.result : {};
+      return Connection.#result(entry.response!);
     } finally {
       this.pending.delete(key);
+    }
+  }
+
+  static #result(result: Json): unknown {
+    if (Object.hasOwn(result, 'error')) {
+      const error = result.error;
+      throw new RuntimeError(
+        pyStr(
+          isDict(error) && Object.hasOwn(error, 'message') ? error.message : error,
+        ),
+      );
+    }
+    return Object.hasOwn(result, 'result') ? result.result : {};
+  }
+
+  /** A request the old AIB sent (rebuilt from the record): wait for its response, which comes from the record or live. */
+  async #awaitReplayed(entry: Pending, id: unknown): Promise<unknown> {
+    try {
+      await entry.done.wait();
+      return Connection.#result(entry.response!);
+    } finally {
+      if (this.pending.get(id) === entry) this.pending.delete(id);
     }
   }
 
@@ -822,31 +1503,7 @@ export class Connection {
     } catch (error) {
       if (isOsOrValueError(error)) this.error = errorText(error);
       else {
-        // A bug in one of our handlers must not leave a half-working connection behind: say what happened, then stop the agent.
-        log.exception(
-          error,
-          'Internal error while reading from the agent; closing the connection',
-        );
-        const name = errorName(error);
-        const message = errorText(error);
-        const frames = error instanceof Error && error.stack ? error.stack.split(/\r?\n/).slice(1).map((l) => l.trim()).reverse() : [];
-        const trace = [
-          'Traceback (most recent call last):',
-          ...frames,
-          `${name}: ${message}`,
-        ].join('\n');
-        this.traceback = trace;
-        for (const line of trace.split('\n').slice(-12)) {
-          this.#pushStderr(clip(line, 2000));
-        }
-        failure =
-          `Studio hit an internal error while reading from the agent (${name}: ${message}). The connection was closed; reconnect to continue.`;
-        this.error = failure;
-        try {
-          this.tree?.kill();
-        } catch (killError) {
-          log.exception(killError, 'Killing the agent process tree failed');
-        }
+        failure = this.#internalFailure(error);
         try {
           await reader.cancel();
         } catch { /* already gone */ }
@@ -855,6 +1512,44 @@ export class Connection {
       try {
         reader.releaseLock();
       } catch { /* a read is still pending (close() cancels it) */ }
+      this.#readerEnded(failure);
+    }
+  }
+
+  /** A bug in one of our handlers must not leave a half-working connection behind: say what happened, then stop the agent. */
+  #internalFailure(error: unknown): string {
+    log.exception(
+      error,
+      'Internal error while reading from the agent; closing the connection',
+    );
+    const name = errorName(error);
+    const message = errorText(error);
+    const frames = error instanceof Error && error.stack ? error.stack.split(/\r?\n/).slice(1).map((l) => l.trim()).reverse() : [];
+    const trace = [
+      'Traceback (most recent call last):',
+      ...frames,
+      `${name}: ${message}`,
+    ].join('\n');
+    this.traceback = trace;
+    for (const line of trace.split('\n').slice(-12)) {
+      this.#pushStderr(clip(line, 2000));
+    }
+    const failure =
+      `Studio hit an internal error while reading from the agent (${name}: ${message}). The connection was closed; reconnect to continue.`;
+    this.error = failure;
+    try {
+      this.tree?.kill();
+    } catch (killError) {
+      log.exception(killError, 'Killing the agent process tree failed');
+    }
+    return failure;
+  }
+
+  /** The agent's output ended (it exited, the pipe broke, or the keeper went away): the connection is closed. Runs once. */
+  #readerEnded(failure: string): void {
+    if (this.#ended) return;
+    this.#ended = true;
+    try {
       this.closed = true;
       if (this.closedAt === null) this.closedAt = now();
       this.ready = false;
@@ -875,6 +1570,10 @@ export class Connection {
       this.event('disconnected', {
         message: this.error || 'Agent connection closed',
       });
+    } finally {
+      this.#endedResolve?.();
+      this.#settleRebuild?.[0](); // ended during the rebuild: the caller sees it closed
+      this.#settleRebuild = null;
     }
   }
 
@@ -896,6 +1595,8 @@ export class Connection {
     const method = message.method as string;
     const params = get(message, 'params', {}) as Json;
     if (Object.hasOwn(message, 'id')) {
+      const seenKey = JSON.stringify(message.id);
+      this.#requestsSeen.set(seenKey, (this.#requestsSeen.get(seenKey) ?? 0) + 1);
       if (
         method === 'session/request_permission' && this.ownArtifactTool(params)
       ) {
@@ -918,7 +1619,11 @@ export class Connection {
         this.permissions.set(key, { rpcId: message.id, params });
         this.event('permission', { key, params });
       } else if (this.caps.handles(method)) {
-        const answered = this.caps.dispatch(message);
+        if (this.#replaying) { // answered once live, unless the record shows the old AIB answered it
+          this.#deferred.push(message);
+          return;
+        }
+        const answered = this.#dispatchCaps(message);
         // terminal/wait_for_exit can take as long as the command runs: answered on its own (Python: a worker thread). Everything
         // else is answered before the next line is read, as Python's reader thread does.
         if (method !== 'terminal/wait_for_exit') return answered;
@@ -961,7 +1666,7 @@ export class Connection {
         this.knownSessions.add(subagent.sessionId);
       }
       if (this.sessionId === null || sid === null || sid === this.sessionId) {
-        applyUpdate(this.breadth, update, now());
+        applyUpdate(this.breadth, update, this.#now());
       }
       if (get(update, 'sessionUpdate') === 'config_option_update') {
         this.settings.configOptions = get(update, 'configOptions', []);
@@ -1181,6 +1886,7 @@ export class Connection {
   }
 
   async setup(resume: string | null = null): Promise<void> {
+    this.#refuseReadOnly();
     this.ready = false;
     if (resume) this.knownSessions.add(resume);
     this.initial = await this.setupRequest('initialize', {
@@ -1197,6 +1903,37 @@ export class Connection {
       },
     }, 45);
     this.#checkSetupAbort();
+    const mcpServers = this.#applyInitialize();
+    let result: unknown;
+    if (resume) {
+      const resumeCaps = sessionCapabilities(this.initial);
+      if (!resumeCaps.loadSession && !resumeCaps.resume) {
+        throw new ValueError(
+          'This agent does not advertise session loading. Start a new conversation instead.',
+        );
+      }
+      this.sessionId = resume;
+      result = await this.#setupSessionCall(
+        resumeCaps.loadSession ? 'session/load' : 'session/resume',
+        {
+          sessionId: resume,
+          cwd: this.cwd,
+          mcpServers,
+          ...this.artifactPrompt(mcpServers),
+        },
+      );
+    } else {
+      result = await this.#setupSessionCall('session/new', {
+        cwd: this.cwd,
+        mcpServers,
+        ...this.artifactPrompt(mcpServers),
+      });
+    }
+    this.#applySession(result, resume);
+  }
+
+  /** What the `initialize` result (this.initial) sets; returns the MCP servers this agent gets. Live setup and replay share it. */
+  #applyInitialize(): McpServer[] {
     if (
       !isDict(this.initial) || !pyEq(get(this.initial, 'protocolVersion'), 1)
     ) {
@@ -1225,32 +1962,13 @@ export class Connection {
       this.initial,
     );
     this.breadth.skippedMcp = skipped;
-    let result: unknown;
-    if (resume) {
-      const resumeCaps = sessionCapabilities(this.initial);
-      if (!resumeCaps.loadSession && !resumeCaps.resume) {
-        throw new ValueError(
-          'This agent does not advertise session loading. Start a new conversation instead.',
-        );
-      }
-      this.sessionId = resume;
-      result = await this.#setupSessionCall(
-        resumeCaps.loadSession ? 'session/load' : 'session/resume',
-        {
-          sessionId: resume,
-          cwd: this.cwd,
-          mcpServers,
-          ...this.artifactPrompt(mcpServers),
-        },
-      );
-    } else {
-      result = await this.#setupSessionCall('session/new', {
-        cwd: this.cwd,
-        mcpServers,
-        ...this.artifactPrompt(mcpServers),
-      });
-      this.sessionId = isDict(result) ? get(result, 'sessionId') as string | null : null;
-    }
+    return mcpServers;
+  }
+
+  /** What a session/new, session/load or session/resume result sets: the chat is ready. Live setup and replay share it. */
+  #applySession(result: unknown, resume: string | null): void {
+    if (resume) this.sessionId = resume;
+    else this.sessionId = isDict(result) ? get(result, 'sessionId') as string | null : null;
     if (!isDict(result) || !isStr(this.sessionId) || !this.sessionId) {
       throw new ValueError('The agent returned an invalid session response');
     }
@@ -1419,6 +2137,7 @@ export class Connection {
         turnState: receipt.state,
       };
     }
+    this.#refuseReadOnly();
     if (this.closed || !this.ready || !this.sessionId) {
       throw new ValueError('This connection is not ready');
     }
@@ -1427,21 +2146,7 @@ export class Connection {
         'Wait for the current turn, or interrupt it before sending another prompt',
       );
     }
-    this.busy = true;
-    this.turnStartedAt = now();
-    this.error = '';
-    this.promptSeq += 1;
-    const seq = this.promptSeq;
-    if (clientMessageId) {
-      this.promptReceipts.set(clientMessageId, {
-        fingerprint,
-        state: 'working',
-      });
-      while (this.promptReceipts.size > 1000) {
-        this.promptReceipts.delete(this.promptReceipts.keys().next().value!);
-      }
-      this.#receiptChanged(clientMessageId);
-    }
+    const seq = this.#startTurn(clientMessageId, fingerprint);
     await this.#drainPending(); // changes still queued from a finished turn go first; a failure is reported but never drops this prompt
     const userEvent: Json = {
       text,
@@ -1457,6 +2162,7 @@ export class Connection {
       fileBlocks,
       imageBlocks,
       clientMessageId,
+      { receipt: clientMessageId, fingerprint, text, files: fileSummaries },
     );
     return {
       accepted: true,
@@ -1466,15 +2172,37 @@ export class Connection {
     };
   }
 
+  /** The turn begins: busy, and the receipt is "working". Shared by prompt() and a turn rebuilt from the keeper's record. */
+  #startTurn(clientMessageId: string | null, fingerprint: string): number {
+    this.busy = true;
+    this.turnStartedAt = now();
+    this.error = '';
+    this.promptSeq += 1;
+    const seq = this.promptSeq;
+    if (clientMessageId) {
+      this.promptReceipts.set(clientMessageId, {
+        fingerprint,
+        state: 'working',
+      });
+      while (this.promptReceipts.size > 1000) {
+        this.promptReceipts.delete(this.promptReceipts.keys().next().value!);
+      }
+      this.#receiptChanged(clientMessageId);
+    }
+    return seq;
+  }
+
   async #runTurn(
     seq: number,
     text: string,
     fileBlocks: Json[],
     imageBlocks: ImageBlock[],
     clientMessageId: string | null,
+    receipt: Json | null,
+    replayed: { entry: Pending; id: unknown } | null = null,
   ): Promise<void> {
     try {
-      const context = await this.#studioContext();
+      const context = replayed ? null : await this.#studioContext();
       const blocks = [
         ...(context ? [{ type: 'text', text: context[0] }] : []),
         ...(pyStrip(text) ? [{ type: 'text', text }] : []),
@@ -1482,22 +2210,32 @@ export class Connection {
         ...imageBlocks,
       ];
       let result: unknown;
-      if (this.cancelSeq >= seq) { // cancelled while the hook above was still working: the agent never had this turn
+      if (replayed) { // the old AIB sent it: wait for its response, from the record or live
+        const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
+        if (promptReceipt) promptReceipt.sent = true; // the agent has it already (a deliberate stop records it as delivered)
+        result = await this.#awaitReplayed(replayed.entry, replayed.id);
+      } else if (this.cancelSeq >= seq) { // cancelled while the hook above was still working: the agent never had this turn
         result = { stopReason: 'cancelled' };
       } else {
-        const receipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
-        if (receipt) receipt.sent = true;
+        // (not `receipt`: that is the keeper's receipt note for this turn, below)
+        const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
+        if (promptReceipt) promptReceipt.sent = true;
         result = await this.request('session/prompt', {
           sessionId: this.sessionId,
           prompt: blocks,
-        }, 86400);
+        }, 86400, {
+          // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
+          note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
+          once: clientMessageId ? `prompt:${clientMessageId}` : undefined,
+        });
         await this.#studioContextSent(context);
       }
-      this.turnEndedAt = now();
+      this.turnEndedAt = this.#now();
       this.#queueNoteOutcome(result, false);
       this.event('turn_end', result);
       const hook = this.onTurnEnd;
-      if (hook && !(isDict(result) && result.stopReason === 'cancelled')) {
+      // A turn that ended before a rebuild had its hooks run by the AIB that saw it end.
+      if (hook && !this.#replaying && !(isDict(result) && result.stopReason === 'cancelled')) {
         try {
           await hook(this);
         } catch (error) {
@@ -1523,6 +2261,7 @@ export class Connection {
       this.withdrawTurnRequests();
       await this.#finishTurn();
       await this.#queueAfterTurn();
+      if (!this.#replaying) this.#scheduleSnapshot(); // quiet now (or skipped when the queue started the next turn)
     }
   }
 
@@ -1599,6 +2338,7 @@ export class Connection {
     if (kind !== 'mode' && kind !== 'config') {
       throw new ValueError('Unknown setting kind');
     }
+    this.#refuseReadOnly();
     if (this.closed || !this.ready || !this.sessionId) {
       throw new ValueError('This connection is not ready');
     }
@@ -1722,6 +2462,7 @@ export class Connection {
 
   // ---- queued messages: written while the agent works, sent one per turn when it ends ---------------------
   #queueChanged(): void {
+    if (this.#replaying) return; // the saved queue is the old AIB's; a replay must not overwrite it
     const hook = this.recovery;
     if (hook && this.sessionId) {
       try {
@@ -1744,6 +2485,12 @@ export class Connection {
     return this.queue.public(light);
   }
 
+  /** A chat rebuilt from the keeper: its saved queue goes on as it was (the turn never stopped), so it is not paused. */
+  async queueContinue(saved: SavedItem[] | unknown): Promise<void> {
+    this.queue.load(saved, '');
+    await this.#queuePump();
+  }
+
   /** After a host restart: the saved queue comes back PAUSED; nothing is sent until the user resumes. */
   queueRestore(saved: SavedItem[] | unknown): void {
     this.queue.load(saved, 'restart');
@@ -1755,6 +2502,7 @@ export class Connection {
     clientMessageId: string | null = null,
     attachments: unknown = null,
   ): Promise<Json> {
+    this.#refuseReadOnly();
     const [, , , fingerprint] = this.preparePrompt(
       text,
       clientMessageId,
@@ -1938,6 +2686,7 @@ export class Connection {
   /** Send the first waiting message if nothing stops it: idle, no hold, no edit lease on it, nobody waiting on the user. */
   async #queuePump(): Promise<void> {
     while (true) {
+      if (this.#replaying || this.rebuildError) return;
       const q = this.queue;
       if (
         this.closed || !this.ready || this.busy || !this.sessionId ||
@@ -2065,6 +2814,7 @@ export class Connection {
   }
 
   permission(key: unknown, option: unknown): void {
+    this.#refuseReadOnly();
     const pending = isStr(key) ? this.permissions.get(key) : undefined;
     if (!pending) throw this.#staleError(key, 'approval');
     const options = get(pending.params, 'options', []);
@@ -2145,6 +2895,7 @@ export class Connection {
     if (!['accept', 'decline', 'cancel'].includes(action as string)) {
       throw new ValueError('Action must be accept, decline, or cancel');
     }
+    this.#refuseReadOnly();
     const pending = isStr(key) ? this.elicitations.get(key) : undefined;
     if (!pending) throw this.#staleError(key, 'request');
     const result: Json = { action };
@@ -2312,6 +3063,7 @@ export class Connection {
   }
 
   cancel(subagent: unknown = null): void {
+    this.#refuseReadOnly();
     if (subagent !== null && subagent !== undefined) {
       return this.cancelSubagent(subagent);
     }
@@ -2350,11 +3102,16 @@ export class Connection {
     let stop = false;
     try {
       for (const key of [...this.permissions.keys()]) {
-        this.permission(key, null);
+        if (!this.rebuildError) this.permission(key, null);
       }
       this.#clearElicitations({});
-      if (this.busy) this.cancel();
-      if (this.process !== null) {
+      if (this.busy && !this.rebuildError) this.cancel();
+      if (this.channel !== null) {
+        if (this.rebuildError) await this.channel.claim().catch(() => 0); // read-only until now: take it over to stop it
+        this.#stdinClosed = true;
+        void this.channel.closeStdin(); // ACP adapters exit on it, as on a closed pipe
+        if (!(await this.#waitExit(5000))) stop = true;
+      } else if (this.process !== null) {
         this.#stdinClosed = true;
         this.#stdin?.close().catch(() => {});
         if (!(await this.#waitExit(5000))) stop = true;
@@ -2374,6 +3131,7 @@ export class Connection {
       this.tree!.kill();
       await this.#waitExit(3000);
     }
+    if (this.channel) void this.channel.remove(); // closed by the person: its record is not needed any more
     this.closed = true;
     if (this.closedAt === null) this.closedAt = now();
     this.ready = false;
@@ -2410,6 +3168,10 @@ export class Connection {
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */
   public(after = 0, light = false): Json {
     const events = this.events;
+    // Being rebuilt from the keeper's record: no events yet, and the page keeps its cursor (the rebuilt chat numbers them the same).
+    const rebuilding = this.#replaying && !this.rebuildError && !this.closed;
+    // A cursor past the end belongs to another numbering (an older record without its Studio events): send everything again.
+    const stale = !rebuilding && after > this.sequence;
     const data: Json = {
       attention: this.attention(),
       id: this.id,
@@ -2440,9 +3202,9 @@ export class Connection {
       imageSupported: this.imageSupported,
       promptCapabilities: { ...this.promptCaps },
       breadth: publicState(this),
-      events: light ? [] : events.filter((e) => (e.seq as number) > after),
-      cursor: this.sequence,
-      reset: !!(events.length && after && after < (events[0].seq as number) - 1),
+      events: light || rebuilding ? [] : stale ? [...events] : events.filter((e) => (e.seq as number) > after),
+      cursor: rebuilding ? after : this.sequence,
+      reset: stale || !!(!rebuilding && events.length && after && after < (events[0].seq as number) - 1),
       setupDone: this.openDone.isSet(),
       auth: this.auth ? { ...this.auth } : null,
       permissions: light ? [] : [...this.permissions].map(([k, v]) => ({
@@ -2458,6 +3220,9 @@ export class Connection {
       clientCaps: this.caps.public(),
       unknownReceipts: this.unknownReceipts(),
     };
+    if (this.rebuildError) data.readOnly = true; // rebuilt from the keeper's record but not continuable (error says why)
+    if (rebuilding) data.rebuilding = true;
+    if (this.channel) data.eventsId = this.eventsId; // a chat in the keeper: its numbering survives a rebuild (chat.js compares it)
     if (this.worktree) data.worktree = { ...this.worktree }; // only a worktree chat has this key; the page does not show it yet
     return data;
   }

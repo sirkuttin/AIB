@@ -418,6 +418,7 @@ export class AgentHost {
       runtime: RUNTIME,
       startedWith: this.startedWith(),
     });
+    await this.studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are (AIB_KEEPER=1)
     this.studio.startAutoReconnect(); // chats that were open before the restart; nothing is sent
     return this.port;
   }

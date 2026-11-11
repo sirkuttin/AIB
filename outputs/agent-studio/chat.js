@@ -47,6 +47,8 @@
     selected = null,
     snapshot = null,
     cursor = 0,
+    /* The server's id for the open chat's event numbering: another id means its events must be fetched again from the start. */
+    eventsId = '',
     events = [],
     conversations = [],
     agents = [],
@@ -928,6 +930,7 @@
     agents = [];
     snapshot = null;
     cursor = 0;
+    eventsId = '';
     events = [];
     historyLimit = 120;
     rowExtra.main = 0;
@@ -2060,8 +2063,15 @@
     try {
       if (current) {
         const requested = current;
-        const next = await get('/api/live/state', { id: current, after: cursor });
+        let next = await get('/api/live/state', { id: current, after: cursor });
         if (current !== requested) return;
+        if (next.eventsId && eventsId && next.eventsId !== eventsId && cursor) {
+          /* The chat was rebuilt with another event numbering (AIB restarted on an older record): fetch it all again. */
+          next = await get('/api/live/state', { id: current, after: 0 });
+          if (current !== requested) return;
+          events = [];
+        }
+        if (next.eventsId) eventsId = next.eventsId;
         snapshot = next;
         if (next.reset) events = [];
         events.push(...next.events);
@@ -3590,8 +3600,14 @@
         m.id = c.live.id;
         m.cursor = 0;
         m.events = [];
+        m.eventsId = '';
       }
-      const next = await get('/api/live/state', { id: m.id, after: m.cursor });
+      let next = await get('/api/live/state', { id: m.id, after: m.cursor });
+      if (next.eventsId && m.eventsId && next.eventsId !== m.eventsId && m.cursor) {
+        next = await get('/api/live/state', { id: m.id, after: 0 });
+        m.events = [];
+      }
+      if (next.eventsId) m.eventsId = next.eventsId;
       m.histKey = '';
       if (next.reset) m.events = [];
       m.events.push(...next.events);

@@ -7,6 +7,7 @@
 import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts';
 import type { LiveBackend } from '../host/backend.ts';
 import { HostUnavailable } from '../host/host_client.ts';
+import { keeperOverride } from '../keeper/link.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { ViewPrefs } from '../state/view_prefs.ts';
 import { authorize, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
@@ -193,6 +194,8 @@ export class WebServer {
         hostStartedAt: info.startedAt ?? null,
         webStartedAt: WEB_STARTED,
         hostAutoReconnect: startedWith.autoReconnect ?? null,
+        // Settings > Studio server, keeper: AIB_KEEPER=1/0 overrides the saved switch (only present then; the reference has no key).
+        ...(keeperOverride() === null ? {} : { keeperOverride: keeperOverride() }),
         python: '',
         webPort: c.cliPort,
       },
