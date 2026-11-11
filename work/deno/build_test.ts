@@ -558,10 +558,15 @@ Deno.test("ELF programs get 0755 and ELF shared libraries 0644, in the .deb and 
   }
 });
 
-Deno.test("release.json names the version and the agent-host protocol; --version rewrites only the staged app.ts", async () => {
+Deno.test("release.json names the version, the agent-host protocol and what it needs of a keeper; --version rewrites only the staged app.ts", async () => {
   const { releaseInfo, setStagedVersion } = await import("../../tools/build.ts");
   const { PROTOCOL_VERSION } = await import("../../outputs/agent-studio/server/host/host_client.ts");
-  assertEquals(JSON.parse(releaseInfo("0.1.0-beta.2")), { version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION, appId: "dev.aib.app" });
+  assertEquals(JSON.parse(releaseInfo("0.1.0-beta.2")), {
+    version: "0.1.0-beta.2",
+    protocol: PROTOCOL_VERSION,
+    appId: "dev.aib.app",
+    keeper: { protocols: [1], needs: ["notes", "once", "channel-ids"] },
+  });
   const dir = Deno.makeTempDirSync({ prefix: "aib-stage-version-" });
   try {
     Deno.mkdirSync(`${dir}/server/core`, { recursive: true });

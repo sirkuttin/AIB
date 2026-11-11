@@ -48,30 +48,71 @@ The built app starts its host with `--tray --exit-unattached-seconds 10` (`main.
 
 ## The keeper (behind a switch, off by default)
 
-With `AIB_KEEPER=1` in the environment of the web server (the host inherits it), agents run in the keeper (`AIB-keeper`, Go, `keeper/`,
-protocol in `keeper/PROTOCOL.md`) instead of as children of the host. Without it nothing below runs and agents are the host's
-children as described above.
+With `AIB_KEEPER=1` in the environment (or a keeper already running for the data folder), agents run in the keeper (`AIB-keeper`, Go,
+`keeper/`, protocol in `keeper/PROTOCOL.md`) instead of as children of AIB, and AIB is **one process** (no agent host, see below).
+Without it nothing below runs and agents are the host's children as described above.
 
-* **Start.** The host's Studio starts the keeper for its data folder on the first chat (`<data>/keeper/`; program: `$AIB_KEEPER_BIN`, or
-  `AIB-keeper` next to the app's program, or in a source run a binary built from `keeper/` with Go into the temp folder). Its orphan
-  command is the host's own command line, so with no host attached for 5 s the keeper starts one. Code: `server/keeper/client.ts`
-  (the protocol), `server/keeper/link.ts` (one connection per Studio, one channel per chat, id `chat-<connection id>`).
+* **One process with the keeper** (owner decision D3, keeper step 2). The agent host existed so the web server could restart without
+  stopping agents; the keeper now does that, so with the keeper the web server runs the `Studio` itself (`main.ts`, like
+  `--in-process`; bootstrap `hostMode` is `keeper`, Settings > About says "One process; running agents are held by the keeper"). It
+  keeps the host's recovery and queue files (`studio-recovery-host.json`, `studio-queues-host.json`). An agent host that still runs for
+  the folder (chats from before the switch, or the previous version) is attached to as before and drained the usual way; the next
+  start is one process. Measured on the dev restart (`work/deno/keeper_restart_timing.ts`: kill, start again, until the working chat
+  streams again; 5 runs each): web server restart without the keeper 546-561 ms (median 554), one process with the keeper 522-529 ms
+  (median 525); keeper step 1's host restart took about 6.4 s. `AIB deploy` restarts it at once (no waiting, never `taskkill /T`,
+  which would end the keeper it started).
+* **Start.** The Studio starts the keeper for its data folder on the first chat (`<data>/keeper/`; program: `$AIB_KEEPER_BIN`; in a
+  built app `AIB-keeper` from next to the app's program, **copied to `<data>/keeper-bin/<hash>/` and run from there**, so a keeper that
+  outlives the app never runs from files an update renames or replaces (Windows `.old-*` files, the macOS bundle, the Linux AppImage
+  mount); in a source run a binary built from `keeper/` with Go into the temp folder). Its orphan command is AIB's own command line, so
+  with no AIB attached for 5 s the keeper starts one (in the desktop app that opens the window). Code: `server/keeper/client.ts` (the
+  protocol), `server/keeper/link.ts` (one connection per Studio, one channel per chat, id `chat-<connection id>`).
 * **The record.** The keeper journals everything the agent says and everything AIB writes. AIB adds notes before acting: `chat` (right
   after the spawn: provider, folder, worktree, command, MCP list), `receipt` (before each `session/prompt`: the page's message id,
   fingerprint, text), `fsWrite` and `clientTerminal` (before those client capability calls). Every write carries a once-key
   (`req:<id>`, `resp:<agent id>:<n>`, `prompt:<message id>`, `cancel:<session>:<turn>`), so the keeper refuses a second copy.
-* **Host crash or restart.** The agent keeps running. The next host (`adoptKeeper`, before the automatic reconnect) attaches to each
-  live channel, replays its record through the same `Connection` code with side effects off (nothing written, no client capability
-  run, no hooks, the saved queue untouched), claims the channel and goes on live under the same connection id: the turn, a question
-  waiting for the person, receipts and the queue (unpaused) come back; answers the old host never sent are sent once. Open pages see a
-  new host id and reload the chat list, as after any host restart. A chat the code cannot rebuild stays listed read-only
-  (`readOnly`, `error` says why) and nothing is sent to it; one that was still opening is stopped.
+* **Restart or crash.** The agent keeps running. The next AIB (`adoptKeeper`, before the automatic reconnect) attaches to each live
+  channel, replays its record through the same `Connection` code with side effects off (nothing written, no client capability run, no
+  hooks, the saved queue untouched), claims the channel and goes on live under the same connection id: the turn, a question waiting
+  for the person, receipts and the queue (unpaused) come back; answers the old AIB never sent are sent once. The instance id open pages
+  compare stays the same while the keeper does (`studio-instance-keeper.json`: the id and the keeper's pid and start time), so a page
+  keeps the open chat instead of saying "Studio was restarted". A chat the code cannot rebuild stays listed read-only (`readOnly`,
+  `error` says why) and nothing is sent to it; one that was still opening is stopped.
+* **Install now with the keeper** (`updater.ts` `keeperHandover`). It goes ahead while chats work when every working chat runs in the
+  keeper this AIB is connected to and the new version's `release.json` says it can drive this keeper (`keeper: {protocols, needs}`:
+  the keeper protocols it speaks and the hello features it needs, `client.ts` `KEEPER_NEEDS`). Then:
+  1. The app starts the update helper with `keeper: <data folder>`; the helper connects to the keeper **first** and stays connected
+     until a version has started (the new one, or the old one after a rollback), so the keeper always has a client and never runs its
+     orphan command from a half-swapped folder.
+  2. The app quits with `Studio.release()` instead of `close()`: chats in the keeper are left running (leases released, receipts not
+     marked unknown, the recovery list kept); anything outside the keeper is closed. Logged: "closing (installing an update); leaving
+     the chats in the keeper", "released N chat(s) to the keeper".
+  3. The helper swaps the files and starts the new version with the same arguments and `AIB_KEEPER` (the only `AIB_*` variable it
+     passes on besides the test tray file). The new version takes every chat over from the keeper's record as after a restart, then
+     writes its start confirmation; the helper disconnects. Idle chats in the keeper go over the same way.
+
+  The keeper process itself keeps running throughout. If the new version cannot drive the keeper (an older build without
+  `release.json` `keeper`, a keeper protocol or feature it lacks), a working chat runs outside the keeper, or the keeper cannot be
+  asked, Install now falls back to the rules above: with a separate host the protocol gate and drain; otherwise it waits until no chat
+  is working, and says why ("This update cannot take running chats over from the keeper, ...", "The running keeper is too old for
+  this update to take its chats over, ...", "Some working chats do not run in the keeper, ...").
+* **Keeper versions.** The keeper is never replaced while it holds chats (they would die with it). `KeeperLink.check()` runs before each
+  new chat. A keeper that lacks a feature this AIB needs is replaced by the shipped one when it holds no live channel; while it holds
+  running agents they stay on it, new chats run as children of AIB (logged "this chat runs without the keeper"), and such a chat makes
+  Install now wait. A newer keeper shipped with AIB (its `AIB-keeper version`) replaces the running one at the first chat start when
+  the running one holds no live channel ("replacing the running keeper 1.0.0 (pid N) with 1.0.1: it holds no chats"); until then new
+  chats go to the running one ("the newer keeper 1.0.1 is used once the running one (1.0.0) holds no chats"). Test builds stamp a
+  version with `go build -ldflags "-X main.keeperVersion=1.0.1"`.
 * **Keeper death.** Its Job Objects end every agent. Each chat closes with "Interrupted: the keeper ... stopped ..." (receipt `error`,
   never resent) and is reconnected by `session/load` when automatic reconnect is on.
-* **Not yet:** updating AIB while chats run (step 2), terminals in the keeper (step 3), snapshots/truncation of long journals, stable
-  event ids across a rebuild, artifact and Studio-note events (not in the record, so not rebuilt).
-* Tests: `work/deno/keeper_client_test.ts`, `keeper_studio_test.ts` (rebuild at four points of a turn, keeper death),
-  `keeper_crash_e2e_test.ts` (real web server, host and keeper; host killed, then keeper killed).
+* **Not yet:** terminals in the keeper (step 3), snapshots/truncation of long journals, stable event ids across a rebuild, artifact and
+  Studio-note events (not in the record, so not rebuilt), a tray presence while the keeper holds chats and no AIB runs (rule V1 relies
+  on the orphan restart), a split host left by an older version is drained rather than handed over at once.
+* Tests: `work/deno/keeper_client_test.ts`, `keeper_studio_test.ts` (rebuild at four points of a turn, keeper death, release for an
+  update, newer and older keepers), `keeper_crash_e2e_test.ts` (real web server, host and keeper; host killed, then keeper killed),
+  `keeper_update_e2e_test.ts` (`AIB_SLOW_TESTS=1`: two real builds, a fake GitHub releases API, Install now mid-turn),
+  `updater_test.ts` (the release.json keeper gate, the helper staying connected), `keeper_restart_timing.ts` (the timing above; run by
+  hand).
 
 ## Failure modes
 

@@ -35,6 +35,7 @@ import {
   UPDATE_REPO,
   UpdateError,
   UpdateService,
+  type KeeperState,
   type UpdateServiceOptions,
 } from "../../outputs/agent-studio/server/desktop/updater.ts";
 import {
@@ -840,6 +841,79 @@ Deno.test("Install now while chats work needs a release that speaks this agent-h
   }
 });
 
+Deno.test("with the keeper Install now leaves the chats to the new version (release.json keeper); a release or keeper that cannot take them over waits", async () => {
+  const keeperInfo = (needs = ["notes", "once", "channel-ids"], protocols = [1]) =>
+    JSON.stringify({ version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION, keeper: { protocols, needs } });
+  const state = (over: Partial<KeeperState> = {}): KeeperState => ({
+    reason: "",
+    protocol: 1,
+    features: ["pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids"],
+    version: "1.0.0",
+    dataDir: "C:/data",
+    ...over,
+  });
+  {
+    // The new version can take them over: the helper gets the data folder (it keeps the keeper company) and the app releases them.
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ info: keeperInfo() });
+    env.base(fake.base);
+    const quits: (boolean | undefined)[] = [];
+    const { svc, launched } = await ready(env, 2, { keeper: () => Promise.resolve(state()), quit: (release) => void quits.push(release) });
+    assertEquals(svc.state.downloaded?.keeper, { protocols: [1], needs: ["notes", "once", "channel-ids"] });
+    assertEquals(await svc.keeperHandover(), true);
+    assertEquals(await svc.install(), { state: "installing", chats: 2 });
+    assertEquals([launched.length, launched[0].keeper, quits], [1, "C:/data", [true]]);
+  }
+  {
+    // Idle chats in the keeper go over too (no reconnect needed), and nothing is said about chats.
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ info: keeperInfo() });
+    env.base(fake.base);
+    const quits: (boolean | undefined)[] = [];
+    const { svc, launched } = await ready(env, 0, { keeper: () => Promise.resolve(state()), quit: (release) => void quits.push(release) });
+    assertEquals(await svc.install(), { state: "installing" });
+    assertEquals([launched[0].keeper, quits], ["C:/data", [true]]);
+  }
+  const waits: [string | undefined, KeeperState | null | "throws", string, string][] = [
+    [JSON.stringify({ version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION }), state(), "release", "This update cannot take running chats over from the keeper, so it waits"],
+    [keeperInfo(["notes", "once", "channel-ids", "snapshots"]), state(), "features", "The running keeper is too old for this update to take its chats over, so it waits"],
+    [keeperInfo(undefined, [2]), state(), "protocol", "The running keeper is too old"],
+    [keeperInfo(), state({ reason: "1 working chat(s) run outside the keeper" }), "outside", "Some working chats do not run in the keeper, so it waits"],
+    [keeperInfo(), "throws", "unknown", "AIB cannot tell whether the keeper can hand its chats to this update"],
+  ];
+  for (const [info, keeper, why, text] of waits) {
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ info });
+    env.base(fake.base);
+    const quits: (boolean | undefined)[] = [];
+    const { svc, launched } = await ready(env, 2, {
+      keeper: () => (keeper === "throws" ? Promise.reject(new Error("no answer")) : Promise.resolve(keeper)),
+      quit: (release) => void quits.push(release),
+    });
+    assertEquals(await svc.keeperHandover(), why);
+    const error = await assertRejects(() => svc.install(), UpdateError) as UpdateError;
+    assertEquals(error.code, "chats_working");
+    assert(error.message.startsWith(text), error.message);
+    assertEquals([launched, quits], [[], []]);
+    // With nothing working it installs the normal way: the app stops whatever is left (no release, no keeper for the helper).
+    const { svc: idle, launched: l2 } = await ready(env, 0, {
+      keeper: () => (keeper === "throws" ? Promise.reject(new Error("no answer")) : Promise.resolve(keeper)),
+      quit: (release) => void quits.push(release),
+    });
+    assertEquals((await idle.install()).state, "installing");
+    assertEquals([l2[0].keeper, quits], [undefined, [false]]);
+  }
+  {
+    // No keeper running (null): the agent-host rules apply as before.
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ info: keeperInfo() });
+    env.base(fake.base);
+    const { svc } = await ready(env, 1, { keeper: () => Promise.resolve(null) });
+    assertEquals(await svc.keeperHandover(), "off");
+    assertEquals((await assertRejects(() => svc.install(), UpdateError) as UpdateError).message, "1 chat(s) are working. Install when they finish, or wait.");
+  }
+});
+
 Deno.test("automatic checks never install", async () => {
   using env = new Env();
   await using fake = await FakeGitHub.start();
@@ -1209,6 +1283,61 @@ Deno.test("helper: the new app exits with an error or cannot start: every rename
   } finally {
     Deno.removeSync(c.dir, { recursive: true });
   }
+});
+
+Deno.test("helper: with chats left in the keeper it stays connected to the keeper from before the old app quits until a version has started", async () => {
+  for (const outcome of ["started", "rolled back"]) {
+    const c = await windowsCase();
+    try {
+      const events: string[] = [];
+      const { deps: d } = deps(c, outcome === "started" ? [{ code: null }] : [{ code: 1 }, { code: null }], { aliveFor: 2 });
+      const code = await runHelper({ ...c.args, keeper: "C:/data" }, {
+        ...d,
+        alive: () => {
+          events.push("alive?");
+          return d.alive();
+        },
+        start: (command: string[]) => {
+          events.push("start");
+          return d.start(command);
+        },
+        keepKeeper: (dataDir: string) => {
+          events.push(`connect ${dataDir}`);
+          return Promise.resolve({ what: "keeper 1.0.0 (pid 9, 1 running agent(s))", release: () => void events.push("disconnect") });
+        },
+      });
+      assertEquals(code, outcome === "started" ? 0 : 7);
+      assertEquals(events[0], "connect C:/data", "connected before waiting for the old app to quit");
+      assertEquals(events.at(-1), "disconnect", "disconnected only after the (new or old) app was started: " + events.join(", "));
+      assertEquals(events.filter((e) => e === "start").length, outcome === "started" ? 1 : 2);
+      const logText = read(c.args.log);
+      assert(logText.includes("staying connected to the keeper 1.0.0 (pid 9, 1 running agent(s)) until AIB has started again"), logText);
+      assert(logText.includes("disconnected from the keeper"), logText);
+    } finally {
+      Deno.removeSync(c.dir, { recursive: true });
+    }
+  }
+  // No keeper argument: nothing is connected; a keeper that is not running is logged and the update goes on.
+  let asked = 0;
+  const keepKeeper = () => (asked++, Promise.resolve(null));
+  for (const keeper of [undefined, "C:/data"]) {
+    const c = await windowsCase();
+    try {
+      assertEquals(await runHelper({ ...c.args, ...(keeper ? { keeper } : {}) }, { ...deps(c).deps, keepKeeper }), 0);
+      assertEquals(asked, keeper ? 1 : 0);
+      if (keeper) assert(read(c.args.log).includes("no keeper runs; nothing to hold"));
+    } finally {
+      Deno.removeSync(c.dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("helper: the new app keeps the keeper switch (AIB_KEEPER) and nothing else of AIB_*", () => {
+  assertEquals(cleanEnv({ AIB_KEEPER: "1", AIB_KEEPER_BIN: "x", AIB_UPDATE_API_BASE: "y", AIB_TEST_TRAY_STATE: "z", PATH: "p" }), {
+    AIB_KEEPER: "1",
+    AIB_TEST_TRAY_STATE: "z",
+    PATH: "p",
+  });
 });
 
 Deno.test("helper: a rename that fails half-way rolls back what was already swapped", async () => {

@@ -25,10 +25,13 @@ import (
 
 const (
 	protocolVersion = 1
-	keeperVersion   = "1.0.0"
 	maxHeader       = 64 << 10
 	maxBody         = 16 << 20
 )
+
+// keeperVersion is this program's version. A var only so a test build can stamp another one
+// (go build -ldflags "-X main.keeperVersion=1.0.1"); releases use the value here.
+var keeperVersion = "1.0.0"
 
 // features are advertised in hello. Additions only.
 var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids"}

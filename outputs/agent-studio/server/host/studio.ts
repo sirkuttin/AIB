@@ -23,8 +23,9 @@ import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, httpEntry } from '../artifacts/mcp_http.ts';
 import { isCompiled, selfCommand, TESTS_DIR } from '../core/app.ts';
-import { type ChannelInfo, type OrphanCommand } from '../keeper/client.ts';
-import { type KeeperChannel, keeperEnabled, KeeperLink } from '../keeper/link.ts';
+import { type ChannelInfo, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
+import { pidAlive } from './host_client.ts';
+import { type KeeperChannel, KeeperLink, keeperWanted } from '../keeper/link.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
@@ -188,7 +189,11 @@ export class Studio {
   /** Tests replace this to age closed connections without sleeping (seconds). */
   clock: () => number = () => Date.now() / 1000;
   readonly token: string;
-  readonly instanceId = crypto.randomUUID().replaceAll('-', '');
+  /**
+   * The id open pages compare to tell "the same Studio" (connection ids still valid) from a restart. With the keeper it survives a
+   * restart or update of this process as long as the keeper does (keeperInstanceId): the chats are rebuilt under the same ids.
+   */
+  readonly instanceId: string;
   readonly stateDir: string;
   readonly hasStateDir: boolean;
   ownerProbe: OwnerProbe;
@@ -213,7 +218,10 @@ export class Studio {
   reconnectWorkers: Promise<void>[] = [];
   installer: Installer | null = null;
   signer: Signer | null = null;
-  readonly hostMode = 'in-process';
+  /** Bootstrap's hostMode: 'keeper' when agents run in the keeper (they outlive this process), else 'in-process'. */
+  get hostMode(): string {
+    return this.keeper ? 'keeper' : 'in-process';
+  }
   /** The in-process Studio has no separate host: no code warning, nobody to wait for. */
   readonly hostInfo: unknown = undefined;
   readonly waitingChats = 0;
@@ -232,6 +240,8 @@ export class Studio {
     registerSecret(this.token);
     this.hasStateDir = options.stateDir !== undefined && options.stateDir !== null;
     this.stateDir = this.hasStateDir ? String(options.stateDir) : join(TESTS_DIR, 'agent-studio-state');
+    const withKeeper = construct.keeper !== undefined ? !!construct.keeper : this.hasStateDir && keeperWanted(this.stateDir);
+    this.instanceId = withKeeper && this.hasStateDir ? keeperInstanceId(this.stateDir) : crypto.randomUUID().replaceAll('-', '');
     this.ownerProbe = (provider, sessionId, excluded) => this.#cmdlineOwner(provider, sessionId, excluded);
     this.owners = options.ownersDir ? new OwnerRegistry(options.ownersDir, { instanceId: this.instanceId }) : null;
     this.probe = new OwnershipProbe({
@@ -270,10 +280,13 @@ export class Studio {
     this.autoReconnect = (options.autoReconnect ?? true) && this.settings.autoReconnect();
     this.keeper = construct.keeper !== undefined
       ? construct.keeper
-      : keeperEnabled() && this.hasStateDir
+      : withKeeper
       ? new KeeperLink({ dataDir: this.stateDir, orphan: orphanCommand() })
       : null;
-    if (this.keeper) this.keeper.onLost = (channels) => this.#keeperLost(channels);
+    if (this.keeper) {
+      this.keeper.onLost = (channels) => this.#keeperLost(channels);
+      this.keeper.onClient = () => saveKeeperInstance(this.stateDir, this.instanceId); // the ids now live as long as this keeper
+    }
   }
 
   // ---- hooks on each connection ------------------------------------------------------------------------------------------
@@ -624,7 +637,7 @@ export class Studio {
       }
       const connectionOptions: ConnectionOptions = {};
       if (Object.keys(env).length) connectionOptions.env = env;
-      if (this.keeper) connectionOptions.keeper = this.keeper;
+      if (this.keeper && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
@@ -800,6 +813,33 @@ export class Studio {
     } finally {
       c.openDone.set();
     }
+  }
+
+  /**
+   * Can a new chat run in the keeper? Starts the keeper when none runs and applies its version rules (KeeperLink.check). False when
+   * the running keeper is too old for this AIB while it holds other chats, or the keeper cannot be started: the chat then runs as a
+   * child of this process, as with the switch off, and the reason is logged (it is not carried through an update).
+   */
+  async #keeperUsable(): Promise<boolean> {
+    try {
+      await this.keeper!.check();
+      return true;
+    } catch (error) {
+      announce('studio', 'keeper: this chat runs without the keeper: %s', this.keeper!.problem || errorText(error));
+      return false;
+    }
+  }
+
+  /**
+   * Can every working chat survive this process exiting for an update (Install now)? Yes when each one runs in a keeper this AIB is
+   * connected to: release() then leaves them there and the next version takes them over. Otherwise the reason ('' when yes).
+   */
+  keeperHandover(): string {
+    if (!this.keeper) return 'the keeper is off';
+    const working = [...this.connections.values()].filter((c) => !c.closed && (c.busy || !c.ready || c.permissions.size));
+    const outside = working.filter((c) => !c.channel || c.channel.lost || !c.channel.client || c.channel.client.closed);
+    if (outside.length) return `${outside.length} working chat(s) run outside the keeper`;
+    return '';
   }
 
   /** The keeper went away (its agents ended with it): the chats say "Interrupted" and reconnect with session/load, never resent. */
@@ -1183,6 +1223,41 @@ export class Studio {
     return [200, { ok: true }];
   }
 
+  /**
+   * Exit for an update (or a restart) without touching the chats that run in the keeper: they keep running and recording, and the
+   * next AIB rebuilds them from the keeper's record (adoptKeeper) and claims them. Everything else is stopped as in close(): chats
+   * outside the keeper are closed, live sync and timers stop. Their session leases are released, the recovery list keeps them, and
+   * no receipt is marked "unknown" (the turns go on). Returns how many chats were left running in the keeper.
+   */
+  async release(): Promise<number> {
+    if (this.#closed) return 0;
+    this.#closed = true;
+    if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
+    if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
+    this.#heartbeat = null;
+    this.reconnectStop.set();
+    if (this.recovery) this.recovery.shuttingDown = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all(this.reconnectWorkers.map((w) => w.catch(() => {}))),
+      new Promise((resolve) => (timer = setTimeout(resolve, 10_000))),
+    ]);
+    clearTimeout(timer);
+    const kept: Connection[] = [];
+    const others: Connection[] = [];
+    for (const c of this.connections.values()) {
+      if (c.closed) continue;
+      (c.channel && !c.channel.lost && c.channel.client && !c.channel.client.closed ? kept : others).push(c);
+    }
+    await Promise.all(others.map((c) => c.close().catch((error) => log.exception(error, 'Closing a connection failed'))));
+    for (const c of kept) c.releaseLease(); // the next AIB takes the lease when it takes the chat
+    if (this.owners) this.owners.withdrawAll();
+    if (this.#mcpHttp) await this.#mcpHttp.close();
+    this.keeper?.disconnect(); // the keeper keeps the agents; whoever connects next (the update helper, then the new AIB) is its client
+    announce('studio', 'released %s chat(s) to the keeper; %s closed', kept.length, others.length);
+    return kept.length;
+  }
+
   /** Stop everything this Studio runs. The recovery list is kept (orderly shutdown), so the next start can reconnect. */
   async close(): Promise<void> {
     if (this.#closed) return;
@@ -1208,6 +1283,33 @@ export class Studio {
     if (this.#mcpHttp) await this.#mcpHttp.close();
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
   }
+}
+
+const INSTANCE_FILE = 'studio-instance-keeper.json';
+
+/**
+ * The instance id of a Studio whose chats run in the keeper: the id the previous Studio of this data folder used, when the keeper it
+ * was connected to still runs (same pid and start time), since every chat it had is rebuilt under the same connection id; a new id
+ * otherwise (no keeper, or another one: no old connection id can be valid). Never throws.
+ */
+export function keeperInstanceId(stateDir: string): string {
+  try {
+    const saved = JSON.parse(Deno.readTextFileSync(join(stateDir, INSTANCE_FILE)));
+    const info = readKeeperInfo(stateDir);
+    if (info && pidAlive(info.pid) && isStr(saved.id) && saved.keeperPid === info.pid && saved.keeperStarted === info.started) {
+      return saved.id;
+    }
+  } catch { /* none yet */ }
+  return crypto.randomUUID().replaceAll('-', '');
+}
+
+/** Remember which keeper this instance id belongs to (on every connection to a keeper). Never throws. */
+export function saveKeeperInstance(stateDir: string, id: string): void {
+  try {
+    const info = readKeeperInfo(stateDir);
+    if (!info) return;
+    Deno.writeTextFileSync(join(stateDir, INSTANCE_FILE), JSON.stringify({ id, keeperPid: info.pid, keeperStarted: info.started }));
+  } catch { /* not fatal: the next start shows "restarted" once */ }
 }
 
 /** How the keeper starts AIB again when no AIB is attached (keeper rule V1): this very process's command line. */

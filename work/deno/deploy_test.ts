@@ -82,6 +82,10 @@ Deno.test('restart plan: a web-only restart with a host needs no waiting and kee
     assertEquals(deploy.restartPlan(mode), { wait: true, stop_host: false, kill_tree: true });
     assertEquals(deploy.restartPlan(mode, true), { wait: true, stop_host: false, kill_tree: true });
   }
+  // One process with the keeper: restarting never touches a chat (they are rebuilt from the keeper), and the keeper is never killed.
+  assertEquals(deploy.restartPlan('keeper'), { wait: false, stop_host: false, kill_tree: false });
+  assertEquals(deploy.restartPlan('keeper', true), { wait: false, stop_host: false, kill_tree: false });
+  assertEquals(deploy.restartPlan('keeper', false, true), { wait: true, stop_host: false, kill_tree: false });
 });
 
 // ---- DeployGuardTests and the command line ------------------------------------------------------------------------------------

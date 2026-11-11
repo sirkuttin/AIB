@@ -22,6 +22,12 @@ const ENC = new TextEncoder();
 const DEC = new TextDecoder();
 
 export const PROTOCOL = 1;
+/**
+ * What this AIB needs of a running keeper to run chats in it and to take them over after an update or restart (hello's
+ * `features`). release.json carries it (tools/build.ts), so a running AIB can tell before Install now whether the new version can
+ * drive the keeper that holds its chats. Every keeper ever released must keep satisfying the AIB that shipped with it (rule 4).
+ */
+export const KEEPER_NEEDS = ['notes', 'once', 'channel-ids'];
 export const MAX_HEADER = 65536;
 export const MAX_BODY = 16 * 1024 * 1024;
 export const KEEPER_NAME = 'AIB-keeper';
@@ -410,6 +416,46 @@ export class KeeperClient {
   }
 }
 
+// ---- versions and compatibility ---------------------------------------------------------------------------------------------
+
+/** The needed features a keeper does not offer ([] = it can be used). */
+export function missingFeatures(features: readonly string[], needs: readonly string[] = KEEPER_NEEDS): string[] {
+  return needs.filter((f) => !features.includes(f));
+}
+
+/** Dotted keeper versions ("1.0.0" < "1.0.10" < "1.1"); anything unreadable sorts first. */
+export function compareKeeperVersions(a: string, b: string): number {
+  const parse = (v: string) => (/^\d+(\.\d+)*$/.test(v.trim()) ? v.trim().split('.').map(Number) : null);
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return x ? 1 : y ? -1 : 0;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+const versions = new Map<string, Promise<string | null>>();
+
+/** `AIB-keeper version` of a keeper program ("AIB keeper 1.0.0, protocol 1" -> "1.0.0"), cached per path; null when unknown. */
+export function programVersion(binary: string): Promise<string | null> {
+  let known = versions.get(binary);
+  if (!known) {
+    known = new Deno.Command(binary, { args: ['version'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output().then(
+      (out) => /AIB keeper (\S+?),/.exec(DEC.decode(out.stdout))?.[1] ?? null,
+      () => null,
+    );
+    versions.set(binary, known);
+  }
+  return known;
+}
+
+/** True when a keeper process runs for this data folder (its keeper.json names a live pid). Cheap: no connection. */
+export function keeperRunning(dataDir: string): boolean {
+  const info = readKeeperInfo(dataDir);
+  return !!info && pidAlive(info.pid);
+}
+
 // ---- finding and starting the keeper ----------------------------------------------------------------------------------------
 
 export function keeperDir(dataDir: string): string {
@@ -453,7 +499,7 @@ export interface EnsureOptions {
 export async function ensureKeeper(dataDir: string, options: EnsureOptions = {}): Promise<KeeperClient> {
   const found = await findKeeper(dataDir);
   if (found) return found;
-  const binary = options.binary ?? await keeperBinary();
+  const binary = options.binary ?? await keeperBinary(dataDir);
   Deno.mkdirSync(dataDir, { recursive: true });
   const logFile = `${dataDir.replace(/[\\/]+$/, '')}${SEP}keeper-launch.log`;
   const args = ['serve', '--data', dataDir, ...(options.orphan ? ['--orphan-command', JSON.stringify(options.orphan)] : [])];
@@ -505,16 +551,18 @@ function goCommand(): string {
 let built: Promise<string> | null = null;
 
 /**
- * The keeper program: $AIB_KEEPER_BIN; in a built app AIB-keeper next to the app's program (the build puts it there); in a source
- * run a binary built from keeper/ with Go into the temp folder (cached by a hash of the sources, so it is built once per change).
+ * The keeper program: $AIB_KEEPER_BIN; in a built app AIB-keeper next to the app's program (the build puts it there), copied out to
+ * `<data>/keeper-bin/<hash>/` first when the data folder is given (placeKeeper: a running keeper never runs from files an update
+ * replaces); in a source run a binary built from keeper/ with Go into the temp folder (cached by a hash of the sources, so it is
+ * built once per change).
  */
-export function keeperBinary(): Promise<string> {
+export function keeperBinary(dataDir?: string): Promise<string> {
   const given = Deno.env.get('AIB_KEEPER_BIN');
   if (given) return Promise.resolve(given);
   const name = WIN ? `${KEEPER_NAME}.exe` : KEEPER_NAME;
   if (isCompiled()) {
     const beside = Deno.execPath().replace(/[\\/][^\\/]*$/, '') + SEP + name;
-    if (exists(beside)) return Promise.resolve(beside);
+    if (exists(beside)) return Promise.resolve(dataDir ? placeKeeper(beside, dataDir) : beside);
   }
   const source = keeperSourceDir();
   if (!source) return Promise.reject(new Error(`${name} was not found next to ${Deno.execPath()}`));
@@ -523,6 +571,50 @@ export function keeperBinary(): Promise<string> {
     throw error;
   });
   return built;
+}
+
+/**
+ * Copy the keeper program shipped with the app to `<data>/keeper-bin/<first 16 hex of its SHA-256>/` and return that path. The keeper
+ * outlives the app (it holds the chats through an update), so it must not run from the app's folder: the update helper renames the
+ * files there (Windows: `.old-<stamp>` files that could not be cleaned up while it runs), replaces the macOS bundle, and on Linux the
+ * old AppImage's mount goes away (SIGBUS). A copy with the same hash is reused; other copies are deleted when nothing runs from them
+ * (Windows refuses to delete a running exe; elsewhere a running program keeps its deleted file). Falls back to `beside` on error.
+ */
+export function placeKeeper(beside: string, dataDir: string): string {
+  try {
+    const bytes = Deno.readFileSync(beside);
+    const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+    const root = `${dataDir.replace(/[\\/]+$/, '')}${SEP}keeper-bin`;
+    const folder = `${root}${SEP}${hash}`;
+    const target = `${folder}${SEP}${beside.split(/[\\/]/).pop()}`;
+    if (!exists(target)) {
+      Deno.mkdirSync(folder, { recursive: true });
+      const partial = `${target}.${Deno.pid}.part`;
+      Deno.writeFileSync(partial, bytes, { mode: 0o755 });
+      try {
+        Deno.renameSync(partial, target);
+      } catch {
+        try {
+          Deno.removeSync(partial);
+        } catch { /* gone */ }
+        if (!exists(target)) throw new Error(`could not place the keeper at ${target}`);
+      }
+    }
+    for (const entry of Deno.readDirSync(root)) {
+      if (entry.name === hash || !entry.isDirectory) continue;
+      try {
+        Deno.removeSync(`${root}${SEP}${entry.name}`, { recursive: true });
+      } catch { /* in use: next time */ }
+    }
+    return target;
+  } catch (error) {
+    log.warning(
+      'keeper: could not copy %s out of the app folder (%s); running it from there',
+      beside,
+      error instanceof Error ? error.message : error,
+    );
+    return beside;
+  }
 }
 
 async function buildFromSource(source: string, name: string): Promise<string> {

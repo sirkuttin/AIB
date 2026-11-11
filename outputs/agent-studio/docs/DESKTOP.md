@@ -119,6 +119,11 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
   helper waits for the app to exit, re-checks the hash, swaps the files (the old ones are renamed, not deleted, so a host still
   running from them keeps running), starts the new AIB, and rolls everything back if the new app cannot start. Its log is
   `<data>/updates/install.log`. The new app deletes the leftovers at startup.
+- **With the keeper (`AIB_KEEPER=1`, off by default):** AIB is one process and the chats run in the keeper. Install now goes ahead
+  while chats work when the release's `release.json` says the new version can drive the running keeper (`keeper: {protocols, needs}`):
+  the app leaves the chats in the keeper, the helper stays connected to the keeper while it swaps the files, and the new version takes
+  every chat over from the keeper's record (same chat, same agent process, nothing sent twice). Otherwise it waits and says why. See
+  agent-host.md, "The keeper".
 - **A .deb install and `deno run`:** downloaded and verified the same way; the amber line and Settings show instructions with the
   file's path. They do not install in place.
 

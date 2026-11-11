@@ -10,7 +10,16 @@ import { fake, pause, until } from './_connection.ts';
 import { Connection, KEEPER_LOST } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
+import {
+  compareKeeperVersions,
+  KEEPER_NEEDS,
+  keeperBinary,
+  KeeperClient,
+  keeperSourceDir,
+  missingFeatures,
+  programVersion,
+  readKeeperInfo,
+} from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
@@ -200,4 +209,98 @@ Deno.test({
     assertEquals(prompts(got).length, 1);
     assertEquals(got.filter((m) => m.method === 'session/load').length, 1);
   },
+});
+
+Deno.test({
+  name: 'keeper studio: release() for an update leaves the chat running in the keeper; the next Studio takes it over under the same ids',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new KeeperStudioLab();
+    const a = lab.studio();
+    const c = await a.connect('omp', lab.work);
+    await a.liveCall('prompt', { id: c.id, text: 'stream:10:150', clientMessageId: 'm1' });
+    await until(() => said(c).includes('chunk1 '), 'streaming', 10);
+    assertEquals(a.keeperHandover(), '', 'every working chat runs in the keeper');
+    const agentPid = c.process!.pid;
+    assertEquals(await a.release(), 1);
+    lab.studios.splice(lab.studios.indexOf(a), 1); // released, not to be closed again
+    assert(pidAlive(agentPid), 'the agent keeps running');
+    assertEquals(a.store!.receipt('omp', 'fake-session', 'm1')!.state, 'working', 'not marked unknown: the turn goes on');
+
+    const b = lab.studio();
+    assertEquals(b.instanceId, a.instanceId, 'the same keeper: open pages keep their connection ids');
+    assertEquals(await b.adoptKeeper(), 1);
+    const r = b.connections.get(c.id)!;
+    assertEquals([r.ready, r.rebuildError, r.process!.pid], [true, '', agentPid]);
+    await until(() => r.permissions.size === 1, 'the question, shown once', 10);
+    assertEquals(r.events.filter((e) => e.kind === 'permission').length, 1);
+    assertEquals((await b.liveCall('permission', { id: r.id, key: [...r.permissions.keys()][0], option: 'yes' }))[0], 200);
+    await until(() => !r.busy, 'turn end on the new Studio', 15);
+    assertEquals(said(r), 'chunk0 chunk1 chunk2 chunk3 chunk4 answer=yes chunk5 chunk6 chunk7 chunk8 chunk9 ');
+    assertEquals(prompts(lab.received()).length, 1);
+    assertEquals(answers(lab.received(), 'stream-ask').length, 1);
+  },
+});
+
+/** A keeper program built from keeper/ with another version stamped in (a "newer keeper ships" stand-in). */
+async function keeperWithVersion(dir: string, version: string): Promise<string> {
+  const go = Deno.env.get('GO') || (Deno.build.os === 'windows' ? 'C:/Program Files/Go/bin/go.exe' : 'go');
+  const exe = `${dir}${SEP}AIB-keeper-${version}${Deno.build.os === 'windows' ? '.exe' : ''}`;
+  const flags = `-s -w -X main.keeperVersion=${version}${Deno.build.os === 'windows' ? ' -H windowsgui' : ''}`;
+  const out = await new Deno.Command(go, {
+    args: ['build', '-trimpath', '-ldflags', flags, '-o', exe, '.'],
+    cwd: keeperSourceDir()!,
+    env: { CGO_ENABLED: '0' },
+    stdout: 'piped',
+    stderr: 'piped',
+  }).output();
+  if (!out.success) throw new Error(new TextDecoder().decode(out.stderr));
+  return exe;
+}
+
+Deno.test({
+  name: 'keeper versions: a newer keeper shipped with AIB is used only once the running one holds no chats; then it replaces it',
+  ...T,
+  async fn() {
+    await using lab = new KeeperStudioLab();
+    const older = await keeperBinary();
+    const newer = await keeperWithVersion(lab.dir, '1.0.1');
+    assertEquals([await programVersion(older), await programVersion(newer)], ['1.0.0', '1.0.1']);
+    const extraArgs = ['--exit-after', '2s', '--orphan-after', '30s'];
+    // An AIB with the 1.0.0 keeper starts a long-running agent in it.
+    const first = new KeeperLink({ dataDir: lab.state, orphan: null, binary: older, extraArgs });
+    const sleeper = { command: Deno.execPath(), args: ['eval', 'setTimeout(() => {}, 60000)'], cwd: lab.work };
+    const one = first.spawn({ channel: 'held', ...sleeper }, {});
+    await one.ready;
+    const oldPid = readKeeperInfo(lab.state)!.pid;
+    first.disconnect();
+    // The updated AIB ships 1.0.1: while 1.0.0 holds a live channel it is kept (the chat would die with it).
+    const second = new KeeperLink({ dataDir: lab.state, orphan: null, binary: newer, extraArgs });
+    const kept = await second.check();
+    assertEquals([kept.keeperVersion, kept.keeperPid, second.problem], ['1.0.0', oldPid, '']);
+    const two = second.spawn({ channel: 'also-old', ...sleeper }, {});
+    await two.ready;
+    assertEquals(two.client!.keeperVersion, '1.0.0', 'new chats go to the running keeper meanwhile');
+    // Every chat ends: the next start replaces the keeper with the newer one.
+    for (const id of ['held', 'also-old']) await kept.kill(id, await kept.claim(id));
+    await until(async () => (await kept.list()).every((ch) => !ch.live), 'channels ended', 10);
+    const renewed = await second.check();
+    assertEquals(renewed.keeperVersion, '1.0.1');
+    await until(() => !pidAlive(oldPid), 'the old keeper exited', 10);
+    assertEquals(readKeeperInfo(lab.state)!.keeper, '1.0.1');
+    const three = second.spawn({ channel: 'on-new', ...sleeper }, {});
+    await three.ready;
+    assertEquals(three.client!.keeperVersion, '1.0.1');
+    assertEquals(compareKeeperVersions('1.0.10', '1.0.9'), 1);
+    assertEquals(compareKeeperVersions('1.0', '1.0.0'), 0);
+    assertEquals(compareKeeperVersions('', '1.0.0'), -1);
+    second.disconnect();
+  },
+});
+
+Deno.test('keeper versions: a keeper that lacks a needed feature is reported (missingFeatures) and the features AIB needs are listed', () => {
+  assertEquals(KEEPER_NEEDS, ['notes', 'once', 'channel-ids']);
+  assertEquals(missingFeatures(['pty', 'notes', 'once', 'channel-ids']), []);
+  assertEquals(missingFeatures(['pty', 'notes']), ['once', 'channel-ids']);
 });

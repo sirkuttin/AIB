@@ -22,6 +22,7 @@
 import { createHash } from 'node:crypto';
 import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
 import { PROTOCOL_VERSION } from '../outputs/agent-studio/server/host/host_client.ts';
+import { KEEPER_NEEDS, PROTOCOL as KEEPER_PROTOCOL } from '../outputs/agent-studio/server/keeper/client.ts';
 import { addToAppImage, addToDeb, fixAppImage, fixDeb } from './linux_package.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
@@ -383,9 +384,18 @@ export async function setStagedVersion(stageDir: string, version: string): Promi
 
 export const RELEASE_INFO = 'release.json';
 
-/** {version, protocol, appId}: the agent-host protocol this version speaks (host_client PROTOCOL_VERSION). */
+/**
+ * {version, protocol, appId, keeper}: the agent-host protocol this version speaks (host_client PROTOCOL_VERSION), and what it needs
+ * of a running keeper to take chats over from it after Install now (the keeper protocols it speaks and the keeper features it needs,
+ * keeper/client.ts KEEPER_NEEDS). A running AIB reads it before Install now while chats work.
+ */
 export function releaseInfo(version: string): string {
-  return JSON.stringify({ version, protocol: PROTOCOL_VERSION, appId: APP_IDENTIFIER });
+  return JSON.stringify({
+    version,
+    protocol: PROTOCOL_VERSION,
+    appId: APP_IDENTIFIER,
+    keeper: { protocols: [KEEPER_PROTOCOL], needs: KEEPER_NEEDS },
+  });
 }
 
 export async function stage(stageDir: string, version: string): Promise<string[]> {

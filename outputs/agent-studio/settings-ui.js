@@ -1350,7 +1350,7 @@
       ['State folder', b.stateDir || 'unknown'],
       ['Web server PID', b.pid],
       ['Agent host PID', b.hostPid],
-      ['Mode', b.hostMode === 'split' ? 'Web server and separate agent host' : b.hostMode],
+      ['Mode', b.hostMode === 'split' ? 'Web server and separate agent host' : b.hostMode === 'keeper' ? 'One process; running agents are held by the keeper' : b.hostMode],
       ['Web server port', sv.webPort],
       ['Web server started', sv.webStartedAt ? when(sv.webStartedAt) : ''],
       ['Agent host started', sv.hostStartedAt ? when(sv.hostStartedAt) : ''],

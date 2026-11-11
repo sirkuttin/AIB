@@ -63,6 +63,12 @@ export interface HelperArgs {
   args?: string[];
   /** The file the new app writes once it is up (<data>/updates/started-<ver>.ok): the only proof of a good start. */
   marker?: string;
+  /**
+   * The data folder whose keeper holds the chats the old app left running (Install now with AIB_KEEPER=1). The helper stays connected
+   * to that keeper from before the old app quits until the new version (or, after a rollback, the old one again) has started, so the
+   * keeper always has a client and never runs its orphan command (which would start AIB from a half-swapped folder).
+   */
+  keeper?: string;
 }
 
 export interface StartResult {
@@ -87,6 +93,20 @@ export interface HelperDeps {
   tray?: (tooltip: string) => () => void;
   /** The <stamp> in .old-<stamp> (tests pin it). */
   stamp?: string;
+  /** Connect to the keeper of a data folder and stay connected; resolves to a description and the function that disconnects. */
+  keepKeeper?: (dataDir: string) => Promise<{ what: string; release: () => void } | null>;
+}
+
+/** Stay connected to the keeper of `dataDir` (an authenticated connection counts as its client). null when none runs. */
+export async function defaultKeepKeeper(dataDir: string): Promise<{ what: string; release: () => void } | null> {
+  const { findKeeper } = await import('../keeper/client.ts');
+  const client = await findKeeper(dataDir);
+  if (!client) return null;
+  let live = 0;
+  try {
+    live = (await client.list()).filter((c) => c.live).length;
+  } catch { /* still connected: that is what counts */ }
+  return { what: `keeper ${client.keeperVersion} (pid ${client.keeperPid}, ${live} running agent(s))`, release: () => client.close() };
 }
 
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -136,10 +156,13 @@ export function defaultAlive(pid: number): boolean {
   }
 }
 
+/** AIB_ variables the new app keeps: the keeper switch (the new version must take the chats over in the same mode), a test's tray file. */
+const KEEP_ENV = new Set(['AIB_KEEPER', 'AIB_TEST_TRAY_STATE']);
+
 /** The new app must not inherit the old one's launch variables (nor an AppImage runtime's, nor deno desktop's serve address). */
 export function cleanEnv(env: Record<string, string> = Deno.env.toObject()): Record<string, string> {
   const drop = new Set(['PYTHONHOME', 'AGENT_STUDIO_LAUNCH_NONCE', 'APPIMAGE', 'APPDIR', 'ARGV0', 'OWD', 'DENO_SERVE_ADDRESS']);
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k) && (!k.startsWith('AIB_') || k === 'AIB_TEST_TRAY_STATE')));
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !drop.has(k) && (!k.startsWith('AIB_') || KEEP_ENV.has(k))));
 }
 
 async function runQuiet(command: string, args: string[], timeoutSeconds: number): Promise<void> {
@@ -349,9 +372,23 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
     return 1;
   }
   const closeTray = (deps.tray ?? (deps.start ? () => () => {} : helperTray))(`Updating AIB to ${args.version ?? 'a new version'}...`);
+  // First of all (the old app quits right after starting this helper): keep its keeper company until a version has started again.
+  let keeper: { what: string; release: () => void } | null = null;
+  if (typeof args.keeper === 'string' && args.keeper) {
+    try {
+      keeper = await (deps.keepKeeper ?? defaultKeepKeeper)(args.keeper);
+      log(note, keeper ? `staying connected to the ${keeper.what} until AIB has started again` : 'no keeper runs; nothing to hold');
+    } catch (error) {
+      log(note, `could not connect to the keeper (${error instanceof Error ? error.message : error}); its own restart rule applies`);
+    }
+  }
   try {
     return await runSteps(args, deps, { alive, sleep, unpack, start, stamp, note, installer, want, pid, exe, kind, target });
   } finally {
+    if (keeper) {
+      keeper.release();
+      log(note, 'disconnected from the keeper');
+    }
     closeTray();
   }
 }

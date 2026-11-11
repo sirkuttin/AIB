@@ -19,7 +19,9 @@ import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
 import './state/migrate.ts'; // registers the data move with paths.ts
-import { stopHost } from './host/host_client.ts';
+import { pidAlive, readInfo, stopHost } from './host/host_client.ts';
+import { keeperWanted } from './keeper/link.ts';
+import { PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
 import { Studio } from './host/studio.ts';
@@ -96,6 +98,11 @@ function envObject(): Record<string, string | undefined> {
   } catch {
     return {};
   }
+}
+
+/** An agent host process runs for this folder (its host file names a live pid). */
+function hostRunning(info: Record<string, unknown> | null): boolean {
+  return !!info && typeof info.pid === 'number' && pidAlive(info.pid);
 }
 
 /** How long the built app's host stays after the last app left with no chat working. */
@@ -176,11 +183,18 @@ export async function main(argv: string[]): Promise<void> {
   let studio: Studio | null = null;
   let host: LiveBackend;
   let webInstanceId: string;
-  if (options.inProcess) {
-    // Agents run inside this process (studio.py --in-process): restarting it ends every conversation.
-    studio = new Studio(studioOptions(options, mcpServers));
+  // One process with the keeper (owner decision D3, docs/agent-host.md "One process with the keeper"): with AIB_KEEPER=1 (or a keeper
+  // already running for this folder) the agents run in the keeper and outlive this process, so the separate agent host has no job
+  // left. An agent host that still runs for this folder (chats from before the switch, or from the previous version) is attached to
+  // as before, and drained and retired the usual way.
+  const merged = !options.inProcess && keeperWanted(stateDir) && !hostRunning(await readInfo(stateDir));
+  if (options.inProcess || merged) {
+    // Agents run inside this process (studio.py --in-process): restarting it ends every conversation, unless they run in the keeper.
+    // The one-process app keeps the agent host's recovery and queue files (studio-*-host.json), so switching modes keeps the list.
+    studio = new Studio(studioOptions(options, mcpServers), merged ? { port: 'host' } : {});
     host = studio;
     webInstanceId = studio.instanceId;
+    if (merged) log.announce('studio', 'one process: agents run in the keeper (AIB_KEEPER), no separate agent host');
   } else {
     webInstanceId = crypto.randomUUID().replaceAll('-', '');
     host = await attachHost({
@@ -203,7 +217,7 @@ export async function main(argv: string[]): Promise<void> {
   }
   configureArtifactKeys(stateDir); // artifact tool: the same shared secret as the agent host
   let closing = false;
-  let close = async (_why?: string) => {};
+  let close = async (_why?: string, _release?: boolean) => {};
   const ctx = makeContext({
     stateDir,
     host,
@@ -230,8 +244,22 @@ export async function main(argv: string[]): Promise<void> {
   ctx.updates = new UpdateService(stateDir, {
     autoCheck: () => ctx.settings.autoUpdateCheck(),
     busyChats: async () => (await host.busyConnections()).length,
-    quit: () => void setTimeout(() => void close('installing an update'), 50),
-    chatsKeepRunning: !options.inProcess, // the agent host outlives this app: an update never stops a working chat
+    quit: (release) => void setTimeout(() => void close('installing an update', release), 50),
+    chatsKeepRunning: !studio, // the agent host outlives this app: an update never stops a working chat
+    // One process with the keeper: Install now leaves the chats in the keeper and the new version takes them over.
+    keeper: studio?.keeper
+      ? async () => {
+        const client = await studio!.keeper!.client(false);
+        if (!client) return null; // no keeper runs, so no chat runs in one
+        return {
+          reason: studio!.keeperHandover(),
+          protocol: KEEPER_PROTOCOL,
+          features: client.features,
+          version: client.keeperVersion,
+          dataDir: stateDir,
+        };
+      }
+      : null,
   });
   log.registerSecret(ctx.token);
   const server = new WebServer(ctx);
@@ -257,14 +285,16 @@ export async function main(argv: string[]): Promise<void> {
       `Agent Studio: ${url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (deno run -A server/main.ts --stop-host ends the host).`,
     );
   }
-  close = async (why = 'quit') => {
+  close = async (why = 'quit', release = false) => {
     if (closing) return;
     closing = true;
-    log.announce('studio', 'closing (%s)', why);
+    log.announce('studio', 'closing (%s)%s', why, release && studio ? '; leaving the chats in the keeper' : '');
     ctx.updates.stop();
     await ctx.artifacts.stop().catch(() => {});
     await server.close().catch(() => {});
-    await host.close().catch(() => {}); // split: detach only; in-process: stops every agent
+    // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
+    if (release && studio) await studio.release().catch(() => {});
+    else await host.close().catch(() => {});
     folderLock?.release();
     Deno.exit(0);
   };
@@ -281,9 +311,9 @@ export async function main(argv: string[]): Promise<void> {
       trayIcon: trayIconPng(),
       trayIconDark: trayIconDarkPng(),
       busyCount: async () => (await host.busyConnections()).length,
-      // In-process mode has no separate host: closing stops its agents. Split: OK forces the host down; with nothing working it is
+      // In-process mode (and one process with the keeper) has no separate host: closing stops its agents. Split: OK forces the host down; with nothing working it is
       // stopped too (unforced: a chat that just started keeps it), so no invisible process idles on after the app is gone.
-      stopHost: options.inProcess ? undefined : async (force) => {
+      stopHost: studio ? undefined : async (force) => {
         const result = await stopHost(stateDir, force, 5, `the app quitting (pid ${Deno.pid}${force ? ', OK: stop them' : ''})`);
         log.announce('studio', 'quit: agent host %s', result.stopped ? 'stopped' : `kept (${result.message})`);
         return result;
