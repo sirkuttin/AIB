@@ -66,8 +66,10 @@ export const ID_RE = /^[0-9a-f]{16}\n?$/;
 export const WRITE_TOOLS = ['write', 'edit', 'multiedit', 'notebookedit']; // Claude Code's own tool names (lower case)
 export const PATH_KEYS = ['file_path', 'notebook_path', 'path', 'filePath', 'filename'];
 
+/** A local doc's history (isDocHistory) keeps every version this young, plus v1: a snapshot every 10 s would fill MAX_VERSIONS in 5 min. */
+export const DOC_HISTORY_SECONDS = 30 * 24 * 3600;
 /** The retention limits, mutable so tests can lower them (the Python tests patch artifacts.MAX_VERSIONS / MAX_BYTES). */
-export const limits = { maxVersions: MAX_VERSIONS, maxBytes: MAX_BYTES };
+export const limits = { maxVersions: MAX_VERSIONS, maxBytes: MAX_BYTES, docHistorySeconds: DOC_HISTORY_SECONDS };
 
 export type Json = Record<string, unknown>;
 export interface Version extends Json {
@@ -639,10 +641,22 @@ export class ArtifactStore {
     return [manifest, true];
   }
 
-  /** Keep the newest MAX_VERSIONS / MAX_BYTES; v1 and the latest stay; pinned artifacts keep everything. */
+  /**
+   * Keep the newest MAX_VERSIONS / MAX_BYTES; v1 and the latest stay; pinned artifacts keep everything. A doc's history has its own
+   * limit instead: every version from the last DOC_HISTORY_SECONDS (30 days), plus v1 and the latest.
+   */
   #retain(manifest: Manifest): void {
     if (pyTruthy(manifest.pinned)) return;
     const versions = manifest.versions;
+    if (isDocHistory(manifest)) {
+      const cutoff = this.clock() - limits.docHistorySeconds;
+      for (let k = versions.length - 2; k >= 1; k--) {
+        if (versions[k].at >= cutoff) continue;
+        const [victim] = versions.splice(k, 1);
+        rmtree(pathOf(this.folder(manifest.id), `v${victim.n}`));
+      }
+      return;
+    }
     for (;;) {
       const total = versions.reduce((sum, v) => sum + (v.size ?? 0), 0);
       if (versions.length <= limits.maxVersions && total <= limits.maxBytes) return;

@@ -29,6 +29,7 @@ import {
   WriteTracker,
 } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { configure as configureKeys, issue } from '../../outputs/agent-studio/server/artifacts/keys.ts';
+import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -148,6 +149,42 @@ Deno.test('store: retention by count keeps v1 and the latest; pinned keeps all',
     [p] = store.addVersion(p.id, enc(`p${i}`));
   }
   assertEquals(p.versions.length, 36);
+});
+
+Deno.test("store: a doc's history keeps every version from the last 30 days plus v1, past the 30-version cap", () => {
+  const { tmp, clock, store } = storeFixture();
+  using _ = tmp;
+  const history = new ArtifactHistory(() => store);
+  const doc = { name: 'plan', projectRoot: tmp.dir, artifactId: null as string | null };
+  // a snapshot every 10 s for 10 minutes: 61 versions, twice the cap, all kept
+  for (let i = 0; i <= 60; i++) {
+    history.snapshot(doc, `{"rev":${i}}`, 'user', `rev ${i}`);
+    clock.t += 10;
+  }
+  let m = store.get(doc.artifactId);
+  assertEquals(m.versions.length, 61);
+  assertEquals(history.list(doc).length, 61);
+  // 31 days later: the old ones go, v1 and the new one stay
+  clock.t += 31 * 24 * 3600;
+  history.snapshot(doc, '{"rev":61}', 'user', 'rev 61');
+  m = store.get(doc.artifactId);
+  assertEquals(m.versions.map((v) => v.n), [1, 62]);
+  assertThrows(() => Deno.statSync(join(store.root, m.id, 'v2')));
+  assert(Deno.statSync(join(store.root, m.id, 'v1')).isDirectory);
+  // the versions of the last 30 days stay: 40 more over 20 days (one every 12 h)
+  for (let i = 0; i < 40; i++) {
+    clock.t += 12 * 3600;
+    history.snapshot(doc, `{"late":${i}}`, 'user', `rev ${100 + i}`);
+  }
+  m = store.get(doc.artifactId);
+  assertEquals(m.versions.length, 42, 'v1, v62 (20 days old) and all 40');
+  // an ordinary artifact still keeps 30
+  let a = store.create('chat-1', 'Page', 'html', 'index.html', enc('0'));
+  for (let i = 0; i < 40; i++) {
+    clock.t += 10;
+    [a] = store.addVersion(a.id, enc(`a${i}`));
+  }
+  assertEquals(a.versions.length, MAX_VERSIONS);
 });
 
 Deno.test('store: retention by size', () => {
