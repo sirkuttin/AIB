@@ -9,17 +9,26 @@ import { clip, isDict, isInt, isStr, pyLen } from '../core/py.ts';
 
 const VIEW_CONTEXT_TEST = /<artifact-view-context\b/i;
 const VIEW_CONTEXT = /\s*<artifact-view-context\b[^>]*>[\s\S]*?<\/artifact-view-context\s*>\s*/gi;
-const AGENT_MESSAGE = /^(?:Another Claude session sent a message:\s*)?<agent-message\b([^>]*)>([\s\S]*?)<\/agent-message>\s*([\s\S]*)$/i;
+const AGENT_MESSAGE =
+  /^(?:Another Claude session sent a message:\s*)?<(agent-message|cross-session-message)\b([^>]*)>([\s\S]*?)<\/\1>\s*([\s\S]*)$/i;
 const TEAMMATE = /^<teammate-message\b([^>]*)>([\s\S]*?)<\/teammate-message>$/i;
 const HANDBACK = /^\s*\[Subagent hand-back\]/i;
 const REPORT_FOLLOWS = /The report follows:/i;
-const TRAILER = /^That\s+[“"']?other Claude session/i;
+const TRAILER = /^(?:That\s+[“"']?other Claude session|This came from another Claude session)/i;
+// Whole user turns the harness writes in plain text (StreamUI.wholeNote): only these exact lead-ins, never one quoted further down.
+const HARNESS_TEXT = [
+  /^(?:<[a-z][\w-]*\s*\/>\s*)*(?:The summarized conversation included Artifact content written by people other than you\b[^\n]*\s*)?This session is being continued from a previous conversation\b/i,
+  /^\[SYSTEM NOTIFICATION - NOT USER INPUT\]/,
+  /^\[handback-send-enforce\]/,
+  /^Base directory for this skill:/i,
+  /^The coordinator sent a message while you were working:\s*[\s\S]*?\s*Address this before completing your current task\.$/i,
+];
 const TASK_NOTE = /<task-notification\b[^>]*>[\s\S]*?<\/task-notification>/gi;
 const TASK_NOTE_START = /^<task-notification\b/i;
 // Wrapper blocks the agent's harness injects into a user turn: the same list and peeling as StreamUI (stream-ui.js).
 const INJECTED_TAGS = 'system-reminder|side-sessions-event|user-prompt-submit-hook|hook-output|session-start-hook|' +
   'post-tool-use-hook|pre-tool-use-hook|stop-hook|ide_opened_file|ide_selection|ide_diagnostics|environment_details|' +
-  'system_instruction|cross-session-message';
+  'system_instruction|cross-session-message|local-command-caveat|local-command-stdout|local-command-stderr|fork-boilerplate';
 const INJECTED_START = new RegExp('^<(?:' + INJECTED_TAGS + ')(?![\\w-])', 'i');
 // A body never contains its own closing tag, so a match cannot run across the person's words into a later block.
 const BLOCK = '<(' + INJECTED_TAGS + ')(?![\\w-])[^>]*>((?:(?!</\\1\\s*>)[\\s\\S])*)</\\1\\s*>';
@@ -71,6 +80,7 @@ export function stripInjected(text: string): string {
   if (!/<[a-z]/i.test(text)) return text;
   const s = text.trim(); // longer text is left whole, as isWrapper leaves it
   if (s.length > MAX_CLASSIFIED && pyLen(s) > MAX_CLASSIFIED) return text;
+  if (wholeWrapper(s)) return text; // a relayed message or harness text as a whole: not words with blocks peeled off its ends
   const p = peelInjected(text);
   return p.count ? p.rest : text;
 }
@@ -79,19 +89,25 @@ export function stripInjected(text: string): string {
 export function isWrapper(text: string): boolean {
   const s = text.trim();
   if (!s || (s.length > MAX_CLASSIFIED && pyLen(s) > MAX_CLASSIFIED)) return false;
-  const m = AGENT_MESSAGE.exec(s);
-  if (m) {
-    const rest = m[3].trim();
-    if (!rest || TRAILER.test(rest)) return true;
-  }
-  if (TEAMMATE.test(s)) return true;
-  if (HANDBACK.test(s) && REPORT_FOLLOWS.test(s)) return true;
-  if (!s.replace(TASK_NOTE, '').trim() && TASK_NOTE_START.test(s)) return true;
+  if (wholeWrapper(s)) return true;
   if (INJECTED_START.test(s)) {
     const p = peelInjected(s);
     if (p.count && !p.rest) return true;
   }
   return false;
+}
+
+/** isWrapper without the "only injected blocks" case: the trimmed `s` is one known wrapper or harness text (StreamUI.wholeNote). */
+function wholeWrapper(s: string): boolean {
+  const m = AGENT_MESSAGE.exec(s);
+  if (m) {
+    const rest = m[4].trim();
+    if (!rest || TRAILER.test(rest)) return true;
+  }
+  if (HARNESS_TEXT.some((re) => re.test(s))) return true;
+  if (TEAMMATE.test(s)) return true;
+  if (HANDBACK.test(s) && REPORT_FOLLOWS.test(s)) return true;
+  return !s.replace(TASK_NOTE, '').trim() && TASK_NOTE_START.test(s);
 }
 
 /** The event carries at least one saved file reference ({n, i} integers). */

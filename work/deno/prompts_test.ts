@@ -103,6 +103,10 @@ const EXTRA_TEXTS = [
   '😀'.repeat(250000) + 'x',
   'x'.repeat(500000),
   '<system-reminder>' + '😀'.repeat(249990) + '</system-reminder>',
+  '﻿<a-b/>　<c /> This session is being continued from a previous conversation, so',
+  'Another Claude session sent a message: <cross-session-message from="x">a</cross-session-message>  ',
+  'The coordinator sent a message while you were working:\nx\nAddress this before completing your current task.\n',
+  '[system notification - not user input] lower case is a prompt',
 ];
 
 const EXTRA_EVENTS: unknown[] = [

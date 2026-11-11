@@ -69,7 +69,19 @@
 
   /* ---- Injected user text ---- */
   const HANDBACK = /^\s*\[Subagent hand-back\]/i;
-  const TRAILER = /^That\s+[“"']?other Claude session/i;
+  // The paragraph Claude Code appends after a relayed message (agent-message: 'That "other Claude session" is an agent…',
+  // cross-session-message: 'This came from another Claude session…').
+  const TRAILER = /^(?:That\s+[“"']?other Claude session|This came from another Claude session)/i;
+  /* Whole user turns the harness writes in plain text (no wrapper tag at the start). Only these exact lead-ins count: a prompt
+     that quotes one further down stays a prompt. Kept in step with prompts.ts / prompts.py (wholeWrapper). */
+  const SELF_CLOSED = /^(?:<[a-z][\w-]*\s*\/>\s*)+/i;
+  const COMPACTED =
+    /^(?:<[a-z][\w-]*\s*\/>\s*)*(?:The summarized conversation included Artifact content written by people other than you\b[^\n]*\s*)?This session is being continued from a previous conversation\b/i;
+  const SYSTEM_NOTICE = /^\[SYSTEM NOTIFICATION - NOT USER INPUT\]/;
+  const HANDBACK_NUDGE = /^\[handback-send-enforce\]/;
+  const SKILL_LOAD = /^Base directory for this skill:/i;
+  const COORDINATOR =
+    /^The coordinator sent a message while you were working:\s*([\s\S]*?)\s*Address this before completing your current task\.$/i;
   const attr = (attrs, name) => {
     const m = new RegExp('\\b' + name + '\\s*=\\s*"([^"]*)"', 'i').exec(attrs || '');
     return m ? m[1] : '';
@@ -118,17 +130,48 @@
     if (typeof text !== 'string') return null;
     const s = text.trim();
     if (!s || s.length > 500000) return null;
+    const whole = wholeNote(s);
+    if (whole) return whole;
+    if (INJECTED_START.test(s)) {
+      const p = peelInjected(s);
+      if (p.blocks.length && !p.rest) return injectedNote(p.blocks);
+    }
+    return null;
+  }
+  /* classifyUser without the "only injected blocks" case: `s` (trimmed) is one known wrapper or harness text as a whole. */
+  function wholeNote(s) {
     let m =
-      /^(?:Another Claude session sent a message:\s*)?<agent-message\b([^>]*)>([\s\S]*?)<\/agent-message>\s*([\s\S]*)$/i.exec(
+      /^(?:Another Claude session sent a message:\s*)?<(agent-message|cross-session-message)\b([^>]*)>([\s\S]*?)<\/\1>\s*([\s\S]*)$/i.exec(
         s,
       );
-    if (m && (!m[3].trim() || TRAILER.test(m[3].trim()))) {
-      const inner = m[2],
-        hand = HANDBACK.test(inner);
+    if (m && (!m[4].trim() || TRAILER.test(m[4].trim()))) {
+      const inner = m[3],
+        hand = HANDBACK.test(inner),
+        name = attr(m[2], 'from-name');
       return {
         kind: hand ? 'subagent' : 'agent',
-        from: attr(m[1], 'from'),
+        from: attr(m[2], 'from'),
+        ...(name && !hand ? { fromName: name } : {}),
         body: hand ? stripHandback(inner) : inner.trim(),
+      };
+    }
+    m = COORDINATOR.exec(s);
+    if (m) return { kind: 'agent', from: '', fromName: 'coordinator', body: m[1].trim() };
+    if (COMPACTED.test(s))
+      return { kind: 'system', from: '', summary: 'Conversation summary', body: s.replace(SELF_CLOSED, '') };
+    if (SKILL_LOAD.test(s)) return { kind: 'system', from: '', summary: 'Skill instructions', body: s };
+    if (HANDBACK_NUDGE.test(s)) return { kind: 'system', from: '', summary: 'Hand-back reminder', body: s };
+    if (SYSTEM_NOTICE.test(s)) {
+      const parts = [],
+        each = /<task-notification\b[^>]*>([\s\S]*?)<\/task-notification>/gi;
+      let one;
+      while ((one = each.exec(s))) parts.push(taskNotice(one[1]));
+      if (!parts.length) return { kind: 'system', from: '', summary: 'System notification', body: s };
+      return {
+        kind: 'system',
+        from: '',
+        summary: parts.length === 1 ? parts[0].summary || 'Background task' : parts.length + ' background tasks',
+        body: parts.map((p) => p.body).join('\n\n---\n\n'),
       };
     }
     m = /^<teammate-message\b([^>]*)>([\s\S]*?)<\/teammate-message>$/i.exec(s);
@@ -147,10 +190,6 @@
         body: parts.map((p) => p.body).join('\n\n---\n\n'),
       };
     }
-    if (INJECTED_START.test(s)) {
-      const p = peelInjected(s);
-      if (p.blocks.length && !p.rest) return injectedNote(p.blocks);
-    }
     return null;
   }
   /* Wrapper blocks the agent's harness injects into a user turn (Claude Code's reminders, linked-session events, hook output,
@@ -159,7 +198,7 @@
   const INJECTED_TAGS =
     'system-reminder|side-sessions-event|user-prompt-submit-hook|hook-output|session-start-hook|post-tool-use-hook|' +
     'pre-tool-use-hook|stop-hook|ide_opened_file|ide_selection|ide_diagnostics|environment_details|system_instruction|' +
-    'cross-session-message';
+    'cross-session-message|local-command-caveat|local-command-stdout|local-command-stderr|fork-boilerplate';
   const INJECTED_START = new RegExp('^<(?:' + INJECTED_TAGS + ')(?![\\w-])', 'i');
   // A body never contains its own closing tag, so a match cannot run across the person's words into a later block.
   const BLOCK = '<(' + INJECTED_TAGS + ')(?![\\w-])[^>]*>((?:(?!</\\1\\s*>)[\\s\\S])*)</\\1\\s*>';
@@ -190,10 +229,13 @@
     const has = (re) => blocks.some((b) => re.test(b.body));
     const tags = blocks.map((b) => b.tag);
     let summary = '';
-    if (tags.includes('side-sessions-event') || has(/\bfinished a turn\. It reported\b/i)) summary = 'Linked session report';
+    if (tags.includes('side-sessions-event') || has(/\bfinished a turn\. It reported\b/i))
+      summary = 'Linked session report';
     else if (has(/^\s*Linked sessions now\b/i)) summary = 'Linked sessions';
     else if (tags.every((t) => /^ide_/.test(t))) summary = 'IDE context';
     else if (tags.every((t) => /hook/.test(t))) summary = 'Hook output';
+    else if (tags.every((t) => /^local-command-/.test(t))) summary = 'Command output';
+    else if (tags.every((t) => t === 'fork-boilerplate')) summary = 'Fork instructions';
     return { kind: 'system', from: '', ...(summary ? { summary } : {}), body };
   }
   /* A user turn that mixes the person's words with injected blocks: {text: their words (may be '' when only files remain),
@@ -201,6 +243,8 @@
   function splitInjected(text) {
     // longer text is left whole, as classifyUser leaves it (it is then the person's message)
     if (typeof text !== 'string' || !/<[a-z]/i.test(text) || text.trim().length > 500000) return null;
+    // a relayed message or harness text as a whole is one note (classifyUser), not words with blocks peeled off its ends
+    if (wholeNote(text.trim())) return null;
     const p = peelInjected(text);
     return p.blocks.length ? { text: p.rest, note: injectedNote(p.blocks) } : null;
   }
@@ -222,8 +266,10 @@
         : note.from
           ? 'Report from subagent ' + shortId(note.from)
           : 'Report from subagent';
-    if (note.kind === 'agent')
-      return name || note.from ? 'Message from agent "' + (name || shortId(note.from)) + '"' : 'Message from agent';
+    if (note.kind === 'agent') {
+      const who = name || note.fromName || (note.from && shortId(note.from));
+      return who ? 'Message from agent "' + who.replace(/\s+/g, ' ').slice(0, 80) + '"' : 'Message from agent';
+    }
     return note.summary ? 'System note · ' + note.summary.replace(/\s+/g, ' ').slice(0, 80) : 'System note';
   }
 

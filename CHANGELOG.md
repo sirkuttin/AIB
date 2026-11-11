@@ -14,6 +14,8 @@
   confirms for Discard and Merge; a discarded chat stays readable; artifact Compare handles a missing final newline.
 - Settings and setup: Settings fits at large interface sizes; turned-off agents show Turn on; uninstall refusals come first;
   one name, AIB, everywhere; appId dev.aib.app for the built app.
+- Messages relayed from other agents, system notes and session summaries are collapsed notes, not your prompts (Prompts
+  view, search, unread counts and chat titles).
 - Updates: a failed check is retried after an hour and says when it failed; the full version is shown; the installed
   version's download is cleaned up.
 

@@ -820,6 +820,22 @@ const PROMPTS: [string, string][] = [
     "",
   ],
   ["<local-command-stdout>Compacted</local-command-stdout>", ""],
+  // harness text with a plain-text lead-in is never a title (synthetic shapes of Claude Code's injected turns)
+  [
+    "<artifact-content-authored-by-others/>\nThe summarized conversation included Artifact content written by people other than you.\n" +
+    "This session is being continued from a previous conversation that ran out of context.\n\n<system-reminder>x</system-reminder>\nSummary",
+    "",
+  ],
+  [
+    'Another Claude session sent a message:\n<cross-session-message from="local_1" from-name="Lead">Freeze now</cross-session-message>\n\n' +
+    "This came from another Claude session.",
+    "",
+  ],
+  ["[SYSTEM NOTIFICATION - NOT USER INPUT]\nAutomated.\n<task-notification><status>completed</status></task-notification>", ""],
+  ["[handback-send-enforce] Your report has not been delivered.", ""],
+  ["The coordinator sent a message while you were working:\nRun lint.\n\nAddress this before completing your current task.", ""],
+  ["<fork-boilerplate>You are a worker fork.</fork-boilerplate>\nCheck slice 2", "Check slice 2"],
+  ['Explain "This session is being continued from a previous conversation"', 'Explain "This session is being continued from a previous conversation"'],
   [
     "<task-notification>\n<task-id>bf0og2uoa</task-id>\n<status>completed</status>\n</task-notification>",
     "",
