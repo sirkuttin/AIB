@@ -23,6 +23,7 @@ import { FolderMemory } from '../desktop/folders.ts';
 import { Refused } from '../worktrees/merge.ts';
 import { EditorError } from '../desktop/editors.ts';
 import type { UpdateService } from '../desktop/updater.ts';
+import { cleanNotifyRequest, type DesktopNotifications } from '../desktop/notify.ts';
 import { MAX_PROMPT_BODY_BYTES } from '../acp/attachments.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
@@ -109,6 +110,9 @@ export interface WebContext {
   editorList: Record<string, unknown>;
   /** The chats' terminal shells (terminal/sessions.ts); ended when this server closes. */
   terminals: TerminalSessions;
+  /** The desktop app's own notifications (desktop/notify.ts), set by main.ts in the app; null in a server run (a browser uses the
+   * web Notification API instead). */
+  desktopNotify: DesktopNotifications | null;
 }
 
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
@@ -140,6 +144,13 @@ export class WebServer {
       await c.viewPrefs.update(body);
       const view = c.viewPrefs.public();
       return this.json(200, { revision: view.revision, warning: view.warning, ok: true });
+    });
+    // The desktop app shows the page's notifications itself. {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
+    this.native.set('POST /api/live/desktop/notify', async (c, _url, body) => {
+      const n = c.desktopNotify;
+      if (!n) return this.json(409, { error: 'Only the AIB desktop app shows notifications itself' });
+      const result = await n.show(cleanNotifyRequest(body));
+      return this.json(200, { ok: true, shown: result.shown, reason: result.reason ?? '', mechanism: n.mechanism });
     });
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, c.projectPrefs.public()));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
@@ -407,6 +418,7 @@ export function makeContext(
     gate: null,
     editorList: {},
     terminals: new TerminalSessions(),
+    desktopNotify: null,
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(options.stateDir, options.host, () => ctx.token, () => chatStudioOf(ctx));

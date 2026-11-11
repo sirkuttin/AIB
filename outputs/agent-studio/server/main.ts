@@ -346,6 +346,7 @@ export async function main(argv: string[]): Promise<void> {
         }
         : undefined,
     });
+    ctx.desktopNotify = app.notifications; // POST /api/live/desktop/notify: the page's notifications, shown by this process
     await app.start(); // the window navigates now: the server already listens
     await watchSignal(stateDir, () => void app.showWindow());
     void ensureStartMenuShortcut(Deno.execPath());

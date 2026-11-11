@@ -10,11 +10,13 @@
  *   - window.open() and target=_blank links open in the system browser (window.open returns null); a plain click on a link to
  *     another origin navigates the app window itself. desktop-bridge.js turns such clicks into window.open; the load check below
  *     is the safety net for anything else (a form, location.assign).
- *   - `bindings.*` exist in every frame of the window, including cross-origin iframes (artifact pages), so the bound functions
- *     only show notifications, rate-limited.
+ *   - `bindings.*` exist in every frame of the window, including cross-origin iframes (artifact pages), so the one bound function
+ *     (`aibDesktop`) only tells the page it runs in the app. Notifications go through the web server (POST
+ *     /api/live/desktop/notify, notify.ts), which needs the page's token.
  */
 
 import { getLogger } from '../core/log.ts';
+import { DesktopNotifications, type NotifyTarget, type OsNotify } from './notify.ts';
 
 const log = getLogger('desktop');
 
@@ -266,12 +268,10 @@ export interface TrayItem {
   disabled?: boolean;
 }
 
-export interface Notifier {
-  /** True when a notification would show now. */
-  ready(): Promise<boolean>;
-  /** Asks the OS once; 'granted' or 'denied'. */
-  request(): Promise<'granted' | 'denied'>;
-  show(title: string, body: string): void;
+/** The page function a notification click calls (notify-ui.js openFromDesktop): true once the page has opened the target. */
+export function openTargetScript(target: NotifyTarget | null): string {
+  const t = JSON.stringify(target).replace(/</g, '\\u003c');
+  return `(function(){var N=window.AgentNotifyUI;return !!(N&&N.openFromDesktop&&N.openFromDesktop(${t}));})()`;
 }
 
 export interface Shell {
@@ -302,7 +302,8 @@ export interface Shell {
   /** A native OK/Cancel question; Cancel is the default button. Resolves true for OK. Must not block the event loop. */
   ask(message: string): Promise<boolean>;
   openExternal(url: string): void;
-  notifier: Notifier;
+  /** The OS notifications (notify.ts), or null where there are none. */
+  notifier: OsNotify | null;
 }
 
 export interface DesktopOptions {
@@ -357,7 +358,8 @@ export class DesktopApp {
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
   readonly origin: string;
   readonly geometryPath: string;
-  readonly notifyAllowed = rateLimiter(6, 30_000);
+  /** What POST /api/live/desktop/notify shows through; a click opens the chat (openFromNotification). */
+  readonly notifications: DesktopNotifications;
   /** Sending the window back to our page: at most 4 times in 30 s, so a page that fails at once can't make a navigation loop. */
   readonly backAllowed = rateLimiter(4, 30_000);
   keeper: WindowHandle | null = null;
@@ -370,6 +372,25 @@ export class DesktopApp {
   constructor(readonly shell: Shell, readonly options: DesktopOptions) {
     this.origin = new URL(options.url).origin;
     this.geometryPath = `${options.stateDir}${SEP}${GEOMETRY_FILE}`;
+    this.notifications = new DesktopNotifications(shell.notifier, (target) => void this.openFromNotification(target));
+  }
+
+  /**
+   * A notification was clicked: the window comes forward (made again if it was closed) and the page opens the chat or the inbox.
+   * A window that is still loading gets a few more tries (every 500 ms, up to `tries`). Resolves true once the page took it.
+   */
+  async openFromNotification(target: NotifyTarget | null, tries = 20, waitMs = 500): Promise<boolean> {
+    if (this.#quitting) return false;
+    await this.showWindow();
+    if (!target) return true;
+    for (let i = 0; i < tries; i++) {
+      const win = this.window;
+      if (!win || win.isClosed()) return false;
+      if ((await win.evaluate(openTargetScript(target))) === true) return true;
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    }
+    log.info('notification click: the page did not open %s', target.type);
+    return false;
   }
 
   async start(): Promise<void> {
@@ -554,16 +575,9 @@ export class DesktopApp {
     }
   }
 
+  /** One binding: the page asks it whether it runs in the app (desktop-bridge.js available()). It does nothing else. */
   bindAll(win: WindowHandle): void {
-    const n = this.shell.notifier;
-    const text = (v: unknown, max: number) => String(v ?? '').slice(0, max);
-    win.bind('aibNotify', (title, body) => {
-      if (!this.notifyAllowed()) return false;
-      n.show(text(title, 200), text(body, 500));
-      return true;
-    });
-    win.bind('aibNotifyReady', () => n.ready());
-    win.bind('aibRequestNotifications', () => n.request());
+    win.bind('aibDesktop', () => true);
   }
 
   scheduleSave(win: WindowHandle): void {

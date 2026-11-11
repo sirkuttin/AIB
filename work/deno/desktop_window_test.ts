@@ -239,9 +239,8 @@ function fakeShell(answer = false) {
     ask: (m) => (s.questions.push(m), Promise.resolve(s.answer)),
     openExternal: (u) => void s.external.push(u),
     notifier: {
-      ready: () => Promise.resolve(true),
-      request: () => Promise.resolve('granted'),
-      show: (t, b) => void s.notes.push([t, b]),
+      mechanism: 'fake',
+      show: (t, b) => (s.notes.push([t, b]), Promise.resolve({ shown: true, code: 1 })),
     },
   };
   return { s, shell };
@@ -274,14 +273,15 @@ async function makeApp(
   return { app, s, quits, stops, order, dir, done: () => Deno.remove(dir, { recursive: true }) };
 }
 
-Deno.test('start: one window titled AIB on the page, a keeper, a tray, three bindings only', async () => {
+Deno.test('start: one window titled AIB on the page, a keeper, a tray, one binding only', async () => {
   const { s, done } = await makeApp(() => Promise.resolve(0));
   try {
     assertEquals(s.windows.length, 1);
     const w = s.windows[0];
     assertEquals(w.options.title, 'AIB');
     assertEquals(w.urls, ['http://127.0.0.1:8890/']);
-    assertEquals([...w.bound.keys()].sort(), ['aibNotify', 'aibNotifyReady', 'aibRequestNotifications']);
+    assertEquals([...w.bound.keys()], ['aibDesktop'], 'it only says "the app"; notifications go through the server');
+    assertEquals(await w.bound.get('aibDesktop')!(), true);
     assertEquals(s.keepers, 1);
     assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', 'Quit AIB']);
     const png = trayIconPng();
@@ -388,6 +388,8 @@ Deno.test('Windows tray: callback events, menu commands and the NOTIFYICONDATAW 
   assertEquals(trayEvent(0x0200), null); // WM_MOUSEMOVE
   assertEquals(trayEvent(0x0203), null); // WM_LBUTTONDBLCLK
   assertEquals(trayEvent(0x12340205n), 'menu', 'only the low word counts');
+  assertEquals(trayEvent(0x0405), 'balloon-click'); // NIN_BALLOONUSERCLICK
+  assertEquals(trayEvent(0x0404), null); // NIN_BALLOONTIMEOUT
   const items = [{ id: 'open', label: 'Open AIB' }, { id: 'quit', label: 'Quit AIB' }];
   assertEquals(items.map((_, i) => menuCommand(i)), [1, 2]);
   assertEquals([chosenItem(items, 0), chosenItem(items, 1), chosenItem(items, 2), chosenItem(items, 3)], [null, 'open', 'quit', null]);
@@ -467,17 +469,14 @@ Deno.test('a page that left the app origin opens outside and the window goes bac
   }
 });
 
-Deno.test('notification bindings: capped text and a rate limit', async () => {
+Deno.test('notifications: the app shows them through its OS notifier, rate-limited', async () => {
   const a = await makeApp(() => Promise.resolve(0));
   try {
-    const notify = a.s.windows[0].bound.get('aibNotify')!;
-    assertEquals(await notify('t'.repeat(300), 'b'), true);
-    assertEquals(a.s.notes[0][0].length, 200);
-    for (let i = 0; i < 5; i++) await notify('x', 'y');
-    assertEquals(await notify('x', 'y'), false, 'the 7th within 30 s is dropped');
+    const req = { title: 't', body: 'b', target: null, test: false };
+    assertEquals(await a.app.notifications.show(req), { shown: true, code: 1 });
+    for (let i = 0; i < 5; i++) await a.app.notifications.show(req);
+    assertEquals((await a.app.notifications.show(req)).shown, false, 'the 7th within 30 s is dropped');
     assertEquals(a.s.notes.length, 6);
-    assertEquals(await a.s.windows[0].bound.get('aibNotifyReady')!(), true);
-    assertEquals(await a.s.windows[0].bound.get('aibRequestNotifications')!(), 'granted');
   } finally {
     await a.done();
   }

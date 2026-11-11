@@ -118,6 +118,7 @@ function run(start: TrayWorkerStart): void {
         if (msg === TRAY_CALLBACK) {
           const what = trayEvent(lParam);
           if (what === 'click') post({ type: 'click' });
+          else if (what === 'balloon-click') post({ type: 'balloon-click' });
           else if (what === 'menu') showMenu(hwnd);
           return 0n;
         }

@@ -1,10 +1,11 @@
 /**
- * The real Shell for window.ts: Deno.BrowserWindow, Deno.Tray, the native question box and Deno-side notifications. Only loaded in
+ * The real Shell for window.ts: Deno.BrowserWindow, Deno.Tray, the native question box and the OS notifications (notify.ts). Only loaded in
  * a `deno desktop` build (isDesktopApp()); nothing here is reached by tests. API facts: docs in window.ts and the stage D report.
  */
-import type { Notifier, Shell, TrayItem, WindowHandle } from './window.ts';
+import type { Shell, TrayItem, WindowHandle } from './window.ts';
+import { type OsNotify, posixNotify, windowsNotify } from './notify.ts';
 import { isExternal, keepHidden } from './window.ts';
-import { startWindowsTray, type WindowsTray } from './tray_win.ts';
+import { startWindowsTray, userNotificationState, type WindowsTray } from './tray_win.ts';
 import { applyAppIcon } from './window_icon_win.ts';
 import { writeTrayState } from './host_tray.ts';
 import { getLogger } from '../core/log.ts';
@@ -80,37 +81,6 @@ export function windowsAsk(): ((message: string) => Promise<boolean>) | null {
   }
 }
 
-function deskNotifier(): Notifier {
-  let unsupported = false; // the platform has no permission model: notifications just show
-  return {
-    async ready() {
-      if (unsupported) return true;
-      try {
-        const status = await G.navigator.permissions.query({ name: 'notifications' });
-        return status.state === 'granted';
-      } catch {
-        return G.Notification?.permission === 'granted';
-      }
-    },
-    async request() {
-      try {
-        return (await G.Notification.requestPermission()) === 'granted' ? 'granted' : 'denied';
-      } catch (error) {
-        if (/not supported/i.test(String(error))) {
-          unsupported = true;
-          return 'granted';
-        }
-        return 'denied';
-      }
-    },
-    show(title, body) {
-      try {
-        new G.Notification(title, { body, silent: true });
-      } catch { /* nothing to fall back to */ }
-    },
-  };
-}
-
 export function openExternal(url: string): void {
   if (!isExternal(url, 'http://127.0.0.1:1')) return; // http(s) only (an app-origin URL never reaches here)
   const [cmd, args] = Deno.build.os === 'windows'
@@ -171,6 +141,14 @@ export function nativeShell(): Shell {
   let tray: Any = null; // held for the app's life, so the native icon is never collected
   let windowsTray: WindowsTray | null = null;
   let trayItems: TrayItem[] = [];
+  // Windows: a balloon on our own tray icon (a toast on Windows 10/11); its click comes back through the tray worker.
+  const winNotify = Deno.build.os === 'windows'
+    ? windowsNotify({
+      balloon: (title, body) => (windowsTray ? windowsTray.balloon(title, body) : null),
+      quietState: userNotificationState,
+    })
+    : null;
+  const notifier: OsNotify | null = winNotify ?? posixNotify(Deno.build.os);
   const menuOf = (items: TrayItem[]) => items.map((i) => ({ item: { label: i.label, id: i.id, enabled: !i.disabled } }));
   const denoTray = (
     icon: Uint8Array,
@@ -211,11 +189,12 @@ export function nativeShell(): Shell {
       // if that can't start. Elsewhere Deno.Tray.
       trayItems = items.map((i) => ({ ...i }));
       if (Deno.build.os === 'windows') {
-        void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m)).then((t) => {
-          if (t) windowsTray = t;
-          else denoTray(icon, tooltip, items, onClick, onMenu);
-          writeTrayState('app', { shown: true, tooltip, icons: t ? t.icons.map(String) : [] });
-        });
+        void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m), { onBalloonClick: () => winNotify?.clicked() })
+          .then((t) => {
+            if (t) windowsTray = t;
+            else denoTray(icon, tooltip, items, onClick, onMenu);
+            writeTrayState('app', { shown: true, tooltip, icons: t ? t.icons.map(String) : [] });
+          });
         return;
       }
       denoTray(icon, tooltip, items, onClick, onMenu);
@@ -241,6 +220,6 @@ export function nativeShell(): Shell {
     },
     ask,
     openExternal,
-    notifier: deskNotifier(),
+    notifier,
   };
 }
