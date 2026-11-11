@@ -842,7 +842,13 @@
       }
       const lv = c.live || {},
         root = lv.projectRoot || c.projectRoot || '';
-      name = name || String(root || '').split(/[\\/]/).filter(Boolean).pop() || '';
+      name =
+        name ||
+        String(root || '')
+          .split(/[\\/]/)
+          .filter(Boolean)
+          .pop() ||
+        '';
       TV.notePlace(lv.cwd || c.cwd, name);
       TV.notePlace(root, name);
     }
@@ -997,7 +1003,8 @@
   function mergeBlockedReason(c) {
     if (!c) return '';
     if (c.elsewhere && !current) return 'This chat is open in another app. Merge it there';
-    if (window.AgentOrganizeUI?.bucket?.(c) === 'archived') return 'This chat is archived. Unarchive it to merge its work';
+    if (window.AgentOrganizeUI?.bucket?.(c) === 'archived')
+      return 'This chat is archived. Unarchive it to merge its work';
     if (current && snapshot && snapshot.readOnly) return "This chat is read only, so it can't merge";
     if (!current || (snapshot && snapshot.closed)) return 'This chat is closed. Continue it to merge its work';
     return '';
@@ -1240,7 +1247,9 @@
         text('pre', row.value),
       );
       article.append(details);
-    } else if (row.value) article.append(text('pre', row.value));
+    } else if (row.value && row.role === 'notice' && (row.label === 'error' || row.label === 'disconnected'))
+      article.append(linkedPre(row.value)); // an agent's error often names a page to open (a plan to upgrade, a sign-in)
+    else if (row.value) article.append(text('pre', row.value));
     if (row.actions?.length) article.append(clashButtons(row.actions));
     for (const [index, image] of (row.attachments || []).entries()) {
       if (image && image.type === 'studio_file') {
@@ -2815,7 +2824,12 @@
       const c = conversations.find((x) => x.live?.id === result.id);
       if (!c)
         throw Error('The agent opened, but its conversation is not listed yet. Your message is still in the box.');
-      if (selected) return; // the user moved on to another chat while this one opened; it is in the list
+      if (selected && aliasKey(selected) !== aliasKey(c)) {
+        // The user opened another chat while this one was starting. The message was typed for the new chat, so it still goes
+        // there (this used to return here and the message vanished); the page stays where the user went.
+        await sendFirstInBackground(c, result.id, draft, problems);
+        return;
+      }
       if (provider !== 'all') provider = c.provider;
       viewStore?.adopt('new-chat', aliasKey(c)); // the view picked on the New chat page carries over to the real chat
       await openConversation(c);
@@ -2873,6 +2887,59 @@
       startingNew = false;
       if (newDraft && !selected) renderNewChat();
       else if (selected) renderHeader();
+    }
+  }
+  // Plain text with its http(s) links clickable (only those two schemes; the text itself is never read as markup).
+  function linkedPre(value) {
+    const pre = document.createElement('pre');
+    let last = 0;
+    for (const m of String(value).matchAll(/https?:\/\/[^\s<>"']+/g)) {
+      const url = m[0].replace(/[.,;:!?)\]]+$/, '');
+      if (m.index > last) pre.append(String(value).slice(last, m.index));
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = url;
+      pre.append(link);
+      last = m.index + url.length;
+    }
+    if (last < String(value).length) pre.append(String(value).slice(last));
+    return pre;
+  }
+  // The first message of a chat that opened while the user was looking at another chat: sent without leaving that chat.
+  // A failure is shown and the text is kept as the draft of the new chat, so it never disappears.
+  async function sendFirstInBackground(c, id, draft, problems) {
+    const key = aliasKey(c),
+      pending = (attachmentStore.get('new-chat') || []).slice();
+    attachmentStore.delete('new-chat');
+    try {
+      const fingerprint = await imageFingerprint(pending),
+        clientMessageId = attemptId(key, draft, fingerprint),
+        attachments = await imageBlocks(pending);
+      await post('prompt', { id, text: draft, clientMessageId, attachments });
+      clearAttempt(key, draft, fingerprint);
+      if (problems.length)
+        fail(
+          Error(
+            'Could not apply the chosen settings: ' +
+              problems.join(' · ') +
+              ' The chat started with the agent defaults.',
+          ),
+        );
+    } catch (error) {
+      try {
+        drafts.set(key, draft);
+      } catch {}
+      if (pending.length) attachmentStore.set(key, pending);
+      fail(
+        Error(
+          sentence(error.message) +
+            ' The new ' +
+            nameOf(c.provider) +
+            ' chat is open; your first message is kept as its draft.',
+        ),
+      );
     }
   }
   // Continue this folder in a new chat with the other agent. Nothing is sent: a new chat opens with the agent chosen and,
@@ -4666,6 +4733,8 @@
     commandDuration,
     commandState,
     continueConversation,
+    startNewChat,
+    bubbleFull,
     discoverSessions,
     fetchEarlier,
     isRunningCommand,
