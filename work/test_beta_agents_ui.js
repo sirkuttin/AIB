@@ -639,3 +639,61 @@ test('the Beta card CSS: the key link is a teal st-link, line-start links sit on
     "the app's disabled primary (chat.css .primary:disabled), not 50% opacity",
   );
 });
+
+// The page scroll: a repaint replaces every node, which used to drop the scroll position (the page is empty for a moment) and the
+// focus (the clicked button is gone), so the window jumped away from the card you clicked. The fake DOM has no layout, so this one
+// simulates it: rows are 150px tall from y=100, the content scrolls, and replacing its children clamps the scroll to 0.
+test('Install on a card that is not the first keeps the scroll position, the card where it was, and the focus on the card', async () => {
+  const list = setupList();
+  const { shell, ctx, betaRow } = await openSettings(list);
+  const content = shell.body.querySelector('.st-content');
+  const proto = Object.getPrototypeOf(content);
+  const realRect = proto.getBoundingClientRect;
+  const realReplace = content.replaceChildren;
+  const scrolled = [];
+  try {
+    content.scrollTop = 400;
+    content.replaceChildren = function (...n) {
+      this.scrollTop = 0; // the empty page clamps the scroll
+      return realReplace.apply(this, n);
+    };
+    proto.getBoundingClientRect = function () {
+      if (this === content) return { top: 0, bottom: 700, left: 0, right: 800, width: 800, height: 700 };
+      const rows = content.querySelectorAll('.st-agent');
+      const i = rows.indexOf(this);
+      if (i >= 0) {
+        const top = 100 + i * 150 - content.scrollTop;
+        return { top, bottom: top + 150, left: 0, right: 800, width: 800, height: 150 };
+      }
+      const row = this.closest && this.closest('.st-agent');
+      if (row && this.matches('.st-beta-term')) {
+        const top = row.getBoundingClientRect().top + 30;
+        return { top, bottom: top + 50, left: 0, right: 800, width: 800, height: 50 };
+      }
+      return realRect.call(this);
+    };
+    ctx.AibTerminal = { runSetup: () => ({ close() {} }) };
+    const row = betaRow('Cursor CLI');
+    const topBefore = row.getBoundingClientRect().top;
+    const install = buttonOf(row, 'Install');
+    install.focus();
+    // Anything that scrolls an element into view or focuses something else is a jump.
+    for (const n of shell.body.all()) n.scrollIntoView = () => scrolled.push(n);
+    install.click();
+    await flush();
+    const after = betaRow('Cursor CLI');
+    assert.ok(after.querySelector('.st-beta-term'), 'the panel opened on the card');
+    assert.equal(content.scrollTop, 400, 'the scroll position is kept');
+    assert.equal(after.getBoundingClientRect().top, topBefore, 'the clicked card is where it was on screen');
+    assert.ok(after.contains(shell.document.activeElement), 'focus is still on the card');
+    assert.equal(scrolled.length, 0, 'nothing was scrolled into view');
+    // Cancel/Close on the same card: same again.
+    buttonOf(after.querySelector('.st-beta-term'), 'Close').click();
+    await flush();
+    assert.equal(content.scrollTop, 400);
+    assert.equal(betaRow('Cursor CLI').getBoundingClientRect().top, topBefore);
+    assert.ok(betaRow('Cursor CLI').contains(shell.document.activeElement), 'focus stays on the card after Close');
+  } finally {
+    proto.getBoundingClientRect = realRect;
+  }
+});

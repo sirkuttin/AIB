@@ -744,6 +744,7 @@
   function agentRow(a, opts) {
     const shared = !!(opts && opts.sharedBlock);
     const row = el('div', null, 'st-agent' + (a.enabled ? '' : ' off'));
+    row.dataset.agent = a.id; // keepView finds this card again after a repaint
     const head = el('div', null, 'st-agent-head');
     head.append(el('span', a.letter || '?', 'st-letter'), el('strong', a.name));
     // Beta agents carry no tag: the section heading says Beta.
@@ -1239,6 +1240,7 @@
     const entry = { node, status, run: null, done: null, key: 'setup:' + a.id, running: true };
     betaTerms[a.id] = entry;
     repaint();
+    showPanel(a.id);
     const fresh = () => agents().find((x) => x.id === a.id) || a;
     entry.run = T.runSetup(view, a.id, step, {
       onReady: () => (status.textContent = 'Installing. Answer here if the installer asks something.'),
@@ -1418,6 +1420,7 @@
           const entry = { node, status, run: null, done, fromChat: !!(opts && opts.onDone) };
           betaTerms[a.id] = entry;
           repaint();
+          showPanel(a.id);
           entry.run = T.runSignin(view, a.id, {
             onReady: () =>
               (status.textContent = 'Finish the sign-in in this terminal. AIB does not see what you type here.'),
@@ -2183,7 +2186,63 @@
       frag.append(f);
     }
     // Keep typing places: the agent form's focus survives because it is only redrawn by explicit actions.
+    const restoreView = keepView();
     S.content.replaceChildren(frag);
+    restoreView();
+  }
+  const rowOf = (agent) => (S.content ? S.content.querySelectorAll('.st-agent').find((r) => r.dataset && r.dataset.agent === agent) : null);
+  const topOf = (n) => (n && n.getBoundingClientRect ? n.getBoundingClientRect().top : 0);
+  // Redrawing the page replaces every node, which drops the scroll position (the page is briefly empty, so the scroll clamps to 0)
+  // and the focus (the clicked button is gone). keepView() records both before the redraw; the function it returns puts them back:
+  // the same scroll offset, the clicked card at the same place on screen, focus on the button's replacement.
+  function keepView() {
+    const c = S.content;
+    if (!c) return () => {};
+    const scroll = c.scrollTop || 0;
+    const act = doc().activeElement;
+    const inside = act && act !== c && c.contains && c.contains(act);
+    const row = inside && act.closest ? act.closest('.st-agent') : null;
+    const agent = row && row.dataset ? row.dataset.agent : '';
+    const rowTop = row ? topOf(row) : 0;
+    const label = inside ? act.textContent : '';
+    const cls = inside && act.className;
+    return () => {
+      c.scrollTop = scroll;
+      const now = agent ? rowOf(agent) : null;
+      if (inside && !c.contains(doc().activeElement)) {
+        const here = now || c;
+        const buttons = here.querySelectorAll ? here.querySelectorAll('button,input,select,textarea,a') : [];
+        const next =
+          buttons.find((b) => b.textContent === label && b.className === cls) ||
+          buttons.find((b) => b.textContent === label) ||
+          (now ? buttons[0] : null);
+        if (next && next.focus) {
+          try {
+            next.focus({ preventScroll: true });
+          } catch (e) {
+            next.focus();
+          }
+        }
+      }
+      // The card itself keeps its on-screen position even when what is above it changed height.
+      if (now) {
+        const drift = topOf(now) - rowTop;
+        if (drift) c.scrollTop = scroll + drift;
+      }
+    };
+  }
+  // When a card's terminal panel opens below the card: keep the card's top where it is; scroll only as far as it takes to show
+  // the panel's bottom (never past the card's own top).
+  function showPanel(agent) {
+    const c = S.content,
+      row = rowOf(agent),
+      entry = betaTerms[agent];
+    if (!c || !row || !entry || !entry.node || !c.getBoundingClientRect) return;
+    const view = c.getBoundingClientRect();
+    const need = entry.node.getBoundingClientRect().bottom - view.bottom;
+    const room = topOf(row) - view.top;
+    const by = Math.min(need, room);
+    if (by > 0) c.scrollTop = (c.scrollTop || 0) + by;
   }
   function renderAll() {
     if (!S.page) return;
