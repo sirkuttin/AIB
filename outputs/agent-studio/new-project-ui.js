@@ -171,7 +171,10 @@
               (host.projects() || []).map((p) => p.key),
             )
           : false;
-      s.state = St().hintState(check, { isProject: known });
+      // The untouched starting folder (it ends with a separator) and no name: wait for a name or a folder choice, so Enter can't
+      // make that parent folder a project by accident. Typing in Folder or using Browse ends this.
+      const prefilled = !s.folderTouched && !!s.prefill && s.folder.value === s.prefill && !s.name.value.trim();
+      s.state = St().hintState(check, { isProject: known, prefilled });
       paint();
     }
     function runCheck() {
@@ -205,6 +208,7 @@
 
     folder.addEventListener('input', () => {
       errorLine.hidden = true;
+      s.folderTouched = true;
       schedule(false);
     });
     name.addEventListener('input', () => {
@@ -247,6 +251,7 @@
     });
 
     folder.value = startValue || '';
+    s.prefill = /[\\/]$/.test(folder.value) ? folder.value : '';
     paint();
     try {
       dialog.showModal();
@@ -285,6 +290,7 @@
           if (dlg !== s.dialog) return;
           if (res && typeof res.path === 'string' && res.path) {
             s.folder.value = toStyle(res.path).replace(/[\\/]+$/, '') || toStyle(res.path);
+            s.folderTouched = true; // a folder chosen with Browse is meant, even with no name
             schedule(true);
           }
         },

@@ -28,6 +28,7 @@ function harness(answers, { projects = [], created = null } = {}) {
         return Promise.resolve(
           created || { path: body.name ? body.path + '\\' + body.name : body.path, git: !!body.gitInit },
         );
+      if (name === 'folders/pick') return Promise.resolve({ path: 'C:\\REPOS\\' }); // the picker chose the same folder
       return Promise.resolve({ ok: true });
     },
     projects: () => projects,
@@ -200,4 +201,53 @@ test('no name and a new folder still creates the folder itself, without a name i
   await settle();
   assert.deepEqual(h.calls.posts, [['folders/create', { path: 'C:\\REPOS\\fresh', gitInit: true }]]);
   assert.equal(h.calls.done[0].created, true);
+});
+
+// The dialog opens on the remembered folder plus a trailing separator (C:\REPOS\). With Name empty, Enter must not make C:\REPOS a
+// project by accident: Create waits until a name is typed, Folder is edited, or Browse is used.
+test('the untouched prefilled folder with an empty name keeps Create disabled and asks for a name', async () => {
+  const h = harness(server);
+  const s = await openDialog(h);
+  assert.equal(s.folder.value, 'C:\\REPOS\\', 'prefilled with the remembered folder and a trailing separator');
+  assert.equal(s.preview.textContent, 'Type a project name, or pick a folder');
+  assert.equal(s.preview.className, 'np-preview hint');
+  assert.equal(s.primary.disabled, true);
+  assert.equal(s.gitRow.hidden, true);
+  s.dialog.querySelector('form').dispatch('submit');
+  await settle();
+  assert.deepEqual(h.calls.posts, [], 'Enter does nothing');
+  assert.deepEqual(h.calls.done, []);
+
+  await type(h, s.name, 'spaghetti');
+  assert.equal(s.preview.textContent, 'Creates C:\\REPOS\\spaghetti');
+  assert.equal(s.primary.disabled, false);
+  await type(h, s.name, '  ');
+  assert.equal(
+    s.preview.textContent,
+    'Type a project name, or pick a folder',
+    'clearing the name brings the guard back',
+  );
+  assert.equal(s.primary.disabled, true);
+});
+
+test('editing the prefilled folder ends the guard, even when typed back to the same text', async () => {
+  const h = harness(server);
+  const s = await openDialog(h);
+  await type(h, s.folder, 'C:\\REPOS');
+  assert.equal(s.preview.textContent, 'Uses C:\\REPOS (already there)');
+  assert.equal(s.primary.disabled, false);
+  await type(h, s.folder, 'C:\\REPOS\\');
+  assert.equal(s.preview.textContent, 'Uses C:\\REPOS (already there)');
+  assert.equal(s.primary.disabled, false);
+});
+
+test('Browse ends the guard: an empty name then means "use this folder"', async () => {
+  const h = harness(server);
+  const s = await openDialog(h);
+  assert.equal(s.primary.disabled, true);
+  s.browse.click();
+  await settle();
+  assert.equal(s.folder.value, 'C:\\REPOS');
+  assert.equal(s.preview.textContent, 'Uses C:\\REPOS (already there)');
+  assert.equal(s.primary.disabled, false);
 });

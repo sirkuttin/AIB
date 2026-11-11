@@ -174,3 +174,16 @@ test('which chat opens for a project that already has chats', () => {
   assert.equal(W.isKnownProject('p', new Set(['p'])), true);
   assert.equal(W.isKnownProject('', ['p']), false);
 });
+
+test('hint: the untouched prefilled folder with no name waits for a name or a folder choice', () => {
+  const h = W.hintState({ valid: true, exists: true, isDir: true, path: 'C:\\REPOS' }, { prefilled: true });
+  assert.deepEqual(
+    [h.kind, h.canSubmit, h.preview, h.previewTone, h.showGit],
+    ['prefilled', false, 'Type a project name, or pick a folder', 'hint', false],
+  );
+  const named = W.hintState(
+    { valid: true, exists: false, path: 'C:\\REPOS\\x', folder: 'C:\\REPOS' },
+    { prefilled: true },
+  );
+  assert.equal(named.canSubmit, true, 'a name always wins');
+});

@@ -678,7 +678,7 @@
     return withTrailingSep(srv.home || srv.start || '');
   }
   // What the dialog shows for the server's check answer (GET /api/live/folders/check?path=&name=). ctx: {isProject: the folder that
-  // becomes the project is already one, checking: answer pending}. text/tone: the hint under Folder, about the Folder box only;
+  // becomes the project is already one, checking: answer pending, prefilled: see below}. text/tone: the hint under Folder, about the Folder box only;
   // preview/previewTone: the line under Project name saying exactly what Create does (or why the name can't be used).
   // check.folder is set when a name was given: path is then <folder>\<name>.
   // Returns {kind, text, tone, preview, previewTone, primary, canSubmit, showGit, gitEnabled, gitNote}. tone: hint | ok | error.
@@ -703,6 +703,15 @@
       });
     const named = isStr(check.folder) && !!check.folder;
     const path = String(check.path || '');
+    // ctx.prefilled: Folder still holds the untouched starting value (a parent with a trailing separator) and Name is empty.
+    // Enter must not turn that parent into a project by accident, so Create waits for a name or a folder choice.
+    if (c.prefilled && check.valid && !named)
+      return Object.assign(base, {
+        kind: 'prefilled',
+        text: check.exists ? 'Existing folder' : 'New folder',
+        tone: 'ok',
+        preview: 'Type a project name, or pick a folder',
+      });
     if (check.valid && check.exists) {
       return Object.assign(
         base,
