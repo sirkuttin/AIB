@@ -7,7 +7,7 @@ subagent, running process and approval. It runs on your computer with the agent 
 
 **[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64).
 
-> **Beta: 0.1.0-beta.6.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
+> **Beta: 0.1.0-beta.7.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
 
 **_Codex and Claude Code working side by side in the same project_**
