@@ -2571,3 +2571,24 @@ aside #archivedScroll {
 .dp-row {
   margin-top: 4px;
 }
+
+/* A title the age would cut (sidebar-ui.js fitTitles measures each card): line 1 is all title, from the status dot to the
+   card's right edge, and the age sits at the right end of line 2, after the status phrase. */
+aside .connection.age-low .connection-title {
+  flex: 1 1 calc(100% - 22px);
+}
+aside .connection.age-low .row-status {
+  flex: 1 1 0;
+}
+aside .connection.age-low .row-age {
+  order: 4;
+  flex: none;
+}
+aside .connection.age-low .row-line3,
+aside .connection.age-low .hold-note {
+  order: 5;
+}
+aside .conversation-row:hover .connection.age-low .row-age,
+aside .conversation-row:focus-within .connection.age-low .row-age {
+  visibility: visible; /* the rename button covers line 1 only */
+}

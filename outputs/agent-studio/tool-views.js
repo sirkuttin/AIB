@@ -783,6 +783,57 @@
       .replace(/[\\/]+$/, '')
       .split(/[\\/]/)
       .pop() || String(p || '');
+  /* ---- Where a path is, in the project's words ----
+     A chat that works in its own copy runs in <data>/worktrees/<hash>/chat-1a2b3c4d: that folder name means nothing to the
+     owner. notePlace(folder, name) teaches the copy (and the project folder) of each chat; placePath(p) gives a path relative
+     to it, or the project's name for the folder itself. A copy nobody taught (a mirrored chat before its list arrived) is
+     still recognised by AIB's own layout and shown relative, or as "the project". */
+  const places = new Map(); // lower-cased folder with forward slashes -> project name
+  const slashed = (p) =>
+    filePath(p)
+      .replace(/\\/g, '/')
+      .replace(/(.)\/+$/, '$1');
+  function notePlace(folder, name) {
+    const f = slashed(folder || '');
+    if (f && f.length > 1 && name) places.set(f.toLowerCase(), String(name));
+  }
+  const COPY_DIR = /^(.*?\/worktrees\/[^/]+\/chat-[0-9a-f]{8}(?:-\d+)?)(?=\/|$)/i;
+  function placeOf(p) {
+    const s = slashed(p),
+      low = s.toLowerCase();
+    let best = null;
+    for (const [dir, name] of places)
+      if ((low === dir || low.startsWith(dir + '/')) && (!best || dir.length > best.dir.length)) best = { dir, name };
+    if (!best) {
+      const m = COPY_DIR.exec(s);
+      if (m) best = { dir: m[1].toLowerCase(), name: places.get(m[1].toLowerCase()) || 'the project' };
+    }
+    if (!best) return null;
+    return { name: best.name, rel: s.slice(best.dir.length).replace(/^\/+/, '') };
+  }
+  /* A folder or file the owner can place: relative to the project, the project's name for its root, else the last part. */
+  function placePath(p) {
+    const at = placeOf(p);
+    return at ? at.rel || at.name : baseName(p);
+  }
+  /* Free text (an agent's title) with the chat's copy folder replaced: "in C:\…\chat-1a2b3c4d\src" reads "in src". */
+  function placeText(t) {
+    let out = String(t ?? '');
+    const dirs = [...places.keys()].sort((a, b) => b.length - a.length);
+    for (const dir of dirs) {
+      const pattern = dir
+        .split('/')
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[\\\\/]+');
+      out = out.replace(new RegExp(pattern + '(?![^\\s\\\\/\'"`])(?:[\\\\/]+([^\\s\'"`]*))?', 'gi'), (_, rest) =>
+        rest ? rest.replace(/\\/g, '/') : places.get(dir),
+      );
+    }
+    return out.replace(
+      /(?:[A-Za-z]:)?[\\/][^\s'"`]*?[\\/]worktrees[\\/][^\\/\s]+[\\/]chat-[0-9a-f]{8}(?:-\d+)?(?![^\s\\/'"`])(?:[\\/]+([^\s'"`]*))?/gi,
+      (_, rest) => (rest ? rest.replace(/\\/g, '/') : 'the project'),
+    );
+  }
   const oneLine = (t) =>
     String(t ?? '')
       .replace(/\s+/g, ' ')
@@ -873,7 +924,7 @@
       text = 'Edited ' + baseName(a.path);
     } else if (t === 'search') {
       label = 'search';
-      text = "Searched '" + a.pattern + "'" + (a.path ? ' in ' + baseName(a.path) : '');
+      text = "Searched '" + a.pattern + "'" + (a.path ? ' in ' + placePath(a.path) : '');
     } else if (t === 'title') {
       label =
         a.kind === 'execute'
@@ -885,7 +936,7 @@
               : a.kind === 'search'
                 ? 'search'
                 : 'tool';
-      text = oneLine(a.title);
+      text = oneLine(placeText(a.title));
     } else {
       const n = String(name || '').toLowerCase(),
         input = a.input || {};
@@ -897,6 +948,105 @@
       }
     }
     return { label, text, status };
+  }
+  /* ---- What an approval asks for, plainly ----
+     actionOf(toolCall) -> {kind, verb, target, code, note, line} for an ACP session/request_permission tool call.
+     verb: "Run", "Edit", "Write", "Delete", "Move", "Read", "Search", "Fetch", "Think", "Switch mode" or "" (another tool);
+     target: the command, path, URL or pattern itself (code: true when it belongs in a code box); note: the agent's own words
+     (its description or title) when they say something the target does not; line: "Run npm install stripe@18.0.0". */
+  const SHELL_WRAP = /^(?:(?:\/usr)?\/bin\/)?(?:ba|z|da|fi)?sh$|^(?:pwsh|powershell)(?:\.exe)?$|^cmd(?:\.exe)?$/i;
+  function commandText(v) {
+    if (typeof v === 'string') return v;
+    if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) return '';
+    // ["bash", "-lc", "npm test"] / ["pwsh", "-Command", "…"] / ["cmd", "/c", "…"]: the script is what runs.
+    if (v.length === 3 && SHELL_WRAP.test(v[0]) && /^(?:-l?c|-Command|\/c)$/i.test(v[1])) return v[2];
+    return v.map((x) => (/[\s"']/.test(x) ? JSON.stringify(x) : x)).join(' ');
+  }
+  const strOf = (obj, keys) => {
+    for (const k of keys) if (obj && typeof obj[k] === 'string' && obj[k].trim()) return obj[k];
+    return '';
+  };
+  function actionOf(call) {
+    const raw = call && typeof call === 'object' ? call : {},
+      input = asObject(raw.rawInput) || {},
+      name = toolNameOf(raw),
+      a = analyze(name, input),
+      lowName = String(name || '').toLowerCase(),
+      title = oneLine(placeText(raw.title || '')),
+      desc = oneLine(strOf(input, ['description', 'reason', 'justification']));
+    let kind = String(raw.kind || '');
+    const loc = Array.isArray(raw.locations)
+      ? raw.locations.find((l) => l && typeof l.path === 'string' && l.path)
+      : null;
+    const diff = Array.isArray(raw.content)
+      ? raw.content.find((i) => i && i.type === 'diff' && typeof i.path === 'string' && i.path)
+      : null;
+    const path = a.path || (loc && loc.path) || (diff && diff.path) || pathOf(input)[1] || '';
+    // The whole path the approval is about: relative to the project when inside it, else as the agent gave it.
+    const where = (p) => {
+      if (!p) return '';
+      const at = placeOf(p);
+      return at ? at.rel || at.name : filePath(p);
+    };
+    const command = a.type === 'shell' ? a.command : commandText(input.command ?? input.cmd ?? input.argv);
+    if (!kind) {
+      if (command) kind = 'execute';
+      else if (a.type === 'read') kind = 'read';
+      else if (a.type === 'write' || a.type === 'edit' || a.type === 'patch') kind = 'edit';
+      else if (a.type === 'search') kind = 'search';
+      else if (/fetch|web/.test(lowName) && strOf(input, ['url'])) kind = 'fetch';
+      else if (/delete|remove|^rm$/.test(lowName)) kind = 'delete';
+      else kind = 'other';
+    }
+    let verb = '',
+      target = '',
+      code = true;
+    if (kind === 'execute') {
+      verb = 'Run';
+      target = command || title;
+    } else if (kind === 'edit') {
+      verb = a.type === 'write' || (lowName === 'write' && !diff) ? 'Write' : 'Edit';
+      target = where(path) || title;
+    } else if (kind === 'delete') {
+      verb = 'Delete';
+      target = where(path) || title;
+    } else if (kind === 'move') {
+      verb = 'Move';
+      const from = strOf(input, ['source', 'from', 'src', 'old_path', 'oldPath', 'path', 'file_path']),
+        to = strOf(input, ['destination', 'to', 'dest', 'new_path', 'newPath', 'target']);
+      target = from && to ? where(from) + ' → ' + where(to) : title;
+    } else if (kind === 'read') {
+      verb = 'Read';
+      target = where(path) || title;
+    } else if (kind === 'search') {
+      verb = 'Search';
+      const pattern = a.type === 'search' ? a.pattern : strOf(input, ['pattern', 'query', 'regex']);
+      const inPath = a.type === 'search' ? a.path : '';
+      target = pattern ? pattern + (inPath ? ' in ' + where(inPath) : '') : title;
+    } else if (kind === 'fetch') {
+      verb = 'Fetch';
+      target = strOf(input, ['url', 'uri']) || strOf(input, ['query']) || title;
+    } else if (kind === 'think') {
+      verb = 'Think';
+      target = title;
+      code = false;
+    } else if (kind === 'switch_mode') {
+      verb = 'Switch mode';
+      target = strOf(input, ['mode', 'modeId', 'mode_id']) || title;
+      code = false;
+    } else {
+      target = title || (name ? prettyName(name) : '');
+      code = false;
+    }
+    target = String(target || '').replace(/\s+$/, '');
+    if (!target) {
+      target = verb ? 'something the agent did not name' : 'A tool';
+      code = false;
+    }
+    const plain = oneLine(target);
+    let note = desc && desc !== plain ? desc : '';
+    if (!note && title && title !== plain && verb && !plain.includes(title) && !title.includes(plain)) note = title;
+    return { kind, verb, target, code, note, line: (verb ? verb + ' ' : '') + plain };
   }
   /* The file a tool row is about, for the "open" button: {path, line|null} or null. Locations (ACP) win; otherwise the call's own
     path argument for read / write / edit calls. A line comes only from a location or a Read offset. */
@@ -1157,6 +1307,10 @@
     groupRows,
     setScope,
     summarize,
+    actionOf,
+    notePlace,
+    placePath,
+    placeText,
     commandSummary,
     render,
     renderCall,

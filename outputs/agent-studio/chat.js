@@ -827,7 +827,28 @@
       openConversation(selected).catch(fail);
     }
   }
+  // Tool rows name a chat's folder in the project's words: its own copy (worktree) and its project folder map to the project.
+  function notePlaces(list) {
+    const TV = window.ToolViews,
+      S = window.AgentSidebarUI;
+    if (!TV?.notePlace) return;
+    for (const c of list || []) {
+      if (!c) continue;
+      let name = '';
+      try {
+        name = S?.projectOf ? S.projectOf(c).name : '';
+      } catch {
+        name = '';
+      }
+      const lv = c.live || {},
+        root = lv.projectRoot || c.projectRoot || '';
+      name = name || String(root || '').split(/[\\/]/).filter(Boolean).pop() || '';
+      TV.notePlace(lv.cwd || c.cwd, name);
+      TV.notePlace(root, name);
+    }
+  }
   function renderConversations() {
+    notePlaces(conversations);
     window.AgentOrganizeUI?.flag?.(conversations);
     renderDiscover();
     if (newDraft && !selected) renderNewChat();
@@ -882,6 +903,7 @@
       if (!rows.length) box.append(text('p', emptyText, 'note'));
     }
     box.scrollTop = top;
+    window.AgentSidebarUI?.watchTitles?.(box); // each title gets the room its card has (age moves down when it would cut it)
   }
   function makeRow(c) {
     const wrapper = text('div', '', 'conversation-row');
@@ -921,6 +943,7 @@
     $('subagentCount').textContent = '0';
     newDraft = null;
     window.ToolViews?.setScope?.(aliasKey(c)); // open tool rows and step groups belong to this chat
+    notePlaces([c]);
     lastMainRows = [];
     document.body.classList.remove('new-chat');
     $('newChatBar').hidden = true;
@@ -971,6 +994,14 @@
     await refresh();
   }
   function renderHeader() {
+    syncChatPanels();
+    if (!selected) return;
+    window.AgentBreadth?.sync(current ? snapshot : null, breadthContext());
+    renderHeaderBody();
+  }
+  // The panels that belong to the open chat (views, terminal, Files, Changes with its header chip and Merge / Discard,
+  // Artifacts): fed on every header render, and when a New chat page replaces a chat, so none keeps the chat we left.
+  function syncChatPanels() {
     window.ChatViewsUI?.sync();
     window.AibTerminal?.sync();
     window.AgentFilesUI?.sync(selected && (current || selected.id) ? selected : null);
@@ -984,8 +1015,8 @@
           }
         : null,
     );
-    if (!selected) return;
-    window.AgentBreadth?.sync(current ? snapshot : null, breadthContext());
+  }
+  function renderHeaderBody() {
     if (!window.AgentHeaderUI?.isEditing?.()) $('title').textContent = titleOf(selected);
     const connected = !!current && snapshot && !snapshot.closed,
       images = selectedAttachments().length,
@@ -2281,21 +2312,24 @@
     );
     window.AgentElicitationUI?.renderAuth($('authPrompts'), snapshot.auth, authContext(connection, snapshot));
   }
-  /* What the approval is for, in words (the tool line Studio draws for tool calls), with the raw request folded under Details. */
+  /* What the approval is for, plainly: the verb and the command, path or URL itself (in a code box), the agent's own
+     description under it as a quieter line, and the raw request folded under Details (ToolViews.actionOf). */
   function approvalDetail(params) {
     const call = params.toolCall || null,
       out = [];
-    let s = null;
+    let act = null;
     try {
-      s = call && window.ToolViews?.summarize ? window.ToolViews.summarize({ role: 'tool', raw: call }) : null;
+      act = call && window.ToolViews?.actionOf ? window.ToolViews.actionOf(call) : null;
     } catch {
-      s = null;
+      act = null;
     }
-    if (s && (s.label || s.text)) {
-      const what = text('p', '', 'approval-what');
-      if (s.label) what.append(text('span', s.label, 'tool-line-kind'));
-      what.append(text('span', s.text || call.title || '', 'approval-what-text'));
+    if (act) {
+      const what = text('div', '', 'approval-what' + (act.code ? ' has-code' : ''));
+      what.dataset.kind = act.kind;
+      if (act.verb) what.append(text('span', act.verb, 'approval-verb'));
+      what.append(text(act.code ? 'code' : 'span', act.target, 'approval-target'));
       out.push(what);
+      if (act.note) out.push(text('p', act.note, 'approval-note'));
     } else if (call && call.title) out.push(text('p', String(call.title), 'approval-what'));
     const raw = document.createElement('details');
     raw.className = 'approval-raw';
@@ -2449,6 +2483,7 @@
     $('settings').replaceChildren();
     $('approvals').replaceChildren();
     clearError();
+    syncChatPanels(); // the chat we left: its Changes chip, Merge / Discard, Files and Artifacts go with it
     renderConversations();
     renderNewChat();
     renderAgents();
@@ -2494,8 +2529,7 @@
   }
   // "Default" leaves the agent's own setting alone; it names that setting when the agent reported it.
   function defaultName(list) {
-    const hit = list && list.current && list.choices.find((c) => c.value === list.current);
-    return hit ? 'Default (' + hit.name + ')' : 'Default';
+    return AgentChoice.defaultLabel(list);
   }
   // The chips' view of the draft: the remembered lists as advertised settings, with a "Default" row first and the picks as
   // the current values, so the New chat page uses the same chips and menus as a chat.
@@ -4477,6 +4511,19 @@
       }
       if (id === 'messages') syncJump();
     });
+  }
+  /* The message list gets shorter when something is pinned under it (a question or approval card, the terminal dock, the queue).
+     Shrinking never scrolls, so a list that was following the newest message was left showing older rows while its last card
+     (a plan) sat hidden under the pinned card. A list that follows keeps following: it stays at its newest row. */
+  if (typeof ResizeObserver === 'function') {
+    const box = $('messages');
+    let lastHeight = box.clientHeight;
+    new ResizeObserver(() => {
+      const h = box.clientHeight;
+      if (h < lastHeight && !box.dataset.paused && box.scrollHeight - box.scrollTop - box.clientHeight > 1)
+        box.scrollTop = box.scrollHeight;
+      lastHeight = h;
+    }).observe(box);
   }
   /* Reaching the latest message: the line stays a few seconds, dimmed, then goes. */
   function fadeNewLine(box) {
