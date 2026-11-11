@@ -120,7 +120,10 @@
         btn.title = 'A step in this run failed';
       } else btn.textContent = text;
       list.hidden = !open;
-      if (open && !list.children.length) list.append(...ctx.groupRows(fold.rows, ctx.bubble));
+      /* The fold is the only fold: its rows are drawn one by one, never through groupRows (that would put a second
+         "steps · N steps" fold inside this one whenever more than 3 tool rows sit side by side, e.g. when a note between
+         them is dropped from the fold or a saved transcript has no thinking rows to break the run). */
+      if (open && !list.children.length) list.append(...fold.rows.map((r) => ctx.bubble(r)));
     };
     btn.addEventListener('click', () => {
       if (OPEN.has(fold.key)) OPEN.delete(fold.key);
@@ -327,7 +330,8 @@
   }
   const syncFind = () => find && find.sync();
 
-  /* ctx: {bubble(row), groupRows(rows, bubble)} from chat.js. Returns the top-level nodes of one unit, in order. */
+  /* ctx: {bubble(row), groupRows(rows, bubble)} from chat.js. Returns the top-level nodes of one unit, in order.
+     (A "Show steps" fold draws its rows flat; groupRows is for Full and the Prompts accordion, where it is the only fold.) */
   function unitNodes(unit, ctx) {
     const out = [];
     if (!unit.prompt && unit.earlier) {
