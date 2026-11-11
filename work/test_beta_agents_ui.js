@@ -175,6 +175,50 @@ test('each Beta card has its cost line; a missing one shows the install command 
   assert.equal(rows[1].querySelector('.st-beta-key'), null);
 });
 
+test('a card without an Install button says AIB cannot install it; an npm card shows Install and "Or install it yourself"', async () => {
+  const list = LIST();
+  list[5] = beta('gemini', 'Gemini CLI', { installable: true }); // an npm agent AIB installs itself
+  const { card } = await openSettings(list);
+  const rows = card('Beta agents').querySelectorAll('.st-agent');
+  const hint = (row) => row.querySelector('.st-beta-install').querySelector('.st-hint').textContent;
+  // OpenCode and Cursor CLI: no npm package AIB installs, so their own installer.
+  for (const row of [rows[1], rows[3]]) {
+    assert.ok(!row.querySelectorAll('button').some((b) => b.textContent === 'Install'), 'no Install button');
+    assert.equal(hint(row), "AIB can't install this one for you. Run this command, then choose Check again.");
+    assert.ok(
+      row
+        .querySelector('.st-beta-install')
+        .querySelectorAll('button')
+        .some((b) => b.textContent === 'Check again'),
+    );
+  }
+  assert.ok(
+    rows[2].querySelectorAll('button').some((b) => b.textContent === 'Install'),
+    'the npm agent has Install',
+  );
+  assert.equal(hint(rows[2]), 'Or install it yourself:');
+});
+
+test("a card with an API key box links to the provider's key page, opened in the browser; no key box, no link", async () => {
+  const list = LIST();
+  list[5] = beta('gemini', 'Gemini CLI', {
+    betaInfo: {
+      ...beta('gemini', 'x').betaInfo,
+      signin: 'agent',
+      keyEnv: 'GEMINI_API_KEY',
+      keyUrl: 'https://aistudio.google.com/apikey',
+    },
+  });
+  const { card } = await openSettings(list);
+  const rows = card('Beta agents').querySelectorAll('.st-agent');
+  const link = inside(rows[2], '.st-beta-key', 'a.st-beta-keylink');
+  assert.equal(link.textContent, 'Get an API key');
+  assert.equal(link.href, 'https://aistudio.google.com/apikey');
+  assert.equal(link.target, '_blank', 'the desktop app hands target=_blank links to the system browser');
+  assert.equal(link.rel, 'noopener noreferrer');
+  assert.equal(rows[1].querySelector('.st-beta-keylink'), null, 'OpenCode has no key box, so no link');
+});
+
 test('the New chat agent menu and the composer agent chip list Beta agents last, under a "Beta" group label', async () => {
   const shell = page();
   const ctx = load(shell, ['agent-choice.js', 'composer-chips.js']);

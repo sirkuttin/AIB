@@ -1116,20 +1116,20 @@
     if (info.note) row.append(note(info.note, 'dim'));
     if (!a.found && !installRunning(a)) {
       const how = el('div', null, 'st-beta-install');
-      how.append(el('span', canInstall(a) ? 'Or install it yourself:' : 'Install it with:', 'st-hint'));
+      // No Install button: AIB installs only npm packages (into its own folder); the rest need their own installer.
+      const hint = canInstall(a)
+        ? 'Or install it yourself:'
+        : a.installable
+          ? 'Install it with:'
+          : "AIB can't install this one for you. Run this command, then choose Check again.";
+      how.append(el('span', hint, 'st-hint'));
       const line = el('div', null, 'st-beta-row st-beta-command');
       const code = el('code', info.installCommand || '', 'st-command');
       const copy = button('Copy', () => copyText(info.installCommand || '', copy), 'st-link');
       copy.setAttribute('aria-label', 'Copy the install command of ' + a.name);
       line.append(code, copy);
       how.append(line);
-      if (info.docs) {
-        const link = el('a', 'Install instructions', 'st-link st-beta-docs');
-        link.href = info.docs;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        how.append(link);
-      }
+      if (info.docs) how.append(externalLink('Install instructions', info.docs, 'st-link st-beta-docs'));
       const again = button('Check again', () => load(true), 'st-link');
       how.append(' ', again);
       row.append(how);
@@ -1137,6 +1137,14 @@
     if (info.keyEnv) row.append(keyBox(a, info));
     const term = betaTerms[a.id];
     if (term) row.append(term.node);
+  }
+  // A link to a page on the web: target=_blank, which the desktop app hands to the system browser (desktop-bridge.js).
+  function externalLink(text, href, cls) {
+    const link = el('a', text, cls);
+    link.href = href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
   }
   // The API key box: the key is saved with the settings (plain text in the state folder, like an added agent's environment values),
   // passed to the agent as its environment variable, and never shown again on this page.
@@ -1173,9 +1181,16 @@
     line.append(input, store);
     if (info.keySet)
       line.append(button('Remove key', () => saveQuiet({ agents: { betaKey: { [a.id]: null } } }), 'st-danger'));
+    // The provider's own page where the key is made (beta_catalog.ts keyUrl), opened in the system browser.
+    let getKey = null;
+    if (info.keyUrl) {
+      getKey = externalLink('Get an API key', info.keyUrl, 'st-link st-beta-keylink');
+      getKey.setAttribute('aria-label', 'Get an API key for ' + a.name + ' (opens in your browser)');
+    }
     wrap.append(
       label,
       line,
+      ...(getKey ? [getKey] : []),
       el(
         'span',
         'Stored as plain text in the state folder' +

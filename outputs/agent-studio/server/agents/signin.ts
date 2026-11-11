@@ -114,6 +114,27 @@ export interface Method {
   name?: string;
   kind: 'terminal' | 'agent';
   args: string[];
+  /** A terminal method's advertised environment (ACP terminal auth `env`), added to the agent's own when the login runs. */
+  env?: Record<string, string>;
+}
+
+/**
+ * The `env` of an ACP terminal auth method: a map {NAME: value} (protocol v1) or a list [{name, value}] (v2). Plain variable names
+ * only, at most 20, values without NUL or line breaks; anything else is dropped. {} when there is none.
+ */
+export function normalizeMethodEnv(raw: unknown): Record<string, string> {
+  const pairs: [unknown, unknown][] = Array.isArray(raw)
+    ? raw.filter(isDict).map((e) => [e.name, e.value])
+    : isDict(raw)
+    ? Object.entries(raw)
+    : [];
+  const out: Record<string, string> = {};
+  for (const [name, value] of pairs.slice(0, 20)) {
+    if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) continue;
+    if (typeof value !== 'string' || pyLen(value) > 4096 || /[\0\r\n]/.test(value)) continue;
+    out[name] = value;
+  }
+  return out;
 }
 
 /** [{id, name, kind, args}] from initialize.authMethods; methods Studio cannot start (env vars, unknown types) are dropped. */
@@ -127,11 +148,13 @@ export function normalizeMethods(raw: unknown): Method[] {
     const args = item.args;
     const ok = Array.isArray(args) && args.length > 0 && args.length <= 12 &&
       args.every((a) => typeof a === 'string' && pyLen(a) > 0 && pyLen(a) <= 200 && !a.includes('\n') && !a.includes('\r'));
+    const env = kind === 'terminal' ? normalizeMethodEnv(item.env) : {};
     out.push({
       id: item.id,
       name: clip(pyStr(pyTruthy(item.name) ? item.name : item.id), 80),
       kind,
       args: ok && kind === 'terminal' ? [...args as string[]] : [],
+      ...(Object.keys(env).length ? { env } : {}), // only when advertised: the shape stays the Python reference's otherwise
     });
   }
   return out;

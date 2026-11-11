@@ -40,10 +40,15 @@ export interface BetaKnownPath {
 
 export interface BetaSignin {
   readonly kind: SigninKind;
-  /** Arguments of the agent's own login command (terminal), after the agent's program. */
+  /**
+   * Arguments of the agent's own login command (terminal), right after the agent's program (a login subcommand: `copilot login`).
+   * Only used when the agent advertises no terminal auth method; an advertised method's args go after the full ACP launch command.
+   */
   readonly terminalArgs?: readonly string[];
   /** The environment variable an API key goes into. */
   readonly keyEnv?: string;
+  /** The provider's official page where that key is made (the card's "Get an API key" link). Every agent with keyEnv has one. */
+  readonly keyUrl?: string;
   /** The ACP auth method that takes that key in `_meta['api-key']` (Gemini's shape). */
   readonly keyMethod?: string;
   /** The agent-type ACP auth method the Sign in button runs. */
@@ -82,6 +87,8 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     name: 'GitHub Copilot CLI',
     letter: 'G',
     license: 'Proprietary',
+    // UNCONFIRMED: "the Free plan works". GitHub's install page (docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/
+    // install-copilot-cli, read 2026-11-11) only says "An active GitHub Copilot subscription" and does not name the plans.
     cost: 'Needs a GitHub Copilot plan (the Free plan works)',
     // registry: npx @github/copilot@1.0.109 --acp. Node 22+ (research). Also `winget install GitHub.Copilot` (a native copilot.exe).
     npm: { package: '@github/copilot', version: '1.0.109', bin: 'copilot', entry: 'index.js' },
@@ -92,7 +99,15 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     install: 'npm install -g @github/copilot',
     docs: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
     // research: authMethods are terminal-type (`copilot login`); a token in COPILOT_GITHUB_TOKEN / GH_TOKEN also works.
-    signin: { kind: 'terminal', terminalArgs: ['login'], keyEnv: 'COPILOT_GITHUB_TOKEN' },
+    // keyUrl: GitHub's "Authenticating GitHub Copilot CLI" (docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/
+    // authenticate-copilot-cli, read 2026-11-11): a fine-grained token owned by your personal account with the Copilot Requests
+    // permission, made at github.com/settings/personal-access-tokens/new; classic ghp_ tokens are not supported.
+    signin: {
+      kind: 'terminal',
+      terminalArgs: ['login'],
+      keyEnv: 'COPILOT_GITHUB_TOKEN',
+      keyUrl: 'https://github.com/settings/personal-access-tokens/new',
+    },
     setModelAfterNew: true,
     modeIdsAreUrls: true,
     vscodeShim: true,
@@ -116,8 +131,14 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     name: 'Gemini CLI',
     letter: 'G',
     license: 'Apache-2.0',
-    cost: 'Free CLI · needs an API key or a paid plan',
-    note: 'Free personal Google sign-in moved to Antigravity in June 2026; use an API key or a paid plan.',
+    // Google Developers Blog, "An important update: Transitioning Gemini CLI to Antigravity CLI" (developers.googleblog.com/en/
+    // an-important-update-transitioning-gemini-cli-to-antigravity-cli/, May 19 2026, read 2026-11-11): from June 18 2026 Gemini CLI
+    // stops serving Google AI Pro and Ultra and free Gemini Code Assist for individuals; Code Assist Standard and Enterprise keep it;
+    // it "will remain accessible via paid Gemini and Gemini Enterprise Agent Platform API keys". UNCONFIRMED: whether a free-tier
+    // Gemini API key still works with Gemini CLI (the post says paid keys only), so the card says a paid key.
+    cost: 'Free CLI · needs a paid Gemini API key or a Code Assist Standard or Enterprise licence',
+    note:
+      'Since June 18, 2026 a personal Google sign-in (free, AI Pro or Ultra) no longer works here: Google moved those to Antigravity CLI.',
     // registry: npx @google/gemini-cli@0.68.0 --acp. Node 20+.
     npm: { package: '@google/gemini-cli', version: '0.68.0', bin: 'gemini', entry: 'dist/index.js' },
     commands: ['gemini'],
@@ -127,15 +148,29 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // research: every authMethod is agent-type (Google login, API key with _meta['api-key'], Vertex, gateway).
     // UNCONFIRMED: the method ids 'gemini-api-key' and 'oauth-personal' (Google login); when the agent lists other ids, the Sign in
     // button runs the first one it advertises, and a key still reaches the agent as GEMINI_API_KEY.
-    signin: { kind: 'agent', keyEnv: 'GEMINI_API_KEY', keyMethod: 'gemini-api-key', method: 'oauth-personal' },
+    // keyUrl: Google AI Studio's API keys page, from "Using Gemini API keys" (ai.google.dev/gemini-api/docs/api-key, now
+    // aistudio.google.com/docs/api-key, read 2026-11-11).
+    signin: {
+      kind: 'agent',
+      keyEnv: 'GEMINI_API_KEY',
+      keyMethod: 'gemini-api-key',
+      method: 'oauth-personal',
+      keyUrl: 'https://aistudio.google.com/apikey',
+    },
   },
   {
     id: 'qwen',
     name: 'Qwen Code',
     letter: 'Q',
     license: 'Apache-2.0',
-    cost: 'Free CLI · needs an API key',
-    note: 'The free Qwen sign-in ended in April 2026: use an OpenAI-compatible API key.',
+    // The free Qwen OAuth tier: QwenLM/qwen-code issue #3203 (github.com/QwenLM/qwen-code/issues/3203, by the Qwen Code team,
+    // closed as completed): "Completely close the Qwen OAuth free entry point on 2026-04-15". The auth docs
+    // (qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/, read 2026-11-11) now offer Qwen sign-in only with a Plus or Pro
+    // subscription, or an API key: OPENAI_API_KEY (+ OPENAI_BASE_URL, OPENAI_MODEL) for any OpenAI-compatible provider, Alibaba Cloud
+    // Model Studio among them. The CLI is Apache-2.0 and free; the model use is billed by the key's provider (Alibaba: "Anyone with your
+    // API key can make service requests on your behalf, which may incur charges").
+    cost: "Free CLI · model use is billed by your API key's provider",
+    note: 'The free Qwen sign-in ended on April 15, 2026: use an OpenAI-compatible API key, for example from Alibaba Cloud Model Studio.',
     // registry: npx @qwen-code/qwen-code@0.27.2 --acp --experimental-skills. Node 22+.
     npm: { package: '@qwen-code/qwen-code', version: '0.27.2', bin: 'qwen', entry: 'cli.js' },
     commands: ['qwen'],
@@ -143,7 +178,15 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     args: ['--acp', '--experimental-skills', '--approval-mode', 'default'],
     install: 'npm install -g @qwen-code/qwen-code',
     docs: 'https://qwenlm.github.io/qwen-code-docs/en/users/overview',
-    signin: { kind: 'key', keyEnv: 'OPENAI_API_KEY' },
+    // keyUrl: Alibaba Cloud Model Studio, "Get an API key" (alibabacloud.com/help/en/model-studio/get-api-key, read 2026-11-11), the
+    // international (Singapore) console. Keys are per region. UNCONFIRMED: Qwen Code's default OPENAI_BASE_URL is OpenAI's
+    // (api.openai.com/v1, read from the installed 0.27.2 package); a Model Studio key also needs OPENAI_BASE_URL
+    // https://dashscope-intl.aliyuncs.com/compatible-mode/v1, which AIB does not set.
+    signin: {
+      kind: 'key',
+      keyEnv: 'OPENAI_API_KEY',
+      keyUrl: 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
+    },
   },
   {
     id: 'cursor',
@@ -158,7 +201,9 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     args: ['acp'],
     install: "irm 'https://cursor.com/install?win32=true' | iex",
     docs: 'https://cursor.com/docs/cli/acp',
-    signin: { kind: 'agent', method: 'cursor_login', keyEnv: 'CURSOR_API_KEY' },
+    // keyUrl: Cursor CLI docs, Authentication (cursor.com/docs/cli/reference/authentication, read 2026-11-11): "Cursor Dashboard →
+    // API Keys" at cursor.com/dashboard/api. UNCONFIRMED: cost 'Paid plan' (the CLI docs name no plan).
+    signin: { kind: 'agent', method: 'cursor_login', keyEnv: 'CURSOR_API_KEY', keyUrl: 'https://cursor.com/dashboard/api' },
   },
   {
     id: 'goose',
@@ -188,7 +233,10 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     args: [],
     install: 'uv tool install mistral-vibe',
     docs: 'https://github.com/mistralai/mistral-vibe',
-    signin: { kind: 'key', keyEnv: 'MISTRAL_API_KEY' },
+    // keyUrl: Mistral docs, Vibe "API keys and profiles" (docs.mistral.ai/vibe/code/cli/api-keys-profiles, read 2026-11-11): make the
+    // key under Code › Vibe CLI at chat.mistral.ai/code/extensions; "The same key works in Free mode, with a paid plan, or with
+    // pay-as-you-go enabled" (use beyond the plan's monthly amount stops unless pay-as-you-go is on).
+    signin: { kind: 'key', keyEnv: 'MISTRAL_API_KEY', keyUrl: 'https://chat.mistral.ai/code/extensions' },
   },
   {
     id: 'cline',
@@ -212,12 +260,14 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     license: 'MIT',
     cost: 'Free CLI · needs an API key',
     // registry: npx @moonshot-ai/kimi-code@2.5.3 acp. AIB installs the package instead of running npx (npx would download at launch).
-    npm: { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/index.js' },
-    commands: ['kimi-code', 'kimi'], // UNCONFIRMED: the bin name of the package
+    // From the package itself (2.5.3): package.json bin {"kimi": "dist/main.mjs"}; dist/main.mjs has a `login` command and an `acp`
+    // command whose `--login` option is what its advertised terminal auth method runs (`kimi acp --login`).
+    npm: { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs' },
+    commands: ['kimi'],
     args: ['acp'],
     install: 'npm install -g @moonshot-ai/kimi-code',
     docs: 'https://moonshotai.github.io/kimi-code/',
-    signin: { kind: 'terminal', terminalArgs: ['login'] }, // UNCONFIRMED: the login subcommand
+    signin: { kind: 'terminal', terminalArgs: ['login'] }, // the fallback when Kimi advertises no terminal method: `kimi login`
   },
   {
     id: 'kilo',

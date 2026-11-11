@@ -18,7 +18,7 @@ import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import type { WebContext } from './server.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
 import { resolveBeta, signinArgv } from '../agents/beta_agents.ts';
-import { readTerminalArgs } from '../agents/beta_signin.ts';
+import { readTerminalMethod } from '../agents/beta_signin.ts';
 import type { ShellSpec } from '../platform/pty.ts';
 import type { WsLink } from '../platform/websocket.ts';
 
@@ -89,14 +89,16 @@ export async function signinCommand(ctx: Pick<WebContext, 'agentOptions'>, agent
   const options = ctx.agentOptions;
   const launch = await resolveBeta(agentId, { stateDir: options.stateDir ?? null, nodeCommand: options.nodeCommand || '' });
   if (!launch.found) return `${agent.name} is not installed. ${launch.problem}`;
-  const saved = options.stateDir ? readTerminalArgs(options.stateDir, agentId) : null;
+  const saved = options.stateDir ? readTerminalMethod(options.stateDir, agentId) : null;
   let argv: string[] | null;
   try {
     argv = signinArgv(launch, agentId, saved);
   } catch (error) {
     return (error as Error).message;
   }
-  return argv && argv.length ? { file: argv[0], args: argv.slice(1) } : `${agent.name} has no sign-in command AIB can run.`;
+  if (!argv || !argv.length) return `${agent.name} has no sign-in command AIB can run.`;
+  const env = saved?.advertised ? { ...(saved.env ?? {}) } : {};
+  return Object.keys(env).length ? { file: argv[0], args: argv.slice(1), env } : { file: argv[0], args: argv.slice(1) };
 }
 
 /** A sign-in terminal: key signin:<agent>, started in the home folder; it ends when the sign-in command ends. */

@@ -48,6 +48,8 @@ export interface Pty {
 export interface ShellSpec {
   file: string;
   args: string[];
+  /** Extra environment for this program only (a Beta agent's terminal sign-in: the method's advertised `env`). */
+  env?: Record<string, string>;
 }
 
 /** First match for `name` on PATH (Windows: also tries PATHEXT suffixes when `name` has none), or null. */

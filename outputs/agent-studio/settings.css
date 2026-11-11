@@ -766,8 +766,12 @@ html[data-ui-scaled] .st-page {
   margin: 2px 0 0;
   user-select: all;
 }
-.st-beta-docs {
+.st-beta-docs,
+.st-beta-keylink {
   font-size: 12px;
+}
+.st-beta-keylink {
+  align-self: flex-start;
 }
 .st-beta-key {
   margin: 8px 0 0;

@@ -258,6 +258,7 @@ export async function describeBeta(
         signin: agent.signin.kind,
         signinCommand: agent.signin.terminalArgs ? [...agent.signin.terminalArgs] : [],
         keyEnv: agent.signin.keyEnv ?? '',
+        keyUrl: agent.signin.keyUrl ?? '',
         keySet: !!keys[agent.id],
       },
     });
