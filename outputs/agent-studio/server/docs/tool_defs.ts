@@ -10,7 +10,9 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
   'target ({"kind":"find","text":"<the exact words as they stand>"}, no guard needed); a whole-block replace, delete, move or set ' +
   'needs "ifHash" = its h and "ifRev" = the rev of the read that showed it (several ids: "ifRev" alone). `guard_mismatch` or ' +
   '`find_none` means the user changed it after your read: their edit wins; redo yours from what stands, never over their text, ' +
-  'never with force. Later turns start with doc_changes {sinceRev: <your last rev>}, not a full read.';
+  'never with force. Later turns start with doc_changes {sinceRev: <your last rev>}, not a full read. The user comments on words; ' +
+  'doc_comments {since: <your last seq>} shows the threads; answer with doc_reply. An edit that would remove words a comment hangs ' +
+  'on is refused `anchors_affected`: keep them.';
 
 const DOC = { type: 'string', description: 'The doc\'s name, e.g. "plan". Its Markdown copy is docs/<name>.md in the chat\'s project.' };
 
@@ -34,7 +36,10 @@ const EDIT_HELP = 'Ops, applied in order, all or nothing (a refused call changed
   '{"op":"table_col_delete",…,"at":<col>,"ifRev":<rev>}\n' +
   'Refusals: missing_guard, guard_mismatch (shows the block as it stands: their edit wins), find_none (read again, quote what it says ' +
   'now), block_gone, atom_in_range (a break/image/HTML tag inside the changed words: quote around it), cell_count, last_block, bad_op. ' +
-  '"force":true only when the user told you to overwrite their text.';
+  '"force":true only when the user told you to overwrite their text.\n' +
+  'anchors_affected: an op would delete or replace words an open comment thread hangs on (the refusal lists the threads). Keep those ' +
+  'words and re-word around them. Only when the user asked for that change, add "allowDetach":true to the op: it applies and the ' +
+  'thread stays, marked detached.';
 
 export const DOC_TOOLS: Json[] = [
   {
@@ -105,6 +110,64 @@ export const DOC_TOOLS: Json[] = [
     description: 'Take back your own last doc_edit call on this doc (again for the one before). Refused with undo_conflict when the ' +
       'user changed what that call wrote since: their edit wins.',
     inputSchema: { type: 'object', properties: { doc: DOC }, required: ['doc'], additionalProperties: false },
+  },
+  {
+    name: 'doc_comments',
+    title: "A doc's comments",
+    description: 'The comment threads on a doc: each with `thread` (its id), `on` ("words" or "doc" for a whole-doc note), `quote` ' +
+      '(the words it hangs on now), `block`, who started it (`by`: "user" or an agent), `resolved`, `detached` ("Text removed": its ' +
+      'words are gone) and `replies` (the first is the comment itself), plus `seq`, the latest change. With "since": your last `seq`, ' +
+      'only the threads changed after it. Comments are never in the Markdown copy.',
+    inputSchema: {
+      type: 'object',
+      properties: { doc: DOC, since: { type: 'integer', minimum: 0, description: 'Only threads changed after this seq.' } },
+      required: ['doc'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'doc_comment',
+    title: 'Comment on a doc',
+    description: 'Start a comment thread on words of a doc (a question, an explanation of what you drafted): target ' +
+      '{"kind":"find","text":"<the exact words>","nth":1} or {"kind":"blocks","ids":["<id of a paragraph, heading or code block>"]} ' +
+      "(all its words). No target: a note on the whole doc. The thread follows its words through everyone's edits.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        doc: DOC,
+        target: { type: 'object', description: 'The words: a find target or one block id. Leave out for a whole-doc note.' },
+        text: { type: 'string', description: 'The comment.' },
+      },
+      required: ['doc', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'doc_reply',
+    title: 'Reply to a doc comment',
+    description: 'Reply in a comment thread (doc_comments lists them): say what you changed for it, or answer the question.',
+    inputSchema: {
+      type: 'object',
+      properties: { doc: DOC, thread: { type: 'string', description: 'The thread id, e.g. "t3".' }, text: { type: 'string' } },
+      required: ['doc', 'thread', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'doc_resolve',
+    title: 'Resolve a doc comment',
+    description: 'Mark a comment thread resolved. You may resolve only threads you started; a thread the user (or another agent) ' +
+      'started is refused with not_yours, unless the user asked you in chat to resolve it: only then send "userAsked": true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        doc: DOC,
+        thread: { type: 'string', description: 'The thread id.' },
+        userAsked: { type: 'boolean', description: 'true only when the user asked you in chat to resolve this thread.' },
+      },
+      required: ['doc', 'thread'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'doc_history',

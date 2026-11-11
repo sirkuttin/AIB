@@ -44,7 +44,20 @@ Deno.test("the doc tools are always offered, and a call goes to Studio's doc rou
   try {
     const list = (worktree: boolean) => handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctxFor(url, worktree));
     const names = (r: Json | null) => ((r!.result as Json).tools as Json[]).map((t) => t.name);
-    const docTools = ['doc_list', 'doc_create', 'doc_read', 'doc_changes', 'doc_edit', 'doc_undo', 'doc_history', 'doc_restore'];
+    const docTools = [
+      'doc_list',
+      'doc_create',
+      'doc_read',
+      'doc_changes',
+      'doc_edit',
+      'doc_undo',
+      'doc_comments',
+      'doc_comment',
+      'doc_reply',
+      'doc_resolve',
+      'doc_history',
+      'doc_restore',
+    ];
     assertEquals([...DOC_TOOL_NAMES], docTools);
     assertEquals(names(await list(false)), ['publish', 'update', 'list', ...docTools]);
     assertEquals(names(await list(true)), ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...docTools]);
@@ -190,7 +203,7 @@ for (const impl of ['deno', 'node'] as const) {
       const info = await (await fetch(`${server.origin}/api/live/docs/info?doc=${doc.id}`, {
         headers: { 'X-Studio-Token': server.ctx.token },
       })).json();
-      assertEquals([info.name, info.skipped, Array.isArray(info.history.versions)], ['live', [], true]);
+      assertEquals([info.name, info.skipped, Array.isArray(info.history.versions), info.comments], ['live', [], true, []]);
       await until(
         () => (doc.live.read() as { blocks: { md: string }[] }).blocks[1]?.md === 'Typed. From the agent.',
         'the typing on the server',

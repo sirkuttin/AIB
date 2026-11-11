@@ -27,6 +27,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/docs/info                  local docs: rev, skipped file edits, history of an open doc
  *   GET  /api/live/docs/socket                local docs: the editor's WebSocket
  *   POST /api/live/docs/tool                  local docs: an agent's doc_* tool (agent key)
+ *   POST /api/live/docs/comment/send          local docs: "Send to agent" queues a comment thread to the doc's chat
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
@@ -45,6 +46,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/docs/info', 'read', 'get'],
   ['GET', '/api/live/docs/socket', 'write', 'get'],
   ['POST', '/api/live/docs/tool', 'artifacts.tool', 'own-gate'],
+  ['POST', '/api/live/docs/comment/send', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

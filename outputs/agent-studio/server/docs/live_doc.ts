@@ -54,6 +54,7 @@ import {
   TEXTBLOCKS,
 } from './markdown.ts';
 import type { WsLink } from '../platform/websocket.ts';
+import { anyDeleted, Comments } from './comments.ts';
 
 export { FIELD };
 // deno-lint-ignore no-explicit-any
@@ -158,6 +159,8 @@ export interface Op {
   ifHash?: unknown;
   ifRev?: unknown;
   force?: boolean;
+  /** Let this op remove words a comment thread hangs on (only when the user asked for the change): the thread is detached. */
+  allowDetach?: boolean;
 }
 
 /** Where ops run: the live doc or the dry-run copy. */
@@ -189,6 +192,8 @@ export class LiveDoc {
   readonly doc: Y.Doc;
   readonly frag: Y.XmlFragment;
   readonly awareness: awarenessProtocol.Awareness;
+  /** The doc's comment threads (comments.ts), kept in this Y.Doc. */
+  readonly comments: Comments;
   rev: number;
   #entries = new Map<string, Entry>();
   #gone = new Map<string, [number, number]>();
@@ -214,6 +219,7 @@ export class LiveDoc {
     this.doc = new Y.Doc();
     this.frag = this.doc.getXmlFragment(FIELD);
     if (state) Y.applyUpdate(this.doc, state, this.system);
+    this.comments = new Comments(this.doc);
     this.awareness = new awarenessProtocol.Awareness(this.doc);
     this.awareness.setLocalState(null); // the server has no cursor
     this.rev = meta?.rev ?? 0;
@@ -391,6 +397,7 @@ export class LiveDoc {
   #afterTransaction(tr: Y.Transaction): void {
     if (tr.changed.size === 0) return;
     const by = this.#authorOf(tr.origin);
+    const commented = this.comments.touches(tr);
     const next = this.rev + 1;
     const dirty = new Set<string>();
     let rootDirty = false;
@@ -428,8 +435,12 @@ export class LiveDoc {
       this.#bubble(id, next);
       changed = true;
     }
-    if (!changed) return;
+    if (!changed) {
+      if (commented) this.onChange?.(null); // saved with the doc; no new rev, no history version
+      return;
+    }
     this.rev = next;
+    if (this.comments.map.size) this.comments.recheck(by ?? 'user', this.system);
     if (this.#gone.size > MAX_GONE) { for (const id of [...this.#gone.keys()].slice(0, this.#gone.size - MAX_GONE)) this.#gone.delete(id); }
     this.onChange?.(by);
   }
@@ -616,11 +627,33 @@ export class LiveDoc {
     };
     index(copyFrag);
     const dry = ctxFor(copy, copyFrag, (id) => lookup.get(id) ?? null, mark);
+    // the words open comment threads hang on: an agent op that would remove any of them is refused unless it allows detaching
+    const guards = origin.kind === 'agent' ? this.comments.guards() : [];
+    const hits: { thread: string; quote: string; by: string; op: number }[] = [];
+    const afterOp = guards.length
+      ? (index: number) => {
+        for (const g of guards) {
+          if (!hits.some((h) => h.thread === g.thread) && anyDeleted(copy, g.ids)) {
+            hits.push({ thread: g.thread, quote: g.quote, by: g.by, op: index });
+          }
+        }
+      }
+      : undefined;
     try {
-      copy.transact(() => applyOps(dry, ops as Op[]));
+      copy.transact(() => applyOps(dry, ops as Op[], afterOp));
       validate(dry);
     } finally {
       copy.destroy();
+    }
+    const refused = hits.filter((h) => (ops as Op[])[h.op].allowDetach !== true);
+    if (refused.length) {
+      const list = refused.map((h) => `${h.thread} on "${h.quote}" (op ${h.op})`).join(', ');
+      throw new DocRefusal(
+        'anchors_affected',
+        `Not changed: that would remove words a comment thread hangs on: ${list}. Keep those words (re-word around them). Only when ` +
+          'the user asked for this change, resend those ops with "allowDetach": true: the thread stays, marked detached.',
+        { op: refused[0].op, threads: refused },
+      );
     }
     // for real
     const before = this.rev;
@@ -632,6 +665,7 @@ export class LiveDoc {
       return e && e.el && !this.#isDeleted(e.el) ? e.el : null;
     }, mark);
     this.doc.transact(() => applyOps(live, ops as Op[]), origin);
+    if (hits.length) this.comments.detach(hits.map((h) => h.thread), origin.name, 'edited', origin);
     for (const id of live.filled) delete this.#pending[id];
     Object.assign(this.#pending, live.planted);
     const ack = this.changes(before);
@@ -647,6 +681,7 @@ export class LiveDoc {
       rev: this.rev,
       changed: ack.changed,
       gone: ack.gone,
+      ...(hits.length ? { detached: hits.map((h) => h.thread) } : {}),
       ...(live.created.length ? { created: live.created } : {}),
       ...(Object.keys(live.moved).length ? { moved: live.moved } : {}),
     };
@@ -674,6 +709,41 @@ export class LiveDoc {
     calls.pop();
     const ack = this.changes(before);
     return { ok: true, undone: true, rev: this.rev, changed: ack.changed, gone: ack.gone };
+  }
+
+  /**
+   * The words a comment goes on: a find target (the exact words, `nth`) or one textblock's id (all its text). Refused like
+   * doc_edit's targets (find_none, block_gone).
+   */
+  range(target: unknown): { el: Y.XmlElement; from: number; to: number } {
+    const t = (target && typeof target === 'object' ? target : {}) as Target;
+    if (t.kind === 'find') {
+      const ctx = ctxFor(this.doc, this.frag, () => null, null);
+      try {
+        const { el, at, text } = locate(ctx, t, 0);
+        return { el, from: at, to: at + text.length };
+      } catch (error) {
+        if (error instanceof DocRefusal) throw new DocRefusal(error.code, error.message.replace(/^op 0: /, ''), { text: t.text });
+        throw error;
+      }
+    }
+    if (t.kind !== 'blocks') {
+      throw new DocRefusal(
+        'bad_op',
+        'target is {"kind":"find","text":"<exact words>"} or {"kind":"blocks","ids":["<id>"]}; none = a note on the whole doc',
+      );
+    }
+    const ids = Array.isArray(t.ids) ? t.ids : [];
+    if (ids.length !== 1 || typeof ids[0] !== 'string') throw new DocRefusal('bad_op', 'a blocks target names one block id');
+    if (!this.has(ids[0])) throw this.#goneRefusal(ids[0], 'comment');
+    const el = this.#entries.get(ids[0])!.el!;
+    if (!TEXTBLOCKS.has(el.nodeName) || !textOf(el).length) {
+      throw new DocRefusal(
+        'bad_op',
+        `block ${ids[0]} is a ${el.nodeName} without words of its own: comment on its words with a find target`,
+      );
+    }
+    return { el, from: 0, to: textOf(el).length };
   }
 
   /** Replace the whole content (restore from history, a doc made from a file). Not guarded: callers check. */
@@ -1292,8 +1362,15 @@ const SET_CHECKS: Record<string, (v: unknown) => boolean> = {
 };
 const KINDS: Record<string, string> = { bullet: 'bulletList', ordered: 'orderedList', check: 'taskList' };
 
-function applyOps(ctx: Ctx, ops: Op[]): void {
+function applyOps(ctx: Ctx, ops: Op[], afterOp?: (index: number) => void): void {
   ops.forEach((op, index) => {
+    applyOp(ctx, op, index);
+    afterOp?.(index);
+  });
+}
+
+function applyOp(ctx: Ctx, op: Op, index: number): void {
+  {
     const t = op.target;
     switch (op.op) {
       case 'insert': {
@@ -1325,7 +1402,7 @@ function applyOps(ctx: Ctx, ops: Op[]): void {
       default:
         return tableOp(ctx, op, index);
     }
-  });
+  }
 }
 
 function isGone(el: Y.XmlElement): boolean {

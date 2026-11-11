@@ -6,7 +6,11 @@
  *                                                   rev, ...info}. Page token.
  *   GET  /api/live/docs/info?id=<chat>&doc=<doc>    what the UI can show about an open doc: rev, skipped file edits (each with the
  *                                                   block as the mirror had it, as the doc has it, as the file wanted it), lossy
- *                                                   blocks, and the history (versions with n, rev, by, at).
+ *                                                   blocks, the linked chat, the comment threads (comments.ts ThreadView) with
+ *                                                   `commentSeq`, and the history (versions with n, rev, by, at).
+ *   POST /api/live/docs/comment/send {doc, thread, chat?}  "Send to agent": the thread becomes a user message queued to the
+ *                                                   doc's linked chat (or `chat`), the same queue the composer uses (live op
+ *                                                   `queue`). Sending the same thread state twice is one message. Page token.
  *   GET  /api/live/docs/socket?doc=<doc>            the editor's WebSocket (y-protocols sync + awareness, binary). A browser cannot
  *                                                   set headers on a WebSocket, so the page offers two subprotocols, `aib-docs` and
  *                                                   `aib-token.<page token>`, as the terminal does. The doc must be open already.
@@ -20,6 +24,8 @@ import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import { rootFor } from './files_routes.ts';
 import { runDocTool } from '../docs/tools.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
+import { commentMessage } from '../docs/comments.ts';
+import type { OpenDoc } from '../docs/store.ts';
 import { TOKEN_PROTOCOL_PREFIX } from './terminal_routes.ts';
 import type { WebContext } from './server.ts';
 
@@ -38,6 +44,7 @@ export function docsRoutes(): Map<string, (ctx: WebContext, url: URL, body: Json
     try {
       const create = typeof body?.create === 'string' ? body.create : undefined;
       const doc = await ctx.docs.open(root, body?.name, create);
+      ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.id ?? '')), true);
       return [200, { ok: true, ...ctx.docs.info(doc) }];
     } catch (error) {
       if (error instanceof DocRefusal) return [400, { error: error.message, code: error.code }];
@@ -49,7 +56,38 @@ export function docsRoutes(): Map<string, (ctx: WebContext, url: URL, body: Json
     if (!doc) return Promise.resolve([404, { error: 'Open the doc first', code: 'doc_not_open' }] as Reply);
     return Promise.resolve([200, { ok: true, ...ctx.docs.info(doc), history: ctx.docs.history(doc) }] as Reply);
   });
+  routes.set('POST /api/live/docs/comment/send', async (ctx, _url, body) => {
+    const doc = ctx.docs.get(String(body?.doc ?? ''));
+    if (!doc) return [404, { error: 'Open the doc first', code: 'doc_not_open' }];
+    const chat = typeof body?.chat === 'string' && body.chat ? body.chat : doc.chat;
+    if (!chat) return [409, { error: 'This doc is not linked to a chat yet: choose the chat to send it to.', code: 'no_chat' }];
+    return await sendComment(ctx, doc, body?.thread, chat);
+  });
   return routes;
+}
+
+/**
+ * Turn a comment thread into a user message and queue it to a chat (`chat`: its lasting id or a live connection id), exactly as the
+ * composer's queue does (live op `queue`, sent at once when the agent is idle). The message id is the thread's state, so a second
+ * send of the same state is a duplicate, not a second message. The thread remembers where it was sent.
+ */
+export async function sendComment(ctx: WebContext, doc: OpenDoc, thread: unknown, chat: string): Promise<Reply> {
+  let view;
+  try {
+    view = doc.live.comments.get(thread);
+  } catch (error) {
+    if (error instanceof DocRefusal) return [404, { error: error.message, code: error.code }];
+    throw error;
+  }
+  await ctx.artifacts.refresh().catch(() => {});
+  const connection = ctx.artifacts.connectionOf(chat);
+  if (!connection) return [409, { error: 'That chat is not open: open it, then send again.', code: 'chat_not_open', chat }];
+  const text = commentMessage(doc.name, doc.mirrorPath, view);
+  const clientMessageId = `doc-comment-${doc.id}-${view.thread}-${view.replies.length}`;
+  const [status, payload] = await ctx.host.liveCall('queue', { id: connection, text, clientMessageId });
+  if (status !== 200) return [status, payload];
+  doc.live.comments.markSent(view.thread, ctx.artifacts.chatOf(connection), doc.live.system);
+  return [200, { ...(payload as Json), ok: true, thread: view.thread, chat: ctx.artifacts.chatOf(connection), text }];
 }
 
 /** POST /api/live/docs/tool, after the own gate checked the conversation's key against the body's conversationId. */
@@ -61,7 +99,7 @@ export async function docsTool(ctx: WebContext, body: Json): Promise<Reply> {
   const tool = typeof body.tool === 'string' ? body.tool : '';
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args as Json : {};
   const agent = chat.includes(':') ? chat.slice(0, chat.indexOf(':')) : 'agent';
-  const [ok, result] = await runDocTool(ctx.docs, root, agent, tool, args);
+  const [ok, result] = await runDocTool(ctx.docs, root, agent, tool, args, chat);
   return [200, { ok, result }];
 }
 

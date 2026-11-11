@@ -73,6 +73,8 @@ export interface OpenDoc {
   authors: Set<string>;
   snapTimer: ReturnType<typeof setTimeout> | null;
   note: string;
+  /** The chat this doc is linked to (its lasting id, "provider:sessionId"): "Send to agent" on a comment goes there. */
+  chat: string | null;
 }
 
 export async function docId(
@@ -239,7 +241,7 @@ export class DocStore {
     const mirrorPath = this.mirrorPath(projectRoot, name);
     let state: Uint8Array | null = null;
     let saved:
-      | (Meta & { mirror?: MirrorState; artifactId?: string | null; snapRev?: number })
+      | (Meta & { mirror?: MirrorState; artifactId?: string | null; snapRev?: number; chat?: string | null })
       | null = null;
     if (create === undefined) {
       try {
@@ -270,6 +272,7 @@ export class DocStore {
       authors: new Set(),
       snapTimer: null,
       note: '',
+      chat: typeof saved?.chat === 'string' ? saved.chat : null,
     };
     if (!state) {
       // A new doc: from the given Markdown, else from the project's Markdown copy, else one empty paragraph.
@@ -376,6 +379,7 @@ export class DocStore {
         mirror: doc.mirror,
         artifactId: doc.artifactId,
         snapRev: doc.snapRev,
+        chat: doc.chat,
       }),
     );
   }
@@ -534,8 +538,33 @@ export class DocStore {
     return { rev: doc.live.rev, restored: n };
   }
 
-  /** What the UI can show about a doc: where it is, its rev, skipped file edits, lossy blocks, how many versions. */
+  /**
+   * Link the doc to a chat (its lasting id). `replace`: the page opened it from this chat; otherwise only a doc without a link takes
+   * it (an agent's first tool call on it).
+   */
+  link(doc: OpenDoc, chat: string, replace: boolean): void {
+    if (!chat || doc.chat === chat || (doc.chat && !replace)) return;
+    doc.chat = chat;
+    doc.dirty = true;
+    this.#touchSave(doc);
+  }
+
+  #touchSave(doc: OpenDoc): void {
+    if (doc.timer !== null) clearTimeout(doc.timer);
+    const timer = setTimeout(() => {
+      doc.timer = null;
+      void this.flush(doc).catch(() => {});
+    }, this.options.idleMs ?? 1500);
+    Deno.unrefTimer(timer);
+    doc.timer = timer;
+  }
+
+  /**
+   * What the UI can show about a doc: where it is, its rev, skipped file edits, lossy blocks, its linked chat and its comment threads
+   * (with `seq`, the latest comment change).
+   */
   info(doc: OpenDoc): Record<string, unknown> {
+    const comments = doc.live.comments.list();
     return {
       doc: doc.id,
       name: doc.name,
@@ -545,6 +574,9 @@ export class DocStore {
       skipped: doc.skipped,
       lossy: doc.lossy,
       artifactId: doc.artifactId,
+      chat: doc.chat,
+      commentSeq: comments.seq,
+      comments: comments.threads,
     };
   }
 

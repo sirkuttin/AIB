@@ -12,7 +12,8 @@ type Json = Record<string, unknown>;
 
 /**
  * Run one doc tool for an agent working in `projectRoot`. File-tool edits to the doc's Markdown copy are taken in first, so the
- * agent sees them. Returns [ok, payload]: a refusal is a normal answer (ok=false) with Claude Docs' code.
+ * agent sees them. Returns [ok, payload]: a refusal is a normal answer (ok=false) with Claude Docs' code. `chat` (the chat's lasting
+ * id) becomes the doc's linked chat if it has none yet: "Send to agent" on a comment goes there.
  */
 export async function runDocTool(
   store: DocStore,
@@ -20,6 +21,7 @@ export async function runDocTool(
   agent: string,
   tool: string,
   args: Json,
+  chat: string | null = null,
 ): Promise<[boolean, Json]> {
   try {
     if (!DOC_TOOL_NAMES.has(tool)) throw new DocRefusal('bad_tool', `Unknown doc tool: ${tool}`);
@@ -28,9 +30,11 @@ export async function runDocTool(
       const markdown = args.markdown === undefined ? '' : args.markdown;
       if (typeof markdown !== 'string') throw new DocRefusal('bad_op', '`markdown` is the first content, as a string');
       const doc = await store.open(projectRoot, args.doc, markdown);
+      if (chat) store.link(doc, chat, false);
       return [true, { doc: doc.name, file: doc.mirrorPath, created: true, ...doc.live.read() }];
     }
     const doc = await store.open(projectRoot, args.doc);
+    if (chat) store.link(doc, chat, false);
     await store.syncMirror(doc);
     const live = doc.live;
     const head = { doc: doc.name, file: doc.mirrorPath };
@@ -47,6 +51,25 @@ export async function runDocTool(
         return [true, { ...head, ...live.edit(args.ops, live.originFor('agent', agent)) }];
       case 'doc_undo':
         return [true, { ...head, ...live.undo(live.originFor('agent', agent)) }];
+      case 'doc_comments': {
+        let since: number | undefined;
+        if (args.since !== undefined) {
+          since = Number(args.since);
+          if (!Number.isInteger(since) || since < 0) throw new DocRefusal('bad_op', '`since` is the `seq` of your last doc_comments');
+        }
+        return [true, { ...head, ...live.comments.list(since) }];
+      }
+      case 'doc_comment': {
+        const range = args.target === undefined || args.target === null ? null : live.range(args.target);
+        const thread = live.comments.add(agent, args.text, range, live.originFor('agent', agent));
+        return [true, { ...head, ok: true, ...thread }];
+      }
+      case 'doc_reply':
+        return [true, { ...head, ok: true, ...live.comments.reply(agent, args.thread, args.text, live.originFor('agent', agent)) }];
+      case 'doc_resolve': {
+        const opts = { agent: true, userAsked: args.userAsked };
+        return [true, { ...head, ok: true, ...live.comments.resolve(agent, args.thread, opts, live.originFor('agent', agent)) }];
+      }
       case 'doc_history': {
         if (args.version !== undefined) {
           const n = Number(args.version);
