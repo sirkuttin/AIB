@@ -62,91 +62,14 @@ The page (`chat.html`) is plain JavaScript and CSS served as they are. There is 
 
 Stylesheets load before the scripts; their order is the `<link>` order in `chat.html`.
 
-## Colour tokens
+## Colour tokens and themes
 
-`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (71 tokens: the first 60 from step 1, then the terminal's). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
-
-Rules for the tokens:
-
-- A token is shared only where the hex was already identical. Near-identical shades (`#d6d9e2` and `#d7d9e3`, say) have separate tokens or stay literal; nothing was merged. Numbered names (`--text-2`, `--accent-wash-3`) are separate roles within a family that look alike; their purpose column says where each appears.
-- `--line`, `--muted` and `--accent` kept their old names and values; they moved here from `chat.css`.
-- `header.css` keeps its own `--hd-work`, `--hd-turn`, `--hd-need`, `--hd-idle` and `--hd-fail`; they now point at `--info`, `--ok`, `--warn`, `--text-muted-2` and `--danger`.
-- Colours left literal on purpose (about 200 shades used once or twice, `rgba()` forms, the `#000` mask, the custom properties `--need`, `--ws-bg` and `--sel` in `workspace.css`, and the monitor pages `style.css` and `sidebar.css`, which are a separate page that does not load `theme.css`) are not tokens yet. A new colour in a stylesheet should use an existing token when its role matches, or add one to `theme.css`.
-- `copy-ui.js` keeps literal light colours (`#f3f4f6`, `#d9dce1`, `#c5c9d0`, `#555555`). They style HTML put on the clipboard for other applications, not the page, so they must not follow the page theme.
-
-| Token | Value | Used for |
-| --- | --- | --- |
-| `--text` | `#e5e7ec` | Default text on the page |
-| `--text-bright` | `#fff` | Brightest text: on solid buttons and viewer controls |
-| `--text-2` | `#d6d9e2` | Chip, tab and vendor-label text |
-| `--text-3` | `#c9cbd6` | Secondary labels: sidebar summaries, inbox button |
-| `--text-4` | `#d8dbe4` | Pane headings on hover, file-group scope |
-| `--text-5` | `#c8cbd6` | Link-like body text in the activity and changes panes |
-| `--text-6` | `#e6e7ee` | Artifact list titles and picker text |
-| `--text-7` | `#c9ccd8` | Artifact version and next-step recap text |
-| `--text-dim` | `#a3a8b6` | Activity strip and sub-agent card text |
-| `--muted` | `#929aaa` | Muted text (original token) |
-| `--text-muted` | `#8a91a3` | Qualifiers, timestamps, toggles |
-| `--text-muted-2` | `#9195a6` | Idle status text and dot (also --hd-idle) |
-| `--text-faint` | `#747d90` | Placeholders, composer notes, context state |
-| `--text-faint-2` | `#737e94` | Message times, turn dividers |
-| `--text-faint-3` | `#6d7184` | Artifact shortcuts and counts |
-| `--bg` | `#101114` | Page background; deepest wells (provider tabs, attachment image wells) |
-| `--panel` | `#17181e` | Sidebar, switcher and dialog panels |
-| `--panel-2` | `#20212a` | Raised blocks: rename dialog, attachment cards, file badges |
-| `--bg-inset` | `#14151a` | Small inset fields: project filter, rename input, kbd chips |
-| `--code-bg` | `#14151b` | Code blocks, diffs, resource links |
-| `--code-bg-inline` | `#1b1c24` | Inline code, table heads, diff summaries |
-| `--bg-field` | `#1c1e27` | Inputs, slash popup, open tool rows |
-| `--bg-popover` | `#1d1e28` | Toasts and popovers |
-| `--bg-composer` | `#1a1b24` | Prompt form and small popups |
-| `--bg-control` | `#20222b` | Copy controls and menus |
-| `--bg-row` | `#16171d` | Turn lines, message notes, queue rows on hover |
-| `--bg-card-hover` | `#1d1e26` | Activity cards and strip on hover |
-| `--hover` | `#23252f` | Hover fill for sidebar rows, tabs, buttons |
-| `--hover-2` | `#25222e` | Hover fill for sub-agent cards and activity buttons |
-| `--hover-overlay` | `#ffffff14` | Translucent white hover wash on header icon buttons |
-| `--line` | `#2d2e39` | Default hairline border (original token) |
-| `--line-strong` | `#414051` | Panel, form and card borders |
-| `--line-control` | `#3a3c49` | Button and badge borders |
-| `--line-card` | `#3d4050` | Thumbnail and queue-row borders |
-| `--line-field` | `#343746` | Input and popup borders |
-| `--accent` | `#bba1ff` | Accent (original token): primary buttons, focus, links |
-| `--accent-wash` | `#2a2438` | Purple-tinted hover and active fill |
-| `--accent-wash-2` | `#383043` | Stronger purple hover fill |
-| `--accent-wash-3` | `#2b2752` | Artifacts pane purple fill |
-| `--accent-wash-4` | `#2b2740` | Sub-agent command chips and pane badges |
-| `--accent-wash-5` | `#2d243d` | Selected sub-agent and command card fill |
-| `--accent-line` | `#705a9b` | Selected and needs-you purple borders |
-| `--danger` | `#f08a8a` | Failure dot and new-line marker (also --hd-fail) |
-| `--danger-text` | `#f19999` | Ownership and error-note text |
-| `--danger-bright` | `#ffbac6` | Error text and failed tool status |
-| `--danger-fill` | `#d96b82` | Destructive primary button fill and border |
-| `--ok` | `#7ad19c` | Turn-running dot and additions (also --hd-turn) |
-| `--ok-text` | `#8fd7b2` | Idle status text and notify-on button |
-| `--ok-bright` | `#8be28b` | Copied tick, added tokens, ok marks |
-| `--ok-text-2` | `#8be3ad` | Completed tool status and added diff lines |
-| `--warn` | `#f0b23e` | Needs-you dot and stars (also --hd-need) |
-| `--warn-text` | `#e6c27a` | Hold note, needs-you hover and flash |
-| `--warn-text-2` | `#f0c674` | Recovered and possibly-active badges |
-| `--warn-bg` | `#302a1c` | Approval, needs-you line and toast fill |
-| `--warn-line` | `#ad8d47` | Approval and needs-you borders |
-| `--info` | `#5aa9ff` | Working dot (also --hd-work) |
-| `--plan-dot` | `#d7d9e3` | Plan step dots |
-| `--shadow-strong` | `#000a` | Toast, switcher and popover drop shadow |
-| `--shadow-med` | `#0009` | Menu shadow and switcher backdrop |
-| `--shadow-soft` | `#0008` | Chip popover shadow |
-| `--term-bg` | `#0c0d10` | Terminal panel and xterm background |
-| `--term-sel` | `#3d3456` | xterm selection |
-| `--term-green` | `#7ad19c` | xterm green |
-| `--term-blue` | `#7cb7ff` | xterm blue |
-| `--term-yellow` | `#e6c27a` | xterm yellow |
-| `--term-red` | `#f19999` | xterm red |
-| `--term-cyan` | `#7fd3d8` | xterm cyan |
-| `--term-dim` | `#8a91a3` | xterm bright black (prompts, dim text) |
-| `--accent-ink` | `#17111f` | Text on a solid accent button |
-| `--bad-fill` | `#3a1820` | "Didn't start" shell chip fill |
-| `--bad-line` | `#7a3a48` | "Didn't start" shell chip border |
+`theme.css` loads first in `chat.html` (after `themes.js`, the one blocking script, which puts the saved theme on
+`<html data-theme>` before first paint). It names every colour the page paints as a token; the other stylesheets only say
+`var(--token)`. Each theme is one block of token values; derived tokens are formulas over the core tokens, so a new theme
+sets only the core ones. The full token list, what each is for, the themes and how to add one: [THEMES.md](THEMES.md).
+Checked by `work/test_themes.js` (tokens, no stray colours, WCAG contrast in every theme) and `work/test_card_layout.js`
+(no theme or status symbol moves a card).
 
 ## Vendored libraries
 

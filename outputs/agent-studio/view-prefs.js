@@ -30,6 +30,8 @@
     'agentStudio.copyFormat.code', // the code-block Copy button's format
     'studio-cwd', // the folder last typed for a new chat
     'studio-notifications-app', // the desktop app's notification choices (notify-ui.js; a browser's stay in that browser)
+    'aib-theme', // the colour theme (themes.js)
+    'aib-status-glyphs', // status symbols on or off (themes.js)
   ]);
   const PREFIXES = Object.freeze([
     'studio-textsize-v1:', // chat text and interface size, code font, line spacing

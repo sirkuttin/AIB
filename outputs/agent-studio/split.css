@@ -93,7 +93,7 @@ body.split-on .ahead {
 }
 .dv:hover,
 .dv.on {
-  background: #4a4660;
+  background: var(--divider-active-bg);
 }
 body.split-resizing-x,
 body.split-resizing-y {
@@ -135,7 +135,7 @@ body.split-resizing-y {
   position: relative;
 }
 .pane:not(.foc) .ws-tab.on {
-  background: #181a21;
+  background: var(--bubble-bg);
 }
 
 /* ---- A pane that is not focused: a live copy of its chat. Clicking it focuses it. ---- */
@@ -192,22 +192,48 @@ body.split-resizing-y {
 .mirror-status[data-tone='turn']::before {
   background: var(--hd-turn);
 }
-.mirror-status[data-tone='need'],
-.mirror-status[data-tone='else'] {
+.mirror-status[data-tone='need'] {
   color: var(--hd-need);
+}
+.mirror-status[data-tone='else'] {
+  color: var(--else-status-text);
 }
 .mirror-status[data-tone='need']::before {
   background: var(--hd-need);
 }
+.mirror-status[data-tone='else-work'] {
+  color: var(--hd-work);
+  border-color: var(--status-working-line);
+}
+.mirror-status[data-tone='else-work']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-work);
+}
 .mirror-status[data-tone='else']::before {
   background: transparent;
-  border: 1.5px dashed var(--hd-need);
+  border: 1.5px dashed var(--else-status-text);
 }
 .mirror-status[data-tone='bad'] {
   color: var(--hd-fail);
 }
 .mirror-status[data-tone='bad']::before {
   background: var(--hd-fail);
+}
+.mirror-status[data-tone='work'] {
+  background: var(--chip-working-bg);
+  border-color: var(--chip-working-line);
+}
+.mirror-status[data-tone='turn'] {
+  background: var(--chip-done-bg);
+  border-color: var(--chip-done-line);
+}
+.mirror-status[data-tone='need'] {
+  background: var(--chip-needs-bg);
+  border-color: var(--chip-needs-line);
+}
+.mirror-status[data-tone='idle'] {
+  background: var(--chip-idle-bg);
+  border-color: var(--chip-idle-line);
 }
 .mirror-msgs {
   flex: 1 1 auto;
@@ -249,7 +275,7 @@ body.split-dragging {
   position: fixed;
   z-index: 60;
   pointer-events: none;
-  background: rgba(187, 161, 255, 0.22);
+  background: var(--split-hint-bg);
   border: 1px solid var(--accent);
   border-radius: 4px;
   transition:
@@ -267,7 +293,7 @@ body.split-dragging {
   border-radius: 999px;
   border: 1px solid var(--accent);
   background: var(--accent-wash-3);
-  color: #f0e5ff;
+  color: var(--tab-selected-text);
   font:
     600 11px Segoe UI,
     system-ui,
@@ -293,10 +319,10 @@ body.split-dragging {
   padding: 3px 10px;
   border: 1px solid var(--accent);
   border-radius: 6px;
-  background: #1e1f28;
+  background: var(--ar-pick-bg);
   color: var(--text);
   font-size: 12px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 18px var(--split-ghost-shadow);
   white-space: nowrap;
   overflow: hidden;
 }

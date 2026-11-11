@@ -44,7 +44,7 @@ body {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line);
-  background: #15161c;
+  background: var(--subagents-pane-bg);
   overflow: hidden;
 }
 #activityStrip {
@@ -262,20 +262,20 @@ body.subchat-open .rs-split {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4b4f5d;
+  background: var(--activity-dot-bg);
 }
 .sa-working .sa-dot,
 .proc-running .sa-dot {
-  background: var(--accent);
+  background: var(--status-working);
   animation: toolpulse 1.4s ease-in-out infinite;
 }
 .sa-probable .sa-dot {
   background: transparent;
-  border: 1.5px solid var(--accent);
+  border: 1.5px solid var(--status-working);
   animation: none;
 }
 .sa-working .sa-title {
-  color: #f1ecff;
+  color: var(--title-active-text);
   font-weight: 550;
 }
 .sa-when {
@@ -285,7 +285,7 @@ body.subchat-open .rs-split {
 }
 .sa-working .sa-when,
 .proc-running .sa-when {
-  color: #a79fbd;
+  color: var(--activity-when-text);
 }
 .sa-cmd {
   flex: 0 0 auto;
@@ -294,14 +294,17 @@ body.subchat-open .rs-split {
   padding: 0 6px;
   border-radius: 999px;
   background: var(--accent-wash-4);
-  color: var(--accent);
+  color: var(--link);
+}
+.sa-completed .sa-dot {
+  background: var(--status-done);
 }
 .sa-failed .sa-dot,
 .proc-failed .sa-dot {
-  background: #d9666e;
+  background: var(--activity-dot-failed-bg);
 }
 .sa-failed .sa-title {
-  color: #f3b3b8;
+  color: var(--activity-failed-text);
   font-weight: 550;
 }
 .sa-failed .sa-when,
@@ -342,13 +345,13 @@ body.subchat-open .rs-split {
     -apple-system,
     'Segoe UI',
     sans-serif;
-  color: #b4b9c8;
+  color: var(--proc-title-text);
 }
 .proc-running .proc-title {
   color: var(--text);
 }
 .proc-failed .proc-title {
-  color: #f3b3b8;
+  color: var(--activity-failed-text);
 }
 .proc-row.sa-card .sa-dot {
   margin-left: 0;
@@ -357,7 +360,7 @@ body.subchat-open .rs-split {
 .activity-hide:focus-visible,
 #commandHistoryToggle:focus-visible,
 #activityStrip:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -510,7 +513,7 @@ body.subchat-open #commandSection {
   color: var(--muted);
 }
 .sub-link-state.running {
-  color: var(--accent);
+  color: var(--status-working);
 }
 .subchat-note {
   margin: 0;
@@ -570,16 +573,16 @@ body.subchat-open #commandSection {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #4b4f5d;
+    background: var(--activity-dot-bg);
   }
   .ac-sub.working .ac-dot {
-    background: var(--accent);
+    background: var(--status-working);
     animation: toolpulse 1.4s ease-in-out infinite;
   }
   .ac-chip + .ac-chip::before {
     content: '\00B7';
     margin-right: 8px;
-    color: #5a5f70;
+    color: var(--activity-chip-sep-text);
   }
   .ac-failed,
   .ac-proc {

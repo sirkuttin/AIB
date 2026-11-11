@@ -1,7 +1,7 @@
 'use strict';
 const { APP: APP_DIR } = require('./_paths');
-/* Your own messages keep the purple box but have no visible title bar: the "You" label stays for screen readers,
-   and the time and Copy button float at the top right and always show, at a readable size. */
+/* Your own messages keep their own box (a neutral raised fill since the Bay teal styling) but have no visible title bar: the "You"
+   label stays for screen readers. The time always shows; Copy shows on hover or keyboard focus (always on touch). */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,8 +13,8 @@ const rules = cssRules(css);
 const decl = (selector, context) => declarationsFor(rules, selector, context);
 const HEAD = '.bubble.user > .bubble-head';
 /* Colours are named in theme.css (var(--token)); resolve them to check contrast. */
-const tokens = declarationsFor(cssRules(fs.readFileSync(path.join(APP_DIR, 'theme.css'), 'utf8')), ':root');
-const hex = (value) => String(value).replace(/var\((--[\w-]+)\)/g, (all, name) => tokens[name] ?? all);
+const T = require('./theme_tokens.js');
+const hex = (value, theme = 'teal-dark') => T.hex(value, theme);
 const luminance = (h) => {
   const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
   const [r, g, b] = c.map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
@@ -25,8 +25,8 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-test('the purple box is unchanged', () => {
-  assert.deepEqual(decl('.bubble.user'), { background: '#272031', 'border-color': '#4d3c65' });
+test('the user box is unchanged', () => {
+  assert.deepEqual(decl('.bubble.user'), { background: 'var(--bubble-user-bg)', 'border-color': 'var(--bubble-user-line)' });
   const box = decl('.bubble');
   assert.equal(box['border-radius'], '9px');
   assert.equal(box.border, '1px solid var(--line)');
@@ -60,13 +60,11 @@ test('your prompts: Copy shows on hover or focus only (pointer screens), never o
 test('time and Copy always show outside the hover-only media block, time 12px muted with at least 4.5:1 on the purple box', () => {
   const time = { ...decl('.bubble-head time'), ...decl(HEAD + ' > time') };
   assert.equal(time['font-size'], '12px');
-  const color = hex(time.color);
-  assert.match(color, /^#[0-9a-f]{6}$/i);
-  assert.ok(
-    contrast(color, '#272031') >= 4.5,
-    `time contrast ${contrast(color, '#272031').toFixed(2)} on the user box`,
-  );
-  assert.ok(contrast(color, hex('var(--bg)')) >= 4.5, 'and on the page behind agent messages');
+  for (const theme of T.themeIds()) {
+    const on = (bg) => T.contrast(time.color, bg, theme);
+    assert.ok(on('var(--bubble-user-bg)') >= 4.5, `${theme}: time contrast ${on('var(--bubble-user-bg)').toFixed(2)} on the user box`);
+    assert.ok(on('var(--bg)') >= 4.5, `${theme}: and on the page behind agent messages`);
+  }
   for (const part of ['time', '.copy-ctl']) {
     assert.equal(decl(`${HEAD} > ${part}`).opacity, undefined);
     assert.deepEqual(decl(`.bubble.user:hover > .bubble-head > ${part}`), {});
@@ -107,5 +105,5 @@ test('Copy, Run in terminal and code-block copy: 12px text, at least 24px tall, 
 test('the user rules do not leak to other bubbles', () => {
   const leaks = rules.filter((r) => /\.bubble\.user/.test(r.selector) && /assistant|tool|notice/.test(r.selector));
   assert.equal(leaks.length, 0);
-  assert.equal(decl('.bubble-head')['border-bottom'], '1px solid #292b35');
+  assert.equal(decl('.bubble-head')['border-bottom'], '1px solid var(--bubble-head-line)');
 });

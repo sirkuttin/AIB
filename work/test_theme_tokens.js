@@ -195,21 +195,6 @@ test('theme tokens keep every colour', { skip: baseAvailable() ? false : 'histor
     assert.deepEqual(problems, [], problems.slice(0, 40).join('\n'));
   });
 
-  await t.test('theme.css defines literal colours only and is the only place for them', () => {
-    const rules = parse(readAfter('theme'));
-    assert.deepEqual([...new Set(rules.map(([c, p]) => `${c}|${p}`))], ['|:root'], 'theme.css must hold one plain :root rule');
-    const variables = rootVars(rules);
-    assert.ok(Object.keys(variables).length >= 30);
-    for (const [name, value] of Object.entries(variables)) assert.match(value, /^#[0-9a-fA-F]{3,8}$/, `${name} must be one literal colour, got ${value}`);
-  });
-
-  await t.test('tokens are in use and defined', () => {
-    const defined = rootVars(parse(readAfter('theme')));
-    const used = new Set();
-    for (const text of Object.values(after)) for (const m of text.replace(COMMENT, '').matchAll(VAR)) used.add(m[1]);
-    assert.deepEqual(Object.keys(defined).filter((n) => !used.has(n)).sort(), [], 'tokens defined in theme.css but used nowhere');
-  });
-
   await t.test('monitor stylesheets are untouched', () => {
     for (const name of MONITOR_CSS) assert.equal(before[name].replaceAll('\r\n', '\n'), after[name].replaceAll('\r\n', '\n'), name);
   });
@@ -225,6 +210,9 @@ test('theme tokens keep every colour', { skip: baseAvailable() ? false : 'histor
     assert.equal(servedAsset('/theme.css'), 'theme.css');
   });
 });
+
+// Today's theme.css (one block per theme, every token defined, no colour outside theme.css, contrast) is checked by
+// test_themes.js.
 
 test('the equivalence check is strict: it fails when a colour, selector or property changes', async (t) => {
   const THEME_CSS = ':root { --a: #abc; --b: #0009; --c: #112233; }';

@@ -7,6 +7,7 @@ const test = require('node:test'),
   fs = require('node:fs'),
   path = require('node:path');
 const { cssRules, declarationsFor } = require('./css_rules');
+const T = require('./theme_tokens.js'); // colours are theme tokens
 
 const rules = cssRules(fs.readFileSync(path.join(APP, 'workspace.css'), 'utf8'));
 const decl = (sel) => declarationsFor(rules, sel);
@@ -17,7 +18,8 @@ test('the selected card has no inset bar shadow; the marker is a straight ::befo
   assert.equal(pill.content, "''");
   assert.equal(pill.position, 'absolute');
   assert.equal(pill.width, '3px');
-  assert.equal(pill.background, '#a98be2');
+  assert.equal(pill.background, 'var(--sel-bar)');
+  assert.equal(T.hex(pill.background, 'teal-dark'), T.hex('var(--accent)', 'teal-dark'));
   assert.ok(pill.top && pill.bottom && pill.left, 'placed inside the card, clear of the rounded corners');
   assert.equal(decl('aside .connection').position, 'relative');
 });
@@ -42,10 +44,11 @@ test('the card keeps its size, padding and radius: only position: relative is ne
 
 test('needs-you / unread outlines on the selected card are the 1px outline only', () => {
   // QA c1: needs-you is a thin amber outline, so it no longer looks like the purple focus ring or the selected card.
-  const amber = 'inset 0 0 0 1px color-mix(in srgb, var(--need) 55%, transparent)';
-  assert.equal(decl('aside .connection.selected.attn-needs_you')['box-shadow'], amber);
-  assert.equal(decl('aside .connection.attn-needs_you:not(.selected)')['box-shadow'], amber);
-  assert.equal(decl('aside .connection.selected.attn-unread')['box-shadow'], 'inset 0 0 0 1px #3d5f86');
+  // The outline is the theme's needs-you line (Dracula-style keeps the old amber).
+  const needs = 'inset 0 0 0 1px var(--card-needs-line)';
+  assert.equal(decl('aside .connection.selected.attn-needs_you')['box-shadow'], needs);
+  assert.equal(decl('aside .connection.attn-needs_you:not(.selected)')['box-shadow'], needs);
+  assert.equal(decl('aside .connection.selected.attn-unread')['box-shadow'], 'inset 0 0 0 1px var(--status-done-line)');
   for (const r of rules) {
     if (/\.connection/.test(r.selector) && r.declarations['box-shadow']) {
       assert.ok(!/inset 3px/.test(r.declarations['box-shadow']), r.selector);

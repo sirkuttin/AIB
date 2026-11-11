@@ -278,6 +278,47 @@ test(
 );
 
 test(
+  'every colour theme, and the status symbols, lay the cards and tabs out exactly like the default',
+  { skip: !BROWSER && 'no Chrome or Edge found' },
+  async () => {
+    const s = await open();
+    const ids = require('./theme_tokens.js').themeIds();
+    const measure = () =>
+      s.evaluate(
+        `() => JSON.stringify([(${measureCards})(), [...document.querySelectorAll('.ws-tab')].map((t) => t.getBoundingClientRect().toJSON())])`,
+      );
+    await s.evaluate(`() => document.documentElement.removeAttribute('data-theme')`);
+    const base = await measure();
+    for (const id of ids) {
+      await s.evaluate(
+        `() => { document.documentElement.setAttribute('data-theme', ${JSON.stringify(id)}); return document.body.offsetHeight; }`,
+      );
+      assert.equal(await measure(), base, `${id}: a card or tab moved or changed size`);
+    }
+    // Status symbols on (Settings > Appearance, and always in cb-safe): the symbol takes the dot's box, nothing moves.
+    await s.evaluate(
+      `() => { document.documentElement.setAttribute('data-status-glyphs', 'on'); return document.body.offsetHeight; }`,
+    );
+    for (const id of ['teal-dark', 'cb-safe', 'hc-light']) {
+      await s.evaluate(
+        `() => { document.documentElement.setAttribute('data-theme', ${JSON.stringify('ID')}); return 1; }`.replace(
+          'ID',
+          id,
+        ),
+      );
+      assert.equal(await measure(), base, `${id} with status symbols: a card or tab moved or changed size`);
+      const shown = await s.evaluate(
+        `() => getComputedStyle(document.querySelector('.status-dot.d-need'), '::after').content`,
+      );
+      assert.equal(shown, '"▲"', `${id}: the needs-you symbol is drawn`);
+    }
+    await s.evaluate(
+      `() => { document.documentElement.removeAttribute('data-status-glyphs'); document.documentElement.removeAttribute('data-theme'); return 1; }`,
+    );
+  },
+);
+
+test(
   'chat tabs: the active tab has the inactive tab size, and its dot, title and close button stay put',
   { skip: !BROWSER && 'no Chrome or Edge found' },
   async () => {

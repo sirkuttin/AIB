@@ -57,13 +57,13 @@
 .plan-completed .plan-text {
   color: var(--muted);
   text-decoration: line-through;
-  text-decoration-color: #5d6272;
+  text-decoration-color: var(--plan-text-underline);
 }
 .plan-pending {
   color: var(--muted);
 }
 .plan-in_progress .plan-text {
-  color: #f0eaff;
+  color: var(--plan-active-text);
   font-weight: 600;
 }
 .plan-spin::before,
@@ -88,7 +88,7 @@
     radial-gradient(circle at 78% 50%, var(--plan-dot) 0 0.9px, transparent 1.2px);
 }
 .plan-spin::before {
-  border: 1.5px solid rgba(215, 217, 227, 0.25);
+  border: 1.5px solid var(--plan-spin-line);
   border-top-color: var(--plan-dot);
   border-right-color: var(--plan-dot);
   animation: plan-spin 0.9s linear infinite;
@@ -142,7 +142,7 @@
 }
 .nextstep-btn.primary {
   border-style: solid;
-  border-color: #55586a;
+  border-color: var(--nextstep-btn-primary-line);
   color: var(--text-7);
 }
 .nextstep-note {
@@ -157,7 +157,7 @@
   padding: 8px 12px;
   border: 1px solid var(--line-card);
   border-radius: 10px;
-  background: #17181f;
+  background: var(--ws-reply-box-bg);
 }
 .plan-dock-head {
   font-size: 12px;

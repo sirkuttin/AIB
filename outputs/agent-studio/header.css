@@ -1,12 +1,5 @@
 /* Chat header, status vocabulary, composer and New chat view (docs/design/review-decisions.html). Loaded last.
    Header: ONE line: name + pencil, then the agent chip and the status chip. Composer: turn line, one box, one chip row. */
-:root {
-  --hd-work: var(--info);
-  --hd-turn: var(--ok);
-  --hd-need: var(--warn);
-  --hd-idle: var(--text-muted-2);
-  --hd-fail: var(--danger);
-}
 
 /* Nothing here is shown: older code still looks these elements up. */
 #legacyControls[hidden],
@@ -55,10 +48,10 @@ header .hd-line h1 {
   border-radius: 4px;
 }
 header .hd-line h1:hover {
-  background: #ffffff0d;
+  background: var(--title-hover-bg);
 }
 header .hd-line h1:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .hd-title-input {
@@ -107,13 +100,14 @@ header .hd-line h1:focus-visible {
   flex: none;
   display: inline-flex;
   align-items: center;
-  height: 22px;
+  height: 24px;
   padding: 0 9px;
   font-size: 12px;
-  line-height: 20px;
+  font-weight: 600;
+  line-height: 22px;
   color: var(--text-2);
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 12px;
   background: var(--panel-2);
   white-space: nowrap;
 }
@@ -137,15 +131,16 @@ header #status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: 24px;
   max-width: 220px;
   margin: 0;
   padding: 0 10px;
   font-size: 12px;
-  line-height: 20px;
+  font-weight: 600;
+  line-height: 22px;
   color: var(--muted);
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 12px;
   background: transparent;
   white-space: nowrap;
   overflow: hidden;
@@ -185,7 +180,7 @@ header #status {
 #status[data-tone='need']::before,
 #turnStatus[data-tone='need']::before {
   background: var(--hd-need);
-  box-shadow: 0 0 0 3px #f0b23e49;
+  box-shadow: 0 0 0 3px var(--hd-need-halo);
 }
 #status[data-tone='idle'],
 #turnStatus[data-tone='idle'] {
@@ -202,12 +197,22 @@ header #status {
 }
 #status[data-tone='else'],
 #turnStatus[data-tone='else'] {
-  color: var(--hd-need);
+  color: var(--else-status-text);
 }
 #status[data-tone='else']::before,
 #turnStatus[data-tone='else']::before {
   background: transparent;
-  border: 1.5px dashed var(--hd-need);
+  border: 1.5px dashed var(--else-status-text);
+}
+/* Elsewhere · Working: still the Working colour; the dashed ring says it runs in another app */
+#status[data-tone='else-work'],
+#turnStatus[data-tone='else-work'] {
+  color: var(--hd-work);
+}
+#status[data-tone='else-work']::before,
+#turnStatus[data-tone='else-work']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-work);
 }
 #status[data-tone='bad'],
 #turnStatus[data-tone='bad'] {
@@ -217,13 +222,67 @@ header #status {
 #turnStatus[data-tone='bad']::before {
   background: var(--hd-fail);
 }
+/* the header chip is filled with its tone's pair (theme.css --status-*-bg); the composer turn line keeps its own fill */
+#status[data-tone='work'] {
+  background: var(--chip-working-bg);
+  border-color: var(--chip-working-line);
+}
+#status[data-tone='turn'] {
+  background: var(--chip-done-bg);
+  border-color: var(--chip-done-line);
+}
+#status[data-tone='need'] {
+  background: var(--chip-needs-bg);
+  border-color: var(--chip-needs-line);
+}
+#status[data-tone='idle'] {
+  background: var(--chip-idle-bg);
+  border-color: var(--chip-idle-line);
+}
+#status[data-tone='else-work'] {
+  background: var(--status-working-bg);
+  border: 1px dashed var(--status-working);
+}
+/* status symbols in the header chip and the composer turn line: the symbol takes the dot's place */
+:root[data-status-glyphs='on'] :is(#status, #turnStatus)[data-tone]::before,
+[data-theme='cb-safe'] :is(#status, #turnStatus)[data-tone]::before {
+  content: var(--glyph, '');
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+:is(#status, #turnStatus)[data-tone='work'],
+:is(#status, #turnStatus)[data-tone='else-work'] {
+  --glyph: var(--status-working-glyph);
+}
+:is(#status, #turnStatus)[data-tone='need'] {
+  --glyph: var(--status-needs-glyph);
+}
+:is(#status, #turnStatus)[data-tone='turn'] {
+  --glyph: var(--status-done-glyph);
+}
+:is(#status, #turnStatus)[data-tone='idle'],
+:is(#status, #turnStatus)[data-tone='off'],
+:is(#status, #turnStatus)[data-tone='else'] {
+  --glyph: var(--status-idle-glyph);
+}
+:is(#status, #turnStatus)[data-tone='bad'] {
+  --glyph: var(--status-error-glyph);
+}
 @keyframes hd-pulse {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.35;
+    opacity: 0.55;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -233,19 +292,22 @@ header #status {
   }
 }
 /* the same colours on the sidebar card's status phrase */
-.tone-work .row-phrase {
+.tone-work .row-phrase,
+.tone-else-work .row-phrase {
   color: var(--hd-work);
 }
 .tone-turn .row-phrase {
   color: var(--hd-turn);
 }
-.tone-need .row-phrase,
-.tone-else .row-phrase {
+.tone-need .row-phrase {
   color: var(--hd-need);
 }
 .tone-idle .row-phrase,
 .tone-off .row-phrase {
   color: var(--muted);
+}
+.tone-else .row-phrase {
+  color: var(--else-phrase-text);
 }
 
 /* ownership bar: 28 px, dismissible, only while the notice applies */
@@ -257,7 +319,7 @@ header #status {
   flex: none;
   padding: 0 4px 0 16px;
   border-bottom: 1px solid var(--line);
-  background: #1b1a17;
+  background: var(--ownership-bar-bg);
 }
 .ownership-bar:has(#ownershipHint[hidden]) {
   display: none;
@@ -307,7 +369,7 @@ header #status {
   border: 0;
   border-radius: 999px;
   background: var(--accent);
-  color: #15111d;
+  color: var(--jump-new-text);
   font-weight: 600;
   box-shadow: 0 4px 16px var(--shadow-med);
 }
@@ -398,8 +460,8 @@ header #status {
 }
 /* Interrupt takes Send's place while the agent is working */
 #cancel {
-  border-color: #7a4c4c;
-  color: #f2b8b8;
+  border-color: var(--cancel-line);
+  color: var(--cancel-text);
   background: transparent;
 }
 .composer-row {
@@ -480,7 +542,7 @@ header #status {
 #promptForm .composer-actions .composer-attach {
   height: 32px;
   padding: 0 10px;
-  border: 1px solid #3f4150;
+  border: 1px solid var(--composer-attach-line);
   border-radius: 6px;
   background: transparent;
   color: var(--text-3);
@@ -489,7 +551,7 @@ header #status {
 }
 #promptForm .composer-actions .composer-attach:hover,
 #promptForm .composer-actions .composer-attach:focus-visible {
-  background: #262836;
+  background: var(--composer-attach-bg);
   color: var(--text-bright);
 }
 

@@ -23,7 +23,7 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
   font-size: 11px;
   text-decoration: underline;
 }
@@ -46,7 +46,7 @@
   padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: #24262f;
+  background: var(--button-bg);
   color: var(--text);
   font-size: 11.5px;
 }
@@ -58,7 +58,7 @@
   cursor: default;
 }
 .ws-qa:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .ws-qa.ws-inbox-handled,
@@ -68,7 +68,7 @@
   padding: 0 8px;
   border-color: transparent;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
   text-decoration: underline;
 }
 .ws-qa.ws-inbox-handled:hover,
@@ -76,12 +76,12 @@
   background: var(--accent-wash-2);
 }
 .ws-qa-reply {
-  border-color: #6a528f;
+  border-color: var(--subagent-card-selected-line);
 }
 .ws-qa-send.primary {
-  background: #8f7cf0;
+  background: var(--ws-qa-send-primary-bg);
   border-color: transparent;
-  color: #16131f;
+  color: var(--ws-qa-send-primary-text);
   font-weight: 600;
   border-radius: 999px;
 }
@@ -91,18 +91,18 @@
   gap: 5px;
 }
 .ws-qa-choice.ok {
-  background: #2f6f4c;
+  background: var(--ws-qa-choice-ok-bg);
   border-color: transparent;
 }
 .ws-qa-choice.no {
-  color: #f0a0a0;
+  color: var(--ws-qa-choice-no-text);
 }
 .ws-qa-note {
   font-size: 11px;
   color: var(--muted);
 }
 .ws-qa-queued {
-  color: var(--accent);
+  color: var(--link);
   font-weight: 600;
 }
 .ws-reply {
@@ -119,7 +119,7 @@
   padding: 6px 8px;
   border: 1px solid var(--accent);
   border-radius: 6px;
-  background: #17181f;
+  background: var(--ws-reply-box-bg);
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
