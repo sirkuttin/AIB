@@ -42,7 +42,7 @@
   padding: 0 8px;
   border: 1px solid var(--line-card);
   border-radius: 6px;
-  background: #1e1f28;
+  background: var(--ar-pick-bg);
   color: var(--text-6);
   font-size: 12px;
   line-height: 1;
@@ -78,8 +78,8 @@
   color: var(--text-7);
 }
 .ar-ver.old {
-  color: #f0c36a;
-  border-color: #6b5a2c;
+  color: var(--ar-ver-old-text);
+  border-color: var(--ar-ver-old-line);
 }
 .ar-ico {
   flex: 0 0 auto;
@@ -138,9 +138,9 @@
   gap: 2px;
   padding: 5px 12px;
   font-size: 12px;
-  background: #3a2d12;
-  color: #f0c36a;
-  border-bottom: 1px solid #5a4620;
+  background: var(--ar-avail-bg);
+  color: var(--ar-ver-old-text);
+  border-bottom: 1px solid var(--ar-avail-line);
 }
 /* "New: <title> · Open": a new artifact arrived while you look at another one (QA m2). Quiet: the viewer stays where it is. */
 .ar-fresh {
@@ -169,7 +169,7 @@
   padding: 0 4px;
   border: 0;
   background: transparent;
-  color: #ffd98a;
+  color: var(--ar-switch-text);
   text-decoration: underline;
   font-size: 12px;
 }
@@ -194,7 +194,7 @@
   width: 100%;
   min-height: 0;
   border: 0;
-  background: var(--text-bright);
+  background: var(--artifact-frame-bg);
   color-scheme: normal;
 }
 .ar-frame.loading {
@@ -209,7 +209,7 @@
   max-height: 100%;
   margin: auto;
   object-fit: contain;
-  background: var(--text-bright);
+  background: var(--artifact-frame-bg);
 }
 .ar-textwrap {
   flex: 1 1 auto;
@@ -226,7 +226,7 @@
     monospace;
   white-space: pre-wrap; /* long lines wrap: no single endless line (QA c6) */
   overflow-wrap: anywhere;
-  color: #cfd2dc;
+  color: var(--cg-text);
   tab-size: 4;
 }
 .ar-msg {
@@ -290,10 +290,10 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  background: #1e1f28;
+  background: var(--ar-pick-bg);
   border: 1px solid var(--line-card);
   border-radius: 8px;
-  box-shadow: 0 10px 28px #0006;
+  box-shadow: 0 10px 28px var(--organize-menu-shadow);
   font-size: 12px;
   scrollbar-width: thin;
 }
@@ -360,7 +360,7 @@
 .ar-sep {
   height: 1px;
   margin: 4px 2px;
-  background: #2c2e3a;
+  background: var(--ar-sep-bg);
 }
 .ar-kb {
   margin-left: auto;
@@ -399,7 +399,7 @@
   padding: 8px 10px;
   border: 1px solid var(--line-card);
   border-radius: 8px;
-  background: #17181f;
+  background: var(--ws-reply-box-bg);
   font-size: 12px;
   line-height: 1.45;
 }

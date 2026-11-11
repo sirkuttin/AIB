@@ -16,7 +16,7 @@
   padding: 0 4px 2px;
 }
 .q-head.q-paused {
-  color: #f0d28a;
+  color: var(--queue-paused-text);
 }
 .q-list {
   list-style: none;
@@ -35,12 +35,12 @@
   padding: 0 4px 0 8px;
   border: 1px dashed var(--line-card);
   border-radius: 6px;
-  color: #c9ccd6;
+  color: var(--kbd-text-3);
   background: transparent;
 }
 .q-row:hover,
 .q-row:focus-within {
-  border-color: #5a5e75;
+  border-color: var(--q-row-line);
   background: var(--bg-row);
 }
 .q-row.q-held {
@@ -63,7 +63,7 @@
 }
 .q-note {
   flex: none;
-  color: #e6a0a0;
+  color: var(--turn-lost-text);
   font-weight: 700;
   cursor: default;
 }
@@ -97,7 +97,7 @@
 }
 .q-btn:hover,
 .q-btn:focus-visible {
-  background: #2b2d38;
+  background: var(--q-btn-bg);
   color: var(--text);
   outline: none;
 }
@@ -112,7 +112,7 @@
 }
 .q-text-btn:hover,
 .q-text-btn:focus-visible {
-  background: #2b2d38;
+  background: var(--q-btn-bg);
   outline: none;
 }
 .q-row.q-editing {

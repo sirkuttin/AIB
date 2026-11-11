@@ -68,7 +68,7 @@ body.new-chat.start-page #turnRow {
 #startPage .sp-stuck {
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid #262833;
+  border: 1px solid var(--st-agent-line);
   border-radius: 8px;
 }
 #startPage .sp-command {

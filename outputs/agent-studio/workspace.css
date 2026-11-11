@@ -2,11 +2,6 @@
    Loaded after chat.css so it overrides the older sidebar rules without editing their long one-line sources.
    Scales: spacing 4/8/12/16/24, type 11/12/13/14, rows 28 (headings) / 32 (chats) / 44 (hold note), radius 6.
    Activity pane (#subagentsPane) and its CSS are deliberately not touched here. */
-:root {
-  --need: var(--status-needs);
-  --ws-bg: #121317;
-  --sel: var(--accent-wash);
-}
 
 /* ---- sidebar = project rail + slim list -------------------------------------------------------------------- */
 /* The aside keeps its own width (rail 48 + list 252) whatever the grid track in chat.css says: the main column spans
@@ -184,7 +179,7 @@ aside .conversation-row .connection {
 }
 .status-count {
   background: var(--need);
-  color: var(--status-needs-bg);
+  color: var(--count-needs-text);
   font-size: 11px;
 }
 
@@ -297,7 +292,7 @@ details.side-more .note {
   border: 1px solid transparent;
   border-bottom: 0;
   border-radius: 6px 6px 0 0;
-  background: #1b1c23;
+  background: var(--ws-tab-bg);
   position: relative;
 }
 .ws-tab:hover {
@@ -497,7 +492,7 @@ header .session-strip {
 header #status {
   font-size: 11px;
   padding: 2px 8px;
-  border: 1px solid #2f4a3c;
+  border: 1px solid var(--header-status-line);
   border-radius: 999px;
   max-width: 220px;
   overflow: hidden;
@@ -598,7 +593,7 @@ body.show-composer-help .composer-note {
     position: fixed;
     inset: 0;
     z-index: 35;
-    background: #0006;
+    background: var(--organize-menu-shadow);
   }
   header {
     padding: 8px 16px;
@@ -632,8 +627,8 @@ body.show-composer-help .composer-note {
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  background: var(--accent-wash-4);
-  color: var(--link);
+  background: var(--chip-icon-bg);
+  color: var(--chip-icon-text);
   font-size: 10px;
   font-weight: 600;
 }
@@ -656,7 +651,7 @@ body.show-composer-help .composer-note {
   max-width: 130px;
 }
 .chip-agent-select option {
-  background: #1a1b22;
+  background: var(--select-option-bg);
   color: var(--text);
 }
 .chip-pop-agent {
@@ -804,7 +799,7 @@ body > main {
   height: 28px;
   margin: 0;
   padding: 0;
-  border: 1px dashed #4a4c5b;
+  border: 1px dashed var(--ws-newproj-line);
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
@@ -911,7 +906,7 @@ body > main {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--need);
-  color: var(--status-needs-bg);
+  color: var(--ws-badge-text);
   font-size: 11px;
   font-weight: 700;
   line-height: 18px;
@@ -926,7 +921,7 @@ body > main {
   border-radius: 50%;
 }
 .ws-working {
-  background: var(--status-working);
+  background: var(--ws-working-bg);
   animation: ws-pulse 1.6s infinite;
 }
 .ws-unread {
@@ -1018,7 +1013,7 @@ body.ws-dragging {
   background: var(--accent-wash);
 }
 .ws-menu-item:disabled {
-  color: #6b7080;
+  color: var(--ws-menu-item-text);
   cursor: default;
 }
 .ws-menu-sep {
@@ -1105,7 +1100,7 @@ body.ws-dragging {
   flex: none;
   font-size: 12px;
   color: var(--muted);
-  background: #1b1c23;
+  background: var(--ws-tab-bg);
   border: 1px solid var(--line);
   border-radius: 6px;
   text-align: left;
@@ -1125,7 +1120,7 @@ body.ws-dragging {
   border-bottom-width: 2px;
   border-radius: 4px;
   padding: 0 4px;
-  color: #cfd3df;
+  color: var(--kbd-text-2);
   background: var(--bg-inset);
 }
 aside #connections {
@@ -1403,8 +1398,7 @@ aside .connection:has(.hold-note) {
   gap: 2px 8px;
   height: auto;
   min-height: 56px;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 6px 8px;
   overflow: hidden;
   line-height: 18px;
 }
@@ -1412,7 +1406,7 @@ aside .conversation-row {
   margin: 0 0 4px;
 }
 aside .conversation-row .connection {
-  padding-right: 10px;
+  padding-right: 8px;
 }
 /* the mark column is always 14 px, so titles share one left edge; the count badge sits under it on line 2 (below) */
 aside .connection .status-mark {
@@ -1447,7 +1441,7 @@ aside .connection .status-count {
    dot's column on line 2, which is empty on every card (line 2 starts 22 px in). */
 aside .connection .status-mark .status-count {
   position: absolute;
-  left: 10px;
+  left: 8px;
   top: 27px;
 }
 aside .connection .connection-title,
@@ -1481,7 +1475,7 @@ aside .connection .row-status {
   min-width: 0;
   padding-left: 22px;
   font-size: 12px;
-  line-height: 16px;
+  line-height: 18px;
   white-space: nowrap;
 }
 aside .connection .row-phrase {
@@ -1499,14 +1493,14 @@ aside .connection .row-agent {
   white-space: pre;
   font-size: 12px;
   font-weight: 400;
-  color: var(--text-dim);
+  color: var(--row-agent-text);
 }
 aside .connection .row-chip {
   flex: none;
   margin-left: 6px;
   padding: 0 6px;
   border-radius: 8px;
-  background: #2a2c38;
+  background: var(--row-chip-bg);
   color: var(--text-3);
   font-size: 11px;
   font-weight: 600;
@@ -1520,10 +1514,10 @@ aside .connection .row-status.tone-else-work .row-phrase {
   color: var(--status-working);
 }
 aside .connection .row-status.tone-info .row-phrase {
-  color: #8fb8ef;
+  color: var(--badge-agent-text);
 }
 aside .connection .row-status.tone-ok .row-phrase {
-  color: #79d6ae;
+  color: var(--row-ok-text);
 }
 aside .connection .row-status.tone-warn .row-phrase {
   color: var(--warn-text);
@@ -1550,7 +1544,7 @@ aside .connection .hold-note {
   text-overflow: ellipsis;
 }
 aside .connection .row-line3 .row-project {
-  color: #aeb4c4;
+  color: var(--row-project-text);
 }
 aside .connection .hold-note {
   color: var(--warn-text);
@@ -1564,13 +1558,13 @@ aside .rename-chat {
 }
 /* Needs you: a thin amber outline (the needs-you colour), not the purple one that reads like focus or the selected card. */
 aside .connection.selected.attn-needs_you {
-  box-shadow: inset 0 0 0 1px var(--status-needs-line);
+  box-shadow: inset 0 0 0 1px var(--card-needs-line);
 }
 aside .connection.selected.attn-unread {
   box-shadow: inset 0 0 0 1px var(--status-done-line);
 }
 aside .connection.attn-needs_you:not(.selected) {
-  box-shadow: inset 0 0 0 1px var(--status-needs-line);
+  box-shadow: inset 0 0 0 1px var(--card-needs-line);
 }
 aside .connection.attn-unread:not(.selected) {
   box-shadow: inset 0 0 0 1px var(--status-done-line);
@@ -1584,7 +1578,7 @@ aside .connection.attn-unread:not(.selected) {
   color: var(--text);
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  box-shadow: 0 12px 40px #000c;
+  box-shadow: 0 12px 40px var(--np-dialog-shadow);
 }
 .np-dialog::backdrop {
   background: var(--shadow-med);
@@ -1613,7 +1607,7 @@ aside .connection.attn-unread:not(.selected) {
   color: inherit;
 }
 .np-form input[aria-invalid='true'] {
-  border-color: #c25f5f;
+  border-color: var(--field-invalid-line);
 }
 .np-form input:focus-visible,
 .np-form button:focus-visible {
@@ -1642,7 +1636,7 @@ aside .connection.attn-unread:not(.selected) {
   color: var(--muted);
 }
 .np-hint.ok {
-  color: #79d6ae;
+  color: var(--row-ok-text);
 }
 .np-hint.error {
   color: var(--danger-text);
@@ -1687,9 +1681,9 @@ aside .connection.attn-unread:not(.selected) {
   font-size: 13px;
 }
 .np-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--np-primary-bg);
+  border-color: var(--np-primary-line);
+  color: var(--np-primary-text);
 }
 .np-primary:disabled {
   opacity: 0.45;
@@ -1846,13 +1840,13 @@ aside .connection.attn-unread:not(.selected) {
   border: 2px solid var(--hd-idle, var(--status-idle));
 }
 .status-dot.d-off {
-  border: 1px dashed #6b7080;
+  border: 1px dashed var(--ws-menu-item-text);
 }
 .status-dot.d-else-work {
   border: 2px dashed var(--hd-work, var(--status-working));
 }
 .status-dot.d-else {
-  border: 2px dashed var(--status-idle);
+  border: 2px dashed var(--else-dot-line);
 }
 .status-dot.d-fail {
   background: var(--hd-fail, var(--danger));
@@ -2087,7 +2081,7 @@ body.rs-dragging iframe {
   font-size: 12px;
 }
 .ws-notify-body .note.warn {
-  color: #e0b36a;
+  color: var(--note-warn-text);
 }
 .ws-notify-body .notify-muted-head {
   font-size: 12px;
@@ -2207,7 +2201,7 @@ aside {
 /* A project's "finished, not viewed" count uses the Your-turn colour; amber stays for Needs you. */
 .status-count.count-turn {
   background: var(--hd-turn, var(--ok));
-  color: #0e1f17;
+  color: var(--count-turn-text);
 }
 
 /* On-hold line: the note shortens, "held 10m" always stays visible (the full text is the tooltip). */

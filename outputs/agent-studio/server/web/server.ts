@@ -68,7 +68,19 @@ export function withViewPrefs(html: string, prefs: Record<string, string>): stri
   const at = html.indexOf('</head>');
   if (at < 0) return html;
   const data = JSON.stringify({ prefs }).replace(/</g, '\\u003c');
-  return html.slice(0, at) + '<script type="application/json" id="aibViewPrefs">' + data + '</script>' + html.slice(at);
+  return withThemePref(
+    html.slice(0, at) + '<script type="application/json" id="aibViewPrefs">' + data + '</script>' + html.slice(at),
+    prefs['aib-theme'],
+  );
+}
+
+/**
+ * The saved colour theme on <html data-theme-pref="...">, so themes.js (the first, blocking script) paints it before anything
+ * shows. Only a plain theme id is written; anything else leaves the page as it is (themes.js then uses its default).
+ */
+export function withThemePref(html: string, pref: string | undefined): string {
+  if (typeof pref !== 'string' || !/^[a-z0-9-]{1,40}$/.test(pref)) return html;
+  return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + ` data-theme-pref="${pref}"`);
 }
 
 function contentType(name: string): string {

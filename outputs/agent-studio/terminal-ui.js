@@ -74,15 +74,15 @@
     const v = (name, fallback) => (read(name) || '').trim() || fallback;
     return {
       background: v('--term-bg', '#0c0d10'),
-      foreground: v('--text', '#e5e7ec'),
-      cursor: v('--text', '#e5e7ec'),
+      foreground: v('--term-fg', v('--text', '#e5e7ec')),
+      cursor: v('--term-fg', v('--text', '#e5e7ec')),
       cursorAccent: v('--term-bg', '#0c0d10'),
       selectionBackground: v('--term-sel', '#3d3456'),
       red: v('--term-red', '#f19999'),
       green: v('--term-green', '#7ad19c'),
       yellow: v('--term-yellow', '#e6c27a'),
       blue: v('--term-blue', '#7cb7ff'),
-      magenta: v('--accent', '#bba1ff'),
+      magenta: v('--term-magenta', '#bba1ff'),
       cyan: v('--term-cyan', '#7fd3d8'),
       brightBlack: v('--term-dim', '#8a91a3'),
     };

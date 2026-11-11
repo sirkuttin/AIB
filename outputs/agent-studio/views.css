@@ -299,7 +299,7 @@ header.vs-narrow > .header-actions {
 /* the replies of an opened prompt sit on black so they stand apart from the prompts */
 .pv-body {
   padding: 4px 6px 10px;
-  background: #000000;
+  background: var(--pv-body-bg);
 }
 .pv-body[hidden] {
   display: none;

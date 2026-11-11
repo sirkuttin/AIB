@@ -192,8 +192,10 @@ test('without the data block (a server without view preferences) nothing is hook
   assert.deepEqual(V.readBlock({ getElementById: () => ({ textContent: '{"prefs":{"a":"1","b":2}}' }) }), { a: '1' });
 });
 
-test('chat.html loads view-prefs.js before every other page script', () => {
+test('chat.html loads view-prefs.js before every other deferred page script (themes.js runs first, not deferred)', () => {
   const html = fs.readFileSync(path.join(APP, 'chat.html'), 'utf8');
-  const first = html.match(/<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)"/);
+  assert.ok(html.includes('<script src="/themes.js"></script>'), 'themes.js: blocking, so the theme is on <html> before paint');
+  const first = html.match(/<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)" defer/);
   assert.equal(first[1], 'view-prefs.js');
+  assert.ok(V.KEYS.includes('aib-theme'), 'the theme choice is kept in the data folder');
 });

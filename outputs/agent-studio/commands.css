@@ -49,13 +49,13 @@
   border-radius: 4px;
   padding: 1px 5px;
   background: var(--bg-control);
-  color: #c9ccd6;
+  color: var(--kbd-text-3);
 }
 .switcher-sub.warn {
-  color: #f0a0a0;
+  color: var(--ws-qa-choice-no-text);
 }
 .switcher-item.danger.active {
-  background: #3a2226;
+  background: var(--danger-active-bg);
 }
 .sheet {
   padding: 14px 18px;

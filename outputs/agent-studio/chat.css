@@ -1,5 +1,4 @@
 :root {
-  color-scheme: dark;
   font-family:
     Segoe UI,
     system-ui,
@@ -25,7 +24,7 @@ aside {
 }
 .brand {
   font-size: 21px;
-  color: var(--text-6);
+  color: var(--heading-tint-text);
   text-decoration: none;
 }
 .eyebrow {
@@ -42,7 +41,7 @@ select {
 }
 button {
   border: 1px solid var(--line-control);
-  background: #24262f;
+  background: var(--button-bg);
   color: var(--text);
   padding: 9px 14px;
   border-radius: 6px;
@@ -64,8 +63,8 @@ button:disabled {
 /* disabled primary (Send / Queue with nothing to send): a solid teal wash with readable text, not a half-transparent button */
 .primary:disabled {
   opacity: 1;
-  background: var(--accent-wash-2);
-  border-color: var(--accent-line);
+  background: var(--primary-disabled-bg);
+  border-color: var(--primary-disabled-line);
   color: var(--on-accent-disabled);
 }
 /* the ring stands off the teal button so it stays visible */
@@ -91,7 +90,7 @@ button:disabled {
 }
 .connection.selected {
   border-color: var(--accent-line);
-  background: var(--accent-wash);
+  background: var(--option-selected-bg);
 }
 .connection small {
   color: var(--muted);
@@ -165,7 +164,7 @@ label {
   flex-direction: column;
   gap: 8px;
   font-size: 12px;
-  color: #b8bece;
+  color: var(--label-text);
   margin: 18px 0;
 }
 input,
@@ -200,7 +199,7 @@ details p {
 }
 #error {
   padding: 14px 30px;
-  background: #40242e;
+  background: var(--error-bg);
   color: var(--danger-bright);
   font-size: 12px;
   white-space: pre-wrap;
@@ -263,19 +262,19 @@ input[type='checkbox'] {
 .bubble {
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #181a21;
+  background: var(--bubble-bg);
   margin: 14px 0;
   overflow: hidden;
 }
 .bubble.user {
-  background: var(--panel-2);
-  border-color: var(--line-card);
+  background: var(--bubble-user-bg);
+  border-color: var(--bubble-user-line);
 }
 .bubble-head {
   padding: 10px 15px;
-  border-bottom: 1px solid #292b35;
+  border-bottom: 1px solid var(--bubble-head-line);
   font-size: 10px;
-  color: #aab3c5;
+  color: var(--bubble-head-text);
   display: flex;
   gap: 12px;
   align-items: center;
@@ -324,7 +323,7 @@ input[type='checkbox'] {
 }
 .approval {
   border: 1px solid var(--status-needs-line);
-  background: var(--panel-2);
+  background: var(--approval-bg);
   border-radius: 7px;
   padding: 15px;
   margin-bottom: 12px;
@@ -530,8 +529,8 @@ aside > .note {
   color: var(--muted);
 }
 .provider-tabs button[aria-selected='true'] {
-  background: var(--accent-wash-2);
-  color: var(--text-6);
+  background: var(--tab-selected-bg);
+  color: var(--tab-selected-text);
 }
 .provider-tabs span {
   font-size: 10px;
@@ -544,8 +543,8 @@ aside > .note {
   width: 100%;
 }
 .connection {
-  border: 1px solid #2c2c37;
-  background: #1b1b23;
+  border: 1px solid var(--card-line);
+  background: var(--card-bg);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 9px;
@@ -564,7 +563,7 @@ aside > .note {
   font-size: 10px;
 }
 .connection .owned-status {
-  color: #87d3aa;
+  color: var(--owned-status-text);
 }
 .connection-meta {
   display: flex !important;
@@ -705,7 +704,7 @@ header p {
   top: 30px;
   z-index: 20;
   width: 150px;
-  background: #292632;
+  background: var(--menu-bg);
 }
 .chat-toolbar {
   display: flex;
@@ -753,7 +752,7 @@ header p {
   border: 0;
   padding: 3px 6px;
   font-size: 16px;
-  color: #a5a1b6;
+  color: var(--rename-chat-text);
   opacity: 0.55;
 }
 .rename-chat:hover,
@@ -801,7 +800,7 @@ header p {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line);
-  background: #15161c;
+  background: var(--subagents-pane-bg);
 }
 #subagentsPane > .note {
   padding: 10px 16px;
@@ -826,7 +825,7 @@ header p {
 }
 .subagent-card.selected {
   background: var(--accent-wash-5);
-  border-color: var(--accent-line);
+  border-color: var(--subagent-card-selected-line);
 }
 .subagent-card:hover {
   background: var(--hover-2);
@@ -839,13 +838,13 @@ header p {
 }
 .subagent-card small {
   font-size: 9px;
-  color: #9a92ae;
+  color: var(--subagent-card-meta-text);
   display: block;
   margin-top: 6px;
 }
 .subagent-card p {
   font-size: 10px;
-  color: #7f879a;
+  color: var(--subagent-card-desc-text);
   line-height: 1.7;
   margin: 7px 0 0;
   display: -webkit-box;
@@ -917,13 +916,13 @@ header p {
 #renameDialog {
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid var(--accent-line);
+  border: 1px solid var(--rename-dialog-line);
   border-radius: 12px;
   padding: 25px;
   width: min(480px, 90vw);
 }
 #renameDialog::backdrop {
-  background: #07080bb3;
+  background: var(--backdrop);
 }
 #renameDialog h2 {
   margin-top: 0;
@@ -1051,8 +1050,8 @@ body > main {
   min-width: 0;
   padding: 8px;
   text-align: left;
-  background: #1b1b23;
-  border: 1px solid #30313c;
+  background: var(--card-bg);
+  border: 1px solid var(--command-card-line);
   border-radius: 7px;
   color: var(--text);
 }
@@ -1081,7 +1080,7 @@ body > main {
 .command-error {
   display: block;
   margin-top: 5px;
-  color: #ff9ba9;
+  color: var(--command-error-text);
   font-size: 9px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -1102,7 +1101,7 @@ body > main {
   font:
     11px/1.7 Consolas,
     monospace;
-  color: #c4cada;
+  color: var(--command-details-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1149,7 +1148,7 @@ body > main {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 9px;
-  color: #c4cada;
+  color: var(--command-details-text);
 }
 .attachment-card .attachment-remove {
   position: absolute;
@@ -1157,8 +1156,8 @@ body > main {
   bottom: 5px;
   padding: 0 4px;
   border: 0;
-  background: #3b2934;
-  color: #ffc1cd;
+  background: var(--attachment-remove-bg);
+  color: var(--attachment-remove-text);
   font-size: 13px;
   line-height: 18px;
 }
@@ -1188,13 +1187,13 @@ body > main {
   border: 1px solid var(--line-card);
   border-radius: 8px;
   object-fit: contain;
-  background: #121318;
+  background: var(--message-image-bg);
 }
 .bubble .message-image + .message-image {
   margin-left: 8px;
 }
 .bubble .message-image:hover {
-  border-color: var(--accent);
+  border-color: var(--message-image-line);
 }
 
 #subagentsPane > .note {
@@ -1262,7 +1261,7 @@ body > main {
 }
 .command-card.selected {
   background: var(--accent-wash-5);
-  border-color: var(--accent-line);
+  border-color: var(--subagent-card-selected-line);
 }
 
 #commandSection {
@@ -1293,8 +1292,8 @@ body > main {
   display: none;
 }
 .elicitation-card {
-  background: var(--panel-2);
-  border: 1px solid var(--status-needs-line);
+  background: var(--elicitation-card-bg);
+  border: 1px solid var(--question-line);
   border-radius: 9px;
   margin: 10px 0;
   padding: 16px;
@@ -1302,7 +1301,7 @@ body > main {
 .elicitation-heading {
   font-size: 13px;
   margin: 0 0 9px;
-  color: var(--text-6);
+  color: var(--heading-tint-text);
 }
 /* question and approval cards: a plain panel with a coral border and a small coral dot before the title */
 .elicitation-heading::before,
@@ -1364,8 +1363,8 @@ body > main {
 }
 /* the question card's Submit is a .primary button: keep its disabled wash over the first-child fill above */
 .elicitation-actions button.primary:disabled {
-  background: var(--accent-wash-2);
-  border-color: var(--accent-line);
+  background: var(--primary-disabled-bg);
+  border-color: var(--primary-disabled-line);
   color: var(--on-accent-disabled);
 }
 .elicitation-error,
@@ -1521,15 +1520,15 @@ body > main {
 }
 .tool-status.status-completed {
   background: var(--status-done-bg);
-  color: var(--status-done);
+  color: var(--tool-done-text);
 }
 .tool-status.status-failed {
-  background: #4a1d27;
+  background: var(--tool-failed-bg);
   color: var(--danger-bright);
 }
 .tool-status.status-in_progress {
   background: var(--status-working-bg);
-  color: var(--status-working);
+  color: var(--tool-working-text);
 }
 .tool-locations {
   margin: 0;
@@ -1590,7 +1589,7 @@ body > main {
   color: var(--ok-text-2);
 }
 .diff-removed {
-  color: #ff9aa9;
+  color: var(--diff-removed-text);
 }
 .diff-body {
   overflow: auto;
@@ -1615,16 +1614,16 @@ body > main {
   padding-right: 12px;
 }
 .diff-add {
-  background: rgba(52, 168, 100, 0.18);
+  background: var(--diff-add-bg);
 }
 .diff-add .diff-sign {
   color: var(--ok-text-2);
 }
 .diff-del {
-  background: rgba(220, 70, 90, 0.18);
+  background: var(--diff-del-bg);
 }
 .diff-del .diff-sign {
-  color: #ff9aa9;
+  color: var(--diff-removed-text);
 }
 .diff-skip {
   padding: 2px 10px;
@@ -1682,8 +1681,8 @@ body > main {
 .elicitation-url {
   margin: 8px 0;
   padding: 9px 11px;
-  background: var(--code-bg);
-  border: 1px solid var(--line-field);
+  background: var(--elicitation-url-bg);
+  border: 1px solid var(--elicitation-url-line);
   border-radius: 6px;
   font-family: Consolas, monospace;
   font-size: 13px;
@@ -1691,7 +1690,7 @@ body > main {
 }
 .elicitation-url-host {
   color: var(--text-bright);
-  background: var(--accent-wash-2);
+  background: var(--elicitation-url-host-bg);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -1711,7 +1710,7 @@ a.elicitation-open {
 .auth-method {
   margin: 10px 0;
   padding: 10px;
-  border: 1px solid var(--line-field);
+  border: 1px solid var(--elicitation-url-line);
   border-radius: 6px;
 }
 .auth-instructions {
@@ -1745,7 +1744,7 @@ a.elicitation-open {
   flex-wrap: wrap;
 }
 .slash-option.selected {
-  background: var(--accent-wash);
+  background: var(--option-selected-bg);
 }
 .slash-option em {
   color: var(--muted);
@@ -1779,7 +1778,7 @@ a.elicitation-open {
   color: var(--text);
 }
 .strip-notice.severity-warning {
-  color: #ffd79a;
+  color: var(--strip-notice-severity-warning-text);
 }
 .strip-notice.severity-error {
   color: var(--danger-bright);
@@ -1816,7 +1815,7 @@ a.elicitation-open {
   flex-direction: column;
   gap: 6px;
   padding: 6px;
-  background: #292632;
+  background: var(--menu-bg);
   border: 1px solid var(--line);
   border-radius: 6px;
 }
@@ -1825,12 +1824,12 @@ a.elicitation-open {
   width: 100%;
 }
 .danger {
-  border-color: #8f3b4d;
+  border-color: var(--danger-line);
 }
 .primary.danger {
   background: var(--danger-fill);
   border-color: var(--danger-fill);
-  color: #1d0d12;
+  color: var(--primary-danger-text);
 }
 .session-op-dialog {
   background: var(--panel);
@@ -1928,24 +1927,24 @@ a.elicitation-open {
   vertical-align: middle;
 }
 .badge-live {
-  background: #16342a;
-  color: #87d3aa;
-  border-color: #2c6b52;
+  background: var(--badge-live-bg);
+  color: var(--owned-status-text);
+  border-color: var(--badge-live-line);
 }
 .badge-saved {
-  background: #25262e;
-  color: #aab0bf;
+  background: var(--badge-saved-bg);
+  color: var(--badge-saved-text);
   border-color: var(--line-control);
 }
 .badge-recovered {
-  background: #33291a;
+  background: var(--badge-recovered-bg);
   color: var(--warn-text-2);
-  border-color: #7a6431;
+  border-color: var(--badge-recovered-line);
 }
 .badge-agent {
-  background: #222b3a;
-  color: #8fb8ef;
-  border-color: #3d5680;
+  background: var(--badge-agent-bg);
+  color: var(--badge-agent-text);
+  border-color: var(--badge-agent-line);
 }
 .status-detail {
   font-size: 9px;
@@ -1980,7 +1979,7 @@ a.elicitation-open {
 #stopSubagent {
   font-size: 11px;
   margin: 8px 0 0;
-  border-color: #8a4a56;
+  border-color: var(--stop-subagent-line);
   color: var(--danger-bright);
 }
 /* Rich bubble content uses the same inner spacing as plain-text bubbles (.bubble pre has 15px). */
@@ -2035,16 +2034,16 @@ aside #connections {
 .file-badge-ext {
   font-size: 13px;
   letter-spacing: 0.04em;
-  color: #d8dcf0;
+  color: var(--file-badge-ext-text);
 }
 .file-badge-size {
   font-size: 9px;
-  color: #8f98ad;
+  color: var(--file-badge-size-text);
 }
 .attachment-card > span {
   margin: 4px 0 0;
   font-size: 9px;
-  color: #8f98ad;
+  color: var(--file-badge-size-text);
 }
 .attachment-card .attachment-remove {
   right: -6px;
@@ -2053,9 +2052,9 @@ aside #connections {
   width: 20px;
   height: 20px;
   padding: 0;
-  border: 1px solid #555a6b;
+  border: 1px solid var(--icon-btn-line);
   border-radius: 50%;
-  background: #2a2b36;
+  background: var(--icon-btn-bg);
   color: var(--text);
   font-size: 13px;
   line-height: 18px;
@@ -2103,7 +2102,7 @@ aside #connections {
 }
 .file-card-meta {
   font-size: 10px;
-  color: #8f98ad;
+  color: var(--file-badge-size-text);
 }
 .file-card details {
   margin-top: 8px;
@@ -2136,7 +2135,7 @@ aside #connections {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(6, 7, 10, 0.9);
+  background: var(--image-viewer-bg);
 }
 .image-viewer-stage {
   flex: 1;
@@ -2157,7 +2156,7 @@ aside #connections {
 .image-viewer-caption {
   padding: 8px 16px 18px;
   font-size: 12px;
-  color: #c4cada;
+  color: var(--command-details-text);
   max-width: 90vw;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2168,8 +2167,8 @@ aside #connections {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 1px solid #555a6b;
-  background: #2a2b36;
+  border: 1px solid var(--icon-btn-line);
+  background: var(--icon-btn-bg);
   color: var(--text-bright);
   font-size: 22px;
   line-height: 1;
@@ -2193,7 +2192,7 @@ aside #connections {
   margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #9aa1b2;
+  color: var(--ownership-hint-text);
 }
 .ownership-hint.ownership-possibly_active {
   color: var(--warn-text-2);
@@ -2205,27 +2204,27 @@ aside #connections {
   margin-left: 2px;
 }
 .badge-ownership-possibly_active {
-  background: #33291a;
+  background: var(--badge-recovered-bg);
   color: var(--warn-text-2);
-  border-color: #7a6431;
+  border-color: var(--badge-recovered-line);
 }
 .badge-ownership-owned_elsewhere {
-  background: #3a1f22;
+  background: var(--badge-ownership-ownedelsewhere-bg);
   color: var(--danger-text);
-  border-color: #7a3a41;
+  border-color: var(--badge-ownership-ownedelsewhere-line);
 }
 .ownership-prompt {
   margin: 10px 30px 0;
   padding: 12px 15px;
-  border: 1px solid #7a6431;
-  background: #2a2417;
+  border: 1px solid var(--badge-recovered-line);
+  background: var(--ownership-prompt-bg);
   border-radius: 8px;
   font-size: 12.5px;
   line-height: 1.5;
 }
 .ownership-prompt-blocked {
-  border-color: #7a3a41;
-  background: #2a1a1c;
+  border-color: var(--badge-ownership-ownedelsewhere-line);
+  background: var(--ownership-prompt-blocked-bg);
 }
 .ownership-prompt h3 {
   margin: 0 0 6px;
@@ -2240,7 +2239,7 @@ aside #connections {
 }
 .ownership-note,
 .ownership-advice {
-  color: #b9bfcc;
+  color: var(--ownership-note-text);
 }
 .ownership-actions {
   display: flex;
@@ -2329,10 +2328,10 @@ aside #connections {
   flex-direction: column;
   gap: 2px;
   padding: 5px;
-  background: #292632;
+  background: var(--menu-bg);
   border: 1px solid var(--line);
   border-radius: 7px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px var(--organize-menu-shadow);
 }
 .organize-menu button {
   text-align: left;
@@ -2343,10 +2342,10 @@ aside #connections {
 }
 .organize-menu button:hover,
 .organize-menu button:focus {
-  background: var(--accent-wash-2);
+  background: var(--menu-hover-bg);
 }
 .organize-menu button.danger {
-  color: #ff9fb0;
+  color: var(--menu-danger-text);
 }
 .organize-check {
   display: flex;
@@ -2428,14 +2427,14 @@ aside #connections {
   min-height: 24px;
   background: none;
   border: 0;
-  color: #c3cadb;
+  color: var(--copy-btn-text);
   padding: 0 9px;
   cursor: pointer;
   font: inherit;
 }
 .copy-ctl button:hover,
 .copy-ctl button:focus-visible {
-  background: #2d303c;
+  background: var(--copy-btn-hover-bg);
   color: var(--text-bright);
 }
 .copy-ctl .copy-more {
@@ -2468,7 +2467,7 @@ aside #connections {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--bg-control);
-  color: #c3cadb;
+  color: var(--copy-btn-text);
   font: inherit;
   font-size: 12px;
   line-height: 1;
@@ -2529,7 +2528,7 @@ aside #connections {
   z-index: 1000;
   min-width: 210px;
   background: var(--bg-control);
-  border: 1px solid #3a3d4c;
+  border: 1px solid var(--copy-menu-line);
   border-radius: 8px;
   box-shadow: 0 8px 24px var(--shadow-med);
   padding: 4px;
@@ -2549,21 +2548,21 @@ aside #connections {
 }
 .copy-menu-item:hover,
 .copy-menu-item:focus-visible {
-  background: #33364a;
+  background: var(--copy-menu-item-bg);
   outline: 0;
 }
 .copy-manual {
   z-index: 1000;
   width: 320px;
   background: var(--bg-control);
-  border: 1px solid #3a3d4c;
+  border: 1px solid var(--copy-menu-line);
   border-radius: 8px;
   padding: 8px;
   box-shadow: 0 8px 24px var(--shadow-med);
 }
 .copy-manual-note {
   font-size: 12px;
-  color: #ffd479;
+  color: var(--copy-manual-note-text);
   margin-bottom: 6px;
 }
 .copy-manual-text {
@@ -2674,7 +2673,7 @@ aside #connections {
   word-break: break-word;
 }
 .kv-lit {
-  color: #f0a96b;
+  color: var(--syn-number);
 }
 .tool-result > summary {
   cursor: pointer;
@@ -2682,34 +2681,34 @@ aside #connections {
   font-size: 12px;
 }
 .tool-result-error > summary {
-  color: #ff8f8f;
+  color: var(--tool-error-text);
 }
 .tok-k {
-  color: #c79bff;
+  color: var(--syn-keyword);
 }
 .tok-s {
-  color: #9bd88f;
+  color: var(--syn-string);
 }
 .tok-n {
-  color: #f0a96b;
+  color: var(--syn-number);
 }
 .tok-c {
-  color: #7d8597;
+  color: var(--syn-comment);
   font-style: italic;
 }
 .tok-key {
-  color: #7cc4ff;
+  color: var(--syn-key);
 }
 .tok-add {
   color: var(--ok-bright);
-  background: #1a2e1f;
+  background: var(--syn-add-bg);
 }
 .tok-del {
-  color: #ff9b9b;
-  background: #33191d;
+  color: var(--syn-del-text);
+  background: var(--syn-del-bg);
 }
 .tok-h {
-  color: #7cc4ff;
+  color: var(--syn-key);
 }
 
 /* Compact tool lines */
@@ -2764,7 +2763,7 @@ aside #connections {
   border: 0;
   border-radius: 6px;
   padding: 4px 8px;
-  color: #aab3c5;
+  color: var(--bubble-head-text);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -2797,7 +2796,7 @@ aside #connections {
     monospace;
 }
 .tool-line.failed .tool-line-text {
-  color: #ff9b9b;
+  color: var(--syn-del-text);
 }
 .tool-toggle[aria-expanded='true'] {
   color: var(--text);
@@ -2819,10 +2818,10 @@ aside #connections {
   line-height: 1;
 }
 .mark-ok {
-  color: var(--status-done);
+  color: var(--mark-ok-text);
 }
 .mark-failed {
-  color: #ff6b6b;
+  color: var(--mark-failed-text);
 }
 .mark-pending {
   color: var(--muted);
@@ -2877,19 +2876,19 @@ aside #connections {
   align-items: baseline;
 }
 .turn-line[data-kind='working'] {
-  color: var(--status-working);
+  color: var(--turn-working-text);
   border-color: var(--status-working-line);
 }
 .turn-line[data-kind='idle'] {
   color: var(--status-done);
-  border-color: var(--status-done-line);
+  border-color: var(--turn-idle-line);
 }
 .turn-line[data-kind='lost'] {
-  color: #e6a0a0;
-  border-color: #6b3a3a;
+  color: var(--turn-lost-text);
+  border-color: var(--turn-lost-line);
 }
 .turn-line[data-kind='needs'] {
-  color: var(--status-needs);
+  color: var(--turn-needs-text);
   border-color: var(--status-needs-line);
   background: var(--status-needs-bg);
   cursor: pointer;
@@ -3132,8 +3131,8 @@ span.chip-static:hover {
   border-bottom-width: 2px;
   border-radius: 4px;
   padding: 0 4px;
-  color: #cfd3dd;
-  background: #1b1b23;
+  color: var(--kbd-text);
+  background: var(--card-bg);
 }
 .project-group {
   margin-top: 10px;
@@ -3153,7 +3152,7 @@ span.chip-static:hover {
   font-weight: 600;
 }
 .project-head:hover {
-  background: #1f2029;
+  background: var(--project-head-bg);
 }
 .project-head:focus-visible,
 .switcher-input:focus-visible {
@@ -3218,31 +3217,31 @@ span.chip-static:hover {
   animation: status-spin 0.9s linear infinite;
 }
 .st-needs_you {
-  background: var(--status-needs);
-  box-shadow: 0 0 0 3px var(--status-needs-halo);
+  background: var(--st-needs-bg);
+  box-shadow: 0 0 0 3px var(--st-needs-halo);
 }
 .st-unread {
-  background: var(--status-done);
+  background: var(--st-unread-bg);
 }
 .st-idle {
-  border: 2px solid var(--status-idle);
+  border: 2px solid var(--st-idle-line);
 }
 .st-opening {
-  border: 2px dashed #8a8fa0;
+  border: 2px dashed var(--st-opening-line);
 }
 .status-count {
   min-width: 16px;
   padding: 0 5px;
   border-radius: 8px;
-  background: var(--status-needs);
-  color: var(--status-needs-bg);
+  background: var(--st-needs-bg);
+  color: var(--st-count-text);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
 }
 .connection.attn-needs_you {
-  border-color: var(--status-needs-line);
+  border-color: var(--question-line);
 }
 .connection.attn-unread {
   border-color: var(--status-done-line);
@@ -3349,7 +3348,7 @@ span.chip-static:hover {
 }
 /* Queued settings changes and the in-use model: chip cancel, mismatch marker, panel "after this turn" mark. */
 .chip-pending .chip-v {
-  color: #e8c872;
+  color: var(--chip-v-text);
 }
 .chip-cancel {
   margin-left: 2px;
@@ -3368,7 +3367,7 @@ span.chip-static:hover {
   color: var(--text);
 }
 .chip-warn {
-  color: #e8c872;
+  color: var(--chip-v-text);
   font-size: 11px;
   cursor: help;
 }
@@ -3381,7 +3380,7 @@ span.chip-static:hover {
   gap: 4px;
   margin-left: 6px;
   font-size: 11px;
-  color: #e8c872;
+  color: var(--chip-v-text);
 }
 .config-queued-cancel {
   padding: 0 6px;
@@ -3425,12 +3424,12 @@ span.chip-static:hover {
   object-fit: cover;
   border: 1px solid var(--line-card);
   border-radius: 5px;
-  background: #121318;
+  background: var(--message-image-bg);
   cursor: zoom-in;
 }
 .tool-thumbs .tool-thumb:hover,
 .tool-thumbs .tool-thumb:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--message-image-line);
 }
 .tool-thumbs-more {
   font-size: 11px;
@@ -3466,10 +3465,10 @@ span.chip-static:hover {
   gap: 10px;
   margin: 8px 14px 0;
   padding: 8px 12px;
-  border: 1px solid #5a4a20;
+  border: 1px solid var(--studio-notice-line);
   border-radius: 8px;
-  background: #2a2312;
-  color: #f0d9a0;
+  background: var(--studio-notice-bg);
+  color: var(--studio-notice-text);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -3482,12 +3481,12 @@ span.chip-static:hover {
 .update-banner .update-btn {
   font-size: 13px;
   padding: 3px 10px;
-  border: 1px solid #8a7433;
+  border: 1px solid var(--update-btn-line);
   border-radius: 6px;
-  color: #f7e6b8;
+  color: var(--update-btn-text);
 }
 .update-banner .update-btn:hover {
-  background: #3a3018;
+  background: var(--update-btn-bg);
 }
 .studio-notice span {
   flex: 1;

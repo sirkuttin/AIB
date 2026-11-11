@@ -44,7 +44,7 @@ body {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line);
-  background: #15161c;
+  background: var(--subagents-pane-bg);
   overflow: hidden;
 }
 #activityStrip {
@@ -262,7 +262,7 @@ body.subchat-open .rs-split {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4b4f5d;
+  background: var(--activity-dot-bg);
 }
 .sa-working .sa-dot,
 .proc-running .sa-dot {
@@ -275,7 +275,7 @@ body.subchat-open .rs-split {
   animation: none;
 }
 .sa-working .sa-title {
-  color: var(--text-6);
+  color: var(--title-active-text);
   font-weight: 550;
 }
 .sa-when {
@@ -285,7 +285,7 @@ body.subchat-open .rs-split {
 }
 .sa-working .sa-when,
 .proc-running .sa-when {
-  color: var(--text-dim);
+  color: var(--activity-when-text);
 }
 .sa-cmd {
   flex: 0 0 auto;
@@ -301,10 +301,10 @@ body.subchat-open .rs-split {
 }
 .sa-failed .sa-dot,
 .proc-failed .sa-dot {
-  background: #d9666e;
+  background: var(--activity-dot-failed-bg);
 }
 .sa-failed .sa-title {
-  color: #f3b3b8;
+  color: var(--activity-failed-text);
   font-weight: 550;
 }
 .sa-failed .sa-when,
@@ -345,13 +345,13 @@ body.subchat-open .rs-split {
     -apple-system,
     'Segoe UI',
     sans-serif;
-  color: #b4b9c8;
+  color: var(--proc-title-text);
 }
 .proc-running .proc-title {
   color: var(--text);
 }
 .proc-failed .proc-title {
-  color: #f3b3b8;
+  color: var(--activity-failed-text);
 }
 .proc-row.sa-card .sa-dot {
   margin-left: 0;
@@ -573,7 +573,7 @@ body.subchat-open #commandSection {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #4b4f5d;
+    background: var(--activity-dot-bg);
   }
   .ac-sub.working .ac-dot {
     background: var(--status-working);
@@ -582,7 +582,7 @@ body.subchat-open #commandSection {
   .ac-chip + .ac-chip::before {
     content: '\00B7';
     margin-right: 8px;
-    color: #5a5f70;
+    color: var(--activity-chip-sep-text);
   }
   .ac-failed,
   .ac-proc {

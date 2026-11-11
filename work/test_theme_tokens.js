@@ -211,39 +211,8 @@ test('theme tokens keep every colour', { skip: baseAvailable() ? false : 'histor
   });
 });
 
-// Today's theme.css and stylesheets: runs on every checkout (the comparison above needs the old commits).
-test('theme.css today', async (t) => {
-  await t.test('theme.css defines literal colours only and is the only place for them', () => {
-    const rules = parse(readAfter('theme'));
-    assert.deepEqual([...new Set(rules.map(([c, p]) => `${c}|${p}`))], ['|:root'], 'theme.css must hold one plain :root rule');
-    const variables = rootVars(rules);
-    assert.ok(Object.keys(variables).length >= 30);
-    for (const [name, value] of Object.entries(variables)) assert.match(value, /^#[0-9a-fA-F]{3,8}$/, `${name} must be one literal colour, got ${value}`);
-  });
-
-  await t.test('tokens are in use and defined', () => {
-    // Checked against today's page stylesheets: later work adds tokens (the Bay teal styling's --link, --status-*).
-    // KEPT are no longer painted on this page but stay defined so code on other branches that names them still resolves.
-    const KEPT = ['--info', '--warn-bg'];
-    const defined = rootVars(parse(readAfter('theme')));
-    const sheets = fs
-      .readdirSync(APP)
-      .filter((n) => n.endsWith('.css') && n !== 'theme.css' && !MONITOR_CSS.includes(n.slice(0, -4)))
-      .map((n) => fs.readFileSync(path.join(APP, n), 'utf8').replace(COMMENT, ''));
-    const used = new Set(), ownNames = new Set();
-    for (const text of sheets) {
-      for (const m of text.matchAll(VAR)) used.add(m[1]);
-      for (const m of text.matchAll(/(--[\w-]+)\s*:/g)) ownNames.add(m[1]); // --hd-*, --need, --sel ... defined by a sheet itself
-    }
-    assert.deepEqual(Object.keys(defined).filter((n) => !used.has(n) && !KEPT.includes(n)).sort(), [], 'tokens defined in theme.css but used nowhere');
-    for (const n of KEPT) assert.ok(Object.hasOwn(defined, n), `${n} stays defined`);
-    // Sizes and fonts set from script (--side-w, --ui-scale ...) are not colours; every colour-family name must resolve.
-    const COLOUR = /^--(text|muted|bg|panel|code|hover|line|accent|on-accent|link|danger|ok|warn|info|status|plan|shadow)/;
-    const undefinedNames = [...used].filter((n) => COLOUR.test(n) && !Object.hasOwn(defined, n) && !ownNames.has(n));
-    assert.deepEqual(undefinedNames.sort(), [], 'var() names defined nowhere');
-  });
-
-});
+// Today's theme.css (one block per theme, every token defined, no colour outside theme.css, contrast) is checked by
+// test_themes.js; Classic purple against the colours before the teal styling by test_theme_classic.js.
 
 test('the equivalence check is strict: it fails when a colour, selector or property changes', async (t) => {
   const THEME_CSS = ':root { --a: #abc; --b: #0009; --c: #112233; }';

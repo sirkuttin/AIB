@@ -36,7 +36,7 @@
   border-radius: 0;
   background: transparent;
   text-align: left;
-  color: #aab3c5;
+  color: var(--bubble-head-text);
   font-size: 12px;
 }
 .msg-note-toggle:hover,
@@ -64,7 +64,7 @@
 }
 .msg-note-body {
   padding: 8px 14px 12px;
-  border-top: 1px solid #292b35;
+  border-top: 1px solid var(--bubble-head-line);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -96,17 +96,17 @@
   margin: 0 0 14px;
   padding: 0 4px;
   font-size: 11px;
-  color: #d9b45f;
+  color: var(--unknown-send-line-text);
 }
 .unknown-send-btn {
   font-size: 10px;
   padding: 3px 8px;
   background: transparent;
-  color: #d9b45f;
-  border-color: #6b5a2e;
+  color: var(--unknown-send-line-text);
+  border-color: var(--unknown-send-btn-line);
 }
 .unknown-send-btn:hover {
-  border-color: #d9b45f;
+  border-color: var(--unknown-send-line-text);
 }
 
 /* Unread messages: the line above the first one that arrived while you were scrolled up */

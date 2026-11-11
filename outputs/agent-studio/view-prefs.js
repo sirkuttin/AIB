@@ -29,6 +29,7 @@
     'agentStudio.copyFormat', // the Copy button's format
     'agentStudio.copyFormat.code', // the code-block Copy button's format
     'studio-cwd', // the folder last typed for a new chat
+    'aib-theme', // the colour theme (themes.js)
   ]);
   const PREFIXES = Object.freeze([
     'studio-textsize-v1:', // chat text and interface size, code font, line spacing

@@ -21,7 +21,7 @@ main {
 }
 .side-settings:hover,
 .side-settings:focus-visible {
-  background: #1f212a;
+  background: var(--side-settings-bg);
   color: var(--text);
 }
 .side-settings span:nth-child(2) {
@@ -35,7 +35,7 @@ main {
   border-bottom-width: 2px;
   border-radius: 4px;
   padding: 0 4px;
-  color: #cfd3df;
+  color: var(--kbd-text-2);
   background: var(--bg-inset);
 }
 body.settings-open .side-settings {
@@ -110,10 +110,10 @@ html[data-ui-scaled] .st-page {
   text-align: left;
 }
 .st-section:hover {
-  background: #1f212a;
+  background: var(--side-settings-bg);
 }
 .st-section.active {
-  background: var(--accent-wash);
+  background: var(--st-section-active-bg);
   color: var(--text-bright);
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -162,7 +162,7 @@ html[data-ui-scaled] .st-page {
   color: var(--muted);
 }
 .st-close:hover {
-  background: #24262f;
+  background: var(--button-bg);
   color: var(--text-bright);
 }
 .st-content {
@@ -202,10 +202,10 @@ html[data-ui-scaled] .st-page {
 .st-note.bad,
 .st-error,
 .st-hint.warn {
-  color: #f0a3a3;
+  color: var(--st-note-bad-text);
 }
 .st-hint.warn {
-  color: #e6c07a;
+  color: var(--st-hint-warn-text);
 }
 .st-note.dim {
   opacity: 0.8;
@@ -215,9 +215,9 @@ html[data-ui-scaled] .st-page {
   font-size: 12px;
 }
 .st-agent {
-  border: 1px solid #262833;
+  border: 1px solid var(--st-agent-line);
   border-radius: 8px;
-  background: #1a1b22;
+  background: var(--select-option-bg);
   padding: 10px 12px;
   margin: 0 0 10px;
 }
@@ -237,8 +237,8 @@ html[data-ui-scaled] .st-page {
   width: 22px;
   height: 22px;
   border-radius: 5px;
-  background: var(--accent-wash-4);
-  color: var(--link);
+  background: var(--st-letter-bg);
+  color: var(--chip-icon-text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -260,18 +260,18 @@ html[data-ui-scaled] .st-page {
   border-color: var(--status-idle-bg);
 }
 .st-status.ok {
-  color: var(--status-done);
+  color: var(--st-status-ok-text);
   background: var(--status-done-bg);
-  border-color: var(--status-done-bg);
+  border-color: var(--st-status-ok-line);
 }
 .st-status.bad {
-  color: #f0a3a3;
-  border-color: #6b3434;
+  color: var(--st-note-bad-text);
+  border-color: var(--st-status-bad-line);
 }
 .st-status.warn {
-  color: var(--status-needs);
+  color: var(--st-status-warn-text);
   background: var(--status-needs-bg);
-  border-color: var(--status-needs-bg);
+  border-color: var(--st-status-warn-line);
 }
 .st-command {
   display: block;
@@ -279,7 +279,7 @@ html[data-ui-scaled] .st-page {
   font:
     12px Consolas,
     monospace;
-  color: #b9bdca;
+  color: var(--st-command-text);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -298,7 +298,7 @@ html[data-ui-scaled] .st-page {
   font-size: 12px;
 }
 .st-danger {
-  color: #f0a3a3;
+  color: var(--st-note-bad-text);
 }
 .st-toggle {
   display: inline-flex;
@@ -374,7 +374,7 @@ html[data-ui-scaled] .st-page {
   gap: 10px;
   align-items: end;
   padding: 10px 0;
-  border-top: 1px solid #23252e;
+  border-top: 1px solid var(--st-line);
 }
 .st-line:first-of-type {
   border-top: 0;
@@ -406,7 +406,7 @@ html[data-ui-scaled] .st-page {
   justify-content: space-between;
   gap: 16px;
   padding: 6px 0;
-  border-bottom: 1px solid #23252e;
+  border-bottom: 1px solid var(--st-line);
   font-size: 13px;
 }
 .st-kbd {
@@ -424,7 +424,7 @@ html[data-ui-scaled] .st-page {
   border-bottom-width: 2px;
   border-radius: 4px;
   padding: 1px 6px;
-  color: #cfd3df;
+  color: var(--kbd-text-2);
   background: var(--bg-inset);
 }
 .st-facts {
@@ -478,13 +478,13 @@ html[data-ui-scaled] .st-page {
   color: var(--muted);
 }
 .st-notify .note.warn {
-  color: #e6c07a;
+  color: var(--st-hint-warn-text);
 }
 .st-flash {
   position: fixed;
   right: 24px;
   bottom: 20px;
-  background: var(--accent-wash);
+  background: var(--st-section-active-bg);
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 8px 14px;
@@ -528,7 +528,7 @@ html[data-ui-scaled] .st-page {
   border: 0;
   border-radius: 6px;
   background: var(--accent);
-  color: var(--on-accent);
+  color: var(--st-primary-text);
   font-weight: 600;
 }
 .st-agent-head .st-primary:hover {
@@ -570,6 +570,124 @@ html[data-ui-scaled] .st-page {
 }
 .st-radios .st-radio {
   margin: 0;
+}
+/* Theme picker: a grid of choices, each with a small preview painted in that theme's own tokens (data-theme on .st-swatch). */
+.st-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+.st-theme-group {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.st-theme {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.st-theme:hover {
+  background: var(--hover);
+}
+.st-theme:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.st-theme:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.st-theme input {
+  margin: 0;
+}
+.st-theme-name {
+  font-size: 13px;
+}
+.st-swatch-pair {
+  display: inline-flex;
+  flex: none;
+}
+.st-swatch-pair .st-swatch {
+  width: 26px;
+}
+.st-swatch-pair .st-swatch-side {
+  display: none;
+}
+.st-swatch {
+  display: inline-flex;
+  flex: none;
+  width: 52px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.st-swatch-side {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 16px;
+  padding: 4px 2px;
+  background: var(--panel);
+}
+.st-swatch-row {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.st-swatch-row.sel {
+  background: var(--accent-wash);
+  box-shadow: inset 2px 0 0 var(--sel-bar);
+}
+.st-swatch-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+}
+.st-swatch-line {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text);
+}
+.st-swatch-line.short {
+  width: 60%;
+  background: var(--muted);
+}
+.st-swatch-dots {
+  display: flex;
+  gap: 2px;
+}
+.st-swatch-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.st-swatch-dot.working {
+  background: var(--status-working);
+}
+.st-swatch-dot.needs {
+  background: var(--status-needs);
+}
+.st-swatch-dot.done {
+  background: var(--status-done);
+}
+.st-swatch-btn {
+  width: 14px;
+  height: 5px;
+  margin-top: auto;
+  border-radius: 2px;
+  background: var(--accent);
 }
 /* Updates card (updates-ui.js): its buttons sit apart, in the settings' own button size. */
 .st-updates .st-row {

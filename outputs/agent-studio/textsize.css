@@ -123,7 +123,7 @@ html[data-line-spacing='roomy'] .code-block pre {
   padding: 6px 14px;
   border-radius: 999px;
   background: var(--accent-wash);
-  color: var(--text-6);
+  color: var(--tab-selected-text);
   border: 1px solid var(--accent-line);
   font:
     600 13px Segoe UI,

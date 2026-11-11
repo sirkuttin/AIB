@@ -278,6 +278,23 @@ test(
 );
 
 test(
+  'every colour theme lays the cards and tabs out exactly like the default (a theme changes colours only)',
+  { skip: !BROWSER && 'no Chrome or Edge found' },
+  async () => {
+    const s = await open();
+    const ids = require('./theme_tokens.js').themeIds();
+    const measure = () => s.evaluate(`() => JSON.stringify([(${measureCards})(), [...document.querySelectorAll('.ws-tab')].map((t) => t.getBoundingClientRect().toJSON())])`);
+    await s.evaluate(`() => document.documentElement.removeAttribute('data-theme')`);
+    const base = await measure();
+    for (const id of ids) {
+      await s.evaluate(`() => { document.documentElement.setAttribute('data-theme', ${JSON.stringify(id)}); return document.body.offsetHeight; }`);
+      assert.equal(await measure(), base, `${id}: a card or tab moved or changed size`);
+    }
+    await s.evaluate(`() => document.documentElement.removeAttribute('data-theme')`);
+  },
+);
+
+test(
   'chat tabs: the active tab has the inactive tab size, and its dot, title and close button stay put',
   { skip: !BROWSER && 'no Chrome or Edge found' },
   async () => {

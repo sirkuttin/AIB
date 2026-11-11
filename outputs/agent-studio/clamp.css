@@ -20,9 +20,9 @@
   padding: 2px 8px;
   font: inherit;
   font-size: 11px;
-  color: var(--link);
+  color: var(--clamp-toggle-text-rest);
   background: transparent;
-  border: 1px solid var(--line-control);
+  border: 1px solid var(--clamp-toggle-line);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -32,6 +32,6 @@
 }
 .clamp-toggle:hover,
 .clamp-toggle:focus-visible {
-  background: var(--accent-wash);
-  color: var(--text-6);
+  background: var(--clamp-toggle-bg);
+  color: var(--clamp-toggle-text);
 }

@@ -11,37 +11,14 @@ const test = require('node:test'),
 const { cssRules, declarationsFor } = require('./css_rules.js');
 
 const sheet = (name) => cssRules(fs.readFileSync(path.join(APP, name), 'utf8'));
-const tokens = declarationsFor(sheet('theme.css'), ':root');
+// The approved styling is the AIB teal (dark) theme: read its tokens the way the browser does (theme_tokens.js).
+const T = require('./theme_tokens.js');
+const THEME = 'teal-dark';
+const raw = T.tokens(THEME);
+const tokens = new Proxy({}, { get: (_, n) => (typeof n === 'string' && n in raw ? T.hex(`var(${n})`, THEME) : undefined) });
 const header = sheet('header.css');
-const hd = declarationsFor(header, ':root'); // --hd-work ... point at the status tokens
-
-/** The literal colour of a value: follows var(--x) through theme.css and header.css's own names. */
-function colour(value) {
-  let v = String(value).trim();
-  for (let n = 0; n < 10; n++) {
-    const m = /^var\((--[\w-]+)\)$/.exec(v);
-    if (!m) break;
-    v = tokens[m[1]] ?? hd[m[1]];
-    assert.ok(v, `${m[1]} is defined`);
-  }
-  if (/^#[0-9a-f]{3}$/i.test(v)) v = '#' + [...v.slice(1)].map((c) => c + c).join('');
-  assert.match(v, /^#[0-9a-f]{6}$/i, `${value} resolves to an opaque colour`);
-  return v;
-}
-
-function luminance(hex) {
-  const [r, g, b] = [1, 3, 5].map((i) => {
-    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function contrast(a, b) {
-  const [x, y] = [luminance(colour(a)), luminance(colour(b))].sort((p, q) => q - p);
-  return (x + 0.05) / (y + 0.05);
-}
-
+const colour = (value) => T.hex(value, THEME);
+const contrast = (a, b) => T.contrast(a, b, THEME);
 const atLeast = (fg, bg, min) => {
   const ratio = contrast(fg, bg);
   assert.ok(ratio >= min, `${fg} on ${bg} is ${ratio.toFixed(2)}:1, needs ${min}:1`);
@@ -103,7 +80,7 @@ test('status chips and dots paint with the status tokens', () => {
   const chat = sheet('chat.css');
   assert.equal(declarationsFor(chat, '.tool-status.status-in_progress').background, 'var(--status-working-bg)');
   assert.equal(declarationsFor(chat, '.tool-status.status-completed').background, 'var(--status-done-bg)');
-  assert.equal(declarationsFor(chat, '.st-needs_you').background, 'var(--status-needs)');
+  assert.equal(colour(declarationsFor(chat, '.st-needs_you').background), tokens['--status-needs']);
   const activity = sheet('activity.css');
   assert.equal(declarationsFor(activity, '.sa-working .sa-dot').background, 'var(--status-working)');
   assert.equal(declarationsFor(activity, '.sa-completed .sa-dot').background, 'var(--status-done)');
@@ -113,7 +90,7 @@ test('disabled and focused primary buttons, spinners and cards follow the design
   const chat = sheet('chat.css');
   const disabled = declarationsFor(chat, '.primary:disabled');
   assert.equal(disabled.opacity, '1', 'no half-transparent teal');
-  assert.equal(disabled.background, 'var(--accent-wash-2)');
+  assert.equal(colour(disabled.background), tokens['--accent-wash-2']);
   assert.equal(disabled.color, 'var(--on-accent-disabled)');
   const focus = declarationsFor(chat, '.primary:focus-visible');
   assert.equal(focus.outline, '2px solid var(--text-bright)');
@@ -124,31 +101,27 @@ test('disabled and focused primary buttons, spinners and cards follow the design
   assert.equal(declarationsFor(sheet('workspace.css'), '.status-dot.d-work').border, '2px solid var(--status-working-track)');
   assert.equal(declarationsFor(chat, '.st-working').border, '2px solid var(--status-working-track)');
   // approval and question cards: a plain panel with a coral border, not a coral block
-  assert.equal(declarationsFor(chat, '.approval').background, 'var(--panel-2)');
-  assert.equal(declarationsFor(chat, '.elicitation-card').background, 'var(--panel-2)');
+  assert.equal(colour(declarationsFor(chat, '.approval').background), tokens['--panel-2']);
+  assert.equal(colour(declarationsFor(chat, '.elicitation-card').background), tokens['--panel-2']);
   assert.equal(declarationsFor(chat, '.approval h3::before').background, 'var(--status-needs)');
   for (const fg of ['--text', '--muted', '--status-needs']) atLeast(`var(${fg})`, 'var(--panel-2)', 4.5);
   // the question card's Submit keeps the disabled wash, not the first-child teal fill
   const qDisabled = declarationsFor(chat, '.elicitation-actions button.primary:disabled');
-  assert.equal(qDisabled.background, 'var(--accent-wash-2)');
+  assert.equal(colour(qDisabled.background), tokens['--accent-wash-2']);
   assert.equal(qDisabled.color, 'var(--on-accent-disabled)');
 });
 
-test('sidebar chat cards: one 14 px mark column, compact spacing, one step larger type', () => {
+test('sidebar chat cards: one 14 px mark column, one step larger type; size and padding as before (test_card_layout.js)', () => {
   const ws = sheet('workspace.css');
   const card = declarationsFor(ws, 'aside .connection');
-  assert.equal(card.padding, '6px 10px');
-  assert.equal(card.gap, '2px 8px');
+  // Padding, height and the count badge's place come from the card-size fix (base), not from the styling round.
+  assert.equal(card.padding, '6px 8px');
+  assert.equal(card['min-height'], '56px');
   assert.equal(card['align-content'], 'flex-start');
-  assert.equal(card['min-height'], '0');
-  assert.equal(card['max-height'], 'none');
-  assert.equal(declarationsFor(ws, 'aside .conversation-row').margin, '0 0 4px');
   const mark = declarationsFor(ws, 'aside .connection .status-mark');
   assert.equal(mark.flex, '0 0 14px');
   assert.equal(mark.width, '14px');
-  // a count badge replaces the dot (the dot stays for screen readers, out of sight)
-  assert.equal(declarationsFor(ws, 'aside .connection .status-mark:has(.status-count) .status-dot').position, 'absolute');
-  assert.equal(declarationsFor(ws, 'aside .connection .status-count')['min-width'], '14px');
+  assert.equal(declarationsFor(ws, 'aside .connection .status-mark .status-count').position, 'absolute');
   const title = declarationsFor(ws, 'aside .connection .connection-title');
   assert.deepEqual([title['font-size'], title['line-height'], title['font-weight']], ['14px', '18px', '600']);
   for (const sel of ['aside .connection .row-status', 'aside .connection .row-line3']) {

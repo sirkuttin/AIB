@@ -1,12 +1,5 @@
 /* Chat header, status vocabulary, composer and New chat view (docs/design/review-decisions.html). Loaded last.
    Header: ONE line: name + pencil, then the agent chip and the status chip. Composer: turn line, one box, one chip row. */
-:root {
-  --hd-work: var(--status-working);
-  --hd-turn: var(--status-done);
-  --hd-need: var(--status-needs);
-  --hd-idle: var(--status-idle);
-  --hd-fail: var(--danger);
-}
 
 /* Nothing here is shown: older code still looks these elements up. */
 #legacyControls[hidden],
@@ -55,7 +48,7 @@ header .hd-line h1 {
   border-radius: 4px;
 }
 header .hd-line h1:hover {
-  background: #ffffff0d;
+  background: var(--title-hover-bg);
 }
 header .hd-line h1:focus-visible {
   outline: 1px solid var(--accent);
@@ -187,7 +180,7 @@ header #status {
 #status[data-tone='need']::before,
 #turnStatus[data-tone='need']::before {
   background: var(--hd-need);
-  box-shadow: 0 0 0 3px var(--status-needs-halo);
+  box-shadow: 0 0 0 3px var(--hd-need-halo);
 }
 #status[data-tone='idle'],
 #turnStatus[data-tone='idle'] {
@@ -204,12 +197,12 @@ header #status {
 }
 #status[data-tone='else'],
 #turnStatus[data-tone='else'] {
-  color: var(--hd-idle);
+  color: var(--else-status-text);
 }
 #status[data-tone='else']::before,
 #turnStatus[data-tone='else']::before {
   background: transparent;
-  border: 1.5px dashed var(--hd-idle);
+  border: 1.5px dashed var(--else-status-text);
 }
 /* Elsewhere · Working: still the Working colour; the dashed ring says it runs in another app */
 #status[data-tone='else-work'],
@@ -277,9 +270,11 @@ header #status {
   color: var(--hd-need);
 }
 .tone-idle .row-phrase,
-.tone-else .row-phrase,
 .tone-off .row-phrase {
   color: var(--muted);
+}
+.tone-else .row-phrase {
+  color: var(--else-phrase-text);
 }
 
 /* ownership bar: 28 px, dismissible, only while the notice applies */
@@ -291,7 +286,7 @@ header #status {
   flex: none;
   padding: 0 4px 0 16px;
   border-bottom: 1px solid var(--line);
-  background: #1b1a17;
+  background: var(--ownership-bar-bg);
 }
 .ownership-bar:has(#ownershipHint[hidden]) {
   display: none;
@@ -341,7 +336,7 @@ header #status {
   border: 0;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--on-accent);
+  color: var(--jump-new-text);
   font-weight: 600;
   box-shadow: 0 4px 16px var(--shadow-med);
 }
@@ -432,8 +427,8 @@ header #status {
 }
 /* Interrupt takes Send's place while the agent is working */
 #cancel {
-  border-color: #7a4c4c;
-  color: #f2b8b8;
+  border-color: var(--cancel-line);
+  color: var(--cancel-text);
   background: transparent;
 }
 .composer-row {
@@ -514,7 +509,7 @@ header #status {
 #promptForm .composer-actions .composer-attach {
   height: 32px;
   padding: 0 10px;
-  border: 1px solid #3f4150;
+  border: 1px solid var(--composer-attach-line);
   border-radius: 6px;
   background: transparent;
   color: var(--text-3);
@@ -523,7 +518,7 @@ header #status {
 }
 #promptForm .composer-actions .composer-attach:hover,
 #promptForm .composer-actions .composer-attach:focus-visible {
-  background: #262836;
+  background: var(--composer-attach-bg);
   color: var(--text-bright);
 }
 

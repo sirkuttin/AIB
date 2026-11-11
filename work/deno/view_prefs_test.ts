@@ -100,6 +100,11 @@ Deno.test("chat.html carries the saved values in a JSON data block that no value
     '{"a":"</script><script>alert(1)</script>"}',
   );
   assertEquals(withViewPrefs("<p>no head</p>", { a: "1" }), "<p>no head</p>");
+  // the saved theme goes on <html> for themes.js; only a plain id is written
+  const themed = withViewPrefs('<!doctype html><html lang="en"><head></head></html>', { "aib-theme": "teal-light" });
+  assert(themed.startsWith('<!doctype html><html data-theme-pref="teal-light" lang="en">'), themed);
+  const bad = withViewPrefs('<html lang="en"><head></head></html>', { "aib-theme": '"><script>' });
+  assert(!bad.includes("data-theme-pref"), bad);
 });
 
 Deno.test("the web server: chat.html has the saved values, POST /api/live/view-prefs saves behind the page gate", async () => {

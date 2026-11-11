@@ -101,6 +101,12 @@
       keywords: ['keys', 'hotkeys', 'cheat sheet', 'ctrl', 'shortcut', 'bindings'],
     },
     {
+      id: 'theme',
+      section: 'appearance',
+      label: 'Theme',
+      keywords: ['colour', 'color', 'dark', 'light', 'teal', 'purple', 'classic', 'system', 'appearance', 'contrast'],
+    },
+    {
       id: 'text-size',
       section: 'appearance',
       label: 'Text size',
@@ -1242,6 +1248,59 @@
     box.append(note('Read-only for now. Press ? anywhere to see this list in a sheet.'));
   }
 
+  // Theme: owned by themes.js (the list and <html data-theme>), saved in localStorage and the data folder (view-prefs.js).
+  // Each choice is a radio with a small preview drawn in that theme's own colours (data-theme on the preview itself).
+  function swatch(id) {
+    const sw = el('span', null, 'st-swatch');
+    sw.setAttribute('aria-hidden', 'true');
+    sw.setAttribute('data-theme', id);
+    const side = el('span', null, 'st-swatch-side'),
+      main = el('span', null, 'st-swatch-main');
+    side.append(el('span', null, 'st-swatch-row sel'), el('span', null, 'st-swatch-row'));
+    const dots = el('span', null, 'st-swatch-dots');
+    for (const d of ['working', 'needs', 'done']) dots.append(el('span', null, 'st-swatch-dot ' + d));
+    main.append(el('span', null, 'st-swatch-line'), el('span', null, 'st-swatch-line short'), dots, el('span', null, 'st-swatch-btn'));
+    sw.append(side, main);
+    return sw;
+  }
+  function renderTheme(box) {
+    const A = root.AibThemes;
+    if (!A) {
+      box.append(note('Themes are not available on this page.'));
+      return;
+    }
+    const now = A.current();
+    const group = el('div', null, 'st-themes');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Theme');
+    const options = A.THEMES.concat([A.SYSTEM]);
+    for (const g of A.GROUPS) {
+      const inGroup = options.filter((t) => t.group === g);
+      if (!inGroup.length) continue;
+      if (A.GROUPS.length > 1) group.append(el('h5', g, 'st-theme-group'));
+      for (const t of inGroup) {
+        const l = el('label', null, 'st-theme'),
+          r = el('input');
+        r.type = 'radio';
+        r.name = 'aib-theme';
+        r.value = t.id;
+        r.checked = t.id === now;
+        r.addEventListener('change', () => {
+          if (r.checked) A.choose(t.id);
+        });
+        let pic;
+        if (t.id === A.SYSTEM.id) {
+          pic = el('span', null, 'st-swatch-pair');
+          pic.setAttribute('aria-hidden', 'true');
+          pic.append(swatch(A.SYSTEM.dark), swatch(A.SYSTEM.light));
+        } else pic = swatch(t.id);
+        l.append(r, pic, el('span', t.label, 'st-theme-name'));
+        group.append(l);
+      }
+    }
+    box.append(note('Applies at once and is saved with your AIB data. "Match system" follows your light or dark setting.'), group);
+  }
+
   // Text size: owned by textsize-ui.js (per window-width bucket, localStorage), kept in the data folder by view-prefs.js, not by the server settings.
   function renderTextSize(box) {
     const T = root.AgentTextSize;
@@ -1461,6 +1520,7 @@
     notifications: renderNotifications,
     editors: renderEditors,
     keyboard: renderKeyboard,
+    theme: renderTheme,
     'text-size': renderTextSize,
     'default-view': renderDefaultView,
     'auto-reconnect': renderAutoReconnect,
@@ -1477,6 +1537,7 @@
     notifications: 'Notifications',
     editors: 'Editors',
     keyboard: 'Keyboard shortcuts',
+    theme: 'Theme',
     'text-size': 'Text size',
     'default-view': 'Default chat view',
     'auto-reconnect': 'Reconnect after a restart',

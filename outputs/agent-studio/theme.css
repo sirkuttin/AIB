@@ -1,111 +1,769 @@
-/* Agent Studio colour tokens: every colour the page paints is named here once, so a theme is a different set of values for this one block. Loaded first by chat.html. Documented in docs/FRONTEND.md.
-   These are the dark values (the page is dark-only today). A light theme redefines the same names, e.g. in :root[data-theme='light']; the light values of the accent and status pairs are listed in docs/FRONTEND.md. */
-:root {
-  /* Text */
-  --text: #e5e7ec; /* Default text on the page */
-  --text-bright: #fff; /* Brightest text: on solid buttons and viewer controls */
-  --text-2: #d6d9e2; /* Chip, tab and vendor-label text */
-  --text-3: #c9cbd6; /* Secondary labels: sidebar summaries, inbox button */
-  --text-4: #d8dbe4; /* Pane headings on hover, file-group scope */
-  --text-5: #c8cbd6; /* Link-like body text in the activity and changes panes */
-  --text-6: #e6e7ee; /* Artifact list titles and picker text */
-  --text-7: #c9ccd8; /* Artifact version and next-step recap text */
-  --text-dim: #a3a8b6; /* Activity strip and sub-agent card text */
-  --muted: #929aaa; /* Muted text (original token) */
-  --text-muted: #8a91a3; /* Qualifiers, timestamps, toggles */
-  --text-muted-2: #9195a6; /* Plan step qualifiers (former idle status colour) */
-  --text-faint: #747d90; /* Placeholders, composer notes, context state */
-  --text-faint-2: #737e94; /* Message times, turn dividers */
-  --text-faint-3: #6d7184; /* Artifact shortcuts and counts */
+/* AIB colour tokens and themes. Every colour the page paints is a token named here; the other stylesheets only say
+   var(--token). Documented in docs/THEMES.md (the full list) and checked by work/test_themes.js (every theme defines the
+   core tokens, every formula resolves, every text/background pair meets its WCAG contrast target).
 
-  /* Surface */
-  --bg: #101114; /* Page background; deepest wells (provider tabs, attachment image wells) */
-  --panel: #17181e; /* Sidebar, switcher and dialog panels */
-  --panel-2: #20212a; /* Raised blocks: rename dialog, attachment cards, file badges */
-  --bg-inset: #14151a; /* Small inset fields: project filter, rename input, kbd chips */
-  --code-bg: #14151b; /* Code blocks, diffs, resource links */
-  --code-bg-inline: #1b1c24; /* Inline code, table heads, diff summaries */
-  --bg-field: #1c1e27; /* Inputs, slash popup, open tool rows */
-  --bg-popover: #1d1e28; /* Toasts and popovers */
-  --bg-composer: #1a1b24; /* Prompt form and small popups */
-  --bg-control: #20222b; /* Copy controls and menus */
-  --bg-row: #16171d; /* Turn lines, message notes, queue rows on hover */
-  --bg-card-hover: #1d1e26; /* Activity cards and strip on hover */
-  --hover: #23252f; /* Hover fill for sidebar rows, tabs, buttons */
-  --hover-2: #25222e; /* Hover fill for sub-agent cards and activity buttons */
-  --hover-overlay: #ffffff14; /* Translucent white hover wash on header icon buttons */
+   How it fits together:
+   1. Derived tokens (this first block) are formulas over the core tokens, so a theme that sets only the core tokens
+      still paints everything. They apply to :root and to any element with data-theme (the Settings swatches).
+   2. A theme is one block of core tokens on [data-theme='<id>'] (plus color-scheme, plus any derived token it wants
+      to pin to an exact value). The page sets data-theme on <html> before first paint (view-prefs.js).
+   3. AIB teal (dark) is the default: it also applies when <html> has no data-theme.
+   Adding a theme = one block here + one entry in THEMES in view-prefs.js. */
 
-  /* Line */
-  --line: #2d2e39; /* Default hairline border (original token) */
-  --line-strong: #414051; /* Panel, form and card borders */
-  --line-control: #3a3c49; /* Button and badge borders */
-  --line-card: #3d4050; /* Thumbnail and queue-row borders */
-  --line-field: #343746; /* Input and popup borders */
+:root,
+[data-theme] {
+  --text-2: color-mix(in srgb, var(--text) 87%, var(--text-faint)); /* Chip, tab and vendor-label text */
+  --text-3: color-mix(in srgb, var(--text) 65%, var(--muted)); /* Secondary labels: sidebar summaries, inbox button */
+  --text-4: color-mix(in srgb, var(--text) 85%, var(--muted)); /* Pane headings on hover, file-group scope */
+  --text-5: color-mix(in srgb, var(--text) 65%, var(--muted)); /* Link-like body text in the activity and changes panes */
+  --text-6: var(--text); /* Artifact list titles and picker text */
+  --text-7: color-mix(in srgb, var(--text) 67%, var(--muted)); /* Artifact version and next-step recap text */
+  --text-dim: color-mix(in srgb, var(--text) 41%, var(--text-faint)); /* Activity strip and sub-agent card text */
+  --text-muted: color-mix(in srgb, var(--muted) 72%, var(--text-faint)); /* Qualifiers, timestamps, toggles */
+  --text-muted-2: var(--muted); /* Plan step qualifiers (former idle status colour) */
+  --text-faint-2: var(--text-faint); /* Message times, turn dividers */
+  --text-faint-3: var(--text-faint); /* Artifact shortcuts and counts */
+  --bg-inset: color-mix(in srgb, var(--bg) 68%, var(--bg-field)); /* Small inset fields: project filter, rename input, kbd chips */
+  --code-bg-inline: color-mix(in srgb, var(--panel-2) 59%, var(--code-bg)); /* Inline code, table heads, diff summaries */
+  --bg-popover: var(--bg-field); /* Toasts and popovers */
+  --bg-composer: color-mix(in srgb, var(--bg-field) 73%, var(--code-bg)); /* Prompt form and small popups */
+  --bg-control: var(--bg-field); /* Copy controls and menus */
+  --bg-row: color-mix(in srgb, var(--panel) 67%, var(--code-bg)); /* Turn lines, message notes, queue rows on hover */
+  --bg-card-hover: color-mix(in srgb, var(--panel) 33%, var(--panel-2)); /* Activity cards and strip on hover */
+  --hover-2: color-mix(in srgb, var(--line-strong) 35%, var(--code-bg)); /* Hover fill for sub-agent cards and activity buttons */
+  --hover-overlay: color-mix(in srgb, var(--text) 8%, transparent); /* Translucent white hover wash on header icon buttons */
+  --line-control: color-mix(in srgb, var(--line) 82%, var(--text-faint)); /* Button and badge borders */
+  --line-card: color-mix(in srgb, var(--line) 8%, var(--line-strong)); /* Thumbnail and queue-row borders */
+  --line-field: color-mix(in srgb, var(--hover) 36%, var(--line-strong)); /* Input and popup borders */
+  --on-accent-disabled: color-mix(in srgb, var(--accent) 55%, var(--text)); /* Text on a disabled primary button (on --accent-wash-2) */
+  --link-underline: color-mix(in srgb, var(--link) 50%, transparent); /* Link underline at rest */
+  --accent-halo: color-mix(in srgb, var(--accent) 20%, transparent); /* Soft accent glow (drop target) */
+  --accent-wash-2: color-mix(in srgb, var(--accent-wash) 93%, var(--text)); /* Stronger teal hover fill */
+  --accent-wash-3: color-mix(in srgb, var(--accent-line) 35%, var(--code-bg)); /* Artifacts pane teal fill */
+  --accent-wash-4: color-mix(in srgb, var(--accent-line) 31%, var(--bg)); /* Sub-agent command chips, pane badges, agent letters */
+  --accent-wash-5: color-mix(in srgb, var(--accent-line) 30%, var(--bg)); /* Selected sub-agent and command card fill */
+  --danger-text: color-mix(in srgb, var(--danger) 84%, var(--text)); /* Ownership and error-note text */
+  --danger-fill: color-mix(in srgb, var(--danger) 87%, var(--code-bg)); /* Destructive primary button fill and border */
+  --ok-text: color-mix(in srgb, var(--ok) 77%, var(--text)); /* Idle status text and notify-on button */
+  --ok-bright: var(--ok); /* Copied tick, added tokens, ok marks */
+  --ok-text-2: var(--ok); /* Completed tool status and added diff lines */
+  --warn-text: color-mix(in srgb, var(--warn) 66%, var(--text)); /* Hold note and held-chat text */
+  --warn-text-2: color-mix(in srgb, var(--warn) 69%, var(--text)); /* Recovered and possibly-active badges */
+  --warn-bg: color-mix(in srgb, var(--warn) 15%, var(--bg)); /* Former approval and needs-you fill; kept for code on other branches */
+  --warn-line: color-mix(in srgb, var(--warn) 63%, var(--line-strong)); /* Held and edited queue rows, mismatched setting chips */
+  --status-working-track: color-mix(in srgb, var(--status-working) 25%, transparent); /* Working spinner track (the spinner's head is --status-working) */
+  --status-working-line: var(--status-working); /* Working borders: turn line, elsewhere chip */
+  --status-needs-line: var(--status-needs); /* Needs-you borders and row outline */
+  --status-needs-halo: color-mix(in srgb, var(--status-needs) 30%, transparent); /* Halo around the needs-you dot */
+  --status-done-line: var(--status-done); /* Your-turn turn-line border, unread row outline */
+  --plan-dot: var(--text); /* Plan step dots */
+  --shadow-strong: color-mix(in srgb, var(--shadow-ink) 67%, transparent); /* Toast, switcher and popover drop shadow */
+  --shadow-med: color-mix(in srgb, var(--shadow-ink) 60%, transparent); /* Menu shadow and switcher backdrop */
+  --shadow-soft: color-mix(in srgb, var(--shadow-ink) 53%, transparent); /* Chip popover shadow */
+  --accent-ink: var(--on-accent); /* Text on a solid accent button (Start new session, Try again) */
+  --bad-fill: color-mix(in srgb, var(--danger) 15%, var(--bg)); /* "Didn't start" shell chip fill */
+  --bad-line: color-mix(in srgb, var(--danger) 44%, var(--bg)); /* "Didn't start" shell chip border */
+  --hd-work: var(--status-working);
+  --hd-turn: var(--status-done);
+  --hd-need: var(--status-needs);
+  --hd-idle: var(--status-idle);
+  --hd-fail: var(--danger);
+  --need: var(--status-needs);
+  --ws-bg: var(--bg);
+  --sel: var(--accent-wash);
+  --button-bg: var(--bg-field); /* button {background}; .ws-qa {background}; .st-close:hover {background} */
+  --label-text: color-mix(in srgb, var(--text) 48%, var(--muted)); /* label {color} */
+  --error-bg: color-mix(in srgb, var(--danger) 18%, var(--code-bg)); /* #error {background} */
+  --bubble-bg: color-mix(in srgb, var(--bg) 32%, var(--bg-field)); /* .bubble {background}; .pane:not(.foc) .ws-tab.on {background} */
+  --bubble-head-line: color-mix(in srgb, var(--panel-2) 89%, var(--text-faint)); /* .bubble-head {border-bottom}; .msg-note-body {border-top} */
+  --bubble-head-text: color-mix(in srgb, var(--text) 33%, var(--muted)); /* .bubble-head {color}; .tool-toggle {color}; .msg-note-toggle {color} */
+  --card-line: color-mix(in srgb, var(--bg) 43%, var(--line-strong)); /* .connection {border} */
+  --card-bg: color-mix(in srgb, var(--line-strong) 15%, var(--code-bg)); /* .connection {background}; .command-card {background}; .switcher-open kbd,.switcher-foot kbd {background} */
+  --owned-status-text: color-mix(in srgb, var(--ok) 86%, var(--text)); /* .connection .owned-status {color}; .badge-live {color} */
+  --menu-bg: color-mix(in srgb, var(--line-strong) 43%, var(--code-bg)); /* #connectionMenu[open] button {background}; #connectionMenu[open] .menu-panel {background}; .organize-menu {background} */
+  --rename-chat-text: color-mix(in srgb, var(--text) 17%, var(--muted)); /* .rename-chat {color} */
+  --subagents-pane-bg: color-mix(in srgb, var(--panel) 33%, var(--code-bg)); /* #subagentsPane,#subchatPane {background}; #subagentsPane {background}; .cg-file {background} */
+  --subagent-card-meta-text: color-mix(in srgb, var(--accent-line) 64%, var(--text)); /* .subagent-card small {color} */
+  --subagent-card-desc-text: color-mix(in srgb, var(--muted) 36%, var(--text-faint)); /* .subagent-card p {color} */
+  --backdrop: color-mix(in srgb, var(--bg) 70%, transparent); /* #renameDialog::backdrop {background} */
+  --command-card-line: var(--line); /* .command-card {border} */
+  --command-error-text: var(--danger); /* .command-error {color} */
+  --command-details-text: color-mix(in srgb, var(--text) 64%, var(--muted)); /* #commandDetails {color}; .attachment-card span {color}; .image-viewer-caption {color} */
+  --attachment-remove-bg: color-mix(in srgb, var(--bg) 38%, var(--line-strong)); /* .attachment-card .attachment-remove {background} */
+  --attachment-remove-text: color-mix(in srgb, var(--danger-bright) 86%, var(--text)); /* .attachment-card .attachment-remove {color} */
+  --message-image-bg: color-mix(in srgb, var(--bg) 46%, var(--code-bg)); /* .bubble .message-image {background}; .tool-thumbs .tool-thumb {background} */
+  --tool-failed-bg: color-mix(in srgb, var(--danger) 21%, var(--bg)); /* .tool-status.status-failed {background} */
+  --diff-removed-text: var(--danger); /* .diff-removed {color}; .diff-del .diff-sign {color} */
+  --diff-add-bg: color-mix(in srgb, var(--ok) 18%, transparent); /* .diff-add {background} */
+  --diff-del-bg: color-mix(in srgb, var(--danger) 18%, transparent); /* .diff-del {background} */
+  --strip-notice-severity-warning-text: color-mix(in srgb, var(--warn) 46%, var(--text)); /* .strip-notice.severity-warning {color} */
+  --danger-line: color-mix(in srgb, var(--danger) 51%, var(--bg)); /* .danger {border-color}; .cg-discard {border-color} */
+  --primary-danger-text: color-mix(in srgb, var(--bg) 73%, var(--code-bg)); /* .primary.danger {color} */
+  --badge-live-bg: color-mix(in srgb, var(--ok) 16%, var(--bg)); /* .badge-live {background} */
+  --badge-live-line: color-mix(in srgb, var(--ok) 43%, var(--bg)); /* .badge-live {border-color} */
+  --badge-saved-bg: color-mix(in srgb, var(--bg) 29%, var(--line)); /* .badge-saved {background} */
+  --badge-saved-text: color-mix(in srgb, var(--text) 30%, var(--muted)); /* .badge-saved {color} */
+  --badge-recovered-bg: color-mix(in srgb, var(--warn) 15%, var(--bg)); /* .badge-recovered {background}; .badge-ownership-possibly_active {background} */
+  --badge-recovered-line: color-mix(in srgb, var(--warn) 45%, var(--bg-field)); /* .badge-recovered {border-color}; .badge-ownership-possibly_active {border-color}; .ownership-prompt {border} */
+  --badge-agent-bg: color-mix(in srgb, var(--info) 9%, var(--bg-field)); /* .badge-agent {background} */
+  --badge-agent-text: color-mix(in srgb, var(--info) 63%, var(--text)); /* .badge-agent {color}; aside .connection .row-status.tone-info .row-phrase {color} */
+  --badge-agent-line: color-mix(in srgb, var(--info) 40%, var(--panel-2)); /* .badge-agent {border-color} */
+  --stop-subagent-line: color-mix(in srgb, var(--danger) 52%, var(--code-bg)); /* #stopSubagent {border-color} */
+  --file-badge-ext-text: color-mix(in srgb, var(--accent) 20%, var(--text)); /* .file-badge-ext {color} */
+  --file-badge-size-text: var(--muted); /* .file-badge-size {color}; .attachment-card > span {color}; .file-card-meta {color} */
+  --icon-btn-line: color-mix(in srgb, var(--line-strong) 59%, var(--text-faint)); /* .attachment-card .attachment-remove {border}; .image-viewer button {border} */
+  --icon-btn-bg: color-mix(in srgb, var(--bg-field) 18%, var(--line)); /* .attachment-card .attachment-remove {background}; .image-viewer button {background} */
+  --image-viewer-bg: color-mix(in srgb, var(--bg) 90%, transparent); /* .image-viewer {background} */
+  --ownership-hint-text: color-mix(in srgb, var(--text) 10%, var(--muted)); /* .ownership-hint {color} */
+  --badge-ownership-ownedelsewhere-bg: color-mix(in srgb, var(--danger) 16%, var(--bg)); /* .badge-ownership-owned_elsewhere {background} */
+  --badge-ownership-ownedelsewhere-line: color-mix(in srgb, var(--danger) 43%, var(--bg)); /* .badge-ownership-owned_elsewhere {border-color}; .ownership-prompt-blocked {border-color} */
+  --ownership-prompt-bg: color-mix(in srgb, var(--warn) 12%, var(--bg)); /* .ownership-prompt {background} */
+  --ownership-prompt-blocked-bg: color-mix(in srgb, var(--danger) 10%, var(--bg)); /* .ownership-prompt-blocked {background} */
+  --ownership-note-text: color-mix(in srgb, var(--text) 49%, var(--muted)); /* .ownership-note,.ownership-advice {color} */
+  --organize-menu-shadow: color-mix(in srgb, var(--bg) 40%, transparent); /* .organize-menu {box-shadow}; .ws-scrim:not([hidden]) {background}; .ar-pop {box-shadow} */
+  --menu-danger-text: color-mix(in srgb, var(--danger) 70%, var(--text)); /* .organize-menu button.danger {color} */
+  --copy-btn-text: color-mix(in srgb, var(--text) 64%, var(--muted)); /* .copy-ctl button {color}; .run-term {color} */
+  --copy-btn-hover-bg: color-mix(in srgb, var(--hover) 87%, var(--text-faint)); /* .copy-ctl button:hover,.copy-ctl button:focus-visible {background} */
+  --copy-menu-line: color-mix(in srgb, var(--line) 24%, var(--line-strong)); /* .copy-menu {border}; .copy-manual {border} */
+  --copy-menu-item-bg: color-mix(in srgb, var(--bg-field) 27%, var(--line-strong)); /* .copy-menu-item:hover,.copy-menu-item:focus-visible {background} */
+  --copy-manual-note-text: color-mix(in srgb, var(--warn) 64%, var(--text)); /* .copy-manual-note {color} */
+  --tool-error-text: var(--danger); /* .tool-result-error > summary {color} */
+  --syn-add-bg: color-mix(in srgb, var(--ok) 12%, var(--bg)); /* .tok-add {background} */
+  --syn-del-text: var(--danger); /* .tok-del {color}; .tool-line.failed .tool-line-text {color} */
+  --syn-del-bg: color-mix(in srgb, var(--danger) 13%, var(--bg)); /* .tok-del {background} */
+  --mark-failed-text: var(--danger); /* .mark-failed {color} */
+  --turn-lost-text: color-mix(in srgb, var(--danger) 77%, var(--text)); /* .turn-line[data-kind='lost'] {color}; .q-note {color} */
+  --turn-lost-line: color-mix(in srgb, var(--danger) 38%, var(--bg)); /* .turn-line[data-kind='lost'] {border-color} */
+  --kbd-text: color-mix(in srgb, var(--text) 75%, var(--muted)); /* .switcher-open kbd,.switcher-foot kbd {color} */
+  --project-head-bg: color-mix(in srgb, var(--panel-2) 71%, var(--bg-field)); /* .project-head:hover {background} */
+  --st-opening-line: color-mix(in srgb, var(--line-strong) 11%, var(--muted)); /* .st-opening {border} */
+  --chip-v-text: color-mix(in srgb, var(--warn) 69%, var(--text)); /* .chip-pending .chip-v {color}; .chip-warn {color}; .config-queued {color} */
+  --studio-notice-line: color-mix(in srgb, var(--warn) 34%, var(--bg)); /* .studio-notice {border} */
+  --studio-notice-bg: color-mix(in srgb, var(--warn) 11%, var(--bg)); /* .studio-notice {background} */
+  --studio-notice-text: color-mix(in srgb, var(--warn) 42%, var(--text)); /* .studio-notice {color} */
+  --update-btn-line: color-mix(in srgb, var(--warn) 54%, var(--bg-field)); /* .update-banner .update-btn {border} */
+  --update-btn-text: color-mix(in srgb, var(--warn) 28%, var(--text)); /* .update-banner .update-btn {color} */
+  --update-btn-bg: color-mix(in srgb, var(--warn) 19%, var(--bg)); /* .update-banner .update-btn:hover {background} */
+  --activity-dot-bg: color-mix(in srgb, var(--line) 58%, var(--text-faint)); /* .sa-dot {background}; .ac-dot {background} */
+  --activity-dot-failed-bg: color-mix(in srgb, var(--danger) 84%, var(--bg)); /* .sa-failed .sa-dot,.proc-failed .sa-dot {background} */
+  --activity-failed-text: color-mix(in srgb, var(--danger-bright) 94%, var(--bg)); /* .sa-failed .sa-title {color}; .proc-failed .proc-title {color} */
+  --proc-title-text: color-mix(in srgb, var(--text) 42%, var(--muted)); /* .proc-title {color} */
+  --activity-chip-sep-text: color-mix(in srgb, var(--line-strong) 50%, var(--text-faint)); /* .ac-chip + .ac-chip::before {color} */
+  --ws-tab-bg: color-mix(in srgb, var(--panel) 82%, var(--line)); /* .ws-tab {background}; .find-chat {background} */
+  --header-status-line: color-mix(in srgb, var(--ok) 30%, var(--bg)); /* .header-actions #status,header #status {border} */
+  --select-option-bg: color-mix(in srgb, var(--panel) 67%, var(--panel-2)); /* .chip-agent-select option {background}; .st-agent {background} */
+  --ws-newproj-line: color-mix(in srgb, var(--line) 61%, var(--text-faint)); /* .ws-newproj {border} */
+  --ws-menu-item-text: color-mix(in srgb, var(--line-strong) 47%, var(--muted)); /* .ws-menu-item:disabled {color}; .status-dot.d-off {border} */
+  --kbd-text-2: color-mix(in srgb, var(--text) 75%, var(--muted)); /* .find-chat kbd {color}; .side-settings kbd {color}; .st-kbd kbd {color} */
+  --row-chip-bg: color-mix(in srgb, var(--hover) 75%, var(--line-strong)); /* aside .connection .row-chip {background} */
+  --row-ok-text: color-mix(in srgb, var(--ok) 92%, var(--text)); /* aside .connection .row-status.tone-ok .row-phrase {color}; .np-hint.ok {color} */
+  --row-project-text: color-mix(in srgb, var(--text) 35%, var(--muted)); /* aside .connection .row-line3 .row-project {color} */
+  --np-dialog-shadow: color-mix(in srgb, var(--bg) 80%, transparent); /* .np-dialog {box-shadow} */
+  --field-invalid-line: color-mix(in srgb, var(--danger) 74%, var(--bg)); /* .np-form input[aria-invalid='true'] {border-color} */
+  --note-warn-text: color-mix(in srgb, var(--warn) 70%, var(--muted)); /* .ws-notify-body .note.warn {color} */
+  --count-turn-text: var(--bg); /* .status-count.count-turn {color} */
+  --unknown-send-line-text: color-mix(in srgb, var(--warn) 73%, var(--muted)); /* .unknown-send-line {color}; .unknown-send-btn {color}; .unknown-send-btn:hover {border-color} */
+  --unknown-send-btn-line: color-mix(in srgb, var(--warn) 38%, var(--bg-field)); /* .unknown-send-btn {border-color} */
+  --title-hover-bg: color-mix(in srgb, var(--text) 5%, transparent); /* header .hd-line h1:hover {background} */
+  --ownership-bar-bg: var(--bg); /* .ownership-bar {background} */
+  --cancel-line: color-mix(in srgb, var(--danger) 48%, var(--bg)); /* #cancel {border-color} */
+  --cancel-text: color-mix(in srgb, var(--danger) 52%, var(--text)); /* #cancel {color} */
+  --composer-attach-line: color-mix(in srgb, var(--line) 75%, var(--text-faint)); /* #promptForm .composer-actions .composer-attach {border} */
+  --composer-attach-bg: color-mix(in srgb, var(--bg-field) 69%, var(--line-strong)); /* #promptForm .composer-actions .composer-attach:hover,#promptForm .composer-actions .composer-attach:focus-visible {background} */
+  --ws-qa-choice-ok-bg: color-mix(in srgb, var(--ok) 43%, var(--bg)); /* .ws-qa-choice.ok {background} */
+  --ws-qa-choice-no-text: color-mix(in srgb, var(--danger) 77%, var(--text)); /* .ws-qa-choice.no {color}; .switcher-sub.warn {color} */
+  --ws-reply-box-bg: color-mix(in srgb, var(--bg-field) 34%, var(--code-bg)); /* .ws-reply-box {background}; .art-card {background}; .plan-dock {background} */
+  --kbd-text-3: color-mix(in srgb, var(--text) 66%, var(--muted)); /* .switcher-key kbd,.sheet-rows kbd {color}; .q-row {color} */
+  --danger-active-bg: color-mix(in srgb, var(--danger) 17%, var(--bg)); /* .switcher-item.danger.active {background} */
+  --queue-paused-text: color-mix(in srgb, var(--warn) 55%, var(--text)); /* .q-head.q-paused {color} */
+  --q-row-line: color-mix(in srgb, var(--line-strong) 48%, var(--text-faint)); /* .q-row:hover,.q-row:focus-within {border-color} */
+  --q-btn-bg: color-mix(in srgb, var(--hover) 91%, var(--text-faint)); /* .q-btn:hover,.q-btn:focus-visible {background}; .q-text-btn:hover,.q-text-btn:focus-visible {background} */
+  --side-settings-bg: color-mix(in srgb, var(--hover) 75%, var(--code-bg)); /* .side-settings:hover,.side-settings:focus-visible {background}; .st-section:hover {background} */
+  --st-note-bad-text: color-mix(in srgb, var(--danger) 74%, var(--text)); /* .st-note.bad,.st-error,.st-hint.warn {color}; .st-status.bad {color}; .st-danger {color} */
+  --st-hint-warn-text: color-mix(in srgb, var(--warn) 66%, var(--text)); /* .st-hint.warn {color}; .st-notify .note.warn {color} */
+  --st-agent-line: color-mix(in srgb, var(--hover) 89%, var(--line-strong)); /* .st-agent {border}; #startPage .sp-stuck {border} */
+  --st-status-bad-line: color-mix(in srgb, var(--danger) 36%, var(--bg)); /* .st-status.bad {border-color} */
+  --st-command-text: color-mix(in srgb, var(--text) 47%, var(--muted)); /* .st-command {color} */
+  --st-line: color-mix(in srgb, var(--bg-field) 94%, var(--muted)); /* .st-line {border-top}; .st-keys li {border-bottom} */
+  --pane-tab-bg: color-mix(in srgb, var(--text) 3%, transparent); /* .pane-tab:hover {background} */
+  --cg-file-open-line: color-mix(in srgb, var(--bg-field) 81%, var(--line-strong)); /* .cg-file.open {border-bottom-color}; .cg-hunk {border-top}; .cg-hunk {border-bottom} */
+  --git-modified-text: color-mix(in srgb, var(--warn) 83%, var(--text)); /* .st-M {color} */
+  --git-renamed-text: color-mix(in srgb, var(--info) 65%, var(--text)); /* .st-R {color} */
+  --git-conflict-text: var(--danger); /* .st-C {color}; .cg-conflict {color} */
+  --git-conflict-bg: color-mix(in srgb, var(--danger) 13%, transparent); /* .cg-conflict {background} */
+  --cg-hunk-bg: color-mix(in srgb, var(--bg-field) 87%, var(--code-bg)); /* .cg-hunk {background} */
+  --cg-no-text: var(--text-faint); /* .cg-no {color} */
+  --cg-sign-text: var(--text-faint); /* .cg-sign {color} */
+  --cg-text: color-mix(in srgb, var(--text) 74%, var(--muted)); /* .cg-text {color}; .ar-pre {color} */
+  --cg-add-bg: color-mix(in srgb, var(--ok) 12%, var(--bg)); /* .cg-row.cg-add {background} */
+  --cg-add-no-bg: color-mix(in srgb, var(--ok) 17%, var(--bg)); /* .cg-row.cg-add .cg-no {background} */
+  --cg-add-no-text: color-mix(in srgb, var(--ok) 70%, var(--text)); /* .cg-row.cg-add .cg-no {color} */
+  --cg-del-bg: color-mix(in srgb, var(--danger) 13%, var(--bg)); /* .cg-row.cg-del {background} */
+  --cg-del-no-bg: color-mix(in srgb, var(--danger) 20%, var(--bg)); /* .cg-row.cg-del .cg-no {background} */
+  --cg-del-no-text: color-mix(in srgb, var(--danger) 70%, var(--text)); /* .cg-row.cg-del .cg-no {color} */
+  --cg-discard-text: color-mix(in srgb, var(--danger-bright) 90%, var(--bg)); /* .cg-discard {color}; .cg-foot-note.err {color} */
+  --cg-discard-bg: color-mix(in srgb, var(--danger) 11%, var(--bg)); /* .cg-discard:hover:not(:disabled) {background} */
+  --ar-pick-bg: color-mix(in srgb, var(--panel-2) 41%, var(--bg-field)); /* .ar-pick,.ar-ver,.ar-ico {background}; .ar-pop {background}; .split-ghost {background} */
+  --ar-ver-old-text: color-mix(in srgb, var(--warn) 74%, var(--text)); /* .ar-ver.old {color}; .ar-avail {color} */
+  --ar-ver-old-line: color-mix(in srgb, var(--warn) 40%, var(--panel)); /* .ar-ver.old {border-color} */
+  --ar-avail-bg: color-mix(in srgb, var(--warn) 18%, var(--bg)); /* .ar-avail {background} */
+  --ar-avail-line: color-mix(in srgb, var(--warn) 33%, var(--bg)); /* .ar-avail {border-bottom} */
+  --ar-switch-text: color-mix(in srgb, var(--warn) 54%, var(--text)); /* .ar-switch {color} */
+  --ar-sep-bg: color-mix(in srgb, var(--hover) 68%, var(--line-strong)); /* .ar-sep {background} */
+  --plan-text-underline: color-mix(in srgb, var(--line) 34%, var(--text-faint)); /* .plan-completed .plan-text {text-decoration-color} */
+  --plan-spin-line: color-mix(in srgb, color-mix(in srgb, var(--text) 83%, var(--muted)) 25%, transparent); /* .plan-spin::before {border} */
+  --nextstep-btn-primary-line: color-mix(in srgb, var(--line-strong) 61%, var(--text-faint)); /* .nextstep-btn.primary {border-color} */
+  --split-hint-bg: color-mix(in srgb, var(--accent) 22%, transparent); /* .split-hint {background} */
+  --split-ghost-shadow: color-mix(in srgb, var(--bg) 45%, transparent); /* .split-ghost {box-shadow} */
+  --pv-body-bg: var(--bg); /* .pv-body {background} */
+  --heading-tint-text: var(--text-6); /* .brand {color}; .elicitation-heading {color} */
+  --tab-selected-text: var(--text-6); /* .provider-tabs button[aria-selected='true'] {color}; .textsize-badge {color}; .split-hint .lbl {color} */
+  --title-active-text: var(--text-6); /* .sa-working .sa-title {color}; .pane-tab.active {color} */
+  --clamp-toggle-text: var(--text-6); /* .clamp-toggle:hover,.clamp-toggle:focus-visible {color} */
+  --plan-active-text: var(--text-6); /* .plan-in_progress .plan-text {color} */
+  --option-selected-bg: var(--accent-wash); /* .connection.selected {background}; .slash-option.selected {background} */
+  --clamp-toggle-bg: var(--accent-wash); /* .clamp-toggle:hover,.clamp-toggle:focus-visible {background} */
+  --st-section-active-bg: var(--accent-wash); /* .st-section.active {background}; .st-flash {background} */
+  --bubble-user-bg: var(--panel-2); /* .bubble.user {background} */
+  --approval-bg: var(--panel-2); /* .approval {background} */
+  --elicitation-card-bg: var(--panel-2); /* .elicitation-card {background} */
+  --bubble-user-line: var(--line-card); /* .bubble.user {border-color} */
+  --tab-selected-bg: var(--accent-wash-2); /* .provider-tabs button[aria-selected='true'] {background} */
+  --elicitation-url-host-bg: var(--accent-wash-2); /* .elicitation-url-host {background} */
+  --menu-hover-bg: var(--accent-wash-2); /* .organize-menu button:hover,.organize-menu button:focus {background} */
+  --subagent-card-selected-line: var(--accent-line); /* .subagent-card.selected {border-color}; .command-card.selected {border-color}; .ws-qa-reply {border-color} */
+  --rename-dialog-line: var(--accent-line); /* #renameDialog {border} */
+  --divider-active-bg: var(--accent-line); /* .dv:hover,.dv.on {background} */
+  --message-image-line: var(--accent); /* .bubble .message-image:hover {border-color}; .tool-thumbs .tool-thumb:hover,.tool-thumbs .tool-thumb:focus-visible {border-color} */
+  --np-primary-bg: var(--accent); /* .np-primary {background} */
+  --np-primary-line: var(--accent); /* .np-primary {border-color} */
+  --ws-qa-send-primary-bg: var(--accent); /* .ws-qa-send.primary {background} */
+  --elicitation-url-bg: var(--code-bg); /* .elicitation-url {background} */
+  --elicitation-url-line: var(--line-field); /* .elicitation-url {border}; .auth-method {border} */
+  --activity-when-text: var(--text-dim); /* .sa-working .sa-when,.proc-running .sa-when {color} */
+  --row-agent-text: var(--text-dim); /* aside .connection .row-agent {color} */
+  --chip-icon-bg: var(--accent-wash-4); /* .chip-agent .chip-icon {background} */
+  --st-letter-bg: var(--accent-wash-4); /* .st-letter {background} */
+  --clamp-toggle-line: var(--line-control); /* .clamp-toggle {border} */
+  --else-status-text: var(--hd-idle); /* #status[data-tone='else'],#turnStatus[data-tone='else'] {color}; #status[data-tone='else']::before,#turnStatus[data-tone='else']::before {border}; .mirror-status[data-tone='else'] {color} (+1 more) */
+  --question-line: var(--status-needs-line); /* .elicitation-card {border}; .connection.attn-needs_you {border-color} */
+  --card-needs-line: var(--status-needs-line); /* aside .connection.selected.attn-needs_you {box-shadow}; aside .connection.attn-needs_you:not(.selected) {box-shadow} */
+  --tool-done-text: var(--status-done); /* .tool-status.status-completed {color} */
+  --mark-ok-text: var(--status-done); /* .mark-ok {color} */
+  --st-unread-bg: var(--status-done); /* .st-unread {background} */
+  --st-status-ok-text: var(--status-done); /* .st-status.ok {color} */
+  --tool-working-text: var(--status-working); /* .tool-status.status-in_progress {color} */
+  --turn-working-text: var(--status-working); /* .turn-line[data-kind='working'] {color} */
+  --ws-working-bg: var(--status-working); /* .ws-working {background} */
+  --turn-idle-line: var(--status-done-line); /* .turn-line[data-kind='idle'] {border-color} */
+  --turn-needs-text: var(--status-needs); /* .turn-line[data-kind='needs'] {color} */
+  --st-needs-bg: var(--status-needs); /* .st-needs_you {background}; .status-count {background} */
+  --st-status-warn-text: var(--status-needs); /* .st-status.warn {color} */
+  --st-needs-halo: var(--status-needs-halo); /* .st-needs_you {box-shadow} */
+  --hd-need-halo: var(--status-needs-halo); /* #status[data-tone='need']::before,#turnStatus[data-tone='need']::before {box-shadow} */
+  --st-idle-line: var(--status-idle); /* .st-idle {border} */
+  --st-count-text: var(--status-needs-bg); /* .status-count {color} */
+  --count-needs-text: var(--status-needs-bg); /* .status-count {color} */
+  --ws-badge-text: var(--status-needs-bg); /* .ws-badge {color} */
+  --st-status-warn-line: var(--status-needs-bg); /* .st-status.warn {border-color} */
+  --chip-icon-text: var(--link); /* .chip-agent .chip-icon {color}; .st-letter {color} */
+  --clamp-toggle-text-rest: var(--link); /* .clamp-toggle {color} */
+  --np-primary-text: var(--on-accent); /* .np-primary {color} */
+  --jump-new-text: var(--on-accent); /* .jump-new {color} */
+  --ws-qa-send-primary-text: var(--on-accent); /* .ws-qa-send.primary {color} */
+  --st-primary-text: var(--on-accent); /* .st-agent-head .st-primary {color} */
+  --st-status-ok-line: var(--status-done-bg); /* .st-status.ok {border-color} */
+  --else-phrase-text: var(--muted); /* .tone-else .row-phrase {color} */
+  --sel-bar: var(--accent); /* aside .connection.selected::before {background} */
+  --else-dot-line: var(--status-idle); /* .status-dot.d-else {border} */
+  --primary-disabled-bg: var(--accent-wash-2); /* .primary:disabled {background} */
+  --primary-disabled-line: var(--accent-line); /* .primary:disabled {border-color} */
+  --artifact-frame-bg: #ffffff; /* Behind an artifact page or image: always white, as a web page expects (theme-independent) */
+}
 
-  /* Accent: Bay teal, the one accent (primary buttons, links, focus, selection, the active chat). Dark values. */
-  --accent: #2bb3a3; /* Accent (original token): primary button fill, focus rings, selection bars, accent borders */
-  --on-accent: #0b1f1d; /* Text on an --accent fill (primary buttons, badges) */
-  --on-accent-disabled: #8fd9cf; /* Text on a disabled primary button (on --accent-wash-2) */
-  --link: #33bcab; /* Links and accent-coloured text: the most saturated teal that keeps 4.5:1 on every teal fill */
-  --link-underline: #33bcab80; /* Link underline at rest */
-  --accent-halo: #2bb3a333; /* Soft accent glow (drop target) */
-  --accent-wash: #17332f; /* Active chat, selected rows, teal hover and active fill */
-  --accent-wash-2: #1f423d; /* Stronger teal hover fill */
-  --accent-wash-3: #173a36; /* Artifacts pane teal fill */
-  --accent-wash-4: #16302d; /* Sub-agent command chips, pane badges, agent letters */
-  --accent-wash-5: #1a3834; /* Selected sub-agent and command card fill */
-  --accent-line: #2a7c72; /* Selected-card and dialog teal borders */
-
-  /* Status */
-  --danger: #f08a8a; /* Failure dot and new-line marker (also --hd-fail) */
-  --danger-text: #f19999; /* Ownership and error-note text */
+/* AIB teal (dark): the default theme. Bay teal accent, the icon's agent lights for status. */
+:root:not([data-theme]),
+[data-theme='teal-dark'] {
+  color-scheme: dark;
+  /* core */
+  --bg: #121318; /* Page background: the chat column and the deepest wells */
+  --panel: #1b1c23; /* Sidebar, switcher and dialog panels */
+  --panel-2: #23242c; /* Raised blocks: your prompts, approval and question cards, dialogs, attachment cards */
+  --bg-field: #1f2028; /* Inputs, slash popup, open tool rows */
+  --hover: #272830; /* Hover fill for sidebar rows, tabs, buttons */
+  --line: #2c2d36; /* Default hairline border */
+  --line-strong: #40414b; /* Panel, form and card borders */
+  --text: #edeae2; /* Default text on the page */
+  --text-bright: #ffffff; /* Strongest text: hovered and selected controls, the ring round a focused primary button */
+  --muted: #a9a497; /* Muted text: meta lines, agent names, secondary labels */
+  --text-faint: #918d80; /* Faintest readable text: placeholders, composer notes, context state */
+  --code-bg: #16171d; /* Code blocks, diffs, resource links */
+  --accent: #2bb3a3; /* The one accent: primary button fill, focus rings, selection bars, accent borders */
+  --on-accent: #0b1f1d; /* Text on an --accent fill */
+  --link: #33bcab; /* Links and accent-coloured text */
+  --accent-wash: #17332f; /* Active chat, selected rows, accent hover and active fill */
+  --accent-line: #2a7c72; /* Selected-card and dialog accent borders (meaningful: 3:1) */
+  --danger: #f08a8a; /* Failure dot and new-line marker */
   --danger-bright: #ffbac6; /* Error text and failed tool status */
-  --danger-fill: #d96b82; /* Destructive primary button fill and border */
-  --ok: #7ad19c; /* Additions and change counts (former your-turn dot) */
-  --ok-text: #8fd7b2; /* Idle status text and notify-on button */
-  --ok-bright: #8be28b; /* Copied tick, added tokens, ok marks */
-  --ok-text-2: #8be3ad; /* Completed tool status and added diff lines */
-  --warn: #f0b23e; /* Stars and file warnings (former needs-you dot) */
-  --warn-text: #e6c27a; /* Hold note and held-chat text */
-  --warn-text-2: #f0c674; /* Recovered and possibly-active badges */
-  --warn-bg: #302a1c; /* Former approval and needs-you fill; kept for code on other branches */
-  --warn-line: #ad8d47; /* Held and edited queue rows, mismatched setting chips */
-  --info: #5aa9ff; /* Former working dot; kept for code on other branches */
-
-  /* Agent status: the icon's agent lights. Text, dots and borders use the icon's saturated colours (amber #ffc247, coral #ff7a59,
-     teal #2bb3a3), which keep 4.5:1 as text on every dark surface; chips fill with --status-x-bg. Checked by work/test_theme_status.js. Always shown with the status word, never colour alone. */
-  --status-working: #ffc247; /* Working: the icon's amber, for text, dot and spinner (also Elsewhere · Working, dashed) */
+  --ok: #7ad19c; /* Additions, change counts, ok marks */
+  --warn: #f0b23e; /* Stars, file warnings, held chats */
+  --info: #5aa9ff; /* Neutral information blue (agent badges, renamed files) */
+  --status-working: #ffc247; /* Working: text, dot and spinner head */
   --status-working-bg: #3a2e14; /* Working chip fill */
-  --status-working-track: #ffc24740; /* Working spinner track (the spinner's head is --status-working) */
-  --status-working-line: #ffc247; /* Working borders: turn line, elsewhere chip */
-  --status-needs: #ff7a59; /* Needs you: the icon's coral, for text, dot and badges */
-  --status-needs-bg: #3d1f18; /* Needs-you chip, approval, turn-line and toast fill; text on a coral badge */
-  --status-needs-line: #ff7a59; /* Needs-you borders and row outline */
-  --status-needs-halo: #ff7a594d; /* Halo around the needs-you dot */
-  --status-done: #2bb3a3; /* Done / Your turn / unread: the icon's teal, for text and dot */
+  --status-needs: #ff7a59; /* Needs you: text, dot and badges */
+  --status-needs-bg: #3d1f18; /* Needs-you chip, turn-line and toast fill; text on a needs-you badge */
+  --status-done: #2bb3a3; /* Done / Your turn / unread: text and dot */
   --status-done-bg: #12302c; /* Done chip fill */
-  --status-done-line: #2bb3a3; /* Your-turn turn-line border, unread row outline */
-  --status-idle: #c9c5bb; /* Idle and unknown (also Elsewhere · Idle, dashed): grey text and dot ring */
+  --status-idle: #c9c5bb; /* Idle and unknown: grey text and dot ring */
   --status-idle-bg: #26272f; /* Idle chip fill */
-
-  /* Plan */
-  --plan-dot: #d7d9e3; /* Plan step dots */
-
-  /* Shadow */
-  --shadow-strong: #000a; /* Toast, switcher and popover drop shadow */
-  --shadow-med: #0009; /* Menu shadow and switcher backdrop */
-  --shadow-soft: #0008; /* Chip popover shadow */
-
-  /* Terminal (terminal.css, and xterm's colours through terminal-ui.js) */
-  --term-bg: #0c0d10; /* Terminal panel and xterm background */
-  --term-sel: #3d3456; /* xterm selection */
-  --term-green: #7ad19c; /* xterm green */
-  --term-blue: #7cb7ff; /* xterm blue */
-  --term-yellow: #e6c27a; /* xterm yellow */
+  --syn-keyword: #c79bff; /* Code: keywords */
+  --syn-string: #9bd88f; /* Code: strings */
+  --syn-number: #f0a96b; /* Code: numbers and literals */
+  --syn-comment: #8a8679; /* Code: comments */
+  --syn-key: #7cc4ff; /* Code: object keys and headings */
+  --term-bg: #0e0f13; /* Terminal panel and xterm background */
+  --term-fg: #edeae2; /* xterm text and cursor */
+  --term-sel: #1f4a44; /* xterm selection */
   --term-red: #f19999; /* xterm red */
+  --term-green: #7ad19c; /* xterm green */
+  --term-yellow: #e6c27a; /* xterm yellow */
+  --term-blue: #7cb7ff; /* xterm blue */
+  --term-magenta: #c79bff; /* xterm magenta */
   --term-cyan: #7fd3d8; /* xterm cyan */
-  --term-dim: #8a91a3; /* xterm bright black (prompts, dim text) */
-  --accent-ink: #17111f; /* Text on a solid accent button (Start new session, Try again) */
-  --bad-fill: #3a1820; /* "Didn't start" shell chip fill */
-  --bad-line: #7a3a48; /* "Didn't start" shell chip border */
+  --term-dim: #8a8679; /* xterm bright black (prompts, dim text) */
+  --shadow-ink: #000000; /* Colour of drop shadows and backdrops (used with transparency) */
+  /* derived tokens pinned to an exact value in this theme */
+  --hover-overlay: #ffffff14;
+  --on-accent-disabled: #8fd9cf;
+  --link-underline: #33bcab80;
+  --accent-halo: #2bb3a333;
+  --accent-wash-2: #1f423d;
+  --accent-wash-3: #173a36;
+  --accent-wash-4: #16302d;
+  --accent-wash-5: #1a3834;
+  --danger-fill: #d96b82;
+  --ok-bright: #8be28b;
+  --ok-text-2: #8be3ad;
+  --status-working-track: #ffc24740;
+  --status-working-line: #ffc247;
+  --status-needs-line: #ff7a59;
+  --status-needs-halo: #ff7a594d;
+  --status-done-line: #2bb3a3;
+  --bad-fill: #3a1820;
+  --bad-line: #7a3a48;
+  --error-bg: #40242e;
+  --subagent-card-meta-text: #9a92ae;
+  --command-error-text: #ff9ba9;
+  --attachment-remove-bg: #3b2934;
+  --tool-failed-bg: #4a1d27;
+  --diff-removed-text: #ff9aa9;
+  --diff-add-bg: #34a8642e;
+  --diff-del-bg: #dc465a2e;
+  --strip-notice-severity-warning-text: #ffd79a;
+  --danger-line: #8f3b4d;
+  --primary-danger-text: #1d0d12;
+  --badge-live-bg: #16342a;
+  --badge-live-line: #2c6b52;
+  --stop-subagent-line: #8a4a56;
+  --badge-ownership-ownedelsewhere-bg: #3a1f22;
+  --badge-ownership-ownedelsewhere-line: #7a3a41;
+  --menu-danger-text: #ff9fb0;
+  --copy-manual-note-text: #ffd479;
+  --syn-add-bg: #1a2e1f;
+  --syn-del-text: #ff9b9b;
+  --syn-del-bg: #33191d;
+  --mark-failed-text: #ff6b6b;
+  --studio-notice-text: #f0d9a0;
+  --update-btn-text: #f7e6b8;
+  --activity-dot-failed-bg: #d9666e;
+  --field-invalid-line: #c25f5f;
+  --count-turn-text: #0e1f17;
+  --title-hover-bg: #ffffff0d;
+  --ws-qa-choice-ok-bg: #2f6f4c;
+  --st-status-bad-line: #6b3434;
+  --pane-tab-bg: #ffffff08;
+  --git-renamed-text: #8fb8ff;
+  --git-conflict-text: #ff9f6e;
+  --git-conflict-bg: #ff9f6e22;
+  --cg-add-bg: #17301f;
+  --cg-del-bg: #35191d;
+  --cg-discard-text: #f0a0b0;
+  --ar-switch-text: #ffd98a;
+}
+
+/* AIB teal (light): the same direction on warm paper. Teal stays saturated; status colours keep 3:1 as dots and 4.5:1 as text. */
+[data-theme='teal-light'] {
+  color-scheme: light;
+  /* core */
+  --bg: #f7f4ee;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --bg-field: #ffffff;
+  --hover: #ece8df;
+  --line: #e2ded4;
+  --line-strong: #c9c2b3;
+  --text: #16151b;
+  --text-bright: #000000;
+  --muted: #5c5547;
+  --text-faint: #6b6455;
+  --code-bg: #f1ede5;
+  --accent: #0f766e;
+  --on-accent: #ffffff;
+  --link: #0f766e;
+  --accent-wash: #e3f2ef;
+  --accent-line: #3d968b;
+  --danger: #a82424;
+  --danger-bright: #a8201a;
+  --ok: #16643a;
+  --warn: #8a5a00;
+  --info: #1f5fbf;
+  --status-working: #8f5a00;
+  --status-working-bg: #fff1d6;
+  --status-needs: #b8381c;
+  --status-needs-bg: #ffe4dc;
+  --status-done: #08706a;
+  --status-done-bg: #ddf1ec;
+  --status-idle: #4a4740;
+  --status-idle-bg: #ece9e2;
+  --syn-keyword: #7b3fc4;
+  --syn-string: #2f7a22;
+  --syn-number: #a5520a;
+  --syn-comment: #6b6455;
+  --syn-key: #0b5fa8;
+  --term-bg: #fbfaf7;
+  --term-fg: #16151b;
+  --term-sel: #cfe8e3;
+  --term-red: #b42318;
+  --term-green: #1d7a46;
+  --term-yellow: #8a5a00;
+  --term-blue: #1f5fbf;
+  --term-magenta: #8a3fb8;
+  --term-cyan: #0b7380;
+  --term-dim: #6b6455;
+  --shadow-ink: #2a2418;
+  /* derived tokens pinned to an exact value in this theme */
+  --accent-wash-2: #dcefea;
+  --accent-wash-3: #d9eee9;
+  --accent-wash-4: #dcefea;
+  --accent-wash-5: #d9eee9;
+}
+
+/* Classic purple (dark): AIB before the teal styling, colour for colour. */
+[data-theme='classic'] {
+  color-scheme: dark;
+  /* core */
+  --bg: #101114;
+  --panel: #17181e;
+  --panel-2: #20212a;
+  --bg-field: #1c1e27;
+  --hover: #23252f;
+  --line: #2d2e39;
+  --line-strong: #414051;
+  --text: #e5e7ec;
+  --text-bright: #ffffff;
+  --muted: #929aaa;
+  --text-faint: #7f899c;
+  --code-bg: #14151b;
+  --accent: #bba1ff;
+  --on-accent: #17111f;
+  --link: #bba1ff;
+  --accent-wash: #2a2438;
+  --accent-line: #705a9b;
+  --danger: #f08a8a;
+  --danger-bright: #ffbac6;
+  --ok: #7ad19c;
+  --warn: #f0b23e;
+  --info: #5aa9ff;
+  --status-working: #bba1ff;
+  --status-working-bg: #2c2a4a;
+  --status-needs: #e6c27a;
+  --status-needs-bg: #302a1c;
+  --status-done: #8fd7b2;
+  --status-done-bg: #16392a;
+  --status-idle: #cfd3dd;
+  --status-idle-bg: #2a2b36;
+  --syn-keyword: #c79bff;
+  --syn-string: #9bd88f;
+  --syn-number: #f0a96b;
+  --syn-comment: #7d8597;
+  --syn-key: #7cc4ff;
+  --term-bg: #0c0d10;
+  --term-fg: #e5e7ec;
+  --term-sel: #3d3456;
+  --term-red: #f19999;
+  --term-green: #7ad19c;
+  --term-yellow: #e6c27a;
+  --term-blue: #7cb7ff;
+  --term-magenta: #bba1ff;
+  --term-cyan: #7fd3d8;
+  --term-dim: #8a91a3;
+  --shadow-ink: #000000;
+  /* every derived token pinned to the exact colour AIB used before the teal styling */
+  --text-2: #d6d9e2;
+  --text-3: #c9cbd6;
+  --text-4: #d8dbe4;
+  --text-5: #c8cbd6;
+  --text-6: #e6e7ee;
+  --text-7: #c9ccd8;
+  --text-dim: #a3a8b6;
+  --text-muted: #8a91a3;
+  --text-muted-2: #9195a6;
+  --text-faint-2: #7e899f;
+  --text-faint-3: #84889b;
+  --bg-inset: #14151a;
+  --code-bg-inline: #1b1c24;
+  --bg-popover: #1d1e28;
+  --bg-composer: #1a1b24;
+  --bg-control: #20222b;
+  --bg-row: #16171d;
+  --bg-card-hover: #1d1e26;
+  --hover-2: #25222e;
+  --hover-overlay: #ffffff14;
+  --line-control: #3a3c49;
+  --line-card: #3d4050;
+  --line-field: #343746;
+  --on-accent-disabled: #191624;
+  --link-underline: #a99cff80;
+  --accent-halo: #7c6cf033;
+  --accent-wash-2: #383043;
+  --accent-wash-3: #2b2752;
+  --accent-wash-4: #2b2740;
+  --accent-wash-5: #2d243d;
+  --danger-text: #f19999;
+  --danger-fill: #d96b82;
+  --ok-text: #8fd7b2;
+  --ok-bright: #8be28b;
+  --ok-text-2: #8be3ad;
+  --warn-text: #e6c27a;
+  --warn-text-2: #f0c674;
+  --warn-bg: #302a1c;
+  --warn-line: #ad8d47;
+  --status-working-track: #4b4560;
+  --status-working-line: #463d6e;
+  --status-needs-line: #ad8d47;
+  --status-needs-halo: #f2b24a4d;
+  --status-done-line: #46678e;
+  --plan-dot: #d7d9e3;
+  --shadow-strong: #000000aa;
+  --shadow-med: #00000099;
+  --shadow-soft: #00000088;
+  --accent-ink: #17111f;
+  --bad-fill: #3a1820;
+  --bad-line: #7a3a48;
+  --hd-work: #5aa9ff;
+  --hd-turn: #7ad19c;
+  --hd-need: #f0b23e;
+  --hd-idle: #9195a6;
+  --hd-fail: #f08a8a;
+  --need: #f2b24a;
+  --ws-bg: #121317;
+  --sel: #2b2340;
+  --button-bg: #24262f;
+  --label-text: #b8bece;
+  --error-bg: #40242e;
+  --bubble-bg: #181a21;
+  --bubble-head-line: #292b35;
+  --bubble-head-text: #aab3c5;
+  --card-line: #2c2c37;
+  --card-bg: #1b1b23;
+  --owned-status-text: #87d3aa;
+  --menu-bg: #292632;
+  --rename-chat-text: #a5a1b6;
+  --subagents-pane-bg: #15161c;
+  --subagent-card-meta-text: #9a92ae;
+  --subagent-card-desc-text: #7f879a;
+  --backdrop: #07080bb3;
+  --command-card-line: #30313c;
+  --command-error-text: #ff9ba9;
+  --command-details-text: #c4cada;
+  --attachment-remove-bg: #3b2934;
+  --attachment-remove-text: #ffc1cd;
+  --message-image-bg: #121318;
+  --tool-failed-bg: #4a1d27;
+  --diff-removed-text: #ff9aa9;
+  --diff-add-bg: #34a8642e;
+  --diff-del-bg: #dc465a2e;
+  --strip-notice-severity-warning-text: #ffd79a;
+  --danger-line: #8f3b4d;
+  --primary-danger-text: #1d0d12;
+  --badge-live-bg: #16342a;
+  --badge-live-line: #2c6b52;
+  --badge-saved-bg: #25262e;
+  --badge-saved-text: #aab0bf;
+  --badge-recovered-bg: #33291a;
+  --badge-recovered-line: #7a6431;
+  --badge-agent-bg: #222b3a;
+  --badge-agent-text: #8fb8ef;
+  --badge-agent-line: #3d5680;
+  --stop-subagent-line: #8a4a56;
+  --file-badge-ext-text: #d8dcf0;
+  --file-badge-size-text: #8f98ad;
+  --icon-btn-line: #555a6b;
+  --icon-btn-bg: #2a2b36;
+  --image-viewer-bg: #06070ae6;
+  --ownership-hint-text: #9aa1b2;
+  --badge-ownership-ownedelsewhere-bg: #3a1f22;
+  --badge-ownership-ownedelsewhere-line: #7a3a41;
+  --ownership-prompt-bg: #2a2417;
+  --ownership-prompt-blocked-bg: #2a1a1c;
+  --ownership-note-text: #b9bfcc;
+  --organize-menu-shadow: #00000066;
+  --menu-danger-text: #ff9fb0;
+  --copy-btn-text: #c3cadb;
+  --copy-btn-hover-bg: #2d303c;
+  --copy-menu-line: #3a3d4c;
+  --copy-menu-item-bg: #33364a;
+  --copy-manual-note-text: #ffd479;
+  --tool-error-text: #ff8f8f;
+  --syn-add-bg: #1a2e1f;
+  --syn-del-text: #ff9b9b;
+  --syn-del-bg: #33191d;
+  --mark-failed-text: #ff6b6b;
+  --turn-lost-text: #e6a0a0;
+  --turn-lost-line: #6b3a3a;
+  --kbd-text: #cfd3dd;
+  --project-head-bg: #1f2029;
+  --st-opening-line: #8a8fa0;
+  --chip-v-text: #e8c872;
+  --studio-notice-line: #5a4a20;
+  --studio-notice-bg: #2a2312;
+  --studio-notice-text: #f0d9a0;
+  --update-btn-line: #8a7433;
+  --update-btn-text: #f7e6b8;
+  --update-btn-bg: #3a3018;
+  --activity-dot-bg: #4b4f5d;
+  --activity-dot-failed-bg: #d9666e;
+  --activity-failed-text: #f3b3b8;
+  --proc-title-text: #b4b9c8;
+  --activity-chip-sep-text: #5a5f70;
+  --ws-tab-bg: #1b1c23;
+  --header-status-line: #2f4a3c;
+  --select-option-bg: #1a1b22;
+  --ws-newproj-line: #4a4c5b;
+  --ws-menu-item-text: #6b7080;
+  --kbd-text-2: #cfd3df;
+  --row-chip-bg: #2a2c38;
+  --row-ok-text: #79d6ae;
+  --row-project-text: #aeb4c4;
+  --np-dialog-shadow: #000000cc;
+  --field-invalid-line: #c25f5f;
+  --note-warn-text: #e0b36a;
+  --count-turn-text: #0e1f17;
+  --unknown-send-line-text: #d9b45f;
+  --unknown-send-btn-line: #6b5a2e;
+  --title-hover-bg: #ffffff0d;
+  --ownership-bar-bg: #1b1a17;
+  --cancel-line: #7a4c4c;
+  --cancel-text: #f2b8b8;
+  --composer-attach-line: #3f4150;
+  --composer-attach-bg: #262836;
+  --ws-qa-choice-ok-bg: #2f6f4c;
+  --ws-qa-choice-no-text: #f0a0a0;
+  --ws-reply-box-bg: #17181f;
+  --kbd-text-3: #c9ccd6;
+  --danger-active-bg: #3a2226;
+  --queue-paused-text: #f0d28a;
+  --q-row-line: #5a5e75;
+  --q-btn-bg: #2b2d38;
+  --side-settings-bg: #1f212a;
+  --st-note-bad-text: #f0a3a3;
+  --st-hint-warn-text: #e6c07a;
+  --st-agent-line: #262833;
+  --st-status-bad-line: #6b3434;
+  --st-command-text: #b9bdca;
+  --st-line: #23252e;
+  --pane-tab-bg: #ffffff08;
+  --cg-file-open-line: #23242f;
+  --git-modified-text: #e3b95c;
+  --git-renamed-text: #8fb8ff;
+  --git-conflict-text: #ff9f6e;
+  --git-conflict-bg: #ff9f6e22;
+  --cg-hunk-bg: #1b1c26;
+  --cg-no-text: #7a7f91;
+  --cg-sign-text: #7b8194;
+  --cg-text: #cfd2dc;
+  --cg-add-bg: #17301f;
+  --cg-add-no-bg: #1a3a25;
+  --cg-add-no-text: #6fae86;
+  --cg-del-bg: #35191d;
+  --cg-del-no-bg: #44202a;
+  --cg-del-no-text: #c47f8b;
+  --cg-discard-text: #f0a0b0;
+  --cg-discard-bg: #2a1a20;
+  --ar-pick-bg: #1e1f28;
+  --ar-ver-old-text: #f0c36a;
+  --ar-ver-old-line: #6b5a2c;
+  --ar-avail-bg: #3a2d12;
+  --ar-avail-line: #5a4620;
+  --ar-switch-text: #ffd98a;
+  --ar-sep-bg: #2c2e3a;
+  --plan-text-underline: #5d6272;
+  --plan-spin-line: #d7d9e340;
+  --nextstep-btn-primary-line: #55586a;
+  --split-hint-bg: #bba1ff38;
+  --split-ghost-shadow: #00000073;
+  --pv-body-bg: #000000;
+  --heading-tint-text: #e5d8ff;
+  --tab-selected-text: #f0e5ff;
+  --title-active-text: #f1ecff;
+  --clamp-toggle-text: #d8ccff;
+  --plan-active-text: #f0eaff;
+  --option-selected-bg: #2b223b;
+  --clamp-toggle-bg: #2a2540;
+  --st-section-active-bg: #272433;
+  --bubble-user-bg: #272031;
+  --approval-bg: #302a1c;
+  --elicitation-card-bg: #242032;
+  --bubble-user-line: #4d3c65;
+  --tab-selected-bg: #342744;
+  --elicitation-url-host-bg: #4b3a7a;
+  --menu-hover-bg: #3a3248;
+  --subagent-card-selected-line: #6a528f;
+  --rename-dialog-line: #5b4a78;
+  --divider-active-bg: #4a4660;
+  --message-image-line: #a99cff;
+  --np-primary-bg: #6a4fc2;
+  --np-primary-line: #8a6fe0;
+  --ws-qa-send-primary-bg: #8f7cf0;
+  --elicitation-url-bg: #17141f;
+  --elicitation-url-line: #4a3d6b;
+  --activity-when-text: #a79fbd;
+  --row-agent-text: #929aaa;
+  --chip-icon-bg: #33324a;
+  --st-letter-bg: #2d2745;
+  --clamp-toggle-line: #3a3550;
+  --else-status-text: #f0b23e;
+  --question-line: #705a9b;
+  --card-needs-line: color-mix(in srgb,#f2b24a 55%,transparent);
+  --tool-done-text: #8be3ad;
+  --mark-ok-text: #8be28b;
+  --st-unread-bg: #6fb4ff;
+  --st-status-ok-text: #9ad8a6;
+  --tool-working-text: #c9bcff;
+  --turn-working-text: #c9b8ff;
+  --ws-working-bg: #6fb4ff;
+  --turn-idle-line: #2a4a3a;
+  --turn-needs-text: #f0d28a;
+  --st-needs-bg: #bba1ff;
+  --st-status-warn-text: #e6c07a;
+  --st-needs-halo: #bba1ff33;
+  --hd-need-halo: #f0b23e49;
+  --st-idle-line: #4fae85;
+  --st-count-text: #1d1530;
+  --count-needs-text: #24180a;
+  --ws-badge-text: #1b1300;
+  --st-status-warn-line: #6b5628;
+  --chip-icon-text: #d9ccff;
+  --clamp-toggle-text-rest: #b9a7ff;
+  --np-primary-text: #ffffff;
+  --jump-new-text: #15111d;
+  --ws-qa-send-primary-text: #16131f;
+  --st-primary-text: #101114;
+  --st-status-ok-line: #2f5a3a;
+  --else-phrase-text: #f0b23e;
+  --sel-bar: #a98be2;
+  --else-dot-line: #8a9be0;
+  --primary-disabled-bg: #6b5e92;
+  --primary-disabled-line: #6b5e92;
+  --artifact-frame-bg: #ffffff;
 }
