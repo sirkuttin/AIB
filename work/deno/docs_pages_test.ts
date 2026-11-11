@@ -423,3 +423,33 @@ Deno.test('a client that adds a page on its own (the editor) is picked up: its b
     await dirs.done();
   }
 });
+
+Deno.test('history with pages: a version keeps every page (marked); restore brings back their titles, order and words', async () => {
+  const dirs = await tempDirs();
+  const { ArtifactStore } = await import('../../outputs/agent-studio/server/artifacts/artifacts.ts');
+  const { ArtifactHistory } = await import('../../outputs/agent-studio/server/docs/history.ts');
+  const artifacts = new ArtifactStore(`${dirs.root}${sep}artifacts`);
+  const store = new DocStore(dirs.state, { idleMs: 60_000, snapshotIdleMs: 60_000, history: new ArtifactHistory(() => artifacts) });
+  try {
+    const doc = await store.open(dirs.project, 'plan', '# Plan\n\nFirst.\n');
+    const origin = doc.live.originFor('agent', 'claude');
+    const notes = doc.live.addPage('Notes', origin, { markdown: 'A note.\n\nAnother.' }).page as string;
+    const n = store.snapshot(doc)!;
+    assertEquals(
+      store.readVersion(doc, n),
+      `<!-- aib:page {"id":"p1","title":"Page 1"} -->\n\n# Plan\n\nFirst.\n\n<!-- aib:page {"id":"${notes}","title":"Notes"} -->\n\nA note.\n\nAnother.\n`,
+    );
+    doc.live.renamePage(notes, 'Renamed', origin);
+    doc.live.addPage('Extra', origin);
+    doc.live.edit([{ op: 'replace', target: { kind: 'find', text: 'First' }, with: inline('Changed', 'text') }], origin);
+    await store.restore(doc, n, doc.live.rev, origin);
+    assertEquals(doc.live.pageList().map((p) => [p.id, p.title]), [['p1', 'Page 1'], [notes, 'Notes']]);
+    assertEquals(blocksOf(doc.live).map((b) => b.md), ['# Plan', 'First.']);
+    assertEquals(blocksOf(doc.live, notes).map((b) => b.md), ['A note.', 'Another.']);
+    assertEquals(await mdFiles(doc.dir), ['01-page-1.md', '02-notes.md']);
+    assertEquals(mdBody(await Deno.readTextFile(`${doc.dir}${sep}02-notes.md`)), 'A note.\n\nAnother.\n');
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
