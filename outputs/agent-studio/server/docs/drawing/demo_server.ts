@@ -1,6 +1,7 @@
 /**
- * A standalone server for trying the drawing spike: one DrawingHub, the page, its WebSocket, and the agent tools over HTTP.
- * Not wired into AIB's server (the doc core merge does that). Listens on 127.0.0.1 only.
+ * A standalone server for trying the drawing page: one doc core LiveDoc (its Y.Doc and awareness), the page, its WebSocket, and the
+ * agent tools over HTTP. AIB's server serves drawings through the doc socket and the doc tools; this stays for the page's headless
+ * test until the editor's drawing block lands (the page still speaks the spike's framing below). Listens on 127.0.0.1 only.
  *
  *   deno run -A server/docs/drawing/demo_server.ts --port 8791
  *   open http://127.0.0.1:8791/?drawing=d1
@@ -9,9 +10,10 @@
  *
  * WebSocket frames: byte 0 = Yjs update, byte 1 = awareness update (y-protocols encoding), rest = payload.
  */
-import { applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from './deps.ts';
+import { applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 import { Y } from './model.ts';
-import { drawing_edit, drawing_from_mermaid, drawing_read, DrawingHub } from './tools.ts';
+import { drawing_edit, drawing_from_mermaid, drawing_read, type DrawingHost } from './tools.ts';
+import { LiveDoc } from '../live_doc.ts';
 import { exportJson, exportSvg } from './files.ts';
 
 const VENDOR = new URL('../../../vendor/excalidraw/', import.meta.url);
@@ -25,7 +27,7 @@ function frame(kind: number, bytes: Uint8Array) {
   return out;
 }
 
-export function startDemo(hub: DrawingHub, port: number, signal?: AbortSignal) {
+export function startDemo(hub: DrawingHost, port: number, signal?: AbortSignal) {
   const sockets = new Map<WebSocket, Set<number>>();
   const broadcast = (data: Uint8Array, except?: unknown) => {
     for (const s of sockets.keys()) if (s !== except && s.readyState === WebSocket.OPEN) s.send(data);
@@ -96,6 +98,6 @@ if (import.meta.main) {
   const i = Deno.args.indexOf('--port');
   const port = i >= 0 ? Number(Deno.args[i + 1]) : 8791;
   if ([8767, 8768, 8777, 8778].includes(port)) throw new Error(`Port ${port} belongs to a live Studio.`);
-  startDemo(new DrawingHub(), port);
+  startDemo(new LiveDoc(), port);
   console.log(`drawing demo on http://127.0.0.1:${port}/?drawing=d1`);
 }

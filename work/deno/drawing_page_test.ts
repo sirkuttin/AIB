@@ -4,10 +4,11 @@
  * the way a drag ends. The server must then hold the new x (Excalidraw -> Y) and see b1 as selected (awareness), so the
  * agent's next edit of b1 is refused with user_editing. Skipped when no Chrome or Edge is installed.
  */
-import { assert, assertEquals } from '../_assert.ts';
-import { readModels } from '../../../outputs/agent-studio/server/docs/drawing/model.ts';
-import { drawing_edit, DrawingHub } from '../../../outputs/agent-studio/server/docs/drawing/tools.ts';
-import { startDemo } from '../../../outputs/agent-studio/server/docs/drawing/demo_server.ts';
+import { assert, assertEquals } from './_assert.ts';
+import { readModels } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
+import { drawing_edit } from '../../outputs/agent-studio/server/docs/drawing/tools.ts';
+import { LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
+import { startDemo } from '../../outputs/agent-studio/server/docs/drawing/demo_server.ts';
 
 const BROWSERS = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -29,7 +30,7 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
-    const hub = new DrawingHub();
+    const hub = new LiveDoc();
     const ac = new AbortController();
     const port = 8793; // clear of the live Studio ports (8767, 8768, 8777, 8778)
     const server = startDemo(hub, port, ac.signal);

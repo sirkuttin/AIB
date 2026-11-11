@@ -1,23 +1,24 @@
 /**
- * The drawing spike's proofs (server/docs/drawing/). The "user" is a second Y.Doc with its own awareness and the page's
+ * Drawings on the doc core's Y.Doc (server/docs/drawing/): the trial's proofs, now on a LiveDoc. The "user" is a second Y.Doc with its own awareness and the page's
  * Binding, fed Excalidraw-shaped element arrays the way Excalidraw's onChange feeds the page. Updates travel only when a
  * test calls sync(), so a test can make the user's and the agent's edits truly concurrent.
  */
-import { assert, assertEquals } from '../_assert.ts';
-import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from '../../../outputs/agent-studio/server/docs/drawing/deps.ts';
-import { readModels, USER, Y } from '../../../outputs/agent-studio/server/docs/drawing/model.ts';
-import { Binding, type Presence } from '../../../outputs/agent-studio/server/docs/drawing/binding.ts';
+import { assert, assertEquals } from './_assert.ts';
+import * as Y from 'yjs';
+import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness';
+import { readModels, USER } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
+import { LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
+import { Binding, type Presence } from '../../outputs/agent-studio/server/docs/drawing/binding.ts';
 import {
   drawing_edit,
   drawing_from_mermaid,
   drawing_read,
-  DrawingHub,
   type EditResult,
   type Op,
-} from '../../../outputs/agent-studio/server/docs/drawing/tools.ts';
-import { exportJson, exportSvg, importJson, sceneFromSvg } from '../../../outputs/agent-studio/server/docs/drawing/files.ts';
-import { boxOf, overlaps } from '../../../outputs/agent-studio/server/docs/drawing/geometry.ts';
-import type { XEl } from '../../../outputs/agent-studio/server/docs/drawing/scene.ts';
+} from '../../outputs/agent-studio/server/docs/drawing/tools.ts';
+import { exportJson, exportSvg, importJson, sceneFromSvg } from '../../outputs/agent-studio/server/docs/drawing/files.ts';
+import { boxOf, overlaps } from '../../outputs/agent-studio/server/docs/drawing/geometry.ts';
+import type { XEl } from '../../outputs/agent-studio/server/docs/drawing/scene.ts';
 
 const D = 'd1';
 
@@ -47,7 +48,7 @@ class User {
   }
 }
 
-function sync(hub: DrawingHub, user: User) {
+function sync(hub: LiveDoc, user: User) {
   const a = Y.encodeStateAsUpdate(hub.doc, Y.encodeStateVector(user.doc));
   const b = Y.encodeStateAsUpdate(user.doc, Y.encodeStateVector(hub.doc));
   Y.applyUpdate(user.doc, a, 'remote');
@@ -56,7 +57,7 @@ function sync(hub: DrawingHub, user: User) {
 }
 
 function setup() {
-  const hub = new DrawingHub();
+  const hub = new LiveDoc();
   const user = new User();
   return { hub, user, [Symbol.dispose]: () => (hub.destroy(), user.destroy()) };
 }
@@ -66,7 +67,7 @@ function ok(res: EditResult): Extract<EditResult, { ok: true }> {
   return res;
 }
 const el = (doc: Y.Doc, id: string) => readModels(doc, D).find((m) => m.id === id)!;
-const edit = (hub: DrawingHub, ...ops: Op[]) => drawing_edit(hub, { drawing: D, ops });
+const edit = (hub: LiveDoc, ...ops: Op[]) => drawing_edit(hub, { drawing: D, ops });
 
 Deno.test('the user moves box B while the agent set_texts B: both survive', () => {
   using t = setup();
@@ -223,7 +224,7 @@ Deno.test('JSON round-trip: export, import into a fresh drawing, export again; a
   assertEquals([el(hub.doc, 'u1').createdBy, el(hub.doc, 'u1').text], ['user', 'Mine']);
 
   const json = exportJson(hub, D);
-  const fresh = new DrawingHub();
+  const fresh = new LiveDoc();
   try {
     const res = importJson(fresh, D, json);
     assertEquals(res.refused, []);

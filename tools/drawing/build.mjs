@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, '../../outputs/agent-studio/vendor/excalidraw');
+const OUT = process.env.AIB_DRAWING_OUT || join(HERE, '../../outputs/agent-studio/vendor/excalidraw'); // the env var: a trial build elsewhere
 const pkg = (name) => JSON.parse(readFileSync(join(HERE, 'node_modules', name, 'package.json'), 'utf8')).version;
 
-// server/docs/drawing/*.ts import Yjs as Deno does (npm:yjs@x); point those at this folder's node_modules, so the page and
-// the binding share one Yjs.
+// server/docs/drawing/*.ts import Yjs by its bare name (outputs/agent-studio/deno.json maps it for Deno); nodePaths below points it
+// at this folder's node_modules, so the page and the binding share one Yjs. npm: specifiers are mapped the same way, just in case.
 const npmSpecifiers = {
   name: 'npm-specifiers',
   setup(build) {
@@ -52,6 +52,7 @@ await esbuild.build({
   define: { 'process.env.NODE_ENV': '"production"', 'process.env.IS_PREACT': '"false"' },
   loader: { '.woff2': 'file', '.ttf': 'file' },
   plugins: [npmSpecifiers, oneMermaid],
+  nodePaths: [join(HERE, 'node_modules')], // server/docs/drawing/*.ts live outside this folder
   legalComments: 'none',
   logLevel: 'warning',
 });

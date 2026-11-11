@@ -1,6 +1,6 @@
 /**
  * The agent's drawing tools: drawing_read, drawing_edit, drawing_from_mermaid. Plain functions with MCP-shaped inputs; the
- * MCP registration comes with the merge into the doc core (which also owns the doc lookup: here a DrawingHub is passed in).
+ * MCP registration and the doc lookup are in agent.ts; here the doc's live state (a LiveDoc: its Y.Doc and awareness) is passed in.
  *
  * The never-overwrite rule (mirrors Claude Docs' guarded edits):
  *   - every change to an existing element carries ifV (the `v` the agent read); a stale one is refused with the element now;
@@ -11,7 +11,7 @@
  *     The plan and the write run in one synchronous stretch, so nothing can land in between.
  * New shapes are placed by the server in free space (geometry.ts), so they do not cover the user's.
  */
-import { Awareness } from './deps.ts';
+import type { Awareness } from 'y-protocols/awareness';
 import {
   AGENT,
   clone,
@@ -25,21 +25,18 @@ import {
   readModels,
   same,
   writeFields,
-  Y,
+  type Y,
 } from './model.ts';
 import { type Box, boxOf, findFree, obstacles, placeAnywhere, placeNear, route, textSize, union } from './geometry.ts';
 import { busyIds } from './binding.ts';
 
-/** One live doc as the agent tools see it: the Y.Doc and its awareness (the user's selection arrives there). */
-export class DrawingHub {
+/**
+ * One live doc as the drawing tools see it: the doc core's Y.Doc (drawings live under doc.getMap('drawings')) and the awareness its
+ * doc socket feeds (the user's selection, drag and text editing arrive there). A LiveDoc (../live_doc.ts) is one.
+ */
+export interface DrawingHost {
+  readonly doc: Y.Doc;
   readonly awareness: Awareness;
-  constructor(readonly doc: Y.Doc = new Y.Doc()) {
-    this.awareness = new Awareness(doc);
-    this.awareness.setLocalState(null); // the server is nobody; agents do not show up as users
-  }
-  destroy() {
-    this.awareness.destroy();
-  }
 }
 
 export type Refusal = { ok: false; error: string; op?: number; id?: string; message: string; current?: string; element?: Model };
@@ -90,7 +87,7 @@ export function line(m: Model, models: Model[], busy: Map<string, string>): stri
   return parts.join(' ');
 }
 
-export function drawing_read(hub: DrawingHub, input: { drawing: string }): { ok: true; text: string } {
+export function drawing_read(hub: DrawingHost, input: { drawing: string }): { ok: true; text: string } {
   const models = readModels(hub.doc, input.drawing);
   const busy = busyIds(hub.awareness.getStates().values(), input.drawing);
   const head = `drawing ${input.drawing}: ${models.length} element(s). Change one with drawing_edit and ifV=<its v>.`;
@@ -433,7 +430,7 @@ function planOp(p: Plan, o: Op, i: number, created: string[]) {
 
 const insideBox = (a: Box, b: Box) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 
-export function drawing_edit(hub: DrawingHub, input: { drawing: string; ops: Op[] }, origin: unknown = AGENT): EditResult {
+export function drawing_edit(hub: DrawingHost, input: { drawing: string; ops: Op[] }, origin: unknown = AGENT): EditResult {
   if (!Array.isArray(input.ops) || !input.ops.length) return { ok: false, error: 'bad_op', message: 'ops must be a non-empty list.' };
   const ymap = elementsMap(hub.doc, input.drawing)!;
   const base = readModels(hub.doc, input.drawing);
@@ -480,8 +477,9 @@ const decode = (s: string) =>
   s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 
 export async function drawing_from_mermaid(
-  hub: DrawingHub,
+  hub: DrawingHost,
   input: { drawing: string; mermaid: string },
+  origin: unknown = AGENT,
 ): Promise<EditResult> {
   const mod = await import(MERMAID);
   let parsed: { elements: Skeleton[] };
@@ -536,5 +534,5 @@ export async function drawing_from_mermaid(
     if (e.type === 'frame') m.name = e.name ?? null;
     ops.push({ op: 'add_raw', element: m });
   }
-  return drawing_edit(hub, { drawing: input.drawing, ops });
+  return drawing_edit(hub, { drawing: input.drawing, ops }, origin);
 }

@@ -12,7 +12,7 @@
  * Labels are fields of their container (`text`, `fontSize`, `fontFamily`, `labelId`): Excalidraw's separate bound text
  * element is expanded from them in scene.ts and folded back in binding.ts. `boundElements` is never stored; it is derived.
  */
-import { Y } from './deps.ts';
+import * as Y from 'yjs';
 
 export { Y };
 
