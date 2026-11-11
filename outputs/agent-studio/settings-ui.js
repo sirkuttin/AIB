@@ -1138,8 +1138,8 @@
     const term = betaTerms[a.id];
     if (term) row.append(term.node);
   }
-  // The API key box: the key is saved with the settings (plain text in the state folder, like an added agent's environment values),
-  // passed to the agent as its environment variable, and never shown again on this page.
+  // The API key box: the key is saved encrypted (Windows DPAPI, the macOS Keychain, the Linux keyring; on Linux without a keyring
+  // an owner-only file, which info.keyStorage says), passed to the agent as its environment variable, never shown on this page.
   const keyDrafts = {};
   function keyBox(a, info) {
     const wrap = el('div', null, 'st-field st-beta-key');
@@ -1178,13 +1178,12 @@
       line,
       el(
         'span',
-        'Stored as plain text in the state folder' +
-          (S.boot && S.boot.stateDir ? ' (' + S.boot.stateDir + ')' : '') +
-          ' and passed to ' +
+        (info.keyStorage ? String(info.keyStorage).replace(/\.?$/, '') : 'Saved in the data folder') +
+          '. Passed to ' +
           a.name +
           ' as ' +
           info.keyEnv +
-          '. Never shown again here.',
+          '; never shown again here.',
         'st-hint',
       ),
     );

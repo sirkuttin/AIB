@@ -6,6 +6,8 @@
  * during the transition; each re-reads it when the file changes, so a new agent is launchable without restarting anything).
  * Writes are atomic. `revision` changes on every save, in this process or another, so other windows know to refresh. Agent
  * environment values are stored as plain text: ACP adapters need them. The file is the user's own and lives in the state folder.
+ * Beta agents' API keys are not: on disk each is sealed (secrets.ts: DPAPI on Windows, the Keychain on macOS, the Secret Service
+ * or an owner-only file on Linux); in memory they are plain. A plain key in the file (an older AIB) is sealed as soon as it is read.
  *
  *   {"version":1,
  *    "agents":   {"builtin": {"omp": true, "claude": true, "codex": true}, "custom": [{id,name,command,args,env,enabled}]},
@@ -40,6 +42,7 @@ import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION
 import { entriesOf, now, put, quarantine, readJsonFile, saveJson } from './json.ts';
 import { ProjectPrefs } from './projects.ts';
 import { DEFAULT_ORDER } from '../desktop/editors.ts';
+import { isSealed, type KeyStore, keyStoreFor } from './secrets.ts';
 
 /** editors.DEFAULT_ORDER: the ids of editors.EDITOR_SPECS. */
 export const EDITOR_IDS: readonly string[] = DEFAULT_ORDER;
@@ -80,11 +83,61 @@ export class SettingsStore extends JsonFileStore {
   static DEFAULT_VIEWS: readonly string[] = ['full', 'chat'];
 
   data: Settings = SettingsStore.blank();
+  /** Where API keys are kept at rest (null for a store with no folder: nothing is written). */
+  readonly keys: KeyStore | null;
+  /** Plain keys were read from the file: they are sealed by the next save (started right after the load). */
+  #plainOnDisk = false;
+  #migrating: Promise<void> | null = null;
 
   constructor(stateDir: string | null = null) {
     super();
     this.path = stateDir ? inDir(stateDir, (this.constructor as typeof SettingsStore).FILE) : null;
+    this.keys = stateDir ? keyStoreFor(stateDir) : null;
     this.reload();
+  }
+
+  /** Settings > Beta agents: where a saved key is kept, in plain words. */
+  keyStorage(): { kind: string; note: string } {
+    return this.keys ? { kind: this.keys.kind, note: this.keys.note } : { kind: 'memory', note: 'Kept in memory only' };
+  }
+
+  /** The stored betaKeys of a raw file turned into plain keys (sealed forms opened; one that cannot be opened is dropped). */
+  #openKeys(raw: Dict): void {
+    const agents = isDict(raw.agents) ? raw.agents : null;
+    if (!agents || !isDict(agents.betaKeys)) return;
+    const open: Dict = {};
+    for (const [agentId, stored] of Object.entries(agents.betaKeys)) {
+      if (!isStr(stored) || !stored) continue;
+      if (!isSealed(stored)) this.#plainOnDisk = true;
+      const plain = this.keys ? this.keys.open(agentId, stored) : (isSealed(stored) ? null : stored);
+      if (plain) open[agentId] = plain;
+    }
+    agents.betaKeys = open;
+  }
+
+  /** Seals the plain keys an older AIB left in the file: the outside store first (async), then one save. */
+  #migrateKeys(): void {
+    if (!this.#plainOnDisk || this.#migrating || !this.keys || this.path === null) return;
+    const keys = { ...(this.data.agents.betaKeys ?? {}) };
+    this.#migrating = (async () => {
+      try {
+        for (const [agentId, plain] of Object.entries(keys)) await this.keys!.prepare(agentId, plain);
+        await this.locked(() => {
+          this.sync();
+          if (!this.#plainOnDisk) return;
+          this.#save();
+        });
+      } catch (error) {
+        this.warning = `AIB could not encrypt the saved API keys: ${errorText(error)}`;
+      } finally {
+        this.#migrating = null;
+      }
+    })();
+  }
+
+  /** Resolves when keys found in plain text at load have been sealed (tests; the server never waits for it). */
+  keysSealed(): Promise<void> {
+    return this.#migrating ?? Promise.resolve();
   }
 
   static blank(): Settings {
@@ -229,13 +282,24 @@ export class SettingsStore extends JsonFileStore {
       return;
     }
     this.warning = '';
+    this.#plainOnDisk = false;
+    this.#openKeys(raw);
     this.data = this.#cls().cleanDoc(raw);
+    this.#migrateKeys();
   }
 
   #save(): void {
     if (this.path === null) return;
     this.requireReadable();
-    saveJson(this.path, { ...this.data, version: VERSION, savedAt: now() }, '.studio-settings-');
+    const doc = deepCopy(this.data);
+    const plain = doc.agents.betaKeys;
+    if (plain && this.keys) {
+      const sealed = this.keys.sealAll(plain); // never the plain keys: each one sealed, or kept outside the file
+      if (Object.keys(sealed).length) doc.agents.betaKeys = sealed;
+      else delete doc.agents.betaKeys;
+    } else if (this.keys) this.keys.sealAll({}); // the last key went: its outside copy goes too
+    saveJson(this.path, { ...doc, version: VERSION, savedAt: now() }, '.studio-settings-');
+    this.#plainOnDisk = false;
     this.seen = this.stamp();
   }
 
@@ -307,8 +371,20 @@ export class SettingsStore extends JsonFileStore {
    * server: {...}, editors: {default}, appearance: {defaultView}, launchers: {claude, codex}}. Nothing is saved unless the whole
    * patch is valid. Resolves true when something changed.
    */
-  update(body: unknown): Promise<boolean> {
-    if (!isDict(body) || !Object.keys(body).length) return Promise.reject(new ValueError('Invalid request'));
+  async update(body: unknown): Promise<boolean> {
+    if (!isDict(body) || !Object.keys(body).length) throw new ValueError('Invalid request');
+    // A new API key goes into the Keychain / keyring first (that needs an async child); the save below then writes its marker.
+    const typed = isDict(body.agents) && isDict(body.agents.betaKey) ? body.agents.betaKey : {};
+    if (this.keys) {
+      for (const [agentId, key] of Object.entries(typed)) {
+        const cleaned = isStr(key) ? this.#cls().betaKeyValue(key) : '';
+        if (cleaned && betaAgent(agentId)?.signin.keyEnv) await this.keys.prepare(agentId, cleaned);
+      }
+    }
+    return this.#update(body);
+  }
+
+  #update(body: Dict): Promise<boolean> {
     const known = ['agents', 'defaults', 'server', 'editors', 'appearance', 'launchers'];
     const unknown = Object.keys(body).filter((key) => !known.includes(key));
     if (unknown.length) {
