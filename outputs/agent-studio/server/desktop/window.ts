@@ -339,6 +339,8 @@ export interface DesktopOptions {
    * trayIdleQuitMs (the chats that were open come back at the next start, as after an idle agent host).
    */
   startInTray?: boolean;
+  /** Terminal shells running a command (a tray-only start does not quit while one does: it would end the shell). */
+  terminalsBusy?: () => number;
   /** What works now, for the tray-only status line and its idle quit. Default: busyCount, nobody waiting. */
   trayCounts?: () => Promise<{ working: number; needsYou: number }>;
   /** Tray-only start: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
@@ -476,7 +478,11 @@ export class DesktopApp {
     }
     const idleMs = this.options.trayIdleQuitMs ?? 10_000;
     if (this.#windowOpened || idleMs <= 0) return;
-    if (!counts || counts.working > 0) {
+    let terminals = 0;
+    try {
+      terminals = this.options.terminalsBusy?.() ?? 0;
+    } catch { /* unknown: not busy */ }
+    if (!counts || counts.working > 0 || terminals > 0) {
       this.#idleSince = null;
       return;
     }

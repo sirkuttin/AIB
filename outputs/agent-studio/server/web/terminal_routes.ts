@@ -2,7 +2,7 @@
  * The per-chat terminal's routes (Deno only: routes.ts DENO_ONLY). Same gate as every route (security.ts authorize: loopback Host,
  * this server's Origin, Sec-Fetch-Site same-origin or absent, the page token), so the artifact origin can never reach them.
  *
- *   GET  /api/live/terminal?key=&cwd=&cols=&rows=[&shell=]  WebSocket (scope write). A browser cannot set headers on a WebSocket, so the page
+ *   GET  /api/live/terminal?key=&cwd=&cols=&rows=[&shell=][&resume=1]  WebSocket (scope write). A browser cannot set headers on a WebSocket, so the page
  *                                                   offers two subprotocols: `aib-terminal` and `aib-token.<page token>`; the token is
  *                                                   checked as X-Studio-Token. An Origin header is required (browsers always send one).
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
@@ -59,6 +59,6 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   }
   const { link, response } = upgradeWebSocket(request, TERMINAL_PROTOCOL);
   const q = url.searchParams;
-  ctx.terminals.attach(link, q.get('key'), q.get('cwd'), q.get('cols'), q.get('rows'), q.get('shell') ?? '');
+  ctx.terminals.attach(link, q.get('key'), q.get('cwd'), q.get('cols'), q.get('rows'), q.get('shell') ?? '', q.get('resume') === '1');
   return { response };
 }

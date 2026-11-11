@@ -1,7 +1,9 @@
 /**
- * Terminal sessions: one shell per conversation, owned by the web server process. They outlive the page and the window (closing to
- * the tray keeps them), and all end when the web server closes (WebServer.close -> endAll; on Windows the Job Object also ends them
- * if AIB dies). Nothing typed or printed here goes to an agent.
+ * Terminal sessions: one shell per conversation. They outlive the page and the window (closing to the tray keeps them). With the
+ * keeper (keeper_pty.ts; keeper 1.2.0 or later) the shell runs in the keeper: it outlives an AIB restart, crash or update, and the
+ * next AIB takes it over (adoptKeeper: same process, its recent output replayed, PromptWatch rebuilt from the record); quitting AIB
+ * ends it (endAll), an update leaves it running (releaseAll). Without the keeper (off, or one too old) the shell is a child of the web
+ * server process and ends with it (on Windows the Job Object also ends it if AIB dies). Nothing typed or printed here goes to an agent.
  *
  * Wire protocol on the socket (GET /api/live/terminal, server/web/server.ts):
  *   server -> page   binary frames: shell output (UTF-8 with VT sequences)
@@ -21,11 +23,18 @@
  *                      {type:'resize', cols, rows}
  *                      {type:'busy?', id}                      is a command running? (the page asks before a paste)
  *
- * The socket's query: key, cwd, cols, rows, and shell=windows-powershell to use Windows PowerShell instead of the default shell.
+ * The socket's query: key, cwd, cols, rows, shell=windows-powershell to use Windows PowerShell instead of the default shell, and
+ * resume=1 to attach only to a shell that already runs (the page reconnecting after AIB restarted): none gives {type:'error',
+ * code:'gone'} and starts nothing.
  */
 import { isNetworkPath } from '../web/security.ts';
 import { clampSize, defaultShell, type Pty, type PtyOptions, type ShellSpec, spawnPty } from '../platform/pty.ts';
 import type { WsLink } from '../platform/websocket.ts';
+import { announce, getLogger } from '../core/log.ts';
+import type { KeeperLink } from '../keeper/link.ts';
+import { inputText, KeeperPty, parseTerminalLabel, TERMINAL_PREFIX, type TerminalLabel, terminalProblem } from './keeper_pty.ts';
+
+const log = getLogger('terminal');
 
 export const MAX_SESSIONS = 8;
 /** Recent output kept per session and replayed to a page that attaches later (a reload, a second window). */
@@ -163,14 +172,15 @@ export function checkKey(key: unknown): string {
 }
 
 export class TerminalSession {
-  readonly id = crypto.randomUUID();
-  readonly startedAt = Date.now();
+  readonly id: string;
+  readonly startedAt: number;
   lastActivity = Date.now();
   readonly links = new Set<WsLink>();
   readonly prompt: PromptWatch;
   #replay: Uint8Array[] = [];
   #replaySize = 0;
   exitCode: number | null = null;
+  #started = false;
 
   constructor(
     readonly key: string,
@@ -178,14 +188,22 @@ export class TerminalSession {
     readonly shell: ShellSpec,
     readonly pty: Pty,
     onExit: (s: TerminalSession) => void,
+    restored: { id: string; startedAt: number } | null = null,
   ) {
+    this.id = restored?.id ?? crypto.randomUUID();
+    this.startedAt = restored?.startedAt ?? Date.now();
     this.prompt = PromptWatch.forShell(shell.file);
+    const keeper = pty instanceof KeeperPty ? pty : null;
     pty.onData = (bytes) => {
-      this.lastActivity = Date.now();
+      this.lastActivity = keeper && !this.#started ? keeper.lastRecord || Date.now() : Date.now();
       this.prompt.output(bytes);
       this.#remember(bytes);
       for (const link of this.links) link.send(bytes);
     };
+    if (keeper) {
+      keeper.onInput = (bytes) => this.prompt.input(inputText(bytes)); // replayed typing: PromptWatch as it was before the restart
+      void keeper.ready.then(() => (this.#started = true));
+    } else this.#started = true;
     void pty.exited.then((code) => {
       this.exitCode = code;
       onExit(this);
@@ -220,6 +238,26 @@ export class TerminalSession {
 
   /** Attach a page. `resumed` says whether the shell was already running (its recent output is sent first). */
   attach(link: WsLink, resumed: boolean): void {
+    const keeper = this.pty instanceof KeeperPty ? this.pty : null;
+    if (keeper && !this.#started) { // the keeper is still starting it, or replaying it after a restart: ready once it runs
+      let gone = false;
+      link.onclose = () => (gone = true);
+      void keeper.ready.then(() => {
+        this.#started = true;
+        if (!gone) this.attach(link, resumed);
+      });
+      return;
+    }
+    if (keeper?.startError || this.exitCode !== null) {
+      link.send(JSON.stringify({
+        type: 'error',
+        code: 'spawn_failed',
+        shellName: shellName(this.shell.file),
+        message: keeper?.startError || 'The shell ended.',
+      }));
+      link.close(1000, 'refused');
+      return;
+    }
     this.links.add(link);
     link.send(JSON.stringify({ type: 'ready', ...this.info, resumed }));
     for (const chunk of this.#replay) link.send(chunk);
@@ -264,6 +302,8 @@ export interface SessionsOptions {
   max?: number;
   spawn?: (options: PtyOptions) => Pty;
   shell?: () => ShellSpec;
+  /** Run the shells in the keeper (main.ts, when the keeper is on): they outlive AIB. null: children of this process. */
+  keeper?: KeeperLink | null;
 }
 
 export class TerminalSessions {
@@ -271,12 +311,16 @@ export class TerminalSessions {
   readonly #max: number;
   readonly #spawn: (options: PtyOptions) => Pty;
   readonly #shell: () => ShellSpec;
+  readonly keeper: KeeperLink | null;
+  /** Why new shells run inside AIB although the keeper is on ('' = they go to the keeper, or it is off). */
+  keeperProblem = '';
   #closed = false;
 
   constructor(options: SessionsOptions = {}) {
     this.#max = options.max ?? MAX_SESSIONS;
     this.#spawn = options.spawn ?? spawnPty;
     this.#shell = options.shell ?? (() => defaultShell());
+    this.keeper = options.keeper ?? null;
   }
 
   get(key: string): TerminalSession | undefined {
@@ -312,22 +356,117 @@ export class TerminalSessions {
     }
     const shell = shellChoice === 'windows-powershell' && Deno.build.os === 'windows' ? windowsPowerShell() : this.#shell();
     const size = clampSize(cols, rows);
+    const options: PtyOptions = { file: shell.file, args: shell.args, cwd: folder, ...size, env: { AIB_TERMINAL: '1' } };
     let pty: Pty;
-    try {
-      pty = this.#spawn({ file: shell.file, args: shell.args, cwd: folder, ...size, env: { AIB_TERMINAL: '1' } });
-    } catch (error) {
-      throw new TerminalError(`${shell.file}: ${(error as Error).message}`, 'spawn_failed', { shellName: shellName(shell.file) });
+    let label: TerminalLabel | null = null;
+    if (this.keeper && !this.keeperProblem) {
+      label = { t: 'terminal', v: 1, key: k, id: crypto.randomUUID(), cwd: folder, shell, startedAt: Date.now() };
+      const keeperPty = KeeperPty.spawn(this.keeper, options, label, (o) => this.#spawn(o));
+      keeperPty.onFallback = (why) => this.#fellBack(why);
+      pty = keeperPty;
+    } else {
+      try {
+        pty = this.#spawn(options);
+      } catch (error) {
+        throw new TerminalError(`${shell.file}: ${(error as Error).message}`, 'spawn_failed', { shellName: shellName(shell.file) });
+      }
     }
-    const session = new TerminalSession(k, folder, shell, pty, (s) => {
-      if (this.#sessions.get(s.key) === s) this.#sessions.delete(s.key);
-    });
-    this.#sessions.set(k, session);
+    const session = this.#add(k, folder, shell, pty, label);
     return { session, resumed: false };
   }
 
-  /** Attach a socket: open (or reuse) the shell, or tell the page why not and close the socket. */
-  attach(link: WsLink, key: unknown, cwd: unknown, cols: unknown, rows: unknown, shell: unknown = ''): TerminalSession | null {
+  #add(key: string, cwd: string, shell: ShellSpec, pty: Pty, label: TerminalLabel | null): TerminalSession {
+    const session = new TerminalSession(key, cwd, shell, pty, (s) => {
+      if (this.#sessions.get(s.key) === s) this.#sessions.delete(s.key);
+    }, label ? { id: label.id, startedAt: label.startedAt } : null);
+    this.#sessions.set(key, session);
+    if (pty instanceof KeeperPty) pty.start();
+    return session;
+  }
+
+  /** The keeper could not take a shell (too old, refused): this and later shells run inside AIB; logged once. */
+  #fellBack(why: string): void {
+    if (this.keeperProblem) return;
+    this.keeperProblem = why || 'the keeper could not start it';
+    announce('terminal', 'keeper: terminals run inside AIB (%s); they end when AIB restarts', this.keeperProblem);
+  }
+
+  /**
+   * At start: take over the shells an earlier AIB left running in the keeper (a restart, a crash, an update). Each is found by its
+   * label, replayed (its recent output and PromptWatch state come back) and claimed; the page attaches to it like to any running
+   * shell. An ended terminal channel (its shell ended while no AIB was there) is removed. Returns how many were taken over.
+   */
+  async adoptKeeper(): Promise<number> {
+    const link = this.keeper;
+    if (!link || this.#closed) return 0;
+    let client;
     try {
+      client = await link.client(false);
+    } catch (error) {
+      log.warning('terminal: could not reach the keeper: %s', error instanceof Error ? error.message : error);
+      return 0;
+    }
+    if (!client) return 0; // no keeper runs: nothing to take over; the first shell starts one
+    const problem = terminalProblem(client);
+    if (problem) {
+      // Not final: a keeper with no live channel is replaced by the bundled one at the first spawn (KeeperLink.check).
+      announce('terminal', 'keeper: %s; terminals may run inside AIB', problem);
+      return 0;
+    }
+    let adopted = 0;
+    for (const info of await client.list()) {
+      if (info.kind !== 'pty' || !info.channel.startsWith(TERMINAL_PREFIX)) continue;
+      const label = parseTerminalLabel(info.label);
+      if (!label) continue;
+      try {
+        if (!info.live) {
+          await link.removeEnded(client, info.channel);
+          continue;
+        }
+        if (this.#sessions.has(label.key) || this.#sessions.size >= this.#max) {
+          announce('terminal', 'keeper: stopping terminal %s (%s)', info.channel, this.#sessions.has(label.key) ? 'its chat has another one' : 'too many');
+          await link.stopUnknown(client, info.channel);
+          continue;
+        }
+        const pty = KeeperPty.adopt(link, info, label);
+        this.#add(label.key, label.cwd, label.shell, pty, label);
+        adopted++;
+      } catch (error) {
+        log.exception(error, 'keeper: taking over a terminal failed');
+      }
+    }
+    if (adopted) announce('terminal', 'keeper: %s terminal(s) taken over from the keeper', adopted);
+    return adopted;
+  }
+
+  /** How many shells are running a command right now (Pty.busy, PromptWatch). The tray-only AIB does not quit while one does. */
+  busyCount(): number {
+    let n = 0;
+    for (const s of this.#sessions.values()) {
+      let busy = false;
+      try {
+        busy = s.pty.busy();
+      } catch { /* unknown */ }
+      if (busy || s.prompt.busy) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Attach a socket: open (or reuse) the shell, or tell the page why not and close the socket. `resume`: only a shell that already
+   * runs (the page reconnecting after a restart); none is refused with code `gone`.
+   */
+  attach(
+    link: WsLink,
+    key: unknown,
+    cwd: unknown,
+    cols: unknown,
+    rows: unknown,
+    shell: unknown = '',
+    resume = false,
+  ): TerminalSession | null {
+    try {
+      if (resume && !this.#sessions.has(checkKey(key))) throw new TerminalError('This terminal is no longer running.', 'gone');
       const { session, resumed } = this.open(key, cwd, cols, rows, shell);
       session.attach(link, resumed);
       if (resumed) {
@@ -362,9 +501,31 @@ export class TerminalSessions {
     this.#closed = true;
     const all = [...this.#sessions.keys()];
     await Promise.all(all.map((key) => this.end(key)));
+    this.keeper?.disconnect();
   }
 
-  /** Synchronous last resort while the process exits: signal every shell to end now. */
+  /**
+   * AIB exits for an update: shells in the keeper keep running (the next AIB takes them over), shells inside AIB end. Refuses new
+   * ones. Returns how many were left in the keeper.
+   */
+  async releaseAll(): Promise<number> {
+    this.#closed = true;
+    let kept = 0;
+    const all = [...this.#sessions.values()];
+    this.#sessions.clear();
+    await Promise.all(all.map(async (s) => {
+      if (s.pty instanceof KeeperPty && s.pty.inKeeper) {
+        kept++;
+        for (const link of [...s.links]) link.close(1012, 'AIB is restarting'); // the page reconnects to the next AIB
+        await s.pty.release();
+      } else await s.pty.kill();
+    }));
+    this.keeper?.disconnect();
+    if (kept) announce('terminal', 'keeper: %s terminal(s) left running in the keeper', kept);
+    return kept;
+  }
+
+  /** Synchronous last resort while the process exits: signal every shell to end now (shells in the keeper stay: see KeeperPty). */
   terminateAllNow(): void {
     for (const session of this.#sessions.values()) {
       try {

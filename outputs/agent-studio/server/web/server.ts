@@ -28,6 +28,7 @@ import { MAX_PROMPT_BODY_BYTES } from '../acp/attachments.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { TerminalSessions } from '../terminal/sessions.ts';
+import type { KeeperLink } from '../keeper/link.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 import { RemovedProjects } from '../desktop/project_delete.ts';
 import { projectRemove } from './project_routes.ts';
@@ -383,9 +384,11 @@ export class WebServer {
     }
   }
 
-  async close(): Promise<void> {
+  /** Stop serving. Terminal shells end, except with `release` (an update): shells in the keeper keep running for the next AIB. */
+  async close(release = false): Promise<void> {
     globalThis.removeEventListener('unload', this.#onUnload);
-    await this.ctx.terminals.endAll();
+    if (release) await this.ctx.terminals.releaseAll();
+    else await this.ctx.terminals.endAll();
     await this.#server?.shutdown();
   }
 
@@ -423,6 +426,8 @@ export function makeContext(
     ompSessions: string;
     shutdown: () => void;
     agentOptions?: AgentOptions;
+    /** Run the chats' terminal shells in the keeper (null or absent: as children of this process). */
+    terminalKeeper?: KeeperLink | null;
     /** Stores to share (an --in-process Studio passes its own, so one instance of each file is read and written). */
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
   },
@@ -450,7 +455,7 @@ export function makeContext(
     artifacts: null as unknown as Artifacts,
     gate: null,
     editorList: {},
-    terminals: new TerminalSessions(),
+    terminals: new TerminalSessions({ keeper: options.terminalKeeper ?? null }),
     desktopNotify: null,
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
