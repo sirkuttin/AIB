@@ -1,9 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.3 (beta)
 
 - The tray icon is the colour AIB icon on light and dark taskbars (the app's and the agent host's), not a one-colour glyph.
 - Windows: the app window shows the AIB icon in its title bar, in Alt+Tab and on its taskbar button.
+- Desktop app: Ctrl+wheel and Ctrl+plus/minus no longer zoom the page; layout and view settings are kept in the data folder
+  (studio-view.json) instead of only in the browser.
+- Conversation: long first lines wrap around time and Copy, auto-follow and unread fixed, code-block Copy defaults to plain
+  code, Run in terminal waits for the prompt, compact answered approvals, clearer form errors and approval wording.
+- Sidebar: better Ctrl+K ranking, status words Idle / Not running, thin amber needs-you outline, keyboard and drawer focus,
+  scrolling tab strip, archived chats open in a marked tab, pin star no longer clipped.
+- Right column: a subagent history stays in Activity; Changes pages through large change sets with true counts; in-page
+  confirms for Discard and Merge; a discarded chat stays readable; artifact Compare handles a missing final newline.
+- Settings and setup: Settings fits at large interface sizes; turned-off agents show Turn on; uninstall refusals come first;
+  one name, AIB, everywhere; appId dev.aib.app for the built app.
+- Updates: a failed check is retried after an hour and says when it failed; the full version is shown; the installed
+  version's download is cleaned up.
 
 ## 0.1.0-beta.2 (beta)
 
