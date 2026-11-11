@@ -13,7 +13,7 @@
   };
 
   const SECTIONS = [
-    { id: 'agents', label: 'Agents' },
+    { id: 'agents', label: 'AIB Linking' },
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'editors', label: 'Editors' },

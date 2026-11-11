@@ -85,7 +85,7 @@
       more,
       el(
         'p',
-        'Once one agent is ready, this page is replaced by the normal new-chat screen. You can add more agents any time in Settings → Agents.',
+        'Once one agent is ready, this page is replaced by the normal new-chat screen. You can add more agents any time in Settings → AIB Linking.',
         'sp-foot',
       ),
     );

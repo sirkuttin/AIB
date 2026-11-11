@@ -387,7 +387,7 @@ test('Settings page: one name for the agents page, the full version, an Updates 
   assert.ok(pageNode.querySelector('.st-frame').querySelector('.st-nav'), 'nav and settings sit in the frame the size container query lays out');
   UI.open('agents');
   await flush();
-  assert.equal(pageNode.querySelector('.st-head').querySelector('h2').textContent, 'Agents', 'the heading is the nav name, not "AIB linking"');
+  assert.equal(pageNode.querySelector('.st-head').querySelector('h2').textContent, 'AIB Linking', 'the heading is the nav name (owner: AIB Linking)');
   UI.open('server');
   await flush();
   await flush();

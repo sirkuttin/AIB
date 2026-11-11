@@ -84,7 +84,7 @@ test('it has the heading, the subtitle, the text, the footer and a See more agen
   );
   assert.match(
     text,
-    /Once one agent is ready, this page is replaced by the normal new-chat screen\. You can add more agents any time in Settings → Agents\./,
+    /Once one agent is ready, this page is replaced by the normal new-chat screen\. You can add more agents any time in Settings → AIB Linking./,
   );
   const more = s.box.querySelectorAll('button').find((b) => b.textContent === 'See more agents');
   more.click();
