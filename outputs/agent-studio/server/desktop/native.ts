@@ -7,6 +7,7 @@ import { type OsNotify, posixNotify, windowsNotify } from './notify.ts';
 import { isExternal, keepHidden } from './window.ts';
 import { startWindowsTray, userNotificationState, type WindowsTray } from './tray_win.ts';
 import { applyAppIcon } from './window_icon_win.ts';
+import { bringToFront } from './foreground_win.ts';
 import { writeTrayState } from './host_tray.ts';
 import { getLogger } from '../core/log.ts';
 
@@ -221,5 +222,6 @@ export function nativeShell(): Shell {
     ask,
     openExternal,
     notifier,
+    bringToFront: Deno.build.os === 'windows' ? () => bringToFront() : undefined,
   };
 }

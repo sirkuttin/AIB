@@ -243,6 +243,7 @@ export class DesktopNotifications {
   /** The notification was clicked: bring AIB forward and open what it was about. */
   clicked(): void {
     const target = this.#last;
+    log.info('notify click → %s', target ? `${target.type}` : 'no chat (a test, or before any notification)');
     try {
       this.open(target);
     } catch { /* never fatal */ }

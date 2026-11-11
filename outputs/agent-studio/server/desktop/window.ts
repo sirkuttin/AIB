@@ -304,6 +304,8 @@ export interface Shell {
   openExternal(url: string): void;
   /** The OS notifications (notify.ts), or null where there are none. */
   notifier: OsNotify | null;
+  /** Restores the app window if minimised and makes it the foreground window (Windows: foreground_win.ts). */
+  bringToFront?(): { found: boolean; restored: boolean; foreground: boolean };
 }
 
 export interface DesktopOptions {
@@ -381,12 +383,16 @@ export class DesktopApp {
    */
   async openFromNotification(target: NotifyTarget | null, tries = 20, waitMs = 500): Promise<boolean> {
     if (this.#quitting) return false;
-    await this.showWindow();
+    log.info('notify click → %s', target ? (target.type === 'chat' ? 'open the chat' : 'open the inbox') : 'bring AIB to the front');
+    await this.showWindow('notification click');
     if (!target) return true;
     for (let i = 0; i < tries; i++) {
       const win = this.window;
       if (!win || win.isClosed()) return false;
-      if ((await win.evaluate(openTargetScript(target))) === true) return true;
+      if ((await win.evaluate(openTargetScript(target))) === true) {
+        log.info('notify click → the page opened the %s (try %s)', target.type, i + 1);
+        return true;
+      }
       if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
     }
     log.info('notification click: the page did not open %s', target.type);
@@ -560,11 +566,12 @@ export class DesktopApp {
   }
 
   /** Tray click, "Open AIB", or a second launch: show and focus the window, or make a new one if it was closed. */
-  async showWindow(): Promise<void> {
+  async showWindow(why = 'show'): Promise<void> {
     if (this.#quitting) return;
     const win = this.window;
     if (!win || win.isClosed()) {
       await this.openWindow();
+      this.toFront(why);
       return;
     }
     try {
@@ -572,7 +579,26 @@ export class DesktopApp {
       win.focus();
     } catch {
       await this.openWindow();
+      return;
     }
+    this.toFront(why);
+  }
+
+  /**
+   * show() and focus() neither restore a minimised window nor make it the foreground window: the Shell does that (Windows:
+   * foreground_win.ts), now and once more shortly after (the runtime shows the window on its own UI thread a moment later).
+   */
+  toFront(why: string): void {
+    const front = this.shell.bringToFront;
+    if (!front) return;
+    const once = (when: string) => {
+      try {
+        const r = front();
+        log.info('window to front (%s, %s): found %s, restored %s, foreground %s', why, when, r.found, r.restored, r.foreground);
+      } catch { /* not fatal */ }
+    };
+    once('now');
+    setTimeout(() => once('after 250 ms'), 250);
   }
 
   /** One binding: the page asks it whether it runs in the app (desktop-bridge.js available()). It does nothing else. */

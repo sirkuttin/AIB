@@ -40,17 +40,42 @@ export const NIF_MESSAGE = 0x1, NIF_ICON = 0x2, NIF_TIP = 0x4, NIF_INFO = 0x10;
 export const NIIF_NONE = 0x0, NIIF_NOSOUND = 0x10, NIIF_RESPECT_QUIET_TIME = 0x80;
 /** What the tray callback's lParam says about a balloon: clicked (NIN_BALLOONUSERCLICK). */
 export const NIN_BALLOONUSERCLICK = 0x0405;
+/** The callback forms (NOTIFYICONDATAW uVersion via NIM_SETVERSION). AIB's icon never sets one, so it is the legacy form. */
+export const NOTIFYICON_VERSION_LEGACY = 0, NOTIFYICON_VERSION_4 = 4;
 
 /** sizeof(NOTIFYICONDATAW) on 64-bit Windows (x64 and arm64). */
 export const NOTIFYICONDATAW_SIZE = 976;
 
-/** What a tray callback's lParam means: a left click, a request for the menu, or nothing we act on. */
-export function trayEvent(lParam: number | bigint): 'click' | 'menu' | 'balloon-click' | null {
+/**
+ * What a tray callback's lParam means: a left click, a request for the menu, a click on our balloon / toast, or nothing we act on.
+ * Our icon never sets a version (no NIM_SETVERSION), so Explorer uses the legacy form: lParam IS the event (WM_LBUTTONUP,
+ * NIN_BALLOONUSERCLICK, ...). With NOTIFYICON_VERSION_4 the event is LOWORD(lParam) and the icon id HIWORD(lParam). Reading only
+ * the low word decodes both, so a later switch to version 4 can't break the click.
+ */
+export function trayEvent(lParam: number | bigint, version = NOTIFYICON_VERSION_LEGACY): 'click' | 'menu' | 'balloon-click' | null {
   const event = Number(BigInt.asUintN(64, BigInt(lParam)) & 0xffffn);
   if (event === WM_LBUTTONUP) return 'click';
   if (event === NIN_BALLOONUSERCLICK) return 'balloon-click';
+  // Version 4 sends WM_CONTEXTMENU for the menu as well as the raw WM_RBUTTONUP: one menu, not two.
+  if (version >= NOTIFYICON_VERSION_4) return event === WM_CONTEXTMENU ? 'menu' : null;
   if (event === WM_RBUTTONUP || event === WM_CONTEXTMENU) return 'menu';
   return null;
+}
+
+/** One line for studio.log about a message the tray window got (every one is logged: the owner's test tells what arrived). */
+export function trayMessageText(msg: number, wParam: number | bigint, lParam: number | bigint): string {
+  const hex = (v: number | bigint) => '0x' + BigInt.asUintN(64, BigInt(v)).toString(16);
+  const names: Record<number, string> = {
+    [TRAY_CALLBACK]: 'callback',
+    [TRAY_REMOVE]: 'remove',
+    [TRAY_SHOW]: 'show',
+    [TRAY_HIDE]: 'hide',
+    [TRAY_COMMAND]: 'command',
+    [TRAY_SET_ICON]: 'set-icon',
+  };
+  const name = names[msg] ?? hex(msg);
+  const event = msg === TRAY_CALLBACK ? ` (${trayEvent(lParam) ?? 'ignored'})` : '';
+  return `tray message: ${name} msg=${hex(msg)} wParam=${hex(wParam)} lParam=${hex(lParam)}${event}`;
 }
 
 /** Menu command ids: item i is command i + 1 (0 means "nothing chosen" for TrackPopupMenu). */
