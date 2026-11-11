@@ -289,7 +289,7 @@ test('a fold with a failed step stands out: a ✗ and "N failed" in the error co
   assert.match(css, /\.sf-failed\s*\{[^}]*var\(--danger-text\)/);
 });
 
-test('Chat folds a turn\'s steps once: no inner "N steps" group inside "Show steps", live or replayed, across a background-task note', () => {
+test('Chat and Prompts fold a turn\'s steps once: no inner "N steps" group inside "Show steps", live or replayed, across a background-task note', () => {
   const note = user(
     '<task-notification><task-id>b1</task-id><status>completed</status><summary>Build done</summary></task-notification>',
     5,
@@ -335,5 +335,17 @@ test('Chat folds a turn\'s steps once: no inner "N steps" group inside "Show ste
     assert.equal(byClass(list, 'tool-group').length, 0, how + ': no second "N steps" fold inside');
     assert.doesNotMatch(flat(list), /5 steps/, how);
     assert.equal(list.children.length, 5, how + ': the five rows are drawn directly');
+    /* Prompts: the open prompt is the fold; its rows are drawn directly, no inner "N steps" group */
+    page.hook.setView('prompts');
+    const plain = rows.filter((r) => r !== note);
+    page.hook.showRows(box, plain, 'main');
+    const head = byClass(box, 'pv-head')[0];
+    assert.ok(head, how + ': the prompt is drawn');
+    if (byClass(box, 'pv-body')[0].hidden) head.listeners.click();
+    const pbody = byClass(box, 'pv-body')[0];
+    assert.equal(pbody.hidden, false, how + ': the prompt is open');
+    assert.equal(byClass(pbody, 'tool-group').length, 0, how + ': no "N steps" fold inside the open prompt');
+    assert.doesNotMatch(flat(pbody), /\d+ steps/, how);
+    assert.equal(pbody.children.length, plain.length - 1, how + ': every reply row is drawn directly');
   }
 });
