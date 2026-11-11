@@ -9,7 +9,11 @@
   //   * Studio away (hidden or not focused): a desktop notification (if turned on) and a sound (per setting).
   //   * Transitions within about a minute merge into ONE notification ("3 agents are waiting for you") that replaces the older.
   //   * Muted projects (server-side project prefs) never notify or sound; the inbox still lists them.
-  const PREF_KEY = 'studio-notifications';
+  // In the AIB desktop app the app process shows the notification itself (desktop-bridge.js notify -> server/desktop/notify.ts):
+  // no browser permission is involved, the choices are AIB's own (saved in the data folder: view-prefs.js syncs APP_PREF_KEY) and
+  // desktop notifications start on, for Needs you only. In a browser the web Notification API and its permission, as before.
+  const PREF_KEY = 'studio-notifications',
+    APP_PREF_KEY = 'studio-notifications-app';
   const GROUP_MS = 60000;
   const TAG = 'studio-attention';
 
@@ -100,11 +104,16 @@
 
   const SOUND_MODES = ['needs', 'both', 'off'],
     NOTIFY_FOR = ['both', 'needs'];
-  function cleanPrefs(v) {
+  // app: the desktop app's defaults (notifications on, Needs you only); a browser's stay off until allowed, for both kinds.
+  function cleanPrefs(v, app) {
     v = v && typeof v === 'object' ? v : {};
     // The old checkbox ("Play a sound") was a boolean: on becomes "Needs you only", off stays off.
     const sound = SOUND_MODES.includes(v.sound) ? v.sound : v.sound === false ? 'off' : 'needs';
-    return { desktop: v.desktop === true, sound, notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : 'both' };
+    return {
+      desktop: app ? v.desktop !== false : v.desktop === true,
+      sound,
+      notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : app ? 'needs' : 'both',
+    };
   }
 
   // ---- runtime ------------------------------------------------------------------------------------------------
@@ -120,37 +129,33 @@
     pop: null,
     stack: null,
     blocked: false,
-    nativePerm: 'default', // the desktop app's notification permission, once asked ('granted' or 'denied')
+    testNote: null, // the desktop app's answer to the last test: {text, warn}
   };
 
   function loadPrefs() {
+    const app = native();
     try {
-      S.prefs = cleanPrefs(JSON.parse(root.localStorage.getItem(PREF_KEY) || '{}'));
+      S.prefs = cleanPrefs(JSON.parse(root.localStorage.getItem(app ? APP_PREF_KEY : PREF_KEY) || '{}'), app);
     } catch {
-      S.prefs = cleanPrefs();
+      S.prefs = cleanPrefs(null, app);
     }
   }
   function savePrefs() {
     try {
-      root.localStorage.setItem(PREF_KEY, JSON.stringify(S.prefs));
+      root.localStorage.setItem(native() ? APP_PREF_KEY : PREF_KEY, JSON.stringify(S.prefs));
     } catch {
       /* storage unavailable */
     }
   }
 
   const doc = () => root.document;
-  // In the AIB desktop app the notification plugin does the work (WKWebView and WebKitGTK have no web Notifications); in a browser
-  // the web Notification API does, as before.
-  const native = () => !!(root.AibDesktop && root.AibDesktop.available());
-  const supported = () => native() || typeof root.Notification === 'function';
-  const permission = () => (native() ? S.nativePerm : supported() ? root.Notification.permission : 'unsupported');
-  function refreshNative() {
-    if (!native()) return;
-    root.AibDesktop.notifyReady().then((ok) => {
-      S.nativePerm = ok ? 'granted' : 'default';
-      if (S.pop) paintPop();
-    });
+  // In the AIB desktop app the app shows notifications itself (no permission to ask for); in a browser the web Notification API
+  // does, as before.
+  function native() {
+    return !!(root.AibDesktop && root.AibDesktop.available());
   }
+  const supported = () => native() || typeof root.Notification === 'function';
+  const permission = () => (native() ? 'granted' : supported() ? root.Notification.permission : 'unsupported');
   const desktopReady = () => S.prefs.desktop && permission() === 'granted';
   // Studio is "in front" only when the page is visible AND has focus; otherwise you are away.
   const away = () => {
@@ -201,6 +206,14 @@
     else if (S.host.openInbox) S.host.openInbox();
   }
 
+  // The desktop app: its notification was clicked and the window is in front again (server/desktop/window.ts
+  // openFromNotification). True once the page is ready to open it; the app tries again while the page still loads.
+  function openFromDesktop(target) {
+    if (!S.host) return false;
+    if (target && (target.type === 'chat' || target.type === 'inbox')) openTarget(target);
+    return true;
+  }
+
   function closeShown() {
     if (S.shown) {
       try {
@@ -215,8 +228,8 @@
   function showDesktop(group) {
     const d = describe(group);
     if (native()) {
-      root.AibDesktop.notify(d.title, d.body).catch(() => {
-        /* the desktop app refused: nothing to fall back to that would work here */
+      root.AibDesktop.notify(d.title, d.body, d.target).catch(() => {
+        /* the server could not be reached: nothing to fall back to that would work here */
       });
       return;
     }
@@ -380,10 +393,14 @@
     if (!pop) return;
     pop.replaceChildren();
     const on = desktopReady(),
-      p = permission();
+      p = permission(),
+      app = native();
+    // The app says "Desktop notifications" off Windows; a browser keeps today's wording.
+    const label =
+      app && root.AibDesktop.os && root.AibDesktop.os() !== 'windows' ? 'Desktop notifications' : 'Windows notifications';
     pop.append(
       selectRow(
-        'Windows notifications',
+        label,
         [
           ['on', 'On'],
           ['off', 'Off'],
@@ -400,7 +417,9 @@
         },
       ),
     );
-    if (p === 'unsupported') pop.append(el('p', 'This browser does not support desktop notifications.', 'note'));
+    if (app) {
+      if (S.testNote) pop.append(el('p', S.testNote.text, S.testNote.warn ? 'note warn' : 'note'));
+    } else if (p === 'unsupported') pop.append(el('p', 'This browser does not support desktop notifications.', 'note'));
     else if (p === 'denied' || S.blocked)
       pop.append(el('p', 'Blocked by the browser - allow it in site settings', 'note warn'));
     pop.append(
@@ -441,7 +460,13 @@
         },
       ),
     );
-    if (on) {
+    if (app) {
+      // Always offered in the app (also while off: it shows what a notification looks like), with the app's answer above.
+      const t = el('button', 'Send a test notification');
+      t.type = 'button';
+      t.addEventListener('click', () => sendTest(t));
+      pop.append(t);
+    } else if (on) {
       const t = el('button', 'Send a test notification');
       t.type = 'button';
       t.addEventListener('click', () =>
@@ -470,22 +495,41 @@
     }
   }
 
+  // The desktop app's test: what it answered, as a line under the setting.
+  function testText(r) {
+    if (r && r.shown) return { text: 'Test sent. If nothing showed, Do not disturb may be on.', warn: false };
+    const why = (r && r.reason) || 'the system did not show it';
+    return { text: 'Not shown: ' + why + '.', warn: true };
+  }
+  function sendTest(button) {
+    if (button) button.disabled = true;
+    return root.AibDesktop.notify('AIB', 'This is a test notification.', null, true)
+      .then(testText, (e) => ({ text: 'Not shown: ' + ((e && e.message) || 'AIB could not be reached') + '.', warn: true }))
+      .then((note) => {
+        S.testNote = note;
+        if (button) button.disabled = false;
+        paintPop();
+        return note;
+      });
+  }
+
   function enableDesktop() {
+    if (native()) {
+      S.prefs.desktop = true;
+      savePrefs();
+      paintPop();
+      return;
+    }
     if (!supported()) {
       paintPop();
       return;
     }
     const done = (result) => {
-      if (native()) S.nativePerm = result === 'granted' ? 'granted' : 'denied';
       S.prefs.desktop = result === 'granted';
       S.blocked = result !== 'granted';
       savePrefs();
       paintPop();
     };
-    if (native()) {
-      root.AibDesktop.requestNotifications().then(done);
-      return;
-    }
     try {
       const r = root.Notification.requestPermission(done); // the legacy callback form; modern browsers also return a promise
       if (r && typeof r.then === 'function') r.then(done, () => done('denied'));
@@ -499,6 +543,7 @@
     if (!node) return;
     S.pop = node;
     S.blocked = false;
+    S.testNote = null;
     paintPop();
   }
 
@@ -506,7 +551,6 @@
   function init(host) {
     S.host = host;
     loadPrefs();
-    refreshNative();
     doc().addEventListener('visibilitychange', comeBack);
     root.addEventListener('focus', comeBack);
     root.setInterval(reconcile, 1000); // DOM only: drops toasts for the chat you just opened
@@ -523,6 +567,10 @@
     init,
     enableDesktop,
     mountSettings,
+    openFromDesktop,
+    sendTest,
+    testText,
+    native,
     chime,
     GROUP_MS,
     _state: S,

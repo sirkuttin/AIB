@@ -41,9 +41,13 @@ notifications through the web API, updates as "open the installer" instructions)
   another origin into `window.open`, and the window's load check is the safety net for anything else.
 - **Folder picker:** `deno desktop` has no native folder dialog, so "Browse..." uses the server's picker in the app too
   (`folders.ts`: a hidden PowerShell `FolderBrowserDialog` on Windows, `osascript` on macOS, zenity or kdialog on Linux).
-- **Notifications:** the app binds `aibNotify`, `aibNotifyReady` and `aibRequestNotifications` into its window; `notify-ui.js` uses
-  them through `desktop-bridge.js` (`window.AibDesktop`) and the web Notification API in a browser. Every frame of the window can call
-  the bindings (artifact iframes too), so they only show notifications, rate-limited.
+- **Notifications:** the app process shows them itself (`server/desktop/notify.ts`); WebView2 has no browser permission, so the web
+  Notification API is only used in a browser. `notify-ui.js` decides when (never while AIB is in front) and `desktop-bridge.js` sends
+  `POST /api/live/desktop/notify` (page token required, rate-limited). Windows: a balloon on AIB's own tray icon (Shell_NotifyIconW
+  NIF_INFO), which Windows 10/11 show as a toast; presentation mode, quiet time and full-screen apps are respected
+  (SHQueryUserNotificationState) and Do not disturb is applied by Windows. A click (NIN_BALLOONUSERCLICK on the tray thread) brings the
+  window forward and opens that chat. macOS: `osascript`; Linux: `notify-send` when installed. The window's only binding is
+  `aibDesktop`, which tells the page it runs in the app. The choices are saved in the data folder (`studio-notifications-app`).
 - **Agent host:** a separate long-lived process by design (`AIB host`). Closing the window does not cut off a turn when the person
   chose to keep chats running. With no app attached the host shows its own tray icon while something works and exits 10 s after
   nothing does (docs/agent-host.md, "Lifecycle of the built app's host"). The close question stays for now (`askOnClose`; false

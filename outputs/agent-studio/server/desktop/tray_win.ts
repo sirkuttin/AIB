@@ -34,15 +34,21 @@ const WM_RBUTTONUP = 0x0205;
 const WM_CONTEXTMENU = 0x007b;
 
 export const NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2;
-export const NIF_MESSAGE = 0x1, NIF_ICON = 0x2, NIF_TIP = 0x4;
+export const NIF_MESSAGE = 0x1, NIF_ICON = 0x2, NIF_TIP = 0x4, NIF_INFO = 0x10;
+/** Balloon (Windows 10/11: toast) flags: no icon of its own (the toast shows AIB's), no sound (the page plays its own chime),
+ * and Windows' quiet time is respected. */
+export const NIIF_NONE = 0x0, NIIF_NOSOUND = 0x10, NIIF_RESPECT_QUIET_TIME = 0x80;
+/** What the tray callback's lParam says about a balloon: clicked (NIN_BALLOONUSERCLICK). */
+export const NIN_BALLOONUSERCLICK = 0x0405;
 
 /** sizeof(NOTIFYICONDATAW) on 64-bit Windows (x64 and arm64). */
 export const NOTIFYICONDATAW_SIZE = 976;
 
 /** What a tray callback's lParam means: a left click, a request for the menu, or nothing we act on. */
-export function trayEvent(lParam: number | bigint): 'click' | 'menu' | null {
+export function trayEvent(lParam: number | bigint): 'click' | 'menu' | 'balloon-click' | null {
   const event = Number(BigInt.asUintN(64, BigInt(lParam)) & 0xffffn);
   if (event === WM_LBUTTONUP) return 'click';
+  if (event === NIN_BALLOONUSERCLICK) return 'balloon-click';
   if (event === WM_RBUTTONUP || event === WM_CONTEXTMENU) return 'menu';
   return null;
 }
@@ -74,11 +80,29 @@ export function notifyIconData(
   return buf;
 }
 
+/**
+ * A NOTIFYICONDATAW that shows a balloon on the icon (NIM_MODIFY + NIF_INFO): szInfo (the text, 255 chars) at 304, szInfoTitle
+ * (63 chars) at 820, dwInfoFlags at 948 (64-bit layout). A newer balloon replaces the one showing.
+ */
+export function balloonData(o: { hwnd: bigint; title: string; body: string; uid?: number; flags?: number }): Uint8Array {
+  const buf = notifyIconData({ hwnd: o.hwnd, uid: o.uid, flags: NIF_INFO });
+  const v = new DataView(buf.buffer);
+  const put = (at: number, text: string, max: number) => {
+    const t = text.slice(0, max);
+    for (let i = 0; i < t.length; i++) v.setUint16(at + i * 2, t.charCodeAt(i), true);
+  };
+  put(304, o.body || ' ', 255); // an empty szInfo would remove the balloon instead
+  put(820, o.title, 63);
+  v.setUint32(948, o.flags ?? (NIIF_NONE | NIIF_NOSOUND | NIIF_RESPECT_QUIET_TIME), true);
+  return buf;
+}
+
 /** What the worker tells the main thread. */
 export type TrayWorkerMessage =
   | { type: 'ready'; hwnd: string; added: boolean; menu: string; icons: string[] }
   | { type: 'failed'; error: string }
   | { type: 'click' }
+  | { type: 'balloon-click' }
   | { type: 'menu'; id: string }
   | { type: 'log'; message: string };
 
@@ -108,6 +132,8 @@ export interface WindowsTray {
   setIcon(index: number): void;
   /** Changes a menu item's text (the host's status line). Never throws. */
   setItemLabel(index: number, label: string, disabled?: boolean): void;
+  /** Shows a balloon (a toast on Windows 10/11) on the icon: Shell_NotifyIconW's result (0: refused). Never throws. */
+  balloon(title: string, body: string): number;
 }
 
 /**
@@ -122,7 +148,7 @@ export function startWindowsTray(
   onClick: () => void,
   onMenu: (id: string) => void,
   onLog: (message: string) => void = () => {},
-  options: { hidden?: boolean; altIcons?: Uint8Array[] } = {},
+  options: { hidden?: boolean; altIcons?: Uint8Array[]; onBalloonClick?: () => void } = {},
 ): Promise<WindowsTray | null> {
   return new Promise((resolve) => {
     let worker: Worker;
@@ -148,6 +174,7 @@ export function startWindowsTray(
     worker.onmessage = (e: MessageEvent<TrayWorkerMessage>) => {
       const m = e.data;
       if (m.type === 'click') onClick();
+      else if (m.type === 'balloon-click') options.onBalloonClick?.();
       else if (m.type === 'menu') onMenu(m.id);
       else if (m.type === 'log') onLog(m.message);
       else if (m.type === 'failed') {
@@ -168,6 +195,7 @@ export function startWindowsTray(
             if (icons[index] !== undefined) postToTray(hwnd, TRAY_SET_ICON, BigInt(index));
           },
           setItemLabel: (index, label, disabled) => setMenuLabel(menu, index, label, disabled),
+          balloon: (title, body) => showBalloon(hwnd, title, body),
         });
       }
     };
@@ -195,6 +223,31 @@ function setTrayTooltip(hwnd: bigint, tip: string): boolean {
     return ok;
   } catch {
     return false;
+  }
+}
+
+/** NIM_MODIFY + NIF_INFO from this (main) thread: the balloon. Shell_NotifyIconW's BOOL (0 when the icon isn't shown). */
+function showBalloon(hwnd: bigint, title: string, body: string): number {
+  try {
+    const shell = Deno.dlopen('shell32.dll', { Shell_NotifyIconW: { parameters: ['u32', 'buffer'], result: 'i32' } });
+    const ok = shell.symbols.Shell_NotifyIconW(NIM_MODIFY, balloonData({ hwnd, title, body }));
+    shell.close();
+    return ok;
+  } catch {
+    return 0;
+  }
+}
+
+/** SHQueryUserNotificationState: whether Windows wants notifications now (notify.ts QUNS), or null when it could not tell. */
+export function userNotificationState(): number | null {
+  try {
+    const shell = Deno.dlopen('shell32.dll', { SHQueryUserNotificationState: { parameters: ['buffer'], result: 'i32' } });
+    const out = new Int32Array(1);
+    const hr = shell.symbols.SHQueryUserNotificationState(out);
+    shell.close();
+    return hr === 0 ? out[0] : null;
+  } catch {
+    return null;
   }
 }
 

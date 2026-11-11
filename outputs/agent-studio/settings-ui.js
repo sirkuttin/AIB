@@ -3,7 +3,7 @@
   // Settings page: opens over the chat area (the chat list stays). Search on the left filters settings across sections by label
   // and keywords; every change is saved at once through POST /api/live/settings (no Save button). The server owns the data
   // (agents, defaults for new chats, server options); this file draws it and keeps AgentChoice (the page's agent registry) in step.
-  // Notification preferences stay per browser (desktop permission is per browser) and are drawn by notify-ui.js.
+  // Notification preferences are drawn by notify-ui.js: per browser in a browser (its permission), AIB's own in the desktop app.
   const doc = () => root.document;
   const el = (tag, content, cls) => {
     const n = doc().createElement(tag);
@@ -1166,7 +1166,15 @@
 
   // ---- Notifications / Editors / Keyboard / Appearance ----------------------------------------------------------
   function renderNotifications(box) {
-    box.append(note("These apply to this browser only: desktop notifications need this browser's permission."));
+    // The desktop app shows notifications itself and keeps these choices with AIB's data; a browser needs its own permission.
+    const app = !!(root.AibDesktop && root.AibDesktop.available());
+    box.append(
+      note(
+        app
+          ? "AIB shows these itself. They are saved with AIB's data."
+          : "These apply to this browser only: desktop notifications need this browser's permission.",
+      ),
+    );
     const slot = el('div', null, 'st-notify');
     box.append(slot);
     if (root.AgentNotifyUI && root.AgentNotifyUI.mountSettings) root.AgentNotifyUI.mountSettings(slot);
@@ -1719,6 +1727,7 @@
     defaultView,
     DEFAULT_VIEWS,
     renderDefaultView,
+    renderNotifications,
     filterIndex,
     sectionCounts,
     checkSignins, // refresh the cached sign-in status (once per Settings open; force for "Check again")
