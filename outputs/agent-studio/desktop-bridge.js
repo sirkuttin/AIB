@@ -9,7 +9,7 @@
   //   * notify(title, body, target, test): the app process shows the notification itself (Windows: a toast from AIB's tray icon;
   //     macOS: osascript; Linux: notify-send), through POST /api/live/desktop/notify (server/desktop/notify.ts). Resolves with the
   //     server's answer {shown, reason}. A click on it brings the window forward and calls AgentNotifyUI.openFromDesktop(target).
-  //   * os(): 'windows', 'macos' or 'linux' (for the wording: "Windows notifications" on Windows, "Desktop notifications" elsewhere).
+  //   * os(): 'windows', 'macos' or 'linux' (the notifications label is "Desktop notifications" everywhere).
   //   * Links: in the app, a plain click on an http(s) link to another origin would load that site in the app window. The click is
   //     turned into window.open, which the app hands to the system browser (as it does for target=_blank).
   // Tests replace the detection with setInvoke(fn) (any function: "in the app") and the network with setFetch(fn).
