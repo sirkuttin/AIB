@@ -775,6 +775,22 @@
     h.append(el('span', label), el('span', n, 'n'));
     return h;
   }
+  // The "Chats n" row: a "+" after the count starts a new chat in the project the list shows ("All chats": the plain
+  // New chat, in the project of the chat you were on or the last one).
+  function chatsHeading(n) {
+    const h = heading('mainHeading', 'Chats', n);
+    const W = root.AgentWorkspaceUI;
+    if (!W || !W.newChatIn) return h;
+    const p = W.activeProject && !(sidebar() && sidebar().isGrouping()) ? W.activeProject() : null;
+    const label = 'New chat' + (p ? ' in ' + p.name : '');
+    const add = el('button', '+', 'list-add');
+    add.type = 'button';
+    add.title = label;
+    add.setAttribute('aria-label', label);
+    add.onclick = () => W.newChatIn(p ? p.key : '');
+    h.append(add);
+    return h;
+  }
   function group(id, label, rows, ctx, visible) {
     const wrap = el('div', null, 'list-group');
     wrap.setAttribute('role', 'group');
@@ -915,7 +931,7 @@
     if (view.main.length || view.hold.length || (projects && view.pinned.length)) {
       if (projects) {
         const listed = view.pinned.concat(view.main);
-        if (listed.length) frag.append(heading('mainHeading', 'Chats', listed.length));
+        if (listed.length) frag.append(chatsHeading(listed.length));
         const held = (r) => holdBlock(r.key, r.rows, ctx, r.visible).node;
         for (const g of sidebar().projectGroups(listed, (c, visible) => row(c, ctx, visible, true), {
           forceOpen: !!ctx.query,
@@ -928,7 +944,7 @@
         wrap.setAttribute('role', 'group');
         if (view.main.length) {
           wrap.setAttribute('aria-labelledby', 'mainHeading');
-          wrap.append(heading('mainHeading', 'Chats', view.main.length));
+          wrap.append(chatsHeading(view.main.length));
         }
         for (const c of view.main) wrap.append(row(c, ctx, always));
         if (view.hold.length) {
