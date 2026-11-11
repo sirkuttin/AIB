@@ -208,7 +208,7 @@ Deno.test('history: snapshots in the artifact versions store with by; read a ver
     assertEquals(versions[2].rev, doc.live.rev);
     assertEquals(store.readVersion(doc, versions[1].n), '# Plan\n\nMy First words.\n');
     const manifest = artifacts.get(doc.artifactId!);
-    assertEquals([manifest.kind, manifest.sourcePath], ['md', null]);
+    assertEquals([manifest.kind, manifest.sourcePath], ['json', null]); // each version is the whole doc.aibdoc
     // restore needs ifRev = latest
     const latest = doc.live.rev;
     let refused: DocRefusal | null = null;

@@ -14,8 +14,9 @@
  *            the doc.aibdoc it was saved with). On open the cache is used only when that hash matches the file; otherwise (a git
  *            pull, a branch switch, a hand edit) the doc is rebuilt from doc.aibdoc. A doc.aibdoc changed on disk while the doc is
  *            open is merged in block by block on the same guarded path as the Markdown copies.
- *   History  On idle (and before an agent's edit lands on someone else's), the doc's Markdown (pages marked when there are several)
- *            is snapshotted as a version of the doc's artifact in AIB's artifact store (history.ts).
+ *   History  On idle (and before an agent's edit lands on someone else's), the whole doc.aibdoc (pages, rich blocks, marks, comments,
+ *            drawings) is snapshotted as a version of the doc's artifact in AIB's artifact store (history.ts). Restore (the whole doc
+ *            or one page) brings it back exactly; older Markdown versions restore from their Markdown.
  *
  * A doc from before pages (docs/<name>.md + state in <stateDir>/docs/<id>/) is moved to docs/<doc>/ with one page on first open; its
  * old files go only after the new ones are written.
@@ -43,14 +44,18 @@ import {
   AIBDOC,
   type AibDoc,
   blockKey,
+  bindIds,
   buildFromAib,
   exportAib,
   hashText,
   IdMap,
   pageNodes,
   parseAib,
+  restoreDrawings,
+  restoreThreads,
   stringifyAib,
   stripIds,
+  versionAib,
 } from './aibdoc.ts';
 import * as Y from 'yjs';
 
@@ -968,7 +973,8 @@ export class DocStore {
     if (!history || (doc.snapRev === doc.live.rev && doc.artifactId)) return null;
     if (doc.snapTimer !== null) clearTimeout(doc.snapTimer), doc.snapTimer = null;
     const by = [...doc.authors].sort().join('+') || (note === 'created' ? 'system' : 'user');
-    const n = history.snapshot(doc, this.markdown(doc), by, `rev ${doc.live.rev}${note || doc.note ? '; ' + (note || doc.note) : ''}`);
+    const text = stringifyAib(exportAib(doc.live, doc.title, doc.ids));
+    const n = history.snapshot(doc, text, by, `rev ${doc.live.rev}${note || doc.note ? '; ' + (note || doc.note) : ''}`, 'json');
     doc.snapRev = doc.live.rev;
     doc.authors.clear();
     doc.note = '';
@@ -980,7 +986,8 @@ export class DocStore {
     return { latest: doc.live.rev, versions: this.options.history?.list(doc) ?? [] };
   }
 
-  readVersion(doc: OpenDoc, n: number): string {
+  /** A version as stored: a doc.aibdoc (JSON), or Markdown for versions from before that. */
+  versionText(doc: OpenDoc, n: number): string {
     const text = this.options.history?.read(doc, n);
     if (text === null || text === undefined) {
       throw new DocRefusal('no_version', `There is no version ${n} of this doc; doc_history lists them.`);
@@ -988,16 +995,37 @@ export class DocStore {
     return text;
   }
 
+  /** A version as Markdown (for reading): pages marked as in markdown() when there are several. */
+  readVersion(doc: OpenDoc, n: number): string {
+    const text = this.versionText(doc, n);
+    const aib = versionAib(text);
+    if (!aib) return text;
+    const built = buildFromAib(aib, 0);
+    const tmp = new LiveDoc(built.state, built.meta);
+    try {
+      const md = (p: string) => writeDoc(tmp.topBlocks(p), {}, '\n', '\n').text;
+      const pages = tmp.pageList();
+      if (pages.length === 1) return md(pages[0].id);
+      return pages.map((p) => `<!-- aib:page ${JSON.stringify({ id: p.id, title: p.title })} -->\n\n${md(p.id)}`).join('\n');
+    } finally {
+      tmp.destroy();
+    }
+  }
+
   /**
    * Restore the doc to a history version, only when nothing changed since the caller's read (`ifRev` = the latest rev). Its pages
-   * read exactly as that version did; a version from before pages restores the first page and drops the others.
+   * read exactly as that version did; a version from before pages restores the first page and drops the others. With `page` (an id
+   * or title of a page in that version) only that page comes back, the others stay as they are.
+   * A doc.aibdoc version comes back exactly: rich blocks, marks, block ids in the file, its drawings, and its comment threads
+   * (threads made since stay; a thread that exists keeps its replies and only takes the version's anchor if its own words are gone).
    */
   async restore(
     doc: OpenDoc,
     n: number,
     ifRev: unknown,
     origin: Origin,
-  ): Promise<{ rev: number; restored: number }> {
+    pageValue?: unknown,
+  ): Promise<{ rev: number; restored: number; page?: string }> {
     if (typeof ifRev !== 'number') {
       throw new DocRefusal('missing_guard', 'restore needs "ifRev" = the latest rev (doc_history shows it as `latest`).');
     }
@@ -1009,15 +1037,44 @@ export class DocStore {
         { rev: doc.live.rev },
       );
     }
-    const text = this.readVersion(doc, n);
+    const text = this.versionText(doc, n);
+    const aib = versionAib(text);
+    const one = pageValue !== undefined && pageValue !== null && pageValue !== '';
+    let restoredPage: string | undefined;
     await this.#serial(doc, async () => {
       await this.#sync(doc);
       if (doc.live.rev !== ifRev) throw new DocRefusal('guard_mismatch', 'The doc changed while restoring; nothing was restored.');
-      this.snapshot(doc);
       const first = doc.live.pageList()[0];
-      const pages = splitPages(text, first);
+      const listed = aib ? aib.pages.map((p) => ({ id: p.id, title: p.title })) : splitPages(text, first);
+      const want = one ? versionPage(doc.live, listed, pageValue, n) : null;
+      this.snapshot(doc);
+      if (aib) {
+        const restored = want ? aib.pages.filter((p) => p.id === want.id) : aib.pages;
+        const nodes = restored.map((p) => pageNodes(p));
+        const at: string[] = [];
+        if (want) at.push(this.#restorePage(doc, listed, want, nodes[0], origin));
+        else {
+          doc.live.setPages(restored.map((p, k) => ({ id: p.id, title: p.title, nodes: nodes[k] })), origin);
+          at.push(...restored.map((p) => p.id));
+        }
+        const byFile = new Map();
+        restored.forEach((p, k) => bindIds(p.content, doc.live.fragOf(at[k]), doc.ids, byFile));
+        doc.live.doc.transact(() => {
+          restoreThreads(doc.live.doc, aib.comments.filter((t) => !want || t.page === want.id), byFile);
+          restoreDrawings(doc.live.doc, aib.drawings.filter((d) => !want || d.page === want.id));
+        }, origin);
+        restoredPage = want ? at[0] : undefined;
+        doc.note = want ? `restored page "${want.title}" from v${n}` : `restored v${n}`;
+        await this.#write(doc);
+        return;
+      }
+      const pages = want ? splitPages(text, first).filter((p) => p.id === want.id) : splitPages(text, first);
       const parsed = pages.map((p) => parseDoc(p.text));
-      doc.live.setPages(pages.map((p, k) => ({ id: p.id, title: p.title, nodes: nodesOf(parsed[k]) })), origin);
+      if (want) {
+        const id = this.#restorePage(doc, listed, want, nodesOf(parsed[0]), origin);
+        pages[0] = { ...pages[0], id };
+        restoredPage = id;
+      } else doc.live.setPages(pages.map((p, k) => ({ id: p.id, title: p.title, nodes: nodesOf(parsed[k]) })), origin);
       pages.forEach((p, k) => {
         const m = doc.mirrors.get(p.id) ?? emptyMirror();
         doc.mirrors.set(p.id, {
@@ -1028,10 +1085,39 @@ export class DocStore {
           eol: parsed[k].eol,
         });
       });
-      doc.note = `restored v${n}`;
+      doc.note = want ? `restored page "${want.title}" from v${n}` : `restored v${n}`;
       await this.#write(doc);
     });
-    return { rev: doc.live.rev, restored: n };
+    return { rev: doc.live.rev, restored: n, ...(restoredPage ? { page: restoredPage } : {}) };
+  }
+
+  /**
+   * One page back from a version: its content (and title, unless another page has it now); a page deleted since comes back where
+   * it stood (after the page before it in that version). Returns the page's id now.
+   */
+  #restorePage(
+    doc: OpenDoc,
+    listed: { id: string; title: string }[],
+    want: { id: string; title: string },
+    nodes: PMJson[],
+    origin: Origin,
+  ): string {
+    const live = doc.live;
+    const taken = (title: string, except: string) =>
+      live.pageList().some((p) => p.id !== except && p.title.toLowerCase() === title.toLowerCase());
+    if (live.pageList().some((p) => p.id === want.id)) {
+      live.replaceAll(nodes, origin, want.id);
+      const now = live.pageList().find((p) => p.id === want.id)!;
+      if (now.title !== want.title && !taken(want.title, want.id)) live.renamePage(want.id, want.title, origin);
+      return want.id;
+    }
+    const index = listed.findIndex((p) => p.id === want.id);
+    const before = listed.slice(0, index).reverse().find((p) => live.pageList().some((x) => x.id === p.id));
+    const title = taken(want.title, '') ? `${want.title} (restored)`.slice(0, 100) : want.title;
+    const id = live.addPage(title, live.system, { after: before?.id, nodes: [{ type: 'paragraph' }], id: want.id }).page as string;
+    if (!before) live.movePage(id, null, live.system);
+    live.replaceAll(nodes, origin, id);
+    return id;
   }
 
   /**
@@ -1091,6 +1177,22 @@ export class DocStore {
     }
     this.docs.clear();
   }
+}
+
+/** The page of a version that `value` names: its id or title there, or the id of the live page with that title. */
+function versionPage(live: LiveDoc, listed: { id: string; title: string }[], value: unknown, n: number): { id: string; title: string } {
+  const v = String(value).trim();
+  const hit = listed.find((p) => p.id === v) ?? listed.find((p) => p.title.toLowerCase() === v.toLowerCase());
+  if (hit) return hit;
+  try {
+    const id = live.resolvePage(v);
+    const byLive = listed.find((p) => p.id === id);
+    if (byLive) return byLive;
+  } catch { /* not a live page either */ }
+  throw new DocRefusal(
+    'no_page',
+    `Version ${n} has no page ${JSON.stringify(value)}. Its pages: ${listed.map((p) => `${p.id} ("${p.title}")`).join(', ')}.`,
+  );
 }
 
 /** History text back into pages: marker lines split it; text without markers is the first page alone. */

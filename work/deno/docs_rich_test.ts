@@ -6,8 +6,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { DocRefusal, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { normalize, type PMJson, writeDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
-import { buildFromAib, contentOf, exportAib, IdMap, parseAib, stringifyAib } from '../../outputs/agent-studio/server/docs/aibdoc.ts';
+import { normalize, type PMJson, richOf, writeDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
+import { buildFromAib, contentOf, exportAib, IdMap, parseAib, stringifyAib, versionAib } from '../../outputs/agent-studio/server/docs/aibdoc.ts';
+import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
+import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { DocStore, mdBody, RICH_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
 import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
 import { UserClient } from './_docs.ts';
@@ -351,5 +353,141 @@ Deno.test('a .md edit to a callout is skipped and flagged (use the doc tools), w
   } finally {
     await store.close();
     await Deno.remove(root, { recursive: true }).catch(() => {});
+  }
+});
+
+async function richStore() {
+  const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-rich-' })).replace(/^\\\\\?\\/, '');
+  const artifacts = new ArtifactStore(`${root}${sep}artifacts`);
+  const history = new ArtifactHistory(() => artifacts);
+  const store = new DocStore(`${root}${sep}state`, { idleMs: 60_000, snapshotIdleMs: 60_000, history });
+  const project = `${root}${sep}project`;
+  await Deno.mkdir(`${project}${sep}docs`, { recursive: true });
+  return { store, project, history, done: async () => (await store.close(), await Deno.remove(root, { recursive: true }).catch(() => {})) };
+}
+
+const pagesOf = (text: string) => parseAib(text).pages;
+const blocksOf = (live: LiveDoc, page?: string): View[] => (live.read({ page }) as { blocks: View[] }).blocks;
+
+async function refusedRestore(store: DocStore, doc: Awaited<ReturnType<DocStore['open']>>, n: number, page: string): Promise<DocRefusal> {
+  try {
+    await store.restore(doc, n, doc.live.rev, doc.live.originFor('agent', 'claude'), page);
+  } catch (error) {
+    if (error instanceof DocRefusal) return error;
+    throw error;
+  }
+  throw new Error('expected a refusal');
+}
+
+Deno.test('history keeps the whole doc.aibdoc: a version with a callout, colours and a merged table restores exactly, whole doc and one page', async () => {
+  const s = await richStore();
+  try {
+    const doc = await s.store.open(s.project, 'plan', 'Start.\n');
+    const live = doc.live;
+    const claude = live.originFor('agent', 'claude');
+    live.replaceAll(RICH, claude);
+    const notes = live.addPage('Notes', claude, { markdown: 'A note.' }).page as string;
+    live.comments.add('user', 'Which device?', live.range({ kind: 'find', text: 'old total' }), live.system);
+    await s.store.flush(doc);
+    const n = s.store.snapshot(doc)!;
+    const version = s.store.versionText(doc, n);
+    assertEquals(version, await Deno.readTextFile(doc.file), 'the version is the doc.aibdoc as written');
+    assert(versionAib(version) !== null);
+    const want = contentOf(live, live.firstPage);
+    assert(JSON.stringify(want).includes('"textColor"') && JSON.stringify(want).includes('"colspan":2'));
+    assert(s.store.readVersion(doc, n).includes('> **Warning:** Apple Pay shows the old total.'), 'agents read it as Markdown');
+    // everything changes: callout words, colours off, the merged cell split, page 2
+    const change = () => {
+      const r = live.read() as { rev: number; blocks: View[] };
+      const table = r.blocks.find((b) => b.type === 'table')!;
+      live.edit([
+        { op: 'replace', target: { kind: 'find', text: 'Apple Pay shows the old total.' }, with: inline('Fixed.', 'text'), allowDetach: true },
+        { op: 'style', target: { kind: 'find', text: 'red' }, color: null },
+        { op: 'table_split', target: { kind: 'blocks', ids: [table.id] }, at: [0, 1], ifRev: r.rev },
+      ], claude);
+      live.edit([{ op: 'replace', target: { kind: 'find', text: 'A note.' }, with: inline('Changed note.', 'text') }], claude, notes);
+    };
+    change();
+    assert(JSON.stringify(contentOf(live, live.firstPage)) !== JSON.stringify(want));
+    // the whole doc
+    await s.store.restore(doc, n, live.rev, claude);
+    assertEquals(contentOf(live, live.firstPage), want);
+    assertEquals(blocksOf(live, notes).map((b) => b.md), ['A note.']);
+    const thread = live.comments.list().threads[0] as { quote?: string; detached?: boolean };
+    assertEquals([thread.quote, thread.detached], ['old total', undefined]);
+    assertEquals(pagesOf(await Deno.readTextFile(doc.file)), pagesOf(version), 'doc.aibdoc pages exactly as in the version, block ids too');
+    // one page: page 1 comes back, page 2 keeps what it has now
+    change();
+    await s.store.restore(doc, n, live.rev, claude, 'Page 1');
+    assertEquals(contentOf(live, live.firstPage), want);
+    assertEquals(blocksOf(live, notes).map((b) => b.md), ['Changed note.']);
+    assertEquals(pagesOf(await Deno.readTextFile(doc.file))[0], pagesOf(version)[0]);
+    // a page deleted since comes back where it stood
+    live.deletePage(notes, claude, { ifRev: live.rev, allowUserContent: true });
+    const back = await s.store.restore(doc, n, live.rev, claude, 'Notes');
+    assertEquals(live.pageList().map((p) => p.title), ['Page 1', 'Notes']);
+    assertEquals(blocksOf(live, back.page).map((b) => b.md), ['A note.']);
+    assertEquals((await refusedRestore(s.store, doc, n, 'Nope')).code, 'no_page');
+  } finally {
+    await s.done();
+  }
+});
+
+Deno.test('an old Markdown history version still restores (whole doc and one page)', async () => {
+  const s = await richStore();
+  try {
+    const doc = await s.store.open(s.project, 'plan', '# Plan\n\nFirst.\n');
+    const live = doc.live;
+    const claude = live.originFor('agent', 'claude');
+    s.store.snapshot(doc);
+    const notes = live.addPage('Notes', claude, { markdown: 'Note.' }).page as string;
+    const md = `<!-- aib:page {"id":"p1","title":"Page 1"} -->\n\n# Plan\n\nOld words.\n\n<!-- aib:page {"id":"${notes}","title":"Notes"} -->\n\nOld note.\n`;
+    const n = s.history.snapshot(doc, md, 'user', `rev ${live.rev}`, 'md')!;
+    assertEquals(s.store.readVersion(doc, n), md);
+    await s.store.restore(doc, n, live.rev, claude, 'Notes');
+    assertEquals(blocksOf(live, notes).map((b) => b.md), ['Old note.']);
+    assertEquals(blocksOf(live).map((b) => b.md), ['# Plan', 'First.']);
+    await s.store.restore(doc, n, live.rev, claude);
+    assertEquals(blocksOf(live).map((b) => b.md), ['# Plan', 'Old words.']);
+  } finally {
+    await s.done();
+  }
+});
+
+Deno.test('a plain table (header row, column alignment) is not rich: .md edits to it apply; one without a header row is skipped', async () => {
+  const s = await richStore();
+  try {
+    await runDocTool(s.store, s.project, 'claude', 'doc_create', { doc: 'plan', markdown: '| A | B |\n| :--- | ---: |\n| 1 | 2 |\n' });
+    const doc = await s.store.open(s.project, 'plan');
+    const live = doc.live;
+    await s.store.flush(doc);
+    assertEquals(doc.lossy, []);
+    const path = `${doc.dir}${sep}01-page-1.md`;
+    await Deno.writeTextFile(path, (await Deno.readTextFile(path)).replace('| 1 | 2 |', '| 1 | 3 |\n| 4 | 5 |'));
+    assertEquals(await s.store.syncMirror(doc), []);
+    assertEquals(live.markdownOf(live.topIds()[0]), '| A | B |\n| :--- | ---: |\n| 1 | 3 |\n| 4 | 5 |');
+    // header row off: Markdown can't say that, so the table is rich and a .md edit to it is skipped
+    const r = live.read() as { rev: number };
+    live.edit([{ op: 'table_header', target: { kind: 'blocks', ids: [live.topIds()[0]] }, row: false, ifRev: r.rev }], live.originFor('agent', 'claude'));
+    await s.store.flush(doc);
+    assertEquals(doc.lossy, live.topIds());
+    await Deno.writeTextFile(path, (await Deno.readTextFile(path)).replace('| 4 | 5 |', '| 4 | 6 |'));
+    assertEquals((await s.store.syncMirror(doc)).map((x) => x.reason), ['rich_block']);
+    assert(live.markdownOf(live.topIds()[0]).includes('| 4 | 5 |'));
+    // a single cell aligned apart from its column is rich too
+    const table = live.topBlocks()[0].node;
+    const withHeader = (t: PMJson): PMJson => ({
+      ...t,
+      content: t.content!.map((row, k) => (k ? row : { ...row, content: row.content!.map((c) => ({ ...c, type: 'tableHeader' })) })),
+    });
+    const lone: PMJson = {
+      ...table,
+      content: table.content!.map((row, k) =>
+        k !== 1 ? row : { ...row, content: row.content!.map((c, i) => (i ? c : { ...c, attrs: { ...c.attrs, align: 'center' } })) }
+      ),
+    };
+    assertEquals([richOf(withHeader(table)), richOf(withHeader(lone))], [false, true]);
+  } finally {
+    await s.done();
   }
 });

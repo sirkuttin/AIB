@@ -45,7 +45,8 @@ const span = (v: unknown) => Math.max(1, Math.floor(Number(v)) || 1);
 
 /**
  * Does this node hold anything Markdown can't (a callout, columns, a toggle, colour or highlight, alignment, merged cells, a header
- * column or a table without a header row)? Its Markdown is then only a readable fallback: a file edit to it is not taken in.
+ * column, a table without a header row, a table cell aligned apart from its column)? A plain table (header row, column alignment
+ * at most) is not rich. Its Markdown is then only a readable fallback: a file edit to it is not taken in.
  */
 export function richOf(node: PMJson): boolean {
   if (RICH_NODES.has(node.type)) return true;
@@ -56,6 +57,9 @@ export function richOf(node: PMJson): boolean {
     const rows = node.content ?? [];
     if ((rows[0]?.content ?? []).some((c) => c.type !== 'tableHeader')) return true;
     if (rows.slice(1).some((r) => (r.content ?? []).some((c) => c.type === 'tableHeader'))) return true;
+    // Markdown aligns whole columns (from the header row): a plain table is not rich, a cell aligned on its own is
+    const heads = (rows[0]?.content ?? []).map((c) => c.attrs?.align ?? null);
+    if (rows.slice(1).some((r) => (r.content ?? []).some((c, k) => (c.attrs?.align ?? null) !== (heads[k] ?? null)))) return true;
   }
   return (node.content ?? []).some(richOf);
 }

@@ -88,7 +88,7 @@ export async function runDocTool(
       default: {
         const n = Number(args.version);
         if (!Number.isInteger(n) || n < 1) throw new DocRefusal('bad_op', '`version` is a version number from doc_history');
-        const result = await store.restore(doc, n, args.ifRev, live.originFor('agent', agent));
+        const result = await store.restore(doc, n, args.ifRev, live.originFor('agent', agent), args.page);
         return [true, { ...head, ok: true, ...result }];
       }
     }

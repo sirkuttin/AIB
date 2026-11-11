@@ -289,45 +289,94 @@ export function buildFromAib(aib: AibDoc, rev: number): { state: Uint8Array; met
       els.forEach((el, k) => page.content[k] && bind(page.content[k], el));
       arr.push([newPageMap(page.id, page.title.trim() || page.id)]);
     }
-    const comments = ydoc.getMap(COMMENTS);
-    for (const t of aib.comments) {
-      if (!t || typeof t.id !== 'string') continue;
-      const m = new Y.Map<unknown>();
-      comments.set(t.id, m);
-      for (const [k, v] of Object.entries(t)) {
-        if (['id', 'anchor', 'lost', 'replies', 'page'].includes(k) || v === undefined) continue;
-        m.set(k, v);
-      }
-      let anchor: Anchor | null = null;
-      const a = t.anchor;
-      if (a && typeof a === 'object') {
-        const el = byFile.get(String(a.block));
-        try {
-          anchor = el ? anchorOf(el, Number(a.from), Number(a.to)) : LOST;
-        } catch {
-          anchor = LOST;
-        }
-      } else if (t.lost) anchor = LOST;
-      m.set('anchor', anchor);
-      const replies = new Y.Array<unknown>();
-      m.set('replies', replies);
-      replies.push(Array.isArray(t.replies) ? t.replies : []);
-    }
-    const drawings = drawingsMap(ydoc);
-    for (const d of aib.drawings) {
-      if (!d || typeof d.id !== 'string') continue;
-      const dm = new Y.Map<unknown>();
-      const els = new Y.Map<Y.Map<unknown>>();
-      dm.set('elements', els);
-      drawings.set(d.id, dm as Y.Map<unknown>);
-      for (const e of Array.isArray(d.elements) ? d.elements : []) {
-        if (e && typeof e.id === 'string') els.set(e.id, newElementMap(e));
-      }
-    }
+    restoreThreads(ydoc, aib.comments, byFile);
+    restoreDrawings(ydoc, aib.drawings);
   });
   const state = Y.encodeStateAsUpdate(ydoc);
   ydoc.destroy();
   return { state, meta: { rev, blocks }, ids };
+}
+
+/** Bind a page's elements to the file's block ids (the same walk as buildFromAib): `ids` learns them, `byFile` finds the elements. */
+export function bindIds(content: AibNode[], frag: Y.XmlFragment, ids: IdMap, byFile: Map<string, Y.XmlElement>): void {
+  const bind = (n: AibNode, el: Y.XmlElement) => {
+    if (typeof n.id === 'string' && n.id && !byFile.has(n.id)) {
+      ids.set(idOf(el), n.id);
+      byFile.set(n.id, el);
+    }
+    if (CONTAINERS.has(el.nodeName) && Array.isArray(n.content)) {
+      const kids = el.toArray().filter((c): c is Y.XmlElement => c instanceof Y.XmlElement);
+      n.content.forEach((c, k) => kids[k] && bind(c as AibNode, kids[k]));
+    }
+  };
+  const els = frag.toArray().filter((c): c is Y.XmlElement => c instanceof Y.XmlElement);
+  content.forEach((n, k) => els[k] && bind(n, els[k]));
+}
+
+/**
+ * Comment threads of a doc.aibdoc into a Y.Doc (inside a transaction), anchored through `byFile`. A thread the doc has already keeps
+ * everything it has now (its replies, resolved state); it only takes the file's anchor when its own words are gone or it was
+ * detached (and is no longer detached when the file's thread was not).
+ */
+export function restoreThreads(ydoc: Y.Doc, threads: AibThread[], byFile: Map<string, Y.XmlElement>): void {
+  const comments = ydoc.getMap(COMMENTS);
+  for (const t of threads) {
+    if (!t || typeof t.id !== 'string') continue;
+    let anchor: Anchor | null = null;
+    const a = t.anchor;
+    if (a && typeof a === 'object') {
+      const el = byFile.get(String(a.block));
+      try {
+        anchor = el ? anchorOf(el, Number(a.from), Number(a.to)) : LOST;
+      } catch {
+        anchor = LOST;
+      }
+    } else if (t.lost) anchor = LOST;
+    const had = comments.get(t.id);
+    if (had instanceof Y.Map) {
+      // the version's words are back: a thread whose own words went (or that an edit detached) hangs on them again
+      if (anchor && anchor !== LOST && (had.get('detached') || !rangeOf(ydoc, had.get('anchor') as Anchor | null))) {
+        had.set('anchor', anchor);
+        if (!t.detached) had.delete('detached');
+      }
+      continue;
+    }
+    const m = new Y.Map<unknown>();
+    comments.set(t.id, m);
+    for (const [k, v] of Object.entries(t)) {
+      if (['id', 'anchor', 'lost', 'replies', 'page'].includes(k) || v === undefined) continue;
+      m.set(k, v);
+    }
+    m.set('anchor', anchor);
+    const replies = new Y.Array<unknown>();
+    m.set('replies', replies);
+    replies.push(Array.isArray(t.replies) ? t.replies : []);
+  }
+}
+
+/** Drawings of a doc.aibdoc into a Y.Doc (inside a transaction): each one listed is set to exactly the file's elements. */
+export function restoreDrawings(ydoc: Y.Doc, drawings: AibDrawing[]): void {
+  const map = drawingsMap(ydoc);
+  for (const d of drawings) {
+    if (!d || typeof d.id !== 'string') continue;
+    const dm = new Y.Map<unknown>();
+    const els = new Y.Map<Y.Map<unknown>>();
+    dm.set('elements', els);
+    map.set(d.id, dm as Y.Map<unknown>);
+    for (const e of Array.isArray(d.elements) ? d.elements : []) {
+      if (e && typeof e.id === 'string') els.set(e.id, newElementMap(e));
+    }
+  }
+}
+
+/** A history version's text as a doc.aibdoc, or null when it is Markdown (versions from before history kept doc.aibdoc). */
+export function versionAib(text: string): AibDoc | null {
+  if (!text.trimStart().startsWith('{')) return null;
+  try {
+    return parseAib(text);
+  } catch {
+    return null;
+  }
 }
 
 /** Rebuilt pages keep their content ids: a doc from a file, read back, gives the same file. For tests and the merge. */

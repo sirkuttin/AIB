@@ -1,5 +1,6 @@
 /**
- * A doc's history in AIB's artifact versions store (artifacts/artifacts.ts): one `md` artifact per doc, one version per snapshot,
+ * A doc's history in AIB's artifact versions store (artifacts/artifacts.ts): one artifact per doc, one version per snapshot. A
+ * version is the whole doc.aibdoc (`json`: pages, rich blocks, marks, comments, drawings); histories from before that hold Markdown,
  * with `by` (who changed it since the last snapshot: "user", an agent's name, "file", or several joined by "+") and the doc's rev in
  * the version's note ("rev 57"). The artifact has no source path, so the artifact watcher leaves it alone; the Artifacts panel can
  * list it, and Compare/diff works on it like on any text artifact.
@@ -23,12 +24,16 @@ export interface HistoryVersion {
 }
 
 export interface DocHistory {
-  /** Record `text` as a new version; returns its number (null when nothing was recorded). Sets doc.artifactId on the first. */
+  /**
+   * Record `text` as a new version ('json': a doc.aibdoc, 'md': Markdown); returns its number (null when nothing was recorded). Sets
+   * doc.artifactId on the first.
+   */
   snapshot(
     doc: HistoryDoc,
     text: string,
     by: string,
     note: string,
+    kind?: 'json' | 'md',
   ): number | null;
   list(doc: HistoryDoc): HistoryVersion[];
   read(doc: HistoryDoc, n: number): string | null;
@@ -42,11 +47,12 @@ export class ArtifactHistory implements DocHistory {
     text: string,
     by: string,
     note: string,
+    kind: 'json' | 'md' = 'json',
   ): number | null {
     const store = this.store();
     if (!store) return null;
     const data = new TextEncoder().encode(text);
-    const entry = `${doc.name}.md`;
+    const entry = kind === 'json' ? `${doc.name}.aibdoc.json` : `${doc.name}.md`;
     if (doc.artifactId) {
       try {
         const [manifest] = store.addVersion(doc.artifactId, data, { entry, by, note });
@@ -56,7 +62,7 @@ export class ArtifactHistory implements DocHistory {
         doc.artifactId = null; // removed from the store: start a new history
       }
     }
-    const manifest = store.create(null, doc.name, 'md', entry, data, { project: doc.projectRoot, by, note });
+    const manifest = store.create(null, doc.name, kind, entry, data, { project: doc.projectRoot, by, note });
     doc.artifactId = manifest.id;
     return 1;
   }

@@ -236,11 +236,17 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_restore',
     title: 'Restore a doc version',
-    description: 'Rewind the whole doc to a version from doc_history, only when nothing changed since: "ifRev" = the `latest` that ' +
-      'doc_history showed. Only when the user asked for it.',
+    description: 'Rewind the whole doc (or with "page", one page) to a version from doc_history, exactly as it was (rich blocks, ' +
+      'colours, drawings and comments too), only when nothing changed since: "ifRev" = the `latest` that doc_history showed. Only ' +
+      'when the user asked for it.',
     inputSchema: {
       type: 'object',
-      properties: { doc: DOC, version: { type: 'integer', minimum: 1 }, ifRev: { type: 'integer', minimum: 0 } },
+      properties: {
+        doc: DOC,
+        version: { type: 'integer', minimum: 1 },
+        ifRev: { type: 'integer', minimum: 0 },
+        page: { type: 'string', description: "Only this page (its id or title in that version); the doc's other pages stay." },
+      },
       required: ['doc', 'version', 'ifRev'],
       additionalProperties: false,
     },
