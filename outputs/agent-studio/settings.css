@@ -535,6 +535,16 @@ html[data-ui-scaled] .st-page {
   background: var(--accent-wash-2);
   color: var(--text-bright);
 }
+/* An Install that cannot run yet (a prerequisite is missing): the app's disabled primary (chat.css .primary:disabled), a solid
+   teal wash with readable text, not the half-transparent default. */
+.st-agent-head .st-primary:disabled,
+.st-agent-head .st-primary:disabled:hover {
+  opacity: 1;
+  background: var(--primary-disabled-bg);
+  box-shadow: inset 0 0 0 1px var(--primary-disabled-line);
+  color: var(--on-accent-disabled);
+  cursor: default;
+}
 .st-agent-head .st-cancel {
   margin-left: auto;
 }
@@ -553,7 +563,8 @@ html[data-ui-scaled] .st-page {
 .st-note .st-link,
 .st-agent-head .st-link,
 .st-beta-install .st-link,
-.st-beta-term-head .st-link {
+.st-beta-term-head .st-link,
+.st-beta-key .st-link {
   margin: 0 0 0 4px;
   padding: 0;
   border: 0;
@@ -772,6 +783,17 @@ html[data-ui-scaled] .st-page {
 }
 .st-beta-keylink {
   align-self: flex-start;
+}
+/* Links that start their own line sit on the same left edge as the hint lines and commands (no leading 4px). A Copy that wraps
+   inside a command row starts at the row's edge too: the row's gap spaces it otherwise. */
+.st-beta-key .st-beta-keylink,
+.st-beta-install .st-beta-docs,
+.st-beta-row .st-link {
+  margin-left: 0;
+}
+/* "Install uv first": its own line under the card's header, so Install and the status badge keep their place. */
+.st-beta-blocked {
+  margin: 4px 0 0;
 }
 .st-beta-needs {
   margin: 6px 0 0;

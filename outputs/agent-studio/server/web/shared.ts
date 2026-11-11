@@ -12,7 +12,7 @@ import * as installer from '../agents/installer.ts';
 import * as signin from '../agents/signin.ts';
 import { BETA_AGENTS } from '../agents/beta_catalog.ts';
 import { resolveBeta } from '../agents/beta_agents.ts';
-import { defaultProbe, refreshWindowsPath, type SetupProbe, setupView } from '../agents/beta_setup.ts';
+import { BUILTIN_NPM, builtinSetup, defaultProbe, refreshWindowsPath, type SetupProbe, setupView } from '../agents/beta_setup.ts';
 import { isDict, ValueError } from '../core/py.ts';
 import { codeWarning, HostUnavailable } from '../host/host_client.ts';
 import { packageContext, packageLabel } from '../state/paths.ts';
@@ -151,9 +151,12 @@ export async function describeAgents(
       }
     }
   }
+  const probe = defaultProbe(options.nodeCommand || '', recheck);
   for (const [agentId, letter] of [['omp', 'O'], ['claude', 'C'], ['codex', 'X']] as const) {
     const row = await builtinLaunch(options, settings, agentId);
     const installable = hasOwn(adapters.STUDIO_PACKAGES, agentId);
+    // Not installed and AIB installs it (npm): the card lists Node.js under "Needs first:" when it is missing or too old.
+    const setup = installable && row.source === 'missing' && BUILTIN_NPM.includes(agentId) ? await builtinSetup(probe) : null;
     // `launcher`: read-only text for Settings saying which program starts this agent (and where it came from)
     out.push({
       id: agentId,
@@ -178,9 +181,10 @@ export async function describeAgents(
         : '',
       packageBytes: sizes[agentId] || 0,
       signin: row.found ? signinView(options, agentId, state[agentId] ?? '') : null,
+      ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps the Python reference's shape otherwise
     });
   }
-  out.push(...(await describeBeta(options, snap, state, block, sizes, defaultProbe(options.nodeCommand || '', recheck))));
+  out.push(...(await describeBeta(options, snap, state, block, sizes, probe)));
   for (const a of snap.agents.custom) {
     const [found, problem] = commandStatus(a.command);
     out.push({
