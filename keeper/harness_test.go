@@ -73,9 +73,18 @@ func freePort(t *testing.T) int {
 
 func startKeeper(t *testing.T, data string, extra ...string) *keeperProc {
 	t.Helper()
+	return startKeeperWith(t, data, nil, extra...)
+}
+
+// startKeeperWith starts a keeper; tweak (if any) changes how it is started (creation flags) after hideWindow.
+func startKeeperWith(t *testing.T, data string, tweak func(*exec.Cmd), extra ...string) *keeperProc {
+	t.Helper()
 	args := append([]string{"serve", "--data", data, "--port", strconv.Itoa(freePort(t))}, extra...)
 	cmd := exec.Command(keeperBin, args...)
 	hideWindow(cmd)
+	if tweak != nil {
+		tweak(cmd)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

@@ -301,33 +301,33 @@ Deno.test({
   async fn() {
     await using lab = new KeeperStudioLab();
     const older = await keeperBinary();
-    const newer = await keeperWithVersion(lab.dir, '1.1.1');
-    assertEquals([await programVersion(older), await programVersion(newer)], ['1.1.0', '1.1.1']);
+    const newer = await keeperWithVersion(lab.dir, '1.2.1');
+    assertEquals([await programVersion(older), await programVersion(newer)], ['1.2.0', '1.2.1']);
     const extraArgs = ['--exit-after', '2s', '--orphan-after', '30s'];
-    // An AIB with the 1.1.0 keeper starts a long-running agent in it.
+    // An AIB with the 1.2.0 keeper starts a long-running agent in it.
     const first = new KeeperLink({ dataDir: lab.state, orphan: null, binary: older, extraArgs });
     const sleeper = { command: Deno.execPath(), args: ['eval', 'setTimeout(() => {}, 60000)'], cwd: lab.work };
     const one = first.spawn({ channel: 'held', ...sleeper }, {});
     await one.ready;
     const oldPid = readKeeperInfo(lab.state)!.pid;
     first.disconnect();
-    // The updated AIB ships 1.1.1: while 1.1.0 holds a live channel it is kept (the chat would die with it).
+    // The updated AIB ships 1.2.1: while 1.2.0 holds a live channel it is kept (the chat would die with it).
     const second = new KeeperLink({ dataDir: lab.state, orphan: null, binary: newer, extraArgs });
     const kept = await second.check();
-    assertEquals([kept.keeperVersion, kept.keeperPid, second.problem], ['1.1.0', oldPid, '']);
+    assertEquals([kept.keeperVersion, kept.keeperPid, second.problem], ['1.2.0', oldPid, '']);
     const two = second.spawn({ channel: 'also-old', ...sleeper }, {});
     await two.ready;
-    assertEquals(two.client!.keeperVersion, '1.1.0', 'new chats go to the running keeper meanwhile');
+    assertEquals(two.client!.keeperVersion, '1.2.0', 'new chats go to the running keeper meanwhile');
     // Every chat ends: the next start replaces the keeper with the newer one.
     for (const id of ['held', 'also-old']) await kept.kill(id, await kept.claim(id));
     await until(async () => (await kept.list()).every((ch) => !ch.live), 'channels ended', 10);
     const renewed = await second.check();
-    assertEquals(renewed.keeperVersion, '1.1.1');
+    assertEquals(renewed.keeperVersion, '1.2.1');
     await until(() => !pidAlive(oldPid), 'the old keeper exited', 10);
-    assertEquals(readKeeperInfo(lab.state)!.keeper, '1.1.1');
+    assertEquals(readKeeperInfo(lab.state)!.keeper, '1.2.1');
     const three = second.spawn({ channel: 'on-new', ...sleeper }, {});
     await three.ready;
-    assertEquals(three.client!.keeperVersion, '1.1.1');
+    assertEquals(three.client!.keeperVersion, '1.2.1');
     assertEquals(compareKeeperVersions('1.0.10', '1.0.9'), 1);
     assertEquals(compareKeeperVersions('1.0', '1.0.0'), 0);
     assertEquals(compareKeeperVersions('', '1.0.0'), -1);

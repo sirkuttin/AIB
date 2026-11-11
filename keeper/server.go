@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -227,7 +228,7 @@ func (c *conn) channelOp(req *request, body []byte) {
 	case "closeStdin":
 		code = ch.closeStdin(c, req.Epoch)
 	case "resize":
-		seq, code = ch.resize(c, req.Epoch, req.Cols, req.Rows)
+		seq, code = ch.resize(c, req.Epoch, req.Once, req.Cols, req.Rows)
 	case "signal":
 		code = ch.signal(c, req.Epoch, req.Signal)
 	case "kill":
@@ -293,6 +294,21 @@ func (c *conn) spawn(req *request) {
 		c.send(fail(req, errBadRequest, err.Error(), nil), nil)
 		return
 	}
+	if len(req.Label) > maxLabel || strings.ContainsRune(req.Label, 0) {
+		c.send(fail(req, errBadRequest, "label is longer than 16 KiB or contains NUL", nil), nil)
+		return
+	}
+	segBytes, maxBytes := k.opts.segBytes, k.opts.maxChannelBytes
+	if req.Scrollback != 0 {
+		// A bounded journal (terminals): at least the newest `scrollback` bytes of records are kept, at most about a quarter more,
+		// in segments of a quarter of it. The client chose the bound at spawn; the keeper only applies it.
+		if req.Scrollback < minScrollback || req.Scrollback > maxScrollback {
+			c.send(fail(req, errBadRequest, "scrollback must be 64 KiB..256 MiB", nil), nil)
+			return
+		}
+		segBytes = req.Scrollback / 4
+		maxBytes = req.Scrollback + segBytes
+	}
 	if k.opts.noSpawn {
 		c.send(fail(req, errSpawnFailed, "spawning is off", nil), nil)
 		return
@@ -307,12 +323,12 @@ func (c *conn) spawn(req *request) {
 		c.send(fail(req, errShuttingDown, "", nil), nil)
 		return
 	}
-	j, err := openJournal(filepath.Join(k.dir, "channels", id), k.opts.segBytes, k.opts.maxChannelBytes)
+	j, err := openJournal(filepath.Join(k.dir, "channels", id), segBytes, maxBytes)
 	if err != nil {
 		c.send(fail(req, errFailed, err.Error(), nil), nil)
 		return
 	}
-	ch := &channel{k: k, id: id, kind: kindName, command: req.Command, args: req.Args, cwd: req.Cwd,
+	ch := &channel{k: k, id: id, kind: kindName, command: req.Command, args: req.Args, cwd: req.Cwd, label: req.Label,
 		created: time.Now().UnixMilli(), j: j, once: map[string]struct{}{}, epoch: 1, owner: c}
 	if err := ch.start(spec); err != nil {
 		j.remove()

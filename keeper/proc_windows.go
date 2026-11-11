@@ -510,3 +510,10 @@ func openShared(path string) (*os.File, error) {
 
 // notifyStop: a GUI-subsystem program gets no console signals; AIB stops the keeper with the shutdown op.
 func notifyStop(*keeper) {}
+
+// allowCtrlC undoes what CREATE_NEW_PROCESS_GROUP (how AIB starts the keeper) does to Ctrl+C: a process started that way ignores
+// it, and so does everything it starts. Terminal shells in the keeper must get Ctrl+C from their pseudo console (stop a command),
+// so the keeper turns normal handling back on for itself before it starts anything; its children inherit that.
+func allowCtrlC() {
+	kernel32.NewProc("SetConsoleCtrlHandler").Call(0, 0)
+}

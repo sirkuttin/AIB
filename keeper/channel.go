@@ -45,6 +45,7 @@ type channel struct {
 	command string
 	args    []string
 	cwd     string
+	label   string
 	created int64
 	j       *journal
 
@@ -72,6 +73,7 @@ type channelInfo struct {
 	Command  string   `json:"command"`
 	Args     []string `json:"args,omitempty"`
 	Cwd      string   `json:"cwd,omitempty"`
+	Label    string   `json:"label,omitempty"`
 	Created  int64    `json:"created"`
 	Live     bool     `json:"live"`
 	Ended    int64    `json:"ended,omitempty"`
@@ -88,7 +90,7 @@ func (ch *channel) info(c *conn) channelInfo {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 	return channelInfo{
-		Channel: ch.id, Kind: ch.kind, Pid: ch.pid, Command: ch.command, Args: ch.args, Cwd: ch.cwd, Created: ch.created,
+		Channel: ch.id, Kind: ch.kind, Pid: ch.pid, Command: ch.command, Args: ch.args, Cwd: ch.cwd, Label: ch.label, Created: ch.created,
 		Live: ch.live, Ended: ch.ended, ExitCode: ch.exitCode, Reason: ch.reason, Epoch: ch.epoch, First: first, Last: last,
 		Owner: c != nil && ch.owner == c,
 	}
@@ -298,7 +300,7 @@ func (ch *channel) closeStdin(c *conn, epoch uint64) string {
 	return ""
 }
 
-func (ch *channel) resize(c *conn, epoch uint64, cols, rows int) (uint64, string) {
+func (ch *channel) resize(c *conn, epoch uint64, once string, cols, rows int) (uint64, string) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 	if !ch.checkOwnerLocked(c, epoch) {
@@ -306,6 +308,11 @@ func (ch *channel) resize(c *conn, epoch uint64, cols, rows int) (uint64, string
 	}
 	if !ch.live {
 		return 0, errEnded
+	}
+	if once != "" {
+		if _, used := ch.once[once]; used {
+			return 0, errDuplicate
+		}
 	}
 	if ch.kind != "pty" {
 		return 0, errUnsupported
@@ -315,6 +322,9 @@ func (ch *channel) resize(c *conn, epoch uint64, cols, rows int) (uint64, string
 	}
 	if err := ch.proc.Resize(cols, rows); err != nil {
 		return 0, errFailed
+	}
+	if once != "" {
+		ch.once[once] = struct{}{}
 	}
 	body, _ := json.Marshal(ptySize{Cols: cols, Rows: rows})
 	seq, _ := ch.j.append(kindResize, body)
@@ -400,7 +410,7 @@ func (k *keeper) loadIndex() error {
 			k.logf("journal %s: %v", info.Channel, err)
 			continue
 		}
-		ch := &channel{k: k, id: info.Channel, kind: info.Kind, command: info.Command, args: info.Args, cwd: info.Cwd,
+		ch := &channel{k: k, id: info.Channel, kind: info.Kind, command: info.Command, args: info.Args, cwd: info.Cwd, label: info.Label,
 			created: info.Created, j: j, pid: info.Pid, once: map[string]struct{}{}, ended: info.Ended,
 			exitCode: info.ExitCode, reason: info.Reason}
 		if info.Ended == 0 {

@@ -290,3 +290,6 @@ func notifyStop(k *keeper) {
 		k.stop("shutdown")
 	}()
 }
+
+// allowCtrlC: nothing to do on POSIX (a pty's foreground group gets SIGINT from the line discipline).
+func allowCtrlC() {}
