@@ -17,6 +17,7 @@ import { pyTypeName, truthy } from '../transcripts/pycompat.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { join, normpath } from '../platform/ospath.ts';
 import { DOC_TOOL_NAMES, DOC_TOOLS } from '../docs/tool_defs.ts';
+import { DRAWING_TOOL_NAMES, DRAWING_TOOLS } from '../docs/drawing/tool_defs.ts';
 
 type Json = Record<string, unknown>;
 
@@ -525,7 +526,7 @@ async function docTool(ctx: ToolContext, name: string, args: Json): Promise<Json
   return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(ok ? {} : { isError: true }) };
 }
 const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
-  [...DOC_TOOL_NAMES].map((name) => [name, (ctx, args) => docTool(ctx, name, args)]),
+  [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES].map((name) => [name, (ctx, args) => docTool(ctx, name, args)]),
 );
 
 function handlers(ctx: ToolContext): Record<string, Handler> {
@@ -565,7 +566,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
     });
   }
   if (method === 'ping') return ok({});
-  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...DOC_TOOLS] });
+  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
   if (method === 'tools/call') {
     const name = Object.hasOwn(params, 'name') ? params.name : null;
     if (Array.isArray(name) || isDict(name)) throw new PyError('TypeError', `unhashable type: '${pyTypeName(name)}'`);

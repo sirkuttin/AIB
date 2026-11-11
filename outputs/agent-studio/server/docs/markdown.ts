@@ -184,6 +184,17 @@ interface Parsed {
 
 const para = (content: PMJson[]): PMJson => (content.length ? { type: 'paragraph', content } : { type: 'paragraph' });
 
+/** A drawing's picture next to the Markdown copy: <name>.assets/<drawing id>.excalidraw.svg (server/docs/drawing/assets.ts). */
+export const DRAWING_SRC = /^(?:\.\/)?[^/\\<>]+\.assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.excalidraw\.svg$/;
+
+/** A paragraph that is just a drawing's picture (no title, no link) is the drawing block. */
+function drawingOf(p: PMJson): PMJson {
+  const img = p.content?.length === 1 ? p.content[0] : null;
+  const a = img?.type === 'image' ? img.attrs ?? {} : null;
+  const m = a && !a.href && !a.title && !img!.marks?.length ? DRAWING_SRC.exec(String(a.src ?? '')) : null;
+  return m ? { type: 'drawing', attrs: { drawing: m[1], caption: String(a!.alt ?? ''), src: String(a!.src) } } : p;
+}
+
 /** Can `l` end a paragraph (start another block)? */
 function interrupts(lines: string[], i: number): boolean {
   const l = lines[i];
@@ -362,7 +373,7 @@ function parseBlocks(lines: string[], top = false): Parsed[] {
           end: i,
           style: { setext: true },
         });
-      } else out.push({ node: para(parseInline(text)), start, end: i });
+      } else out.push({ node: drawingOf(para(parseInline(text))), start, end: i });
     }
   }
   return out;
@@ -983,6 +994,8 @@ export function serializeBlock(
       return typeof style.rule === 'string' ? style.rule : '---';
     case 'rawBlock':
       return String(a.text ?? '');
+    case 'drawing':
+      return serializeInline([{ type: 'image', attrs: { src: a.src, alt: a.caption || null, title: null } }], { level, style });
     case 'blockquote':
       return serializeChildren(node.content ?? [], {}, level).split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
     case 'bulletList':

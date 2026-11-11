@@ -12,9 +12,13 @@
 import { FILE, LINEAR, type Model, readModels, same } from './model.ts';
 import { modelsToScene, sceneToModels, type XEl } from './scene.ts';
 import { boxOf, union } from './geometry.ts';
-import { drawing_edit, type DrawingHub, type Op, type Refusal } from './tools.ts';
+import { drawing_edit, type DrawingHost, type Op, type Refusal } from './tools.ts';
 
-export function exportScene(hub: DrawingHub, drawingId: string) {
+/**
+ * `key` names the doc in the file's `aib` block (the store passes its stable doc id; a Y.Doc's guid is new every load), so an import
+ * knows the file was exported from this very drawing.
+ */
+export function exportScene(hub: DrawingHost, drawingId: string, key = hub.doc.guid) {
   const models = readModels(hub.doc, drawingId);
   return {
     type: 'excalidraw',
@@ -24,12 +28,12 @@ export function exportScene(hub: DrawingHub, drawingId: string) {
     appState: { viewBackgroundColor: '#ffffff', gridSize: 20 },
     files: {},
     // AIB's own key (Excalidraw ignores it): which elements were exported at which v, so a removed one reads as a delete.
-    aib: { doc: hub.doc.guid, drawing: drawingId, versions: Object.fromEntries(models.map((m) => [m.id, m.v])) },
+    aib: { doc: key, drawing: drawingId, versions: Object.fromEntries(models.map((m) => [m.id, m.v])) },
   };
 }
 
-export function exportJson(hub: DrawingHub, drawingId: string): string {
-  return JSON.stringify(exportScene(hub, drawingId), null, 2) + '\n';
+export function exportJson(hub: DrawingHost, drawingId: string, key?: string): string {
+  return JSON.stringify(exportScene(hub, drawingId, key), null, 2) + '\n';
 }
 
 // ---------- SVG ----------
@@ -97,8 +101,8 @@ function head(a: number[], b: number[], stroke: string): string {
   }" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
-export function exportSvg(hub: DrawingHub, drawingId: string): string {
-  const scene = exportScene(hub, drawingId);
+export function exportSvg(hub: DrawingHost, drawingId: string, key?: string): string {
+  const scene = exportScene(hub, drawingId, key);
   const els = scene.elements.filter((e) => !e.isDeleted);
   const pad = 20;
   const boxes = els.map((e) => boxOf({ ...e, v: 0 } as Model)).concat(
@@ -138,21 +142,34 @@ export async function sceneFromSvg(svg: string): Promise<string> {
 // ---------- import ----------
 
 export type ImportResult = { ok: true; applied: string[]; refused: Refusal[] };
+export type ImportOptions = {
+  allowDetach?: boolean;
+  /** The doc key the file was exported under (see exportScene); default the Y.Doc's guid. */
+  key?: string;
+  /** The transaction origin (default FILE; the store passes the doc core's file origin). */
+  origin?: unknown;
+  /** Rebuilding a drawing the doc does not hold (a Markdown copy read in): who made each element comes from the file. */
+  rebuild?: boolean;
+};
 
 /** Back from a file (after an agent edited it with file tools): each element on its own, through the guarded edit. */
-export function importJson(hub: DrawingHub, drawingId: string, text: string, opts: { allowDetach?: boolean } = {}): ImportResult {
+export function importJson(hub: DrawingHost, drawingId: string, text: string, opts: ImportOptions = {}): ImportResult {
   const data = JSON.parse(text);
   const fileEls: XEl[] = (data.elements ?? []).filter((e: XEl) => !e.isDeleted);
   const fileModels = sceneToModels(fileEls);
   const fileVersion = new Map(fileEls.map((e) => [e.id, e.version as number]));
-  const exported: Record<string, number> = data.aib?.doc === hub.doc.guid && data.aib?.drawing === drawingId ? data.aib.versions ?? {} : {};
+  const key = opts.key ?? hub.doc.guid;
+  const exported: Record<string, number> = !opts.rebuild && data.aib?.doc === key && data.aib?.drawing === drawingId
+    ? data.aib.versions ?? {}
+    : {};
+  const madeBy = new Map(fileEls.map((e) => [e.id, e.customData?.createdBy === 'user' ? 'user' : 'agent']));
   const current = readModels(hub.doc, drawingId);
   const byId = new Map(current.map((m) => [m.id, m]));
   // Compare like with like: the current state through the same conversion, so defaults the file spells out are no change.
   const currentAsFile = sceneToModels(modelsToScene(current));
   const applied: string[] = [], refused: Refusal[] = [];
   const run = (ops: Op[], id: string) => {
-    const res = drawing_edit(hub, { drawing: drawingId, ops }, FILE);
+    const res = drawing_edit(hub, { drawing: drawingId, ops }, opts.origin ?? FILE);
     if (res.ok) applied.push(id);
     else refused.push(res);
   };
@@ -169,7 +186,17 @@ export function importJson(hub: DrawingHub, drawingId: string, text: string, opt
         continue;
       }
       run(
-        [{ op: 'add_raw', element: { ...fields, id, type: fields.type as string, v: 1, createdBy: 'agent', z: zOf.get(id) } as Model }],
+        [{
+          op: 'add_raw',
+          element: {
+            ...fields,
+            id,
+            type: fields.type as string,
+            v: 1,
+            createdBy: opts.rebuild ? madeBy.get(id) ?? 'agent' : 'agent',
+            z: zOf.get(id),
+          } as Model,
+        }],
         id,
       );
       continue;
@@ -186,12 +213,12 @@ export function importJson(hub: DrawingHub, drawingId: string, text: string, opt
   return { ok: true, applied, refused };
 }
 
-export async function importFile(hub: DrawingHub, drawingId: string, path: string, opts: { allowDetach?: boolean } = {}) {
+export async function importFile(hub: DrawingHost, drawingId: string, path: string, opts: ImportOptions = {}) {
   const text = await Deno.readTextFile(path);
   return importJson(hub, drawingId, path.endsWith('.svg') ? await sceneFromSvg(text) : text, opts);
 }
 
-export async function exportFiles(hub: DrawingHub, drawingId: string, basePath: string) {
+export async function exportFiles(hub: DrawingHost, drawingId: string, basePath: string) {
   await Deno.writeTextFile(`${basePath}.excalidraw`, exportJson(hub, drawingId));
   await Deno.writeTextFile(`${basePath}.excalidraw.svg`, exportSvg(hub, drawingId));
 }

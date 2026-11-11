@@ -9,6 +9,8 @@
  *   htmlInline  an inline raw HTML tag (<kbd>, <br>, ...), kept verbatim
  *   pending     a placeholder an agent planted ("intent"), to be filled by a later call; the user may type into it or delete it
  *   agentEdit   the mark on text an agent wrote (attribute `by`); never part of the Markdown
+ *   drawing     an Excalidraw drawing: `drawing` is its id under the Y.Doc's 'drawings' map (server/docs/drawing/), `caption` its
+ *               caption, `src` its picture next to the Markdown copy (<name>.assets/<id>.excalidraw.svg)
  * Changes here change both sides: rebuild the page bundle (tools/docs-vendor) in the same commit.
  */
 import { type AnyExtension, Mark, mergeAttributes, Node } from '@tiptap/core';
@@ -26,7 +28,7 @@ interface DomEl {
 
 export const AGENT_MARK = 'agentEdit';
 /** Bumped whenever the schema changes; the page refuses to bind to a server with another one. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const AgentEdit = Mark.create({
   name: AGENT_MARK,
@@ -82,6 +84,30 @@ export const Pending = Node.create({
   renderHTML: ({ node }) => ['div', { 'data-pending': '', 'data-intent': node.attrs.intent, class: 'pending' }, 0],
 });
 
+/** A drawing block: the shapes live in the Y.Doc's 'drawings' map under `drawing`; the block only places it in the doc. */
+export const Drawing = Node.create({
+  name: 'drawing',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: true,
+  addAttributes() {
+    return { drawing: { default: '' }, caption: { default: '' }, src: { default: '' } };
+  },
+  parseHTML: () => [{
+    tag: 'figure[data-drawing]',
+    getAttrs: (el: DomEl) => ({
+      drawing: el.getAttribute('data-drawing') ?? '',
+      caption: el.getAttribute('data-caption') ?? '',
+      src: el.getAttribute('data-src') ?? '',
+    }),
+  }],
+  renderHTML: ({ node }) => [
+    'figure',
+    { 'data-drawing': node.attrs.drawing, 'data-caption': node.attrs.caption, 'data-src': node.attrs.src, class: 'drawing' },
+  ],
+});
+
 /** Inline image (Markdown images sit in text); `href` holds the link of a linked image ([![alt](src)](href)). */
 const InlineImage = Image.extend({
   addAttributes() {
@@ -112,6 +138,7 @@ export function docExtensions(): AnyExtension[] {
     RawBlock,
     HtmlInline,
     Pending,
+    Drawing,
     AgentEdit,
   ];
 }

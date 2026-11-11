@@ -5,6 +5,7 @@
 import { DocRefusal } from './live_doc.ts';
 import type { DocStore } from './store.ts';
 import { DOC_TOOL_NAMES } from './tool_defs.ts';
+import { DRAWING_TOOL_NAMES, runDrawingTool } from './drawing/agent.ts';
 
 export { DOC_INSTRUCTIONS, DOC_TOOL_NAMES, DOC_TOOLS } from './tool_defs.ts';
 
@@ -22,7 +23,7 @@ export async function runDocTool(
   args: Json,
 ): Promise<[boolean, Json]> {
   try {
-    if (!DOC_TOOL_NAMES.has(tool)) throw new DocRefusal('bad_tool', `Unknown doc tool: ${tool}`);
+    if (!DOC_TOOL_NAMES.has(tool) && !DRAWING_TOOL_NAMES.has(tool)) throw new DocRefusal('bad_tool', `Unknown doc tool: ${tool}`);
     if (tool === 'doc_list') return [true, { docs: await store.list(projectRoot) }];
     if (tool === 'doc_create') {
       const markdown = args.markdown === undefined ? '' : args.markdown;
@@ -33,6 +34,7 @@ export async function runDocTool(
     const doc = await store.open(projectRoot, args.doc);
     await store.syncMirror(doc);
     const live = doc.live;
+    if (DRAWING_TOOL_NAMES.has(tool)) return await runDrawingTool(doc, agent, tool, args);
     const head = { doc: doc.name, file: doc.mirrorPath };
     const skipped = doc.skipped.length ? { fileEditsSkipped: doc.skipped.slice(-10) } : {};
     switch (tool) {

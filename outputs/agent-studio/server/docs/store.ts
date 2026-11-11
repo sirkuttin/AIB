@@ -27,6 +27,7 @@ import {
 } from './markdown.ts';
 import { DocRefusal, LiveDoc, type Meta, type Op, type Origin } from './live_doc.ts';
 import type { DocHistory } from './history.ts';
+import { syncDrawings } from './drawing/assets.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/;
@@ -291,6 +292,7 @@ export class DocStore {
       doc.dirty = true;
     }
     live.onChange = (by) => this.#touched(doc, by);
+    live.doc.getMap('drawings').observeDeep(() => this.#touched(doc, null)); // shapes: saved and written out like blocks
     live.beforeEdit = (by) => {
       if (doc.authors.size && !(doc.authors.size === 1 && doc.authors.has(by))) this.snapshot(doc);
     };
@@ -358,6 +360,7 @@ export class DocStore {
     }
     if (w.text !== doc.mirror.text) doc.dirty = true;
     doc.mirror = { ...doc.mirror, text: w.text, map: w.map, order: doc.live.topIds() };
+    await syncDrawings(doc);
     if (!doc.dirty) return;
     doc.dirty = false;
     await this.#saveState(doc);
@@ -390,6 +393,7 @@ export class DocStore {
   }
 
   async #sync(doc: OpenDoc): Promise<SkippedEdit[]> {
+    await syncDrawings(doc); // drawings first: their file edits are taken in before anything writes their files
     let text: string;
     try {
       text = await Deno.readTextFile(doc.mirrorPath);
