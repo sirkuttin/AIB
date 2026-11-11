@@ -541,7 +541,8 @@
       if (menu.node && menu.trigger === button) return closeMenu(true);
       openMenu(doc, button, {
         label: 'Agent',
-        items: chip.agents.map((a) => ({ value: a.id, name: a.name })),
+        // Beta agents come last, under a "Beta" group label (AgentChoice.menuItems gives them a.group).
+        items: chip.agents.map((a) => ({ value: a.id, name: a.name, group: a.group || '' })),
         current: chip.agentId,
         disabled: !!o.disabled,
         notes: [],

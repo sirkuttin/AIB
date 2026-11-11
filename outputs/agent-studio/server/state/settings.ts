@@ -19,17 +19,22 @@
  */
 import { clip, isDict, isStr, pyCompare, pyLen, pyStrip, ValueError } from '../core/py.ts';
 import {
+  BETA_IDS,
+  BETA_NAMES,
   BUILTIN_IDS,
   BUILTIN_NAMES,
   cleanAgent,
   type CustomAgent,
   hiddenEnv,
+  isBeta,
   isBuiltin,
   isCustom,
   isProvider,
   MAX_AGENTS,
   MAX_COMMAND,
+  MAX_ENV_VALUE,
 } from '../agents/agent_registry.ts';
+import { betaAgent } from '../agents/beta_catalog.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from './base.ts';
 import { entriesOf, now, put, quarantine, readJsonFile, saveJson } from './json.ts';
@@ -46,7 +51,9 @@ export interface Choice {
 }
 
 export interface Settings {
-  agents: { builtin: Record<string, boolean>; custom: CustomAgent[] };
+  /** beta / betaKeys: the Beta agents (beta_catalog.ts) turned on, and the API keys typed for them. Present only when not empty (a
+   * fresh store matches the Python one), hidden from public(). */
+  agents: { builtin: Record<string, boolean>; custom: CustomAgent[]; beta?: Record<string, boolean>; betaKeys?: Record<string, string> };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
   server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean };
   editors: { default: string };
@@ -122,6 +129,13 @@ export class SettingsStore extends JsonFileStore {
     for (const agentId of BUILTIN_IDS) {
       if (typeof builtin[agentId] === 'boolean') doc.agents.builtin[agentId] = builtin[agentId] as boolean;
     }
+    const beta = isDict(agents.beta) ? agents.beta : {};
+    for (const agentId of BETA_IDS) if (beta[agentId] === true) (doc.agents.beta ??= {})[agentId] = true; // off unless turned on
+    const keys = isDict(agents.betaKeys) ? agents.betaKeys : {};
+    for (const agentId of BETA_IDS) {
+      const key = this.betaKeyValue(keys[agentId]);
+      if (key && betaAgent(agentId)?.signin.keyEnv) (doc.agents.betaKeys ??= {})[agentId] = key;
+    }
     const taken = new Set<string>();
     for (const item of (Array.isArray(agents.custom) ? agents.custom : []).slice(0, MAX_AGENTS)) {
       let cleaned: CustomAgent;
@@ -162,6 +176,14 @@ export class SettingsStore extends JsonFileStore {
       doc.launchers[key] = this.launcherPath(Object.prototype.hasOwnProperty.call(launchers, key) ? launchers[key] : undefined);
     }
     return doc;
+  }
+
+  /** An API key as stored: one line of text, at most MAX_ENV_VALUE characters, else ''. */
+  static betaKeyValue(value: unknown): string {
+    if (!isStr(value)) return '';
+    const text = pyStrip(value);
+    for (const ch of text) if (ch.codePointAt(0)! < 32 || ch.codePointAt(0) === 127) return '';
+    return pyLen(text) <= MAX_ENV_VALUE ? text : '';
   }
 
   static launcherPath(value: unknown): string {
@@ -228,6 +250,9 @@ export class SettingsStore extends JsonFileStore {
     const shown = deepCopy(this.data) as unknown as Dict & Settings;
     delete (shown.server as Partial<Settings['server']>).worktreePerChat; // hidden flag: the page sees nothing new
     for (const agent of shown.agents.custom as unknown as Dict[]) agent.env = hiddenEnv(agent.env); // names only
+    // Beta agents: the agent list (/api/live/settings agents rows) says which are on and which have a key; never the key itself.
+    delete (shown.agents as Partial<Settings['agents']>).beta;
+    delete (shown.agents as Partial<Settings['agents']>).betaKeys;
     return { revision: `${this.nonce}.${this.counter}`, settings: shown, warning: this.warning };
   }
 
@@ -237,6 +262,17 @@ export class SettingsStore extends JsonFileStore {
 
   customAgent(agentId: string): CustomAgent | null {
     return this.customAgents().find((a) => a.id === agentId) ?? null;
+  }
+
+  /** A Beta agent is off until the person turns it on. */
+  betaEnabled(agentId: string): boolean {
+    return this.snapshot().agents.beta?.[agentId] === true;
+  }
+
+  /** The API key typed for a Beta agent ('' when none). Never sent to the page. */
+  betaKey(agentId: string): string {
+    const keys = this.snapshot().agents.betaKeys ?? {};
+    return Object.prototype.hasOwnProperty.call(keys, agentId) ? keys[agentId] : '';
   }
 
   builtinEnabled(agentId: string): boolean {
@@ -307,11 +343,16 @@ export class SettingsStore extends JsonFileStore {
 
   #applyAgents(work: Settings, value: unknown): void {
     const patch = section(value, 'agents');
-    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove'])) throw new ValueError('Unknown agents setting');
+    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey'])) throw new ValueError('Unknown agents setting');
     for (const [agentId, enabled] of Object.entries(section(patch.enabled, 'agents'))) { // on/off only: nothing else is touched
       if (typeof enabled !== 'boolean') throw new ValueError('Agents can only be turned on or off');
       if (isBuiltin(agentId)) {
         work.agents.builtin[agentId] = enabled;
+        continue;
+      }
+      if (isBeta(agentId)) {
+        if (enabled) (work.agents.beta ??= {})[agentId] = true;
+        else if (work.agents.beta) delete work.agents.beta[agentId];
         continue;
       }
       const target = work.agents.custom.find((a) => a.id === agentId);
@@ -322,10 +363,21 @@ export class SettingsStore extends JsonFileStore {
       if (!isBuiltin(agentId) || typeof enabled !== 'boolean') throw new ValueError('Built-in agents can only be turned on or off');
       work.agents.builtin[agentId] = enabled;
     }
+    for (const [agentId, key] of Object.entries(section(patch.betaKey, 'agents'))) { // {id: 'key'} sets it, {id: '' | null} clears it
+      const agent = betaAgent(agentId);
+      if (!agent || !agent.signin.keyEnv) throw new ValueError('That agent does not take an API key');
+      if (key === null || key === '') {
+        if (work.agents.betaKeys) delete work.agents.betaKeys[agentId];
+        continue;
+      }
+      const cleaned = this.#cls().betaKeyValue(key);
+      if (!cleaned) throw new ValueError('The API key must be one line of text');
+      (work.agents.betaKeys ??= {})[agentId] = cleaned;
+    }
     const custom = work.agents.custom;
     if ('remove' in patch) {
       const target = patch.remove;
-      if (isBuiltin(target)) throw new ValueError('Built-in agents cannot be removed; turn them off instead');
+      if (isBuiltin(target) || isBeta(target)) throw new ValueError('Built-in agents cannot be removed; turn them off instead');
       if (!custom.some((a) => sameJson(a.id, target))) throw new ValueError('That agent is not in the list');
       work.agents.custom = custom.filter((a) => !sameJson(a.id, target));
       for (const choice of Object.values(work.defaults.projects)) {
@@ -350,6 +402,7 @@ export class SettingsStore extends JsonFileStore {
       const names = new Set([
         ...list.filter((a) => a !== existing).map((a) => a.name.toLowerCase()),
         ...Object.values(BUILTIN_NAMES).map((n) => n.toLowerCase()),
+        ...Object.values(BETA_NAMES).map((n) => n.toLowerCase()),
       ]);
       if (names.has(cleaned.name.toLowerCase())) throw new ValueError('Another agent already has that name');
       if (existing === null) list.push(cleaned);

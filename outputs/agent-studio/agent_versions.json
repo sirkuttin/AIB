@@ -16,5 +16,14 @@
       "packageBytes": 300000000,
       "minFreeBytes": 0
     }
+  },
+  "betaNote": "Beta agents (server/agents/beta_catalog.ts): not tested by us. Pinned to the exact version the ACP registry listed on 2026-11-11, with no lockfile (not reviewed): npm checks each package's own checksum and resolves its dependencies within their ranges. Sizes are not known yet.",
+  "betaAgents": {
+    "copilot": { "package": "@github/copilot", "version": "1.0.109" },
+    "gemini": { "package": "@google/gemini-cli", "version": "0.68.0" },
+    "qwen": { "package": "@qwen-code/qwen-code", "version": "0.27.2" },
+    "cline": { "package": "cline", "version": "3.0.74" },
+    "kimi": { "package": "@moonshot-ai/kimi-code", "version": "2.5.3" },
+    "kilo": { "package": "@kilocode/cli", "version": "7.8.27" }
   }
 }

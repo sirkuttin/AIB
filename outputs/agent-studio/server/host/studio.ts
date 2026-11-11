@@ -19,6 +19,9 @@ import * as agentRegistry from '../agents/agent_registry.ts';
 import * as adapters from '../agents/adapters.ts';
 import { Installer, InstallRefused } from '../agents/installer.ts';
 import { readCached as readSignIn, Signer, SignInRefused } from '../agents/signin.ts';
+import { betaAgent, isBeta } from '../agents/beta_catalog.ts';
+import { resolveBeta } from '../agents/beta_agents.ts';
+import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
@@ -246,6 +249,7 @@ export class Studio {
   reconnectWorkers: Promise<void>[] = [];
   installer: Installer | null = null;
   signer: Signer | null = null;
+  betaSigner: BetaSigner | null = null;
   /** Bootstrap's hostMode: 'keeper' when agents run in the keeper (they outlive this process), else 'in-process'. */
   get hostMode(): string {
     return this.keeper && this.keeperForNew ? 'keeper' : 'in-process';
@@ -526,11 +530,30 @@ export class Studio {
       if (!row.found) throw new ValueError(`${agentRegistry.BUILTIN_NAMES[provider]} is not available: ${row.problem}`);
       return [row.argv, {}];
     }
+    if (isBeta(provider)) return await this.#betaLaunch(provider, fresh);
     const agent = agentRegistry.isCustom(provider) ? this.settings.customAgent(provider) : null;
     if (agent === null) throw new ValueError('That agent is not in Settings (it may have been removed)');
     if (fresh && !agent.enabled) throw new ValueError(`${agent.name} is turned off in Settings`);
     for (const e of agent.env) registerSecret(e.value); // custom agent env values (often API keys) never reach a log line
     return [[agentRegistry.checkCommand(agent.command), ...agent.args], Object.fromEntries(agent.env.map((e) => [e.name, e.value]))];
+  }
+
+  /** A Beta agent (beta_catalog.ts): refused for a new chat while it is off; its API key, when one is stored, goes in its environment. */
+  async #betaLaunch(provider: string, fresh: boolean): Promise<[string[], Record<string, string>]> {
+    const agent = betaAgent(provider)!;
+    if (fresh && !this.settings.betaEnabled(provider)) throw new ValueError(`${agent.name} is turned off in Settings`);
+    const row = await resolveBeta(provider, { stateDir: this.hasStateDir ? this.stateDir : null, nodeCommand: this.options.nodeCommand || '' });
+    if (!row.found) throw new ValueError(`${agent.name} is not available: ${row.problem}`);
+    return [row.argv, this.betaEnv(provider)];
+  }
+
+  /** The environment a Beta agent gets on top of AIB's: its stored API key under the agent's variable (registered as a secret). */
+  betaEnv(provider: string): Record<string, string> {
+    const agent = betaAgent(provider);
+    const key = agent?.signin.keyEnv ? this.settings.betaKey(provider) : '';
+    if (!agent?.signin.keyEnv || !key) return {};
+    registerSecret(key); // never in a log line
+    return { [agent.signin.keyEnv]: key };
   }
 
   #agentOptions() {
@@ -1298,12 +1321,20 @@ export class Studio {
    */
   async signinCall(action: string, agentId: unknown, force: unknown = false): Promise<[number, unknown]> {
     this.signer ??= new Signer(this.stateDir, (agent) => builtinLaunch(this.#agentOptions(), this.settings, agent));
+    this.betaSigner ??= new BetaSigner(
+      this.stateDir,
+      (agent) => resolveBeta(agent, { stateDir: this.hasStateDir ? this.stateDir : null, nodeCommand: this.options.nodeCommand || '' }),
+      (agent) => this.betaEnv(agent),
+    );
     try {
       if (action === 'check' && !agentId) {
         const agents: Json = {};
         for (const a of Object.keys(adapters.STUDIO_PACKAGES)) agents[a] = await this.signer.check(a, !!force);
+        // Beta agents: only the turned-on ones are asked (a check starts the agent once, hidden)
+        for (const a of agentRegistry.BETA_IDS) if (this.settings.betaEnabled(a)) agents[a] = await this.betaSigner.check(a, !!force);
         return [200, { ok: true, agents }];
       }
+      if (isBeta(agentId)) return await this.#betaSigninCall(action, agentId as string, force);
       if (action === 'check') return [200, { ...(await this.signer.check(agentId, !!force)), ok: true }];
       if (action === 'start') return [200, { ...(await this.signer.start(agentId)), ok: true }];
       if (action === 'cancel') return [200, { ...(await this.signer.cancel(agentId)), ok: true }];
@@ -1314,6 +1345,16 @@ export class Studio {
       if (isRequestError(error)) return [400, { error: error.message }];
       throw error;
     }
+  }
+
+  /** A Beta agent's sign-in calls (beta_signin.ts): 'check', 'start', 'cancel', 'status'. */
+  async #betaSigninCall(action: string, agentId: string, force: unknown): Promise<[number, unknown]> {
+    const signer = this.betaSigner!;
+    if (action === 'check') return [200, { ...(await signer.check(agentId, !!force)), ok: true }];
+    if (action === 'start') return [200, { ...(await signer.start(agentId)), ok: true }];
+    if (action === 'cancel') return [200, { ...(await signer.cancel(agentId)), ok: true }];
+    if (action === 'status') return [200, { ...signer.status(agentId), ok: true }];
+    return [404, { error: 'Not found' }];
   }
 
   // ---- POST /api/live/<name> ----------------------------------------------------------------------------------------------

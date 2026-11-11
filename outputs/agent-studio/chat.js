@@ -2533,12 +2533,23 @@
     const sig = JSON.stringify(items);
     if (select.dataset.sig !== sig) {
       select.dataset.sig = sig;
+      // Items with a group (the Beta agents) go in an <optgroup> with that label, after the ones without.
+      const groups = new Map();
       select.replaceChildren(
-        ...items.map((item) => {
+        ...items.flatMap((item) => {
           const option = document.createElement('option');
           option.value = item.value;
           option.textContent = item.name;
-          return option;
+          if (!item.group) return [option];
+          if (groups.has(item.group)) {
+            groups.get(item.group).append(option);
+            return [];
+          }
+          const g = document.createElement('optgroup');
+          g.label = item.group;
+          g.append(option);
+          groups.set(item.group, g);
+          return [g];
         }),
       );
     }
@@ -2557,11 +2568,7 @@
     if (!lists.loading || lists.model) if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
     if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
     if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
-    fillSelect(
-      $('ncAgent'),
-      AgentChoice.AGENTS.map((a) => ({ value: a.id, name: a.name })),
-      newDraft.provider,
-    );
+    fillSelect($('ncAgent'), AgentChoice.menuItems(AgentChoice.AGENTS), newDraft.provider);
     fillSelect($('ncModel'), models, newDraft.model);
     fillSelect($('ncMode'), modes, newDraft.mode);
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
@@ -2628,7 +2635,11 @@
         settings,
         agent: name,
         agentId: newDraft.provider,
-        agents: AgentChoice.AGENTS.map((a) => ({ id: a.id, name: a.name })),
+        agents: AgentChoice.AGENTS.map((a) => ({
+          id: a.id,
+          name: a.name,
+          group: a.beta ? AgentChoice.BETA_GROUP : '',
+        })),
         extraChips,
       },
       {
@@ -4066,7 +4077,7 @@
   });
   // Settings page: the agent list and the defaults for new chats come from the server (Settings is the source of truth).
   function registryChanged() {
-    const agents = AgentChoice.AGENTS.map((a) => ({ value: a.id, name: a.name }));
+    const agents = AgentChoice.menuItems(AgentChoice.AGENTS);
     fillSelect($('provider'), agents, AgentChoice.isAgent($('provider').value) ? $('provider').value : agents[0].value);
     if (newDraft && !selected) {
       if (!AgentChoice.isAgent(newDraft.provider)) {

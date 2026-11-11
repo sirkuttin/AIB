@@ -16,7 +16,7 @@
  * refused, with one plain line, when it is bound to fail: Node missing or older than 22, too little disk space, or a path too long.
  */
 import * as adapters from './adapters.ts';
-import { BUILTIN_NAMES } from './agent_registry.ts';
+import { agentName } from './agent_registry.ts';
 import { APP_ROOT } from '../core/app.ts';
 import { writeJsonAtomic } from '../core/fs.ts';
 import { clip, isDict, pyJsonDumps, pyStr, ValueError } from '../core/py.ts';
@@ -192,6 +192,22 @@ export function loadAllowList(path?: string): Record<string, unknown> {
   const agents = isDict(data) ? data.agents : null;
   if (!isDict(agents)) throw new ValueError('The list of installable agents is not valid.');
   return agents;
+}
+
+/**
+ * The Beta agents' entries ({id: {package, version}}) from the `betaAgents` section of agent_versions.json, or {}. They are pinned to
+ * the exact version the ACP registry lists but have NO lockfile (not reviewed, see beta_catalog.ts): npm checks the package's own
+ * checksum, its dependencies resolve within their ranges. Only ids of the Beta catalog that ship on npm are kept.
+ */
+export function loadBetaAllowList(path?: string): Record<string, unknown> {
+  let data: unknown;
+  try {
+    data = JSON.parse(Deno.readTextFileSync(path || ALLOW_LIST));
+  } catch {
+    return {};
+  }
+  const beta = isDict(data) && isDict(data.betaAgents) ? data.betaAgents : {};
+  return Object.fromEntries(Object.entries(beta).filter(([id]) => Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, id)));
 }
 
 export const IDLE = { state: 'idle', stage: '', percent: 0, message: '' } as const;
@@ -397,12 +413,12 @@ export class Installer {
 
   // ---- what can be installed --------------------------------------------------------------------------------------
   allowList(): Record<string, unknown> {
-    return this.#allow !== null ? this.#allow : loadAllowList();
+    return this.#allow !== null ? this.#allow : { ...loadBetaAllowList(), ...loadAllowList() };
   }
 
   /** The allow-list entry for an agent id. Only ids that are known agents are looked at, so an id never becomes part of a path. */
   entry(agentId: unknown, verb = ''): AllowEntry {
-    const known = typeof agentId === 'string' && Object.prototype.hasOwnProperty.call(adapters.STUDIO_PACKAGES, agentId);
+    const known = typeof agentId === 'string' && adapters.installPackages(agentId) !== null;
     const found = known ? this.allowList()[agentId as string] : null;
     if (!isDict(found) || !found.package || !found.version) {
       // (Python's wording for an install; an uninstall says what was asked.)
@@ -418,7 +434,7 @@ export class Installer {
   // ---- checks before anything starts (each refusal is one plain line) -----------------------------------------------
   /** [node, npmCli]. Throws InstallRefused. Nothing has been created or started yet. */
   async preflight(agentId: string, entry: AllowEntry): Promise<[string, string]> {
-    const name = BUILTIN_NAMES[agentId] ?? agentId;
+    const name = agentName(agentId);
     const shown = abspath(this.versionDir(agentId, String(entry.version)));
     const length = [...shown].length;
     if (length > MAX_PATH_CHARS) {
@@ -560,7 +576,7 @@ export class Installer {
       return Promise.reject(error);
     }
     const id = agentId as string;
-    const name = BUILTIN_NAMES[id] ?? id;
+    const name = agentName(id);
     return this.#guard.run(async () => {
       const job = this.jobs.get(id);
       const holder = (readJson(this.#lockPath(id)) ?? {}).pid;
@@ -806,7 +822,11 @@ export class Installer {
   /** '' when the installed package is the pinned one and has a usable entry file inside the folder, else one plain line. */
   static verify(folder: string, pkg: string, version: string): string {
     const dir = pathOf(folder, 'node_modules', ...pkg.split('/'));
-    const all = [...(adapters.STUDIO_PACKAGES.codex ?? []), ...(adapters.STUDIO_PACKAGES.claude ?? [])];
+    const all = [
+      ...(adapters.STUDIO_PACKAGES.codex ?? []),
+      ...(adapters.STUDIO_PACKAGES.claude ?? []),
+      ...Object.values(adapters.BETA_PACKAGES).flat(),
+    ];
     const known: adapters.Package = all.find((p) => p[0] === pkg) ?? [pkg, ''];
     let installed: unknown;
     try {

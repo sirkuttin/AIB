@@ -5,6 +5,9 @@
  *   GET  /api/live/terminal?key=&cwd=&cols=&rows=[&shell=]  WebSocket (scope write). A browser cannot set headers on a WebSocket, so the page
  *                                                   offers two subprotocols: `aib-terminal` and `aib-token.<page token>`; the token is
  *                                                   checked as X-Studio-Token. An Origin header is required (browsers always send one).
+ *   GET  /api/live/terminal?signin=<agent>&cols=&rows=  the same socket, running a Beta agent's own sign-in command instead of a shell
+ *                                                   (ACP terminal auth: beta_signin.ts). The page never names the program: it is the
+ *                                                   agent's own launcher with the sign-in args the agent host saved, else the catalog's.
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
  */
@@ -13,6 +16,11 @@ import { authorize, Refusal, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
 import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import type { WebContext } from './server.ts';
+import { betaAgent } from '../agents/beta_catalog.ts';
+import { resolveBeta, signinArgv } from '../agents/beta_agents.ts';
+import { readTerminalArgs } from '../agents/beta_signin.ts';
+import type { ShellSpec } from '../platform/pty.ts';
+import type { WsLink } from '../platform/websocket.ts';
 
 export const TERMINAL_SOCKET = '/api/live/terminal';
 export const TERMINAL_PROTOCOL = 'aib-terminal';
@@ -59,6 +67,37 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   }
   const { link, response } = upgradeWebSocket(request, TERMINAL_PROTOCOL);
   const q = url.searchParams;
-  ctx.terminals.attach(link, q.get('key'), q.get('cwd'), q.get('cols'), q.get('rows'), q.get('shell') ?? '');
+  const signin = q.get('signin');
+  if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'));
+  else ctx.terminals.attach(link, q.get('key'), q.get('cwd'), q.get('cols'), q.get('rows'), q.get('shell') ?? '');
   return { response };
+}
+
+/** The program a Beta agent's terminal sign-in runs: [file, args], or a one-line reason it cannot run. */
+export async function signinCommand(ctx: Pick<WebContext, 'agentOptions'>, agentId: string): Promise<ShellSpec | string> {
+  const agent = betaAgent(agentId);
+  if (!agent || agent.signin.kind !== 'terminal') return 'That agent does not sign in through a terminal.';
+  const options = ctx.agentOptions;
+  const launch = await resolveBeta(agentId, { stateDir: options.stateDir ?? null, nodeCommand: options.nodeCommand || '' });
+  if (!launch.found) return `${agent.name} is not installed. ${launch.problem}`;
+  const saved = options.stateDir ? readTerminalArgs(options.stateDir, agentId) : null;
+  let argv: string[] | null;
+  try {
+    argv = signinArgv(launch, agentId, saved);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  return argv && argv.length ? { file: argv[0], args: argv.slice(1) } : `${agent.name} has no sign-in command AIB can run.`;
+}
+
+/** A sign-in terminal: key signin:<agent>, started in the home folder; it ends when the sign-in command ends. */
+async function attachSignin(ctx: WebContext, link: WsLink, agentId: string, cols: unknown, rows: unknown): Promise<void> {
+  const command = await signinCommand(ctx, agentId);
+  if (typeof command === 'string') {
+    link.send(JSON.stringify({ type: 'error', message: command, code: 'signin_unavailable' }));
+    link.close(1000, 'refused');
+    return;
+  }
+  const home = Deno.env.get(Deno.build.os === 'windows' ? 'USERPROFILE' : 'HOME') || Deno.cwd();
+  ctx.terminals.attach(link, `signin:${agentId}`, home, cols, rows, '', command);
 }
