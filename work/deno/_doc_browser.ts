@@ -4,29 +4,25 @@
  * own temporary profile: no window on the screen) driven over the DevTools protocol. Each page records its console errors and every
  * Content Security Policy violation.
  */
-import { assert } from "./_assert.ts";
-import {
-  makeContext,
-  type WebContext,
-  WebServer,
-} from "../../outputs/agent-studio/server/web/server.ts";
-import { docsTool } from "../../outputs/agent-studio/server/web/docs_routes.ts";
-import type { LiveBackend } from "../../outputs/agent-studio/server/host/backend.ts";
-import type { UpdateService } from "../../outputs/agent-studio/server/desktop/updater.ts";
-import type { Source } from "../../outputs/agent-studio/server/transcripts/monitor.ts";
+import { assert } from './_assert.ts';
+import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
+import { docsTool } from '../../outputs/agent-studio/server/web/docs_routes.ts';
+import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
+import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
-const sep = Deno.build.os === "windows" ? "\\" : "/";
+const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
 const BROWSERS = [
-  Deno.env.get("CHROME_PATH") ?? "",
-  "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-  "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-  "/usr/bin/google-chrome",
-  "/usr/bin/chromium",
-  "/usr/bin/chromium-browser",
+  Deno.env.get('CHROME_PATH') ?? '',
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
 ];
 export const browserPath = BROWSERS.find((p) => {
   try {
@@ -39,7 +35,7 @@ export const browserPath = BROWSERS.find((p) => {
 export async function temp(prefix: string): Promise<string> {
   return Deno.realPathSync(await Deno.makeTempDir({ prefix })).replace(
     /^\\\\\?\\/,
-    "",
+    '',
   );
 }
 
@@ -47,7 +43,7 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A Studio on a free port whose chats all work in one project; `chat()` sets what the agent host lists (the turn signal). */
 export async function studio(root?: string, port = 0) {
-  root ??= await temp("aib-docpage-");
+  root ??= await temp('aib-docpage-');
   const project = `${root}${sep}project`;
   const state = `${root}${sep}state-${Math.random().toString(36).slice(2, 7)}`;
   await Deno.mkdir(`${project}${sep}docs`, { recursive: true });
@@ -55,8 +51,8 @@ export async function studio(root?: string, port = 0) {
   const connections: Json[] = [];
   const queued: Json[] = [];
   const host = {
-    hostMode: "test",
-    liveInfo: () => Promise.resolve({ connections, instanceId: "test" }),
+    hostMode: 'test',
+    liveInfo: () => Promise.resolve({ connections, instanceId: 'test' }),
     liveList: () => Promise.resolve({ connections }),
     liveState: () => Promise.resolve({}),
     liveWrites: () => Promise.resolve({}),
@@ -70,7 +66,7 @@ export async function studio(root?: string, port = 0) {
     stateDir: state,
     host,
     updates: {} as UpdateService,
-    webInstanceId: "test",
+    webInstanceId: 'test',
     cliPort: 0,
     transcripts: {
       sessionCwd: () => Promise.resolve(project),
@@ -160,25 +156,25 @@ export class Browser {
     this.port = port;
   }
   static async launch(): Promise<Browser> {
-    assert(browserPath, "Chrome or Edge");
-    const profile = await temp("aib-docpage-profile-");
+    assert(browserPath, 'Chrome or Edge');
+    const profile = await temp('aib-docpage-profile-');
     const proc = new Deno.Command(browserPath!, {
       args: [
-        "--headless=new",
-        "--disable-gpu",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-extensions",
-        "--disable-background-networking",
-        "--disable-renderer-backgrounding",
-        "--disable-background-timer-throttling",
+        '--headless=new',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-renderer-backgrounding',
+        '--disable-background-timer-throttling',
         `--user-data-dir=${profile}`,
-        "--window-size=1280,900",
-        "--remote-debugging-port=0",
-        "about:blank",
+        '--window-size=1280,900',
+        '--remote-debugging-port=0',
+        'about:blank',
       ],
-      stdout: "null",
-      stderr: "null",
+      stdout: 'null',
+      stderr: 'null',
     }).spawn();
     let port = 0;
     for (let i = 0; i < 200 && !port; i++) {
@@ -190,20 +186,19 @@ export class Browser {
       } catch { /* not written yet */ }
       if (!port) await sleep(50);
     }
-    assert(port, "DevTools port");
+    assert(port, 'DevTools port');
     return new Browser(proc, profile, port);
   }
   async open(url: string, width = 1280, height = 900): Promise<Page> {
-    const target =
-      await (await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, {
-        method: "PUT",
-      })).json();
+    const target = await (await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, {
+      method: 'PUT',
+    })).json();
     const page = new Page(target.webSocketDebuggerUrl, target.id, this.port);
     await page.ready;
-    await page.send("Runtime.enable");
-    await page.send("Log.enable");
-    await page.send("Page.enable");
-    await page.send("Page.addScriptToEvaluateOnNewDocument", {
+    await page.send('Runtime.enable');
+    await page.send('Log.enable');
+    await page.send('Page.enable');
+    await page.send('Page.addScriptToEvaluateOnNewDocument', {
       source:
         "window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + (e.blockedURI || '') + ' ' + (e.sourceFile || '') + ':' + e.lineNumber));",
     });
@@ -247,26 +242,26 @@ export class Page {
         const w = this.#waiting.get(msg.id)!;
         this.#waiting.delete(msg.id);
         if (msg.error) {
-          w.reject(new Error(`${msg.error.message} ${msg.error.data ?? ""}`));
+          w.reject(new Error(`${msg.error.message} ${msg.error.data ?? ''}`));
         } else w.resolve(msg.result ?? {});
         return;
       }
-      if (msg.method === "Runtime.exceptionThrown") {
+      if (msg.method === 'Runtime.exceptionThrown') {
         const d = msg.params.exceptionDetails;
         this.errors.push(
-          `${d.text} ${d.exception?.description ?? ""}`.slice(0, 600),
+          `${d.text} ${d.exception?.description ?? ''}`.slice(0, 600),
         );
       } else if (
-        msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error"
+        msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error'
       ) {
         this.errors.push(
-          msg.params.args.map((a: Json) => a.value ?? a.description ?? "").join(
-            " ",
+          msg.params.args.map((a: Json) => a.value ?? a.description ?? '').join(
+            ' ',
           ).slice(0, 600),
         );
-      } else if (msg.method === "Log.entryAdded") {
+      } else if (msg.method === 'Log.entryAdded') {
         const e = msg.params.entry;
-        const text = String(e.text ?? "");
+        const text = String(e.text ?? '');
         this.logs.push(`${e.level} ${text}`);
         if (
           /Content Security Policy|Refused to (apply|execute|load|connect)/i
@@ -278,16 +273,25 @@ export class Page {
   send(method: string, params: Json = {}): Promise<Json> {
     return new Promise((resolve, reject) => {
       const id = this.#next++;
-      this.#waiting.set(id, { resolve, reject });
+      // a page that stops answering (a busy loop) fails the step with what it was doing, instead of hanging the run
+      const timer = setTimeout(() => {
+        if (!this.#waiting.has(id)) return;
+        this.#waiting.delete(id);
+        reject(new Error(`the page did not answer ${method} ${JSON.stringify(params).slice(0, 300)}`));
+      }, 20000);
+      this.#waiting.set(id, {
+        resolve: (v) => (clearTimeout(timer), resolve(v)),
+        reject: (e) => (clearTimeout(timer), reject(e)),
+      });
       this.#ws.send(JSON.stringify({ id, method, params }));
     });
   }
   async goto(url: string): Promise<void> {
-    await this.send("Page.navigate", { url });
+    await this.send('Page.navigate', { url });
     await this.waitFor('document.readyState === "complete"', 10000);
   }
   async viewport(width: number, height = 900): Promise<void> {
-    await this.send("Emulation.setDeviceMetricsOverride", {
+    await this.send('Emulation.setDeviceMetricsOverride', {
       width,
       height,
       deviceScaleFactor: 1,
@@ -296,7 +300,7 @@ export class Page {
   }
   /** Evaluate an expression (awaits promises) and return its value. */
   async eval<T = unknown>(expression: string): Promise<T> {
-    const r = await this.send("Runtime.evaluate", {
+    const r = await this.send('Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
@@ -304,9 +308,7 @@ export class Page {
     const d = r.exceptionDetails as Json | undefined;
     if (d) {
       throw new Error(
-        `page: ${(d.exception as Json)?.description ?? d.text}\n  in: ${
-          expression.slice(0, 300)
-        }`,
+        `page: ${(d.exception as Json)?.description ?? d.text}\n  in: ${expression.slice(0, 300)}`,
       );
     }
     return (r.result as Json)?.value as T;
@@ -327,9 +329,7 @@ export class Page {
       }
       if (Date.now() > end) {
         throw new Error(
-          `timed out waiting for ${what ?? expression}${
-            last instanceof Error ? ": " + last.message : ""
-          }`,
+          `timed out waiting for ${what ?? expression}${last instanceof Error ? ': ' + last.message : ''}`,
         );
       }
       await sleep(40);
@@ -337,19 +337,19 @@ export class Page {
   }
   /** Type text where the caret is (as an input method would: beforeinput/input events the editor handles). */
   async type(text: string): Promise<void> {
-    await this.send("Input.insertText", { text });
+    await this.send('Input.insertText', { text });
   }
   /** Press a key; modifiers: 1 Alt, 2 Ctrl, 4 Meta, 8 Shift. */
   async key(key: string, modifiers = 0): Promise<void> {
     const codes: Record<string, [string, number]> = {
-      Enter: ["Enter", 13],
-      Escape: ["Escape", 27],
-      ArrowDown: ["ArrowDown", 40],
-      ArrowUp: ["ArrowUp", 38],
-      Backspace: ["Backspace", 8],
-      Tab: ["Tab", 9],
-      Delete: ["Delete", 46],
-      F2: ["F2", 113],
+      Enter: ['Enter', 13],
+      Escape: ['Escape', 27],
+      ArrowDown: ['ArrowDown', 40],
+      ArrowUp: ['ArrowUp', 38],
+      Backspace: ['Backspace', 8],
+      Tab: ['Tab', 9],
+      Delete: ['Delete', 46],
+      F2: ['F2', 113],
     };
     const [code, vk] = codes[key] ??
       [`Key${key.toUpperCase()}`, key.toUpperCase().charCodeAt(0)];
@@ -360,15 +360,15 @@ export class Page {
       nativeVirtualKeyCode: vk,
       modifiers,
     };
-    await this.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
-    if (key === "Enter" && !modifiers) {
-      await this.send("Input.dispatchKeyEvent", {
-        type: "char",
+    await this.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    if (key === 'Enter' && !modifiers) {
+      await this.send('Input.dispatchKeyEvent', {
+        type: 'char',
         ...base,
-        text: "\r",
+        text: '\r',
       });
     }
-    await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
   }
   /** Click the centre of the first element matching a selector (a real mouse click). */
   async click(selector: string): Promise<void> {
@@ -380,36 +380,36 @@ export class Page {
       selector,
     ) as [number, number];
     const [x, y] = box;
-    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-    await this.send("Input.dispatchMouseEvent", {
-      type: "mousePressed",
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
       x,
       y,
-      button: "left",
+      button: 'left',
       clickCount: 1,
     });
-    await this.send("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
       x,
       y,
-      button: "left",
+      button: 'left',
       clickCount: 1,
     });
   }
   /** A PNG of the page (AIB_DOCPAGE_SHOTS=<folder> keeps them, for looking at the page). */
   async shot(name: string): Promise<void> {
-    const dir = Deno.env.get("AIB_DOCPAGE_SHOTS");
+    const dir = Deno.env.get('AIB_DOCPAGE_SHOTS');
     if (!dir) return;
-    const png = await this.send("Page.captureScreenshot", { format: "png" });
+    const png = await this.send('Page.captureScreenshot', { format: 'png' });
     await Deno.mkdir(dir, { recursive: true });
     Deno.writeFileSync(
       `${dir}/${name}.png`,
-      Uint8Array.from(atob(String(png.data ?? "")), (c) => c.charCodeAt(0)),
+      Uint8Array.from(atob(String(png.data ?? '')), (c) => c.charCodeAt(0)),
     );
   }
   /** CSP violations the page itself saw plus the ones the console reported. */
   async violations(): Promise<string[]> {
-    const own = await this.eval<string[]>("window.__csp || []").catch(() => []);
+    const own = await this.eval<string[]>('window.__csp || []').catch(() => []);
     return [...own, ...this.csp];
   }
   async close(): Promise<void> {

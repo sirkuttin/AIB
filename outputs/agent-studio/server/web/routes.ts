@@ -40,6 +40,9 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/docs/history/version       local docs: one version's pages, to show and compare
  *   POST /api/live/docs/history/restore       local docs: restore the whole doc or one page
  *   POST /api/live/docs/export                local docs: Markdown to the Downloads folder
+ *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
+ *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
+ *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
@@ -71,6 +74,9 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/docs/history/version', 'read', 'get'],
   ['POST', '/api/live/docs/history/restore', 'write', 'body'],
   ['POST', '/api/live/docs/export', 'write', 'body'],
+  ['POST', '/api/live/docs/duplicate', 'write', 'body'],
+  ['POST', '/api/live/docs/trash', 'write', 'body'],
+  ['POST', '/api/live/docs/reveal', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

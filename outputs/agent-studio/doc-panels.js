@@ -815,10 +815,11 @@
   // ---------------------------------------------------------------------------------------------------------------------------
   // The ⋯ menu: export, duplicate, show in Files, trash
 
-  $('btnMore').addEventListener('click', (e) => {
+  $('btnMore').addEventListener('click', () => {
+    const more = $('btnMore');
     const page = D.pages.find((p) => p.id === D.page);
     D.menu(
-      e.currentTarget,
+      more,
       [
         { head: 'Export Markdown' },
         {
@@ -841,7 +842,7 @@
           run: () => D.tell({ type: 'aib-doc:show-in-files', dir: D.info && D.info.dir }),
         },
         { sep: true },
-        { label: 'Move doc to trash…', danger: true, data: { act: 'trash' }, run: () => askTrash(e.currentTarget) },
+        { label: 'Move doc to trash…', danger: true, data: { act: 'trash' }, run: () => askTrash(more) },
       ],
       { cls: 'more-menu' },
     );
@@ -912,7 +913,7 @@
   // A drawing full screen (its server-made picture; editing is not on the doc page in v1)
 
   D.on('drawing', async (attrs) => {
-    const src = attrs.src ? await D.fileUrl(attrs.src) : null;
+    const src = await D.fileUrl(attrs.src || (attrs.drawing ? 'assets/' + attrs.drawing + '.excalidraw.svg' : ''));
     const box = el('div', 'drw-full');
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', attrs.caption || 'Drawing');

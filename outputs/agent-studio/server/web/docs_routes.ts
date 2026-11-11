@@ -35,6 +35,13 @@
  *                                                   server has not got all its keystrokes; agent_writing while an agent works here.
  *   POST /api/live/docs/export {doc, scope, page?}  Markdown to the Downloads folder (AIB_DOWNLOADS_DIR overrides it): scope "page"
  *                                                   (one page) or "all"; never overwrites (" (2)"); {path, name, folder}.
+ *   POST /api/live/docs/duplicate {doc, id}         "Duplicate doc": a new doc "<title> copy" in the same project with every page, its
+ *                                                   rich blocks and drawings (no agent marks, no comments), linked to chat `id`.
+ *                                                   {doc, name, title, dir}.
+ *   POST /api/live/docs/trash {doc}                 "Move doc to trash": a history version first (history stays in AIB's state), the
+ *                                                   open pages are told {type: "closed"}, then the doc's folder goes to the system
+ *                                                   trash (never deleted outright: no trash = refused, nothing removed).
+ *   POST /api/live/docs/reveal {doc, path}          "Show in folder" after an export: only a file AIB wrote into the Downloads folder.
  *   GET  /api/live/docs/socket?doc=<doc>&epoch=<e>  the editor's WebSocket (y-protocols sync + awareness, binary; AIB's control
  *                                                   messages as JSON text frames). A browser cannot set headers on a WebSocket, so
  *                                                   the page offers two subprotocols, `aib-docs` and `aib-token.<page token>`, as
@@ -54,7 +61,9 @@ import { DocRefusal } from '../docs/live_doc.ts';
 import { commentMessage } from '../docs/comments.ts';
 import type { OpenDoc } from '../docs/store.ts';
 import { agentName, authorNames } from '../docs/agents.ts';
-import { pageNodes, versionAib } from '../docs/aibdoc.ts';
+import { pageNodes, restoreDrawings, versionAib } from '../docs/aibdoc.ts';
+import { withoutAgentMarks } from '../docs/store.ts';
+import { osTrash, type TrashLayer } from '../desktop/project_delete.ts';
 import { parseDoc } from '../docs/markdown.ts';
 import { TOKEN_PROTOCOL_PREFIX } from './terminal_routes.ts';
 import type { WebContext } from './server.ts';
@@ -166,7 +175,10 @@ export function docsRoutes(): Map<string, Route> {
     'POST /api/live/docs/history/restore',
     onDoc(async (ctx, doc, args) => {
       const live = doc.live;
-      if (typeof args.client === 'number' && typeof args.clock === 'number' && (Y.decodeStateVector(Y.encodeStateVector(live.doc)).get(args.client) ?? 0) < args.clock) {
+      if (
+        typeof args.client === 'number' && typeof args.clock === 'number' &&
+        (Y.decodeStateVector(Y.encodeStateVector(live.doc)).get(args.client) ?? 0) < args.clock
+      ) {
         return [409, {
           error: 'Your last keystrokes have not reached AIB yet: nothing was restored. Try again in a moment.',
           code: 'in_flight',
@@ -187,7 +199,73 @@ export function docsRoutes(): Map<string, Route> {
     'POST /api/live/docs/export',
     onDoc(async (ctx, doc, args) => [200, { ok: true, ...(await exportMarkdown(ctx, doc, args)) }]),
   );
+  routes.set(
+    'POST /api/live/docs/duplicate',
+    onDoc(async (ctx, doc, args) => [200, { ok: true, ...(await duplicateDoc(ctx, doc, args)) }]),
+  );
+  routes.set('POST /api/live/docs/trash', onDoc(async (ctx, doc) => [200, { ok: true, ...(await trashDoc(ctx, doc)) }]));
+  routes.set('POST /api/live/docs/reveal', onDoc(async (_ctx, _doc, args) => [200, { ok: true, ...(await revealExport(args.path)) }]));
   return routes;
+}
+
+/** "Duplicate doc": every page as it stands now (rich blocks and drawings kept, agent marks and comments left out). */
+async function duplicateDoc(ctx: WebContext, doc: OpenDoc, args: Json): Promise<Json> {
+  await ctx.docs.flush(doc);
+  const aib = doc.aib.doc;
+  if (!aib) throw new DocRefusal('bad_op', 'The doc is still loading; try again in a moment.');
+  let copy: OpenDoc | null = null;
+  for (let k = 1; k < 100 && !copy; k++) {
+    const title = `${doc.title} copy${k === 1 ? '' : ` ${k}`}`.slice(0, 100);
+    if (await ctx.docs.exists(doc.projectRoot, title)) continue;
+    try {
+      copy = await ctx.docs.open(doc.projectRoot, title, '');
+    } catch (error) {
+      if (!(error instanceof DocRefusal) || !['doc_exists', 'folder_exists'].includes(error.code)) throw error;
+    }
+  }
+  if (!copy) throw new DocRefusal('bad_op', 'Too many copies of this doc already.');
+  const live = copy.live;
+  live.setPages(aib.pages.map((p) => ({ id: p.id, title: p.title, nodes: pageNodes(p).map(withoutAgentMarks) })), live.user);
+  if (aib.drawings.length) live.doc.transact(() => restoreDrawings(live.doc, aib.drawings), live.user);
+  const chat = ctx.artifacts.chatOf(String(args.id ?? ''));
+  if (chat) ctx.docs.link(copy, chat, true);
+  await ctx.docs.flush(copy);
+  return { doc: copy.id, name: copy.name, title: copy.title, dir: copy.dir };
+}
+
+/** "Move doc to trash": snapshot, tell the open pages, close it, then the folder to the system trash. */
+async function trashDoc(ctx: WebContext, doc: OpenDoc): Promise<Json> {
+  const layer = (ctx as unknown as { trashLayer?: TrashLayer }).trashLayer ?? osTrash;
+  const folder = doc.dir;
+  const kind = await layer.kind(folder);
+  if (kind === 'permanent') throw new DocRefusal('no_trash', 'There is no trash on this drive, so AIB did not delete the doc.');
+  ctx.docs.snapshot(doc, 'moved to the trash');
+  await ctx.docs.flush(doc);
+  doc.live.sendControl({ type: 'closed' });
+  ctx.docs.docs.delete(doc.id);
+  if (doc.timer !== null) clearTimeout(doc.timer);
+  if (doc.snapTimer !== null) clearTimeout(doc.snapTimer);
+  doc.agents.destroy();
+  doc.live.destroy();
+  await layer.trash(folder, kind);
+  return { trashed: doc.name };
+}
+
+/** "Show in folder" for a Markdown export: Explorer / Finder / the file manager on a file in the Downloads folder only. */
+async function revealExport(value: unknown): Promise<Json> {
+  const path = typeof value === 'string' ? value : '';
+  const dir = downloadsDir();
+  const inside = path.toLowerCase().startsWith((dir + sep).toLowerCase()) && !path.slice(dir.length).includes('..');
+  if (!inside || !(await Deno.stat(path).then((s) => s.isFile, () => false))) {
+    throw new DocRefusal('bad_op', 'That file is not an export in the Downloads folder.');
+  }
+  const os = Deno.build.os;
+  const [cmd, cmdArgs] = os === 'windows' ? ['explorer.exe', [`/select,${path}`]] : os === 'darwin' ? ['open', ['-R', path]] : [
+    'xdg-open',
+    [dir],
+  ];
+  new Deno.Command(cmd, { args: cmdArgs as string[], stdin: 'null', stdout: 'null', stderr: 'null' }).spawn().unref();
+  return { shown: path };
 }
 
 /** The user's comment actions, with the user's origin. */
@@ -201,7 +279,7 @@ function userComment(doc: OpenDoc, args: Json): Json {
         if (!el) throw new DocRefusal('block_gone', 'That text is gone; select it again.');
         const from = Number(args.from), to = Number(args.to);
         if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to <= from) {
-          throw new DocRefusal('bad_op', '`from` and `to` are the selection\'s offsets in the block\'s text');
+          throw new DocRefusal('bad_op', "`from` and `to` are the selection's offsets in the block's text");
         }
         range = { el, from, to };
       } else if (args.target) range = live.range(args.target, args.page);
@@ -223,7 +301,7 @@ function versionPages(text: string | null): Map<string, { title: string; key: st
   const out = new Map<string, { title: string; key: string }>();
   if (text === null) return out;
   const aib = versionAib(text);
-  if (aib) for (const p of aib.pages) out.set(p.id, { title: p.title, key: p.title + '\0' + JSON.stringify(pageNodes(p)) });
+  if (aib) { for (const p of aib.pages) out.set(p.id, { title: p.title, key: p.title + '\0' + JSON.stringify(pageNodes(p)) }); }
   else out.set('', { title: '', key: text });
   return out;
 }

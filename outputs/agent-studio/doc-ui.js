@@ -314,7 +314,9 @@
     for (const b of buttons) row.append(btn('btn sm ' + (b.cls || ''), b.label, () => (closeMenu(), b.run && b.run())));
     p.append(text, row);
     layer().append(p);
-    place(p, anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor, 'below');
+    let rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+    if (!rect || (!rect.width && !rect.height)) rect = $('docHead').getBoundingClientRect(); // the anchor was re-drawn meanwhile
+    place(p, rect, 'below');
     openMenu = { node: p, list: p, onClose: null };
     const first = row.querySelector('button');
     if (first) first.focus();
@@ -387,6 +389,15 @@
     ydoc.getMap('claims').observe(() => schedule('claims'));
     ydoc.getMap('pageRequests').observe(() => schedule('requests'));
     ydoc.getArray('pages').observeDeep(() => schedule('pages'));
+    let drawn = 0;
+    ydoc.getMap('drawings').observeDeep(() => {
+      // AIB writes a drawing's picture when it saves (about a second later): then the previews load it again
+      clearTimeout(drawn);
+      drawn = setTimeout(() => {
+        for (const k of [...fileUrls.keys()]) if (/\.excalidraw\.svg$/.test(k)) fileUrls.delete(k);
+        document.dispatchEvent(new Event('aib-drawings'));
+      }, 1500);
+    });
     ydoc.on('update', () => D.changeCount++);
     await session.synced;
     if (D.session !== session) return;
@@ -684,7 +695,11 @@
           return URL.createObjectURL(new Blob([r.text], { type: 'image/svg+xml' }));
         return null;
       })
-      .catch(() => null);
+      .catch(() => null)
+      .then((url) => {
+        if (!url) fileUrls.delete(path); // not written yet: ask again next time
+        return url;
+      });
     fileUrls.set(path, p);
     return p;
   }
@@ -699,7 +714,7 @@
         const a = (D.agents || []).find((p) => p.page === D.page) || (D.agents || [])[0];
         return a ? a.name : D.linked ? agentName(D.linked) : 'The agent';
       },
-      drawingSrc: (attrs) => (attrs.src ? fileUrl(attrs.src) : Promise.resolve(null)),
+      drawingSrc: (attrs) => fileUrl(attrs.src || (attrs.drawing ? 'assets/' + attrs.drawing + '.excalidraw.svg' : '')),
       assetSrc: (src) => fileUrl(src),
       openDrawing: (attrs) => D.emit('drawing', attrs),
       onTransaction: (tr) => D.emit('tx', tr),
@@ -1175,7 +1190,7 @@
           label: 'Delete page…',
           danger: true,
           disabled: D.pages.length < 2,
-          run: () => askDelete(p, anchor.closest('.pg') || anchor),
+          run: () => askDelete(p, $('pageList').querySelector(`.pg[data-page="${CSS.escape(p.id)}"]`) || anchor),
         },
       ],
       { side: 'right', onClose: () => anchor.setAttribute('aria-expanded', 'false') },

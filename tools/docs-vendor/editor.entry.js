@@ -682,7 +682,14 @@ function toggleView(page, node, getPos) {
     paint();
   });
   queueMicrotask(paint);
-  return { dom, contentDOM: content, update: (next) => next.type === node.type, stopEvent: (e) => caret.contains(e.target) };
+  return {
+    dom,
+    contentDOM: content,
+    update: (next) => next.type === node.type,
+    stopEvent: (e) => caret.contains(e.target),
+    // open/closed is a class on the view's own element: not a change to the doc
+    ignoreMutation: (m) => (m.type === 'attributes' && m.target === dom) || caret.contains(m.target),
+  };
 }
 
 function parseNumber(text) {
@@ -876,6 +883,9 @@ function drawingView(page, node) {
   };
   paint();
   dom.addEventListener('dblclick', () => page.options.openDrawing?.(current.attrs));
+  // the page says when the drawings changed (their pictures are written again): show the new one
+  const again = () => paint();
+  document.addEventListener('aib-drawings', again);
   return {
     dom,
     update(next) {
@@ -887,6 +897,7 @@ function drawingView(page, node) {
     },
     stopEvent: (e) => bar.contains(e.target),
     ignoreMutation: () => true,
+    destroy: () => document.removeEventListener('aib-drawings', again),
   };
 }
 
