@@ -314,7 +314,8 @@ test('terminal-ui.js and run-terminal-ui.js use the same chat key (provider:sess
   const split = fs.readFileSync(path.join(dir, 'split-ui.js'), 'utf8');
   assert.match(split, /dataset\.mirror = key/);
   const html = fs.readFileSync(path.join(dir, 'chat.html'), 'utf8');
-  const scripts = [...html.matchAll(/<script src="\/([^"]+)"/g)].map((m) => m[1]);
+  // themes.js runs first and is not deferred (it only puts the theme on <html>); the deferred scripts follow in order
+  const scripts = [...html.matchAll(/<script src="\/([^"]+)" defer/g)].map((m) => m[1]);
   assert.equal(scripts[0], 'view-prefs.js', 'view-prefs.js loads first (it fills localStorage for every other script)');
   assert.equal(scripts[1], 'terminal-ui.js', 'terminal-ui.js loads first after it');
   const md = scripts.indexOf('markdown.js');
