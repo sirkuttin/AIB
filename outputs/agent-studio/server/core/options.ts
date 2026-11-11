@@ -41,6 +41,11 @@ export interface Options {
   startInTray: boolean;
   /** The agent host's --exit-unattached-seconds: exit this long after the last app left with nothing working (0 = off). */
   exitUnattachedSeconds: number;
+  /**
+   * The agent host's --keeper: start new chats in the keeper (the web server passes it while it drains an older split host with
+   * the keeper usable). Without it a split host is the fallback for a keeper that cannot run, and its new chats are its children.
+   */
+  keeper: boolean;
 }
 
 export class UsageError extends Error {}
@@ -117,6 +122,7 @@ export const HOST_FLAGS: Record<string, [keyof Options, Kind]> = {
   '--idle-exit-minutes': ['idleExitMinutes', 'float'],
   '--tray': ['tray', 'true'],
   '--exit-unattached-seconds': ['exitUnattachedSeconds', 'float'],
+  '--keeper': ['keeper', 'true'],
 };
 
 export function defaults(): Options {
@@ -148,6 +154,7 @@ export function defaults(): Options {
     idleExitMinutes: 30,
     tray: false,
     exitUnattachedSeconds: 0,
+    keeper: false,
     startInTray: false,
   };
 }

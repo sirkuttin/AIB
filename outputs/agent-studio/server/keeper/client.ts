@@ -441,7 +441,10 @@ const versions = new Map<string, Promise<string | null>>();
 export function programVersion(binary: string): Promise<string | null> {
   let known = versions.get(binary);
   if (!known) {
-    known = new Deno.Command(binary, { args: ['version'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output().then(
+    // A program that is not there throws from output() itself, not as a rejection: start it inside the promise chain.
+    known = Promise.resolve().then(() =>
+      new Deno.Command(binary, { args: ['version'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output()
+    ).then(
       (out) => /AIB keeper (\S+?),/.exec(DEC.decode(out.stdout))?.[1] ?? null,
       () => null,
     );
@@ -584,7 +587,9 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
   const program = binary ?? await keeperBinary(dataDir);
   let ok = forwarders.get(program);
   if (!ok) {
-    ok = new Deno.Command(program, { args: ['mcp-forward', '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output().then(
+    ok = Promise.resolve().then(() =>
+      new Deno.Command(program, { args: ['mcp-forward', '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output()
+    ).then(
       (out) => out.success && DEC.decode(out.stdout).startsWith('mcp-forward'),
       () => false,
     );

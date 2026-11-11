@@ -64,7 +64,7 @@ export interface HelperArgs {
   /** The file the new app writes once it is up (<data>/updates/started-<ver>.ok): the only proof of a good start. */
   marker?: string;
   /**
-   * The data folder whose keeper holds the chats the old app left running (Install now with AIB_KEEPER=1). The helper stays connected
+   * The data folder whose keeper holds the chats the old app left running (Install now with the keeper). The helper stays connected
    * to that keeper from before the old app quits until the new version (or, after a rollback, the old one again) has started, so the
    * keeper always has a client and never runs its orphan command (which would start AIB from a half-swapped folder).
    */
@@ -156,7 +156,7 @@ export function defaultAlive(pid: number): boolean {
   }
 }
 
-/** AIB_ variables the new app keeps: the keeper switch (the new version must take the chats over in the same mode), a test's tray file. */
+/** AIB_ variables the new app keeps: AIB_KEEPER (the internal off switch: a test or debug run keeps its mode), a test's tray file. */
 const KEEP_ENV = new Set(['AIB_KEEPER', 'AIB_TEST_TRAY_STATE']);
 
 /** The new app must not inherit the old one's launch variables (nor an AppImage runtime's, nor deno desktop's serve address). */

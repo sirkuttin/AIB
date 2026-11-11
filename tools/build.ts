@@ -876,6 +876,13 @@ export async function main(argv: string[]): Promise<number> {
     const exes = listing.filter((e) => /\/Contents\/MacOS\/[^/]+$/.test(e.name));
     if (!exes.length || exes.some((e) => (e.mode & 0o111) === 0)) throw new Error(`${r.name}: Contents/MacOS files are not executable`);
   }
+  // Every zip carries the keeper next to the app's program (the keeper is always on; a missing one makes AIB fall back).
+  for (const r of rows.filter((r) => r.name.endsWith('.zip'))) {
+    const want = r.name.includes('-windows-') ? `${APP_NAME}/${KEEPER_NAME}.exe` : `${APP_NAME}.app/Contents/MacOS/${KEEPER_NAME}`;
+    const entry = readZipListing(await Deno.readFile(r.path)).find((e) => e.name === want);
+    if (!entry) throw new Error(`${r.name}: ${want} is missing`);
+    if (r.name.includes('-macos-') && (entry.mode & 0o111) === 0) throw new Error(`${r.name}: ${want} is not executable`);
+  }
   await Deno.writeTextFile(`${out}/SHA256SUMS`, sha256sums(rows));
   console.log(table(rows));
   const over = rows.filter((r) => r.bytes > SIZE_LIMIT);

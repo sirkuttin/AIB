@@ -10,7 +10,7 @@
  *   {"version":1,
  *    "agents":   {"builtin": {"omp": true, "claude": true, "codex": true}, "custom": [{id,name,command,args,env,enabled}]},
  *    "defaults": {"agent": "", "byAgent": {id: {model, mode}}, "projects": {projectKey: {agent, model, mode}}, "migrated": false},
- *    "server":   {"autoReconnect": true, "worktreePerChat": true, "autoUpdateCheck": true, "keeper": true (only when on)},
+ *    "server":   {"autoReconnect": true, "worktreePerChat": true, "autoUpdateCheck": true},
  *    "editors":  {"default": "" | "code" | "cursor" | "windsurf" | "devin"},
  *    "appearance": {"defaultView": "full" | "chat"},
  *    "launchers": {"claude": "", "codex": ""}}
@@ -48,7 +48,7 @@ export interface Choice {
 export interface Settings {
   agents: { builtin: Record<string, boolean>; custom: CustomAgent[] };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
-  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keeper?: boolean };
+  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean };
   editors: { default: string };
   appearance: { defaultView: string };
   launchers: Record<string, string>;
@@ -84,8 +84,8 @@ export class SettingsStore extends JsonFileStore {
     return {
       agents: { builtin: { omp: true, claude: true, codex: true }, custom: [] },
       defaults: { agent: '', byAgent: {}, projects: {}, migrated: false },
-      // worktreePerChat: on by default; hidden, never shown by public(). keeper (off by default for now; AIB_KEEPER still wins) is
-      // only present when on, so a store without it is byte for byte the Python reference's.
+      // worktreePerChat: on by default; hidden, never shown by public(). The keeper has no setting (it is always on): an old saved
+      // `server.keeper` is dropped on read.
       server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true },
       editors: { default: '' },
       appearance: { defaultView: 'full' },
@@ -151,7 +151,6 @@ export class SettingsStore extends JsonFileStore {
     if (typeof server.autoReconnect === 'boolean') doc.server.autoReconnect = server.autoReconnect;
     if (typeof server.worktreePerChat === 'boolean') doc.server.worktreePerChat = server.worktreePerChat;
     if (typeof server.autoUpdateCheck === 'boolean') doc.server.autoUpdateCheck = server.autoUpdateCheck;
-    if (server.keeper === true) doc.server.keeper = true;
     const editor = isDict(raw.editors) ? raw.editors : {};
     doc.editors.default = isStr(editor.default) && EDITOR_IDS.includes(editor.default) ? editor.default : '';
     const appearance = isDict(raw.appearance) ? raw.appearance : {};
@@ -258,14 +257,6 @@ export class SettingsStore extends JsonFileStore {
   /** Settings > About > Automatically check for updates (on by default: the owner chose automatic updates). */
   autoUpdateCheck(): boolean {
     return this.snapshot().server.autoUpdateCheck;
-  }
-
-  /**
-   * Settings > AIB server > "Keep chats running through updates and restarts (keeper)" (off by default for now). Read once at start
-   * through keeper/link.ts keeperSetting(), where AIB_KEEPER=1/0 overrides it.
-   */
-  keeper(): boolean {
-    return this.snapshot().server.keeper === true;
   }
 
   /** Hidden flag (on by default): a new chat in a git project gets its own git worktree. No page control sets it. */
@@ -452,12 +443,7 @@ export class SettingsStore extends JsonFileStore {
 
   #applyServer(work: Settings, value: unknown): void {
     const patch = section(value, 'server');
-    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keeper'])) throw new ValueError('Unknown server setting');
-    if ('keeper' in patch) {
-      if (typeof patch.keeper !== 'boolean') throw new ValueError('keeper must be true or false');
-      if (patch.keeper) work.server.keeper = true;
-      else delete work.server.keeper;
-    }
+    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck'])) throw new ValueError('Unknown server setting');
     if ('worktreePerChat' in patch) {
       if (typeof patch.worktreePerChat !== 'boolean') throw new ValueError('worktreePerChat must be true or false');
       work.server.worktreePerChat = patch.worktreePerChat;

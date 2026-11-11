@@ -71,6 +71,14 @@ class E2EFixture(Fixture):
         flags[flags.index('--claude-launcher') + 1] = str(LAUNCHER)
         return flags
 
+    def env(self):
+        """deno-split: AIB_KEEPER=0 (the split host is the fallback for a keeper that cannot run); deno: the keeper, always on,
+        unless AIB_KEEPER=0 is set where the tests run."""
+        env = dict(os.environ, AGENT_STUDIO_TEST='1')
+        if SERVER_KIND == 'deno-split':
+            env.setdefault('AIB_KEEPER', '0')
+        return env
+
     def program(self):
         if SERVER_KIND == 'python':
             return [sys.executable, str(_isolation.PY_REF / 'studio.py')]
@@ -87,7 +95,7 @@ class E2EFixture(Fixture):
         serve = ['serve', '--in-process'] if SERVER_KIND == 'deno' else (['serve'] if SERVER_KIND == 'deno-split' else [])
         process = subprocess.Popen([*self.program(), *serve, '--port', str(port), *self.agent_flags(), '--host-idle-minutes', '0', *extra],
                                    cwd=str(_isolation.APP), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                   env=dict(os.environ, AGENT_STUDIO_TEST='1'), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                                   env=self.env(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.processes.append(process)
         web = Web(process, port, log.name)
         if wait:
@@ -96,7 +104,7 @@ class E2EFixture(Fixture):
 
     def run_cli(self, *args):
         return subprocess.run([*self.program(), *self.agent_flags(), *args], cwd=str(_isolation.APP), capture_output=True, text=True, timeout=60,
-                              env=dict(os.environ, AGENT_STUDIO_TEST='1'), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                              env=self.env(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 
 
 class Chat:

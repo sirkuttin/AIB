@@ -2,9 +2,10 @@
  * The keeper gaps before default-on, one regression test (or more) each, with the real keeper (built from keeper/ with Go), the fake
  * ACP agent (work/fake_acp.py) and temp state folders:
  *
- *   1. The saved switch (Settings > server.keeper, AIB_KEEPER overrides): a Studio with it on starts chats in the keeper; with it
- *      off but a keeper holding chats, those are taken over and stay in the keeper until they end (then the keeper is let go), while
- *      new chats run as children.
+ *   1. The start decision (always on; no setting; AIB_KEEPER=0 an internal off switch; a keeper that cannot run falls back with
+ *      the reason for Settings > About): a Studio with it on starts chats in the keeper; without it but with a keeper holding
+ *      chats, those are taken over and stay in the keeper until they end (then the keeper is let go), while new chats run as
+ *      children.
  *   3. The MCP forwarder (`AIB-keeper mcp-forward`): an agent in the keeper gets the keeper's program as its artifact tool, never
  *      AIB's own, and the tool answers from whichever AIB runs now (it survives a switch to another Studio on another port).
  *   4. A split agent host left by an older version: stopped at once when nothing works there (one process now), drained otherwise,
@@ -19,7 +20,14 @@ import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink, keeperOverride, keeperSetting, keeperWanted } from '../../outputs/agent-studio/server/keeper/link.ts';
+import {
+  decideKeeper,
+  KeeperLink,
+  keeperProblem,
+  keeperSetting,
+  keeperWanted,
+  setKeeperDecision,
+} from '../../outputs/agent-studio/server/keeper/link.ts';
 import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { codeWarning, leaveSplitHost, pidAlive, readInfo, setDrainToKeeper } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
@@ -114,44 +122,79 @@ async function turn(studio: Studio, c: Connection, n: number, messageId: string)
   await until(() => !c.busy, `the end of ${messageId}`, 10);
 }
 
-// ---- 1. the saved switch ----------------------------------------------------------------------------------------------------
+// ---- 1. the start decision -------------------------------------------------------------------------------------------------
 
-Deno.test('keeper switch: off by default; the Settings value turns it on; AIB_KEEPER=1/0 wins over it', async () => {
+Deno.test('keeper decision: on by default with no setting; AIB_KEEPER=0 turns it off quietly; an old saved server.keeper is ignored', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-keeper-switch-' });
   try {
     const env = (value?: string) => (name: string) => (name === 'AIB_KEEPER' ? value : undefined);
-    assertEquals(keeperSetting(dir, env()), false, 'off by default');
+    const ok = { binary: () => keeperBinary() };
+    // An old saved switch, off: no error, dropped on read, never shown, and it decides nothing.
+    Deno.writeTextFileSync(`${dir}${SEP}studio-settings.json`, JSON.stringify({ version: 1, server: { keeper: false, autoReconnect: false } }));
     const settings = new SettingsStore(dir);
-    assertEquals(settings.keeper(), false);
-    await settings.update({ server: { keeper: true } });
-    assertEquals([new SettingsStore(dir).keeper(), keeperSetting(dir, env())], [true, true], 'saved, and read from the file');
-    assertEquals(keeperSetting(dir, env('0')), false, 'AIB_KEEPER=0 overrides the saved on');
-    await settings.update({ server: { keeper: false } });
-    assertEquals(keeperSetting(dir, env('1')), true, 'AIB_KEEPER=1 overrides the saved off');
-    assertEquals(keeperSetting(dir, env('yes')), false, 'anything else: the saved value');
-    assertEquals(keeperOverride(env('1')), true);
-    assertEquals(keeperOverride(env()), null);
+    const server = (settings.public().settings as Json & { server: Json }).server;
+    assertEquals([server.keeper, server.autoReconnect], [undefined, false], 'dropped; the rest of the file still applies');
     let refused = '';
-    await settings.update({ server: { keeper: 'on' } }).catch((e) => (refused = e.message));
-    assertEquals(refused, 'keeper must be true or false');
-    assertEquals((settings.public().settings as Json & { server: Json }).server.keeper, undefined, 'off: absent, as in the Python reference');
-    await settings.update({ server: { keeper: true } });
-    assertEquals((settings.public().settings as Json & { server: Json }).server.keeper, true, 'the page sees it');
-    await settings.update({ server: { keeper: false } });
-    assertEquals(keeperWanted(dir, env()), false, 'off and no keeper running: nothing changes');
+    await settings.update({ server: { keeper: true } }).catch((e) => (refused = e.message));
+    assertEquals(refused, 'Unknown server setting', 'no such setting any more (as in the Python reference)');
+    assertEquals(await decideKeeper(dir, { ...ok, env: env() }), true, 'on by default');
+    assertEquals([keeperSetting(), keeperProblem()], [true, '']);
+    assertEquals(await decideKeeper(dir, { ...ok, env: env('1') }), true, 'anything but 0: on');
+    assertEquals(await decideKeeper(dir, { ...ok, env: env('0') }), false, 'AIB_KEEPER=0: off');
+    assertEquals([keeperSetting(), keeperProblem()], [false, ''], 'the escape hatch shows nothing in the page');
+    assertEquals(keeperWanted(dir), false, 'off and no keeper running: nothing changes');
   } finally {
+    setKeeperDecision(null);
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test('keeper decision: a keeper that cannot run falls back (off) and says why for Settings > About', async () => {
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-keeper-missing-' });
+  try {
+    const env = () => undefined;
+    // The program is missing (a built app without it, or no Go in a source run): keeperBinary rejects.
+    const missing = () => Promise.reject(new Error('AIB-keeper.exe was not found next to C:\\AIB\\AIB.exe'));
+    assertEquals(await decideKeeper(dir, { env, binary: missing }), false);
+    assertEquals(keeperSetting(), false, 'new chats run without the keeper');
+    assert(keeperProblem().includes('was not found'), keeperProblem());
+    // The program is there but does not run (spawn fails).
+    assertEquals(await decideKeeper(dir, { env, binary: () => Promise.resolve(`${dir}${SEP}no-such-keeper.exe`) }), false);
+    assert(keeperProblem().includes('could not be run'), keeperProblem());
+    // A Studio built after the fallback: no keeper link, agents are its children.
+    const studio = new Studio({ ompCommand: 'unused', stateDir: dir, port: 0, ownersDir: null });
+    assertEquals([studio.keeper, studio.keeperForNew, studio.hostMode], [null, false, 'in-process']);
+    await studio.close();
+  } finally {
+    setKeeperDecision(null);
     Deno.removeSync(dir, { recursive: true });
   }
 });
 
 Deno.test({
-  name: 'keeper switch: a Studio started with it off takes over the chats a keeper holds; they stay there until they end; new chats run as children',
+  name: 'keeper fallback: a chat whose keeper cannot start runs as a child of AIB, and Settings > About says why',
   ...T,
   async fn() {
-    if (keeperOverride() !== null) return; // AIB_KEEPER is set in this shell: the constructor's choice is the variable's
+    await using lab = new Lab();
+    const keeper = new KeeperLink({ dataDir: lab.state, orphan: null, binary: `${lab.dir}${SEP}no-such-keeper.exe`, waitSeconds: 2 });
+    const studio = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
+    studio.ownerProbe = () => null;
+    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(), cwd, provider, options);
+    lab.studios.push(studio);
+    const c = await studio.connect('omp', lab.work);
+    assertEquals([c.channel, c.ready], [null, true], 'the chat works, outside the keeper');
+    assert(keeperProblem() !== '', 'the reason is kept for Settings > About');
+    setKeeperDecision(null);
+  },
+});
+
+Deno.test({
+  name: 'keeper fallback: a Studio started without the keeper takes over the chats a keeper holds; they stay there until they end; new chats run as children',
+  ...T,
+  async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio(); // the switch on (a test link)
+    const a = lab.studio(); // the keeper on (a test link)
     const c = await a.connect('omp', lab.work);
     assert(c.channel, 'started in the keeper');
     await turn(a, c, 2, 'm1');
@@ -159,19 +202,19 @@ Deno.test({
     const agentPid = c.process!.pid;
     lab.crash(a);
 
-    // What a launch with the saved switch off and a keeper still running builds (no link passed: the Studio decides).
+    // What a fallback start (the keeper not decided on) builds while a keeper still runs (no link passed: the Studio decides).
     const plain = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, ownersDir: null });
     assert(plain.keeper !== null, 'a keeper runs: a link to take its chats over');
     assertEquals([plain.keeperForNew, plain.hostMode], [false, 'in-process']);
     await plain.close();
-    await new SettingsStore(lab.state).update({ server: { keeper: true } });
+    setKeeperDecision(true); // what main.ts decides when the keeper can run
     const on = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, ownersDir: null });
+    setKeeperDecision(null);
     assertEquals([on.keeper !== null, on.keeperForNew, on.hostMode], [true, true, 'keeper']);
     await on.close();
-    await new SettingsStore(lab.state).update({ server: { keeper: false } });
 
     const b = lab.studio(false);
-    assertEquals(await b.adoptKeeper(), 1, 'taken over although the switch is off');
+    assertEquals(await b.adoptKeeper(), 1, 'taken over although new chats run without the keeper');
     const r = b.connections.get(c.id)!;
     assertEquals([r.ready, r.process!.pid, r.channel !== null], [true, agentPid, true]);
     const fresh = await b.connect('claude', lab.work); // another provider: the fake agent's session id is always the same
@@ -276,7 +319,7 @@ Deno.test({
 // ---- 4. a split agent host from an older version ----------------------------------------------------------------------------
 
 Deno.test({
-  name: 'split host: with the keeper switch on, a host with nothing working is stopped at once; one with working chats is drained and the banner says why',
+  name: 'split host: with the keeper on, a host with nothing working is stopped at once; one with working chats is drained and the banner says why',
   ...T,
   async fn() {
     await using fx = new Fixture();

@@ -119,8 +119,11 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
   helper waits for the app to exit, re-checks the hash, swaps the files (the old ones are renamed, not deleted, so a host still
   running from them keeps running), starts the new AIB, and rolls everything back if the new app cannot start. Its log is
   `<data>/updates/install.log`. The new app deletes the leftovers at startup.
-- **With the keeper (Settings > AIB server > "Keep chats running through updates and restarts (keeper)", or `AIB_KEEPER=1`; off
-  by default):** AIB is one process and the chats run in the keeper. If AIB crashes, the keeper starts it again **in the tray only**
+- **The keeper (always on; no setting):** AIB is one process and the chats run in the keeper (`AIB-keeper.exe` next to `AIB.exe`,
+  `AIB-keeper` on macOS and Linux: Task Manager shows AIB plus AIB-keeper.exe). The paragraph above is the fallback for a keeper
+  that cannot run (missing or refusing to start: AIB logs why and Settings > About AIB shows one line) and for an older version's
+  agent host, such as beta.3's: with nothing working it is stopped at once and AIB runs as one process; with a chat working it
+  drains as above, the banner says why, and the next start is one process. If AIB crashes, the keeper starts it again **in the tray only**
   (`--start-in-tray`: no window; menu Open AIB / status / Stop chats and quit; it quits by itself once nothing works and no window was
   opened). Agents' artifact tool runs from the keeper's folder (its MCP forwarder), so an update's `.old-*` files go at the next start
   even while chats run. Install now goes ahead

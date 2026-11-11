@@ -111,6 +111,13 @@ class Fixture:
         deadline = time.time() + 10
         while time.time() < deadline and any(host_client.pid_alive(pid) for pid in self.host_pids):
             time.sleep(0.1)
+        # A keeper started for this fixture's own state folder (agents in the keeper, the default): web servers killed above would
+        # be started again by it after 5 s (its orphan command), so it goes too, by its exact pid.
+        try:
+            import server_under_test
+            server_under_test.stop_keeper(self.state)
+        except Exception:
+            pass
         for log in self.logs:
             log.close()
 

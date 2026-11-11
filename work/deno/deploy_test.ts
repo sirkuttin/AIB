@@ -192,6 +192,9 @@ Deno.test({
     const { tmp, main } = fakeCheckouts();
     await using fixture = new Fixture();
     const started: number[] = []; // servers deploy started: stopped at the end by their exact PID
+    // The servers deploy starts get this process's environment: keep them in split mode too (the fixture's AIB_KEEPER=0).
+    const keeperEnv = Deno.env.get('AIB_KEEPER');
+    Deno.env.set('AIB_KEEPER', '0');
     try {
       const web = await fixture.startWeb();
       const port = web.port;
@@ -256,6 +259,8 @@ Deno.test({
       fixture.hostPids.add(newHost.pid as number);
       assert(Deno.readTextFileSync(`${LOGS}${SEP}agent-studio.stdout.log`).includes(`Agent Studio: http://127.0.0.1:${port}`));
     } finally {
+      if (keeperEnv === undefined) Deno.env.delete('AIB_KEEPER');
+      else Deno.env.set('AIB_KEEPER', keeperEnv);
       for (const pid of started) if (pid && pidAlive(pid)) taskkill(pid);
       Deno.removeSync(tmp, { recursive: true });
     }

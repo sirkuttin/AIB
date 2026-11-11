@@ -41,19 +41,17 @@ class GateContract(unittest.TestCase):
         with Server(kind='python') as reference:
             mine, theirs = self.server.bootstrap().json(), reference.bootstrap().json()
         self.assertEqual(sorted(mine), sorted(theirs))
-        # 'keeperOverride' is Deno-only (AIB_KEEPER=1/0 set where AIB started; the reference has no keeper): sent only with an override.
-        override = mine['server'].pop('keeperOverride', None)
-        if override is not None:
-            self.assertIn(os.environ.get('AIB_KEEPER'), ('0', '1'))
-            self.assertIs(override, os.environ['AIB_KEEPER'] == '1')
         self.assertEqual(sorted(mine['server']), sorted(theirs['server']))
         self.assertEqual(sorted(mine['features']), sorted(theirs['features']))
         for key in ('launchNonce', 'connections', 'migration', 'hostTakeoverWaiting', 'sandboxNotice', 'hostCodeWarning', 'packageContext'):
             self.assertEqual(mine[key], theirs[key], key)
         for key in ('version', 'versionLabel', 'aboutLine', 'webPort'):   # protocol is the agent host's (the in-process reference has none)
             self.assertEqual(mine['server'][key], theirs['server'][key], key)
-        self.assertEqual(mine['hostMode'], 'in-process' if '--in-process' in self.server.command() else 'split')
-        if mine['hostMode'] == 'in-process':   # the agents run in the web server, as in the reference
+        # The keeper is always on (agents in the keeper: 'keeper'); AIB_KEEPER=0 gives the plain modes. deno-split sets it.
+        keeper_off = os.environ.get('AIB_KEEPER') == '0' or server_kind() == 'deno-split'
+        plain = 'in-process' if '--in-process' in self.server.command() else 'split'
+        self.assertEqual(mine['hostMode'], plain if keeper_off else 'keeper')
+        if '--in-process' in self.server.command():   # the agents are managed by the web server, as in the reference
             self.assertEqual((mine['hostPid'], mine['instanceId']), (mine['pid'], mine['webInstanceId']))
 
     def test_bootstrap_refuses_a_cross_site_page(self):

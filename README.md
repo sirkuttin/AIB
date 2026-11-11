@@ -20,8 +20,10 @@ account, no telemetry, and your data stays with you.
 - **One copy per chat.** *"A chat divided against itself cannot stand."* In a git project, each chat works in its own
   worktree on its own branch, so two agents never overwrite each other. The **Changes** view brings a chat's work back into
   your project when you're ready. Always on in a git project; there is no switch for it.
-- **Agents keep running.** Agents live in a separate background process (the *agent host*), so closing, restarting or
-  updating the app doesn't cut off a turn.
+- **Agents keep running.** Running chats are held by a small separate program, the *keeper* (`AIB-keeper.exe` next to
+  `AIB.exe` in Task Manager), so restarting, updating or even a crash of the app doesn't cut off a turn: the next AIB picks
+  each chat up where it was. After a crash the keeper starts AIB again in the tray, without a window. Always on; there is
+  no switch for it.
 - **Agent setup built in.** AIB installs its own copy of the Claude Code and Codex adapters and runs each agent's own
   sign-in. It never asks for a password or API key.
 - **Artifacts.** Pages and files agents make are shown next to the chat, on their own origin, apart from the app.
@@ -41,9 +43,10 @@ link Claude Code and Codex, sign in, pick a project folder, and start a chat.
 
 ## Security model
 
-- **Local only.** The server and the agent host listen on `127.0.0.1` only. No telemetry, no remote scripts or fonts.
+- **Local only.** The server listens on `127.0.0.1` only; the keeper on `127.0.0.1` (Windows) or a user-only socket.
+  No telemetry, no remote scripts or fonts.
 - **Page token.** Every change needs a random per-process token that only the page AIB served receives, plus same-origin
-  checks, so other websites can't drive it. The agent host has its own token in a user-only file.
+  checks, so other websites can't drive it. The keeper has its own token in a user-only file.
 - **Agents own their sign-in.** AIB never reads, stores or sends their credentials.
 - **Agents use their own tools.** They run with your account's normal permissions; AIB refuses agents' terminal and file
   requests unless you turn them on.
@@ -57,7 +60,8 @@ cd outputs/agent-studio
 deno run -A server/main.ts --open
 ```
 
-It opens at `http://127.0.0.1:8767` and starts (or attaches to) the agent host. Other commands:
+It opens at `http://127.0.0.1:8767`. The keeper is built from `keeper/` with Go when AIB starts (once per change; Go 1.23 or newer on
+PATH, or `$GO`); without Go, AIB runs chats without the keeper and Settings > About AIB says so. Other commands:
 
 ```text
 deno run -A server/main.ts --in-process      # agents inside the web server (tests, debugging)

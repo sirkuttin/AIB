@@ -33,6 +33,7 @@ import { StateStore } from '../state/recovery.ts';
 import { tokenMatches } from '../web/security.ts';
 import { APP_ROOT } from '../core/app.ts';
 import * as log from '../core/log.ts';
+import { decideKeeper } from '../keeper/link.ts';
 import { HOST_FLAGS, type Options, parseOptions, UsageError } from '../core/options.ts';
 import { apply as applyStatePaths } from '../state/paths.ts';
 import { ensureHiddenConsole } from '../platform/console.ts';
@@ -418,7 +419,7 @@ export class AgentHost {
       runtime: RUNTIME,
       startedWith: this.startedWith(),
     });
-    await this.studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are (AIB_KEEPER=1)
+    await this.studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are
     this.studio.startAutoReconnect(); // chats that were open before the restart; nothing is sent
     return this.port;
   }
@@ -564,6 +565,8 @@ export async function hostMain(argv: string[]): Promise<number> {
   // stderr only: the web server starts the host with stdout and stderr going to <state>/agent-host.log, which is rotated by
   // copy-and-truncate, so a second handle on that file would fight the rotation.
   log.setup('agent-host', { level: options.logLevel });
+  // --keeper: the web server drains an older split host and the keeper can run, so this host's new chats start in the keeper.
+  if (options.keeper) await decideKeeper(String(options.stateDir));
   const tray = options.tray ? (await import('../desktop/host_tray.ts')).nativeHostTray : null;
   const host = new AgentHost(studioOptions(options, mcpServers), options.idleExitMinutes, options.hostPort, {
     tray,

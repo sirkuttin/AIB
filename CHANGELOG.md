@@ -8,15 +8,18 @@
   reported (agent-options.json in the data folder) and, when it has none, asks the agent once with a quiet session/new.
   The picks are applied as soon as the session exists, before the first message is sent; a pick the agent no longer
   offers or refuses is named and the chat starts with the agent's own setting.
-- Keeper (off by default): Settings > AIB server > "Keep chats running through updates and restarts (keeper)". It takes effect
-  the next time AIB starts; `AIB_KEEPER=1` or `AIB_KEEPER=0` where AIB is started overrides it, and Settings says so.
-- With the keeper on, running chats are held by a small separate program, AIB-keeper.exe (AIB-keeper on Linux and macOS), so
-  they keep running when AIB restarts or updates: the next AIB picks each chat up where it was.
+- Keeper, always on: running chats are held by a small separate program, AIB-keeper.exe (AIB-keeper on Linux and macOS),
+  so they keep running when AIB restarts, updates or crashes: the next AIB picks each chat up where it was. There is no
+  setting; an old saved keeper setting is ignored. In Task Manager you see AIB plus AIB-keeper.exe, not a separate agent host.
 - Install now works while chats are running: the new version takes them over. If it cannot (an older keeper, or a chat
   running outside it), Install now waits for the chats as before and says why.
-- AIB runs as one process plus AIB-keeper.exe, instead of the app and a separate agent host.
 - If AIB crashes, the keeper starts it again in the tray (no window); open it from the tray icon.
-- Turning the keeper off never stops a chat: chats it holds keep running until they end, new chats run as before.
+- Coming from beta.3 (separate agent host): Install now with no chat working hands over at once and AIB runs as one process.
+  With a chat working, that chat finishes in the old agent host (AIB says why); the next start runs as one process.
+- If the keeper cannot run (its program missing or refusing to start), AIB still works without it, as before (chats stop
+  on a restart), logs why, and Settings > About AIB shows one line saying so.
+- Every package ships the keeper next to the app (Windows and macOS zips, Linux AppImage and .deb), executable on Linux
+  and macOS; the build checks the zips for it.
 
 ## 0.1.0-beta.3 (beta)
 

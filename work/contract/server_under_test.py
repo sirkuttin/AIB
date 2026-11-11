@@ -3,8 +3,10 @@
 Contract tests (work/contract/test_*.py) speak only HTTP, so the same file checks both servers
 Which server: the AIB_SERVER environment variable.
 
-    AIB_SERVER=deno-split (default)  deno run -A outputs/agent-studio/server/main.ts serve ...   (Deno web server + Deno agent host)
-    AIB_SERVER=deno                  deno run -A outputs/agent-studio/server/main.ts serve --in-process ...
+    AIB_SERVER=deno-split (default)  deno run -A outputs/agent-studio/server/main.ts serve ...   (Deno web server + Deno agent host;
+                                     AIB_KEEPER=0 is set for it: the split host is the fallback when the keeper cannot run)
+    AIB_SERVER=deno                  deno run -A outputs/agent-studio/server/main.ts serve --in-process ...   (agents in the keeper,
+                                     always on; AIB_KEEPER=0 in the environment gives the plain in-process Python parity path)
     AIB_SERVER=python                python work/python-reference/studio.py --in-process ...   (the reference)
     AIB_SERVER_CMD='["prog", "arg"]'  any other command (JSON list); the standard flags below are appended
 
@@ -75,6 +77,41 @@ class Response:
         return f'<Response {self.status} {self.text[:200]!r}>'
 
 
+def stop_keeper(state_dir, wait=2):
+    """The keeper of a test's own temp state folder (<state>/keeper/keeper.json), if one still runs: it exits by itself once it
+    holds no chat and has no client; otherwise it is ended by its exact pid (it was started for this folder by this test)."""
+    if not state_dir:
+        return
+    try:
+        pid = int(json.loads((pathlib.Path(state_dir) / 'keeper' / 'keeper.json').read_text(encoding='utf-8'))['pid'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and pid_alive(pid):
+        time.sleep(0.2)
+    if pid_alive(pid):
+        try:
+            if sys.platform == 'win32':
+                subprocess.run(['taskkill', '/PID', str(pid), '/F'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            else:
+                os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+def pid_alive(pid):
+    if sys.platform == 'win32':
+        out = subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH', '/FO', 'CSV'], capture_output=True, text=True,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout
+        return f'"{pid}"' in out
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 class Server:
     """Start with `with Server() as s:`; s.get('/api/...') and s.post(...) send page-like requests with the token."""
 
@@ -102,6 +139,8 @@ class Server:
                                     *self.extra_args]
         env = dict(os.environ, AGENT_STUDIO_TEST='1', AGENT_STUDIO_STATE_DIR=str(self.state_dir), PYTHONDONTWRITEBYTECODE='1',
                    **self.env_extra)
+        if self.effective_kind() == 'deno-split':
+            env.setdefault('AIB_KEEPER', '0')   # split mode exists only as the fallback for a keeper that cannot run
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         self.process = subprocess.Popen(command, cwd=str(APP), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, creationflags=flags)
@@ -133,6 +172,14 @@ class Server:
         return self
 
     def __exit__(self, *_):
+        # A server whose agents run in the keeper: quit it the normal way first (POST /api/live/shutdown closes its chats, so the
+        # keeper exits by itself). Killed hard, its keeper would start it again after 5 s (the orphan command).
+        if self.process and self.process.poll() is None and self.port and self.token and self.effective_kind() != 'python':
+            try:
+                self.request('POST', '/api/live/shutdown', self.page_headers(), b'{}', timeout=10)
+                self.process.wait(15)
+            except Exception:  # noqa: BLE001  best effort; terminate() below
+                pass
         if self.process and '--in-process' not in self.command() + self.extra_args:
             # Not --in-process: the server started a detached agent host for the temp state folder. Ask it to stop (the normal
             # --stop-host path), or it outlives the test until its idle timeout.
@@ -151,6 +198,7 @@ class Server:
                 self.process.wait(10)
         if self.process and self.process.stdout:
             self.process.stdout.close()
+        stop_keeper(getattr(self, 'state_dir', None))
         shutil.rmtree(getattr(self, 'temp', ''), ignore_errors=True)
 
     def effective_kind(self):

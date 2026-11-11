@@ -3,10 +3,11 @@
  * Studio runs through it. A channel queues its operations until the keeper has spawned it, so a Connection can write right away,
  * exactly as it writes to a child's stdin.
  *
- * The switch (off by default): Settings > AIB server > "Keep chats running through updates and restarts (keeper)", saved as
- * `server.keeper` in studio-settings.json, read once when AIB starts (keeperSetting()). AIB_KEEPER=1 / AIB_KEEPER=0 in the environment
- * overrides it. With it off nothing here runs and agents are children of AIB as before, except that chats a keeper still holds (it
- * was on before) are taken over and stay in the keeper until they end (keeperWanted()).
+ * The keeper is always on (owner decision): main.ts decides once at start (decideKeeper()) whether it can run: the program is there
+ * (next to the app, or built from keeper/ with Go in a source run) and answers `version`. When it cannot, AIB falls back to the split
+ * agent host (or plain in-process agents), logs why and Settings > About shows one quiet line (keeperProblem()). AIB_KEEPER=0 in the
+ * environment turns it off: an internal escape hatch for tests and debugging, shown nowhere. A Studio built without a decision (unit
+ * tests, the split agent host) starts no new chat in the keeper, but still takes over chats a keeper already holds (keeperWanted()).
  */
 import { announce, getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
@@ -29,50 +30,72 @@ import {
 
 const log = getLogger('keeper');
 const ENC = new TextEncoder();
-const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
-/** The environment override: AIB_KEEPER=1 on, AIB_KEEPER=0 off, anything else null (the saved setting decides). */
-export function keeperOverride(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean | null {
-  let value: string | undefined;
+/** AIB_KEEPER=0 in the environment: the keeper is off (internal escape hatch for tests and debugging; never shown in the page). */
+export function keeperDisabled(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean {
   try {
-    value = env('AIB_KEEPER');
-  } catch {
-    return null;
-  }
-  return value === '1' ? true : value === '0' ? false : null;
-}
-
-/** The saved setting (studio-settings.json `server.keeper`), false when unset or unreadable. Read straight from the file. */
-export function savedKeeperSetting(dataDir: string | null): boolean {
-  if (!dataDir) return false;
-  try {
-    const doc = JSON.parse(Deno.readTextFileSync(`${dataDir.replace(/[\\/]+$/, '')}${SEP}studio-settings.json`));
-    return doc?.server?.keeper === true;
+    return env('AIB_KEEPER') === '0';
   } catch {
     return false;
   }
 }
 
-/**
- * The switch for this data folder: new chats start in the keeper and AIB runs as one process. AIB_KEEPER=1/0 wins over the saved
- * setting; without it, the setting (off by default).
- */
-export function keeperSetting(dataDir: string | null, env?: (name: string) => string | undefined): boolean {
-  return keeperOverride(env) ?? savedKeeperSetting(dataDir);
-}
-
-/** Kept for callers that only know the environment: true with AIB_KEEPER=1. */
-export function keeperEnabled(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean {
-  return keeperOverride(env) === true;
-}
+let decided: boolean | null = null;
+let problem = '';
 
 /**
- * Use the keeper for this data folder at all: the switch is on, or a keeper already runs there (it holds chats an earlier AIB started
- * with the switch on). With the switch off such chats are taken over and stay in the keeper until they end; new chats start outside
- * it. With the switch off and no keeper running, false: nothing changes.
+ * Decide once at start whether new chats run in the keeper (main.ts; the agent host when started with --keeper). On unless
+ * AIB_KEEPER=0, or the keeper program cannot be found, built or run: then off, the reason logged and kept for Settings > About
+ * (keeperProblem). A keeper that already runs for the folder counts as usable.
  */
-export function keeperWanted(dataDir: string | null, env?: (name: string) => string | undefined): boolean {
-  return keeperSetting(dataDir, env) || (!!dataDir && keeperRunning(dataDir));
+export async function decideKeeper(
+  dataDir: string | null,
+  options: { env?: (name: string) => string | undefined; binary?: () => Promise<string> } = {},
+): Promise<boolean> {
+  problem = '';
+  if (keeperDisabled(options.env)) {
+    announce('keeper', 'keeper: off (AIB_KEEPER=0 is set)');
+    return (decided = false);
+  }
+  if (dataDir && keeperRunning(dataDir)) return (decided = true);
+  try {
+    const binary = await (options.binary ?? (() => keeperBinary(dataDir ?? undefined)))();
+    if (!await programVersion(binary)) throw new Error(`${binary} could not be run (it did not answer "version")`);
+    return (decided = true);
+  } catch (error) {
+    noteKeeperProblem(error instanceof Error ? error.message : String(error));
+    announce('keeper', 'keeper: cannot run the keeper (%s); falling back to running agents without it', problem);
+    return (decided = false);
+  }
+}
+
+/** Set the decision directly (tests; the agent host told to use the keeper). */
+export function setKeeperDecision(on: boolean | null, why = ''): void {
+  decided = on;
+  problem = why;
+}
+
+/** Why the keeper is not used although it should be ('' = it is, or AIB_KEEPER=0 turned it off). Settings > About shows it. */
+export function keeperProblem(): string {
+  return problem;
+}
+
+/** A chat could not start in the keeper (spawn failed): remember why for Settings > About; '' clears it. */
+export function noteKeeperProblem(why: string): void {
+  problem = why.replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
+/** New chats start in the keeper: decideKeeper() said so in this process. False when nothing decided (unit tests, a split host). */
+export function keeperSetting(): boolean {
+  return decided === true;
+}
+
+/**
+ * Use the keeper for this data folder at all: new chats go there (keeperSetting), or a keeper already runs there holding chats from
+ * an earlier AIB: those are taken over and stay in the keeper until they end, while new chats start outside it.
+ */
+export function keeperWanted(dataDir: string | null): boolean {
+  return keeperSetting() || (!!dataDir && keeperRunning(dataDir));
 }
 
 /** What a channel's owner hears: the keeper's records and events, plus `lost` when the keeper connection ends. */

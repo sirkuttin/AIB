@@ -20,7 +20,7 @@ import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
 import './state/migrate.ts'; // registers the data move with paths.ts
 import { leaveSplitHost, pidAlive, readInfo, stopHost } from './host/host_client.ts';
-import { keeperSetting } from './keeper/link.ts';
+import { decideKeeper } from './keeper/link.ts';
 import { PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
@@ -191,13 +191,14 @@ export async function main(argv: string[]): Promise<void> {
   let studio: Studio | null = null;
   let host: LiveBackend;
   let webInstanceId: string;
-  // One process with the keeper (owner decision D3, docs/agent-host.md "One process with the keeper"): with the keeper switch on
-  // (Settings > AIB server, or AIB_KEEPER=1) the agents run in the keeper and outlive this process, so the separate agent host has no
-  // job left. With it off, a keeper that still holds chats from before is taken over by the Studio (in the agent host) and keeps them
-  // until they end; new chats are the host's children as without the keeper.
-  const keeperOn = !options.inProcess && keeperSetting(stateDir);
-  let merged = keeperOn && !hostRunning(await readInfo(stateDir));
-  if (keeperOn && !merged) {
+  // One process with the keeper (owner decisions D3 and "the keeper is always on", docs/agent-host.md "The keeper"): the agents run
+  // in the keeper and outlive this process, so the separate agent host has no job left. When the keeper cannot run (program missing,
+  // no Go in a source run, it does not start) decideKeeper logs why and AIB falls back to the split agent host (or, --in-process,
+  // agents as children of this process); Settings > About shows the reason. AIB_KEEPER=0 (tests, debugging) turns it off.
+  // A split host that still runs for the folder (an older version such as beta.3) is stopped when idle, else drained.
+  const keeperOn = await decideKeeper(stateDir);
+  let merged = !options.inProcess && keeperOn && !hostRunning(await readInfo(stateDir));
+  if (!options.inProcess && keeperOn && !merged) {
     merged = await leaveSplitHost(stateDir, (line) => {
       console.log(line);
       log.announce('studio', '%s', line);
@@ -210,12 +211,13 @@ export async function main(argv: string[]): Promise<void> {
     host = studio;
     webInstanceId = studio.instanceId;
     void studio.adoptKeeper(); // chats whose agents still run in the keeper: taken over now, while the server starts (state waits)
-    if (merged) log.announce('studio', 'one process: agents run in the keeper (keeper switch on), no separate agent host');
+    if (merged) log.announce('studio', 'one process: agents run in the keeper, no separate agent host');
   } else {
     webInstanceId = crypto.randomUUID().replaceAll('-', '');
     host = await attachHost({
       stateDir,
-      command: hostCommand(options),
+      // While it drains an older split host with the keeper usable, the host of this version (after the drain) uses the keeper too.
+      command: keeperOn ? [...hostCommand(options), '--keeper'] : hostCommand(options),
       port: options.port,
       webInstanceId,
       runtime: 'deno',

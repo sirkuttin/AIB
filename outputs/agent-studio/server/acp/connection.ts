@@ -405,7 +405,7 @@ export interface ConnectionOptions {
   /** false: the chat's worktree is still being made; startProcess() runs once its folder exists. */
   start?: boolean;
   capsFactory?: CapsFactory;
-  /** Run the agent in the keeper instead of as a child of this process (the AIB_KEEPER switch). */
+  /** Run the agent in the keeper instead of as a child of this process. */
   keeper?: KeeperLink | null;
   /** The connection id (a chat rebuilt from the keeper keeps the id it had). */
   id?: string;
@@ -666,7 +666,7 @@ export class Connection {
   /** The agent process; for a keeper-run agent a stand-in with only pid and kill (it is not our child). */
   process: Deno.ChildProcess | null = null;
   tree: { kill(): void } | null = null;
-  /** Set when this chat's agent runs in the keeper (AIB_KEEPER=1). */
+  /** Set when this chat's agent runs in the keeper. */
   readonly keeper: KeeperLink | null;
   /** The keeper channel of this chat's agent, or null for a child process. */
   channel: KeeperChannel | null = null;
@@ -792,7 +792,7 @@ export class Connection {
     this.#errorTask = this.#readErrors(child.stderr);
   }
 
-  // ---- the agent in the keeper (AIB_KEEPER=1) --------------------------------------------------------------------------------
+  // ---- the agent in the keeper ----------------------------------------------------------------------------------------------
   /** Start the agent as a keeper channel. Writes made before the keeper answers wait for it, in order. */
   #startInKeeper(): void {
     const [program, ...args] = this.command;

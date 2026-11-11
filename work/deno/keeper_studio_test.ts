@@ -1,5 +1,5 @@
 /**
- * Studio with agents in the keeper (the AIB_KEEPER switch on), in one process: a chat runs through the keeper; a Studio that
+ * Studio with agents in the keeper (always on), in one process: a chat runs through the keeper; a Studio that
  * "crashes" (drops its keeper connection without touching the agent) is replaced by a new Studio that rebuilds the chat from the
  * keeper's record at several points of a turn (streaming, a question waiting, after the answer, idle) and goes on live; the keeper
  * dying ends the agent and the chat comes back "Interrupted" without anything sent twice. Real keeper (built from keeper/ with

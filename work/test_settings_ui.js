@@ -68,6 +68,11 @@ test('search matches label, keywords and the section name, across sections', () 
   assert.deepEqual(ids('zzzzqqq'), []);
 });
 
+test('the keeper has no setting: it is always on, so no entry to find', () => {
+  assert.ok(!S.INDEX.some((e) => e.id === 'keeper'));
+  assert.ok(!S.INDEX.some((e) => e.keywords.includes('AIB_KEEPER')), 'the escape hatch is never shown');
+});
+
 test('every word must match; the best match comes first', () => {
   const ids = (q) => S.filterIndex(S.INDEX, q).map((e) => e.id);
   assert.ok(ids('agent default').includes('default-agent'));

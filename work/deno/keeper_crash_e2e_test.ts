@@ -1,6 +1,6 @@
 /**
- * The keeper with real processes, switched on by the saved setting (Settings > server.keeper, no AIB_KEEPER in the environment, so
- * the AIB the keeper starts again reads the switch from the data folder too): AIB (`serve`, one process: no agent host with the keeper) and the keeper, the fake
+ * The keeper with real processes, on by default (no setting; an old saved `server.keeper: false` is ignored; no AIB_KEEPER in the
+ * environment): AIB (`serve`, one process: no agent host with the keeper) and the keeper, the fake
  * agent mid-turn streaming. Killing AIB hard (TerminateProcess) leaves the agent running in the keeper; with no client for 5 s the
  * keeper starts AIB again (its orphan command, rule V1), and the new AIB rebuilds the chat from the keeper's record under the same
  * id: it is still streaming, the question shows once, answering it works, and the keeper's record shows nothing was sent twice.
@@ -29,7 +29,9 @@ class KeeperFixture extends Fixture {
   }
 
   override get env(): Record<string, string> {
-    return { ...super.env, AIB_KEEPER_BIN: this.keeperBin, FAKE_ACP_LOG: this.agentLog };
+    const env: Record<string, string> = { ...super.env, AIB_KEEPER_BIN: this.keeperBin, FAKE_ACP_LOG: this.agentLog };
+    delete env.AIB_KEEPER; // the default: the keeper on (the split-host fixture turns it off)
+    return env;
   }
 
   received(): Json[] {
@@ -94,8 +96,8 @@ Deno.test({
     const fixture = new KeeperFixture();
     try {
       fixture.keeperBin = await keeperBinary();
-      // The keeper switch as the Settings page saves it (no AIB_KEEPER: that would override it either way).
-      Deno.writeTextFileSync(fixture.state + SEP + 'studio-settings.json', JSON.stringify({ version: 1, server: { keeper: true } }));
+      // An old saved switch (the setting is gone): ignored, the keeper is on anyway.
+      Deno.writeTextFileSync(fixture.state + SEP + 'studio-settings.json', JSON.stringify({ version: 1, server: { keeper: false } }));
       const web: Web = await fixture.startWeb([], { port: 8825 }); // the page on 8825, its artifact origin on 8826
       assertEquals(web.boot.hostMode, 'keeper', 'one AIB process with the keeper');
       assertEquals(await readInfo(fixture.state), null, 'no separate agent host');

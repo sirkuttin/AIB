@@ -1,6 +1,6 @@
 /**
  * Keeper step 2 with real binaries, end to end (slow: two `deno desktop` builds; AIB_SLOW_TESTS=1, Windows only): Install now while a
- * chat streams, with the keeper on (AIB_KEEPER=1, one AIB process). Everything runs on an invisible desktop (_hidden_desktop.ts) with
+ * chat streams, with the keeper on (the default: no setting, no AIB_KEEPER; one AIB process). Everything runs on an invisible desktop (_hidden_desktop.ts) with
  * a temp data folder, temp APPDATA/LOCALAPPDATA and ports 8821/8822; only processes this test started are killed.
  *
  *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.98 (B), each with its keeper; install A from its zip into a temp folder.
@@ -139,7 +139,6 @@ Deno.test({
       LOCALAPPDATA: `${fx.root}\\localappdata`,
       AIB_UPDATE_API_BASE: `http://127.0.0.1:${releases.addr.port}`,
       AIB_UPDATE_REPO: 'acme/aib',
-      AIB_KEEPER: '1',
       FAKE_ACP_LOG: agentLog,
       FAKE_ACP_MCP_PIDS: mcpPids, // the fake agent starts its stdio MCP servers like a real agent
       AIB_TEST_TRAY_STATE: trays,

@@ -551,7 +551,7 @@ export interface UpdateServiceOptions {
    */
   quit?: ((release?: boolean) => void) | null;
   /**
-   * The keeper the chats run in (one AIB process with AIB_KEEPER=1), or null/undefined when there is none. With it, Install now goes
+   * The keeper the chats run in (one AIB process with the keeper), or null/undefined when there is none. With it, Install now goes
    * ahead while chats work when the new version can take them over from this keeper (its release.json `keeper`), and the app
    * releases them instead of stopping them. A throw counts as "no".
    */

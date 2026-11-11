@@ -27,7 +27,7 @@ import { forwarderOf } from '../keeper/client.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
-import { type KeeperChannel, KeeperLink, keeperSetting, keeperWanted } from '../keeper/link.ts';
+import { type KeeperChannel, KeeperLink, keeperSetting, keeperWanted, noteKeeperProblem } from '../keeper/link.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
@@ -195,11 +195,11 @@ export interface StudioConstruct {
   port?: number | string | null;
   connectionFactory?: ConnectionFactory | null;
   /**
-   * The keeper link (tests pass their own). undefined: one when the keeper switch is on (Settings or AIB_KEEPER) or a keeper already
-   * runs for the state folder; null: none.
+   * The keeper link (tests pass their own). undefined: one when this process decided to use the keeper (decideKeeper) or a keeper
+   * already runs for the state folder; null: none.
    */
   keeper?: KeeperLink | null;
-  /** New chats start in the keeper (default: the switch, keeperSetting(); true when a test passes its own link). */
+  /** New chats start in the keeper (default: the start decision, keeperSetting(); true when a test passes its own link). */
   keeperForNew?: boolean;
   /** Shared stores (an --in-process web server passes its own, so both read and write one instance). */
   stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
@@ -262,12 +262,12 @@ export class Studio {
   readonly #probeFailed = new Map<string, number>();
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #closed = false;
-  /** Agents run in the keeper (AIB_KEEPER=1) and chats are rebuilt from its record after a restart; null: agents are children. */
+  /** Agents run in the keeper and chats are rebuilt from its record after a restart; null: agents are children. */
   readonly keeper: KeeperLink | null;
   /**
-   * New chats start in the keeper: the switch was on when this Studio started (Settings or AIB_KEEPER; it applies at the next start).
-   * False with a keeper link means the switch is off but a keeper still holds chats from before: they are taken over and stay there
-   * until they end, and new chats run as children as without the keeper.
+   * New chats start in the keeper: decided when AIB started (on unless the keeper cannot run or AIB_KEEPER=0). False with a keeper
+   * link means a keeper still holds chats from before while this Studio runs without it (the fallback, a split agent host): they
+   * are taken over and stay there until they end, and new chats run as children.
    */
   readonly keeperForNew: boolean;
   #mcpHttp: ArtifactMcpHttp | null = null;
@@ -324,7 +324,7 @@ export class Studio {
       ? new KeeperLink({ dataDir: this.stateDir, orphan: orphanCommand() })
       : null;
     this.keeperForNew = !!this.keeper &&
-      (construct.keeperForNew ?? (construct.keeper !== undefined ? true : keeperSetting(this.hasStateDir ? this.stateDir : null)));
+      (construct.keeperForNew ?? (construct.keeper !== undefined ? true : keeperSetting()));
     if (this.keeper) {
       this.keeper.onLost = (channels) => this.#keeperLost(channels);
       this.keeper.onClient = () => saveKeeperInstance(this.stateDir, this.instanceId); // the ids now live as long as this keeper
@@ -859,13 +859,13 @@ export class Studio {
 
   // ---- the keeper: chats that outlive this process -------------------------------------------------------------------------
   /**
-   * With the switch off, the keeper only holds chats from before (keeperForNew false): once the last of them has ended, let go of the
+   * Without the keeper for new chats (a fallback), the keeper only holds chats from before (keeperForNew false): once the last of them has ended, let go of the
    * keeper connection, so the keeper exits by itself (no live channel, no client) instead of staying for as long as AIB runs.
    */
   #keeperNoLongerNeeded(): void {
     if (!this.keeper || this.keeperForNew || this.#closed) return;
     if ([...this.connections.values()].some((c) => !c.closed && c.channel && !c.channel.lost)) return;
-    announce('studio', 'keeper: the last chat from before the keeper was switched off has ended; letting the keeper go');
+    announce('studio', 'keeper: the last chat the keeper held from before has ended; letting the keeper go');
     this.keeper.disconnect();
   }
 
@@ -1002,14 +1002,17 @@ export class Studio {
   /**
    * Can a new chat run in the keeper? Starts the keeper when none runs and applies its version rules (KeeperLink.check). False when
    * the running keeper is too old for this AIB while it holds other chats, or the keeper cannot be started: the chat then runs as a
-   * child of this process, as with the switch off, and the reason is logged (it is not carried through an update).
+   * child of this process, the reason is logged and shown in Settings > About (it is not carried through an update).
    */
   async #keeperUsable(): Promise<boolean> {
     try {
       await this.keeper!.check();
+      noteKeeperProblem('');
       return true;
     } catch (error) {
-      announce('studio', 'keeper: this chat runs without the keeper: %s', this.keeper!.problem || errorText(error));
+      const why = this.keeper!.problem || errorText(error);
+      announce('studio', 'keeper: this chat runs without the keeper: %s', why);
+      noteKeeperProblem(why); // Settings > About shows it
       return false;
     }
   }

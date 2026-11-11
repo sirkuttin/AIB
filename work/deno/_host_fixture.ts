@@ -137,8 +137,9 @@ export class Fixture {
     for (const name of ['state', 'owners', 'workspace', 'omp', 'claude']) Deno.mkdirSync(this.root + SEP + name);
   }
 
+  /** AIB_KEEPER=0: this fixture tests the split agent host (the fallback when the keeper cannot run); keeper tests drop it. */
   get env(): Record<string, string> {
-    return { AGENT_STUDIO_TEST: '1', AGENT_STUDIO_STATE_DIR: this.state };
+    return { AGENT_STUDIO_TEST: '1', AGENT_STUDIO_STATE_DIR: this.state, AIB_KEEPER: '0' };
   }
 
   agentFlags(): string[] {

@@ -4,7 +4,7 @@
  *
  *   split            web server and agent host, no keeper: restart the web server only (the host keeps the agent). The dev loop
  *                    before the keeper; host-side code needed `deploy --host`, which waits until no chat works.
- *   merged+keeper    AIB_KEEPER=1: one process (no agent host) with the keeper: restart it (it rebuilds the chat from the keeper).
+ *   merged+keeper    the default: one process (no agent host) with the keeper: restart it (it rebuilds the chat from the keeper).
  *   split+keeper     keeper step 1 only (web server, host, keeper; restart the host). With step 2 the keeper always means one
  *                    process, so this mode now measures merged+keeper again; kept for the record (step 1: about 6.4 s, the web
  *                    server's 5 s reattach throttle plus its heartbeat).
@@ -38,7 +38,7 @@ class Lab extends Fixture {
     return flags;
   }
   override get env(): Record<string, string> {
-    return this.keeper ? { ...super.env, AIB_KEEPER: '1', AIB_KEEPER_BIN: this.keeperBin } : super.env;
+    return this.keeper ? { ...super.env, AIB_KEEPER: '1', AIB_KEEPER_BIN: this.keeperBin } : super.env; // '1': anything but '0' is on
   }
   async startOn(port: number, extra: string[]): Promise<Web> {
     const [child, log] = this.spawn(
