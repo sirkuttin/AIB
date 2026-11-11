@@ -75,6 +75,8 @@ Checked by `work/test_themes.js` (tokens, no stray colours, WCAG contrast in eve
 
 `vendor/xterm/` holds xterm.js 5.5.0 with its fit and canvas addons, unmodified, with their MIT licenses and `VERSIONS.txt` (versions and SHA-256). The server serves only `vendor/xterm/<name>.js|css`; `tools/build.ts` stages `vendor/` into the app. `terminal-ui.js` loads them when a terminal is first opened. The canvas renderer is used because xterm's default DOM renderer inserts `<style>` elements, which the page's CSP (`style-src 'self'`) refuses. ESLint ignores `vendor/`.
 
+`vendor/artifact-libs/` holds the libraries artifact pages may use offline: Mermaid 11.17.2, Chart.js 4.6.1, Vega 6.4.0, Vega-Lite 6.5.0 and vega-embed 7.3.0 (single-file browser builds, unmodified, 4.6 MB together), with their licenses and `VERSIONS.txt`. The artifact origin serves them at `/_lib/<file>` (`server/artifacts/libs.ts`), its page CSP allows script-src from that folder only, and HTML artifacts that load these libraries by a jsDelivr, unpkg or cdnjs URL of a matching major version get the local path instead. Markdown artifacts draw `mermaid` code fences with it. The publish tool description tells agents.
+
 ## Page behaviour worth knowing
 
 - **Change signature.** `showRows` repaints a list only when its signature changed. The signature (`StreamUI.rowsSignature`) sums up every row by its small fields plus `rev`, a counter `liveRows` bumps each time an event is folded into a row. A change to any row, not just the last, repaints. It never stringifies whole rows.

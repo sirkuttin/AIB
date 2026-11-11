@@ -15,6 +15,7 @@ import { pathOf } from '../state/paths.ts';
 import { decodeReplace, pureName, pureStem, pureSuffix } from './artifacts.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { lookup as ticketFile, TICKET_PATH } from '../web/file_tickets.ts';
+import { LIB_PREFIX, libAsset, rewriteLibBytes } from './libs.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -26,8 +27,15 @@ export const CSP_TEMPLATE =
   'frame-ancestors http://127.0.0.1:{port} http://localhost:{port}; ' +
   'sandbox allow-scripts allow-forms allow-popups allow-downloads'; // same flags as the Studio viewer frame; never allow-same-origin
 
-export function csp(studioPort: number): string {
-  return CSP_TEMPLATE.replaceAll('{port}', String(studioPort));
+/**
+ * The page CSP. With `ownPort` (Deno only) script-src also allows this origin's /_lib/ folder, the vendored libraries (libs.ts), and
+ * nothing else of it; the rest is Python's policy unchanged.
+ */
+export function csp(studioPort: number, ownPort = 0): string {
+  const policy = CSP_TEMPLATE.replaceAll('{port}', String(studioPort));
+  if (!ownPort) return policy;
+  const libs = `http://127.0.0.1:${ownPort}${LIB_PREFIX} http://localhost:${ownPort}${LIB_PREFIX}`;
+  return policy.replace('https://unpkg.com;', `https://unpkg.com ${libs};`);
 }
 
 export const CSP_KINDS = ['.html', '.htm', '.svg', '.md', '.markdown'];
@@ -198,7 +206,7 @@ export function splitTarget(target: string): [string, string] {
   return [url, query];
 }
 
-// ---- Markdown viewer (rendered here, raw HTML escaped; the page itself runs no script of its own) -------------------------
+// ---- Markdown viewer (rendered here, raw HTML escaped; the page runs no script but the local Mermaid when it has a mermaid fence) --
 
 const SAFE_LINK = new RegExp(`^(https?://|mailto:|#|/|\\./|\\.\\./|[${W.slice(1, -1)}.\\-%]+(/|$))`, 'iu');
 
@@ -282,7 +290,9 @@ export function renderMarkdown(source: string): string {
       const body: string[] = [];
       while (i < lines.length && !pyStrip(lines[i]).startsWith(fence[1])) body.push(lines[i++]);
       i++;
-      out.push('<pre><code>' + htmlEscape(body.join('\n')) + '</code></pre>');
+      // Deno only: a mermaid fence becomes a diagram (markdownPage loads the local Mermaid); its source shows until it is drawn.
+      if (fence[2].toLowerCase() === 'mermaid') out.push(MERMAID_OPEN + htmlEscape(body.join('\n')) + '</pre>');
+      else out.push('<pre><code>' + htmlEscape(body.join('\n')) + '</code></pre>');
     } else if (!pyStrip(line)) {
       i++;
     } else if ((heading = HEADING.exec(line))) {
@@ -335,12 +345,19 @@ export const VIEWER_CSS =
   'pre{background:#8882;padding:.8rem 1rem;border-radius:6px;overflow:auto}pre code{background:none;padding:0}blockquote{margin:1em 0;padding:0 1em;border-left:4px solid #8886;color:#8b949e}' +
   'table{border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid #d0d7de;padding:.35em .7em}img{max-width:100%}hr{border:0;border-top:1px solid #8884}';
 
+const MERMAID_OPEN = '<pre class="mermaid">';
+/** Draws the page's mermaid blocks with the vendored Mermaid (strict: no HTML in labels, no click handlers), in the page's theme. */
+export const MERMAID_SCRIPT = `<script src="${LIB_PREFIX}mermaid.min.js"></script><script>try{mermaid.initialize({startOnLoad:true,` +
+  `securityLevel:'strict',theme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'default'});}catch(e){}</script>`;
+
 export function markdownPage(source: string, title: string): Uint8Array {
+  const body = renderMarkdown(source);
+  const mermaid = body.includes(MERMAID_OPEN) ? MERMAID_SCRIPT : ''; // user text is escaped, so only a fence can make this tag
   return new TextEncoder().encode(
     `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${
       htmlEscape(title)
     }</title>` +
-      `<style>${VIEWER_CSS}</style></head><body>${renderMarkdown(source)}${SCROLL_SCRIPT}</body></html>`,
+      `<style>${VIEWER_CSS}</style></head><body>${body}${mermaid}${SCROLL_SCRIPT}</body></html>`,
   );
 }
 
@@ -371,13 +388,14 @@ function respond(
   studioPort: number,
   extra: Record<string, string> = {},
   withCsp = false,
+  ownPort = 0,
 ): Response {
   const headers = new Headers();
   headers.set('Content-Type', mime);
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'no-referrer');
   headers.set('Cache-Control', 'no-store');
-  if (withCsp) headers.set('Content-Security-Policy', csp(studioPort));
+  if (withCsp) headers.set('Content-Security-Policy', csp(studioPort, ownPort));
   for (const [name, value] of Object.entries(extra)) headers.set(name, value);
   const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
   return new Response(bytes as Uint8Array<ArrayBuffer>, { status, headers });
@@ -388,7 +406,7 @@ export function makeHandler(root: string, studioPort: number, ownPort: () => num
   const base = pathOf(String(root));
   const text = 'text/plain; charset=utf-8';
   const send = (status: number, body: Uint8Array | string, mime = text, extra: Record<string, string> = {}, withCsp = false) =>
-    respond(status, body, mime, studioPort, extra, withCsp);
+    respond(status, body, mime, studioPort, extra, withCsp, ownPort());
   return (request: Request): Response => {
     if (request.method !== 'GET') {
       if (REFUSED.has(request.method)) return send(405, 'Method not allowed', text, { Allow: 'GET' });
@@ -403,6 +421,14 @@ export function makeHandler(root: string, studioPort: number, ownPort: () => num
     const [rawPath, rawQuery] = splitTarget(target);
     const query = parseQs(rawQuery);
     const unquoted = pyUnquote(rawPath);
+    // Deno only: the vendored page libraries (libs.ts). Public files, so any page may load them, also as a module (a CORS fetch
+    // from the sandbox's opaque origin): hence Access-Control-Allow-Origin here and nowhere else on this origin.
+    if (rawPath.startsWith(LIB_PREFIX)) {
+      const name = rawPath.slice(LIB_PREFIX.length);
+      const asset = /^[a-z0-9][a-z0-9.-]*$/.test(name) ? libAsset(name) : null;
+      if (!asset) return send(404, 'Not found');
+      return send(200, asset, 'text/javascript; charset=utf-8', { 'Access-Control-Allow-Origin': '*' });
+    }
     // Deno only: a project file the Files view shows (Page view, images), by a ticket the Studio route issued (web/file_tickets.ts).
     const ticket = !rawPath.includes('%00') && !unquoted.includes('\\') ? TICKET_PATH.exec(unquoted) : null;
     if (ticket) return serveTicket(ticket[1], query, send);
@@ -436,7 +462,7 @@ export function makeHandler(root: string, studioPort: number, ownPort: () => num
       data = markdownPage(decodeReplace(data), pureStem(resolved));
       mime = 'text/html; charset=utf-8';
     } else if (ext === '.html' || ext === '.htm') {
-      data = injectScroll(data);
+      data = injectScroll(rewriteLibBytes(data));
     }
     return send(200, data, mime, extra, CSP_KINDS.includes(ext));
   };
@@ -463,6 +489,8 @@ function serveTicket(
   if ((ext === '.md' || ext === '.markdown') && Object.hasOwn(query, 'view')) {
     data = markdownPage(decodeReplace(data), pureStem(path));
     mime = 'text/html; charset=utf-8';
+  } else if (ext === '.html' || ext === '.htm') {
+    data = rewriteLibBytes(data);
   }
   return send(200, data, mime, {}, true);
 }

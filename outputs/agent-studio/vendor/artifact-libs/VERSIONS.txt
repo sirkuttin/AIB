@@ -1,0 +1,24 @@
+Vendored libraries for artifact pages, served by the artifact origin at /_lib/<file> (server/artifacts/libs.ts) so pages
+that use them work offline. Files are unmodified copies from the npm packages. Licenses: MIT (mermaid, chart.js),
+BSD-3-Clause (vega, vega-lite, vega-embed); see LICENSE-<package>.
+
+mermaid      11.17.2  dist/mermaid.min.js         -> mermaid.min.js        3,572,661 bytes
+chart.js     4.6.1    dist/chart.umd.min.js       -> chart.umd.min.js        210,082 bytes
+vega         6.4.0    build/vega.min.js           -> vega.min.js             521,123 bytes
+vega-lite    6.5.0    build/vega-lite.min.js      -> vega-lite.min.js        257,954 bytes
+vega-embed   7.3.0    build/vega-embed.min.js     -> vega-embed.min.js        60,298 bytes
+                                                     total                 4,622,118 bytes
+
+Mermaid 11 rather than 12: pages agents write ask for mermaid@10 or @11, and 11's single-file build is 3.6 MB against 5.5 MB.
+/_lib/mermaid.esm.min.mjs is not a file here: libs.ts serves a few lines that load mermaid.min.js and export it, for pages that
+`import mermaid from '.../mermaid.esm.min.mjs'`.
+
+Updating: npm install --ignore-scripts <package>@<version> in a scratch folder inside the worktree, copy the file above, update
+this table and the hashes, and the accepted major versions in libs.ts.
+
+SHA-256
+581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8  mermaid.min.js
+87364cc2b2a76a6684929e7d6b80b18a897794db38400caff1fcf1791c6925d2  chart.umd.min.js
+8f6a3587cf8d4f42c7e08120e3eb05d067e746d554e39d2dcf52acc0bd5ba28f  vega.min.js
+83e215e84e308ee8688fa6503ba0f1cf8a3c05c0d61df2841a0b92bf86809e00  vega-lite.min.js
+b1455caba2fb1a72fb46025ba0ba1316e2dbc7f0dd40a3f6040172bf9c08ba91  vega-embed.min.js

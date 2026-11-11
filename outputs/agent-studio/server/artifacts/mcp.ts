@@ -29,6 +29,17 @@ export const INSTRUCTIONS = "Use these tools to show the user an HTML page, diag
   'Do not use them for source code. When you mention an artifact in a reply, write it as a Markdown link ' +
   '[Title](studio-artifact://<id>).';
 
+/**
+ * Deno only (the Python reference has no /_lib/): the libraries the artifact origin bundles (libs.ts), appended to publish's
+ * description. artifact_mcp_test.ts takes it out before comparing tools/list with Python.
+ */
+export const OFFLINE_LIBS_NOTE = ' Pages should work offline, and AIB bundles these libraries for charts and diagrams: Mermaid 11, ' +
+  'Chart.js 4, Vega 6, Vega-Lite 6 and vega-embed 7. Load them by their usual jsDelivr, unpkg or cdnjs URL (e.g. ' +
+  'https://cdn.jsdelivr.net/npm/chart.js@4) or by local path: /_lib/mermaid.min.js, /_lib/mermaid.esm.min.mjs (to import), ' +
+  '/_lib/chart.umd.min.js, /_lib/vega.min.js, /_lib/vega-lite.min.js, /_lib/vega-embed.min.js; either way AIB serves its own copy. ' +
+  'Any other CDN script (other libraries, plugins, other major versions) does not load offline. In Markdown artifacts a ```mermaid ' +
+  'fence is drawn as a diagram.';
+
 export const TOOLS: Json[] = [
   {
     name: 'publish',
@@ -39,7 +50,8 @@ export const TOOLS: Json[] = [
       'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with ' +
       '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and ' +
       'unpkg.com are allowed, but the page cannot make network requests, so embed its data inline. To change a page you already published, call `update` with its id ' +
-      'instead of publishing a new one. After publishing, mention it in your reply as a Markdown link: [Title](studio-artifact://<id>).',
+      'instead of publishing a new one. After publishing, mention it in your reply as a Markdown link: [Title](studio-artifact://<id>).' +
+      OFFLINE_LIBS_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
