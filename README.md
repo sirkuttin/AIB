@@ -1,6 +1,6 @@
 # AIB — Agent Integration Bay
 
-**All your coding agents in one desktop app. Nothing hidden.**
+**All your coding agents and all your coding projects in one desktop app. Nothing hidden.**
 
 Honest AIB allows you to run Claude Code, Codex, OMP and ten more agents via ACP side by side, in the same project. Local shared Artifacts and Docs between all your agents. Visibility into every tool call,
 subagent, running process and approval. It runs on your computer with the agent sign-ins you already have.
