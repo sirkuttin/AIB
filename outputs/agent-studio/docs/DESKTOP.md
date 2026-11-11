@@ -2,7 +2,7 @@
 
 A `deno desktop` build of the same Deno server: one program, `AIB`, that is the web server, the agent host and a native window with
 a tray icon. Name AIB, identifier `dev.aib.app` (`deno.json` `desktop.app`), version `APP_VERSION` in `server/core/app.ts`
-(`0.1.0-beta.3`). Builds are unsigned and marked beta. Code: `server/desktop/` and `server/main.ts`; the icons are in `icons/`.
+(`0.1.0-beta.4`). Builds are unsigned and marked beta. Code: `server/desktop/` and `server/main.ts`; the icons are in `icons/`.
 
 ## Run it from the source tree (dev)
 

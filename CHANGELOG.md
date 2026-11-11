@@ -1,7 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.4 (beta)
 
+- New look: Bay teal is the default. Settings > Appearance > Theme offers eleven themes (AIB teal dark and light; high
+  contrast dark and light, colour-blind safe; Dracula-style, which replaces the old purple look, Monokai-, Nord-,
+  GitHub- and Solarized-style, Ember) plus Match system. Every theme passes a measured contrast check; a "Show status
+  symbols" switch adds shapes to the status dots.
+- Native desktop notifications: the app shows Windows notifications itself (no browser permission); clicking one brings
+  AIB to the front and opens that chat. Settings has Send a test notification.
+- Sidebar: a + next to each project's chat count, folder icons on the project switcher, and Delete project (removes it
+  from AIB; optionally sends the folder to the Recycle Bin).
+- Chat cards and tabs keep the same size and text position in every state; branch lines are no longer clipped.
+- Copy on your own prompts shows on hover or focus; the chat header no longer shows the agent's name; a bigger terminal
+  button; the inbox count is never covered by the first tab.
+- The agents page in Settings is AIB Linking; every server message, banner and log line says AIB instead of Studio.
 - New project: a Project name now makes a folder with that name inside Folder (`C:\REPOS\` + `spaghetti` makes
   `C:\REPOS\spaghetti`), or uses it if it is already there; an empty name still uses Folder itself. A live line under the name
   says exactly what Create will do. A trailing `\`, a lower-case drive letter and `/` in Folder no longer keep Create disabled.
