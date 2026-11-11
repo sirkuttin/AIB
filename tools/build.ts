@@ -359,11 +359,15 @@ async function copyTree(from: string, to: string): Promise<void> {
   }
 }
 
-/** The staged deno.json: the app's own settings plus version and desktop.app, and no node_modules. */
+/**
+ * The staged deno.json: the app's own settings (and its npm imports: the local docs' Yjs and TipTap, pinned by deno.lock, which
+ * stage() copies next to it) plus version and desktop.app, and no node_modules.
+ */
 export function stagedConfig(appConfig: Record<string, unknown>, version: string): Record<string, unknown> {
   const desktop = (appConfig.desktop ?? {}) as Record<string, unknown>;
   return {
     compilerOptions: appConfig.compilerOptions ?? { strict: true },
+    ...(appConfig.imports ? { imports: appConfig.imports } : {}),
     nodeModulesDir: 'none',
     version,
     desktop: { ...desktop, app: { ...(desktop.app as object ?? {}), name: APP_NAME, identifier: APP_IDENTIFIER } },
@@ -409,6 +413,7 @@ export async function stage(stageDir: string, version: string): Promise<string[]
     included.push(e.name);
   }
   const appConfig = JSON.parse(await Deno.readTextFile(`${APP_DIR}/deno.json`));
+  await Deno.copyFile(`${APP_DIR}/deno.lock`, `${stageDir}/deno.lock`); // the npm packages' exact versions and hashes
   await Deno.writeTextFile(`${stageDir}/deno.json`, JSON.stringify(stagedConfig(appConfig, version), null, 2) + '\n');
   const icns = makeIcns([
     ['ic11', await Deno.readFile(`${ICONS}/32x32.png`)],

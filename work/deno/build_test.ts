@@ -207,6 +207,8 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
     version: "0.2.0-beta.1",
     desktop: { app: { name: "AIB", identifier: "dev.aib.app" } },
   });
+  // the npm imports (local docs: Yjs, TipTap) go along; deno.lock is copied next to the staged deno.json
+  assertEquals(stagedConfig({ imports: { yjs: "npm:yjs@13.6.33" } }, "1.0.0").imports, { yjs: "npm:yjs@13.6.33" });
 });
 
 const ICONS_DIR = new URL("../../outputs/agent-studio/icons/", import.meta.url);
