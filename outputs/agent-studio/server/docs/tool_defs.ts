@@ -34,10 +34,20 @@ const EDIT_HELP = 'Ops, applied in order, all or nothing (a refused call changed
   '- move: {"op":"move","target":{"kind":"blocks","ids":["<id>"]},"ifHash":"<h>","ifRev":<rev>,"to":{"target":{"kind":"blocks","ids":["<id>"]},"side":"after"}}' +
   ' (moved blocks get new ids: the ack\'s "moved" maps old to new)\n' +
   '- set attrs: {"op":"set","target":{"kind":"blocks","ids":["<id>"]},"ifHash":"<h>","ifRev":<rev>,"attrs":{"level":2}} ' +
-  '(heading level, item "checked", code "language", cell "align", list "start"; list "kind": "bullet"|"ordered"|"check")\n' +
+  '(heading level, item "checked", code "language", list "start", "align" left|center|right on a paragraph, heading or cell, callout ' +
+  '"variant" info|warning|success, column "width" 0.1-0.9; list "kind": "bullet"|"ordered"|"check")\n' +
+  '- rich blocks (Markdown can\'t hold them; their .md copy is only a readable fallback, so edit them here, never in the .md): a ' +
+  'callout is a Markdown quote starting "> [!NOTE]", "> [!WARNING]" or "> [!SUCCESS]" (holds text, lists, code; no callout in a ' +
+  'callout); toggles and columns go "as":"blocks" with Markdown in "md": [{"type":"toggle","summary":"<its line>","md":"<body>"}], ' +
+  '[{"type":"columns","content":[{"type":"column","md":"…"},{"type":"column","md":"…"}]}] (2-3 columns, top of a page only). Their ' +
+  'blocks have ids like any other: re-word with find, insert with side "start"/"end" on the callout, column or toggle id.\n' +
+  '- colour: {"op":"style","target":<find, or blocks + ifHash/ifRev>,"color":"grey"|"red"|"orange"|"green"|"blue"|"purple"|null,' +
+  '"highlight":"yellow"|"green"|"pink"|"purple"|"grey"|null} (null clears; the words stay)\n' +
   '- tables: {"op":"table_row_insert","target":{"kind":"blocks","ids":["<table id>"]},"at":<row, 1 = first body row; default end>,"cells":["a","b"]}, ' +
   '{"op":"table_row_delete",…,"at":<row>,"ifRev":<rev>}, {"op":"table_col_insert",…,"at":<col; default end>,"cells":["Header","r1","r2"]}, ' +
-  '{"op":"table_col_delete",…,"at":<col>,"ifRev":<rev>}\n' +
+  '{"op":"table_col_delete",…,"at":<col>,"ifRev":<rev>}; merged cells: {"op":"table_merge",…,"cells":[[<row>,<col>],[<row>,<col>]],' +
+  '"ifRev":<rev>} (two corners, 0-based squares, row 0 = the first row), {"op":"table_split",…,"at":[<row>,<col>],"ifRev":<rev>}, ' +
+  '{"op":"table_header",…,"row":true|false,"col":true|false,"ifRev":<rev>}; split merged cells before adding or removing rows/columns\n' +
   'Refusals: missing_guard, guard_mismatch (shows the block as it stands: their edit wins), find_none (read again, quote what it says ' +
   'now), block_gone, atom_in_range (a break/image/HTML tag inside the changed words: quote around it), cell_count, last_block, bad_op. ' +
   '"force":true only when the user told you to overwrite their text.\n' +
@@ -76,7 +86,8 @@ export const DOC_TOOLS: Json[] = [
     description: 'Read a doc shared with the user. A doc has pages (like tabs): reads are of one page, "page" (id or title; ' +
       'default the first). mode "outline" (the pages with their ids, titles and block counts, then the page\'s headings + top-level ' +
       'blocks with a preview: start here), "full" (default: every block of the page in order with `id`, `h`, `md`; lists, quotes ' +
-      'and tables list their `kids`), "block" + id (that block, on any page, and all inside it, with its whole Markdown), "search" + ' +
+      'and tables list their `kids`; callouts, columns and toggles too; `attrs`: callout variant, column width, cell colspan/rowspan, ' +
+      'align; `styles`: coloured/highlighted char ranges), "block" + id (that block, on any page, and all inside it, with its whole Markdown), "search" + ' +
       'query (text blocks holding the words, with char ranges and `page`; every page unless "page"). Keep the `rev`: guards and ' +
       'doc_changes use it. ' + DOC_INSTRUCTIONS,
     inputSchema: {

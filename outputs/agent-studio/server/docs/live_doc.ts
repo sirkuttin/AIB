@@ -14,6 +14,10 @@
  * Guards. A whole-block replace/delete/move/set carries ifHash (its h) + ifRev (the rev of the read that showed it): it is refused
  * when the block, or anything inside it, changed after that rev. The user's edit wins; the refusal shows the block as it stands.
  *
+ * Rich blocks. Callouts, columns (and each column) and toggles are containers like quotes: every block inside has its own id and
+ * guard, so typing in a callout moves the callout's `sub` and an agent's guarded rewrite of it is refused. Colour, highlight and
+ * alignment are part of a block's content (its h); a merge or split of table cells is guarded by every cell it touches.
+ *
  * Who wrote what. Every transaction has an origin: a page socket (the user), an agent's origin object, the file sync, an agent's
  * undo manager. Text an agent writes carries the agentEdit mark with its name. Undo is per author: the page's undo tracks only its
  * own edits; an agent's doc_undo takes back only its own last call, and only if nobody changed those blocks since.
@@ -26,6 +30,8 @@ import * as decoding from 'lib0/decoding';
 import {
   applyTextEdits,
   ATOM,
+  formatText,
+  stylesOf,
   atomsOf,
   type Attrs,
   diffText,
@@ -39,8 +45,10 @@ import {
   withMark,
 } from './blocks.ts';
 import {
+  alertsToCallouts,
   type DocBlock,
   hash8,
+  hasSpans,
   ITEMS,
   LISTS,
   normalize,
@@ -51,8 +59,10 @@ import {
   serializeBlock,
   sigOf,
   splitRow,
+  tableGrid,
   TEXTBLOCKS,
 } from './markdown.ts';
+import { ALIGNS, CALLOUT_VARIANTS, HIGHLIGHTS, TEXT_COLORS } from './schema.ts';
 import type { WsLink } from '../platform/websocket.ts';
 import { anyDeleted, Comments } from './comments.ts';
 
@@ -114,10 +124,14 @@ export const CONTAINERS = new Set([
   'tableRow',
   'tableCell',
   'tableHeader',
+  'callout',
+  'columns',
+  'column',
+  'toggle',
 ]);
 const CELLS = new Set(['tableCell', 'tableHeader']);
 /** Containers that go away with their last child (a list without items, a quote without blocks, a row without cells). */
-const EMPTY_GOES = new Set(['blockquote', 'bulletList', 'orderedList', 'taskList', 'table', 'tableRow']);
+const EMPTY_GOES = new Set(['blockquote', 'bulletList', 'orderedList', 'taskList', 'table', 'tableRow', 'callout']);
 const MAX_GONE = 5000;
 
 /** Who made a change. One object per author, so Y.UndoManager can track it. */
@@ -147,6 +161,8 @@ export interface BlockView {
   md?: string;
   kids?: string[];
   attrs?: Attrs;
+  /** Text blocks: coloured or highlighted stretches (char ranges in the block's text). */
+  styles?: { from: number; to: number; color?: string; highlight?: string }[];
   parent?: string;
   depth?: number;
   /** Who changed it last: 'user', an agent's name, 'file' (a file tool edited the Markdown copy). */
@@ -198,8 +214,14 @@ export interface Op {
   with?: Source;
   to?: { target?: Target; side?: string };
   attrs?: Attrs;
-  at?: number;
+  at?: unknown;
   cells?: unknown;
+  /** style: the text colour / highlight by name, null to clear. */
+  color?: unknown;
+  highlight?: unknown;
+  /** table_header: header row / header column on or off. */
+  row?: unknown;
+  col?: unknown;
   ifHash?: unknown;
   ifRev?: unknown;
   force?: boolean;
@@ -230,7 +252,13 @@ const OPS = new Set([
   'table_row_delete',
   'table_col_insert',
   'table_col_delete',
+  'style',
+  'table_merge',
+  'table_split',
+  'table_header',
 ]);
+/** Table ops guarded by ifRev on the cells they touch (no ifHash). */
+const TABLE_GUARDED = new Set(['table_row_delete', 'table_col_delete', 'table_merge', 'table_split', 'table_header']);
 
 export class LiveDoc {
   readonly doc: Y.Doc;
@@ -659,7 +687,15 @@ export class LiveDoc {
       v.kids = [...e.kids];
       const a = this.#attrsOf(e);
       if (a) v.attrs = a;
-    } else v.md = e.md;
+    } else {
+      v.md = e.md;
+      const align = e.el!.getAttribute('align');
+      if (align) v.attrs = { align };
+      if (TEXTBLOCKS.has(e.el!.nodeName)) {
+        const styles = stylesOf(e.el!);
+        if (styles.length) v.styles = styles;
+      }
+    }
     if (extra && !this.#roots.has(e.parent)) v.parent = e.parent;
     if (e.by) v.by = e.by;
     return v;
@@ -1259,10 +1295,10 @@ export class LiveDoc {
       return;
     }
     if (target.kind === 'find') {
-      if (op.op !== 'replace' && op.op !== 'delete') {
+      if (op.op !== 'replace' && op.op !== 'delete' && op.op !== 'style') {
         throw new DocRefusal(
           'bad_op',
-          `op ${index}: a find target is for replace (re-word) and delete; ${op.op} takes block ids`,
+          `op ${index}: a find target is for replace (re-word), delete and style; ${op.op} takes block ids`,
           { op: index },
         );
       }
@@ -1278,7 +1314,7 @@ export class LiveDoc {
       }
     }
     if (op.force === true) return;
-    const tableOp = op.op === 'table_row_delete' || op.op === 'table_col_delete';
+    const tableOp = TABLE_GUARDED.has(op.op);
     const needsHash = ids.length === 1 && !tableOp;
     if (
       typeof op.ifRev !== 'number' || (needsHash && typeof op.ifHash !== 'string')
@@ -1301,11 +1337,7 @@ export class LiveDoc {
     if (tableOp) {
       const table = this.#entries.get(ids[0])!;
       if (table.el!.nodeName !== 'table') throw new DocRefusal('bad_op', `op ${index}: ${op.op} targets a table's id`, { op: index });
-      const rows = table.kids!;
-      const at = Number(op.at);
-      const watched = op.op === 'table_row_delete'
-        ? [rows[at]].filter(Boolean)
-        : rows.map((r) => this.#entries.get(r)!.kids![at]).filter(Boolean);
+      const watched = this.#tableWatched(ids[0], op);
       for (const id of watched) {
         if (this.#entries.get(id)!.sub > ifRev) {
           throw new DocRefusal(
@@ -1321,6 +1353,32 @@ export class LiveDoc {
       const e = this.#entries.get(id)!;
       if (e.sub > ifRev || (needsHash && e.h !== op.ifHash)) throw this.#mismatch(index, id);
     }
+  }
+
+  /** The ids of the rows or cells a guarded table op touches (judged on the doc as it stands). */
+  #tableWatched(table: string, op: Op): string[] {
+    const rows = this.#entries.get(table)!.kids!;
+    const cellId = (r: number, i: number) => this.#entries.get(rows[r])?.kids?.[i];
+    if (op.op === 'table_row_delete') return [rows[Number(op.at)]].filter(Boolean);
+    const { grid } = tableGrid(jsonOf(this.#entries.get(table)!.el!));
+    const ids = new Set<string>();
+    const add = (r: number, c: number) => {
+      const at = grid[r]?.[c];
+      const id = at ? cellId(at.r, at.i) : undefined;
+      if (id) ids.add(id);
+    };
+    if (op.op === 'table_col_delete') grid.forEach((_, r) => add(r, Number(op.at)));
+    else if (op.op === 'table_merge') {
+      const box = cornersOf(op.cells);
+      if (box) for (let r = box[0]; r <= box[2]; r++) for (let c = box[1]; c <= box[3]; c++) add(r, c);
+    } else if (op.op === 'table_split') {
+      const at = pairOf(op.at);
+      if (at) add(at[0], at[1]);
+    } else {
+      // table_header: the first row and the first column
+      grid.forEach((g, r) => g.forEach((_, c) => (r === 0 || c === 0) && add(r, c)));
+    }
+    return [...ids];
   }
 
   // ---------- page sockets ----------
@@ -1475,12 +1533,15 @@ function sourceNodes(
         { op: index },
       );
     }
+    let nodes: PMJson[];
     try {
-      for (const n of content) schema.nodeFromJSON(n);
+      nodes = (content as PMJson[]).map((n) => shorthand(n, index));
+      for (const n of nodes) schema.nodeFromJSON(n);
     } catch (error) {
+      if (error instanceof DocRefusal) throw error;
       throw new DocRefusal('bad_op', `op ${index}: not a node of this doc's schema: ${(error as Error).message}`, { op: index });
     }
-    return fit(parentType, content as PMJson[], index);
+    return fit(parentType, nodes, index);
   }
   const text = textSource(source, index);
   if (as === 'text') return fit(parentType, [para(text)], index);
@@ -1502,9 +1563,36 @@ function sourceNodes(
       index,
     );
   }
-  const nodes = parseBlockMarkdown(text);
+  const nodes = alertsToCallouts(parseBlockMarkdown(text));
   if (!nodes.length) throw new DocRefusal('bad_op', `op ${index}: the Markdown has no blocks`, { op: index });
   return fit(parentType, nodes, index);
+}
+
+/**
+ * "as":"blocks" nodes may give their content as Markdown: {"type":"callout","attrs":{"variant":"warning"},"md":"…"},
+ * {"type":"toggle","summary":"Rollback steps","md":"1. Turn it off"}, {"type":"columns","content":[{"type":"column","md":"…"},…]},
+ * a textblock {"type":"paragraph","md":"**bold** words"}. Expanded here into plain nodes.
+ */
+function shorthand(node: unknown, index: number): PMJson {
+  if (!node || typeof node !== 'object' || typeof (node as PMJson).type !== 'string') {
+    throw new DocRefusal('bad_op', `op ${index}: each block is an object with a "type"`, { op: index });
+  }
+  const { md, summary, ...rest } = node as PMJson & { md?: unknown; summary?: unknown };
+  const out: PMJson = { ...rest };
+  if (md !== undefined) {
+    if (typeof md !== 'string') throw new DocRefusal('bad_op', `op ${index}: "md" is Markdown, a string`, { op: index });
+    if (TEXTBLOCKS.has(out.type)) out.content = md ? parseInline(md) : [];
+    else out.content = md.trim() ? alertsToCallouts(parseBlockMarkdown(md)) : [{ type: 'paragraph' }];
+  } else if (Array.isArray(out.content)) out.content = out.content.map((c) => shorthand(c, index));
+  if (summary !== undefined) {
+    if (out.type !== 'toggle' || typeof summary !== 'string') {
+      throw new DocRefusal('bad_op', `op ${index}: "summary" is a toggle's line, a string`, { op: index });
+    }
+    const line = parseInline(summary);
+    out.content = [line.length ? { type: 'paragraph', content: line } : { type: 'paragraph' }, ...(out.content ?? [])];
+  }
+  if (out.content && !out.content.length) delete out.content;
+  return out;
 }
 
 /** Shape nodes for a parent: items for a list, rows for a table, blocks elsewhere. */
@@ -1547,6 +1635,12 @@ function fit(parentType: string, nodes: PMJson[], index: number): PMJson[] {
     }
     return out;
   }
+  if (parentType === 'columns') {
+    // into columns: whole columns, or blocks that make one new column
+    if (nodes.every((n) => n.type === 'column')) return nodes;
+    if (nodes.some((n) => n.type === 'column')) throw new DocRefusal('bad_op', `op ${index}: give columns or blocks, not both`, { op: index });
+    return [{ type: 'column', content: fit('column', nodes, index) }];
+  }
   if (parentType === 'tableRow') {
     throw new DocRefusal(
       'bad_op',
@@ -1555,6 +1649,12 @@ function fit(parentType: string, nodes: PMJson[], index: number): PMJson[] {
     );
   }
   for (const n of nodes) {
+    if (n.type === 'column') {
+      throw new DocRefusal('bad_op', `op ${index}: a column goes only inside columns (side "start"/"end" of a columns id)`, { op: index });
+    }
+    if (n.type === 'columns' && parentType !== 'doc') {
+      throw new DocRefusal('bad_op', `op ${index}: columns sit only at the top of a page, not inside a ${parentType}`, { op: index });
+    }
     if (ITEMS.has(n.type) || n.type === 'tableRow' || CELLS.has(n.type)) {
       throw new DocRefusal(
         'bad_op',
@@ -1598,14 +1698,16 @@ function place(
     if (!CONTAINERS.has(el.nodeName)) {
       throw new DocRefusal(
         'bad_op',
-        `op ${index}: side "${s}" puts blocks inside a list, item, quote, table or cell; a ${el.nodeName} takes "before" or "after"`,
+        `op ${index}: side "${s}" puts blocks inside a list, item, quote, table, cell, callout, columns, column or toggle; a ` +
+          `${el.nodeName} takes "before" or "after"`,
         { op: index },
       );
     }
     if (el.nodeName === 'tableRow') {
       throw new DocRefusal('bad_op', `op ${index}: cells come and go a column at a time: use table_col_insert`, { op: index });
     }
-    return { parent: el, at: s === 'start' ? 0 : el.length };
+    // a toggle's first paragraph is its line: "start" is the top of what it opens
+    return { parent: el, at: s === 'start' ? (el.nodeName === 'toggle' ? 1 : 0) : el.length };
   }
   throw new DocRefusal('bad_op', `op ${index}: "side" must be before, after, start or end`, { op: index });
 }
@@ -1627,6 +1729,7 @@ function insertAt(
     }
   }
   const els = insertNodes(ctx.doc, parent, at, ready);
+  if (els.some(nestedCallout)) throw new DocRefusal('bad_op', 'a callout cannot hold another callout');
   ctx.touched.add(parent);
   for (const el of els) {
     ctx.created.push(idOf(el));
@@ -1806,8 +1909,10 @@ const SET_CHECKS: Record<string, (v: unknown) => boolean> = {
   checked: (v) => typeof v === 'boolean',
   start: (v) => Number.isInteger(v) && (v as number) >= 0,
   language: (v) => v === null || typeof v === 'string',
-  align: (v) => v === null || v === 'left' || v === 'center' || v === 'right',
+  align: (v) => v === null || ALIGNS.includes(v as string),
   intent: (v) => typeof v === 'string',
+  variant: (v) => CALLOUT_VARIANTS.includes(v as string),
+  width: (v) => v === null || (typeof v === 'number' && v >= 0.1 && v <= 0.9),
 };
 const KINDS: Record<string, string> = { bullet: 'bulletList', ordered: 'orderedList', check: 'taskList' };
 
@@ -1848,6 +1953,8 @@ function applyOp(ctx: Ctx, op: Op, index: number): void {
         return moveOp(ctx, op, index);
       case 'set':
         return setOp(ctx, op, index);
+      case 'style':
+        return styleOp(ctx, op, index);
       default:
         return tableOp(ctx, op, index);
     }
@@ -1985,10 +2092,18 @@ function tableOp(ctx: Ctx, op: Op, index: number): void {
   const ids = idsOf(op.target, index);
   const table = need(ctx, ids[0], index);
   if (table.nodeName !== 'table') throw new DocRefusal('bad_op', `op ${index}: ${op.op} targets a table's id`, { op: index });
+  if (op.op === 'table_merge' || op.op === 'table_split' || op.op === 'table_header') return cellsOp(ctx, table, op, index);
+  if (hasSpans(jsonOf(table))) {
+    throw new DocRefusal(
+      'bad_op',
+      `op ${index}: this table has merged cells; split them first (table_split), then add or remove rows and columns`,
+      { op: index },
+    );
+  }
   const rows = table.toArray() as Y.XmlElement[];
   const cols = rows[0]?.length ?? 0;
   const headerCells = (rows[0]?.toArray() ?? []) as Y.XmlElement[];
-  const at = op.at;
+  const at = op.at as number | undefined;
   if (at !== undefined && (!Number.isInteger(at) || at < 0)) {
     throw new DocRefusal('bad_op', `op ${index}: "at" is a 0-based index`, { op: index });
   }
@@ -2033,6 +2148,166 @@ function tableOp(ctx: Ctx, op: Op, index: number): void {
   }
 }
 
+/** [row, col] from an agent's value. */
+function pairOf(v: unknown): [number, number] | null {
+  return Array.isArray(v) && v.length === 2 && v.every((x) => Number.isInteger(x) && x >= 0) ? [v[0], v[1]] : null;
+}
+
+/** The box two corners [[r1,c1],[r2,c2]] span: [top, left, bottom, right]. */
+function cornersOf(v: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(v) || v.length !== 2) return null;
+  const a = pairOf(v[0]), b = pairOf(v[1]);
+  if (!a || !b) return null;
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+}
+
+const emptyBlock = (n: PMJson) => n.type === 'paragraph' && !n.content?.length;
+
+/**
+ * Merge cells (table_merge: "cells" = two corners [[row, col], [row, col]], 0-based squares of the grid, row 0 the first row), split
+ * a merged cell (table_split: "at" = [row, col] of any square it covers), header row / column on or off (table_header: "row",
+ * "col"). The table is rewritten through y-tiptap's reconciliation, so rows and cells it does not change keep their ids.
+ */
+function cellsOp(ctx: Ctx, table: Y.XmlElement, op: Op, index: number): void {
+  const json = jsonOf(table);
+  const rows = json.content ?? [];
+  const { grid, cols, start } = tableGrid(json);
+  const cellAt = (r: number, i: number) => rows[r].content![i];
+  const out: PMJson[][] = rows.map(() => []);
+  const bad = (message: string) => new DocRefusal('bad_op', `op ${index}: ${message}`, { op: index });
+  if (op.op === 'table_merge') {
+    const box = cornersOf(op.cells);
+    if (!box) throw bad('table_merge takes "cells": two corners [[row, col], [row, col]] (0-based)');
+    const [top, left, bottom, right] = box;
+    if (bottom >= rows.length || right >= cols) throw bad(`the table has ${rows.length} rows and ${cols} columns`);
+    const inside = new Set<string>();
+    for (let r = top; r <= bottom; r++) {
+      for (let c = left; c <= right; c++) {
+        const at = grid[r][c];
+        if (!at) throw bad(`no cell at [${r}, ${c}]`);
+        inside.add(`${at.r},${at.i}`);
+      }
+    }
+    if (inside.size < 2) throw bad('that is one cell already; give two corners further apart');
+    for (const key of inside) {
+      const [r, i] = key.split(',').map(Number);
+      const [sr, sc] = start.get(key)!;
+      const cell = cellAt(r, i);
+      const er = sr + (Number(cell.attrs?.rowspan) || 1) - 1, ec = sc + (Number(cell.attrs?.colspan) || 1) - 1;
+      if (sr < top || sc < left || er > bottom || ec > right) throw bad(`a merged cell crosses the edge of that box: split it first`);
+    }
+    const first = grid[top][left]!;
+    const kept: PMJson[] = [];
+    rows.forEach((row, r) => {
+      (row.content ?? []).forEach((cell, i) => {
+        const key = `${r},${i}`;
+        if (!inside.has(key)) return void out[r].push(cell);
+        if (r === first.r && i === first.i) return void out[r].push(cell); // filled below
+        kept.push(...(cell.content ?? []).filter((n) => !emptyBlock(n)));
+      });
+    });
+    const host = cellAt(first.r, first.i);
+    const own = (host.content ?? []).filter((n) => !emptyBlock(n));
+    const merged: PMJson = {
+      ...host,
+      attrs: { ...(host.attrs ?? {}), colspan: right - left + 1, rowspan: bottom - top + 1, colwidth: null },
+      content: own.length || kept.length ? [...own, ...kept] : [{ type: 'paragraph' }],
+    };
+    out[first.r][out[first.r].indexOf(host)] = merged;
+  } else if (op.op === 'table_split') {
+    const at = pairOf(op.at);
+    if (!at || at[0] >= rows.length || at[1] >= cols || !grid[at[0]][at[1]]) {
+      throw bad('table_split takes "at": [row, col] of the merged cell (0-based)');
+    }
+    const target = grid[at[0]][at[1]]!;
+    const cell = cellAt(target.r, target.i);
+    if ((Number(cell.attrs?.colspan) || 1) === 1 && (Number(cell.attrs?.rowspan) || 1) === 1) throw bad('that cell is not merged');
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < cols; c++) {
+        const g = grid[r][c];
+        if (!g) continue;
+        const [sr, sc] = start.get(`${g.r},${g.i}`)!;
+        if (g.r === target.r && g.i === target.i) {
+          out[r].push(
+            sr === r && sc === c
+              ? { ...cell, attrs: { ...(cell.attrs ?? {}), colspan: 1, rowspan: 1, colwidth: null } }
+              : { type: cell.type, attrs: { align: cell.attrs?.align ?? null }, content: [{ type: 'paragraph' }] },
+          );
+        } else if (sr === r && sc === c) out[r].push(cellAt(g.r, g.i));
+      }
+    }
+  } else {
+    const isHeaderRow = (rows[0]?.content ?? []).every((c) => c.type === 'tableHeader');
+    const isHeaderCol = rows.length > 0 && grid.every((g) => !g[0] || cellAt(g[0].r, g[0].i).type === 'tableHeader');
+    if (op.row === undefined && op.col === undefined) throw bad('table_header takes "row" and/or "col": true or false');
+    if ((op.row !== undefined && typeof op.row !== 'boolean') || (op.col !== undefined && typeof op.col !== 'boolean')) {
+      throw bad('"row" and "col" are true or false');
+    }
+    const row = op.row === undefined ? isHeaderRow : op.row as boolean;
+    const col = op.col === undefined ? isHeaderCol : op.col as boolean;
+    rows.forEach((r, ri) => {
+      (r.content ?? []).forEach((cell, i) => {
+        const [sr, sc] = start.get(`${ri},${i}`)!;
+        const type = (row && sr === 0) || (col && sc === 0) ? 'tableHeader' : 'tableCell';
+        out[ri].push(type === cell.type ? cell : { ...cell, type });
+      });
+    });
+  }
+  updateNode(ctx.doc, table, { ...json, content: rows.map((r, k) => ({ ...r, content: out[k] })) });
+  ctx.touched.add(table);
+}
+
+/**
+ * style: colour or highlight words ("color": a TEXT_COLORS name, "highlight": a HIGHLIGHTS name, null clears), on a find target
+ * (those words) or on blocks (all their text, every text block inside them). The words themselves do not change.
+ */
+function styleOp(ctx: Ctx, op: Op, index: number): void {
+  const marks: Record<string, Attrs | null> = {};
+  const pick = (key: 'color' | 'highlight', mark: string, names: string[]) => {
+    const v = op[key];
+    if (v === undefined) return;
+    if (v !== null && !names.includes(v as string)) {
+      throw new DocRefusal('bad_op', `op ${index}: "${key}" is one of ${names.join(', ')} (or null to clear)`, { op: index });
+    }
+    marks[mark] = v === null ? null : { color: v };
+  };
+  pick('color', 'textColor', TEXT_COLORS);
+  pick('highlight', 'highlight', HIGHLIGHTS);
+  if (!Object.keys(marks).length) {
+    throw new DocRefusal('bad_op', `op ${index}: style needs "color" and/or "highlight"`, { op: index });
+  }
+  const styleable = (el: Y.XmlElement) => TEXTBLOCKS.has(el.nodeName) && schema.nodes[el.nodeName]?.spec.marks !== '';
+  if (op.target.kind === 'find') {
+    const { el, at, text } = locate(ctx, op.target, index);
+    if (!styleable(el)) throw new DocRefusal('bad_op', `op ${index}: text in a code block takes no colour`, { op: index });
+    formatText(el, at, at + text.length, marks);
+    ctx.touched.add(el);
+    return;
+  }
+  for (const id of idsOf(op.target, index)) {
+    const el = need(ctx, id, index);
+    const walk = (x: Y.XmlElement) => {
+      if (styleable(x)) formatText(x, 0, textOf(x).length, marks);
+      else if (CONTAINERS.has(x.nodeName)) for (const c of x.toArray()) if (c instanceof Y.XmlElement) walk(c);
+    };
+    walk(el);
+    ctx.touched.add(el);
+  }
+}
+
+/** A callout inside a callout (directly, or through a list or toggle in it)? */
+function nestedCallout(el: Y.XmlElement): boolean {
+  const inCallout = (x: Y.XmlElement) => {
+    for (let p = x.parent as YType | null; p; p = p.parent as YType | null) {
+      if (p instanceof Y.XmlElement && p.nodeName === 'callout') return true;
+    }
+    return false;
+  };
+  const walk = (x: Y.XmlElement): boolean =>
+    (x.nodeName === 'callout' && inCallout(x)) || x.toArray().some((c) => c instanceof Y.XmlElement && walk(c));
+  return walk(el);
+}
+
 /** After the dry run: every container the ops touched still fits the schema (else the call is refused with why). */
 function validate(ctx: Ctx): void {
   for (const parent of ctx.touched) {
@@ -2042,6 +2317,7 @@ function validate(ctx: Ctx): void {
     }
     const el = parent as Y.XmlElement;
     if (isGone(el)) continue;
+    if (nestedCallout(el)) throw new DocRefusal('bad_op', 'a callout cannot hold another callout');
     try {
       nodeOf(el).check();
     } catch (error) {

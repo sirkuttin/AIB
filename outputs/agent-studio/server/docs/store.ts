@@ -22,6 +22,7 @@
  */
 import {
   adopt,
+  alertsToCallouts,
   blockMarkdown,
   type DocBlock,
   LEGACY_DRAWING_SRC,
@@ -29,6 +30,7 @@ import {
   type ParsedDoc,
   parseDoc,
   type PMJson,
+  richOf,
   schema,
   sigOf,
   type SrcMap,
@@ -78,7 +80,8 @@ export interface PageMirror extends MirrorState {
 /** A file-tool edit the store did not apply, because that block changed in the doc since the last copy. Data for the UI. */
 export interface SkippedEdit {
   at: string;
-  reason: 'user_changed' | 'block_gone' | 'refused';
+  /** rich_block: the block holds what Markdown can't (a callout, columns, colour...); its .md text is only a fallback. */
+  reason: 'user_changed' | 'block_gone' | 'refused' | 'rich_block';
   id: string;
   /** The block as the copy had it, as the doc has it now, and as the file edit wanted it ('' = deleted). */
   mirror: string;
@@ -87,7 +90,13 @@ export interface SkippedEdit {
   /** The page, and which file: a page's .md copy or doc.aibdoc. */
   page?: string;
   source?: 'md' | 'aibdoc' | 'drawing';
+  /** Why, in words, when the reason alone does not say it. */
+  note?: string;
 }
+
+/** The note on a skipped .md edit to a rich block. */
+export const RICH_NOTE = 'This block holds what Markdown cannot (a callout, columns, a toggle, colour, alignment or merged cells); ' +
+  'its .md text is only a readable copy, so the edit was not taken in. Edit it with the doc tools (doc_read, then doc_edit).';
 
 export interface OpenDoc {
   /** The cache key. */
@@ -414,7 +423,7 @@ export class DocStore {
     if (create !== undefined) {
       live = new LiveDoc();
       const parsed = parseDoc(create);
-      live.replaceAll(nodesOf(parsed), live.system);
+      live.replaceAll(alertsToCallouts(nodesOf(parsed)), live.system); // an agent's "> [!WARNING]" quote is a callout
       mirrors.set(live.firstPage, {
         ...emptyMirror(),
         map: adopt(parsed, live.topBlocks()),
@@ -774,6 +783,7 @@ export class DocStore {
     const readable = (s: string) => (source === 'md' ? s : jsonMarkdown(s));
     const skip = (reason: SkippedEdit['reason'], id: string, mirror: string, file: string) => {
       skipped.push({
+        ...(reason === 'rich_block' ? { note: RICH_NOTE } : {}),
         at: new Date().toISOString(),
         reason,
         id,
@@ -802,6 +812,12 @@ export class DocStore {
         const old = before[pair.a!];
         const now = live.has(old.id) && live.pageOf(old.id) === page ? current(old.id) : undefined;
         const wanted = pair.kind === 'delete' ? '' : after[pair.b!];
+        if (source === 'md' && now && richOf(now.node)) {
+          // its Markdown is a fallback: taking the edit in would drop the callout, the colours, the merged cells
+          skip('rich_block', old.id, old.raw, wanted);
+          anchor = old.id;
+          continue;
+        }
         if (!now || sigOf(now.node) !== old.sig) {
           skip(now ? 'user_changed' : 'block_gone', old.id, old.raw, wanted);
           if (now) anchor = old.id;

@@ -272,3 +272,44 @@ function myers(a: string[], b: string[]): ('=' | '-' | '+')[] {
   while (x > 0 && y > 0) out.push('='), x--, y--;
   return out.reverse();
 }
+
+// ---------- colour and highlight ----------
+
+/** Set (or with null, clear) marks on the characters from..to of a textblock (textOf positions), leaving the words alone. */
+export function formatText(el: Y.XmlElement, from: number, to: number, marks: Record<string, Attrs | null>): void {
+  for (const run of runsOf(el)) {
+    if (!(run.node instanceof Y.XmlText)) continue;
+    const a = Math.max(from, run.start), b = Math.min(to, run.start + run.length);
+    if (a < b) run.node.format(a - run.start, b - a, marks);
+  }
+}
+
+export interface StyleRun {
+  from: number;
+  to: number;
+  color?: string;
+  highlight?: string;
+}
+
+/** The coloured and highlighted stretches of a textblock (textOf positions), for an agent's read. */
+export function stylesOf(el: Y.XmlElement): StyleRun[] {
+  const out: StyleRun[] = [];
+  let at = 0;
+  for (const child of el.toArray()) {
+    if (!(child instanceof Y.XmlText)) {
+      at += 1;
+      continue;
+    }
+    for (const d of child.toDelta() as { insert: unknown; attributes?: Record<string, { color?: string } | null> }[]) {
+      const n = typeof d.insert === 'string' ? d.insert.length : 1;
+      const color = d.attributes?.textColor?.color, highlight = d.attributes?.highlight?.color;
+      if (color || highlight) {
+        const last = out[out.length - 1];
+        if (last && last.to === at && last.color === color && last.highlight === highlight) last.to += n;
+        else out.push({ from: at, to: at + n, ...(color ? { color } : {}), ...(highlight ? { highlight } : {}) });
+      }
+      at += n;
+    }
+  }
+  return out;
+}

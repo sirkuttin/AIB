@@ -7,6 +7,9 @@
  *      `htmlInline`s: kept verbatim. CRLF and LF both read; soft line breaks stay in the text.
  * Out: one block at a time (serializeBlock), each checked by parsing it back; a block that would not come back the same is written
  *      again with more escaping.
+ * Rich:  callouts, columns, toggles, text colour, highlight, alignment and merged cells (schema.ts) have no Markdown. Their Markdown is
+ *      a readable fallback (richOf: lossy): a callout is a quote starting **Note:** / **Warning:** / **Done:**, columns one after the
+ *      other, a toggle its line in bold then its body, colours and alignment dropped, a merged cell's value repeated in each cell.
  * The file: parseDoc keeps every top-level block's original text (and a list's items', a table's rows'), the blank lines between
  *      them and the line ending. writeDoc writes a doc back reusing the original text of every block whose content is unchanged
  *      (same `sig`), so an untouched file comes out byte for byte and an edit rewrites only the blocks it changed.
@@ -34,6 +37,113 @@ export const TEXTBLOCKS = new Set(['paragraph', 'heading', 'codeBlock', 'pending
 export const LISTS = new Set(['bulletList', 'orderedList', 'taskList']);
 export const ITEMS = new Set(['listItem', 'taskItem']);
 const CELLS = new Set(['tableCell', 'tableHeader']);
+const RICH_NODES = new Set(['callout', 'columns', 'column', 'toggle']);
+const RICH_MARKS = new Set(['textColor', 'highlight']);
+export const CALLOUT_LABELS: Record<string, string> = { info: 'Note', warning: 'Warning', success: 'Done' };
+
+const span = (v: unknown) => Math.max(1, Math.floor(Number(v)) || 1);
+
+/**
+ * Does this node hold anything Markdown can't (a callout, columns, a toggle, colour or highlight, alignment, merged cells, a header
+ * column or a table without a header row)? Its Markdown is then only a readable fallback: a file edit to it is not taken in.
+ */
+export function richOf(node: PMJson): boolean {
+  if (RICH_NODES.has(node.type)) return true;
+  if ((node.type === 'paragraph' || node.type === 'heading') && node.attrs?.align) return true;
+  if (node.marks?.some((m) => RICH_MARKS.has(m.type))) return true;
+  if (CELLS.has(node.type) && (span(node.attrs?.colspan) > 1 || span(node.attrs?.rowspan) > 1)) return true;
+  if (node.type === 'table') {
+    const rows = node.content ?? [];
+    if ((rows[0]?.content ?? []).some((c) => c.type !== 'tableHeader')) return true;
+    if (rows.slice(1).some((r) => (r.content ?? []).some((c) => c.type === 'tableHeader'))) return true;
+  }
+  return (node.content ?? []).some(richOf);
+}
+
+/** Where a table cell sits: its row and its index in that row. */
+export interface CellAt {
+  r: number;
+  i: number;
+}
+
+/**
+ * A table's grid: grid[row][col] is the cell covering that square (merged cells cover several), null where no cell does. `start`
+ * gives each cell's top-left square ("r,i" -> [row, col]).
+ */
+export function tableGrid(table: PMJson): { grid: (CellAt | null)[][]; cols: number; start: Map<string, [number, number]> } {
+  const rows = table.content ?? [];
+  const grid: (CellAt | null)[][] = rows.map(() => []);
+  const start = new Map<string, [number, number]>();
+  rows.forEach((row, r) => {
+    let c = 0;
+    (row.content ?? []).forEach((cell, i) => {
+      while (grid[r][c]) c++;
+      start.set(`${r},${i}`, [r, c]);
+      const cs = span(cell.attrs?.colspan), rs = span(cell.attrs?.rowspan);
+      for (let dr = 0; dr < rs && r + dr < rows.length; dr++) {
+        for (let dc = 0; dc < cs; dc++) grid[r + dr][c + dc] = { r, i };
+      }
+      c += cs;
+    });
+  });
+  const cols = Math.max(0, ...grid.map((g) => g.length));
+  for (const g of grid) for (let c = 0; c < cols; c++) g[c] ??= null;
+  return { grid, cols, start };
+}
+
+/** Does any cell of the table span more than one square? */
+export function hasSpans(table: PMJson): boolean {
+  return (table.content ?? []).some((r) => (r.content ?? []).some((c) => span(c.attrs?.colspan) > 1 || span(c.attrs?.rowspan) > 1));
+}
+
+/** The table with every merged cell split, its value repeated in each square (the Markdown fallback). */
+export function expandTable(table: PMJson): PMJson {
+  const { grid } = tableGrid(table);
+  const rows = table.content ?? [];
+  return {
+    ...table,
+    content: grid.map((g, r) => ({
+      ...rows[r],
+      content: g.map((at) => {
+        if (!at) return { type: r === 0 ? 'tableHeader' : 'tableCell', content: [{ type: 'paragraph' }] };
+        const cell = rows[at.r].content![at.i];
+        return { ...cell, attrs: { ...(cell.attrs ?? {}), colspan: 1, rowspan: 1, colwidth: null } };
+      }),
+    })),
+  };
+}
+
+const ALERTS: Record<string, string> = {
+  NOTE: 'info',
+  INFO: 'info',
+  TIP: 'info',
+  WARNING: 'warning',
+  CAUTION: 'warning',
+  IMPORTANT: 'warning',
+  SUCCESS: 'success',
+  DONE: 'success',
+};
+const ALERT = /^\[!([A-Za-z]+)\][ \t]*\n?/;
+
+/**
+ * For agents' Markdown: a quote that starts with a GitHub alert line ("> [!NOTE]", "[!WARNING]", "[!SUCCESS]"; TIP, CAUTION,
+ * IMPORTANT, DONE too) becomes a callout. The .md copies never use this (their callouts are plain quotes), so it is only for input.
+ */
+export function alertsToCallouts(nodes: PMJson[]): PMJson[] {
+  return nodes.map((n) => {
+    const content = n.content ? alertsToCallouts(n.content) : undefined;
+    const first = content?.[0];
+    const text = first?.type === 'paragraph' ? first.content?.[0] : undefined;
+    const m = n.type === 'blockquote' && text?.type === 'text' && !text.marks?.length ? ALERT.exec(text.text ?? '') : null;
+    const variant = m ? ALERTS[m[1].toUpperCase()] : undefined;
+    if (!m || !variant) return content ? { ...n, content } : n;
+    const rest = (text!.text ?? '').slice(m[0].length);
+    const inline = [...(rest ? [{ ...text!, text: rest }] : []), ...(first!.content ?? []).slice(1)];
+    while (inline[0]?.type === 'hardBreak') inline.shift();
+    const kids = [...(inline.length ? [{ ...first!, content: inline }] : []), ...content!.slice(1)];
+    return { type: 'callout', attrs: { variant }, content: kids.length ? kids : [{ type: 'paragraph' }] };
+  });
+}
 
 // =====================================================================================================================================
 // Normalising and signatures
@@ -1002,6 +1112,23 @@ export function serializeBlock(
       return serializeInline([{ type: 'image', attrs: { src: a.src, alt: a.caption || null, title: null } }], { level, style });
     case 'blockquote':
       return serializeChildren(node.content ?? [], {}, level).split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
+    case 'callout': {
+      // a quote starting with its label: > **Warning:** words
+      const label = `**${CALLOUT_LABELS[String(a.variant)] ?? 'Note'}:**`;
+      const kids = node.content ?? [];
+      const body = kids[0]?.type === 'paragraph'
+        ? (label + ' ' + serializeChildren(kids, {}, level)).replace(/^([^\n]*?)[ \t]+(?=\n|$)/, '$1')
+        : label + (kids.length ? '\n\n' + serializeChildren(kids, {}, level) : '');
+      return body.split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
+    }
+    case 'toggle': {
+      // its line in bold, then what it opens
+      const [line, ...body] = node.content ?? [];
+      const text = line?.content?.length ? inline(line).replace(/\n/g, ' ').trim() : '';
+      const head = text ? `**${text}**` : '';
+      const rest = serializeChildren(body, {}, level);
+      return head && rest ? head + '\n\n' + rest : head || rest;
+    }
     case 'bulletList':
     case 'orderedList':
     case 'taskList':
@@ -1078,7 +1205,8 @@ function delimFor(table: PMJson): string {
   }).join(' | ') + ' |';
 }
 
-function serializeTable(table: PMJson, _style: Style, level: number): string[] {
+function serializeTable(node: PMJson, _style: Style, level: number): string[] {
+  const table = hasSpans(node) ? expandTable(node) : node;
   const rows = (table.content ?? []).map((r) => serializeRow(r, level));
   return [rows[0] ?? '|  |', delimFor(table), ...rows.slice(1)];
 }
@@ -1096,6 +1224,7 @@ export function blockMarkdown(
   node: PMJson,
   style: Style = {},
 ): { md: string; lossy: boolean } {
+  if (richOf(node)) return { md: serializeBlock(node, style, 0), lossy: true };
   const want = JSON.stringify(normalize(node));
   let first = '';
   for (const level of [0, 1, 2]) {
@@ -1236,6 +1365,7 @@ export function writeDoc(
       })();
       rewritten.push(b.id);
     }
+    if (richOf(b.node) && !lossy.includes(b.id)) lossy.push(b.id);
     out.push(index === 0 && gap === '' ? raw : gap + raw);
     next[b.id] = { raw, gap, sig, ...(src?.style ? { style: src.style } : {}) };
     if (src && src.sig === sig && b.kidIds) { for (const kid of b.kidIds) if (map[kid]) next[kid] = map[kid]; }
@@ -1255,7 +1385,7 @@ function writeContainer(
   eol: string,
 ): string | null {
   if (
-    !b.kidIds || !src || !b.node.content || b.kidIds.length !== b.node.content.length
+    !b.kidIds || !src || !b.node.content || b.kidIds.length !== b.node.content.length || richOf(b.node)
   ) return null;
   const known = b.kidIds.filter((id) => map[id]);
   if (!known.length) return null;
