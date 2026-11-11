@@ -241,6 +241,41 @@ Deno.test({
 });
 
 Deno.test({
+  name: 'auto-reconnect: a transcript the previous AIB wrote just before the restart is not "another app" (no Elsewhere · Working)',
+  ...T,
+  async fn() {
+    // The owner's case: a Claude chat answered (or was resumed) by the previous AIB seconds before an update or restart. The new
+    // process saw the fresh transcript, called it another app's work, refused the reconnect and showed "Elsewhere · Working".
+    await using lab = new Lab();
+    const sep = Deno.build.os === 'windows' ? '\\' : '/';
+    const claude = `${lab.dir}${sep}claude-projects`;
+    Deno.mkdirSync(`${claude}${sep}C--project`, { recursive: true });
+    const transcript = `${claude}${sep}C--project${sep}restart-session.jsonl`;
+    const first = lab.manager([], { claudeProjects: claude });
+    first.store!.rememberConversation('claude', 'restart-session', lab.dir);
+    Deno.writeTextFileSync(transcript, '{"type":"assistant"}\n'); // the last reply, written by the previous AIB
+    await first.close();
+
+    const second = lab.manager([], { claudeProjects: claude });
+    const verdict = second.probe.assess('claude', 'restart-session', { cwd: lab.dir, skipCmdline: true });
+    assert(verdict.verdict !== 'possibly_active' && verdict.verdict !== 'owned_elsewhere', JSON.stringify(verdict));
+    assertEquals(second.probe.hints()['claude:restart-session'], undefined, 'no ownership hint: the card is not Elsewhere');
+    second.checkOwnership('claude', 'restart-session', lab.dir); // the auto-reconnect check passes
+
+    // A write after this start is still someone else's work.
+    const later = new Date(Date.now() + 30_000);
+    Deno.utimeSync(transcript, later, later);
+    const after = second.probe.assess('claude', 'restart-session', { cwd: lab.dir, skipCmdline: true });
+    assertEquals(after.verdict, 'possibly_active');
+
+    // A transcript AIB never ran (not on the recovery list) still counts as another app's.
+    const other = `${claude}${sep}C--project${sep}foreign-session.jsonl`;
+    Deno.writeTextFileSync(other, '{"type":"assistant"}\n');
+    assertEquals(second.probe.assess('claude', 'foreign-session', { cwd: lab.dir, skipCmdline: true }).verdict, 'possibly_active');
+  },
+});
+
+Deno.test({
   name: 'auto-reconnect: failures retry, then drop from the recovery list; a failure that clears up still reconnects',
   ...T,
   async fn() {
