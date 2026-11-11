@@ -44,34 +44,82 @@ test('smart start: ties are stable, drive roots are not parents, no projects mea
 test('hint: empty, partial and checking', () => {
   for (const c of [null, { valid: false, reason: 'empty' }, { valid: false, reason: 'partial' }]) {
     const h = W.hintState(c);
-    assert.equal(h.text, 'Type a folder name, or Browse');
-    assert.equal(h.canSubmit, false);
-    assert.equal(h.showGit, false);
+    assert.equal(h.text, 'Type a folder path, or Browse');
+    assert.deepEqual([h.canSubmit, h.showGit, h.preview], [false, false, '']);
   }
   const k = W.hintState(null, { checking: true });
   assert.deepEqual([k.kind, k.canSubmit], ['checking', false]);
 });
 
-test('hint: new folder offers git, disabled when git is missing', () => {
-  const h = W.hintState({ valid: true, reason: 'new', exists: false, gitAvailable: true });
+test('hint: new folder says what it creates and offers git, disabled when git is missing', () => {
+  const h = W.hintState({ valid: true, reason: 'new', exists: false, gitAvailable: true, path: 'C:\\R\\app' });
   assert.deepEqual(
-    [h.kind, h.text, h.primary, h.canSubmit, h.showGit, h.gitEnabled],
-    ['new', 'New folder, will be created', 'Create project', true, true, true],
+    [h.kind, h.text, h.preview, h.previewTone, h.primary, h.canSubmit, h.showGit, h.gitEnabled],
+    ['new', 'New folder', 'Creates C:\\R\\app', 'ok', 'Create project', true, true, true],
   );
-  const g = W.hintState({ valid: true, reason: 'new', exists: false, gitAvailable: false });
+  const g = W.hintState({ valid: true, reason: 'new', exists: false, gitAvailable: false, path: 'C:\\R\\app' });
   assert.deepEqual([g.showGit, g.gitEnabled, g.gitNote], [true, false, 'git not found']);
 });
 
 test('hint: existing folder and existing project', () => {
-  const e = W.hintState({ valid: true, exists: true, isDir: true }, { isProject: false });
+  const e = W.hintState({ valid: true, exists: true, isDir: true, path: 'C:\\REPOS' }, { isProject: false });
   assert.deepEqual(
-    [e.text, e.primary, e.canSubmit, e.showGit],
-    ['Existing folder, used as is', 'Open project', true, false],
+    [e.text, e.preview, e.primary, e.canSubmit, e.showGit],
+    ['Existing folder', 'Uses C:\\REPOS (already there)', 'Open project', true, false],
   );
-  const p = W.hintState({ valid: true, exists: true, isDir: true }, { isProject: true });
+  const p = W.hintState({ valid: true, exists: true, isDir: true, path: 'C:\\R\\a' }, { isProject: true });
   assert.deepEqual(
-    [p.kind, p.text, p.primary],
-    ['project', 'This is already a project. Open switches to it', 'Open project'],
+    [p.kind, p.text, p.preview, p.primary],
+    ['project', 'Already a project', 'Opens C:\\R\\a (already a project)', 'Open project'],
+  );
+});
+
+test('hint: with a name, the hint is about Folder and the preview names <folder>\\<name>', () => {
+  const made = W.hintState({
+    valid: true,
+    exists: false,
+    path: 'C:\\REPOS\\spaghetti',
+    folder: 'C:\\REPOS',
+    gitAvailable: true,
+  });
+  assert.deepEqual(
+    [made.text, made.preview, made.primary, made.canSubmit, made.showGit],
+    ['Folder found', 'Creates C:\\REPOS\\spaghetti', 'Create project', true, true],
+  );
+  const there = W.hintState({
+    valid: true,
+    exists: true,
+    isDir: true,
+    path: 'C:\\REPOS\\spaghetti',
+    folder: 'C:\\REPOS',
+  });
+  assert.deepEqual(
+    [there.text, there.preview, there.primary, there.showGit],
+    ['Folder found', 'Uses C:\\REPOS\\spaghetti (already there)', 'Open project', false],
+  );
+});
+
+test('hint: a bad name is red on the preview line, the Folder hint stays fine', () => {
+  const h = W.hintState({
+    valid: false,
+    reason: 'invalid_name',
+    field: 'name',
+    folder: 'C:\\R',
+    message: '"CON" is a reserved Windows name',
+  });
+  assert.deepEqual(
+    [h.kind, h.text, h.tone, h.preview, h.previewTone, h.canSubmit],
+    ['bad_name', 'Folder found', 'ok', '"CON" is a reserved Windows name', 'error', false],
+  );
+  const gone = W.hintState({
+    valid: false,
+    reason: 'folder_missing',
+    field: 'folder',
+    message: "C:\\x doesn't exist. Leave…",
+  });
+  assert.deepEqual(
+    [gone.kind, gone.tone, gone.previewTone, gone.canSubmit],
+    ['folder_missing', 'error', 'hint', false],
   );
 });
 

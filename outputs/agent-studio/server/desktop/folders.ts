@@ -191,6 +191,92 @@ export function checkPath(raw: unknown, windows?: boolean | null): CheckResult {
   return result({ valid: true, reason: exists ? 'existing' : 'new', message: '', ...base });
 }
 
+const isWindows = (windows?: boolean | null) => windows ?? (Deno.build.os === 'windows');
+
+/**
+ * The Folder box as typed, tidied before any check: trimmed; on Windows '/' becomes '\' and the drive letter upper case; trailing
+ * separators dropped (a bare drive or '/' keeps its one). Anything it can't tidy (relative, network) is left for validatePath to refuse.
+ */
+export function normalizeFolder(raw: unknown, windows?: boolean | null): string {
+  let text = isStr(raw) ? pyStrip(raw) : '';
+  if (!text) return '';
+  if (isWindows(windows)) {
+    text = text.replaceAll('/', '\\');
+    const m = /^([A-Za-z]):\\([\s\S]*)$/.exec(text);
+    if (!m) return text;
+    return m[1].toUpperCase() + ':\\' + m[2].replace(/\\+$/, '');
+  }
+  if (!text.startsWith('/') || text.startsWith('//')) return text;
+  return '/' + text.slice(1).replace(/\/+$/, '');
+}
+
+/** The "Project name" box as a single folder name: trimmed, one level, no . or .., nothing Windows refuses. Throws FolderError. */
+export function validateName(raw: unknown, windows?: boolean | null): string {
+  const win = isWindows(windows);
+  const name = isStr(raw) ? pyStrip(raw) : '';
+  if (!name) throw new FolderError('Type a project name, or leave it empty to use the folder itself', 'empty_name');
+  if (hasControl(name)) throw new FolderError("A project name can't contain control characters", 'invalid_name');
+  if (name === '.' || name === '..') throw new FolderError('"." and ".." can\'t be used as a project name', 'escape');
+  if (name.includes('/') || (win && name.includes('\\'))) {
+    throw new FolderError(win ? "A project name can't contain \\ or /" : "A project name can't contain /", 'escape');
+  }
+  if (pyLen(name) > 255) throw new FolderError('That project name is too long', 'invalid_name');
+  if (win) {
+    const bad = [...new Set([...name].filter((c) => BAD_CHARS.includes(c)))].sort();
+    if (bad.length) throw new FolderError(`"${name}" can't contain ${bad.join(' ')}`, 'invalid_name');
+    if (name.endsWith('.')) throw new FolderError(`"${name}" can't end with a dot`, 'invalid_name');
+    if (RESERVED.has(pyStrip(name.split('.')[0]).toUpperCase())) {
+      throw new FolderError(`"${name}" is a reserved Windows name`, 'invalid_name');
+    }
+  }
+  return name;
+}
+
+/** checkPath plus which box an error belongs to and, with a name, the folder the new one goes in. */
+export interface ProjectCheck extends CheckResult {
+  field?: 'folder' | 'name' | '';
+  folder?: string;
+}
+
+/**
+ * The answer behind GET /api/live/folders/check?path=&name=. Without a name: checkPath of the tidied folder (the folder itself is the
+ * project; a missing one is created if its parent exists). With a name: the folder must exist, and the project is <folder>\<name>,
+ * new (valid, exists false) or already there (valid, exists true). path is always the folder that becomes the project.
+ */
+export function checkProject(rawFolder: unknown, rawName: unknown, windows?: boolean | null): ProjectCheck {
+  if (isNetworkPath(rawFolder)) return checkPath(rawFolder, windows); // refused before anything looks at the filesystem
+  const win = isWindows(windows);
+  const folder = normalizeFolder(rawFolder, win);
+  const wanted = isStr(rawName) ? pyStrip(rawName) : '';
+  if (!wanted) return checkPath(folder, win);
+  const isRoot = win ? /^[A-Z]:\\$/.test(folder) : folder === '/';
+  let base = folder;
+  if (!isRoot) {
+    const f = checkPath(folder, win);
+    if (!f.valid) return { ...f, field: 'folder', folder: f.path };
+    if (!f.exists) {
+      return {
+        ...f,
+        valid: false,
+        reason: 'folder_missing',
+        message: `${f.path} doesn't exist. Leave Project name empty to create it as the project`,
+        field: 'folder',
+        folder: f.path,
+      };
+    }
+    base = f.path;
+  }
+  let name: string;
+  try {
+    name = validateName(wanted, win);
+  } catch (error) {
+    if (!(error instanceof FolderError)) throw error;
+    return { ...result({ valid: false, reason: error.code, message: error.message, parent: base }), field: 'name', folder: base };
+  }
+  const target = checkPath(base + (isRoot ? '' : win ? '\\' : '/') + name, win);
+  return { ...target, field: target.valid ? '' : 'name', folder: base };
+}
+
 export interface RunResult {
   code: number;
   stdout: string;
@@ -242,6 +328,8 @@ export interface CreateResult {
   path: string;
   git: boolean;
   gitError?: string;
+  /** createProject only: the named folder was already there and is used as is (nothing created, no git init). */
+  existed?: boolean;
 }
 
 /** One new folder level, never intermediate folders, never an existing one. */
@@ -272,6 +360,30 @@ export async function createFolder(raw: unknown, gitInit = false, runner: GitRun
     }
   }
   return out;
+}
+
+/**
+ * POST /api/live/folders/create with a name: makes <folder>\<name> inside an existing folder (one level, as createFolder), or uses
+ * it when it is already there. An empty name is refused here: the page sends no name to use the folder itself.
+ */
+export async function createProject(
+  rawFolder: unknown,
+  rawName: unknown,
+  gitInit = false,
+  runner: GitRunner = runCommand,
+): Promise<CreateResult> {
+  validateName(rawName);
+  const info = checkProject(rawFolder, rawName);
+  if (!info.valid) throw new FolderError(info.message || 'Invalid folder', info.reason);
+  if (info.exists) return { path: info.path, git: false, existed: true };
+  try {
+    return await createFolder(info.path, gitInit, runner);
+  } catch (error) {
+    if (error instanceof FolderError && error.code === 'exists' && osp.isdir(info.path)) {
+      return { path: info.path, git: false, existed: true };
+    }
+    throw error;
+  }
 }
 
 /** Python's error.strerror: the OS message without Deno's "(os error N)" and call details. */
