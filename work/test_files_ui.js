@@ -85,6 +85,12 @@ function setup(o) {
       return { root: ROOT, matches: [{ path: 'outputs/bar-charts.html', name: 'bar-charts.html', dir: 'outputs' }], total: 1 };
     if (path === '/api/live/files/read')
       return { root: ROOT, path: q.path, abs: ROOT + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: '' };
+    if (path === '/api/live/files/outside') {
+      const r = (opts.outside || {})[q.path];
+      if (!r) throw Object.assign(new Error('This chat never named that file'), { status: 403 });
+      const name = q.path.split(/[\\/]/).pop();
+      return Object.assign({ path: q.path, abs: q.path, name, size: 12, binary: false, tooBig: false, image: false, page: false, text: q.peek ? null : 'x = 1\n', lines: 1, viewUrl: '' }, r);
+    }
     if (path === '/api/live/artifacts') return { artifacts: (opts.arts || {})[q.conversationId] || [] };
     return {};
   };
@@ -408,4 +414,220 @@ test('Open in Artifacts shows for every page file; on one no chat registered it 
   await flush();
   const v2 = t.shell.body.querySelector('#fileView');
   assert.equal(v2.querySelectorAll('.fx-btn').filter((x) => /Open in Artifacts/.test(x.textContent)).length, 0, 'a .py file has no page');
+});
+
+// ---- write / edit rows: the open-file icon and the clickable path ----------------------------------------------------------
+const writeRow = (id, path, o) => ({
+  role: 'tool',
+  uid: id,
+  call: Object.assign({ id, name: 'Write', input: { file_path: path, content: 'x = 1\n' }, result: { text: 'File written' } }, o || {}),
+});
+const editRow = (id, path) => ({
+  role: 'tool',
+  uid: id,
+  call: { id, name: 'Edit', input: { file_path: path, old_string: 'a', new_string: 'b' }, result: { text: 'Edited' } },
+});
+const readRow = (id, path) => ({ role: 'tool', uid: id, call: { id, name: 'Read', input: { file_path: path }, result: { text: 'a' } } });
+// A tool row the way chat.js draws it, inside `box` (#messages, #submessages or a split pane's .mirror-msgs).
+async function drawRow(t, row, box) {
+  const TV = t.ctx.ToolViews;
+  const line = TV.line(row, () => (row.raw ? TV.render(row.raw) : TV.renderCall(row.call)));
+  box.append(line);
+  await flush();
+  await flush();
+  return line;
+}
+const actsOf = (line) => line.children.find((c) => c.classList.contains('tool-acts'));
+const fileBtn = (line) => line.querySelector('.tool-file');
+const withEditor = (t, edits) => {
+  t.ctx.AgentEditors = {
+    canOpenFile: () => true,
+    fileTip: (l) => 'Open in VS Code' + (l ? ' at line ' + l : ''),
+    fileEditor: () => ({ name: 'VS Code' }),
+    openFile: (p, l) => edits.push([p, l]),
+  };
+};
+const expand = (line) => line.querySelector('.tool-toggle').dispatch('click');
+
+test('a write row in the main chat gets a visible open-file icon (tooltip, "Open <name>"), beside "editor ↗"; it opens the file view', async () => {
+  const t = setup();
+  const edits = [];
+  withEditor(t, edits);
+  const messages = t.shell.make('div', 'messages');
+  const line = await drawRow(t, writeRow('w1', ROOT + '/scripts/make_charts.py'), messages);
+  const b = fileBtn(line);
+  assert.ok(b, 'the icon button is there');
+  assert.equal(b.hidden, false, 'visible, not hover-only');
+  assert.equal(b.getAttribute('aria-label'), 'Open make_charts.py');
+  assert.match(b.title, /^Open make_charts\.py\n/);
+  assert.ok(b.querySelector('.tool-file-ico'), 'an icon');
+  // the editor button stays and says what it does; exactly one of each, file icon first
+  const acts = actsOf(line);
+  assert.deepEqual(acts.children.map((c) => c.className), ['tool-file', 'tool-open']);
+  const ed = acts.querySelector('.tool-open');
+  assert.equal(ed.textContent, 'editor ↗');
+  assert.equal(ed.getAttribute('aria-label'), 'Open in VS Code');
+  assert.equal(line.querySelectorAll('.art-preview').length, 0, 'no "Show file" button');
+  // Tab order: the actions come before the opened detail
+  assert.equal(line.children.at(-1).className.split(' ')[0], 'tool-detail');
+  // a click opens the file (beside the chat at 1400 px); the row does not expand
+  b.dispatch('click');
+  await flush();
+  assert.equal(t.FU._state().beside.tabs[0].path, 'scripts/make_charts.py');
+  assert.doesNotMatch(line.className, /\bopen\b/);
+  assert.deepEqual(edits, [], 'the icon never opens the editor');
+  ed.dispatch('click');
+  assert.deepEqual(edits, [[ROOT + '/scripts/make_charts.py', null]], '"editor ↗" opens the editor');
+});
+
+test('an edit row gets the icon too; read rows and failed writes do not', async () => {
+  const t = setup({ width: 1000 });
+  const box = t.shell.make('div', 'messages');
+  const edit = await drawRow(t, editRow('e1', ROOT + '/scripts/load_sales.py'), box);
+  assert.equal(fileBtn(edit).getAttribute('aria-label'), 'Open load_sales.py');
+  fileBtn(edit).dispatch('click');
+  await flush();
+  assert.equal(t.FU._state().tabs.tabs[0].path, 'scripts/load_sales.py', 'below 1280 px: a tab');
+  const read = await drawRow(t, readRow('r1', ROOT + '/README.md'), box);
+  assert.equal(fileBtn(read), null, 'a read row has no open-file icon');
+  const failed = await drawRow(t, writeRow('w2', ROOT + '/README.md', { result: { text: 'Error: denied', isError: true } }), box);
+  assert.equal(fileBtn(failed), null, 'a failed write has none');
+});
+
+test('the path in an expanded write detail is a file link: click opens it, Ctrl+click opens the editor, right-click gives the link menu', async () => {
+  const t = setup();
+  const edits = [];
+  withEditor(t, edits);
+  const box = t.shell.make('div', 'messages');
+  const line = await drawRow(t, writeRow('w3', ROOT + '/scripts/make_charts.py'), box);
+  expand(line);
+  const a = line.querySelector('.tool-detail').querySelector('a.fx-path');
+  assert.ok(a, 'the path box became a link');
+  assert.equal(a.dataset.filePath, 'scripts/make_charts.py');
+  assert.ok(a.querySelector('.fx-pico'), 'file icon');
+  assert.ok(a.querySelector('code').classList.contains('tool-path-text'), 'still the code box');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: true });
+  assert.deepEqual(edits, [[ROOT + '/scripts/make_charts.py', 0]]);
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await flush();
+  assert.equal(t.FU._state().beside.tabs[0].path, 'scripts/make_charts.py');
+  t.shell.document.dispatch('contextmenu', { target: a, clientX: 20, clientY: 30 });
+  const items = t.shell.body.querySelectorAll('.fx-menu-it').map((x) => x.textContent);
+  assert.deepEqual(items.slice(0, 3), ['Open to the side', 'Show in Files', 'Copy path']);
+  // a row already open when the check finishes is linked too
+  const t2 = setup();
+  const box2 = t2.shell.make('div', 'messages');
+  const TV = t2.ctx.ToolViews;
+  const row = writeRow('w4', ROOT + '/README.md');
+  const l2 = TV.line(row, () => TV.renderCall(row.call));
+  box2.append(l2);
+  expand(l2);
+  await flush();
+  await flush();
+  assert.ok(l2.querySelector('.tool-detail').querySelector('a.fx-path'));
+});
+
+test('a missing file or one outside the folder the chat never named: plain path, no open-file icon', async () => {
+  const t = setup();
+  const box = t.shell.make('div', 'messages');
+  for (const p of [ROOT + '/data/missing.csv', 'C:/elsewhere/x.py']) {
+    const line = await drawRow(t, writeRow('m-' + p, p), box);
+    assert.equal(fileBtn(line), null, p);
+    expand(line);
+    assert.equal(line.querySelector('.tool-detail').querySelector('a.fx-path'), null, p);
+    assert.equal(line.querySelector('code.tool-path-text').textContent, p);
+  }
+  const asked = t.calls.filter((c) => c.path === '/api/live/files/outside');
+  assert.deepEqual(asked.map((c) => c.q.path), ['C:/elsewhere/x.py'], 'only the outside path is asked about, by the chat');
+  assert.equal(asked[0].q.id, 'claude:a1');
+});
+
+test('outside the folder but named by the chat (a discovered chat): icon and link open it read only, labelled "Outside this project"', async () => {
+  const OUT = 'C:/Users/me/AIB-keeper-terms/work/deno/keeper_terminal_test.ts';
+  const t = setup({
+    width: 1000,
+    outside: { [OUT]: { outside: { kind: 'worktree', branch: 'keeper-terms', repo: 'AIB', text: '⎇ keeper-terms · git worktree of AIB' } } },
+  });
+  const box = t.shell.make('div', 'submessages'); // the subagent history view
+  const line = await drawRow(t, writeRow('o1', OUT), box);
+  const asked = t.calls.find((c) => c.path === '/api/live/files/outside');
+  assert.equal(asked.q.id, 'claude:a1', 'a discovered chat is named by provider:session');
+  assert.equal(asked.q.peek, 1);
+  const b = fileBtn(line);
+  assert.equal(b.getAttribute('aria-label'), 'Open keeper_terminal_test.ts');
+  assert.match(b.title, /Outside this project · ⎇ keeper-terms · git worktree of AIB, read only/);
+  b.dispatch('click');
+  await flush();
+  await flush();
+  const tab = t.FU._state().tabs.tabs[0];
+  assert.equal(tab.scope.root, 'outside');
+  assert.equal(tab.path, OUT);
+  const ftab = t.shell.byId.chatTabs.querySelectorAll('.sf-ftab')[0];
+  assert.match(ftab.querySelector('.ws-tab-main').title, /Outside this project · ⎇ keeper-terms · git worktree of AIB/);
+  const view = t.shell.body.querySelector('#fileView');
+  const chip = view.querySelector('.sf-fv-from');
+  assert.equal(chip.textContent, 'Outside this project· ⎇ keeper-terms · git worktree of AIB');
+  assert.equal(view.querySelector('.fx-chg'), null, 'no change badge');
+  assert.match(view.querySelector('.fx-pv-foot').textContent, /Read-only/);
+  assert.ok(t.calls.some((c) => c.path === '/api/live/files/outside' && !c.q.peek), 'read through the outside route');
+  assert.ok(!t.calls.some((c) => c.path === '/api/live/changes/file'), 'no Changes jump');
+  // the path in the detail links the same way; its menu has no "Show in Files"
+  expand(line);
+  const a = line.querySelector('.tool-detail').querySelector('a.fx-path');
+  assert.ok(a);
+  t.shell.document.dispatch('contextmenu', { target: a, clientX: 1, clientY: 1 });
+  const items = t.shell.body.querySelectorAll('.fx-menu-it').map((x) => x.textContent);
+  assert.ok(!items.includes('Show in Files'), items.join(','));
+});
+
+test('folder label variants: worktree, ordinary repo, plain folder', async () => {
+  const P = { wt: 'C:/x/wt/a.ts', repo: 'C:/x/repo/b.ts', plain: 'C:/x/plain/c.ts' };
+  const t = setup({
+    width: 1000,
+    outside: {
+      [P.wt]: { outside: { kind: 'worktree', text: '⎇ feat · git worktree of AIB' } },
+      [P.repo]: { outside: { kind: 'repo', text: '⎇ main' } },
+      [P.plain]: { outside: { kind: 'folder', text: 'C:\\x\\plain' } },
+    },
+  });
+  const box = t.shell.make('div', 'messages');
+  const want = {
+    wt: 'Outside this project · ⎇ feat · git worktree of AIB',
+    repo: 'Outside this project · ⎇ main',
+    plain: 'Outside this project · C:\\x\\plain',
+  };
+  for (const k of Object.keys(P)) {
+    const line = await drawRow(t, writeRow('l-' + k, P[k]), box);
+    fileBtn(line).dispatch('click');
+    await flush();
+    await flush();
+    const chip = t.shell.body.querySelector('#fileView').querySelector('.sf-fv-from');
+    assert.equal(chip.textContent.replace('project·', 'project ·'), want[k], k);
+    assert.ok(chip.title.startsWith(want[k]), k);
+  }
+});
+
+test("split panes: a row in another pane is checked against that pane's chat", async () => {
+  // b1's folder is C:/work/beta: a file in alpha is outside it, so the outside route is asked with b1's id.
+  const t = setup({ outside: { [ROOT + '/README.md']: { outside: { kind: 'folder', text: ROOT } } } });
+  const pane = t.shell.make('div');
+  pane.className = 'mirror-msgs';
+  pane.dataset.mirror = 'claude:b1';
+  const line = await drawRow(t, writeRow('s1', ROOT + '/README.md'), pane);
+  const asked = t.calls.filter((c) => c.path === '/api/live/files/outside');
+  assert.deepEqual(asked.map((c) => c.q.id), ['claude:b1']);
+  assert.equal(fileBtn(line).getAttribute('aria-label'), 'Open README.md');
+});
+
+test('no duplicate actions: one open-file icon however often the row is checked, and "Show file" is gone from artifacts-ui', async () => {
+  const t = setup();
+  const box = t.shell.make('div', 'messages');
+  const line = await drawRow(t, writeRow('d1', ROOT + '/README.md'), box);
+  await t.FU.toolFile(line, ROOT + '/README.md');
+  assert.equal(line.querySelectorAll('.tool-file').length, 1);
+  expand(line);
+  await t.FU.toolFile(line, ROOT + '/README.md');
+  assert.equal(line.querySelector('.tool-detail').querySelectorAll('a.fx-path').length, 1, 'the path is linked once');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../outputs/agent-studio/artifacts-ui.js'), 'utf8');
+  assert.ok(!/Show file|art-preview/.test(src), 'the old "Show file" button (same action as the icon) is removed');
 });

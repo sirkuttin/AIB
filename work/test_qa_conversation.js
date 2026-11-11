@@ -80,7 +80,7 @@ test('an open step group stays in its own chat', () => {
   assert.match(draw().className, /\bopen\b/, 'back in chat 1: still open');
 });
 
-test('a tool row: "open ↗" comes before the opened detail in Tab order', () => {
+test('a tool row: "editor ↗" comes before the opened detail in Tab order', () => {
   const page = makePage({
     scripts: ['tool-views.js'],
     window: { AgentEditors: { init() {}, canOpenFile: () => true, fileTip: () => 'Open in editor', openFile() {} } },
@@ -98,8 +98,11 @@ test('a tool row: "open ↗" comes before the opened detail in Tab order', () =>
   };
   const box = TV.line(row, () => new El('detail'));
   const order = box.children.map((c) => String(c.className).split(' ')[0]);
-  assert.ok(order.includes('tool-open'), order.join(','));
-  assert.ok(order.indexOf('tool-open') < order.indexOf('tool-detail'), order.join(','));
+  assert.ok(order.includes('tool-acts'), order.join(','));
+  assert.ok(order.indexOf('tool-acts') < order.indexOf('tool-detail'), order.join(','));
+  const acts = box.children.find((c) => String(c.className) === 'tool-acts');
+  assert.equal(acts.children[0].className, 'tool-open');
+  assert.equal(acts.children[0].textContent, 'editor ↗');
   assert.equal(order.at(-1), 'tool-detail');
 });
 

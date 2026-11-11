@@ -126,7 +126,6 @@
 .ar-it:focus-visible,
 .ar-switch:focus-visible,
 .art-btn:focus-visible,
-.art-preview:focus-visible,
 .artifact-link:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
@@ -462,33 +461,6 @@
 .art-btn:disabled {
   opacity: 0.5;
   cursor: default;
-}
-.art-preview {
-  position: absolute;
-  top: 2px;
-  right: 68px;
-  z-index: 1;
-  padding: 0 6px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1.5;
-  cursor: pointer;
-}
-.art-preview:hover:not(:disabled),
-.art-preview:focus-visible {
-  color: var(--text);
-  background: var(--bg-field);
-}
-.art-preview:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.tool-line:has(.art-preview) .tool-toggle {
-  padding-right: 140px;
 }
 /* ⧉ links in replies */
 a.artifact-link {
