@@ -349,8 +349,13 @@ body:not(.sf-files-mode) #filesPane {
 }
 
 /* ---- the file view: replaces the chat in the middle while a file tab is on ---- */
-body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside) {
+/* The page's error line and notices stay: an error raised while a file shows must not be silent. They sit under the tabs, above
+   the file (the file view is moved after them). */
+body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside):not(#error):not(#updateBanner):not(#studioNotice) {
   display: none !important;
+}
+body.sf-file-on main > #fileView {
+  order: 1;
 }
 .sf-fileview {
   flex: 1 1 auto;

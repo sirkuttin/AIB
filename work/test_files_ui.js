@@ -67,7 +67,7 @@ function setup(o) {
     registeredIn = [];
   ctx.AgentArtifactsUI = {
     state: () => ({ list: opts.ownList || [{ id: 'art1', sourcePath: ROOT + '/outputs/bar-charts.html' }] }),
-    open: (id) => opened.push(id),
+    open: (id) => (opened.push(id), !opts.openFails),
     registerFile: async (abs, chatId) => {
       registered.push(abs);
       registeredIn.push(chatId);
@@ -120,7 +120,14 @@ function setup(o) {
     quickPrompt() {},
   });
   const FU = ctx.AgentFilesUI;
-  FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, conversations: () => list, open: async () => {} });
+  // notice: what chat.js passes (fail): the page's #error line, inside <main>, shows the message.
+  const notice = (m) => {
+    const e = shell.byId.error;
+    if (!e) return;
+    e.textContent = m;
+    e.hidden = false;
+  };
+  FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, notice, conversations: () => list, open: async () => {} });
   W.sync(list, list[0]);
   FU.sync(list[0]);
   return { shell, ctx, W, FU, calls, list, focused, opened, registered, registeredIn };
@@ -491,6 +498,49 @@ test('a failed Open in Artifacts shows an alert in the file view (the page error
   assert.match(alert.textContent, /Could not open in Artifacts: That file does not exist\./);
   alert.querySelector('.sf-fv-alert-x').click();
   assert.equal(t.shell.body.querySelector('#fileView').querySelector('.sf-fv-alert'), null);
+});
+
+test("an error notice raised while a file tab shows is visible: files.css's file-on rule spares the page's error and notice lines", async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { cssRules, declarationsFor } = require('./css_rules.js');
+  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/files.css'), 'utf8'));
+  // Every "body.sf-file-on main > :not(#a):not(#b)…" rule that hides: the ids it spares.
+  const hiders = rules
+    .filter((r) => r.context === '' && /^body\.sf-file-on main > :not\(/.test(r.selector) && /^none/.test(r.declarations.display || ''))
+    .map((r) => [...r.selector.matchAll(/:not\(#([\w-]+)\)/g)].map((m) => m[1]));
+  assert.ok(hiders.length, 'the rule that swaps the chat for the file is there');
+  const hiddenByCss = (el, body) =>
+    body.classList.contains('sf-file-on') && el.parentNode && el.parentNode.tagName === 'MAIN' && hiders.some((ids) => !ids.includes(el.id));
+  const visible = (el, body) => !el.hidden && !hiddenByCss(el, body);
+
+  const t = setup({ openFails: true, arts: { 'claude:a1': [] } });
+  const main = t.shell.body.querySelector('main');
+  // the page's lines, as chat.html has them: direct children of <main>
+  const mk = (id) => {
+    const n = t.shell.make('div', id, main);
+    n.hidden = true;
+    return n;
+  };
+  const error = mk('error');
+  mk('updateBanner');
+  mk('studioNotice');
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'outputs').click();
+  await flush();
+  rowOf(t, 'outputs/bar-charts.html').click();
+  await flush();
+  assert.ok(t.shell.body.classList.contains('sf-file-on'), 'a file tab is showing');
+  assert.ok(hiddenByCss(t.shell.byId.messages, t.shell.body), 'the chat is hidden behind the file');
+  // the ⧉ marker in the tree: its viewer refuses, which raises the page notice (no file-view alert on this path)
+  rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art').click();
+  await flush();
+  await flush();
+  assert.match(error.textContent, /Could not open in Artifacts/);
+  assert.ok(visible(error, t.shell.body), 'the error line shows over the file view');
+  for (const id of ['updateBanner', 'studioNotice']) assert.ok(!hiddenByCss(t.shell.byId[id], t.shell.body), id + ' is spared too');
+  assert.equal(declarationsFor(rules, 'body.sf-file-on main > #fileView').order, '1', 'the file view sits under the notices');
 });
 
 // ---- write / edit rows: the open-file icon and the clickable path ----------------------------------------------------------
