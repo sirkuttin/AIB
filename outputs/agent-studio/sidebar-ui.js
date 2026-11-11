@@ -71,13 +71,24 @@
   // records that carry no projectRoot (older ones, saved transcripts, agent-listed sessions) fall back to cwd.
   function rootOf(c) {
     if (!c) return '';
-    return c.projectRoot || (c.live && c.live.projectRoot) || (c.recovered && c.recovered.projectRoot) || c.cwd || '';
+    const base = c.projectRoot || (c.live && c.live.projectRoot) || (c.recovered && c.recovered.projectRoot) || c.cwd || '';
+    // A chat in a git worktree folder AIB did not make (.claude/worktrees/..., any other linked worktree) is filed under the
+    // repository it belongs to; the server names that parent (folders/kinds, worktreeOf).
+    const parent = worktreeHook && base ? worktreeHook(base) : null;
+    return (parent && parent.of) || base;
+  }
+  let worktreeHook = null; // path -> {of: main checkout, branch} or null
+  function setWorktreeHook(fn) {
+    worktreeHook = typeof fn === 'function' ? fn : null;
   }
   // The branch of a chat that runs in its own Studio worktree ('' for every other chat): a live chat reports it, a saved one carries it from the server.
   function branchOf(c) {
     if (!c) return '';
     const w = c.worktree || (c.live && c.live.worktree) || (c.recovered && c.recovered.worktree);
-    return w && typeof w.branch === 'string' ? w.branch : '';
+    if (w && typeof w.branch === 'string' && w.branch) return w.branch;
+    const base = c.projectRoot || (c.live && c.live.projectRoot) || (c.recovered && c.recovered.projectRoot) || c.cwd || '';
+    const parent = worktreeHook && base ? worktreeHook(base) : null;
+    return parent && parent.of ? String(parent.branch || 'worktree') : '';
   }
   function pathKey(cwd) {
     const { segments, windows } = splitPath(cwd);
@@ -661,6 +672,7 @@
     sync,
     signature,
     setNameHook,
+    setWorktreeHook,
     pathKey,
     rootOf,
     branchOf,

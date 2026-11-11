@@ -435,12 +435,25 @@ test('buildProjects carries the folder-derived name next to a custom one', () =>
   assert.equal(ps[0].autoName, 'folder');
 });
 
-test('opening a chat from another project moves the active project; All stays All', () => {
+test('opening a chat from another project moves the active project (there is no All chats to stay on)', () => {
   const st = { ...W.empty(), active: 'a' };
   assert.equal(W.activeAfterOpen(st, 'b').active, 'b');
   assert.equal(W.activeAfterOpen(st, 'a'), st);
-  assert.equal(W.activeAfterOpen({ ...W.empty(), active: 'all' }, 'b').active, 'all');
+  assert.equal(W.activeAfterOpen({ ...W.empty(), active: 'all' }, 'b').active, 'b');
   assert.equal(W.activeAfterOpen(st, ''), st);
+});
+
+test('migration: All chats lands on the open chat\'s project, else the most recent one, else the first project', () => {
+  const keys = ['a', 'b', 'c'];
+  const all = { ...W.empty(), active: 'all', recent: 'c', tabs: { c: ['c:1'] } };
+  assert.equal(W.pickActive(all, keys, 'b').active, 'b', 'the open chat wins');
+  assert.equal(W.pickActive(all, keys, '').active, 'c', 'then the project used last');
+  assert.equal(W.pickActive({ ...W.empty(), active: 'all' }, keys, '').active, 'a', 'then the first project');
+  assert.equal(W.pickActive({ ...W.empty(), active: 'gone' }, keys, '').active, 'a', 'a project that is gone moves too');
+  const fine = { ...W.empty(), active: 'b' };
+  assert.equal(W.pickActive(fine, keys, 'c'), fine, 'a valid project stays');
+  assert.equal(W.pickActive(all, [], '').active, 'all', 'nothing to pick yet: unchanged');
+  assert.ok(!keys.includes('all'));
 });
 
 test('filterProjects matches display name, folder name and path', () => {

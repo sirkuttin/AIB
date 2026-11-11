@@ -29,7 +29,7 @@ main {
 }
 .side-settings kbd {
   font:
-    11px Consolas,
+    12px Consolas,
     monospace;
   border: 1px solid var(--line-control);
   border-bottom-width: 2px;

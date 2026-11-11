@@ -149,7 +149,7 @@
   background: var(--bg-popover);
   border-top: 1px solid var(--line-strong);
   font:
-    11px Consolas,
+    12px Consolas,
     monospace;
   color: var(--muted);
 }
