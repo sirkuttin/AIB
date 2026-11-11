@@ -27,6 +27,7 @@
     'aib-terminal-height', // chat terminal height
     'studio-show-thinking', // show thinking
     'agentStudio.copyFormat', // the Copy button's format
+    'agentStudio.copyFormat.code', // the code-block Copy button's format
     'studio-cwd', // the folder last typed for a new chat
   ]);
   const PREFIXES = Object.freeze([

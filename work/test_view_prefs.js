@@ -87,6 +87,7 @@ test('the keys that move: layout and view state, by exact name or per-bucket pre
     'studio-activity-hidden',
     'aib-terminal-height',
     'agentStudio.copyFormat',
+    'agentStudio.copyFormat.code',
     'studio-textsize-v1:<1400',
     'studio-textsize-v1:>=1800',
     'studio-layout-v1:<1800',
