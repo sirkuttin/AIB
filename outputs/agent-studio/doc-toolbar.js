@@ -344,6 +344,7 @@
     bar.append(
       tool('bold', strong('b', 'B'), 'Bold (Ctrl+B)', () => run((c) => c.toggleBold())),
       tool('italic', strong('i', 'I'), 'Italic (Ctrl+I)', () => run((c) => c.toggleItalic())),
+      tool('underline', strong('u', 'U'), 'Underline (Ctrl+U)', () => run((c) => c.toggleUnderline())),
       tool('strike', strong('s', 'S'), 'Strikethrough (Ctrl+Shift+S)', () => run((c) => c.toggleStrike())),
       tool('code', icon('code'), 'Code (Ctrl+E)', () => run((c) => c.toggleCode())),
       tool('link', icon('link'), 'Link (Ctrl+K)', (b) => linkForm(b)),
@@ -518,6 +519,7 @@
     const on = (name, active) => tools[name] && tools[name].setAttribute('aria-pressed', String(!!active));
     on('bold', e.isActive('bold'));
     on('italic', e.isActive('italic'));
+    on('underline', e.isActive('underline'));
     on('strike', e.isActive('strike'));
     on('code', e.isActive('code'));
     on('link', e.isActive('link'));
@@ -615,6 +617,7 @@
       bubble.append(
         mk('bold', strong('b', 'B'), 'Bold', () => run((c) => c.toggleBold())),
         mk('italic', strong('i', 'I'), 'Italic', () => run((c) => c.toggleItalic())),
+        mk('underline', strong('u', 'U'), 'Underline', () => run((c) => c.toggleUnderline())),
         mk('strike', strong('s', 'S'), 'Strikethrough', () => run((c) => c.toggleStrike())),
         mk('code', icon('code'), 'Code', () => run((c) => c.toggleCode())),
         mk('link', icon('link'), 'Link', (b) => linkForm(b)),

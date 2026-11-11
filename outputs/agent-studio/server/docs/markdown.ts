@@ -40,13 +40,13 @@ export const LISTS = new Set(['bulletList', 'orderedList', 'taskList']);
 export const ITEMS = new Set(['listItem', 'taskItem']);
 const CELLS = new Set(['tableCell', 'tableHeader']);
 const RICH_NODES = new Set(['callout', 'columns', 'column', 'toggle', 'chart']);
-const RICH_MARKS = new Set(['textColor', 'highlight']);
+const RICH_MARKS = new Set(['textColor', 'highlight', 'underline']);
 export const CALLOUT_LABELS: Record<string, string> = { info: 'Note', warning: 'Warning', success: 'Done' };
 
 const span = (v: unknown) => Math.max(1, Math.floor(Number(v)) || 1);
 
 /**
- * Does this node hold anything Markdown can't (a callout, columns, a toggle, colour or highlight, alignment, merged cells, a header
+ * Does this node hold anything Markdown can't (a callout, columns, a toggle, colour, highlight or underline, alignment, merged cells, a header
  * column, a table without a header row, a table cell aligned apart from its column)? A plain table (header row, column alignment
  * at most) is not rich. Its Markdown is then only a readable fallback: a file edit to it is not taken in.
  */

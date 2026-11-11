@@ -604,6 +604,23 @@ Deno.test({
         },
       );
 
+      await step('underline: the U button and Ctrl+U put it on the words, on the server too', async () => {
+        await s.tool(CHAT, 'doc_create', { doc: 'under', markdown: 'Ship only behind the flag.\n' });
+        const p = await open('under');
+        await shows(p, 'Ship only behind the flag.');
+        const doc = await live(s, 'under');
+        const marked = () => JSON.stringify(doc.live.topBlocks()[0].node);
+        assert(await p.eval(caretAfter('only', true)));
+        await p.click('#toolbar [data-tool="underline"]');
+        await until(() => marked().includes('"underline"'), 'U button: underline on the server');
+        await p.waitFor(`document.querySelector('#toolbar [data-tool="underline"]').getAttribute('aria-pressed') === 'true'`, 8000, 'U pressed');
+        assertEquals(await p.eval(`[...document.querySelectorAll('#docEditor u')].map((u) => u.textContent).join()`), 'only');
+        assert(await p.eval(caretAfter('flag', true)));
+        await p.key('u', CTRL);
+        await until(() => (marked().match(/"underline"/g) ?? []).length === 2, 'Ctrl+U: a second underline');
+        assertEquals(await p.eval(`[...document.querySelectorAll('#docEditor u')].map((u) => u.textContent).join()`), 'only,flag');
+      });
+
       await step('"/" inserts a rich block', async () => {
         await s.tool(CHAT, 'doc_create', { doc: 'slash', markdown: 'Text.\n' });
         const p = await open('slash');

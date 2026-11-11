@@ -128,6 +128,27 @@ Deno.test('the Markdown copy is a readable fallback for each rich block, and eve
   assertEquals(writeDoc(plain.topBlocks(), {}, '\n', '\n').lossy, []);
 });
 
+Deno.test('underline: doc.aibdoc keeps it, the page bundle has it (Ctrl+U), the .md copy drops it and is flagged lossy', async () => {
+  const u = { type: 'underline' };
+  const content = [p(t('Ship '), t('only', u), t(' behind the '), t('flag', u, bold))];
+  const live = new LiveDoc();
+  live.replaceAll(content, live.system);
+  assertEquals(contentOf(live, live.firstPage), content.map(normalize));
+  const text = stringifyAib(exportAib(live, 'U', new IdMap()));
+  assert(text.includes('"underline"'), 'the mark is in the file');
+  const built = buildFromAib(parseAib(text), 1);
+  const back = new LiveDoc(built.state, built.meta);
+  assertEquals(contentOf(back, back.firstPage), content.map(normalize));
+  // Markdown has no underline: the words stay, the mark drops, and the block is a fallback (file edits to it are skipped)
+  const w = writeDoc(live.topBlocks(), {}, '\n', '\n');
+  assertEquals(w.text, 'Ship only behind the **flag**\n');
+  assertEquals(w.lossy, live.topIds());
+  assert(richOf(content[0]));
+  await import(new URL('../../outputs/agent-studio/vendor/docs/editor.js', import.meta.url).href);
+  const page = (globalThis as unknown as { AIBDocEditor: { docJSON(u: Uint8Array): PMJson } }).AIBDocEditor;
+  assertEquals(page.docJSON(live.encode()), { type: 'doc', content: contentOf(live, live.firstPage) });
+});
+
 Deno.test('the page bundle reads a rich doc exactly as the server has it', async () => {
   await import(new URL('../../outputs/agent-studio/vendor/docs/editor.js', import.meta.url).href);
   const page = (globalThis as unknown as { AIBDocEditor: { docJSON(u: Uint8Array): PMJson; encode(j: PMJson): Uint8Array } }).AIBDocEditor;

@@ -3,8 +3,8 @@
  * vendor/docs/editor.js from this very file). Both sides bind it to the Y.Doc with @tiptap/y-tiptap, so a block the server writes is
  * the block the page shows, and the two can't drift: work/deno/docs_schema_test.ts checks the bundle's schema against this one.
  *
- * TipTap 3 extensions (MIT): StarterKit (paragraph, heading, blockquote, lists, code block, rule, hard break, bold, italic, strike,
- * code, link), tables, task lists, inline images. AIB's own:
+ * TipTap 3 extensions (MIT): StarterKit (paragraph, heading, blockquote, lists, code block, rule, hard break, bold, italic, underline,
+ * strike, code, link; underline is rich: Markdown has none, so the .md copy drops it), tables, task lists, inline images. AIB's own:
  *   rawBlock    text kept verbatim and shown read-only: front matter, raw HTML blocks, link definitions (Markdown the editor can't hold)
  *   htmlInline  an inline raw HTML tag (<kbd>, <br>, ...), kept verbatim
  *   pending     a placeholder an agent planted ("intent"), to be filled by a later call; the user may type into it or delete it
@@ -41,7 +41,7 @@ interface DomEl {
 
 export const AGENT_MARK = 'agentEdit';
 /** Bumped whenever the schema changes; the page refuses to bind to a server with another one. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const CALLOUT_VARIANTS = ['info', 'warning', 'success'];
 export const TEXT_COLORS = ['grey', 'red', 'orange', 'green', 'blue', 'purple'];
@@ -282,7 +282,7 @@ export function docExtensions(): AnyExtension[] {
       document: false, // Doc: blocks and columns
       undoRedo: false, // Yjs undo (per author) instead
       trailingNode: false, // would add a paragraph the user never typed
-      underline: false, // Markdown has none
+      underline: { HTMLAttributes: { class: null } }, // <u>; Markdown has none (the .md copy drops it, markdown.ts RICH_MARKS)
       code: false,
       link: { openOnClick: false, autolink: false, linkOnPaste: true, HTMLAttributes: { target: null, rel: null, class: null } },
       dropcursor: false,
