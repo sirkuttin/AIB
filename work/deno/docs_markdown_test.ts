@@ -5,6 +5,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
+import { legacyMd } from './_docs.ts';
 import { blockMarkdown, normalize, parseDoc, parseInline, type PMJson } from '../../outputs/agent-studio/server/docs/markdown.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -110,7 +111,7 @@ async function roundTrip(
   name: string,
   text: string,
 ): Promise<{ same: boolean; lossy: number; blocks: number }> {
-  await Deno.writeTextFile(`${project}${sep}docs${sep}${name}.md`, text);
+  await Deno.writeTextFile(`${project}${sep}docs${sep}${name}.md`, legacyMd(text));
   const doc = await store.open(project, name);
   await store.flush(doc);
   const after = await Deno.readTextFile(doc.mirrorPath);

@@ -39,6 +39,7 @@ import {
 } from './markdown.ts';
 import { DocRefusal, LiveDoc, type Meta, type Op, type Origin } from './live_doc.ts';
 import type { DocHistory } from './history.ts';
+import { agentName, authorNames, DocAgents } from './agents.ts';
 import { syncDrawings } from './drawing/assets.ts';
 import { fixChartIds, syncCharts } from './charts.ts';
 import {
@@ -140,6 +141,21 @@ export interface OpenDoc {
   chat: string | null;
   /** Files of the old layout to remove once the new ones are written. */
   legacy: string[];
+  /** The agents working in it, per chat: presence, claims, page delete requests, refused notes (agents.ts). */
+  agents: DocAgents;
+  /**
+   * This load of the doc: a new one after a restart or a rebuild from doc.aibdoc. The page sends the epoch it synced with; a page
+   * holding another epoch's copy is told to re-open (its Y.Doc would otherwise merge into this one as duplicate blocks).
+   */
+  epoch: string;
+}
+
+/** The note an exported or listed doc carries about the files that are AIB's (the Files view hides exactly these). */
+export interface OwnedPaths {
+  /** docs/<name> (project-relative, forward slashes). */
+  dir: string;
+  /** doc.aibdoc, every page's Markdown copy, every asset file (project-relative, forward slashes). */
+  owned: string[];
 }
 
 interface CacheMeta extends Meta {
@@ -229,6 +245,64 @@ async function readText(path: string): Promise<string | null> {
   }
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Did AIB write this Markdown file (its first line is AIB's note)? Only such a file can be a doc's copy. */
+async function aibWritten(path: string): Promise<boolean> {
+  const text = await readText(path);
+  return text !== null && NOTE_LINE.test(text);
+}
+
+/** A path inside the project, project-relative with forward slashes. */
+function relTo(projectRoot: string, path: string): string {
+  const root = projectRoot.replace(/[\\/]+$/, '');
+  const inside = pathKey(path).startsWith(pathKey(root + sep)) ? path.slice(root.length + 1) : path;
+  return inside.replace(/\\/g, '/');
+}
+
+/** The files a doc owns: doc.aibdoc, its pages' copies (`copies`: their paths), its assets folder and every file in it. */
+async function ownedPaths(projectRoot: string, dir: string, copies: string[]): Promise<OwnedPaths> {
+  const owned = [`${dir}${sep}${AIBDOC}`, ...copies];
+  const walk = async (folder: string) => {
+    try {
+      for await (const e of Deno.readDir(folder)) {
+        const path = `${folder}${sep}${e.name}`;
+        if (e.isDirectory) await walk(path);
+        else owned.push(path);
+      }
+    } catch { /* no assets */ }
+  };
+  if (await exists(`${dir}${sep}assets`)) {
+    owned.push(`${dir}${sep}assets`);
+    await walk(`${dir}${sep}assets`);
+  }
+  return { dir: relTo(projectRoot, dir), owned: owned.map((p) => relTo(projectRoot, p)) };
+}
+
+/** Each page's Markdown copy: NN-<title slug>.md in page order. */
+function copyPaths(dir: string, titles: string[]): string[] {
+  return titles.map((t, k) => `${dir}${sep}${String(k + 1).padStart(2, '0')}-${slugOf(t)}.md`);
+}
+
+/** A node without agentEdit marks (a duplicated page is the user's). */
+export function withoutAgentMarks(node: PMJson): PMJson {
+  const out: PMJson = { ...node };
+  if (Array.isArray(node.marks)) {
+    const marks = node.marks.filter((m) => (m as { type?: string }).type !== 'agentEdit');
+    if (marks.length) out.marks = marks;
+    else delete out.marks;
+  }
+  if (Array.isArray(node.content)) out.content = node.content.map((c) => withoutAgentMarks(c as PMJson));
+  return out;
+}
+
 async function isFile(path: string): Promise<boolean> {
   try {
     return (await Deno.stat(path)).isFile;
@@ -239,6 +313,9 @@ async function isFile(path: string): Promise<boolean> {
 
 export class DocStore {
   readonly docs = new Map<string, OpenDoc>();
+  /** This store's run (a restart makes a new one); each doc load adds a count (OpenDoc.epoch). */
+  readonly epoch = crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
+  #loads = 0;
   #opening = new Map<string, Promise<OpenDoc>>();
   #poll: ReturnType<typeof setInterval> | null = null;
 
@@ -276,14 +353,19 @@ export class DocStore {
   }
 
   /** A doc of the old layout (docs/<name>.md, state in <stateDir>/docs/<old id>/) whose name gives this folder name. */
-  async #legacy(projectRoot: string, name: string): Promise<{ title: string; md: string | null; state: string | null } | null> {
-    let found: { title: string; md: string | null; state: string | null } | null = null;
+  async #legacy(
+    projectRoot: string,
+    name: string,
+  ): Promise<{ title: string; md: string | null; state: string | null; keepMd?: boolean } | null> {
+    let found: { title: string; md: string | null; state: string | null; keepMd?: boolean } | null = null;
     try {
       for await (const e of Deno.readDir(this.#docsDir(projectRoot))) {
         if (!e.isFile || !e.name.toLowerCase().endsWith('.md')) continue;
         const title = e.name.slice(0, -3);
         if (!NAME.test(title) || slugOf(title, 60, 'doc') !== name) continue;
-        found = { title, md: `${this.#docsDir(projectRoot)}${sep}${e.name}`, state: null };
+        const path = `${this.#docsDir(projectRoot)}${sep}${e.name}`;
+        if (!(await aibWritten(path))) continue; // a user's own docs/x.md is never a doc
+        found = { title, md: path, state: null };
         break;
       }
     } catch { /* no docs folder */ }
@@ -296,6 +378,10 @@ export class DocStore {
           const state = `${this.stateDir}${sep}docs${sep}${e.name}`;
           const md = `${this.#docsDir(projectRoot)}${sep}${meta.name}.md`;
           found = { title: meta.name, md: found?.md ?? ((await isFile(md)) ? md : null), state };
+          // the old layout's copy goes only when AIB wrote it; a file the user wrote there stays where it is
+          if (found.md && !(await aibWritten(found.md))) found.keepMd = true;
+          // the old layout's copy is moved only when AIB wrote it; a file the user wrote over it stays where it is
+          if (found.md && !(await aibWritten(found.md))) found.keepMd = true;
           break;
         } catch { /* not a doc */ }
       }
@@ -329,6 +415,12 @@ export class DocStore {
         `A doc named "${name}" already exists (docs/${name}/). Read it with doc_read, or pick another name.`,
       );
     }
+    if (create !== undefined && await exists(this.docDir(projectRoot, name))) {
+      throw new DocRefusal(
+        'folder_exists',
+        `There is a folder docs/${name}/ already, and it is not a doc: pick another name (AIB never writes into a folder it did not make).`,
+      );
+    }
     const open = this.docs.get(id);
     if (open) return open;
     if (create === undefined && !(await this.exists(projectRoot, name))) {
@@ -346,9 +438,11 @@ export class DocStore {
   async list(
     projectRoot: string,
   ): Promise<
-    { name: string; title: string; file: string; open: boolean; pages?: number; rev?: number; blocks?: number; legacy?: true }[]
+    ({ name: string; title: string; file: string; open: boolean; pages?: number; rev?: number; blocks?: number; legacy?: true } & Partial<
+      OwnedPaths
+    >)[]
   > {
-    const found = new Map<string, { title: string; file: string; pages?: number; legacy?: true }>();
+    const found = new Map<string, { title: string; file: string; pages?: number; legacy?: true; titles?: string[] }>();
     const docs = this.#docsDir(projectRoot);
     try {
       for await (const e of Deno.readDir(docs)) {
@@ -356,17 +450,19 @@ export class DocStore {
           const file = `${docs}${sep}${e.name}${sep}${AIBDOC}`;
           const text = await readText(file);
           if (text === null) continue;
-          let title = e.name, pages: number | undefined;
+          let title = e.name, pages: number | undefined, titles: string[] = [];
           try {
             const aib = parseAib(text);
             title = aib.title || e.name;
             pages = aib.pages.length;
+            titles = aib.pages.map((p) => p.title);
           } catch { /* listed; opening it says what is wrong */ }
-          found.set(e.name, { title, file, ...(pages ? { pages } : {}) });
+          found.set(e.name, { title, file, titles, ...(pages ? { pages } : {}) });
         }
       }
       for await (const e of Deno.readDir(docs)) {
         if (!e.isFile || !e.name.toLowerCase().endsWith('.md') || !NAME.test(e.name.slice(0, -3))) continue;
+        if (!(await aibWritten(`${docs}${sep}${e.name}`))) continue; // a user's own docs/x.md is a file, not a doc
         const title = e.name.slice(0, -3), name = slugOf(title, 60, 'doc');
         if (!found.has(name)) found.set(name, { title, file: `${docs}${sep}${e.name}`, legacy: true });
       }
@@ -385,10 +481,17 @@ export class DocStore {
     const out = [];
     for (const name of [...found.keys()].sort()) {
       const doc = this.docs.get(await docId(projectRoot, name));
-      const f = found.get(name)!;
+      const { titles, ...f } = found.get(name)!;
+      const dir = this.docDir(projectRoot, name);
+      const owned = doc
+        ? await ownedPaths(projectRoot, doc.dir, [...this.#pagePaths(doc).values()])
+        : f.legacy
+        ? { dir: relTo(projectRoot, dir), owned: [relTo(projectRoot, f.file)] }
+        : await ownedPaths(projectRoot, dir, copyPaths(dir, titles ?? []));
       out.push({
         name,
         ...f,
+        ...owned,
         ...(doc ? { title: doc.title, file: doc.file, pages: doc.live.pageList().length, legacy: undefined } : {}),
         open: !!doc,
         ...(doc ? { rev: doc.live.rev, blocks: doc.live.blockCount } : {}),
@@ -493,7 +596,7 @@ export class DocStore {
           legacyFiles.push(legacy.state!);
         } else {
           const mdText = legacy.md ? (await readText(legacy.md)) ?? '' : '';
-          const parsed = parseDoc(mdText);
+          const parsed = parseDoc(mdBody(mdText));
           live = new LiveDoc();
           live.replaceAll(nodesOf(parsed), live.system);
           mirrors.set(live.firstPage, {
@@ -505,7 +608,7 @@ export class DocStore {
             path: legacy.md ?? '',
           });
         }
-        if (legacy.md) legacyFiles.push(legacy.md);
+        if (legacy.md && !legacy.keepMd) legacyFiles.push(legacy.md);
         legacyFiles.push(...await moveLegacyAssets(live, this.#docsDir(projectRoot), dir));
         dirty = true;
       }
@@ -534,7 +637,10 @@ export class DocStore {
       note: '',
       chat: typeof meta?.chat === 'string' ? meta.chat : null,
       legacy: legacyFiles,
+      agents: new DocAgents(live),
+      epoch: `${this.epoch}.${++this.#loads}`,
     };
+    doc.agents.onChange = () => this.#touchSave(doc);
     doc.mirrorPath = this.#pagePaths(doc).get(live.firstPage) ?? '';
     if (rebuilt) await this.#adoptCopies(doc);
     live.onChange = (by) => this.#touched(doc, by);
@@ -951,20 +1057,110 @@ export class DocStore {
 
   // ---------- pages ----------
 
-  /** Add, rename, move or delete a page (agent tools; LiveDoc guards them). The copies follow on the next write. */
+  /**
+   * Add, rename, move or delete a page (agent tools; LiveDoc guards them). The copies follow on the next write. An agent's delete that
+   * passes its guards becomes a request the user answers (decideRequest); an agent's rename is refused over a newer user rename.
+   */
   pageOp(doc: OpenDoc, action: unknown, args: Record<string, unknown>, origin: Origin): Record<string, unknown> {
     const live = doc.live;
     switch (action) {
       case 'add':
         return live.addPage(args.title, origin, { after: args.after, markdown: args.markdown });
       case 'rename':
-        return live.renamePage(args.page, args.title, origin, args.ifRev);
+        return live.renamePage(args.page, args.title, origin, args.ifRev, doc.agents.seen.get(origin.name) ?? 0);
       case 'move':
         return live.movePage(args.page, args.after, origin);
-      case 'delete':
-        return live.deletePage(args.page, origin, { ifRev: args.ifRev, allowUserContent: args.allowUserContent, allowDetach: args.allowDetach });
+      case 'delete': {
+        const opts = { ifRev: args.ifRev, allowUserContent: args.allowUserContent, allowDetach: args.allowDetach };
+        if (origin.kind !== 'agent') return live.deletePage(args.page, origin, opts);
+        const ok = live.deletePage(args.page, origin, { ...opts, check: true });
+        const request = doc.agents.requestDelete(origin.name, ok.page as string, ok.title as string);
+        return {
+          ok: true,
+          pending: true,
+          rev: live.rev,
+          page: request.page,
+          note: `Not deleted yet: the user sees your request to delete "${request.title}" and answers Delete or Keep. A later doc tool ` +
+            'result tells you which.',
+        };
+      }
       default:
         throw new DocRefusal('bad_op', '`action` is add, rename, move or delete');
+    }
+  }
+
+  /**
+   * The user's page operations (the page's route, user origin): add {title, after?}, rename {page, title}, move {page, index} (by
+   * place: the page's map stays), duplicate {page, title?}, delete {page} (a history snapshot first; no guards: the user decides).
+   */
+  userPageOp(doc: OpenDoc, action: unknown, args: Record<string, unknown>): Record<string, unknown> {
+    const live = doc.live;
+    const user = live.user;
+    switch (action) {
+      case 'add':
+        return live.addPage(args.title, user, { after: args.after });
+      case 'rename':
+        return live.renamePage(args.page, args.title, user);
+      case 'move': {
+        const page = live.resolvePage(args.page);
+        const rest = live.pageList().filter((p) => p.id !== page);
+        const index = Number(args.index);
+        if (!Number.isInteger(index) || index < 0 || index > rest.length) {
+          throw new DocRefusal('bad_op', `"index" is the page's new place: 0-${rest.length}`);
+        }
+        return live.movePage(page, index === 0 ? null : rest[index - 1].id, user);
+      }
+      case 'duplicate': {
+        const page = live.resolvePage(args.page);
+        const from = live.pageList().find((p) => p.id === page)!;
+        let title = typeof args.title === 'string' && args.title.trim() ? args.title : `${from.title} (copy)`;
+        for (let k = 2; live.pageList().some((p) => p.title.toLowerCase() === title.toLowerCase()); k++) {
+          title = `${from.title} (copy ${k})`;
+        }
+        const nodes = live.topBlocks(page).map((b) => withoutAgentMarks(b.node));
+        return live.addPage(title.slice(0, 100), user, { after: page, nodes });
+      }
+      case 'delete': {
+        const page = live.resolvePage(args.page);
+        this.snapshot(doc, 'before a page was deleted');
+        const done = live.deletePage(page, user, { ifRev: live.rev, allowUserContent: true, allowDetach: true });
+        for (const r of doc.agents.dropRequests(page)) {
+          doc.agents.notice(r.chat, `The user deleted page "${r.title}" (it is in the doc's history).`);
+        }
+        return done;
+      }
+      default:
+        throw new DocRefusal('bad_op', '`action` is add, rename, move, duplicate or delete');
+    }
+  }
+
+  /**
+   * The user's answer to an agent's page delete request: "delete" deletes the page as it stands now (a history snapshot first),
+   * "keep" drops the request; either way the chat hears it in its next doc tool result.
+   */
+  decideRequest(doc: OpenDoc, pageValue: unknown, chat: unknown, decision: unknown): Record<string, unknown> {
+    const page = typeof pageValue === 'string' ? pageValue : '';
+    const requests = doc.agents.requestsFor(page).filter((r) => !chat || r.chat === chat);
+    if (!requests.length) throw new DocRefusal('no_request', 'There is no delete request for that page (any more).');
+    if (decision === 'delete') return this.userPageOp(doc, 'delete', { page });
+    if (decision !== 'keep') throw new DocRefusal('bad_op', '`decision` is delete or keep');
+    for (const r of doc.agents.dropRequests(page, typeof chat === 'string' && chat ? chat : undefined)) {
+      doc.agents.notice(r.chat, `The user kept page "${r.title}": do not delete it.`);
+    }
+    return { ok: true, kept: page, rev: doc.live.rev };
+  }
+
+  /**
+   * A chat's turn ended (or was cancelled, or its connection went): in every open doc it stops showing, its claim goes, its refused
+   * edits still undone become notes for the page; a doc it changed gets a history version, announced to the page.
+   */
+  turnEnded(chat: string): void {
+    for (const doc of this.docs.values()) {
+      const active = doc.agents.active().includes(chat);
+      doc.agents.turnEnded(chat);
+      if (!active && !doc.authors.has(chat)) continue;
+      const n = this.snapshot(doc, `${agentName(chat)}'s turn`);
+      if (n !== null) doc.live.sendControl({ type: 'history', version: n, by: authorNames(chat), rev: doc.live.rev });
     }
   }
 
@@ -1166,7 +1362,14 @@ export class DocStore {
       chat: doc.chat,
       commentSeq: comments.seq,
       comments: comments.threads,
+      epoch: doc.epoch,
+      ...doc.agents.state(),
     };
+  }
+
+  /** info() plus the files the doc owns (the Files view, Ctrl+K, Changes and Merge hide exactly these). */
+  async infoWithOwned(doc: OpenDoc): Promise<Record<string, unknown>> {
+    return { ...this.info(doc), ...(await ownedPaths(doc.projectRoot, doc.dir, [...this.#pagePaths(doc).values()])) };
   }
 
   async close(): Promise<void> {
@@ -1176,6 +1379,7 @@ export class DocStore {
       this.snapshot(doc);
       if (doc.snapTimer !== null) clearTimeout(doc.snapTimer);
       await this.#saveState(doc).catch(() => {});
+      doc.agents.destroy();
       doc.live.destroy();
     }
     this.docs.clear();

@@ -28,6 +28,17 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/docs/socket                local docs: the editor's WebSocket
  *   POST /api/live/docs/tool                  local docs: an agent's doc_* tool (agent key)
  *   POST /api/live/docs/comment/send          local docs: "Send to agent" queues a comment thread to the doc's chat
+ *   POST /api/live/docs/link                  local docs: link a doc to the chat the user picked
+ *   POST /api/live/docs/page                  local docs: the user's page operations (add, rename, move, duplicate, delete)
+ *   POST /api/live/docs/page/request          local docs: the user answers an agent's page delete request (delete / keep)
+ *   POST /api/live/docs/claim/release         local docs: "Stop and keep the text" on blocks an agent is rewriting
+ *   POST /api/live/docs/notes/dismiss         local docs: dismiss a refused-edit note
+ *   POST /api/live/docs/edit                  local docs: the user's block operations through the server (chart from a table...)
+ *   POST /api/live/docs/comment               local docs: the user's comments (add, reply, resolve, reopen)
+ *   GET  /api/live/docs/history               local docs: the versions with authors and the pages each changed
+ *   GET  /api/live/docs/history/version       local docs: one version's pages, to show and compare
+ *   POST /api/live/docs/history/restore       local docs: restore the whole doc or one page
+ *   POST /api/live/docs/export                local docs: Markdown to the Downloads folder
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
@@ -47,6 +58,17 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/docs/socket', 'write', 'get'],
   ['POST', '/api/live/docs/tool', 'artifacts.tool', 'own-gate'],
   ['POST', '/api/live/docs/comment/send', 'write', 'body'],
+  ['POST', '/api/live/docs/link', 'write', 'body'],
+  ['POST', '/api/live/docs/page', 'write', 'body'],
+  ['POST', '/api/live/docs/page/request', 'write', 'body'],
+  ['POST', '/api/live/docs/claim/release', 'write', 'body'],
+  ['POST', '/api/live/docs/notes/dismiss', 'write', 'body'],
+  ['POST', '/api/live/docs/edit', 'write', 'body'],
+  ['POST', '/api/live/docs/comment', 'write', 'body'],
+  ['GET', '/api/live/docs/history', 'read', 'get'],
+  ['GET', '/api/live/docs/history/version', 'read', 'get'],
+  ['POST', '/api/live/docs/history/restore', 'write', 'body'],
+  ['POST', '/api/live/docs/export', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

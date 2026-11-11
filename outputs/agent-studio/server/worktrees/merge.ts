@@ -19,6 +19,7 @@
  * The read-mostly helpers of worktree_sync.py that Merge calls (settle_conflicts, clash_line, open_clashes, paused_status) live with
  * the live sync in sync.ts and are re-exported at the end of this file.
  */
+import { docRows } from '../docs/rows.ts';
 import * as wt from './worktrees.ts';
 import { GitError, type WorktreeRecord } from './worktrees.ts';
 import { isdir, join, normcase } from '../platform/ospath.ts';
@@ -1102,9 +1103,12 @@ export async function status(studio: MergeStudio, chatId: unknown): Promise<Reco
     if (clashes.length) {
       return { ...out, enabled: false, state: 'conflicts', message: clashLine(clashes), files: clashes };
     }
-    if (!(await wt.touchedPaths(chat.wt, chat.user)).length) {
+    const touched = await wt.touchedPaths(chat.wt, chat.user);
+    if (!touched.length) {
       return { ...out, enabled: false, state: 'nochanges', message: 'Nothing to merge yet' };
     }
+    const docs = docRows(chat.wt, touched); // a doc's files as one row each (docs/rows.ts)
+    if (docs.length) Object.assign(out, { docs });
     const reason = await chat.idleReason();
     if (reason) {
       return { ...out, enabled: false, state: 'busy', message: reason };

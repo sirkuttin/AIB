@@ -145,7 +145,10 @@ export const DOC_TOOLS: Json[] = [
       'page "page" goes after page "after" (null: first). "delete": page "page", guarded by "ifRev" = the rev of the read that showed ' +
       'it (refused guard_mismatch when anything on it changed since); a page holding the user\'s words is refused user_content unless ' +
       'the user asked for it ("allowUserContent": true), one with comment threads on its words anchors_affected ("allowDetach": ' +
-      'true). Titles are unique in a doc. doc_undo does not take page changes back.',
+      'true). A delete that passes these checks is not done at once: it becomes a request the user answers in the doc (Delete or ' +
+      'Keep); the call returns "pending": true, and a later doc tool result tells you what they chose. A rename is refused ' +
+      'user_renamed when the user renamed that page after your read: keep their title. Titles are unique in a doc. doc_undo does not ' +
+      'take page changes back.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -160,6 +163,28 @@ export const DOC_TOOLS: Json[] = [
         allowDetach: { type: 'boolean', description: 'delete: true only when the user asked, and comment threads hang on the page.' },
       },
       required: ['doc', 'action'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'doc_claim',
+    title: 'Mark blocks you are about to rewrite',
+    description: 'Before rewriting existing blocks over several calls (or one long one), claim them: the user sees "<you> is ' +
+      'rewriting this" on those blocks until your replacing doc_edit lands (that releases the claim), your turn ends, or the user ' +
+      'stops you ("Stop and keep the text": your next edit of those blocks is refused user_took_back; leave them). "ids": the top-level ' +
+      'blocks, "intent": a few words on what you are doing, "ifRev": the rev of the read that showed them (refused guard_mismatch if ' +
+      'any changed since). Refused claimed when another chat claimed one of them. "release": true drops your claim without editing. ' +
+      'doc_read shows the claims. New sections need no claim: plant placeholders (as "pending") instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        doc: DOC,
+        ids: { type: 'array', items: { type: 'string' }, description: 'The block ids you are about to rewrite.' },
+        intent: { type: 'string', description: 'A few words: what you are doing to them.' },
+        ifRev: { type: 'integer', minimum: 0, description: 'The rev of the read that showed them.' },
+        release: { type: 'boolean', description: 'true: drop your claim.' },
+      },
+      required: ['doc'],
       additionalProperties: false,
     },
   },

@@ -51,6 +51,7 @@ Deno.test("the doc tools are always offered, and a call goes to Studio's doc rou
       'doc_changes',
       'doc_edit',
       'doc_page',
+      'doc_claim',
       'doc_undo',
       'doc_comments',
       'doc_comment',
@@ -160,7 +161,9 @@ function connect(origin: string, port: number, doc: string, protocols: string[])
     if (origin !== ws) send((e) => syncProtocol.writeUpdate(e, update));
   });
   ws.onopen = () => send((e) => syncProtocol.writeSyncStep1(e, ydoc));
+  const control: Json[] = [];
   ws.onmessage = (event) => {
+    if (typeof event.data === 'string') return void control.push(JSON.parse(event.data)); // AIB's control messages
     const d = decoding.createDecoder(new Uint8Array(event.data as ArrayBuffer));
     if (decoding.readVarUint(d) !== 0) return;
     const e = encoding.createEncoder();
@@ -169,7 +172,7 @@ function connect(origin: string, port: number, doc: string, protocols: string[])
     if (encoding.length(e) > 1) ws.send(encoding.toUint8Array(e));
   };
   const closed = new Promise<CloseEvent>((r) => ws.addEventListener('close', (e) => r(e as CloseEvent)));
-  return { ydoc, ws, closed, text: () => ydoc.getXmlFragment(FIELD).toString().replace(/<[^>]+>/g, '|') };
+  return { ydoc, ws, closed, control, text: () => ydoc.getXmlFragment(FIELD).toString().replace(/<[^>]+>/g, '|') };
 }
 
 async function until(check: () => boolean, what: string): Promise<void> {

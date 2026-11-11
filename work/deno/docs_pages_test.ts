@@ -227,13 +227,18 @@ Deno.test('pages: add, rename, move, delete through doc_page, with their guards;
     const userWords = await t('doc_page', { action: 'delete', page: 'Draft', ifRev: doc.live.rev }, true);
     assertEquals(userWords.code, 'user_content');
     assertEquals(((userWords.blocks as View[])[0]).md, 'User draft');
-    const gone = await t('doc_page', { action: 'delete', page: 'Draft', ifRev: doc.live.rev, allowUserContent: true });
+    // a delete that passes the guards waits for the user: pending, the page stays until they answer Delete
+    const asked = await t('doc_page', { action: 'delete', page: 'Draft', ifRev: doc.live.rev, allowUserContent: true });
+    assertEquals([asked.pending, doc.live.pageList().length], [true, 3]);
+    const gone = store.decideRequest(doc, asked.page, null, 'delete');
     assertEquals((gone.pages as { title: string }[]).map((p) => p.title), ['Open questions', 'Overview']);
     const after = await t('doc_changes', { sinceRev: before });
     assertEquals(after.pagesGone, [gone.deleted]);
     assert((after.gone as string[]).includes(draft.id));
-    // an agent's own page (only its words) goes with just the guard
-    assertEquals((await t('doc_page', { action: 'delete', page: 'Open questions', ifRev: doc.live.rev })).deleted, notes);
+    assertEquals((after.userNotes as string[])[0], 'The user deleted page "Draft" (it is in the doc\'s history).');
+    // an agent's own page (only its words) passes with just the guard
+    const own = await t('doc_page', { action: 'delete', page: 'Open questions', ifRev: doc.live.rev });
+    assertEquals(store.decideRequest(doc, own.page, null, 'delete').deleted, notes);
     assertEquals((await t('doc_page', { action: 'delete', page: 'Overview', ifRev: doc.live.rev }, true)).code, 'last_page');
     doc.live.detach(user.link);
   } finally {

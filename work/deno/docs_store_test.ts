@@ -8,7 +8,7 @@ import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.t
 import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
 import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { DocRefusal } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { UserClient } from './_docs.ts';
+import { legacyMd, UserClient } from './_docs.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 type View = { id: string; h: string; md?: string; type: string; kids?: string[]; parent?: string };
@@ -60,7 +60,7 @@ Deno.test('the Markdown copy rewrites only what changed: the rest keeps its exac
   const store = new DocStore(dirs.state, { idleMs: 60_000 });
   try {
     const old = `${dirs.project}${sep}docs${sep}styled.md`;
-    await Deno.writeTextFile(old, STYLED);
+    await Deno.writeTextFile(old, legacyMd(STYLED));
     const doc = await store.open(dirs.project, 'styled'); // a doc of the old layout: moved to docs/styled/
     await store.flush(doc);
     const path = doc.mirrorPath;
@@ -113,7 +113,7 @@ Deno.test('a file-tool edit to an untouched block is applied; one to a block the
   try {
     await Deno.writeTextFile(
       `${dirs.project}${sep}docs${sep}plan.md`,
-      '# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n',
+      legacyMd('# Plan\n\nAlpha paragraph.\n\nBeta paragraph.\n\nGamma paragraph.\n'),
     );
     const doc = await store.open(dirs.project, 'plan');
     const user = new UserClient(doc.live);
@@ -236,7 +236,7 @@ Deno.test('speed: after a keystroke in a 2,000-block doc, the Markdown copy is w
   const store = new DocStore(dirs.state, { idleMs: 60_000 });
   try {
     const text = Array.from({ length: 2000 }, (_, i) => `Paragraph ${i} with some words.`).join('\n\n') + '\n';
-    await Deno.writeTextFile(`${dirs.project}${sep}docs${sep}big.md`, text);
+    await Deno.writeTextFile(`${dirs.project}${sep}docs${sep}big.md`, legacyMd(text));
     let t = performance.now();
     const doc = await store.open(dirs.project, 'big');
     const openMs = performance.now() - t;

@@ -97,11 +97,12 @@ export function fieldOf(page: string): string {
   return page === FIRST_PAGE ? FIELD : `page:${page}`;
 }
 
-export function newPageMap(id: string, title: string, field = fieldOf(id)): Y.Map<unknown> {
+export function newPageMap(id: string, title: string, field = fieldOf(id), pos?: number): Y.Map<unknown> {
   const m = new Y.Map<unknown>();
   m.set('id', id);
   m.set('title', title);
   m.set('field', field);
+  if (pos !== undefined) m.set('pos', pos);
   return m;
 }
 
@@ -145,6 +146,7 @@ const MAX_GONE = 5000;
 /** Who made a change. One object per author, so Y.UndoManager can track it. */
 export interface Origin {
   kind: 'agent' | 'user' | 'file' | 'system';
+  /** An agent's origin name is its chat's lasting id ("claude:<session>"), so undo and guards are per chat; tests may use a bare name. */
   name: string;
 }
 
@@ -297,6 +299,10 @@ export class LiveDoc {
   #topCache = new Map<string, { sub: number; json: PMJson; sig: string }>();
   #sockets = new Map<WsLink, { clients: Set<number> }>();
   readonly system: Origin = { kind: 'system', name: 'system' };
+  /** The user's changes made through the server (page operations, restore, comments from the page's routes). */
+  readonly user: Origin = { kind: 'user', name: 'user' };
+  /** Per page: the rev its title last changed and who changed it (an agent's rename is refused over a newer user rename). */
+  readonly titles = new Map<string, { rev: number; by: string | null }>();
   /** Counts for tests: how many leaves were rehashed. */
   readonly stats = { hashed: 0 };
   /** Called after every change with who made it (the store uses it to save, mirror and snapshot on idle). */
@@ -396,9 +402,19 @@ export class LiveDoc {
 
   /** The pages in order, as stored (a malformed or repeated entry is left out). */
   pageList(): PageInfo[] {
-    const out: PageInfo[] = [];
+    return this.#pageEntries().map(({ info }) => info);
+  }
+
+  /**
+   * The pages with their place: a page map's `pos` (a number; moves set it, so a move and a concurrent rename both land), else its
+   * index in PAGES (docs from before `pos`). Sorted by place, then index.
+   */
+  #pageEntries(): { info: PageInfo; pos: number; map: Y.Map<unknown> }[] {
+    const out: { info: PageInfo; pos: number; map: Y.Map<unknown>; index: number }[] = [];
     const seen = new Set<string>(), fields = new Set<string>();
-    for (const m of this.pagesArr.toArray()) {
+    const arr = this.pagesArr.toArray();
+    for (let index = 0; index < arr.length; index++) {
+      const m = arr[index];
       if (!(m instanceof Y.Map)) continue;
       const id = m.get('id'), title = m.get('title'), f = m.get('field');
       if (typeof id !== 'string' || !PAGE_ID.test(id) || seen.has(id)) continue;
@@ -407,9 +423,24 @@ export class LiveDoc {
       if (fields.has(field)) continue;
       seen.add(id);
       fields.add(field);
-      out.push({ id, title: typeof title === 'string' && title.trim() ? title : id, field });
+      const pos = m.get('pos');
+      out.push({
+        info: { id, title: typeof title === 'string' && title.trim() ? title : id, field },
+        pos: typeof pos === 'number' && Number.isFinite(pos) ? pos : index,
+        map: m,
+        index,
+      });
     }
-    return out;
+    return out.sort((a, b) => a.pos - b.pos || a.index - b.index);
+  }
+
+  /** The place for a page that goes at `at` in the page list (without `except`): between its neighbours. */
+  #posAt(at: number, except?: string): number {
+    const list = this.#pageEntries().filter((e) => e.info.id !== except);
+    if (!list.length) return 0;
+    if (at <= 0) return list[0].pos - 1;
+    if (at >= list.length) return list[list.length - 1].pos + 1;
+    return (list[at - 1].pos + list[at].pos) / 2;
   }
 
   /** The pages for an agent: id, title, how many blocks (all levels). */
@@ -508,6 +539,7 @@ export class LiveDoc {
       if (!seen || seen.title !== p.title || seen.index !== index) {
         if (seen) {
           this.#pageRevs.set(p.id, [rev, this.#pageRevs.get(p.id)?.[1] ?? rev]);
+          if (seen.title !== p.title) this.titles.set(p.id, { rev, by });
           changed = true;
         }
         this.#pageSeen.set(p.id, { title: p.title, index });
@@ -732,6 +764,18 @@ export class LiveDoc {
   /** Who changed a block last ('user', an agent's name, 'file'), if known. */
   byOf(id: string): string | undefined {
     return this.#entries.get(id)?.by;
+  }
+
+  /** When a block (or anything inside it) last changed; null when it is gone. */
+  subOf(id: string): number | null {
+    const e = this.#entries.get(id);
+    return e && e.el && !this.#isDeleted(e.el) ? e.sub : null;
+  }
+
+  /** A live block's element (null when gone). */
+  elementOf(id: string): Y.XmlElement | null {
+    const e = this.#entries.get(id);
+    return e && e.el && !this.#isDeleted(e.el) ? e.el : null;
   }
 
   has(id: string): boolean {
@@ -1077,7 +1121,7 @@ export class LiveDoc {
         insertNodes(this.doc, f, 0, p.nodes.length ? p.nodes : [{ type: 'paragraph' }]);
       });
       this.pagesArr.delete(0, this.pagesArr.length);
-      this.pagesArr.insert(0, pages.map((p) => newPageMap(p.id, p.title, fields.get(p.id) ?? fieldOf(p.id))));
+      this.pagesArr.insert(0, pages.map((p, k) => newPageMap(p.id, p.title, fields.get(p.id) ?? fieldOf(p.id), k)));
     }, origin);
   }
 
@@ -1120,18 +1164,31 @@ export class LiveDoc {
     const frag = this.doc.getXmlFragment(fieldOf(id));
     if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
     this.doc.transact(() => {
-      this.pagesArr.insert(at, [newPageMap(id, t)]);
+      this.pagesArr.push([newPageMap(id, t, fieldOf(id), this.#posAt(at))]);
       insertNodes(this.doc, frag, 0, ready);
     }, this.#pageOrigin(origin));
     return { ok: true, rev: this.rev, page: id, title: t, created: this.topIds(id), pages: this.pages() };
   }
 
-  /** Rename a page. With `ifRev`: refused if the page changed after that rev. */
-  renamePage(pageValue: unknown, title: unknown, origin: Origin, ifRev?: unknown): Json {
+  /**
+   * Rename a page. With `ifRev`: refused if the page changed after that rev. An agent's rename (`seenRev`: the rev of its last read)
+   * is refused when the user renamed the page after that read: the user's title stays.
+   */
+  renamePage(pageValue: unknown, title: unknown, origin: Origin, ifRev?: unknown, seenRev?: number): Json {
     const page = this.resolvePage(pageValue);
     const t = pageTitle(title);
     this.#checkTitle(t, page);
     this.#pageGuard(page, ifRev, false);
+    const renamed = this.titles.get(page);
+    const seen = typeof ifRev === 'number' ? ifRev : seenRev;
+    if (origin.kind === 'agent' && renamed?.by === 'user' && seen !== undefined && renamed.rev > seen) {
+      const now = this.pageList().find((p) => p.id === page)!.title;
+      throw new DocRefusal(
+        'user_renamed',
+        `Not renamed: the user renamed this page to "${now}" after your read (rev ${seen}). Their title stays; keep it.`,
+        { rev: this.rev, page, title: now },
+      );
+    }
     const m = this.#pageEntry(page)!;
     if (m.get('title') !== t) this.doc.transact(() => m.set('title', t), this.#pageOrigin(origin));
     return { ok: true, rev: this.rev, page, title: t, pages: this.pages() };
@@ -1147,14 +1204,9 @@ export class LiveDoc {
     const at = target === null ? 0 : rest.findIndex((p) => p.id === target) + 1;
     const from = list.findIndex((p) => p.id === page);
     if (at !== from) {
-      const me = list[from];
-      this.doc.transact(() => {
-        const i = this.pagesArr.toArray().findIndex((m) => m instanceof Y.Map && m.get('id') === page);
-        this.pagesArr.delete(i, 1);
-        const arr = this.pagesArr.toArray();
-        const before = at < rest.length ? arr.findIndex((m) => m instanceof Y.Map && m.get('id') === rest[at].id) : arr.length;
-        this.pagesArr.insert(before, [newPageMap(me.id, me.title, me.field)]);
-      }, this.#pageOrigin(origin));
+      // by place, not delete + insert: the page's map stays, so a rename made meanwhile is kept
+      const pos = this.#posAt(at, page);
+      this.doc.transact(() => this.#pageEntry(page)!.set('pos', pos), this.#pageOrigin(origin));
     }
     return { ok: true, rev: this.rev, page, index: this.pageList().findIndex((p) => p.id === page), pages: this.pages() };
   }
@@ -1194,7 +1246,7 @@ export class LiveDoc {
   deletePage(
     pageValue: unknown,
     origin: Origin,
-    opts: { ifRev?: unknown; allowUserContent?: unknown; allowDetach?: unknown } = {},
+    opts: { ifRev?: unknown; allowUserContent?: unknown; allowDetach?: unknown; check?: boolean } = {},
   ): Json {
     const page = this.resolvePage(pageValue);
     const list = this.pageList();
@@ -1223,6 +1275,7 @@ export class LiveDoc {
         { page, threads: threads.map((t) => ({ thread: t.thread, quote: t.quote, by: t.by })) },
       );
     }
+    if (opts.check) return { ok: true, rev: this.rev, page, title: list.find((p) => p.id === page)!.title };
     const frag = this.fragOf(page);
     if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
     const o = this.#pageOrigin(origin);
@@ -1431,6 +1484,12 @@ export class LiveDoc {
     if (!socket) return;
     this.#sockets.delete(link);
     awarenessProtocol.removeAwarenessStates(this.awareness, [...socket.clients], null);
+  }
+
+  /** A JSON control message (a text frame) to every page socket: hello, reopen, refused notes, history marks, requests. */
+  sendControl(message: Record<string, unknown>): void {
+    const text = JSON.stringify(message);
+    for (const link of this.#sockets.keys()) link.send(text);
   }
 
   get socketCount(): number {

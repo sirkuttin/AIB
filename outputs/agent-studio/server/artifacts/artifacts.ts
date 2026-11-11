@@ -381,6 +381,16 @@ function copy<T>(value: T): T {
 
 export type Clock = () => number;
 
+/**
+ * A local doc's history (docs/history.ts): no chat, no source file, versions noted "rev <n>", entry <doc>.aibdoc.json (or <doc>.md
+ * before that). The Artifacts panel and picker never list these; the doc's History panel shows them.
+ */
+export function isDocHistory(m: { conversationId?: unknown; sourcePath?: unknown; entry?: unknown; versions?: { note?: unknown }[] }): boolean {
+  if (m.conversationId || m.sourcePath) return false;
+  if (typeof m.entry === 'string' && m.entry.endsWith('.aibdoc.json')) return true;
+  return /^rev \d+/.test(String(m.versions?.[0]?.note ?? ''));
+}
+
 export class ArtifactStore {
   readonly root: string;
   /** 'http://127.0.0.1:<port>' once the artifact origin listener is up */
@@ -477,7 +487,9 @@ export class ArtifactStore {
 
   list(conversationId: string | null = null, also: readonly string[] = []): Json[] {
     const wanted = [conversationId, ...also];
-    const items = this.all().filter((m) => conversationId === null || wanted.includes((m.conversationId ?? null) as string | null));
+    const items = this.all().filter((m) =>
+      !isDocHistory(m) && (conversationId === null || wanted.includes((m.conversationId ?? null) as string | null))
+    );
     items.sort((a, b) => (Number(!pyTruthy(a.pinned)) - Number(!pyTruthy(b.pinned))) || (b.updatedAt - a.updatedAt));
     return items.map((m) => this.summary(m));
   }

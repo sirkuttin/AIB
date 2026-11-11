@@ -65,7 +65,8 @@ export const AgentEdit = Mark.create({
       },
     };
   },
-  parseHTML: () => [{ tag: 'span[data-agent-edit]' }],
+  // Never read from HTML: pasted or dropped text is the user's, even when it was copied from an agent's words.
+  parseHTML: () => [],
   renderHTML: ({ HTMLAttributes }) => ['span', mergeAttributes({ 'data-agent-edit': '', class: 'agent-edit' }, HTMLAttributes), 0],
 });
 
@@ -167,7 +168,9 @@ export const Column = Node.create({
           const w = Number(el.getAttribute('data-width'));
           return w > 0 && w < 1 ? w : null;
         },
-        renderHTML: (a: Record<string, unknown>) => (a.width ? { 'data-width': a.width, style: `flex: ${a.width} 1 0` } : {}),
+        // no inline style (the page's CSP): docs.css sizes a column by data-w, its width in whole 5 % steps (10-90)
+        renderHTML: (a: Record<string, unknown>) =>
+          a.width ? { 'data-width': a.width, 'data-w': String(Math.round((a.width as number) * 20) * 5) } : {},
       },
     };
   },
@@ -255,7 +258,7 @@ export const BlockAlign = Extension.create({
           const a = el.getAttribute('data-align');
           return a && ALIGNS.includes(a) ? a : null;
         },
-        renderHTML: (a: Record<string, unknown>) => (a.align ? { 'data-align': a.align, style: `text-align: ${a.align}` } : {}),
+        renderHTML: (a: Record<string, unknown>) => (a.align ? { 'data-align': a.align } : {}), // docs.css aligns by data-align
       },
     },
   }],

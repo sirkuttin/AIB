@@ -201,7 +201,13 @@ function denoLink(socket: WebSocket): WsLink {
       else if (socket.readyState === WebSocket.CONNECTING) early.push(data);
     },
     close(code = 1000, reason = '') {
-      if (socket.readyState === WebSocket.CONNECTING) socket.onopen = () => socket.close(code, reason);
+      if (socket.readyState === WebSocket.CONNECTING) {
+        const opened = socket.onopen; // what was sent before the handshake goes first
+        socket.onopen = (event) => {
+          opened?.call(socket, event);
+          socket.close(code, reason);
+        };
+      }
       else if (socket.readyState === WebSocket.OPEN) socket.close(code, reason);
     },
   };

@@ -9,6 +9,7 @@ import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { FIELD, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
 import { parseDoc, writeDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
+import { MD_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
 import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
 
 /** The page's side: a Y.Doc synced with the server through y-protocols over a socket whose up direction can be held. */
@@ -101,6 +102,12 @@ export class UserClient {
   text(id: string): string {
     return (this.block(id).get(0) as Y.XmlText).toString().replace(/<[^>]+>/g, '');
   }
+}
+
+/** A docs/<name>.md of the old layout: AIB wrote it, so it starts with AIB's note (a user's own docs/x.md is never a doc). */
+export function legacyMd(text: string): string {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  return MD_NOTE + eol + eol + text;
 }
 
 export function seeded(md: string): LiveDoc {

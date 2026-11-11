@@ -10,7 +10,7 @@ import { HostUnavailable } from '../host/host_client.ts';
 import { keeperProblem } from '../keeper/link.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { ViewPrefs } from '../state/view_prefs.ts';
-import { authorize, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
+import { authorize, drawingHeaders, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
 import { liveRoutes } from './live_routes.ts';
@@ -49,6 +49,9 @@ const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$
 /** The drawing page's Excalidraw bundle (tools/drawing/build.mjs): its code-split chunks, its CSS and its fonts. The server-only
  * Mermaid converter is not served. */
 const EXCALIDRAW_ASSET = /^\/vendor\/excalidraw\/((?:chunks\/|assets\/|fonts\/[A-Za-z]+\/)?[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:js|css|woff2))$/;
+
+/** The drawing editor page and its boot script: served with their own CSP (security.ts drawingHeaders). */
+const DRAWING_PAGE: Record<string, string> = { '/doc-drawing.html': 'drawing.html', '/doc-drawing-boot.js': 'drawing-boot.js' };
 
 /** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
 export function studioAsset(path: string): string | null {
@@ -367,6 +370,14 @@ export class WebServer {
       if (method === 'GET') {
         const handler = this.native.get(`GET ${path}`);
         if (handler) return await handler(this.ctx, url, null, request);
+        const drawing = DRAWING_PAGE[path];
+        if (drawing) {
+          const body = await Deno.readFile(`${APP_ROOT}${sep}server${sep}docs${sep}drawing${sep}page${sep}${drawing}`);
+          return new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': contentType(drawing), ...drawingHeaders(this.artifactOrigin) },
+          });
+        }
         const asset = studioAsset(path);
         if (asset === 'chat.html') {
           const page = withViewPrefs(await Deno.readTextFile(APP_ROOT + sep + asset), this.ctx.viewPrefs.public().prefs);
@@ -502,6 +513,8 @@ export function makeContext(
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(options.stateDir, options.host, () => ctx.token, () => chatStudioOf(ctx));
+  // a chat's turn ended (its turnEndedAt moved, or its connection went): the docs drop its presence and claims, show its refused notes
+  ctx.artifacts.onTurnEnd = (chat) => ctx.docs.turnEnded(chat);
   return ctx;
 }
 
