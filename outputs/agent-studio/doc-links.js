@@ -470,6 +470,16 @@
     const tog = box.querySelector ? box.querySelector('.tool-toggle') : null;
     if (tog && t) tog.title = t.textContent;
   }
+  // The card icons (doc-icons.js; a plain label when the page lacks it)
+  const cardIcon = (name) => {
+    const I = root.AIBDocIcons;
+    try {
+      if (I && I.icon) return I.icon(name, 'art-card-svg');
+    } catch (e) {
+      /* fall back */
+    }
+    return doc().createTextNode(name === 'doc' ? 'doc' : '');
+  };
   function paintCard(card, call, docs) {
     const d = docOf(docs, call.doc);
     const res = call.result || {};
@@ -477,9 +487,9 @@
     const n = d ? d.pages : Array.isArray(res.pages) ? res.pages.length : 1;
     card.replaceChildren();
     const body = el('div', null, 'art-card-body');
-    body.append(el('div', title, 'art-card-title'), el('div', 'Doc · ' + pagesText(n), 'art-card-sub'));
+    body.append(el('div', title, 'art-card-title'), el('div', 'Doc · ' + pagesText(n) + ' · in the project, you and agents edit it', 'art-card-sub'));
     const acts = el('div', null, 'art-card-actions');
-    const open = btn('Open', 'art-btn');
+    const open = btn('Open doc', 'art-btn art-btn-acc');
     open.setAttribute('aria-label', 'Open ' + title);
     open.disabled = !call.doc;
     open.addEventListener('click', () => {
@@ -487,7 +497,10 @@
       openDoc({ name: call.doc, title, chat: c, from: 'chat' });
     });
     acts.append(open);
-    card.append(el('span', 'doc', 'art-card-ic doc-card-ic'), body, acts);
+    const ic = el('span', null, 'art-card-ic doc-card-ic');
+    ic.setAttribute('aria-hidden', 'true');
+    ic.append(cardIcon('doc'));
+    card.append(ic, body, acts);
   }
   // chat.js passes every tool row here first: a doc tool row gets the DOC label, its words and "open ↗"; doc_create adds a card.
   function decorateToolRow(box, row) {

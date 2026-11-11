@@ -356,6 +356,17 @@
   background: var(--hover-overlay);
   color: var(--warn);
 }
+.ar-gnote {
+  padding: 0 8px 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ar-out {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+}
 .ar-sep {
   height: 1px;
   margin: 4px 2px;
@@ -418,6 +429,47 @@
     monospace;
   text-align: center;
   text-transform: lowercase;
+}
+/* Option C: the two cards differ by shape before a word is read. An artifact: dashed and round, an outlined window icon, View. A doc
+   (doc-links.js, .doc-card): a solid square teal icon, a teal bar on the left, Open doc. */
+.art-card:not(.doc-card) {
+  border-style: dashed;
+  border-color: var(--accent-line);
+  border-radius: 12px;
+}
+.art-card-win {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid var(--accent-line);
+  border-radius: 10px;
+}
+.art-card.doc-card {
+  border-left: 3px solid var(--accent);
+  border-radius: 3px 8px 8px 3px;
+}
+.art-card .doc-card-ic {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.art-card-svg {
+  width: 18px;
+  height: 18px;
+}
+.art-btn.art-btn-acc {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.art-btn.art-btn-acc:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
 }
 .art-card-body {
   flex: 1 1 auto;

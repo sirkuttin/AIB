@@ -302,23 +302,28 @@ test('doc tabs: one per doc; a single click is a preview the next one replaces; 
   assert.equal(st.tabs.find((x) => x.kind === 'doc').doc.page, 'p1');
 });
 
-test('the Artifacts picker lists docs under "This chat" and "Docs in this project", and never a doc history', () => {
+test('the Artifacts picker: artifacts, then "Docs this chat wrote" under a divider; no other docs, never a doc history', () => {
   const list = [
     { id: 'a1', title: 'Checkout v2 timeline', kind: 'html', version: 2, conversationId: 'claude:a1', updatedAt: 10 },
     { id: 'h1', title: 'release-plan', kind: 'md', version: 6, conversationId: null, sourcePath: null, updatedAt: 20 },
   ];
   const docs = [plan(), Object.assign(plan(), { name: 'onboarding', title: 'Onboarding', pages: 3, chat: 'claude:zz' })];
   const g = A.pickerGroups(list, 'a1', 0, docs, ['claude:a1']);
-  assert.deepEqual(g.map((x) => x.label), ['This chat', 'Docs in this project']);
-  assert.deepEqual(g[0].items.map((i) => [i.badge, i.title, i.meta.replace(/ · .*/, '')]), [
-    ['html', 'Checkout v2 timeline', 'v2'],
-    ['doc', 'Release plan', '2 pages'],
-  ]);
-  assert.deepEqual(g[1].items.map((i) => [i.title, i.meta]), [['Onboarding', '3 pages']]);
+  assert.deepEqual(g.map((x) => x.label), ['This chat', 'Docs this chat wrote']);
+  assert.deepEqual(g[0].items.map((i) => [i.badge, i.title, i.meta.replace(/ · .*/, '')]), [['html', 'Checkout v2 timeline', 'v2']]);
+  assert.deepEqual(g[1].items.map((i) => [i.doc, i.title, i.meta]), [[true, 'Release plan', '2 pages']]);
+  assert.equal(g[1].note, 'Opens beside the chat, where you can edit it');
+  assert.equal(g[1].divider, true);
+  assert.ok(!g.some((x) => x.items.some((i) => i.title === 'Onboarding')), 'a doc another chat wrote is left out');
   assert.ok(!g.some((x) => x.items.some((i) => i.id === 'h1')), 'the doc history is left out');
   assert.equal(A.isDocHistory(list[1]), true);
-  assert.equal(A.pickerIsPlain([list[0]], []), true);
-  assert.equal(A.pickerIsPlain([list[0]], docs), false, 'a doc makes it a dropdown');
+  // no artifacts: the doc group alone, no divider
+  const only = A.pickerGroups([], '', 0, docs, ['claude:a1']);
+  assert.deepEqual(only.map((x) => [x.label, x.divider]), [['Docs this chat wrote', false]]);
+  assert.deepEqual(A.pickerGroups([], '', 0, docs, ['claude:other']), []);
+  assert.equal(A.pickerIsPlain([list[0]], [], ['claude:a1']), true);
+  assert.equal(A.pickerIsPlain([list[0]], docs, ['claude:a1']), false, 'a doc this chat wrote makes it a dropdown');
+  assert.equal(A.pickerIsPlain([list[0]], docs, ['claude:other']), true, 'docs of other chats do not');
 });
 
 // ---- the Files view ---------------------------------------------------------------------------------------------------------------
@@ -478,7 +483,9 @@ test('doc_create adds a doc-created card whose Open opens the doc; an already op
   assert.notEqual(out, line, 'wrapped with a card');
   const card = out.querySelector('.doc-card');
   assert.equal(card.querySelector('.art-card-title').textContent, 'Release plan');
-  assert.equal(card.querySelector('.art-card-sub').textContent, 'Doc \u00b7 2 pages');
+  assert.equal(card.querySelector('.art-card-sub').textContent, 'Doc \u00b7 2 pages \u00b7 in the project, you and agents edit it');
+  assert.equal(card.querySelector('.art-btn').textContent, 'Open doc');
+  assert.ok(card.querySelector('.doc-card-ic'), 'the solid square doc icon');
   card.querySelector('.art-btn').click();
   await flush();
   const [rec] = frames(t, 'beside');

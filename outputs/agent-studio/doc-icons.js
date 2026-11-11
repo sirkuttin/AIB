@@ -117,6 +117,12 @@
     full: [['path', { ...S, 'stroke-width': '1.4', d: 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4' }]],
     folder: [['path', { ...S, d: 'M1.5 3.5h5l1.5 1.5h6.5v8.5h-13z' }]],
     plus: [['path', { ...S, 'stroke-width': '1.5', d: 'M8 3v10M3 8h10' }]],
+    // an artifact: an outlined window frame with a play mark (reply cards; artifacts are round where docs are square)
+    artifact: [
+      ['rect', { ...S, x: '1.5', y: '2.5', width: '13', height: '11', rx: '2.5' }],
+      ['path', { ...S, 'stroke-width': '1.2', d: 'M1.5 5.5h13' }],
+      ['path', { ...F, d: 'M6.5 7.8v3.6l3.2-1.8z' }],
+    ],
   };
   function icon(name, className) {
     const parts = ICONS[name] || ICONS.doc;

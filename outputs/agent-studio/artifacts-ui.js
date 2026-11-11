@@ -127,8 +127,14 @@
     pinned: false,
     on: false,
   });
-  /* Picker rows in groups ("Pinned", "This chat", "Docs in this project"); an empty group is left out. Docs linked to this chat
-     join "This chat" after its artifacts; the project's other docs get their own group. */
+  /* Picker rows in groups: "Pinned" and "This chat" list artifacts; below a divider, "Docs this chat wrote" lists the docs linked to
+     this chat (rows end in ↗: they open beside the chat, never in this column). The project's other docs are not listed: Files and
+     Ctrl+K have every doc. An empty group is left out. */
+  const DOCS_NOTE = 'Opens beside the chat, where you can edit it';
+  const linkedDocs = (docs, chatKeys) => {
+    const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean);
+    return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat && keys.includes(d.chat));
+  };
   function pickerGroups(list, selectedId, nowMs, docs, chatKeys) {
     const row = (a) => ({
       id: a.id,
@@ -141,19 +147,17 @@
     const ordered = orderArtifacts((Array.isArray(list) ? list : []).filter((a) => !isDocHistory(a))),
       pinned = ordered.filter((a) => a.pinned).map(row),
       rest = ordered.filter((a) => !a.pinned).map(row);
-    const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean),
-      ds = (Array.isArray(docs) ? docs : []).filter((d) => d && d.name),
-      mine = ds.filter((d) => d.chat && keys.includes(d.chat)).map(docRow),
-      others = ds.filter((d) => !(d.chat && keys.includes(d.chat))).map(docRow);
+    const mine = linkedDocs(docs, chatKeys).map(docRow);
     const groups = [];
     if (pinned.length) groups.push({ key: 'pinned', label: 'Pinned', items: pinned });
-    if (rest.length || mine.length) groups.push({ key: 'chat', label: 'This chat', items: rest.concat(mine) });
-    if (others.length) groups.push({ key: 'docs', label: 'Docs in this project', items: others });
+    if (rest.length) groups.push({ key: 'chat', label: 'This chat', items: rest });
+    if (mine.length)
+      groups.push({ key: 'docs', label: 'Docs this chat wrote', note: DOCS_NOTE, divider: !!(pinned.length || rest.length), items: mine });
     return groups;
   }
-  /* One artifact and no docs: plain text, no caret. Several, or any doc: a dropdown. */
-  const pickerIsPlain = (list, docs) =>
-    (Array.isArray(list) ? list.filter((a) => !isDocHistory(a)).length : 0) <= 1 && !(Array.isArray(docs) && docs.length);
+  /* One artifact and no doc this chat wrote: plain text, no caret. Several, or a linked doc: a dropdown. */
+  const pickerIsPlain = (list, docs, chatKeys) =>
+    (Array.isArray(list) ? list.filter((a) => !isDocHistory(a)).length : 0) <= 1 && !linkedDocs(docs, chatKeys).length;
   /* The version shown: the user's pick, or the latest when following. */
   const shownVersion = (latest, picked) =>
     picked != null && picked >= 1 && picked <= num(latest) ? Math.floor(picked) : Math.max(1, num(latest) || 1);
@@ -443,6 +447,13 @@
       canOpen: !!id && !failed,
     };
   }
+  /* The card's second line: what it is and where it lives ("Artifact · HTML page · v2 · kept with this chat, view only"); a card
+     still publishing or failed says only that. `fromDoc` (a "built from" link) names the doc page it shows. */
+  function cardLine(m) {
+    if (!m) return '';
+    if (!m.canOpen) return m.sub;
+    return ['Artifact', m.sub, m.builtFrom ? 'built from ' + m.builtFrom : 'kept with this chat, view only'].join(' · ');
+  }
   /* The version a write made: the first version saved at or after the write (the watcher saves it a moment later), else the
      newest one before it. Without a time (a replayed row), the n-th write card of the same file is version n. Never above latest. */
   function writtenVersion(versions, at, ordinal, latest) {
@@ -613,6 +624,7 @@
     artifactCall,
     parseResult,
     cardModel,
+    cardLine,
     outputsCardModel,
     writtenVersion,
     placeLeft,
@@ -989,15 +1001,26 @@
   function docButton(it) {
     const row = popItem('ar-doc');
     row.dataset.doc = it.name;
-    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
+    const out = el('span', 'ar-out', '↗');
+    out.setAttribute('aria-hidden', 'true');
+    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta), out);
     row.title = 'Open ' + it.title + ' beside the chat';
+    row.setAttribute('aria-label', it.title + ', ' + it.meta + ': opens beside the chat');
     row.addEventListener('click', () => {
       closePop();
       openDocRow(it);
     });
     return row;
   }
-  /* No artifacts yet: the project's docs still show, under the empty text. */
+  /* A group's head: a divider before "Docs this chat wrote", its label and its note line. */
+  function groupHead(g) {
+    const out = [];
+    if (g.divider) out.push(el('div', 'ar-sep'));
+    out.push(el('div', 'ar-gh', g.label));
+    if (g.note) out.push(el('div', 'ar-gnote', g.note));
+    return out;
+  }
+  /* No artifacts yet: the docs this chat wrote still show, under the empty text. */
   function paintEmptyDocs() {
     if (!ui) return;
     let box = ui.empty.querySelector('.ar-docs-empty');
@@ -1012,7 +1035,7 @@
     }
     box.replaceChildren();
     for (const g of groups) {
-      box.append(el('div', 'ar-gh', g.label));
+      box.append(...groupHead(g));
       for (const it of g.items) box.append(docButton(it));
     }
   }
@@ -1039,7 +1062,7 @@
       paintEmptyDocs();
       return;
     }
-    const plain = pickerIsPlain(S.list.length ? S.list : [a], projectDocs());
+    const plain = pickerIsPlain(S.list.length ? S.list : [a], projectDocs(), chatKeys());
     ui.pick.replaceChildren(
       el('span', 'ar-k', kindInfo(a.kind).badge),
       el('span', 'ar-pick-title', a.title || 'Untitled'),
@@ -1313,13 +1336,13 @@
     closePop();
     const a = current(),
       docs = projectDocs();
-    if (!a || pickerIsPlain(S.list, docs)) return;
+    if (!a || pickerIsPlain(S.list, docs, chatKeys())) return;
     ui.popFor = 'pick';
     ui.pick.setAttribute('aria-expanded', 'true');
     const groups = pickerGroups(S.list, a.id, undefined, docs, chatKeys());
     const frag = doc.createDocumentFragment();
     for (const g of groups) {
-      frag.append(el('div', 'ar-gh', g.label));
+      frag.append(...groupHead(g));
       for (const it of g.items) {
         if (it.doc) {
           frag.append(docButton(it));
@@ -1590,11 +1613,13 @@
     card.dataset.sig = sig;
     card.dataset.artId = m.id;
     card.replaceChildren();
-    const ic = el('span', 'art-card-ic', m.badge),
+    const ic = el('span', 'art-card-ic art-card-win'),
       body = el('div', 'art-card-body');
-    body.append(el('div', 'art-card-title', m.title), el('div', 'art-card-sub', m.sub));
+    ic.setAttribute('aria-hidden', 'true');
+    ic.append(cardIcon(m.badge));
+    body.append(el('div', 'art-card-title', m.title), el('div', 'art-card-sub', cardLine(m)));
     const acts = el('div', 'art-card-actions');
-    const openBtn = el('button', 'art-btn', 'Open');
+    const openBtn = el('button', 'art-btn', 'View');
     openBtn.type = 'button';
     openBtn.disabled = !m.canOpen;
     openBtn.setAttribute('aria-label', 'Open ' + m.title + ' in the Artifacts viewer');
@@ -1612,6 +1637,16 @@
       acts.append(df);
     }
     card.append(ic, body, acts);
+  }
+  /* The window icon (doc-icons.js), or the kind badge when the page lacks it. */
+  function cardIcon(badge) {
+    const I = win && win.AIBDocIcons;
+    try {
+      if (I && I.icon) return I.icon('artifact', 'art-card-svg');
+    } catch (e) {
+      /* fall back */
+    }
+    return doc.createTextNode(badge || '');
   }
   function makeCard(data) {
     const card = el('div', 'art-card');

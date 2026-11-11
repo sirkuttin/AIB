@@ -452,6 +452,16 @@ test("a card for an older call keeps that call's version, and live data supplies
   assert.equal(m.sub, 'HTML page \u00b7 v2');
   assert.equal(m.diffFrom, 1);
 });
+test('the artifact card says what it is and where it lives; built from a doc names the page', () => {
+  const m = A.cardModel(A.artifactCall(rawRow()), [art({ version: 5 })], NOW);
+  assert.equal(A.cardLine(m), 'Artifact \u00b7 HTML page \u00b7 v2 \u00b7 kept with this chat, view only');
+  assert.equal(
+    A.cardLine(Object.assign({}, m, { builtFrom: 'Release plan \u203a Rollout' })),
+    'Artifact \u00b7 HTML page \u00b7 v2 \u00b7 built from Release plan \u203a Rollout',
+  );
+  const pending = A.cardModel(A.artifactCall(rawRow({ status: 'in_progress', content: undefined })), [], NOW);
+  assert.equal(A.cardLine(pending), 'Publishing\u2026');
+});
 test('files written inside outputs/ get a card once the artifact exists; others get a Preview button', () => {
   const list = [
     art({
