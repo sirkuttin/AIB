@@ -428,7 +428,7 @@ body.sf-file-on main > #fileView {
   padding: 6px 10px 6px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--error-bg);
-  color: var(--danger-text);
+  color: var(--danger-bright);
   font-size: 13px;
 }
 .sf-fv-alert > span {
