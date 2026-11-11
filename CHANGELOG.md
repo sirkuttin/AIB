@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Chat terminals keep running when AIB restarts, updates or crashes. The keeper now holds them, like the chats. When AIB comes
+  back, the terminal shows the same shell with its recent output, and a command that was running is still running. While AIB
+  restarts, the terminal panel says "reconnecting" and comes back by itself. "Session ended" appears only when the shell really
+  ends. Quitting AIB still ends the terminals.
+- Commands an agent runs in a terminal of its own (when that option is on) also keep running through a restart or an update. AIB
+  answers the agent from the same command afterwards, instead of saying the terminal was lost.
+- Ctrl+C now stops a command in a terminal held by the keeper.
+- A tray-only AIB (after a crash) no longer quits by itself while a command runs in a terminal.
+- The keeper is version 1.2.0. While an older keeper still runs (it holds chats from before an update), new terminals run
+  inside AIB as before, and the log says so. Once that keeper has been replaced, the next AIB start puts terminals in the keeper.
+
 ## 0.1.0-beta.4 (beta)
 
 - New look: Bay teal is the default. Settings > Appearance > Theme offers eleven themes (AIB teal dark and light; high

@@ -72,8 +72,13 @@ handshake and framing for the desktop binary's node:http listeners), `terminal-u
 - **Shell:** Windows: PowerShell 7 (`pwsh.exe` on PATH), else Windows PowerShell; macOS/Linux: `$SHELL -l`, else `/bin/bash -l`. The
   "Use Windows PowerShell" button asks for Windows PowerShell explicitly.
 - **No windows:** the console host behind ConPTY runs headless; nothing appears on screen.
-- **Lifetime:** shells live in the web server process. Closing the window to the tray keeps them; quitting AIB ends them all
-  (`WebServer.close`); on Windows each shell and everything it starts is in a Job Object that also ends them if AIB dies.
+- **Lifetime:** with the keeper (keeper 1.2.0, shipped with AIB) shells live in the keeper, like the chats: they keep running when
+  AIB restarts, updates or crashes, and the next AIB shows the same shell with its recent output (the newest 2 MiB are kept). While
+  AIB restarts, the panel says "reconnecting" and reconnects by itself; only if the shell is gone does it say "Disconnected. Press any
+  key to reconnect." Closing the window to the tray keeps them; quitting AIB ends them all (`WebServer.close`). Each shell and
+  everything it starts is in a Job Object in the keeper, so they end if the keeper dies. Without the keeper (off, or a running keeper
+  too old for terminals) shells live in the web server process and end with AIB, as before. See agent-host.md, "Chat terminals in the
+  keeper".
 - **Paste:** text pasted into a terminal (Ctrl+V, or "Run in terminal") never runs by itself: no trailing Enter, and several lines are
   entered without running (PowerShell: Shift+Enter between lines; bash/zsh: bracketed paste). When a command is still running, the
   page asks "Paste anyway / Cancel" first. "Running" (`Pty.busy`): on Windows the shell's Job Object holds more than the shell; on
