@@ -785,6 +785,8 @@
         );
     }
     row.append(head);
+    const blockedBy = a.beta && !a.found && !running && (betaInfo(a).setup || {}).blockedBy;
+    if (blockedBy) row.append(note(blockedBy, 'dim st-beta-blocked'));
     if (running) {
       row.append(progressBar(a, job), note(progressText(a, job)));
     } else if (waiting) {
@@ -1203,8 +1205,7 @@
     const busy = !!betaTerms[a.id] && betaTerms[a.id].running;
     if (setup.blockedBy || busy) go.disabled = true;
     if (setup.blockedBy) go.title = setup.blockedBy;
-    head.append(go);
-    if (setup.blockedBy) head.append(el('span', setup.blockedBy, 'st-hint st-beta-blocked'));
+    head.append(go); // the reason ("Install uv first") is a line under the header (agentRow), so Install keeps its place
   }
   // Run one setup step in an AIB terminal on the card: 'install' (the vendor's installer) or 'prereq:<id>'. The command is shown
   // first; the server runs its own copy of it. Exit 0: Check again (PATH re-read), then the card shows what it finds.

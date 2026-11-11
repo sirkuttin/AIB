@@ -602,3 +602,40 @@ test('Qwen: an optional API address under the key box, saved like the key; empty
   assert.deepEqual(plain(posts.at(-1)), ['settings', { agents: { betaUrl: { qwen: null } } }]);
   assert.equal(betaRow('Gemini CLI').querySelector('.st-beta-url'), null, 'only agents that take an address');
 });
+
+test('"Install … first" is a line under the header, so Install and the badge keep the same place on every card', async () => {
+  const { betaRow } = await openSettings(setupList());
+  for (const name of ['Gemini CLI', 'Mistral Vibe', 'Cursor CLI']) {
+    const row = betaRow(name);
+    const head = row.querySelector('.st-agent-head');
+    assert.equal(head.querySelector('.st-beta-blocked'), null, name + ': nothing after Install in the header');
+    const kids = head.children.map((n) => n.className || n.tagName);
+    assert.equal(kids.at(-1), 'st-primary', name + ': Install is the last thing in the header');
+  }
+  const gemini = betaRow('Gemini CLI');
+  const after = gemini.children[gemini.children.indexOf(gemini.querySelector('.st-agent-head')) + 1];
+  assert.equal(after.className, 'st-note dim st-beta-blocked');
+  assert.equal(after.textContent, 'Install Node.js first');
+  assert.equal(betaRow('Cursor CLI').querySelector('.st-beta-blocked'), null);
+});
+
+test('the Beta card CSS: the key link is a teal st-link, line-start links sit on the hint edge, disabled Install is readable', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { cssRules, declarationsFor } = require('./css_rules.js');
+  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/settings.css'), 'utf8'));
+  const link = declarationsFor(rules, '.st-beta-key .st-link');
+  assert.deepEqual([link.color, link['text-decoration']], ['var(--link)', 'underline'], 'same as every other st-link');
+  assert.deepEqual(
+    declarationsFor(rules, '.st-beta-key .st-link'),
+    declarationsFor(rules, '.st-beta-install .st-link'),
+  );
+  for (const sel of ['.st-beta-key .st-beta-keylink', '.st-beta-install .st-beta-docs', '.st-beta-row .st-link'])
+    assert.equal(declarationsFor(rules, sel)['margin-left'], '0', sel);
+  const off = declarationsFor(rules, '.st-agent-head .st-primary:disabled');
+  assert.deepEqual(
+    [off.opacity, off.background, off.color],
+    ['1', 'var(--primary-disabled-bg)', 'var(--on-accent-disabled)'],
+    "the app's disabled primary (chat.css .primary:disabled), not 50% opacity",
+  );
+});
