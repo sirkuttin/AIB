@@ -10,6 +10,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { PyParity } from './_parity.ts';
 import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { injectScroll, markdownPage, OriginServer, renderMarkdown } from '../../outputs/agent-studio/server/artifacts/origin.ts';
+import { LIB_DIR, localLibUrl, rewriteLibUrls } from '../../outputs/agent-studio/server/artifacts/libs.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -88,7 +89,8 @@ Deno.test('origin: HTML headers and the exact CSP; the scroll script goes before
   assertEquals(h['cache-control'], 'no-store');
   assertEquals(h['access-control-allow-origin'], undefined);
   const expected =
-    "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; " +
+    "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com " +
+    `http://127.0.0.1:${origin.port}/_lib/ http://localhost:${origin.port}/_lib/; ` +
     "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob: 'self'; media-src data: blob: 'self'; " +
     `connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors http://127.0.0.1:${studioPort} http://localhost:${studioPort}; ` +
     'sandbox allow-scripts allow-forms allow-popups allow-downloads';
@@ -230,13 +232,17 @@ const COMPARED = [
   'allow',
 ];
 
+/** Deno only: script-src also names this origin's /_lib/ (the vendored libraries); Python's policy is the rest. */
+const maskCsp = (policy: string | undefined) =>
+  policy?.replace(` http://127.0.0.1:${origin.port}/_lib/ http://localhost:${origin.port}/_lib/`, '');
+
 async function compare(target: string, method = 'GET', host?: (port: number) => string | null) {
   const mine = await raw(origin.port, target, host ? host(origin.port) : `127.0.0.1:${origin.port}`, method);
   const theirs = await raw(pyPort, target, host ? host(pyPort) : `127.0.0.1:${pyPort}`, method);
   const pick = (r: Reply) => Object.fromEntries(COMPARED.filter((k) => k in r.headers).map((k) => [k, r.headers[k]]));
   assertEquals(mine.status, theirs.status, `${method} ${target}: status`);
   assertEquals(pick(mine), pick(theirs), `${method} ${target}: headers`);
-  assertEquals(mine.headers['content-security-policy'], theirs.headers['content-security-policy'], `${method} ${target}: CSP`);
+  assertEquals(maskCsp(mine.headers['content-security-policy']), theirs.headers['content-security-policy'], `${method} ${target}: CSP`);
   if (method !== 'HEAD') assertEquals([...mine.body].join(), [...theirs.body].join(), `${method} ${target}: body`);
 }
 
@@ -354,6 +360,121 @@ Deno.test('parity: the scroll script is injected as Python does', async () => {
       JSON.stringify(page),
     );
   }
+});
+
+// ---- Deno only: the vendored page libraries (libs.ts) ---------------------------------------------------------------------
+
+const LIB_PAGE = '<html><head>' +
+  '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" integrity="sha384-x" crossorigin="anonymous"></script>' +
+  "<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1'></script>" +
+  '<script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>' +
+  '<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>' +
+  '</head><body><p>https://cdn.jsdelivr.net/npm/mermaid@11 in text</p>' +
+  '<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";</script></body></html>';
+const libPage = store.create('c1', 'L', 'html', 'libs.html', enc(LIB_PAGE));
+const vendored = (name: string) => Deno.readFileSync(`${LIB_DIR}${SEP}${name}`);
+
+Deno.test('libs: a jsDelivr Mermaid / Chart.js page is served the local copies', async () => {
+  const reply = await get(`/a/${libPage.id}/v1/libs.html`);
+  assertEquals(reply.status, 200);
+  const text = new TextDecoder().decode(reply.body);
+  assert(text.includes('<script src="/_lib/mermaid.min.js"></script>'), 'mermaid src swapped, integrity and crossorigin dropped');
+  assert(text.includes("<script src='/_lib/chart.umd.min.js'></script>"), 'chart.js swapped');
+  assert(text.includes('import mermaid from "/_lib/mermaid.esm.min.mjs"'), 'the module import swapped');
+  assert(text.includes('chart.js@2.9.4/dist/Chart.min.js'), 'another major keeps its CDN URL');
+  assert(text.includes('https://cdn.jsdelivr.net/npm/d3@7'), 'other libraries keep theirs');
+  assert(text.includes('<p>https://cdn.jsdelivr.net/npm/mermaid@11 in text</p>'), 'text is not touched');
+  assert(text.includes('studio-artifact-scroll'));
+  for (const name of ['mermaid.min.js', 'chart.umd.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) {
+    const lib = await get(`/_lib/${name}`);
+    const file = vendored(name);
+    assertEquals(lib.status, 200, name);
+    assertEquals(lib.headers['content-type'], 'text/javascript; charset=utf-8');
+    assertEquals(lib.headers['access-control-allow-origin'], '*'); // a module fetch from the sandbox's opaque origin is CORS
+    assertEquals(lib.headers['x-content-type-options'], 'nosniff');
+    assertEquals(lib.body.length, file.length, name);
+    assert(lib.body.every((b, i) => b === file[i]), `${name}: the vendored bytes`);
+  }
+  const esm = new TextDecoder().decode((await get('/_lib/mermaid.esm.min.mjs')).body);
+  assert(esm.includes("new URL('mermaid.min.js', import.meta.url)") && esm.includes('export default globalThis.mermaid'));
+  for (const bad of ['/_lib/', '/_lib/nope.js', '/_lib/../manifest.json', '/_lib/%2e%2e/x', '/_lib/LICENSE-vega', '/_lib/VERSIONS.txt']) {
+    assertEquals((await get(bad)).status, 404, bad);
+  }
+  assertEquals((await get('/_lib/mermaid.min.js', 'evil.example')).status, 403);
+});
+
+Deno.test("libs: the CSP adds only this origin's /_lib/ and still blocks other hosts", async () => {
+  const policy = (await get(`/a/${libPage.id}/v1/libs.html`)).headers['content-security-policy'];
+  const directives: Record<string, string[]> = Object.fromEntries(
+    policy.split(';').map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k, v]),
+  );
+  assertEquals(directives['script-src'], [
+    "'unsafe-inline'",
+    "'unsafe-eval'",
+    'https://cdnjs.cloudflare.com',
+    'https://cdn.jsdelivr.net',
+    'https://unpkg.com',
+    `http://127.0.0.1:${origin.port}/_lib/`,
+    `http://localhost:${origin.port}/_lib/`,
+  ]);
+  assert(!directives['script-src'].some((s) => s === "'self'" || s === '*' || s.includes('example')));
+  assertEquals(directives['default-src'], ["'none'"]);
+  assertEquals(directives['connect-src'], ["'none'"]);
+  assertEquals(directives['sandbox'], ['allow-scripts', 'allow-forms', 'allow-popups', 'allow-downloads']);
+  assert(!policy.includes('allow-same-origin'));
+  assertEquals((await get(`/a/${md.id}/v1/n.md?view=1`)).headers['content-security-policy'], policy, 'Markdown pages: the same policy');
+});
+
+Deno.test('libs: a mermaid fence in Markdown is drawn with the local Mermaid', async () => {
+  const source = '# D\n\n```mermaid\ngraph TD\n  A["<b>x</b>"] --> B\n```\n\n```js\nconst y = 1;\n```\n';
+  const doc = store.create('c1', 'D', 'md', 'd.md', enc(source));
+  const text = new TextDecoder().decode((await get(`/a/${doc.id}/v1/d.md?view=1`)).body);
+  assert(
+    text.includes('<pre class="mermaid">graph TD\n  A[&quot;&lt;b&gt;x&lt;/b&gt;&quot;] --&gt; B</pre>'),
+    'escaped source in a mermaid block',
+  );
+  assert(text.includes('<script src="/_lib/mermaid.min.js"></script>'));
+  assert(text.includes("securityLevel:'strict'"));
+  assert(text.includes('<pre><code>const y = 1;</code></pre>'), 'other fences stay code');
+  assert(text.indexOf('/_lib/mermaid.min.js') < text.indexOf('studio-artifact-scroll'));
+  const plain = new TextDecoder().decode(markdownPage('```\ngraph TD\n```\n<pre class="mermaid">', 't'));
+  assert(!plain.includes('/_lib/'), 'no mermaid fence, no script; typed tags are escaped');
+});
+
+Deno.test('libs: CDN URL shapes and versions', () => {
+  const cases: [string, string | null][] = [
+    ['https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js', '/_lib/mermaid.min.js'],
+    ['https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.js', '/_lib/mermaid.min.js'],
+    ['https://unpkg.com/mermaid@11.4.0/dist/mermaid.min.js', '/_lib/mermaid.min.js'],
+    ['https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.1/mermaid.min.js', '/_lib/mermaid.min.js'],
+    ['https://cdn.jsdelivr.net/npm/mermaid@11/+esm', '/_lib/mermaid.esm.min.mjs'],
+    ['https://unpkg.com/mermaid@latest/dist/mermaid.esm.mjs', '/_lib/mermaid.esm.min.mjs'],
+    ['https://cdn.jsdelivr.net/npm/mermaid@12/dist/mermaid.min.js', null],
+    ['https://cdn.jsdelivr.net/npm/mermaid@9.4.3/dist/mermaid.min.js', null],
+    ['https://cdn.jsdelivr.net/npm/chart.js', '/_lib/chart.umd.min.js'],
+    ['//cdn.jsdelivr.net/npm/chart.js@^4.4/dist/chart.umd.js', '/_lib/chart.umd.min.js'],
+    ['https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js', '/_lib/chart.umd.min.js'],
+    ['https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.js', null], // the ES module build
+    ['https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js', null],
+    ['https://cdn.jsdelivr.net/npm/vega@5', '/_lib/vega.min.js'],
+    ['https://cdn.jsdelivr.net/npm/vega-lite@5.x', '/_lib/vega-lite.min.js'],
+    ['https://cdn.jsdelivr.net/npm/vega-embed@6', '/_lib/vega-embed.min.js'],
+    ['https://unpkg.com/vega@6.1.2/build/vega.min.js', '/_lib/vega.min.js'],
+    ['https://cdnjs.cloudflare.com/ajax/libs/vega-embed/6.24.0/vega-embed.min.js', '/_lib/vega-embed.min.js'],
+    ['https://cdn.jsdelivr.net/npm/vega-lite@4', null],
+    ['https://cdn.jsdelivr.net/npm/vega-embed@6/build/vega-embed.js?x=1', null],
+    ['https://example.com/npm/chart.js@4', null],
+    ['https://cdn.jsdelivr.net/npm/chart.js-plugin@4', null],
+    ['https://cdn.jsdelivr.net/gh/user/chart.js@4/x.js', null],
+  ];
+  for (const [url, local] of cases) assertEquals(localLibUrl(url), local, url);
+  assertEquals(rewriteLibUrls('<p>no libraries</p>'), '<p>no libraries</p>');
+  assertEquals(
+    rewriteLibUrls('<script integrity="sha512-a" src="https://cdn.jsdelivr.net/npm/vega@5" crossorigin></script>'),
+    '<script src="/_lib/vega.min.js"></script>',
+  );
+  const untouched = '<script integrity="sha512-a" src="https://cdn.jsdelivr.net/npm/d3@7" crossorigin></script>';
+  assertEquals(rewriteLibUrls(untouched), untouched, 'a tag with nothing swapped keeps its attributes');
 });
 
 Deno.test('origin teardown', async () => {

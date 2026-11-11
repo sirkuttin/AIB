@@ -7,7 +7,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { PY_REF_DIR, python } from './_parity.ts';
 import { APP_ROOT, TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { artifactToolCommand } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
+import { artifactToolCommand, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { ARTIFACT_URL_FILE } from '../../outputs/agent-studio/server/host/studio.ts';
 import { ARTIFACT_PROMPT, Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
@@ -20,6 +20,8 @@ const MAIN = `${APP_ROOT}${SEP}server${SEP}main.ts`;
 const DENO_TOOL = [Deno.execPath(), 'run', '-A', '--quiet', MAIN, 'mcp-artifact'];
 const PY_TOOL = [python(), `${PY_REF_DIR}${SEP}artifact_mcp.py`]; // the Python reference's tool
 Deno.env.set('AGENT_STUDIO_TEST', '1');
+/** A Deno reply line with the Deno-only part taken out: the bundled-libraries sentence of publish's description (no /_lib/ in Python). */
+const masked = (line: string) => line.replace(JSON.stringify(OFFLINE_LIBS_NOTE).slice(1, -1), '');
 
 type Json = Record<string, unknown>;
 interface Recorded {
@@ -240,6 +242,9 @@ Deno.test('initialize negotiation and tools/list', async () => {
   assertEquals((tools[0].inputSchema as Json).required, ['title']);
   assert((tools[0].description as string).includes('studio-artifact://<id>'));
   assert((tools[0].description as string).includes('source code'));
+  for (const path of ['/_lib/mermaid.min.js', '/_lib/chart.umd.min.js', '/_lib/vega-embed.min.js', 'does not load offline']) {
+    assert((tools[0].description as string).includes(path), path); // agents learn the bundled libraries here
+  }
   assertEquals((tools[1].inputSchema as Json).required, ['id']);
 });
 
@@ -525,7 +530,7 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   const [pyLines, pyRequests] = await runScript(PY_TOOL, lab.dir, lab.fake, env);
   const [denoLines, denoRequests] = await runScript(DENO_TOOL, lab.dir, lab.fake, env);
   assertEquals(denoLines.length, pyLines.length);
-  for (let i = 0; i < pyLines.length; i++) assertEquals(denoLines[i], pyLines[i], `reply ${i + 1}`);
+  for (let i = 0; i < pyLines.length; i++) assertEquals(masked(denoLines[i]), pyLines[i], `reply ${i + 1}`);
   assertEquals(denoRequests, pyRequests);
   assert(pyRequests.length > 30, 'the script reached the fake Studio');
 });
@@ -568,7 +573,7 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
         await shim.close();
       }
     }
-    assertEquals(replies[1], replies[0], JSON.stringify([url, extra, key, conversation]));
+    assertEquals(replies[1].map(masked), replies[0], JSON.stringify([url, extra, key, conversation]));
   }
 });
 
