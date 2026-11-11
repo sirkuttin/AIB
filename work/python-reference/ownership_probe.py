@@ -48,7 +48,7 @@ STATE_ORDER = {'no_evidence': 0, 'possibly_active': 1, 'owned_elsewhere': 2, 'ow
 SESSION_ID_RE = re.compile(r'^[A-Za-z0-9._-]{1,128}$')
 PROVIDER_RE = re.compile(r'^[a-z0-9_-]{1,32}$')
 
-NO_EVIDENCE_NOTE = ('Studio found no sign of another app using this conversation, but it cannot see every client '
+NO_EVIDENCE_NOTE = ('AIB found no sign of another app using this conversation, but it cannot see every client '
                     '(for example an idle session open in another app writes nothing). This is not proof that it is free.')
 
 
@@ -287,8 +287,8 @@ def restart_manager_holders(path):
 # ---------------------------------------------------------------------------------------------
 _INTERESTING = {'claude.exe', 'omp.exe', 'node.exe', 'devin.exe', 'claude', 'omp', 'node', 'devin'}
 _PARENT_LABELS = {'devin.exe': 'Devin', 'code.exe': 'VS Code', 'claude.exe': 'Claude app or CLI', 'windowsterminal.exe': 'a terminal',
-                  'cmd.exe': 'a terminal', 'powershell.exe': 'a terminal', 'pwsh.exe': 'a terminal', 'python.exe': 'a Python program (possibly another Agent Studio)',
-                  'pythonw.exe': 'a Python program (possibly another Agent Studio)', 'cursor.exe': 'Cursor', 'windsurf.exe': 'Windsurf'}
+                  'cmd.exe': 'a terminal', 'powershell.exe': 'a terminal', 'pwsh.exe': 'a terminal', 'python.exe': 'a Python program (possibly another AIB)',
+                  'pythonw.exe': 'a Python program (possibly another AIB)', 'cursor.exe': 'Cursor', 'windsurf.exe': 'Windsurf'}
 
 
 def _ps_lines(run, columns):
@@ -647,7 +647,7 @@ class OwnershipProbe:
                 self._seen.pop(key, None)
         info = f'Transcript last written {humanize_age(age)} ago'
         if released is not None and modified <= released + RELEASE_GRACE_SECONDS:
-            return None, info + ' (by Studio itself, before it released the conversation)'
+            return None, info + ' (by AIB itself, before it released the conversation)'
         newest, label = age, 'Transcript'
         if deep:  # Claude subagents and OMP artifacts live in a sibling folder named like the transcript
             folder = path.with_suffix('')
@@ -665,9 +665,9 @@ class OwnershipProbe:
                 pass
         if newest > ACTIVE_WINDOW_SECONDS:
             return None, info + ' (an idle session open in another app would not write anything)'
-        text = f'{label} was written {humanize_age(newest)} ago, and Studio is not the app writing it'
+        text = f'{label} was written {humanize_age(newest)} ago, and AIB is not the app writing it'
         if before and stat.st_size > before[0]:
-            text += f' (it grew by {stat.st_size - before[0]:,} bytes since Studio last looked)'
+            text += f' (it grew by {stat.st_size - before[0]:,} bytes since AIB last looked)'
         return {'signal': 'transcript', 'strength': 'weak', 'text': text + '.'}, None
 
     # -- processes ---------------------------------------------------------------------------
@@ -730,7 +730,7 @@ class OwnershipProbe:
             parent = self._started_by(snapshot, proc)
             reasons.append({'signal': 'process-folder', 'strength': 'weak', 'pid': proc['pid'],
                             'text': f"{kind['label']} (PID {proc['pid']}{', started by ' + parent if parent else ''}) is running in this project folder. "
-                                    'Agent processes do not reveal which conversation they hold, so Studio cannot tell whether it is this one.'})
+                                    'Agent processes do not reveal which conversation they hold, so AIB cannot tell whether it is this one.'})
         if len(shown) > 3:
             reasons.append({'signal': 'process-folder', 'strength': 'weak', 'text': f'{len(shown) - 3} more agent processes are running in this folder.'})
         return reasons
@@ -753,7 +753,7 @@ class OwnershipProbe:
                                 'text': f"{who} announced this conversation but has not refreshed the announcement for {humanize_age(entry['age'])}, although that process is still running."})
             elif entry['status'] == 'remote':
                 reasons.append({'signal': 'announcement', 'strength': 'weak',
-                                'text': f"{entry['clientName']} on {entry['hostname'] or 'another computer'} announced this conversation {humanize_age(entry['age'])} ago. Studio cannot check a process on another computer."})
+                                'text': f"{entry['clientName']} on {entry['hostname'] or 'another computer'} announced this conversation {humanize_age(entry['age'])} ago. AIB cannot check a process on another computer."})
             else:
                 info.append(f"{entry['clientName']} once announced this conversation, but the announcement is no longer live ({'process ended' if entry['status'] == 'dead' else 'expired'}).")
         return reasons, info, problems
@@ -764,7 +764,7 @@ class OwnershipProbe:
         started = self.clock()
         result = {'provider': provider, 'sessionId': session_id, 'reasons': [], 'notes': [], 'unavailable': [], 'checkedAt': started}
         if self.owned_by_studio(provider, session_id):
-            return dict(result, verdict='owned_by_studio', summary='This conversation is running in this Studio.')
+            return dict(result, verdict='owned_by_studio', summary='This conversation is running in this AIB.')
         reasons, notes, unavailable = result['reasons'], result['notes'], result['unavailable']
         extra, info, problems = self._registry_signals(provider, session_id)
         reasons.extend(extra)
@@ -804,8 +804,8 @@ class OwnershipProbe:
                                     'text': f'{clean_text(name, 60)} (PID {pid}) has the transcript file open right now.'})
         verdict = 'owned_elsewhere' if any(r['strength'] == 'strong' for r in reasons) else 'possibly_active' if reasons else 'no_evidence'
         summaries = {
-            'owned_elsewhere': 'Another app is running this conversation. Studio will not continue it from here.',
-            'possibly_active': 'Another app may be using this conversation. Studio cannot be sure either way.',
+            'owned_elsewhere': 'Another app is running this conversation. AIB will not continue it from here.',
+            'possibly_active': 'Another app may be using this conversation. AIB cannot be sure either way.',
             'no_evidence': NO_EVIDENCE_NOTE}
         # 'unknown' is a separate field so the verdict names stay stable: with no evidence found AND a probe that could not run
         # (process list, open-file check), the honest answer is "unknown", never "free".

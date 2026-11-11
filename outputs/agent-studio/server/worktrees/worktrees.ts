@@ -40,7 +40,7 @@ export const SKIP_DIRS = new Set(['node_modules', '.git']);
 export const LFS_MAGIC = new TextEncoder().encode(
   'version https://git-lfs.github.com/spec',
 );
-export const SNAPSHOT_IDENTITY = ['-c', 'user.name=Agent Studio', '-c', 'user.email=studio@localhost', '-c', 'commit.gpgsign=false'];
+export const SNAPSHOT_IDENTITY = ['-c', 'user.name=AIB', '-c', 'user.email=studio@localhost', '-c', 'commit.gpgsign=false'];
 
 const ACTIVE = new Set<string>(); // keys being created by this process right now (startup cleanup must not touch them)
 
@@ -734,7 +734,7 @@ export async function snapshotCommit(project: string, scratch: string): Promise<
   await git(['read-tree', 'HEAD'], project, { env });
   await git(['add', '-A'], project, { env });
   const tree = pyStrip((await git(['write-tree'], project, { env })).stdout);
-  return pyStrip((await git(['commit-tree', tree, '-p', 'HEAD', '-m', 'Studio snapshot'], project, { env, identity: true })).stdout);
+  return pyStrip((await git(['commit-tree', tree, '-p', 'HEAD', '-m', 'AIB snapshot'], project, { env, identity: true })).stdout);
 }
 
 // ---- the user base U ---------------------------------------------------------------------------------------------
@@ -805,7 +805,7 @@ export async function advanceUserBase(record: WorktreeRecord, paths: unknown[] |
   }
   let result = previous;
   if (tree !== pyStrip((await git(['rev-parse', previous + '^{tree}'], project)).stdout)) {
-    result = pyStrip((await git(['commit-tree', tree, '-p', previous, '-m', 'Studio: user edits'], project, { identity: true })).stdout);
+    result = pyStrip((await git(['commit-tree', tree, '-p', previous, '-m', 'AIB: user edits'], project, { identity: true })).stdout);
   }
   await pinUserBase(project, record, result);
   if (registry !== null && record.key) {
@@ -1067,7 +1067,7 @@ export class Manager {
     const root = norm(this.registry.root);
     const inside = !!path && normcase(realpath(path)).startsWith(root + SEP);
     if (!inside) {
-      log.warning("Not removing %s: it is not under Studio's worktrees folder", path);
+      log.warning("Not removing %s: it is not under AIB's worktrees folder", path);
       return;
     }
     const projectOk = !!project && isdir(project);
@@ -1141,7 +1141,7 @@ export class Manager {
       project = str(record.project),
       branch = str(record.branch);
     if (!this.insideRoot(path)) {
-      log.warning('Not removing %s: it is not under the Studio worktrees folder', path);
+      log.warning('Not removing %s: it is not under the AIB worktrees folder', path);
       return true; // nothing of Studio's to remove; do not keep a record forever
     }
     const projectOk = !!project && isdir(project) &&

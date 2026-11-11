@@ -190,8 +190,8 @@ class Refusal:
     """Why authorize said no. Falsy, so `if not authorize(...)` keeps working; `.status` and `.message(path)` are what to answer."""
     REASONS = {
         'unknown_route': (404, 'Not found'),
-        'bad_host': (403, 'Not a Studio address'),
-        'bad_origin': (403, 'Request must come from the Studio page'),
+        'bad_host': (403, 'Not an AIB address'),
+        'bad_origin': (403, 'Request must come from the AIB page'),
         'bad_token': (403, 'Invalid local session token'),
         'bad_key': (403, 'Invalid artifact key'),
     }

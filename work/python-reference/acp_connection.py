@@ -294,7 +294,7 @@ class Connection:
             self.traceback = trace
             for line in trace.rstrip().splitlines()[-12:]:
                 self.stderr.append(line[:2000])
-            failure = f'Studio hit an internal error while reading from the agent ({type(error).__name__}: {error}). The connection was closed; reconnect to continue.'
+            failure = f'AIB hit an internal error while reading from the agent ({type(error).__name__}: {error}). The connection was closed; reconnect to continue.'
             self.error = failure
             try:
                 self.tree.kill()
@@ -440,7 +440,7 @@ class Connection:
                 if method is None:
                     raise ValueError('Unknown sign-in method')
                 if method['kind'] != 'agent':
-                    raise ValueError('This sign-in must be completed outside Studio. Follow the instructions shown, then choose Retry.')
+                    raise ValueError('This sign-in must be completed outside AIB. Follow the instructions shown, then choose Retry.')
             elif action not in ('retry', 'cancel'):
                 raise ValueError('Action must be authenticate, retry, or cancel')
             else:
@@ -452,7 +452,7 @@ class Connection:
         self.ready = False
         if resume:
             self.known_sessions.add(resume)
-        self.initial = self._setup_request('initialize', {'protocolVersion': 1, 'clientInfo': {'name': 'agent-studio', 'title': 'Agent Studio', 'version': __version__},
+        self.initial = self._setup_request('initialize', {'protocolVersion': 1, 'clientInfo': {'name': 'agent-studio', 'title': 'AIB', 'version': __version__},
             'clientCapabilities': {**self.caps.capabilities(), 'subagents': {}, 'elicitation': {'form': {}, 'url': {}}}}, 45)
         self._check_setup_abort()
         if not isinstance(self.initial, dict) or self.initial.get('protocolVersion') != 1:
@@ -481,7 +481,7 @@ class Connection:
 
     def initialize_for_discovery(self):
         """Initialize only (no session) so session/list can run in a short-lived process."""
-        self.initial = self.request('initialize', {'protocolVersion': 1, 'clientInfo': {'name': 'agent-studio', 'title': 'Agent Studio', 'version': __version__},
+        self.initial = self.request('initialize', {'protocolVersion': 1, 'clientInfo': {'name': 'agent-studio', 'title': 'AIB', 'version': __version__},
             'clientCapabilities': {'fs': {'readTextFile': False, 'writeTextFile': False}, 'terminal': False}}, 45)
         if not isinstance(self.initial, dict) or self.initial.get('protocolVersion') != 1:
             raise ValueError('The agent did not negotiate supported ACP protocol version 1')
@@ -549,7 +549,7 @@ class Connection:
                 if receipt['fingerprint'] != fingerprint:
                     raise ValueError('This client message ID was already used for different text')
                 if receipt['state'] == 'unknown':
-                    raise PromptStateUnknown('This message was being sent when Studio stopped, so Studio cannot tell whether the agent received it. Check the conversation. If it is missing, press Send again.')
+                    raise PromptStateUnknown('This message was being sent when AIB stopped, so AIB cannot tell whether the agent received it. Check the conversation. If it is missing, press Send again.')
                 return {'accepted': True, 'duplicate': True, 'clientMessageId': client_message_id, 'turnState': receipt['state']}
             if self.closed or not self.ready or not self.session_id:
                 raise ValueError('This connection is not ready')
@@ -777,7 +777,7 @@ class Connection:
                 if (receipt['fingerprint'] if receipt else known['fingerprint']) != fingerprint:
                     raise ValueError('This client message ID was already used for different text')
                 if receipt and receipt['state'] == 'unknown':
-                    raise PromptStateUnknown('This message was being sent when Studio stopped, so Studio cannot tell whether the agent received it. Check the conversation. If it is missing, press Send again.')
+                    raise PromptStateUnknown('This message was being sent when AIB stopped, so AIB cannot tell whether the agent received it. Check the conversation. If it is missing, press Send again.')
                 return {'accepted': True, 'duplicate': True, 'queued': queued is not None, 'clientMessageId': item_id, 'turnState': receipt['state'] if receipt else 'queued', 'queue': self.queue.public()}
             self.queue.add(item_id, text, attachments if attachments else [], fingerprint)
         self._queue_changed()
@@ -894,7 +894,7 @@ class Connection:
             try:
                 result = self.prompt(item['text'], item['id'], item['attachments'] or None)   # receipts make a retry of the same id harmless
             except PromptStateUnknown:
-                failure = ('unknown', 'Studio cannot tell whether this one was already sent. Remove it, or press Resume to send it again.')
+                failure = ('unknown', 'AIB cannot tell whether this one was already sent. Remove it, or press Resume to send it again.')
             except Exception as error:
                 log.warning('Sending a queued message failed', exc_info=True)
                 failure = ('' if 'Wait for the current turn' in str(error) else 'error', str(error)[:300])
@@ -939,7 +939,7 @@ class Connection:
         if hook and receipt:
             hook.receipt_changed(self, client_message_id, receipt)
 
-    ARTIFACT_PROMPT = ('You are running inside Agent Studio, which shows artifacts beside the chat; when the user says "artifact" they '
+    ARTIFACT_PROMPT = ('You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they '
                        'mean this viewer and its studio_artifact tool. When you make something the user '
                        'should look at rather than source code (an HTML page, report, chart, diagram, SVG, Markdown document or image), '
                        'save its file under the project\'s outputs/ folder (for example outputs/report.html), never in the project root '

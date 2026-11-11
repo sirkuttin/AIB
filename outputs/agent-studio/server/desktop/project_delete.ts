@@ -101,7 +101,7 @@ export class RemovedProjects extends JsonFileStore {
         } catch (error) {
           if (!isOSError(error)) throw error;
           this.removed = before;
-          throw new ValueError(`Studio could not save the removed project: ${errorText(error)}`);
+          throw new ValueError(`AIB could not save the removed project: ${errorText(error)}`);
         }
         this.seen = this.stamp();
       }

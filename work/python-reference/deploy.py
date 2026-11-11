@@ -1,4 +1,4 @@
-"""Restart a running Agent Studio server (and optionally its agent host) without cutting off a turn.
+"""Restart a running AIB server (and optionally its agent host) without cutting off a turn.
 
     python deploy.py                      # restart only the web server on port 8767 (agents keep working)
     python deploy.py --host               # also restart the agent host: wait for idle, stop the host, restart the web server
@@ -7,11 +7,11 @@
     python deploy.py --dry-run            # report what would happen, change nothing
     python deploy.py --timeout 3600       # give up after an hour (default: wait indefinitely)
 
-Agent Studio runs agents in a long-lived agent host process, so restarting only the web server (the default)
+AIB runs agents in a long-lived agent host process, so restarting only the web server (the default)
 never touches a running turn and needs no waiting: the page reconnects to the same conversations. Changes to
 the web side of studio.py, monitor.py and the page files need only that. Changes to the code that talks to
 agents (Connection, prompts, permissions, leases; agent_host.py itself) need --host, which waits until every
-Studio-owned conversation is idle or closed, asks the host to stop, and starts a new web server (which starts
+AIB-owned conversation is idle or closed, asks the host to stop, and starts a new web server (which starts
 a new host). Conversations that were open reconnect automatically (unless the server runs with --no-auto-reconnect).
 
 "Idle" means nothing is working, opening, or waiting for your answer, and it must stay so for --settle
@@ -91,7 +91,7 @@ def find_pid(port):
         if explicit or (port == 8767 and '--port' not in cmd):
             matches.append(int(pid))
     if len(matches) != 1:
-        raise RuntimeError(f'Found {len(matches)} Studio processes that could be port {port}; refusing to guess')
+        raise RuntimeError(f'Found {len(matches)} AIB processes that could be port {port}; refusing to guess')
     return matches[0], boot
 
 
@@ -101,7 +101,7 @@ def wait_until_idle(port, settle, timeout, poll=5):
         try:
             reasons = busy_reasons(get(port, '/api/live/list'))
         except (urllib.error.URLError, OSError) as error:
-            raise RuntimeError(f'Studio on port {port} stopped answering: {error}')
+            raise RuntimeError(f'AIB on port {port} stopped answering: {error}')
         if reasons:
             idle_since = None
             if reasons != last:
@@ -146,7 +146,7 @@ def restart(port, pid, command_line, kill_tree=True):
     LOGS.mkdir(exist_ok=True)
     package = state_paths.package_context()
     if package:   # started from inside a packaged app (the Claude desktop app): Studio must not inherit its sandbox
-        print(f'This deploy runs inside {package}\'s sandbox; starting Studio through Explorer so it runs outside it.', flush=True)
+        print(f'This deploy runs inside {package}\'s sandbox; starting AIB through Explorer so it runs outside it.', flush=True)
         process = launch_outside_package(command_line)
     else:
         process = launch_direct(command_line)
@@ -225,7 +225,7 @@ def main(root=None):
         plan = restart_plan(boot.get('hostMode'), args.host, args.wait)
         if args.host and boot.get('hostMode') != 'split':
             print('This server runs its agents itself (no agent host), so restarting it is the restart; --host adds nothing.')
-        print(f'Studio on port {args.port}: process {pid} ({boot.get("hostMode") or "no agent host"})\n  {command_line}', flush=True)
+        print(f'AIB on port {args.port}: process {pid} ({boot.get("hostMode") or "no agent host"})\n  {command_line}', flush=True)
         if args.dry_run:
             reasons = busy_reasons(get(args.port, '/api/live/list'))
             steps = (['wait until idle'] if plan['wait'] else []) + (['stop the agent host'] if plan['stop_host'] else []) + ['restart the web server']
@@ -246,7 +246,7 @@ def main(root=None):
         except (urllib.error.URLError, OSError, ValueError):
             inside = None
         if inside:
-            print(f'WARNING: the new Studio still runs inside {inside}\'s sandbox, so its data is in that app\'s private folder.')
+            print(f'WARNING: the new AIB still runs inside {inside}\'s sandbox, so its data is in that app\'s private folder.')
         print('Still running: ' + ('; '.join(live) if live else 'none'))
         print(('Reconnecting automatically: ' if listing.get('autoReconnect') else 'Ready to reconnect: ') + ('; '.join(recovered) if recovered else 'none'))
     except (RuntimeError, TimeoutError, urllib.error.URLError, OSError) as error:

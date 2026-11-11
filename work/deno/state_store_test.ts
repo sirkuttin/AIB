@@ -1087,7 +1087,7 @@ Deno.test('safety: the lock times out instead of blocking forever; a held lock t
   };
   try {
     const error = await assertRejects(() => state.apply('pin', 'omp', 'x'), ValueError);
-    assertEquals(error.message, 'Studio could not save: Timed out waiting for the state file lock (studio-conversations.json.lock)');
+    assertEquals(error.message, 'AIB could not save: Timed out waiting for the state file lock (studio-conversations.json.lock)');
   } finally {
     FileLock.prototype.acquire = real;
     lock.release();

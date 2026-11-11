@@ -151,7 +151,7 @@ Deno.test('deploy flags: argparse errors, help, prefixes', async () => {
     }
     const c = capture();
     assertEquals(await deploy.main(['--help'], { ...c.hooks, root: main }), 0);
-    assert(c.out[0].includes('--dry-run') && c.out[0].includes('Restart a running Agent Studio server'));
+    assert(c.out[0].includes('--dry-run') && c.out[0].includes('Restart a running AIB server'));
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }
@@ -169,7 +169,7 @@ Deno.test({
       assert(/^Not restarted: <urlopen error \[WinError 10061\] /.test(c.err[0]), c.err[0]);
       c = capture();
       assertEquals(await deploy.main(['--port', String(server.addr.port), '--dry-run'], { ...c.hooks, root: main }), 1);
-      assertEquals(c.err, [`Not restarted: Found 0 Studio processes that could be port ${server.addr.port}; refusing to guess`]);
+      assertEquals(c.err, [`Not restarted: Found 0 AIB processes that could be port ${server.addr.port}; refusing to guess`]);
     } finally {
       await server.shutdown();
       Deno.removeSync(tmp, { recursive: true });
@@ -211,7 +211,7 @@ Deno.test({
       // --dry-run changes nothing
       let c = capture();
       assertEquals(await deploy.main(['--port', String(port), '--dry-run'], { ...c.hooks, ...hooks }), 0, c.err.join('\n'));
-      assertEquals(c.out, [`Studio on port ${port}: process ${web.process.pid} (split)\n  ${line}`, 'Would: restart the web server.']);
+      assertEquals(c.out, [`AIB on port ${port}: process ${web.process.pid} (split)\n  ${line}`, 'Would: restart the web server.']);
       c = capture();
       assertEquals(await deploy.main(['--port', String(port), '--dry-run', '--host'], { ...c.hooks, ...hooks }), 0);
       assertEquals(c.out.slice(1), ['Would: wait until idle, then stop the agent host, then restart the web server.', 'Idle now.']);
@@ -224,7 +224,7 @@ Deno.test({
       assert(boot.pid !== web.process.pid);
       const pkg = packageContext(); // this test starts the server directly, so inside a packaged app the new one is in its sandbox
       const warning = pkg
-        ? [`WARNING: the new Studio still runs inside ${pkg}'s sandbox, so its data is in that app's private folder.`]
+        ? [`WARNING: the new AIB still runs inside ${pkg}'s sandbox, so its data is in that app's private folder.`]
         : [];
       assertEquals(c.out.slice(1), [
         `Restarted: process ${boot.pid}, instance ${boot.instanceId}`,
@@ -257,7 +257,7 @@ Deno.test({
         60,
       );
       fixture.hostPids.add(newHost.pid as number);
-      assert(Deno.readTextFileSync(`${LOGS}${SEP}agent-studio.stdout.log`).includes(`Agent Studio: http://127.0.0.1:${port}`));
+      assert(Deno.readTextFileSync(`${LOGS}${SEP}agent-studio.stdout.log`).includes(`AIB: http://127.0.0.1:${port}`));
     } finally {
       if (keeperEnv === undefined) Deno.env.delete('AIB_KEEPER');
       else Deno.env.set('AIB_KEEPER', keeperEnv);

@@ -14,7 +14,7 @@ A server started without --in-process starts a detached agent host for its temp 
 --force) when the test ends.
 
 Every server is started with the same flags as the Python CLI: a private temp --state-dir, empty transcript folders, --port 0,
-no auto-reconnect and no owner announcements, and must print "Agent Studio: http://127.0.0.1:<port>" on stdout once listening.
+no auto-reconnect and no owner announcements, and must print "AIB: http://127.0.0.1:<port>" on stdout once listening.
 AGENT_STUDIO_TEST=1 is set, so neither server can reach the real data folder, and the ports 8767/8768 are never used.
 
 Run: python -m unittest discover -s work/contract     (AIB_SERVER=python to check the reference)
@@ -35,7 +35,7 @@ import time
 WORK = pathlib.Path(__file__).resolve().parent.parent
 APP = WORK.parent / 'outputs' / 'agent-studio'
 PY_REF = WORK / 'python-reference'   # the Python reference server
-READY = re.compile(r'Agent Studio: http://127\.0\.0\.1:(\d+)')
+READY = re.compile(r'AIB: http://127\.0\.0\.1:(\d+)')
 FORBIDDEN_PORTS = {8767, 8768}
 TOKEN_HEADER = 'X-Studio-Token'
 

@@ -60,9 +60,9 @@ function load() {
 const EVIL = '<img src=x onerror=alert(1)><script>alert(2)</script>';
 const evidence = {
   verdict: 'possibly_active',
-  summary: 'Another app may be using this conversation. Studio cannot be sure either way.',
+  summary: 'Another app may be using this conversation. AIB cannot be sure either way.',
   reasons: [
-    { strength: 'weak', text: 'Transcript was written 40 seconds ago, and Studio is not the app writing it.' },
+    { strength: 'weak', text: 'Transcript was written 40 seconds ago, and AIB is not the app writing it.' },
     { strength: 'weak', text: EVIL },
   ],
   notes: ['1 agent process(es) could not be inspected (different user or elevated).'],
@@ -126,7 +126,7 @@ test('owned_elsewhere explains itself, offers no continue button, and rethrows',
     box = new Node('section');
   const ownership = {
     verdict: 'owned_elsewhere',
-    summary: 'Another app is running this conversation. Studio will not continue it from here.',
+    summary: 'Another app is running this conversation. AIB will not continue it from here.',
     reasons: [{ strength: 'strong', text: 'devin-vscode (PID 12) announced that it is running this conversation.' }],
     notes: [],
   };

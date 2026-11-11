@@ -50,9 +50,9 @@ def describe_auth_methods(methods, provider=''):
             kind = 'env_var'
             raw = item.get('vars') if isinstance(item.get('vars'), list) else []
             names = [v.get('name') for v in raw if isinstance(v, dict) and isinstance(v.get('name'), str)]
-            instructions = ('Set ' + ', '.join(f'`{clip(n, 80)}`' for n in names[:10]) + ' in the environment that starts the agent, restart Studio, then retry. Studio never asks for secrets.') if names else 'Configure the credentials this agent documents, restart Studio, then retry.'
+            instructions = ('Set ' + ', '.join(f'`{clip(n, 80)}`' for n in names[:10]) + ' in the environment that starts the agent, restart AIB, then retry. AIB never asks for secrets.') if names else 'Configure the credentials this agent documents, restart AIB, then retry.'
         elif isinstance(mtype, str) and mtype != 'agent':
-            kind, instructions = 'other', "This sign-in type is not supported inside Studio. Complete it with the agent's own tools, then choose Retry."
+            kind, instructions = 'other', "This sign-in type is not supported inside AIB. Complete it with the agent's own tools, then choose Retry."
         out.append({'id': item['id'], 'name': clip(item.get('name')) or item['id'], 'description': clip(item.get('description'), 1000), 'kind': kind, 'instructions': instructions})
     return out
 

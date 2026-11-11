@@ -38,7 +38,7 @@ const agent = (state, extra = {}) => ({
   builtin: true,
   enabled: true,
   found: true,
-  launcher: "Studio's own install",
+  launcher: "AIB's own install",
   launcherSource: 'studio',
   problem: '',
   installable: true,

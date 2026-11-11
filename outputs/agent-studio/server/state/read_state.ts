@@ -174,7 +174,7 @@ export class ReadState extends JsonFileStore {
       } catch (error) {
         if (!isOSError(error)) throw error;
         this.chats = before;
-        this.warning = `Studio could not save read positions: ${errorText(error)}`;
+        this.warning = `AIB could not save read positions: ${errorText(error)}`;
         throw new ValueError(this.warning);
       }
       this.warning = '';

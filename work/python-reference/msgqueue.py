@@ -230,4 +230,4 @@ class QueueStore:
                 raise
             self.warning = ''
         except OSError as error:
-            self.warning = f'Studio could not save queued messages: {error}'
+            self.warning = f'AIB could not save queued messages: {error}'

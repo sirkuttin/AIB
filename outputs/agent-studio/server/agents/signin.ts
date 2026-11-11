@@ -396,7 +396,7 @@ export class Signer {
   // ---- helpers ------------------------------------------------------------------------------------------------------
   #agent(agentId: unknown): string {
     if (typeof agentId !== 'string' || !hasOwn(adapters.STUDIO_PACKAGES, agentId)) {
-      throw new SignInRefused('Studio cannot check or start a sign-in for that agent.');
+      throw new SignInRefused('AIB cannot check or start a sign-in for that agent.');
     }
     return agentId;
   }
@@ -616,7 +616,7 @@ export class Signer {
         'initialize',
         {
           protocolVersion: 1,
-          clientInfo: { name: 'agent-studio', title: 'Agent Studio', version: '0.1.0' },
+          clientInfo: { name: 'agent-studio', title: 'AIB', version: '0.1.0' },
           clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, auth: { terminal: true } },
         },
         HANDSHAKE_TIMEOUT,
@@ -645,7 +645,7 @@ export class Signer {
       await handshake?.close();
       return [
         'failed',
-        `${name} did not offer a sign-in that Studio can start. Sign in with the ${name} program itself, then choose Check again.`,
+        `${name} did not offer a sign-in that AIB can start. Sign in with the ${name} program itself, then choose Check again.`,
         '',
       ];
     }

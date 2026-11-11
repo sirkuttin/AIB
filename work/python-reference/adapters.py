@@ -268,8 +268,8 @@ def _studio_launch(agent_id, node_command, state_dir):
         return None
     node = find_node(node_command)
     if not node:
-        return _row([], 'studio', found['entry'], 'Node.js was not found. Install Node.js so Studio can start this adapter.', f"Studio's own install: {found['entry']}")
-    return _row([node, found['entry']], 'studio', found['entry'], '', f"Studio's own install {found['version']}: {found['entry']} (run with node)")
+        return _row([], 'studio', found['entry'], 'Node.js was not found. Install Node.js so AIB can start this adapter.', f"AIB's own install: {found['entry']}")
+    return _row([node, found['entry']], 'studio', found['entry'], '', f"AIB's own install {found['version']}: {found['entry']} (run with node)")
 
 
 # ---- agent lookups ----------------------------------------------------------------------------------------------------
@@ -287,7 +287,7 @@ def _script_launch(kind, source, script, node_command, install_hint):
     if not path.is_file():
         return _row([], source, str(path), f'{label} not found: {path}', f'{label}: {path}')
     if not node:
-        return _row([], source, str(path), 'Node.js was not found. Install Node.js so Studio can start this adapter.', f'{label}: {path}')
+        return _row([], source, str(path), 'Node.js was not found. Install Node.js so AIB can start this adapter.', f'{label}: {path}')
     return _row([node, str(path.resolve())], source, str(path.resolve()), '', f'{label}: {path.resolve()} (run with node)')
 
 
@@ -297,7 +297,7 @@ def _installed_launch(kind, package, node_command, install_hint, npm_root=None):
     if not entry:
         return None
     if not node:
-        return _row([], 'installed', entry, 'Node.js was not found. Install Node.js so Studio can start this adapter.', f'Installed adapter: {entry}')
+        return _row([], 'installed', entry, 'Node.js was not found. Install Node.js so AIB can start this adapter.', f'Installed adapter: {entry}')
     return _row([node, entry], 'installed', entry, '', f'Installed adapter: {entry} (run with node)')
 
 
@@ -342,7 +342,7 @@ def codex_looks_installed(which=None, home=None, local_appdata=None, system_wind
     return False
 
 
-CODEX_NEEDS_ADAPTER = 'The Codex app is on this PC, but Studio needs its ACP adapter.'
+CODEX_NEEDS_ADAPTER = 'The Codex app is on this PC, but AIB needs its ACP adapter.'
 
 
 def resolve_codex(flag='', saved='', node_command='', npm_root=None, on_path=None, codex_present=None, state_dir=None):

@@ -532,7 +532,7 @@ export function resolveProgram(program: string, env: Record<string, string>): st
 // ---- the connection -----------------------------------------------------------------------------------------------------------
 
 export const ARTIFACT_PROMPT =
-  'You are running inside Agent Studio, which shows artifacts beside the chat; when the user says "artifact" they ' +
+  'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
   'mean this viewer and its studio_artifact tool. When you make something the user ' +
   'should look at rather than source code (an HTML page, report, chart, diagram, SVG, Markdown document or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
@@ -549,7 +549,7 @@ export const WORKTREE_PROMPT =
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 
-const PROMPT_UNKNOWN = 'This message was being sent when Studio stopped, so Studio cannot tell whether the agent received it. ' +
+const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB cannot tell whether the agent received it. ' +
   'Check the conversation. If it is missing, press Send again.';
 
 /** str(a) for each item of `e.get('args') or []` (a string iterates its characters, as in Python). */
@@ -1546,7 +1546,7 @@ export class Connection {
       this.#pushStderr(clip(line, 2000));
     }
     const failure =
-      `Studio hit an internal error while reading from the agent (${name}: ${message}). The connection was closed; reconnect to continue.`;
+      `AIB hit an internal error while reading from the agent (${name}: ${message}). The connection was closed; reconnect to continue.`;
     this.error = failure;
     try {
       this.tree?.kill();
@@ -1884,7 +1884,7 @@ export class Connection {
       if (method === null) throw new ValueError('Unknown sign-in method');
       if (method.kind !== 'agent') {
         throw new ValueError(
-          'This sign-in must be completed outside Studio. Follow the instructions shown, then choose Retry.',
+          'This sign-in must be completed outside AIB. Follow the instructions shown, then choose Retry.',
         );
       }
     } else if (action !== 'retry' && action !== 'cancel') {
@@ -1904,7 +1904,7 @@ export class Connection {
       protocolVersion: 1,
       clientInfo: {
         name: 'agent-studio',
-        title: 'Agent Studio',
+        title: 'AIB',
         version: APP_VERSION,
       },
       clientCapabilities: {
@@ -2073,7 +2073,7 @@ export class Connection {
       protocolVersion: 1,
       clientInfo: {
         name: 'agent-studio',
-        title: 'Agent Studio',
+        title: 'AIB',
         version: APP_VERSION,
       },
       clientCapabilities: {
@@ -2794,7 +2794,7 @@ export class Connection {
         if (error instanceof PromptStateUnknown) {
           failure = [
             'unknown',
-            'Studio cannot tell whether this one was already sent. Remove it, or press Resume to send it again.',
+            'AIB cannot tell whether this one was already sent. Remove it, or press Resume to send it again.',
           ];
         } else {
           log.warning('Sending a queued message failed: %s', errorText(error));

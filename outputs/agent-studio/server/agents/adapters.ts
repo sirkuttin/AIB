@@ -40,8 +40,8 @@ export const PATH_START = '__STUDIO_PATH_START__';
 export const PATH_END = '__STUDIO_PATH_END__';
 export const LOGIN_SHELL_TIMEOUT = 3.0;
 export const NPM_ROOT_TIMEOUT = 10.0;
-export const CODEX_NEEDS_ADAPTER = 'The Codex app is on this PC, but Studio needs its ACP adapter.';
-const NODE_MISSING = 'Node.js was not found. Install Node.js so Studio can start this adapter.';
+export const CODEX_NEEDS_ADAPTER = 'The Codex app is on this PC, but AIB needs its ACP adapter.';
+const NODE_MISSING = 'Node.js was not found. Install Node.js so AIB can start this adapter.';
 
 export function isWindows(): boolean {
   return WIN;
@@ -389,8 +389,8 @@ function studioLaunch(agentId: string, nodeCommand: string, stateDir: string | n
   const found = findStudioInstall(agentId, stateDir);
   if (!found) return null;
   const node = findNode(nodeCommand);
-  if (!node) return row([], 'studio', found.entry, NODE_MISSING, `Studio's own install: ${found.entry}`);
-  return row([node, found.entry], 'studio', found.entry, '', `Studio's own install ${found.version}: ${found.entry} (run with node)`);
+  if (!node) return row([], 'studio', found.entry, NODE_MISSING, `AIB's own install: ${found.entry}`);
+  return row([node, found.entry], 'studio', found.entry, '', `AIB's own install ${found.version}: ${found.entry} (run with node)`);
 }
 
 // ---- agent lookups ----------------------------------------------------------------------------------------------------

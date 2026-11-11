@@ -29,7 +29,7 @@ SUPPORTED_VERSIONS = ('2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05')
 KINDS = ['html', 'svg', 'md', 'image', 'pdf', 'csv', 'json', 'text']
 HTTP_TIMEOUT = 60
 
-INSTRUCTIONS = ('Use these tools to show the user an HTML page, diagram, report or document in Studio\'s Artifacts panel. '
+INSTRUCTIONS = ('Use these tools to show the user an HTML page, diagram, report or document in AIB\'s Artifacts panel. '
                 'Do not use them for source code. When you mention an artifact in a reply, write it as a Markdown link '
                 '[Title](studio-artifact://<id>).')
 
@@ -40,7 +40,7 @@ TOOLS = [
         'description': ('Show the user an HTML page, diagram (SVG), report, Markdown document, image, PDF, CSV or JSON file in the Artifacts panel next to the chat. '
                         'Use it for anything the user should look at: a generated page, a chart, an explainer, a report. Do NOT use it for source code or files the user '
                         'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with '
-                        '`filename` such as "report.html" so Studio knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and '
+                        '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and '
                         'unpkg.com are allowed, but the page cannot make network requests, so embed its data inline. To change a page you already published, call `update` with its id '
                         'instead of publishing a new one. After publishing, mention it in your reply as a Markdown link: [Title](studio-artifact://<id>).'),
         'inputSchema': {
@@ -95,8 +95,8 @@ WORKTREE_TOOLS = [
     {
         'name': 'resolve_edit_clash',
         'title': 'Resolve a clash with the user\'s own edits',
-        'description': ('After a merge, the user\'s own unsaved edits in the project folder can clash with it; Studio then tells you which files and the name of the stash '
-                        'that keeps their edits. Use `check` after you combined those files yourself in the project folder (Studio looks for leftover conflict markers), '
+        'description': ('After a merge, the user\'s own unsaved edits in the project folder can clash with it; AIB then tells you which files and the name of the stash '
+                        'that keeps their edits. Use `check` after you combined those files yourself in the project folder (AIB looks for leftover conflict markers), '
                         '`keep_mine` only when the user says to keep their version (their edits win in those files), `leave` when the user says they will sort it out themselves.'),
         'inputSchema': {
             'type': 'object',
@@ -175,7 +175,7 @@ def http(method, route, query=None, body=None, soft=False):
         if root and root not in roots:
             roots.append(root)
     if not roots:
-        raise ToolError('Studio did not tell the artifact tool where it is running.')
+        raise ToolError('AIB did not tell the artifact tool where it is running.')
     for root in roots[:2]:
         url = root + route + ('?' + urllib.parse.urlencode(query) if query else '')
         data = json.dumps(body).encode('utf-8') if body is not None else None
@@ -192,19 +192,19 @@ def http(method, route, query=None, body=None, soft=False):
             except (ValueError, AttributeError):
                 message = None
             if error.code in (401, 403):
-                message = message or 'Studio refused the artifact key for this conversation'
+                message = message or 'AIB refused the artifact key for this conversation'
             elif soft and message:
                 return {'error': message, 'status': error.code}
-            raise ToolError(f'Studio returned {error.code}: {message or error.reason}')
+            raise ToolError(f'AIB returned {error.code}: {message or error.reason}')
         except (urllib.error.URLError, OSError, TimeoutError) as error:
             last = error
             continue
         try:
             return json.loads(raw.decode('utf-8'))
         except ValueError:
-            raise ToolError('Studio returned a reply that is not JSON')
+            raise ToolError('AIB returned a reply that is not JSON')
     reason = getattr(last, 'reason', last)
-    raise ToolError(f'Could not reach Studio ({reason}). It may be restarting; try again in a moment.')
+    raise ToolError(f'Could not reach AIB ({reason}). It may be restarting; try again in a moment.')
 
 
 def text_result(sentence, data):
@@ -338,7 +338,7 @@ def handle(message):
         asked = params.get('protocolVersion')
         version = asked if asked in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0]
         return ok({'protocolVersion': version, 'capabilities': {'tools': {'listChanged': False}},
-                   'serverInfo': {'name': SERVER_NAME, 'title': 'Studio artifacts', 'version': SERVER_VERSION}, 'instructions': INSTRUCTIONS})
+                   'serverInfo': {'name': SERVER_NAME, 'title': 'AIB artifacts', 'version': SERVER_VERSION}, 'instructions': INSTRUCTIONS})
     if method == 'ping':
         return ok({})
     if method == 'tools/list':

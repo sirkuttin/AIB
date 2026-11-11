@@ -18,7 +18,7 @@ const parent = (path: string) => path.replace(/[\\/][^\\/]*$/, '');
 export const HERE = APP_ROOT;
 export const LOGS = parent(parent(APP_ROOT)) + SEP + 'work';
 
-export const DOC = `Restart a running Agent Studio server (and optionally its agent host) without cutting off a turn.
+export const DOC = `Restart a running AIB server (and optionally its agent host) without cutting off a turn.
 
     aib deploy                      # restart only the web server on port 8767 (agents keep working)
     aib deploy --host               # also restart the agent host: wait for idle, stop the host, restart the web server
@@ -27,11 +27,11 @@ export const DOC = `Restart a running Agent Studio server (and optionally its ag
     aib deploy --dry-run            # report what would happen, change nothing
     aib deploy --timeout 3600       # give up after an hour (default: wait indefinitely)
 
-Agent Studio runs agents in a long-lived agent host process, so restarting only the web server (the default)
+AIB runs agents in a long-lived agent host process, so restarting only the web server (the default)
 never touches a running turn and needs no waiting: the page reconnects to the same conversations. Changes to
 the web side of the server and the page files need only that. Changes to the code that talks to agents
 (Connection, prompts, permissions, leases; the agent host itself) need --host, which waits until every
-Studio-owned conversation is idle or closed, asks the host to stop, and starts a new web server (which starts
+AIB-owned conversation is idle or closed, asks the host to stop, and starts a new web server (which starts
 a new host). Conversations that were open reconnect automatically (unless the server runs with --no-auto-reconnect).
 
 "Idle" means nothing is working, opening, or waiting for your answer, and it must stay so for --settle
@@ -116,7 +116,7 @@ export async function findPid(port: number): Promise<[number, Json]> {
     const explicit = cmd.includes(`--port ${port}`) || cmd.includes(`--port=${port}`);
     if (explicit || (port === 8767 && !cmd.includes('--port'))) matches.push(entry.pid);
   }
-  if (matches.length !== 1) throw new Error(`Found ${matches.length} Studio processes that could be port ${port}; refusing to guess`);
+  if (matches.length !== 1) throw new Error(`Found ${matches.length} AIB processes that could be port ${port}; refusing to guess`);
   return [matches[0], boot];
 }
 
@@ -139,7 +139,7 @@ export async function waitUntilIdle(
     try {
       reasons = busyReasons(await get(port, '/api/live/list'));
     } catch (error) {
-      if (error instanceof UrlError) throw new Error(`Studio on port ${port} stopped answering: ${error.message}`);
+      if (error instanceof UrlError) throw new Error(`AIB on port ${port} stopped answering: ${error.message}`);
       throw error;
     }
     if (reasons.length) {
@@ -234,7 +234,7 @@ export async function restart(
   const pkg = (hooks.packageContext ?? (() => packageContext()))();
   let process: DetachedProcess | null;
   if (pkg) { // started from inside a packaged app (the Claude desktop app): Studio must not inherit its sandbox
-    say(`This deploy runs inside ${pkg}'s sandbox; starting Studio through Explorer so it runs outside it.`);
+    say(`This deploy runs inside ${pkg}'s sandbox; starting AIB through Explorer so it runs outside it.`);
     process = await launchOutsidePackage(commandLine, logs);
   } else {
     process = await launchDirect(commandLine, logs);
@@ -415,7 +415,7 @@ export async function main(argv: string[], hooks: Hooks & { root?: string } = {}
       );
     }
     out(
-      `Studio on port ${args.port}: process ${pid} (${truthy(boot.hostMode) ? pyStr(boot.hostMode) : 'no agent host'})\n  ${commandLine}`,
+      `AIB on port ${args.port}: process ${pid} (${truthy(boot.hostMode) ? pyStr(boot.hostMode) : 'no agent host'})\n  ${commandLine}`,
     );
     if (args.dry_run) {
       const reasons = busyReasons(await get(args.port, '/api/live/list'));
@@ -444,7 +444,7 @@ export async function main(argv: string[], hooks: Hooks & { root?: string } = {}
       inside = null;
     }
     if (truthy(inside)) {
-      out(`WARNING: the new Studio still runs inside ${pyStr(inside)}'s sandbox, so its data is in that app's private folder.`);
+      out(`WARNING: the new AIB still runs inside ${pyStr(inside)}'s sandbox, so its data is in that app's private folder.`);
     }
     out('Still running: ' + (live.length ? live.join('; ') : 'none'));
     out(

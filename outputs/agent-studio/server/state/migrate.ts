@@ -408,7 +408,7 @@ export async function migrate(source: string, target: string, options: MigrateOp
   if (exists(target) && listNames(target).length) {
     return result(
       'blocked',
-      `${target} already holds files but was never marked as migrated; move it aside to let Agent Studio migrate`,
+      `${target} already holds files but was never marked as migrated; move it aside to let AIB migrate`,
       source,
     );
   }
@@ -422,7 +422,7 @@ export async function migrate(source: string, target: string, options: MigrateOp
     let left: string[];
     [files, left] = planFiles(source);
     cleanStaleTmp(target);
-    say(`Moving Agent Studio data from ${source} to ${target} (${files.length} files)...`);
+    say(`Moving AIB data from ${source} to ${target} (${files.length} files)...`);
     let tmp: string;
     [tmp, rewritten] = copyAll(source, target, files, options.onFile, say);
     const at = (performance.timeOrigin + performance.now()) / 1000; // time.time(), below the millisecond too
@@ -458,14 +458,14 @@ export async function migrate(source: string, target: string, options: MigrateOp
   try { // the only change ever made to the old folder
     writeText(
       pathOf(source, NOTE_NAME),
-      `Agent Studio moved this folder's data to:\n  ${target}\non ${record.atText}.\n\n` +
+      `AIB moved this folder's data to:\n  ${target}\non ${record.atText}.\n\n` +
         'Nothing in this folder was changed or deleted; it is kept as a backup and is no longer used.\n' +
-        `To go back to it (rollback), start Agent Studio with: --state-dir "${source}"\n`,
+        `To go back to it (rollback), start AIB with: --state-dir "${source}"\n`,
     );
   } catch (error) {
     say(`Note: could not write ${NOTE_NAME} in ${source}: ${(error as Error).message}`);
   }
-  say(`Agent Studio data moved to ${target}.`);
+  say(`AIB data moved to ${target}.`);
   return result('done', '', source, { files: files.length, rewrittenPaths: rewritten });
 }
 

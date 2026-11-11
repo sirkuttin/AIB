@@ -208,7 +208,7 @@ def get_folders_start(h, ctx, parsed, args):
 def get_state(h, ctx, parsed, args):
     state = ctx.studio.live_state(args.get('id', [''])[0], int(args.get('after', ['0'])[0]))
     if state is None:
-        return h.respond(404, {'error': 'This Studio connection is no longer available. Your saved conversation can be continued again.', 'code': 'connection_not_found'})
+        return h.respond(404, {'error': 'This AIB connection is no longer available. Your saved conversation can be continued again.', 'code': 'connection_not_found'})
     return h.respond(200, dict(state, inUse=model_in_use(state, ctx.options)))
 
 

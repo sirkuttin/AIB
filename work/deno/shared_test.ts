@@ -289,7 +289,7 @@ Deno.test('the notice lines match Python', async () => {
   }
   const notices = await shared.notices({ options: { stateDir: 'x', migration: { kind: 'sandbox', state: 'conflict' } }, hostInfo: null });
   assertEquals(notices.migration, { kind: 'sandbox', state: 'conflict' });
-  assert(String(notices.sandboxNotice).startsWith('Studio data exists in two places'));
+  assert(String(notices.sandboxNotice).startsWith('AIB data exists in two places'));
   assertEquals(notices.hostTakeoverWaiting, 0);
 });
 
@@ -351,7 +351,7 @@ Deno.test('a Studio delete of a live conversation is refused until it is ended; 
   const body = { action: 'delete', provider: 'omp', sessionId: 'live-1' };
   const [status, payload] = await shared.conversationAction(ctx, body);
   assertEquals([status, payload.code], [409, 'session_live']);
-  assertEquals(payload.error, 'This conversation is live in Studio. End the Studio session first; nothing was deleted.');
+  assertEquals(payload.error, 'This conversation is live in AIB. End the AIB session first; nothing was deleted.');
   assertEquals(Object.keys(new ConversationState(dir.root).public().entries), []);
   assertEquals((await shared.conversationAction(ctx, { ...body, action: 'archive' }))[0], 200);
   live = false;

@@ -350,7 +350,7 @@ export function cleanPathText(value: unknown, what = 'path'): string {
   if ([...value].some((c) => c.codePointAt(0)! < 32) || value.includes('\x7f')) throw new EditorError(`Invalid ${what}`);
   const text = value.trim();
   if (isNetworkPath(text)) { // \\server\share, \\?\C:\..., \\.\device: network and device paths are never opened
-    throw new EditorError('Network and device paths cannot be opened from Studio', 'path_refused', 403);
+    throw new EditorError('Network and device paths cannot be opened from AIB', 'path_refused', 403);
   }
   return text;
 }
@@ -443,7 +443,7 @@ export function resolveInside(raw: unknown, roots: unknown[], base: string | nul
   if (realRoots.some((r) => inside(resolved, r))) return resolved;
   const main = worktreeMain(resolved);
   if (main && realRoots.some((r) => inside(real(main), r))) return resolved;
-  throw new EditorError('That location is not inside a project folder Studio knows, so Studio will not open it', 'path_refused', 403);
+  throw new EditorError('That location is not inside a project folder AIB knows, so AIB will not open it', 'path_refused', 403);
 }
 
 // ---- workspace files ---------------------------------------------------------------------------
@@ -580,20 +580,20 @@ export function buildCommand(entry: Entry, kind: Kind, path: string, line: numbe
   const exe = entry.exe, program = entry.kind;
   if (entry.macApp) { // an installed app without a command-line launcher: `open -a <App> <path>`
     if (program === 'editor' && kind === 'file' && !entry.capabilities.file) {
-      throw new EditorError(`${entry.name} can only open folders from Studio for now`, 'unsupported', 400);
+      throw new EditorError(`${entry.name} can only open folders from AIB for now`, 'unsupported', 400);
     }
     if (kind === 'workspace' && !entry.capabilities.workspace) {
-      throw new EditorError(`${entry.name} cannot open workspace files from Studio`, 'unsupported', 400);
+      throw new EditorError(`${entry.name} cannot open workspace files from AIB`, 'unsupported', 400);
     }
     return [exe, '-a', entry.macApp, path];
   }
   if (program === 'editor') {
     if (kind === 'file') {
-      if (!entry.capabilities.file) throw new EditorError(`${entry.name} can only open folders from Studio for now`, 'unsupported', 400);
+      if (!entry.capabilities.file) throw new EditorError(`${entry.name} can only open folders from AIB for now`, 'unsupported', 400);
       return line ? [exe, '-r', '--goto', `${path}:${line}`] : [exe, '-r', path];
     }
     if (kind === 'workspace') {
-      if (!entry.capabilities.workspace) throw new EditorError(`${entry.name} cannot open workspace files from Studio`, 'unsupported', 400);
+      if (!entry.capabilities.workspace) throw new EditorError(`${entry.name} cannot open workspace files from AIB`, 'unsupported', 400);
       return [exe, '-r', path];
     }
     return entry.folderOnly ? [exe, path] : [exe, '-r', path];
@@ -749,7 +749,7 @@ export class Launcher {
         if (findWorkspaces(root).some((m) => norm(m.path) === norm(candidate)) || inside(candidate, real(root))) return candidate;
       }
     }
-    throw new EditorError('That workspace file does not belong to a project Studio knows', 'path_refused', 403);
+    throw new EditorError('That workspace file does not belong to a project AIB knows', 'path_refused', 403);
   }
 
   #start(entry: Entry, command: string[] | null, path: string): void {

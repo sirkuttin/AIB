@@ -195,10 +195,10 @@ def failure_line(log_text, code):
     text = log_text or ''
     table = (('ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|network|EPROTO|ESOCKETTIMEDOUT', 'Could not reach the npm registry. Check the internet connection and try again.'),
              ('ENOSPC', 'The disk is full.'),
-             ('EACCES|EPERM|EBUSY', "Studio could not write to its install folder. Close programs that may be using it and try again."),
+             ('EACCES|EPERM|EBUSY', "AIB could not write to its install folder. Close programs that may be using it and try again."),
              ('E404|E403', 'npm could not find that exact version of the adapter.'),
              ('EINTEGRITY', 'npm rejected the download because its checksum did not match.'),
-             ('ENOENT.*package-lock|EUSAGE|lock file', 'The saved lockfile does not match the package. This is a Studio bug.'))
+             ('ENOENT.*package-lock|EUSAGE|lock file', 'The saved lockfile does not match the package. This is an AIB bug.'))
     for pattern, line in table:
         if re.search(pattern, text, re.I):
             return line
@@ -241,7 +241,7 @@ class Installer:
         """The allow-list entry for an agent id. Only ids that are known agents are looked at, so an id never becomes part of a path."""
         found = self.allow_list().get(agent_id) if isinstance(agent_id, str) and agent_id in adapters.STUDIO_PACKAGES else None
         if not isinstance(found, dict) or not found.get('package') or not found.get('version'):
-            raise InstallRefused('Studio cannot install that agent.')
+            raise InstallRefused('AIB cannot install that agent.')
         return found
 
     def version_dir(self, agent_id, version):
@@ -254,7 +254,7 @@ class Installer:
         folder = self.version_dir(agent_id, str(entry['version']))
         shown = os.path.abspath(folder)
         if len(shown) > MAX_PATH_CHARS:
-            raise InstallRefused(f'The install folder path is {len(shown)} characters long, over the {MAX_PATH_CHARS} Windows can handle. Start Studio with a shorter --state-dir.')
+            raise InstallRefused(f'The install folder path is {len(shown)} characters long, over the {MAX_PATH_CHARS} Windows can handle. Start AIB with a shorter --state-dir.')
         node = adapters.find_node(self.node_command)
         if not node:
             raise InstallRefused(f'Node.js {MIN_NODE_MAJOR} or newer is needed to install {name}, and Node.js was not found. Install it from nodejs.org and try again.')

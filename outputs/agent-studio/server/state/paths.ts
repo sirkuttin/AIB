@@ -211,7 +211,7 @@ export function realUserStateDir(env?: Env, platform?: string, homeDir?: string)
   const path = userStateDir(env, platform, homeDir);
   if (underTest(env) && samePath(path, userStateDir())) {
     throw new RealFolderBlocked(
-      'Refusing to resolve the real per-user Agent Studio folder while running tests ' +
+      'Refusing to resolve the real per-user AIB folder while running tests ' +
         `(${ENV_TEST}=1 or unittest/pytest is loaded). Pass --state-dir or set ${ENV_STATE_DIR} to a temp folder.`,
     );
   }
@@ -262,7 +262,7 @@ export function resolve(cliStateDir?: string | null, env?: Env, codeRoot?: strin
   chosen = abspath(chosen);
   const isUser = samePath(chosen, userStateDir(env, platform, homeDir));
   if (isUser && underTest(env) && samePath(chosen, userStateDir())) {
-    throw new RealFolderBlocked(`Refusing to use the real per-user Agent Studio folder ${chosen} while running tests.`);
+    throw new RealFolderBlocked(`Refusing to use the real per-user AIB folder ${chosen} while running tests.`);
   }
   return new Resolved(chosen, source, isUser);
 }
@@ -440,12 +440,12 @@ export async function adoptSandboxCopy(target: string, options: AdoptOptions = {
   let extra = '';
   if (copies.length > 1) {
     extra = ` (${copies.length} copies were found in app sandboxes; using the newest, from ${packageName})`;
-    say(`Several sandbox copies of the Studio data exist; using the newest: ${source}`);
+    say(`Several sandbox copies of the AIB data exist; using the newest: ${source}`);
   }
   if (hasData(target) || exists(pathOf(target, MIGRATED_MARKER))) {
     return [target, {
       state: 'conflict',
-      reason: `${target} and ${source} both hold Studio data` + extra,
+      reason: `${target} and ${source} both hold AIB data` + extra,
       source,
       package: packageName,
       kind: 'sandbox',
@@ -458,7 +458,7 @@ export async function adoptSandboxCopy(target: string, options: AdoptOptions = {
   const result: Migration = { ...(await runMigrate(options.migrate, source, target, say)), kind: 'sandbox', package: packageName };
   result.worktreesLeft = countWorktrees(source); // never moved: a moved git worktree loses its link to the repository
   if (result.state === 'waiting') {
-    say(`Studio data will move from ${source} to ${target} at a later start. This run keeps using ${source}: ${result.reason}`);
+    say(`AIB data will move from ${source} to ${target} at a later start. This run keeps using ${source}: ${result.reason}`);
     return [source, result];
   }
   return [target, result];
@@ -535,7 +535,7 @@ export function ensurePrivateDir(path: string, strict = true, say: Say = sayErr)
     const text = `${path} is not private: ` + problems.join('; ') + '.';
     if (strict) {
       throw new StateDirInsecure(
-        text + ' Agent Studio will not keep its data there. Fix the folder permissions or choose another --state-dir.',
+        text + ' AIB will not keep its data there. Fix the folder permissions or choose another --state-dir.',
       );
     }
     say('WARNING: ' + text);
@@ -593,7 +593,7 @@ export async function prepare(options: PrepareOptions = {}): Promise<Plan> {
         // Python: migrate.migrate(source, target, say=say)
         migration = await runMigrate(options.migrate, source, target, say);
         if (migration.state !== 'done') {
-          say(`Agent Studio data will move to ${target} at a later start. This run uses ${source}: ${migration.reason}`);
+          say(`AIB data will move to ${target} at a later start. This run uses ${source}: ${migration.reason}`);
           target = source;
         }
       }

@@ -53,7 +53,7 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
     ROUTES.scopeFor('GET', TERMINAL_SOCKET),
   );
   if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(TERMINAL_SOCKET) }] };
-  if (request.headers.get('Origin') === null) return { refused: [403, { error: 'Request must come from the Studio page' }] };
+  if (request.headers.get('Origin') === null) return { refused: [403, { error: 'Request must come from the AIB page' }] };
   if (!wantsWebSocket(request) || !protocols.includes(TERMINAL_PROTOCOL)) {
     return { refused: [400, { error: 'This address only takes a terminal WebSocket.' }] };
   }

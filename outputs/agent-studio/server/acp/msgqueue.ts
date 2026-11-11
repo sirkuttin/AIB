@@ -314,7 +314,7 @@ export class QueueStore {
       });
       this.warning = '';
     } catch (error) {
-      this.warning = `Studio could not save queued messages: ${error instanceof Error ? error.message : error}`;
+      this.warning = `AIB could not save queued messages: ${error instanceof Error ? error.message : error}`;
     }
   }
 }

@@ -333,7 +333,7 @@ Deno.test('unreachable Studio and missing configuration', async () => {
   await using lab = new Lab();
   const dead = lab.shim(lab.hangUp().url);
   const result = await dead.call('list', {});
-  assert(result.isError && firstText(result).includes('Could not reach Studio'), firstText(result));
+  assert(result.isError && firstText(result).includes('Could not reach AIB'), firstText(result));
   const unconfigured = lab.shim('', {}, '', '');
   assert((await unconfigured.call('list', {})).isError);
 });

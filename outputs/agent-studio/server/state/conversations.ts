@@ -246,7 +246,7 @@ export class ConversationState extends JsonFileStore {
       } catch (error) {
         if (!isOSError(error)) throw error;
         this.entries = before;
-        this.warning = `Studio could not save pin/archive/delete marks: ${errorText(error)}`;
+        this.warning = `AIB could not save pin/archive/delete marks: ${errorText(error)}`;
         throw new ValueError(this.warning);
       }
       this.warning = '';
