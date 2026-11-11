@@ -239,12 +239,16 @@ class StudioContract(unittest.TestCase):
         self.same_post('/api/live/worktree/clash', {'action': 'resume-sync', 'project': repo})   # nothing paused any more
 
     def test_update_routes(self):
-        self.same_get('/api/live/update')
+        # 'desktop' is Deno-only (the reference is never the desktop app; updater_test.ts pyView drops it too): a source run says false.
+        deno_only = lambda data, server: {k: v for k, v in data.items() if k != 'desktop'} if server is self.subject else data
+        a, _ = self.same_get('/api/live/update', deno_only)
+        if self.subject.effective_kind() in ('deno', 'deno-split'):
+            self.assertIs(a.json()['desktop'], False)
         for body in ({'whenIdle': 'yes'}, {'cancelWait': True}, {'whenIdle': False}, {'whenIdle': True}):
-            self.same_post('/api/live/update/install', body)
+            self.same_post('/api/live/update/install', body, deno_only)
         a, b = self.subject.post('/api/live/update/check', {}), self.reference.post('/api/live/update/check', {})
-        self.compare(a, b, 'update/check')
-        self.same_get('/api/live/update')
+        self.compare(a, b, 'update/check', deno_only)
+        self.same_get('/api/live/update', deno_only)
 
     def test_worktree_tool_route_gate(self):
         """The agent's merge route: the page token is not enough, a bad key is refused, a valid key reaches the merge (which refuses)."""
