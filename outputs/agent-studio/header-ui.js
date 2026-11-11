@@ -185,13 +185,9 @@
       chip.textContent = branch ? '⎇ ' + branch : '';
       chip.title = branch ? 'This chat works on its own branch ' + branch : '';
     }
+    // No agent chip in the header (owner's choice): the agent shows on the composer's agent chip and the sidebar card.
     const vendor = $('vendorChip');
-    if (vendor) {
-      const choice = root.AgentChoice;
-      vendor.hidden = false;
-      vendor.textContent = choice ? choice.nameOf(s.provider) : String(s.provider || '');
-      vendor.title = 'Agent: ' + vendor.textContent + ' (a chat keeps its agent)';
-    }
+    if (vendor) vendor.hidden = true;
     const disconnect = $('disconnect');
     if (disconnect) disconnect.hidden = !c.current;
   }
