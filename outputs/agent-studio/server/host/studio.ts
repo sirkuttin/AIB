@@ -549,18 +549,29 @@ export class Studio {
   async #betaLaunch(provider: string, fresh: boolean): Promise<[string[], Record<string, string>]> {
     const agent = betaAgent(provider)!;
     if (fresh && !this.settings.betaEnabled(provider)) throw new ValueError(`${agent.name} is turned off in Settings`);
-    const row = await resolveBeta(provider, { stateDir: this.hasStateDir ? this.stateDir : null, nodeCommand: this.options.nodeCommand || '' });
+    const row = await resolveBeta(provider, {
+      stateDir: this.hasStateDir ? this.stateDir : null,
+      nodeCommand: this.options.nodeCommand || '',
+    });
     if (!row.found) throw new ValueError(`${agent.name} is not available: ${row.problem}`);
     return [row.argv, this.betaEnv(provider)];
   }
 
-  /** The environment a Beta agent gets on top of AIB's: its stored API key under the agent's variable (registered as a secret). */
+  /**
+   * The environment a Beta agent gets on top of AIB's: its stored API key under the agent's variable (registered as a secret), and
+   * its stored API address (Qwen: OPENAI_BASE_URL) when one is set.
+   */
   betaEnv(provider: string): Record<string, string> {
     const agent = betaAgent(provider);
+    const out: Record<string, string> = {};
     const key = agent?.signin.keyEnv ? this.settings.betaKey(provider) : '';
-    if (!agent?.signin.keyEnv || !key) return {};
-    registerSecret(key); // never in a log line
-    return { [agent.signin.keyEnv]: key };
+    if (agent?.signin.keyEnv && key) {
+      registerSecret(key); // never in a log line
+      out[agent.signin.keyEnv] = key;
+    }
+    const url = agent?.signin.baseUrlEnv ? this.settings.betaUrl(provider) : '';
+    if (agent?.signin.baseUrlEnv && url) out[agent.signin.baseUrlEnv] = url;
+    return out;
   }
 
   #agentOptions() {
@@ -1099,10 +1110,12 @@ export class Studio {
       const key = pairKey(c.provider, c.sessionId);
       if (this.reconnectPending.has(key)) continue;
       this.reconnectPending.add(key);
-      this.reconnectWorkers.push((async () => {
-        for (let waited = 0; !c.closed && waited < 5000; waited += 50) await new Promise((r) => setTimeout(r, 50));
-        await this.reconnectOne(item, RECONNECT_TRIES, 5);
-      })().catch((error) => log.exception(error, 'keeper: reconnecting an interrupted chat failed')));
+      this.reconnectWorkers.push(
+        (async () => {
+          for (let waited = 0; !c.closed && waited < 5000; waited += 50) await new Promise((r) => setTimeout(r, 50));
+          await this.reconnectOne(item, RECONNECT_TRIES, 5);
+        })().catch((error) => log.exception(error, 'keeper: reconnecting an interrupted chat failed')),
+      );
     }
   }
 
@@ -1247,10 +1260,16 @@ export class Studio {
     const working = this.busyList();
     const listed = new Set(working.map((w) => w.id));
     for (const c of [...this.connections.values()]) {
-      if (!c.closed && !listed.has(c.id) && c.queue.items.length) working.push({ id: c.id, provider: c.provider, cwd: c.cwd, state: 'queued' });
+      if (!c.closed && !listed.has(c.id) && c.queue.items.length) {
+        working.push({ id: c.id, provider: c.provider, cwd: c.cwd, state: 'queued' });
+      }
     }
-    for (const [agent, job] of this.installer?.jobs ?? []) if (job.alive) working.push({ id: `install:${agent}`, provider: agent, cwd: '', state: 'installing' });
-    for (const [agent, job] of this.signer?.jobs ?? []) if (job.alive) working.push({ id: `signin:${agent}`, provider: agent, cwd: '', state: 'needs_you' });
+    for (const [agent, job] of this.installer?.jobs ?? []) {
+      if (job.alive) working.push({ id: `install:${agent}`, provider: agent, cwd: '', state: 'installing' });
+    }
+    for (const [agent, job] of this.signer?.jobs ?? []) {
+      if (job.alive) working.push({ id: `signin:${agent}`, provider: agent, cwd: '', state: 'needs_you' });
+    }
     return working;
   }
 
@@ -1499,8 +1518,7 @@ export class Studio {
       const result = await connection.changeSetting('mode', null, need(body, 'modeId'));
       this.rememberOptions(connection);
       return [200, { ok: true, ...result }];
-    }
-    else if (name === 'cancel-pending') return [200, { ok: true, pendingChanges: connection.cancelPending(need(body, 'key')) }];
+    } else if (name === 'cancel-pending') return [200, { ok: true, pendingChanges: connection.cancelPending(need(body, 'key')) }];
     else if (name === 'session-op') {
       const deletedRef = body.op === 'delete' ? [connection.provider, connection.sessionId] : null;
       const result = await sessionOp(connection as never, body);

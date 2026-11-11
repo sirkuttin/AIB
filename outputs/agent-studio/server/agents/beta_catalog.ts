@@ -79,6 +79,9 @@ export interface BetaSignin {
   readonly keyEnv?: string;
   /** The provider's official page where that key is made (the card's "Get an API key" link). Every agent with keyEnv has one. */
   readonly keyUrl?: string;
+  /** The environment variable an optional API address goes into (the card's "API address" field), with the address to suggest. */
+  readonly baseUrlEnv?: string;
+  readonly baseUrlHint?: string;
   /** The ACP auth method that takes that key in `_meta['api-key']` (Gemini's shape). */
   readonly keyMethod?: string;
   /** The agent-type ACP auth method the Sign in button runs. */
@@ -233,10 +236,17 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // international (Singapore) console. Keys are per region. UNCONFIRMED: Qwen Code's default OPENAI_BASE_URL is OpenAI's
     // (api.openai.com/v1, read from the installed 0.27.2 package); a Model Studio key also needs OPENAI_BASE_URL
     // https://dashscope-intl.aliyuncs.com/compatible-mode/v1, which AIB does not set.
+    // baseUrlHint: Alibaba Cloud Model Studio, "OpenAI compatibility" (alibabacloud.com/help/en/model-studio/
+    // compatibility-of-openai-with-dashscope, read 2026-11-11): Singapore base_url https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/
+    // compatible-mode/v1 ("Migrate from https://dashscope-intl.aliyuncs.com"); the workspace ID is on the workspace details page in the
+    // Model Studio console. Keys are bound to their region, so the key link is the same Singapore console. Empty: Qwen's default
+    // (OpenAI, api.openai.com/v1).
     signin: {
       kind: 'key',
       keyEnv: 'OPENAI_API_KEY',
       keyUrl: 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
+      baseUrlEnv: 'OPENAI_BASE_URL',
+      baseUrlHint: 'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
     },
   },
   {

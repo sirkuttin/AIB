@@ -793,6 +793,15 @@ html[data-ui-scaled] .st-page {
 .st-beta-key {
   margin: 8px 0 0;
 }
+.st-beta-url {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+.st-beta-url .st-label {
+  color: var(--text-3);
+}
 .st-beta-key .st-beta-row input {
   min-width: 220px;
   flex: 1 1 220px;

@@ -30,7 +30,13 @@ export interface AgentOptions {
 export interface SettingsLike {
   launcher(agentId: string): string;
   snapshot(): {
-    agents: { builtin: Record<string, boolean>; custom: CustomAgent[]; beta?: Record<string, boolean>; betaKeys?: Record<string, string> };
+    agents: {
+      builtin: Record<string, boolean>;
+      custom: CustomAgent[];
+      beta?: Record<string, boolean>;
+      betaKeys?: Record<string, string>;
+      betaUrls?: Record<string, string>;
+    };
   };
   public(): Record<string, unknown>;
 }
@@ -266,6 +272,9 @@ export async function describeBeta(
         signinCommand: agent.signin.terminalArgs ? [...agent.signin.terminalArgs] : [],
         keyEnv: agent.signin.keyEnv ?? '',
         keyUrl: agent.signin.keyUrl ?? '',
+        baseUrlEnv: agent.signin.baseUrlEnv ?? '',
+        baseUrlHint: agent.signin.baseUrlHint ?? '',
+        baseUrl: agent.signin.baseUrlEnv ? (snap.agents.betaUrls ?? {})[agent.id] ?? '' : '',
         keySet: !!keys[agent.id],
       },
     });

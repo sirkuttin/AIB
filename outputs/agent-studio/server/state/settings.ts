@@ -53,7 +53,14 @@ export interface Choice {
 export interface Settings {
   /** beta / betaKeys: the Beta agents (beta_catalog.ts) turned on, and the API keys typed for them. Present only when not empty (a
    * fresh store matches the Python one), hidden from public(). */
-  agents: { builtin: Record<string, boolean>; custom: CustomAgent[]; beta?: Record<string, boolean>; betaKeys?: Record<string, string> };
+  agents: {
+    builtin: Record<string, boolean>;
+    custom: CustomAgent[];
+    beta?: Record<string, boolean>;
+    betaKeys?: Record<string, string>;
+    /** The API address typed for a Beta agent that takes one (Qwen: OPENAI_BASE_URL). Present only when not empty. */
+    betaUrls?: Record<string, string>;
+  };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
   server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean };
   editors: { default: string };
@@ -136,6 +143,11 @@ export class SettingsStore extends JsonFileStore {
       const key = this.betaKeyValue(keys[agentId]);
       if (key && betaAgent(agentId)?.signin.keyEnv) (doc.agents.betaKeys ??= {})[agentId] = key;
     }
+    const urls = isDict(agents.betaUrls) ? agents.betaUrls : {};
+    for (const agentId of BETA_IDS) {
+      const url = this.betaUrlValue(urls[agentId]);
+      if (url && betaAgent(agentId)?.signin.baseUrlEnv) (doc.agents.betaUrls ??= {})[agentId] = url;
+    }
     const taken = new Set<string>();
     for (const item of (Array.isArray(agents.custom) ? agents.custom : []).slice(0, MAX_AGENTS)) {
       let cleaned: CustomAgent;
@@ -184,6 +196,19 @@ export class SettingsStore extends JsonFileStore {
     const text = pyStrip(value);
     for (const ch of text) if (ch.codePointAt(0)! < 32 || ch.codePointAt(0) === 127) return '';
     return pyLen(text) <= MAX_ENV_VALUE ? text : '';
+  }
+
+  /** An API address as stored: one http(s) URL, at most 500 characters, no placeholder left in it (<...>, {...}), else ''. */
+  static betaUrlValue(value: unknown): string {
+    if (!isStr(value)) return '';
+    const text = pyStrip(value);
+    if (!text || pyLen(text) > 500 || /[\s<>{}"'`]/.test(text) || !/^https?:\/\//i.test(text)) return '';
+    try {
+      new URL(text);
+    } catch {
+      return '';
+    }
+    return text;
   }
 
   static launcherPath(value: unknown): string {
@@ -253,6 +278,7 @@ export class SettingsStore extends JsonFileStore {
     // Beta agents: the agent list (/api/live/settings agents rows) says which are on and which have a key; never the key itself.
     delete (shown.agents as Partial<Settings['agents']>).beta;
     delete (shown.agents as Partial<Settings['agents']>).betaKeys;
+    delete (shown.agents as Partial<Settings['agents']>).betaUrls; // the agent rows carry it (betaInfo.baseUrl)
     return { revision: `${this.nonce}.${this.counter}`, settings: shown, warning: this.warning };
   }
 
@@ -273,6 +299,12 @@ export class SettingsStore extends JsonFileStore {
   betaKey(agentId: string): string {
     const keys = this.snapshot().agents.betaKeys ?? {};
     return Object.prototype.hasOwnProperty.call(keys, agentId) ? keys[agentId] : '';
+  }
+
+  /** The API address typed for a Beta agent ('' when none: the agent's own default). */
+  betaUrl(agentId: string): string {
+    const urls = this.snapshot().agents.betaUrls ?? {};
+    return Object.prototype.hasOwnProperty.call(urls, agentId) ? urls[agentId] : '';
   }
 
   builtinEnabled(agentId: string): boolean {
@@ -343,7 +375,9 @@ export class SettingsStore extends JsonFileStore {
 
   #applyAgents(work: Settings, value: unknown): void {
     const patch = section(value, 'agents');
-    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey'])) throw new ValueError('Unknown agents setting');
+    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey', 'betaUrl'])) {
+      throw new ValueError('Unknown agents setting');
+    }
     for (const [agentId, enabled] of Object.entries(section(patch.enabled, 'agents'))) { // on/off only: nothing else is touched
       if (typeof enabled !== 'boolean') throw new ValueError('Agents can only be turned on or off');
       if (isBuiltin(agentId)) {
@@ -373,6 +407,17 @@ export class SettingsStore extends JsonFileStore {
       const cleaned = this.#cls().betaKeyValue(key);
       if (!cleaned) throw new ValueError('The API key must be one line of text');
       (work.agents.betaKeys ??= {})[agentId] = cleaned;
+    }
+    for (const [agentId, url] of Object.entries(section(patch.betaUrl, 'agents'))) { // {id: 'https://…'} sets it, '' | null clears it
+      const agent = betaAgent(agentId);
+      if (!agent || !agent.signin.baseUrlEnv) throw new ValueError('That agent does not take an API address');
+      if (url === null || url === '') {
+        if (work.agents.betaUrls) delete work.agents.betaUrls[agentId];
+        continue;
+      }
+      const cleaned = this.#cls().betaUrlValue(url);
+      if (!cleaned) throw new ValueError('The API address must be one http:// or https:// address, with your own values filled in');
+      (work.agents.betaUrls ??= {})[agentId] = cleaned;
     }
     const custom = work.agents.custom;
     if ('remove' in patch) {

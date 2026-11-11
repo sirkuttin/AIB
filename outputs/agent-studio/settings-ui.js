@@ -1320,7 +1320,52 @@
         'st-hint',
       ),
     );
+    if (info.baseUrlEnv) wrap.append(urlBox(a, info));
     return wrap;
+  }
+  // The optional API address under the key box (Qwen: OPENAI_BASE_URL): saved with the settings like the key, passed to the agent as
+  // its variable. Empty: the agent's own default address.
+  const urlDrafts = {};
+  function urlBox(a, info) {
+    const box = el('div', null, 'st-beta-url');
+    const label = el('span', 'API address (' + info.baseUrlEnv + ', optional)', 'st-label');
+    const line = el('div', null, 'st-beta-row');
+    const input = el('input');
+    input.type = 'url';
+    input.spellcheck = false;
+    input.value = Object.prototype.hasOwnProperty.call(urlDrafts, a.id) ? urlDrafts[a.id] : info.baseUrl || '';
+    input.placeholder = info.baseUrlHint || '';
+    input.setAttribute('aria-label', 'API address for ' + a.name);
+    input.addEventListener('input', () => {
+      urlDrafts[a.id] = input.value;
+    });
+    const store = button(
+      'Save address',
+      () => {
+        const value = (Object.prototype.hasOwnProperty.call(urlDrafts, a.id) ? urlDrafts[a.id] : input.value).trim();
+        save({ agents: { betaUrl: { [a.id]: value || null } } }).then(
+          () => {
+            delete urlDrafts[a.id];
+            if (a.enabled) checkOne(a);
+          },
+          () => {},
+        );
+      },
+      'st-primary',
+    );
+    line.append(input, store);
+    box.append(
+      label,
+      line,
+      el(
+        'span',
+        'Leave empty for OpenAI. For an Alibaba Cloud Model Studio key use ' +
+          (info.baseUrlHint || '') +
+          ' (your workspace ID is on the workspace details page in the Model Studio console).',
+        'st-hint',
+      ),
+    );
+    return box;
   }
   // One agent's sign-in check (force), then the list again.
   function checkOne(a) {

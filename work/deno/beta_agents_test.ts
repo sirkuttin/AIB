@@ -25,6 +25,7 @@ import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/ses
 import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
 import { MODELS_SOURCE, withModelsOption } from '../../outputs/agent-studio/server/acp/breadth.ts';
 import { AgentOptionsCache } from '../../outputs/agent-studio/server/state/agent_options.ts';
+import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 
 const WIN = Deno.build.os === 'windows';
 const sanitize = { sanitizeOps: false, sanitizeResources: false }; // sign-in jobs run in the background between awaits
@@ -677,3 +678,44 @@ Deno.test(
     }
   },
 );
+
+Deno.test("Qwen's optional API address: stored like the key, checked, passed as OPENAI_BASE_URL, empty = Qwen's default", async () => {
+  using dir = tempDir();
+  const store = new SettingsStore(dir.root);
+  const qwen = betaAgent('qwen')!;
+  assertEquals([qwen.signin.baseUrlEnv, qwen.signin.baseUrlHint], [
+    'OPENAI_BASE_URL',
+    'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+  ]);
+  const env = () => Studio.prototype.betaEnv.call({ settings: store } as unknown as Studio, 'qwen');
+  await store.update({ agents: { betaKey: { qwen: 'test-key-not-real' } } });
+  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real' }, 'no address: Qwen uses its own default (OpenAI)');
+  const address = 'https://ws-test.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  await store.update({ agents: { betaUrl: { qwen: ' ' + address + ' ' } } });
+  assertEquals(store.betaUrl('qwen'), address);
+  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real', OPENAI_BASE_URL: address });
+  assertEquals(new SettingsStore(dir.root).betaUrl('qwen'), address, 'read back from the file');
+  assert(!JSON.stringify(store.public()).includes('betaUrls'));
+  const rows = await describeBeta({ stateDir: dir.root }, store.snapshot());
+  const info = rows.find((r) => r.id === 'qwen')!.betaInfo as Record<string, unknown>;
+  assertEquals([info.baseUrlEnv, info.baseUrl], ['OPENAI_BASE_URL', address]);
+  assertEquals((rows.find((r) => r.id === 'gemini')!.betaInfo as Record<string, unknown>).baseUrlEnv, '');
+  for (const bad of [qwen.signin.baseUrlHint!, 'ftp://x.example/v1', 'https://a b', 'not a url']) {
+    let refused = '';
+    try {
+      await store.update({ agents: { betaUrl: { qwen: bad } } });
+    } catch (error) {
+      refused = (error as Error).message;
+    }
+    assertEquals(refused, 'The API address must be one http:// or https:// address, with your own values filled in', bad);
+  }
+  let refused = '';
+  try {
+    await store.update({ agents: { betaUrl: { gemini: address } } });
+  } catch (error) {
+    refused = (error as Error).message;
+  }
+  assertEquals(refused, 'That agent does not take an API address');
+  await store.update({ agents: { betaUrl: { qwen: null } } });
+  assertEquals([store.betaUrl('qwen'), env()], ['', { OPENAI_API_KEY: 'test-key-not-real' }]);
+});
