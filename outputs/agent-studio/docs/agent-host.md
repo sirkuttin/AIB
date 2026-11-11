@@ -48,7 +48,7 @@ The built app starts its host with `--tray --exit-unattached-seconds 10` (`main.
 
 ## The keeper (behind a switch, off by default)
 
-The switch is **Settings > Studio server > "Keep chats running through updates and restarts (keeper)"** (`server.keeper` in
+The switch is **Settings > AIB server > "Keep chats running through updates and restarts (keeper)"** (`server.keeper` in
 `studio-settings.json`, off by default for now; it applies at the next start). `AIB_KEEPER=1` / `AIB_KEEPER=0` in the environment
 overrides it (`keeper/link.ts` `keeperSetting`; bootstrap `server.keeperOverride` says so, and the Settings card shows it). With it on,
 agents run in the keeper (`AIB-keeper`, Go, `keeper/`, protocol in `keeper/PROTOCOL.md`) instead of as children of AIB, and AIB is

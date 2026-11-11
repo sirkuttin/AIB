@@ -97,7 +97,7 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
 `updates-ui.js` (the amber line and the Settings card). Tests: `work/deno/updater_test.ts` (fake local HTTP server, no GitHub calls),
 `work/test_desktop_bridge.js`.
 
-- **Check:** Settings, Studio server, Updates: "Check for updates" and "Automatically check for updates" (on by default, setting
+- **Check:** Settings, AIB server, Updates: "Check for updates" and "Automatically check for updates" (on by default, setting
   `server.autoUpdateCheck`). Automatic checks run at most once a day (time kept in `<data>/updates/state.json`); the button always
   checks. With the toggle off there is no network call at all.
 - **Source:** the GitHub Releases API for the update repository. Only `api.github.com` and GitHub's asset hosts over https are
@@ -119,7 +119,7 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
   helper waits for the app to exit, re-checks the hash, swaps the files (the old ones are renamed, not deleted, so a host still
   running from them keeps running), starts the new AIB, and rolls everything back if the new app cannot start. Its log is
   `<data>/updates/install.log`. The new app deletes the leftovers at startup.
-- **With the keeper (Settings > Studio server > "Keep chats running through updates and restarts (keeper)", or `AIB_KEEPER=1`; off
+- **With the keeper (Settings > AIB server > "Keep chats running through updates and restarts (keeper)", or `AIB_KEEPER=1`; off
   by default):** AIB is one process and the chats run in the keeper. If AIB crashes, the keeper starts it again **in the tray only**
   (`--start-in-tray`: no window; menu Open AIB / status / Stop chats and quit; it quits by itself once nothing works and no window was
   opened). Agents' artifact tool runs from the keeper's folder (its MCP forwarder), so an update's `.old-*` files go at the next start
