@@ -20,13 +20,15 @@ export class UserClient {
   readonly typing = { kind: 'typing' };
   readonly undo: Y.UndoManager;
   holdUp = false;
+  /** AIB's control messages the page got (JSON text frames: refused notes, history marks...). */
+  readonly control: Record<string, unknown>[] = [];
   #up: Uint8Array[] = [];
   readonly link: WsLink;
 
   constructor(readonly live: LiveDoc) {
     this.frag = this.doc.getXmlFragment(FIELD);
     this.undo = new Y.UndoManager(this.frag, { trackedOrigins: new Set([this.typing]), captureTimeout: 0 });
-    this.link = { onmessage: null, onclose: null, isOpen: true, send: (data) => this.#receive(data as Uint8Array), close: () => {} };
+    this.link = { onmessage: null, onclose: null, isOpen: true, send: (data) => (typeof data === 'string' ? void this.control.push(JSON.parse(data)) : this.#receive(data)), close: () => {} };
     this.doc.on('update', (update: Uint8Array, origin: unknown) => {
       if (origin === this) return;
       const e = encoding.createEncoder();
