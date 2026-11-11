@@ -548,6 +548,37 @@ test('/doc with a page: an existing page opens; an unknown page is made; a new d
   assert.deepEqual(JSON.parse(JSON.stringify(await t.DL.runCommand('/doc', chat))), { error: 'Name the doc: /doc release plan' });
 });
 
+test('doc frames: show-in-files reveals the doc row, open from beside moves it to a tab, duplicate and trash list the docs again', async () => {
+  const t = setup();
+  await openDocsFolder(t);
+  t.FU.openDoc(t.FU.currentScope(), { name: 'release-plan', title: 'Release plan', where: 'beside' });
+  await flush();
+  const [rec] = frames(t, 'beside');
+  assert.ok(rec, 'a doc beside the chat');
+  rec.frame.contentWindow = { postMessage() {} };
+  const send = (data) => t.FU.onFrameMessage({ origin: 'http://127.0.0.1:9', source: rec.frame.contentWindow, data });
+  send({ type: 'aib-doc:show-in-files', dir: 'docs/release-plan' });
+  await flush();
+  assert.equal(t.FU._state().sel, 'docs/release-plan', 'the doc row is selected in Files');
+  const before = t.calls.filter((c) => c.path === '/api/live/docs/list').length;
+  send({ type: 'aib-doc:docs-changed' });
+  await flush();
+  assert.ok(t.calls.filter((c) => c.path === '/api/live/docs/list').length > before, 'duplicate: the docs are listed again');
+  send({ type: 'aib-doc:open', name: 'release-plan', where: 'tab' });
+  await flush();
+  assert.equal(frames(t, 'beside').length, 0, '"Open as tab" leaves the beside column');
+  assert.equal(t.FU._state().tabs.tabs.length, 1);
+  assert.equal(t.FU._state().tabs.tabs[0].doc.name, 'release-plan');
+  await flush();
+  const [main] = frames(t, 'main');
+  main.frame.contentWindow = { postMessage() {} };
+  const mid = t.calls.filter((c) => c.path === '/api/live/docs/list').length;
+  t.FU.onFrameMessage({ origin: 'http://127.0.0.1:9', source: main.frame.contentWindow, data: { type: 'aib-doc:closed' } });
+  await flush();
+  assert.equal(t.FU._state().tabs.tabs.length, 0, 'moved to the trash: the tab closes');
+  assert.ok(t.calls.filter((c) => c.path === '/api/live/docs/list').length > mid, 'trash: the docs are listed again');
+});
+
 test('/doc in the composer: the doc list, then after ">" its pages; Tab completes; arrows move', async () => {
   const t = setup();
   const form = t.shell.byId.promptForm;

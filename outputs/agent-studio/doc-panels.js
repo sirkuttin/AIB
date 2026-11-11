@@ -874,6 +874,7 @@
   async function duplicateDoc() {
     try {
       const r = await D.post('/api/live/docs/duplicate', { id: D.params.get('chat') || '' });
+      D.tell({ type: 'aib-doc:docs-changed' });
       D.toast(
         `Made ${r.title}.`,
         [{ label: 'Open it', run: () => D.tell({ type: 'aib-doc:open', name: r.name, where: 'tab' }) }],

@@ -1055,7 +1055,20 @@
         beside = F().closeTab(beside, tab.id).state;
         drawBeside();
       } else closeFileTab(tab.id);
+      refreshDocs(tab.scope);
+    } else if (data.type === 'aib-doc:docs-changed') {
+      // "Duplicate doc" made a new doc: Files, Ctrl+K and the picker list it without a reload
+      refreshDocs(tab.scope);
     }
+  }
+  // The project's docs changed (a doc duplicated or moved to the trash): list them again, and the docs folder if it was listed.
+  function refreshDocs(scope) {
+    if (!scope) return;
+    const t = treeOf(scope);
+    if (t.cache.docs !== undefined && t.cache.docs !== 'loading') {
+      delete t.cache.docs;
+      listDir(scope, 'docs');
+    } else loadDocs(scope, true);
   }
   function showFile() {
     view = tabsHere().active ? 'file' : 'chat';

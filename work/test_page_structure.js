@@ -67,8 +67,12 @@ test('every script tag is closed', () => {
 test('the content security policy allows local attachment previews', () => {
   // Composer thumbnails use URL.createObjectURL (blob:); without it every pasted picture shows as broken.
   const security = fs.readFileSync(path.join(APP, 'server', 'web', 'security.ts'), 'utf8');
-  const csp = security.match(/`default-src[^`]*`/);
+  // The main page's CSP is the one in securityHeaders (drawingHeaders, the drawing page's own, comes first in the file).
+  const main = security.slice(security.indexOf('export function securityHeaders('));
+  assert.ok(main.length < security.length, 'securityHeaders in server/web/security.ts');
+  const csp = main.match(/`default-src[^`]*`/);
   assert.ok(csp, 'the page CSP in server/web/security.ts');
+  assert.match(csp[0], /script-src 'self';/, 'the main page CSP, not the drawing page one');
   const imgSrc = csp[0].match(/img-src ([^;]*);/)[1].split(/\s+/);
   assert.ok(imgSrc.includes('blob:'), imgSrc.join(' '));
   assert.ok(!imgSrc.includes('*'), imgSrc.join(' '));
