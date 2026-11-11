@@ -1019,7 +1019,10 @@
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       panel.hidden = !open;
       box.className = 'tool-line' + (open ? ' open' : '') + (s.status === 'failed' ? ' failed' : '');
-      if (open && !panel.children.length) panel.append(buildDetail());
+      if (open && !panel.children.length) {
+        panel.append(buildDetail());
+        if (typeof box.onDetail === 'function') box.onDetail(panel); // files-ui.js: the written file's path becomes a link
+      }
     };
     btn.addEventListener('click', () => {
       if (EXPANDED.has(key)) EXPANDED.delete(key);
@@ -1038,23 +1041,30 @@
       box.append(thumbs);
     }
     const E = root.AgentEditors,
-      target = E ? fileTarget(row) : null;
+      target = fileTarget(row);
     if (target) {
-      /* A sibling of the toggle, so clicking it never expands the row. Hidden until an editor that can open files is known. */
-      const open = make('button', 'open ↗', 'tool-open');
-      open.type = 'button';
-      open.dataset.line = target.line || '';
-      const tip = E.fileTip ? E.fileTip(target.line) : 'Open in editor';
-      open.title = tip;
-      open.setAttribute('aria-label', tip);
-      open.hidden = !(E.canOpenFile && E.canOpenFile());
-      open.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        E.openFile(target.path, target.line);
-      });
-      box.append(open);
+      /* Row actions sit beside the toggle (siblings, so a click never expands the row): files-ui.js adds the "open file" icon at the
+         front once the file is known to exist in the chat's folder; "editor ↗" is hidden until an editor that can open files is known. */
+      const acts = make('span', '', 'tool-acts');
+      if (E) {
+        const open = make('button', 'editor ↗', 'tool-open');
+        open.type = 'button';
+        open.dataset.line = target.line || '';
+        const tip = E.fileTip ? E.fileTip(target.line) : 'Open in editor';
+        open.title = tip;
+        open.setAttribute('aria-label', tip);
+        open.hidden = !(E.canOpenFile && E.canOpenFile());
+        open.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          E.openFile(target.path, target.line);
+        });
+        acts.append(open);
+      }
+      box.append(acts);
+      const FU = root.AgentFilesUI;
+      if ((s.label === 'write' || s.label === 'edit') && s.status !== 'failed' && FU && FU.toolFile) FU.toolFile(box, target.path);
     }
-    box.append(panel); // last: Tab reaches "open ↗" (and thumbnails) before the opened detail
+    box.append(panel); // last: Tab reaches the row actions (and thumbnails) before the opened detail
     return box;
   }
   const isToolRow = (r) => r && r.role === 'tool' && (r.raw || r.call);

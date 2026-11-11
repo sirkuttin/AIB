@@ -583,6 +583,7 @@ body.sf-beside-on main {
 
 /* ---- file links in replies ---- */
 #messages a.fx-path,
+#submessages a.fx-path,
 .mirror-msgs a.fx-path {
   color: var(--link);
   text-decoration: underline;
@@ -592,6 +593,17 @@ body.sf-beside-on main {
 }
 a.fx-path code {
   color: inherit;
+}
+.tool-path a.fx-path {
+  text-decoration: none;
+}
+.tool-path a.fx-path code {
+  text-decoration: underline;
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 2px;
+}
+.sf-fv-out {
+  font-weight: 600;
 }
 .fx-pico {
   width: 13px;

@@ -190,7 +190,7 @@
   // The scope's folder is the open chat's own folder: then the Changes tab's data is the source of the badges.
   function changesFor(scope) {
     const live = CH();
-    if (!scope || !live || !live.data || !chat || scope.chatKey !== chat.key || live.chatId() !== chat.id) return null;
+    if (!scope || scope.root === 'outside' || !live || !live.data || !chat || scope.chatKey !== chat.key || live.chatId() !== chat.id) return null;
     const d = live.data();
     if (!d || !d.git) return null;
     return { map: F().changesMap(d.files || [], d.prefix || ''), prefix: d.prefix || '' };
@@ -749,7 +749,9 @@
   }
 
   // ---- the tab strip (workspace-ui.js asks for these nodes) -----------------------------------------------------------
-  const tabTitle = (t) => t.path + (t.scope && t.scope.branch ? '\n⎇ ' + t.scope.branch : '') + (t.preview ? '\nPreview: the next file you open replaces it. Double-click to keep it.' : '');
+  const tabTitle = (t) =>
+    (t.scope && t.scope.root === 'outside' ? (t.scope.abs || t.path) + '\n' + outsideText(t.scope.where) : t.path) +
+    (t.scope && t.scope.branch ? '\n⎇ ' + t.scope.branch : '') + (t.preview ? '\nPreview: the next file you open replaces it. Double-click to keep it.' : '');
   function tabNode(t, active, onSelect, onClose, onKeep) {
     const wrap = el('div', null, 'ws-tab sf-ftab' + (t.preview ? ' preview' : '') + (active ? ' on' : ''));
     wrap.dataset.key = 'file:' + t.id;
@@ -791,13 +793,18 @@
   }
 
   // ---- the file view ---------------------------------------------------------------------------------------------------
+  const outsideText = (where) => 'Outside this project' + (where ? ' · ' + where : '');
   function ensureRead(tab, redraw) {
     let r = reads.get(tab.id);
     if (r) return r;
     r = { loading: true, data: null, error: '', mode: 'source', gutter: null };
     reads.set(tab.id, r);
+    const outside = tab.scope.root === 'outside';
     host
-      .getJson('/api/live/files/read', { id: tab.scope.id, root: tab.scope.root, path: tab.path })
+      .getJson(
+        outside ? '/api/live/files/outside' : '/api/live/files/read',
+        outside ? { id: tab.scope.id, path: tab.scope.abs || tab.path } : { id: tab.scope.id, root: tab.scope.root, path: tab.path },
+      )
       .then(
         (d) => {
           r.data = d;
@@ -834,8 +841,18 @@
     );
   }
   const kb = (n) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB');
-  function chipFor(tab) {
-    const s = tab.scope || {},
+  // A file outside the chat's folder: "Outside this project" and what AIB can tell about its folder (branch, worktree of which repo).
+  function chipFor(tab, d) {
+    const s = tab.scope || {};
+    if (s.root === 'outside') {
+      const where = (d && d.outside && d.outside.text) || s.where || '',
+        chip = el('span', null, 'sf-fv-from sf-fv-outside');
+      chip.append(el('span', 'Outside this project', 'sf-fv-out'));
+      if (where) chip.append(el('span', '· ' + where, 'sf-fv-chat'));
+      chip.title = outsideText(where) + "\nRead-only. This file is not in the chat's folder; the chat named it.";
+      return chip;
+    }
+    const
       c = projectChats().find((x) => x.key === s.chatKey);
     const chip = el('span', null, 'sf-fv-from');
     chip.append(el('span', s.branch ? '⎇ ' + s.branch : 'Project folder'));
@@ -890,7 +907,8 @@
     const crumb = el('div', null, 'sf-fv-crumb');
     const proj = (W() && W().currentProjectName && W().currentProjectName()) || '';
     const dirs = F().dirOf(tab.path);
-    crumb.append(doc().createTextNode((proj ? proj + ' / ' : '') + (dirs ? dirs.split('/').join(' / ') + ' / ' : '')), el('b', tab.name));
+    if (tab.scope && tab.scope.root === 'outside') crumb.append(doc().createTextNode(dirs ? dirs + '/' : ''), el('b', tab.name));
+    else crumb.append(doc().createTextNode((proj ? proj + ' / ' : '') + (dirs ? dirs.split('/').join(' / ') + ' / ' : '')), el('b', tab.name));
     crumb.title = (d && d.abs) || tab.path;
     head.append(crumb);
     const ch = changesFor(tab.scope),
@@ -903,7 +921,7 @@
       b.onclick = () => showChange(tab.scope, tab.path);
       head.append(b);
     }
-    head.append(el('span', null, 'fx-spacer'), chipFor(tab));
+    head.append(el('span', null, 'fx-spacer'), chipFor(tab, d));
     const tools = el('div', null, 'sf-fv-tools');
     const canPage = !!(d && d.page && d.viewUrl);
     if (canPage) {
@@ -930,9 +948,9 @@
       k.onclick = () => keepTab(tab.id);
       tools.append(k);
     }
-    const art = d ? artifactFor(treeOf(tab.scope).root || d.root || '', tab.path) || artifactFor(d.root, tab.path) : null;
+    const art = d && tab.scope.root !== 'outside' ? artifactFor(treeOf(tab.scope).root || d.root || '', tab.path) || artifactFor(d.root, tab.path) : null;
     // Every page file (html, svg, md) can open in Artifacts; one no chat registered yet is registered in the open chat on click.
-    if (art || (d && d.page && !d.binary && !d.tooBig)) {
+    if (art || (d && tab.scope.root !== 'outside' && d.page && !d.binary && !d.tooBig)) {
       const a = btn(
         '⧉ Open in Artifacts',
         'fx-btn link',
@@ -1238,12 +1256,16 @@
     }
   }
   function openLink(a, how) {
-    const scope = scopeOfLink(a),
-      rel = a.dataset.filePath,
-      line = Number(a.dataset.line) || 0;
+    openTarget({ scope: scopeOfLink(a), rel: a.dataset.filePath, line: Number(a.dataset.line) || 0, abs: a.dataset.abs || '' }, how);
+  }
+  // t: {scope, rel, line, abs}. how: '' (the width rule), 'beside', 'tab' or 'editor'.
+  function openTarget(t, how) {
+    const scope = t && t.scope,
+      rel = t && t.rel,
+      line = (t && t.line) || 0;
     if (!scope || !rel) return;
     if (how === 'editor') {
-      if (ED() && a.dataset.abs) ED().openFile(a.dataset.abs, line, dirAbs(a.dataset.abs));
+      if (ED() && t.abs) ED().openFile(t.abs, line, dirAbs(t.abs));
       return;
     }
     const wide = F().opensBeside(root.innerWidth || 0);
@@ -1263,7 +1285,8 @@
       m.append(b);
     };
     add('Open to the side', () => openLink(a, 'beside'));
-    add('Show in Files', () => showInFiles(scopeOfLink(a), a.dataset.filePath));
+    const sc = scopeOfLink(a);
+    if (!(sc && sc.root === 'outside')) add('Show in Files', () => showInFiles(sc, a.dataset.filePath));
     add('Copy path', () => copyText(a.dataset.abs || a.dataset.filePath));
     if (ED() && ED().showInExplorer && a.dataset.abs) add('Show in Explorer', () => ED().showInExplorer(dirAbs(a.dataset.abs)));
     doc().body.append(m);
@@ -1273,6 +1296,128 @@
     const first = m.querySelector('button');
     if (first) first.focus();
   }
+  // ---- write / edit rows ----------------------------------------------------------------------------------------------------
+  // tool-views.js calls toolFile(box, path) for a write or edit row. When the file exists on this computer (inside the chat's
+  // folder, or outside it when the chat named it: GET /api/live/files/outside), the row gets an "open file" icon button and the
+  // path in its detail becomes a file link (same click, Ctrl+click and right-click as paths in replies). A missing file gets
+  // neither. The chat is the one the row is drawn for: a split pane's own chat, else the open chat (main view, subagent history).
+  const outsideSeen = new Map(); // chat id + path -> {at, promise}
+  function outsidePeek(c, path) {
+    const k = c.id + '|' + path,
+      hit = outsideSeen.get(k);
+    if (hit && Date.now() - hit.at < 20000) return hit.promise;
+    const rec = { at: Date.now(), promise: null };
+    rec.promise = host.getJson('/api/live/files/outside', { id: c.id, path, peek: 1 }).then(
+      (r) => (r && r.abs ? r : null),
+      () => null,
+    );
+    outsideSeen.set(k, rec);
+    while (outsideSeen.size > 300) outsideSeen.delete(outsideSeen.keys().next().value);
+    return rec.promise;
+  }
+  function chatOfNode(node) {
+    const m = node && node.closest ? node.closest('.mirror-msgs') : null,
+      key = m && m.dataset ? m.dataset.mirror : '';
+    if (key && host && host.conversations) {
+      const c = (host.conversations() || []).find((x) => host.aliasKey(x) === key);
+      return c ? chatInfo(c) : null;
+    }
+    return chat;
+  }
+  const isAbs = (p) => /^([A-Za-z]:[\\/]|\/)/.test(String(p || ''));
+  function toolFileInfo(c, path) {
+    const scope = F().followScope(c, c.projectPath),
+      folder = c.cwd || c.projectPath,
+      rel = scope && folder ? F().relTo(path, folder) : null;
+    if (rel !== null) {
+      return dirNames(scope, F().dirOf(rel)).then((d) => {
+        const e = d.names.get(F().nameOf(rel).toLowerCase());
+        if (!e || e.dir) return null;
+        return { scope, rel, root: d.root, line: 0, abs: '' };
+      });
+    }
+    if (!isAbs(path)) return Promise.resolve(null);
+    return outsidePeek(c, path).then((r) => {
+      if (!r) return null;
+      const where = (r.outside && r.outside.text) || '';
+      const scope = { id: c.id, root: 'outside', label: 'Outside', branch: '', chatKey: c.key, title: c.title, abs: path, where };
+      return { scope, rel: F().slash(path), root: '', line: 0, abs: path, outside: true, where };
+    });
+  }
+  function toolLink(text, info, parent) {
+    const a = pathLink(text, info.rel, info.line, info.scope, info.root, parent);
+    if (info.abs) a.dataset.abs = info.abs;
+    if (info.outside)
+      a.title =
+        (info.abs || info.rel) +
+        '\n' +
+        outsideText(info.where) +
+        '\nClick: open the file (read only). Ctrl+click: open in your editor. Right-click: more';
+    return a;
+  }
+  const samePath = (a, b) => {
+    const n = (p) =>
+      F()
+        .slash(String(p || '').trim())
+        .replace(/\/+$/, '');
+    return /^[A-Za-z]:/.test(String(a).trim()) ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
+  };
+  // The written file's path in an opened detail (the path box, and the locations list) becomes a file link.
+  function linkToolDetail(panel, info, path) {
+    if (!panel || !panel.querySelectorAll) return 0;
+    let n = 0;
+    for (const code of panel.querySelectorAll('code.tool-path-text')) {
+      if (!code.parentNode || (code.closest && code.closest('a.fx-path')) || !samePath(code.textContent, path)) continue;
+      const a = toolLink(code.textContent, info, code);
+      a.lastChild.remove();
+      code.replaceWith(a);
+      a.append(code);
+      n++;
+    }
+    for (const li of Array.from(panel.querySelectorAll('.tool-locations')).flatMap((ul) => Array.from(ul.querySelectorAll('li')))) {
+      const t = String(li.textContent || ''),
+        m = /^(.*?)(?::(\d+))?$/.exec(t);
+      if (!m || !samePath(m[1], path) || li.querySelector('a.fx-path')) continue;
+      li.replaceChildren(toolLink(t, Object.assign({}, info, { line: Number(m[2]) || 0 }), null));
+      n++;
+    }
+    return n;
+  }
+  function toolButton(info) {
+    const name = F().nameOf(info.rel);
+    const b = btn(null, 'tool-file', 'Open ' + name + '\n' + (info.outside ? outsideText(info.where) + ', read only' : 'Opens in the file view'));
+    b.append(icon(FILE_D, 'tool-file-ico'));
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openTarget(info, '');
+    });
+    return b;
+  }
+  function toolFile(box, path) {
+    if (!host || !box || !path) return Promise.resolve(false);
+    return Promise.resolve()
+      .then(() => {
+        const c = chatOfNode(box);
+        return c && c.id ? toolFileInfo(c, path) : null;
+      })
+      .then((info) => {
+        if (!info) return false;
+        const kids = Array.from(box.children || []);
+        let acts = kids.find((k) => k.classList && k.classList.contains('tool-acts'));
+        const panel = kids.find((k) => k.classList && k.classList.contains('tool-detail'));
+        if (!acts) {
+          acts = el('span', null, 'tool-acts');
+          if (panel) box.insertBefore(acts, panel);
+          else box.append(acts);
+        }
+        if (!acts.querySelector('.tool-file')) acts.insertBefore(toolButton(info), acts.firstChild || null);
+        box.onDetail = (p) => linkToolDetail(p, info, path);
+        if (panel) linkToolDetail(panel, info, path);
+        return true;
+      })
+      .catch(() => false);
+  }
+
   // "Show in Files": the sidebar switches to Files, the file's folders open and the row is selected (asked for, never automatic).
   function showInFiles(scope, rel) {
     if (!scope || !rel) return;
@@ -1401,6 +1546,7 @@
     openFile,
     showInFiles,
     openLink,
+    toolFile,
     currentScope,
     search: (q) => {
       const scope = currentScope();
@@ -1414,6 +1560,7 @@
       reads.clear();
       projectArts.clear();
       exists.clear();
+      outsideSeen.clear();
       tabsByProject = {};
       beside = F().emptyTabs();
       view = 'chat';

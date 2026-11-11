@@ -22,6 +22,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/files/list                 the Files view: one folder of a chat's folder (files_routes.ts)
  *   GET  /api/live/files/search               the Files view: file names matching a filter
  *   GET  /api/live/files/read                 the Files view: one file, read only
+ *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
@@ -35,6 +36,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/list', 'read', 'get'],
   ['GET', '/api/live/files/search', 'read', 'get'],
   ['GET', '/api/live/files/read', 'read', 'get'],
+  ['GET', '/api/live/files/outside', 'read', 'get'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

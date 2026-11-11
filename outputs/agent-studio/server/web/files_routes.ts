@@ -7,6 +7,9 @@
  *   GET /api/live/files/search?id&root&q      the best 200 file names from a cached index (rebuilt when the agent writes files)
  *   GET /api/live/files/read?id&root&path     a text file up to 1 MB (binary detected); `viewUrl` for images and pages, served
  *                                             read only by the artifact origin (file_tickets.ts), never as an artifact
+ *   GET /api/live/files/outside?id&path[&peek=1]  a file OUTSIDE the chat's folder, by absolute path, only when the chat's own tool
+ *                                             calls or messages name it (worktrees/outside_files.ts); same answer as read plus
+ *                                             `outside: {kind, branch, repo, folder, text}`; peek=1 leaves out the text
  * Needs the Studio token, like the Changes routes.
  */
 import { isStr } from '../core/py.ts';
@@ -18,6 +21,8 @@ import * as osp from '../platform/ospath.ts';
 import { isNetworkPath, tokenMatches } from './security.ts';
 import { issue } from './file_tickets.ts';
 import { chatStudioOf, savedFolders } from './studio_routes.ts';
+import * as outside from '../worktrees/outside_files.ts';
+import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';
 
 type Reply = [number, unknown];
@@ -98,5 +103,57 @@ export function filesRoutes(): Map<string, Handler> {
       : '';
     return { root: base, ...read, viewUrl };
   });
+  routes.set('GET /api/live/files/outside', (ctx, url, _body, request) => {
+    if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) {
+      return Promise.resolve([403, { error: 'Invalid local session token' }]);
+    }
+    const args = parseQs(url.search.slice(1));
+    const id = one(args, 'id');
+    if (!id || id.length > 600) return Promise.resolve([400, { error: 'Choose a chat', code: 'bad_chat' }]);
+    return guarded(async () => {
+      const given = outside.checkShape(one(args, 'path'));
+      // The guard first, so an unnamed path never tells whether it exists.
+      if (!(await mentionedBy(ctx, id, given))) throw new files.FilesError('This chat never named that file', 'not_mentioned', 403);
+      const real = outside.resolveOutside(given, dataDirs(ctx));
+      const read = outside.readOutside(real, one(args, 'peek') === '1');
+      const origin = ctx.artifacts?.store.origin ?? '';
+      const viewable = !read.tooBig && (read.image || (read.page && !read.binary)) && one(args, 'peek') !== '1';
+      const viewUrl = viewable && origin
+        ? origin + '/f/' + issue(read.abs) + '/' + encodeURIComponent(read.name) + (/\.(md|markdown)$/i.test(read.name) ? '?view=1' : '')
+        : '';
+      return { root: '', ...read, viewUrl, outside: outside.folderLabel(real) };
+    });
+  });
   return routes;
 }
+
+/** AIB's own data folder(s): never shown through the outside route. */
+function dataDirs(ctx: WebContext): string[] {
+  const out: string[] = [];
+  if (ctx.stateDir) out.push(String(ctx.stateDir));
+  const local = osp.WIN ? Deno.env.get('LOCALAPPDATA') : '';
+  if (local) out.push(osp.join(local, 'AgentStudio'));
+  return out;
+}
+
+const mentioned = new Map<string, boolean>(); // chat id + path -> named (records only grow, so a yes stays a yes)
+/** True when the chat's own record (live events, saved transcript and its subagents) names `path`. */
+async function mentionedBy(ctx: WebContext, id: string, path: string): Promise<boolean> {
+  const key = id + '|' + osp.normcase(osp.normpath(path));
+  if (mentioned.get(key)) return true;
+  const stores = (ctx.transcripts as unknown as { stores?: Map<string, { root: string }> }).stores;
+  const texts = await outside.chatTexts({
+    liveState: (chat) => ctx.host.liveState(chat, 0),
+    sessionFile: async (provider, sessionId) => {
+      const store = stores?.get(provider);
+      return store ? await findSessionFile(provider, store.root, sessionId) : null;
+    },
+  }, id);
+  const yes = outside.mentions(texts, path);
+  if (yes) {
+    if (mentioned.size > 2000) mentioned.clear();
+    mentioned.set(key, true);
+  }
+  return yes;
+}
+export const _mentioned = mentioned;

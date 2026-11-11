@@ -2728,11 +2728,20 @@ aside #connections {
 .tool-line {
   position: relative;
 }
-.tool-open {
+.tool-acts {
   position: absolute;
   top: 2px;
   right: 6px;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool-acts:empty {
+  display: none;
+}
+.tool-open,
+.tool-file {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: transparent;
@@ -2743,16 +2752,42 @@ aside #connections {
   padding: 0 6px;
   cursor: pointer;
 }
+.tool-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  padding: 0;
+}
+.tool-file-ico {
+  width: 12px;
+  height: 12px;
+}
 .tool-open[hidden] {
   display: none;
 }
 .tool-open:hover,
-.tool-open:focus-visible {
+.tool-open:focus-visible,
+.tool-file:hover,
+.tool-file:focus-visible {
   color: var(--text);
   background: var(--bg-field);
 }
-.tool-toggle:has(+ .tool-open:not([hidden])) {
-  padding-right: 64px;
+.tool-file:focus-visible,
+.tool-open:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+/* Room for the row actions: "editor ↗" about 70 px, the open-file icon 28 px. */
+.tool-line:has(> .tool-acts .tool-open:not([hidden])) > .tool-toggle {
+  padding-right: 76px;
+}
+.tool-line:has(> .tool-acts .tool-file) > .tool-toggle {
+  padding-right: 36px;
+}
+.tool-line:has(> .tool-acts .tool-file):has(> .tool-acts .tool-open:not([hidden])) > .tool-toggle {
+  padding-right: 104px;
 }
 .tool-toggle {
   display: flex;
@@ -3415,7 +3450,13 @@ span.chip-static:hover {
   z-index: 1;
 }
 .tool-line:has(.tool-open:not([hidden])) .tool-thumbs {
-  right: 72px;
+  right: 84px;
+}
+.tool-line:has(.tool-file) .tool-thumbs {
+  right: 40px;
+}
+.tool-line:has(.tool-file):has(.tool-open:not([hidden])) .tool-thumbs {
+  right: 112px;
 }
 .tool-thumbs .tool-thumb {
   display: block;

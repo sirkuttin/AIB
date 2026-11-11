@@ -1555,26 +1555,6 @@
     if (!doc) return;
     for (const c of doc.querySelectorAll('.art-card')) paintCard(c);
   }
-  /* "Show file" on a file-write row: the file opens in the Files view (beside the chat on wide windows). It never registers an
-     artifact. */
-  function previewButton(path) {
-    const b = el('button', 'art-preview', 'Show file');
-    b.type = 'button';
-    b.title = 'Show this file';
-    b.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      const FU = win.AgentFilesUI,
-        rel = relPath(path, S.chat.cwd);
-      if (!FU || rel === null) return;
-      const a = doc.createElement('a');
-      a.dataset.filePath = rel.replace(/\\/g, '/');
-      a.dataset.abs = path;
-      const scope = FU.currentScope ? FU.currentScope() : null;
-      a.dataset.scope = JSON.stringify(scope);
-      FU.openLink(a, '');
-    });
-    return b;
-  }
   /* chat.js passes every tool row through here. Returns the row itself, or a wrapper that also holds a card. */
   function decorateToolRow(box, row) {
     if (!doc || !box) return box;
@@ -1607,12 +1587,7 @@
           wrap.append(box, makeCard({ src: path, time: Number(row && row.time) || 0 }));
           return wrap;
         }
-        if (!S.chat.cwd || relPath(path, S.chat.cwd) !== null) {
-          const detail = box.querySelector && box.querySelector(':scope > .tool-detail');
-          if (detail)
-            box.insertBefore(previewButton(path), detail); // before the opened detail in Tab order
-          else box.append(previewButton(path));
-        }
+        // Other written files: the row's own "open file" icon (files-ui.js toolFile) opens them in the Files view.
       }
     } catch (e) {}
     return box;
