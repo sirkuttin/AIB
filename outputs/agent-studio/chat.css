@@ -3559,3 +3559,14 @@ span.chip-static:hover {
 .bubble.user > .bubble-head > .copy-ctl {
   margin-left: 0;
 }
+/* Your own prompts: Copy shows on hover or keyboard focus only (owner's choice); the time stays visible. Opacity, not
+   visibility, so the button keeps its space (nothing moves) and stays reachable by Tab. Touch screens always show it. */
+@media (hover: hover) {
+  .bubble.user > .bubble-head > .copy-ctl {
+    opacity: 0;
+  }
+  .bubble.user:hover > .bubble-head > .copy-ctl,
+  .bubble.user:focus-within > .bubble-head > .copy-ctl {
+    opacity: 1;
+  }
+}

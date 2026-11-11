@@ -49,7 +49,15 @@ test('the label is visually hidden but kept for screen readers', () => {
   assert.notEqual(label.visibility, 'hidden');
 });
 
-test('time and Copy always show (no hover-only reveal), time 12px muted with at least 4.5:1 on the purple box', () => {
+test('your prompts: Copy shows on hover or focus only (pointer screens), never on touch; the time always shows', () => {
+  const css = fs.readFileSync(path.join(APP_DIR, 'chat.css'), 'utf8');
+  const block = css.slice(css.indexOf('@media (hover: hover)'));
+  assert.match(block, /\.bubble\.user > \.bubble-head > \.copy-ctl \{\s*opacity: 0;/);
+  assert.match(block, /\.bubble\.user:hover > \.bubble-head > \.copy-ctl,\s*\.bubble\.user:focus-within > \.bubble-head > \.copy-ctl \{\s*opacity: 1;/);
+  assert.doesNotMatch(block.slice(0, block.indexOf('\n}\n')), /time|assistant|visibility/);
+});
+
+test('time and Copy always show outside the hover-only media block, time 12px muted with at least 4.5:1 on the purple box', () => {
   const time = { ...decl('.bubble-head time'), ...decl(HEAD + ' > time') };
   assert.equal(time['font-size'], '12px');
   const color = hex(time.color);
@@ -71,6 +79,7 @@ test('no page stylesheet hides a message time or a copy / run control until hove
   for (const file of fs.readdirSync(APP_DIR).filter((f) => f.endsWith('.css'))) {
     for (const rule of cssRules(fs.readFileSync(path.join(APP_DIR, file), 'utf8'))) {
       if (!/\.bubble|copy-|run-term|msg-note/.test(rule.selector) || !targets.test(rule.selector)) continue;
+      if (rule.context === '@media(hover:hover)' && /^\.bubble\.user(:hover|:focus-within)? > \.bubble-head > \.copy-ctl$/.test(rule.selector)) continue; // your prompts' Copy: hover-only by the owner's choice
       const d = rule.declarations;
       assert.ok(
         !('opacity' in d) || Number(d.opacity) === 1 || /:disabled/.test(rule.selector),
