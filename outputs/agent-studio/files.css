@@ -349,7 +349,7 @@ body:not(.sf-files-mode) #filesPane {
 }
 
 /* ---- the file view: replaces the chat in the middle while a file tab is on ---- */
-body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside) {
+body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#docView):not(#fileBeside) {
   display: none !important;
 }
 .sf-fileview {
@@ -610,4 +610,120 @@ a.fx-path code {
   height: 13px;
   margin-right: 3px;
   vertical-align: -2px;
+}
+
+/* ---- local docs: one row per doc, "+ New doc", doc tabs and frames (doc-links.js, files-ui.js) ---- */
+.fx-row.fx-doc .fx-docico,
+.sf-ftab .sf-docico {
+  color: var(--accent);
+}
+.fx-docpages {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.fx-newdoc {
+  color: var(--link);
+}
+.fx-newdoc-plus {
+  flex: 0 0 14px;
+  text-align: center;
+  font-weight: 600;
+}
+.fx-newdoc.editing {
+  flex-wrap: wrap;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.fx-newdoc-in {
+  flex: 1 1 120px;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-field);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.fx-newdoc-err {
+  flex: 1 0 100%;
+  padding-left: 20px;
+  color: var(--danger-text);
+  font-size: 11px;
+  white-space: normal;
+}
+.sf-docview {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.sf-docview[hidden],
+.sf-docframe[hidden] {
+  display: none;
+}
+.sf-docframe {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+/* page link chips in replies: "Release plan › Risks" */
+a.doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid var(--accent-line);
+  border-radius: 10px;
+  background: var(--accent-wash);
+  color: var(--link);
+  font-size: 0.92em;
+  line-height: 1.6;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+a.doc-chip:hover {
+  border-color: var(--accent);
+}
+a.doc-chip.gone {
+  color: var(--muted);
+  border-color: var(--line);
+  background: transparent;
+  text-decoration: line-through;
+}
+.doc-chip-ic {
+  font: 600 9px/1 Consolas, 'Cascadia Mono', monospace;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.tool-line.doc-tool .tool-line-kind {
+  color: var(--accent);
+}
+.tool-open.doc-open {
+  color: var(--link);
+}
+/* the /doc completion list: its heading row */
+.doc-pop-head {
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.doc-option.doc-new strong {
+  color: var(--link);
+}
+/* Changes tab: a doc is one row */
+.cg-doc .cg-docpages {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* the Artifacts picker's doc rows, and the doc list when the chat has no artifacts */
+.ar-docs-empty {
+  margin: 12px 0 0;
+}
+.ar-docs-empty .ar-it {
+  width: 100%;
 }

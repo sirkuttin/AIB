@@ -12,7 +12,9 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
   '`find_none` means the user changed it after your read: their edit wins; redo yours from what stands, never over their text, ' +
   'never with force. Later turns start with doc_changes {sinceRev: <your last rev>}, not a full read. The user comments on words; ' +
   'doc_comments {since: <your last seq>} shows the threads; answer with doc_reply. An edit that would remove words a comment hangs ' +
-  'on is refused `anchors_affected`: keep them.';
+  'on is refused `anchors_affected`: keep them. To point the user at a doc or a page in your reply, write a Markdown link ' +
+  '[<doc title> › <page title>](aib-doc://<doc name>/<page id>) (page ids: doc_read outline; [<doc title>](aib-doc://<doc name>) for ' +
+  'the whole doc): AIB shows it as a chip that opens the page, even after a rename. Never name the doc files or docs/ paths.';
 
 const DOC = {
   type: 'string',

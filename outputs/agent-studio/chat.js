@@ -1139,6 +1139,9 @@
     }
     if (window.ToolViews?.line && row.role === 'tool' && (row.raw || row.call)) {
       const line = window.ToolViews.line(row, () => bubbleFull(row));
+      // a doc tool row: DOC label, "open ↗", the doc-created card (doc-links.js)
+      const docRow = window.AgentDocLinks?.decorateToolRow ? window.AgentDocLinks.decorateToolRow(line, row) : line;
+      if (docRow !== line || line.classList?.contains('doc-tool')) return docRow;
       return window.AgentArtifactsUI?.decorateToolRow ? window.AgentArtifactsUI.decorateToolRow(line, row) : line;
     }
     return bubbleFull(row);
@@ -2978,6 +2981,33 @@
     const value = $('prompt').value,
       images = selectedAttachments().slice();
     if ((!value.trim() && !images.length) || !current || sendingKey || (!imageCapability() && images.length)) return;
+    // /doc <name>[ > page][: brief]: AIB opens (or makes) the doc beside the chat; only the brief goes to the agent.
+    if (window.AgentDocLinks?.isDocCommand(value)) {
+      const docKey = aliasKey(selected);
+      sendingKey = docKey;
+      renderHeader();
+      let message = '';
+      try {
+        const r = await window.AgentDocLinks.runCommand(value, { id: current, key: docKey, title: titleOf(selected) });
+        if (r.error) throw Error(r.error);
+        message = r.message || '';
+        window.AgentDocLinks.closePopup();
+        $('prompt').value = message;
+        if (!message) {
+          try {
+            drafts.delete(docKey);
+          } catch {}
+        }
+      } catch (error) {
+        fail(Error(sentence(error.message) + ' Your draft has been kept.'));
+        return;
+      } finally {
+        sendingKey = '';
+        renderHeader();
+      }
+      if (message) $('promptForm').requestSubmit();
+      return;
+    }
     const key = aliasKey(selected),
       connection = current;
     keepDraft();
@@ -3018,6 +3048,7 @@
     }
   };
   $('prompt').onkeydown = (e) => {
+    if (window.AgentDocLinks?.handleKey(e)) return;
     if (window.AgentBreadth?.handleKey(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
@@ -3743,10 +3774,16 @@
       renderConversations();
     },
   });
+  window.AgentDocLinks?.init({
+    getJson: get,
+    post: (path, body) => post(path, body),
+    notice: (m) => fail(Error(m)),
+  });
   window.AgentFilesUI?.init({
     aliasKey,
     titleOf,
     getJson: get,
+    post: (path, body) => post(path, body),
     notice: (m) => fail(Error(m)),
     conversations: () => conversations,
     open: async (c) => {

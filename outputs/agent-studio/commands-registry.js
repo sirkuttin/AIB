@@ -12,7 +12,7 @@
   //   keys      {inbox: "Alt+I"} shortcuts that other modules may or may not have
   //   editor    {name, explorer, terminal}: the default editor's name and whether Explorer / a terminal were found, or null
   //   do        the functions that exist on this page; an action whose function is missing is simply not offered
-  //               chat(id), newChat(project), openProjectEditor(), showProjectExplorer(), openProjectTerminal(), newProject(), switchProject(), openInbox(), toggleSide(), toggleActivity(), showSheet(), openSettings()
+  //               chat(id), newChat(project), openProjectEditor(), showProjectExplorer(), openProjectTerminal(), newProject(), switchProject(), openInbox(), toggleSide(), toggleActivity(), showSheet(), openSettings(), newDoc()
 
   // ---- fuzzy matching -----------------------------------------------------------------------
   // Score of one search term against one text, or -1. Substrings beat scattered letters; word starts beat the middle.
@@ -232,6 +232,16 @@
       common: true,
       when: (ctx) => can(ctx, 'newProject'),
       run: (ctx) => ctx.do.newProject(),
+    },
+    {
+      id: 'new-doc',
+      group: 'Project',
+      title: 'New doc',
+      keywords: ['doc', 'document', 'write', 'page', 'notes', 'create'],
+      shortcut: '',
+      common: true,
+      when: (ctx) => can(ctx, 'newDoc'),
+      run: (ctx) => ctx.do.newDoc(),
     },
     {
       id: 'switch-project',

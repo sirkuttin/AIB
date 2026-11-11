@@ -20,6 +20,16 @@
     const m = /^studio-artifact:\/\/([0-9a-f]{8,64})\/?$/i.exec(String(value));
     return m ? m[1].toLowerCase() : null;
   };
+  /* aib-doc://<doc name>[/<page id>] links: a doc or one of its pages (doc-links.js opens them). */
+  const docLink = (value) => {
+    const m = /^aib-doc:\/\/([^/?#\s]+)(?:\/([^/?#\s]+))?\/?$/i.exec(String(value));
+    if (!m) return null;
+    try {
+      return { name: decodeURIComponent(m[1]), page: m[2] ? decodeURIComponent(m[2]) : '' };
+    } catch {
+      return null;
+    }
+  };
   function inline(parent, value, depth = 0) {
     if (depth > 5) {
       parent.append(make('span', value));
@@ -35,7 +45,21 @@
       else if (match[2]) parent.append(make('code', match[3]));
       else if (match[4]) {
         const art = match[4].startsWith('!') ? null : artifactId(match[6]);
-        if (art) {
+        const docRef = match[4].startsWith('!') ? null : docLink(match[6]);
+        if (docRef) {
+          /* aib-doc://<doc>/<page id>: a page link chip (doc-links.js names it and resolves the page by id at click). */
+          const link = make('a');
+          link.href = '#';
+          link.className = 'doc-chip';
+          link.dataset.docName = docRef.name;
+          if (docRef.page) link.dataset.docPage = docRef.page;
+          const ic = make('span', 'doc'),
+            label = make('span', match[5]);
+          ic.className = 'doc-chip-ic';
+          label.className = 'doc-chip-t';
+          link.append(ic, label);
+          parent.append(link);
+        } else if (art) {
           const link = make('a');
           link.href = '#';
           link.className = 'artifact-link';
@@ -231,6 +255,11 @@
     if (root.AgentArtifactsUI && typeof root.AgentArtifactsUI.linkify === 'function') {
       try {
         root.AgentArtifactsUI.linkify(container);
+      } catch (e) {}
+    }
+    if (root.AgentDocLinks && typeof root.AgentDocLinks.decorate === 'function') {
+      try {
+        root.AgentDocLinks.decorate(container);
       } catch (e) {}
     }
   }

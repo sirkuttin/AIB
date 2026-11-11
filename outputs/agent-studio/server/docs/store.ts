@@ -438,11 +438,23 @@ export class DocStore {
   async list(
     projectRoot: string,
   ): Promise<
-    ({ name: string; title: string; file: string; open: boolean; pages?: number; rev?: number; blocks?: number; legacy?: true } & Partial<
-      OwnedPaths
-    >)[]
+    ({
+      name: string;
+      title: string;
+      file: string;
+      open: boolean;
+      pages?: number;
+      rev?: number;
+      blocks?: number;
+      legacy?: true;
+      pageList?: { id: string; title: string }[];
+      chat?: string | null;
+    } & Partial<OwnedPaths>)[]
   > {
-    const found = new Map<string, { title: string; file: string; pages?: number; legacy?: true; titles?: string[] }>();
+    const found = new Map<
+      string,
+      { title: string; file: string; pages?: number; legacy?: true; titles?: string[]; pageList?: { id: string; title: string }[] }
+    >();
     const docs = this.#docsDir(projectRoot);
     try {
       for await (const e of Deno.readDir(docs)) {
@@ -450,14 +462,15 @@ export class DocStore {
           const file = `${docs}${sep}${e.name}${sep}${AIBDOC}`;
           const text = await readText(file);
           if (text === null) continue;
-          let title = e.name, pages: number | undefined, titles: string[] = [];
+          let title = e.name, pages: number | undefined, titles: string[] = [], pageList: { id: string; title: string }[] = [];
           try {
             const aib = parseAib(text);
             title = aib.title || e.name;
             pages = aib.pages.length;
             titles = aib.pages.map((p) => p.title);
+            pageList = aib.pages.map((p) => ({ id: p.id, title: p.title }));
           } catch { /* listed; opening it says what is wrong */ }
-          found.set(e.name, { title, file, titles, ...(pages ? { pages } : {}) });
+          found.set(e.name, { title, file, titles, pageList, ...(pages ? { pages } : {}) });
         }
       }
       for await (const e of Deno.readDir(docs)) {
@@ -480,7 +493,16 @@ export class DocStore {
     } catch { /* no state yet */ }
     const out = [];
     for (const name of [...found.keys()].sort()) {
-      const doc = this.docs.get(await docId(projectRoot, name));
+      const id = await docId(projectRoot, name);
+      const doc = this.docs.get(id);
+      // the linked chat (the Artifacts picker's "This chat"): the open doc's, else the one its cache remembers
+      let chat: string | null = doc ? doc.chat : null;
+      if (!doc) {
+        try {
+          const meta = JSON.parse(await Deno.readTextFile(`${this.#cacheDir(id)}${sep}meta.json`)) as CacheMeta;
+          chat = typeof meta.chat === 'string' ? meta.chat : null;
+        } catch { /* never opened here */ }
+      }
       const { titles, ...f } = found.get(name)!;
       const dir = this.docDir(projectRoot, name);
       const owned = doc
@@ -492,7 +514,16 @@ export class DocStore {
         name,
         ...f,
         ...owned,
-        ...(doc ? { title: doc.title, file: doc.file, pages: doc.live.pageList().length, legacy: undefined } : {}),
+        ...(doc
+          ? {
+            title: doc.title,
+            file: doc.file,
+            pages: doc.live.pageList().length,
+            pageList: doc.live.pageList().map((p) => ({ id: p.id, title: p.title })),
+            legacy: undefined,
+          }
+          : {}),
+        chat,
         open: !!doc,
         ...(doc ? { rev: doc.live.rev, blocks: doc.live.blockCount } : {}),
       });

@@ -77,6 +77,51 @@
     return n;
   }
 
+  // ---- docs ---------------------------------------------------------------------------------------------------------------
+  // A local doc (docs/<doc>/ with its doc.aibdoc) is ONE row: never a folder, never its files. `docs`: GET /api/live/docs/list's
+  // docs ({name, title, dir, owned, pages}). Only the paths a doc owns are hidden, never a docs/** pattern: a user's
+  // docs/README.md stays a file.
+  function docIndex(docs) {
+    const byDir = new Map(),
+      owned = new Map(); // owned path -> doc
+    for (const d of docs || []) {
+      if (!d || !isStr(d.dir)) continue;
+      byDir.set(slash(d.dir), d);
+      for (const p of d.owned || []) owned.set(slash(p), d);
+    }
+    return { byDir, owned };
+  }
+  // The doc row's change badge: "A" when its doc.aibdoc is new, else "M" when any file it owns changed. From the Changes data
+  // when there is some, else from the listing's changed count of the doc's folder.
+  function docBadge(d, changes, entry) {
+    let st = '';
+    if (changes) {
+      for (const p of d.owned || []) {
+        const f = changes.get(slash(p));
+        if (!f) continue;
+        const b = badgeOf(f);
+        if (/\/doc\.aibdoc$/.test(slash(p))) st = b.status === 'A' ? 'A' : b.status === 'D' ? 'D' : st || 'M';
+        else st = st || 'M';
+      }
+    } else if (entry && (Number(entry.changed) > 0 || entry.status)) st = 'M';
+    return st ? { status: st, added: 0, removed: 0, text: st } : null;
+  }
+  const docRow = (d, depth, changes, entry) => ({
+    kind: 'doc',
+    path: slash(d.dir),
+    name: d.title || d.name,
+    doc: d,
+    pages: Math.max(1, Number(d.pages) || 1),
+    depth,
+    ignored: false,
+    open: false,
+    canOpen: false,
+    badge: docBadge(d, changes, entry),
+    changed: 0,
+    artifact: false,
+  });
+  const NEW_DOC = 'docs/+new-doc';
+
   // ---- the tree -----------------------------------------------------------------------------------------------------------
   // cache: {dir -> entries[] | 'loading' | {error}}, open: Set of open folders. Entries come from /api/live/files/list.
   // Returns the rows on screen, depth-first, with depth. An ignored folder opens only with showIgnored. Folders not listed yet
@@ -85,7 +130,8 @@
     const o = opts || {},
       out = [],
       changes = o.changes || null,
-      arts = o.artifacts || null;
+      arts = o.artifacts || null,
+      docs = o.docs || null; // docIndex()
     const walk = (dir, depth) => {
       const list = cache[dir];
       if (list === 'loading' || list === undefined) {
@@ -96,7 +142,15 @@
         out.push({ kind: 'error', path: dir + '/!', depth, text: list.error });
         return;
       }
+      // "+ New doc" at the top when the project has no docs folder yet
+      if (dir === '' && o.newDoc && !list.some((e) => e.dir && e.path === 'docs')) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
       for (const e of list) {
+        if (docs && docs.owned.has(slash(e.path))) continue;
+        const d = docs && e.dir ? docs.byDir.get(slash(e.path)) : null;
+        if (d) {
+          out.push(docRow(d, depth, changes, e));
+          continue;
+        }
         const isOpen = !!e.dir && open.has(e.path) && (!e.ignored || o.showIgnored);
         const row = {
           kind: e.dir ? 'dir' : 'file',
@@ -118,17 +172,33 @@
         out.push(row);
         if (isOpen) walk(e.path, depth + 1);
       }
+      // the last row inside docs
+      if (dir === 'docs' && o.newDoc) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
     };
     walk('', 0);
     return out;
   }
   // The filter and the Changed toggle turn the tree into a flat list: one row per file with its folder after the name.
+  // A doc's files become its one doc row (once); `o.docs`: docIndex().
   function flatRows(paths, opts) {
     const o = opts || {},
       changes = o.changes || null,
-      arts = o.artifacts || null;
-    return (paths || []).map((p) => {
-      const path = slash(p);
+      arts = o.artifacts || null,
+      docs = o.docs || null,
+      seen = new Set(),
+      out = [];
+    for (const p of paths || []) {
+      const path = slash(p),
+        d = docs ? docs.owned.get(path) : null;
+      if (d) {
+        if (!seen.has(d.dir)) out.push(Object.assign(docRow(d, 0, changes, null), { folder: '' }));
+        seen.add(d.dir);
+        continue;
+      }
+      out.push(fileRow(path));
+    }
+    return out;
+    function fileRow(path) {
       return {
         kind: 'file',
         path,
@@ -142,7 +212,7 @@
         changed: 0,
         artifact: !!(arts && arts.has(path)),
       };
-    });
+    }
   }
   const changedPaths = (map) => Array.from((map || new Map()).keys()).sort((a, b) => a.localeCompare(b));
   // Where a query matches inside a name, for <mark>: [before, hit, after] or null.
@@ -154,7 +224,7 @@
 
   // Arrow keys on the tree. rows: treeRows() output; sel: the selected path. Returns {sel, toggle, open, close, activate}.
   function keyMove(rows, sel, key) {
-    const list = (rows || []).filter((r) => r.kind === 'dir' || r.kind === 'file');
+    const list = (rows || []).filter((r) => r.kind === 'dir' || r.kind === 'file' || r.kind === 'doc' || r.kind === 'newdoc');
     if (!list.length) return { sel: '' };
     let i = list.findIndex((r) => r.path === sel);
     const cur = list[i];
@@ -226,6 +296,34 @@
   const tabId = (scope, path) => scopeId(scope) + '|' + slash(path);
   function emptyTabs() {
     return { tabs: [], active: '' };
+  }
+  // A doc tab: one per doc in a project (whichever chat opened it); `doc`: {name, title, page}. path = the doc's folder.
+  const docTabId = (name) => 'doc|' + String(name || '');
+  function openDocTab(st, scope, d, opts) {
+    const o = opts || {},
+      id = docTabId(d.name),
+      tabs = (st.tabs || []).slice();
+    const at = tabs.findIndex((t) => t.id === id);
+    if (at >= 0) {
+      const t = Object.assign({}, tabs[at], { doc: Object.assign({}, tabs[at].doc, d.page ? { page: d.page } : {}) });
+      if (o.keep) t.preview = false;
+      tabs[at] = t;
+      return { tabs, active: id };
+    }
+    const tab = {
+      id,
+      kind: 'doc',
+      path: slash(d.dir || 'docs/' + d.name),
+      name: d.title || d.name,
+      scope,
+      preview: !o.keep,
+      line: 0,
+      doc: { name: d.name, title: d.title || d.name, page: d.page || '' },
+    };
+    const prev = o.keep ? -1 : tabs.findIndex((t) => t.preview);
+    if (prev >= 0) tabs[prev] = tab;
+    else tabs.push(tab);
+    return { tabs, active: id };
   }
   function openTab(st, scope, path, opts) {
     const o = opts || {},
@@ -325,6 +423,11 @@
     scopeMenu,
     scopeLabel,
     tabId,
+    docIndex,
+    docBadge,
+    NEW_DOC,
+    docTabId,
+    openDocTab,
     emptyTabs,
     openTab,
     keepTab,

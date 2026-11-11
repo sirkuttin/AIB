@@ -129,13 +129,35 @@
   /* The one confirmation before Discard, and the line after it. The Discard button exists only for a chat with its own branch that has changes. */
   const discardQuestion = (branch) =>
     'Discard this chat\u2019s changes? This deletes its branch ' + branch + ' and can\u2019t be undone.';
-  /* The short confirmation before Merge: how many files go into the base branch. */
-  const mergeQuestion = (files, base) =>
-    'Merge ' +
-    (num(files) === 1 ? 'the 1 changed file' : 'all ' + num(files) + ' changed files') +
-    ' into ' +
-    (base || 'main') +
-    '? Edits the chat has not committed yet are committed first.';
+  /* The short confirmation before Merge: how many files go into the base branch, and each doc by its name (`docs`: the server's
+     doc rows; `files` then counts the other files only). */
+  const mergeQuestion = (files, base, docs) => {
+    const parts = [],
+      ds = Array.isArray(docs) ? docs : [];
+    if (num(files) || !ds.length) parts.push(num(files) === 1 ? 'the 1 changed file' : 'all ' + num(files) + ' changed files');
+    for (const d of ds) parts.push('the doc ' + (d.title || d.doc) + ' (' + docPagesText(d.pages) + ')');
+    return 'Merge ' + parts.join(' and ') + ' into ' + (base || 'main') + '? Edits the chat has not committed yet are committed first.';
+  };
+  /* Local docs: a doc is ONE row, "2 pages changed" (GET /api/live/changes `docs`: {doc, dir, title, pages, paths}); its paths are
+     not listed as files. */
+  const docPagesText = (n) => Math.max(1, num(n)) + (Math.max(1, num(n)) === 1 ? ' page changed' : ' pages changed');
+  const docsOfData = (data) => (data && data.git && Array.isArray(data.docs) ? data.docs.filter((d) => d && Array.isArray(d.paths)) : []);
+  function splitDocFiles(data) {
+    const docs = docsOfData(data),
+      owned = new Set();
+    const slash = (p) => String(p).split('\\').join('/');
+    for (const d of docs) for (const p of d.paths) owned.add(slash(p));
+    const files = ((data && data.git && data.files) || []).filter((f) => !owned.has(slash(f.path)));
+    return { files, docs, owned };
+  }
+  /* What the tab badge counts: the other files plus one per doc. */
+  function shownCount(data) {
+    const t = totalsOf(data),
+      s = splitDocFiles(data);
+    if (!s.docs.length) return num(t.files);
+    const listed = ((data && data.files) || []).length;
+    return Math.max(0, num(t.files) - (listed - s.files.length)) + s.docs.length;
+  }
   /* An in-page confirmation (never the blocking window.confirm, which freezes every chat's page work): a short question with two
      buttons, shown inside `host`. Escape or Cancel answer false. Resolves once; the box removes itself. */
   function askInPage(doc, host, o) {
@@ -264,6 +286,9 @@
     moreLeft,
     moreText,
     mergeQuestion,
+    docPagesText,
+    splitDocFiles,
+    shownCount,
     toggleOpen,
     pruneOpen,
     TABS,
@@ -607,7 +632,7 @@
       cache.set(path, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
       paintList();
     }
-    const files = () => (data && data.git && data.files) || [];
+    const files = () => splitDocFiles(data).files;
     const needsLoad = (f) => {
       const c = cache.get(f.path);
       return !c || c.sig !== fileSignature(f);
@@ -648,7 +673,7 @@
     }
     function paintBadges() {
       const t = data && data.git ? totalsOf(data) : null,
-        n = t ? t.files : 0;
+        n = t ? shownCount(data) : 0;
       badgeEl.textContent = badge(n);
       badgeEl.hidden = !n;
       tabChanges.setAttribute('aria-label', 'Changes' + (n ? ', ' + plural(n, 'file', 'files') + ' changed' : ''));
@@ -726,6 +751,33 @@
     let listSig = '';
     /* Files the Merge status names as conflicted (merge-ui.js). */
     const conflicted = () => (mergeUi && mergeUi.conflicts ? mergeUi.conflicts() : []);
+    /* A doc: one row, "2 pages changed". Clicked, the doc opens (beside the chat when there is room); no diff in v1. */
+    function rowForDoc(d) {
+      const item = el('div', 'cg-item cg-doc');
+      item.setAttribute('role', 'listitem');
+      item.dataset.doc = d.doc;
+      const b = el('button', 'cg-file cg-doc-btn');
+      b.type = 'button';
+      b.dataset.path = d.dir;
+      b.title = (d.title || d.doc) + ' (doc)\n' + docPagesText(d.pages) + '\nClick: open the doc';
+      const path = el('span', 'cg-path'),
+        inner = el('span', 'cg-path-in');
+      inner.append(el('b', '', d.title || d.doc));
+      path.append(inner);
+      const caret = el('span', 'cg-caret', '');
+      caret.setAttribute('aria-hidden', 'true');
+      b.append(caret, el('span', 'cg-st cg-st-doc', 'doc'), path, el('span', 'cg-docpages', docPagesText(d.pages)));
+      if (d.paths.some((p) => conflicted().includes(p))) {
+        b.append(el('span', 'cg-conflict', 'conflict'));
+        b.title += '\nHas conflict markers: Merge waits until the chat resolves them';
+      }
+      b.onclick = () => {
+        const D = win.AgentDocLinks;
+        if (D && D.openDoc) D.openDoc({ name: d.doc, title: d.title, chat: { id: chat.id, key: chat.key || '' }, from: 'chat' });
+      };
+      item.append(b);
+      return item;
+    }
     function moreRow() {
       const left = moreLeft(data);
       if (!left) return null;
@@ -736,8 +788,10 @@
       return b;
     }
     function paintList(force) {
-      const fs = files();
+      const fs = files(),
+        ds = docsOfData(data);
       const sig = JSON.stringify([
+        ds.map((d) => [d.doc, d.title, d.pages, d.paths.length]),
         force ? Math.random() : 0,
         moreLeft(data),
         loadingMore,
@@ -756,13 +810,13 @@
         focus = ae && list.contains(ae) ? ae.dataset.path : null;
       const more = moreRow(),
         moreHad = ae && ae.classList && ae.classList.contains('cg-more');
-      list.replaceChildren(...fs.map(rowFor), ...(more ? [more] : []));
+      list.replaceChildren(...ds.map(rowForDoc), ...fs.map(rowFor), ...(more ? [more] : []));
       list.scrollTop = top;
       if (focus) {
         const n = [...list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === focus);
         if (n) n.focus({ preventScroll: true });
       } else if (moreHad && more) more.focus({ preventScroll: true });
-      list.hidden = !fs.length;
+      list.hidden = !fs.length && !ds.length;
     }
     function diffRows(h, f, detail) {
       const frag = doc.createDocumentFragment();
@@ -849,13 +903,20 @@
             paintFoot();
             paintList();
           },
-          confirm: (o) => ask({ text: mergeQuestion(o.files, o.base), ok: 'Merge', label: 'Merge this chat' }),
+          confirm: (o) => {
+            const s = splitDocFiles(data);
+            return ask({
+              text: s.docs.length ? mergeQuestion(Math.max(0, num(o.files) - s.docs.length), o.base, s.docs) : mergeQuestion(o.files, o.base),
+              ok: 'Merge',
+              label: 'Merge this chat',
+            });
+          },
         });
       if (mergeUi)
         mergeUi.update({
           id: chat.id,
           busy: chat.busy,
-          files: data && data.git ? totalsOf(data).files : 0,
+          files: data && data.git ? shownCount(data) : 0,
           branchView: !!(data && data.scope === 'branch'),
         });
     }

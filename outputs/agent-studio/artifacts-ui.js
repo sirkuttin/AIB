@@ -113,8 +113,23 @@
     const days = Math.round(secs / 86400);
     return days === 1 ? 'yesterday' : days + ' d ago';
   }
-  /* Picker rows in two groups ("Pinned", "This chat"); an empty group is left out. */
-  function pickerGroups(list, selectedId, nowMs) {
+  /* A local doc's history (no chat, no source file): the doc's History panel shows it, the picker never does (the server leaves
+     them out of the list already; this keeps an old answer from showing one). */
+  const isDocHistory = (a) => !!a && !a.conversationId && !a.sourcePath;
+  /* The doc rows: {doc: true, name, title, badge 'doc', meta "4 pages"}. `chatKey`: the chat's lasting id(s) a doc links to. */
+  const docRow = (d) => ({
+    doc: true,
+    id: 'doc:' + d.name,
+    name: d.name,
+    badge: 'doc',
+    title: d.title || d.name,
+    meta: Math.max(1, num(d.pages)) + (Math.max(1, num(d.pages)) === 1 ? ' page' : ' pages'),
+    pinned: false,
+    on: false,
+  });
+  /* Picker rows in groups ("Pinned", "This chat", "Docs in this project"); an empty group is left out. Docs linked to this chat
+     join "This chat" after its artifacts; the project's other docs get their own group. */
+  function pickerGroups(list, selectedId, nowMs, docs, chatKeys) {
     const row = (a) => ({
       id: a.id,
       badge: kindInfo(a.kind).badge,
@@ -123,16 +138,22 @@
       pinned: !!a.pinned,
       on: a.id === selectedId,
     });
-    const ordered = orderArtifacts(list),
+    const ordered = orderArtifacts((Array.isArray(list) ? list : []).filter((a) => !isDocHistory(a))),
       pinned = ordered.filter((a) => a.pinned).map(row),
       rest = ordered.filter((a) => !a.pinned).map(row);
+    const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean),
+      ds = (Array.isArray(docs) ? docs : []).filter((d) => d && d.name),
+      mine = ds.filter((d) => d.chat && keys.includes(d.chat)).map(docRow),
+      others = ds.filter((d) => !(d.chat && keys.includes(d.chat))).map(docRow);
     const groups = [];
     if (pinned.length) groups.push({ key: 'pinned', label: 'Pinned', items: pinned });
-    if (rest.length) groups.push({ key: 'chat', label: 'This chat', items: rest });
+    if (rest.length || mine.length) groups.push({ key: 'chat', label: 'This chat', items: rest.concat(mine) });
+    if (others.length) groups.push({ key: 'docs', label: 'Docs in this project', items: others });
     return groups;
   }
-  /* One artifact: plain text, no caret. Several: a dropdown. */
-  const pickerIsPlain = (list) => (Array.isArray(list) ? list.length : 0) <= 1;
+  /* One artifact and no docs: plain text, no caret. Several, or any doc: a dropdown. */
+  const pickerIsPlain = (list, docs) =>
+    (Array.isArray(list) ? list.filter((a) => !isDocHistory(a)).length : 0) <= 1 && !(Array.isArray(docs) && docs.length);
   /* The version shown: the user's pick, or the latest when following. */
   const shownVersion = (latest, picked) =>
     picked != null && picked >= 1 && picked <= num(latest) ? Math.floor(picked) : Math.max(1, num(latest) || 1);
@@ -570,6 +591,7 @@
     versionUrlFrom,
     orderArtifacts,
     relTime,
+    isDocHistory,
     pickerGroups,
     pickerIsPlain,
     shownVersion,
@@ -941,6 +963,60 @@
       }, 5000);
   }
 
+  /* -- local docs in the picker: doc-links.js keeps the project's doc list; picking a doc opens it beside the chat (a tab below
+     1280 px), never inside this narrow viewer. -- */
+  const DL = () => win && win.AgentDocLinks;
+  let docsAsked = '';
+  function projectDocs() {
+    const D = DL();
+    if (!D || !S.chat.id) return [];
+    const now = D.cached(S.chat.id, 'main');
+    if (!now && docsAsked !== S.chat.id) {
+      docsAsked = S.chat.id;
+      D.listFor(S.chat.id, 'main').then(() => paintBar());
+    }
+    return now || [];
+  }
+  function chatKeys() {
+    const FU = win && win.AgentFilesUI,
+      c = FU && FU.currentChat ? FU.currentChat() : null;
+    return [S.chat.id, c && c.key, c && c.id].filter(Boolean);
+  }
+  function openDocRow(it) {
+    const D = DL();
+    if (D && D.openDoc) D.openDoc({ name: it.name, title: it.title, chat: { id: S.chat.id }, from: 'chat' });
+  }
+  function docButton(it) {
+    const row = popItem('ar-doc');
+    row.dataset.doc = it.name;
+    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
+    row.title = 'Open ' + it.title + ' beside the chat';
+    row.addEventListener('click', () => {
+      closePop();
+      openDocRow(it);
+    });
+    return row;
+  }
+  /* No artifacts yet: the project's docs still show, under the empty text. */
+  function paintEmptyDocs() {
+    if (!ui) return;
+    let box = ui.empty.querySelector('.ar-docs-empty');
+    const groups = pickerGroups([], '', undefined, projectDocs(), chatKeys());
+    if (!groups.length) {
+      if (box) box.remove();
+      return;
+    }
+    if (!box) {
+      box = el('div', 'ar-docs-empty');
+      ui.empty.append(box);
+    }
+    box.replaceChildren();
+    for (const g of groups) {
+      box.append(el('div', 'ar-gh', g.label));
+      for (const it of g.items) box.append(docButton(it));
+    }
+  }
+
   /* -- painting: tab badge, toolbar, banner -- */
   function paintCount() {
     if (!ui) return;
@@ -960,9 +1036,10 @@
     if (none) {
       ui.avail.hidden = true;
       ui.fresh.hidden = true;
+      paintEmptyDocs();
       return;
     }
-    const plain = pickerIsPlain(S.list.length ? S.list : [a]);
+    const plain = pickerIsPlain(S.list.length ? S.list : [a], projectDocs());
     ui.pick.replaceChildren(
       el('span', 'ar-k', kindInfo(a.kind).badge),
       el('span', 'ar-pick-title', a.title || 'Untitled'),
@@ -1234,15 +1311,20 @@
       return;
     }
     closePop();
-    const a = current();
-    if (!a || pickerIsPlain(S.list)) return;
+    const a = current(),
+      docs = projectDocs();
+    if (!a || pickerIsPlain(S.list, docs)) return;
     ui.popFor = 'pick';
     ui.pick.setAttribute('aria-expanded', 'true');
-    const groups = pickerGroups(S.list, a.id);
+    const groups = pickerGroups(S.list, a.id, undefined, docs, chatKeys());
     const frag = doc.createDocumentFragment();
     for (const g of groups) {
       frag.append(el('div', 'ar-gh', g.label));
       for (const it of g.items) {
+        if (it.doc) {
+          frag.append(docButton(it));
+          continue;
+        }
         const row = popItem(it.on ? 'on' : '');
         row.dataset.id = it.id;
         const star = el('span', 'ar-star' + (it.pinned ? ' on' : ''), it.pinned ? '★' : '☆');

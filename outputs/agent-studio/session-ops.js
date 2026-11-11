@@ -260,7 +260,17 @@
     renderStrip(b);
     renderOps(snapshot, b);
     if (root.AgentSlashCommands && ensureController())
-      controller.setCommands(snapshot && !snapshot.closed && b ? b.commands : []);
+      controller.setCommands(snapshot && !snapshot.closed ? withAibCommands(b ? b.commands : []) : []);
+  }
+  // AIB's own commands, before the agent's: /doc opens or makes a local doc (doc-links.js runs it; the agent only gets the brief).
+  const DOC_COMMAND = {
+    name: 'doc',
+    hint: '<name> [> page] [: brief]',
+    description: "Start or open a doc with this chat's agent",
+  };
+  function withAibCommands(list) {
+    const agent = Array.isArray(list) ? list.filter((c) => !(c && c.name === 'doc')) : [];
+    return root.AgentDocLinks ? [DOC_COMMAND].concat(agent) : agent;
   }
 
   const api = { formatUsage, stripSummary, sync, handleKey: (e) => !!(controller && controller.handleKey(e)) };

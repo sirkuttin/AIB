@@ -24,6 +24,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/files/read                 the Files view: one file, read only
  *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
  *   POST /api/live/docs/open                  local docs: the page opens a doc (docs_routes.ts)
+ *   GET  /api/live/docs/list                  local docs: the docs of a chat's project folder (Files, Ctrl+K, chips, picker)
  *   GET  /api/live/docs/info                  local docs: rev, skipped file edits, history of an open doc
  *   GET  /api/live/docs/socket                local docs: the editor's WebSocket
  *   POST /api/live/docs/tool                  local docs: an agent's doc_* tool (agent key)
@@ -54,6 +55,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/read', 'read', 'get'],
   ['GET', '/api/live/files/outside', 'read', 'get'],
   ['POST', '/api/live/docs/open', 'write', 'body'],
+  ['GET', '/api/live/docs/list', 'read', 'get'],
   ['GET', '/api/live/docs/info', 'read', 'get'],
   ['GET', '/api/live/docs/socket', 'write', 'get'],
   ['POST', '/api/live/docs/tool', 'artifacts.tool', 'own-gate'],

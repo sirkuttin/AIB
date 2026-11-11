@@ -95,6 +95,8 @@
       d.uiReset = () => T.reset('ui');
     }
     d.showSheet = () => openSheet();
+    if (root.AgentFilesUI && typeof root.AgentFilesUI.startNewDoc === 'function' && chat)
+      d.newDoc = () => root.AgentFilesUI.startNewDoc();
     if (root.AgentSettingsUI && typeof root.AgentSettingsUI.open === 'function')
       d.openSettings = () => root.AgentSettingsUI.open();
     const projects = W && typeof W.paletteProjects === 'function' ? W.paletteProjects() : [];
@@ -270,7 +272,7 @@
     ctx = makeCtx();
     const sources = { chats: collect(), projects: ctx.projects, actions: C().buildActions(ctx) };
     results = C().compose(sources, input.value, mode, MAX_RESULTS);
-    results = results.concat(fileResults());
+    results = results.concat(docResults(), fileResults());
     if (active >= results.length) active = Math.max(0, results.length - 1);
     drawTabs();
     const frag = doc().createDocumentFragment();
@@ -297,6 +299,12 @@
         text.append(el('small', (r.dir || 'top folder') + (r.branch ? ' · ⎇ ' + r.branch : ''), 'switcher-sub'));
         li.title = r.path;
         li.append(text, el('span', 'File', 'switcher-kind'));
+      } else if (r.kind === 'doc' || r.kind === 'page') {
+        li.append(el('span', '≡', 'switcher-ico switcher-doc'));
+        text.append(el('span', r.title, 'switcher-title'));
+        text.append(el('small', r.sub, 'switcher-sub'));
+        li.title = r.kind === 'page' ? r.title + ' · page in ' + r.docTitle : r.title + ' · doc';
+        li.append(text, el('span', r.kind === 'page' ? 'Page' : 'Doc', 'switcher-kind'));
       } else if (r.kind === 'project') {
         li.append(el('span', '▤', 'switcher-ico'));
         text.append(el('span', r.name, 'switcher-title'));
@@ -359,6 +367,29 @@
     }
     return fileHits;
   }
+  // Docs and their pages in the open chat's project ("Risks · page in Release plan"): from the doc list doc-links.js keeps.
+  const MAX_DOCS = 6;
+  let docQ = '';
+  function docResults() {
+    const D = root.AgentDocLinks,
+      FU = root.AgentFilesUI,
+      q = C().parseQuery(input.value, mode);
+    const chat = FU && FU.currentChat ? FU.currentChat() : null;
+    if (!D || !chat || !chat.id || q.mode !== 'all' || String(q.query || '').trim().length < 2) return [];
+    const text = String(q.query).trim(),
+      docs = D.cached(chat.id, 'main');
+    if (!docs && text !== docQ) {
+      docQ = text;
+      D.listFor(chat.id, 'main').then(() => {
+        if (docQ === text && dialog && dialog.open) draw();
+      });
+    }
+    return D.searchDocs(docs || [], text, MAX_DOCS).map((h) =>
+      h.kind === 'page'
+        ? { kind: 'page', title: h.page.title, sub: 'page in ' + h.doc.title, docTitle: h.doc.title, name: h.doc.name, page: h.page.id, chat }
+        : { kind: 'doc', title: h.doc.title, sub: 'Doc · ' + D.pagesText(h.doc.pages), docTitle: h.doc.title, name: h.doc.name, page: '', chat },
+    );
+  }
   function choose(i) {
     const r = results[i];
     if (!r) return;
@@ -376,6 +407,11 @@
       return;
     }
     close();
+    if (r.kind === 'doc' || r.kind === 'page') {
+      const D = root.AgentDocLinks;
+      if (D) D.openDoc({ name: r.name, title: r.docTitle, page: r.page, chat: r.chat, from: 'ctrlk' });
+      return;
+    }
     if (r.kind === 'file') {
       const FU = root.AgentFilesUI;
       if (FU && FU.openFile) FU.openFile(r.scope, r.path, { keep: true });

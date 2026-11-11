@@ -5,6 +5,9 @@
  *
  *   POST /api/live/docs/open {id, name, create?}    the page opens a doc (`create`: Markdown, makes a new one and links it to chat
  *                                                   `id`; opening never re-links): {doc, name, file, rev, epoch, ...info}.
+ *   GET  /api/live/docs/list?id=<chat>&root=chat|main  the docs of the folder the Files view shows for that chat (files_routes
+ *                                                   rootFor): {docs: [{name, title, dir, owned, pages, pageList: [{id, title}],
+ *                                                   chat (linked chat), open}]}. Files, Ctrl+K, chips and the Artifacts picker.
  *   POST /api/live/docs/link {doc, id}              link the doc to chat `id` (the user picked it): comments "Send" go there.
  *   GET  /api/live/docs/info?doc=<doc>              what the UI can show about an open doc: store.info (pages, rev, epoch, skipped
  *                                                   file edits, lossy blocks, linked chat, comment threads, claims, delete requests,
@@ -100,6 +103,11 @@ export function docsRoutes(): Map<string, Route> {
     } catch (error) {
       return refused(error);
     }
+  });
+  routes.set('GET /api/live/docs/list', async (ctx, url) => {
+    const root = await rootFor(ctx, { id: [url.searchParams.get('id') ?? ''], root: [url.searchParams.get('root') || 'main'] });
+    if (typeof root !== 'string') return root;
+    return [200, { ok: true, docs: await ctx.docs.list(root) }];
   });
   routes.set(
     'POST /api/live/docs/link',

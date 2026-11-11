@@ -59,6 +59,18 @@
   const CODE_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|c|h|cpp|cs|php|sh|ps1|css|scss|json|ya?ml|toml|sql|kt|swift|lua)$/i;
   const IMG_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
   const fileIcon = (name) => icon(IMG_EXT.test(name) ? IMG_D : CODE_EXT.test(name) ? CODE_D : FILE_D, 'fx-ico');
+  // A doc: the docs' own icon (doc-icons.js) when the page has it, else a page with lines; in the accent colour.
+  const DOC_D = 'M3.5 1.5h6l3 3v10h-9zM5.5 7h5M5.5 9.5h5M5.5 12h3';
+  const docIcon = (cls) => {
+    const I = root.AIBDocIcons;
+    try {
+      if (I && I.icon) return I.icon('doc', cls);
+    } catch (e) {
+      /* fall back */
+    }
+    return icon(DOC_D, cls);
+  };
+  const DL = () => root.AgentDocLinks;
 
   // ---- state -------------------------------------------------------------------------------------------------------------
   const MODE_KEY = 'aib-sidebar-mode';
@@ -173,10 +185,42 @@
     }
     return t;
   }
+  // The docs of the scope's folder (doc-links.js keeps the lists): one row each, their files hidden. Asked again whenever the top
+  // folder or docs/ is listed again.
+  function docsOf(scope) {
+    const D = DL();
+    if (!D || !scope || scope.root === 'outside') return null;
+    const now = D.cached(scope.id, scope.root);
+    if (!now) loadDocs(scope, false);
+    if (!now || scope.root !== 'chat') return now;
+    // A worktree chat's copy: its doc rows are the main checkout's docs (where the doc lives and opens): their names and pages.
+    const main = D.cached(scope.id, 'main');
+    if (!main) {
+      loadDocs(Object.assign({}, scope, { root: 'main' }), false);
+      return now;
+    }
+    return now.map((d) => {
+      const m = main.find((x) => x.name === d.name);
+      return m ? Object.assign({}, d, { title: m.title, pages: m.pages, pageList: m.pageList, chat: m.chat }) : d;
+    });
+  }
+  function loadDocs(scope, force) {
+    const D = DL();
+    if (!D || !scope || scope.root === 'outside') return Promise.resolve([]);
+    return D.listFor(scope.id, scope.root, force).then((docs) => {
+      paint();
+      return docs;
+    });
+  }
+  const docIndexOf = (scope) => {
+    const docs = docsOf(scope);
+    return docs ? F().docIndex(docs) : null;
+  };
   async function listDir(scope, dir) {
     const t = treeOf(scope);
     if (t.cache[dir] === 'loading') return;
     t.cache[dir] = 'loading';
+    if (dir === '' || dir === 'docs') loadDocs(scope, true);
     try {
       const r = await host.getJson('/api/live/files/list', { id: scope.id, root: scope.root, dir });
       t.cache[dir] = (r && r.entries) || [];
@@ -278,12 +322,26 @@
     try {
       const r = await host.getJson('/api/live/files/search', { id: scope.id, root: scope.root, q });
       if (mine !== searchSeq) return;
-      results = { q, matches: (r && r.matches) || [], total: (r && r.total) || 0 };
+      const all = (r && r.matches) || [],
+        matches = withoutDocFiles(scope, all);
+      results = { q, matches, total: Math.max(0, ((r && r.total) || 0) - (all.length - matches.length)) };
     } catch (e) {
       if (mine !== searchSeq) return;
       results = { q, matches: [], total: 0, error: (e && e.message) || 'Search failed' };
     }
     paint();
+  }
+
+  // A search's hits without the files a doc owns (the doc itself is found by its title: docHits).
+  function withoutDocFiles(scope, matches) {
+    const idx = docIndexOf(scope);
+    return idx ? matches.filter((m) => !idx.owned.has(F().slash(m.path))) : matches;
+  }
+  function docHits(scope, q) {
+    const docs = docsOf(scope),
+      D = DL();
+    if (!docs || !D) return [];
+    return docs.filter((d) => D.looseScore(d.title, q) >= 40 || D.looseScore(d.name, q) >= 40);
   }
 
   // ---- sidebar: the switch and the Files pane ---------------------------------------------------------------------------
@@ -405,12 +463,19 @@
     if (!scope) return { rows: [], scope: null, tree: null, changes: null };
     const t = treeOf(scope),
       ch = changesFor(scope),
-      arts = artifactSet(t.root);
+      arts = artifactSet(t.root),
+      docs = docIndexOf(scope);
     const changes = ch ? ch.map : null;
     let rows;
-    if (query.trim() && results) rows = F().flatRows(results.matches.map((m) => m.path), { changes, artifacts: arts });
-    else if (changedOnly) rows = F().flatRows(changes ? F().changedPaths(changes) : changedFromListing(t), { changes, artifacts: arts });
-    else rows = F().treeRows(t.cache, t.open, { changes, artifacts: arts, showIgnored });
+    if (query.trim() && results) {
+      rows = F().flatRows(results.matches.map((m) => m.path), { changes, artifacts: arts, docs });
+      const hits = docHits(scope, query.trim())
+        .map((d) => F().flatRows([F().slash(d.dir) + '/doc.aibdoc'], { changes, docs })[0])
+        .filter((r) => r && r.kind === 'doc');
+      rows = hits.concat(rows.filter((r) => !hits.some((h) => h.path === r.path)));
+    } else if (changedOnly)
+      rows = F().flatRows(changes ? F().changedPaths(changes) : changedFromListing(t), { changes, artifacts: arts, docs });
+    else rows = F().treeRows(t.cache, t.open, { changes, artifacts: arts, showIgnored, docs, newDoc: !!DL() && scope.root !== 'outside' });
     return { rows, scope, tree: t, changes };
   }
   // Without the Changes data (another chat's copy), the Changed list comes from what the listings already showed.
@@ -455,19 +520,21 @@
     else if (query.trim() && !results) frag.append(el('p', 'Searching…', 'fx-empty'));
     else if (query.trim() && results && !rows.length) frag.append(el('p', results.error || 'No file matches.', 'fx-empty'));
     else if (changedOnly && !rows.length) frag.append(el('p', 'Nothing changed here.', 'fx-empty'));
-    const files = rows.filter((r) => r.kind === 'file' || r.kind === 'dir');
+    const files = rows.filter((r) => r.kind === 'file' || r.kind === 'dir' || r.kind === 'doc' || r.kind === 'newdoc');
     if (files.length && !files.some((r) => r.path === sel)) sel = files[0].path;
     for (const r of rows) frag.append(rowNode(r, scope));
     els.tree.replaceChildren(frag);
     const hadFocus = doc().activeElement && els.tree.contains(doc().activeElement);
     if (hadFocus) focusRow(sel);
-    const items = rows.filter((r) => r.kind === 'file' || r.kind === 'dir').length;
+    const items = rows.filter((r) => r.kind === 'file' || r.kind === 'dir' || r.kind === 'doc').length;
     els.footText.textContent =
       query.trim() && results
         ? results.total + (results.total === 1 ? ' match' : ' matches') + ' · Enter opens'
         : items + (items === 1 ? ' item' : ' items');
   }
   function rowNode(r, scope) {
+    if (r.kind === 'doc') return docRowNode(r, scope);
+    if (r.kind === 'newdoc') return newDocNode(r, scope);
     if (r.kind === 'loading' || r.kind === 'error') {
       const n = el('div', r.kind === 'loading' ? 'Loading…' : r.text, 'fx-row fx-note-row');
       n.style.setProperty('--d', String(r.depth));
@@ -524,7 +591,188 @@
     n.addEventListener('dblclick', () => {
       if (r.kind === 'file') activateRow(r.path, { keep: true });
     });
+    if (r.kind === 'dir')
+      n.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        folderMenu(n, e.clientX, e.clientY);
+      });
     return n;
+  }
+  const pagesText = (n) => n + (n === 1 ? ' page' : ' pages');
+  // A doc: one row, no caret, never expands. Its name, its page count and a change badge.
+  function docRowNode(r, scope) {
+    const n = el('div', null, 'fx-row fx-doc' + (r.path === sel ? ' sel' : ''));
+    n.dataset.path = r.path;
+    n.dataset.kind = 'doc';
+    n.setAttribute('role', 'treeitem');
+    n.tabIndex = r.path === sel ? 0 : -1;
+    n.style.setProperty('--d', String(r.depth));
+    const caret = el('span', '', 'fx-caret');
+    caret.setAttribute('aria-hidden', 'true');
+    n.append(caret, docIcon('fx-ico fx-docico'));
+    const name = el('span', null, 'fx-name');
+    const hit = query.trim() && results ? F().markHit(r.name, query) : null;
+    if (hit) name.append(doc().createTextNode(hit[0]), el('mark', hit[1]), doc().createTextNode(hit[2]));
+    else name.textContent = r.name;
+    n.append(name, el('span', pagesText(r.pages), 'fx-docpages'));
+    n.title = r.name + ' · doc, ' + pagesText(r.pages) + '\nClick: open. Double-click: keep the tab open';
+    if (r.badge) {
+      const b = btn(null, 'fx-chg ' + r.badge.status, 'Changed: show the Changes tab');
+      b.tabIndex = -1;
+      b.append(el('span', r.badge.text, 'st'));
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const live = CH();
+        if (live && live.reveal) live.reveal('changes');
+      };
+      n.append(b);
+    }
+    n.addEventListener('click', () => {
+      sel = r.path;
+      openDocRow(scope, r.doc, false);
+    });
+    n.addEventListener('dblclick', () => openDocRow(scope, r.doc, true));
+    n.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      folderMenu(n, e.clientX, e.clientY);
+    });
+    return n;
+  }
+  function openDocRow(scope, d, keep) {
+    openDoc(scope, { name: d.name, title: d.title || d.name, dir: d.dir, where: 'tab', preview: !keep });
+  }
+  // "+ New doc": a visible row (the last one inside docs, or the top one when there is no docs folder). Clicked, it turns into a
+  // name field reading "Untitled doc" with the name selected; Enter makes the doc with one page and opens it.
+  let newDoc = null; // {value, error, busy, focus} while the name field shows
+  function newDocNode(r, scope) {
+    const n = el('div', null, 'fx-row fx-newdoc' + (r.path === sel ? ' sel' : ''));
+    n.dataset.path = r.path;
+    n.dataset.kind = 'newdoc';
+    n.setAttribute('role', 'treeitem');
+    n.tabIndex = r.path === sel && !newDoc ? 0 : -1;
+    n.style.setProperty('--d', String(r.depth));
+    n.append(el('span', '', 'fx-caret'));
+    if (!newDoc) {
+      n.append(el('span', '+', 'fx-newdoc-plus'), el('span', 'New doc', 'fx-name'));
+      n.title = 'Make a new doc in this project';
+      n.addEventListener('click', () => startNewDoc());
+      return n;
+    }
+    n.classList.add('editing');
+    const input = el('input', null, 'fx-newdoc-in');
+    input.type = 'text';
+    input.value = newDoc.value;
+    input.setAttribute('aria-label', 'Name of the new doc');
+    input.maxLength = 60;
+    input.disabled = !!newDoc.busy;
+    input.addEventListener('input', () => {
+      newDoc.value = input.value;
+      newDoc.error = '';
+    });
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        createDoc(scope, input.value);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        newDoc = null;
+        paint();
+      }
+    });
+    input.addEventListener('blur', () => {
+      (root.setTimeout || setTimeout)(() => {
+        if (newDoc && !newDoc.busy && !newDoc.error && els && !els.tree.contains(doc().activeElement)) {
+          newDoc = null;
+          paint();
+        }
+      }, 150);
+    });
+    n.append(input);
+    if (newDoc.error) n.append(el('span', newDoc.error, 'fx-newdoc-err'));
+    if (newDoc.focus) {
+      newDoc.focus = false;
+      (root.setTimeout || setTimeout)(() => {
+        if (input.focus) input.focus();
+        if (input.select) input.select();
+      }, 0);
+    }
+    return n;
+  }
+  // New doc from Files, a folder's right-click menu or Ctrl+K: the Files view shows the name field in place.
+  function startNewDoc() {
+    if (!host) return;
+    if (mode !== 'files') setMode('files');
+    if (W() && W().openDrawer) W().openDrawer();
+    const scope = currentScope();
+    if (!scope) return;
+    query = '';
+    results = null;
+    changedOnly = false;
+    if (els) els.filter.value = '';
+    const t = treeOf(scope),
+      top = t.cache[''];
+    if (Array.isArray(top) && top.some((e) => e.dir && e.path === 'docs')) {
+      t.open.add('docs');
+      if (t.cache.docs === undefined) listDir(scope, 'docs');
+    } else if (top === undefined) listDir(scope, '');
+    const names = (docsOf(scope) || []).map((d) => String(d.title || '').toLowerCase());
+    let value = 'Untitled doc',
+      k = 2;
+    while (names.includes(value.toLowerCase())) value = 'Untitled doc ' + k++;
+    newDoc = { value, error: '', busy: false, focus: true };
+    sel = F().NEW_DOC;
+    paint();
+  }
+  // Enter in the name field: POST /api/live/docs/open with create (the doc is linked to the chat the Files view follows).
+  async function createDoc(scope, value) {
+    const name = String(value || '').trim();
+    if (!newDoc || newDoc.busy) return;
+    if (!name) {
+      newDoc.error = 'Type a name';
+      newDoc.focus = true;
+      paint();
+      return;
+    }
+    newDoc.busy = true;
+    paint();
+    try {
+      const r = await host.post('docs/open', { id: scope.id, name, create: '' });
+      newDoc = null;
+      await loadDocs(scope, true);
+      const t = treeOf(scope);
+      listDir(scope, '');
+      if (t.open.has('docs') || t.cache.docs !== undefined) {
+        t.open.add('docs');
+        listDir(scope, 'docs');
+      }
+      openDoc(scope, { name: r.name, title: r.title || r.name, dir: r.dir, page: '', where: 'tab', preview: false });
+    } catch (e) {
+      if (!newDoc) return;
+      newDoc.busy = false;
+      newDoc.focus = true;
+      newDoc.error =
+        e && (e.code === 'doc_exists' || e.code === 'folder_exists')
+          ? 'That name is taken: choose another'
+          : (e && e.message) || 'Could not make the doc';
+      paint();
+    }
+  }
+  function folderMenu(anchor, x, y) {
+    if (menu) closeMenu(false);
+    const m = menuShell('Folder', anchor);
+    const b = btn('New doc', 'ws-menu-item fx-menu-it');
+    b.setAttribute('role', 'menuitem');
+    b.onclick = () => {
+      closeMenu(false);
+      startNewDoc();
+    };
+    m.append(b);
+    doc().body.append(m);
+    menu = m;
+    m.style.left = Math.max(8, Math.round(x)) + 'px';
+    m.style.top = Math.max(8, Math.round(y)) + 'px';
+    if (b.focus) b.focus();
   }
   function focusRow(path) {
     if (!els) return;
@@ -658,6 +906,10 @@
   function activateRow(path, o) {
     const scope = currentScope();
     if (!scope) return;
+    if (path === F().NEW_DOC) return startNewDoc();
+    const idx = docIndexOf(scope),
+      d = idx ? idx.byDir.get(path) : null;
+    if (d) return openDocRow(scope, d, !!(o && o.keep));
     if (o && o.beside) openFile(scope, path, { keep: true, beside: true });
     else openFile(scope, path, { keep: !!(o && o.keep) });
   }
@@ -677,6 +929,133 @@
       showFile();
     }
     if (W() && W().closeDrawer && !o.keepDrawer) W().closeDrawer();
+  }
+  // ---- doc tabs -------------------------------------------------------------------------------------------------------------
+  // A doc shows in the doc page (doc.html) in a frame, by the doc-tab contract: a tab in the strip (from Files, New doc, Ctrl+K; a
+  // preview tab on a single click), or beside the chat (from a chat at 1280 px and wider). A doc already open is re-used: its frame
+  // is told to go to the page. Frames stay alive while their tab exists (moving a frame would reload it).
+  const frames = new Map(); // 'main|' or 'beside|' + tab id -> {frame, tab, where}
+  function openDoc(scope, d) {
+    if (!scope || !d || !d.name) return;
+    const where = d.where === 'beside' ? 'beside' : 'tab';
+    if (where === 'beside') {
+      beside = F().openDocTab(beside, scope, d, { keep: true });
+      setBeside(true);
+      gotoIfOpen('beside', d);
+      drawBeside();
+    } else {
+      setTabsHere(F().openDocTab(tabsHere(), scope, d, { keep: !d.preview }));
+      gotoIfOpen('main', d);
+      showFile();
+      if (W() && W().closeDrawer) W().closeDrawer();
+    }
+  }
+  function gotoIfOpen(where, d) {
+    const rec = frames.get(where + '|' + F().docTabId(d.name));
+    if (!rec || !(d.page || d.block || d.thread)) return;
+    try {
+      if (rec.frame.contentWindow)
+        rec.frame.contentWindow.postMessage({ type: 'aib-doc:goto', page: d.page || '', block: d.block || '', thread: d.thread || '' }, originOf());
+    } catch (e) {
+      /* the frame is still loading */
+    }
+  }
+  const originOf = () => (root.location && root.location.origin) || '*';
+  // Where doc frames live: main = #docView right after #fileView (box), beside = the beside box's third child.
+  let docViewEl = null;
+  function docHolder(where, box) {
+    if (where === 'beside') {
+      const b = besideBox();
+      return b ? b.children[2] : null;
+    }
+    if (docViewEl && docViewEl.parentNode) return docViewEl;
+    if (!box || !box.parentNode) return null;
+    docViewEl = el('section', null, 'sf-docview');
+    docViewEl.id = 'docView';
+    docViewEl.setAttribute('aria-label', 'Doc');
+    docViewEl.hidden = true;
+    box.after(docViewEl);
+    return docViewEl;
+  }
+  function showDocFrame(holder, tab, where) {
+    const key = where + '|' + tab.id;
+    let rec = frames.get(key);
+    if (!rec) {
+      const f = el('iframe', null, 'sf-docframe');
+      f.title = 'Doc: ' + tab.name;
+      f.src = DL()
+        ? DL().docUrl({ chat: tab.scope.id, name: tab.doc.name, page: tab.doc.page, preview: !!tab.preview, where: where === 'beside' ? 'beside' : 'tab' })
+        : 'about:blank';
+      rec = { frame: f, tab, where };
+      frames.set(key, rec);
+    }
+    rec.tab = tab;
+    if (rec.frame.parentNode !== holder) holder.append(rec.frame);
+    for (const r of frames.values()) if (r.where === where) r.frame.hidden = r !== rec;
+  }
+  function pruneFrames(where, tabs) {
+    for (const [k, r] of Array.from(frames)) {
+      if (r.where !== where || (tabs || []).some((t) => t.id === r.tab.id)) continue;
+      if (r.frame.remove) r.frame.remove();
+      frames.delete(k);
+    }
+  }
+  // Messages from a doc frame (contract section 2): the frame is found by e.source, never by what the message says.
+  function onFrameMessage(e) {
+    if (!e || e.origin !== originOf()) return;
+    const data = e.data;
+    if (!data || typeof data.type !== 'string' || data.type.indexOf('aib-doc:') !== 0) return;
+    let rec = null;
+    for (const r of frames.values()) if (r.frame.contentWindow && r.frame.contentWindow === e.source) rec = r;
+    if (!rec) return;
+    const tab = rec.tab,
+      str = (v) => (typeof v === 'string' ? v : '');
+    if (data.type === 'aib-doc:open') {
+      const name = str(data.name) || tab.doc.name,
+        wide = F().opensBeside(root.innerWidth || 0);
+      const where = data.where === 'tab' ? 'tab' : data.where === 'beside' && wide ? 'beside' : wide && rec.where === 'beside' ? 'beside' : 'tab';
+      // "Open as tab" from beside the chat: the doc moves to the strip
+      if (rec.where === 'beside' && where === 'tab' && name === tab.doc.name) {
+        beside = F().closeTab(beside, tab.id).state;
+        drawBeside();
+      }
+      openDoc(tab.scope, { name, title: name === tab.doc.name ? tab.doc.title : name, page: str(data.page), block: str(data.block), where, preview: false });
+    } else if (data.type === 'aib-doc:show-in-files') {
+      showInFiles(currentScope() || tab.scope, str(data.dir) || tab.path);
+    } else if (data.type === 'aib-doc:pick-chat') {
+      const src = e.source;
+      Promise.resolve(DL() && DL().pickChat ? DL().pickChat(rec.frame, str(data.purpose)) : null).then((chatId) => {
+        try {
+          src.postMessage({ type: 'aib-doc:picked', requestId: data.requestId, chat: chatId || null }, originOf());
+        } catch (err) {
+          /* the frame is gone */
+        }
+      });
+    } else if (data.type === 'aib-doc:pin') {
+      if (rec.where === 'main' && tab.preview) keepTab(tab.id);
+    } else if (data.type === 'aib-doc:title') {
+      const patch = (t) =>
+        t.id === tab.id
+          ? Object.assign({}, t, {
+              name: str(data.title) || t.name,
+              pageTitle: str(data.pageTitle),
+              doc: Object.assign({}, t.doc, { title: str(data.title) || t.doc.title, page: str(data.page) || t.doc.page }),
+            })
+          : t;
+      if (rec.where === 'beside') {
+        beside = { tabs: beside.tabs.map(patch), active: beside.active };
+        drawBeside();
+      } else {
+        const h = tabsHere();
+        setTabsHere({ tabs: h.tabs.map(patch), active: h.active });
+        if (W() && W().refresh) W().refresh();
+      }
+    } else if (data.type === 'aib-doc:closed') {
+      if (rec.where === 'beside') {
+        beside = F().closeTab(beside, tab.id).state;
+        drawBeside();
+      } else closeFileTab(tab.id);
+    }
   }
   function showFile() {
     view = tabsHere().active ? 'file' : 'chat';
@@ -704,6 +1083,7 @@
     const r = F().closeTab(tabsHere(), id);
     setTabsHere(r.state);
     reads.delete(id);
+    pruneFrames('main', r.state.tabs);
     if (!r.next) showChat();
     else showFile();
   }
@@ -750,7 +1130,9 @@
 
   // ---- the tab strip (workspace-ui.js asks for these nodes) -----------------------------------------------------------
   const tabTitle = (t) =>
-    (t.scope && t.scope.root === 'outside' ? (t.scope.abs || t.path) + '\n' + outsideText(t.scope.where) : t.path) +
+    t.kind === 'doc'
+      ? t.name + (t.pageTitle ? ' › ' + t.pageTitle : '') + ' (doc)' + (t.preview ? '\nPreview: the next file or doc you open replaces it. Double-click to keep it.' : '')
+      : (t.scope && t.scope.root === 'outside' ? (t.scope.abs || t.path) + '\n' + outsideText(t.scope.where) : t.path) +
     (t.scope && t.scope.branch ? '\n⎇ ' + t.scope.branch : '') + (t.preview ? '\nPreview: the next file you open replaces it. Double-click to keep it.' : '');
   function tabNode(t, active, onSelect, onClose, onKeep) {
     const wrap = el('div', null, 'ws-tab sf-ftab' + (t.preview ? ' preview' : '') + (active ? ' on' : ''));
@@ -759,7 +1141,10 @@
     main.setAttribute('role', 'tab');
     main.setAttribute('aria-selected', String(!!active));
     main.title = tabTitle(t);
-    main.append(icon(FILE_D, 'sf-fico'), el('span', t.name, 'ws-tab-title'));
+    if (t.kind === 'doc') {
+      wrap.classList.add('sf-doctab');
+      main.append(docIcon('sf-fico sf-docico'), el('span', t.name + (t.pageTitle ? ' › ' + t.pageTitle : ''), 'ws-tab-title'));
+    } else main.append(icon(FILE_D, 'sf-fico'), el('span', t.name, 'ws-tab-title'));
     main.onclick = () => onSelect(t.id);
     main.ondblclick = () => onKeep(t.id);
     const x = btn('×', 'ws-tab-x', 'Close tab: ' + t.name);
@@ -1059,6 +1444,16 @@
     if (!box) return;
     const t = tabsHere(),
       tab = view === 'file' ? t.tabs.find((x) => x.id === t.active) : null;
+    const dv = docHolder('main', box);
+    pruneFrames('main', t.tabs);
+    if (tab && tab.kind === 'doc' && dv) {
+      box.hidden = true;
+      box.replaceChildren();
+      dv.hidden = false;
+      showDocFrame(dv, tab, 'main');
+      return;
+    }
+    if (dv) dv.hidden = true;
     box.hidden = !tab;
     if (!tab) {
       box.replaceChildren();
@@ -1082,7 +1477,9 @@
       box.hidden = true;
       const strip = el('div', null, 'ws-tabs sf-beside-strip');
       const view_ = el('div', null, 'sf-fileview');
-      box.append(strip, view_);
+      const docs_ = el('div', null, 'sf-docview');
+      docs_.hidden = true;
+      box.append(strip, view_, docs_);
       main.append(box);
       if (els) els.beside = box;
     }
@@ -1093,12 +1490,14 @@
     if (!box) return;
     const tab = beside.tabs.find((x) => x.id === beside.active);
     box.hidden = !tab;
+    pruneFrames('beside', tab ? beside.tabs : []);
     if (!tab) {
       setBeside(false);
       return;
     }
     const strip = box.children[0],
-      v = box.children[1];
+      v = box.children[1],
+      dv = box.children[2];
     const list = el('div', null, 'ws-tablist');
     list.setAttribute('role', 'tablist');
     list.setAttribute('aria-label', 'Files beside the chat');
@@ -1126,6 +1525,15 @@
       drawBeside();
     };
     strip.replaceChildren(list, el('span', null, 'ws-spacer'), close);
+    if (tab.kind === 'doc' && dv) {
+      v.hidden = true;
+      v.replaceChildren();
+      dv.hidden = false;
+      showDocFrame(dv, tab, 'beside');
+      return;
+    }
+    if (dv) dv.hidden = true;
+    v.hidden = false;
     renderView(v, tab, 'beside');
   }
 
@@ -1529,7 +1937,17 @@
       e.preventDefault();
       linkMenu(a, e.clientX, e.clientY);
     });
+    if (root.addEventListener) root.addEventListener('message', onFrameMessage);
     paint();
+  }
+  // The search Ctrl+K uses: a doc's files are never hits.
+  function searchFiles(q) {
+    const scope = currentScope();
+    if (!scope || !q) return Promise.resolve({ scope, matches: [] });
+    return Promise.all([
+      host.getJson('/api/live/files/search', { id: scope.id, root: scope.root, q }),
+      DL() ? DL().listFor(scope.id, scope.root) : Promise.resolve([]),
+    ]).then(([r]) => ({ scope, matches: withoutDocFiles(scope, (r && r.matches) || []) }));
   }
 
   const api = {
@@ -1548,19 +1966,23 @@
     openLink,
     toolFile,
     currentScope,
-    search: (q) => {
-      const scope = currentScope();
-      return scope && q
-        ? host.getJson('/api/live/files/search', { id: scope.id, root: scope.root, q }).then((r) => ({ scope, matches: (r && r.matches) || [] }))
-        : Promise.resolve({ scope, matches: [] });
-    },
-    _state: () => ({ mode, chat, following, pinned, query, changedOnly, showIgnored, sel, results, view, tabs: tabsHere(), beside, trees }),
+    search: searchFiles,
+    openDoc,
+    startNewDoc,
+    chatOfNode,
+    currentChat: () => chat,
+    projectChats,
+    onFrameMessage,
+    _state: () => ({ mode, chat, following, pinned, query, changedOnly, showIgnored, sel, results, view, tabs: tabsHere(), beside, trees, newDoc, frames }),
     _reset: () => {
       trees.clear();
       reads.clear();
       projectArts.clear();
       exists.clear();
       outsideSeen.clear();
+      frames.clear();
+      newDoc = null;
+      docViewEl = null;
       tabsByProject = {};
       beside = F().emptyTabs();
       view = 'chat';
