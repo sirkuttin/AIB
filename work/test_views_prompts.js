@@ -158,11 +158,20 @@ test('an error in the hidden replies puts a small error badge on the header', ()
     { role: 'notice', label: 'Disconnected', value: 'lost', time: 8 },
     user('fifth', 9),
     asst('ok', 10),
+    user('sixth', 11),
+    {
+      role: 'tool',
+      label: 'Bash',
+      value: '{}',
+      time: 12,
+      call: { name: 'Bash', input: {}, result: { text: 'boom', isError: true } },
+    },
+    asst('That failed, so I used another way: done.', 13),
   ];
   t.page.hook.showRows(t.box, rows, 'main');
   assert.deepEqual(
     t.items().map((i) => byClass(i, 'pv-err').length),
-    [0, 1, 1, 1, 0],
+    [0, 1, 1, 1, 0, 0], // sixth: a step failed mid-turn, the turn went on and succeeded: no error badge
   );
   assert.equal(byClass(t.items()[1], 'pv-err')[0].textContent, 'error');
 });

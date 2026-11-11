@@ -211,3 +211,35 @@ test('rows: tool rows copy as markdown with a fenced command', () => {
   assert.equal(CopyUI.fromRow({ role: 'assistant', value: '**x**' }).plain(), 'x');
   assert.equal(CopyUI.fromRow({ role: 'assistant', value: '' }), null);
 });
+
+test('code blocks copy plain code by default and keep their own format, apart from whole messages', () => {
+  for (const k of Object.keys(store)) delete store[k];
+  assert.equal(CopyUI.lastFormat('code'), 'plain', 'code: no fences by default');
+  assert.equal(CopyUI.lastFormat(), 'markdown', 'messages: Markdown by default');
+  CopyUI.rememberFormat('markdown', 'code');
+  assert.equal(CopyUI.lastFormat('code'), 'markdown');
+  assert.equal(CopyUI.lastFormat(), 'markdown');
+  CopyUI.rememberFormat('teams');
+  assert.equal(CopyUI.lastFormat(), 'teams');
+  assert.equal(CopyUI.lastFormat('code'), 'markdown', 'choosing a message format leaves code blocks alone');
+  for (const k of Object.keys(store)) delete store[k];
+  /* the code-block button writes the code itself */
+  writes.length = 0;
+  context.setTimeout = (fn) => fn; // the "Copied" flash never needs to end here
+  Node.prototype.setAttribute = function (k, v) {
+    this.attrs[k] = v;
+  };
+  Node.prototype.addEventListener = function (name, fn) {
+    (this.listeners = this.listeners || {})[name] = fn;
+  };
+  const ctl = CopyUI.makeControl(() => CopyUI.fromCode('ls -la\n', 'bash'), 'copy-code');
+  const main = ctl.children[0];
+  assert.equal(main.title, 'Copy as plain text');
+  main.listeners.click({ stopPropagation() {}, preventDefault() {} });
+  return new Promise((r) => setTimeout(r, 0)).then(() => {
+    assert.deepEqual(
+      writes.map((w) => w.text),
+      ['ls -la\n'],
+    );
+  });
+});

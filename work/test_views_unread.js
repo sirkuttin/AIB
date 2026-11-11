@@ -102,11 +102,11 @@ test('read some messages, switch Full > Chat > Prompts > Full: the unread count 
     run('c3', 2002),
     reply('answer 3', 2003),
   ];
-  t.set(evs); // three messages arrive while you are scrolled up
+  t.set(evs); // a prompt and two replies arrive while you are scrolled up: only the agent's two are unread
   const first = t.pending();
-  assert.equal(first.count, 3);
+  assert.equal(first.count, 2);
   assert.equal(t.lines().length, 1);
-  assert.match(t.lineBefore(), /question 3/);
+  assert.match(t.lineBefore(), /interim 3/);
   const seen = [];
   for (const view of ['chat', 'prompts', 'full']) {
     t.page.hook.setView(view);
@@ -122,9 +122,9 @@ test('read some messages, switch Full > Chat > Prompts > Full: the unread count 
     assert.equal(t.lines().length, view === 'prompts' ? 0 : 1, view);
     seen.push(view + ': ' + t.lineBefore());
   }
-  assert.match(seen[0], /chat: .*question 3/);
+  assert.match(seen[0], /chat: .*interim 3/);
   assert.equal(seen[1], 'prompts: null');
-  assert.match(seen[2], /full: .*question 3/);
+  assert.match(seen[2], /full: .*interim 3/);
 });
 
 test('a message arriving while you are in Chat is unread in every view', () => {
@@ -134,11 +134,12 @@ test('a message arriving while you are in Chat is unread in every view', () => {
   const first = [...turns(2), say('question 2', 2000)];
   const evs = [...first, reply('interim 2', 2001), run('c2', 2002), reply('answer 2', 2003)];
   t.set(first);
-  assert.equal(t.pending().count, 1);
+  assert.equal(t.pending().count, 0, 'your own prompt is never unread');
+  assert.equal(t.lines().length, 0);
   t.set(evs);
   const n = t.pending().count;
-  assert.equal(n, 3, 'the prompt, the interim message and the answer');
-  assert.match(t.lineBefore(), /question 2/, 'Chat: the line is before the first unread row');
+  assert.equal(n, 2, 'the interim message and the answer');
+  assert.match(t.lineBefore(), /interim 2/, 'Chat: the line is before the first unread row');
   for (const view of ['full', 'prompts', 'chat']) {
     t.page.hook.setView(view);
     assert.equal(t.page.hook.unreadCount(), n, view);
@@ -184,4 +185,43 @@ test('Prompts marks replies seen only when the prompt is opened; hidden replies 
   /* a new reply arrives in a closed prompt: not seen */
   t.set([...turns(3), say('question 3', 2000), reply('answer 3', 2001)]);
   assert.equal(t.page.hook.seenAtOf('claude:a'), 1000 * 2000, 'the new prompt is seen, its reply is not');
+});
+
+test('paused with nothing to scroll: follow comes back on its own, and the button goes', () => {
+  const t = unreadPage('full');
+  t.set(turns(1));
+  t.scrollUp();
+  t.set([...turns(1), say('question 1', 2000), reply('answer 1', 2001)]);
+  assert.equal(t.box.dataset.paused, '1', 'still scrolled up in a long chat');
+  /* the chat is short: everything fits, so no scroll event will ever fire */
+  t.box.scrollHeight = 400;
+  t.box.clientHeight = 500;
+  t.box.scrollTop = 0;
+  t.set([...turns(1), say('question 1', 2000), reply('answer 1 grows', 2001)]);
+  assert.equal(t.box.dataset.paused, undefined, 'follow is back on');
+  assert.equal(t.page.hook.unreadCount(), 0);
+  assert.equal(t.page.element('jumpNew').hidden, true, 'no "Latest" button with nothing below');
+});
+
+test('sending while scrolled up jumps to your message, and it is not counted as new', async () => {
+  const t = unreadPage('full');
+  t.set(turns(2));
+  t.scrollUp();
+  assert.equal(t.box.dataset.paused, '1');
+  const sent = [];
+  t.page.context.fetch = async (url, options) => {
+    sent.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  t.page.element('prompt').value = 'one more';
+  await t.page.element('promptForm').onsubmit({ preventDefault() {} });
+  assert.ok(
+    sent.some((u) => u.includes('/api/live/prompt')),
+    'the message went out',
+  );
+  assert.equal(t.box.dataset.paused, undefined, 'follow is on again');
+  t.set([...turns(2), say('one more', 3000)]);
+  assert.equal(t.page.hook.unreadCount(), 0, 'your own message is not "new"');
+  assert.equal(t.lines().length, 0, 'no New line above your message');
+  assert.equal(t.box.scrollTop, t.box.scrollHeight, 'the view is at the end, where your message is');
 });

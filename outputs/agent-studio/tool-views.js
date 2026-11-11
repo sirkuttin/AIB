@@ -647,6 +647,7 @@
   /* Parses saved tool rows' JSON and attaches each result row to its call by id. */
   function pairSaved(rows) {
     const byId = new Map(),
+      seen = new Map(),
       out = [];
     for (const row of rows) {
       if (row.role === 'tool') {
@@ -656,7 +657,12 @@
           input = JSON.parse(text);
         } catch {}
         const copy = { ...row, call: { name: row.label, input, intent: row.intent || '' } };
-        if (row.callId) byId.set(row.callId, copy);
+        if (row.callId) {
+          const n = (seen.get(row.callId) || 0) + 1;
+          seen.set(row.callId, n);
+          if (n > 1) copy.uid = row.callId + '#' + n; // the id was used before: its own row, opened on its own
+          byId.set(row.callId, copy);
+        }
         out.push(copy);
         continue;
       }
@@ -925,9 +931,20 @@
     } else if (row && row.call) fromCall(row.call.name, row.call.input);
     return path ? { path, line: lineNo } : null;
   }
-  const EXPANDED = new Set();
+  /* Open rows and groups, per chat: setScope(chat) is called when a chat opens, so an open group never carries into another
+     chat that happens to use the same call ids. row.uid tells apart calls that reuse an id (a later turn's "call-1"). */
+  const OPEN = new Set();
+  let scope = '';
+  const EXPANDED = {
+    has: (key) => OPEN.has(scope + '\u0000' + key),
+    add: (key) => OPEN.add(scope + '\u0000' + key),
+    delete: (key) => OPEN.delete(scope + '\u0000' + key),
+  };
+  function setScope(next) {
+    scope = String(next || '');
+  }
   const rowKey = (row) =>
-    row.callId || (row.raw && row.raw.toolCallId) || String(row.label || '') + '|' + String(row.time || '');
+    row.uid || row.callId || (row.raw && row.raw.toolCallId) || String(row.label || '') + '|' + String(row.time || '');
   function statusMark(status) {
     const mark = make('span', '', 'tool-mark mark-' + (status || 'none'));
     const text = { running: 'running', ok: 'completed', failed: 'failed', pending: 'pending' }[status];
@@ -1009,7 +1026,7 @@
       else EXPANDED.add(key);
       sync();
     });
-    box.append(btn, panel);
+    box.append(btn);
     sync();
     box.toolKey = key;
     box.summary = s;
@@ -1037,6 +1054,7 @@
       });
       box.append(open);
     }
+    box.append(panel); // last: Tab reaches "open ↗" (and thumbnails) before the opened detail
     return box;
   }
   const isToolRow = (r) => r && r.role === 'tool' && (r.raw || r.call);
@@ -1127,6 +1145,7 @@
     fileTarget,
     line,
     groupRows,
+    setScope,
     summarize,
     commandSummary,
     render,

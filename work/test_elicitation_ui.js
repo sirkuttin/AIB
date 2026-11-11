@@ -39,6 +39,18 @@ class Node {
   addEventListener(name, fn) {
     this.listeners[name] = fn;
   }
+  setAttribute(k, v) {
+    (this.attrs = this.attrs || {})[k] = String(v);
+  }
+  removeAttribute(k) {
+    if (this.attrs) delete this.attrs[k];
+  }
+  getAttribute(k) {
+    return this.attrs && k in this.attrs ? this.attrs[k] : null;
+  }
+  focus() {
+    focused = this;
+  }
   remove() {
     if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this);
   }
@@ -56,6 +68,7 @@ class Node {
     }
   }
 }
+let focused = null;
 const document = { createElement: (tag) => new Node(tag) };
 const window = {};
 vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'elicitation-ui.js'), 'utf8'), {
@@ -180,5 +193,48 @@ setImmediate(async () => {
   optionalRoot.children[0].children.find((n) => n.className === 'elicitation-actions').children[0].click();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(JSON.stringify(optionalAnswer), JSON.stringify(['optional', 'accept', {}]));
+
+  /* A required field left empty: the message is an alert, the field is marked invalid and focused, and typing clears both. */
+  const nameRoot = new Node('main');
+  let nameAnswer;
+  window.AgentElicitationUI.render(
+    nameRoot,
+    [
+      {
+        key: 'name',
+        params: {
+          mode: 'form',
+          requestedSchema: {
+            type: 'object',
+            required: ['name'],
+            properties: { name: { type: 'string', title: 'Name' } },
+          },
+        },
+      },
+    ],
+    {
+      onRespond: async (...args) => {
+        nameAnswer = args;
+      },
+    },
+  );
+  const nameCard = nameRoot.children[0],
+    nameInput = nameCard.children
+      .find((n) => n.className === 'elicitation-fields')
+      .children[0].children.find((n) => n.tagName === 'input'),
+    nameError = nameCard.children.find((n) => n.className === 'elicitation-error');
+  assert.equal(nameError.getAttribute('role'), 'alert');
+  await nameCard.children.find((n) => n.className === 'elicitation-actions').children[0].click();
+  assert.equal(nameError.hidden, false);
+  assert.equal(nameError.textContent, 'Name is required.');
+  assert.equal(nameInput.getAttribute('aria-invalid'), 'true');
+  assert.equal(nameInput.getAttribute('aria-describedby'), nameError.id);
+  assert.equal(focused, nameInput, 'focus goes to the field to fix');
+  nameInput.value = 'Ada';
+  nameInput.listeners.input();
+  assert.equal(nameError.hidden, true, 'the message goes once you fill it in');
+  assert.equal(nameInput.getAttribute('aria-invalid'), null);
+  await nameCard.children.find((n) => n.className === 'elicitation-actions').children[0].click();
+  assert.equal(JSON.stringify(nameAnswer), JSON.stringify(['name', 'accept', { name: 'Ada' }]));
   console.log('elicitation UI tests passed');
 });

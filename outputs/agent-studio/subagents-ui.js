@@ -34,6 +34,7 @@
     canceled: 'Stopped',
     stopped: 'Stopped',
     killed: 'Stopped',
+    interrupted: 'Interrupted',
   };
   /* kind: working | probable | failed | completed | idle | stopped. group: working | finished. */
   function classify(a) {
@@ -42,8 +43,8 @@
         l = s.toLowerCase();
       if (RUNNING.test(s)) return { group: 'working', kind: 'working', label: LABELS[l] || 'Working' };
       if (/^(failed|error)$/.test(l)) return { group: 'finished', kind: 'failed', label: 'Failed' };
-      if (/^(cancelled|canceled|stopped|killed)$/.test(l))
-        return { group: 'finished', kind: 'stopped', label: 'Stopped' };
+      if (/^(cancelled|canceled|stopped|killed|interrupted)$/.test(l))
+        return { group: 'finished', kind: 'stopped', label: l === 'interrupted' ? 'Interrupted' : 'Stopped' };
       if (/^(completed|complete)$/.test(l)) return { group: 'finished', kind: 'completed', label: 'Completed' };
       return { group: 'finished', kind: 'idle', label: LABELS[l] || s || 'Idle' };
     }

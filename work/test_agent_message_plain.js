@@ -22,7 +22,10 @@ test('assistant bubbles have no border, background or card shape', () => {
 
 test('assistant header is kept for screen readers but not drawn', () => {
   const head = decl('.bubble.assistant > .bubble-head');
-  assert.equal(head.position, 'absolute');
+  /* floated like the user header, so a long first line wraps around the time and Copy instead of running under them */
+  assert.equal(head.float, 'right');
+  assert.notEqual(head.position, 'absolute');
+  assert.equal(decl('.bubble.assistant').display, 'flow-root', 'the message box holds its floated header');
   assert.equal(head.border, '0');
   assert.equal(head.background, 'transparent');
   const label = decl('.bubble.assistant > .bubble-head > strong');
@@ -36,7 +39,11 @@ test('assistant time always shows, muted 12px at the top right', () => {
   assert.equal(time.opacity, undefined);
   assert.equal(hex(time.color), '#929aaa');
   assert.equal(time['font-size'], '12px');
-  assert.equal(decl('.bubble.assistant > .bubble-head').right, '0');
+  assert.equal(decl('.bubble.assistant > .bubble-head').float, 'right');
+  /* the same inset as your own messages (1px border + padding), so the two Copy buttons line up */
+  assert.equal(decl('.bubble.assistant').padding, '0 1px');
+  assert.equal(decl('.bubble.user > .bubble-head').padding, '5px 8px 0 12px');
+  assert.equal(decl('.bubble.assistant > .bubble-head').padding, '6px 8px 0 12px');
   assert.deepEqual(decl('.bubble.assistant:hover > .bubble-head > time'), {});
   assert.deepEqual(decl('.bubble.assistant:focus-within > .bubble-head > time'), {});
 });

@@ -104,6 +104,59 @@ export function pasteInput(text: string, os: string = Deno.build.os): string {
   return `${ESC}[200~${lines.join('\r')}${ESC}[201~`;
 }
 
+/**
+ * Is a command running in a Windows shell? Pty.busy() sees the programs a command starts, but not a PowerShell cmdlet that runs inside
+ * the shell itself (Start-Sleep, a long Get-ChildItem). So: once the shell has printed a prompt we recognise (`PS C:\x> ` for PowerShell,
+ * `C:\x>` for cmd), Enter makes it busy until a prompt is again the last thing it printed. Conservative: a shell whose prompt was never
+ * recognised (a custom prompt) is never called busy by this, only by Pty.busy().
+ */
+export class PromptWatch {
+  #tail = '';
+  #seen = false;
+  #pending = false;
+  #decoder = new TextDecoder();
+  constructor(readonly enabled: boolean) {}
+
+  static forShell(file: string): PromptWatch {
+    return new PromptWatch(['PowerShell 7', 'Windows PowerShell', 'Command Prompt'].includes(shellName(file)));
+  }
+
+  output(bytes: Uint8Array): void {
+    if (!this.enabled) return;
+    this.#tail = (this.#tail + plainText(this.#decoder.decode(bytes, { stream: true }))).slice(-600);
+    if (endsWithPrompt(this.#tail)) {
+      this.#seen = true;
+      this.#pending = false;
+    }
+  }
+
+  input(text: string): void {
+    if (!this.enabled || !text.includes('\r')) return;
+    this.#pending = true;
+    this.#tail = '';
+  }
+
+  get busy(): boolean {
+    return this.enabled && this.#seen && this.#pending;
+  }
+}
+
+/** Shell output as plain lines: a cursor move to a row starts a new line; other escape sequences and carriage returns go. */
+function plainText(text: string): string {
+  return text
+    .replace(new RegExp(`${ESC}\\[[0-9;]*[Hf]`, 'g'), '\n')
+    .replace(new RegExp(`${ESC}\\][^\\x07${ESC}]*(?:\\x07|${ESC}\\\\)`, 'g'), '')
+    .replace(new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, 'g'), '')
+    .replace(new RegExp(`${ESC}[@-_]`, 'g'), '')
+    .replace(/\r/g, '');
+}
+
+/** The last line is a PowerShell (`PS C:\x> `) or cmd (`C:\x>`) prompt with nothing typed after it. */
+export function endsWithPrompt(text: string): boolean {
+  const line = text.replace(/\s+$/, '').split('\n').pop() ?? '';
+  return /^PS .*>$/.test(line) || /^[A-Za-z]:\\[^<>|]*>$/.test(line);
+}
+
 export function checkKey(key: unknown): string {
   if (typeof key !== 'string' || !key.trim() || key.length > 300) throw new TerminalError('Unknown conversation.', 'bad_key');
   return key;
@@ -114,6 +167,7 @@ export class TerminalSession {
   readonly startedAt = Date.now();
   lastActivity = Date.now();
   readonly links = new Set<WsLink>();
+  readonly prompt: PromptWatch;
   #replay: Uint8Array[] = [];
   #replaySize = 0;
   exitCode: number | null = null;
@@ -125,8 +179,10 @@ export class TerminalSession {
     readonly pty: Pty,
     onExit: (s: TerminalSession) => void,
   ) {
+    this.prompt = PromptWatch.forShell(shell.file);
     pty.onData = (bytes) => {
       this.lastActivity = Date.now();
+      this.prompt.output(bytes);
       this.#remember(bytes);
       for (const link of this.links) link.send(bytes);
     };
@@ -173,6 +229,7 @@ export class TerminalSession {
 
   #message(data: string | Uint8Array): void {
     if (typeof data !== 'string') {
+      this.prompt.input(new TextDecoder().decode(data));
       this.pty.write(data);
       return;
     }
@@ -184,6 +241,7 @@ export class TerminalSession {
     }
     if (message?.type === 'input' && typeof message.data === 'string') {
       this.lastActivity = Date.now();
+      this.prompt.input(message.data);
       this.pty.write(message.data);
     } else if (message?.type === 'paste' && typeof message.data === 'string') {
       this.lastActivity = Date.now();
@@ -193,6 +251,7 @@ export class TerminalSession {
       try {
         busy = this.pty.busy();
       } catch { /* unknown: not busy */ }
+      busy ||= this.prompt.busy;
       for (const link of this.links) link.send(JSON.stringify({ type: 'busy', id: message.id ?? null, busy }));
     } else if (message?.type === 'resize') {
       const { cols, rows } = clampSize(message.cols, message.rows);

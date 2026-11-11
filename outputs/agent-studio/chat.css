@@ -330,7 +330,56 @@ input[type='checkbox'] {
 }
 .approval button {
   margin: 6px 7px 0 0;
+  font-size: 12px; /* the same as the question card's buttons */
+}
+/* What the approval is for, in words; the raw request is folded under Details. */
+.approval-what {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+.approval-what-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family:
+    Cascadia Mono,
+    Consolas,
+    monospace;
+  font-size: 12px;
+}
+.approval-raw summary {
   font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+/* An answered approval or question: one quiet line where it was asked. */
+.answered-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+}
+.answered-mark {
+  flex: none;
+  color: var(--ok-bright);
+}
+.answered-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.answered-line time {
+  flex: none;
+  font-size: 12px;
 }
 #promptForm {
   margin: 10px 30px 0;
@@ -596,6 +645,7 @@ body {
 }
 main {
   overflow: hidden;
+  overflow: clip; /* hidden still lets scrollIntoView() scroll <main>, which pushed the tabs and header off screen */
 }
 header {
   padding: 20px 24px;
@@ -1256,6 +1306,7 @@ body > main {
 .elicitation-fields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: start;
   gap: 12px;
 }
 .elicitation-field {
@@ -2311,6 +2362,26 @@ aside #connections {
 .bubble-head .copy-message {
   margin-left: auto;
 }
+/* Time then Copy at the right end of a header: the time has pushed them there, so Copy follows it (two auto margins put the
+   time in the middle of the row). */
+.bubble-head > time + .copy-message {
+  margin-left: 0;
+}
+/* An opened tool row's detail: the row above already names the tool, and the detail's own header repeats it, so the bubble
+   header keeps only its time and Copy (the label stays for screen readers). */
+.tool-detail .bubble.tool > .bubble-head > strong {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.tool-detail .bubble.tool > .bubble-head {
+  justify-content: flex-end;
+}
 .copy-ctl {
   display: inline-flex;
   border: 1px solid var(--line);
@@ -2339,6 +2410,11 @@ aside #connections {
 .copy-ctl .copy-more {
   border-left: 1px solid var(--line);
   padding: 0 7px;
+}
+/* The control clips its corners (overflow: hidden), so the focus ring is drawn inside each half, never cut off. */
+.copy-ctl button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .copy-ctl .copied {
   color: var(--ok-bright);
@@ -2407,6 +2483,16 @@ aside #connections {
 .markdown-code pre,
 .code-block pre {
   padding-right: 78px;
+}
+/* The language header is as tall as the Copy button and its margin, so the button sits inside it, never across its divider. */
+.markdown-code.has-copy > small {
+  padding: 4px 10px;
+  line-height: 26px;
+}
+/* A diff's header keeps room on the right for its Copy button ("new file" and the counts stay visible). */
+.tool-diff.has-copy > summary {
+  min-height: 34px;
+  padding-right: 96px;
 }
 .copy-menu {
   z-index: 1000;
@@ -3380,9 +3466,12 @@ span.chip-static:hover {
 }
 
 /* Agent messages are plain text on the page: no box, no title bar. The header stays in the DOM (the screen-reader name
-   "Assistant") but its label is visually hidden; the time and copy button always show at the top-right. */
+   "Assistant") but its label is visually hidden; the time and copy button always show at the top-right. Like your own
+   messages they are floated, so a long first line wraps around them instead of running underneath (at any width); the
+   padding matches the user box (1px border + 5px 8px), so both Copy buttons line up. */
 .bubble.assistant {
   position: relative;
+  display: flow-root; /* holds the floated time and Copy */
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -3391,14 +3480,28 @@ span.chip-static:hover {
   padding: 0 1px; /* the user box has a 1px border, so the text lines up */
 }
 .bubble.assistant > .bubble-head {
-  position: absolute;
-  top: 2px;
-  right: 0;
-  padding: 0 4px;
+  float: right;
+  position: relative;
+  padding: 6px 8px 0 12px;
   border: 0;
   background: transparent;
   gap: 8px;
   z-index: 1;
+}
+/* A row of links or files: the time and Copy line up with the box's first line (a repeated time is left out: chat.js). */
+.bubble.assistant.resource-only > .bubble-head {
+  padding-top: 13px;
+  min-width: 172px; /* the same width with or without the time, so the boxes of one message line up */
+  justify-content: flex-end;
+}
+/* A code block or table that opens a message starts below the time and Copy, at full width. */
+.bubble.assistant > .markdown > :is(.markdown-code, .markdown-table):first-child {
+  clear: right;
+}
+/* A sensible line length on very wide windows: message text stops at about 120 characters (code and tables keep their box). */
+#messages .bubble:is(.assistant, .user) > .markdown > :is(p, ul, ol, blockquote, h3, h4, h5, h6),
+#messages .bubble:is(.assistant, .user) > pre {
+  max-width: 120ch;
 }
 .bubble.assistant > .bubble-head > strong {
   position: absolute;

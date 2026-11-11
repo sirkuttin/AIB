@@ -2,6 +2,7 @@
   'use strict';
   const cards = new WeakMap(),
     authCards = new WeakMap();
+  let errorIds = 0;
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const el = (tag, cls, txt) => {
     const n = document.createElement(tag);
@@ -28,7 +29,9 @@
       const d = el('span', 'elicitation-description', s.description);
       wrap.appendChild(d);
     }
-    let input, kind;
+    let input,
+      kind,
+      notes = null; // the options' descriptions go under the list, so lists and text boxes line up side by side
     if (s.type === 'string' && optionsFor(s)) {
       input = el('select');
       kind = 'select';
@@ -42,7 +45,7 @@
         opt.__elicitationValue = o.value;
         input.appendChild(opt);
       });
-      addChoiceDescriptions(wrap, choices);
+      notes = choices;
     } else if (s.type === 'array' && s.items && (Array.isArray(s.items.enum) || Array.isArray(s.items.anyOf))) {
       input = el('select');
       input.multiple = true;
@@ -61,7 +64,7 @@
         opt.__elicitationValue = o.value;
         input.appendChild(opt);
       });
-      addChoiceDescriptions(wrap, choices);
+      notes = choices;
     } else if (s.type === 'boolean') {
       input = el('input');
       input.type = 'checkbox';
@@ -85,6 +88,7 @@
       if (typeof s.maxLength === 'number') input.maxLength = s.maxLength;
     }
     wrap.appendChild(input);
+    if (notes) addChoiceDescriptions(wrap, notes);
     const field = {
       key,
       schema: s,
@@ -94,10 +98,13 @@
       hasDefault: kind === 'boolean' && typeof s.default === 'boolean',
       touched: false,
     };
-    if (kind === 'boolean')
-      input.addEventListener('change', () => {
-        field.touched = true;
-      });
+    /* Changing a field clears its "is required" / "is invalid" mark and message (set by render's act()). */
+    const edited = () => {
+      if (kind === 'boolean') field.touched = true;
+      if (field.onEdit) field.onEdit(field);
+    };
+    input.addEventListener('change', edited);
+    if (kind !== 'boolean') input.addEventListener('input', edited);
     return field;
   }
   function addChoiceDescriptions(parent, choices) {
@@ -197,7 +204,8 @@
     return { kind: sessionId ? 'main' : 'setup', name: provider, sessionId: sessionId || null };
   }
   function routeNote(info) {
-    if (info.kind === 'subagent') return 'Subagent: ' + info.name;
+    /* a subagent without a name is already called "Subagent 1a2b3c4d" in the heading: no second line saying so again */
+    if (info.kind === 'subagent') return /^Subagent /.test(info.name) ? '' : 'Subagent: ' + info.name;
     if (info.kind === 'unknown')
       return (
         'This request comes from a session Studio does not recognize (' + info.name + '). Answer only if you expect it.'
@@ -402,7 +410,23 @@
       card.appendChild(fieldsBox);
       const error = el('p', 'elicitation-error');
       error.hidden = true;
+      error.setAttribute('role', 'alert');
+      error.id = 'elicitation-error-' + ++errorIds;
       card.appendChild(error);
+      let badField = null;
+      const clearBad = () => {
+        if (!badField) return;
+        badField.input.removeAttribute('aria-invalid');
+        badField.input.removeAttribute('aria-describedby');
+        badField = null;
+        error.hidden = true;
+        error.textContent = '';
+      };
+      fields.forEach((f) => {
+        f.onEdit = (changed) => {
+          if (changed === badField) clearBad();
+        };
+      });
       if (issue) card.appendChild(el('p', 'elicitation-issue', issue));
       const actions = el('div', 'elicitation-actions');
       const submit = el('button', '', isUrl ? "I've completed this" : 'Submit');
@@ -436,10 +460,18 @@
         if (state.busy) return;
         let content = {};
         try {
+          clearBad();
           if (action === 'accept') {
             for (const f of fields) {
-              const v = read(f, required.has(f.key));
-              if (required.has(f.key) && v === undefined) throw new Error((f.schema.title || f.key) + ' is required.');
+              let v;
+              try {
+                v = read(f, required.has(f.key));
+                if (required.has(f.key) && v === undefined)
+                  throw new Error((f.schema.title || f.key) + ' is required.');
+              } catch (e) {
+                e.field = f;
+                throw e;
+              }
               if (v !== undefined) content[f.key] = v;
             }
           }
@@ -456,6 +488,13 @@
           state.buttons.forEach((b, i) => (b.disabled = i === 0 && (!!state.issue || (state.isUrl && !state.opened))));
           error.textContent = e && e.message ? e.message : 'The response could not be sent. Please try again.';
           error.hidden = false;
+          if (e && e.field) {
+            /* the field that needs fixing: marked for screen readers, described by the message, and focused */
+            badField = e.field;
+            badField.input.setAttribute('aria-invalid', 'true');
+            badField.input.setAttribute('aria-describedby', error.id);
+            if (badField.input.focus) badField.input.focus();
+          }
         }
       };
       submit.addEventListener('click', () => act('accept'));

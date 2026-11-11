@@ -98,6 +98,7 @@
     GROUP_WINDOW = 40;
   let continuingKey = '',
     sendingKey = '',
+    listedAt = 0, // when the conversation list was last asked for (headerYourTurn)
     imagePickerKey = '',
     newDraft = null,
     startingNew = false,
@@ -498,8 +499,9 @@
   }
   function date(t) {
     if (!t) return '';
+    /* the same clock as the turn line and the terminal ("4:10 PM"), with seconds */
     return new Date(typeof t === 'number' ? t * 1000 : t).toLocaleTimeString([], {
-      hour: '2-digit',
+      hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
     });
@@ -647,6 +649,7 @@
   let ownershipHints = {},
     ownershipCertainty = 'checked';
   async function listConversations() {
+    listedAt = Date.now();
     const [live, saved, ownership] = await Promise.all([
       get('/api/live/list'),
       get('/api/sessions'),
@@ -866,6 +869,7 @@
     document.body.classList.remove('subchat-open');
     $('subagentCount').textContent = '0';
     newDraft = null;
+    window.ToolViews?.setScope?.(aliasKey(c)); // open tool rows and step groups belong to this chat
     lastMainRows = [];
     document.body.classList.remove('new-chat');
     $('newChatBar').hidden = true;
@@ -956,9 +960,9 @@
         snapshot,
         events,
         names: Object.fromEntries([...children].map(([id, agent]) => [id, agent.name])),
-        yourTurn: typeof selected.yourTurn === 'boolean' ? selected.yourTurn : selected.live?.yourTurn,
+        yourTurn: headerYourTurn(),
         handledAt: handledAt.get(aliasKey(selected)),
-        queueNote: window.AgentQueueUI?.summary(connected ? snapshot.queue : null, busy).note || '',
+        queueNote: queueLineNote(connected ? snapshot.queue : null, busy),
         hint: ownershipHints[selected.provider + ':' + selected.id],
         recovered: !!selected.recovered,
         reconnecting: !!(selected.recovered?.reconnecting || selected.live?.reconnecting),
@@ -1043,7 +1047,7 @@
     renderAttachments();
     applyElsewhereGuard();
     {
-      const pageTitle = titleOf(selected) + ' · Agent Studio';
+      const pageTitle = titleOf(selected) + ' · AIB';
       if (window.AgentSidebarUI) window.AgentSidebarUI.setBase(pageTitle);
       else document.title = pageTitle;
     }
@@ -1062,7 +1066,8 @@
       // The person's words plus injected reminders: the words are the message, the reminders a collapsed note inside it.
       // (A turn of reminders alone stays whole: classifyUser makes it a System note card below.)
       const split = window.StreamUI?.splitInjected?.(row.value);
-      if (split && (split.text || row.attachments?.length)) row = { ...row, value: split.text, injectedNote: split.note };
+      if (split && (split.text || row.attachments?.length))
+        row = { ...row, value: split.text, injectedNote: split.note };
     }
     if (row.role === 'unknown-send')
       return window.UnknownSend.build(row.unknownSend, { again: resendUnknown, dismiss: dismissUnknown });
@@ -1106,8 +1111,19 @@
   }
   function bubbleFull(row) {
     const article = text('article', '', 'bubble ' + row.role);
+    /* links or files with no words: a compact row whose time lines up with the box (and repeats only when it changes) */
+    if (
+      row.role === 'assistant' &&
+      !row.value &&
+      row.attachments?.length &&
+      row.attachments.every((a) => a && a.type !== 'image' && a.type !== 'transcript-image')
+    ) {
+      article.classList.add('resource-only');
+      article.dataset.when = date(row.time);
+    }
     const head = text('div', '', 'bubble-head');
-    head.append(text('strong', row.label || row.role), text('time', date(row.time)));
+    /* the screen-reader name of a message: "You" for yours, live or saved (saved transcripts say "User") */
+    head.append(text('strong', row.role === 'user' ? 'You' : row.label || row.role), text('time', date(row.time)));
     article.append(head);
     if (row.injectedNote && window.StreamUI?.noteCard)
       article.append(window.StreamUI.noteCard(row.injectedNote, row, resolveAgentName));
@@ -1301,7 +1317,7 @@
       flat = window.ChatViewsUI.flatFrom(proj, win.start);
     } else {
       const docked = box.id === 'messages' ? dockedPlan(rows) : null,
-        drawn = docked ? [...shown.filter((r) => r !== docked), docked] : shown; // an unfinished plan is the chat's last item (it scrolls with the history); once done it stays where it was made
+        drawn = docked ? planLast(shown, rows, docked) : shown;
       const draw = box.id === 'messages' && window.ChatViews ? viewBubble : bubble;
       if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, draw));
       else for (const row of drawn) fragment.append(draw(row));
@@ -1329,10 +1345,22 @@
         box.scrollTop = box.scrollHeight;
       } else window.ChatViewsUI.restoreAnchor(box, s.anchor);
     }
+    markRepeatedTimes(box);
+    resumeIfAtEnd(box);
     if (box.id === 'messages') {
       syncJump();
       updatePlanDock(rows);
       announceTurns(box, selected ? aliasKey(selected) : '', rows, '');
+    }
+  }
+  /* Several link/file rows in a row with the same time: the time shows on the first one only. */
+  function markRepeatedTimes(box) {
+    let prev = null;
+    for (const el of box.children) {
+      const resource = !!el.classList?.contains?.('resource-only');
+      if (resource && prev && prev.dataset.when === el.dataset.when)
+        el.querySelector(':scope > .bubble-head > time')?.remove();
+      prev = resource ? el : null;
     }
   }
   /* The main list's bubbles: a prompt carries its key (time + text hash) so a view change can anchor to it. */
@@ -1421,7 +1449,10 @@
   }
   function liveRows(session, evs = events, snap = snapshot, uncapped = false) {
     const rows = [],
-      tools = new Map();
+      tools = new Map(), // toolCallId -> {row, turn}
+      uses = new Map(), // toolCallId -> how many calls used it
+      asks = new Map(); // approval / question key -> its record row
+    let turn = 0;
     for (const event of evs) {
       let role,
         label,
@@ -1431,6 +1462,7 @@
       const sid = event.data?.sessionId || snap?.sessionId;
       if (sid !== session) continue;
       if (event.kind === 'user') {
+        turn++;
         role = 'user';
         label = 'You';
         value = event.data.text;
@@ -1446,7 +1478,10 @@
             attachments = [u.content];
         } else if (['tool_call', 'tool_call_update'].includes(kind)) {
           const key = u.toolCallId;
-          const old = tools.get(key);
+          let old = tools.get(key);
+          /* Some agents number their calls per turn: a new call that reuses an id from an earlier turn is its own row. */
+          if (old && kind === 'tool_call' && old.turn !== turn) old = null;
+          else if (old) old = old.row;
           if (old) {
             old.raw = { ...old.raw, ...u };
             old.label = (old.raw.title || key) + ' · ' + (old.raw.status || 'started');
@@ -1457,8 +1492,11 @@
           role = 'tool';
           label = (u.title || key) + ' · ' + (u.status || 'started');
           value = JSON.stringify(u, null, 2).slice(0, 40000);
-          const row = { role, label, value, time: event.replay ? 0 : event.time, raw: u };
-          tools.set(key, row);
+          const row = { role, label, value, time: event.replay ? 0 : event.time, raw: u },
+            n = (uses.get(key) || 0) + 1;
+          uses.set(key, n);
+          if (n > 1) row.uid = key + '#' + n;
+          tools.set(key, { row, turn });
           rows.push(row);
           continue;
         } else if (kind === 'plan') {
@@ -1475,6 +1513,25 @@
           label = 'Delegation';
           value = JSON.stringify(u.content || u, null, 2);
         } else continue;
+      } else if (event.kind === 'permission' || event.kind === 'elicitation') {
+        /* An approval or a question: once it is answered its card goes, and this compact line stays in the chat. */
+        const key = event.data?.key;
+        if (typeof key === 'string' && key) {
+          const row = {
+            role: 'answered',
+            ask: event.kind,
+            key,
+            params: event.data.params || {},
+            time: event.replay ? 0 : event.time,
+          };
+          asks.set(key, row);
+          rows.push(row);
+        }
+        continue;
+      } else if (event.kind === 'request_withdrawn') {
+        const row = asks.get(event.data?.key);
+        if (row) row.withdrawn = true;
+        continue;
       } else if (event.kind === 'error' || event.kind === 'disconnected') {
         role = 'notice';
         label = event.kind;
@@ -1485,6 +1542,7 @@
         value = event.data.message;
         if (Array.isArray(event.data.actions) && event.data.actions.length) actions = event.data.actions;
       } else if (event.kind === 'turn_end') {
+        turn++;
         role = 'turn-end';
         label = 'Turn finished';
         value = event.data.stopReason || 'end_turn';
@@ -1510,8 +1568,43 @@
           ...(actions ? { actions } : {}),
         });
     }
+    if (asks.size) {
+      /* still waiting (its card is up) or withdrawn by the agent: no record line */
+      const open = new Set([...(snap?.permissions || []), ...(snap?.elicitations || [])].map((p) => p && p.key));
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const r = rows[i];
+        if (r.role !== 'answered') continue;
+        if (open.has(r.key) || r.withdrawn) rows.splice(i, 1);
+        else r.value = answeredText(r);
+      }
+    }
     const folded = window.PlanUI ? window.PlanUI.fold(rows, { live: true }) : rows;
     return uncapped ? folded : folded.slice(-500); // a condensed view caps after it has projected (views.js), so the latest prompt is never cut off
+  }
+  /* What you chose on an approval or a question card, by request key (this page only; another window's answer reads "Answered"). */
+  const answerChoice = new Map();
+  function answeredText(r) {
+    const p = r.params || {},
+      chose = answerChoice.get(r.key);
+    if (r.ask === 'permission') {
+      const call = p.toolCall || {},
+        what = String(call.title || call.kind || 'a tool')
+          .replace(/\s+/g, ' ')
+          .slice(0, 120);
+      return 'Approval · ' + what + ' · ' + (chose || 'Answered');
+    }
+    const what = String(p.message || (p.mode === 'url' ? 'A link' : 'A question'))
+      .replace(/\s+/g, ' ')
+      .slice(0, 120);
+    return 'Question · ' + what + ' · ' + (chose || 'Answered');
+  }
+  function answeredLine(row) {
+    const line = text('div', '', 'answered-line');
+    line.setAttribute('role', 'note');
+    line.append(text('span', '✓', 'answered-mark'), text('span', row.value, 'answered-text'));
+    const when = window.StreamUI?.shortTime?.(row.time);
+    if (when) line.append(text('time', when));
+    return line;
   }
   // Messages whose delivery is unknown after a restart: shown as a bubble with one amber line (unknown-send.js), cleared once the agent shows them.
   function withUnknownSends(rows, unknown) {
@@ -1553,8 +1646,11 @@
     }
   }
   function collectChildren() {
-    for (const e of events) {
-      if (e.kind !== 'update') continue;
+    const heard = new Map(); // child id -> index of its last event
+    let interrupted = -1; // index of the last turn you interrupted
+    events.forEach((e, i) => {
+      if (e.kind === 'turn_end' && e.data?.stopReason === 'cancelled') interrupted = i;
+      if (e.kind !== 'update') return;
       const u = e.data.update || {};
       if (u.sessionUpdate === 'subagent_update') {
         const child = u.subagent || u;
@@ -1573,6 +1669,7 @@
           };
           window.SubagentsUI?.enrich(next, old, child, e.time);
           children.set(id, next);
+          heard.set(id, i);
         }
       }
       const sid = e.data.sessionId;
@@ -1584,8 +1681,17 @@
           created: e.time,
           state: 'Live stream',
         });
-      if (sid && sid !== snapshot.sessionId) window.SubagentsUI?.noteEvent(children.get(sid), e);
-    }
+      if (sid && sid !== snapshot.sessionId) {
+        heard.set(sid, i);
+        window.SubagentsUI?.noteEvent(children.get(sid), e);
+      }
+    });
+    /* You pressed Interrupt and the turn ended cancelled: a subagent the agent last reported as running, and has not been heard
+       from since, is shown as Interrupted rather than still working. Anything it sends later puts it back. */
+    if (interrupted < 0) return;
+    for (const [id, a] of children)
+      if ((heard.get(id) ?? -1) < interrupted && window.SubagentsUI?.classify(a).group === 'working')
+        children.set(id, { ...a, state: 'interrupted' });
   }
   function agentIsActive(a) {
     if (!a.live) return !!a.active;
@@ -1976,6 +2082,7 @@
       },
       onRespond: async (key, action, content) => {
         await post('elicitation', { id: connection, key, action, content });
+        answerChoice.set(key, { accept: 'Submitted', decline: 'Declined', cancel: 'Cancelled' }[action] || 'Answered');
         if (current === connection) await refresh();
       },
     };
@@ -2031,6 +2138,28 @@
     );
     window.AgentElicitationUI?.renderAuth($('authPrompts'), snapshot.auth, authContext(connection, snapshot));
   }
+  /* What the approval is for, in words (the tool line Studio draws for tool calls), with the raw request folded under Details. */
+  function approvalDetail(params) {
+    const call = params.toolCall || null,
+      out = [];
+    let s = null;
+    try {
+      s = call && window.ToolViews?.summarize ? window.ToolViews.summarize({ role: 'tool', raw: call }) : null;
+    } catch {
+      s = null;
+    }
+    if (s && (s.label || s.text)) {
+      const what = text('p', '', 'approval-what');
+      if (s.label) what.append(text('span', s.label, 'tool-line-kind'));
+      what.append(text('span', s.text || call.title || '', 'approval-what-text'));
+      out.push(what);
+    } else if (call && call.title) out.push(text('p', String(call.title), 'approval-what'));
+    const raw = document.createElement('details');
+    raw.className = 'approval-raw';
+    raw.append(text('summary', 'Details'), text('pre', JSON.stringify(call || params, null, 2)));
+    out.push(raw);
+    return out;
+  }
   function renderApprovals() {
     const list = snapshot.permissions || [],
       names = Object.fromEntries([...children].map(([id, agent]) => [id, agent.name])),
@@ -2056,13 +2185,14 @@
           card.append(show);
         }
       }
-      card.append(text('pre', JSON.stringify(p.params.toolCall || p.params, null, 2)));
+      card.append(...approvalDetail(p.params));
       for (const option of [...(p.params.options || []), { name: 'Cancel request', optionId: null }]) {
         const button = text('button', option.name || option.optionId);
         button.onclick = async () => {
           button.disabled = true;
           try {
             await post('permission', { id: current, key: p.key, option: option.optionId });
+            answerChoice.set(p.key, option.optionId === null ? 'Cancelled' : String(option.name || option.optionId));
             await refresh();
           } catch (e) {
             fail(e);
@@ -2377,6 +2507,7 @@
           clientMessageId = attemptId(key, draft, fingerprint),
           attachments = await imageBlocks(images);
         await post('prompt', { id: result.id, text: draft, clientMessageId, attachments });
+        followSent();
         clearAttempt(key, draft, fingerprint);
         clearSentAttachments(key, images);
         if (drafts.get(key) === draft) {
@@ -2442,6 +2573,27 @@
       $('connect').textContent = 'Start conversation';
     }
   };
+  /* The header's "Your turn": the conversation list's flag, except right after a turn ends. The list is a few seconds behind
+     (it is fetched on a timer, and the server marks the turn a moment later), so the header said "Idle" first. A turn that
+     ended after the list was fetched, or within 15 s before, is read from the chat's own events (which still respect your
+     reply and Mark handled); an older false flag means it was handled elsewhere. */
+  /* The turn line's queue words. A paused queue ("Paused - you interrupted the agent") is said by the queue box right below,
+     with its Resume: the line does not say it a second time. */
+  function queueLineNote(queue, busy) {
+    const s = window.AgentQueueUI?.summary(queue, busy);
+    return !s || s.tone === 'paused' ? '' : s.note || '';
+  }
+  function headerYourTurn() {
+    const listed = typeof selected.yourTurn === 'boolean' ? selected.yourTurn : selected.live?.yourTurn;
+    if (listed !== false || !Array.isArray(events)) return listed;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (!e || e.kind === 'user') return listed;
+      if (e.kind === 'turn_end')
+        return typeof e.time === 'number' && e.time * 1000 > listedAt - 15000 ? undefined : listed;
+    }
+    return listed;
+  }
   async function continueConversation() {
     if (!selected || continuingKey || elsewhereLocked(selected)) return;
     const target = { ...selected },
@@ -2468,6 +2620,7 @@
           clientMessageId = attemptId(key, draft, fingerprint),
           attachments = await imageBlocks(images);
         await post('prompt', { id: result.id, text: draft, clientMessageId, attachments });
+        followSent();
         clearAttempt(key, draft, fingerprint);
         clearSentAttachments(key, images);
         if (drafts.get(key) === draft) {
@@ -2556,6 +2709,7 @@
         clientMessageId,
         attachments,
       });
+      followSent(); // you sent it: the view goes to your message and follows the reply, wherever you had scrolled
       clearAttempt(key, value, fingerprint);
       clearSentAttachments(key, images);
       if (drafts.get(key) === value) {
@@ -3439,6 +3593,7 @@
     else if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, bubble));
     else for (const row of drawn) fragment.append(bubble(row));
     box.replaceChildren(fragment);
+    markRepeatedTimes(box);
     if (!condensed)
       for (const i of opens) if (box.querySelectorAll('details')[i]) box.querySelectorAll('details')[i].open = true;
     box._painted = true;
@@ -3600,7 +3755,8 @@
         if (!c) return false;
         await openConversation(c);
       }
-      for (let i = 0; i < 50 && !(selected && aliasKey(selected) === key); i++) await new Promise((r) => setTimeout(r, 100));
+      for (let i = 0; i < 50 && !(selected && aliasKey(selected) === key); i++)
+        await new Promise((r) => setTimeout(r, 100));
       return !!selected && aliasKey(selected) === key;
     },
   });
@@ -3670,6 +3826,16 @@
         return Array.isArray(e) && e.length && e.some((x) => x.status !== 'completed') ? rows[i] : null;
       }
     return null;
+  }
+  /* An unfinished plan is the chat's last item while its turn is the latest (it scrolls with the history), placed before the
+     closing "turn finished" line. Once you have sent another message it stays in its own turn, above the later turns. */
+  function planLast(shown, rows, plan) {
+    const at = rows.indexOf(plan);
+    if (rows.slice(at + 1).some((r) => r.role === 'user' && isMsgRow(r))) return shown;
+    const rest = shown.filter((r) => r !== plan);
+    let end = rest.length;
+    while (end > 0 && rest[end - 1].role === 'turn-end') end--;
+    return [...rest.slice(0, end), plan, ...rest.slice(end)];
   }
   function updatePlanDock(rows) {
     const dock = $('planDock');
@@ -3748,6 +3914,7 @@
     const S = window.StreamUI;
     if (!S) return null;
     if (row.role === 'turn-end') return S.divider(row);
+    if (row.role === 'answered') return answeredLine(row);
     if (row.role === 'user' && !(row.attachments && row.attachments.length)) {
       const note = S.classifyUser(row.value);
       if (note) return S.noteCard(note, row, resolveAgentName);
@@ -3814,11 +3981,13 @@
     (r.role === 'assistant' ||
       (r.role === 'user' && !(!(r.attachments && r.attachments.length) && window.StreamUI?.classifyUser?.(r.value)))) &&
     !!(r.value || (r.attachments && r.attachments.length));
+  /* Only the agent's messages can be unread: your own never get a "New" line or count in the button. */
+  const isUnreadRow = (r) => isMsgRow(r) && r.role === 'assistant';
   function markSeen(chat, time) {
     if (!chat || !time) return;
     window.AgentReadState?.mark(chat, time, UNREAD.count);
   }
-  const msgBubbles = (box) => [...box.children].filter((e) => e.matches('.bubble.user,.bubble.assistant'));
+  const msgBubbles = (box) => [...box.children].filter((e) => e.matches('.bubble.assistant'));
   function unreadReset() {
     UNREAD.mark = null;
     UNREAD.jumped = false;
@@ -3869,7 +4038,7 @@
      shown: the rows this view drew as top-level bubbles; rows: all the rows of the chat, whatever the view. */
   function placeNewLine(box, shown, rows) {
     if (box.id !== 'messages') return;
-    const all = (rows || shown || []).filter(isMsgRow),
+    const all = (rows || shown || []).filter(isUnreadRow),
       chat = selected ? aliasKey(selected) : null;
     UNREAD.rows = rows || shown || [];
     UNREAD.all = all.map((r) => ({ key: msgKey(r), time: rowTime(r) }));
@@ -3882,7 +4051,7 @@
       unreadReset();
       UNREAD.opening = !!chat;
     }
-    if (UNREAD.opening && all.length) {
+    if (UNREAD.opening && (rows || shown || []).some(isMsgRow)) {
       UNREAD.opening = false;
       /* Opening a chat: if it has messages newer than the last one you saw here, start at the first of them. */
       /* Messages replayed after a restart carry no time (0): those are placed by how many you had seen. */
@@ -3905,10 +4074,10 @@
     let at = null;
     if (box.dataset.paused && unreadCount() > 0) {
       /* the first unread row's place in this view: if the view hides it, the next visible message */
-      const drawn = (shown || []).filter(isMsgRow),
+      const drawn = (shown || []).filter(isUnreadRow),
         bubbles = msgBubbles(box);
       if (drawn.length === bubbles.length) {
-        const place = new Map(rows ? rows.filter(isMsgRow).map((r, i) => [r, i]) : []),
+        const place = new Map(rows ? rows.filter(isUnreadRow).map((r, i) => [r, i]) : []),
           from = readIndex(),
           p = drawn.findIndex((r) => (place.has(r) ? place.get(r) : -1) >= from);
         at = p >= 0 ? p : null;
@@ -3976,6 +4145,24 @@
         UNREAD.lineAt = null;
       }
     }, 4200);
+  }
+  /* Everything fits on screen, or the list is already at its end: nothing is waiting below, so follow is back on (a
+     scroll event would say so, but none fires when the content does not scroll). */
+  function resumeIfAtEnd(box) {
+    if (!box.dataset.paused || box.scrollHeight - box.scrollTop - box.clientHeight > 48) return;
+    if (box.id === 'messages') {
+      if (Date.now() < UNREAD.holdUntil) return; // a view switch is still settling
+      fadeNewLine(box);
+      markSeen(UNREAD.chat, UNREAD.newest);
+      UNREAD.mark = null;
+      UNREAD.jumped = false;
+    }
+    delete box.dataset.paused;
+    delete box.dataset.unseen;
+  }
+  /* You sent a message: show it and follow the reply. */
+  function followSent() {
+    if ($('messages').dataset.paused) jumpLatest();
   }
   function jumpLatest() {
     const box = $('messages');
@@ -4058,6 +4245,9 @@
    `state` for the few variables they set up or check. Nothing else from this file is reachable from outside. */
   window.StudioChat = {
     DraftStore,
+    headerYourTurn,
+    collectChildren,
+    children,
     agentIsActive,
     agentStateLabel,
     attemptId,
@@ -4156,6 +4346,12 @@
       },
       set events(v) {
         events = v;
+      },
+      get listedAt() {
+        return listedAt;
+      },
+      set listedAt(v) {
+        listedAt = v;
       },
       get historyWindows() {
         return historyWindows;

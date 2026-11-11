@@ -26,6 +26,10 @@
   border-radius: 4px;
   cursor: pointer;
 }
+/* Under a message's own text (your messages, plain replies): in line with the text, not against the box's edge. */
+.bubble > .clamp-toggle {
+  margin: 2px 15px 10px;
+}
 .clamp-toggle:hover,
 .clamp-toggle:focus-visible {
   background: #2a2540;

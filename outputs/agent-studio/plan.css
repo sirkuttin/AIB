@@ -7,6 +7,11 @@
   align-items: baseline;
   gap: 8px;
 }
+/* "Plan" and "Next step" read as headings: the 10 px of a message's hidden title bar was too small. */
+.bubble.plan > .bubble-head,
+.bubble.nextstep > .bubble-head {
+  font-size: 12px;
+}
 .plan-count {
   color: var(--muted);
   font-size: 12px;

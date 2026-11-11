@@ -36,6 +36,12 @@ class Node {
   addEventListener(name, fn) {
     this.listeners[name] = fn;
   }
+  setAttribute(k, v) {
+    (this.attrs = this.attrs || {})[k] = String(v);
+  }
+  removeAttribute(k) {
+    if (this.attrs) delete this.attrs[k];
+  }
   remove() {
     if (this.parent) this.parent.children = this.parent.children.filter((x) => x !== this);
   }
@@ -198,6 +204,9 @@ test('requests are labeled with the asking agent and subagents can be shown', ()
     { kind: 'subagent', name: 'Subagent child', sessionId: 'child' },
   );
   assert.equal(ui.routeInfo('x', undefined, { mainSessionId: 'main' }).kind, 'unknown');
+  /* an unnamed subagent: the heading already says "Subagent child-se…", so no "Subagent: Subagent …" line under it */
+  assert.equal(ui.routeNote(ui.routeInfo('child-session-1', 'subagent', { mainSessionId: 'main' })), '');
+  assert.equal(ui.routeNote({ kind: 'subagent', name: 'Researcher' }), 'Subagent: Researcher');
 });
 
 test('withdrawn requests disappear and a stale answer reports the server error', async () => {
