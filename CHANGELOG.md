@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-beta.5 (beta)
+
+- Project files in the left sidebar: the sidebar shows one project at a time (All chats is gone; the project dropdown
+  counts chats that need you in every project and has Open inbox). A Chats | Files switch (Ctrl+Shift+E) shows the
+  project's files: a tree that follows the open chat's own copy (a scope button pins another copy or the main folder),
+  .gitignore and node_modules hidden, a filter (Ctrl+Shift+F), a Changed toggle, change badges that open the diff, and a
+  marker on files any chat made into an artifact.
+- Files open as tabs (a single click opens an italic preview tab) in a read-only file view with Source / Page, Open in
+  Artifacts (for any HTML, SVG or Markdown file), Open in VS Code and Show in Explorer. A file path in a reply opens the
+  file beside the chat on wide windows, or as a tab; clicking a path no longer adds an artifact. Find and Ctrl+K find files.
+- Chats from worktree folders made outside AIB are listed under their parent project, marked with their branch.
+- Beta agents in Settings > AIB Linking, off by default and not tested by us yet: GitHub Copilot CLI, OpenCode, Gemini CLI,
+  Qwen Code, Cursor CLI, Goose, Mistral Vibe, Cline, Kimi Code and Kilo Code. Install commands, API key boxes, and sign-in
+  that needs a terminal runs in an AIB terminal panel (also from a chat that needs sign-in). Turned-on Beta agents show
+  under a "Beta" label in the agent pickers.
+- Quitting and quickly reopening AIB no longer shows a just-used Claude chat as "Elsewhere · Working" for two minutes or
+  refuses to reconnect it.
+- The notifications setting is called Desktop notifications on every system.
+
 ## 0.1.0-beta.4 (beta)
 
 - New look: Bay teal is the default. Settings > Appearance > Theme offers eleven themes (AIB teal dark and light; high
