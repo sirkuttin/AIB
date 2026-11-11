@@ -72,16 +72,19 @@ async function openSettings(list = LIST()) {
   const ctx = load(shell, ['agent-choice.js', 'settings-ui.js']);
   const UI = ctx.AgentSettingsUI;
   const posts = [];
+  const gets = [];
   UI.init({
-    get: async (path) =>
-      path === '/api/live/settings'
+    get: async (path, params) => {
+      gets.push([path, params || null]);
+      return path === '/api/live/settings'
         ? {
             revision: 'r1',
             warning: '',
             settings: { defaults: { migrated: true, projects: {}, byAgent: {} } },
             agents: list,
           }
-        : {},
+        : {};
+    },
     post: async (name, body) => {
       posts.push([name, body]);
       return {
@@ -98,7 +101,14 @@ async function openSettings(list = LIST()) {
   await flush();
   const cards = shell.body.querySelectorAll('section.st-card');
   const card = (title) => cards.find((c) => (c.querySelector('h3') || {}).textContent === title);
-  return { shell, ctx, UI, posts, card };
+  // The Beta card's row, found again after a repaint.
+  const betaRow = (name) =>
+    shell.body
+      .querySelectorAll('section.st-card')
+      .find((c) => (c.querySelector('h3') || {}).textContent === 'Beta agents')
+      .querySelectorAll('.st-agent')
+      .find((r) => r.querySelector('strong').textContent === name);
+  return { shell, ctx, UI, posts, gets, card, betaRow };
 }
 
 test('AIB Linking has a "Beta agents" card with its one-line note, under the tested agents', async () => {
@@ -175,28 +185,190 @@ test('each Beta card has its cost line; a missing one shows the install command 
   assert.equal(rows[1].querySelector('.st-beta-key'), null);
 });
 
-test('a card without an Install button says AIB cannot install it; an npm card shows Install and "Or install it yourself"', async () => {
+// Beta setup (server/agents/beta_setup.ts betaInfo.setup): every card that is not installed has Install; prerequisites first.
+const setupOf = (kind, command, prereqs = [], blockedBy = '') => ({
+  kind,
+  command,
+  source: '',
+  uninstallDocs: '',
+  prereqs,
+  blockedBy,
+});
+const NODE_MISSING = {
+  id: 'node',
+  name: 'Node.js',
+  need: 'Node.js 22 or newer',
+  state: 'missing',
+  version: '',
+  min: '22',
+  command: 'winget install -e --id OpenJS.NodeJS.LTS',
+  installLabel: 'Install Node.js 26 (LTS)',
+  page: 'https://nodejs.org/en/download',
+  source: '',
+};
+const UV = (state, version = '') => ({
+  id: 'uv',
+  name: 'uv',
+  need: 'uv',
+  state,
+  version,
+  min: '',
+  command: 'winget install --id=astral-sh.uv -e',
+  installLabel: 'Install uv',
+  page: 'https://docs.astral.sh/uv/getting-started/installation/',
+  source: '',
+});
+const CURSOR_CMD = "irm 'https://cursor.com/install?win32=true' | iex";
+function setupList() {
   const list = LIST();
-  list[5] = beta('gemini', 'Gemini CLI', { installable: true }); // an npm agent AIB installs itself
-  const { card } = await openSettings(list);
-  const rows = card('Beta agents').querySelectorAll('.st-agent');
-  const hint = (row) => row.querySelector('.st-beta-install').querySelector('.st-hint').textContent;
-  // OpenCode and Cursor CLI: no npm package AIB installs, so their own installer.
-  for (const row of [rows[1], rows[3]]) {
-    assert.ok(!row.querySelectorAll('button').some((b) => b.textContent === 'Install'), 'no Install button');
-    assert.equal(hint(row), "AIB can't install this one for you. Run this command, then choose Check again.");
-    assert.ok(
-      row
-        .querySelector('.st-beta-install')
-        .querySelectorAll('button')
-        .some((b) => b.textContent === 'Check again'),
-    );
-  }
-  assert.ok(
-    rows[2].querySelectorAll('button').some((b) => b.textContent === 'Install'),
-    'the npm agent has Install',
+  const withSetup = (a, setup, extra = {}) => ({
+    ...a,
+    ...extra,
+    betaInfo: {
+      ...a.betaInfo,
+      installCommand: setup.kind === 'npm' ? a.betaInfo.installCommand : setup.command,
+      setup,
+    },
+  });
+  list[4] = withSetup(
+    list[4],
+    setupOf('npm', 'npm install -g @opencode/cli', [{ ...NODE_MISSING, state: 'found', version: '26.13.1' }]),
+    {
+      installable: true,
+    },
   );
-  assert.equal(hint(rows[2]), 'Or install it yourself:');
+  list[5] = withSetup(
+    list[5],
+    setupOf('npm', 'npm install -g @google/gemini-cli', [NODE_MISSING], 'Install Node.js first'),
+    {
+      installable: true,
+    },
+  );
+  list[6] = withSetup(list[6], setupOf('terminal', CURSOR_CMD));
+  list.push(
+    withSetup(
+      beta('vibe', 'Mistral Vibe'),
+      setupOf('terminal', 'uv tool install mistral-vibe', [UV('missing')], 'Install uv first'),
+    ),
+  );
+  return list;
+}
+const buttonOf = (row, text) => row.querySelectorAll('button').find((b) => b.textContent === text);
+
+test('every Beta card that is not installed has Install: npm ones by AIB, the others run the vendor installer here', async () => {
+  const { betaRow } = await openSettings(setupList());
+  const hint = (row) => row.querySelector('.st-beta-install').querySelector('.st-hint').textContent;
+  const opencode = betaRow('OpenCode');
+  assert.ok(buttonOf(opencode, 'Install') && !buttonOf(opencode, 'Install').disabled, 'OpenCode is an npm agent now');
+  assert.equal(hint(opencode), 'Or install it yourself:');
+  assert.equal(opencode.querySelector('.st-beta-need').textContent, 'Node.js 22 or newer: found 26.13.1');
+  const cursor = betaRow('Cursor CLI');
+  assert.ok(buttonOf(cursor, 'Install') && !buttonOf(cursor, 'Install').disabled);
+  assert.equal(hint(cursor), 'Install runs this in a terminal here:');
+  assert.equal(
+    cursor.querySelector('.st-beta-install').querySelector('code').textContent,
+    CURSOR_CMD,
+    'shown before it runs',
+  );
+  assert.equal(cursor.querySelector('.st-beta-needs'), null, 'nothing needed first');
+  assert.doesNotMatch(cursor.textContent, /can't install/);
+});
+
+test('a missing prerequisite: "Needs first" with its install command and button; the agent Install is off with the reason', async () => {
+  const { betaRow } = await openSettings(setupList());
+  const gemini = betaRow('Gemini CLI');
+  assert.equal(gemini.querySelector('.st-beta-needs').querySelector('.st-hint').textContent, 'Needs first:');
+  const need = gemini.querySelector('.st-beta-need');
+  assert.equal(need.querySelector('.st-beta-need-text').textContent, 'Node.js 22 or newer: missing');
+  assert.equal(need.querySelector('code').textContent, 'winget install -e --id OpenJS.NodeJS.LTS');
+  assert.ok(buttonOf(need, 'Install Node.js 26 (LTS)'));
+  assert.equal(buttonOf(gemini, 'Install').disabled, true);
+  assert.equal(gemini.querySelector('.st-beta-blocked').textContent, 'Install Node.js first');
+  const vibe = betaRow('Mistral Vibe');
+  assert.equal(vibe.querySelector('.st-beta-need-text').textContent, 'uv: missing');
+  assert.equal(buttonOf(vibe, 'Install').disabled, true);
+  assert.equal(vibe.querySelector('.st-beta-blocked').textContent, 'Install uv first');
+});
+
+test('Install of a vendor agent runs in the card terminal; exit 0 checks again, a failure keeps the output with one line', async () => {
+  const list = setupList();
+  const { ctx, betaRow, gets, posts } = await openSettings(list);
+  const runs = [];
+  let closed = 0;
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push([id, step, h]), { close: () => closed++ }) };
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  assert.deepEqual(
+    runs.map((r) => [r[0], r[1]]),
+    [['cursor', 'install']],
+  );
+  assert.equal(betaRow('Cursor CLI').querySelector('.st-beta-term-title').textContent, 'Installing: ' + CURSOR_CMD);
+  runs[0][2].onExit(1);
+  await flush();
+  assert.equal(
+    betaRow('Cursor CLI').querySelector('.st-beta-term').querySelector('p').textContent,
+    'Install failed. See the output above.',
+  );
+  assert.equal(closed, 0, 'the output stays');
+
+  buttonOf(betaRow('Cursor CLI'), 'Install').click();
+  await flush();
+  const before = gets.length;
+  list[6] = { ...list[6], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
+  runs[1][2].onExit(0);
+  await flush();
+  await flush();
+  assert.deepEqual(plain(gets.slice(before)), [['/api/live/settings', { recheck: '1' }]], 'Check again, PATH re-read');
+  assert.equal(betaRow('Cursor CLI').querySelector('.st-beta-term'), null, 'found: the panel closes');
+  assert.ok(posts.some((p) => p[0] === 'terminal/end' && p[1].key === 'setup:cursor'));
+});
+
+test('Install uv runs its installer; after exit 0 the check sees uv and the agent Install turns on', async () => {
+  const list = setupList();
+  const { ctx, betaRow } = await openSettings(list);
+  const runs = [];
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => (runs.push([id, step, h]), { close() {} }) };
+  buttonOf(betaRow('Mistral Vibe').querySelector('.st-beta-need'), 'Install uv').click();
+  await flush();
+  assert.deepEqual(
+    runs.map((r) => [r[0], r[1]]),
+    [['vibe', 'prereq:uv']],
+  );
+  assert.equal(
+    betaRow('Mistral Vibe').querySelector('.st-beta-term-title').textContent,
+    'Installing uv: winget install --id=astral-sh.uv -e',
+  );
+  const vibe = list.length - 1;
+  list[vibe] = {
+    ...list[vibe],
+    betaInfo: {
+      ...list[vibe].betaInfo,
+      setup: setupOf('terminal', 'uv tool install mistral-vibe', [UV('found', '0.9.9')]),
+    },
+  };
+  runs[0][2].onExit(0);
+  await flush();
+  await flush();
+  const row = betaRow('Mistral Vibe');
+  assert.equal(row.querySelector('.st-beta-need-text').textContent, 'uv: found 0.9.9');
+  assert.equal(buttonOf(row, 'Install').disabled, false);
+  assert.equal(row.querySelector('.st-beta-blocked'), null);
+  assert.equal(row.querySelector('.st-beta-term'), null);
+});
+
+test('a prerequisite that installed but is not seen yet: the panel says to restart AIB', async () => {
+  const { ctx, betaRow } = await openSettings(setupList());
+  let hooks = null;
+  ctx.AibTerminal = { runSetup: (view, id, step, h) => ((hooks = h), { close() {} }) };
+  buttonOf(betaRow('Gemini CLI').querySelector('.st-beta-need'), 'Install Node.js 26 (LTS)').click();
+  await flush();
+  hooks.onExit(0);
+  await flush();
+  await flush();
+  assert.equal(
+    betaRow('Gemini CLI').querySelector('.st-beta-term').querySelector('p').textContent,
+    'The install finished, but AIB cannot find Node.js yet. Restart AIB, then choose Check again.',
+  );
 });
 
 test("a card with an API key box links to the provider's key page, opened in the browser; no key box, no link", async () => {

@@ -37,6 +37,8 @@ export interface BetaLookOptions {
   /** npm global folders (default: adapters.globalRoots, which may run `npm root -g` once). */
   globalRoots?: (node: string) => string[] | Promise<string[]>;
   findNode?: (configured: string) => string;
+  /** `<os>-<arch>` for a `native` npm package (default: this computer's). */
+  platform?: string;
 }
 
 /** Characters cmd.exe would read as syntax. Only fixed catalog arguments and file paths go through it; anything else is refused. */
@@ -129,6 +131,19 @@ async function globalEntry(agent: BetaAgent, node: string, roots: (node: string)
   return '';
 }
 
+/** `<os>-<arch>` of this computer, the key of BetaNpm.native. */
+export function platformKey(): string {
+  return `${Deno.build.os}-${Deno.build.arch}`;
+}
+
+/** The platform binary of a `native` npm package inside an install folder (<state>/agents/<id>/<version>), or '' when missing. */
+export function nativeProgram(agent: BetaAgent, versionDir: string, platform = platformKey()): string {
+  const parts = agent.npm?.native?.[platform];
+  if (!parts) return '';
+  const path = pathOf(versionDir, 'node_modules', ...parts);
+  return isFile(path) ? path : '';
+}
+
 /** How to start this Beta agent. Never throws for a missing program. */
 export async function resolveBeta(id: string, options: BetaLookOptions = {}): Promise<BetaLaunch> {
   const agent = betaAgent(id);
@@ -136,8 +151,15 @@ export async function resolveBeta(id: string, options: BetaLookOptions = {}): Pr
   const env = options.env ?? Deno.env.toObject();
   const windows = options.windows ?? WIN;
   const comspec = env.ComSpec || env.COMSPEC || '';
-  const node = agent.npm ? (options.findNode ?? adapters.findNode)(options.nodeCommand || '') : '';
-  if (agent.npm) {
+  if (agent.npm?.native) {
+    // A package whose bin is a postinstall placeholder (OpenCode): AIB's own install runs its platform binary, no node involved. A
+    // global `npm i -g` ran the postinstall, so its PATH program is the real one (step 3 finds it).
+    const own = adapters.findStudioInstall(id, options.stateDir);
+    const program = own ? nativeProgram(agent, own.dir, options.platform) : '';
+    if (program) return row(agent, [program], 'studio', program, false, `AIB's own install ${own!.version}: ${program}`);
+  }
+  const node = agent.npm && !agent.npm.native ? (options.findNode ?? adapters.findNode)(options.nodeCommand || '') : '';
+  if (agent.npm && !agent.npm.native) {
     const own = adapters.findStudioInstall(id, options.stateDir);
     if (own && node) {
       return row(agent, [node, own.entry], 'studio', own.entry, false, `AIB's own install ${own.version}: ${own.entry} (run with node)`);

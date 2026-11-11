@@ -17,6 +17,7 @@
  */
 import * as adapters from './adapters.ts';
 import { agentName } from './agent_registry.ts';
+import { BETA_AGENTS } from './beta_catalog.ts';
 import { APP_ROOT } from '../core/app.ts';
 import { writeJsonAtomic } from '../core/fs.ts';
 import { clip, isDict, pyJsonDumps, pyStr, ValueError } from '../core/py.ts';
@@ -840,6 +841,15 @@ export class Installer {
       return `npm installed version ${installed === null ? 'None' : pyStr(installed)}, not the reviewed version ${version}.`;
     }
     if (!adapters.packageEntry(folder, known)) return "The download finished, but the adapter's start file was not found.";
+    // A package that runs its platform binary (BetaNpm.native, OpenCode): that binary must have come with it.
+    const native = BETA_AGENTS.find((a) => a.npm?.package === pkg)?.npm?.native;
+    if (native) {
+      const parts = native[`${Deno.build.os}-${Deno.build.arch}`];
+      if (!parts) return `This package has no program for this computer (${Deno.build.os}, ${Deno.build.arch}).`;
+      if (!isFile(pathOf(folder, 'node_modules', ...parts))) {
+        return "The download finished, but the program for this computer was not in it (npm skipped the agent's platform package).";
+      }
+    }
     return '';
   }
 }

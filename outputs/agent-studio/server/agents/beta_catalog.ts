@@ -30,6 +30,36 @@ export interface BetaNpm {
   readonly bin: string;
   /** The entry file used only when package.json has no usable `bin` (UNCONFIRMED for every package: a guess). */
   readonly entry: string;
+  /** The lowest Node.js the package runs on, when it asks for more than AIB's MIN_NODE_MAJOR (its package.json `engines.node`). */
+  readonly minNode?: string;
+  /**
+   * A package whose bin is a placeholder its postinstall replaces (AIB installs with --ignore-scripts): the program to run is the
+   * native binary in its platform package, which npm installs as an optional dependency. Keyed `<Deno.build.os>-<Deno.build.arch>`;
+   * the value is the path under the install folder's node_modules. Started directly, not with node.
+   */
+  readonly native?: Readonly<Record<string, readonly string[]>>;
+}
+
+export type OsName = 'windows' | 'darwin' | 'linux';
+
+/** One command AIB runs in an AIB terminal panel on the card (the person sees it first and watches its output). */
+export interface BetaSetupStep {
+  /** powershell: Windows PowerShell -Command; bash / sh: -c. */
+  readonly shell: 'powershell' | 'bash' | 'sh';
+  readonly command: string;
+  /** Prerequisites (beta_setup.ts PREREQS ids) that must be on this computer first. */
+  readonly needs?: readonly string[];
+}
+
+/** The vendor's own installer, per OS, for an agent with no npm package AIB can install (from the vendor's docs only). */
+export interface BetaVendorInstall {
+  readonly windows?: BetaSetupStep;
+  readonly darwin?: BetaSetupStep;
+  readonly linux?: BetaSetupStep;
+  /** The official page the commands come from. */
+  readonly source: string;
+  /** The vendor's uninstall instructions, when it documents them (AIB never deletes what it did not install). */
+  readonly uninstallDocs?: string;
 }
 
 export interface BetaKnownPath {
@@ -70,6 +100,8 @@ export interface BetaAgent {
   readonly args: readonly string[];
   readonly install: string;
   readonly docs: string;
+  /** No npm package: Install runs the vendor's installer for this OS in an AIB terminal panel (beta_setup.ts). */
+  readonly vendorInstall?: BetaVendorInstall;
   readonly signin: BetaSignin;
   /** session/new reports a model it does not use until the client sets one (github/copilot-cli#5363): set it right after. */
   readonly setModelAfterNew?: boolean;
@@ -118,11 +150,30 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     letter: 'O',
     license: 'MIT',
     cost: 'Free CLI · needs an API key',
-    // registry: native binary `opencode acp` (windows-x86_64 and aarch64 builds).
+    // registry: native binary `opencode acp`, version 2.2.7. OpenCode 2 is the npm package @opencode/cli (opencode.ai/docs, read
+    // 2026-11-11: "npm install -g @opencode/cli"; "Windows package managers are not supported"). Its bin (bin/opencode.exe) is a
+    // placeholder its postinstall replaces with the binary of the platform package (@opencode/cli-<os>-<arch>, an optional
+    // dependency, 230-265 MB). AIB installs with --ignore-scripts, so it runs that platform binary itself (`native`). npm also fetches
+    // the -baseline (and on Linux -musl) variants of the same os/cpu, so the install is about twice that size. UNCONFIRMED: the
+    // non-baseline binary needs AVX2 (postinstall picks -baseline without it); a CPU without AVX2 cannot run AIB's install.
+    npm: {
+      package: '@opencode/cli',
+      version: '2.2.7',
+      bin: 'opencode',
+      entry: 'bin/opencode.exe',
+      native: {
+        'windows-x86_64': ['@opencode', 'cli-windows-x64', 'bin', 'opencode.exe'],
+        'windows-aarch64': ['@opencode', 'cli-windows-arm64', 'bin', 'opencode.exe'],
+        'darwin-x86_64': ['@opencode', 'cli-darwin-x64', 'bin', 'opencode'],
+        'darwin-aarch64': ['@opencode', 'cli-darwin-arm64', 'bin', 'opencode'],
+        'linux-x86_64': ['@opencode', 'cli-linux-x64', 'bin', 'opencode'],
+        'linux-aarch64': ['@opencode', 'cli-linux-arm64', 'bin', 'opencode'],
+      },
+    },
     commands: ['opencode'],
     known: [{ base: 'USERPROFILE', parts: ['.opencode', 'bin', 'opencode.exe'] }], // UNCONFIRMED: the install script's folder
     args: ['acp'],
-    install: 'npm install -g opencode-ai',
+    install: 'npm install -g @opencode/cli',
     docs: 'https://opencode.ai/docs/',
     signin: { kind: 'terminal', terminalArgs: ['auth', 'login'] },
   },
@@ -197,10 +248,19 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // registry: Windows build is dist-package\cursor-agent.cmd acp (the research said `agent acp`: the same program, also named agent).
     commands: ['cursor-agent', 'agent'],
     pathMustContain: { agent: 'cursor' }, // `agent` is too generic a name: only one that sits in a Cursor folder counts
-    known: [{ base: 'LOCALAPPDATA', parts: ['cursor-agent', 'cursor-agent.cmd'] }], // UNCONFIRMED: the installer's folder
+    // The Windows installer (cursor.com/install?win32=true, read 2026-11-11) puts cursor-agent.cmd in %LOCALAPPDATA%\cursor-agent and adds
+    // that folder to PATH. It also prints that Git for Windows is needed "to run a private worker" (a Cursor feature, not the install).
+    known: [{ base: 'LOCALAPPDATA', parts: ['cursor-agent', 'cursor-agent.cmd'] }],
     args: ['acp'],
     install: "irm 'https://cursor.com/install?win32=true' | iex",
     docs: 'https://cursor.com/docs/cli/acp',
+    // Cursor CLI docs, Installation (cursor.com/docs/cli/installation, read 2026-11-11). No uninstall instructions there.
+    vendorInstall: {
+      windows: { shell: 'powershell', command: "irm 'https://cursor.com/install?win32=true' | iex" },
+      darwin: { shell: 'bash', command: 'curl https://cursor.com/install -fsS | bash' },
+      linux: { shell: 'bash', command: 'curl https://cursor.com/install -fsS | bash' },
+      source: 'https://cursor.com/docs/cli/installation',
+    },
     // keyUrl: Cursor CLI docs, Authentication (cursor.com/docs/cli/reference/authentication, read 2026-11-11): "Cursor Dashboard →
     // API Keys" at cursor.com/dashboard/api. UNCONFIRMED: cost 'Paid plan' (the CLI docs name no plan).
     signin: { kind: 'agent', method: 'cursor_login', keyEnv: 'CURSOR_API_KEY', keyUrl: 'https://cursor.com/dashboard/api' },
@@ -213,11 +273,31 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     cost: 'Free CLI · needs an API key',
     // registry: native binary goose-package\goose.exe acp.
     commands: ['goose'],
-    known: [{ base: 'USERPROFILE', parts: ['.local', 'bin', 'goose.exe'] }], // UNCONFIRMED: the download script's folder
+    // download_cli.ps1 (read 2026-11-11): installs to $env:GOOSE_BIN_DIR, default $env:USERPROFILE\.local\bin.
+    known: [{ base: 'USERPROFILE', parts: ['.local', 'bin', 'goose.exe'] }],
     args: ['acp'],
-    // research: on Windows the documented install runs this script from Git Bash.
-    install: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash',
+    install: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash',
     docs: 'https://block.github.io/goose/docs/getting-started/installation',
+    // goose docs, Install goose (github.com/block/goose documentation/docs/getting-started/installation.md, read 2026-11-11; the
+    // project moved to github.com/aaif-goose). Windows lists Git Bash, MSYS2 and PowerShell; AIB uses the PowerShell one, which needs
+    // nothing else: the docs download download_cli.ps1 to the current folder and run it; AIB saves it in %TEMP% instead. The scripts end
+    // with `goose configure` (interactive, in the panel). No uninstall steps for the CLI in the docs.
+    vendorInstall: {
+      windows: {
+        shell: 'powershell',
+        command: "$f = Join-Path $env:TEMP 'download_cli.ps1'; " +
+          'Invoke-WebRequest -Uri "https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1" -OutFile $f; & $f',
+      },
+      darwin: {
+        shell: 'bash',
+        command: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash',
+      },
+      linux: {
+        shell: 'bash',
+        command: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash',
+      },
+      source: 'https://block.github.io/goose/docs/getting-started/installation',
+    },
     // research: agent-type (provider and key). UNCONFIRMED: the method ids; the first advertised one runs.
     signin: { kind: 'agent' },
   },
@@ -233,6 +313,16 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     args: [],
     install: 'uv tool install mistral-vibe',
     docs: 'https://github.com/mistralai/mistral-vibe',
+    // Mistral Vibe README (github.com/mistralai/mistral-vibe, read 2026-11-11) and docs.mistral.ai/mistral-vibe/terminal: macOS/Linux
+    // `curl -LsSf https://mistral.ai/vibe/install.sh | bash` (the script installs uv itself when missing, then `uv tool install
+    // mistral-vibe`); Windows: install uv first, then `uv tool install mistral-vibe`. uv fetches a Python (3.12+) when needed, so Python
+    // is not a prerequisite. No uninstall instructions in either.
+    vendorInstall: {
+      windows: { shell: 'powershell', command: 'uv tool install mistral-vibe', needs: ['uv'] },
+      darwin: { shell: 'bash', command: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash' },
+      linux: { shell: 'bash', command: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash' },
+      source: 'https://github.com/mistralai/mistral-vibe#installation',
+    },
     // keyUrl: Mistral docs, Vibe "API keys and profiles" (docs.mistral.ai/vibe/code/cli/api-keys-profiles, read 2026-11-11): make the
     // key under Code › Vibe CLI at chat.mistral.ai/code/extensions; "The same key works in Free mode, with a paid plan, or with
     // pay-as-you-go enabled" (use beyond the plan's monthly amount stops unless pay-as-you-go is on).
@@ -262,7 +352,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // registry: npx @moonshot-ai/kimi-code@2.5.3 acp. AIB installs the package instead of running npx (npx would download at launch).
     // From the package itself (2.5.3): package.json bin {"kimi": "dist/main.mjs"}; dist/main.mjs has a `login` command and an `acp`
     // command whose `--login` option is what its advertised terminal auth method runs (`kimi acp --login`).
-    npm: { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs' },
+    npm: { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs', minNode: '22.19.0' },
     commands: ['kimi'],
     args: ['acp'],
     install: 'npm install -g @moonshot-ai/kimi-code',

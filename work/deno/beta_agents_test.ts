@@ -237,7 +237,7 @@ Deno.test('Beta agents are off by default; turning one on and storing its key ne
 
 Deno.test('the Beta npm agents are installable from the allow-list (exact registry versions), the built-ins keep their lockfiles', () => {
   const beta = installer.loadBetaAllowList() as Record<string, Record<string, string>>;
-  assertEquals(Object.keys(beta).sort(), ['cline', 'copilot', 'gemini', 'kilo', 'kimi', 'qwen']);
+  assertEquals(Object.keys(beta).sort(), ['cline', 'copilot', 'gemini', 'kilo', 'kimi', 'opencode', 'qwen']);
   for (const [id, entry] of Object.entries(beta)) {
     assertEquals(entry.package, betaAgent(id)!.npm!.package);
     assertEquals(entry.version, betaAgent(id)!.npm!.version);
@@ -360,7 +360,7 @@ Deno.test('ACP terminal auth: advertised args go after the launch command (`kimi
 
 Deno.test("Kimi's catalog entry matches its package: bin kimi -> dist/main.mjs, ACP `acp`, fallback login `kimi login`", () => {
   const kimi = betaAgent('kimi')!;
-  assertEquals(kimi.npm, { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs' });
+  assertEquals(kimi.npm, { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs', minNode: '22.19.0' });
   assertEquals(kimi.commands, ['kimi']);
   assertEquals(kimi.args, ['acp']);
   assertEquals(kimi.signin.terminalArgs, ['login']);

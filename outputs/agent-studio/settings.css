@@ -773,6 +773,23 @@ html[data-ui-scaled] .st-page {
 .st-beta-keylink {
   align-self: flex-start;
 }
+.st-beta-needs {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.st-beta-needs-list {
+  margin: 2px 0 0;
+  padding: 0 0 0 18px;
+}
+.st-beta-need {
+  margin: 2px 0;
+}
+.st-beta-need.bad .st-beta-need-text {
+  font-weight: 600;
+}
+.st-beta-blocked {
+  font-size: 12px;
+}
 .st-beta-key {
   margin: 8px 0 0;
 }

@@ -778,7 +778,8 @@
       if (canSignIn(a)) head.append(button('Sign in', () => startSignin(a), 'st-primary'));
       if (a.found && a.signin)
         head.append(button('Check again', () => (a.beta ? checkOne(a) : checkSignins(true)), 'st-link'));
-      if (canInstall(a))
+      if (a.beta && !a.found && betaInfo(a).setup) betaInstallButton(a, head, job, refused);
+      else if (canInstall(a))
         head.append(
           button(job && (job.state === 'failed' || refused) ? 'Retry' : 'Install', () => startInstall(a), 'st-primary'),
         );
@@ -1115,13 +1116,18 @@
     if (info.cost) row.append(el('p', info.cost, 'st-beta-cost'));
     if (info.note) row.append(note(info.note, 'dim'));
     if (!a.found && !installRunning(a)) {
+      const setup = info.setup || null;
+      if (setup && setup.prereqs && setup.prereqs.length) row.append(needsFirst(a, setup));
       const how = el('div', null, 'st-beta-install');
-      // No Install button: AIB installs only npm packages (into its own folder); the rest need their own installer.
-      const hint = canInstall(a)
-        ? 'Or install it yourself:'
-        : a.installable
-          ? 'Install it with:'
-          : "AIB can't install this one for you. Run this command, then choose Check again.";
+      // npm agents: AIB installs the package into its own folder (Install); the global npm command is the do-it-yourself way.
+      // Others: Install runs the vendor's installer for this computer in a terminal on this card; this is that command.
+      const kind = setup ? setup.kind : a.installable ? 'npm' : 'none';
+      const hint =
+        kind === 'npm'
+          ? 'Or install it yourself:'
+          : kind === 'terminal'
+            ? 'Install runs this in a terminal here:'
+            : "AIB can't install this one for you. Run this command, then choose Check again.";
       how.append(el('span', hint, 'st-hint'));
       const line = el('div', null, 'st-beta-row st-beta-command');
       const code = el('code', info.installCommand || '', 'st-command');
@@ -1132,8 +1138,12 @@
       if (info.docs) how.append(externalLink('Install instructions', info.docs, 'st-link st-beta-docs'));
       const again = button('Check again', () => load(true), 'st-link');
       how.append(' ', again);
+      if (setup && setup.uninstallDocs)
+        how.append(' ', externalLink('How to uninstall', setup.uninstallDocs, 'st-link st-beta-docs'));
       row.append(how);
     }
+    const msg = setupNotes[a.id];
+    if (msg && !a.found) row.append(note(msg, 'dim'));
     if (info.keyEnv) row.append(keyBox(a, info));
     const term = betaTerms[a.id];
     if (term) row.append(term.node);
@@ -1145,6 +1155,113 @@
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     return link;
+  }
+  // ---- Beta setup: prerequisites and installs in the card's terminal (server/agents/beta_setup.ts) ------------------------
+  const setupNotes = {}; // agent id -> a line about the last setup step (e.g. installed but not seen until AIB restarts)
+  const prereqText = (p) =>
+    p.need +
+    ': ' +
+    (p.state === 'found'
+      ? 'found' + (p.version ? ' ' + p.version : '')
+      : p.state === 'old'
+        ? 'too old' + (p.version ? ' (' + p.version + ')' : '')
+        : 'missing');
+  // "Needs first:" each prerequisite with its state; a missing or too-old one shows its installer command and an Install button.
+  function needsFirst(a, setup) {
+    const box = el('div', null, 'st-beta-needs');
+    box.append(el('span', 'Needs first:', 'st-hint'));
+    const list = el('ul', null, 'st-beta-needs-list');
+    for (const p of setup.prereqs) {
+      const item = el('li', null, 'st-beta-need ' + (p.state === 'found' ? 'ok' : 'bad'));
+      item.append(el('span', prereqText(p), 'st-beta-need-text'));
+      if (p.state !== 'found') {
+        if (p.command) {
+          const line = el('div', null, 'st-beta-row st-beta-command');
+          const busy = !!betaTerms[a.id] && betaTerms[a.id].running;
+          const go = button(p.installLabel, () => startSetup(a, 'prereq:' + p.id, p.command, p), 'st-primary');
+          go.disabled = busy;
+          line.append(el('code', p.command, 'st-command'), go);
+          item.append(line);
+        } else item.append(' ', externalLink('Get ' + p.name, p.page, 'st-link st-beta-docs'));
+      }
+      list.append(item);
+    }
+    box.append(list);
+    return box;
+  }
+  // The head's Install for a Beta card that is not installed: AIB's own npm install, or the vendor's installer in the card's terminal.
+  // Off while a prerequisite is missing, with the reason next to it.
+  function betaInstallButton(a, head, job, refused) {
+    const setup = betaInfo(a).setup;
+    if (!setup || setup.kind === 'none' || (setup.kind === 'npm' && !a.installable)) return;
+    const retry = !!job && (job.state === 'failed' || refused);
+    const go = button(
+      retry ? 'Retry' : 'Install',
+      () => (setup.kind === 'npm' ? startInstall(a) : startSetup(a, 'install', setup.command, null)),
+      'st-primary',
+    );
+    const busy = !!betaTerms[a.id] && betaTerms[a.id].running;
+    if (setup.blockedBy || busy) go.disabled = true;
+    if (setup.blockedBy) go.title = setup.blockedBy;
+    head.append(go);
+    if (setup.blockedBy) head.append(el('span', setup.blockedBy, 'st-hint st-beta-blocked'));
+  }
+  // Run one setup step in an AIB terminal on the card: 'install' (the vendor's installer) or 'prereq:<id>'. The command is shown
+  // first; the server runs its own copy of it. Exit 0: Check again (PATH re-read), then the card shows what it finds.
+  function startSetup(a, step, command, prereq) {
+    const T = root.AibTerminal;
+    if (!T || !T.runSetup) {
+      setupNotes[a.id] = 'The terminal is not available on this page.';
+      return repaint();
+    }
+    closeTerminal(a.id);
+    delete setupNotes[a.id];
+    const node = el('div', null, 'st-beta-term');
+    const head = el('div', null, 'st-beta-term-head');
+    head.append(
+      el('span', (prereq ? 'Installing ' + prereq.name + ': ' : 'Installing: ') + command, 'st-beta-term-title'),
+      button('Close', () => closeTerminal(a.id, true), 'st-link'),
+    );
+    const view = el('div', null, 'st-beta-term-view');
+    const status = el('p', 'Starting…', 'st-note');
+    status.setAttribute('role', 'status');
+    node.append(head, view, status);
+    const entry = { node, status, run: null, done: null, key: 'setup:' + a.id, running: true };
+    betaTerms[a.id] = entry;
+    repaint();
+    const fresh = () => agents().find((x) => x.id === a.id) || a;
+    entry.run = T.runSetup(view, a.id, step, {
+      onReady: () => (status.textContent = 'Installing. Answer here if the installer asks something.'),
+      onExit: (code) => {
+        entry.running = false;
+        if (code !== 0) {
+          status.textContent = 'Install failed. See the output above.';
+          status.className = 'st-note bad';
+          return repaint();
+        }
+        status.textContent = 'Installed. Checking…';
+        return load(true).then(() => {
+          const now = fresh();
+          const need = prereq && ((betaInfo(now).setup || {}).prereqs || []).find((p) => p.id === prereq.id);
+          const seen = prereq ? !need || need.state === 'found' : now.found;
+          if (seen) {
+            if (betaTerms[a.id] === entry) closeTerminal(a.id);
+          } else {
+            const what = prereq ? prereq.name : a.name;
+            status.textContent =
+              'The install finished, but AIB cannot find ' + what + ' yet. Restart AIB, then choose Check again.';
+            status.className = 'st-note warn';
+          }
+          repaint();
+        });
+      },
+      onError: (message) => {
+        entry.running = false;
+        status.textContent = message;
+        status.className = 'st-note bad';
+        repaint();
+      },
+    });
   }
   // The API key box: the key is saved with the settings (plain text in the state folder, like an added agent's environment values),
   // passed to the agent as its environment variable, and never shown again on this page.
@@ -1319,7 +1436,7 @@
     if (entry.node && entry.node.remove) entry.node.remove();
     // End the sign-in program too (the server keeps a terminal running after its socket closes).
     Promise.resolve()
-      .then(() => S.host.post('terminal/end', { key: 'signin:' + id }))
+      .then(() => S.host.post('terminal/end', { key: entry.key || 'signin:' + id }))
       .catch(() => {});
     if (paint) repaint();
   }

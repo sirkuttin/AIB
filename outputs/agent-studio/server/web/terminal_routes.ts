@@ -19,6 +19,7 @@ import type { WebContext } from './server.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
 import { resolveBeta, signinArgv } from '../agents/beta_agents.ts';
 import { readTerminalMethod } from '../agents/beta_signin.ts';
+import { defaultProbe, refreshWindowsPath, setupCommand } from '../agents/beta_setup.ts';
 import type { ShellSpec } from '../platform/pty.ts';
 import type { WsLink } from '../platform/websocket.ts';
 
@@ -68,7 +69,9 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const { link, response } = upgradeWebSocket(request, TERMINAL_PROTOCOL);
   const q = url.searchParams;
   const signin = q.get('signin');
+  const setup = q.get('setup');
   if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'));
+  else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
   else {ctx.terminals.attach(
       link,
       q.get('key'),
@@ -111,4 +114,21 @@ async function attachSignin(ctx: WebContext, link: WsLink, agentId: string, cols
   }
   const home = Deno.env.get(Deno.build.os === 'windows' ? 'USERPROFILE' : 'HOME') || Deno.cwd();
   ctx.terminals.attach(link, `signin:${agentId}`, home, cols, rows, '', command);
+}
+
+/**
+ * A setup terminal on a Beta card: key setup:<agent>, step `install` (the vendor's installer) or `prereq:<id>` (a prerequisite's
+ * installer). The command comes from the catalog (beta_setup.ts setupCommand), never from the page. PATH is refreshed first (Windows),
+ * so a prerequisite installed a moment ago is found.
+ */
+async function attachSetup(ctx: WebContext, link: WsLink, agentId: string, step: string, cols: unknown, rows: unknown): Promise<void> {
+  await refreshWindowsPath().catch(() => false);
+  const command = await setupCommand(agentId, step, defaultProbe(ctx.agentOptions.nodeCommand || '', true));
+  if (typeof command === 'string') {
+    link.send(JSON.stringify({ type: 'error', message: command, code: 'setup_unavailable' }));
+    link.close(1000, 'refused');
+    return;
+  }
+  const home = Deno.env.get(Deno.build.os === 'windows' ? 'USERPROFILE' : 'HOME') || Deno.cwd();
+  ctx.terminals.attach(link, `setup:${agentId}`, home, cols, rows, '', command);
 }
