@@ -41,7 +41,6 @@
       status = null,
       ctx = { id: '', busy: false, files: 0, branchView: false, worktree: false, blocked: '' },
       merging = false,
-      asking = false,
       sig = '',
       seq = 0,
       result = '';
@@ -94,22 +93,8 @@
       paint();
     }
     button.addEventListener('click', async () => {
-      if (merging || button.disabled || asking) return;
-      /* A short in-page confirmation that says how many files go in (changes-ui.js draws it). */
-      if (opts.confirm) {
-        asking = true;
-        let sure = false;
-        try {
-          sure = await opts.confirm({ files: ctx.files, base: (status && status.base) || 'main' });
-        } finally {
-          asking = false;
-        }
-        if (!sure) {
-          if (!button.hidden && button.focus) button.focus();
-          return;
-        }
-        if (merging || button.disabled) return;
-      }
+      /* No confirmation: one click asks the chat (the permission is tied to the chat's work at this click). */
+      if (merging || button.disabled) return;
       merging = true;
       result = '';
       paint();

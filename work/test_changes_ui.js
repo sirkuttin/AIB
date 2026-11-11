@@ -107,14 +107,6 @@ test('status letters, counts and chip text', () => {
   assert.equal(C.moreText(360), 'Show the next 300 (360 not listed yet)');
   assert.equal(C.moreText(61), 'Show the last 61 (61 not listed yet)');
   assert.equal(C.moreText(0), '');
-  assert.equal(
-    C.mergeQuestion(361, 'main'),
-    'Ask the chat to merge all 361 changed files into main? Edits it has not committed yet are committed first.',
-  );
-  assert.equal(
-    C.mergeQuestion(1, 'dev'),
-    'Ask the chat to merge the 1 changed file into dev? Edits it has not committed yet are committed first.',
-  );
   assert.equal(C.stripText(3), '3 changed');
   assert.equal(C.stripText(0), '');
 });
@@ -602,7 +594,7 @@ test('QA M4: a discarded chat: the Changes tab says so instead of "not available
   assert.equal(t.calls.filter((u, i) => i >= before && u.includes('/api/live/changes?')).length, 0);
 });
 
-test('QA m5 + m6: Merge asks first with the file count; a conflicted file has a conflict badge', async () => {
+test('one click on Merge asks the chat at once (no confirmation); a conflicted file has a conflict badge', async () => {
   const status = { worktree: true, base: 'main', label: 'Merge into main', enabled: true, state: 'ready', message: '' };
   const t = setup({ scope: 'branch', branch: 'studio/x', status });
   t.ui().show('changes');
@@ -611,17 +603,10 @@ test('QA m5 + m6: Merge asks first with the file count; a conflicted file has a 
   assert.ok(merge && !merge.hidden);
   merge.click();
   await flush();
-  const box = pane(t).querySelector('.cg-confirm');
-  assert.ok(box);
-  assert.match(box.textContent, /Ask the chat to merge all 3 changed files into main\?/);
-  box.querySelector('.cg-confirm-no').click();
-  await flush();
-  assert.equal(t.posts.length, 0, 'cancelled: nothing merged');
-  merge.click();
-  await flush();
-  pane(t).querySelector('.cg-confirm-yes').click();
-  await flush();
-  assert.equal(t.posts.filter((p) => p[0].includes('/worktree/merge')).length, 1);
+  assert.equal(pane(t).querySelector('.cg-confirm'), null, 'no confirmation step');
+  const sent = t.posts.filter((p) => p[0].includes('/worktree/merge'));
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0][0].includes('/worktree/merge-request'), 'the request, never the direct merge');
   const c = setup({
     scope: 'branch',
     branch: 'studio/x',
