@@ -123,7 +123,10 @@ export function studioRoutes(): Map<string, StudioHandler> {
     return refusedReply(() => ctx.launcher.open(body));
   });
   // ---- folders ----
-  routes.set('GET /api/live/folders/check', (_ctx, url) => Promise.resolve([200, folders.checkPath(one(argsOf(url), 'path'))]));
+  routes.set('GET /api/live/folders/check', (_ctx, url) => {
+    const args = argsOf(url);
+    return Promise.resolve([200, folders.checkProject(one(args, 'path'), one(args, 'name'))]);
+  });
   routes.set('GET /api/live/folders/kinds', (_ctx, url) => {
     const args = argsOf(url);
     const wanted: unknown[] = [...(args.path ?? [])];
@@ -137,9 +140,13 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('POST /api/live/folders/create', async (ctx, _url, body) => {
     const gitInit = body && Object.hasOwn(body, 'gitInit') ? body.gitInit : false;
     if (typeof body?.path !== 'string' || typeof gitInit !== 'boolean') throw new ValueError('Invalid request');
+    const named = Object.hasOwn(body, 'name'); // with a name: <path>\<name>, made or used; without: <path> itself, made
+    if (named && typeof body.name !== 'string') throw new ValueError('Invalid request');
     let result: folders.CreateResult;
     try {
-      result = await folders.createFolder(body.path, gitInit);
+      result = named
+        ? await folders.createProject(body.path, body.name, gitInit)
+        : await folders.createFolder(folders.normalizeFolder(body.path), gitInit);
     } catch (error) {
       if (error instanceof folders.FolderError) return [400, { error: error.message, code: error.code }];
       throw error;

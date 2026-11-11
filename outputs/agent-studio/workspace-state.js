@@ -677,14 +677,19 @@
     if (best) return withTrailingSep(best.parent);
     return withTrailingSep(srv.home || srv.start || '');
   }
-  // What the dialog shows for the server's check answer. ctx: {isProject: folder is already a project, checking: answer pending}.
-  // Returns {kind, text, tone, primary, canSubmit, showGit, gitEnabled, gitNote}. tone: hint | ok | error.
+  // What the dialog shows for the server's check answer (GET /api/live/folders/check?path=&name=). ctx: {isProject: the folder that
+  // becomes the project is already one, checking: answer pending, prefilled: see below}. text/tone: the hint under Folder, about the Folder box only;
+  // preview/previewTone: the line under Project name saying exactly what Create does (or why the name can't be used).
+  // check.folder is set when a name was given: path is then <folder>\<name>.
+  // Returns {kind, text, tone, preview, previewTone, primary, canSubmit, showGit, gitEnabled, gitNote}. tone: hint | ok | error.
   function hintState(check, ctx) {
     const c = ctx || {},
       base = {
         kind: 'empty',
-        text: 'Type a folder name, or Browse',
+        text: 'Type a folder path, or Browse',
         tone: 'hint',
+        preview: '',
+        previewTone: 'hint',
         primary: 'Create project',
         canSubmit: false,
         showGit: false,
@@ -696,21 +701,36 @@
         kind: c.checking ? 'checking' : 'empty',
         text: c.checking ? 'Checking…' : base.text,
       });
+    const named = isStr(check.folder) && !!check.folder;
+    const path = String(check.path || '');
+    // ctx.prefilled: Folder still holds the untouched starting value (a parent with a trailing separator) and Name is empty.
+    // Enter must not turn that parent into a project by accident, so Create waits for a name or a folder choice.
+    if (c.prefilled && check.valid && !named)
+      return Object.assign(base, {
+        kind: 'prefilled',
+        text: check.exists ? 'Existing folder' : 'New folder',
+        tone: 'ok',
+        preview: 'Type a project name, or pick a folder',
+      });
     if (check.valid && check.exists) {
       return Object.assign(
         base,
         c.isProject
           ? {
               kind: 'project',
-              text: 'This is already a project. Open switches to it',
+              text: named ? 'Folder found' : 'Already a project',
               tone: 'ok',
+              preview: 'Opens ' + path + ' (already a project)',
+              previewTone: 'ok',
               primary: 'Open project',
               canSubmit: true,
             }
           : {
               kind: 'existing',
-              text: 'Existing folder, used as is',
+              text: named ? 'Folder found' : 'Existing folder',
               tone: 'ok',
+              preview: 'Uses ' + path + ' (already there)',
+              previewTone: 'ok',
               primary: 'Open project',
               canSubmit: true,
             },
@@ -720,8 +740,10 @@
       const git = check.gitAvailable !== false;
       return Object.assign(base, {
         kind: 'new',
-        text: 'New folder, will be created',
+        text: named ? 'Folder found' : 'New folder',
         tone: 'ok',
+        preview: 'Creates ' + path,
+        previewTone: 'ok',
         primary: 'Create project',
         canSubmit: true,
         showGit: true,
@@ -729,10 +751,19 @@
         gitNote: git ? '' : 'git not found',
       });
     }
+    const message = String(check.message || "That folder can't be used");
+    if (check.field === 'name')
+      return Object.assign(base, {
+        kind: 'bad_name',
+        text: 'Folder found',
+        tone: 'ok',
+        preview: message,
+        previewTone: 'error',
+      });
     if (check.reason === 'empty' || check.reason === 'partial' || !check.reason) return base;
     return Object.assign(base, {
-      kind: check.reason === 'parent_missing' ? 'parent_missing' : 'invalid',
-      text: String(check.message || "That folder can't be used"),
+      kind: check.reason === 'parent_missing' || check.reason === 'folder_missing' ? check.reason : 'invalid',
+      text: message,
       tone: 'error',
     });
   }

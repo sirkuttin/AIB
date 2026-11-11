@@ -1639,6 +1639,20 @@ aside .connection.attn-unread:not(.selected) {
   font-size: 11px;
   color: var(--muted);
 }
+.np-preview {
+  min-height: 18px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.np-preview.ok {
+  color: #79d6ae;
+}
+.np-preview.error {
+  color: var(--danger-text);
+}
 .np-error {
   margin: 2px 0;
   font-size: 12px;

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- New project: a Project name now makes a folder with that name inside Folder (`C:\REPOS\` + `spaghetti` makes
+  `C:\REPOS\spaghetti`), or uses it if it is already there; an empty name still uses Folder itself. A live line under the name
+  says exactly what Create will do. A trailing `\`, a lower-case drive letter and `/` in Folder no longer keep Create disabled.
 - Composer chips (Agent on the New chat page, Model, Mode, Effort) open a menu that lists the choices directly: one click
   picks, the current one is checked, descriptions show under their option, arrow keys / Enter / Escape / type-ahead work.
 - A new chat offers the agent's models, modes and effort before its first message: AIB remembers the lists each agent

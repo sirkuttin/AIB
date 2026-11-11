@@ -1,8 +1,10 @@
 (function (root) {
   'use strict';
-  // The "New project" dialog: pick or type a folder (checked live by the server), optionally name the project, then create the
-  // folder (one level only, optional git init) or open an existing one. Decisions about what the hint says live in
-  // workspace-state.js (hintState, smartStart); this file draws the dialog and talks to /api/live/folders/*.
+  // The "New project" dialog: pick or type a folder, optionally give a name, and the server checks both live. With a name the project
+  // is <folder>\<name>, made inside the folder (or used when it is already there); without one it is the folder itself (made when only
+  // its parent exists). Folders are only ever made by the server, one level, optional git init. A live line says what Create will do.
+  // Decisions about what the hint and that line say live in workspace-state.js (hintState, smartStart); this file draws the dialog
+  // and talks to /api/live/folders/*.
   const doc = () => root.document;
   const St = () => root.AgentWorkspaceState;
   const el = (tag, content, cls) => {
@@ -91,7 +93,17 @@
     name.id = 'npName';
     name.autocomplete = 'off';
     name.maxLength = 60;
-    const nameNote = el('p', 'Only the name shown in AIB. The folder is never renamed.', 'np-note');
+    name.setAttribute('aria-describedby', 'npNameNote npPreview');
+    const nameNote = el(
+      'p',
+      'A folder with this name is made inside Folder, or used if it is already there. Leave empty to use Folder itself.',
+      'np-note',
+    );
+    nameNote.id = 'npNameNote';
+    const preview = el('p', null, 'np-preview');
+    preview.id = 'npPreview';
+    preview.setAttribute('role', 'status');
+    preview.setAttribute('aria-live', 'polite');
 
     const errorLine = el('p', null, 'np-error');
     errorLine.setAttribute('role', 'alert');
@@ -103,7 +115,7 @@
     primary.type = 'submit';
     primary.disabled = true;
     actions.append(cancel, primary);
-    form.append(title, folderLabel, row, hint, gitRow, nameLabel, name, nameNote, errorLine, actions);
+    form.append(title, folderLabel, row, hint, nameLabel, name, nameNote, preview, gitRow, errorLine, actions);
     dialog.append(form);
     d.body.append(dialog);
 
@@ -114,6 +126,7 @@
       name,
       git,
       hint,
+      preview,
       gitRow,
       gitNote,
       primary,
@@ -135,13 +148,16 @@
       const st = s.state;
       s.hint.textContent = st.text;
       s.hint.className = 'np-hint ' + st.tone;
+      s.preview.textContent = s.waiting ? '' : st.preview || '';
+      s.preview.className = 'np-preview ' + (st.previewTone || 'hint');
+      s.name.setAttribute('aria-invalid', String(!s.waiting && st.previewTone === 'error'));
       s.primary.textContent = s.busy ? (st.primary === 'Open project' ? 'Opening…' : 'Creating…') : st.primary;
       s.primary.disabled = !st.canSubmit || s.busy || s.waiting;
       s.gitRow.hidden = !st.showGit;
       s.git.disabled = !st.gitEnabled || s.busy;
       s.gitNote.textContent = st.gitNote ? ' (' + st.gitNote + ')' : '';
       s.name.placeholder = (st.canSubmit && St().folderLeaf(s.folder.value)) || 'Folder name';
-      s.folder.setAttribute('aria-invalid', String(st.tone === 'error'));
+      s.folder.setAttribute('aria-invalid', String(!s.waiting && st.tone === 'error'));
     }
     s.paint = paint;
 
@@ -155,13 +171,16 @@
               (host.projects() || []).map((p) => p.key),
             )
           : false;
-      s.state = St().hintState(check, { isProject: known });
+      // The untouched starting folder (it ends with a separator) and no name: wait for a name or a folder choice, so Enter can't
+      // make that parent folder a project by accident. Typing in Folder or using Browse ends this.
+      const prefilled = !s.folderTouched && !!s.prefill && s.folder.value === s.prefill && !s.name.value.trim();
+      s.state = St().hintState(check, { isProject: known, prefilled });
       paint();
     }
     function runCheck() {
       const value = s.folder.value,
         mine = ++s.seq;
-      Promise.resolve(host.getJson('/api/live/folders/check', { path: value })).then(
+      Promise.resolve(host.getJson('/api/live/folders/check', { path: value, name: s.name.value })).then(
         (check) => {
           if (mine === s.seq && dlg === s.dialog) apply(check);
         },
@@ -189,9 +208,13 @@
 
     folder.addEventListener('input', () => {
       errorLine.hidden = true;
+      s.folderTouched = true;
       schedule(false);
     });
-    name.addEventListener('input', paint);
+    name.addEventListener('input', () => {
+      errorLine.hidden = true;
+      schedule(false);
+    });
     browse.onclick = () => pick(s, schedule);
     cancel.onclick = () => close(s);
     dialog.addEventListener('cancel', (e) => {
@@ -228,6 +251,7 @@
     });
 
     folder.value = startValue || '';
+    s.prefill = /[\\/]$/.test(folder.value) ? folder.value : '';
     paint();
     try {
       dialog.showModal();
@@ -266,6 +290,7 @@
           if (dlg !== s.dialog) return;
           if (res && typeof res.path === 'string' && res.path) {
             s.folder.value = toStyle(res.path).replace(/[\\/]+$/, '') || toStyle(res.path);
+            s.folderTouched = true; // a folder chosen with Browse is meant, even with no name
             schedule(true);
           }
         },
@@ -295,6 +320,8 @@
     s.busy = true;
     s.paint();
     const typedName = St().cleanName(s.name.value);
+    // check.folder: a name was given, so the project is <folder>\<name>. The server makes it (or uses it if it appeared meanwhile).
+    const named = typeof check.folder === 'string' && !!check.folder && !!s.name.value.trim();
     const finish = (path, created, extra) => {
       const leaf = St().folderLeaf(path);
       s.restoreFocus = false;
@@ -312,12 +339,12 @@
         .catch(() => null)
         .then(() => finish(check.path, false));
     } else {
-      Promise.resolve(
-        host.postJson('folders/create', {
-          path: check.path,
-          gitInit: !!(st.showGit && st.gitEnabled && s.git.checked),
-        }),
-      ).then((res) => finish(res.path || check.path, true, { git: !!res.git, gitError: res.gitError || '' }), fail);
+      const gitInit = !!(st.showGit && st.gitEnabled && s.git.checked);
+      const body = named ? { path: check.folder, name: s.name.value.trim(), gitInit } : { path: check.path, gitInit };
+      Promise.resolve(host.postJson('folders/create', body)).then(
+        (res) => finish(res.path || check.path, !res.existed, { git: !!res.git, gitError: res.gitError || '' }),
+        fail,
+      );
     }
   }
 
