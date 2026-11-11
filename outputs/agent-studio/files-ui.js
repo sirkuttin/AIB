@@ -246,25 +246,37 @@
   }
   const artifactFor = (rootDir, rel) =>
     (rootDir && projectArtifactList().find((a) => a.sourcePath && F().relTo(a.sourcePath, rootDir) === rel)) || null;
-  // "Open in Artifacts": an artifact of any chat opens in the open chat's viewer (it can show another chat's artifact by id, so you
-  // keep your place); a page file no chat registered yet is registered in the open chat first, which is the deliberate action.
-  function openInArtifacts(art, abs) {
-    const A = AR();
-    if (!A) return Promise.resolve(false);
-    if (art) return Promise.resolve(A.open(art.id));
-    if (!A.registerFile || !abs) return Promise.resolve(false);
-    return A.registerFile(abs).then(
-      (s) => {
-        if (chat) projectArts.delete(chat.key);
-        loadProjectArtifacts(true);
-        paint();
-        return !!s;
-      },
-      (e) => {
-        if (host && host.notice) host.notice('Could not open in Artifacts: ' + ((e && e.message) || 'request failed'));
+  // "Open in Artifacts": an artifact of any chat opens in the right column's Artifacts tab, beside whatever is in the middle (the
+  // viewer shows another chat's artifact by id, so a file tab stays open and you keep your place). A page file no chat registered yet
+  // is registered first, which is the deliberate action, in the chat that can hold it: the chat whose copy the file is in, else the
+  // open chat, else any chat of the project working in that folder (the server only takes files inside the chat's own folder).
+  // say(msg): where a failure is shown; it is never silent.
+  function artChatFor(scope, abs) {
+    if (!abs || !scope || scope.root === 'outside') return null;
+    const all = projectChats(),
+      own = all.find((c) => c.key === scope.chatKey),
+      inside = (c) => !!(c && c.id && c.cwd && F().relTo(abs, c.cwd));
+    return (scope.root === 'chat' ? [own, chat] : [chat, own]).concat(all).find(inside) || null;
+  }
+  function openInArtifacts(art, abs, target, say) {
+    const A = AR(),
+      fail = (m) => {
+        if (say) say(m);
+        else if (host && host.notice) host.notice(m);
         return false;
-      },
-    );
+      };
+    const shown = (ok) => ok || fail('Could not open in Artifacts: the Artifacts viewer could not show it.');
+    const failed = (e) => fail('Could not open in Artifacts: ' + ((e && e.message) || 'request failed'));
+    if (!A || !A.open) return Promise.resolve(fail('Could not open in Artifacts: the Artifacts viewer is not loaded.'));
+    if (art) return Promise.resolve(A.open(art.id)).then(shown, failed);
+    if (!A.registerFile || !abs) return Promise.resolve(fail('Could not open in Artifacts: this file has no path.'));
+    if (!target) return Promise.resolve(fail('Could not open in Artifacts: no chat works in this folder.'));
+    return Promise.resolve(A.registerFile(abs, target.id)).then((s) => {
+      projectArts.delete(target.key);
+      loadProjectArtifacts(true);
+      paint();
+      return s ? true : fail('Could not open in Artifacts: AIB did not add it.');
+    }, failed);
   }
   async function runSearch() {
     const scope = currentScope(),
@@ -949,14 +961,27 @@
       tools.append(k);
     }
     const art = d && tab.scope.root !== 'outside' ? artifactFor(treeOf(tab.scope).root || d.root || '', tab.path) || artifactFor(d.root, tab.path) : null;
-    // Every page file (html, svg, md) can open in Artifacts; one no chat registered yet is registered in the open chat on click.
+    // Every page file (html, svg, md) can open in Artifacts; one no chat registered yet is registered on click in the chat that can
+    // hold it (artChatFor). With no such chat the button stays, disabled, and its tooltip says why.
     if (art || (d && tab.scope.root !== 'outside' && d.page && !d.binary && !d.tooBig)) {
+      const target = art ? null : artChatFor(tab.scope, d.abs);
       const a = btn(
         '⧉ Open in Artifacts',
         'fx-btn link',
-        art ? 'Open this artifact in the Artifacts viewer' : "Add this file to the open chat's artifacts and show it",
+        art
+          ? 'Open this artifact in the Artifacts tab on the right'
+          : target
+            ? 'Add this file to the artifacts of "' + target.title + '" and show it in the Artifacts tab on the right'
+            : 'No chat works in this folder, so none can keep this file as an artifact. Start a chat in this folder first.',
       );
-      a.onclick = () => openInArtifacts(art, d.abs);
+      a.disabled = !art && !target;
+      a.onclick = () => {
+        r.artNote = '';
+        openInArtifacts(art, d.abs, target, (m) => {
+          r.artNote = m;
+          redraw();
+        });
+      };
       tools.append(a);
     }
     tools.append(el('span', null, 'fx-spacer'));
@@ -1000,7 +1025,18 @@
       if (badge) foot.append(el('span', badge.status === 'A' ? 'New, not committed' : badge.status === 'D' ? 'Deleted' : 'Changed, not committed'));
     }
     foot.append(el('span', null, 'fx-spacer'), el('span', 'Read-only'));
-    box.replaceChildren(head, tools, body, foot);
+    // A failed "Open in Artifacts" says so right under the toolbar you clicked (the page's own error line is hidden while a file shows).
+    const alert = r.artNote ? el('p', null, 'sf-fv-alert') : null;
+    if (alert) {
+      alert.setAttribute('role', 'alert');
+      const x = btn('×', 'sf-fv-alert-x', 'Dismiss');
+      x.onclick = () => {
+        r.artNote = '';
+        redraw();
+      };
+      alert.append(el('span', r.artNote), x);
+    }
+    box.replaceChildren(...[head, tools, alert, body, foot].filter(Boolean));
   }
   function codeView(text, tab, r) {
     const pre = el('div', null, 'fx-code');

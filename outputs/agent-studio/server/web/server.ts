@@ -14,7 +14,7 @@ import { authorize, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_H
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
 import { liveRoutes } from './live_routes.ts';
-import { chatStudioOf, makeLauncher, ownGatePost, type StudioHandler, studioOf, studioRoutes } from './studio_routes.ts';
+import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type StudioHandler, studioOf, studioRoutes } from './studio_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { Artifacts } from './artifact_wiring.ts';
@@ -466,7 +466,12 @@ export function makeContext(
     desktopNotify: null,
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
-  ctx.artifacts = new Artifacts(options.stateDir, options.host, () => ctx.token, () => chatStudioOf(ctx));
+  ctx.artifacts = new Artifacts(
+    options.stateDir,
+    options.host,
+    () => ctx.token,
+    async (chat) => chatStudioOf(ctx, await savedFolders(ctx, chat)),
+  );
   return ctx;
 }
 

@@ -1187,3 +1187,34 @@ Deno.test('interop: Deno writes, Python reads and extends; Deno reads that back'
 Deno.test('parity teardown', async () => {
   await py.close();
 });
+
+// ---- the web server's wiring (web/artifact_wiring.ts) ----------------------------------------------------------------------
+
+Deno.test('wiring: "Open in Artifacts" registers a file for a saved chat that is not running (its transcript folder is its folder)', async () => {
+  const { Artifacts } = await import('../../outputs/agent-studio/server/web/artifact_wiring.ts');
+  const tmp = temp();
+  using _ = tmp;
+  const project = join(tmp.dir, 'proj');
+  Deno.mkdirSync(join(project, 'design'), { recursive: true });
+  const page = join(project, 'design', 'concepts.html');
+  Deno.writeTextFileSync(page, '<h1>Concepts</h1>');
+  const host = { liveList: () => Promise.resolve({ connections: [] }), liveWrites: () => Promise.resolve({}) };
+  const asked: string[] = [];
+  // No live connection and no mark: only the saved-transcript lookup knows the folder (as the Changes and Files routes use it).
+  const artifacts = new Artifacts(tmp.dir, host as never, () => 't', (chat) => {
+    asked.push(chat);
+    return { liveState: () => null, savedCwd: (p, s) => (`${p}:${s}` === 'claude:saved1' ? project : '') };
+  });
+  const preview = (conversationId: string) =>
+    artifacts.service.handlePost(headers(), '/api/live/artifacts/preview', { conversationId, path: page }) as [number, Record<string, unknown>];
+  await artifacts.prepare(true, 'claude:saved1');
+  assertEquals(asked, ['claude:saved1'], 'the folder lookup is told which chat');
+  const [status, body] = preview('claude:saved1');
+  assertEquals(status, 200, JSON.stringify(body));
+  assert(typeof body.id === 'string' && body.id, 'an artifact id comes back');
+  // a chat nobody knows still gets the plain refusal
+  await artifacts.prepare(true, 'claude:nobody');
+  const [refused, why] = preview('claude:nobody');
+  assertEquals(refused, 404);
+  assertEquals(why.error, 'This chat has no known project folder.');
+});

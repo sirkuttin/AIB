@@ -129,3 +129,51 @@ test('QA m1: a menu wider than the room right of its button moves left, inside t
   assert.equal(A.placeLeft(150, 210, 300), 86, 'the menu ends 4 px inside the right edge');
   assert.equal(A.placeLeft(150, 400, 300), 4, 'wider than the column: from its left edge');
 });
+
+test("Open in Artifacts (Files view): registerFile in another chat shows that artifact here, reveals the Artifacts tab, keeps it out of this chat's list", async () => {
+  const shell = page({ ids: ['artifactsView'] });
+  const w = shell.window;
+  w.setInterval = () => 1;
+  w.clearInterval = () => {};
+  w.CustomEvent = function (type, init) {
+    this.type = type;
+    this.detail = init && init.detail;
+  };
+  const posts = [];
+  w.fetch = async (url, init) => {
+    if (init && init.method === 'POST') posts.push([url, JSON.parse(init.body)]);
+    const body = /bootstrap/.test(url)
+      ? { token: 't' }
+      : /artifacts\/preview/.test(url)
+        ? art('p1', 'concepts', 1, 100, { sourcePath: 'C:/w/proto/concepts.html', conversationId: 'claude:w1' })
+        : /artifacts\/item/.test(url)
+          ? { versions: [], url: 'http://a/p1/' }
+          : { artifacts: [] };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const ctx = load(shell, ['artifacts-ui.js']);
+  const UI = ctx.ArtifactsUI;
+  const revealed = [];
+  UI.mount({
+    view: shell.byId.artifactsView,
+    badge: shell.document.createElement('span'),
+    tab: shell.document.createElement('button'),
+    win: ctx,
+    reveal: () => revealed.push('artifacts'),
+  });
+  UI.sync({ id: 'claude:a1', busy: false, cwd: 'C:/w/main' });
+  await flush();
+  const s = await UI.registerFile('C:/w/proto/concepts.html', 'claude:w1');
+  assert.equal(s.id, 'p1');
+  assert.deepEqual(
+    posts,
+    [['/api/live/artifacts/preview', { conversationId: 'claude:w1', path: 'C:/w/proto/concepts.html' }]],
+    'registered in the chat files-ui picked',
+  );
+  assert.equal(UI.state().selId, 'p1', 'it is the artifact on show');
+  assert.deepEqual(revealed, ['artifacts'], 'the right column opens on the Artifacts tab');
+  assert.equal(UI.state().list.length, 0, "not added to the open chat's own list");
+  // no chat open and none given: a clear error, not silence
+  UI.sync(null);
+  await assert.rejects(() => UI.registerFile('C:/w/main/x.html'), /Open a chat first/);
+});
