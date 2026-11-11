@@ -24,10 +24,12 @@ test('the selected card has no inset bar shadow; the marker is a straight ::befo
 
 test('the card keeps its size, padding and radius: only position: relative is new', () => {
   const card = decl('aside .connection');
+  // No 72 px cap any more: a fourth line (the branch) adds height instead of being centred over the clip (test_card_layout.js).
+  assert.equal(card['max-height'], undefined);
+  assert.equal(card['align-content'], 'flex-start');
   for (const [k, v] of Object.entries({
     height: 'auto',
     'min-height': '56px',
-    'max-height': '72px',
     margin: '0',
     padding: '6px 8px',
     'border-radius': '6px',

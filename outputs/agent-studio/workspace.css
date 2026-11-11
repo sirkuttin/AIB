@@ -303,11 +303,11 @@ details.side-more .note {
 .ws-tab:hover {
   background: var(--hover);
 }
+/* The active tab keeps the inactive tab's 32 px: the strip's tab list clips at its bottom edge (overflow-y: hidden), so
+   the old 33 px / -1 px bottom margin only moved the title, dot and close button down by half a pixel. */
 .ws-tab.on {
   background: var(--bg);
   border-color: var(--line);
-  height: 33px;
-  margin-bottom: -1px;
 }
 .ws-tab-main {
   flex: 1;
@@ -1395,12 +1395,14 @@ aside .project-rows .connection,
 aside .connection:has(.hold-note) {
   display: flex;
   flex-wrap: wrap;
-  align-content: center;
+  /* Lines start at the top padding in every card, so the title, line 2 and line 3 sit at the same height whatever the
+     card holds: a two-line card is not centred lower, and a fourth line (the branch) adds height instead of being
+     centred over the clip (the old 72 px cap cut the title's top and the branch line's bottom). */
+  align-content: flex-start;
   align-items: center;
   gap: 2px 6px;
   height: auto;
   min-height: 56px;
-  max-height: 72px;
   padding: 6px 8px;
   overflow: hidden;
   line-height: 18px;
@@ -1414,6 +1416,13 @@ aside .conversation-row .connection {
 aside .connection .status-mark {
   order: 0;
   min-width: 14px;
+}
+/* The pending-request count takes no room on line 1 (it pushed the title 18 px right on a needs-you card): it sits in the
+   dot's column on line 2, which is empty on every card (line 2 starts 20 px in). */
+aside .connection .status-mark .status-count {
+  position: absolute;
+  left: 7px;
+  top: 27px;
 }
 aside .connection .connection-title,
 aside .project-rows .connection .connection-title {
@@ -2187,6 +2196,12 @@ aside .connection .hold-note .row-project {
 }
 
 /* Archived and Recently deleted: rows and empty notes line up with the section text, counts written the same way. */
+/* The archived list's scroll box reaches the same right edge as the chat list (#connections: margin -8 px, padding 8 px),
+   so archived cards are as wide as the others (they were 4 px narrower). */
+aside #archivedScroll {
+  margin-right: -8px;
+  padding-right: 8px;
+}
 #archivedList > .note,
 #deletedList > .note,
 .deleted-row {
