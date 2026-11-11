@@ -14,12 +14,14 @@ const HTML = fs.readFileSync(path.join(APP, 'chat.html'), 'utf8');
 const VOID = new Set(['meta', 'link', 'input', 'br', 'img', 'hr', 'source', 'wbr']);
 const SCRIPT_SRC = /<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)"/g; // reads the tag, not its exact spelling
 const LOADED_ON_DEMAND = new Set(['elicitation-ui.js']); // fetched by chat.js only when the server supports questions
+const DOC_HTML = fs.readFileSync(path.join(APP, 'doc.html'), 'utf8'); // the doc page loads its own scripts
 const scripts = () => [...HTML.matchAll(SCRIPT_SRC)].map((m) => m[1]);
 
 /** Elements of an HTML text in document order as {tag, attrs, parents} (parents: the open elements around it, outermost first). */
 function tree(html) {
   const text = html.replace(/<!--[\s\S]*?-->/g, '').replace(/(<script\b[^>]*>)[\s\S]*?(<\/script>)/gi, '$1$2');
-  const stack = [], nodes = [];
+  const stack = [],
+    nodes = [];
   for (const m of text.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
     const [, closing, rawTag, rest] = m;
     const tag = rawTag.toLowerCase();
@@ -76,18 +78,37 @@ test('every served module is loaded', () => {
   // The server serves any plainly named .js/.css in the app folder (studioAsset); every such script except the monitor
   // dashboard's own must be loaded by chat.html, or it is dead code.
   const served = fs.readdirSync(APP).filter((n) => n.endsWith('.js') && servedAsset('/' + n));
-  const loaded = new Set(scripts());
-  assert.deepEqual(served.filter((n) => !loaded.has(n) && !LOADED_ON_DEMAND.has(n)), []);
+  const loaded = new Set([...scripts(), ...[...DOC_HTML.matchAll(SCRIPT_SRC)].map((m) => m[1])]);
+  assert.deepEqual(
+    served.filter((n) => !loaded.has(n) && !LOADED_ON_DEMAND.has(n)),
+    [],
+  );
   for (const name of loaded) assert.equal(servedAsset('/' + name), name);
 });
 
 test('the asset pattern refuses everything else', () => {
   assert.equal(servedAsset('/'), 'chat.html');
   assert.equal(servedAsset('/chat.css'), 'chat.css');
-  for (
-    const p of ['/studio.py', '/../studio.py', '/..%2fstudio.py', '/docs/VISION.md', '/.hidden.js', '/Chat.js', '/chat.js.map', '/app.js',
-      '/style.css', '/sidebar.js', '/sidebar.css', '/missing-file.js', '/chat.js?x', '//chat.js', '/chat.html/x', '', null]
-  ) assert.equal(servedAsset(p), null, String(p));
+  for (const p of [
+    '/studio.py',
+    '/../studio.py',
+    '/..%2fstudio.py',
+    '/docs/VISION.md',
+    '/.hidden.js',
+    '/Chat.js',
+    '/chat.js.map',
+    '/app.js',
+    '/style.css',
+    '/sidebar.js',
+    '/sidebar.css',
+    '/missing-file.js',
+    '/chat.js?x',
+    '//chat.js',
+    '/chat.html/x',
+    '',
+    null,
+  ])
+    assert.equal(servedAsset(p), null, String(p));
 });
 
 test('the one-pane page is the page of today', () => {
@@ -95,18 +116,24 @@ test('the one-pane page is the page of today', () => {
   // nodes into a pane only while two or more panes exist (split-ui.js) and puts them back afterwards.
   const main = NODES.find((n) => n.tag === 'main');
   assert.ok(main);
-  const children = NODES.filter((n) => n.parents[n.parents.length - 1] === main).map((n) => [n.tag, n.attrs.id ?? null]);
-  assert.deepEqual(children.filter((c) => c[0] !== 'header'), [
-    ['div', 'chatTabs'],
-    ['div', 'ownershipBar'],
-    ['section', 'setup'],
-    ['div', 'error'],
-    ['div', 'updateBanner'],
-    ['div', 'studioNotice'],
-    ['div', 'authPrompts'],
-    ['div', 'setupQuestions'],
-    ['section', 'chat'],
+  const children = NODES.filter((n) => n.parents[n.parents.length - 1] === main).map((n) => [
+    n.tag,
+    n.attrs.id ?? null,
   ]);
+  assert.deepEqual(
+    children.filter((c) => c[0] !== 'header'),
+    [
+      ['div', 'chatTabs'],
+      ['div', 'ownershipBar'],
+      ['section', 'setup'],
+      ['div', 'error'],
+      ['div', 'updateBanner'],
+      ['div', 'studioNotice'],
+      ['div', 'authPrompts'],
+      ['div', 'setupQuestions'],
+      ['section', 'chat'],
+    ],
+  );
   assert.equal(children.map((c) => c[0]).indexOf('header'), 1);
   assert.ok(!HTML.includes('splitStage'), 'the stage is built by split-ui.js only when there are panes');
 });
@@ -135,24 +162,35 @@ test('the split hooks and keys have behaviour tests', () => {
   // work/test_chat_page.js (host hooks, card drag) and work/test_split_keys.js (keys, menu, narrow width).
   const s = scripts();
   for (const name of ['workspace-ui.js', 'split-tree.js', 'split-ui.js', 'chat.js']) assert.ok(s.includes(name), name);
-  for (const name of ['test_chat_page.js', 'test_split_keys.js']) assert.ok(fs.existsSync(path.join(__dirname, name)), name);
+  for (const name of ['test_chat_page.js', 'test_split_keys.js'])
+    assert.ok(fs.existsSync(path.join(__dirname, name)), name);
 });
 
 test('the message list is not a live region', () => {
   const node = element('messages');
   assert.ok(!('aria-live' in node.attrs));
   assert.ok(!('role' in node.attrs));
-  for (const parent of node.parents) assert.ok(!('aria-live' in parent.attrs), 'an ancestor of #messages would make it live');
+  for (const parent of node.parents)
+    assert.ok(!('aria-live' in parent.attrs), 'an ancestor of #messages would make it live');
 });
 
 test('one visually hidden polite live region sits outside main', () => {
   const node = element('liveAnnounce');
   assert.equal(node.attrs['aria-live'], 'polite');
   assert.ok((node.attrs.class ?? '').split(/\s+/).includes('sr-only'));
-  assert.deepEqual(node.parents.map((p) => p.tag), ['html', 'body'], 'a direct child of <body>, so every split pane shares it');
+  assert.deepEqual(
+    node.parents.map((p) => p.tag),
+    ['html', 'body'],
+    'a direct child of <body>, so every split pane shares it',
+  );
   const rule = declarationsFor(cssRules(fs.readFileSync(path.join(APP, 'chat.css'), 'utf8')), '.sr-only');
   assert.ok(Object.keys(rule).length, 'chat.css has no .sr-only rule');
-  for (const [name, value] of [['position', 'absolute'], ['width', '1px'], ['height', '1px'], ['overflow', 'hidden']]) {
+  for (const [name, value] of [
+    ['position', 'absolute'],
+    ['width', '1px'],
+    ['height', '1px'],
+    ['overflow', 'hidden'],
+  ]) {
     assert.equal(rule[name], value, name);
   }
 });

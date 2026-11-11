@@ -1,1 +1,44 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AIB doc</title><script src="/themes.js"></script><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/docs.css"><script src="/vendor/docs/editor.js" defer></script><script src="/doc-ui.js" defer></script></head><body class="doc-page"><header class="doc-head"><h1 id="docTitle">Doc</h1><span id="docFile" class="doc-file"></span><span id="docStatus" class="doc-status" role="status">Opening…</span></header><main id="docEditor" class="doc-editor" aria-label="Document"></main><p id="docError" class="doc-error" role="alert" hidden></p></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Doc - AIB</title>
+<script src="/themes.js"></script>
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/vendor/docs/editor.js" defer></script>
+<script src="/doc-icons.js" defer></script>
+<script src="/doc-ui.js" defer></script>
+<script src="/doc-toolbar.js" defer></script>
+<script src="/doc-panels.js" defer></script>
+</head>
+<body class="doc-page">
+<div id="docApp" class="dv" aria-busy="true">
+  <header class="dhead" id="docHead">
+    <nav class="crumbs" id="docCrumbs" aria-label="Doc and page"><b id="docTitle">Doc</b><span class="sepr" aria-hidden="true">›</span><span id="docPageName"></span></nav>
+    <button type="button" class="pgpick" id="pagePicker" aria-haspopup="menu" hidden><span id="pagePickerName"></span> ▾ <span class="of" id="pagePickerOf"></span></button>
+    <span class="live" id="docStatus" role="status"><span class="dot" aria-hidden="true"></span><span id="docStatusText">Opening…</span></span>
+    <span class="sp"></span>
+    <button type="button" class="hbtn" id="btnComments" aria-pressed="false"><span class="hico" data-icon="comment"></span><span class="hlab">Comments</span> <span class="c" id="commentCount"></span></button>
+    <button type="button" class="hbtn" id="btnHistory" aria-pressed="false"><span class="hico" data-icon="history"></span><span class="hlab">History</span></button>
+    <button type="button" class="hbtn" id="btnMore" aria-haspopup="menu" aria-label="More">⋯</button>
+  </header>
+  <div id="docBanner" class="doc-banner" hidden></div>
+  <div class="tbar" id="toolbar" role="toolbar" aria-label="Format"></div>
+  <div class="dbody" id="docBody">
+    <nav class="pgrail" id="pageList" aria-label="Pages"></nav>
+    <div class="page-col" id="pageCol">
+      <div class="asklines" id="askLines"></div>
+      <div class="pagenotes" id="pageNotes"></div>
+      <div class="doc" id="docEditor"></div>
+      <div class="doc doc-ro" id="docReadOnly" hidden></div>
+      <div class="handles" id="blockHandles" hidden><button type="button" class="bh-plus" aria-label="Insert a block" title="Insert a block">+</button><button type="button" class="bh-drag" draggable="true" aria-label="Move or change this block" title="Drag to move, click for the block menu">⋮⋮</button></div>
+    </div>
+    <aside class="railc" id="rail" hidden></aside>
+  </div>
+  <p id="docError" class="doc-error" role="alert" hidden></p>
+</div>
+<div id="docLayer" class="doc-layer"></div>
+</body>
+</html>
