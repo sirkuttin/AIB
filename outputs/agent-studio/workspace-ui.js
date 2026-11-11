@@ -1148,7 +1148,10 @@
       const meta = el('span', null, 'ws-inbox-meta');
       meta.append(el('span', r.projectName, 'ws-inbox-proj'));
       // Context: the agent's last message (or its question), three lines; "more" opens it in place.
-      const full = turn ? (item && item.lastText) || r.snippet : r.ask || r.summary;
+      // An approval says what it would do ("Run npm install stripe@18.0.0"), as its card does, once its body is fetched.
+      const perms = !turn && !r.ask && Rp ? detailFor(item).permissions : null,
+        permLine = perms && perms.length && Rp.permissionTitle ? Rp.permissionTitle(perms[0]) : '';
+      const full = turn ? (item && item.lastText) || r.snippet : r.ask || permLine || r.summary;
       const ctxLine = Rp
         ? turn
           ? 'Your turn' + (full ? ': “' + full + '”' : '')
@@ -1158,7 +1161,7 @@
       const sub = el('span', ctxLine, 'ws-inbox-sub' + (Rp ? ' ctx' : '') + (long && !s.expanded ? ' clamp' : ''));
       text.append(top, sub, meta);
       b.append(item ? dotFor(item) : el('span'), text);
-      b.title = r.title + '\n' + r.projectName + '\n' + r.line;
+      b.title = r.title + '\n' + r.projectName + '\n' + (permLine ? 'Needs you: ' + permLine : r.line);
       b.onclick = () => openKey(r.key);
       wrap.append(b);
       if (long) {

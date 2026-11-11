@@ -115,10 +115,20 @@
   }
   const toneOf = (kind) =>
     /^allow/.test(String(kind || '')) ? 'ok' : /^reject|deny/.test(String(kind || '')) ? 'no' : '';
-  // The body of the request that is waiting, for the row text: an approval's tool title, else the question.
+  // The body of the request that is waiting, for the row text: what the approval would do, in the words the approval card
+  // uses ("Run npm install stripe@18.0.0", "Edit src/cart.ts"; ToolViews.actionOf), else the tool's title.
   function permissionTitle(req) {
     const p = req && req.params,
-      tc = p && p.toolCall;
+      tc = p && p.toolCall,
+      TV = root.ToolViews;
+    if (tc && TV && typeof TV.actionOf === 'function') {
+      try {
+        const line = String(TV.actionOf(tc).line || '').replace(/\s+/g, ' ').trim();
+        if (line) return line;
+      } catch {
+        /* fall back to the title */
+      }
+    }
     return String((tc && (tc.title || tc.kind)) || (p && p.title) || '').trim();
   }
 

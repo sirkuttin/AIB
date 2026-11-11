@@ -667,9 +667,51 @@
     }
   }
 
+  // ---- titles: all the room the card has ------------------------------------------------------------------------------
+  // The age shares line 1 with the title. When it would cut the title, the title gets line 1 to itself (the whole width
+  // after the status dot) and the age moves to the right end of line 2 (class "age-low"). Measured on the card as drawn,
+  // never guessed by characters: every card is first measured with its age on line 1. Returns how many moved.
+  function fitTitles(box) {
+    if (!box || !box.querySelectorAll) return 0;
+    const cards = Array.from(box.querySelectorAll('.connection')).filter(
+      (card) =>
+        card.querySelector(':scope > .connection-title') &&
+        card.querySelector(':scope > .row-age') &&
+        card.querySelector(':scope > .row-status'),
+    );
+    for (const card of cards) card.classList.remove('age-low'); // writes first, then all the reads, then the writes
+    const cut = cards.filter((card) => {
+      const t = card.querySelector(':scope > .connection-title');
+      return t.clientWidth > 0 && t.scrollWidth > t.clientWidth + 0.5;
+    });
+    for (const card of cut) card.classList.add('age-low');
+    return cut.length;
+  }
+  // Keeps fitTitles in step with the list: after it is redrawn (rows, ages) and when the sidebar is resized.
+  function watchTitles(box) {
+    if (!box || box._titlesWatched) return;
+    box._titlesWatched = true;
+    let queued = false;
+    const run = () => {
+      queued = false;
+      fitTitles(box);
+    };
+    const later = () => {
+      if (queued) return;
+      queued = true;
+      (root.requestAnimationFrame || ((f) => setTimeout(f, 16)))(run);
+    };
+    if (typeof root.ResizeObserver === 'function') new root.ResizeObserver(later).observe(box);
+    if (typeof root.MutationObserver === 'function')
+      new root.MutationObserver(later).observe(box, { childList: true, subtree: true, characterData: true });
+    later();
+  }
+
   const api = {
     init,
     sync,
+    fitTitles,
+    watchTitles,
     signature,
     setNameHook,
     setWorktreeHook,

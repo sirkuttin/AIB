@@ -406,6 +406,16 @@
     resolveFolder,
     handoffText,
   };
+  // The "Default" row of a model / mode / effort menu: it leaves the agent's own setting alone and names that setting when the
+  // agent reported it. A name that already says Default ("Default (recommended)", Claude Code's) is shown as it is, never
+  // wrapped again into "Default (Default (recommended))".
+  function defaultLabel(list) {
+    const hit = list && list.current && Array.isArray(list.choices) && list.choices.find((c) => c.value === list.current);
+    const name = hit ? String(hit.name || hit.value || '').trim() : '';
+    if (!name) return 'Default';
+    return /^default(?![a-z0-9])/i.test(name) ? name : 'Default (' + name + ')';
+  }
+  api.defaultLabel = defaultLabel;
   root.AgentChoice = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -5,6 +5,7 @@
  * The "studio" argument is a small interface (StudioContext) so server/web/server.ts can pass its own context: the options, the
  * settings and conversation stores, the agent host's live list and calls, and a worktree lookup. JSON keys and messages are Python's.
  */
+import { keyStoreFor } from '../state/secrets.ts';
 import * as adapters from '../agents/adapters.ts';
 import { BUILTIN_NAMES, commandStatus, type CustomAgent, hiddenEnv, letterOf } from '../agents/agent_registry.ts';
 import * as installer from '../agents/installer.ts';
@@ -224,6 +225,7 @@ export async function describeBeta(
   const out: Record<string, unknown>[] = [];
   const on = snap.agents.beta ?? {};
   const keys = snap.agents.betaKeys ?? {};
+  const keyStorage = options.stateDir ? keyStoreFor(options.stateDir).note : ''; // where a saved key is kept, never the key
   for (const agent of BETA_AGENTS) {
     const row = await resolveBeta(agent.id, { stateDir: options.stateDir ?? null, nodeCommand: options.nodeCommand || '' });
     const installable = !!agent.npm && Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agent.id);
@@ -259,6 +261,7 @@ export async function describeBeta(
         signinCommand: agent.signin.terminalArgs ? [...agent.signin.terminalArgs] : [],
         keyEnv: agent.signin.keyEnv ?? '',
         keySet: !!keys[agent.id],
+        keyStorage,
       },
     });
   }

@@ -353,14 +353,44 @@ input[type='checkbox'] {
   font-size: 13px;
   min-width: 0;
 }
-.approval-what-text {
+.approval-what.has-code {
+  align-items: flex-start;
+}
+.approval-verb {
+  flex: none;
+  font-weight: 600;
+  line-height: 28px;
+}
+/* The command, path or URL itself, in a code box: the thing being approved, never hidden behind Details. */
+code.approval-target {
+  flex: 1 1 auto;
   min-width: 0;
+  max-height: 140px;
+  overflow: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--code-bg);
+  color: var(--text);
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family:
     Cascadia Mono,
     Consolas,
     monospace;
   font-size: 12px;
+  line-height: 18px;
+}
+span.approval-target {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The agent's own words about it, under the command. */
+.approval-note {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .approval-raw summary {
   font-size: 11px;
