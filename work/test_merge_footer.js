@@ -42,7 +42,7 @@ test('the footer is one row: status line on the left, Discard then Merge on the 
   assert.ok(paints > 0, 'the footer is told to repaint');
 });
 
-test('clicking Merge asks the chat: it posts merge-request (never the direct merge) and shows the answer', async () => {
+test('one click on Merge asks the chat (no confirmation): it posts merge-request (never the direct merge) and shows the answer', async () => {
   const doc = { createElement: (tag) => new Node(tag, doc) };
   const parts = footer(doc);
   const posts = [];
@@ -58,19 +58,12 @@ test('clicking Merge asks the chat: it posts merge-request (never the direct mer
       return { ok: true, status: 200, json: async () => body };
     },
   };
-  let asked = null;
-  const ui = init({
-    win,
-    line: parts.mergeLine,
-    button: parts.merge,
-    confirm: async (o) => ((asked = o), true),
-  });
+  const ui = init({ win, line: parts.mergeLine, button: parts.merge });
   ui.update({ id: 'c1', busy: true, files: 2, branchView: true, worktree: true });
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(parts.merge.disabled, false, 'a busy chat can be asked');
   parts.merge.dispatch('click');
   await new Promise((r) => setTimeout(r, 30));
-  assert.deepEqual(asked, { files: 2, base: 'main' });
   assert.deepEqual(posts, [['/api/live/worktree/merge-request', { id: 'c1' }]]);
   assert.equal(parts.mergeLine.textContent, 'Merge requested. The chat merges when it finishes its turn');
 });

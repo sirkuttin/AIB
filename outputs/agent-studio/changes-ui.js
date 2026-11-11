@@ -129,13 +129,6 @@
   /* The one confirmation before Discard, and the line after it. The Discard button exists only for a chat with its own branch that has changes. */
   const discardQuestion = (branch) =>
     'Discard this chat\u2019s changes? This deletes its branch ' + branch + ' and can\u2019t be undone.';
-  /* The short confirmation before Merge: the chat's agent is asked to merge, and how many files go into the base branch. */
-  const mergeQuestion = (files, base) =>
-    'Ask the chat to merge ' +
-    (num(files) === 1 ? 'the 1 changed file' : 'all ' + num(files) + ' changed files') +
-    ' into ' +
-    (base || 'main') +
-    '? Edits it has not committed yet are committed first.';
   /* An in-page confirmation (never the blocking window.confirm, which freezes every chat's page work): a short question with two
      buttons, shown inside `host`. Escape or Cancel answer false. Resolves once; the box removes itself. */
   function askInPage(doc, host, o) {
@@ -263,7 +256,6 @@
   const pure = {
     moreLeft,
     moreText,
-    mergeQuestion,
     toggleOpen,
     pruneOpen,
     TABS,
@@ -849,7 +841,7 @@
             paintFoot();
             paintList();
           },
-          confirm: (o) => ask({ text: mergeQuestion(o.files, o.base), ok: 'Merge', label: 'Merge this chat' }),
+          // no confirmation: one click asks the chat to merge (the permission is tied to the work at this click)
         });
       if (mergeUi)
         mergeUi.update({
