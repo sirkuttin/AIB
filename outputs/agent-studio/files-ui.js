@@ -942,11 +942,11 @@
       seg.setAttribute('aria-label', 'Show');
       for (const [m, label] of [
         ['source', 'Source'],
-        ['page', 'Page'],
+        ['page', 'Preview'],
       ]) {
         const b = btn(label);
         b.setAttribute('aria-pressed', String(r.mode === m));
-        b.title = m === 'page' ? 'The rendered page, view only' : 'The file as text';
+        b.title = m === 'page' ? 'Preview of the file, view only' : 'The file as text';
         b.onclick = () => {
           r.mode = m;
           redraw();
@@ -1005,7 +1005,7 @@
       const f = el('iframe', null, 'sf-fv-page');
       f.setAttribute('sandbox', 'allow-scripts allow-popups');
       f.setAttribute('referrerpolicy', 'no-referrer');
-      f.title = 'Page view of ' + d.name + ' (view only)';
+      f.title = 'Preview of ' + d.name + ' (view only)';
       f.src = d.viewUrl;
       body.append(f);
     } else if (d.tooBig || d.binary || d.text == null) {
