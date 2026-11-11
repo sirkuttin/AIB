@@ -346,7 +346,7 @@ test('notify-ui: the app keeps its choices under its own key (synced to the data
   });
 });
 
-test('Settings > Notifications in the desktop app: no browser wording, "Windows notifications" on Windows, a test button', async () => {
+test('Settings > Notifications in the desktop app: no browser wording, "Desktop notifications" on Windows too, a test button', async () => {
   const S = N._state;
   globalThis.AibDesktop = B;
   mockInvoke();
@@ -356,7 +356,7 @@ test('Settings > Notifications in the desktop app: no browser wording, "Windows 
     const pop = fakeDoc().createElement('div');
     N.mountSettings(pop);
     let all = texts(pop).join('\n');
-    assert.match(all, /Windows notifications/);
+    assert.match(all, /Desktop notifications/);
     assert.doesNotMatch(all, /browser|site settings/i);
     assert.equal(find(pop, 'SELECT').value, 'on', 'on by default');
     const button = find(pop, 'BUTTON', 'Send a test notification');
@@ -397,7 +397,7 @@ test('Settings > Notifications in a browser: today\'s permission wording', () =>
     const pop = fakeDoc().createElement('div');
     N.mountSettings(pop);
     const all = texts(pop).join('\n');
-    assert.match(all, /Windows notifications/);
+    assert.match(all, /Desktop notifications/);
     assert.match(all, /Blocked by the browser - allow it in site settings/);
     assert.equal(find(pop, 'BUTTON', 'Send a test notification'), null, 'no test button while off in a browser');
   });

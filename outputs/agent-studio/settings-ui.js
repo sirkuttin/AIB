@@ -85,7 +85,7 @@
     {
       id: 'notifications',
       section: 'notifications',
-      label: 'Windows notifications, sound and muted projects',
+      label: 'Desktop notifications, sound and muted projects',
       keywords: ['notify', 'desktop', 'sound', 'chime', 'mute', 'needs you', 'your turn', 'alert', 'inbox'],
     },
     {

@@ -395,9 +395,8 @@
     const on = desktopReady(),
       p = permission(),
       app = native();
-    // The app says "Desktop notifications" off Windows; a browser keeps today's wording.
-    const label =
-      app && root.AibDesktop.os && root.AibDesktop.os() !== 'windows' ? 'Desktop notifications' : 'Windows notifications';
+    // One name on every system (owner's choice): "Desktop notifications".
+    const label = 'Desktop notifications';
     pop.append(
       selectRow(
         label,

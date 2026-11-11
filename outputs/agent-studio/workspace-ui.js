@@ -1238,7 +1238,7 @@
       wrap.append(acts);
       frag.append(wrap);
     }
-    // Notification settings (Windows notifications, sounds, muted projects) live in Settings now; this is the way in.
+    // Notification settings (desktop notifications, sounds, muted projects) live in Settings now; this is the way in.
     if (root.AgentSettingsUI && root.AgentSettingsUI.open) {
       const notes = el('button', 'Notification settings…', 'ws-notify-link');
       notes.type = 'button';
