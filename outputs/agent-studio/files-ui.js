@@ -656,9 +656,37 @@
     drawMain();
     if (W() && W().refresh) W().refresh();
   }
+  // The width beside the chat, in px, from the chat area (main's children keep clear of the Activity column with a margin, so a
+  // percentage of main would be wrong): the chat keeps about 520 px, the file gets the rest, between 360 px and half.
+  let besideW = 0;
+  function layoutBeside() {
+    const d = doc(),
+      b = d.body,
+      main = d.querySelector('main');
+    if (!b || !main || !b.classList.contains('sf-beside-on')) return;
+    const ref = d.getElementById('chat') && !d.getElementById('chat').hidden ? d.getElementById('chat') : main.querySelector('header');
+    if (!ref || !ref.getBoundingClientRect) return;
+    const r = ref.getBoundingClientRect(),
+      area = r.right + besideW - r.left;
+    if (!(area > 0)) return;
+    const w = Math.round(Math.max(360, Math.min(area - 520, area / 2)));
+    if (w === besideW) return;
+    besideW = w;
+    if (main.style && main.style.setProperty) main.style.setProperty('--sf-bw', w + 'px');
+  }
   function setBeside(on) {
     const b = doc().body;
+    const was = !!(b && b.classList.contains('sf-beside-on'));
     if (b) b.classList.toggle('sf-beside-on', !!on);
+    if (on && !was) {
+      besideW = 420; // the stylesheet's default until measured
+      const main = doc().querySelector('main');
+      if (main && main.style && main.style.removeProperty) main.style.removeProperty('--sf-bw');
+    }
+    if (on) {
+      layoutBeside();
+      layoutBeside(); // once more: the first pass measured with the old width
+    }
     if (!on) beside = F().emptyTabs();
     if (els && els.beside) els.beside.hidden = !on;
     if (root.ResizeUI && root.ResizeUI.layout) root.ResizeUI.layout();
@@ -1270,6 +1298,7 @@
     if (d.body) d.body.classList.toggle('sf-files-mode', mode === 'files');
     besideBox();
     d.addEventListener('keydown', onKey, true);
+    if (root.addEventListener) root.addEventListener('resize', () => layoutBeside());
     d.addEventListener('pointerdown', (e) => {
       if (menu && !(e.target && e.target.closest && (e.target.closest('.fx-menu') || e.target === menu._back))) closeMenu(false);
     });
