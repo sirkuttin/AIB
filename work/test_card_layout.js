@@ -319,6 +319,87 @@ test(
 );
 
 test(
+  'every theme paints the main surfaces with its own tokens (computed colours, not only the variables)',
+  { skip: !BROWSER && 'no Chrome or Edge found' },
+  async () => {
+    const s = await open();
+    const T = require('./theme_tokens.js');
+    // A message bubble with a code block and a terminal panel, as the scripts build them.
+    await s.evaluate(`() => {
+      if (!document.getElementById('surfaceProbe')) {
+        const box = document.createElement('div');
+        box.id = 'surfaceProbe';
+        box.innerHTML = '<div class="bubble user"><div class="code-block"><pre><code>x</code></pre></div></div><div class="aib-term-dock"></div>';
+        (document.getElementById('messages') || document.body).append(box);
+      }
+      return 1;
+    }`);
+    // element -> [background token, text token]; null = transparent / not checked
+    const SURFACES = {
+      html: ['--bg', '--text'],
+      'body > aside': ['--panel', '--text'],
+      '#chatTabs': ['--ws-bg', null],
+      '#promptForm': ['--bg-composer', null],
+      '#subagentsPane': ['--subagents-pane-bg', null],
+      'aside .connection': [null, '--text'],
+      '#surfaceProbe .bubble': ['--bubble-user-bg', null],
+      '#surfaceProbe .code-block': ['--code-bg', null],
+      '#surfaceProbe .aib-term-dock': ['--term-bg', null],
+      header: [null, '--text'],
+    };
+    const problems = [];
+    for (const id of T.themeIds()) {
+      await s.evaluate(
+        `() => { document.documentElement.setAttribute('data-theme', ${JSON.stringify(id)}); return 1; }`,
+      );
+      const got = JSON.parse(
+        await s.evaluate(`() => {
+          const cv = document.createElement('canvas').getContext('2d');
+          const norm = (c) => { cv.fillStyle = '#000'; cv.fillStyle = c; return cv.fillStyle; }; // any CSS colour -> #rrggbb or rgba()
+          const out = {};
+          for (const sel of ${JSON.stringify(Object.keys(SURFACES))}) {
+            const e = document.querySelector(sel);
+            out[sel] = e ? [norm(getComputedStyle(e).backgroundColor), norm(getComputedStyle(e).color)] : null;
+          }
+          return JSON.stringify(out);
+        }`),
+      );
+      for (const [sel, [bgTok, fgTok]] of Object.entries(SURFACES)) {
+        assert.ok(got[sel], `${sel} exists on the page`);
+        for (const [i, tok] of [
+          [0, bgTok],
+          [1, fgTok],
+        ]) {
+          if (!tok) continue;
+          const want = T.hex(`var(${tok})`, id);
+          const have = got[sel][i];
+          const parse = (c) => {
+            let m = /^#([0-9a-f]{6})/i.exec(c);
+            if (m) return [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16));
+            m = /^rgba?\(([^)]*)\)/.exec(c);
+            if (m) return m[1].split(',').slice(0, 3).map(Number);
+            m = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c);
+            if (m) return m.slice(1, 4).map((v) => Number(v) * 255);
+            return null;
+          };
+          const near = (a, b) => {
+            const pa = parse(a),
+              pb = parse(b);
+            return !!pa && !!pb && pa.every((v, k) => Math.abs(v - pb[k]) <= 1);
+          };
+          if (/rgba\(0, 0, 0, 0\)/.test(have) || !near(have, want))
+            problems.push(`${id}: ${sel} ${i ? 'color' : 'background'} is ${have}, the theme's ${tok} is ${want}`);
+        }
+      }
+    }
+    await s.evaluate(
+      `() => { document.documentElement.removeAttribute('data-theme'); document.getElementById('surfaceProbe')?.remove(); return 1; }`,
+    );
+    assert.deepEqual(problems, [], problems.join(String.fromCharCode(10)));
+  },
+);
+
+test(
   'chat tabs: the active tab has the inactive tab size, and its dot, title and close button stay put',
   { skip: !BROWSER && 'no Chrome or Edge found' },
   async () => {
