@@ -96,7 +96,8 @@ function capsResults(c: Connection): Json[] | null {
 }
 
 Deno.test({
-  name: 'keeper client terminal: note first, then the keeper runs it; after a crash the new AIB answers wait_for_exit, output and release from it',
+  name:
+    'keeper client terminal: note first, then the keeper runs it; after a crash the new AIB answers wait_for_exit, output and release from it',
   ...T,
   async fn() {
     await keeperBinary();
@@ -148,14 +149,19 @@ Deno.test({
     assertEquals(results[3].result, null);
     assertEquals((results[4].error as Json).message, 'Unknown terminalId', 'released');
     assertEquals(Deno.readTextFileSync(lab.pids).trim().split('\n').length, 1, 'started once');
-    await until(async () => !(await withClient(lab.state, (k) => k.list())).some((ch) => ch.channel.startsWith(CLIENT_TERMINAL_PREFIX)), 'channel removed', 10);
+    await until(
+      async () => !(await withClient(lab.state, (k) => k.list())).some((ch) => ch.channel.startsWith(CLIENT_TERMINAL_PREFIX)),
+      'channel removed',
+      10,
+    );
     const after = await journal(lab.state, `chat-${c.id}`);
     assert(after.some((r) => r.kind === 'note' && parseNote(r.body)?.t === 'clientTerminalReleased'), 'release noted');
   },
 });
 
 Deno.test({
-  name: 'keeper client terminal: a terminal/create noted but never started (the old AIB stopped in between) is started once under the noted id',
+  name:
+    'keeper client terminal: a terminal/create noted but never started (the old AIB stopped in between) is started once under the noted id',
   ...T,
   async fn() {
     await keeperBinary();
@@ -192,7 +198,9 @@ Deno.test({
     ];
     await a.liveCall('prompt', { id: c.id, text: 'caps:' + JSON.stringify(steps), clientMessageId: 'ct2' });
     await notedOnce;
-    const note = (await journal(lab.state, `chat-${c.id}`)).map((r) => (r.kind === 'note' ? parseNote(r.body) : null)).find((n) => n?.t === 'clientTerminal')!;
+    const note = (await journal(lab.state, `chat-${c.id}`)).map((r) => (r.kind === 'note' ? parseNote(r.body) : null)).find((n) =>
+      n?.t === 'clientTerminal'
+    )!;
     lab.crash(a);
     const b = lab.studio();
     assertEquals(await b.adoptKeeper(), 1);

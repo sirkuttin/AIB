@@ -424,7 +424,12 @@ export class TerminalSessions {
           continue;
         }
         if (this.#sessions.has(label.key) || this.#sessions.size >= this.#max) {
-          announce('terminal', 'keeper: stopping terminal %s (%s)', info.channel, this.#sessions.has(label.key) ? 'its chat has another one' : 'too many');
+          announce(
+            'terminal',
+            'keeper: stopping terminal %s (%s)',
+            info.channel,
+            this.#sessions.has(label.key) ? 'its chat has another one' : 'too many',
+          );
           await link.stopUnknown(client, info.channel);
           continue;
         }

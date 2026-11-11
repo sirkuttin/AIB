@@ -278,7 +278,10 @@ export class KeeperLink {
       const client = await this.check();
       const missing = needs ? missingFeatures(client.features, needs) : [];
       if (missing.length) {
-        throw new KeeperError('unsupported', `the running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')}`);
+        throw new KeeperError(
+          'unsupported',
+          `the running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')}`,
+        );
       }
       channel.client = client;
       const answer = await client.spawn(spec);

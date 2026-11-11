@@ -103,7 +103,8 @@ async function keeperChannels(state: string) {
 }
 
 Deno.test({
-  name: 'keeper terminal: a shell outlives a crashed AIB; the next one takes it over (same pid, output replayed, PromptWatch busy), typing goes on',
+  name:
+    'keeper terminal: a shell outlives a crashed AIB; the next one takes it over (same pid, output replayed, PromptWatch busy), typing goes on',
   ...T,
   async fn() {
     await keeperBinary();
@@ -227,7 +228,10 @@ Deno.test({
     const old = await releasedKeeper(lab.dir);
     // The old keeper holds a chat, so it is not replaced: terminals must fall back.
     const chats = new KeeperLink({ dataDir: lab.state, orphan: null, binary: old, extraArgs: EXTRA });
-    const held = chats.spawn({ channel: 'chat-x', command: Deno.execPath(), args: ['eval', 'setTimeout(() => {}, 60000)'], cwd: lab.work }, {});
+    const held = chats.spawn(
+      { channel: 'chat-x', command: Deno.execPath(), args: ['eval', 'setTimeout(() => {}, 60000)'], cwd: lab.work },
+      {},
+    );
     await held.ready;
     const s = lab.sessions(old);
     assertEquals(await s.adoptKeeper(), 0);

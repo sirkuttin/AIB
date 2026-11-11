@@ -499,6 +499,46 @@ test('a refused socket retries once with a fresh token', async () => {
   await opening;
 });
 
+test('AIB restarted (the keeper kept the shell): the page reconnects quietly to the same shell, never starts a new one', async () => {
+  const env = setup();
+  env.show('claude:a');
+  const first = await openReady(env, 'claude:a');
+  assert.equal(first.query.resume, undefined);
+  const term = FakeTerm.all[0];
+  first.drop(); // AIB went away (an update or a crash)
+  assert.equal(env.T.isOpen('claude:a'), false);
+  assert.equal(env.q('.aib-term-shell').textContent, 'PowerShell 7 · reconnecting');
+  term.dataFn('x'); // typing meanwhile starts nothing
+  assert.equal(FakeWS.all.length, 1);
+  env.shell.window.runTimers(); // a second later
+  await until(() => FakeWS.all.length === 2, 'quiet reconnect');
+  assert.equal(FakeWS.all[1].query.resume, '1');
+  FakeWS.all[1].drop(); // not back yet: one retry with a fresh token, then later again
+  await until(() => FakeWS.all.length === 3, 'token retry');
+  FakeWS.all[2].drop();
+  await tick();
+  env.shell.window.runTimers();
+  await until(() => FakeWS.all.length === 4, 'next try');
+  assert.equal(FakeWS.all[3].query.resume, '1');
+  FakeWS.all[3].ready({ resumed: true });
+  await until(() => env.T.isOpen('claude:a'), 'back on the same shell');
+  assert.equal(term.resets, 1, 'its recent output is replayed on a clean screen');
+  assert.ok(!term.written.some((w) => String(w).includes('Disconnected')), 'no disconnect line');
+  assert.equal(env.q('.aib-term-ended').hidden, true, 'no "Session ended"');
+
+  // The shell is gone after the restart (AIB without the keeper): the old line, and only a key starts a new one.
+  FakeWS.all[3].drop();
+  env.shell.window.runTimers();
+  await until(() => FakeWS.all.length === 5, 'reconnect');
+  FakeWS.all[4].message({ type: 'error', code: 'gone', message: 'This terminal is no longer running.' });
+  await until(() => term.written.some((w) => String(w).includes('Disconnected')), 'disconnect line');
+  assert.equal(FakeWS.all.length, 5);
+  assert.equal(env.q('.aib-term-ended').hidden, true);
+  term.dataFn('x');
+  await until(() => FakeWS.all.length === 6, 'a key reconnects');
+  assert.equal(FakeWS.all[5].query.resume, undefined);
+});
+
 test('Ctrl+` and Ctrl+J (by key position): open and focus; pressed in the terminal: hide and back to the message box', async () => {
   const env = setup();
   const { T, dock, shell, show, state } = env;
