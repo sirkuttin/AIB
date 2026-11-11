@@ -9,7 +9,7 @@ your projects. It talks to each agent through ACP (the Agent Client Protocol), s
 and background commands show up as real things you can see and act on, not terminal noise. It runs on your computer: no
 account, no telemetry, and your data stays with you.
 
-> **Beta: 0.1.0-beta.5.** Builds are not code-signed. Expect rough edges.
+> **Beta: 0.1.0-beta.6.** Builds are not code-signed. Expect rough edges.
 > Independent project; not affiliated with Anthropic or OpenAI.
 
 ## What it does

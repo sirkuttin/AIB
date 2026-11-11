@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.6 (beta)
 
+- Write and edit rows have an open-file button, and the path in the row is clickable: both open the file in the file view
+  (Ctrl+click opens the editor). The row's "open ↗" button is now "editor ↗". Files outside the project open read-only,
+  labelled "Outside this project" with the branch and repository when known, and only when the chat mentioned them.
 - Chat terminals keep running when AIB restarts, updates or crashes. The keeper now holds them, like the chats. When AIB comes
   back, the terminal shows the same shell with its recent output, and a command that was running is still running. While AIB
   restarts, the terminal panel says "reconnecting" and comes back by itself. "Session ended" appears only when the shell really
