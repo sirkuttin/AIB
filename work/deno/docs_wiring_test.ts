@@ -1,13 +1,16 @@
 /**
- * Local docs (spike), wired into AIB: the doc tools in the studio_artifact MCP server (only with AIB_DOCS on), the tool call going
+ * Local docs, wired into AIB: the doc tools in the studio_artifact MCP server (always offered), the tool call going
  * to Studio's /api/live/docs/tool route, and the editor's WebSocket on the real web server (both HTTP implementations): the page's
  * y-protocols client syncs, sees an agent's edit live, and its own typing reaches the server.
  */
 import { assert, assertEquals } from './_assert.ts';
-import * as Y from '../../outputs/agent-studio/server/docs/vendor/yjs.js';
+import * as Y from 'yjs';
+import * as syncProtocol from 'y-protocols/sync';
+import * as encoding from 'lib0/encoding';
+import * as decoding from 'lib0/decoding';
 import { handle, type ToolContext } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
+import { DOC_TOOL_NAMES, runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
 import { FIELD } from '../../outputs/agent-studio/server/docs/live_doc.ts';
 import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
@@ -21,11 +24,11 @@ async function temp(prefix: string): Promise<string> {
   return Deno.realPathSync(await Deno.makeTempDir({ prefix })).replace(/^\\\\\?\\/, '');
 }
 
-function ctxFor(url: string, docs: boolean): ToolContext {
-  return { key: 'k', conversation: 'claude:s1', worktree: false, docs, cwd: null, roots: () => [url] };
+function ctxFor(url: string, worktree = false): ToolContext {
+  return { key: 'k', conversation: 'claude:s1', worktree, cwd: null, roots: () => [url] };
 }
 
-Deno.test("the doc tools are offered only with docs on, and a call goes to Studio's doc route", async () => {
+Deno.test("the doc tools are always offered, and a call goes to Studio's doc route", async () => {
   const project = await temp('aib-docs-proj-');
   const state = await temp('aib-docs-state-');
   const store = new DocStore(state, { idleMs: 60_000 });
@@ -39,15 +42,24 @@ Deno.test("the doc tools are offered only with docs on, and a call goes to Studi
   });
   const url = `http://127.0.0.1:${server.addr.port}`;
   try {
-    const list = (on: boolean) => handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctxFor(url, on));
+    const list = (worktree: boolean) => handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctxFor(url, worktree));
     const names = (r: Json | null) => ((r!.result as Json).tools as Json[]).map((t) => t.name);
-    assertEquals(names(await list(false)), ['publish', 'update', 'list']);
-    assertEquals(names(await list(true)), ['publish', 'update', 'list', 'doc_read', 'doc_changes', 'doc_edit']);
+    const docTools = ['doc_list', 'doc_create', 'doc_read', 'doc_changes', 'doc_edit', 'doc_undo', 'doc_history', 'doc_restore'];
+    assertEquals([...DOC_TOOL_NAMES], docTools);
+    assertEquals(names(await list(false)), ['publish', 'update', 'list', ...docTools]);
+    assertEquals(names(await list(true)), ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...docTools]);
     const call = async (name: string, args: Json) => {
-      const r = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }, ctxFor(url, true));
+      const r = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }, ctxFor(url));
       const result = r!.result as { content: { text: string }[]; isError?: boolean };
       return { data: JSON.parse(result.content[0].text) as Json, isError: !!result.isError };
     };
+    const missing = await call('doc_read', { doc: 'plan' });
+    assertEquals([missing.isError, missing.data.code], [true, 'no_doc']);
+    assert(String(missing.data.message).includes('doc_create'));
+    const created = await call('doc_create', { doc: 'plan' });
+    assertEquals(created.isError, false);
+    assertEquals((await call('doc_create', { doc: 'plan' })).data.code, 'doc_exists');
+    assertEquals(((await call('doc_list', {})).data.docs as Json[]).map((d) => d.name), ['plan']);
     const ins = await call('doc_edit', {
       doc: 'plan',
       ops: [{
@@ -61,6 +73,7 @@ Deno.test("the doc tools are offered only with docs on, and a call goes to Studi
     assertEquals(seen[0].path, '/api/live/docs/tool');
     assertEquals(seen[0].key, 'k');
     assertEquals((seen[0].body as Json).conversationId, 'claude:s1');
+    assertEquals(await Deno.readTextFile(`${project}${sep}docs${sep}plan.md`), String.fromCharCode(10)); // the new doc's copy: one empty paragraph
     const read = await call('doc_read', { doc: 'plan' });
     const blocks = read.data.blocks as { id: string; h: string; md: string; by?: string }[];
     assertEquals(blocks.map((b) => b.md), ['', '# Plan', 'Ship it in October.']);
@@ -119,23 +132,23 @@ function connect(origin: string, port: number, doc: string, protocols: string[])
   // @ts-ignore: Deno's WebSocket takes headers
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/live/docs/socket?doc=${doc}`, { protocols, headers: { Origin: origin } });
   ws.binaryType = 'arraybuffer';
-  const send = (build: (e: Y.encoding.Encoder) => void) => {
-    const e = Y.encoding.createEncoder();
-    Y.encoding.writeVarUint(e, 0);
+  const send = (build: (e: encoding.Encoder) => void) => {
+    const e = encoding.createEncoder();
+    encoding.writeVarUint(e, 0);
     build(e);
-    if (ws.readyState === 1) ws.send(Y.encoding.toUint8Array(e));
+    if (ws.readyState === 1) ws.send(encoding.toUint8Array(e));
   };
-  ydoc.on('update', (update, origin) => {
-    if (origin !== ws) send((e) => Y.sync.writeUpdate(e, update));
+  ydoc.on('update', (update: Uint8Array, origin: unknown) => {
+    if (origin !== ws) send((e) => syncProtocol.writeUpdate(e, update));
   });
-  ws.onopen = () => send((e) => Y.sync.writeSyncStep1(e, ydoc));
+  ws.onopen = () => send((e) => syncProtocol.writeSyncStep1(e, ydoc));
   ws.onmessage = (event) => {
-    const d = Y.decoding.createDecoder(new Uint8Array(event.data as ArrayBuffer));
-    if (Y.decoding.readVarUint(d) !== 0) return;
-    const e = Y.encoding.createEncoder();
-    Y.encoding.writeVarUint(e, 0);
-    Y.sync.readSyncMessage(d, e, ydoc, ws);
-    if (Y.encoding.length(e) > 1) ws.send(Y.encoding.toUint8Array(e));
+    const d = decoding.createDecoder(new Uint8Array(event.data as ArrayBuffer));
+    if (decoding.readVarUint(d) !== 0) return;
+    const e = encoding.createEncoder();
+    encoding.writeVarUint(e, 0);
+    syncProtocol.readSyncMessage(d, e, ydoc, ws);
+    if (encoding.length(e) > 1) ws.send(encoding.toUint8Array(e));
   };
   const closed = new Promise<CloseEvent>((r) => ws.addEventListener('close', (e) => r(e as CloseEvent)));
   return { ydoc, ws, closed, text: () => ydoc.getXmlFragment(FIELD).toString().replace(/<[^>]+>/g, '|') };
@@ -154,7 +167,7 @@ for (const impl of ['deno', 'node'] as const) {
     const server = await startServer(impl);
     const project = await temp('aib-docs-proj-');
     try {
-      const doc = await server.ctx.docs.open(project, 'live');
+      const doc = await server.ctx.docs.open(project, 'live', '');
       // Without the page token: refused before any upgrade.
       const refused = connect(server.origin, server.port, doc.id, ['aib-docs']);
       await refused.closed;
@@ -173,6 +186,11 @@ for (const impl of ['deno', 'node'] as const) {
       await until(() => page.text().includes('From the agent.'), 'the agent edit on the page');
       const para = page.ydoc.getXmlFragment(FIELD).get(1) as Y.XmlElement;
       page.ydoc.transact(() => (para.get(0) as Y.XmlText).insert(0, 'Typed. '));
+      // what the UI can show: GET /api/live/docs/info
+      const info = await (await fetch(`${server.origin}/api/live/docs/info?doc=${doc.id}`, {
+        headers: { 'X-Studio-Token': server.ctx.token },
+      })).json();
+      assertEquals([info.name, info.skipped, Array.isArray(info.history.versions)], ['live', [], true]);
       await until(
         () => (doc.live.read() as { blocks: { md: string }[] }).blocks[1]?.md === 'Typed. From the agent.',
         'the typing on the server',

@@ -16,7 +16,7 @@ import { isDict, pyJsonDumps, pyStr, pyStrip } from '../core/py.ts';
 import { pyTypeName, truthy } from '../transcripts/pycompat.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { join, normpath } from '../platform/ospath.ts';
-import { DOC_TOOL_NAMES, DOC_TOOLS } from '../docs/tools.ts';
+import { DOC_TOOL_NAMES, DOC_TOOLS } from '../docs/tool_defs.ts';
 
 type Json = Record<string, unknown>;
 
@@ -134,8 +134,6 @@ export interface ToolContext {
   conversation: string;
   /** Offer the worktree merge tools. */
   worktree: boolean;
-  /** Offer the doc tools (doc_read, doc_changes, doc_edit): the local-docs spike, on when AIB runs with AIB_DOCS=1. */
-  docs?: boolean;
   /** The session folder relative paths are resolved against, or null when unknown (relative paths are then refused). */
   cwd: string | null;
   /** Studio base URLs to try, in order; each is passed through loopbackUrl before use. */
@@ -148,7 +146,6 @@ export function envContext(): ToolContext {
     key: env('STUDIO_ARTIFACT_KEY'),
     conversation: env('STUDIO_CONVERSATION_ID'),
     worktree: Deno.env.get('STUDIO_WORKTREE') === '1',
-    docs: docsEnabled(),
     cwd: Deno.cwd(),
     roots: () => [baseUrl(), urlFromFile(env('STUDIO_ARTIFACT_URL_FILE'))],
   };
@@ -531,13 +528,8 @@ const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
   [...DOC_TOOL_NAMES].map((name) => [name, (ctx, args) => docTool(ctx, name, args)]),
 );
 
-/** The local-docs spike's switch: AIB_DOCS=1 (or STUDIO_DOCS=1 in a tool's environment). */
-export function docsEnabled(): boolean {
-  return Deno.env.get('AIB_DOCS') === '1' || Deno.env.get('STUDIO_DOCS') === '1';
-}
-
 function handlers(ctx: ToolContext): Record<string, Handler> {
-  return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...(ctx.docs ? DOC_HANDLERS : {}) };
+  return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...DOC_HANDLERS };
 }
 
 async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<Json> {
@@ -573,7 +565,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
     });
   }
   if (method === 'ping') return ok({});
-  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...(ctx.docs ? DOC_TOOLS : [])] });
+  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...DOC_TOOLS] });
   if (method === 'tools/call') {
     const name = Object.hasOwn(params, 'name') ? params.name : null;
     if (Array.isArray(name) || isDict(name)) throw new PyError('TypeError', `unhashable type: '${pyTypeName(name)}'`);

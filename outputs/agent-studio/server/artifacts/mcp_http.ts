@@ -17,7 +17,7 @@
  * The tool then calls Studio's artifact routes with that key exactly as the stdio tool does, so the web server checks it again.
  */
 import * as artifactKeys from './keys.ts';
-import { docsEnabled, reply, SERVER_NAME, type ToolContext, urlFromFile } from './mcp.ts';
+import { reply, SERVER_NAME, type ToolContext, urlFromFile } from './mcp.ts';
 import { pyJsonDumps, pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
@@ -40,8 +40,6 @@ export interface McpHttpStudio {
   baseUrl(): string;
   /** Path of the URL file the web server rewrites when it restarts on another port (artifact-web.json). */
   urlFile: string;
-  /** Offer the doc tools (default: AIB_DOCS=1 in this process). */
-  docs?(): boolean;
   /** Key check; default artifacts/keys.ts check. */
   check?(key: string, conversationId: string): boolean;
   /**
@@ -224,7 +222,6 @@ export class ArtifactMcpHttp {
       key,
       conversation,
       worktree: !!open?.worktree,
-      docs: this.studio.docs ? this.studio.docs() : docsEnabled(),
       cwd: open ? open.cwd : null,
       roots: () => [studio.baseUrl(), urlFromFile(studio.urlFile)],
     };

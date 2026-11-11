@@ -13,6 +13,8 @@ import { ARTIFACT_URL_FILE } from '../../outputs/agent-studio/server/host/studio
 import { ARTIFACT_PROMPT, Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { selectMcpServers, validateMcpServers } from '../../outputs/agent-studio/server/acp/breadth.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
+import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
+import { pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -22,6 +24,27 @@ const PY_TOOL = [python(), `${PY_REF_DIR}${SEP}artifact_mcp.py`]; // the Python 
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 
 type Json = Record<string, unknown>;
+
+/** The doc tools (doc_*) are Deno only: the Python reference has none. */
+const DOCS = [...DOC_TOOL_NAMES];
+
+/**
+ * A Deno reply line with the Deno-only tools taken out of a tools/list result, re-dumped the way the server dumps it, so it can be
+ * compared byte for byte with the Python reference's line.
+ */
+function maskDenoOnly(line: string): string {
+  let reply: Json;
+  try {
+    reply = JSON.parse(line);
+  } catch {
+    return line;
+  }
+  const tools = (reply?.result as Json | undefined)?.tools;
+  if (!Array.isArray(tools)) return line;
+  (reply.result as Json).tools = tools.filter((t) => !DOC_TOOL_NAMES.has((t as Json).name as string));
+  return pyJsonDumps(reply, false);
+}
+
 interface Recorded {
   method: string;
   path: string;
@@ -232,7 +255,7 @@ Deno.test('initialize negotiation and tools/list', async () => {
   await shim.send({ jsonrpc: '2.0', method: 'notifications/initialized' }); // no reply expected
   assertEquals((await shim.request('ping')).result, {});
   const tools = ((await shim.request('tools/list')).result as Json).tools as Json[];
-  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list']);
+  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', ...DOCS]);
   for (const tool of tools) {
     assertEquals((tool.inputSchema as Json).type, 'object');
     assert((tool.description as string).length > 40);
@@ -364,11 +387,11 @@ Deno.test('a non-loopback URL is never called', async () => {
 Deno.test('worktree tools are offered only to a worktree chat', async () => {
   await using lab = new Lab();
   const plain = lab.shim();
-  assertEquals((((await plain.request('tools/list')).result as Json).tools as Json[]).length, 3);
+  assertEquals((((await plain.request('tools/list')).result as Json).tools as Json[]).length, 3 + DOCS.length);
   assertEquals(((await plain.request('tools/call', { name: 'merge_into_project', arguments: {} })).error as Json).code, -32602);
   const shim = lab.shim(lab.fake.url, { STUDIO_WORKTREE: '1' });
   const names = (((await shim.request('tools/list')).result as Json).tools as Json[]).map((t) => t.name);
-  assertEquals(names, ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash']);
+  assertEquals(names, ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...DOCS]);
   const merged = await shim.call('merge_into_project', {});
   assertEquals(firstText(merged), 'Merged 2 commits into main. Your copy now continues from the new main.\nTell the user.');
   assertEquals(lab.fake.requests.at(-1)!.body, { conversationId: 'conv1', action: 'merge' });
@@ -525,7 +548,7 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   const [pyLines, pyRequests] = await runScript(PY_TOOL, lab.dir, lab.fake, env);
   const [denoLines, denoRequests] = await runScript(DENO_TOOL, lab.dir, lab.fake, env);
   assertEquals(denoLines.length, pyLines.length);
-  for (let i = 0; i < pyLines.length; i++) assertEquals(denoLines[i], pyLines[i], `reply ${i + 1}`);
+  for (let i = 0; i < pyLines.length; i++) assertEquals(maskDenoOnly(denoLines[i]), pyLines[i], `reply ${i + 1}`);
   assertEquals(denoRequests, pyRequests);
   assert(pyRequests.length > 30, 'the script reached the fake Studio');
 });
@@ -568,7 +591,7 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
         await shim.close();
       }
     }
-    assertEquals(replies[1], replies[0], JSON.stringify([url, extra, key, conversation]));
+    assertEquals(replies[1].map(maskDenoOnly), replies[0], JSON.stringify([url, extra, key, conversation]));
   }
 });
 
@@ -757,10 +780,10 @@ Deno.test('HTTP tool: initialize, tools/list without a worktree, relative paths 
   const notified = await post(plain.url, JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
   assertEquals([notified.status, await notified.text()], [202, '']);
   const tools = (await (await post(plain.url, rpc(2, 'tools/list'))).json()).result.tools as Json[];
-  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list']);
+  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', ...DOCS]);
   const closed = httpTool(lab, null); // the conversation is not open here: no session folder, no worktree tools
   const listed = (await (await post(closed.url, rpc(3, 'tools/list'))).json()).result.tools as Json[];
-  assertEquals(listed.length, 3);
+  assertEquals(listed.length, 3 + DOCS.length);
   const relative = (await (await post(closed.url, call(4, 'publish', { title: 'x', path: 'page.html' }))).json()).result;
   assertEquals(relative.isError, true);
   assert(firstText(relative).includes('absolute'), firstText(relative));

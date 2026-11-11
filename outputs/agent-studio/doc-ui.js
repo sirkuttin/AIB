@@ -1,4 +1,4 @@
-/* The local-docs spike's editor page: /doc.html?chat=<chat id>&name=<doc name>. Opens the doc in the chat's project (its Markdown copy is
+/* The local docs' test page (the real UI is being designed): /doc.html?chat=<chat id>&name=<doc name>; a new name makes a new doc. Opens the doc in the chat's project (its Markdown copy is
  * docs/<name>.md there) and binds the vendored TipTap editor (vendor/docs/editor.js) to the server's live Y.Doc over the doc socket.
  * Agents' words show tinted (the agentEdit mark), with the agent's name on hover. Ctrl+Z undoes only your own edits. */
 (() => {
@@ -13,12 +13,18 @@
   async function start() {
     const boot = await (await fetch('/api/live/bootstrap', { cache: 'no-store' })).json();
     const token = boot.token;
-    const response = await fetch('/api/live/docs/open', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
-      body: JSON.stringify({ id: params.get('chat') || '', name: params.get('name') || '' }),
-    });
-    const opened = await response.json();
+    const open = (create) =>
+      fetch('/api/live/docs/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
+        body: JSON.stringify({ id: params.get('chat') || '', name: params.get('name') || '', create }),
+      });
+    let response = await open(undefined);
+    let opened = await response.json();
+    if (opened.code === 'no_doc') {
+      response = await open('');
+      opened = await response.json();
+    }
     if (!response.ok) return fail(opened.error || 'Could not open the doc');
     $('docTitle').textContent = opened.name;
     $('docFile').textContent = opened.file;

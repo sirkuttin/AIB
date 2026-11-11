@@ -35,6 +35,7 @@ import { projectRemove } from './project_routes.ts';
 import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
+import { ArtifactHistory } from '../docs/history.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -49,7 +50,7 @@ const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$
 /** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
 export function studioAsset(path: string): string | null {
   if (path === '/' || path === '/chat.html') return 'chat.html';
-  if (path === '/doc.html') return 'doc.html'; // the local-docs spike's editor page
+  if (path === '/doc.html') return 'doc.html'; // the local docs' editor page (a test page until the UI lands)
   const vendored = path.match(VENDOR_ASSET);
   if (vendored) {
     try {
@@ -143,7 +144,7 @@ export interface WebContext {
   gate: Gate | null;
   /** The live list the editor roots read (refreshed before each editor request). */
   editorList: Record<string, unknown>;
-  /** The open local docs (docs/store.ts; spike). */
+  /** The open local docs (docs/store.ts). */
   docs: DocStore;
   /** The chats' terminal shells (terminal/sessions.ts); ended when this server closes. */
   terminals: TerminalSessions;
@@ -482,7 +483,7 @@ export function makeContext(
     gate: null,
     editorList: {},
     terminals: new TerminalSessions({ keeper: options.terminalKeeper ?? null }),
-    docs: new DocStore(options.stateDir),
+    docs: new DocStore(options.stateDir, { history: new ArtifactHistory(() => ctx.artifacts?.store ?? null) }),
     desktopNotify: null,
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);

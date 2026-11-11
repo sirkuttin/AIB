@@ -1,12 +1,16 @@
 /**
- * The local docs' routes (spike; Deno only: routes.ts DENO_ONLY). A doc belongs to a project: the folder is always the one Studio
+ * The local docs' routes (Deno only: routes.ts DENO_ONLY). A doc belongs to a project: the folder is always the one Studio
  * knows for the chat (files_routes.rootFor, the main checkout for a worktree chat), never a folder named in the request.
  *
- *   POST /api/live/docs/open {id, name}             the page opens (or creates) a doc: {doc, name, file, rev}. Page token.
+ *   POST /api/live/docs/open {id, name, create?}    the page opens a doc (`create`: Markdown, makes a new one): {doc, name, file,
+ *                                                   rev, ...info}. Page token.
+ *   GET  /api/live/docs/info?id=<chat>&doc=<doc>    what the UI can show about an open doc: rev, skipped file edits (each with the
+ *                                                   block as the mirror had it, as the doc has it, as the file wanted it), lossy
+ *                                                   blocks, and the history (versions with n, rev, by, at).
  *   GET  /api/live/docs/socket?doc=<doc>            the editor's WebSocket (y-protocols sync + awareness, binary). A browser cannot
  *                                                   set headers on a WebSocket, so the page offers two subprotocols, `aib-docs` and
  *                                                   `aib-token.<page token>`, as the terminal does. The doc must be open already.
- *   POST /api/live/docs/tool {conversationId, tool, args}  an agent's doc_read / doc_changes / doc_edit (mcp.ts), with the
+ *   POST /api/live/docs/tool {conversationId, tool, args}  an agent's doc_* tool (tools.ts, offered by mcp.ts), with the
  *                                                   conversation's artifact key (own gate, like /api/live/artifacts/publish).
  *                                                   200 {ok, result}: a refusal is ok=false with Claude Docs' code.
  */
@@ -32,12 +36,18 @@ export function docsRoutes(): Map<string, (ctx: WebContext, url: URL, body: Json
     const root = await rootFor(ctx, { id: [String(body?.id ?? '')], root: ['main'] });
     if (typeof root !== 'string') return root;
     try {
-      const doc = await ctx.docs.open(root, body?.name);
-      return [200, { ok: true, doc: doc.id, name: doc.name, file: doc.mirrorPath, rev: doc.live.rev }];
+      const create = typeof body?.create === 'string' ? body.create : undefined;
+      const doc = await ctx.docs.open(root, body?.name, create);
+      return [200, { ok: true, ...ctx.docs.info(doc) }];
     } catch (error) {
       if (error instanceof DocRefusal) return [400, { error: error.message, code: error.code }];
       throw error;
     }
+  });
+  routes.set('GET /api/live/docs/info', (ctx, url) => {
+    const doc = ctx.docs.get(url.searchParams.get('doc') ?? '');
+    if (!doc) return Promise.resolve([404, { error: 'Open the doc first', code: 'doc_not_open' }] as Reply);
+    return Promise.resolve([200, { ok: true, ...ctx.docs.info(doc), history: ctx.docs.history(doc) }] as Reply);
   });
   return routes;
 }
