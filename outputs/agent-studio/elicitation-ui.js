@@ -277,6 +277,30 @@
         go.addEventListener('click', () => send('authenticate', m.id));
         buttons.push(go);
         box.appendChild(go);
+      } else if (m.kind === 'terminal' && typeof slot.context.onTerminalSignin === 'function') {
+        // A Beta agent's terminal sign-in: AIB runs it in its own terminal (Settings > AIB Linking), never a separate window, and
+        // reconnects this chat when it succeeds.
+        const go = el('button', 'auth-terminal-signin', auth.working ? 'Signing in…' : 'Sign in');
+        go.type = 'button';
+        go.disabled = !!auth.working;
+        go.title = "Runs this agent's own sign-in in an AIB terminal";
+        go.addEventListener('click', async () => {
+          buttons.forEach((b) => (b.disabled = true));
+          err.hidden = true;
+          try {
+            await slot.context.onTerminalSignin(m.id);
+          } catch (e) {
+            err.textContent = e && e.message ? e.message : 'The sign-in could not be started.';
+            err.hidden = false;
+          } finally {
+            buttons.forEach((b) => (b.disabled = !!auth.working));
+          }
+        });
+        buttons.push(go);
+        box.appendChild(go);
+        box.appendChild(
+          el('p', 'auth-instructions', 'Opens an AIB terminal for the sign-in. When it finishes, the chat reconnects.'),
+        );
       } else
         box.appendChild(
           el('p', 'auth-instructions', m.instructions || 'Complete this sign-in outside AIB, then choose Retry.'),

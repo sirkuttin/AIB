@@ -68,6 +68,7 @@ const LIST = () => [
 
 async function openSettings(list = LIST()) {
   const shell = page();
+  shell.document.contains = (n) => shell.body.contains(n); // closePage puts the focus back
   const ctx = load(shell, ['agent-choice.js', 'settings-ui.js']);
   const UI = ctx.AgentSettingsUI;
   const posts = [];
@@ -217,4 +218,92 @@ test('with no Beta agent turned on the menus have no Beta label', () => {
   const ctx = load(shell, ['agent-choice.js']);
   ctx.AgentChoice.setRegistry(LIST());
   assert.ok(ctx.AgentChoice.menuItems(ctx.AgentChoice.AGENTS).every((i) => !i.group));
+});
+
+test("a chat that needs sign-in: a terminal method of a Beta agent gets a Sign in button that runs AIB's terminal sign-in", async () => {
+  const shell = page();
+  const ctx = load(shell, ['elicitation-ui.js']);
+  const box = shell.document.createElement('div');
+  shell.body.append(box);
+  const auth = {
+    message: 'Authentication required',
+    methods: [
+      {
+        id: 'fixture-terminal-login',
+        name: 'Sign in in a terminal',
+        kind: 'terminal',
+        instructions: 'Run `x login` in a terminal',
+      },
+    ],
+  };
+  const asked = [];
+  ctx.AgentElicitationUI.renderAuth(box, auth, {
+    providerName: 'OpenCode',
+    onTerminalSignin: async (id) => asked.push(id),
+  });
+  const go = box.querySelector('.auth-terminal-signin');
+  assert.ok(go, 'a Sign in button');
+  assert.equal(go.textContent, 'Sign in');
+  assert.match(box.textContent, /Opens an AIB terminal for the sign-in\. When it finishes, the chat reconnects\./);
+  go.click();
+  await flush();
+  assert.deepEqual(plain(asked), ['fixture-terminal-login']);
+
+  const other = shell.document.createElement('div');
+  shell.body.append(other);
+  ctx.AgentElicitationUI.renderAuth(other, auth, { providerName: 'Some agent' });
+  assert.equal(
+    other.querySelector('.auth-terminal-signin'),
+    null,
+    'no handler (not a Beta terminal agent): the instructions only',
+  );
+  assert.match(other.textContent, /Run `x login` in a terminal/);
+});
+
+test("signInBeta opens AIB Linking, runs the agent's sign-in in the AIB terminal, checks it, then closes Settings", async () => {
+  const list = LIST().map((a) =>
+    a.id === 'opencode'
+      ? { ...a, enabled: true, found: true, launcherSource: 'path', problem: '', signin: { state: 'signin' } }
+      : a,
+  );
+  const { UI, ctx, posts } = await openSettings(list);
+  UI.close();
+  let hooks = null;
+  let closed = 0;
+  ctx.AibTerminal = {
+    runSignin: (view, id, h) => {
+      hooks = h;
+      return { close: () => closed++ };
+    },
+  };
+  const done = UI.signInBeta('opencode');
+  await flush();
+  await flush();
+  assert.ok(UI.isOpen(), 'Settings is open on AIB Linking');
+  assert.deepEqual(plain(posts.find((p) => p[0] === 'agents/signin')), ['agents/signin', { agent: 'opencode' }]);
+  assert.ok(hooks, 'the AIB terminal runs the sign-in (never a separate window)');
+  hooks.onExit(0);
+  assert.equal(await done, true);
+  assert.deepEqual(plain(posts.find((p) => p[0] === 'agents/signin/check' && p[1].agent)), [
+    'agents/signin/check',
+    { agent: 'opencode', force: true },
+  ]);
+  assert.equal(UI.isOpen(), false, 'Settings closes: the chat reconnects');
+  assert.equal(closed, 1);
+});
+
+test('signInBeta fails plainly for an agent that does not sign in through a terminal, and when the sign-in ends with an error', async () => {
+  const list = LIST().map((a) =>
+    a.id === 'opencode' ? { ...a, found: true, launcherSource: 'path', problem: '' } : a,
+  );
+  const { UI, ctx } = await openSettings(list);
+  await assert.rejects(() => UI.signInBeta('gemini'), /cannot run a terminal sign-in/);
+  let hooks = null;
+  ctx.AibTerminal = { runSignin: (v, id, h) => ((hooks = h), { close() {} }) };
+  const done = UI.signInBeta('opencode');
+  await flush();
+  await flush();
+  hooks.onExit(1);
+  assert.equal(await done, false);
+  assert.ok(UI.isOpen(), 'Settings stays open with the reason on the card');
 });

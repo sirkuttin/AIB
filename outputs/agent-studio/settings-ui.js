@@ -1204,8 +1204,15 @@
   // Terminal-type sign-in (ACP auth type "terminal"): the agent host reads the agent's own login command, the page runs it in an AIB
   // terminal panel on this card (never a separate window). Exit code 0: the sign-in is checked again.
   const betaTerms = {}; // agent id -> {node, run, state: running|done|failed, message}; the node is kept across repaints
-  function startTerminalSignin(a) {
+  // opts.onDone(ok): called once the sign-in ends (true: exit 0 and checked again); a chat that asked for it then reconnects.
+  function startTerminalSignin(a, opts) {
     const T = root.AibTerminal;
+    let finished = false;
+    const done = (ok) => {
+      if (finished) return;
+      finished = true;
+      if (opts && typeof opts.onDone === 'function') opts.onDone(ok);
+    };
     signins[a.id] = { state: 'idle' };
     return Promise.resolve()
       .then(() => S.host.post('agents/signin', { agent: a.id }))
@@ -1222,7 +1229,7 @@
           const status = el('p', 'Starting…', 'st-note');
           status.setAttribute('role', 'status');
           node.append(head, view, status);
-          const entry = { node, status, run: null };
+          const entry = { node, status, run: null, done };
           betaTerms[a.id] = entry;
           repaint();
           entry.run = T.runSignin(view, a.id, {
@@ -1232,33 +1239,63 @@
               if (code === 0) {
                 status.textContent = 'The sign-in finished. Checking…';
                 checkOne(a).then(() => {
+                  done(true);
                   if (betaTerms[a.id] === entry) closeTerminal(a.id);
                 });
               } else {
                 status.textContent = 'The sign-in did not finish (it ended with code ' + code + '). Try again.';
                 status.className = 'st-note bad';
+                done(false);
               }
             },
             onError: (message) => {
               status.textContent = message;
               status.className = 'st-note bad';
+              done(false);
             },
           });
         },
         (error) => {
           signins[a.id] = { state: 'failed', message: (error && error.message) || 'The sign-in could not be started.' };
           repaint();
+          done(false);
         },
       )
       .catch((error) => {
         signins[a.id] = { state: 'failed', message: (error && error.message) || 'The sign-in could not be started.' };
         repaint();
+        done(false);
       });
+  }
+  // From a chat that needs sign-in (elicitation-ui.js renderAuth): open Settings > AIB Linking and run this Beta agent's terminal
+  // sign-in on its card. Resolves true when it finished (exit 0) and Settings closed again, false when it failed or was closed.
+  function signInBeta(agentId) {
+    return Promise.resolve(S.data ? S.data : load()).then(
+      () =>
+        new Promise((resolve, reject) => {
+          const a = betaAgents().find((x) => x.id === agentId);
+          if (!a || betaInfo(a).signin !== 'terminal')
+            return reject(Error('AIB cannot run a terminal sign-in for this agent.'));
+          if (!a.found) return reject(Error(a.name + ' is not installed. ' + (a.problem || '')));
+          openPage('agents');
+          startTerminalSignin(a, {
+            onDone: (ok) => {
+              if (ok) closePage();
+              resolve(ok);
+            },
+          });
+          root.setTimeout(() => {
+            const node = betaTerms[a.id] && betaTerms[a.id].node;
+            if (node && node.scrollIntoView) node.scrollIntoView({ block: 'center' });
+          }, 300);
+        }),
+    );
   }
   function closeTerminal(id, paint) {
     const entry = betaTerms[id];
     if (!entry) return;
     delete betaTerms[id];
+    if (entry.done) entry.done(false); // closed before it finished (a finished one has already reported)
     try {
       if (entry.run) entry.run.close();
     } catch (e) {
@@ -2093,6 +2130,8 @@
     agentRow, // one agent's row (status, Install / Cancel / Retry); a start page can draw the same row
     renderAgentsBeta,
     BETA_NOTE,
+    signInBeta, // a chat's Sign in for a Beta agent's terminal sign-in (resolves true on success)
+    betaSigninKind: (id) => betaInfo(betaAgents().find((x) => x.id === id)).signin || '',
     togglePatch,
     envRowsFrom,
     envForSave,

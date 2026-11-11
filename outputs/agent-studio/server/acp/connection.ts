@@ -24,6 +24,8 @@ import {
   publicState,
   selectMcpServers,
   sessionCapabilities,
+  isModelsOption,
+  withModelsOption,
 } from './breadth.ts';
 import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
 import { MessageQueue, type QueueItem, type SavedItem } from './msgqueue.ts';
@@ -1041,6 +1043,9 @@ export class Connection {
         this.#modes().currentModeId = get(params, 'modeId');
       } else if (method === 'session/set_config_option' && isDict(result)) {
         Object.assign(this.settings, result);
+        withModelsOption(this.settings);
+      } else if (method === 'session/set_model') {
+        this.#modelSet(get(params, 'modelId'));
       }
     } catch (error) {
       if (this.#replaying) this.#rebuildFailed(error);
@@ -1682,6 +1687,7 @@ export class Connection {
       }
       if (get(update, 'sessionUpdate') === 'config_option_update') {
         this.settings.configOptions = get(update, 'configOptions', []);
+        withModelsOption(this.settings); // an agent's models list stays offered as the model option
       }
       if (get(update, 'sessionUpdate') === 'current_mode_update') {
         this.#modes().currentModeId = get(update, 'currentModeId');
@@ -1950,6 +1956,9 @@ export class Connection {
         ...this.caps.capabilities(),
         subagents: {},
         elicitation: { form: {}, url: {} },
+        // A Beta agent that signs in through a terminal: AIB runs that sign-in itself (its own terminal, Settings > AIB Linking), so the
+        // agent may offer its terminal-type methods (ACP auth.terminal); the chat's sign-in card then has a Sign in button.
+        ...(betaAgent(this.provider)?.signin.kind === 'terminal' ? { auth: { terminal: true } } : {}),
       },
     }, 45);
     this.#checkSetupAbort();
@@ -2038,7 +2047,9 @@ export class Connection {
     if (!isDict(result) || !isStr(this.sessionId) || !this.sessionId) {
       throw new ValueError('The agent returned an invalid session response');
     }
+    withModelsOption(result); // ACP `models` (Gemini): shown, and remembered through startSettings, as the model option
     Object.assign(this.settings, result);
+    withModelsOption(this.settings);
     this.knownSessions.add(this.sessionId);
   }
 
@@ -2097,6 +2108,7 @@ export class Connection {
     await this.initializeForDiscovery();
     const result = await this.request('session/new', { cwd: this.cwd, mcpServers: [] }, timeoutSeconds);
     if (!isDict(result)) throw new ValueError('The agent returned an invalid session response');
+    withModelsOption(result); // the remembered lists (agent-options.json) keep an agent's models list as its model option
     const sid = get(result, 'sessionId');
     const caps = sessionCapabilities(this.initial);
     if (isStr(sid) && sid && caps.ops.includes('close')) {
@@ -2431,6 +2443,11 @@ export class Connection {
   /** Validated session/set_config_option, applied now. */
   async setConfig(configId: unknown, value: unknown): Promise<void> {
     const params = buildConfigRequest(this.settings, configId, value);
+    if (isModelsOption(this.settings, configId)) { // an agent's models list: session/set_model (unstable_setSessionModel)
+      await this.request('session/set_model', { sessionId: this.sessionId, modelId: value });
+      this.#modelSet(value);
+      return;
+    }
     const result = await this.request('session/set_config_option', {
       ...params,
       sessionId: this.sessionId,
@@ -2439,6 +2456,13 @@ export class Connection {
       throw new TypeError(`'${pyTypeName(result)}' object is not iterable`);
     }
     Object.assign(this.settings, result);
+  }
+
+  /** The model the agent took through session/set_model: its models reply and the model option AIB made from it. */
+  #modelSet(modelId: unknown): void {
+    if (!isStr(modelId)) return;
+    if (isDict(this.settings.models)) (this.settings.models as Json).currentModelId = modelId;
+    withModelsOption(this.settings);
   }
 
   /** Validated session/set_mode, applied now. */

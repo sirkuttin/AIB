@@ -2200,12 +2200,26 @@
     };
   }
   function authContext(connection, snap) {
+    const S = window.AgentSettingsUI;
+    const terminal = !!(S && S.betaSigninKind && S.betaSigninKind(snap.provider) === 'terminal');
     return {
       providerName: nameOf(snap.provider),
       onAuth: async (action, methodId) => {
         await post('authenticate', { id: connection, action, methodId });
         if (current === connection) await refresh();
       },
+      // A Beta agent whose sign-in runs in a terminal: AIB runs it in its own terminal (Settings > AIB Linking, on the agent's card),
+      // then reconnects this chat: a fresh agent process that reads the new sign-in (ACP terminal auth re-initializes).
+      onTerminalSignin: terminal
+        ? async () => {
+            const ok = await S.signInBeta(snap.provider);
+            if (!ok) throw Error('The sign-in did not finish. Try again.');
+            const restart = setupRestarts.get(connection);
+            if (restart) restart();
+            else await post('authenticate', { id: connection, action: 'retry' });
+            if (current === connection) await refresh();
+          }
+        : null,
     };
   }
   let setupWatch = '';
@@ -2220,13 +2234,28 @@
       ? window.AgentOwnershipUI.guardedConnect(connectAndWaitOnce, payload, $('ownershipPrompt'))
       : connectAndWaitOnce(payload);
   }
+  // A chat still opening whose Beta agent was just signed in through AIB's terminal: connectAndWaitOnce drops that agent process
+  // (its sign-in wait is cancelled) and opens the chat again with a fresh one. connection id -> restart().
+  const setupRestarts = new Map();
   async function connectAndWaitOnce(payload) {
+    for (let attempt = 0; ; attempt++) {
+      const outcome = await connectAttempt(payload, attempt < 2);
+      if (outcome !== 'restart') return outcome;
+    }
+  }
+  async function connectAttempt(payload, mayRestart) {
     const started = await post('connect', { ...payload, background: true }),
       id = started.id;
-    let closedPolls = 0;
+    let closedPolls = 0,
+      restart = false;
     setupWatch = id;
+    if (mayRestart) setupRestarts.set(id, () => (restart = true));
     try {
       for (;;) {
+        if (restart) {
+          await post('authenticate', { id, action: 'cancel' }).catch(() => {});
+          return 'restart';
+        }
         const snap = await get('/api/live/state', { id });
         showSetupPrompts(id, snap);
         if (snap.closed) {
@@ -2236,6 +2265,7 @@
         await new Promise((resolve) => setTimeout(resolve, snap.elicitations?.length || snap.auth ? 250 : 500));
       }
     } finally {
+      setupRestarts.delete(id);
       setupWatch = '';
       showSetupPrompts(id, null);
     }

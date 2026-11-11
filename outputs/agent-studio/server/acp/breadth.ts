@@ -239,6 +239,53 @@ function findOption(settings: Dict, configId: unknown): Dict | undefined {
   return items(settings.configOptions).find((o): o is Dict => isDict(o) && pyEq(o.id, configId));
 }
 
+/** Marks the model option AIB makes from an agent's `models` reply (it is set through session/set_model, not set_config_option). */
+export const MODELS_SOURCE = 'acp-models';
+
+/**
+ * ACP's unstable model list (Gemini CLI): the session reply carries `models: {availableModels: [{modelId, name, description}],
+ * currentModelId}` and the model is changed with `session/set_model` (unstable_setSessionModel). When the agent offers such a list and
+ * no model config option, AIB shows it as one more select config option {id: 'model', category: 'model', _aibSource: MODELS_SOURCE},
+ * so the model chip, the New chat pickers and the remembered lists (agent-options.json) read it like any other. Changes the settings
+ * object in place and returns it; an agent with its own model config option is left alone.
+ */
+export function withModelsOption<T>(settings: T): T {
+  if (!isDict(settings)) return settings;
+  const s = settings as Dict;
+  const list = Array.isArray(s.configOptions) ? s.configOptions.filter((o) => !(isDict(o) && o._aibSource === MODELS_SOURCE)) : [];
+  const models = isDict(s.models) ? s.models : null;
+  const available = models && Array.isArray(models.availableModels)
+    ? models.availableModels.filter((m): m is Dict => isDict(m) && isStr(m.modelId) && !!m.modelId)
+    : [];
+  const hasOwn = list.some((o) => isDict(o) && (o.category === 'model' || o.id === 'model'));
+  if (!available.length || hasOwn) {
+    if (Array.isArray(s.configOptions)) s.configOptions = list;
+    return settings;
+  }
+  const current = isStr(models!.currentModelId) && models!.currentModelId ? models!.currentModelId : String(available[0].modelId);
+  list.unshift({
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: current,
+    options: available.map((m) => ({
+      value: m.modelId,
+      name: isStr(m.name) && m.name ? m.name : m.modelId,
+      ...(isStr(m.description) && m.description ? { description: m.description } : {}),
+    })),
+    _aibSource: MODELS_SOURCE,
+  });
+  s.configOptions = list;
+  return settings;
+}
+
+/** True when this config option is the one withModelsOption made (it is set through session/set_model). */
+export function isModelsOption(settings: unknown, configId: unknown): boolean {
+  const option = isDict(settings) ? findOption(settings, configId) : undefined;
+  return !!option && option._aibSource === MODELS_SOURCE;
+}
+
 /** Validate a UI request against the agent's reported options and return session/set_config_option params. */
 export function buildConfigRequest(settings: unknown, configId: unknown, value: unknown): Dict {
   const option = isDict(settings) ? findOption(settings, configId) : undefined;
