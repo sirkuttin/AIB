@@ -63,7 +63,7 @@
   color: var(--muted);
 }
 .plan-in_progress .plan-text {
-  color: #f0eaff;
+  color: var(--text-6);
   font-weight: 600;
 }
 .plan-spin::before,

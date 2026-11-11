@@ -64,13 +64,15 @@ Stylesheets load before the scripts; their order is the `<link>` order in `chat.
 
 ## Colour tokens
 
-`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (71 tokens: the first 60 from step 1, then the terminal's). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
+`theme.css` loads first in `chat.html` and defines every named colour once in `:root` (78 tokens). The other page stylesheets paint with `var(--token)` and hold no copy of those values. Step 1 of the themes work changed no colour: `work/test_theme_tokens.py` resolves every `var()` in every stylesheet and compares each rule with the stylesheets as they were at the commit before the change (pinned in the test). A theme is a different set of values for this one block.
 
 Rules for the tokens:
 
 - A token is shared only where the hex was already identical. Near-identical shades (`#d6d9e2` and `#d7d9e3`, say) have separate tokens or stay literal; nothing was merged. Numbered names (`--text-2`, `--accent-wash-3`) are separate roles within a family that look alike; their purpose column says where each appears.
 - `--line`, `--muted` and `--accent` kept their old names and values; they moved here from `chat.css`.
-- `header.css` keeps its own `--hd-work`, `--hd-turn`, `--hd-need`, `--hd-idle` and `--hd-fail`; they now point at `--info`, `--ok`, `--warn`, `--text-muted-2` and `--danger`.
+- `header.css` keeps its own `--hd-work`, `--hd-turn`, `--hd-need`, `--hd-idle` and `--hd-fail`; they point at `--status-working`, `--status-done`, `--status-needs`, `--status-idle` and `--danger`.
+- **Bay teal styling.** One accent, Bay teal: `--accent` fills primary buttons (text `--on-accent`) and draws focus rings and selection bars; accent-coloured text and links use `--link`; the active chat and selected rows use `--accent-wash`. Status uses the icon's agent lights, always next to the status word: Working amber, Needs you coral, Done / Your turn teal, Idle grey (`--status-<name>` text and dot on `--status-<name>-bg`; `-line` borders). Text, dots and borders use the icon's saturated colours (amber `#ffc247`, coral `#ff7a59`, teal `#2bb3a3`), which pass 4.5:1 as text on every dark surface. Elsewhere · Working keeps the Working colour with a dashed ring (`tone` `else-work`, dot `d-else-work`); Elsewhere · Idle is grey and dashed. Failed stays `--danger`. `--info` and `--warn-bg` are no longer painted here but stay defined for other code. `work/test_theme_status.js` computes the contrast of every pair (4.5:1 text, 3:1 borders and focus rings).
+- **Light theme (later).** The page is dark-only. A light theme redefines the same names (for example under `:root[data-theme='light']`); the approved light values are `--accent` `#0F766E` (white text, links the same), active chat `#0B3F3A` on `#E3F2EF`, and chips Working `#7A4A00` on `#FFF1D6`, Needs you `#A3341A` on `#FFE4DC`, Done `#0B5A53` on `#DDF1EC`, Idle `#4A4740` on `#ECE9E2`.
 - Colours left literal on purpose (about 200 shades used once or twice, `rgba()` forms, the `#000` mask, the custom properties `--need`, `--ws-bg` and `--sel` in `workspace.css`, and the monitor pages `style.css` and `sidebar.css`, which are a separate page that does not load `theme.css`) are not tokens yet. A new colour in a stylesheet should use an existing token when its role matches, or add one to `theme.css`.
 - `copy-ui.js` keeps literal light colours (`#f3f4f6`, `#d9dce1`, `#c5c9d0`, `#555555`). They style HTML put on the clipboard for other applications, not the page, so they must not follow the page theme.
 
@@ -87,7 +89,7 @@ Rules for the tokens:
 | `--text-dim` | `#a3a8b6` | Activity strip and sub-agent card text |
 | `--muted` | `#929aaa` | Muted text (original token) |
 | `--text-muted` | `#8a91a3` | Qualifiers, timestamps, toggles |
-| `--text-muted-2` | `#9195a6` | Idle status text and dot (also --hd-idle) |
+| `--text-muted-2` | `#9195a6` | Plan step qualifiers (former idle status colour) |
 | `--text-faint` | `#747d90` | Placeholders, composer notes, context state |
 | `--text-faint-2` | `#737e94` | Message times, turn dividers |
 | `--text-faint-3` | `#6d7184` | Artifact shortcuts and counts |
@@ -111,27 +113,45 @@ Rules for the tokens:
 | `--line-control` | `#3a3c49` | Button and badge borders |
 | `--line-card` | `#3d4050` | Thumbnail and queue-row borders |
 | `--line-field` | `#343746` | Input and popup borders |
-| `--accent` | `#bba1ff` | Accent (original token): primary buttons, focus, links |
-| `--accent-wash` | `#2a2438` | Purple-tinted hover and active fill |
-| `--accent-wash-2` | `#383043` | Stronger purple hover fill |
-| `--accent-wash-3` | `#2b2752` | Artifacts pane purple fill |
-| `--accent-wash-4` | `#2b2740` | Sub-agent command chips and pane badges |
-| `--accent-wash-5` | `#2d243d` | Selected sub-agent and command card fill |
-| `--accent-line` | `#705a9b` | Selected and needs-you purple borders |
+| `--accent` | `#2bb3a3` | Accent (original token): primary button fill, focus rings, selection bars, accent borders |
+| `--on-accent` | `#0b1f1d` | Text on an --accent fill (primary buttons, badges) |
+| `--on-accent-disabled` | `#8fd9cf` | Text on a disabled primary button (on --accent-wash-2) |
+| `--link` | `#33bcab` | Links and accent-coloured text: the most saturated teal that keeps 4.5:1 on every teal fill |
+| `--link-underline` | `#33bcab80` | Link underline at rest |
+| `--accent-halo` | `#2bb3a333` | Soft accent glow (drop target) |
+| `--accent-wash` | `#17332f` | Active chat, selected rows, teal hover and active fill |
+| `--accent-wash-2` | `#1f423d` | Stronger teal hover fill |
+| `--accent-wash-3` | `#173a36` | Artifacts pane teal fill |
+| `--accent-wash-4` | `#16302d` | Sub-agent command chips, pane badges, agent letters |
+| `--accent-wash-5` | `#1a3834` | Selected sub-agent and command card fill |
+| `--accent-line` | `#2a7c72` | Selected-card and dialog teal borders |
 | `--danger` | `#f08a8a` | Failure dot and new-line marker (also --hd-fail) |
 | `--danger-text` | `#f19999` | Ownership and error-note text |
 | `--danger-bright` | `#ffbac6` | Error text and failed tool status |
 | `--danger-fill` | `#d96b82` | Destructive primary button fill and border |
-| `--ok` | `#7ad19c` | Turn-running dot and additions (also --hd-turn) |
+| `--ok` | `#7ad19c` | Additions and change counts (former your-turn dot) |
 | `--ok-text` | `#8fd7b2` | Idle status text and notify-on button |
 | `--ok-bright` | `#8be28b` | Copied tick, added tokens, ok marks |
 | `--ok-text-2` | `#8be3ad` | Completed tool status and added diff lines |
-| `--warn` | `#f0b23e` | Needs-you dot and stars (also --hd-need) |
-| `--warn-text` | `#e6c27a` | Hold note, needs-you hover and flash |
+| `--warn` | `#f0b23e` | Stars and file warnings (former needs-you dot) |
+| `--warn-text` | `#e6c27a` | Hold note and held-chat text |
 | `--warn-text-2` | `#f0c674` | Recovered and possibly-active badges |
-| `--warn-bg` | `#302a1c` | Approval, needs-you line and toast fill |
-| `--warn-line` | `#ad8d47` | Approval and needs-you borders |
-| `--info` | `#5aa9ff` | Working dot (also --hd-work) |
+| `--warn-bg` | `#302a1c` | Former approval and needs-you fill; kept for code on other branches |
+| `--warn-line` | `#ad8d47` | Held and edited queue rows, mismatched setting chips |
+| `--info` | `#5aa9ff` | Former working dot; kept for code on other branches |
+| `--status-working` | `#ffc247` | Working: the icon's amber, for text, dot and spinner (also Elsewhere · Working, dashed) |
+| `--status-working-bg` | `#3a2e14` | Working chip fill |
+| `--status-working-track` | `#ffc24740` | Working spinner track (the spinner's head is --status-working) |
+| `--status-working-line` | `#ffc247` | Working borders: turn line, elsewhere chip |
+| `--status-needs` | `#ff7a59` | Needs you: the icon's coral, for text, dot and badges |
+| `--status-needs-bg` | `#3d1f18` | Needs-you chip, approval, turn-line and toast fill; text on a coral badge |
+| `--status-needs-line` | `#ff7a59` | Needs-you borders and row outline |
+| `--status-needs-halo` | `#ff7a594d` | Halo around the needs-you dot |
+| `--status-done` | `#2bb3a3` | Done / Your turn / unread: the icon's teal, for text and dot |
+| `--status-done-bg` | `#12302c` | Done chip fill |
+| `--status-done-line` | `#2bb3a3` | Your-turn turn-line border, unread row outline |
+| `--status-idle` | `#c9c5bb` | Idle and unknown (also Elsewhere · Idle, dashed): grey text and dot ring |
+| `--status-idle-bg` | `#26272f` | Idle chip fill |
 | `--plan-dot` | `#d7d9e3` | Plan step dots |
 | `--shadow-strong` | `#000a` | Toast, switcher and popover drop shadow |
 | `--shadow-med` | `#0009` | Menu shadow and switcher backdrop |

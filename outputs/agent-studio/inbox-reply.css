@@ -23,7 +23,7 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
   font-size: 11px;
   text-decoration: underline;
 }
@@ -68,7 +68,7 @@
   padding: 0 8px;
   border-color: transparent;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
   text-decoration: underline;
 }
 .ws-qa.ws-inbox-handled:hover,
@@ -76,12 +76,12 @@
   background: var(--accent-wash-2);
 }
 .ws-qa-reply {
-  border-color: #6a528f;
+  border-color: var(--accent-line);
 }
 .ws-qa-send.primary {
-  background: #8f7cf0;
+  background: var(--accent);
   border-color: transparent;
-  color: #16131f;
+  color: var(--on-accent);
   font-weight: 600;
   border-radius: 999px;
 }
@@ -102,7 +102,7 @@
   color: var(--muted);
 }
 .ws-qa-queued {
-  color: var(--accent);
+  color: var(--link);
   font-weight: 600;
 }
 .ws-reply {

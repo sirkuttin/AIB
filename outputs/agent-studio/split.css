@@ -93,7 +93,7 @@ body.split-on .ahead {
 }
 .dv:hover,
 .dv.on {
-  background: #4a4660;
+  background: var(--accent-line);
 }
 body.split-resizing-x,
 body.split-resizing-y {
@@ -192,22 +192,48 @@ body.split-resizing-y {
 .mirror-status[data-tone='turn']::before {
   background: var(--hd-turn);
 }
-.mirror-status[data-tone='need'],
-.mirror-status[data-tone='else'] {
+.mirror-status[data-tone='need'] {
   color: var(--hd-need);
+}
+.mirror-status[data-tone='else'] {
+  color: var(--hd-idle);
 }
 .mirror-status[data-tone='need']::before {
   background: var(--hd-need);
 }
+.mirror-status[data-tone='else-work'] {
+  color: var(--hd-work);
+  border-color: var(--status-working-line);
+}
+.mirror-status[data-tone='else-work']::before {
+  background: transparent;
+  border: 1.5px dashed var(--hd-work);
+}
 .mirror-status[data-tone='else']::before {
   background: transparent;
-  border: 1.5px dashed var(--hd-need);
+  border: 1.5px dashed var(--hd-idle);
 }
 .mirror-status[data-tone='bad'] {
   color: var(--hd-fail);
 }
 .mirror-status[data-tone='bad']::before {
   background: var(--hd-fail);
+}
+.mirror-status[data-tone='work'] {
+  background: var(--status-working-bg);
+  border-color: var(--status-working-bg);
+}
+.mirror-status[data-tone='turn'] {
+  background: var(--status-done-bg);
+  border-color: var(--status-done-bg);
+}
+.mirror-status[data-tone='need'] {
+  background: var(--status-needs-bg);
+  border-color: var(--status-needs-bg);
+}
+.mirror-status[data-tone='idle'] {
+  background: var(--status-idle-bg);
+  border-color: var(--status-idle-bg);
 }
 .mirror-msgs {
   flex: 1 1 auto;
@@ -267,7 +293,7 @@ body.split-dragging {
   border-radius: 999px;
   border: 1px solid var(--accent);
   background: var(--accent-wash-3);
-  color: #f0e5ff;
+  color: var(--text-6);
   font:
     600 11px Segoe UI,
     system-ui,

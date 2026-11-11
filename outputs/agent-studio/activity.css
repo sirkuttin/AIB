@@ -266,16 +266,16 @@ body.subchat-open .rs-split {
 }
 .sa-working .sa-dot,
 .proc-running .sa-dot {
-  background: var(--accent);
+  background: var(--status-working);
   animation: toolpulse 1.4s ease-in-out infinite;
 }
 .sa-probable .sa-dot {
   background: transparent;
-  border: 1.5px solid var(--accent);
+  border: 1.5px solid var(--status-working);
   animation: none;
 }
 .sa-working .sa-title {
-  color: #f1ecff;
+  color: var(--text-6);
   font-weight: 550;
 }
 .sa-when {
@@ -285,7 +285,7 @@ body.subchat-open .rs-split {
 }
 .sa-working .sa-when,
 .proc-running .sa-when {
-  color: #a79fbd;
+  color: var(--text-dim);
 }
 .sa-cmd {
   flex: 0 0 auto;
@@ -294,7 +294,10 @@ body.subchat-open .rs-split {
   padding: 0 6px;
   border-radius: 999px;
   background: var(--accent-wash-4);
-  color: var(--accent);
+  color: var(--link);
+}
+.sa-completed .sa-dot {
+  background: var(--status-done);
 }
 .sa-failed .sa-dot,
 .proc-failed .sa-dot {
@@ -510,7 +513,7 @@ body.subchat-open #commandSection {
   color: var(--muted);
 }
 .sub-link-state.running {
-  color: var(--accent);
+  color: var(--status-working);
 }
 .subchat-note {
   margin: 0;
@@ -573,7 +576,7 @@ body.subchat-open #commandSection {
     background: #4b4f5d;
   }
   .ac-sub.working .ac-dot {
-    background: var(--accent);
+    background: var(--status-working);
     animation: toolpulse 1.4s ease-in-out infinite;
   }
   .ac-chip + .ac-chip::before {

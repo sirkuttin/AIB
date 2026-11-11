@@ -429,7 +429,7 @@
       });
       if (issue) card.appendChild(el('p', 'elicitation-issue', issue));
       const actions = el('div', 'elicitation-actions');
-      const submit = el('button', '', isUrl ? "I've completed this" : 'Submit');
+      const submit = el('button', 'primary', isUrl ? "I've completed this" : 'Submit');
       submit.type = 'button';
       submit.disabled = !!issue || isUrl;
       const decline = el('button', '', 'Decline'),

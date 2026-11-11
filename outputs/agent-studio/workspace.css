@@ -3,9 +3,9 @@
    Scales: spacing 4/8/12/16/24, type 11/12/13/14, rows 28 (headings) / 32 (chats) / 44 (hold note), radius 6.
    Activity pane (#subagentsPane) and its CSS are deliberately not touched here. */
 :root {
-  --need: #f2b24a;
+  --need: var(--status-needs);
   --ws-bg: #121317;
-  --sel: #2b2340;
+  --sel: var(--accent-wash);
 }
 
 /* ---- sidebar = project rail + slim list -------------------------------------------------------------------- */
@@ -62,7 +62,7 @@ aside .connection.selected::before {
   bottom: 6px;
   width: 3px;
   border-radius: 2px;
-  background: #a98be2;
+  background: var(--sel-bar);
   pointer-events: none;
 }
 aside .connection:focus-visible {
@@ -180,11 +180,11 @@ aside .conversation-row .connection {
   width: 12px;
   height: 12px;
   background: var(--need);
-  box-shadow: 0 0 0 3px #f2b24a4d;
+  box-shadow: 0 0 0 3px var(--status-needs-halo);
 }
 .status-count {
   background: var(--need);
-  color: #24180a;
+  color: var(--status-needs-bg);
   font-size: 11px;
 }
 
@@ -632,8 +632,8 @@ body.show-composer-help .composer-note {
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  background: #33324a;
-  color: #d9ccff;
+  background: var(--accent-wash-4);
+  color: var(--link);
   font-size: 10px;
   font-weight: 600;
 }
@@ -911,7 +911,7 @@ body > main {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--need);
-  color: #1b1300;
+  color: var(--status-needs-bg);
   font-size: 11px;
   font-weight: 700;
   line-height: 18px;
@@ -926,11 +926,11 @@ body > main {
   border-radius: 50%;
 }
 .ws-working {
-  background: #6fb4ff;
+  background: var(--status-working);
   animation: ws-pulse 1.6s infinite;
 }
 .ws-unread {
-  background: var(--ok-text);
+  background: var(--status-done);
 }
 @keyframes ws-pulse {
   50% {
@@ -1029,7 +1029,7 @@ body.ws-dragging {
 .ws-menu-item[aria-checked='true']::before {
   content: '¹3';
   margin-right: 6px;
-  color: var(--accent);
+  color: var(--link);
 }
 .ws-rename {
   width: 280px;
@@ -1400,28 +1400,54 @@ aside .connection:has(.hold-note) {
      centred over the clip (the old 72 px cap cut the title's top and the branch line's bottom). */
   align-content: flex-start;
   align-items: center;
-  gap: 2px 6px;
+  gap: 2px 8px;
   height: auto;
   min-height: 56px;
-  padding: 6px 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
   overflow: hidden;
   line-height: 18px;
 }
 aside .conversation-row {
-  margin: 0 0 2px;
+  margin: 0 0 4px;
 }
 aside .conversation-row .connection {
-  padding-right: 8px;
+  padding-right: 10px;
 }
+/* the mark column is always 14 px, so titles share one left edge; the count badge sits under it on line 2 (below) */
 aside .connection .status-mark {
   order: 0;
+  flex: 0 0 14px;
+  width: 14px;
   min-width: 14px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.project-head .status-mark:has(.status-count) .status-dot {
+  /* hidden from sight only: the dot carries the status label for screen readers (the count is aria-hidden) */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  box-shadow: none;
+}
+aside .connection .status-count {
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font-size: 10px;
+  line-height: 14px;
+  border-radius: 7px;
+  font-weight: 700;
 }
 /* The pending-request count takes no room on line 1 (it pushed the title 18 px right on a needs-you card): it sits in the
-   dot's column on line 2, which is empty on every card (line 2 starts 20 px in). */
+   dot's column on line 2, which is empty on every card (line 2 starts 22 px in). */
 aside .connection .status-mark .status-count {
   position: absolute;
-  left: 7px;
+  left: 10px;
   top: 27px;
 }
 aside .connection .connection-title,
@@ -1429,9 +1455,9 @@ aside .project-rows .connection .connection-title {
   order: 1;
   flex: 1 1 0;
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 18px;
-  font-weight: 550;
+  font-weight: 600;
 }
 aside .connection .row-age {
   order: 2;
@@ -1443,6 +1469,9 @@ aside .connection .row-age {
 aside .connection .row-meta-text {
   display: none;
 }
+aside .connection.selected .row-age {
+  color: var(--muted);
+}
 aside .connection .row-status {
   order: 3;
   flex: 0 0 100%;
@@ -1450,9 +1479,9 @@ aside .connection .row-status {
   align-items: center;
   gap: 0;
   min-width: 0;
-  padding-left: 20px;
+  padding-left: 22px;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 16px;
   white-space: nowrap;
 }
 aside .connection .row-phrase {
@@ -1468,9 +1497,9 @@ aside .connection .row-agent {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
-  color: var(--muted);
+  color: var(--text-dim);
 }
 aside .connection .row-chip {
   flex: none;
@@ -1480,13 +1509,15 @@ aside .connection .row-chip {
   background: #2a2c38;
   color: var(--text-3);
   font-size: 11px;
+  font-weight: 600;
   line-height: 16px;
 }
 aside .connection .row-status.tone-need .row-phrase {
   color: var(--need);
 }
-aside .connection .row-status.tone-work .row-phrase {
-  color: var(--accent);
+aside .connection .row-status.tone-work .row-phrase,
+aside .connection .row-status.tone-else-work .row-phrase {
+  color: var(--status-working);
 }
 aside .connection .row-status.tone-info .row-phrase {
   color: #8fb8ef;
@@ -1510,8 +1541,8 @@ aside .connection .hold-note {
   display: block;
   min-width: 0;
   margin: 0;
-  padding-left: 20px;
-  font-size: 11px;
+  padding-left: 22px;
+  font-size: 12px;
   line-height: 16px;
   color: var(--muted);
   white-space: nowrap;
@@ -1533,16 +1564,16 @@ aside .rename-chat {
 }
 /* Needs you: a thin amber outline (the needs-you colour), not the purple one that reads like focus or the selected card. */
 aside .connection.selected.attn-needs_you {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--need) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--status-needs-line);
 }
 aside .connection.selected.attn-unread {
-  box-shadow: inset 0 0 0 1px #3d5f86;
+  box-shadow: inset 0 0 0 1px var(--status-done-line);
 }
 aside .connection.attn-needs_you:not(.selected) {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--need) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--status-needs-line);
 }
 aside .connection.attn-unread:not(.selected) {
-  box-shadow: inset 0 0 0 1px #3d5f86;
+  box-shadow: inset 0 0 0 1px var(--status-done-line);
 }
 
 /* ---- New project dialog (modal) ---- */
@@ -1656,9 +1687,9 @@ aside .connection.attn-unread:not(.selected) {
   font-size: 13px;
 }
 .np-primary {
-  background: #6a4fc2;
-  border-color: #8a6fe0;
-  color: var(--text-bright);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .np-primary:disabled {
   opacity: 0.45;
@@ -1752,7 +1783,7 @@ aside .connection.attn-unread:not(.selected) {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
   font-size: 11px;
   text-decoration: underline;
 }
@@ -1796,29 +1827,32 @@ aside .connection.attn-unread:not(.selected) {
 
 /* ---- status dots (classes come from status-words.js dotClass; same colours as the header chip) ---------------- */
 .status-dot.d-work {
-  width: 9px;
-  height: 9px;
-  border: 2px solid #4b4560;
-  border-top-color: var(--hd-work, var(--info));
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--status-working-track);
+  border-top-color: var(--hd-work, var(--status-working));
   animation: status-spin 0.9s linear infinite;
 }
 .status-dot.d-turn {
-  background: var(--hd-turn, var(--ok));
+  background: var(--hd-turn, var(--status-done));
 }
 .status-dot.d-need {
   width: 12px;
   height: 12px;
-  background: var(--hd-need, var(--warn));
-  box-shadow: 0 0 0 3px #f2b24a4d;
+  background: var(--hd-need, var(--status-needs));
+  box-shadow: 0 0 0 3px var(--status-needs-halo);
 }
 .status-dot.d-idle {
-  border: 2px solid var(--hd-idle, var(--text-muted-2));
+  border: 2px solid var(--hd-idle, var(--status-idle));
 }
 .status-dot.d-off {
   border: 1px dashed #6b7080;
 }
+.status-dot.d-else-work {
+  border: 2px dashed var(--hd-work, var(--status-working));
+}
 .status-dot.d-else {
-  border: 2px solid #8a9be0;
+  border: 2px dashed var(--status-idle);
 }
 .status-dot.d-fail {
   background: var(--hd-fail, var(--danger));

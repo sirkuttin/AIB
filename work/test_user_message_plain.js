@@ -1,7 +1,7 @@
 'use strict';
 const { APP: APP_DIR } = require('./_paths');
-/* Your own messages keep the purple box but have no visible title bar: the "You" label stays for screen readers,
-   and the time and Copy button float at the top right and always show, at a readable size. */
+/* Your own messages keep their own box (a neutral raised fill since the Bay teal styling) but have no visible title bar: the "You"
+   label stays for screen readers. The time always shows; Copy shows on hover or keyboard focus (always on touch). */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -25,8 +25,8 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-test('the purple box is unchanged', () => {
-  assert.deepEqual(decl('.bubble.user'), { background: '#272031', 'border-color': '#4d3c65' });
+test('the user box is unchanged', () => {
+  assert.deepEqual(decl('.bubble.user'), { background: 'var(--panel-2)', 'border-color': 'var(--line-card)' });
   const box = decl('.bubble');
   assert.equal(box['border-radius'], '9px');
   assert.equal(box.border, '1px solid var(--line)');

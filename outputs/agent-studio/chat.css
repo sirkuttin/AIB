@@ -25,7 +25,7 @@ aside {
 }
 .brand {
   font-size: 21px;
-  color: #e5d8ff;
+  color: var(--text-6);
   text-decoration: none;
 }
 .eyebrow {
@@ -57,9 +57,21 @@ button:disabled {
 }
 .primary {
   background: var(--accent);
-  color: #17111f;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
+}
+/* disabled primary (Send / Queue with nothing to send): a solid teal wash with readable text, not a half-transparent button */
+.primary:disabled {
+  opacity: 1;
+  background: var(--accent-wash-2);
+  border-color: var(--accent-line);
+  color: var(--on-accent-disabled);
+}
+/* the ring stands off the teal button so it stays visible */
+.primary:focus-visible {
+  outline: 2px solid var(--text-bright);
+  outline-offset: 2px;
 }
 #new {
   width: 100%;
@@ -79,7 +91,7 @@ button:disabled {
 }
 .connection.selected {
   border-color: var(--accent-line);
-  background: #2b223b;
+  background: var(--accent-wash);
 }
 .connection small {
   color: var(--muted);
@@ -89,7 +101,7 @@ button:disabled {
 .monitor {
   display: block;
   font-size: 12px;
-  color: var(--accent);
+  color: var(--link);
   margin-top: 30px;
   text-decoration: none;
 }
@@ -256,8 +268,8 @@ input[type='checkbox'] {
   overflow: hidden;
 }
 .bubble.user {
-  background: #272031;
-  border-color: #4d3c65;
+  background: var(--panel-2);
+  border-color: var(--line-card);
 }
 .bubble-head {
   padding: 10px 15px;
@@ -311,8 +323,8 @@ input[type='checkbox'] {
   padding: 0 30px;
 }
 .approval {
-  border: 1px solid var(--warn-line);
-  background: var(--warn-bg);
+  border: 1px solid var(--status-needs-line);
+  background: var(--panel-2);
   border-radius: 7px;
   padding: 15px;
   margin-bottom: 12px;
@@ -518,8 +530,8 @@ aside > .note {
   color: var(--muted);
 }
 .provider-tabs button[aria-selected='true'] {
-  background: #342744;
-  color: #f0e5ff;
+  background: var(--accent-wash-2);
+  color: var(--text-6);
 }
 .provider-tabs span {
   font-size: 10px;
@@ -814,7 +826,7 @@ header p {
 }
 .subagent-card.selected {
   background: var(--accent-wash-5);
-  border-color: #6a528f;
+  border-color: var(--accent-line);
 }
 .subagent-card:hover {
   background: var(--hover-2);
@@ -883,7 +895,7 @@ header p {
   font-size: 11px;
   margin: 0 auto 16px;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
 }
 #commandPanel {
   display: flex;
@@ -905,7 +917,7 @@ header p {
 #renameDialog {
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid #5b4a78;
+  border: 1px solid var(--accent-line);
   border-radius: 12px;
   padding: 25px;
   width: min(480px, 90vw);
@@ -1062,7 +1074,7 @@ body > main {
 .command-state {
   display: inline-block;
   margin-top: 5px;
-  color: var(--accent);
+  color: var(--link);
   font-size: 9px;
   line-height: 1.4;
 }
@@ -1182,7 +1194,7 @@ body > main {
   margin-left: 8px;
 }
 .bubble .message-image:hover {
-  border-color: #a99cff;
+  border-color: var(--accent);
 }
 
 #subagentsPane > .note {
@@ -1250,7 +1262,7 @@ body > main {
 }
 .command-card.selected {
   background: var(--accent-wash-5);
-  border-color: #6a528f;
+  border-color: var(--accent-line);
 }
 
 #commandSection {
@@ -1281,8 +1293,8 @@ body > main {
   display: none;
 }
 .elicitation-card {
-  background: #242032;
-  border: 1px solid var(--accent-line);
+  background: var(--panel-2);
+  border: 1px solid var(--status-needs-line);
   border-radius: 9px;
   margin: 10px 0;
   padding: 16px;
@@ -1290,7 +1302,19 @@ body > main {
 .elicitation-heading {
   font-size: 13px;
   margin: 0 0 9px;
-  color: #e5d8ff;
+  color: var(--text-6);
+}
+/* question and approval cards: a plain panel with a coral border and a small coral dot before the title */
+.elicitation-heading::before,
+.approval h3::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 7px 1px 0;
+  border-radius: 50%;
+  background: var(--status-needs);
+  vertical-align: middle;
 }
 .elicitation-message {
   white-space: pre-wrap;
@@ -1336,7 +1360,13 @@ body > main {
 }
 .elicitation-actions button:first-child {
   background: var(--accent);
-  color: #17111f;
+  color: var(--on-accent);
+}
+/* the question card's Submit is a .primary button: keep its disabled wash over the first-child fill above */
+.elicitation-actions button.primary:disabled {
+  background: var(--accent-wash-2);
+  border-color: var(--accent-line);
+  color: var(--on-accent-disabled);
 }
 .elicitation-error,
 .elicitation-issue {
@@ -1406,7 +1436,7 @@ body > main {
   margin: 0.9em 0;
 }
 .markdown a {
-  color: var(--accent);
+  color: var(--link);
 }
 .markdown code {
   font-family:
@@ -1483,22 +1513,23 @@ body > main {
 }
 .tool-status {
   font-size: 11px;
+  font-weight: 600;
   border-radius: 999px;
   padding: 1px 8px;
-  background: #2a2b36;
-  color: #cfd3dd;
+  background: var(--status-idle-bg);
+  color: var(--status-idle);
 }
 .tool-status.status-completed {
-  background: #16392a;
-  color: var(--ok-text-2);
+  background: var(--status-done-bg);
+  color: var(--status-done);
 }
 .tool-status.status-failed {
   background: #4a1d27;
   color: var(--danger-bright);
 }
 .tool-status.status-in_progress {
-  background: #2c2a4a;
-  color: #c9bcff;
+  background: var(--status-working-bg);
+  color: var(--status-working);
 }
 .tool-locations {
   margin: 0;
@@ -1553,7 +1584,7 @@ body > main {
   flex: 1;
 }
 .diff-new {
-  color: var(--accent);
+  color: var(--link);
 }
 .diff-added {
   color: var(--ok-text-2);
@@ -1635,7 +1666,7 @@ body > main {
   overflow-wrap: anywhere;
 }
 .content-block a {
-  color: var(--accent);
+  color: var(--link);
 }
 .content-block audio {
   max-width: 100%;
@@ -1651,8 +1682,8 @@ body > main {
 .elicitation-url {
   margin: 8px 0;
   padding: 9px 11px;
-  background: #17141f;
-  border: 1px solid #4a3d6b;
+  background: var(--code-bg);
+  border: 1px solid var(--line-field);
   border-radius: 6px;
   font-family: Consolas, monospace;
   font-size: 13px;
@@ -1660,7 +1691,7 @@ body > main {
 }
 .elicitation-url-host {
   color: var(--text-bright);
-  background: #4b3a7a;
+  background: var(--accent-wash-2);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -1671,7 +1702,7 @@ body > main {
 a.elicitation-open {
   display: inline-block;
   margin: 4px 0;
-  color: var(--accent);
+  color: var(--link);
 }
 .elicitation-show {
   font-size: 12px;
@@ -1680,7 +1711,7 @@ a.elicitation-open {
 .auth-method {
   margin: 10px 0;
   padding: 10px;
-  border: 1px solid #4a3d6b;
+  border: 1px solid var(--line-field);
   border-radius: 6px;
 }
 .auth-instructions {
@@ -1714,7 +1745,7 @@ a.elicitation-open {
   flex-wrap: wrap;
 }
 .slash-option.selected {
-  background: #2b223b;
+  background: var(--accent-wash);
 }
 .slash-option em {
   color: var(--muted);
@@ -2050,7 +2081,7 @@ aside #connections {
 }
 #promptForm.drop-target {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px #7c6cf033;
+  box-shadow: 0 0 0 2px var(--accent-halo);
 }
 /* Sent file cards */
 .file-card {
@@ -2312,7 +2343,7 @@ aside #connections {
 }
 .organize-menu button:hover,
 .organize-menu button:focus {
-  background: #3a3248;
+  background: var(--accent-wash-2);
 }
 .organize-menu button.danger {
   color: #ff9fb0;
@@ -2788,7 +2819,7 @@ aside #connections {
   line-height: 1;
 }
 .mark-ok {
-  color: var(--ok-bright);
+  color: var(--status-done);
 }
 .mark-failed {
   color: #ff6b6b;
@@ -2802,13 +2833,13 @@ aside #connections {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--status-working);
   animation: toolpulse 1.2s ease-in-out infinite;
 }
 @keyframes toolpulse {
   0%,
   100% {
-    opacity: 0.25;
+    opacity: 0.55;
   }
   50% {
     opacity: 1;
@@ -2846,27 +2877,27 @@ aside #connections {
   align-items: baseline;
 }
 .turn-line[data-kind='working'] {
-  color: #c9b8ff;
-  border-color: #463d6e;
+  color: var(--status-working);
+  border-color: var(--status-working-line);
 }
 .turn-line[data-kind='idle'] {
-  color: var(--ok-text);
-  border-color: #2a4a3a;
+  color: var(--status-done);
+  border-color: var(--status-done-line);
 }
 .turn-line[data-kind='lost'] {
   color: #e6a0a0;
   border-color: #6b3a3a;
 }
 .turn-line[data-kind='needs'] {
-  color: #f0d28a;
-  border-color: var(--warn-line);
-  background: var(--warn-bg);
+  color: var(--status-needs);
+  border-color: var(--status-needs-line);
+  background: var(--status-needs-bg);
   cursor: pointer;
   font-weight: 600;
 }
 .turn-line[data-kind='needs']:hover,
 .turn-line[data-kind='needs']:focus-visible {
-  border-color: var(--warn-text);
+  border-color: var(--status-needs);
   outline: none;
 }
 .turn-detail {
@@ -2875,7 +2906,7 @@ aside #connections {
   color: var(--muted);
 }
 .attention-flash {
-  box-shadow: 0 0 0 2px var(--warn-text);
+  box-shadow: 0 0 0 2px var(--status-needs);
   transition: box-shadow 0.3s;
 }
 @media (max-width: 900px) {
@@ -3030,8 +3061,8 @@ span.chip-static:hover {
   box-shadow: 0 6px 24px var(--shadow-strong);
 }
 .toast-needs {
-  border-color: var(--warn-line);
-  background: var(--warn-bg);
+  border-color: var(--status-needs-line);
+  background: var(--status-needs-bg);
 }
 .toast-text {
   display: flex;
@@ -3182,19 +3213,19 @@ span.chip-static:hover {
   box-sizing: border-box;
 }
 .st-working {
-  border: 2px solid #4b4560;
-  border-top-color: var(--accent);
+  border: 2px solid var(--status-working-track);
+  border-top-color: var(--status-working);
   animation: status-spin 0.9s linear infinite;
 }
 .st-needs_you {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px #bba1ff33;
+  background: var(--status-needs);
+  box-shadow: 0 0 0 3px var(--status-needs-halo);
 }
 .st-unread {
-  background: #6fb4ff;
+  background: var(--status-done);
 }
 .st-idle {
-  border: 2px solid #4fae85;
+  border: 2px solid var(--status-idle);
 }
 .st-opening {
   border: 2px dashed #8a8fa0;
@@ -3203,18 +3234,18 @@ span.chip-static:hover {
   min-width: 16px;
   padding: 0 5px;
   border-radius: 8px;
-  background: var(--accent);
-  color: #1d1530;
+  background: var(--status-needs);
+  color: var(--status-needs-bg);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
 }
 .connection.attn-needs_you {
-  border-color: var(--accent-line);
+  border-color: var(--status-needs-line);
 }
 .connection.attn-unread {
-  border-color: #3d5f86;
+  border-color: var(--status-done-line);
 }
 @keyframes status-spin {
   to {
@@ -3225,7 +3256,7 @@ span.chip-static:hover {
   .st-working {
     animation: none;
     border-style: dotted;
-    border-color: var(--accent);
+    border-color: var(--status-working);
   }
 }
 .switcher {
@@ -3399,7 +3430,7 @@ span.chip-static:hover {
 }
 .tool-thumbs .tool-thumb:hover,
 .tool-thumbs .tool-thumb:focus-visible {
-  border-color: #a99cff;
+  border-color: var(--accent);
 }
 .tool-thumbs-more {
   font-size: 11px;
