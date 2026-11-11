@@ -19,8 +19,8 @@ import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
 import './state/migrate.ts'; // registers the data move with paths.ts
-import { pidAlive, readInfo, stopHost } from './host/host_client.ts';
-import { keeperWanted } from './keeper/link.ts';
+import { leaveSplitHost, pidAlive, readInfo, stopHost } from './host/host_client.ts';
+import { keeperSetting } from './keeper/link.ts';
 import { PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
@@ -123,7 +123,10 @@ export async function main(argv: string[]): Promise<void> {
     runtimePort = servePort(Deno.env.get('DENO_SERVE_ADDRESS'));
     Deno.env.delete('DENO_SERVE_ADDRESS');
   } catch { /* no env access */ }
-  if (isDesktopApp() && (NO_WINDOW.has(argv[0]) || argv.includes('--stop-host'))) (await import('./desktop/native.ts')).tameStartupWindow();
+  // A tray-only start (--start-in-tray, the keeper's orphan restart) takes the startup window too: nothing may show until Open AIB.
+  if (isDesktopApp() && (NO_WINDOW.has(argv[0]) || argv.includes('--stop-host') || argv.includes('--start-in-tray'))) {
+    (await import('./desktop/native.ts')).tameStartupWindow();
+  }
   if (argv[0] === 'host') Deno.exit(await hostMain(argv.slice(1)));
   if (argv[0] === 'mcp-artifact') Deno.exit(await (await import('./artifacts/mcp.ts')).main());
   if (argv[0] === 'deploy') Deno.exit(await (await import('./host/deploy.ts')).main(argv.slice(1)));
@@ -133,7 +136,8 @@ export async function main(argv: string[]): Promise<void> {
   const desktop = isDesktopApp() && argv[0] !== 'serve'; // the window only for a plain `AIB [options]` launch
   // After an update: delete the previous version's *.old-<stamp> files once nothing runs from them (never throws; desktop app only).
   // (`serve` of the built app too: an update keeps the arguments, so a served app updates the same way.)
-  if (isDesktopApp() && !argv.includes('--stop-host')) (await import('./desktop/update_helper.ts')).removeUpdateLeftovers();
+  // Again a few times after: the update helper runs from the old files until this version has confirmed its start.
+  if (isDesktopApp() && !argv.includes('--stop-host')) (await import('./desktop/update_helper.ts')).removeUpdateLeftoversSoon();
   let options: Options;
   try {
     options = parseOptions(args);
@@ -149,6 +153,7 @@ export async function main(argv: string[]): Promise<void> {
   const folderLock = options.stopHost ? null : await guardDataFolder(stateDir, {
     mode: desktop ? 'desktop' : 'server',
     port: desktop ? null : options.port,
+    quiet: options.startInTray,
     notice: async (message) => {
       (await import('./desktop/native.ts')).tameStartupWindow();
       await nativeNotice(message);
@@ -183,18 +188,26 @@ export async function main(argv: string[]): Promise<void> {
   let studio: Studio | null = null;
   let host: LiveBackend;
   let webInstanceId: string;
-  // One process with the keeper (owner decision D3, docs/agent-host.md "One process with the keeper"): with AIB_KEEPER=1 (or a keeper
-  // already running for this folder) the agents run in the keeper and outlive this process, so the separate agent host has no job
-  // left. An agent host that still runs for this folder (chats from before the switch, or from the previous version) is attached to
-  // as before, and drained and retired the usual way.
-  const merged = !options.inProcess && keeperWanted(stateDir) && !hostRunning(await readInfo(stateDir));
+  // One process with the keeper (owner decision D3, docs/agent-host.md "One process with the keeper"): with the keeper switch on
+  // (Settings > AIB server, or AIB_KEEPER=1) the agents run in the keeper and outlive this process, so the separate agent host has no
+  // job left. With it off, a keeper that still holds chats from before is taken over by the Studio (in the agent host) and keeps them
+  // until they end; new chats are the host's children as without the keeper.
+  const keeperOn = !options.inProcess && keeperSetting(stateDir);
+  let merged = keeperOn && !hostRunning(await readInfo(stateDir));
+  if (keeperOn && !merged) {
+    merged = await leaveSplitHost(stateDir, (line) => {
+      console.log(line);
+      log.announce('studio', '%s', line);
+    });
+  }
   if (options.inProcess || merged) {
     // Agents run inside this process (studio.py --in-process): restarting it ends every conversation, unless they run in the keeper.
     // The one-process app keeps the agent host's recovery and queue files (studio-*-host.json), so switching modes keeps the list.
     studio = new Studio(studioOptions(options, mcpServers), merged ? { port: 'host' } : {});
     host = studio;
     webInstanceId = studio.instanceId;
-    if (merged) log.announce('studio', 'one process: agents run in the keeper (AIB_KEEPER), no separate agent host');
+    void studio.adoptKeeper(); // chats whose agents still run in the keeper: taken over now, while the server starts (state waits)
+    if (merged) log.announce('studio', 'one process: agents run in the keeper (keeper switch on), no separate agent host');
   } else {
     webInstanceId = crypto.randomUUID().replaceAll('-', '');
     host = await attachHost({
@@ -272,7 +285,7 @@ export async function main(argv: string[]): Promise<void> {
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
   if (studio) {
-    await studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are (AIB_KEEPER=1)
+    await studio.adoptKeeper(); // the take-over started above: chats whose agents still run in the keeper go on where they are
     studio.startAutoReconnect();
   }
   try { // artifact tool: agents re-read this when Studio restarts on another port (json.dumps spacing, like studio.py)
@@ -320,6 +333,14 @@ export async function main(argv: string[]): Promise<void> {
       },
       quit: () => close('the app was quit'),
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
+      // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
+      startInTray: options.startInTray,
+      trayCounts: studio
+        ? () => {
+          const working = studio!.workingList();
+          return Promise.resolve({ working: working.length, needsYou: working.filter((w) => w.state === 'needs_you').length });
+        }
+        : undefined,
     });
     await app.start(); // the window navigates now: the server already listens
     await watchSignal(stateDir, () => void app.showWindow());

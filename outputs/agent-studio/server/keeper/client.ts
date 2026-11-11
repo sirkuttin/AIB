@@ -573,6 +573,26 @@ export function keeperBinary(dataDir?: string): Promise<string> {
   return built;
 }
 
+const forwarders = new Map<string, Promise<boolean>>();
+
+/**
+ * The keeper program to give agents as their MCP forwarder (`AIB-keeper mcp-forward <file>`, design 3.7): `binary` (a test's), else
+ * keeperBinary(dataDir) (in a built app the copy in <data>/keeper-bin/<hash>/, which no update replaces). It must answer
+ * `mcp-forward --check` (keeper 1.1.0 and later); null when it does not (an older program).
+ */
+export async function forwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
+  const program = binary ?? await keeperBinary(dataDir);
+  let ok = forwarders.get(program);
+  if (!ok) {
+    ok = new Deno.Command(program, { args: ['mcp-forward', '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output().then(
+      (out) => out.success && DEC.decode(out.stdout).startsWith('mcp-forward'),
+      () => false,
+    );
+    forwarders.set(program, ok);
+  }
+  return await ok ? program : null;
+}
+
 /**
  * Copy the keeper program shipped with the app to `<data>/keeper-bin/<first 16 hex of its SHA-256>/` and return that path. The keeper
  * outlives the app (it holds the chats through an update), so it must not run from the app's folder: the update helper renames the

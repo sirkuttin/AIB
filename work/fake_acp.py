@@ -96,6 +96,29 @@ def emit(value):
 
 
 _received_log = os.environ.get('FAKE_ACP_LOG')   # every line this agent receives, appended (tests count what reached it)
+_mcp_pids = os.environ.get('FAKE_ACP_MCP_PIDS')   # set: start the stdio MCP servers of session/new like a real agent, pids to this file
+_mcp_children = []
+
+
+def start_mcp_servers(servers):
+    """What real agents do with the stdio entries of session/new: start each one as a child (kept running), its pid appended to a file."""
+    import subprocess
+    for server in servers or []:
+        if not isinstance(server, dict) or not server.get('command') or server.get('type') in ('http', 'sse'):
+            continue
+        env = dict(os.environ)
+        for item in server.get('env') or []:
+            env[item.get('name', '')] = item.get('value', '')
+        try:
+            child = subprocess.Popen([server['command'], *(server.get('args') or [])], env=env,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError as error:
+            child = None
+            print(f'fake agent: could not start MCP server {server.get("name")}: {error}', file=sys.stderr, flush=True)
+        if child:
+            _mcp_children.append(child)
+            with open(_mcp_pids, 'a', encoding='utf-8') as f:
+                f.write(f'{child.pid} {server.get("name", "")} {server["command"]}\n')
 stream_answer = {}   # 'stream:' turns: the permission answer, set by the main loop
 
 
@@ -366,6 +389,8 @@ for line in sys.stdin:
             session_name = params.get('sessionId', 'fake-session')
             session_cwd = params.get('cwd') or session_cwd
             last_mcp = params.get('mcpServers')
+            if _mcp_pids and method == 'session/new':
+                start_mcp_servers(last_mcp)
             if args.replay_history and method == 'session/load':
                 update({'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': 'old question'}})
                 update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'old answer'}})

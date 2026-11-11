@@ -11,8 +11,9 @@
 //  5. Limits are fixed and checked first: header <= 64 KiB, body <= 16 MiB. A bad frame closes only that connection.
 //
 // The keeper must never contain: JSON or ACP parsing of agent traffic, knowledge of chats, sessions, prompts or settings,
-// HTTP, a UI, or agent-specific code. Test for anything proposed for it: "would this ever change when AIB gets a feature?"
-// If yes, it belongs in AIB.
+// HTTP, a UI, or agent-specific code. (The separate `mcp-forward` subcommand, mcpforward.go, is a generic stdio-to-HTTP pipe that
+// agents run as their MCP server; it never runs inside a serving keeper.)
+// Test for anything proposed for it: "would this ever change when AIB gets a feature?" If yes, it belongs in AIB.
 package main
 
 import (
@@ -30,8 +31,9 @@ const (
 )
 
 // keeperVersion is this program's version. A var only so a test build can stamp another one
-// (go build -ldflags "-X main.keeperVersion=1.0.1"); releases use the value here.
-var keeperVersion = "1.0.0"
+// (go build -ldflags "-X main.keeperVersion=1.1.1"); releases use the value here.
+// 1.1.0: the `mcp-forward` subcommand (no protocol change).
+var keeperVersion = "1.1.0"
 
 // features are advertised in hello. Additions only.
 var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids"}

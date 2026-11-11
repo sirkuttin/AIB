@@ -3,8 +3,10 @@
  * Studio runs through it. A channel queues its operations until the keeper has spawned it, so a Connection can write right away,
  * exactly as it writes to a child's stdin.
  *
- * The switch (off by default): AIB_KEEPER=1 makes Studio start agents through the keeper (keeperEnabled()). With it off nothing here
- * runs and agents are children of AIB as before.
+ * The switch (off by default): Settings > AIB server > "Keep chats running through updates and restarts (keeper)", saved as
+ * `server.keeper` in studio-settings.json, read once when AIB starts (keeperSetting()). AIB_KEEPER=1 / AIB_KEEPER=0 in the environment
+ * overrides it. With it off nothing here runs and agents are children of AIB as before, except that chats a keeper still holds (it
+ * was on before) are taken over and stay in the keeper until they end (keeperWanted()).
  */
 import { announce, getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
@@ -27,19 +29,50 @@ import {
 
 const log = getLogger('keeper');
 const ENC = new TextEncoder();
+const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
-/** The switch: agents run under the keeper only with AIB_KEEPER=1 (default off, so the app behaves as before). */
-export function keeperEnabled(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean {
-  return env('AIB_KEEPER') === '1';
+/** The environment override: AIB_KEEPER=1 on, AIB_KEEPER=0 off, anything else null (the saved setting decides). */
+export function keeperOverride(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean | null {
+  let value: string | undefined;
+  try {
+    value = env('AIB_KEEPER');
+  } catch {
+    return null;
+  }
+  return value === '1' ? true : value === '0' ? false : null;
+}
+
+/** The saved setting (studio-settings.json `server.keeper`), false when unset or unreadable. Read straight from the file. */
+export function savedKeeperSetting(dataDir: string | null): boolean {
+  if (!dataDir) return false;
+  try {
+    const doc = JSON.parse(Deno.readTextFileSync(`${dataDir.replace(/[\\/]+$/, '')}${SEP}studio-settings.json`));
+    return doc?.server?.keeper === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Use the keeper for this data folder: the switch is on, or a keeper already runs there (it holds chats an earlier AIB started with
- * the switch on, for example the version before an update that was started without the variable). With the switch off and no keeper
- * running, false: nothing changes.
+ * The switch for this data folder: new chats start in the keeper and AIB runs as one process. AIB_KEEPER=1/0 wins over the saved
+ * setting; without it, the setting (off by default).
+ */
+export function keeperSetting(dataDir: string | null, env?: (name: string) => string | undefined): boolean {
+  return keeperOverride(env) ?? savedKeeperSetting(dataDir);
+}
+
+/** Kept for callers that only know the environment: true with AIB_KEEPER=1. */
+export function keeperEnabled(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean {
+  return keeperOverride(env) === true;
+}
+
+/**
+ * Use the keeper for this data folder at all: the switch is on, or a keeper already runs there (it holds chats an earlier AIB started
+ * with the switch on). With the switch off such chats are taken over and stay in the keeper until they end; new chats start outside
+ * it. With the switch off and no keeper running, false: nothing changes.
  */
 export function keeperWanted(dataDir: string | null, env?: (name: string) => string | undefined): boolean {
-  return keeperEnabled(env) || (!!dataDir && keeperRunning(dataDir));
+  return keeperSetting(dataDir, env) || (!!dataDir && keeperRunning(dataDir));
 }
 
 /** What a channel's owner hears: the keeper's records and events, plus `lost` when the keeper connection ends. */
@@ -236,7 +269,10 @@ export class KeeperLink {
     return channel;
   }
 
-  /** Read a channel from the start until its first note (the chat note), then detach. null when it has none. */
+  /**
+   * Read a channel from the start until its chat note (or a snapshot's copy of it, when the journal was truncated after a snapshot),
+   * then detach. null when it has none.
+   */
   async firstNote(client: KeeperClient, channel: string, timeoutMs = 10000): Promise<Json | null> {
     let done: (value: Json | null) => void = () => {};
     const result = new Promise<Json | null>((resolve) => (done = resolve));
@@ -244,7 +280,13 @@ export class KeeperLink {
     try {
       await client.attach(channel, 0, {
         record(record) {
-          if (record.kind === 'note') done(parseNote(record.body));
+          if (record.kind !== 'note') return;
+          const note = parseNote(record.body);
+          if (note?.t === 'chat') done(note);
+          else if (note?.t === 'snapshot' && note.chat && typeof note.chat === 'object') done({ ...(note.chat as Json), t: 'chat' });
+          else if (!note || (note.t !== 'receipt' && note.t !== 'event' && note.t !== 'fsWrite' && note.t !== 'clientTerminal')) {
+            done(note); // not AIB's: the caller decides (it stops a channel without a chat record)
+          }
         },
         live() {
           done(null);
@@ -375,6 +417,23 @@ export class KeeperChannel {
       : this.#op((c) => c.note(this.id, this.epoch, body, once)).then(() => true);
     done.catch((error) => log.warning('keeper note on %s failed: %s', this.id, error instanceof Error ? error.message : error));
     return done.catch(() => false);
+  }
+
+  /** A snapshot note (AIB's whole state of the chat at a quiet moment): its seq once stored, null when it could not be stored. */
+  snapshot(note: Json): Promise<number | null> {
+    const body = ENC.encode(JSON.stringify({ v: 1, ...note }));
+    return this.#op((c) => c.note(this.id, this.epoch, body)).then((r) => r.seq || null).catch((error) => {
+      log.warning('keeper snapshot on %s failed: %s', this.id, error instanceof Error ? error.message : error);
+      return null;
+    });
+  }
+
+  /** Let the keeper delete the journal segments wholly before `before` (only after a snapshot covering them). Never throws. */
+  truncate(before: number): Promise<void> {
+    return this.#op(async (c) => {
+      if (!c.has('truncate')) return;
+      await c.truncate(this.id, this.epoch, before);
+    }).catch((error) => log.warning('keeper truncate on %s failed: %s', this.id, error instanceof Error ? error.message : error));
   }
 
   closeStdin(): Promise<void> {

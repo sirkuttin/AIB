@@ -637,6 +637,47 @@ export function removeUpdateLeftovers(
   return removed;
 }
 
+/**
+ * removeUpdateLeftovers() now and then again every `everyMs` (at most `tries` times) while an update's leftovers are still there. At
+ * the new app's start the update helper itself still runs from the old .exe (it waits for the start confirmation), so the first pass
+ * can only remove what it does not hold; the helper exits a moment later. Agents in the keeper run nothing from the app folder (their
+ * artifact tool is the keeper's forwarder), so the files go while their chats run. The timers never keep the process alive. Never
+ * throws. Returns a stop function (tests).
+ */
+export function removeUpdateLeftoversSoon(
+  options: Parameters<typeof removeUpdateLeftovers>[0] & { everyMs?: number; tries?: number; left?: () => boolean } = {},
+): () => void {
+  const { everyMs = 5000, tries = 24, left = () => updateLeftoversLeft(options), ...rest } = options;
+  let count = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const pass = () => {
+    removeUpdateLeftovers(rest);
+    count += 1;
+    if (count >= tries || !left()) return;
+    timer = setTimeout(pass, everyMs);
+    try {
+      Deno.unrefTimer(timer as unknown as number);
+    } catch { /* not fatal */ }
+  };
+  pass();
+  return () => clearTimeout(timer);
+}
+
+/** True while an update's *.old-<stamp> files are still in the install folder. Never throws. */
+export function updateLeftoversLeft(options: { target?: InstallTarget | null; desktop?: boolean } = {}): boolean {
+  try {
+    if (!(options.desktop ?? isDesktopApp()) && !options.target) return false;
+    const t = options.target !== undefined ? options.target : installTarget();
+    if (!t) return false;
+    const folder = t.kind === 'windows-zip' ? t.target : dirname(t.target);
+    const prefix = t.kind === 'windows-zip' ? '' : basename(t.target) + '.old-';
+    for (const e of Deno.readDirSync(folder)) {
+      if (LEFTOVER.test(e.name) && e.name.startsWith(prefix) && !KEEP.test(e.name)) return true;
+    }
+  } catch { /* nothing to say */ }
+  return false;
+}
+
 /** macOS: the full executable path of every running process (`ps -axo comm=`), or null when unknown (then nothing is deleted). */
 export function runningExecutables(): string[] | null {
   try {

@@ -619,7 +619,8 @@ export class UpdateService {
     this.quit = options.quit ?? null;
     this.chatsKeepRunning = !!options.chatsKeepRunning;
     this.keeper = options.keeper ?? null;
-    this.appArgs = [...(options.appArgs ?? Deno.args)];
+    // A tray-only start (the keeper's orphan restart) is not how the person runs AIB: the new version opens its window again.
+    this.appArgs = [...(options.appArgs ?? Deno.args)].filter((a) => a !== '--start-in-tray');
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
     this.current = options.current ?? APP_VERSION;
     this.env = options.env ?? Deno.env.toObject();

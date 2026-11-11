@@ -26,6 +26,23 @@ export const KEEPER_URL = 'about:blank';
 export const GEOMETRY_FILE = 'desktop-window.json';
 export const DEFAULT_SIZE = { width: 1280, height: 860 };
 export const FIRST_PORT = 8777;
+/** The tray menu of a tray-only start (`--start-in-tray`): the same items as the agent host's own icon. */
+export const TRAY_ONLY_ITEMS: TrayItem[] = [
+  { id: 'open', label: 'Open AIB' },
+  { id: 'status', label: '', disabled: true },
+  { id: 'stop', label: 'Stop chats and quit' },
+];
+
+/** The tray-only status line and tooltip for `working` chats, `needsYou` of them waiting for the person. */
+export function trayOnlyView(working: number, needsYou: number): { status: string; tooltip: string } {
+  const plural = (n: number) => `${n} chat${n === 1 ? '' : 's'}`;
+  const status = needsYou
+    ? `${plural(needsYou)} need${needsYou === 1 ? 's' : ''} you${working > needsYou ? `, ${working - needsYou} running` : ''}`
+    : working
+    ? `${plural(working)} running`
+    : 'No chat is working';
+  return { status, tooltip: `AIB · ${status}` };
+}
 
 // ---------- pure rules ----------
 
@@ -272,6 +289,11 @@ export interface Shell {
   ): void;
   /** Removes the tray icon (quitting), so no dead icon is left behind. Never throws. */
   removeTray?(): void;
+  /**
+   * Changes the tray's tooltip and the label of the item at `index` (the greyed status line of a tray-only start). Same number of
+   * items as createTray got. Never throws.
+   */
+  updateTray?(tooltip: string, index: number, label: string): void;
   /** A native OK/Cancel question; Cancel is the default button. Resolves true for OK. Must not block the event loop. */
   ask(message: string): Promise<boolean>;
   openExternal(url: string): void;
@@ -304,6 +326,19 @@ export interface DesktopOptions {
   /** The normal close path (the web server). stopAgents: OK was chosen. Never returns in the real app (Deno.exit). */
   quit: (stopAgents: boolean) => Promise<void>;
   saveDelayMs?: number;
+  /**
+   * Start with no window, only the tray icon (`--start-in-tray`: the keeper restarting AIB after a crash, rule V1, so nothing pops
+   * up over the person's work). The menu is then Open AIB, a greyed status line ("2 chats running") and Stop chats and quit (asks
+   * first). Open AIB makes the window as usual. While no window was ever opened, AIB quits by itself once nothing has worked for
+   * trayIdleQuitMs (the chats that were open come back at the next start, as after an idle agent host).
+   */
+  startInTray?: boolean;
+  /** What works now, for the tray-only status line and its idle quit. Default: busyCount, nobody waiting. */
+  trayCounts?: () => Promise<{ working: number; needsYou: number }>;
+  /** Tray-only start: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
+  trayIdleQuitMs?: number;
+  /** Tray-only start: how often the status line and the idle rule look (default 2 s; 0 = tests call trayTick()). */
+  trayPollMs?: number;
   /** The watchdog period; 0 turns it off (tests drive watchdogTick() themselves). Default WATCHDOG_MS. */
   watchdogMs?: number;
 }
@@ -324,6 +359,10 @@ export class DesktopApp {
   readonly backAllowed = rateLimiter(4, 30_000);
   keeper: WindowHandle | null = null;
   #watchdog: ReturnType<typeof setInterval> | undefined;
+  #trayTimer: ReturnType<typeof setInterval> | undefined;
+  #trayView: { status: string; tooltip: string } | null = null;
+  #idleSince: number | null = null;
+  #windowOpened = false;
 
   constructor(readonly shell: Shell, readonly options: DesktopOptions) {
     this.origin = new URL(options.url).origin;
@@ -331,7 +370,8 @@ export class DesktopApp {
   }
 
   async start(): Promise<void> {
-    await this.openWindow();
+    if (!this.options.startInTray) await this.openWindow();
+    else log.info('window: started in the tray (no window until Open AIB)');
     try {
       this.keepKeeperHidden(this.shell.createKeeper());
     } catch (error) {
@@ -339,6 +379,21 @@ export class DesktopApp {
     }
     const every = this.options.watchdogMs ?? WATCHDOG_MS;
     if (every > 0) this.#watchdog = setInterval(() => void this.watchdogTick(), every);
+    if (this.options.startInTray) {
+      this.shell.createTray(
+        this.options.trayIcon,
+        WINDOW_TITLE,
+        TRAY_ONLY_ITEMS,
+        () => void this.showWindow(),
+        (id) => void (id === 'open' ? this.showWindow() : id === 'stop' ? this.requestStop() : undefined),
+        this.options.trayIconDark ?? null,
+      );
+      await this.trayTick();
+      this.trayState('shown');
+      const poll = this.options.trayPollMs ?? 2000;
+      if (poll > 0) this.#trayTimer = setInterval(() => void this.trayTick(), poll);
+      return;
+    }
     this.shell.createTray(
       this.options.trayIcon,
       WINDOW_TITLE,
@@ -347,12 +402,91 @@ export class DesktopApp {
       (id) => void (id === 'open' ? this.showWindow() : id === 'quit' ? this.requestQuit() : undefined),
       this.options.trayIconDark ?? null,
     );
+    this.trayState('shown');
   }
 
-  /** Stops the watchdog (tests; the real app ends with Deno.exit). */
+  /** AIB_TEST_TRAY_STATE (tests on an invisible desktop): the app icon's state, like the host's and the helper's. Never throws. */
+  trayState(why: string): void {
+    import('./host_tray.ts').then(({ writeTrayState }) =>
+      writeTrayState('app', {
+        shown: why !== 'removed',
+        why,
+        trayOnly: !!this.options.startInTray,
+        windowOpened: this.#windowOpened,
+        tooltip: this.#trayView?.tooltip ?? WINDOW_TITLE,
+        status: this.#trayView?.status ?? '',
+        items: this.options.startInTray
+          ? TRAY_ONLY_ITEMS.map((i) => (i.id === 'status' ? this.#trayView?.status ?? '' : i.label))
+          : ['Open AIB', 'Quit AIB'],
+      })
+    ).catch(() => {});
+  }
+
+  async #counts(): Promise<{ working: number; needsYou: number } | null> {
+    try {
+      if (this.options.trayCounts) return await this.options.trayCounts();
+      const n = await this.options.busyCount();
+      return Number.isInteger(n) && n >= 0 ? { working: n, needsYou: 0 } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Tray-only start: refresh the status line; quit once nothing has worked for trayIdleQuitMs while no window was ever opened. */
+  async trayTick(now = Date.now()): Promise<void> {
+    if (this.#quitting) return;
+    const counts = await this.#counts();
+    if (counts) {
+      const view = trayOnlyView(counts.working, counts.needsYou);
+      if (view.status !== this.#trayView?.status) {
+        this.#trayView = view;
+        try {
+          this.shell.updateTray?.(view.tooltip, 1, view.status);
+        } catch { /* not fatal */ }
+        this.trayState('status');
+      }
+    }
+    const idleMs = this.options.trayIdleQuitMs ?? 10_000;
+    if (this.#windowOpened || idleMs <= 0) return;
+    if (!counts || counts.working > 0) {
+      this.#idleSince = null;
+      return;
+    }
+    this.#idleSince ??= now;
+    if (now - this.#idleSince >= idleMs) {
+      log.info('tray: started in the tray and nothing has worked for %s s; quitting', Math.round((now - this.#idleSince) / 1000));
+      await this.quit(false);
+    }
+  }
+
+  /** Tray "Stop chats and quit" (tray-only start): asks first when something works, then stops the chats and quits. */
+  async requestStop(): Promise<void> {
+    if (this.#quitting || this.#asking) return;
+    const counts = await this.#counts();
+    if (counts && counts.working === 0) {
+      await this.quit(false);
+      return;
+    }
+    this.#asking = true;
+    let ok = false;
+    try {
+      const what = counts ? trayOnlyView(counts.working, counts.needsYou).status : 'Chats may still be working';
+      ok = await this.shell.ask(`Stop chats and quit AIB?\n\n${what}. Their current turn is interrupted.`);
+    } catch {
+      ok = false; // no answer: the safe default
+    } finally {
+      this.#asking = false;
+    }
+    if (ok) await this.quit(true);
+    else log.info('tray: Stop chats and quit cancelled');
+  }
+
+  /** Stops the watchdog and the tray-only timer (tests; the real app ends with Deno.exit). */
   stop(): void {
     clearInterval(this.#watchdog);
     this.#watchdog = undefined;
+    clearInterval(this.#trayTimer);
+    this.#trayTimer = undefined;
   }
 
   /**
@@ -385,6 +519,10 @@ export class DesktopApp {
     const g = await loadGeometry(this.geometryPath);
     const win = this.shell.createWindow({ title: WINDOW_TITLE, width: g.width, height: g.height });
     this.window = win;
+    if (!this.#windowOpened) {
+      this.#windowOpened = true;
+      if (this.options.startInTray) this.trayState('window opened');
+    }
     try {
       win.setSize(g.width, g.height);
       if (g.x !== undefined && g.y !== undefined) win.setPosition(g.x, g.y);
@@ -547,6 +685,7 @@ export class DesktopApp {
     try {
       this.shell.removeTray?.();
     } catch { /* quitting anyway */ }
+    this.trayState('removed');
     await this.options.quit(stopAgents);
   }
 }

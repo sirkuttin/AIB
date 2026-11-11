@@ -1,5 +1,6 @@
 /**
- * The keeper with real processes (AIB_KEEPER=1): AIB (`serve`, one process: no agent host with the keeper) and the keeper, the fake
+ * The keeper with real processes, switched on by the saved setting (Settings > server.keeper, no AIB_KEEPER in the environment, so
+ * the AIB the keeper starts again reads the switch from the data folder too): AIB (`serve`, one process: no agent host with the keeper) and the keeper, the fake
  * agent mid-turn streaming. Killing AIB hard (TerminateProcess) leaves the agent running in the keeper; with no client for 5 s the
  * keeper starts AIB again (its orphan command, rule V1), and the new AIB rebuilds the chat from the keeper's record under the same
  * id: it is still streaming, the question shows once, answering it works, and the keeper's record shows nothing was sent twice.
@@ -28,7 +29,7 @@ class KeeperFixture extends Fixture {
   }
 
   override get env(): Record<string, string> {
-    return { ...super.env, AIB_KEEPER: '1', AIB_KEEPER_BIN: this.keeperBin, FAKE_ACP_LOG: this.agentLog };
+    return { ...super.env, AIB_KEEPER_BIN: this.keeperBin, FAKE_ACP_LOG: this.agentLog };
   }
 
   received(): Json[] {
@@ -93,7 +94,9 @@ Deno.test({
     const fixture = new KeeperFixture();
     try {
       fixture.keeperBin = await keeperBinary();
-      const web: Web = await fixture.startWeb();
+      // The keeper switch as the Settings page saves it (no AIB_KEEPER: that would override it either way).
+      Deno.writeTextFileSync(fixture.state + SEP + 'studio-settings.json', JSON.stringify({ version: 1, server: { keeper: true } }));
+      const web: Web = await fixture.startWeb([], { port: 8825 }); // the page on 8825, its artifact origin on 8826
       assertEquals(web.boot.hostMode, 'keeper', 'one AIB process with the keeper');
       assertEquals(await readInfo(fixture.state), null, 'no separate agent host');
       const id = await openConversation(web, fixture);

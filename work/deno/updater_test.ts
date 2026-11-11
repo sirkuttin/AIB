@@ -45,6 +45,8 @@ import {
   installTarget,
   main as helperMain,
   removeUpdateLeftovers,
+  removeUpdateLeftoversSoon,
+  updateLeftoversLeft,
   JOURNAL_NAME,
   recoverInterruptedUpdate,
   rollback,
@@ -1509,6 +1511,34 @@ Deno.test("removeUpdateLeftovers: old files and unpack folders go, the app and i
     Deno.mkdirSync(`${dir}/Apps/Other.app.old-${STAMP}`);
     assertEquals(removeUpdateLeftovers({ target: { kind: "macos-zip", target: `${dir}/Apps/AIB.app` } }).length, 1);
     assertEquals(names(`${dir}/Apps`), ["AIB.app", `Other.app.old-${STAMP}`]);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("removeUpdateLeftoversSoon: tries again while leftovers stay (the helper runs from the old exe until the new app confirmed)", async () => {
+  const dir = Deno.makeTempDirSync({ prefix: "aib-leftovers-soon-" });
+  try {
+    const app = fakeWindowsInstall(dir);
+    const target = { kind: "windows-zip" as const, target: app };
+    Deno.writeTextFileSync(`${app}/AIB.exe.old-${STAMP}`, "old");
+    let held = true; // the first passes cannot delete it: something still runs from it
+    let passes = 0;
+    const stop = removeUpdateLeftoversSoon({
+      target,
+      everyMs: 20,
+      tries: 50,
+      left: () => {
+        passes++;
+        if (held && passes >= 3) held = false;
+        if (held) Deno.writeTextFileSync(`${app}/AIB.exe.old-${STAMP}`, "old"); // stands in for a file in use: back again
+        return updateLeftoversLeft({ target });
+      },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    stop();
+    assertEquals(updateLeftoversLeft({ target }), false, "gone once nothing holds it");
+    assert(passes >= 3 && passes < 10, `stopped trying once nothing was left (${passes} passes)`);
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }

@@ -382,3 +382,6 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
 ## 9. Change log
 
 - **1** (keeper 1.0.0): everything above.
+- keeper 1.1.0 (protocol still 1): the separate `AIB-keeper mcp-forward <address file>` subcommand, a generic stdio-to-HTTP MCP
+  forwarder agents run as their MCP server (`mcpforward.go`; `mcp-forward --check` prints `mcp-forward 1`). It never runs inside a
+  serving keeper and adds nothing to the wire protocol.

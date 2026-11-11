@@ -188,6 +188,7 @@ export async function codeWarning(hostInfo: unknown): Promise<string> {
   const info = hostInfo as Record<string, unknown>;
   if (!info.pid && !info.hostId) return '';
   const theirs = info.sourceHash;
+  if (drainToKeeper !== null && info.pid === drainToKeeper) return drainNote(info);
   if (sameProduct(info) && theirs && theirs !== await sourceHashFor(hostRuntime(info))) return drainNote(info);
   if (theirs === undefined || theirs === null) {
     return `The running agent host was started by an older version of AIB. To use the current code, restart it: ${restartHostHint()}.`;
@@ -207,11 +208,26 @@ export function sameProduct(info: Record<string, unknown> | null | undefined, ap
   return !!info && info.appId === appId && hostRuntime(info) === RUNTIME;
 }
 
+let drainToKeeper: number | null = null;
+
+/**
+ * main.ts: the keeper switch is on but the split agent host with this pid kept working chats; while that host runs, the page's
+ * banner (codeWarning, drainNote) says why they cannot move into the keeper yet. null: none.
+ */
+export function setDrainToKeeper(hostPid: number | null): void {
+  drainToKeeper = hostPid;
+}
+
 /** The page's note while a same-product host from other code still runs chats (replaces the "older code, restart it" warning). */
 export function drainNote(info: Record<string, unknown>): string {
   const active = Array.isArray(info.active) ? info.active.length : Number(info.working) || 0;
   const working = active ? ` (${active} chat${active === 1 ? '' : 's'} working)` : '';
   const theirs = typeof info.version === 'string' && info.version ? info.version : '';
+  if (drainToKeeper !== null && info.pid === drainToKeeper) {
+    return `Agents are running in the separate agent host of ${theirs && theirs !== APP_VERSION ? `AIB ${theirs}` : 'this AIB'}${working}. ` +
+      'They are its child processes, so they cannot move into the keeper while they work: they finish there, and switch over by ' +
+      'themselves when none is working.';
+  }
   return theirs && theirs !== APP_VERSION
     ? `Agents are running on AIB ${theirs}${working}. They switch to AIB ${APP_VERSION} by themselves when none is working.`
     : `Agents are running on older code of this AIB${working}. They switch to this code by themselves when none is working.`;
@@ -637,6 +653,34 @@ export interface StopResult {
   refused?: boolean;
   active?: unknown[];
   message: string;
+}
+
+/**
+ * The keeper switch is on but an agent host (split mode: an older version, or this one started with the switch off) still runs for
+ * the folder. Its agents are its children, so they cannot move into the keeper while they run. When nothing works there (no turn, no
+ * agent opening, nobody asked anything, nothing queued or installing: exactly what an unforced stop refuses on), it is stopped now and
+ * this AIB is one process at once; its idle chats come back by the automatic reconnect (session/load, nothing resent). Otherwise it
+ * is attached to and drained as before, and the reason is said (console, log, the page's banner). True when the host is gone.
+ */
+export async function leaveSplitHost(stateDir: string, say: (line: string) => void = () => {}): Promise<boolean> {
+  let result;
+  try {
+    result = await stopHost(stateDir, false, 15, `AIB ${APP_VERSION} (pid ${Deno.pid}): moving to one process with the keeper`);
+  } catch (error) {
+    result = { stopped: false, running: true, message: error instanceof Error ? error.message : String(error) };
+  }
+  if (result.stopped || !result.running) {
+    say(`keeper: the agent host had nothing working; stopped it to run as one process with the keeper (${result.message})`);
+    setDrainToKeeper(null);
+    return true;
+  }
+  const active = Array.isArray(result.active) ? result.active.length : 0;
+  const why = `keeper: the separate agent host keeps ${active || 'its'} working chat(s): agents running there are its children and ` +
+    `cannot move into the keeper mid-turn. They finish there; once none is working they move over by themselves (${result.message})`;
+  say(why);
+  const info = await readInfo(stateDir);
+  setDrainToKeeper(typeof info?.pid === 'number' ? info.pid : null);
+  return false;
 }
 
 /** Ask the host to stop. Never kills a process. */

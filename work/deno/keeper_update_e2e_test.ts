@@ -11,7 +11,11 @@
  *      starts B and waits for B's start confirmation.
  *   4. B takes the chat over from the keeper's record under the same connection id: every chunk once and in order, the question once,
  *      the answer reaches the agent once, the prompt reached it once, the same agent process, the same keeper process.
- *   5. Closing B's window with nothing working leaves no process behind: no AIB, no keeper, no agent.
+ *   5. The agent's artifact tool is the keeper's MCP forwarder (`AIB-keeper mcp-forward`, run from the data folder's keeper-bin),
+ *      never A's AIB.exe, so B removes the update's .old-* files at its start while the chat still runs.
+ *   6. B is killed hard mid-turn: the keeper starts AIB again with --start-in-tray (rule V1): no window, only the tray icon (Open AIB,
+ *      a status line, Stop chats and quit); the turn goes on there, and once nothing works the tray-only AIB quits by itself, which
+ *      leaves no process behind: no AIB, no keeper, no agent, no forwarder.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
@@ -110,6 +114,9 @@ Deno.test({
     await using fx = new Fixture();
     const distA = `${fx.root}\\distA`, distB = `${fx.root}\\distB`, install = `${fx.root}\\install`;
     const agentLog = `${fx.root}\\agent-received.log`;
+    const mcpPids = `${fx.root}\\mcp-pids.txt`;
+    const trays = `${fx.root}\\trays`;
+    Deno.mkdirSync(trays);
     const started = Date.now();
     await Promise.all([build(distA), build(distB, NEXT)]);
     console.log(`builds: ${((Date.now() - started) / 1000).toFixed(0)} s`);
@@ -134,6 +141,8 @@ Deno.test({
       AIB_UPDATE_REPO: 'acme/aib',
       AIB_KEEPER: '1',
       FAKE_ACP_LOG: agentLog,
+      FAKE_ACP_MCP_PIDS: mcpPids, // the fake agent starts its stdio MCP servers like a real agent
+      AIB_TEST_TRAY_STATE: trays,
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
@@ -252,16 +261,78 @@ Deno.test({
       assert(studioLog.includes('released 1 chat(s) to the keeper'), studioLog.slice(-3000));
       assert(studioLog.includes('keeper: 1 chat(s) taken over from the keeper'), studioLog.slice(-3000));
 
-      // ---- close B's window with nothing working: no AIB, keeper or agent process is left
-      const owner = JSON.parse(Deno.readTextFileSync(`${fx.state}\\aib-owner.json`));
-      const win = await until(
-        () => desk.windows().find((w) => w.pid === owner.pid && w.title === 'AIB' && w.visible),
-        'B has its window',
+      // ---- the artifact tool is the keeper's forwarder, so B removed the update's leftovers although the chat runs
+      const [mcpLine] = Deno.readTextFileSync(mcpPids).split('\n').filter((l) => l.trim());
+      const [mcpPid, mcpName, ...mcpCommand] = mcpLine.trim().split(' ');
+      pids.add(Number(mcpPid));
+      assertEquals(mcpName, 'studio_artifact');
+      assert(
+        /\\keeper-bin\\[0-9a-f]{16}\\AIB-keeper\.exe$/i.test(mcpCommand.join(' ')),
+        `the forwarder runs from the data folder: ${mcpCommand.join(' ')}`,
+      );
+      assert(pidAlive(Number(mcpPid)), 'the forwarder still runs for the chat');
+      assertEquals((await processesUnder(install)).filter(([pid]) => pid === Number(mcpPid)), [], 'nothing of the agent runs from the app');
+      await until(
+        () => [...Deno.readDirSync(app)].every((e) => !/\.old-/.test(e.name)),
+        `B removed the .old-* files while the chat runs (${[...Deno.readDirSync(app)].map((e) => e.name).join(', ')})`,
         30,
       );
-      desk.post(win, 0x10); // WM_CLOSE: the person closes the window
-      await until(async () => (await processesUnder(install)).length === 0, 'no AIB process left', 30);
+
+      // ---- kill B mid-turn: the keeper starts AIB again in the tray, with no window
+      const bPid = JSON.parse(Deno.readTextFileSync(`${fx.state}\\aib-owner.json`)).pid;
+      assertEquals((await post(tokenB, 'prompt', { id: cid, text: 'stream:30:150', clientMessageId: 'k2-e2e-2' }))[0], 200);
+      await until(async () => said(await state(tokenB)).includes('chunk2 chunk3 '), 'second turn streaming on B', 20);
+      Deno.kill(bPid, 'SIGKILL');
+      await until(() => !pidAlive(bPid), 'B gone', 10);
+      const bootC = await until(
+        async () => {
+          const [s, b] = await httpJson('GET', PORT, '/api/live/bootstrap', null, undefined, 3000);
+          return s === 200 && b.token !== tokenB ? b : null;
+        },
+        'AIB started again by the keeper',
+        60,
+      );
+      const tokenC = String(bootC.token);
+      const cPid = JSON.parse(Deno.readTextFileSync(`${fx.state}\\aib-owner.json`)).pid;
+      pids.add(cPid);
+      assertEquals(bootC.instanceId, bootA.instanceId, 'the same instance: an open page keeps the chat');
+      const tray = await until(
+        () => {
+          try {
+            const t = JSON.parse(Deno.readTextFileSync(`${trays}\\app-${cPid}.json`));
+            return t.shown && t.status ? t : null;
+          } catch {
+            return null;
+          }
+        },
+        'the tray-only icon',
+        30,
+      );
+      assertEquals([tray.trayOnly, tray.windowOpened], [true, false]);
+      assertEquals([tray.items[0], tray.items[2]], ['Open AIB', 'Stop chats and quit']);
+      for (let i = 0; i < 6; i++) { // over a few seconds: no window of the restarted AIB ever shows
+        // Windows' own per-process input windows (the UAC input indicator overlay, IME) are not AIB's and never show on screen.
+        const shown = desk.windows().filter((w) => w.pid === cPid && w.visible && !/^(UAC|IME$|MSCTFIME UI$|Default IME$)/.test(w.cls));
+        assertEquals(shown.map((w) => `${w.title} ${w.cls}`), [], 'the keeper\'s restart shows no window');
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      const asked2 = await until(
+        async () => {
+          const st = await state(tokenC);
+          return st.id === cid && st.ready && (st.permissions as Json[]).length === 1 ? st : null;
+        },
+        'the second question on the tray-only AIB',
+        60,
+      );
+      assertEquals((await post(tokenC, 'permission', { id: cid, key: (asked2.permissions as Json[])[0].key, option: 'yes' }))[0], 200);
+      await until(async () => !(await state(tokenC)).busy, 'second turn end', 60);
+      const received2 = Deno.readTextFileSync(agentLog).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+      assertEquals(received2.filter((m) => m.method === 'session/prompt').length, 2, 'each prompt reached the agent once');
+
+      // ---- nothing works any more: the tray-only AIB quits by itself and leaves no process behind
+      await until(async () => (await processesUnder(install)).length === 0, 'the tray-only AIB quit by itself', 60);
       await until(() => !pidAlive(agentPid), 'the agent ended', 15);
+      await until(() => !pidAlive(Number(mcpPid)), 'the forwarder ended with the agent', 15);
       await until(() => !pidAlive(keeperPid), 'the keeper exited (no channel, no client)', 30);
       assertEquals(await processesUnder(fx.state), [], 'nothing runs from the data folder');
     } finally {

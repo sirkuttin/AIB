@@ -40,7 +40,7 @@ import {
 } from './attachments.ts';
 import { WriteTracker } from '../artifacts/artifacts.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { isOwnMcpUrl } from '../artifacts/mcp_http.ts';
+import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
@@ -262,6 +262,11 @@ export class PyTextLines {
   #parts: string[] = [];
   #pendingCR = false;
 
+  /** No part of a line is waiting for its end (a keeper snapshot is only taken then). */
+  get idle(): boolean {
+    return !this.#parts.length && !this.#pendingCR;
+  }
+
   /** Lines completed by this chunk. `final` flushes: an incomplete UTF-8 sequence becomes U+FFFD and the last line is returned. */
   feed(chunk: Uint8Array | null, final = false): string[] {
     let text = chunk ? this.#decoder.decode(chunk, { stream: !final }) : this.#decoder.decode();
@@ -403,6 +408,11 @@ export interface ConnectionOptions {
   /** Rebuild this chat from a live keeper channel instead of starting an agent (needs `keeper`). */
   rebuild?: ChannelInfo | null;
 }
+
+/** The format of a keeper `snapshot` note this code writes and can restore (its `sv`). */
+export const SNAPSHOT_VERSION = 1;
+/** A snapshot larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
+export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 
 /** Why a keeper-run agent ended without being asked to: the keeper itself went away. */
 export const KEEPER_LOST =
@@ -556,6 +566,7 @@ function isOwnArtifactEntry(entry: unknown): boolean {
   if (!isDict(entry) || entry.name !== 'studio_artifact') return false;
   if (entry.type === 'http') return isOwnMcpUrl(entry.url);
   const args = argStrings(get(entry, 'args'));
+  if (isOwnForwardEntry(entry.command, args)) return true; // the keeper's forwarder to this Studio's HTTP tool
   const own = artifactToolCommand();
   return entry.command === own.command && args.length === own.args.length && args.every((a, i) => a === own.args[i]);
 }
@@ -665,6 +676,28 @@ export class Connection {
   #exitResolve: (() => void) | null = null;
   /** How often each agent request id was seen (rebuilt identically by a replay): part of an answer's once-key. */
   #requestsSeen = new Map<string, number>();
+  /**
+   * The id of this chat's event numbering, sent with every state (eventsId): a page whose events came from another numbering starts
+   * its list again. A chat rebuilt from the keeper keeps the id when its record gives the same numbering (a snapshot, or a record
+   * whose events are all in it: `ev` in the chat note), so an open page simply goes on from its cursor.
+   */
+  eventsId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+  /** The last keeper record handled (a snapshot says how far it reaches). */
+  #lastSeq = 0;
+  /** While replaying: records since the newest snapshot (or the start), handled once the replay has caught up. */
+  #replayBuffer: KeeperRecord[] = [];
+  /** While replaying: the newest snapshot note met and its seq. */
+  #replaySnapshot: { note: Json; seq: number } | null = null;
+  /** While replaying: records before this seq were truncated away (0: none). */
+  #replayGapNext = 0;
+  /** The keeper sent `live`: records from here on are handled as they come. */
+  #replayLive = false;
+  #snapshotQueued = false;
+  /** Snapshots written and journal truncations asked for (tests). */
+  snapshots = 0;
+  /** A rebuild: the seq of the snapshot it started from (0: the start of the record) and how many records it replayed after it. */
+  replayedFrom = 0;
+  replayedRecords = 0;
   traceback = '';
   exitCode: number | null = null;
   #stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -803,18 +836,35 @@ export class Connection {
       command: this.command,
       mcpServers: this.mcpServers,
       app: APP_VERSION,
+      // Every event of this chat is rebuilt from this record (Studio's own events go in as `event` notes), so a rebuild numbers
+      // them exactly as now and an open page keeps its cursor.
+      ev: 1,
+      eventsId: this.eventsId,
     };
   }
 
   #keeperListener(): KeeperChannelListener {
     return {
-      record: (record: KeeperRecord) => this.#enqueue(() => this.#onRecord(record)),
-      live: () => this.#enqueue(() => this.#caughtUp()),
-      gap: (from: number, next: number) =>
+      record: (record: KeeperRecord) => {
+        if (this.#replaying && !this.#replayLive) return this.#bufferReplay(record);
+        this.#enqueue(() => this.#onRecord(record));
+      },
+      live: () => {
+        this.#replayLive = true;
+        this.#enqueue(() => this.#caughtUp());
+      },
+      gap: (from: number, next: number) => {
+        if (this.#replaying && !this.#replayLive) { // truncated after a snapshot: fine when a snapshot covers it (checked at live)
+          this.#replayGapNext = next;
+          this.#replayBuffer = [];
+          this.#replaySnapshot = null;
+          return;
+        }
         this.#enqueue(() => {
           if (this.#replaying) this.#rebuildFailed(new Error(`the record from ${from} to ${next - 1} is no longer kept`));
           else log.warning('keeper: %s lost records %s..%s', this.id, from, next - 1);
-        }),
+        });
+      },
       fenced: () =>
         this.#enqueue(() => {
           this.#stdinBroken = true;
@@ -860,6 +910,14 @@ export class Connection {
 
   async #onRecord(record: KeeperRecord): Promise<void> {
     if (this.#ended) return;
+    try {
+      await this.#handleRecord(record);
+    } finally {
+      if (record.seq > this.#lastSeq) this.#lastSeq = record.seq;
+    }
+  }
+
+  async #handleRecord(record: KeeperRecord): Promise<void> {
     this.#clock = this.#replaying ? record.time / 1000 : null;
     if (record.kind === 'out') {
       for (const line of this.#outLines.feed(record.body)) {
@@ -1001,6 +1059,11 @@ export class Connection {
   }
 
   #replayNote(note: Json | null): void {
+    if (note && note.t === 'event' && isStr(note.kind)) return this.event(note.kind, note.data ?? null); // Studio's own event
+    if (note && note.t === 'chat') { // a record that has every event: the rebuild numbers them as before
+      if (note.ev === 1 && isStr(note.eventsId) && note.eventsId) this.eventsId = note.eventsId;
+      return;
+    }
     if (!note || note.rpc === undefined) return;
     if (note.t === 'receipt') this.#receiptNotes.set(JSON.stringify(note.rpc), note);
     else if (note.t === 'fsWrite' || note.t === 'clientTerminal') this.#sideNotes.set(`${note.t}:${JSON.stringify(note.rpc)}`, note);
@@ -1009,6 +1072,12 @@ export class Connection {
   /** The replay reached the live end: claim the channel (the old AIB can no longer write), send what it never sent, go live. */
   async #caughtUp(): Promise<void> {
     if (!this.#replaying || this.rebuildError || this.#ended) return;
+    try {
+      await this.#replayFromSnapshot();
+    } catch (error) {
+      return this.#rebuildFailed(error);
+    }
+    if (this.rebuildError || this.#ended) return;
     try {
       await this.channel!.claim();
     } catch (error) {
@@ -1061,6 +1130,149 @@ export class Connection {
     return this.#dispatchCaps(message);
   }
 
+  // ---- snapshots: a rebuild starts at the newest one instead of the start of the record -----------------------------------------
+  /** A record met while replaying: kept until the replay has caught up; a snapshot note drops what it already covers. */
+  #bufferReplay(record: KeeperRecord): void {
+    if (record.kind === 'note') {
+      const note = parseNote(record.body);
+      if (note?.t === 'snapshot' && note.sv === SNAPSHOT_VERSION && isDict(note.state) && isInt(note.upTo)) {
+        this.#replaySnapshot = { note, seq: record.seq };
+        const upTo = note.upTo;
+        this.#replayBuffer = this.#replayBuffer.filter((r) => r.seq > upTo);
+        return;
+      }
+    }
+    this.#replayBuffer.push(record);
+  }
+
+  /** At the live end: restore the newest snapshot (if any), then handle the records after it, all with side effects off. */
+  async #replayFromSnapshot(): Promise<void> {
+    const snapshot = this.#replaySnapshot;
+    const records = this.#replayBuffer;
+    this.#replayBuffer = [];
+    this.#replaySnapshot = null;
+    if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
+      throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
+    }
+    if (snapshot) this.#restoreSnapshot(snapshot.note);
+    this.replayedFrom = snapshot ? snapshot.seq : 0;
+    for (const record of records) {
+      if (this.rebuildError || this.#ended) return;
+      // AIB's own writes and notes before the snapshot note were made before it was taken: the snapshot has them already.
+      if (snapshot && record.seq < snapshot.seq && (record.kind === 'in' || record.kind === 'note')) continue;
+      this.replayedRecords += 1;
+      await this.#onRecord(record);
+    }
+  }
+
+  /** The state a snapshot note carries, put back exactly (what the replay of everything before `upTo` would have rebuilt). */
+  #restoreSnapshot(note: Json): void {
+    const s = note.state as Json;
+    const entries = (value: unknown) => (Array.isArray(value) ? value.filter((e) => Array.isArray(e) && e.length === 2) : []);
+    this.initial = s.initial ?? {};
+    if (isDict(this.initial) && Object.keys(this.initial).length) this.#applyInitialize();
+    this.sessionId = isStr(s.sessionId) ? s.sessionId : null;
+    this.ready = s.ready === true;
+    this.settings = isDict(s.settings) ? s.settings : {};
+    this.knownSessions = new Set(Array.isArray(s.knownSessions) ? s.knownSessions.filter(isStr) : []);
+    this.counter = isInt(s.counter) ? s.counter : 0;
+    this.promptSeq = isInt(s.promptSeq) ? s.promptSeq : 0;
+    this.cancelSeq = isInt(s.cancelSeq) ? s.cancelSeq : 0;
+    this.changeSeq = isInt(s.changeSeq) ? s.changeSeq : 0;
+    this.changeFailures = Array.isArray(s.changeFailures) ? s.changeFailures.filter(isDict) as Json[] : [];
+    this.turnEndedAt = typeof s.turnEndedAt === 'number' ? s.turnEndedAt : null;
+    this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
+    this.sequence = isInt(s.sequence) ? s.sequence : 0;
+    this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
+    this.subagents = new Map(entries(s.subagents) as [string, Json][]);
+    const b = isDict(s.breadth) ? s.breadth : {};
+    this.breadth = {
+      ...newState(),
+      ...b,
+      compaction: new Map(entries(b.compaction) as [string, never][]),
+    } as BreadthState;
+    this.writes.paths.clear();
+    for (const [k, v] of entries(isDict(s.writes) ? s.writes.paths : null)) this.writes.paths.set(k as string, v as number);
+    this.writes.calls.clear();
+    for (const [k] of entries(isDict(s.writes) ? s.writes.calls : null)) this.writes.calls.set(k as string, true);
+    this.promptReceipts = new Map(entries(s.promptReceipts) as [string, Receipt][]);
+    this.#requestsSeen = new Map(entries(s.requestsSeen) as [string, number][]);
+    this.withdrawn = new Map(entries(s.withdrawn) as [string, string][]);
+    this.stderr = Array.isArray(s.stderr) ? s.stderr.filter(isStr) : [];
+    if (isStr(s.eventsId) && s.eventsId) this.eventsId = s.eventsId;
+    this.#lastSeq = note.upTo as number;
+  }
+
+  /** Take a snapshot once the record queue has handled what it holds now (so `upTo` is exact). */
+  #scheduleSnapshot(): void {
+    if (!this.channel || this.#replaying || this.#snapshotQueued) return;
+    this.#snapshotQueued = true;
+    this.#enqueue(() => {
+      this.#snapshotQueued = false;
+      return this.#writeSnapshot();
+    });
+  }
+
+  /** Nothing is in flight: no turn, request, question, sign-in or held answer, and no line half read. */
+  #quiet(): boolean {
+    return this.ready && !this.busy && !this.closed && !this.#replaying && !this.rebuildError && !this.auth &&
+      this.pending.size === 0 && this.permissions.size === 0 && this.elicitations.size === 0 && !this.#deferred.length &&
+      !this.#held.length && this.#outLines.idle && this.#errLines.idle;
+  }
+
+  /** The state as a snapshot note, or null when it is too large to store. */
+  snapshotNote(): Json | null {
+    const state: Json = {
+      initial: this.initial,
+      sessionId: this.sessionId,
+      ready: this.ready,
+      settings: this.settings,
+      knownSessions: [...this.knownSessions],
+      counter: this.counter,
+      promptSeq: this.promptSeq,
+      cancelSeq: this.cancelSeq,
+      changeSeq: this.changeSeq,
+      changeFailures: this.changeFailures,
+      turnEndedAt: this.turnEndedAt,
+      events: this.events,
+      sequence: this.sequence,
+      subagents: [...this.subagents],
+      breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
+      writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
+      promptReceipts: [...this.promptReceipts],
+      requestsSeen: [...this.#requestsSeen],
+      withdrawn: [...this.withdrawn],
+      stderr: this.stderr,
+      eventsId: this.eventsId,
+    };
+    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state };
+    return JSON.stringify(note).length > MAX_SNAPSHOT_BYTES ? null : note;
+  }
+
+  /**
+   * Write a snapshot note when the chat is quiet (a turn just ended), then let the keeper drop the journal segments before it
+   * (truncate), so a rebuild reads and replays only what came after. Never throws.
+   */
+  async #writeSnapshot(): Promise<void> {
+    const channel = this.channel;
+    if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
+    let note: Json | null;
+    try {
+      note = this.snapshotNote();
+    } catch (error) {
+      log.exception(error, 'keeper: making a snapshot failed');
+      return;
+    }
+    if (!note) {
+      log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
+      return;
+    }
+    const seq = await channel.snapshot(note);
+    if (seq === null) return;
+    this.snapshots += 1;
+    await channel.truncate((note.upTo as number) + 1); // records after upTo are still needed (they may come before the note)
+  }
+
   /** The record cannot be rebuilt by this code: keep showing the chat, never write to it. */
   #rebuildFailed(error: unknown): void {
     if (this.rebuildError) return;
@@ -1097,6 +1309,15 @@ export class Connection {
   /** Returncode once the agent exited (Popen.poll()). */
   poll(): number | null {
     return this.exitCode;
+  }
+
+  /**
+   * An event Studio makes itself (not from the agent: an artifact, a Studio note, a session op). In the keeper it also goes into the
+   * record as an `event` note, so a rebuild has it in the same place and numbers every later event the same.
+   */
+  recordedEvent(kind: string, data: unknown): void {
+    if (this.channel && !this.#replaying && !this.rebuildError) void this.channel.sendNote({ t: 'event', kind, data });
+    this.event(kind, data);
   }
 
   event(kind: string, data: unknown): void {
@@ -2030,6 +2251,7 @@ export class Connection {
       this.withdrawTurnRequests();
       await this.#finishTurn();
       await this.#queueAfterTurn();
+      if (!this.#replaying) this.#scheduleSnapshot(); // quiet now (or skipped when the queue started the next turn)
     }
   }
 
@@ -2931,6 +3153,10 @@ export class Connection {
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */
   public(after = 0, light = false): Json {
     const events = this.events;
+    // Being rebuilt from the keeper's record: no events yet, and the page keeps its cursor (the rebuilt chat numbers them the same).
+    const rebuilding = this.#replaying && !this.rebuildError && !this.closed;
+    // A cursor past the end belongs to another numbering (an older record without its Studio events): send everything again.
+    const stale = !rebuilding && after > this.sequence;
     const data: Json = {
       attention: this.attention(),
       id: this.id,
@@ -2961,9 +3187,9 @@ export class Connection {
       imageSupported: this.imageSupported,
       promptCapabilities: { ...this.promptCaps },
       breadth: publicState(this),
-      events: light ? [] : events.filter((e) => (e.seq as number) > after),
-      cursor: this.sequence,
-      reset: !!(events.length && after && after < (events[0].seq as number) - 1),
+      events: light || rebuilding ? [] : stale ? [...events] : events.filter((e) => (e.seq as number) > after),
+      cursor: rebuilding ? after : this.sequence,
+      reset: stale || !!(!rebuilding && events.length && after && after < (events[0].seq as number) - 1),
       setupDone: this.openDone.isSet(),
       auth: this.auth ? { ...this.auth } : null,
       permissions: light ? [] : [...this.permissions].map(([k, v]) => ({
@@ -2980,6 +3206,8 @@ export class Connection {
       unknownReceipts: this.unknownReceipts(),
     };
     if (this.rebuildError) data.readOnly = true; // rebuilt from the keeper's record but not continuable (error says why)
+    if (rebuilding) data.rebuilding = true;
+    if (this.channel) data.eventsId = this.eventsId; // a chat in the keeper: its numbering survives a rebuild (chat.js compares it)
     if (this.worktree) data.worktree = { ...this.worktree }; // only a worktree chat has this key; the page does not show it yet
     return data;
   }

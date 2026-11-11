@@ -149,6 +149,11 @@ export interface GuardOptions {
   exit?: (code: number) => never;
   exitWaitMs?: number;
   isAlive?: (pid: number) => boolean;
+  /**
+   * A tray-only start (the keeper's orphan restart): when the folder is taken, exit quietly (code 0): no window is asked to show and
+   * no message box appears. Another AIB is attached to the keeper then, which is all the restart wanted.
+   */
+  quiet?: boolean;
 }
 
 /**
@@ -160,6 +165,10 @@ export async function guardDataFolder(stateDir: string, o: GuardOptions): Promis
   const exit = o.exit ?? ((code: number) => Deno.exit(code));
   const result = await claimFolder(stateDir, { mode: o.mode, port: o.port, exitWaitMs: o.exitWaitMs, isAlive: o.isAlive });
   if (result.primary) return result;
+  if (o.quiet) {
+    (o.say ?? console.log)('AIB is already running for this data folder; this tray-only start is not needed.');
+    return exit(0);
+  }
   if (o.mode === 'desktop' && result.owner?.mode !== 'server') {
     await signalShow(stateDir);
     (o.say ?? console.log)('AIB is already running: its window was asked to show.');

@@ -21,11 +21,12 @@ import { Installer, InstallRefused } from '../agents/installer.ts';
 import { Signer, SignInRefused } from '../agents/signin.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { ArtifactMcpHttp, httpEntry } from '../artifacts/mcp_http.ts';
-import { isCompiled, selfCommand, TESTS_DIR } from '../core/app.ts';
+import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
+import { forwarderOf } from '../keeper/client.ts';
+import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
-import { type KeeperChannel, KeeperLink, keeperWanted } from '../keeper/link.ts';
+import { type KeeperChannel, KeeperLink, keeperSetting, keeperWanted } from '../keeper/link.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
@@ -171,8 +172,13 @@ export interface StudioConstruct {
   /** The recovery file's name part (studio-recovery-<port>.json): the agent host passes 'host'. Default: options.port, else 0. */
   port?: number | string | null;
   connectionFactory?: ConnectionFactory | null;
-  /** The keeper link (tests pass their own). undefined: one when AIB_KEEPER=1 and a state folder is set; null: none. */
+  /**
+   * The keeper link (tests pass their own). undefined: one when the keeper switch is on (Settings or AIB_KEEPER) or a keeper already
+   * runs for the state folder; null: none.
+   */
   keeper?: KeeperLink | null;
+  /** New chats start in the keeper (default: the switch, keeperSetting(); true when a test passes its own link). */
+  keeperForNew?: boolean;
   /** Shared stores (an --in-process web server passes its own, so both read and write one instance). */
   stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
 }
@@ -220,7 +226,7 @@ export class Studio {
   signer: Signer | null = null;
   /** Bootstrap's hostMode: 'keeper' when agents run in the keeper (they outlive this process), else 'in-process'. */
   get hostMode(): string {
-    return this.keeper ? 'keeper' : 'in-process';
+    return this.keeper && this.keeperForNew ? 'keeper' : 'in-process';
   }
   /** The in-process Studio has no separate host: no code warning, nobody to wait for. */
   readonly hostInfo: unknown = undefined;
@@ -231,6 +237,12 @@ export class Studio {
   #closed = false;
   /** Agents run in the keeper (AIB_KEEPER=1) and chats are rebuilt from its record after a restart; null: agents are children. */
   readonly keeper: KeeperLink | null;
+  /**
+   * New chats start in the keeper: the switch was on when this Studio started (Settings or AIB_KEEPER; it applies at the next start).
+   * False with a keeper link means the switch is off but a keeper still holds chats from before: they are taken over and stay there
+   * until they end, and new chats run as children as without the keeper.
+   */
+  readonly keeperForNew: boolean;
   #mcpHttp: ArtifactMcpHttp | null = null;
 
   constructor(options: StudioOptions, construct: StudioConstruct = {}) {
@@ -283,6 +295,8 @@ export class Studio {
       : withKeeper
       ? new KeeperLink({ dataDir: this.stateDir, orphan: orphanCommand() })
       : null;
+    this.keeperForNew = !!this.keeper &&
+      (construct.keeperForNew ?? (construct.keeper !== undefined ? true : keeperSetting(this.hasStateDir ? this.stateDir : null)));
     if (this.keeper) {
       this.keeper.onLost = (channels) => this.#keeperLost(channels);
       this.keeper.onClient = () => saveKeeperInstance(this.stateDir, this.instanceId); // the ids now live as long as this keeper
@@ -530,6 +544,7 @@ export class Studio {
         },
         baseUrl: () => this.artifactBaseUrl(),
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
+        addressFile: this.keeper ? join(this.stateDir, FORWARD_FILE) : undefined, // the keeper's MCP forwarder reads it
       });
     }
     this.#mcpHttp.start();
@@ -541,10 +556,23 @@ export class Studio {
    * stdio entry. http: the HTTP entry first and the stdio entry as the fallback, under the same name; the connection gives the
    * agent the first one it supports (selectMcpServers), so agents that advertise mcpCapabilities.http get the HTTP one.
    */
-  artifactMcpServers(conversationId: string, worktree = false): McpServer[] {
+  artifactMcpServers(conversationId: string, worktree = false, forwarder: string | null = null): McpServer[] {
     if (this.options.noArtifactTool || !this.hasStateDir) return [];
     const key = artifactKeys.issue(conversationId);
     if (!key) return [];
+    if (forwarder) {
+      // An agent in the keeper (design 3.7): the keeper's forwarder, whose program is never in an AIB version folder (an update can
+      // remove the old version's files while the chat runs), posting to whichever AIB serves the tool now. stdio only: every ACP
+      // agent supports it, and an HTTP entry's port would be dead after the next restart.
+      const file = join(this.stateDir, FORWARD_FILE);
+      try {
+        this.artifactMcpHttp(); // listening, with its address published, before the agent starts the forwarder
+        ownForwardFile(file);
+        return [forwardEntry(forwarder, file, key, conversationId) as unknown as McpServer];
+      } catch (error) {
+        log.exception(error, 'Could not start the HTTP artifact tool for the keeper forwarder; the agent gets the usual entries');
+      }
+    }
     const stdio = this.#artifactStdioEntry(conversationId, key, worktree);
     if (this.artifactTransport() !== 'http') return stdio;
     let url: string;
@@ -637,7 +665,7 @@ export class Studio {
       }
       const connectionOptions: ConnectionOptions = {};
       if (Object.keys(env).length) connectionOptions.env = env;
-      if (this.keeper && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
+      if (this.keeper && this.keeperForNew && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
@@ -649,7 +677,8 @@ export class Studio {
       }
       this.#wire(c);
       c.sessionLease = lease;
-      c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree)];
+      const forwarder = c.keeper ? await this.#mcpForwarder() : null;
+      c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree, forwarder)];
       c.sessionId = resume || null;
       c.recovery = this.recovery as never;
       this.connections.set(c.id, c);
@@ -708,7 +737,10 @@ export class Studio {
 
   /** The Studio's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
   #wire(c: Connection): void {
-    c.onRelease = (conn) => this.withdraw(conn);
+    c.onRelease = (conn) => {
+      this.withdraw(conn);
+      if (conn.channel) this.#keeperNoLongerNeeded();
+    };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
     if (this.liveSync) {
       const sync = this.liveSync;
@@ -722,12 +754,36 @@ export class Studio {
 
   // ---- the keeper: chats that outlive this process -------------------------------------------------------------------------
   /**
+   * With the switch off, the keeper only holds chats from before (keeperForNew false): once the last of them has ended, let go of the
+   * keeper connection, so the keeper exits by itself (no live channel, no client) instead of staying for as long as AIB runs.
+   */
+  #keeperNoLongerNeeded(): void {
+    if (!this.keeper || this.keeperForNew || this.#closed) return;
+    if ([...this.connections.values()].some((c) => !c.closed && c.channel && !c.channel.lost)) return;
+    announce('studio', 'keeper: the last chat from before the keeper was switched off has ended; letting the keeper go');
+    this.keeper.disconnect();
+  }
+
+  /**
    * At start (before the automatic reconnect): every chat whose agent still runs in the keeper is rebuilt from the keeper's record
    * and goes on live, its turn, question and queue included. Nothing is sent again. Returns how many chats were taken over.
    * Ended channels older than a week are removed; a live channel without a chat note (an AIB that crashed while starting it)
    * is stopped.
    */
-  async adoptKeeper(): Promise<number> {
+  adoptKeeper(): Promise<number> {
+    this.#adopting ??= this.#adoptKeeper().catch((error) => {
+      log.exception(error, 'keeper: taking chats over failed');
+      return 0;
+    }).finally(() => (this.#adoptDone = true));
+    return this.#adopting;
+  }
+
+  #adoptDone = false;
+
+  /** The take-over from the keeper while it runs (liveState waits for it: an open page keeps its chat meanwhile). */
+  #adopting: Promise<number> | null = null;
+
+  async #adoptKeeper(): Promise<number> {
     const keeper = this.keeper;
     if (!keeper) return 0;
     let client;
@@ -758,7 +814,19 @@ export class Studio {
         log.exception(error, 'keeper: taking over channel failed');
       }
     }
-    if (adopted) announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
+    if (adopted) {
+      announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
+      // Their artifact tool is the keeper's forwarder: it needs this Studio's HTTP endpoint and its published address.
+      const forwarded = [...this.connections.values()].some((c) => c.channel && !c.closed && c.mcpServers.some(isForwardEntry));
+      if (forwarded && !this.options.noArtifactTool) {
+        try {
+          this.artifactMcpHttp();
+          ownForwardFile(join(this.stateDir, FORWARD_FILE));
+        } catch (error) {
+          log.exception(error, 'Could not start the HTTP artifact tool for the chats taken over from the keeper');
+        }
+      }
+    }
     return adopted;
   }
 
@@ -812,6 +880,17 @@ export class Studio {
       return true;
     } finally {
       c.openDone.set();
+    }
+  }
+
+  /** The keeper program as the MCP forwarder for a new chat in the keeper (null: not available, the usual entries are used). */
+  async #mcpForwarder(): Promise<string | null> {
+    if (this.options.noArtifactTool || !this.hasStateDir || !this.keeper) return null;
+    try {
+      return await forwarderOf(this.keeper.options.binary ?? null, this.stateDir);
+    } catch (error) {
+      log.warning('keeper: no MCP forwarder (%s); the artifact tool runs as before', errorText(error));
+      return null;
     }
   }
 
@@ -942,9 +1021,25 @@ export class Studio {
     return Promise.resolve(this.liveListSync());
   }
 
-  liveState(connectionId: unknown, after: unknown = 0): Promise<Json | null> {
+  /** Resolves when the take-over from the keeper has finished (at most 20 s); later calls resolve at once. */
+  async #afterAdopting(): Promise<void> {
+    const adopting = this.#adopting;
+    if (!adopting) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([adopting.catch(() => 0), new Promise((resolve) => (timer = setTimeout(resolve, 20_000)))]);
+    clearTimeout(timer);
+  }
+
+  liveState(connectionId: unknown, after: unknown = 0, wait = true): Promise<Json | null> {
     const connection = isStr(connectionId) ? this.connections.get(connectionId) : undefined;
-    if (connection === undefined) return Promise.resolve(null);
+    if (connection === undefined) {
+      // Taking chats over from the keeper right now: the page's chat may be one of them. Wait for it (bounded) instead of telling
+      // the page the connection is gone, so it keeps the chat without reloading its list.
+      if (wait && this.#adopting && !this.#adoptDone && isStr(connectionId)) {
+        return this.#afterAdopting().then(() => this.liveState(connectionId, after, false));
+      }
+      return Promise.resolve(null);
+    }
     const cursor = Math.trunc(Number(after));
     if (Number.isNaN(cursor)) return Promise.reject(new ValueError(`invalid literal for int() with base 10: ${pyRepr(after)}`));
     return Promise.resolve(connection.public(cursor));
@@ -954,7 +1049,7 @@ export class Studio {
   emitArtifact(conversationId: unknown, data: unknown): Promise<boolean> {
     const connection = isStr(conversationId) ? this.connections.get(conversationId) : undefined;
     if (connection === undefined) return Promise.resolve(false);
-    connection.event('artifact', data);
+    connection.recordedEvent('artifact', data); // in the keeper's record too: a rebuild shows it and numbers events the same
     return Promise.resolve(true);
   }
 
@@ -1157,7 +1252,7 @@ export class Studio {
         .filter((a) => isDict(a) && (a.id === 'keep-mine' || a.id === 'leave')) // buttons in the note: only Studio's own two
         .map((a) => ({ id: (a as Json).id, label: [...String((a as Json).label || (a as Json).id)].slice(0, 40).join('') }));
       if (actions.length) data.actions = actions;
-      connection.event('studio_note', data);
+      connection.recordedEvent('studio_note', data);
       return [200, { ok: true }];
     }
     if (!LIVE_POST_OPS.has(name)) return [404, { error: 'Not found' }];
@@ -1285,6 +1380,12 @@ export class Studio {
   }
 }
 
+/** A `<keeper program> mcp-forward <file>` entry (design 3.7). */
+function isForwardEntry(entry: unknown): boolean {
+  const args = isDict(entry) && Array.isArray(entry.args) ? entry.args : [];
+  return args[0] === 'mcp-forward';
+}
+
 const INSTANCE_FILE = 'studio-instance-keeper.json';
 
 /**
@@ -1312,10 +1413,15 @@ export function saveKeeperInstance(stateDir: string, id: string): void {
   } catch { /* not fatal: the next start shows "restarted" once */ }
 }
 
-/** How the keeper starts AIB again when no AIB is attached (keeper rule V1): this very process's command line. */
-export function orphanCommand(): OrphanCommand {
+/**
+ * How the keeper starts AIB again when no AIB is attached (keeper rule V1): this very process's command line. The desktop app adds
+ * --start-in-tray, so AIB coming back after a crash shows only its tray icon, never a window over the person's work.
+ */
+export function orphanCommand(args: string[] = Deno.args, desktop = isDesktopApp()): OrphanCommand {
   const self = selfCommand();
-  return { command: self[0], args: [...self.slice(1), ...Deno.args], cwd: Deno.cwd() };
+  const windowed = desktop && !['serve', 'host', 'deploy', 'mcp-artifact', 'update-helper'].includes(args[0]);
+  const extra = windowed && !args.includes('--start-in-tray') ? ['--start-in-tray'] : [];
+  return { command: self[0], args: [...self.slice(1), ...args, ...extra], cwd: Deno.cwd() };
 }
 
 /** secrets.token_urlsafe(32). */

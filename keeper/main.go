@@ -61,6 +61,9 @@ func main() {
 		fmt.Printf("AIB keeper %s, protocol %d\n", keeperVersion, protocolVersion)
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp-forward" {
+		os.Exit(mcpForwardMain(os.Args[2:])) // design 3.7: never part of a serving keeper (mcpforward.go)
+	}
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
