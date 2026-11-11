@@ -39,7 +39,7 @@
 .vs-opt:focus-visible,
 .vs-select:focus-visible,
 .steps-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .vs-select {
@@ -245,7 +245,7 @@ header.vs-narrow > .header-actions {
   background: var(--accent-wash-2);
 }
 .pv-head:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .pv-arrow {

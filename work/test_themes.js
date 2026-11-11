@@ -44,7 +44,7 @@ test('the default theme is AIB teal (dark), and it also paints a page with no da
 test('every theme sets every core token, and every token resolves to a colour', () => {
   const core = T.core();
   assert.ok(core.length >= 30, 'core tokens: ' + core.length);
-  const names = Object.keys(T.tokens(ids[0])).filter((k) => k.startsWith('--'));
+  const names = Object.keys(T.tokens(ids[0])).filter((k) => T.isColour(k));
   for (const id of ids) {
     const own = T.tokens(id);
     for (const n of core) assert.ok(Object.hasOwn(own, n), `${id} sets ${n}`);
@@ -70,7 +70,8 @@ test('page stylesheets name no colour of their own, and every var() they use is 
       const n = m[1];
       if (defined.has(n) || own.has(n)) continue;
       if (m[2] === ',') continue; // has a fallback (sizes and fonts set from script: --ui-scale, --side-w ...)
-      if (/^--(ui-scale|chat-scale|side-w|act-split|composer-h|depth|hd-h|tabs-h|sans|code-font|activity-w)$/.test(n)) continue;
+      if (/^--(ui-scale|chat-scale|side-w|act-split|composer-h|depth|hd-h|tabs-h|sans|code-font|activity-w)$/.test(n))
+        continue;
       problems.push(`${name}: var(${n}) is not defined`);
     }
   }
@@ -79,13 +80,27 @@ test('page stylesheets name no colour of their own, and every var() they use is 
 
 test('the terminal and the swatches read their colours from the theme', () => {
   const js = fs.readFileSync(path.join(APP, 'terminal-ui.js'), 'utf8');
-  for (const n of ['--term-bg', '--term-fg', '--term-sel', '--term-red', '--term-green', '--term-yellow', '--term-blue', '--term-magenta', '--term-cyan', '--term-dim']) {
+  for (const n of [
+    '--term-bg',
+    '--term-fg',
+    '--term-sel',
+    '--term-red',
+    '--term-green',
+    '--term-yellow',
+    '--term-blue',
+    '--term-magenta',
+    '--term-cyan',
+    '--term-dim',
+  ]) {
     assert.ok(js.includes(`'${n}'`), `terminal-ui.js reads ${n}`);
     for (const id of ids) assert.doesNotThrow(() => T.colour(`var(${n})`, id));
   }
   assert.match(js, /attributeFilter: \[[^\]]*'data-theme'/, 'the terminal re-reads its colours when the theme changes');
   const html = fs.readFileSync(path.join(APP, 'chat.html'), 'utf8');
-  assert.ok(html.indexOf('<script src="/themes.js"></script>') < html.indexOf('theme.css'), 'themes.js runs before the styles, not deferred');
+  assert.ok(
+    html.indexOf('<script src="/themes.js"></script>') < html.indexOf('theme.css'),
+    'themes.js runs before the styles, not deferred',
+  );
 });
 
 for (const id of ids) {
@@ -96,7 +111,9 @@ for (const id of ids) {
       const min = high ? (p.min >= TEXT ? 7 : 4.5) : p.min;
       const r = T.contrast(`var(${p.fg})`, `var(${p.bg})`, id);
       if (r < min - 0.005)
-        fails.push(`${r.toFixed(2)}:1 < ${min}  ${p.fg} ${T.hex(`var(${p.fg})`, id)} on ${p.bg} ${T.hex(`var(${p.bg})`, id)}  (${p.group}${p.note ? ': ' + p.note : ''})`);
+        fails.push(
+          `${r.toFixed(2)}:1 < ${min}  ${p.fg} ${T.hex(`var(${p.fg})`, id)} on ${p.bg} ${T.hex(`var(${p.bg})`, id)}  (${p.group}${p.note ? ': ' + p.note : ''})`,
+        );
     }
     assert.deepEqual(fails, [], fails.join('\n'));
   });
@@ -116,8 +133,21 @@ test('themes.js: choosing paints <html> at once and saves the choice', () => {
   fn(undefined, root, mod, undefined);
   const A = root.AibThemes;
   assert.equal(A.saved(), 'teal-dark');
-  assert.equal(A.choose('classic'), 'classic');
-  assert.deepEqual([attrs['data-theme'], store['aib-theme']], ['classic', 'classic']);
+  assert.equal(A.choose('nord'), 'nord');
+  assert.deepEqual([attrs['data-theme'], store['aib-theme']], ['nord', 'nord']);
+  // Classic purple was replaced by Dracula-style: an old saved id paints Dracula
+  store['aib-theme'] = 'classic';
+  delete attrs['data-theme-pref']; // as on a fresh page load without the server's attribute
+  assert.equal(A.saved(), 'dracula');
+  assert.equal(A.resolve('purple', false), 'dracula');
+  assert.equal(A.choose('classic'), 'dracula');
+  assert.equal(store['aib-theme'], 'dracula');
+  // status symbols: off by default, saved, on <html>
+  assert.equal(A.symbolsOn(), false);
+  A.setSymbols(true);
+  assert.deepEqual([store['aib-status-glyphs'], attrs['data-status-glyphs']], ['on', 'on']);
+  assert.equal(A.themeShowsSymbols('cb-safe'), true);
+  assert.equal(A.themeShowsSymbols('teal-dark'), false);
   assert.equal(A.choose('system'), 'teal-light'); // the stub prefers light
   assert.equal(attrs['data-theme-pref'], 'system');
   assert.equal(A.choose('bogus'), null);

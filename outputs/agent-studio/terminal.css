@@ -42,7 +42,7 @@
   background: var(--hover-overlay);
 }
 .aib-term-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .aib-term-toggle.is-on {
@@ -310,7 +310,7 @@
 .aib-term-btn:focus-visible,
 .aib-term-path:focus-visible,
 .aib-term-act:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .aib-term-end:not(.is-close):hover {

@@ -104,7 +104,25 @@
       id: 'theme',
       section: 'appearance',
       label: 'Theme',
-      keywords: ['colour', 'color', 'dark', 'light', 'teal', 'purple', 'classic', 'system', 'appearance', 'contrast'],
+      keywords: [
+        'colour',
+        'color',
+        'dark',
+        'light',
+        'teal',
+        'dracula',
+        'monokai',
+        'nord',
+        'solarized',
+        'github',
+        'ember',
+        'system',
+        'appearance',
+        'contrast',
+        'colour blind',
+        'symbols',
+        'glyphs',
+      ],
     },
     {
       id: 'text-size',
@@ -713,7 +731,10 @@
         el('span', 'Turned off', 'st-status dim'),
         button('Turn on', () => saveQuiet(togglePatch(a.id, true)), 'st-primary'),
       );
-      row.append(head, note('Turned off in Settings, so new chats cannot use it. Turn it on to set it up here.', 'dim'));
+      row.append(
+        head,
+        note('Turned off in Settings, so new chats cannot use it. Turn it on to set it up here.', 'dim'),
+      );
       return row;
     }
     if (running) head.append(button('Cancel', () => cancelInstall(a), 'st-cancel'));
@@ -1259,7 +1280,12 @@
     side.append(el('span', null, 'st-swatch-row sel'), el('span', null, 'st-swatch-row'));
     const dots = el('span', null, 'st-swatch-dots');
     for (const d of ['working', 'needs', 'done']) dots.append(el('span', null, 'st-swatch-dot ' + d));
-    main.append(el('span', null, 'st-swatch-line'), el('span', null, 'st-swatch-line short'), dots, el('span', null, 'st-swatch-btn'));
+    main.append(
+      el('span', null, 'st-swatch-line'),
+      el('span', null, 'st-swatch-line short'),
+      dots,
+      el('span', null, 'st-swatch-btn'),
+    );
     sw.append(side, main);
     return sw;
   }
@@ -1286,7 +1312,12 @@
         r.value = t.id;
         r.checked = t.id === now;
         r.addEventListener('change', () => {
-          if (r.checked) A.choose(t.id);
+          if (!r.checked) return;
+          A.choose(t.id);
+          box.textContent = '';
+          renderTheme(box); // the symbols note depends on the theme
+          const again = box.querySelector(`input[value="${t.id}"]`);
+          if (again) again.focus();
         });
         let pic;
         if (t.id === A.SYSTEM.id) {
@@ -1298,7 +1329,20 @@
         group.append(l);
       }
     }
-    box.append(note('Applies at once and is saved with your AIB data. "Match system" follows your light or dark setting.'), group);
+    box.append(
+      note('Applies at once and is saved with your AIB data. "Match system" follows your light or dark setting.'),
+      group,
+    );
+    // Status symbols: a symbol (▲ Needs you, ✓ Done ...) in place of each status dot, so a state never depends on colour alone.
+    const always = A.themeShowsSymbols(now);
+    box.append(toggle('Show status symbols', always || A.symbolsOn(), (v) => A.setSymbols(v)));
+    box.append(
+      note(
+        always
+          ? 'The colour-blind safe theme always shows them.'
+          : 'Off by default. Draws ◔ Working, ▲ Needs you, ✓ Done, ○ Idle and ✕ Failed in place of the coloured dots.',
+      ),
+    );
   }
 
   // Text size: owned by textsize-ui.js (per window-width bucket, localStorage), kept in the data folder by view-prefs.js, not by the server settings.
@@ -1467,7 +1511,14 @@
       ['State folder', b.stateDir || 'unknown'],
       ['Web server PID', b.pid],
       ['Agent host PID', b.hostPid],
-      ['Mode', b.hostMode === 'split' ? 'Web server and separate agent host' : b.hostMode === 'keeper' ? 'One process; running agents are held by the keeper' : b.hostMode],
+      [
+        'Mode',
+        b.hostMode === 'split'
+          ? 'Web server and separate agent host'
+          : b.hostMode === 'keeper'
+            ? 'One process; running agents are held by the keeper'
+            : b.hostMode,
+      ],
       ['Web server port', sv.webPort],
       ['Web server started', sv.webStartedAt ? when(sv.webStartedAt) : ''],
       ['Agent host started', sv.hostStartedAt ? when(sv.hostStartedAt) : ''],

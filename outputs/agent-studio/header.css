@@ -51,7 +51,7 @@ header .hd-line h1:hover {
   background: var(--title-hover-bg);
 }
 header .hd-line h1:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .hd-title-input {
@@ -224,24 +224,57 @@ header #status {
 }
 /* the header chip is filled with its tone's pair (theme.css --status-*-bg); the composer turn line keeps its own fill */
 #status[data-tone='work'] {
-  background: var(--status-working-bg);
-  border-color: var(--status-working-bg);
+  background: var(--chip-working-bg);
+  border-color: var(--chip-working-line);
 }
 #status[data-tone='turn'] {
-  background: var(--status-done-bg);
-  border-color: var(--status-done-bg);
+  background: var(--chip-done-bg);
+  border-color: var(--chip-done-line);
 }
 #status[data-tone='need'] {
-  background: var(--status-needs-bg);
-  border-color: var(--status-needs-bg);
+  background: var(--chip-needs-bg);
+  border-color: var(--chip-needs-line);
 }
 #status[data-tone='idle'] {
-  background: var(--status-idle-bg);
-  border-color: var(--status-idle-bg);
+  background: var(--chip-idle-bg);
+  border-color: var(--chip-idle-line);
 }
 #status[data-tone='else-work'] {
   background: var(--status-working-bg);
   border: 1px dashed var(--status-working);
+}
+/* status symbols in the header chip and the composer turn line: the symbol takes the dot's place */
+:root[data-status-glyphs='on'] :is(#status, #turnStatus)[data-tone]::before,
+[data-theme='cb-safe'] :is(#status, #turnStatus)[data-tone]::before {
+  content: var(--glyph, '');
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+:is(#status, #turnStatus)[data-tone='work'],
+:is(#status, #turnStatus)[data-tone='else-work'] {
+  --glyph: var(--status-working-glyph);
+}
+:is(#status, #turnStatus)[data-tone='need'] {
+  --glyph: var(--status-needs-glyph);
+}
+:is(#status, #turnStatus)[data-tone='turn'] {
+  --glyph: var(--status-done-glyph);
+}
+:is(#status, #turnStatus)[data-tone='idle'],
+:is(#status, #turnStatus)[data-tone='off'],
+:is(#status, #turnStatus)[data-tone='else'] {
+  --glyph: var(--status-idle-glyph);
+}
+:is(#status, #turnStatus)[data-tone='bad'] {
+  --glyph: var(--status-error-glyph);
 }
 @keyframes hd-pulse {
   0%,

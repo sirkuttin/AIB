@@ -71,16 +71,20 @@ export function withViewPrefs(html: string, prefs: Record<string, string>): stri
   return withThemePref(
     html.slice(0, at) + '<script type="application/json" id="aibViewPrefs">' + data + '</script>' + html.slice(at),
     prefs['aib-theme'],
+    prefs['aib-status-glyphs'],
   );
 }
 
 /**
- * The saved colour theme on <html data-theme-pref="...">, so themes.js (the first, blocking script) paints it before anything
+ * The saved colour theme on <html data-theme-pref="..."> (and the status-symbols switch on data-status-glyphs-pref), so themes.js (the first, blocking script) paints it before anything
  * shows. Only a plain theme id is written; anything else leaves the page as it is (themes.js then uses its default).
  */
-export function withThemePref(html: string, pref: string | undefined): string {
-  if (typeof pref !== 'string' || !/^[a-z0-9-]{1,40}$/.test(pref)) return html;
-  return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + ` data-theme-pref="${pref}"`);
+export function withThemePref(html: string, pref: string | undefined, symbols?: string): string {
+  let attrs = '';
+  if (typeof pref === 'string' && /^[a-z0-9-]{1,40}$/.test(pref)) attrs += ` data-theme-pref="${pref}"`;
+  if (symbols === 'on' || symbols === 'off') attrs += ` data-status-glyphs-pref="${symbols}"`;
+  if (!attrs) return html;
+  return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + attrs);
 }
 
 function contentType(name: string): string {

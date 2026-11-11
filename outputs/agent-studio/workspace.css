@@ -61,7 +61,7 @@ aside .connection.selected::before {
   pointer-events: none;
 }
 aside .connection:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 aside .connection.attn-needs_you,
@@ -324,7 +324,7 @@ details.side-more .note {
 }
 .ws-tab-main:focus-visible,
 .ws-tab-x:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .ws-tab-title {
@@ -396,7 +396,7 @@ details.side-more .note {
 }
 .ws-inbox-row:focus-visible,
 .ws-pop-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .ws-inbox-text {
@@ -775,7 +775,7 @@ body > main {
 .ws-prow-more:focus-visible,
 .ws-menu-item:focus-visible,
 .ws-inbox-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .ws-list-name {
@@ -1177,7 +1177,7 @@ aside .list-heading .n,
   background: var(--hover);
 }
 .hold-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .hold-caret {
@@ -1611,7 +1611,7 @@ aside .connection.attn-unread:not(.selected) {
 }
 .np-form input:focus-visible,
 .np-form button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .np-row {
@@ -1819,6 +1819,52 @@ aside .connection.attn-unread:not(.selected) {
   font-size: 13px;
 }
 
+/* ---- status symbols (Settings > Appearance > Show status symbols, always on in the colour-blind safe theme): the dot gives
+   way to a symbol drawn in the same box, so nothing moves (test_card_layout.js). The symbols are theme.css --status-*-glyph. */
+:root[data-status-glyphs='on'] .status-dot[class*='d-'],
+[data-theme='cb-safe'] .status-dot[class*='d-'] {
+  position: relative;
+  animation: none;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+:root[data-status-glyphs='on'] .status-dot[class*='d-']::after,
+[data-theme='cb-safe'] .status-dot[class*='d-']::after {
+  content: var(--glyph, '');
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--glyph-colour, var(--muted));
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.status-dot.d-work,
+.status-dot.d-else-work {
+  --glyph: var(--status-working-glyph);
+  --glyph-colour: var(--hd-work);
+}
+.status-dot.d-need {
+  --glyph: var(--status-needs-glyph);
+  --glyph-colour: var(--hd-need);
+}
+.status-dot.d-turn {
+  --glyph: var(--status-done-glyph);
+  --glyph-colour: var(--hd-turn);
+}
+.status-dot.d-idle,
+.status-dot.d-else,
+.status-dot.d-off {
+  --glyph: var(--status-idle-glyph);
+  --glyph-colour: var(--hd-idle);
+}
+.status-dot.d-fail {
+  --glyph: var(--status-error-glyph);
+  --glyph-colour: var(--hd-fail);
+}
+
 /* ---- status dots (classes come from status-words.js dotClass; same colours as the header chip) ---------------- */
 .status-dot.d-work {
   width: 10px;
@@ -1878,7 +1924,7 @@ aside .connection.attn-unread:not(.selected) {
   background: var(--hover-overlay);
 }
 .ws-rename-proj:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .ws-rename-proj[hidden] {

@@ -14,7 +14,7 @@ const decl = (selector, context) => declarationsFor(rules, selector, context);
 const HEAD = '.bubble.user > .bubble-head';
 /* Colours are named in theme.css (var(--token)); resolve them to check contrast. */
 const T = require('./theme_tokens.js');
-const hex = (value, theme = 'classic') => T.hex(value, theme);
+const hex = (value, theme = 'teal-dark') => T.hex(value, theme);
 const luminance = (h) => {
   const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
   const [r, g, b] = c.map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
@@ -105,5 +105,5 @@ test('Copy, Run in terminal and code-block copy: 12px text, at least 24px tall, 
 test('the user rules do not leak to other bubbles', () => {
   const leaks = rules.filter((r) => /\.bubble\.user/.test(r.selector) && /assistant|tool|notice/.test(r.selector));
   assert.equal(leaks.length, 0);
-  assert.equal(hex(decl('.bubble-head')['border-bottom'].replace('1px solid ', '')), '#292b35');
+  assert.equal(decl('.bubble-head')['border-bottom'], '1px solid var(--bubble-head-line)');
 });

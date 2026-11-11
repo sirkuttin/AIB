@@ -72,10 +72,10 @@
   /** An xterm theme from the page's colour tokens; `read(name)` returns a CSS variable's value or ''. */
   function themeFrom(read) {
     const v = (name, fallback) => (read(name) || '').trim() || fallback;
-    return {
+    const theme = {
       background: v('--term-bg', '#0c0d10'),
       foreground: v('--term-fg', v('--text', '#e5e7ec')),
-      cursor: v('--term-fg', v('--text', '#e5e7ec')),
+      cursor: v('--term-cursor', v('--term-fg', v('--text', '#e5e7ec'))),
       cursorAccent: v('--term-bg', '#0c0d10'),
       selectionBackground: v('--term-sel', '#3d3456'),
       red: v('--term-red', '#f19999'),
@@ -85,7 +85,18 @@
       magenta: v('--term-magenta', '#bba1ff'),
       cyan: v('--term-cyan', '#7fd3d8'),
       brightBlack: v('--term-dim', '#8a91a3'),
+      black: v('--term-black', ''),
+      white: v('--term-white', ''),
+      brightRed: v('--term-bright-red', ''),
+      brightGreen: v('--term-bright-green', ''),
+      brightYellow: v('--term-bright-yellow', ''),
+      brightBlue: v('--term-bright-blue', ''),
+      brightMagenta: v('--term-bright-magenta', ''),
+      brightCyan: v('--term-bright-cyan', ''),
+      brightWhite: v('--term-bright-white', ''),
     };
+    for (const k of Object.keys(theme)) if (!theme[k]) delete theme[k]; // a page without those tokens keeps xterm's own
+    return theme;
   }
   function clampHeight(h, max) {
     const n = Math.round(Number(h));

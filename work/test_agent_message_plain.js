@@ -10,9 +10,9 @@ const { cssRules, declarationsFor } = require('./css_rules.js');
 const rules = cssRules(fs.readFileSync(path.join(APP_DIR, 'chat.css'), 'utf8'));
 const decl = (selector, context) => declarationsFor(rules, selector, context);
 /* Colours are named in theme.css (var(--token)); these checks care about the colour, so resolve the names. */
-// Classic purple keeps the colours from before the teal styling, so the old values are checked there.
+// Colours are theme tokens; contrast in every theme is test_themes.js.
 const T = require('./theme_tokens.js');
-const hex = (value, theme = 'classic') =>
+const hex = (value, theme = 'teal-dark') =>
   String(value).replace(/var\((--[\w-]+)\)/g, (all) => T.hex(all, theme));
 
 test('assistant bubbles have no border, background or card shape', () => {
@@ -39,7 +39,7 @@ test('assistant header is kept for screen readers but not drawn', () => {
 test('assistant time always shows, muted 12px at the top right', () => {
   const time = { ...decl('.bubble-head time'), ...decl('.bubble.assistant > .bubble-head > time') };
   assert.equal(time.opacity, undefined);
-  assert.equal(hex(time.color), '#929aaa');
+  assert.equal(hex(time.color), hex('var(--muted)'));
   assert.equal(time['font-size'], '12px');
   assert.equal(decl('.bubble.assistant > .bubble-head').float, 'right');
   /* the same inset as your own messages (1px border + padding), so the two Copy buttons line up */
@@ -61,9 +61,9 @@ test('user bubbles are unchanged', () => {
   const box = decl('.bubble');
   assert.equal(box.border, '1px solid var(--line)');
   assert.equal(box['border-radius'], '9px');
-  assert.equal(hex(box.background), '#181a21');
+  assert.equal(box.background, 'var(--bubble-bg)');
   assert.deepEqual(decl('.bubble.user'), { background: 'var(--bubble-user-bg)', 'border-color': 'var(--bubble-user-line)' });
   assert.equal(hex(decl('.bubble.user').background, 'teal-dark'), hex('var(--panel-2)', 'teal-dark'));
-  assert.equal(hex(decl('.bubble-head')['border-bottom']), '1px solid #292b35'); // other bubbles keep their title bar
+  assert.equal(decl('.bubble-head')['border-bottom'], '1px solid var(--bubble-head-line)'); // other bubbles keep their title bar
   assert.equal(rules.filter((r) => /\.bubble\.user/.test(r.selector) && /assistant/.test(r.selector)).length, 0);
 });

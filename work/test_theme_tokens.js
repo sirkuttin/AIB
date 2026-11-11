@@ -212,7 +212,7 @@ test('theme tokens keep every colour', { skip: baseAvailable() ? false : 'histor
 });
 
 // Today's theme.css (one block per theme, every token defined, no colour outside theme.css, contrast) is checked by
-// test_themes.js; Classic purple against the colours before the teal styling by test_theme_classic.js.
+// test_themes.js.
 
 test('the equivalence check is strict: it fails when a colour, selector or property changes', async (t) => {
   const THEME_CSS = ':root { --a: #abc; --b: #0009; --c: #112233; }';

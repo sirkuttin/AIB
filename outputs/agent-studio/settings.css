@@ -122,7 +122,7 @@ html[data-ui-scaled] .st-page {
 }
 .st-section:focus-visible,
 .st-close:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .st-count {
@@ -256,12 +256,12 @@ html[data-ui-scaled] .st-page {
 }
 .st-status.dim {
   color: var(--status-idle);
-  background: var(--status-idle-bg);
-  border-color: var(--status-idle-bg);
+  background: var(--chip-idle-bg);
+  border-color: var(--chip-idle-line);
 }
 .st-status.ok {
   color: var(--st-status-ok-text);
-  background: var(--status-done-bg);
+  background: var(--chip-done-bg);
   border-color: var(--st-status-ok-line);
 }
 .st-status.bad {
@@ -270,7 +270,7 @@ html[data-ui-scaled] .st-page {
 }
 .st-status.warn {
   color: var(--st-status-warn-text);
-  background: var(--status-needs-bg);
+  background: var(--chip-needs-bg);
   border-color: var(--st-status-warn-line);
 }
 .st-command {
@@ -602,7 +602,7 @@ html[data-ui-scaled] .st-page {
   background: var(--accent-wash);
 }
 .st-theme:has(input:focus-visible) {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .st-theme input {

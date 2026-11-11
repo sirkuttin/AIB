@@ -20,16 +20,36 @@ const add = (group, fg, bgs, min, note) => {
 };
 // body and meta text
 add('body', '--text', [...SURFACES, '--bg-field', '--code-bg', '--hover', '--bg-composer', '--bg-row'], TEXT);
-add('meta', '--muted', [...SURFACES, '--bg-field', '--bg-composer', '--bg-row', '--hover'], TEXT, 'meta lines, agent names');
+add(
+  'meta',
+  '--muted',
+  [...SURFACES, '--bg-field', '--bg-composer', '--bg-row', '--hover'],
+  TEXT,
+  'meta lines, agent names',
+);
 add('meta', '--text-muted', [...SURFACES, '--bg-row'], TEXT, 'qualifiers, timestamps');
 add('meta', '--text-faint-2', [...SURFACES], TEXT, 'message times (12 px)');
 add('meta', '--text-dim', [...SURFACES], TEXT, 'activity and sub-agent text');
 add('muted', '--text-faint', [...SURFACES, '--bg-field', '--bg-composer'], TEXT, 'placeholders, composer notes');
 add('muted', '--text-faint-3', [...SURFACES], TEXT, 'artifact shortcuts and counts');
 add('muted', '--text-muted-2', [...SURFACES], TEXT, 'plan qualifiers');
-for (const t of ['--text-2', '--text-3', '--text-4', '--text-5', '--text-6', '--text-7']) add('body', t, SURFACES, TEXT);
+for (const t of ['--text-2', '--text-3', '--text-4', '--text-5', '--text-6', '--text-7'])
+  add('body', t, SURFACES, TEXT);
 // links
-add('link', '--link', [...SURFACES, '--bg-composer', '--accent-wash', '--accent-wash-2', '--accent-wash-3', '--accent-wash-4', '--accent-wash-5'], TEXT);
+add(
+  'link',
+  '--link',
+  [
+    ...SURFACES,
+    '--bg-composer',
+    '--accent-wash',
+    '--accent-wash-2',
+    '--accent-wash-3',
+    '--accent-wash-4',
+    '--accent-wash-5',
+  ],
+  TEXT,
+);
 // buttons
 add('button', '--on-accent', '--accent', TEXT, 'primary button');
 add('button', '--on-accent-disabled', '--primary-disabled-bg', UI, 'disabled primary (Send with nothing to send)');
@@ -45,9 +65,16 @@ add('selected', '--accent-line', ['--panel', '--bg'], UI, 'selected borders');
 // status words, chips, dots
 for (const s of ['working', 'needs', 'done', 'idle']) {
   add('status', `--status-${s}`, [`--status-${s}-bg`], TEXT, `${s} chip`);
-  add('status', `--status-${s}`, ['--bg', '--panel', '--bg-row', '--accent-wash'], s === 'idle' ? TEXT : TEXT, `${s} word`);
+  add(
+    'status',
+    `--status-${s}`,
+    ['--bg', '--panel', '--bg-row', '--accent-wash'],
+    s === 'idle' ? TEXT : TEXT,
+    `${s} word`,
+  );
 }
-for (const s of ['needs', 'done']) add('status', `--status-${s}-line`, ['--bg', '--panel', '--bg-row'], UI, `${s} card outline`); // the Working turn-line border sits round its own words: decorative
+for (const s of ['needs', 'done'])
+  add('status', `--status-${s}-line`, ['--bg', '--panel', '--bg-row'], UI, `${s} card outline`); // the Working turn-line border sits round its own words: decorative
 add('needs-you', '--status-needs-bg', '--status-needs', TEXT, 'count badge');
 add('needs-you', '--status-needs-line', ['--panel', '--sel'], UI, 'needs-you card outline');
 add('needs-you', '--text', '--panel-2', TEXT, 'approval / question card');
@@ -76,7 +103,16 @@ add('diff', '--git-modified-text', SURFACES, TEXT, 'M');
 add('diff', '--git-renamed-text', SURFACES, TEXT, 'R');
 add('diff', '--git-conflict-text', [...SURFACES, '--git-conflict-bg'], TEXT, 'C / conflict');
 // terminal
-for (const t of ['--term-fg', '--term-red', '--term-green', '--term-yellow', '--term-blue', '--term-magenta', '--term-cyan', '--term-dim'])
+for (const t of [
+  '--term-fg',
+  '--term-red',
+  '--term-green',
+  '--term-yellow',
+  '--term-blue',
+  '--term-magenta',
+  '--term-cyan',
+  '--term-dim',
+])
   add('terminal', t, ['--term-bg'], TEXT);
 add('terminal', '--term-fg', ['--term-sel'], TEXT, 'selected text');
 

@@ -1,4 +1,5 @@
 :root {
+  scrollbar-color: var(--scrollbar-colors, auto); /* a theme may set '<thumb> <track>' (theme.css) */
   font-family:
     Segoe UI,
     system-ui,
@@ -430,7 +431,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 [hidden] {
@@ -2288,7 +2289,7 @@ aside #connections {
 .deleted-box > summary:focus-visible,
 .organize-menu button:focus-visible,
 .restore-chat:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 #archivedScroll {
@@ -2443,7 +2444,7 @@ aside #connections {
 }
 /* The control clips its corners (overflow: hidden), so the focus ring is drawn inside each half, never cut off. */
 .copy-ctl button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .copy-ctl .copied {
@@ -2483,7 +2484,7 @@ aside #connections {
   color: var(--text-bright);
 }
 .run-term:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .run-term.done {
@@ -3156,7 +3157,7 @@ span.chip-static:hover {
 }
 .project-head:focus-visible,
 .switcher-input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .project-caret {

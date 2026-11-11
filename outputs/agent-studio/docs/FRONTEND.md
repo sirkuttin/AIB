@@ -68,8 +68,8 @@ Stylesheets load before the scripts; their order is the `<link>` order in `chat.
 `<html data-theme>` before first paint). It names every colour the page paints as a token; the other stylesheets only say
 `var(--token)`. Each theme is one block of token values; derived tokens are formulas over the core tokens, so a new theme
 sets only the core ones. The full token list, what each is for, the themes and how to add one: [THEMES.md](THEMES.md).
-Checked by `work/test_themes.js` (tokens, no stray colours, WCAG contrast in every theme) and `work/test_theme_classic.js`
-(Classic purple keeps the colours from before the teal styling).
+Checked by `work/test_themes.js` (tokens, no stray colours, WCAG contrast in every theme) and `work/test_card_layout.js`
+(no theme or status symbol moves a card).
 
 ## Vendored libraries
 

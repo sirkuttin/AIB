@@ -15,7 +15,10 @@ const sheet = (name) => cssRules(fs.readFileSync(path.join(APP, name), 'utf8'));
 const T = require('./theme_tokens.js');
 const THEME = 'teal-dark';
 const raw = T.tokens(THEME);
-const tokens = new Proxy({}, { get: (_, n) => (typeof n === 'string' && n in raw ? T.hex(`var(${n})`, THEME) : undefined) });
+const tokens = new Proxy(
+  {},
+  { get: (_, n) => (typeof n === 'string' && n in raw ? T.hex(`var(${n})`, THEME) : undefined) },
+);
 const header = sheet('header.css');
 const colour = (value) => T.hex(value, THEME);
 const contrast = (a, b) => T.contrast(a, b, THEME);
@@ -51,7 +54,16 @@ test('status text, dots and borders stay readable on the page surfaces', () => {
 test('Bay teal accent: buttons, links, focus and the active chat', () => {
   assert.equal(tokens['--accent'].toLowerCase(), '#2bb3a3');
   atLeast('var(--on-accent)', 'var(--accent)', 4.5); // primary buttons
-  for (const s of ['--bg', '--panel', '--bg-composer', '--accent-wash', '--accent-wash-2', '--accent-wash-3', '--accent-wash-4', '--accent-wash-5'])
+  for (const s of [
+    '--bg',
+    '--panel',
+    '--bg-composer',
+    '--accent-wash',
+    '--accent-wash-2',
+    '--accent-wash-3',
+    '--accent-wash-4',
+    '--accent-wash-5',
+  ])
     atLeast('var(--link)', `var(${s})`, 4.5);
   for (const s of ['--bg', '--panel', '--bg-field', '--accent-wash']) atLeast('var(--accent)', `var(${s})`, 3); // focus rings
   for (const t of ['--text', '--muted', '--text-dim']) atLeast(`var(${t})`, 'var(--accent-wash)', 4.5); // active chat row text
@@ -63,20 +75,23 @@ test('status chips and dots paint with the status tokens', () => {
   const tone = { work: 'working', turn: 'done', need: 'needs', idle: 'idle' };
   for (const [t, name] of Object.entries(tone)) {
     const chip = declarationsFor(header, `#status[data-tone='${t}']`);
-    assert.equal(chip.background, `var(--status-${name}-bg)`, `header chip ${t} fill`);
+    assert.equal(colour(chip.background), tokens[`--status-${name}-bg`], `header chip ${t} fill`);
     assert.equal(colour(chip.color), tokens[`--status-${name}`], `header chip ${t} text`);
     const mirror = declarationsFor(sheet('split.css'), `.mirror-status[data-tone='${t}']`);
-    assert.equal(mirror.background, `var(--status-${name}-bg)`, `split pane chip ${t} fill`);
+    assert.equal(colour(mirror.background), tokens[`--status-${name}-bg`], `split pane chip ${t} fill`);
   }
   // Elsewhere · Working keeps the Working colour, with a dashed ring; Elsewhere · Idle is grey.
   assert.equal(colour(declarationsFor(header, "#status[data-tone='else-work']").color), tokens['--status-working']);
   assert.equal(declarationsFor(header, "#status[data-tone='else-work']::before").border, '1.5px dashed var(--hd-work)');
   assert.equal(colour(declarationsFor(header, "#status[data-tone='else']").color), tokens['--status-idle']);
-  assert.equal(declarationsFor(sheet('workspace.css'), '.status-dot.d-else-work').border, '2px dashed var(--hd-work, var(--status-working))');
+  assert.equal(
+    declarationsFor(sheet('workspace.css'), '.status-dot.d-else-work').border,
+    '2px dashed var(--hd-work, var(--status-working))',
+  );
   const settings = sheet('settings.css');
-  assert.equal(declarationsFor(settings, '.st-status.ok').background, 'var(--status-done-bg)');
-  assert.equal(declarationsFor(settings, '.st-status.warn').background, 'var(--status-needs-bg)');
-  assert.equal(declarationsFor(settings, '.st-status.dim').background, 'var(--status-idle-bg)');
+  assert.equal(colour(declarationsFor(settings, '.st-status.ok').background), tokens['--status-done-bg']);
+  assert.equal(colour(declarationsFor(settings, '.st-status.warn').background), tokens['--status-needs-bg']);
+  assert.equal(colour(declarationsFor(settings, '.st-status.dim').background), tokens['--status-idle-bg']);
   const chat = sheet('chat.css');
   assert.equal(declarationsFor(chat, '.tool-status.status-in_progress').background, 'var(--status-working-bg)');
   assert.equal(declarationsFor(chat, '.tool-status.status-completed').background, 'var(--status-done-bg)');
@@ -98,7 +113,10 @@ test('disabled and focused primary buttons, spinners and cards follow the design
   atLeast('var(--text-bright)', 'var(--bg-composer)', 3);
   // the spinner track is a translucent amber, not the near-invisible chip fill
   assert.match(tokens['--status-working-track'], /^#ffc247[0-9a-f]{2}$/i);
-  assert.equal(declarationsFor(sheet('workspace.css'), '.status-dot.d-work').border, '2px solid var(--status-working-track)');
+  assert.equal(
+    declarationsFor(sheet('workspace.css'), '.status-dot.d-work').border,
+    '2px solid var(--status-working-track)',
+  );
   assert.equal(declarationsFor(chat, '.st-working').border, '2px solid var(--status-working-track)');
   // approval and question cards: a plain panel with a coral border, not a coral block
   assert.equal(colour(declarationsFor(chat, '.approval').background), tokens['--panel-2']);

@@ -220,20 +220,20 @@ body.split-resizing-y {
   background: var(--hd-fail);
 }
 .mirror-status[data-tone='work'] {
-  background: var(--status-working-bg);
-  border-color: var(--status-working-bg);
+  background: var(--chip-working-bg);
+  border-color: var(--chip-working-line);
 }
 .mirror-status[data-tone='turn'] {
-  background: var(--status-done-bg);
-  border-color: var(--status-done-bg);
+  background: var(--chip-done-bg);
+  border-color: var(--chip-done-line);
 }
 .mirror-status[data-tone='need'] {
-  background: var(--status-needs-bg);
-  border-color: var(--status-needs-bg);
+  background: var(--chip-needs-bg);
+  border-color: var(--chip-needs-line);
 }
 .mirror-status[data-tone='idle'] {
-  background: var(--status-idle-bg);
-  border-color: var(--status-idle-bg);
+  background: var(--chip-idle-bg);
+  border-color: var(--chip-idle-line);
 }
 .mirror-msgs {
   flex: 1 1 auto;

@@ -107,7 +107,7 @@ class GateContract(unittest.TestCase):
         self.assertEqual(page.headers['content-type'], 'text/html; charset=utf-8')
         # The Deno server adds the saved view preferences as a JSON data block (server/web/server.ts withViewPrefs); the rest is the file.
         served = re.sub(rb'<script type="application/json" id="aibViewPrefs">[^<]*</script>', b'', page.body)
-        served = re.sub(rb' data-theme-pref="[a-z0-9-]+"', b'', served, count=1)  # the saved theme (withThemePref)
+        served = re.sub(rb' data-(?:theme|status-glyphs)-pref="[a-z0-9-]+"', b'', served, count=2)  # saved theme and symbols (withThemePref)
         self.assertEqual(served, (APP / 'chat.html').read_bytes())
         if server_kind() != 'python':
             self.assertIn(b'<script type="application/json" id="aibViewPrefs">{"prefs":{', page.body)

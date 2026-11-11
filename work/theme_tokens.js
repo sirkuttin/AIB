@@ -7,7 +7,8 @@
      colour(expr, id)      [r, g, b, a] (0-255, alpha 0-1) of a value such as 'var(--text)' or '#fff'
      hex(expr, id)         '#rrggbb' or '#rrggbbaa'
      contrast(fg, bg, id)  WCAG ratio; a translucent colour is laid over the one under it (bg over --bg first)
-     core()                the token names every theme must set (the default block's own names) */
+     core()                the token names every theme must set (the default block's own names)
+     isColour(name)        false for the few tokens that are not colours (status symbols, the scrollbar pair) */
 const fs = require('node:fs');
 const path = require('node:path');
 const { APP } = require('./_paths');
@@ -22,7 +23,9 @@ function load() {
     blocks = {},
     order = [];
   for (const r of rules) {
-    const own = Object.fromEntries(Object.entries(r.declarations).filter(([k]) => k.startsWith('--') || k === 'color-scheme'));
+    const own = Object.fromEntries(
+      Object.entries(r.declarations).filter(([k]) => k.startsWith('--') || k === 'color-scheme'),
+    );
     if (r.context) throw new Error(`theme.css: no at-rules expected (${r.context})`);
     if (r.selector === ':root' || r.selector === '[data-theme]') Object.assign(derived, own);
     else {
@@ -30,7 +33,8 @@ function load() {
       if (m) {
         if (!blocks[m[1]]) order.push(m[1]);
         blocks[m[1]] = Object.assign(blocks[m[1]] || {}, own);
-      } else if (r.selector !== ':root:not([data-theme])') throw new Error('theme.css: unexpected selector ' + r.selector);
+      } else if (r.selector !== ':root:not([data-theme])')
+        throw new Error('theme.css: unexpected selector ' + r.selector);
     }
   }
   cache = { derived, blocks, order };
@@ -45,8 +49,10 @@ function tokens(id) {
 }
 function core() {
   const { derived, blocks, order } = load();
-  return Object.keys(blocks[order[0]]).filter((k) => k.startsWith('--') && !(k in derived));
+  return Object.keys(blocks[order[0]]).filter((k) => isColour(k) && !(k in derived));
 }
+/** Tokens that are not colours: the status symbols (strings) and the scrollbar pair. */
+const isColour = (name) => name.startsWith('--') && !name.endsWith('-glyph') && name !== '--scrollbar-colors';
 
 function splitTop(s) {
   const out = [];
@@ -113,7 +119,11 @@ const toHex = (c) =>
     .slice(0, 3)
     .map((x) => Math.round(x).toString(16).padStart(2, '0'))
     .join('') +
-  (c[3] < 0.999 ? Math.round(c[3] * 255).toString(16).padStart(2, '0') : '');
+  (c[3] < 0.999
+    ? Math.round(c[3] * 255)
+        .toString(16)
+        .padStart(2, '0')
+    : '');
 const hex = (expr, id) => toHex(colour(expr, id));
 const over = (fg, bg) => [0, 1, 2].map((i) => fg[i] * fg[3] + bg[i] * (1 - fg[3])).concat(1);
 function luminance(c) {
@@ -132,4 +142,4 @@ function contrast(fg, bg, id, under = 'var(--bg)') {
   return (x + 0.05) / (y + 0.05);
 }
 
-module.exports = { themeIds, tokens, core, colour, hex, contrast, evaluate, luminance, THEME_CSS };
+module.exports = { themeIds, tokens, core, isColour, colour, hex, contrast, evaluate, luminance, THEME_CSS };
