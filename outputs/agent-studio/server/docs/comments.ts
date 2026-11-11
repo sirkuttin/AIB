@@ -60,6 +60,8 @@ export interface ThreadView {
   quoted?: string;
   /** The textblock holding the words, and where they are in its text. */
   block?: string;
+  /** The page the words are on. */
+  page?: string;
   from?: number;
   to?: number;
   anchor?: Anchor;
@@ -187,6 +189,8 @@ function bodyText(value: unknown): string {
 
 export class Comments {
   readonly map: Y.Map<Y.Map<unknown>>;
+  /** The page a block is on (LiveDoc sets it): thread views carry it. */
+  pageOf: ((block: string) => string | null) | null = null;
 
   constructor(readonly doc: Y.Doc) {
     this.map = doc.getMap(COMMENTS) as Y.Map<Y.Map<unknown>>;
@@ -390,6 +394,8 @@ export class Comments {
         v.quote = now;
         if (quoted !== null && quoted !== now) v.quoted = quoted;
         Object.assign(v, { block: idOf(range.el), from: range.from, to: range.to });
+        const page = this.pageOf?.(idOf(range.el));
+        if (page) v.page = page;
       } else v.quote = quoted ?? '';
       v.anchor = anchor;
       if (detached || !range) {

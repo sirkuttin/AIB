@@ -1,9 +1,9 @@
 /**
- * A doc's drawings next to its Markdown copy (docs/<name>.md):
+ * A doc's drawings in its folder (docs/<doc>/), next to its pages' Markdown copies:
  *
- *   docs/<name>.md                               the drawing block: ![caption](<name>.assets/<drawing>.excalidraw.svg)
- *   docs/<name>.assets/<drawing>.excalidraw.svg  the picture, with the scene embedded (files.ts), so viewers show it and AIB reopens it
- *   docs/<name>.assets/<drawing>.excalidraw      the scene as plain JSON: clean diffs, and what agents edit with file tools
+ *   docs/<doc>/NN-<page>.md                    the drawing block: ![caption](assets/<drawing>.excalidraw.svg)
+ *   docs/<doc>/assets/<drawing>.excalidraw.svg  the picture, with the scene embedded (files.ts), so viewers show it and AIB reopens it
+ *   docs/<doc>/assets/<drawing>.excalidraw      the scene as plain JSON: clean diffs, and what agents edit with file tools
  *
  * syncDrawings runs at the start of the store's file sync and at the end of its write (store.ts), for every drawing a block of the doc
  * shows:
@@ -28,33 +28,34 @@ export interface DrawingRef {
   drawing: string;
   caption: string;
   src: string;
+  /** The page the block is on. */
+  page: string;
 }
 
-/** The drawing blocks of a doc, in doc order (anywhere: top level, in a list item, in a quote). */
+/** The drawing blocks of a doc, in doc order, page by page (anywhere: top level, in a list item, in a quote). */
 export function drawingBlocks(live: LiveDoc): DrawingRef[] {
   const out: DrawingRef[] = [];
-  const walk = (p: Y.XmlFragment | Y.XmlElement) => {
+  const walk = (p: Y.XmlFragment | Y.XmlElement, page: string) => {
     for (const c of p.toArray()) {
       if (!(c instanceof Y.XmlElement)) continue;
       if (c.nodeName === 'drawing') {
         const a = c.getAttributes() as Record<string, unknown>;
-        out.push({ drawing: String(a.drawing ?? ''), caption: String(a.caption ?? ''), src: String(a.src ?? '') });
-      } else walk(c);
+        out.push({ drawing: String(a.drawing ?? ''), caption: String(a.caption ?? ''), src: String(a.src ?? ''), page });
+      } else walk(c, page);
     }
   };
-  walk(live.frag);
+  for (const { page, frag } of live.pageFrags()) walk(frag, page);
   return out;
 }
 
-/** The src a new drawing block gets: relative to the Markdown copy, so GitHub and other viewers show the picture. */
-export function drawingSrc(docName: string, drawing: string): string {
-  return `${docName}.assets/${drawing}.excalidraw.svg`;
+/** The src a new drawing block gets: relative to the Markdown copies, so GitHub and other viewers show the picture. */
+export function drawingSrc(drawing: string): string {
+  return `assets/${drawing}.excalidraw.svg`;
 }
 
-/** The two files of a drawing block, or null for a src that is not a drawing in an assets folder next to the copy. */
-export function drawingFiles(mirrorPath: string, src: string): { svg: string; json: string } | null {
+/** The two files of a drawing block, or null for a src that is not a drawing in the doc folder's assets folder. */
+export function drawingFiles(dir: string, src: string): { svg: string; json: string } | null {
   if (!DRAWING_SRC.test(src)) return null;
-  const dir = mirrorPath.slice(0, mirrorPath.lastIndexOf(sep));
   const svg = `${dir}${sep}${src.replace(/^\.\//, '').replace(/\//g, sep)}`;
   return { svg, json: svg.slice(0, -'.svg'.length) };
 }
@@ -85,7 +86,7 @@ export async function syncDrawings(doc: OpenDoc): Promise<SkippedEdit[]> {
   const skipped: SkippedEdit[] = [];
   const seen = new Set<string>();
   for (const ref of drawingBlocks(live)) {
-    const files = drawingFiles(doc.mirrorPath, ref.src);
+    const files = drawingFiles(doc.dir, ref.src);
     if (!files || !ref.drawing || seen.has(files.json)) continue;
     seen.add(files.json);
     let text = await readText(files.json);

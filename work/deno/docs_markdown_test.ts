@@ -4,7 +4,7 @@
  * same block. AIB_DOCS_CORPUS=<folder> adds a folder of .md files (the editor evaluation's 27 files).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
+import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
 import { blockMarkdown, normalize, parseDoc, parseInline, type PMJson } from '../../outputs/agent-studio/server/docs/markdown.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -122,7 +122,7 @@ async function roundTrip(
       console.log('lossy:', name, JSON.stringify(b.node).slice(0, 300)); // shows what to fix
     }
   }
-  return { same: after === text, lossy, blocks: blocks.length };
+  return { same: mdBody(after) === text, lossy, blocks: blocks.length };
 }
 
 Deno.test('round trip through the Y.Doc: unchanged files come out byte for byte (LF and CRLF), every block re-parses the same', async () => {

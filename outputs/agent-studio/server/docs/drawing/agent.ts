@@ -51,7 +51,7 @@ function answer(res: EditResult, head: Json): [boolean, Json] {
 export async function runDrawingTool(doc: OpenDoc, agent: string, tool: string, args: Json): Promise<[boolean, Json]> {
   const live = doc.live;
   const origin = live.originFor('agent', agent);
-  const head = { doc: doc.name, file: doc.mirrorPath };
+  const head = { doc: doc.name, file: doc.file };
   switch (tool) {
     case 'drawing_create': {
       const caption = typeof args.caption === 'string' ? args.caption.trim() : '';
@@ -61,14 +61,14 @@ export async function runDrawingTool(doc: OpenDoc, agent: string, tool: string, 
       }
       if (args.after !== undefined && typeof args.after !== 'string') throw new DocRefusal('bad_op', '`after` is a block id from doc_read');
       const drawing = newDrawingId(doc, caption);
-      const node = { type: 'drawing', attrs: { drawing, caption, src: drawingSrc(doc.name, drawing) } };
+      const node = { type: 'drawing', attrs: { drawing, caption, src: drawingSrc(drawing) } };
       const source = { from: { kind: 'inline', content: [node] }, as: 'blocks' };
       const op = args.after
         ? { op: 'insert', target: { kind: 'blocks', ids: [args.after] }, side: 'after', source }
         : { op: 'insert', target: { kind: 'root' }, side: 'end', source };
-      const ack = live.edit([op], origin) as Json & { created?: string[] };
+      const ack = live.edit([op], origin, args.page) as Json & { created?: string[]; page?: string };
       elementsMap(live.doc, drawing); // the drawing exists from now on, empty
-      const out: Json = { ...head, ok: true, drawing, block: ack.created?.[0], rev: ack.rev };
+      const out: Json = { ...head, ok: true, drawing, page: ack.page, block: ack.created?.[0], rev: ack.rev };
       if (typeof args.mermaid === 'string' && args.mermaid.trim()) {
         const res = await drawing_from_mermaid(live, { drawing, mermaid: args.mermaid }, origin);
         out.mermaid = res.ok ? { created: res.created } : res;
@@ -77,10 +77,12 @@ export async function runDrawingTool(doc: OpenDoc, agent: string, tool: string, 
     }
     case 'drawing_read': {
       if (args.drawing === undefined) {
-        const captions = new Map(drawingBlocks(live).map((b) => [b.drawing, b.caption]));
+        const blocks = new Map(drawingBlocks(live).map((b) => [b.drawing, b]));
+        const captions = new Map([...blocks].map(([id, b]) => [id, b.caption]));
         const drawings = [...drawingsMap(live.doc).keys()].sort().map((id) => ({
           drawing: id,
           caption: captions.get(id) ?? null,
+          ...(blocks.has(id) ? { page: blocks.get(id)!.page } : {}),
           shapes: readModels(live.doc, id).length,
           ...(captions.has(id) ? {} : { inDoc: false }),
         }));

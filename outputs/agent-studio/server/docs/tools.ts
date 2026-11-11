@@ -32,25 +32,28 @@ export async function runDocTool(
       if (typeof markdown !== 'string') throw new DocRefusal('bad_op', '`markdown` is the first content, as a string');
       const doc = await store.open(projectRoot, args.doc, markdown);
       if (chat) store.link(doc, chat, false);
-      return [true, { doc: doc.name, file: doc.mirrorPath, created: true, ...doc.live.read() }];
+      if (args.title !== undefined) doc.live.renamePage(doc.live.firstPage, args.title, doc.live.system);
+      return [true, { doc: doc.name, file: doc.file, created: true, ...doc.live.read(), pages: doc.live.pages() }];
     }
     const doc = await store.open(projectRoot, args.doc);
     if (chat) store.link(doc, chat, false);
     await store.syncMirror(doc);
     const live = doc.live;
     if (DRAWING_TOOL_NAMES.has(tool)) return await runDrawingTool(doc, agent, tool, args);
-    const head = { doc: doc.name, file: doc.mirrorPath };
+    const head = { doc: doc.name, file: doc.file };
     const skipped = doc.skipped.length ? { fileEditsSkipped: doc.skipped.slice(-10) } : {};
     switch (tool) {
       case 'doc_read':
-        return [true, { ...head, ...live.read({ mode: args.mode, id: args.id, query: args.query }), ...skipped }];
+        return [true, { ...head, ...live.read({ mode: args.mode, id: args.id, query: args.query, page: args.page }), ...skipped }];
       case 'doc_changes': {
         const since = Number(args.sinceRev);
         if (!Number.isInteger(since) || since < 0) throw new DocRefusal('bad_op', '`sinceRev` must be the rev of your last read or ack');
         return [true, { ...head, ...live.changes(since), ...skipped }];
       }
       case 'doc_edit':
-        return [true, { ...head, ...live.edit(args.ops, live.originFor('agent', agent)) }];
+        return [true, { ...head, ...live.edit(args.ops, live.originFor('agent', agent), args.page) }];
+      case 'doc_page':
+        return [true, { ...head, ...store.pageOp(doc, args.action, args, live.originFor('agent', agent)) }];
       case 'doc_undo':
         return [true, { ...head, ...live.undo(live.originFor('agent', agent)) }];
       case 'doc_comments': {
@@ -62,7 +65,7 @@ export async function runDocTool(
         return [true, { ...head, ...live.comments.list(since) }];
       }
       case 'doc_comment': {
-        const range = args.target === undefined || args.target === null ? null : live.range(args.target);
+        const range = args.target === undefined || args.target === null ? null : live.range(args.target, args.page);
         const thread = live.comments.add(agent, args.text, range, live.originFor('agent', agent));
         return [true, { ...head, ok: true, ...thread }];
       }

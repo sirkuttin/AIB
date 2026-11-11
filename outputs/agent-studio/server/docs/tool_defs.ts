@@ -14,7 +14,11 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
   'doc_comments {since: <your last seq>} shows the threads; answer with doc_reply. An edit that would remove words a comment hangs ' +
   'on is refused `anchors_affected`: keep them.';
 
-const DOC = { type: 'string', description: 'The doc\'s name, e.g. "plan". Its Markdown copy is docs/<name>.md in the chat\'s project.' };
+const DOC = {
+  type: 'string',
+  description: 'The doc\'s name, e.g. "plan". It lives in docs/<name>/ in the chat\'s project (doc.aibdoc + a Markdown copy per page).',
+};
+const PAGE = { type: 'string', description: 'The page: its id or title (doc_read outline lists pages). Default: the first page.' };
 
 const EDIT_HELP = 'Ops, applied in order, all or nothing (a refused call changed nothing):\n' +
   '- insert: {"op":"insert","target":{"kind":"blocks","ids":["<id>"]},"side":"after"|"before"|"start"|"end","source":{"from":{"kind":"inline","content":"<markdown>"},"as":"markdown"}}' +
@@ -45,18 +49,23 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_list',
     title: 'List docs',
-    description: "The docs of this chat's project (each one's Markdown copy is docs/<name>.md, meant to be committed).",
+    description: "The docs of this chat's project: each is a folder docs/<name>/ holding doc.aibdoc (the doc, meant to be " +
+      'committed) and a generated Markdown copy per page.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'doc_create',
     title: 'Create a doc',
-    description: 'Make a new doc shared with the user (its copy: docs/<name>.md in the project), optionally from Markdown. Refused ' +
-      'with doc_exists if the name is taken. Returns its blocks and `rev`, like doc_read. ' +
+    description: 'Make a new doc shared with the user (its folder: docs/<name>/ in the project), optionally from Markdown (its ' +
+      'first page). Refused with doc_exists if the name is taken. Returns its blocks and `rev`, like doc_read. ' +
       DOC_INSTRUCTIONS,
     inputSchema: {
       type: 'object',
-      properties: { doc: DOC, markdown: { type: 'string', description: 'The first content, as Markdown. Optional.' } },
+      properties: {
+        doc: DOC,
+        markdown: { type: 'string', description: 'The first content, as Markdown. Optional.' },
+        title: { type: 'string', description: "The first page's title. Default: Page 1." },
+      },
       required: ['doc'],
       additionalProperties: false,
     },
@@ -64,10 +73,12 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_read',
     title: 'Read a doc',
-    description: 'Read a doc shared with the user. mode "outline" (headings + top-level blocks with a preview: start here on a long ' +
-      'doc), "full" (default: every block in order with `id`, `h`, `md`; lists, quotes and tables list their `kids`), "block" + id ' +
-      '(that block and all inside it, with its whole Markdown), "search" + query (text blocks holding the words, with char ranges). ' +
-      'Keep the `rev`: guards and doc_changes use it. ' + DOC_INSTRUCTIONS,
+    description: 'Read a doc shared with the user. A doc has pages (like tabs): reads are of one page, "page" (id or title; ' +
+      'default the first). mode "outline" (the pages with their ids, titles and block counts, then the page\'s headings + top-level ' +
+      'blocks with a preview: start here), "full" (default: every block of the page in order with `id`, `h`, `md`; lists, quotes ' +
+      'and tables list their `kids`), "block" + id (that block, on any page, and all inside it, with its whole Markdown), "search" + ' +
+      'query (text blocks holding the words, with char ranges and `page`; every page unless "page"). Keep the `rev`: guards and ' +
+      'doc_changes use it. ' + DOC_INSTRUCTIONS,
     inputSchema: {
       type: 'object',
       properties: {
@@ -75,6 +86,7 @@ export const DOC_TOOLS: Json[] = [
         mode: { type: 'string', enum: ['outline', 'full', 'block', 'search'] },
         id: { type: 'string', description: 'mode "block": the block.' },
         query: { type: 'string', description: 'mode "search": the words (case does not matter).' },
+        page: PAGE,
       },
       required: ['doc'],
       additionalProperties: false,
@@ -83,9 +95,9 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_changes',
     title: 'What changed in a doc',
-    description: 'The blocks changed after `sinceRev` (each with `parent` and `after`, the id of the block before it; `new` if born ' +
-      'since) and the ids of blocks deleted since (`gone`), plus the new `rev`. Start every later turn on a doc with this instead of a ' +
-      'full read.',
+    description: 'The blocks changed after `sinceRev` on every page (each with its `page`, `parent` and `after`, the id of the ' +
+      'block before it; `new` if born since), the ids of blocks deleted since (`gone`), pages added, renamed or moved ' +
+      '(`pagesChanged`) or deleted (`pagesGone`), plus the new `rev`. Start every later turn on a doc with this instead of a full read.',
     inputSchema: {
       type: 'object',
       properties: { doc: DOC, sinceRev: { type: 'integer', minimum: 0, description: 'The rev of your last read or ack.' } },
@@ -96,11 +108,38 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_edit',
     title: 'Edit a doc',
-    description: 'Edit a doc; your edits show at once, marked as yours. ' + EDIT_HELP,
+    description: 'Edit a doc; your edits show at once, marked as yours. One call edits one page: "page" (id or title), else the ' +
+      'page of the blocks the ops name, else the first page; a block on another page is refused wrong_page. ' + EDIT_HELP,
     inputSchema: {
       type: 'object',
-      properties: { doc: DOC, ops: { type: 'array', items: { type: 'object' }, minItems: 1 } },
+      properties: { doc: DOC, ops: { type: 'array', items: { type: 'object' }, minItems: 1 }, page: PAGE },
       required: ['doc', 'ops'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'doc_page',
+    title: "Add, rename, move or delete a doc's page",
+    description: 'A doc has ordered pages (like tabs); doc_read outline lists them. action "add": a new page "title" (after page ' +
+      '"after", default at the end), optionally with "markdown" as its first content. "rename": page "page" gets "title". "move": ' +
+      'page "page" goes after page "after" (null: first). "delete": page "page", guarded by "ifRev" = the rev of the read that showed ' +
+      'it (refused guard_mismatch when anything on it changed since); a page holding the user\'s words is refused user_content unless ' +
+      'the user asked for it ("allowUserContent": true), one with comment threads on its words anchors_affected ("allowDetach": ' +
+      'true). Titles are unique in a doc. doc_undo does not take page changes back.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        doc: DOC,
+        action: { type: 'string', enum: ['add', 'rename', 'move', 'delete'] },
+        page: { type: 'string', description: 'rename, move, delete: the page (id or title).' },
+        title: { type: 'string', description: 'add, rename: the title.' },
+        after: { type: ['string', 'null'], description: 'add, move: the page it goes after (null for move: first).' },
+        markdown: { type: 'string', description: "add: the page's first content." },
+        ifRev: { type: 'integer', minimum: 0, description: 'delete (rename, optional): the rev of your read.' },
+        allowUserContent: { type: 'boolean', description: "delete: true only when the user asked to delete a page with their words." },
+        allowDetach: { type: 'boolean', description: 'delete: true only when the user asked, and comment threads hang on the page.' },
+      },
+      required: ['doc', 'action'],
       additionalProperties: false,
     },
   },
@@ -136,6 +175,7 @@ export const DOC_TOOLS: Json[] = [
       properties: {
         doc: DOC,
         target: { type: 'object', description: 'The words: a find target or one block id. Leave out for a whole-doc note.' },
+        page: { type: 'string', description: 'For a find target: the page to look on (id or title). Default: the first page.' },
         text: { type: 'string', description: 'The comment.' },
       },
       required: ['doc', 'text'],

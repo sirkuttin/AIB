@@ -184,8 +184,12 @@ interface Parsed {
 
 const para = (content: PMJson[]): PMJson => (content.length ? { type: 'paragraph', content } : { type: 'paragraph' });
 
-/** A drawing's picture next to the Markdown copy: <name>.assets/<drawing id>.excalidraw.svg (server/docs/drawing/assets.ts). */
-export const DRAWING_SRC = /^(?:\.\/)?[^/\\<>]+\.assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.excalidraw\.svg$/;
+/**
+ * A drawing's picture next to the Markdown copies: assets/<drawing id>.excalidraw.svg (server/docs/drawing/assets.ts). A doc from
+ * before pages had <name>.assets/<drawing id>.excalidraw.svg (LEGACY_DRAWING_SRC); it is moved from there.
+ */
+export const DRAWING_SRC = /^(?:\.\/)?(?:[^/\\<>]+\.)?assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.excalidraw\.svg$/;
+export const LEGACY_DRAWING_SRC = /^(?:\.\/)?([^/\\<>]+)\.assets\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.excalidraw\.svg$/;
 
 /** A paragraph that is just a drawing's picture (no title, no link) is the drawing block. */
 function drawingOf(p: PMJson): PMJson {

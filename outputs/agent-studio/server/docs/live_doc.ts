@@ -61,7 +61,47 @@ export { FIELD };
 type YType = Y.AbstractType<any>;
 const MSG_SYNC = 0, MSG_AWARENESS = 1;
 export const ROOT = 'root';
-const CONTAINERS = new Set([
+/** The doc's pages, in order: one Y.Map per page ({id, title, field}); `field` names the page's root XmlFragment. */
+export const PAGES = 'pages';
+/** The first page of a doc made before pages existed keeps the old fragment (FIELD), so its blocks keep their ids. */
+export const FIRST_PAGE = 'p1';
+const MAX_TITLE = 100;
+
+export interface PageInfo {
+  id: string;
+  title: string;
+  field: string;
+}
+
+/** The fragment a page's blocks live in. */
+export function fieldOf(page: string): string {
+  return page === FIRST_PAGE ? FIELD : `page:${page}`;
+}
+
+export function newPageMap(id: string, title: string, field = fieldOf(id)): Y.Map<unknown> {
+  const m = new Y.Map<unknown>();
+  m.set('id', id);
+  m.set('title', title);
+  m.set('field', field);
+  return m;
+}
+
+function newPageId(taken: (id: string) => boolean): string {
+  for (;;) {
+    const id = 'p' + crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
+    if (!taken(id)) return id;
+  }
+}
+
+/** A page title as given: trimmed, one line, 1-100 characters. */
+export function pageTitle(value: unknown): string {
+  const t = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (!t || t.length > MAX_TITLE) throw new DocRefusal('bad_op', `\`title\` is the page's title: 1-${MAX_TITLE} characters`);
+  return t;
+}
+
+const rootOf = (page: string) => `${ROOT}:${page}`;
+export const CONTAINERS = new Set([
   'blockquote',
   'bulletList',
   'orderedList',
@@ -133,6 +173,8 @@ export interface Meta {
   gone: Record<string, [number, number]>;
   /** Placeholders an agent planted: id -> intent. */
   pending: Record<string, string>;
+  /** page id -> [rev (title or place last changed), born] */
+  pages?: Record<string, [number, number]>;
 }
 
 type Json = Record<string, unknown>;
@@ -190,12 +232,21 @@ const OPS = new Set([
 
 export class LiveDoc {
   readonly doc: Y.Doc;
-  readonly frag: Y.XmlFragment;
+  /** The pages, in order (PAGES). */
+  readonly pagesArr: Y.Array<Y.Map<unknown>>;
   readonly awareness: awarenessProtocol.Awareness;
   /** The doc's comment threads (comments.ts), kept in this Y.Doc. */
   readonly comments: Comments;
   rev: number;
   #entries = new Map<string, Entry>();
+  /** Per page: its root entry id (rootOf) -> the page and its fragment. */
+  #roots = new Map<string, { page: string; frag: Y.XmlFragment }>();
+  #fragRoot = new Map<Y.XmlFragment, string>();
+  /** Per page: [rev its title or place last changed, born]. */
+  #pageRevs = new Map<string, [number, number]>();
+  /** The pages as last seen (id, title, place), to tell what changed. */
+  #pageSeen = new Map<string, { title: string; index: number }>();
+  #gonePages = new Map<string, number>();
   #gone = new Map<string, [number, number]>();
   #pending: Record<string, string>;
   #origins = new Map<string, Origin>();
@@ -217,9 +268,12 @@ export class LiveDoc {
     meta: Partial<Meta> | null = null,
   ) {
     this.doc = new Y.Doc();
-    this.frag = this.doc.getXmlFragment(FIELD);
     if (state) Y.applyUpdate(this.doc, state, this.system);
+    this.pagesArr = this.doc.getArray(PAGES) as Y.Array<Y.Map<unknown>>;
+    // A doc from before pages (or a new one): its blocks are the first page.
+    if (!this.pageList().length) this.doc.transact(() => this.pagesArr.push([newPageMap(FIRST_PAGE, 'Page 1', FIELD)]), this.system);
     this.comments = new Comments(this.doc);
+    this.comments.pageOf = (id) => (this.has(id) ? this.pageOf(id) : null);
     this.awareness = new awarenessProtocol.Awareness(this.doc);
     this.awareness.setLocalState(null); // the server has no cursor
     this.rev = meta?.rev ?? 0;
@@ -228,8 +282,10 @@ export class LiveDoc {
       this.#gone.set(id, v);
     }
     const saved = meta?.blocks ?? {};
-    this.#entries.set(ROOT, { id: ROOT, el: null, parent: '', kids: [], h: '', md: '', rev: this.rev, sub: this.rev, born: 0 });
-    this.#rescan(ROOT, this.rev, null);
+    this.#syncPages(this.rev, null);
+    for (const [id, v] of Object.entries(meta?.pages ?? {})) {
+      if (this.#pageRevs.has(id)) this.#pageRevs.set(id, v);
+    }
     for (const [id, e] of this.#entries) {
       const s = saved[id];
       if (!s) continue;
@@ -263,9 +319,15 @@ export class LiveDoc {
   meta(): Meta {
     const blocks: Meta['blocks'] = {};
     for (const [id, e] of this.#entries) {
-      if (id !== ROOT) blocks[id] = [e.rev, e.sub, e.born, e.by ?? null];
+      if (!this.#roots.has(id)) blocks[id] = [e.rev, e.sub, e.born, e.by ?? null];
     }
-    return { rev: this.rev, blocks, gone: Object.fromEntries(this.#gone), pending: { ...this.#pending } };
+    return {
+      rev: this.rev,
+      blocks,
+      gone: Object.fromEntries(this.#gone),
+      pending: { ...this.#pending },
+      pages: Object.fromEntries(this.#pageRevs),
+    };
   }
 
   /** The doc's whole state as one compacted update. */
@@ -280,7 +342,8 @@ export class LiveDoc {
     if (!origin) {
       this.#origins.set(key, origin = { kind, name });
       if (kind === 'agent') {
-        const um = new Y.UndoManager(this.frag, { trackedOrigins: new Set([origin]), captureTimeout: 0 });
+        const scope = [...this.#roots.values()].map((r) => r.frag);
+        const um = new Y.UndoManager(scope, { trackedOrigins: new Set([origin]), captureTimeout: 0 });
         this.#undo.set(name, um);
         this.#undoOwner.set(um, name);
       }
@@ -288,17 +351,137 @@ export class LiveDoc {
     return origin;
   }
 
+  // ---------- pages ----------
+
+  /** The pages in order, as stored (a malformed or repeated entry is left out). */
+  pageList(): PageInfo[] {
+    const out: PageInfo[] = [];
+    const seen = new Set<string>();
+    for (const m of this.pagesArr.toArray()) {
+      if (!(m instanceof Y.Map)) continue;
+      const id = m.get('id'), title = m.get('title'), field = m.get('field');
+      if (typeof id !== 'string' || !id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, title: typeof title === 'string' ? title : id, field: typeof field === 'string' && field ? field : fieldOf(id) });
+    }
+    return out;
+  }
+
+  /** The pages for an agent: id, title, how many blocks (all levels). */
+  pages(): { id: string; title: string; blocks: number }[] {
+    return this.pageList().map((p) => ({ id: p.id, title: p.title, blocks: this.#walk(rootOf(p.id)).length }));
+  }
+
+  get firstPage(): string {
+    return this.pageList()[0].id;
+  }
+
+  /** The first page's fragment (the whole doc before pages). */
+  get frag(): Y.XmlFragment {
+    return this.fragOf(this.firstPage);
+  }
+
+  fragOf(page: string): Y.XmlFragment {
+    const r = this.#roots.get(rootOf(page));
+    if (!r) throw new DocRefusal('no_page', `There is no page ${JSON.stringify(page)} in this doc. Its pages: ${this.#pageNames()}.`);
+    return r.frag;
+  }
+
+  /** Every page's fragment, in page order. */
+  pageFrags(): { page: string; frag: Y.XmlFragment }[] {
+    return this.pageList().filter((p) => this.#roots.has(rootOf(p.id))).map((p) => ({ page: p.id, frag: this.#roots.get(rootOf(p.id))!.frag }));
+  }
+
+  #pageNames(): string {
+    return this.pageList().map((p) => `${p.id} ("${p.title}")`).join(', ');
+  }
+
+  /** A page from what an agent gave: its id or its title (case does not matter). Nothing given: the first page. */
+  resolvePage(value: unknown): string {
+    if (value === undefined || value === null || value === '') return this.firstPage;
+    const list = this.pageList();
+    if (typeof value === 'string') {
+      const v = value.trim();
+      const byId = list.find((p) => p.id === v);
+      if (byId) return byId.id;
+      const byTitle = list.filter((p) => p.title.toLowerCase() === v.toLowerCase());
+      if (byTitle.length === 1) return byTitle[0].id;
+      if (byTitle.length > 1) {
+        throw new DocRefusal('bad_page', `Several pages are titled "${v}": name the page by its id. Pages: ${this.#pageNames()}.`);
+      }
+    }
+    throw new DocRefusal('no_page', `There is no page ${JSON.stringify(value)} in this doc. Its pages: ${this.#pageNames()}.`);
+  }
+
+  /** The page a block is on. */
+  pageOf(id: string): string {
+    let e = this.#entries.get(id);
+    while (e && !this.#roots.has(e.id)) e = this.#entries.get(e.parent);
+    return e ? this.#roots.get(e.id)!.page : this.firstPage;
+  }
+
+  #pageEntry(page: string): Y.Map<unknown> | null {
+    return this.pagesArr.toArray().find((m) => m instanceof Y.Map && m.get('id') === page) ?? null;
+  }
+
+  /** A transaction origin for page operations: the author is the agent, but its doc_undo does not track them. */
+  #pageOrigin(origin: Origin): Origin {
+    return { kind: origin.kind, name: origin.name };
+  }
+
+  /** Register pages that appeared, forget pages that went, note titles and places that changed. True if any did. */
+  #syncPages(rev: number, by: string | null): boolean {
+    const list = this.pageList();
+    let changed = false;
+    const ids = new Set(list.map((p) => p.id));
+    for (const [rid, r] of [...this.#roots]) {
+      if (ids.has(r.page)) continue;
+      const root = this.#entries.get(rid)!;
+      for (const k of root.kids ?? []) this.#remove(k, rev);
+      this.#entries.delete(rid);
+      this.#roots.delete(rid);
+      this.#fragRoot.delete(r.frag);
+      this.#pageRevs.delete(r.page);
+      this.#pageSeen.delete(r.page);
+      this.#gonePages.set(r.page, rev);
+      changed = true;
+    }
+    list.forEach((p, index) => {
+      const rid = rootOf(p.id);
+      if (!this.#roots.has(rid)) {
+        const frag = this.doc.getXmlFragment(p.field);
+        this.#roots.set(rid, { page: p.id, frag });
+        this.#fragRoot.set(frag, rid);
+        this.#entries.set(rid, { id: rid, el: null, parent: '', kids: [], h: '', md: '', rev, sub: rev, born: rev });
+        this.#rescan(rid, rev, by);
+        for (const um of this.#undo.values()) um.addToScope(frag);
+        this.#pageRevs.set(p.id, [rev, rev]);
+        this.#gonePages.delete(p.id);
+        changed = true;
+      }
+      const seen = this.#pageSeen.get(p.id);
+      if (!seen || seen.title !== p.title || seen.index !== index) {
+        if (seen) {
+          this.#pageRevs.set(p.id, [rev, this.#pageRevs.get(p.id)?.[1] ?? rev]);
+          changed = true;
+        }
+        this.#pageSeen.set(p.id, { title: p.title, index });
+      }
+    });
+    return changed;
+  }
+
   // ---------- the block index ----------
 
   #isDeleted(t: YType | null): boolean {
-    for (let x = t; x && x !== this.frag; x = x.parent as YType | null) {
+    for (let x = t; x; x = x.parent as YType | null) {
       if (x._item?.deleted) return true;
     }
     return false;
   }
 
   #childElements(id: string): Y.XmlElement[] {
-    const el = id === ROOT ? this.frag : this.#entries.get(id)!.el!;
+    const el = this.#roots.get(id)?.frag ?? this.#entries.get(id)!.el!;
     return el.toArray().filter((c): c is Y.XmlElement => c instanceof Y.XmlElement);
   }
 
@@ -354,12 +537,14 @@ export class LiveDoc {
   /** Look at a container's children again: register new ones, forget removed ones, rehash. True if it changed. */
   #rescan(id: string, rev: number, by: string | null): boolean {
     const e = this.#entries.get(id)!;
+    const isRoot = this.#roots.has(id);
     const now: string[] = [];
     const known = new Set(e.kids ?? []);
     let changed = false;
     for (const el of this.#childElements(id)) {
       const kid = idOf(el);
-      if (!this.#entries.has(kid)) {
+      const had = this.#entries.get(kid);
+      if (!had) {
         this.#add(el, id, rev, by);
         changed = true;
       } else known.delete(kid);
@@ -369,10 +554,10 @@ export class LiveDoc {
       this.#remove(gone, rev);
       changed = true;
     }
-    const h = id === ROOT ? '' : this.#containerHash(e.el!.nodeName, e.el!.getAttributes(), now);
+    const h = isRoot ? '' : this.#containerHash(e.el!.nodeName, e.el!.getAttributes(), now);
     if (changed || h !== e.h || now.join() !== (e.kids ?? []).join()) {
       e.kids = now;
-      if (id !== ROOT) {
+      if (!isRoot) {
         e.h = h;
         e.rev = rev;
         if (by) e.by = by;
@@ -399,12 +584,18 @@ export class LiveDoc {
     const by = this.#authorOf(tr.origin);
     const commented = this.comments.touches(tr);
     const next = this.rev + 1;
+    let changed = false;
+    const pagesTouched = [...tr.changed.keys()].some((t) =>
+      t === (this.pagesArr as unknown as YType) || t.parent === (this.pagesArr as unknown as YType)
+    );
+    if (pagesTouched && this.#syncPages(next, by)) changed = true;
     const dirty = new Set<string>();
-    let rootDirty = false;
+    const rootsDirty = new Set<string>();
     for (const type of tr.changed.keys()) {
       for (let t: YType | null = type; t; t = t.parent as YType | null) {
-        if (t === this.frag) {
-          rootDirty = true;
+        const rid = this.#fragRoot.get(t as Y.XmlFragment);
+        if (rid) {
+          rootsDirty.add(rid);
           break;
         }
         if (
@@ -415,8 +606,7 @@ export class LiveDoc {
         }
       }
     }
-    let changed = false;
-    if (rootDirty && this.#rescan(ROOT, next, by)) changed = true;
+    for (const rid of rootsDirty) if (this.#rescan(rid, next, by)) changed = true;
     // containers first (they find new and removed children), then leaves
     const order = [...dirty].sort((a, b) => Number(!this.#entries.get(a)?.kids) - Number(!this.#entries.get(b)?.kids));
     for (const id of order) {
@@ -464,7 +654,7 @@ export class LiveDoc {
       const a = this.#attrsOf(e);
       if (a) v.attrs = a;
     } else v.md = e.md;
-    if (extra && e.parent !== ROOT) v.parent = e.parent;
+    if (extra && !this.#roots.has(e.parent)) v.parent = e.parent;
     if (e.by) v.by = e.by;
     return v;
   }
@@ -481,13 +671,18 @@ export class LiveDoc {
     }
   }
 
+  /** Who changed a block last ('user', an agent's name, 'file'), if known. */
+  byOf(id: string): string | undefined {
+    return this.#entries.get(id)?.by;
+  }
+
   has(id: string): boolean {
-    return id !== ROOT && this.#entries.has(id);
+    return this.#entries.has(id) && !this.#roots.has(id);
   }
 
   /** All blocks in doc order, with depth (0 = top level). */
   #walk(
-    from = ROOT,
+    from: string,
     depth = 0,
     out: { id: string; depth: number }[] = [],
   ): { id: string; depth: number }[] {
@@ -498,17 +693,19 @@ export class LiveDoc {
     return out;
   }
 
-  topIds(): string[] {
-    return [...(this.#entries.get(ROOT)!.kids ?? [])];
+  /** A page's top-level block ids (default: the first page). */
+  topIds(page?: string): string[] {
+    return [...(this.#entries.get(rootOf(page ?? this.firstPage))?.kids ?? [])];
   }
 
+  /** Blocks of the whole doc (all pages, all levels). */
   get blockCount(): number {
-    return this.#entries.size - 1;
+    return this.#entries.size - this.#roots.size;
   }
 
-  /** The top-level blocks as the Markdown writer needs them (JSON cached per block until something inside it changes). */
-  topBlocks(): DocBlock[] {
-    return this.topIds().map((id) => {
+  /** A page's top-level blocks as the Markdown writer needs them (JSON cached per block until something inside it changes). */
+  topBlocks(page?: string): DocBlock[] {
+    return this.topIds(page).map((id) => {
       const e = this.#entries.get(id)!;
       let cached = this.#topCache.get(id);
       if (!cached || cached.sub !== e.sub) {
@@ -523,22 +720,62 @@ export class LiveDoc {
   // ---------- agent reads ----------
 
   /**
-   * doc_read. mode "outline": headings and the top-level blocks with a preview; "full" (default): every block in doc order;
-   * "block" + id: that block and everything inside it, with its whole Markdown; "search" + query: the text blocks holding the words.
+   * doc_read, on one page (`page`: its id or title; default the first page). mode "outline": the pages, the page's headings and its
+   * top-level blocks with a preview; "full" (default): every block of the page in order; "block" + id: that block (on whatever page)
+   * and everything inside it, with its whole Markdown; "search" + query: the text blocks holding the words (every page unless `page`).
    */
   read(
-    opts: { mode?: unknown; id?: unknown; query?: unknown; ids?: unknown } = {},
+    opts: { mode?: unknown; id?: unknown; query?: unknown; ids?: unknown; page?: unknown } = {},
   ): Json {
     const mode = typeof opts.mode === 'string' ? opts.mode : opts.id ? 'block' : opts.query ? 'search' : 'full';
     const base = { rev: this.rev };
+    if (mode === 'block') {
+      const id = String(opts.id ?? '');
+      if (!this.has(id)) throw this.#goneRefusal(id, 'read');
+      return {
+        ...base,
+        page: this.pageOf(id),
+        block: this.view(id, true),
+        md: this.markdownOf(id),
+        blocks: this.#walk(id, 1).map(({ id: k, depth }) => ({ ...this.view(k, true), depth })),
+      };
+    }
+    if (mode === 'search') {
+      const q = String(opts.query ?? '').toLowerCase();
+      if (!q) throw new DocRefusal('bad_op', 'search needs "query": the words to look for');
+      const pages = opts.page === undefined || opts.page === null || opts.page === ''
+        ? this.pageList().map((p) => p.id)
+        : [this.resolvePage(opts.page)];
+      const hits: Json[] = [];
+      for (const page of pages) {
+        for (const { id } of this.#walk(rootOf(page))) {
+          const e = this.#entries.get(id)!;
+          if (e.kids) continue;
+          const text = TEXTBLOCKS.has(e.el!.nodeName) ? textOf(e.el!) : e.md;
+          const lower = text.toLowerCase();
+          const at: [number, number][] = [];
+          for (
+            let i = lower.indexOf(q);
+            i >= 0 && at.length < 20;
+            i = lower.indexOf(q, i + 1)
+          ) at.push([i, i + q.length]);
+          if (at.length) hits.push({ ...this.view(id, true), page, at });
+        }
+      }
+      return { ...base, query: opts.query, hits };
+    }
+    const page = this.resolvePage(opts.page);
+    const root = rootOf(page);
     if (mode === 'outline') {
-      const top = this.topIds();
-      const outline = this.#walk().filter(({ id }) => this.#entries.get(id)!.el!.nodeName === 'heading').map(({ id, depth }) => {
+      const top = this.topIds(page);
+      const outline = this.#walk(root).filter(({ id }) => this.#entries.get(id)!.el!.nodeName === 'heading').map(({ id, depth }) => {
         const e = this.#entries.get(id)!;
         return { id, level: Number(e.el!.getAttribute('level')) || 1, text: textOf(e.el!), ...(depth ? { parent: e.parent } : {}) };
       });
       return {
         ...base,
+        pages: this.pages(),
+        page,
         count: top.length,
         outline,
         blocks: top.map((id) => {
@@ -548,57 +785,53 @@ export class LiveDoc {
         }),
       };
     }
-    if (mode === 'block') {
-      const id = String(opts.id ?? '');
-      if (!this.has(id)) throw this.#goneRefusal(id, 'read');
-      return {
-        ...base,
-        block: this.view(id, true),
-        md: this.markdownOf(id),
-        blocks: this.#walk(id, 1).map(({ id: k, depth }) => ({ ...this.view(k, true), depth })),
-      };
-    }
-    if (mode === 'search') {
-      const q = String(opts.query ?? '').toLowerCase();
-      if (!q) throw new DocRefusal('bad_op', 'search needs "query": the words to look for');
-      const hits: Json[] = [];
-      for (const { id } of this.#walk()) {
-        const e = this.#entries.get(id)!;
-        if (e.kids) continue;
-        const text = TEXTBLOCKS.has(e.el!.nodeName) ? textOf(e.el!) : e.md;
-        const lower = text.toLowerCase();
-        const at: [number, number][] = [];
-        for (
-          let i = lower.indexOf(q);
-          i >= 0 && at.length < 20;
-          i = lower.indexOf(q, i + 1)
-        ) at.push([i, i + q.length]);
-        if (at.length) hits.push({ ...this.view(id, true), at });
-      }
-      return { ...base, query: opts.query, hits };
-    }
     if (mode !== 'full') throw new DocRefusal('bad_op', '`mode` is outline, full, block (with id) or search (with query)');
     const only = Array.isArray(opts.ids) ? new Set(opts.ids.map(String)) : null;
     return {
       ...base,
-      blocks: this.#walk().filter(({ id }) => !only || only.has(id)).map((
+      page,
+      ...(this.#roots.size > 1 ? { pages: this.pages() } : {}),
+      blocks: this.#walk(root).filter(({ id }) => !only || only.has(id)).map((
         { id, depth },
       ) => ({ ...this.view(id, true), ...(depth ? { depth } : {}) })),
     };
   }
 
-  /** doc_changes: the blocks changed after `sinceRev` (with `after`, the block before each, and `parent`) and the ones gone. */
+  /**
+   * doc_changes: the blocks changed after `sinceRev` on every page (each with its `page`, `after`, the block before it, and
+   * `parent`), the ones gone, and the pages added, renamed or moved (`pagesChanged`) or deleted (`pagesGone`) since.
+   */
   changes(sinceRev: number): Json {
     const changed: Json[] = [];
-    for (const { id } of this.#walk()) {
-      const e = this.#entries.get(id)!;
-      if (e.rev <= sinceRev) continue;
-      const sibs = this.#entries.get(e.parent)?.kids ?? [];
-      const i = sibs.indexOf(id);
-      changed.push({ ...this.view(id, true), after: i > 0 ? sibs[i - 1] : null, ...(e.born > sinceRev ? { new: true } : {}) });
+    for (const { id: page } of this.pageList()) {
+      for (const { id } of this.#walk(rootOf(page))) {
+        const e = this.#entries.get(id)!;
+        if (e.rev <= sinceRev) continue;
+        const sibs = this.#entries.get(e.parent)?.kids ?? [];
+        const i = sibs.indexOf(id);
+        changed.push({
+          ...this.view(id, true),
+          page,
+          after: i > 0 ? sibs[i - 1] : null,
+          ...(e.born > sinceRev ? { new: true } : {}),
+        });
+      }
     }
     const gone = [...this.#gone].filter(([, [rev, born]]) => rev > sinceRev && born <= sinceRev).map(([id]) => id);
-    return { rev: this.rev, sinceRev, changed, gone };
+    const list = this.pageList();
+    const pagesChanged = list.flatMap((p, index) => {
+      const [rev, born] = this.#pageRevs.get(p.id) ?? [0, 0];
+      return rev > sinceRev ? [{ id: p.id, title: p.title, index, ...(born > sinceRev ? { new: true } : {}) }] : [];
+    });
+    const pagesGone = [...this.#gonePages].filter(([, rev]) => rev > sinceRev).map(([id]) => id);
+    return {
+      rev: this.rev,
+      sinceRev,
+      changed,
+      gone,
+      ...(pagesChanged.length ? { pagesChanged } : {}),
+      ...(pagesGone.length ? { pagesGone } : {}),
+    };
   }
 
   // ---------- agent edits ----------
@@ -607,15 +840,19 @@ export class LiveDoc {
    * doc_edit: run the ops in order, all or nothing. Guards are judged on the doc as it stood before the first op; the ops are then
    * tried on a copy of the doc (and the result checked against the schema), and only when every op succeeds there are they applied
    * to the live doc, in the same synchronous turn, so nothing can come in between. Returns the ack: the new rev and what changed.
+   * The ops work on one page: `page` (id or title), else the page of the first block id they name, else the first page.
    */
-  edit(ops: unknown, origin: Origin): Json {
+  edit(ops: unknown, origin: Origin, pageValue?: unknown): Json {
     if (!Array.isArray(ops) || !ops.length) throw new DocRefusal('bad_op', '`ops` must be a non-empty list of ops');
-    (ops as Op[]).forEach((op, i) => this.#checkGuard(op, i));
+    const page = this.#pageForOps(ops as Op[], pageValue);
+    (ops as Op[]).forEach((op, i) => this.#checkGuard(op, i, page));
     const mark = origin.kind === 'agent' ? { by: origin.name } : origin.kind === 'file' ? { by: 'file' } : null;
+    const field = this.#roots.get(rootOf(page))!.frag;
+    const fieldName = this.pageList().find((p) => p.id === page)!.field;
     // dry run on a copy
     const copy = new Y.Doc();
     Y.applyUpdate(copy, this.encode());
-    const copyFrag = copy.getXmlFragment(FIELD);
+    const copyFrag = copy.getXmlFragment(fieldName);
     const lookup = new Map<string, Y.XmlElement>();
     const index = (p: Y.XmlFragment) => {
       for (const c of p.toArray()) {
@@ -660,7 +897,7 @@ export class LiveDoc {
     const um = origin.kind === 'agent' ? this.#undo.get(origin.name) : undefined;
     const stack = um?.undoStack.length ?? 0;
     if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
-    const live = ctxFor(this.doc, this.frag, (id) => {
+    const live = ctxFor(this.doc, field, (id) => {
       const e = this.#entries.get(id);
       return e && e.el && !this.#isDeleted(e.el) ? e.el : null;
     }, mark);
@@ -679,6 +916,7 @@ export class LiveDoc {
     return {
       ok: true,
       rev: this.rev,
+      page,
       changed: ack.changed,
       gone: ack.gone,
       ...(hits.length ? { detached: hits.map((h) => h.thread) } : {}),
@@ -715,10 +953,10 @@ export class LiveDoc {
    * The words a comment goes on: a find target (the exact words, `nth`) or one textblock's id (all its text). Refused like
    * doc_edit's targets (find_none, block_gone).
    */
-  range(target: unknown): { el: Y.XmlElement; from: number; to: number } {
+  range(target: unknown, page?: unknown): { el: Y.XmlElement; from: number; to: number } {
     const t = (target && typeof target === 'object' ? target : {}) as Target;
     if (t.kind === 'find') {
-      const ctx = ctxFor(this.doc, this.frag, () => null, null);
+      const ctx = ctxFor(this.doc, this.fragOf(this.resolvePage(page)), () => null, null);
       try {
         const { el, at, text } = locate(ctx, t, 0);
         return { el, from: at, to: at + text.length };
@@ -746,13 +984,208 @@ export class LiveDoc {
     return { el, from: 0, to: textOf(el).length };
   }
 
-  /** Replace the whole content (restore from history, a doc made from a file). Not guarded: callers check. */
-  replaceAll(nodes: PMJson[], origin: Origin): void {
+  /** Replace a page's whole content (default the first page; restore from history, a doc made from a file). Not guarded: callers check. */
+  replaceAll(nodes: PMJson[], origin: Origin, page?: string): void {
+    if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
+    const frag = this.fragOf(page ?? this.firstPage);
+    this.doc.transact(() => {
+      if (frag.length) frag.delete(0, frag.length);
+      insertNodes(this.doc, frag, 0, nodes.length ? nodes : [{ type: 'paragraph' }]);
+    }, origin);
+  }
+
+  /**
+   * Set the pages to exactly these, in this order (restore from history): a page that exists keeps its id and gets this content; a
+   * new one is made; one not listed goes. Not guarded: callers check.
+   */
+  setPages(pages: { id: string; title: string; nodes: PMJson[] }[], origin: Origin): void {
+    if (!pages.length) return;
+    if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
+    const fields = new Map(this.pageList().map((p) => [p.id, p.field]));
+    const frags = pages.map((p) => this.doc.getXmlFragment(fields.get(p.id) ?? fieldOf(p.id)));
+    for (const f of frags) for (const um of this.#undo.values()) um.addToScope(f);
+    const keep = new Set(pages.map((p) => p.id));
+    this.doc.transact(() => {
+      for (const p of this.pageList()) {
+        if (keep.has(p.id)) continue;
+        const f = this.doc.getXmlFragment(p.field);
+        if (f.length) f.delete(0, f.length);
+      }
+      pages.forEach((p, k) => {
+        const f = frags[k];
+        if (f.length) f.delete(0, f.length);
+        insertNodes(this.doc, f, 0, p.nodes.length ? p.nodes : [{ type: 'paragraph' }]);
+      });
+      this.pagesArr.delete(0, this.pagesArr.length);
+      this.pagesArr.insert(0, pages.map((p) => newPageMap(p.id, p.title, fields.get(p.id) ?? fieldOf(p.id))));
+    }, origin);
+  }
+
+  // ---------- page operations (agents; the page's own editor changes PAGES directly) ----------
+
+  #checkTitle(title: string, except?: string): void {
+    const clash = this.pageList().find((p) => p.id !== except && p.title.toLowerCase() === title.toLowerCase());
+    if (clash) throw new DocRefusal('page_exists', `A page titled "${clash.title}" exists already (${clash.id}): pick another title.`);
+  }
+
+  /**
+   * A new page titled `title`, after `after` (a page; default: at the end), holding `markdown` (default one empty paragraph). The
+   * agent's words carry its mark. Its doc_undo does not take page operations back: delete_page does.
+   */
+  addPage(title: unknown, origin: Origin, opts: { after?: unknown; markdown?: unknown; nodes?: PMJson[]; id?: string } = {}): Json {
+    const t = pageTitle(title);
+    this.#checkTitle(t);
+    const list = this.pageList();
+    const at = opts.after === undefined || opts.after === null
+      ? list.length
+      : list.findIndex((p) => p.id === this.resolvePage(opts.after)) + 1;
+    let nodes: PMJson[] = opts.nodes?.length ? opts.nodes : [{ type: 'paragraph' }];
+    if (!opts.nodes && opts.markdown !== undefined && opts.markdown !== '') {
+      if (typeof opts.markdown !== 'string') throw new DocRefusal('bad_op', "`markdown` is the page's first content, as a string");
+      nodes = sourceNodes({ from: { kind: 'inline', content: opts.markdown }, as: 'markdown' }, 0, 'doc');
+    }
+    const mark = origin.kind === 'agent' ? { by: origin.name } : origin.kind === 'file' ? { by: 'file' } : null;
+    const ready = nodes.map((n) => withMark(n, mark, 'doc'));
+    for (const n of ready) {
+      try {
+        schema.nodeFromJSON(n).check();
+      } catch (error) {
+        throw new DocRefusal('bad_op', `a ${n.type} that the editor cannot hold: ${(error as Error).message}`);
+      }
+    }
+    const free = (x: string) => !list.some((p) => p.id === x) && !this.#gonePages.has(x);
+    const id = opts.id && /^[A-Za-z0-9_-]{1,40}$/.test(opts.id) && free(opts.id)
+      ? opts.id
+      : newPageId((x) => !free(x) || x === FIRST_PAGE);
+    const frag = this.doc.getXmlFragment(fieldOf(id));
     if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
     this.doc.transact(() => {
-      if (this.frag.length) this.frag.delete(0, this.frag.length);
-      insertNodes(this.doc, this.frag, 0, nodes.length ? nodes : [{ type: 'paragraph' }]);
-    }, origin);
+      this.pagesArr.insert(at, [newPageMap(id, t)]);
+      insertNodes(this.doc, frag, 0, ready);
+    }, this.#pageOrigin(origin));
+    return { ok: true, rev: this.rev, page: id, title: t, created: this.topIds(id), pages: this.pages() };
+  }
+
+  /** Rename a page. With `ifRev`: refused if the page changed after that rev. */
+  renamePage(pageValue: unknown, title: unknown, origin: Origin, ifRev?: unknown): Json {
+    const page = this.resolvePage(pageValue);
+    const t = pageTitle(title);
+    this.#checkTitle(t, page);
+    this.#pageGuard(page, ifRev, false);
+    const m = this.#pageEntry(page)!;
+    if (m.get('title') !== t) this.doc.transact(() => m.set('title', t), this.#pageOrigin(origin));
+    return { ok: true, rev: this.rev, page, title: t, pages: this.pages() };
+  }
+
+  /** Move a page: after `after` (a page), or to the start when `after` is null or left out. */
+  movePage(pageValue: unknown, after: unknown, origin: Origin): Json {
+    const page = this.resolvePage(pageValue);
+    const list = this.pageList();
+    const target = after === null || after === undefined || after === '' ? null : this.resolvePage(after);
+    if (target === page) throw new DocRefusal('bad_op', 'a page cannot go after itself');
+    const rest = list.filter((p) => p.id !== page);
+    const at = target === null ? 0 : rest.findIndex((p) => p.id === target) + 1;
+    const from = list.findIndex((p) => p.id === page);
+    if (at !== from) {
+      const me = list[from];
+      this.doc.transact(() => {
+        const i = this.pagesArr.toArray().findIndex((m) => m instanceof Y.Map && m.get('id') === page);
+        this.pagesArr.delete(i, 1);
+        const arr = this.pagesArr.toArray();
+        const before = at < rest.length ? arr.findIndex((m) => m instanceof Y.Map && m.get('id') === rest[at].id) : arr.length;
+        this.pagesArr.insert(before, [newPageMap(me.id, me.title, me.field)]);
+      }, this.#pageOrigin(origin));
+    }
+    return { ok: true, rev: this.rev, page, index: this.pageList().findIndex((p) => p.id === page), pages: this.pages() };
+  }
+
+  /** Refused when the page (its blocks, title or place) changed after `ifRev`. `need`: ifRev must be given. */
+  #pageGuard(page: string, ifRev: unknown, need: boolean): void {
+    if (ifRev === undefined && !need) return;
+    if (typeof ifRev !== 'number') {
+      throw new DocRefusal('missing_guard', 'deleting a page needs "ifRev": the rev of the read that showed it (doc_read outline lists pages).');
+    }
+    if (ifRev > this.rev) {
+      throw new DocRefusal('guard_mismatch', `ifRev ${ifRev} is newer than the doc (rev ${this.rev}); use a rev you read`, { rev: this.rev });
+    }
+    const root = this.#entries.get(rootOf(page))!;
+    const [prev] = this.#pageRevs.get(page) ?? [0, 0];
+    if (root.sub > ifRev || prev > ifRev) {
+      throw new DocRefusal(
+        'guard_mismatch',
+        `page ${page} changed after your read (rev ${ifRev}); read it again (doc_read with its page) and decide from what stands.`,
+        { rev: this.rev, page },
+      );
+    }
+  }
+
+  /** Blocks on the page with words in them that the user (or a file edit) wrote, or that came in with the doc. */
+  #userMade(page: string): string[] {
+    return this.#walk(rootOf(page)).map(({ id }) => this.#entries.get(id)!).filter((e) => {
+      if (e.by && e.by !== 'user' && e.by !== 'file') return false;
+      return e.kids ? false : e.md.trim() !== '';
+    }).map((e) => e.id);
+  }
+
+  /**
+   * Delete a page, guarded by `ifRev` (nothing on it changed since your read). A page with the user's words on it also needs
+   * `allowUserContent` (only when the user asked for it); one with open comment threads on its words needs `allowDetach`.
+   */
+  deletePage(
+    pageValue: unknown,
+    origin: Origin,
+    opts: { ifRev?: unknown; allowUserContent?: unknown; allowDetach?: unknown } = {},
+  ): Json {
+    const page = this.resolvePage(pageValue);
+    const list = this.pageList();
+    if (list.length < 2) {
+      throw new DocRefusal('last_page', 'a doc keeps at least one page. To clear it, replace its blocks instead.');
+    }
+    this.#pageGuard(page, opts.ifRev, true);
+    const user = this.#userMade(page);
+    if (user.length && opts.allowUserContent !== true) {
+      throw new DocRefusal(
+        'user_content',
+        `Not deleted: page "${list.find((p) => p.id === page)!.title}" holds the user's words (${user.length} block(s)). Delete it ` +
+          'only when the user asked for that: then resend with "allowUserContent": true.',
+        { page, blocks: user.slice(0, 10).map((id) => ({ ...this.view(id, true), md: this.markdownOf(id) })) },
+      );
+    }
+    const threads = this.comments.guards().filter((g) => {
+      const block = this.comments.view(g.thread).block;
+      return block !== undefined && this.has(block) && this.pageOf(block) === page;
+    });
+    if (threads.length && opts.allowDetach !== true) {
+      throw new DocRefusal(
+        'anchors_affected',
+        `Not deleted: comment threads hang on words of this page: ${threads.map((t) => `${t.thread} on "${t.quote}"`).join(', ')}. ` +
+          'Only when the user asked for this, resend with "allowDetach": true: the threads stay, marked detached.',
+        { page, threads: threads.map((t) => ({ thread: t.thread, quote: t.quote, by: t.by })) },
+      );
+    }
+    const frag = this.fragOf(page);
+    if (origin.kind === 'agent' || origin.kind === 'file') this.beforeEdit?.(origin.kind === 'file' ? 'file' : origin.name);
+    const o = this.#pageOrigin(origin);
+    this.doc.transact(() => {
+      const i = this.pagesArr.toArray().findIndex((m) => m instanceof Y.Map && m.get('id') === page);
+      this.pagesArr.delete(i, 1);
+      if (frag.length) frag.delete(0, frag.length);
+    }, o);
+    if (threads.length) this.comments.detach(threads.map((t) => t.thread), origin.name, 'edited', o);
+    return { ok: true, rev: this.rev, deleted: page, pages: this.pages() };
+  }
+
+  #pageForOps(ops: Op[], value: unknown): string {
+    if (value !== undefined && value !== null && value !== '') return this.resolvePage(value);
+    for (const op of ops) {
+      if (!op || typeof op !== 'object') continue;
+      for (const t of [op.target, op.to?.target]) {
+        if (t && typeof t === 'object' && t.kind === 'blocks' && Array.isArray(t.ids)) {
+          for (const id of t.ids) if (typeof id === 'string' && this.has(id)) return this.pageOf(id);
+        }
+      }
+    }
+    return this.firstPage;
   }
 
   #goneRefusal(id: string, op: number | string): DocRefusal {
@@ -791,7 +1224,21 @@ export class LiveDoc {
     );
   }
 
-  #checkGuard(op: Op, index: number): void {
+  #onPage(id: string, page: string, index: number): void {
+    if (!this.has(id)) throw this.#goneRefusal(id, index);
+    const on = this.pageOf(id);
+    if (on !== page) {
+      const title = (p: string) => this.pageList().find((x) => x.id === p)?.title ?? p;
+      throw new DocRefusal(
+        'wrong_page',
+        `op ${index}: block ${id} is on page ${on} ("${title(on)}"), not on ${page} ("${title(page)}"). One call edits one page: ` +
+          'send "page" with the block\'s page (blocks do not move between pages).',
+        { op: index, id, page: on },
+      );
+    }
+  }
+
+  #checkGuard(op: Op, index: number, page: string): void {
     if (!op || typeof op !== 'object' || !OPS.has(op.op)) {
       throw new DocRefusal('bad_op', `op ${index}: "op" must be one of ${[...OPS].join(', ')}`, { op: index });
     }
@@ -801,9 +1248,7 @@ export class LiveDoc {
       op.op === 'insert' || op.op === 'table_row_insert' || op.op === 'table_col_insert'
     ) {
       if (target.kind === 'blocks') {
-        for (const id of idsOf(target, index)) {
-          if (!this.has(id)) throw this.#goneRefusal(id, index);
-        }
+        for (const id of idsOf(target, index)) this.#onPage(id, page, index);
       }
       return;
     }
@@ -819,13 +1264,11 @@ export class LiveDoc {
     }
     if (target.kind !== 'blocks') throw new DocRefusal('bad_op', `op ${index}: target.kind must be "blocks" or "find"`, { op: index });
     const ids = idsOf(target, index);
-    for (const id of ids) if (!this.has(id)) throw this.#goneRefusal(id, index);
+    for (const id of ids) this.#onPage(id, page, index);
     if (op.op === 'move') {
       const dest = op.to?.target;
       if (dest?.kind === 'blocks') {
-        for (const id of idsOf(dest, index)) {
-          if (!this.has(id)) throw this.#goneRefusal(id, index);
-        }
+        for (const id of idsOf(dest, index)) this.#onPage(id, page, index);
       }
     }
     if (op.force === true) return;

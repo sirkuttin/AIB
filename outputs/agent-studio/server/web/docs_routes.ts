@@ -4,7 +4,9 @@
  *
  *   POST /api/live/docs/open {id, name, create?}    the page opens a doc (`create`: Markdown, makes a new one): {doc, name, file,
  *                                                   rev, ...info}. Page token.
- *   GET  /api/live/docs/info?id=<chat>&doc=<doc>    what the UI can show about an open doc: rev, skipped file edits (each with the
+ *   GET  /api/live/docs/info?id=<chat>&doc=<doc>    what the UI can show about an open doc: its folder and doc.aibdoc (`dir`,
+ *                                                   `file`), its pages (id, title, blocks, `md` = the page's Markdown copy), rev,
+ *                                                   skipped file edits (each with the
  *                                                   block as the mirror had it, as the doc has it, as the file wanted it), lossy
  *                                                   blocks, the linked chat, the comment threads (comments.ts ThreadView) with
  *                                                   `commentSeq`, and the history (versions with n, rev, by, at).
@@ -82,7 +84,7 @@ export async function sendComment(ctx: WebContext, doc: OpenDoc, thread: unknown
   await ctx.artifacts.refresh().catch(() => {});
   const connection = ctx.artifacts.connectionOf(chat);
   if (!connection) return [409, { error: 'That chat is not open: open it, then send again.', code: 'chat_not_open', chat }];
-  const text = commentMessage(doc.name, doc.mirrorPath, view);
+  const text = commentMessage(doc.name, doc.file, view);
   const clientMessageId = `doc-comment-${doc.id}-${view.thread}-${view.replies.length}`;
   const [status, payload] = await ctx.host.liveCall('queue', { id: connection, text, clientMessageId });
   if (status !== 200) return [status, payload];

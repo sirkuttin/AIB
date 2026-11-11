@@ -7,7 +7,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from 'yjs';
 import { DocRefusal, type LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
+import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
 import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
 import type { ThreadView } from '../../outputs/agent-studio/server/docs/comments.ts';
 import { sendComment } from '../../outputs/agent-studio/server/web/docs_routes.ts';
@@ -155,7 +155,7 @@ Deno.test('the comment tools: who may resolve, since, and the comments survive a
     const info = store.info(doc) as { comments: ThreadView[]; commentSeq: number; chat: string };
     assertEquals([info.comments.length, info.chat, info.commentSeq > seq], [3, 'claude:s1', true]);
     await store.close();
-    const md = await Deno.readTextFile(`${dirs.project}${sep}docs${sep}plan.md`);
+    const md = mdBody(await Deno.readTextFile(`${dirs.project}${sep}docs${sep}plan${sep}01-page-1.md`));
     assertEquals(md, `# Plan\n\n${PARA}\n`);
     // a restart: the threads, their anchors and the linked chat come back from the saved state
     store = new DocStore(dirs.state, { idleMs: 60_000 });

@@ -5,11 +5,11 @@
  */
 type Json = Record<string, unknown>;
 
-const DOC = { type: 'string', description: 'The doc\'s name, e.g. "plan" (its Markdown copy is docs/<name>.md).' };
+const DOC = { type: 'string', description: 'The doc\'s name, e.g. "plan" (its folder is docs/<name>/).' };
 const DRAWING = {
   type: 'string',
   description: "The drawing's id: drawing_create returns it; in the doc's Markdown it is the file name in " +
-    '![caption](<doc>.assets/<id>.excalidraw.svg).',
+    '![caption](assets/<id>.excalidraw.svg).',
 };
 
 const GUARDS = 'The user may be drawing at the same time. Every change to an existing shape needs "ifV" = its v from drawing_read; ' +
@@ -35,14 +35,15 @@ export const DRAWING_TOOLS: Json[] = [
     title: 'Add a drawing to a doc',
     description: 'Put a new drawing (Excalidraw: boxes, arrows, frames) into a doc shared with the user, as its own block: at the end, ' +
       'or after the block "after" (an id from doc_read). Optional "mermaid": a Mermaid flowchart to start it from. Returns the ' +
-      "drawing's id (for drawing_read and drawing_edit), the block's id and the doc's `rev`. In the Markdown copy it is " +
-      '![caption](<doc>.assets/<id>.excalidraw.svg), with the scene as JSON in <doc>.assets/<id>.excalidraw.',
+      "drawing's id (for drawing_read and drawing_edit), the block's id, its page and the doc's `rev`. In the page's Markdown " +
+      'copy it is ![caption](assets/<id>.excalidraw.svg), with the scene as JSON in docs/<doc>/assets/<id>.excalidraw.',
     inputSchema: {
       type: 'object',
       properties: {
         doc: DOC,
         caption: { type: 'string', description: 'What it shows, e.g. "Release flow"; also its picture\'s alt text.' },
-        after: { type: 'string', description: 'The block to put it after. Default: the end of the doc.' },
+        after: { type: 'string', description: 'The block to put it after. Default: the end of the page.' },
+        page: { type: 'string', description: 'The page: its id or title (doc_read outline lists pages). Default: the first page.' },
         mermaid: { type: 'string', description: 'A Mermaid flowchart ("flowchart TD\\n A[Start] --> B[Ship]") to draw first.' },
       },
       required: ['doc', 'caption'],

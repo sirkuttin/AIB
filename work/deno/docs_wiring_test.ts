@@ -9,7 +9,7 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { handle, type ToolContext } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
+import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
 import { DOC_TOOL_NAMES, runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
 import { FIELD } from '../../outputs/agent-studio/server/docs/live_doc.ts';
 import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
@@ -50,6 +50,7 @@ Deno.test("the doc tools are always offered, and a call goes to Studio's doc rou
       'doc_read',
       'doc_changes',
       'doc_edit',
+      'doc_page',
       'doc_undo',
       'doc_comments',
       'doc_comment',
@@ -90,12 +91,12 @@ Deno.test("the doc tools are always offered, and a call goes to Studio's doc rou
     assertEquals(seen[0].path, '/api/live/docs/tool');
     assertEquals(seen[0].key, 'k');
     assertEquals((seen[0].body as Json).conversationId, 'claude:s1');
-    assertEquals(await Deno.readTextFile(`${project}${sep}docs${sep}plan.md`), String.fromCharCode(10)); // the new doc's copy: one empty paragraph
+    assertEquals(mdBody(await Deno.readTextFile(`${project}${sep}docs${sep}plan${sep}01-page-1.md`)), String.fromCharCode(10)); // the new doc's copy: one empty paragraph
     const read = await call('doc_read', { doc: 'plan' });
     const blocks = read.data.blocks as { id: string; h: string; md: string; by?: string }[];
     assertEquals(blocks.map((b) => b.md), ['', '# Plan', 'Ship it in October.']);
     assertEquals(blocks[2].by, 'claude');
-    assertEquals(read.data.file, `${project}${sep}docs${sep}plan.md`);
+    assertEquals(read.data.file, `${project}${sep}docs${sep}plan${sep}doc.aibdoc`);
     const bare = await call('doc_edit', { doc: 'plan', ops: [{ op: 'delete', target: { kind: 'blocks', ids: [blocks[0].id] } }] });
     assertEquals([bare.isError, bare.data.code], [true, 'missing_guard']);
     const none = await call('doc_edit', {

@@ -71,7 +71,11 @@ export class UserClient {
       }
       return null;
     };
-    const el = find(this.frag);
+    let el = find(this.frag);
+    for (const m of this.doc.getArray<Y.Map<unknown>>('pages').toArray()) {
+      if (el) break;
+      el = find(this.doc.getXmlFragment(String(m.get('field'))));
+    }
     assert(el, `no block ${id} in the user's copy`);
     return el;
   }
