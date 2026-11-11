@@ -1071,7 +1071,9 @@ body.ws-dragging {
 /* inbox envelope at the left end of the tab strip */
 .ws-inbox-btn {
   position: relative;
+  z-index: 2; /* its count badge hangs over the corner: draw it above the first tab, never under it */
   flex: none;
+  margin-right: 6px; /* room for the badge's overhang so it doesn't sit on the first tab */
   width: 28px;
   height: 28px;
   margin-bottom: 2px;
