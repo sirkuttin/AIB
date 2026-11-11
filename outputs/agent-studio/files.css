@@ -1,0 +1,600 @@
+/* Project files in the left sidebar (files-ui.js): the Chats | Files switch, the Files pane (scope, filter, tree), file tabs in the
+   tab strip, the read-only file view in the middle and beside the chat, and file links in replies. Theme tokens only; text 12 px
+   or more, rows 28 px or more, nothing that only shows on hover. */
+
+/* ---- the Chats | Files switch, under Find ---- */
+.sf-mode {
+  flex: none;
+  display: flex;
+  margin: 0 0 8px;
+  border: 1px solid var(--line-control);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.sf-mode button {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: 500;
+}
+.sf-mode button + button {
+  border-left: 1px solid var(--line-control);
+}
+.sf-mode button[aria-pressed='true'] {
+  background: var(--accent-wash);
+  color: var(--text);
+  font-weight: 600;
+}
+.sf-mode button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.sf-mode .ws-badge {
+  position: static;
+  box-shadow: none;
+}
+
+/* Files mode hides the chat list (and its archive); Chats mode hides the Files pane. */
+body.sf-files-mode #connections,
+body.sf-files-mode #archivedBox,
+body.sf-files-mode #discoverBox {
+  display: none;
+}
+body:not(.sf-files-mode) #filesPane {
+  display: none;
+}
+
+/* ---- the Files pane ---- */
+.sf-files {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sf-files[hidden] {
+  display: none;
+}
+.sf-scoperow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 4px;
+}
+.fx-scope {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.fx-scope .lbl {
+  flex: none;
+  color: var(--muted);
+}
+.fx-scope b {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+}
+.fx-scope .fx-caretdown {
+  flex: none;
+  color: var(--muted);
+}
+.fx-filter {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 2px 0 6px;
+}
+.fx-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-field);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 12px;
+}
+.fx-search::placeholder {
+  color: var(--muted);
+}
+.fx-toggle {
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-control);
+  border-radius: 15px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.fx-toggle[aria-pressed='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.fx-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 -8px;
+  padding: 2px 0 8px;
+}
+.fx-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px 0 calc(8px + var(--d, 0) * 14px);
+  font-size: 13px;
+  color: var(--text-5);
+  white-space: nowrap;
+  cursor: default;
+}
+.fx-row:hover {
+  background: var(--bg-card-hover);
+}
+.fx-row.sel {
+  background: var(--accent-wash);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.fx-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.fx-note-row {
+  color: var(--muted);
+  font-size: 12px;
+  padding-left: calc(28px + var(--d, 0) * 14px);
+}
+.fx-caret {
+  flex: 0 0 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.fx-ico {
+  flex: 0 0 14px;
+  color: var(--muted);
+}
+.fx-row.dir .fx-ico {
+  color: var(--text-4);
+}
+.fx-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-name mark {
+  background: transparent;
+  color: var(--link);
+  font-weight: 700;
+}
+.fx-row.dir .fx-name {
+  color: var(--text-4);
+  font-weight: 550;
+}
+.fx-dirpath {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+}
+.fx-row.ignored,
+.fx-row.ignored .fx-name,
+.fx-row.ignored .fx-ico {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.fx-tag {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.fx-chg {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--line-control);
+  border-radius: 11px;
+  background: var(--bg-field);
+  font:
+    600 12px/20px Consolas,
+    'Cascadia Mono',
+    monospace;
+  color: var(--text-2);
+}
+.fx-chg .st {
+  font-weight: 700;
+}
+.fx-chg.M .st,
+.fx-chg.R .st {
+  color: var(--git-modified-text);
+}
+.fx-chg.A .st,
+.fx-chg .add {
+  color: var(--ok);
+}
+.fx-chg.D .st {
+  color: var(--danger);
+}
+.fx-chg .del {
+  color: var(--diff-removed-text);
+}
+.fx-dirchg {
+  flex: none;
+  font-size: 12px;
+  color: var(--git-modified-text);
+}
+.fx-art {
+  flex: none;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid var(--accent-line);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--link);
+  font-size: 12px;
+  line-height: 20px;
+}
+.fx-empty {
+  margin: 8px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.fx-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: 0 -8px;
+  padding: 0 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.fx-foot-link {
+  margin-left: auto;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font-size: 12px;
+  text-decoration: underline;
+  text-decoration-color: var(--link-underline);
+}
+
+/* ---- menus (scope, ⋯, right-click on a path) ---- */
+.fx-menu {
+  min-width: 250px;
+}
+.fx-menu-head {
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.fx-menu-it {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+.fx-menu-it.on {
+  background: var(--accent-wash);
+}
+.fx-menu-it .fx-check {
+  flex: 0 0 12px;
+}
+.fx-menu-it .sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- file tabs in the strip ---- */
+.sf-tabsep {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--line-strong);
+}
+.sf-ftab .sf-fico {
+  flex: none;
+  color: var(--link);
+}
+.sf-ftab.preview .ws-tab-title {
+  font-style: italic;
+}
+
+/* ---- the file view: replaces the chat in the middle while a file tab is on ---- */
+body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#fileBeside) {
+  display: none !important;
+}
+.sf-fileview {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.sf-fileview[hidden] {
+  display: none;
+}
+.sf-fv-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.sf-fv-crumb {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sf-fv-crumb b {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.fx-spacer {
+  flex: 1 1 auto;
+}
+.sf-fv-from {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line-control);
+  border-radius: 13px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sf-fv-tools {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 14px 6px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.fx-seg {
+  display: inline-flex;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fx-seg button {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.fx-seg button + button {
+  border-left: 1px solid var(--line-control);
+}
+.fx-seg button[aria-pressed='true'] {
+  background: var(--accent-wash);
+  color: var(--text);
+  font-weight: 600;
+}
+.fx-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.fx-btn.link {
+  border-color: var(--accent-line);
+  color: var(--link);
+}
+.fx-btn:disabled {
+  opacity: 0.6;
+}
+.fx-icobtn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 28px;
+  text-align: center;
+}
+.sf-fv-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fx-code {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+  background: var(--code-bg);
+  font:
+    13px/21px Consolas,
+    'Cascadia Mono',
+    monospace;
+  color: var(--text);
+}
+.fx-ln {
+  display: flex;
+  min-width: max-content;
+  white-space: pre;
+}
+.fx-no {
+  flex: 0 0 52px;
+  padding-right: 14px;
+  text-align: right;
+  color: var(--text-faint);
+  user-select: none;
+}
+.fx-ln.add .fx-no {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.fx-ln.hl {
+  background: var(--accent-wash);
+}
+.fx-note {
+  margin: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.fx-note p {
+  margin: 0;
+}
+.sf-fv-img {
+  display: block;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+  margin: 16px;
+  object-fit: contain;
+  align-self: flex-start;
+  border: 1px solid var(--line);
+}
+.sf-fv-page {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+.fx-pv-foot {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- beside the chat (1280 px and wider): a column on the right of the middle, with its own tab strip ---- */
+main {
+  position: relative;
+}
+body.sf-beside-on main {
+  padding-right: 50%;
+}
+.sf-beside {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--line-strong);
+  background: var(--bg);
+}
+.sf-beside[hidden] {
+  display: none;
+}
+.sf-beside-close {
+  margin-left: auto;
+}
+@media (max-width: 1279px) {
+  body.sf-beside-on main {
+    padding-right: 0;
+  }
+  .sf-beside {
+    display: none;
+  }
+}
+
+/* ---- file links in replies ---- */
+#messages a.fx-path,
+.mirror-msgs a.fx-path {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+a.fx-path code {
+  color: inherit;
+}
+.fx-pico {
+  width: 13px;
+  height: 13px;
+  margin-right: 3px;
+  vertical-align: -2px;
+}

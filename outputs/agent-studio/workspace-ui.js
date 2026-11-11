@@ -35,6 +35,7 @@
     scrim = null,
     inboxOpen = false;
   const S = () => root.AgentSplitUI;
+  const FU = () => root.AgentFilesUI; // files-ui.js: file tabs after the chat tabs, the file view in the middle
   const splitReady = () => !!(S() && S().ready());
   const splitOn = () => splitReady() && S().active();
   // The envelope and the list button live on the first pane's strip when the window is split.
@@ -302,7 +303,8 @@
         handled = true;
       }
     } else if (act.action === 'close') {
-      handled = selectedKey ? closeTabKey(selectedKey) : discardDraft();
+      if (FU() && FU().showingFile && FU().showingFile()) handled = FU().closeActive();
+      else handled = selectedKey ? closeTabKey(selectedKey) : discardDraft();
     }
     if (handled) {
       e.preventDefault();
@@ -562,6 +564,7 @@
         tabSuppress = false;
         return;
       }
+      if (FU() && FU().showChat) FU().showChat(); // a file was showing: back to the chat
       if (key !== selectedKey) openKey(key);
     };
     const x = btn('\u00D7', 'ws-tab-x', 'Close tab: ' + item.title + ' (Alt+W)');
@@ -654,7 +657,9 @@
       : St()
           .tabsOf(ws, pk)
           .filter((k) => itemOf(k));
-    const activeKey = pane ? pane.group.active : selectedKey;
+    // While a file tab is showing, no chat tab is the active one.
+    const fileShown = !!(FU() && FU().showingFile && FU().showingFile());
+    const activeKey = pane ? pane.group.active : fileShown ? '' : selectedKey;
     const p = projectOfKey(pk);
     const before = node.querySelector ? node.querySelector('.ws-tablist') : null,
       keep = before ? before.scrollLeft : 0;
@@ -683,8 +688,10 @@
       const n = key === St().DRAFT ? draftNode() : tabNode(key, activeKey);
       if (n) list.append(n);
     }
-    if (!tabs.length && !hasDraft)
+    const fileTabs = (!pane || pane.first) && FU() && FU().stripNodes ? FU().stripNodes() : [];
+    if (!tabs.length && !hasDraft && !fileTabs.length)
       list.append(el('span', p ? 'No open chats in ' + p.name : 'No open chats', 'ws-tabs-empty'));
+    for (const n of fileTabs) list.append(n);
     list.addEventListener(
       'wheel',
       (e) => {
@@ -2109,6 +2116,7 @@
     drawStrip();
     drawAhead();
     if (inboxOpen) drawInbox();
+    if (FU() && FU().paint) FU().paint(); // the amber count on the Chats half
     autosize();
   }
   // Keep the split layout of the active project (or of "All chats") in step with the tabs, the open chat and the New chat view.
@@ -2169,6 +2177,7 @@
     commit(St().rememberLast(ws, pk, key));
     commit(St().activeAfterOpen(ws, pk));
     if (splitReady()) S().noteOpened(key, ws.active);
+    if (FU() && FU().showChat) FU().showChat();
     lastSig = '';
     setListOpen(false);
   }
@@ -2609,6 +2618,17 @@
       root.AgentOrganizeUI && root.AgentOrganizeUI.markHandled
         ? root.AgentOrganizeUI.markHandled(c)
         : Promise.resolve(),
+    // For files-ui.js: the project on screen, its name, its chats that need you, and the narrow-window drawer.
+    currentProject: () => (ws && ws.active !== St().ALL ? ws.active : ''),
+    currentProjectName: () => {
+      const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
+      return p ? p.name : '';
+    },
+    waitingIn: (pk) => (pk ? waitingFor(pk) : 0),
+    closeDrawer: () => setListOpen(false),
+    openDrawer: () => {
+      if (root.matchMedia && root.matchMedia('(max-width:1100px)').matches) setListOpen(true);
+    },
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,

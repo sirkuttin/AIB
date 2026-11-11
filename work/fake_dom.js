@@ -16,7 +16,11 @@ class Node {
     this.parentNode = null;
     this.attrs = {};
     this.dataset = {};
-    this.style = {};
+    this.style = {
+      setProperty(k, v) {
+        this[k] = String(v);
+      },
+    };
     this.listeners = {};
     this._text = '';
     this._class = new Set();
@@ -54,6 +58,35 @@ class Node {
   }
   get lastChild() {
     return this.children[this.children.length - 1] || null;
+  }
+  get parentElement() {
+    return this.parentNode && this.parentNode.tagName !== '#FRAGMENT' ? this.parentNode : null;
+  }
+  get nodeValue() {
+    return this.tagName === '#TEXT' ? this._text : null;
+  }
+  set nodeValue(v) {
+    if (this.tagName === '#TEXT') this._text = String(v);
+  }
+  // Insert nodes right after this one / put them in its place (fragments give their children).
+  after(...ns) {
+    const p = this.parentNode;
+    if (!p) return;
+    let ref = this.nextSibling;
+    for (const n of ns) {
+      const list = n.tagName === '#FRAGMENT' ? n.children.slice() : [n];
+      for (const x of list) p.insertBefore(x, ref);
+    }
+  }
+  replaceWith(...ns) {
+    const p = this.parentNode;
+    if (!p) return;
+    const ref = this.nextSibling;
+    this.remove();
+    for (const n of ns) {
+      const list = n.tagName === '#FRAGMENT' ? n.children.slice() : [n];
+      for (const x of list) p.insertBefore(x, ref);
+    }
   }
   get nextSibling() {
     if (!this.parentNode) return null;
@@ -224,6 +257,12 @@ function page({ width = 1400, store = {}, ids = [] } = {}) {
     return n;
   };
   document.createDocumentFragment = () => new Node('#fragment', document);
+  // Text nodes in document order (whatToShow 4 = text only, the one use in the page code).
+  document.createTreeWalker = (rootNode) => {
+    const list = rootNode.all().filter((n) => n.tagName === '#TEXT');
+    let i = -1;
+    return { nextNode: () => list[++i] || null };
+  };
   document.addEventListener = (type, fn) => {
     (document.listeners[type] = document.listeners[type] || []).push(fn);
   };

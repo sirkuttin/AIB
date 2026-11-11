@@ -1041,12 +1041,31 @@
       } else if (ended && id) load(true);
       schedule();
     }
+    /* The Files view's change badge: show the Changes tab with this file's diff open and in view. path is repository-relative. */
+    function focusFile(path) {
+      const f = files().find((x) => x.path === path);
+      reveal('changes');
+      if (!f) return false;
+      if (!open.includes(path)) open = open.concat(path);
+      autoOpened = true;
+      if (needsLoad(f)) loadDetail(f);
+      paintList();
+      const row = [...list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === path);
+      if (row) {
+        if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+        if (row.focus) row.focus({ preventScroll: true });
+      }
+      return true;
+    }
     live = {
       sync,
       show,
       reveal,
       state: () => ({ tab: state.tab, expanded: state.expanded }),
       files,
+      data: () => data,
+      chatId: () => chat.id,
+      focusFile,
       open: () => open.slice(),
     };
     if (AR()) AR().mount({ view: artView, badge: artBadge, tab: tabArtifacts, reveal: () => reveal('artifacts'), win });
