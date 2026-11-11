@@ -66,6 +66,8 @@ export const PAGES = 'pages';
 /** The first page of a doc made before pages existed keeps the old fragment (FIELD), so its blocks keep their ids. */
 export const FIRST_PAGE = 'p1';
 const MAX_TITLE = 100;
+const PAGE_ID = /^[A-Za-z0-9_-]{1,40}$/;
+const PAGE_FIELD = /^(?:doc|page:[A-Za-z0-9_-]{1,40})$/;
 
 export interface PageInfo {
   id: string;
@@ -356,13 +358,17 @@ export class LiveDoc {
   /** The pages in order, as stored (a malformed or repeated entry is left out). */
   pageList(): PageInfo[] {
     const out: PageInfo[] = [];
-    const seen = new Set<string>();
+    const seen = new Set<string>(), fields = new Set<string>();
     for (const m of this.pagesArr.toArray()) {
       if (!(m instanceof Y.Map)) continue;
-      const id = m.get('id'), title = m.get('title'), field = m.get('field');
-      if (typeof id !== 'string' || !id || seen.has(id)) continue;
+      const id = m.get('id'), title = m.get('title'), f = m.get('field');
+      if (typeof id !== 'string' || !PAGE_ID.test(id) || seen.has(id)) continue;
+      // a page's blocks live in `doc` or `page:<id>`: never another root type, never one another page uses
+      const field = typeof f === 'string' && PAGE_FIELD.test(f) ? f : fieldOf(id);
+      if (fields.has(field)) continue;
       seen.add(id);
-      out.push({ id, title: typeof title === 'string' ? title : id, field: typeof field === 'string' && field ? field : fieldOf(id) });
+      fields.add(field);
+      out.push({ id, title: typeof title === 'string' && title.trim() ? title : id, field });
     }
     return out;
   }
