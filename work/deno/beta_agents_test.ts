@@ -14,9 +14,10 @@ import {
   resolveBeta,
   shimArgv,
   signinArgv,
+  signinShown,
 } from '../../outputs/agent-studio/server/agents/beta_agents.ts';
-import { BetaSigner, readTerminalArgs } from '../../outputs/agent-studio/server/agents/beta_signin.ts';
-import { readJob } from '../../outputs/agent-studio/server/agents/signin.ts';
+import { BetaSigner, readTerminalArgs, readTerminalMethod } from '../../outputs/agent-studio/server/agents/beta_signin.ts';
+import { normalizeMethodEnv, normalizeMethods, readJob } from '../../outputs/agent-studio/server/agents/signin.ts';
 import { isProvider } from '../../outputs/agent-studio/server/agents/agent_registry.ts';
 import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
 import { describeBeta } from '../../outputs/agent-studio/server/web/shared.ts';
@@ -24,6 +25,7 @@ import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/ses
 import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
 import { MODELS_SOURCE, withModelsOption } from '../../outputs/agent-studio/server/acp/breadth.ts';
 import { AgentOptionsCache } from '../../outputs/agent-studio/server/state/agent_options.ts';
+import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 
 const WIN = Deno.build.os === 'windows';
 const sanitize = { sanitizeOps: false, sanitizeResources: false }; // sign-in jobs run in the background between awaits
@@ -236,7 +238,7 @@ Deno.test('Beta agents are off by default; turning one on and storing its key ne
 
 Deno.test('the Beta npm agents are installable from the allow-list (exact registry versions), the built-ins keep their lockfiles', () => {
   const beta = installer.loadBetaAllowList() as Record<string, Record<string, string>>;
-  assertEquals(Object.keys(beta).sort(), ['cline', 'copilot', 'gemini', 'kilo', 'kimi', 'qwen']);
+  assertEquals(Object.keys(beta).sort(), ['cline', 'copilot', 'gemini', 'kilo', 'kimi', 'opencode', 'qwen']);
   for (const [id, entry] of Object.entries(beta)) {
     assertEquals(entry.package, betaAgent(id)!.npm!.package);
     assertEquals(entry.version, betaAgent(id)!.npm!.version);
@@ -312,7 +314,7 @@ Deno.test(
       assert(!received(log).some((m) => m.method === 'authenticate'), 'ACP authenticate is never sent for a terminal method');
 
       // What the web server runs for the page: the agent's program with the method's args, in a headless pseudo-terminal.
-      const argv = signinArgv(fakeLaunch(authFile), 'opencode', readTerminalArgs(state, 'opencode'))!;
+      const argv = signinArgv(fakeLaunch(authFile), 'opencode', readTerminalMethod(state, 'opencode'))!;
       assertEquals(argv.slice(-1), ['--fixture-login']);
       const sessions = new TerminalSessions();
       try {
@@ -330,6 +332,101 @@ Deno.test(
     }
   },
 );
+
+Deno.test('ACP terminal auth: advertised args go after the launch command (`kimi acp --login`); the catalog fallback after the program', () => {
+  const node = 'C:/node/node.exe';
+  const main = 'C:/state/agents/kimi/2.5.3/node_modules/@moonshot-ai/kimi-code/dist/main.mjs';
+  const kimi: BetaLaunch = {
+    argv: [node, main, 'acp'],
+    base: [node, main],
+    source: 'studio',
+    path: main,
+    found: true,
+    problem: '',
+    text: 'kimi',
+    shim: false,
+  };
+  const advertised = { args: ['--login'], advertised: true };
+  assertEquals(signinArgv(kimi, 'kimi', advertised), [node, main, 'acp', '--login'], 'the method Kimi advertises');
+  assertEquals(signinArgv(kimi, 'kimi', null), [node, main, 'login'], 'no method advertised: `kimi login`');
+  assertEquals(signinArgv(kimi, 'kimi', { args: ['login'], advertised: false }), [node, main, 'login'], 'a saved fallback');
+  assertEquals(signinShown(kimi, 'kimi', advertised), `${node} ${main} acp --login`);
+  // Through an npm .cmd shim: cmd.exe /d /c <shim> acp --login.
+  const shim = 'C:/npm/kimi.cmd';
+  const viaShim: BetaLaunch = { ...kimi, argv: shimArgv(shim, ['acp'], 'cmd.exe'), base: [shim], shim: true, comspec: 'cmd.exe' };
+  assertEquals(signinArgv(viaShim, 'kimi', advertised), ['cmd.exe', '/d', '/c', shim, 'acp', '--login']);
+  assertEquals(signinShown(viaShim, 'kimi', advertised), `${shim} acp --login`, 'shown without cmd.exe');
+  assertEquals(signinArgv(viaShim, 'kimi', null), ['cmd.exe', '/d', '/c', shim, 'login']);
+});
+
+Deno.test("Kimi's catalog entry matches its package: bin kimi -> dist/main.mjs, ACP `acp`, fallback login `kimi login`", () => {
+  const kimi = betaAgent('kimi')!;
+  assertEquals(kimi.npm, { package: '@moonshot-ai/kimi-code', version: '2.5.3', bin: 'kimi', entry: 'dist/main.mjs', minNode: '22.19.0' });
+  assertEquals(kimi.commands, ['kimi']);
+  assertEquals(kimi.args, ['acp']);
+  assertEquals(kimi.signin.terminalArgs, ['login']);
+});
+
+Deno.test("a terminal method's env: the map (v1) and list (v2) shapes are read; odd names and values are dropped", () => {
+  assertEquals(normalizeMethodEnv({ ACP_LOGIN: '1', 'bad name': 'x', N: 5 }), { ACP_LOGIN: '1' });
+  assertEquals(normalizeMethodEnv([{ name: 'ACP_LOGIN', value: '1' }, { name: 'X', value: 'a\nb' }, 'junk']), { ACP_LOGIN: '1' });
+  assertEquals(normalizeMethodEnv(null), {});
+  const [method] = normalizeMethods([{ id: 'login', type: 'terminal', args: ['--login'], env: { ACP_LOGIN: '1' } }]);
+  assertEquals([method.kind, method.args, method.env], ['terminal', ['--login'], { ACP_LOGIN: '1' }]);
+});
+
+Deno.test(
+  'terminal auth end to end: the login runs the full launch command plus the advertised args, with the advertised env',
+  sanitize,
+  async () => {
+    using dir = tempDir();
+    const state = join(dir.root, 'state');
+    const authFile = join(dir.root, 'auth.flag');
+    // Like a real agent: base is the program only; argv adds what starts its ACP mode (here the fake's flags, which the login needs).
+    const launch: BetaLaunch = {
+      argv: [PY, FAKE, '--auth-required', '--beta-auth', '--auth-file', authFile, '--terminal-env'],
+      base: [PY, FAKE],
+      source: 'path',
+      path: FAKE,
+      found: true,
+      problem: '',
+      text: 'kimi',
+      shim: false,
+    };
+    const signer = new BetaSigner(state, () => launch, () => ({}), { checkTimeout: 20 });
+    const answer = await signer.start('kimi');
+    assertEquals([answer.state, answer.args], ['terminal', ['--fixture-login']]);
+    assert(String(answer.command).endsWith('--terminal-env --fixture-login'), String(answer.command));
+    const method = readTerminalMethod(state, 'kimi')!;
+    assertEquals([method.advertised, method.env], [true, { AIB_FIXTURE_LOGIN: 'from-agent' }]);
+    const argv = signinArgv(launch, 'kimi', method)!;
+    assertEquals(argv, [...launch.argv, '--fixture-login']);
+    const sessions = new TerminalSessions();
+    try {
+      const { session } = sessions.open('signin:kimi', dir.root, 100, 30, '', {
+        file: argv[0],
+        args: argv.slice(1),
+        env: { ...method.env },
+      });
+      assertEquals(await session.pty.exited, 0);
+    } finally {
+      await sessions.endAll();
+    }
+    assertEquals(Deno.readTextFileSync(authFile), 'signed in from-agent', 'the login got --auth-file (launch args) and the env');
+  },
+);
+
+Deno.test('every Beta agent with an API key box links to an https key page, and the page gets it (betaInfo.keyUrl)', async () => {
+  for (const a of BETA_AGENTS) {
+    if (a.signin.keyEnv) assert(a.signin.keyUrl?.startsWith('https://'), a.id);
+    else assertEquals(a.signin.keyUrl, undefined, a.id);
+  }
+  using dir = tempDir();
+  const rows = await describeBeta({ stateDir: dir.root }, new SettingsStore(dir.root).snapshot());
+  const info = (id: string) => rows.find((r) => r.id === id)!.betaInfo as Record<string, unknown>;
+  assertEquals(info('gemini').keyUrl, 'https://aistudio.google.com/apikey');
+  assertEquals(info('opencode').keyUrl, '');
+});
 
 Deno.test('agent-type API key method: authenticate carries the stored key in _meta.api-key, then Ready', sanitize, async () => {
   using dir = tempDir();
@@ -581,3 +678,44 @@ Deno.test(
     }
   },
 );
+
+Deno.test("Qwen's optional API address: stored like the key, checked, passed as OPENAI_BASE_URL, empty = Qwen's default", async () => {
+  using dir = tempDir();
+  const store = new SettingsStore(dir.root);
+  const qwen = betaAgent('qwen')!;
+  assertEquals([qwen.signin.baseUrlEnv, qwen.signin.baseUrlHint], [
+    'OPENAI_BASE_URL',
+    'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+  ]);
+  const env = () => Studio.prototype.betaEnv.call({ settings: store } as unknown as Studio, 'qwen');
+  await store.update({ agents: { betaKey: { qwen: 'test-key-not-real' } } });
+  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real' }, 'no address: Qwen uses its own default (OpenAI)');
+  const address = 'https://ws-test.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  await store.update({ agents: { betaUrl: { qwen: ' ' + address + ' ' } } });
+  assertEquals(store.betaUrl('qwen'), address);
+  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real', OPENAI_BASE_URL: address });
+  assertEquals(new SettingsStore(dir.root).betaUrl('qwen'), address, 'read back from the file');
+  assert(!JSON.stringify(store.public()).includes('betaUrls'));
+  const rows = await describeBeta({ stateDir: dir.root }, store.snapshot());
+  const info = rows.find((r) => r.id === 'qwen')!.betaInfo as Record<string, unknown>;
+  assertEquals([info.baseUrlEnv, info.baseUrl], ['OPENAI_BASE_URL', address]);
+  assertEquals((rows.find((r) => r.id === 'gemini')!.betaInfo as Record<string, unknown>).baseUrlEnv, '');
+  for (const bad of [qwen.signin.baseUrlHint!, 'ftp://x.example/v1', 'https://a b', 'not a url']) {
+    let refused = '';
+    try {
+      await store.update({ agents: { betaUrl: { qwen: bad } } });
+    } catch (error) {
+      refused = (error as Error).message;
+    }
+    assertEquals(refused, 'The API address must be one http:// or https:// address, with your own values filled in', bad);
+  }
+  let refused = '';
+  try {
+    await store.update({ agents: { betaUrl: { gemini: address } } });
+  } catch (error) {
+    refused = (error as Error).message;
+  }
+  assertEquals(refused, 'That agent does not take an API address');
+  await store.update({ agents: { betaUrl: { qwen: null } } });
+  assertEquals([store.betaUrl('qwen'), env()], ['', { OPENAI_API_KEY: 'test-key-not-real' }]);
+});

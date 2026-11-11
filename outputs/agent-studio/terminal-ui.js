@@ -1268,9 +1268,14 @@
   /* ---- a sign-in terminal (Settings > AIB Linking > Beta agents) ------------------------------------------------------------ */
 
   /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
-  function signinUrl(loc, agentId, cols, rows) {
+  // step: '' for the sign-in; 'install' or 'prereq:<id>' for a setup terminal (the server picks the command from its catalog).
+  function signinUrl(loc, agentId, cols, rows, step) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-    const q = new URLSearchParams({ signin: agentId, cols: String(cols || 80), rows: String(rows || 24) });
+    const q = new URLSearchParams(
+      step
+        ? { setup: agentId, step, cols: String(cols || 80), rows: String(rows || 24) }
+        : { signin: agentId, cols: String(cols || 80), rows: String(rows || 24) },
+    );
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
   }
   /**
@@ -1322,7 +1327,7 @@
         return Promise.resolve(host.token()).then((token) => {
           if (run.closed) return;
           const WS = (host && host.WebSocket) || root.WebSocket;
-          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows), protocols(token));
+          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows, h.step || ''), protocols(token));
           ws.binaryType = 'arraybuffer';
           run.ws = ws;
           term.onData((data) => {
@@ -1345,10 +1350,16 @@
             } else if (m.type === 'exit' && !run.done) {
               run.done = true;
               if (h.onExit) h.onExit(Number(m.code));
-            } else if (m.type === 'error') fail(String(m.message || 'The sign-in could not start.'));
+            } else if (m.type === 'error')
+              fail(String(m.message || (h.step ? 'The install could not start.' : 'The sign-in could not start.')));
           };
           ws.onclose = () => {
-            if (!run.closed) fail('The sign-in terminal closed before the sign-in finished.');
+            if (!run.closed)
+              fail(
+                h.step
+                  ? 'The install terminal closed before the install finished.'
+                  : 'The sign-in terminal closed before the sign-in finished.',
+              );
           };
         });
       })
@@ -1385,6 +1396,8 @@
     pageTheme,
     plainColour,
     runSignin,
+    // runSetup(box, agentId, step, hooks): the same terminal for a Beta card's setup step ('install' or 'prereq:<id>').
+    runSetup: (box, agentId, step, hooks) => runSignin(box, agentId, Object.assign({}, hooks, { step })),
     signinUrl,
     socketUrl,
     protocols,

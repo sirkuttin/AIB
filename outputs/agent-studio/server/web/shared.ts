@@ -12,6 +12,7 @@ import * as installer from '../agents/installer.ts';
 import * as signin from '../agents/signin.ts';
 import { BETA_AGENTS } from '../agents/beta_catalog.ts';
 import { resolveBeta } from '../agents/beta_agents.ts';
+import { defaultProbe, refreshWindowsPath, type SetupProbe, setupView } from '../agents/beta_setup.ts';
 import { isDict, ValueError } from '../core/py.ts';
 import { codeWarning, HostUnavailable } from '../host/host_client.ts';
 import { packageContext, packageLabel } from '../state/paths.ts';
@@ -30,7 +31,13 @@ export interface AgentOptions {
 export interface SettingsLike {
   launcher(agentId: string): string;
   snapshot(): {
-    agents: { builtin: Record<string, boolean>; custom: CustomAgent[]; beta?: Record<string, boolean>; betaKeys?: Record<string, string> };
+    agents: {
+      builtin: Record<string, boolean>;
+      custom: CustomAgent[];
+      beta?: Record<string, boolean>;
+      betaKeys?: Record<string, string>;
+      betaUrls?: Record<string, string>;
+    };
   };
   public(): Record<string, unknown>;
 }
@@ -116,6 +123,8 @@ export async function describeAgents(
   connections: unknown[] = [],
   recheck = false,
 ): Promise<Record<string, unknown>[]> {
+  // Check again after an installer ran (winget, uv, Node.js): its new PATH folders are only in the registry yet (Windows).
+  if (recheck) await refreshWindowsPath().catch(() => false);
   const state: Record<string, string> = {};
   for (const c of connections ?? []) {
     if (!isDict(c) || c.closed) continue;
@@ -171,7 +180,7 @@ export async function describeAgents(
       signin: row.found ? signinView(options, agentId, state[agentId] ?? '') : null,
     });
   }
-  out.push(...(await describeBeta(options, snap, state, block, sizes)));
+  out.push(...(await describeBeta(options, snap, state, block, sizes, defaultProbe(options.nodeCommand || '', recheck))));
   for (const a of snap.agents.custom) {
     const [found, problem] = commandStatus(a.command);
     out.push({
@@ -219,8 +228,9 @@ export async function describeBeta(
   options: AgentOptions,
   snap: ReturnType<SettingsLike['snapshot']>,
   state: Record<string, string> = {},
-  block = '',
+  _block = '', // the built-ins' "Node.js is needed" line: a Beta card lists its prerequisites itself (betaInfo.setup)
   sizes: Record<string, unknown> = {},
+  probe: SetupProbe = defaultProbe(options.nodeCommand || ''),
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   const on = snap.agents.beta ?? {};
@@ -229,6 +239,8 @@ export async function describeBeta(
   for (const agent of BETA_AGENTS) {
     const row = await resolveBeta(agent.id, { stateDir: options.stateDir ?? null, nodeCommand: options.nodeCommand || '' });
     const installable = !!agent.npm && Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agent.id);
+    // Only for a card that still needs installing: the prerequisites are looked up (and their versions read) then.
+    const setup = row.found ? null : await setupView(agent, probe);
     out.push({
       id: agent.id,
       name: agent.name,
@@ -247,7 +259,7 @@ export async function describeBeta(
       status: state[agent.id] ?? '',
       install: installState(options, agent.id) ?? betaInstallState(options, agent.id),
       installable,
-      installBlock: installable && row.source === 'missing' ? block : '',
+      installBlock: '',
       installHint: '',
       packageBytes: sizes[agent.id] || 0,
       signin: row.found ? betaSigninView(options, agent.id, state[agent.id] ?? '') : null,
@@ -255,11 +267,16 @@ export async function describeBeta(
         cost: agent.cost,
         note: agent.note ?? '',
         license: agent.license,
-        installCommand: agent.install,
+        installCommand: setup && setup.kind === 'terminal' ? setup.command : agent.install,
+        setup,
         docs: agent.docs,
         signin: agent.signin.kind,
         signinCommand: agent.signin.terminalArgs ? [...agent.signin.terminalArgs] : [],
         keyEnv: agent.signin.keyEnv ?? '',
+        keyUrl: agent.signin.keyUrl ?? '',
+        baseUrlEnv: agent.signin.baseUrlEnv ?? '',
+        baseUrlHint: agent.signin.baseUrlHint ?? '',
+        baseUrl: agent.signin.baseUrlEnv ? (snap.agents.betaUrls ?? {})[agent.id] ?? '' : '',
         keySet: !!keys[agent.id],
         keyStorage,
       },

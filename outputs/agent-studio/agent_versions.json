@@ -24,6 +24,7 @@
     "qwen": { "package": "@qwen-code/qwen-code", "version": "0.27.2" },
     "cline": { "package": "cline", "version": "3.0.74" },
     "kimi": { "package": "@moonshot-ai/kimi-code", "version": "2.5.3" },
-    "kilo": { "package": "@kilocode/cli", "version": "7.8.27" }
+    "kilo": { "package": "@kilocode/cli", "version": "7.8.27" },
+    "opencode": { "package": "@opencode/cli", "version": "2.2.7" }
   }
 }

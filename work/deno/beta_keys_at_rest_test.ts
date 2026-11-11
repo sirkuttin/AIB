@@ -110,3 +110,41 @@ Deno.test('no keyring: the key goes to an owner-only beta-keys.json, and Setting
     restore();
   }
 });
+
+Deno.test("Qwen's API address is kept like the keys: sealed in the file, read back, plain ones sealed on load, gone when cleared", async () => {
+  using dir = tempDir();
+  const URL = 'https://ws-test-7c1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'; // a made-up workspace
+  const storedUrl = (root: string) => JSON.parse(settingsText(root)).agents?.betaUrls?.qwen as string | undefined;
+  const store = new SettingsStore(dir.root);
+  await store.update({ agents: { betaKey: { qwen: KEY }, betaUrl: { qwen: URL } } });
+  assert(!settingsText(dir.root).includes(URL) && !settingsText(dir.root).includes(KEY), 'neither is plain in the file');
+  assert(isSealed(storedUrl(dir.root)!), storedUrl(dir.root));
+  const again = new SettingsStore(dir.root);
+  assertEquals([again.betaUrl('qwen'), again.betaKey('qwen')], [URL, KEY]);
+  assert(!JSON.stringify(again.public()).includes(URL));
+  await again.update({ agents: { betaUrl: { qwen: null } } });
+  assertEquals([again.betaUrl('qwen'), storedUrl(dir.root), again.betaKey('qwen')], ['', undefined, KEY], 'the key stays');
+
+  using old = tempDir();
+  Deno.writeTextFileSync(
+    join(old.root, 'studio-settings.json'),
+    JSON.stringify({ version: 1, agents: { betaUrls: { qwen: URL } } }),
+  );
+  const loaded = new SettingsStore(old.root);
+  assertEquals(loaded.betaUrl('qwen'), URL);
+  await loaded.keysSealed();
+  assert(!settingsText(old.root).includes(URL), 'a plain address from an earlier build is sealed after the load');
+  assertEquals(new SettingsStore(old.root).betaUrl('qwen'), URL);
+
+  const restore = withEnv({ AIB_KEY_STORE: 'file' });
+  try {
+    using plainDir = tempDir();
+    const fileStore = new SettingsStore(plainDir.root);
+    await fileStore.update({ agents: { betaKey: { qwen: KEY }, betaUrl: { qwen: URL } } });
+    assertEquals(JSON.parse(Deno.readTextFileSync(join(plainDir.root, KEY_FILE))).keys, { qwen: KEY, 'qwen-address': URL });
+    assertEquals(storedUrl(plainDir.root), FILE_MARK);
+    assertEquals(new SettingsStore(plainDir.root).betaUrl('qwen'), URL);
+  } finally {
+    restore();
+  }
+});
