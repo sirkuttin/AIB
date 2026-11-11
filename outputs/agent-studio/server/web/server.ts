@@ -31,6 +31,7 @@ import { TerminalSessions } from '../terminal/sessions.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 import { RemovedProjects } from '../desktop/project_delete.ts';
 import { projectRemove } from './project_routes.ts';
+import { filesRoutes } from './files_routes.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -198,6 +199,12 @@ export class WebServer {
     for (const [key, handler] of studioRoutes()) {
       this.native.set(key, async (c, url, body, request) => {
         const [status, payload] = await (handler as StudioHandler)(c, url, body, request);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of filesRoutes()) {
+      this.native.set(key, async (c, url, body, request) => {
+        const [status, payload] = await handler(c, url, body, request);
         return this.json(status, payload);
       });
     }

@@ -14,6 +14,7 @@ import { PY_SPACE, pyRepr, pyStrip } from '../core/py.ts';
 import { pathOf } from '../state/paths.ts';
 import { decodeReplace, pureName, pureStem, pureSuffix } from './artifacts.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
+import { lookup as ticketFile, TICKET_PATH } from '../web/file_tickets.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -402,6 +403,9 @@ export function makeHandler(root: string, studioPort: number, ownPort: () => num
     const [rawPath, rawQuery] = splitTarget(target);
     const query = parseQs(rawQuery);
     const unquoted = pyUnquote(rawPath);
+    // Deno only: a project file the Files view shows (Page view, images), by a ticket the Studio route issued (web/file_tickets.ts).
+    const ticket = !rawPath.includes('%00') && !unquoted.includes('\\') ? TICKET_PATH.exec(unquoted) : null;
+    if (ticket) return serveTicket(ticket[1], query, send);
     const match = !rawPath.includes('%00') && !unquoted.includes('\\') ? PATH_RE.exec(unquoted) : null;
     if (!match) return send(404, 'Not found');
     const [, artifactId, numberText, rest] = match;
@@ -436,6 +440,31 @@ export function makeHandler(root: string, studioPort: number, ownPort: () => num
     }
     return send(200, data, mime, extra, CSP_KINDS.includes(ext));
   };
+}
+
+/** A ticketed project file: read only, the artifact CSP for pages, markdown rendered with ?view=1. */
+function serveTicket(
+  id: string,
+  query: Record<string, string[]>,
+  send: (status: number, body: Uint8Array | string, mime?: string, extra?: Record<string, string>, withCsp?: boolean) => Response,
+): Response {
+  const path = ticketFile(id);
+  if (!path) return send(404, 'Not found');
+  let data: Uint8Array;
+  try {
+    if (!Deno.statSync(path).isFile) return send(404, 'Not found');
+    data = Deno.readFileSync(path);
+  } catch {
+    return send(404, 'Not found');
+  }
+  const ext = pureSuffix(path).toLowerCase();
+  let mime = (Object.hasOwn(MIME, ext) ? MIME[ext] : guessType(pureName(path))) || 'application/octet-stream';
+  if (!mime.startsWith('image/') && !CSP_KINDS.includes(ext)) mime = 'text/plain; charset=utf-8'; // never run anything else
+  if ((ext === '.md' || ext === '.markdown') && Object.hasOwn(query, 'view')) {
+    data = markdownPage(decodeReplace(data), pureStem(path));
+    mime = 'text/html; charset=utf-8';
+  }
+  return send(200, data, mime, {}, true);
 }
 
 /** The listener: tries Studio port + 1, then any free port. GET only, 127.0.0.1 only. */
