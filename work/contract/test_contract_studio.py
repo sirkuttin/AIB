@@ -91,13 +91,28 @@ class StudioContract(unittest.TestCase):
 
     # ---- settings and conversation marks ----
     def test_settings(self):
-        self.same_get('/api/live/settings')
-        self.same_get('/api/live/settings?recheck=0')
+        # The Beta agents (server/agents/beta_catalog.ts) are Deno-only: drop their rows from the subject's lists before comparing.
+        beta = {'copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo'}
+
+        def no_beta(data, server):
+            if server is not self.subject:
+                return data
+            def walk(v):
+                if isinstance(v, dict):
+                    return {k: walk(x) for k, x in v.items()}
+                if isinstance(v, list):
+                    return [walk(x) for x in v if not (isinstance(x, dict) and x.get('id') in beta)]
+                return v
+            return walk(data)
+        same_get = lambda path: self.same_get(path, no_beta)
+        same_post = lambda path, body: self.same_post(path, body, no_beta)
+        same_get('/api/live/settings')
+        same_get('/api/live/settings?recheck=0')
         for body in ({}, {'editors': {'default': 'nope'}}, {'appearance': {'defaultView': 'transcript'}}, {'appearance': 5},
                      {'agents': {'builtin': {'omp': False}}}, {'agents': {'custom': 'x'}}, {'launchers': {'claude': 7}}):
-            self.same_post('/api/live/settings', body)
-        self.same_get('/api/live/settings')
-        self.same_post('/api/live/settings', {'agents': {'builtin': {'omp': True}}})
+            same_post('/api/live/settings', body)
+        same_get('/api/live/settings')
+        same_post('/api/live/settings', {'agents': {'builtin': {'omp': True}}})
 
     def test_conversation_marks(self):
         for body in ({'action': 'pin', 'provider': 'claude', 'sessionId': 'mark-1', 'title': 'T', 'cwd': str(self.root)},

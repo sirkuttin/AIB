@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from server_under_test import Server  # noqa: E402
 
 WORK = pathlib.Path(__file__).resolve().parent.parent
-VOLATILE = {'now'}   # wall-clock time of the reply
+VOLATILE = {'now', 'transcriptIdleSeconds'}   # wall-clock time of the reply; seconds since the transcript's last write (can tick between the two replies)
 
 
 def generate(name):
