@@ -329,6 +329,12 @@ export class Studio {
       this.keeper.onLost = (channels) => this.#keeperLost(channels);
       this.keeper.onClient = () => saveKeeperInstance(this.stateDir, this.instanceId); // the ids now live as long as this keeper
     }
+    // The chats on the recovery list ran in the previous AIB of this data folder (an app restart, an update, or the split agent
+    // host this process took over). Their transcript writes up to now are that AIB's own, not another app's: without this the
+    // ownership probe reads a reply written moments before the restart as "another app is writing it", the auto-reconnect is
+    // refused as possibly active and the chat shows "Elsewhere · Working" until the write is two minutes old. Writes after this
+    // start still count, and the command-line and open-file checks are unchanged.
+    for (const item of this.recovered()) this.probe.noteReleased(String(item.provider), String(item.sessionId));
   }
 
   // ---- hooks on each connection ------------------------------------------------------------------------------------------
