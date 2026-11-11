@@ -2,6 +2,11 @@
 
 ## 0.1.0-beta.7 (beta)
 
+- Installing or signing in to a Beta agent turns it On, and a Ready Beta agent shows in New chat unless you turned it off.
+  Agents that aren't ready show greyed out, with the reason and "Set up in Settings ›".
+- Buttons on Settings agent cards keep the card in place (no scroll jump).
+- The first message of a new chat is always sent, even if you switch chats while the agent starts, and links in agent
+  errors are clickable.
 - Merge into main asks the agent: the Changes tab's Merge button sends the chat a fixed merge request (shown as a collapsed
   "Merge requested" chip) and gives that chat a one-time permission to merge, tied to its work at the click. Without the
   click, the agent's merge tool merges nothing and points you to the button. A merge that lands uses the permission up;
