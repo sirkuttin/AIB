@@ -33,6 +33,7 @@ parser.add_argument('--replay-history', action='store_true', help='session/load 
 parser.add_argument('--demo', action='store_true', help='Demo triggers: stream, html, plan, help (see work/demo-studio/README.md); also remembers the session folder')
 parser.add_argument('--models', action='store_true', help="A long model list, three modes with descriptions and an effort setting (implies --breadth's config options); a prompt 'settings?' replies with the current model, mode and effort; session/new calls are counted in the reply too")
 parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
+parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 args = parser.parse_args()
@@ -54,6 +55,7 @@ caps_run = None  # {'turn': prompt key, 'steps': [...], 'results': [...], 'termi
 setup_answer = False
 pending_setup = None
 authenticated = False
+acp_model = ['gemini-2.5-pro']  # --acp-models: the model session/set_model chose
 import os
 import pathlib
 
@@ -452,9 +454,22 @@ for line in sys.stdin:
             session_result = {'sessionId': session_name, 'modes': json.loads(json.dumps(modes))}
             if args.breadth:
                 session_result['configOptions'] = config_options
+            if args.acp_models:
+                session_result['models'] = {'currentModelId': acp_model[0], 'availableModels': [
+                    {'modelId': 'gemini-2.5-pro', 'name': 'Gemini 2.5 Pro', 'description': 'Most capable'},
+                    {'modelId': 'gemini-2.5-flash', 'name': 'Gemini 2.5 Flash'}]}
             result(key, session_result)
             if args.breadth:
                 breadth_announce()
+    elif method == 'session/set_model' and args.acp_models:
+        if params.get('modelId') in ('gemini-2.5-pro', 'gemini-2.5-flash'):
+            acp_model[0] = params['modelId']
+            result(key, {})
+        else:
+            emit({'id': key, 'error': {'code': -32602, 'message': 'Unknown model'}})
+    elif method == 'session/prompt' and args.acp_models and 'model?' in json.dumps(params.get('prompt')):
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture model: ' + acp_model[0]}})
+        result(key, {'stopReason': 'end_turn'})
     elif method == 'session/resume':
         session_name = params.get('sessionId', 'fake-session')
         session_cwd = params.get('cwd') or session_cwd

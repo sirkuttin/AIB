@@ -22,6 +22,8 @@ import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.
 import { describeBeta } from '../../outputs/agent-studio/server/web/shared.ts';
 import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
 import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
+import { MODELS_SOURCE, withModelsOption } from '../../outputs/agent-studio/server/acp/breadth.ts';
+import { AgentOptionsCache } from '../../outputs/agent-studio/server/state/agent_options.ts';
 
 const WIN = Deno.build.os === 'windows';
 const sanitize = { sanitizeOps: false, sanitizeResources: false }; // sign-in jobs run in the background between awaits
@@ -380,3 +382,202 @@ Deno.test('a chat with a Beta agent sends the key method the stored key (connect
   const other = lab.connection([PY, FAKE], { env: { GEMINI_API_KEY: 'k' } }, lab.dir, 'omp');
   assertEquals(other.authenticateParams('gemini-api-key'), { methodId: 'gemini-api-key' });
 });
+
+// ---- ACP `models` (Gemini's model list): the model option, set through session/set_model --------------------------------
+
+Deno.test(
+  'an agent that offers `models` and no model option gets a Model option; picks go through session/set_model',
+  sanitize,
+  async () => {
+    await using lab = new Lab();
+    const log = lab.path('models.log');
+    const restore = withEnv({ FAKE_ACP_LOG: log });
+    try {
+      const c = await lab.open(['--acp-models'], { provider: 'gemini' });
+      const option = (c.settings.configOptions as Record<string, unknown>[])
+        .find((o) => o.id === 'model')!;
+      assertEquals([
+        option.category,
+        option.type,
+        option.currentValue,
+        option._aibSource,
+      ], ['model', 'select', 'gemini-2.5-pro', MODELS_SOURCE]);
+      assertEquals(
+        (option.options as Record<string, unknown>[]).map((
+          o,
+        ) => [o.value, o.name]),
+        [['gemini-2.5-pro', 'Gemini 2.5 Pro'], [
+          'gemini-2.5-flash',
+          'Gemini 2.5 Flash',
+        ]],
+      );
+      await c.changeSetting('config', 'model', 'gemini-2.5-flash');
+      const sets = received(log).filter((m) => m.method === 'session/set_model');
+      assertEquals(
+        sets.map((m) => (m.params as Record<string, unknown>).modelId),
+        ['gemini-2.5-flash'],
+      );
+      assert(
+        !received(log).some((m) => m.method === 'session/set_config_option'),
+        'never set_config_option for it',
+      );
+      const after = (c.settings.configOptions as Record<string, unknown>[])
+        .find((o) => o.id === 'model')!;
+      assertEquals(after.currentValue, 'gemini-2.5-flash');
+      assertEquals(
+        (c.settings.models as Record<string, unknown>).currentModelId,
+        'gemini-2.5-flash',
+      );
+      let refused = '';
+      try {
+        await c.changeSetting('config', 'model', 'not-a-model');
+      } catch (error) {
+        refused = (error as Error).message;
+      }
+      assertEquals(refused, "That is not one of this setting's listed values");
+
+      // the remembered lists (agent-options.json) keep it, so the New chat pickers offer it before a session exists
+      const cache = new AgentOptionsCache(lab.dir);
+      cache.record('gemini', lab.dir, c.startSettings, true);
+      const hit = cache.lookup('gemini', lab.dir)!;
+      assertEquals(hit.model!.choices.map((x) => x.value), [
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
+      ]);
+      assertEquals(
+        new AgentOptionsCache(lab.dir).lookup('gemini', lab.dir)!.model!
+          .configId,
+        'model',
+      );
+    } finally {
+      restore();
+    }
+  },
+);
+
+Deno.test(
+  'a New chat model pick for a `models` agent is applied with session/set_model before the chat is ready',
+  sanitize,
+  async () => {
+    await using lab = new Lab();
+    const log = lab.path('pick.log');
+    const restore = withEnv({ FAKE_ACP_LOG: log });
+    try {
+      const c = lab.connection(
+        [PY, FAKE, '--acp-models'],
+        {},
+        lab.dir,
+        'gemini',
+      );
+      c.startPicks = { model: 'gemini-2.5-flash' };
+      await c.setup(null);
+      assertEquals(
+        received(log).filter((m) => m.method === 'session/set_model').map((m) => (m.params as Record<string, unknown>).modelId),
+        [
+          'gemini-2.5-flash',
+        ],
+      );
+      assertEquals(c.pickResults.map((p) => [p.kind, p.ok]), [['model', true]]);
+    } finally {
+      restore();
+    }
+  },
+);
+
+Deno.test('the probe of a `models` agent records its Model list; an agent with its own model option is left alone', async () => {
+  const own = withModelsOption({
+    configOptions: [{
+      id: 'model',
+      category: 'model',
+      type: 'select',
+      currentValue: 'a',
+      options: [{ value: 'a' }],
+    }],
+    models: { currentModelId: 'x', availableModels: [{ modelId: 'x' }] },
+  });
+  assertEquals((own.configOptions as unknown[]).length, 1);
+  assertEquals(
+    (own.configOptions as Record<string, unknown>[])[0].currentValue,
+    'a',
+  );
+  const none = withModelsOption({ sessionId: 's' });
+  assertEquals('configOptions' in none, false);
+  await using lab = new Lab();
+  const probe = lab.connection(
+    [PY, FAKE, '--acp-models'],
+    {},
+    lab.dir,
+    'gemini',
+  );
+  const result = await probe.probeSettings(20);
+  const cache = new AgentOptionsCache(null);
+  cache.record('gemini', null, result, true);
+  assertEquals(cache.lookup('gemini', null)!.model!.current, 'gemini-2.5-pro');
+});
+
+Deno.test(
+  'Copilot with only a `models` list: its model is set through session/set_model right after session/new',
+  sanitize,
+  async () => {
+    await using lab = new Lab();
+    const log = lab.path('copilot-models.log');
+    const restore = withEnv({ FAKE_ACP_LOG: log });
+    try {
+      await lab.open(['--acp-models'], { provider: 'copilot' });
+      assertEquals(
+        received(log).filter((m) => m.method === 'session/set_model').map((m) => (m.params as Record<string, unknown>).modelId),
+        [
+          'gemini-2.5-pro',
+        ],
+      );
+    } finally {
+      restore();
+    }
+  },
+);
+
+// ---- terminal sign-in from inside a chat --------------------------------------------------------------------------------
+
+Deno.test(
+  'a chat with a terminal-sign-in Beta agent advertises auth.terminal, so its sign-in card gets the terminal method',
+  sanitize,
+  async () => {
+    await using lab = new Lab();
+    const flags = [
+      '--auth-required',
+      '--beta-auth',
+      '--auth-file',
+      lab.path('auth.flag'),
+    ];
+    for (
+      const [provider, terminal] of [['opencode', true], ['gemini', false], [
+        'omp',
+        false,
+      ]] as const
+    ) {
+      const log = lab.path(`${provider}-auth.log`);
+      const restore = withEnv({ FAKE_ACP_LOG: log });
+      try {
+        const c = lab.connection([PY, FAKE, ...flags], {}, lab.dir, provider);
+        c.setup(null).catch(() => {});
+        await waitFor(() => c.auth, 15);
+        const init = received(log).find((m) => m.method === 'initialize')!;
+        const caps = (init.params as Record<string, Record<string, unknown>>)
+          .clientCapabilities;
+        assertEquals(
+          !!(caps.auth as Record<string, unknown> | undefined)?.terminal,
+          terminal,
+          provider,
+        );
+        assertEquals(
+          c.auth!.methods.some((m) => m.kind === 'terminal'),
+          terminal,
+          provider,
+        );
+        c.answerAuth('cancel');
+      } finally {
+        restore();
+      }
+    }
+  },
+);
