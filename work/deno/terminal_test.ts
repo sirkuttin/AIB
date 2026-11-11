@@ -4,7 +4,14 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { clampSize, defaultShell, type Pty, type PtyOptions, spawnPty } from '../../outputs/agent-studio/server/platform/pty.ts';
-import { checkCwd, pasteInput, TerminalError, TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
+import {
+  checkCwd,
+  endsWithPrompt,
+  pasteInput,
+  PromptWatch,
+  TerminalError,
+  TerminalSessions,
+} from '../../outputs/agent-studio/server/terminal/sessions.ts';
 import { acceptKey, encodeFrame, FrameReader, type WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
 import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
@@ -332,6 +339,83 @@ Deno.test({
       assertEquals(pty.busy(), false);
     } finally {
       await pty.kill();
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test('PromptWatch: after Enter, PowerShell is busy until its prompt is printed again; unknown prompts are never busy', () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+  const pwsh = PromptWatch.forShell('C:\\Program Files\\PowerShell\\7\\pwsh.exe');
+  assertEquals(pwsh.busy, false);
+  pwsh.input('\r'); // before any prompt was recognised: not busy
+  assertEquals(pwsh.busy, false);
+  pwsh.output(enc('\x1b[?25l\x1b[2J\x1b[HPS C:\\work> \x1b[?25h'));
+  assertEquals(pwsh.busy, false);
+  pwsh.input('Start-Sl');
+  pwsh.output(enc('Start-Sl'));
+  assertEquals(pwsh.busy, false, 'typing is not running');
+  pwsh.input('\r');
+  assertEquals(pwsh.busy, true, 'Start-Sleep runs inside pwsh: no child process, still busy');
+  pwsh.output(enc('\r\n'));
+  assertEquals(pwsh.busy, true);
+  pwsh.output(enc('\x1b]0;C:\\work\x07PS C:\\work> '));
+  assertEquals(pwsh.busy, false, 'the prompt is back');
+  pwsh.input('python\r');
+  pwsh.output(enc('Python 3.11\r\n>>> '));
+  assertEquals(pwsh.busy, true, 'a REPL prompt is not the shell prompt');
+
+  const cmd = PromptWatch.forShell('C:\\Windows\\System32\\cmd.exe');
+  cmd.output(enc('Microsoft Windows\r\n\r\nC:\\work>'));
+  cmd.input('timeout 5\r');
+  assertEquals(cmd.busy, true);
+  cmd.output(enc('\r\nC:\\work>'));
+  assertEquals(cmd.busy, false);
+
+  const custom = PromptWatch.forShell('pwsh.exe');
+  custom.output(enc('\u276f '));
+  custom.input('Start-Sleep 5\r');
+  assertEquals(custom.busy, false, 'a prompt we never recognised: leave it to Pty.busy()');
+  const bash = PromptWatch.forShell('/bin/bash');
+  bash.output(enc('PS C:\\x> '));
+  bash.input('\r');
+  assertEquals(bash.busy, false, 'only PowerShell and cmd');
+  assertEquals(endsWithPrompt('PS C:\\x> Start-Sleep 5'), false);
+  assertEquals(endsWithPrompt('out\nPS C:\\x> \n'), true);
+});
+
+Deno.test({
+  name: 'PTY busy (sessions): a PowerShell cmdlet that runs inside the shell counts as busy until the prompt is back',
+  ignore: !win,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: 'aib-pty-' });
+    const sessions = new TerminalSessions({ max: 1 });
+    const link = new FakeLink();
+    sessions.attach(link, 'claude:busy', dir, 100, 30);
+    const waitFor = async (needle: string, ms = 15000) => {
+      const end = Date.now() + ms;
+      while (!link.output.includes(needle)) {
+        if (Date.now() > end) throw new Error('timed out waiting for ' + needle);
+        await sleep(100);
+      }
+    };
+    const ask = () => {
+      link.onmessage!(JSON.stringify({ type: 'busy?', id: 1 }));
+      return link.messages.at(-1).busy;
+    };
+    try {
+      link.onmessage!(JSON.stringify({ type: 'input', data: '"go-" + 1\r' }));
+      await waitFor('go-1');
+      await sleep(500);
+      assertEquals(ask(), false);
+      link.onmessage!(JSON.stringify({ type: 'input', data: 'Start-Sleep -Seconds 3; "done-" + 2\r' }));
+      await sleep(1000);
+      assertEquals(ask(), true, 'Start-Sleep is running');
+      await waitFor('done-2');
+      await sleep(800);
+      assertEquals(ask(), false, 'back at the prompt');
+    } finally {
+      await sessions.endAll();
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
   },

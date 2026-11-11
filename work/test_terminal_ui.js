@@ -106,7 +106,12 @@ function setup({ windows = true, list = [] } = {}) {
   const T = ctx.AibTerminal;
   const state = { current: null, posts: [], selects: [], refreshes: 0, token: 'TOK', changes: 0, composer: 0 };
   const chats = {
-    'claude:a': { key: 'claude:a', cwd: 'C:\\Users\\me\\repo\\.claude\\worktrees\\wt-a', project: 'C:\\Users\\me\\repo', title: 'A' },
+    'claude:a': {
+      key: 'claude:a',
+      cwd: 'C:\\Users\\me\\repo\\.claude\\worktrees\\wt-a',
+      project: 'C:\\Users\\me\\repo',
+      title: 'A',
+    },
     'claude:b': { key: 'claude:b', cwd: 'C:\\work\\b', project: 'C:\\work\\b', title: 'B' },
     'claude:nofolder': { key: 'claude:nofolder', cwd: '', title: 'N' },
   };
@@ -162,10 +167,18 @@ function viewsHidden(env) {
 
 test('pure parts: socket address, token subprotocol, theme tokens, short folder, idle time, toggle keys', () => {
   const T = require('../outputs/agent-studio/terminal-ui.js');
-  const url = new URL(T.socketUrl({ protocol: 'http:', host: '127.0.0.1:8850' }, 'claude:x y', 'C:\\a b', 120, 33, 'windows-powershell'));
+  const url = new URL(
+    T.socketUrl({ protocol: 'http:', host: '127.0.0.1:8850' }, 'claude:x y', 'C:\\a b', 120, 33, 'windows-powershell'),
+  );
   assert.equal(url.origin, 'ws://127.0.0.1:8850');
   assert.equal(url.pathname, '/api/live/terminal');
-  assert.deepEqual(Object.fromEntries(url.searchParams), { key: 'claude:x y', cwd: 'C:\\a b', cols: '120', rows: '33', shell: 'windows-powershell' });
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    key: 'claude:x y',
+    cwd: 'C:\\a b',
+    cols: '120',
+    rows: '33',
+    shell: 'windows-powershell',
+  });
   assert.deepEqual(T.protocols('abc-_1'), ['aib-terminal', 'aib-token.abc-_1']);
   const theme = T.themeFrom((name) => ({ '--term-bg': ' #000 ', '--text': '#eee' })[name] || '');
   assert.deepEqual([theme.background, theme.foreground, theme.selectionBackground], ['#000', '#eee', '#3d3456']);
@@ -192,7 +205,10 @@ test('the button: far right of the chat header, hidden without a folder, pressed
   const env = setup();
   const { T, button, actions, show, dock } = env;
   const wrap = actions.children.at(-1);
-  assert.ok(wrap.classList.contains('aib-term-toggle-wrap') && wrap.contains(button), 'the button is last in .header-actions');
+  assert.ok(
+    wrap.classList.contains('aib-term-toggle-wrap') && wrap.contains(button),
+    'the button is last in .header-actions',
+  );
   assert.equal(button.getAttribute('aria-keyshortcuts'), 'Control+` Control+J');
   assert.equal(wrap.hidden, true);
   show('claude:nofolder');
@@ -236,7 +252,10 @@ test('the panel: under the message box, one shell per chat in its folder; switch
   assert.equal(dock.parentNode.id, 'chat');
   assert.equal(q('.aib-term-divider').getAttribute('role'), 'separator');
   assert.equal(q('.aib-term-path-prefix').textContent + q('.aib-term-path-last').textContent, '~\\…\\worktrees\\wt-a');
-  assert.equal(q('.aib-term-path').title, 'PowerShell 7, running in C:\\Users\\me\\repo\\.claude\\worktrees\\wt-a (click to copy)');
+  assert.equal(
+    q('.aib-term-path').title,
+    'PowerShell 7, running in C:\\Users\\me\\repo\\.claude\\worktrees\\wt-a (click to copy)',
+  );
   assert.ok(q('.aib-term-shell').classList.contains('is-ok'));
   assert.equal(q('.aib-term-shell').textContent, 'PowerShell 7');
   assert.ok(q('.aib-term-slot'), 'a slot for Send to chat (phase 4)');
@@ -251,17 +270,30 @@ test('the panel: under the message box, one shell per chat in its folder; switch
   assert.deepEqual(ws.sent.at(-1), { type: 'resize', cols: 90, rows: 20 });
   ws.onmessage({ data: new Uint8Array([104, 105]).buffer });
   assert.deepEqual([...term.written.at(-1)], [104, 105]);
-  assert.equal(term.keyFn({ type: 'keydown', ctrlKey: true, key: 'v' }), false, 'Ctrl+V is left to the safe paste event');
+  assert.equal(
+    term.keyFn({ type: 'keydown', ctrlKey: true, key: 'v' }),
+    false,
+    'Ctrl+V is left to the safe paste event',
+  );
 
   show('claude:b');
   assert.equal(dock.hidden, true);
   assert.equal(T.isOpen('claude:b'), false);
   await openReady(env, 'claude:b');
   const views = dock.querySelectorAll('.aib-term-view');
-  assert.deepEqual(views.map((v) => [v.dataset.key, v.hidden]), [['claude:a', true], ['claude:b', false]]);
+  assert.deepEqual(
+    views.map((v) => [v.dataset.key, v.hidden]),
+    [
+      ['claude:a', true],
+      ['claude:b', false],
+    ],
+  );
   show('claude:a');
   assert.equal(dock.hidden, false);
-  assert.deepEqual(views.map((v) => v.hidden), [false, true]);
+  assert.deepEqual(
+    views.map((v) => v.hidden),
+    [false, true],
+  );
   assert.equal(FakeWS.all.length, 2, 'no new shell for a chat that has one');
 
   // the trash button ends the shell and removes the panel
@@ -281,7 +313,7 @@ test('session ended: the end line with the exit code, Start new session / Close 
   ws.message({ type: 'exit', code: 0 });
   ws.drop();
   assert.equal(q('.aib-term-ended').hidden, false);
-  assert.match(q('.aib-term-endline').textContent, /^Session ended · exit code 0 · \d\d:\d\d$/);
+  assert.match(q('.aib-term-endline').textContent, /^Session ended · exit code 0 · \d{1,2}:\d\d(\s?[AP]M)?$/i); // the chat's clock (4:10 PM, or 16:10 where 24-hour is the norm)
   assert.ok(q('.aib-term-shell').classList.contains('is-off'));
   assert.equal(q('.aib-term-shell').textContent, 'PowerShell 7 · ended');
   assert.ok(q('.aib-term-end').classList.contains('is-close'));
@@ -313,7 +345,12 @@ test('shell failed: the reason, Try again and Use Windows PowerShell (a new sock
   show('claude:a');
   const opening = T.open('claude:a');
   await until(() => FakeWS.all.length === 1, 'socket');
-  FakeWS.all[0].message({ type: 'error', code: 'spawn_failed', shellName: 'PowerShell 7', message: 'pwsh.exe: not found' });
+  FakeWS.all[0].message({
+    type: 'error',
+    code: 'spawn_failed',
+    shellName: 'PowerShell 7',
+    message: 'pwsh.exe: not found',
+  });
   FakeWS.all[0].drop();
   await assert.rejects(opening, /not found/);
   assert.ok(q('.aib-term-msg').classList.contains('is-failed'));
@@ -370,14 +407,26 @@ test('too many sessions: which chats hold them (idle ones first), End one and th
   ];
   const opening = T.open('claude:b');
   await until(() => FakeWS.all.length === 1, 'socket');
-  FakeWS.all[0].message({ type: 'error', code: 'too_many', max: 8, terminals, message: '8 terminals are already open.' });
+  FakeWS.all[0].message({
+    type: 'error',
+    code: 'too_many',
+    max: 8,
+    terminals,
+    message: '8 terminals are already open.',
+  });
   FakeWS.all[0].drop();
   await assert.rejects(opening);
   assert.equal(q('.aib-term-msg').querySelector('h3').textContent, '8 terminals are already open');
   const rows = env.dock.querySelectorAll('.aib-term-li');
-  assert.deepEqual(rows.map((r) => r.querySelector('.aib-term-li-name').textContent), ['claude:x4', 'Chats: injected notes', 'Linux AppImage icon']);
+  assert.deepEqual(
+    rows.map((r) => r.querySelector('.aib-term-li-name').textContent),
+    ['claude:x4', 'Chats: injected notes', 'Linux AppImage icon'],
+  );
   assert.equal(rows[1].querySelector('.aib-term-li-idle').textContent, 'idle 5h');
-  assert.equal(rows[1].querySelector('.aib-term-act').getAttribute('aria-label'), 'End terminal in Chats: injected notes');
+  assert.equal(
+    rows[1].querySelector('.aib-term-act').getAttribute('aria-label'),
+    'End terminal in Chats: injected notes',
+  );
   act('Show all 4').click();
   assert.equal(env.dock.querySelectorAll('.aib-term-li').length, 4);
   env.dock.querySelectorAll('.aib-term-li')[0].querySelector('.aib-term-act').click();
@@ -463,6 +512,8 @@ test('Ctrl+` and Ctrl+J (by key position): open and focus; pressed in the termin
   assert.ok(ev.defaultPrevented);
   assert.equal(dock.hidden, true);
   assert.equal(state.composer, 1);
+  /* this host's message box did not take focus: it lands on the terminal button, never on <body> */
+  assert.equal(shell.document.activeElement, env.button);
   assert.equal(T.hasSession('claude:a'), true);
 });
 

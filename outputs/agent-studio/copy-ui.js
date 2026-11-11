@@ -10,6 +10,11 @@
     ['plain', 'Copy as plain text'],
   ];
   const STORE_KEY = 'agentStudio.copyFormat';
+  /* Code blocks remember their own format, plain code by default (no ``` fences): pasting code into a terminal or editor
+     is the common case. The whole-message format above is a separate setting. */
+  const CODE_KEY = 'agentStudio.copyFormat.code';
+  const keyOf = (scope) => (scope === 'code' ? CODE_KEY : STORE_KEY);
+  const defaultOf = (scope) => (scope === 'code' ? 'plain' : 'markdown');
   const doc = () => root.document || globalThis.document;
   const esc = (value) =>
     String(value ?? '')
@@ -25,16 +30,16 @@
       return null;
     }
   };
-  function lastFormat() {
+  function lastFormat(scope) {
     try {
-      const v = root.localStorage.getItem(STORE_KEY);
+      const v = root.localStorage.getItem(keyOf(scope));
       if (FORMATS.some((f) => f[0] === v)) return v;
     } catch {}
-    return 'markdown';
+    return defaultOf(scope);
   }
-  function rememberFormat(format) {
+  function rememberFormat(format, scope) {
     try {
-      root.localStorage.setItem(STORE_KEY, format);
+      root.localStorage.setItem(keyOf(scope), format);
     } catch {}
   }
   const label = (format) => (FORMATS.find((f) => f[0] === format) || FORMATS[0])[1];
@@ -270,6 +275,19 @@
       html: () => '<pre style="' + STYLE.pre + '"><code style="' + FONT + '">' + esc(code) + '</code></pre>',
     };
   }
+  /* A message that is only links or files (resource rows): their names and addresses, one per line. */
+  function attachmentText(row) {
+    return (row.attachments || [])
+      .map((a) => {
+        if (!a || typeof a !== 'object') return '';
+        const res = a.resource && typeof a.resource === 'object' ? a.resource : {},
+          name = a.title || a.name || '',
+          where = a.uri || res.uri || '';
+        return [name, where].filter(Boolean).join(' ');
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
   function fromRow(row) {
     if (!row) return null;
     const TV = root.ToolViews;
@@ -278,7 +296,10 @@
       if (row.call && TV) return fromMarkdown(TV.callMarkdown(row.call));
       return row.value ? fromMarkdown(fence(row.value, 'json')) : null;
     }
-    if (!row.value) return null;
+    if (!row.value) {
+      const links = attachmentText(row);
+      return links ? fromPlain(links) : null;
+    }
     if (row.role === 'assistant' && root.AgentMarkdown) return fromMarkdown(row.value);
     return fromPlain(row.value);
   }
@@ -386,7 +407,7 @@
       manualCopy(anchor, textFor(format === 'teams' ? 'plain' : format, payload));
     }
   }
-  function showMenu(arrow, anchor, getPayload, status) {
+  function showMenu(arrow, anchor, getPayload, status, scope) {
     if (openMenu && openMenu.arrow === arrow) {
       closeMenu();
       return;
@@ -394,14 +415,14 @@
     closeMenu();
     const menu = el('div', 'copy-menu');
     menu.setAttribute('role', 'menu');
-    const current = lastFormat();
+    const current = lastFormat(scope);
     for (const [format, text] of FORMATS) {
       const item = el('button', 'copy-menu-item', (format === current ? '✓ ' : '    ') + text);
       item.type = 'button';
       item.setAttribute('role', 'menuitem');
       item.addEventListener('click', (event) => {
         event.stopPropagation();
-        rememberFormat(format);
+        rememberFormat(format, scope);
         closeMenu();
         syncTitles();
         perform(format, getPayload(), anchor, status);
@@ -434,9 +455,8 @@
   }
   const controls = new Set();
   function syncTitles() {
-    const text = label(lastFormat());
     for (const main of controls) {
-      if (main.isConnected) main.title = text;
+      if (main.isConnected) main.title = label(lastFormat(main.copyScope));
       else controls.delete(main);
     }
   }
@@ -444,25 +464,27 @@
   function makeControl(getPayload, extraClass) {
     const wrap = el('span', 'copy-ctl' + (extraClass ? ' ' + extraClass : '')),
       main = el('button', 'copy-main', 'Copy'),
-      arrow = el('button', 'copy-more', '▾');
+      arrow = el('button', 'copy-more', '▾'),
+      scope = extraClass === 'copy-code' ? 'code' : 'message';
+    main.copyScope = scope;
     main.type = 'button';
     arrow.type = 'button';
     arrow.setAttribute('aria-haspopup', 'menu');
     arrow.setAttribute('aria-expanded', 'false');
     arrow.title = 'Choose copy format';
     arrow.setAttribute('aria-label', 'Choose copy format');
-    main.title = label(lastFormat());
+    main.title = label(lastFormat(scope));
     controls.add(main);
     main.addEventListener('click', (event) => {
       event.stopPropagation();
       event.preventDefault();
       closeMenu();
-      perform(lastFormat(), getPayload(), wrap, main);
+      perform(lastFormat(scope), getPayload(), wrap, main);
     });
     arrow.addEventListener('click', (event) => {
       event.stopPropagation();
       event.preventDefault();
-      showMenu(arrow, wrap, getPayload, main);
+      showMenu(arrow, wrap, getPayload, main, scope);
     });
     wrap.append(main, arrow);
     return wrap;
@@ -506,7 +528,8 @@
     decorateCode(article);
     return article;
   }
-  const fromRowCheck = (row) => (row.role === 'tool' ? Boolean(row.raw || row.call || row.value) : Boolean(row.value));
+  const fromRowCheck = (row) =>
+    row.role === 'tool' ? Boolean(row.raw || row.call || row.value) : Boolean(row.value || attachmentText(row));
 
   /* Keeps a drag-selection from also toggling <summary> or opening the picture viewer. */
   let pointerDown = null;

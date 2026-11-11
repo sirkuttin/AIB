@@ -182,7 +182,17 @@
   const size = (u) => 1 + u.body.reduce((n, b) => n + (b.fold ? b.fold.rows.length : 1), 0);
 
   /* ---- Prompts: one unit per prompt of yours, holding every row up to your next prompt ---- */
-  const hasError = (r) => r.role === 'error' || failedTool(r) || alerting(r);
+  /* A prompt has an error when the agent or the connection failed, or its turn stopped on a failed step. A step that failed
+     mid-turn and was followed by the agent's reply is not one: the agent got past it (the fold still says "1 failed"). */
+  function hasError(rows) {
+    let failedLast = false;
+    for (const r of rows) {
+      if ((r.role === 'error' && !r.callId) || alerting(r)) return true;
+      if (failedTool(r)) failedLast = true;
+      else if (r.role === 'assistant' && r.value) failedLast = false;
+    }
+    return failedLast;
+  }
   function promptsOf(rows, opts) {
     const units = split(rows)
       .filter((u) => u.prompt) // rows before the first loaded prompt belong to a prompt on an older page
@@ -193,7 +203,7 @@
         rows: u.rows,
         replies: u.rows.filter((r) => r.role === 'assistant').length,
         time: u.prompt.time,
-        error: u.rows.some(hasError),
+        error: hasError(u.rows),
         working: false,
       }));
     if (units.length && opts.working) units[units.length - 1].working = true;

@@ -1617,7 +1617,12 @@
           wrap.append(box, makeCard({ src: path, time: Number(row && row.time) || 0 }));
           return wrap;
         }
-        if (!S.chat.cwd || relPath(path, S.chat.cwd) !== null) box.append(previewButton(path));
+        if (!S.chat.cwd || relPath(path, S.chat.cwd) !== null) {
+          const detail = box.querySelector && box.querySelector(':scope > .tool-detail');
+          if (detail)
+            box.insertBefore(previewButton(path), detail); // before the opened detail in Tab order
+          else box.append(previewButton(path));
+        }
       }
     } catch (e) {}
     return box;

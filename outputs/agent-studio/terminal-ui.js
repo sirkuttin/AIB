@@ -133,11 +133,26 @@
   /* ---- icons (16 px, 1.5 stroke, round caps) ------------------------------------------------------------------------------- */
 
   const ICONS = {
-    terminal: [['rect', { x: '1.75', y: '2.75', width: '12.5', height: '10.5', rx: '2' }], ['path', { d: 'M4.75 6.25 6.75 8l-2 1.75M8.5 10h2.75' }]],
-    folder: [['path', { d: 'M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z' }]],
-    missing: [['path', { d: 'M8 2.5 14 13H2z' }], ['path', { d: 'M8 6.5v3M8 11.25v.01' }]],
+    terminal: [
+      ['rect', { x: '1.75', y: '2.75', width: '12.5', height: '10.5', rx: '2' }],
+      ['path', { d: 'M4.75 6.25 6.75 8l-2 1.75M8.5 10h2.75' }],
+    ],
+    folder: [
+      ['path', { d: 'M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z' }],
+    ],
+    missing: [
+      ['path', { d: 'M8 2.5 14 13H2z' }],
+      ['path', { d: 'M8 6.5v3M8 11.25v.01' }],
+    ],
     collapse: [['path', { d: 'M4 6l4 4 4-4' }]],
-    end: [['path', { d: 'M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4.25 4.25l.6 8.25a1 1 0 0 0 1 .95h4.3a1 1 0 0 0 1-.95l.6-8.25M6.75 7v4M9.25 7v4' }]],
+    end: [
+      [
+        'path',
+        {
+          d: 'M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4.25 4.25l.6 8.25a1 1 0 0 0 1 .95h4.3a1 1 0 0 0 1-.95l.6-8.25M6.75 7v4M9.25 7v4',
+        },
+      ],
+    ],
     close: [['path', { d: 'M4 4l8 8M12 4l-8 8' }]],
     newSession: [['path', { d: 'M2.75 8a5.25 5.25 0 1 0 1.6-3.8M2.75 2.75v2.5h2.5' }]],
   };
@@ -349,7 +364,11 @@
       if (!text) return;
       try {
         const done = root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText(text);
-        if (done && done.then) done.then(() => flashCopied(), () => {});
+        if (done && done.then)
+          done.then(
+            () => flashCopied(),
+            () => {},
+          );
       } catch {}
     });
     divider.addEventListener('pointerdown', (ev) => {
@@ -542,7 +561,11 @@
     ui.msg.replaceChildren(
       heading('The terminal couldn’t start', 'bad', 'missing'),
       el('span', 'aib-term-mono', err.message || 'The shell did not start.'),
-      el('p', '', 'Nothing was run. Try again' + (isWindows() ? ', or use the PowerShell that ships with Windows.' : '.')),
+      el(
+        'p',
+        '',
+        'Nothing was run. Try again' + (isWindows() ? ', or use the PowerShell that ships with Windows.' : '.'),
+      ),
       acts,
     );
     ui.msg.hidden = false;
@@ -556,7 +579,13 @@
     if (project) {
       const p = shortPath(project);
       acts.append(
-        action('Start in the project folder (' + p.prefix + p.last + ')', false, () => restart(e, { cwd: project }), '', 'Start the terminal in the project folder: ' + project),
+        action(
+          'Start in the project folder (' + p.prefix + p.last + ')',
+          false,
+          () => restart(e, { cwd: project }),
+          '',
+          'Start the terminal in the project folder: ' + project,
+        ),
       );
     }
     acts.append(action('Close panel', false, () => discard(e, true)));
@@ -576,7 +605,9 @@
 
   function drawLimit(e) {
     const err = e.error || {};
-    const list = (Array.isArray(err.terminals) ? err.terminals : []).slice().sort((a, b) => (a.lastActivity || 0) - (b.lastActivity || 0));
+    const list = (Array.isArray(err.terminals) ? err.terminals : [])
+      .slice()
+      .sort((a, b) => (a.lastActivity || 0) - (b.lastActivity || 0));
     ui.msg.className = 'aib-term-msg is-limit';
     ui.msg.setAttribute('role', 'status');
     const box = el('div', 'aib-term-list');
@@ -600,10 +631,19 @@
         restart(e);
       });
       endBtn.setAttribute('aria-label', 'End terminal in ' + name);
-      row.append(el('span', 'aib-term-li-name', name), el('span', 'aib-term-li-folder', p.prefix + p.last), el('span', 'aib-term-li-idle', idleText(now - (t.lastActivity || now))), endBtn);
+      row.append(
+        el('span', 'aib-term-li-name', name),
+        el('span', 'aib-term-li-folder', p.prefix + p.last),
+        el('span', 'aib-term-li-idle', idleText(now - (t.lastActivity || now))),
+        endBtn,
+      );
       box.append(row);
     }
-    const parts = [heading((err.max || list.length) + ' terminals are already open'), el('p', '', 'End one to start a terminal in this chat. Idle ones first:'), box];
+    const parts = [
+      heading((err.max || list.length) + ' terminals are already open'),
+      el('p', '', 'End one to start a terminal in this chat. Idle ones first:'),
+      box,
+    ];
     if (!e.showAll && list.length > shown.length) {
       const acts = el('div', 'aib-term-acts');
       acts.append(
@@ -620,12 +660,19 @@
 
   function drawEnded(e) {
     const when = e.endedAt ? new Date(e.endedAt) : null;
-    const time = when ? String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0') : '';
-    const line = el('div', 'aib-term-endline', ['Session ended', 'exit code ' + (e.exitCode ?? '?'), time].filter(Boolean).join(' · '));
+    const time = when ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; // the chat's clock
+    const line = el(
+      'div',
+      'aib-term-endline',
+      ['Session ended', 'exit code ' + (e.exitCode ?? '?'), time].filter(Boolean).join(' · '),
+    );
     line.setAttribute('role', 'status');
     const acts = el('div', 'aib-term-acts');
     const again = action('Start new session', true, () => restart(e), 'newSession');
-    acts.append(again, action('Close panel', false, () => discard(e, true)));
+    acts.append(
+      again,
+      action('Close panel', false, () => discard(e, true)),
+    );
     ui.ended.replaceChildren(line, acts);
     ui.ended.hidden = false;
     if (e.focusEnded) {
@@ -820,7 +867,10 @@
         .then((token) => {
           const WS = (host && host.WebSocket) || root.WebSocket;
           const t = e.term;
-          const ws = new WS(socketUrl(root.location, e.key, e.cwd, t && t.cols, t && t.rows, e.shellChoice), protocols(token));
+          const ws = new WS(
+            socketUrl(root.location, e.key, e.cwd, t && t.cols, t && t.rows, e.shellChoice),
+            protocols(token),
+          );
           ws.binaryType = 'arraybuffer';
           e.ws = ws;
           let attached = false;
@@ -1070,7 +1120,8 @@
 
   function hasSession(key) {
     const e = entries.get(key);
-    if (e && (e.status === 'ready' || e.status === 'connecting' || e.status === 'loading')) return e.status === 'ready' || running.has(key);
+    if (e && (e.status === 'ready' || e.status === 'connecting' || e.status === 'loading'))
+      return e.status === 'ready' || running.has(key);
     if (e) return false;
     return running.has(key);
   }
@@ -1090,7 +1141,14 @@
     if (!e) return;
     e.visible = false;
     render();
-    if (focusBack && host && host.focusComposer) host.focusComposer();
+    if (!focusBack) return;
+    if (host && host.focusComposer) host.focusComposer();
+    /* The message box can be disabled or gone (a chat that cannot take messages): focus must not fall to <body>, so it goes to
+       the terminal button, where Ctrl+` or Enter brings the panel back. */
+    const d = doc(),
+      a = d.activeElement;
+    if ((!a || a === d.body || (ui.dock && ui.dock.contains && ui.dock.contains(a))) && ui.button && ui.button.focus)
+      ui.button.focus();
   }
 
   async function end(key) {

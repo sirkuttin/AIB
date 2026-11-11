@@ -34,6 +34,14 @@ html[data-ui-scaled]
     margin-right: 0;
   }
 }
+/* The Activity tab row copies the chat title's height (--hd-h, measured on screen, so already zoomed): divided by the zoom it
+   is given again, or the row (and the tab underline) would sit far below the tabs. */
+@media (min-width: 1100px) {
+  html[data-ui-scaled] .pane-tabs {
+    height: calc(var(--hd-h, 48px) / var(--ui-scale));
+    min-height: calc(var(--hd-h, 48px) / var(--ui-scale));
+  }
+}
 /* Viewport-relative heights inside zoomed blocks would grow with the zoom; keep them a share of the window. */
 html[data-ui-scaled] #subagentsPane #commandSection {
   max-height: calc(38vh / var(--ui-scale));
@@ -108,7 +116,7 @@ html[data-line-spacing='roomy'] .code-block pre {
 /* The brief "Chat text 120%" badge. */
 .textsize-badge {
   position: fixed;
-  top: 14px;
+  top: calc(var(--tabs-h, 40px) + var(--hd-h, 48px) + 12px); /* below the tabs and the chat title, never over them */
   left: 50%;
   transform: translateX(-50%);
   z-index: 90;
