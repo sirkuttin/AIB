@@ -67,6 +67,9 @@
   terminal appears, and when the message box grows. Opening a step or "Show all" near the bottom keeps it where it is.
   Opening a chat with unread messages lands on the "New" line, and switching Full / Chat / Prompts keeps the row you were
   reading. Long blocks no longer flash open for a frame on every update.
+- Claude Code chats on the newest models (5.x) keep a to-do checklist again: AIB turns on Claude Code's task tools
+  (CLAUDE_CODE_ENABLE_TODO_TOOLS=1 unless you set it yourself), and the checklist shows as a plan card that ticks off its
+  steps.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.
