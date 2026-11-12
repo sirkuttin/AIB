@@ -271,18 +271,18 @@ test('Edit and Request a change: Markdown gets Edit (one click makes the doc, op
   await flush();
   assert.deepEqual(posts, [{ id: 'chat1', artifact: 'm1' }]);
   assert.deepEqual(JSON.parse(JSON.stringify(opened[0])), { name: 'load-test-summary', title: 'Load test summary', block: 'b3', chat: { id: 'chat1' }, from: 'chat' });
-  // now a doc: the banner, the picker's "→ doc", no Edit, and the doc's text now in the stage
+  // now a doc: the banner, the picker's "now a doc", no Edit, and the doc's text now in the stage
   const became = view.querySelector('.ar-became');
   assert.equal(became.hidden, false);
   assert.equal(became.querySelector('.ar-built-t').textContent, 'Now a doc: Load test summary \u00b7 ');
   assert.equal(became.querySelector('.ar-undo').hidden, false);
   assert.equal(edit.hidden, true);
-  assert.equal(A.pickerGroups(UI._S.list, 'm1', 0, [], [])[0].items[0].meta, '\u2192 doc');
+  assert.equal(A.pickerGroups(UI._S.list, 'm1', 0, [], [])[0].items[0].meta, 'now a doc');
   await flush();
   const live = view.querySelector('.ar-live');
   assert.ok(live, 'the live preview');
   assert.equal(live.querySelector('p').textContent, 'MD:Typed **now**.');
-  assert.equal(live.querySelector('.ar-live-note').textContent, 'v1\u2013v2 stay here as read-only history');
+  assert.equal(live.querySelector('.ar-live-note').textContent, 'Versions 1\u20132 stay here as read-only history');
   // an HTML artifact: Request a change puts it in the box as a link chip and focuses the box
   const box = shell.document.createElement('textarea');
   box.id = 'prompt';
