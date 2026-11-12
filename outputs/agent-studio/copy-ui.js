@@ -453,12 +453,10 @@
       }
     });
   }
-  const controls = new Set();
+  /* The buttons are found in the page when the format changes: a list of them kept here held every chat row ever drawn (the
+     rows are rebuilt on each update), with all their nodes and listeners, until the next format change. */
   function syncTitles() {
-    for (const main of controls) {
-      if (main.isConnected) main.title = label(lastFormat(main.copyScope));
-      else controls.delete(main);
-    }
+    for (const main of doc().querySelectorAll('button.copy-main')) main.title = label(lastFormat(main.copyScope));
   }
   /* Builds a split button. getPayload is called lazily at click time. */
   function makeControl(getPayload, extraClass) {
@@ -474,7 +472,6 @@
     arrow.title = 'Choose copy format';
     arrow.setAttribute('aria-label', 'Choose copy format');
     main.title = label(lastFormat(scope));
-    controls.add(main);
     main.addEventListener('click', (event) => {
       event.stopPropagation();
       event.preventDefault();
