@@ -46,7 +46,7 @@ const CHANGES = [
 
 function setup(o) {
   const opts = o || {};
-  const shell = D.page({ ids: ['wsProjectBtn', 'wsRenameProj', 'wsNewProject', 'new', 'connections'], width: opts.width || 1400 });
+  const shell = D.page({ store: opts.store, ids: ['wsProjectBtn', 'wsRenameProj', 'wsNewProject', 'new', 'connections'], width: opts.width || 1400 });
   shell.make('b', 'wsListName', shell.byId.wsProjectBtn);
   const find = shell.make('button', 'findChat');
   shell.body.insertBefore(find, shell.byId.connections);
@@ -757,4 +757,102 @@ test('no duplicate actions: one open-file icon however often the row is checked,
   assert.equal(line.querySelector('.tool-detail').querySelectorAll('a.fx-path').length, 1, 'the path is linked once');
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../outputs/agent-studio/artifacts-ui.js'), 'utf8');
   assert.ok(!/Show file|art-preview/.test(src), 'the old "Show file" button (same action as the icon) is removed');
+});
+
+// ---- open folders are remembered (beta.8) ------------------------------------------------------------------------------------
+const reloaded = (t, o) => setup(Object.assign({ store: Object.fromEntries(t.shell.localStorage._data) }, o || {}));
+const listed = (t) => t.calls.filter((c) => c.path === '/api/live/files/list').map((c) => c.q.dir);
+
+test('open folders survive a reload and are listed again like a normal open', async () => {
+  const t = setup();
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'scripts').click();
+  rowOf(t, 'data').click();
+  await flush();
+  const t2 = reloaded(t);
+  t2.FU.setMode('files');
+  await flush();
+  await flush();
+  assert.deepEqual(listed(t2).sort(), ['', 'data', 'scripts']);
+  assert.ok(rowOf(t2, 'scripts/load_sales.py') && rowOf(t2, 'data/sales-2026.csv'));
+  rowOf(t2, 'data').click(); // closing is remembered too
+  await flush();
+  const t3 = reloaded(t2);
+  t3.FU.setMode('files');
+  await flush();
+  await flush();
+  assert.deepEqual(listed(t3).sort(), ['', 'scripts']);
+});
+
+test('open folders are per tree: the chat own copy and the main folder keep separate sets', async () => {
+  const wt = conv('a3', ROOT + '/.claude/worktrees/csv', { projectRoot: ROOT, worktree: { branch: 'codex/importer' }, title: 'Clean up CSV' });
+  const t = setup({ list: [wt, conv('a1', ROOT)] });
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'scripts').click();
+  await flush();
+  const saved = JSON.parse(t.shell.localStorage.getItem('aib-files-open-v1'));
+  assert.equal(Object.keys(saved).length, 1);
+  const other = reloaded(t, { list: [conv('a1', ROOT), conv('a9', ROOT)] });
+  other.FU.setMode('files');
+  await flush();
+  assert.deepEqual(listed(other), [''], 'a different tree starts closed');
+});
+
+test('a remembered folder that no longer exists is dropped quietly', async () => {
+  const t = setup();
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'scripts').click();
+  rowOf(t, 'data').click();
+  await flush();
+  const listing = Object.assign({}, LISTING);
+  delete listing.data;
+  const t2 = reloaded(t, { listing });
+  t2.FU.setMode('files');
+  await flush();
+  await flush();
+  assert.ok(rowOf(t2, 'scripts/load_sales.py'));
+  assert.ok(!t2.shell.body.querySelector('.fx-error'), 'no error row');
+  const saved = Object.values(JSON.parse(t2.shell.localStorage.getItem('aib-files-open-v1')))[0];
+  assert.deepEqual(saved, ['scripts']);
+});
+
+test('the remembered set is capped at 200 paths per tree, oldest dropped', async () => {
+  const t = setup();
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'scripts').click();
+  await flush();
+  const key = Object.keys(JSON.parse(t.shell.localStorage.getItem('aib-files-open-v1')))[0];
+  const paths = Array.from({ length: 230 }, (_, i) => 'd' + i);
+  t.shell.localStorage.setItem('aib-files-open-v1', JSON.stringify({ [key]: paths }));
+  const listing = Object.assign({}, LISTING);
+  for (const p of paths) listing[p] = [];
+  const t2 = reloaded(t, { listing });
+  t2.FU.setMode('files');
+  await flush();
+  await flush();
+  rowOf(t2, 'scripts').click();
+  await flush();
+  const got = JSON.parse(t2.shell.localStorage.getItem('aib-files-open-v1'))[key];
+  assert.equal(got.length, 200, 'capped');
+  assert.ok(got.includes('scripts') && !got.includes('d0'), 'the newest is kept, the oldest dropped');
+});
+
+test('aib-docs open state is remembered too', async () => {
+  const listing = Object.assign({}, LISTING, { '': LISTING[''].concat(entry('aib-docs', { dir: true })), 'aib-docs': [entry('aib-docs/notes', { dir: true })] });
+  const t = setup({ listing });
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'aib-docs').click();
+  await flush();
+  const t2 = reloaded(t, { listing });
+  t2.FU.setMode('files');
+  await flush();
+  await flush();
+  assert.ok(listed(t2).includes('aib-docs'), 'listed again on restore');
+  assert.ok(rowOf(t2, 'aib-docs/notes') || rowOf(t2, 'aib-docs'), 'row present');
+  assert.equal(JSON.parse(t2.shell.localStorage.getItem('aib-files-open-v1')) && Object.values(JSON.parse(t2.shell.localStorage.getItem('aib-files-open-v1')))[0].includes('aib-docs'), true);
 });

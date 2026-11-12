@@ -175,11 +175,55 @@
     const any = projectChats()[0];
     return any ? F().followScope(Object.assign({}, any, { branch: '' }), any.projectPath) : null;
   }
+  // Open folders are remembered per project and per tree: the chat's own copy is one tree (its chat id), the main folder another.
+  const OPEN_KEY = 'aib-files-open-v1',
+    OPEN_CAP = 200;
+  function openKey(scope) {
+    return projectKey() + '\n' + (scope.root === 'main' ? 'main' : F().scopeId(scope));
+  }
+  function readOpen() {
+    try {
+      const raw = JSON.parse(store.get(OPEN_KEY, '{}'));
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  class OpenSet extends Set {
+    constructor(key) {
+      super();
+      this.key = key;
+      const saved = readOpen()[key];
+      if (Array.isArray(saved)) for (const p of saved.slice(-OPEN_CAP)) if (typeof p === 'string' && p) super.add(p);
+      this.ready = true;
+    }
+    save() {
+      if (!this.ready) return;
+      const all = readOpen();
+      if (this.size) all[this.key] = [...this];
+      else delete all[this.key];
+      store.set(OPEN_KEY, JSON.stringify(all));
+    }
+    add(p) {
+      const had = super.has(p);
+      super.add(p);
+      while (this.size > OPEN_CAP) super.delete(this.values().next().value);
+      if (!had) this.save();
+      return this;
+    }
+    delete(p) {
+      const r = super.delete(p);
+      if (r) this.save();
+      return r;
+    }
+  }
   function treeOf(scope) {
     const id = F().scopeId(scope);
     let t = trees.get(id);
     if (!t) {
-      t = { cache: {}, open: new Set(), root: '', git: false };
+      const key = openKey(scope);
+      t = { cache: {}, open: new OpenSet(key), root: '', git: false, restored: new Set() };
+      for (const p of t.open) t.restored.add(p);
       trees.set(id, t);
       while (trees.size > 12) trees.delete(trees.keys().next().value);
     }
@@ -226,8 +270,16 @@
       t.cache[dir] = (r && r.entries) || [];
       t.root = (r && r.root) || t.root;
       t.git = !!(r && r.git);
+      t.restored.delete(dir);
+      if (dir === '')
+        for (const p of t.open) if (t.restored.has(p) && t.cache[p] === undefined) listDir(scope, p);
     } catch (e) {
-      t.cache[dir] = { error: (e && e.message) || 'Could not list this folder' };
+      // A remembered folder that is gone is dropped without a word.
+      if (dir !== '' && t.restored.has(dir)) {
+        t.restored.delete(dir);
+        delete t.cache[dir];
+        t.open.delete(dir);
+      } else t.cache[dir] = { error: (e && e.message) || 'Could not list this folder' };
     }
     paint();
   }
