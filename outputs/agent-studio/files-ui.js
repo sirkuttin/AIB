@@ -758,12 +758,31 @@
     else if (!list.length) {
       const box = el('div', null, 'dt-empty');
       const ic = docIcon('dt-empty-ic');
-      const project = (chat && F().nameOf(String(chat.projectPath || chat.cwd || '').replace(/\\/g, '/'))) || 'this project';
+      // the selected project's name (not the open chat's, which can belong to another project)
+      const project =
+        (W() && W().currentProjectName && W().currentProjectName()) ||
+        (chat && F().nameOf(String(chat.projectPath || chat.cwd || '').replace(/\\/g, '/'))) ||
+        'this project';
+      const withCode = (parts) => {
+        const sp = el('span', '');
+        for (const [kind, text] of parts) sp.append(kind === 't' ? doc().createTextNode(text) : el(kind, text));
+        return sp;
+      };
       box.append(
         ic,
         el('b', 'No docs in ' + project + ' yet'),
-        el('span', "A doc is writing you and your agents keep editing, like a plan, a spec or notes. It's saved in aib-docs/ and committed with the project."),
-        el('span', 'Press + New doc, or type /doc release plan in a chat.'),
+        withCode([
+          ['t', 'A doc is writing you and your agents keep editing, like a plan, a spec or notes. It’s saved in '],
+          ['code', 'aib-docs/'],
+          ['t', ' and committed with the project.'],
+        ]),
+        withCode([
+          ['t', 'Press '],
+          ['i', '+ New doc'],
+          ['t', ', or type '],
+          ['code', '/doc release plan'],
+          ['t', ' in a chat.'],
+        ]),
       );
       frag.append(box);
     }
@@ -833,6 +852,10 @@
       return n;
     }
     n.classList.add('editing');
+    // A repaint builds a new field: when the old one had the focus, the new one takes it (same selection), so editing survives.
+    const prev = doc().activeElement;
+    const hadFocus = !!(prev && prev.classList && prev.classList.contains('fx-newdoc-in'));
+    const caret = hadFocus ? [prev.selectionStart, prev.selectionEnd] : null;
     const input = el('input', null, 'fx-newdoc-in');
     input.type = 'text';
     input.value = newDoc.value;
@@ -856,6 +879,7 @@
     });
     input.addEventListener('blur', () => {
       (root.setTimeout || setTimeout)(() => {
+        if (input.isConnected === false) return; // replaced by a repaint, not left by the user
         if (newDoc && !newDoc.busy && !newDoc.error && els && !els.tree.contains(doc().activeElement) && !els.dpane.contains(doc().activeElement)) {
           newDoc = null;
           paint();
@@ -869,6 +893,16 @@
       (root.setTimeout || setTimeout)(() => {
         if (input.focus) input.focus();
         if (input.select) input.select();
+      }, 0);
+    } else if (hadFocus) {
+      (root.setTimeout || setTimeout)(() => {
+        if (input.focus) input.focus();
+        try {
+          const n = input.value.length;
+          input.setSelectionRange(Math.min(caret[0] == null ? n : caret[0], n), Math.min(caret[1] == null ? n : caret[1], n));
+        } catch (e) {
+          /* not a text field in this environment */
+        }
       }, 0);
     }
     return n;
