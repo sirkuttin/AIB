@@ -226,3 +226,14 @@ Deno.test('Tailscale: name without the trailing dot, login, HTTPS, serve target 
   const noCert = await readTailscale(1, fakeTailscale({ status: tailscaleStatus({ CertDomains: [] }) }).runner);
   assertEquals(noCert.https, false);
 });
+
+Deno.test('Tailscale: a warning line before the JSON (client and daemon versions differ) is skipped', async () => {
+  const runner = (args: string[]) =>
+    Promise.resolve({
+      code: 0,
+      stdout: 'Warning: client version "1.80.0" != tailscaled server version "1.78.1"\n' +
+        JSON.stringify(args[0] === 'status' ? tailscaleStatus() : serveStatus(4567)),
+    });
+  const ts = await readTailscale(4567, runner);
+  assertEquals([ts.signedIn, ts.name, ts.serving], [true, NAME, true]);
+});

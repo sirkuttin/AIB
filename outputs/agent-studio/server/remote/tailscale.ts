@@ -68,7 +68,6 @@ export const defaultRunner: Runner = async (args) => {
         stdin: 'null',
         stdout: 'piped',
         stderr: 'null',
-        windowsRawArguments: false,
       }).spawn();
       const timer = setTimeout(() => {
         try {
@@ -78,9 +77,8 @@ export const defaultRunner: Runner = async (args) => {
       const out = await child.output();
       clearTimeout(timer);
       return { code: out.code, stdout: new TextDecoder().decode(out.stdout) };
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound || error instanceof Deno.errors.PermissionDenied) continue;
-      continue;
+    } catch {
+      continue; // not there (NotFound) or not runnable: try the next place
     }
   }
   return null;
@@ -92,6 +90,13 @@ export function cleanName(dns: unknown): string {
 }
 
 type Json = Record<string, unknown>;
+
+/** The JSON object in the CLI's output (a warning line such as "client version != tailscaled version" may come first). */
+function jsonPart(text: string): string {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  return start >= 0 && end > start ? text.slice(start, end + 1) : '';
+}
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
 
 /** What `tailscale serve status --json` says about https://<name>:443/ and Funnel. */
@@ -140,7 +145,7 @@ export async function readTailscale(port: number, run: Runner = defaultRunner, c
   state.installed = true;
   let data: Json = {};
   try {
-    data = obj(JSON.parse(status.stdout));
+    data = obj(JSON.parse(jsonPart(status.stdout)));
   } catch {
     state.problem = 'not_running';
     return state;
@@ -164,7 +169,7 @@ export async function readTailscale(port: number, run: Runner = defaultRunner, c
   if (serve && serve.code === 0) {
     let parsed: Json = {};
     try {
-      parsed = obj(JSON.parse(serve.stdout || '{}'));
+      parsed = obj(JSON.parse(jsonPart(serve.stdout) || '{}'));
     } catch { /* "No serve config" as text in older versions */ }
     Object.assign(state, readServe(parsed, state.name, port));
   }
