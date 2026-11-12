@@ -1434,16 +1434,6 @@
       article.append(window.StreamUI.noteCard(row.injectedNote, row, resolveAgentName));
     if (row.role === 'tool' && (row.raw || row.call) && window.ToolViews)
       article.append(row.raw ? window.ToolViews.render(row.raw) : window.ToolViews.renderCall(row.call));
-    {
-      const bg = row.role === 'tool' && window.AgentSendMenu?.backgroundOf(row.raw);
-      if (bg)
-        article.append(
-          window.AgentSendMenu.backgroundPill(document, bg, async () => {
-            await post('tool-stop', { id: current, toolCallId: row.raw.toolCallId });
-            await refresh();
-          }),
-        );
-    }
     else if (row.role === 'assistant' && row.value && window.AgentMarkdown) {
       const md = document.createElement('div');
       md.className = 'markdown';
@@ -1459,6 +1449,16 @@
     } else if (row.value && row.role === 'notice' && (row.label === 'error' || row.label === 'disconnected'))
       article.append(linkedPre(row.value)); // an agent's error often names a page to open (a plan to upgrade, a sign-in)
     else if (row.value) article.append(text('pre', row.value));
+    {
+      const bg = row.role === 'tool' && window.AgentSendMenu?.backgroundOf(row.raw);
+      if (bg)
+        article.append(
+          window.AgentSendMenu.backgroundPill(document, bg, async () => {
+            await post('tool-stop', { id: current, toolCallId: row.raw.toolCallId });
+            await refresh();
+          }),
+        );
+    }
     if (row.actions?.length) article.append(clashButtons(row.actions));
     for (const [index, image] of (row.attachments || []).entries()) {
       if (image && image.type === 'studio_file') {
@@ -5424,6 +5424,7 @@
     viewStore,
     rowStatus,
     renderHeader,
+    sendWith,
     safeImageBlock,
     showRows,
     sortAgents,
