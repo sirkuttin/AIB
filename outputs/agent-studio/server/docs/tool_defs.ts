@@ -90,7 +90,7 @@ export const DOC_TOOLS: Json[] = [
         title: { type: 'string', description: "The first page's title. Default: Page 1." },
         docTitle: {
           type: 'string',
-          description: "The doc's own title, shown in the Docs tab and on chips, e.g. \"Checkout rounding fix: release plan\" for the " +
+          description: "The doc's own title, shown in Files and on chips, e.g. \"Checkout rounding fix: release plan\" for the " +
             'name "checkout-rounding-release". Default: the first # heading of `markdown`, else the name.',
         },
       },

@@ -373,7 +373,6 @@
     rec.promise = Promise.resolve(host.getJson('/api/live/docs/list', { id, root: rootName || 'main' })).then(
       (r) => {
         rec.docs = (r && Array.isArray(r.docs) ? r.docs : []).filter((d) => d && d.name && !d.legacy);
-        rec.others = r && Array.isArray(r.others) ? r.others.filter((p) => typeof p === 'string') : [];
         rec.at = Date.now();
         rec.promise = null;
         for (const fn of listeners) fn(k);
@@ -394,11 +393,6 @@
   const cached = (id, rootName) => {
     const hit = lists.get(id + '|' + (rootName || 'main'));
     return hit ? hit.docs : null;
-  };
-  // The files in aib-docs/ that are no doc (the Docs tab's "1 other file"), as the last list said.
-  const cachedOthers = (id, rootName) => {
-    const hit = lists.get(id + '|' + (rootName || 'main'));
-    return hit ? hit.others || [] : [];
   };
   const listeners = new Set();
   const forget = () => lists.clear();
@@ -495,7 +489,7 @@
     const n = d ? d.pages : Array.isArray(res.pages) ? res.pages.length : 1;
     card.replaceChildren();
     const body = el('div', null, 'art-card-body');
-    body.append(el('div', title, 'art-card-title'), el('div', 'Doc · ' + pagesText(n) + ' · in the Docs tab, you and agents edit it', 'art-card-sub'));
+    body.append(el('div', title, 'art-card-title'), el('div', 'Doc · ' + pagesText(n) + ' · in Files under aib-docs, you and agents edit it', 'art-card-sub'));
     const acts = el('div', null, 'art-card-actions');
     const open = btn('Open doc', 'art-btn art-btn-acc');
     open.setAttribute('aria-label', 'Open ' + title);
@@ -780,7 +774,6 @@
     init,
     listFor,
     cached,
-    cachedOthers,
     forget,
     onList: (fn) => listeners.add(fn),
     openDoc,

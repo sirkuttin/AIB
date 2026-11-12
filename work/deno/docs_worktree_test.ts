@@ -74,7 +74,7 @@ Deno.test('a worktree chat\'s doc tools and routes use the main checkout\'s aib-
   }
 });
 
-Deno.test('doc_create: docTitle, else the first # heading of a slug-named doc, else the name, is the title the Docs tab lists', async () => {
+Deno.test('doc_create: docTitle, else the first # heading of a slug-named doc, else the name, is the title Files lists', async () => {
   const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-doctitle-' })).replace(/^\\\\\?\\/, '');
   const state = `${root}${sep}state`, project = `${root}${sep}project`;
   await Deno.mkdir(state);

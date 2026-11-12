@@ -114,7 +114,9 @@
     recoveryWarning = '',
     discoveryEnabled = false,
     instanceId = '',
-    stoppingSubagent = false;
+    stoppingSubagent = false,
+    stopArmed = false,
+    stopArmTimer = null;
   const agentListed = {
       omp: { sessions: [], cursor: null, loaded: false, busy: false, note: '' },
       claude: { sessions: [], cursor: null, loaded: false, busy: false, note: '' },
@@ -3208,6 +3210,11 @@
       })
       .catch(fail);
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && stopArmed) {
+      e.preventDefault();
+      disarmStop(true);
+      return;
+    }
     if (
       e.key === 'Escape' &&
       !e.defaultPrevented &&
@@ -3426,7 +3433,7 @@
     window.AgentChangesUI?.show('activity'); // the history lives in the Activity tab
     window.ActivityUI?.drill(true);
     $('inspectorEyebrow').textContent = 'COMMAND DETAILS';
-    $('subchatTitle').textContent = task.title;
+    $('subchatTitle').textContent = $('subchatTitle').title = task.title;
     $('subchatStatus').textContent = commandState(task);
     $('inspectorNote').textContent = 'Read-only monitoring. Viewing this command does not stop or restart it.';
     $('submessages').hidden = true;
@@ -3444,7 +3451,7 @@
       const task = await get('/api/command', { session: key, id });
       if (selected?.key !== key || selectedCommand?.id !== id) return;
       selectedCommand = task;
-      $('subchatTitle').textContent = task.title;
+      $('subchatTitle').textContent = $('subchatTitle').title = task.title;
       $('subchatStatus').textContent = commandState(task) + ' · ' + commandDuration(task);
       const signature = JSON.stringify(task);
       if (signature === commandSignature) return;
@@ -3790,6 +3797,15 @@
       renderDiscover();
     }
   }
+  function disarmStop(refocus) {
+    const wasArmed = stopArmed;
+    stopArmed = false;
+    clearTimeout(stopArmTimer);
+    stopArmTimer = null;
+    const hadFocus = refocus && wasArmed && !$('stopSubagentConfirm').hidden;
+    renderSubagentControls();
+    if (hadFocus && !$('stopSubagent').hidden) $('stopSubagent').focus({ preventScroll: true });
+  }
   function renderSubagentControls() {
     const button = $('stopSubagent');
     if (!button) return;
@@ -3799,16 +3815,39 @@
     );
     const can =
       !!info && !!info.capabilities && Object.prototype.hasOwnProperty.call(info.capabilities, 'cancel') && !ended;
-    button.hidden = !can;
+    if (!can && stopArmed) {
+      stopArmed = false;
+      clearTimeout(stopArmTimer);
+    }
+    const armed = stopArmed && !stoppingSubagent;
+    $('stopSubagentBox').hidden = !can;
+    button.hidden = !can || armed;
     button.disabled = !can || stoppingSubagent;
+    button.textContent = stoppingSubagent ? 'Stopping…' : 'Stop';
+    $('stopSubagentConfirm').hidden = !can || !armed;
+    $('stopSubagentCancel').hidden = !can || !armed;
   }
-  $('stopSubagent').onclick = async () => {
+  // Two-step stop in place: the first click arms (Stop + Cancel appear where the button was), the second Stop cancels.
+  $('stopSubagent').onclick = () => {
     if (!subSelection || !current || stoppingSubagent) return;
-    if (
-      typeof confirm === 'function' &&
-      !confirm('Stop this subagent’s current work? The main conversation keeps running.')
-    )
-      return;
+    stopArmed = true;
+    clearTimeout(stopArmTimer);
+    stopArmTimer = setTimeout(() => disarmStop(true), 5000);
+    renderSubagentControls();
+    $('stopSubagentConfirm').focus({ preventScroll: true });
+  };
+  $('stopSubagentCancel').onclick = () => disarmStop(true);
+  $('stopSubagentBox').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && stopArmed) {
+      e.preventDefault();
+      e.stopPropagation();
+      disarmStop(true);
+    }
+  });
+  $('stopSubagentConfirm').onclick = async () => {
+    if (!stopArmed || !subSelection || !current || stoppingSubagent) return;
+    stopArmed = false;
+    clearTimeout(stopArmTimer);
     stoppingSubagent = true;
     renderSubagentControls();
     try {
@@ -4787,6 +4826,7 @@
     refresh,
     refreshToken,
     renderSubagentControls,
+    disarmStop,
     repaintMain,
     liveExtra,
     savedExtra,

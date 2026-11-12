@@ -7,7 +7,7 @@
    - History: the versions for the whole doc (author, pages changed), one version read-only, a rendered Compare with now (words
      added and removed, block bars, unchanged blocks folded, a heading per changed page) and Restore of the whole doc or one page,
      with the stale check and the server's refusals (keystrokes in flight, an agent still writing).
-   - The ⋯ menu: Markdown export of this page or all pages to Downloads, Duplicate doc, Show in the Docs tab, Move doc to trash.
+   - The ⋯ menu: Markdown export of this page or all pages to Downloads, Duplicate doc, Show in Files, Move doc to trash.
    - A drawing's picture full screen (drawings are view-only on the doc page in v1). */
 (function () {
   const D = window.AIBDoc;
@@ -857,7 +857,7 @@
         { sep: true },
         { label: 'Duplicate doc', data: { act: 'duplicate' }, run: () => duplicateDoc() },
         {
-          label: 'Show in the Docs tab',
+          label: 'Show in Files',
           data: { act: 'files' },
           run: () => D.tell({ type: 'aib-doc:show-in-files', dir: D.info && D.info.dir }),
         },

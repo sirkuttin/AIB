@@ -1,5 +1,6 @@
 'use strict';
 const path = require('path');
+const fs = require('fs');
 const { APP: APP_DIR } = require('./_paths');
 // Browser-level failure scenarios for chat.js using a small fake DOM and a scripted fetch.
 const test = require('node:test');
@@ -516,9 +517,67 @@ test('subagent Stop appears only when the agent advertised cancel and the child 
   assert.equal(h.element('stopSubagent').hidden, true, 'no capability means read-only');
   h.run("snapshot.subagents['child-1']={capabilities:{cancel:{}},state:'running'}");
   h.run('renderSubagentControls()');
-  await h.element('stopSubagent').onclick();
-  const sent = h.calls.find((c) => c.url === '/api/live/cancel');
-  assert.deepEqual(JSON.parse(sent.options.body), { id: 'conn', subagentSessionId: 'child-1' });
+  h.context.confirm = () => assert.fail('no native confirm() for stopping a subagent');
+  const stop = h.element('stopSubagent'),
+    yes = h.element('stopSubagentConfirm'),
+    no = h.element('stopSubagentCancel');
+  const cancels = () => h.calls.filter((c) => c.url === '/api/live/cancel');
+  let fire = null;
+  h.context.setTimeout = (fn) => ((fire = fn), 1);
+  const idle = () => {
+    assert.equal(stop.hidden, false);
+    assert.equal(yes.hidden, true);
+    assert.equal(no.hidden, true);
+  };
+  idle();
+  // first click only arms: Stop is swapped for Stop + Cancel, nothing is posted
+  stop.onclick();
+  assert.equal(stop.hidden, true);
+  assert.equal(yes.hidden, false);
+  assert.equal(no.hidden, false);
+  assert.equal(cancels().length, 0);
+  // Cancel, Esc and the 5 s timeout all disarm
+  no.onclick();
+  idle();
+  stop.onclick();
+  h.run('disarmStop(true)'); // what Esc does
+  idle();
+  stop.onclick();
+  fire();
+  idle();
+  assert.equal(cancels().length, 0);
+  // not cancellable any more while armed: everything hides
+  stop.onclick();
+  h.run("snapshot.subagents['child-1'].state='idle'");
+  h.run('renderSubagentControls()');
+  assert.equal(h.element('stopSubagentBox').hidden, true);
+  assert.equal(yes.hidden, true);
+  h.run("snapshot.subagents['child-1'].state='running'");
+  h.run('renderSubagentControls()');
+  idle();
+  // second Stop cancels once
+  stop.onclick();
+  const done = yes.onclick();
+  assert.equal(stop.textContent, 'Stopping…');
+  assert.equal(stop.disabled, true);
+  await done;
+  assert.equal(stop.textContent, 'Stop');
+  assert.equal(cancels().length, 1);
+  assert.deepEqual(JSON.parse(cancels()[0].options.body), { id: 'conn', subagentSessionId: 'child-1' });
+  await yes.onclick(); // not armed: ignored
+  assert.equal(cancels().length, 1);
+});
+
+test('the Stop button sits in the subagent title row, not on its own line', () => {
+  const html = fs.readFileSync(path.join(APP_DIR, 'chat.html'), 'utf8');
+  const row = html.match(/<div class="subchat-title-row">(.*?)<\/div><p id="subchatStatus">/s)?.[1] || '';
+  assert.match(row, /id="subchatTitle"/);
+  assert.match(row, /id="stopSubagent"/);
+  assert.ok(row.indexOf('subchatTitle') < row.indexOf('stopSubagent'), 'title first, Stop at the right end');
+  assert.doesNotMatch(html, /<p id="subchatStatus"><\/p><button id="stopSubagent"/);
+  const js = fs.readFileSync(path.join(APP_DIR, 'chat.js'), 'utf8');
+  const part = js.slice(js.indexOf('function renderSubagentControls'), js.indexOf("$('discoverSessions').onclick"));
+  assert.doesNotMatch(part, /confirm\(/);
 });
 
 test('agent-listed sessions merge by session ID, paginate, and skip saved or live duplicates', async () => {
