@@ -289,3 +289,23 @@ test('chat.html loads view-prefs.js before every other deferred page script (the
   assert.equal(first[1], 'view-prefs.js');
   assert.ok(V.KEYS.includes('aib-theme'), 'the theme choice is kept in the data folder');
 });
+
+test('writing the value the data folder already has sends nothing (the sidebar rewrites its state on every list update)', async () => {
+  const ws = '{"v":1,"active":"w:c:/a"}';
+  const p = page({ 'studio-workspace-v1': ws }, {});
+  await p.runTimers();
+  p.posts.length = 0;
+  p.storage.setItem('studio-workspace-v1', ws);
+  await p.runTimers();
+  assert.deepEqual(p.posts, [], 'the same value again: no request (a pick right after it would wait behind it)');
+  p.storage.setItem('studio-workspace-v1', '{"v":1,"active":"w:c:/b"}');
+  await p.runTimers();
+  assert.equal(p.posts.length, 1, 'a real change is sent');
+  p.storage.setItem('studio-workspace-v1', '{"v":1,"active":"w:c:/b"}');
+  await p.runTimers();
+  assert.equal(p.posts.length, 1, 'and is then known');
+  p.storage.setItem('studio-workspace-v1', ws);
+  await p.runTimers();
+  assert.equal(p.posts.length, 2, 'going back to the first value is a change too');
+  assert.deepEqual(p.posts[1].body, { set: { 'studio-workspace-v1': ws } });
+});

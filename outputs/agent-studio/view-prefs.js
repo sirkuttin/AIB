@@ -112,6 +112,11 @@
       }
     } catch (e) {}
     const { seed, upload } = plan(saved, local);
+    /* What the data folder has, key by key. Writing the value it already has sends nothing: the page rewrites the same sidebar
+       state on every list update, and each of those requests made a change right after it wait (GAP_MS), so a project picked
+       just before quitting could be lost behind one. */
+    const known = new Map();
+    for (const k of Object.keys(saved)) if (synced(k)) known.set(k, saved[k]);
     for (const k of Object.keys(seed)) {
       try {
         storage.setItem(k, seed[k]); // before the hook: these come from the server
@@ -157,6 +162,7 @@
       if (sending && !keepalive) return false; // the request on its way sends what is left when it ends
       const batch = pending;
       pending = {};
+      for (const k of Object.keys(batch)) known.set(k, batch[k]); // a failed batch goes back into pending
       sending = true;
       lastSent = clock();
       let retry = false;
@@ -178,6 +184,7 @@
       }
     }
     function note(k, v) {
+      if (!Object.prototype.hasOwnProperty.call(pending, k) && known.has(k) && known.get(k) === v) return; // it has it already
       pending[k] = v;
       soon();
     }

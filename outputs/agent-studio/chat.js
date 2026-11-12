@@ -3388,7 +3388,15 @@
       await listConversations();
       // Chats are filed under their final project once the folder kinds answer (a worktree of a Claude worktree): wait for that,
       // so last session's chat reopens in its own project and the saved project stays (workspace-ui.js settled).
+      const startProject = window.AgentWorkspaceUI?.currentProject?.() ?? '';
       await window.AgentWorkspaceUI?.settled?.(1500);
+      // You may have opened a chat, started a new one or picked a project while the page waited: that stays. Reopening last
+      // session's chat now would open a chat you did not ask for and save the state again just as you quit (a project picked
+      // then was lost: its save waited behind this one).
+      if (selected || newDraft || (window.AgentWorkspaceUI?.currentProject?.() ?? '') !== startProject) {
+        if (!selected && !newDraft) showNewChat();
+        return;
+      }
       const key = sessionStorage.getItem('studio-selected') || sessionStorage.getItem('studio-saved');
       const prior = conversations.find((c) => c.key === key) || window.AgentWorkspaceUI?.restoreTarget?.();
       if (prior) {
