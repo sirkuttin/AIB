@@ -125,7 +125,7 @@ Deno.test("the project's own docs/ is never touched: not listed, not opened, nev
       'aib-docs/readme/doc.aibdoc',
       'aib-docs/readme/01-page-1.md',
     ]]]);
-    // the Docs tab's footer: what else is in aib-docs/ (not AIB's README)
+    // docs/list's others: what else is in aib-docs/ (not AIB's README)
     assertEquals(await s.ctx.docs.others(s.project), ['aib-docs/notes']);
     // an old-layout doc is one only when AIB wrote it (its note line)
     await Deno.writeTextFile(`${s.project}${sep}docs${sep}old.md`, `${MD_NOTE}\n\nOld words.\n`);
@@ -265,7 +265,7 @@ Deno.test('pasted or dropped HTML never carries the agent mark; align and column
   assert(col.includes('"data-w":"35"') && !col.includes('style'), col);
 });
 
-Deno.test('the Docs tab list: "Claude Code is writing <section>" while it works, then "edited by Claude Code"; most recent first', async () => {
+Deno.test('docs/list: "Claude Code is writing <section>" while it works, then "edited by Claude Code"; most recent first', async () => {
   const s = await studio();
   try {
     s.chat('c1', 'claude', 'a', '2026-11-11T10:00:00Z');

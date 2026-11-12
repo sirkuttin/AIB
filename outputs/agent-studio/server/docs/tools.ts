@@ -37,7 +37,7 @@ export async function runDocTool(
       const created = await store.open(projectRoot, args.doc, markdown, chat || undefined);
       if (chat) store.link(created, chat, false);
       if (args.title !== undefined) created.live.renamePage(created.live.firstPage, args.title, created.live.system);
-      // The doc's own title (shown in the Docs tab, chips, cards): `docTitle`, else the first page's # heading when the agent named the
+      // The doc's own title (shown in Files, chips, cards): `docTitle`, else the first page's # heading when the agent named the
       // doc by its folder name ("checkout-rounding-release"), so the slug is shown only when there is no title at all.
       const docTitle = typeof args.docTitle === 'string' && args.docTitle.trim()
         ? args.docTitle.trim()

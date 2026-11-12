@@ -163,7 +163,7 @@ export interface OpenDoc {
    * holding another epoch's copy is told to re-open (its Y.Doc would otherwise merge into this one as duplicate blocks).
    */
   epoch: string;
-  /** The last change: when (seconds) and by whom ("user", a chat id, "file"); the Docs tab's "edited 1 h ago by you". */
+  /** The last change: when (seconds) and by whom ("user", a chat id, "file"); kept for the doc list (Files, pickers). */
   edited: { at: number; by: string | null } | null;
 }
 
@@ -446,7 +446,7 @@ export class DocStore {
     } catch { /* there is one already */ }
   }
 
-  /** The files and folders in aib-docs/ that are not docs (nor AIB's README): the Docs tab names them ("1 other file"). */
+  /** The files and folders in aib-docs/ that are not docs (nor AIB's README): they show as plain files in Files. */
   async others(projectRoot: string): Promise<string[]> {
     await this.#moveOld(projectRoot);
     const dir = this.#docsDir(projectRoot), out: string[] = [];
@@ -622,7 +622,7 @@ export class DocStore {
       const doc = this.docs.get(id);
       // the linked chat (the Artifacts picker's "This chat"): the open doc's, else the one its cache remembers
       let chat: string | null = doc ? doc.chat : null;
-      // the last change (the Docs tab: "edited 1 h ago by you"): the open doc's, its cache's, else the file's time
+      // the last change (kept in the doc list): the open doc's, its cache's, else the file's time
       let edited: { at: number; by: string | null } | null = doc?.edited ?? null;
       if (!doc) {
         try {

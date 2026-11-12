@@ -9,7 +9,7 @@
  *                                                   rootFor): {docs: [{name, title, dir, owned, pages, pageList: [{id, title}],
  *                                                   chat (linked chat), open, editedAt, editedBy, writing: [{chat, name, page,
  *                                                   section}]}], others: [aib-docs/<x>: files there that are no doc]}. The
- *                                                   Docs tab, Files, Ctrl+K, chips and the Artifacts picker.
+ *                                                   Files, Ctrl+K, chips and the Artifacts picker.
  *   GET  /api/live/docs/built?id=<chat>&artifact=   an artifact built from a doc page (its manifest's fromDoc): {built: {doc, title,
  *                                                   page, pageTitle, rev, builtRev, changed, edits} | {gone: 'doc'|'page'} | null}.
  *   GET  /api/live/docs/shown?doc=<doc>             the doc header's "Shown in N artifacts": {artifacts: [{id, title, kind,

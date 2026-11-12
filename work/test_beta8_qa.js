@@ -72,10 +72,13 @@ test('the doc tab icon in the workspace strip is 14 px like the other tab icons'
   assert.equal(d.height, '14px');
 });
 
-test('Docs tab empty state is centred', () => {
-  const d = declarationsFor(css('files.css'), '.dt-empty');
-  assert.equal(d['align-items'], 'center');
-  assert.equal(d['text-align'], 'center');
+test('no Docs tab styles are left: docs live in Files (no .dt-* or Docs pane rules); the live dot on a doc row stops for reduced motion', () => {
+  const rules = css('files.css');
+  const left = rules.filter((r) => /\.dt-|\.sf-docs|#docsPane|sf-docs-mode|fx-docsfolder/.test(r.selector)).map((r) => r.selector);
+  assert.deepEqual(left, []);
+  assert.equal(declarationsFor(rules, '.fx-docdot')['border-radius'], '50%');
+  const calm = rules.find((r) => r.selector === '.fx-docdot' && /reduce/.test(r.context));
+  assert.equal(calm && calm.declarations.animation, 'none');
 });
 
 test('beside the chat (.narrow) the toolbar folds into ⋯ and never scrolls sideways; the header shows the doc name', () => {
