@@ -206,6 +206,15 @@ export class Browser {
     await page.goto(url);
     return page;
   }
+  /** At process exit (an unload handler cannot wait): kill Chrome now; its profile folder is a temp folder the OS clears. */
+  killNow(): void {
+    try {
+      this.#proc.kill();
+    } catch { /* gone */ }
+    try {
+      Deno.removeSync(this.profile, { recursive: true });
+    } catch { /* Chrome still holds it for a moment */ }
+  }
   async close(): Promise<void> {
     try {
       this.#proc.kill();

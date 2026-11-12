@@ -99,6 +99,8 @@ const HINT: Record<string, number> = {
  * (work/deno/_shard_preload.ts, loaded with --preload; the file is unchanged). Together the shards run each test once.
  */
 export const SHARDS: Record<string, number> = {
+  'scroll_e2e_test.ts': 4, // 57 scenarios, each its own Lab (Studio + a tab in the shard's one headless Chrome)
+  'layout_e2e_test.ts': 3, // 37 scenarios, the same
   'worktree_sync_interop_test.ts': 3,
   'worktree_sync_test.ts': 3,
   'worktree_merge_clash_test.ts': 2,
