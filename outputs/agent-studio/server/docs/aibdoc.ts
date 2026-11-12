@@ -1,5 +1,5 @@
 /**
- * doc.aibdoc: the doc itself, in the project (docs/<doc-slug>/doc.aibdoc), meant to be committed. Readable, stable JSON (2-space
+ * doc.aibdoc: the doc itself, in the project (aib-docs/<doc-slug>/doc.aibdoc), meant to be committed. Readable, stable JSON (2-space
  * indent, keys in a fixed order, so a git diff shows just the edit):
  *
  *   { "format": "aibdoc", "version": 1, "title": "Plan",

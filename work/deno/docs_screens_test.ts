@@ -1,5 +1,5 @@
 /**
- * The docs server for the doc screens (step S): what the page and the entry points rely on. A user's own docs/x.md is never a doc,
+ * The docs server for the doc screens (step S): what the page and the entry points rely on. The project's own docs/ is never a doc,
  * opening never re-links, per-chat undo, the socket's epoch (restart without duplicates), a move vs a rename, pasted agent marks,
  * the turn signal (refused notes for a short and a cancelled turn, presence and claims cleared), page delete requests, restore with
  * keystrokes in flight, the Markdown export, owned paths, doc rows for Changes/Merge and the drawing page's own CSP.
@@ -9,8 +9,9 @@ import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
-import { DocStore, docId, MD_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
+import { DocStore, docId, DOCS_README, MD_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
+import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
+import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { FIELD } from '../../outputs/agent-studio/server/docs/live_doc.ts';
 import { schema } from '../../outputs/agent-studio/server/docs/markdown.ts';
 import { docRows } from '../../outputs/agent-studio/server/docs/rows.ts';
@@ -91,29 +92,101 @@ async function studio() {
 const presence = (ctx: WebContext, doc: string) =>
   [...ctx.docs.get(doc)!.live.awareness.getStates().values()].map((s) => s.agent as Json).filter(Boolean);
 
-Deno.test("a user's own docs/README.md stays a file: not listed, not opened, never moved; a doc never goes into a folder it did not make", async () => {
+Deno.test("the project's own docs/ is never touched: not listed, not opened, never moved; a doc never goes into a folder it did not make", async () => {
   const s = await studio();
   try {
+    await Deno.mkdir(`${s.project}${sep}docs`, { recursive: true });
     const readme = `${s.project}${sep}docs${sep}README.md`;
     await Deno.writeTextFile(readme, '# Read me\n\nThe user wrote this.\n');
     await Deno.mkdir(`${s.project}${sep}docs${sep}notes`);
+    // a doc.aibdoc AIB has no state for (a clone, a hand copy) is the project's file too
+    await Deno.mkdir(`${s.project}${sep}docs${sep}other`);
+    await Deno.writeTextFile(`${s.project}${sep}docs${sep}other${sep}doc.aibdoc`, '{"format":"aibdoc","version":1,"title":"Other","pages":[]}');
     assertEquals(await s.ctx.docs.list(s.project), []);
     assertEquals((await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'README' }))[1].code, 'no_doc');
-    // a new doc of that name gets its own folder; the file is untouched
     const [status, made] = await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'README', create: '' });
     assertEquals(status, 200);
-    assertEquals(made.dir, 'docs/readme');
+    assertEquals(made.dir, 'aib-docs/readme');
     assertEquals(await Deno.readTextFile(readme), '# Read me\n\nThe user wrote this.\n');
+    assertEquals(
+      [...Deno.readDirSync(`${s.project}${sep}docs`)].map((e) => e.name).sort(),
+      ['README.md', 'notes', 'other'],
+      'docs/ as the user left it',
+    );
+    // aib-docs/notes is a folder AIB did not make: no doc goes into it
+    await Deno.mkdir(`${s.project}${sep}aib-docs${sep}notes`);
     assertEquals((await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'notes', create: '' }))[1].code, 'folder_exists');
-    // what the doc owns: exactly its files, project-relative (the Files view hides these and nothing else)
+    // what the doc owns: exactly its files, project-relative
     const listed = await s.ctx.docs.list(s.project);
-    assertEquals(listed.map((d) => [d.name, d.dir, d.owned]), [['readme', 'docs/readme', ['docs/readme/doc.aibdoc', 'docs/readme/01-page-1.md']]]);
+    assertEquals(listed.map((d) => [d.name, d.dir, d.owned]), [['readme', 'aib-docs/readme', [
+      'aib-docs/readme/doc.aibdoc',
+      'aib-docs/readme/01-page-1.md',
+    ]]]);
+    // the Docs tab's footer: what else is in aib-docs/ (not AIB's README)
+    assertEquals(await s.ctx.docs.others(s.project), ['aib-docs/notes']);
     // an old-layout doc is one only when AIB wrote it (its note line)
     await Deno.writeTextFile(`${s.project}${sep}docs${sep}old.md`, `${MD_NOTE}\n\nOld words.\n`);
     assertEquals((await s.ctx.docs.list(s.project)).map((d) => [d.name, d.legacy ?? false]), [['old', true], ['readme', false]]);
     assert(await exists(readme));
   } finally {
     await s.done();
+  }
+});
+
+Deno.test('aib-docs/README.md is written once, with the first doc, and an edit to it stays', async () => {
+  const s = await studio();
+  try {
+    await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Plan', create: '' });
+    const path = `${s.project}${sep}aib-docs${sep}README.md`;
+    assertEquals(await Deno.readTextFile(path), DOCS_README);
+    assert(DOCS_README.includes('Edits to the .md copies are overwritten.'));
+    await Deno.writeTextFile(path, '# Our docs\n');
+    await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Spec', create: '' });
+    assertEquals(await Deno.readTextFile(path), '# Our docs\n');
+    await Deno.remove(path);
+    await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Notes', create: '' });
+    assertEquals(await exists(path), false, 'deleted by the user: not written again');
+  } finally {
+    await s.done();
+  }
+});
+
+Deno.test('docs AIB made in docs/ move to aib-docs/ on first use: pages, cache and history kept, the copies follow', async () => {
+  const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-move-' })).replace(/^\\\\\?\\/, '');
+  const dirs = { root, state: `${root}${sep}state`, project: `${root}${sep}project` };
+  await Deno.mkdir(dirs.state), await Deno.mkdir(dirs.project);
+  try {
+    // a doc made while AIB kept docs in docs/
+    const history = new ArtifactHistory(() => artifacts);
+    const artifacts = new ArtifactStore(`${dirs.state}${sep}artifacts`);
+    const old = new DocStore(dirs.state, { idleMs: 60_000, mirrorFolder: 'docs', history });
+    const doc = await old.open(dirs.project, 'Release plan', '# Overview\n\nShip it.\n');
+    old.userPageOp(doc, 'add', { title: 'Risks' });
+    await old.flush(doc);
+    const versions = old.history(doc).versions.length;
+    await old.close();
+    assert(await exists(`${dirs.project}${sep}docs${sep}release-plan${sep}doc.aibdoc`));
+    await Deno.writeTextFile(`${dirs.project}${sep}docs${sep}guide.md`, '# The project guide\n');
+    // the next AIB: aib-docs/
+    const store = new DocStore(dirs.state, { idleMs: 60_000, history });
+    const listed = await store.list(dirs.project);
+    assertEquals(listed.map((d) => [d.name, d.dir, d.pages]), [['release-plan', 'aib-docs/release-plan', 2]]);
+    assertEquals(await exists(`${dirs.project}${sep}docs${sep}release-plan`), false, 'moved, not copied');
+    assertEquals(await Deno.readTextFile(`${dirs.project}${sep}docs${sep}guide.md`), '# The project guide\n', "the project's file stays");
+    assert(await exists(`${dirs.project}${sep}aib-docs${sep}README.md`));
+    const again = await store.open(dirs.project, 'release-plan');
+    assertEquals(again.live.pageList().map((p) => p.title), ['Page 1', 'Risks']);
+    assertEquals(store.history(again).versions.length >= versions, true, 'the history is the same artifact');
+    assertEquals(store.pageMarkdown(again).includes('Ship it.'), true);
+    // the cache's copy paths moved with the folder: an edit to the moved copy is taken in
+    const copy = `${dirs.project}${sep}aib-docs${sep}release-plan${sep}01-page-1.md`;
+    const text = await Deno.readTextFile(copy);
+    await Deno.writeTextFile(copy, text.replace('Ship it.', 'Ship it on Monday.'));
+    await store.syncMirror(again);
+    assertEquals(store.pageMarkdown(again).includes('Ship it on Monday.'), true);
+    await store.close();
+  } finally {
+    await Deno.remove(dirs.root, { recursive: true }).catch(() => {});
   }
 });
 
@@ -187,6 +260,36 @@ Deno.test('pasted or dropped HTML never carries the agent mark; align and column
   const column = schema.nodes.column.create({ width: 0.33 }, schema.nodes.paragraph.create());
   const col = JSON.stringify(schema.nodes.column.spec.toDOM!(column));
   assert(col.includes('"data-w":"35"') && !col.includes('style'), col);
+});
+
+Deno.test('the Docs tab list: "Claude Code is writing <section>" while it works, then "edited by Claude Code"; most recent first', async () => {
+  const s = await studio();
+  try {
+    s.chat('c1', 'claude', 'a', '2026-11-11T10:00:00Z');
+    await s.ctx.artifacts.refresh();
+    await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Notes', create: 'Mine.\n' });
+    await s.tool('c1', 'doc_create', { doc: 'plan', markdown: '# Overview\n\nAlpha.\n\n## Risks\n\nBeta.\n' });
+    const [, read] = await s.tool('c1', 'doc_read', { doc: 'plan' });
+    const beta = (read.blocks as { id: string; h: string; md?: string }[]).find((b) => b.md === 'Beta.')!;
+    assert((await s.tool('c1', 'doc_edit', {
+      doc: 'plan',
+      ops: [{ op: 'replace', target: { kind: 'blocks', ids: [beta.id] }, ifHash: beta.h, ifRev: read.rev, with: inline('Beta, rewritten.') }],
+    }))[0]);
+    const [, listed] = await s.call('GET /api/live/docs/list', null, 'id=claude:a');
+    const plan = (listed.docs as Json[]).find((d) => d.name === 'plan')!;
+    assertEquals(plan.writing, [{ chat: 'claude:a', name: 'Claude Code', page: 'Page 1', section: 'Risks' }]);
+    assertEquals(plan.editedBy, 'Claude Code');
+    const notes = (listed.docs as Json[]).find((d) => d.name === 'notes')!;
+    assertEquals(notes.writing, []);
+    assert(Number(plan.editedAt) >= Number(notes.editedAt), 'the times the tab sorts by');
+    // the turn ends: the live line goes
+    s.chat('c1', 'claude', 'a', '2026-11-11T10:00:01Z');
+    await s.ctx.artifacts.refresh();
+    const [, after] = await s.call('GET /api/live/docs/list', null, 'id=claude:a');
+    assertEquals((after.docs as Json[]).find((d) => d.name === 'plan')!.writing, []);
+  } finally {
+    await s.done();
+  }
 });
 
 Deno.test('the turn signal: a turn under 2 s and a cancelled turn both leave the refused note; one made good leaves none; presence and claims go', async () => {
@@ -400,15 +503,22 @@ Deno.test('the user through the server: page add/rename/move/duplicate, comments
 Deno.test('Changes and Merge: a doc is one row; doc histories stay out of the Artifacts list', async () => {
   const root = await temp('aib-rows-');
   try {
-    await Deno.mkdir(`${root}${sep}docs${sep}plan`, { recursive: true });
-    await Deno.writeTextFile(`${root}${sep}docs${sep}plan${sep}doc.aibdoc`, JSON.stringify({ title: 'Release plan' }));
-    const rows = docRows(root, ['docs/plan/doc.aibdoc', 'docs/plan/01-overview.md', 'docs/plan/02-risks.md', 'docs/README.md', 'src/a.ts']);
+    await Deno.mkdir(`${root}${sep}aib-docs${sep}plan`, { recursive: true });
+    await Deno.writeTextFile(`${root}${sep}aib-docs${sep}plan${sep}doc.aibdoc`, JSON.stringify({ title: 'Release plan' }));
+    const rows = docRows(root, [
+      'aib-docs/plan/doc.aibdoc',
+      'aib-docs/plan/01-overview.md',
+      'aib-docs/plan/02-risks.md',
+      'aib-docs/README.md',
+      'docs/plan/01-overview.md',
+      'src/a.ts',
+    ]);
     assertEquals(rows, [{
       doc: 'plan',
-      dir: 'docs/plan',
+      dir: 'aib-docs/plan',
       title: 'Release plan',
       pages: 2,
-      paths: ['docs/plan/doc.aibdoc', 'docs/plan/01-overview.md', 'docs/plan/02-risks.md'],
+      paths: ['aib-docs/plan/doc.aibdoc', 'aib-docs/plan/01-overview.md', 'aib-docs/plan/02-risks.md'],
     }]);
     assert(isDocHistory({ conversationId: null, sourcePath: null, entry: 'plan.aibdoc.json', versions: [] }));
     assert(isDocHistory({ conversationId: null, sourcePath: null, entry: 'plan.md', versions: [{ note: 'rev 3' }] }));

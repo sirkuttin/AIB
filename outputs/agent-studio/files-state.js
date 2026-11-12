@@ -78,9 +78,9 @@
   }
 
   // ---- docs ---------------------------------------------------------------------------------------------------------------
-  // A local doc (docs/<doc>/ with its doc.aibdoc) is ONE row: never a folder, never its files. `docs`: GET /api/live/docs/list's
-  // docs ({name, title, dir, owned, pages}). Only the paths a doc owns are hidden, never a docs/** pattern: a user's
-  // docs/README.md stays a file.
+  // AIB's docs live in aib-docs/<doc>/ (doc.aibdoc + its copies). In the tree the aib-docs folder is ONE row ("4 docs ›") that
+  // switches to the Docs tab; the project's own docs/ is ordinary files. In the filter and Changed lists a doc's files become its
+  // one doc row. `docs`: GET /api/live/docs/list's docs ({name, title, dir, owned, pages}).
   function docIndex(docs) {
     const byDir = new Map(),
       owned = new Map(); // owned path -> doc
@@ -120,7 +120,53 @@
     changed: 0,
     artifact: false,
   });
-  const NEW_DOC = 'docs/+new-doc';
+  const DOCS_FOLDER = 'aib-docs';
+  const NEW_DOC = DOCS_FOLDER + '/+new-doc';
+
+  // ---- the Docs tab ---------------------------------------------------------------------------------------------------------
+  // One flat list, most recently edited first. Each row: title, "this chat" when the doc is linked to the open chat (`chatKeys`),
+  // and its line: the live "Claude Code is writing Risks" while an agent works, else "3 pages · not committed yet" (a new doc) or
+  // "4 pages · edited 1 h ago by you"; the change badge until committed. `nowMs` for the relative time.
+  function docsList(docs, changes, chatKeys, nowMs) {
+    const keys = (chatKeys || []).filter(Boolean);
+    return (docs || [])
+      .filter((d) => d && d.name && !d.legacy)
+      .map((d) => {
+        const badge = docBadge(d, changes, null);
+        return {
+          doc: d,
+          name: d.name,
+          title: d.title || d.name,
+          mine: !!(d.chat && keys.includes(d.chat)),
+          pages: Math.max(1, Number(d.pages) || 1),
+          badge,
+          writing: Array.isArray(d.writing) && d.writing.length ? d.writing[0] : null,
+          line: docsLine(d, badge, nowMs),
+          at: Number(d.editedAt) || 0,
+        };
+      })
+      .sort((a, b) => b.at - a.at || a.title.localeCompare(b.title));
+  }
+  function ago(at, nowMs) {
+    const secs = Math.max(0, ((nowMs == null ? Date.now() : nowMs) / 1000) - Number(at));
+    if (secs < 45) return 'just now';
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return mins + ' min ago';
+    const hours = Math.round(secs / 3600);
+    if (hours < 24) return hours + ' h ago';
+    const days = Math.round(secs / 86400);
+    return days === 1 ? 'yesterday' : days + ' days ago';
+  }
+  function docsLine(d, badge, nowMs) {
+    const w = Array.isArray(d.writing) && d.writing.length ? d.writing[0] : null;
+    if (w) return (w.name || 'An agent') + ' is writing ' + (w.section || w.page || 'this doc');
+    const n = Math.max(1, Number(d.pages) || 1),
+      pages = n + (n === 1 ? ' page' : ' pages');
+    if (badge && badge.status === 'A') return pages + ' · not committed yet';
+    if (!(Number(d.editedAt) > 0)) return pages;
+    const who = d.editedBy === 'You' ? 'you' : d.editedBy;
+    return pages + ' · edited ' + ago(d.editedAt, nowMs) + (who ? ' by ' + who : '');
+  }
 
   // ---- the tree -----------------------------------------------------------------------------------------------------------
   // cache: {dir -> entries[] | 'loading' | {error}}, open: Set of open folders. Entries come from /api/live/files/list.
@@ -142,13 +188,27 @@
         out.push({ kind: 'error', path: dir + '/!', depth, text: list.error });
         return;
       }
-      // "+ New doc" at the top when the project has no docs folder yet
-      if (dir === '' && o.newDoc && !list.some((e) => e.dir && e.path === 'docs')) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
       for (const e of list) {
         if (docs && docs.owned.has(slash(e.path))) continue;
-        const d = docs && e.dir ? docs.byDir.get(slash(e.path)) : null;
-        if (d) {
-          out.push(docRow(d, depth, changes, e));
+        // a doc's folder: never a row of its own (the Docs tab lists the docs)
+        if (docs && e.dir && docs.byDir.has(slash(e.path))) continue;
+        if (e.dir && dir === '' && e.path === DOCS_FOLDER) {
+          // aib-docs: one row that switches to the Docs tab; opened (Show in Files) it lists what is there besides the docs
+          const isOpen = open.has(e.path);
+          out.push({
+            kind: 'docsfolder',
+            path: e.path,
+            name: e.name,
+            count: docs ? docs.byDir.size : 0,
+            depth,
+            ignored: !!e.ignored,
+            open: isOpen,
+            canOpen: false,
+            badge: null,
+            changed: changes ? changedBelow(changes, e.path) : Number(e.changed) || 0,
+            artifact: false,
+          });
+          if (isOpen) walk(e.path, depth + 1);
           continue;
         }
         const isOpen = !!e.dir && open.has(e.path) && (!e.ignored || o.showIgnored);
@@ -172,8 +232,6 @@
         out.push(row);
         if (isOpen) walk(e.path, depth + 1);
       }
-      // the last row inside docs
-      if (dir === 'docs' && o.newDoc) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
     };
     walk('', 0);
     return out;
@@ -313,7 +371,7 @@
     const tab = {
       id,
       kind: 'doc',
-      path: slash(d.dir || 'docs/' + d.name),
+      path: slash(d.dir || DOCS_FOLDER + '/' + d.name),
       name: d.title || d.name,
       scope,
       preview: !o.keep,
@@ -426,6 +484,9 @@
     docIndex,
     docBadge,
     NEW_DOC,
+    DOCS_FOLDER,
+    docsList,
+    docsLine,
     docTabId,
     openDocTab,
     emptyTabs,

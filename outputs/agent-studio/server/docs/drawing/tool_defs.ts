@@ -5,7 +5,7 @@
  */
 type Json = Record<string, unknown>;
 
-const DOC = { type: 'string', description: 'The doc\'s name, e.g. "plan" (its folder is docs/<name>/).' };
+const DOC = { type: 'string', description: 'The doc\'s name, e.g. "plan" (its folder is aib-docs/<name>/).' };
 const DRAWING = {
   type: 'string',
   description: "The drawing's id: drawing_create returns it; in the doc's Markdown it is the file name in " +
@@ -36,7 +36,7 @@ export const DRAWING_TOOLS: Json[] = [
     description: 'Put a new drawing (Excalidraw: boxes, arrows, frames) into a doc shared with the user, as its own block: at the end, ' +
       'or after the block "after" (an id from doc_read). Optional "mermaid": a Mermaid flowchart to start it from. Returns the ' +
       "drawing's id (for drawing_read and drawing_edit), the block's id, its page and the doc's `rev`. In the page's Markdown " +
-      'copy it is ![caption](assets/<id>.excalidraw.svg), with the scene as JSON in docs/<doc>/assets/<id>.excalidraw.',
+      'copy it is ![caption](assets/<id>.excalidraw.svg), with the scene as JSON in aib-docs/<doc>/assets/<id>.excalidraw.',
     inputSchema: {
       type: 'object',
       properties: {

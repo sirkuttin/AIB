@@ -14,11 +14,11 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
   'doc_comments {since: <your last seq>} shows the threads; answer with doc_reply. An edit that would remove words a comment hangs ' +
   'on is refused `anchors_affected`: keep them. To point the user at a doc or a page in your reply, write a Markdown link ' +
   '[<doc title> › <page title>](aib-doc://<doc name>/<page id>) (page ids: doc_read outline; [<doc title>](aib-doc://<doc name>) for ' +
-  'the whole doc): AIB shows it as a chip that opens the page, even after a rename. Never name the doc files or docs/ paths.';
+  'the whole doc): AIB shows it as a chip that opens the page, even after a rename. Never name the doc files or aib-docs/ paths.';
 
 const DOC = {
   type: 'string',
-  description: 'The doc\'s name, e.g. "plan". It lives in docs/<name>/ in the chat\'s project (doc.aibdoc + a Markdown copy per page).',
+  description: 'The doc\'s name, e.g. "plan". It lives in aib-docs/<name>/ in the chat\'s project (doc.aibdoc + a Markdown copy per page).',
 };
 const PAGE = { type: 'string', description: 'The page: its id or title (doc_read outline lists pages). Default: the first page.' };
 
@@ -70,14 +70,14 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_list',
     title: 'List docs',
-    description: "The docs of this chat's project: each is a folder docs/<name>/ holding doc.aibdoc (the doc, meant to be " +
+    description: "The docs of this chat's project: each is a folder aib-docs/<name>/ holding doc.aibdoc (the doc, meant to be " +
       'committed) and a generated Markdown copy per page.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'doc_create',
     title: 'Create a doc',
-    description: 'Make a new doc shared with the user (its folder: docs/<name>/ in the project), optionally from Markdown (its ' +
+    description: 'Make a new doc shared with the user (its folder: aib-docs/<name>/ in the project), optionally from Markdown (its ' +
       'first page). Refused with doc_exists if the name is taken. Returns its blocks and `rev`, like doc_read. ' +
       DOC_INSTRUCTIONS,
     inputSchema: {

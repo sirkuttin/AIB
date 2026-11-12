@@ -1,5 +1,5 @@
 /**
- * Changed files as doc rows, for Changes and Merge: every changed path under docs/<doc>/ of a doc (a folder with doc.aibdoc, or a
+ * Changed files as doc rows, for Changes and Merge: every changed path under aib-docs/<doc>/ of a doc (a folder with doc.aibdoc, or a
  * doc.aibdoc that was deleted) becomes part of one row {doc, dir, title, pages (how many pages' Markdown copies changed), paths}.
  * The page lists those paths under the row and not as files. No imports beyond Deno, so the worktree code can use it.
  */
@@ -8,7 +8,7 @@ const COPY = /^\d{2,}-[^/]*\.md$/;
 
 export interface DocRow {
   doc: string;
-  /** docs/<doc> (forward slashes, relative to the same root as the paths). */
+  /** aib-docs/<doc> (forward slashes, relative to the same root as the paths). */
   dir: string;
   title: string;
   /** Pages whose Markdown copy changed (at least 1 when only doc.aibdoc changed). */
@@ -17,7 +17,7 @@ export interface DocRow {
 }
 
 /** Rows for the changed `paths` (relative to `root`, forward or back slashes); paths of no doc are left out. */
-export function docRows(root: string, paths: string[], folder = 'docs'): DocRow[] {
+export function docRows(root: string, paths: string[], folder = 'aib-docs'): DocRow[] {
   const rows = new Map<string, DocRow>();
   for (const raw of paths) {
     const path = raw.replace(/\\/g, '/');

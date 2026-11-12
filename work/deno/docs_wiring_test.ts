@@ -92,12 +92,12 @@ Deno.test("the doc tools are always offered, and a call goes to Studio's doc rou
     assertEquals(seen[0].path, '/api/live/docs/tool');
     assertEquals(seen[0].key, 'k');
     assertEquals((seen[0].body as Json).conversationId, 'claude:s1');
-    assertEquals(mdBody(await Deno.readTextFile(`${project}${sep}docs${sep}plan${sep}01-page-1.md`)), String.fromCharCode(10)); // the new doc's copy: one empty paragraph
+    assertEquals(mdBody(await Deno.readTextFile(`${project}${sep}aib-docs${sep}plan${sep}01-page-1.md`)), String.fromCharCode(10)); // the new doc's copy: one empty paragraph
     const read = await call('doc_read', { doc: 'plan' });
     const blocks = read.data.blocks as { id: string; h: string; md: string; by?: string }[];
     assertEquals(blocks.map((b) => b.md), ['', '# Plan', 'Ship it in October.']);
     assertEquals(blocks[2].by, 'claude');
-    assertEquals(read.data.file, `${project}${sep}docs${sep}plan${sep}doc.aibdoc`);
+    assertEquals(read.data.file, `${project}${sep}aib-docs${sep}plan${sep}doc.aibdoc`);
     const bare = await call('doc_edit', { doc: 'plan', ops: [{ op: 'delete', target: { kind: 'blocks', ids: [blocks[0].id] } }] });
     assertEquals([bare.isError, bare.data.code], [true, 'missing_guard']);
     const none = await call('doc_edit', {

@@ -7,7 +7,7 @@
  *   chartProblem(node) why a chart's table is not a chart (agent and file edits are refused with it; the user's typing never is)
  *   chartFromTable     a chart node copied once from a table (no live link: later table edits leave the chart alone)
  *   chartSvg(node)     its picture: plain SVG on white, no theme, readable in any viewer (GitHub, an image preview)
- *   syncCharts(doc)    writes docs/<doc>/assets/<chart>.chart.svg for every chart (the .md copy links it), removes pictures of
+ *   syncCharts(doc)    writes aib-docs/<doc>/assets/<chart>.chart.svg for every chart (the .md copy links it), removes pictures of
  *                      charts that are gone; fixChartIds gives a chart without an id (or with a copied one) its own first
  */
 import * as Y from 'yjs';
@@ -265,7 +265,7 @@ export function fixChartIds(live: LiveDoc): void {
   }, live.system);
 }
 
-/** The pictures of the doc's charts in docs/<doc>/assets/, written when they differ; pictures of charts that are gone go. */
+/** The pictures of the doc's charts in aib-docs/<doc>/assets/, written when they differ; pictures of charts that are gone go. */
 export async function syncCharts(doc: { live: LiveDoc; dir: string }): Promise<void> {
   const assets = `${doc.dir}${sep}assets`;
   const want = new Map<string, string>();

@@ -1,9 +1,9 @@
 /**
  * The docs' entry points on the server side (builder A): GET /api/live/docs/list, which the Files view, Ctrl+K, page chips and the
- * Artifacts picker read. A user's docs/README.md is never a doc and never owned; each doc lists exactly the paths it owns, its pages
+ * Artifacts picker read. Docs live in aib-docs/; the project's own docs/ is never a doc folder; each doc lists exactly the paths it owns, its pages
  * with their ids (chips resolve by id) and its linked chat, which opening the doc from another chat never moves.
  */
-import { assertEquals } from './_assert.ts';
+import { assert, assertEquals } from './_assert.ts';
 import { docsRoutes, docsTool } from '../../outputs/agent-studio/server/web/docs_routes.ts';
 import { makeContext } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
@@ -57,9 +57,10 @@ async function studio() {
   };
 }
 
-Deno.test('docs/list: one entry per doc with its owned paths, page ids and linked chat; docs/README.md is not a doc', async () => {
+Deno.test('docs/list: one entry per doc in aib-docs/ with its owned paths, page ids, linked chat and last edit; docs/ is never touched', async () => {
   const s = await studio();
   try {
+    await Deno.mkdir(`${s.project}${sep}docs`, { recursive: true });
     await Deno.writeTextFile(`${s.project}${sep}docs${sep}README.md`, '# Read me\n');
     const [, made] = await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Release plan', create: '# Overview\n' });
     await s.call('POST /api/live/docs/page', { doc: made.doc, action: 'add', title: 'Risks' });
@@ -68,10 +69,17 @@ Deno.test('docs/list: one entry per doc with its owned paths, page ids and linke
     const docs = listed.docs as Json[];
     assertEquals(docs.length, 1, 'README.md is a file, not a doc');
     const d = docs[0];
-    assertEquals([d.name, d.title, d.dir, d.pages, d.chat], ['release-plan', 'Release plan', 'docs/release-plan', 2, 'claude:a']);
+    assertEquals([d.name, d.title, d.dir, d.pages, d.chat], ['release-plan', 'Release plan', 'aib-docs/release-plan', 2, 'claude:a']);
     assertEquals((d.pageList as Json[]).map((p) => p.title), ['Page 1', 'Risks']);
-    for (const p of d.owned as string[]) assertEquals(p.startsWith('docs/release-plan/'), true, p);
-    assertEquals((d.owned as string[]).includes('docs/README.md'), false);
+    for (const p of d.owned as string[]) assertEquals(p.startsWith('aib-docs/release-plan/'), true, p);
+    assertEquals(typeof d.editedAt, 'number');
+    assertEquals(d.editedBy, 'You', 'the user added a page last');
+    assertEquals(d.writing, [], 'no agent at work');
+    assertEquals(listed.others, [], "aib-docs/README.md is AIB's, not another file");
+    // the project's own docs/ is untouched; aib-docs/README.md was written with the first doc
+    assertEquals([...Deno.readDirSync(`${s.project}${sep}docs`)].map((e) => e.name), ['README.md']);
+    assertEquals(Deno.readTextFileSync(`${s.project}${sep}docs${sep}README.md`), '# Read me\n');
+    assert(Deno.readTextFileSync(`${s.project}${sep}aib-docs${sep}README.md`).startsWith('# aib-docs'));
   } finally {
     await s.done();
   }

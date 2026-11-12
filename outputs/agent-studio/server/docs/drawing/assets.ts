@@ -1,9 +1,9 @@
 /**
- * A doc's drawings in its folder (docs/<doc>/), next to its pages' Markdown copies:
+ * A doc's drawings in its folder (aib-docs/<doc>/), next to its pages' Markdown copies:
  *
- *   docs/<doc>/NN-<page>.md                    the drawing block: ![caption](assets/<drawing>.excalidraw.svg)
- *   docs/<doc>/assets/<drawing>.excalidraw.svg  the picture, with the scene embedded (files.ts), so viewers show it and AIB reopens it
- *   docs/<doc>/assets/<drawing>.excalidraw      the scene as plain JSON: clean diffs, and what agents edit with file tools
+ *   aib-docs/<doc>/NN-<page>.md                    the drawing block: ![caption](assets/<drawing>.excalidraw.svg)
+ *   aib-docs/<doc>/assets/<drawing>.excalidraw.svg  the picture, with the scene embedded (files.ts), so viewers show it and AIB reopens it
+ *   aib-docs/<doc>/assets/<drawing>.excalidraw      the scene as plain JSON: clean diffs, and what agents edit with file tools
  *
  * syncDrawings runs at the start of the store's file sync and at the end of its write (store.ts), for every drawing a block of the doc
  * shows:

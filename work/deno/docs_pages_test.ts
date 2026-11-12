@@ -1,5 +1,5 @@
 /**
- * Local docs with pages, living in the project: docs/<doc>/doc.aibdoc (round trip, stable ids, keys in a fixed order), the cache
+ * Local docs with pages, living in the project: aib-docs/<doc>/doc.aibdoc (round trip, stable ids, keys in a fixed order), the cache
  * used only when it matches the file (else a rebuild), doc.aibdoc edited on disk while open (merged without clobbering the user),
  * page operations with their guards, one Markdown copy per page (names, renames, per-page file edits), the move from the old layout,
  * and the proof test on page 2: the user types while the agent rewrites the same block, the agent is refused, the user's words stay.
@@ -67,7 +67,7 @@ Deno.test('doc.aibdoc: readable JSON in a fixed key order; read back it rebuilds
   const store = new DocStore(dirs.state, { idleMs: 60_000 });
   try {
     const doc = await twoPages(store, dirs.project);
-    assertEquals(doc.file, `${dirs.project}${sep}docs${sep}plan${sep}doc.aibdoc`);
+    assertEquals(doc.file, `${dirs.project}${sep}aib-docs${sep}plan${sep}doc.aibdoc`);
     const text = await Deno.readTextFile(doc.file);
     assert(text.startsWith('{\n  "format": "aibdoc",\n  "version": 1,\n  "title": "Plan",\n  "pages": ['), text.slice(0, 120));
     const aib = parseAib(text);
@@ -110,7 +110,7 @@ Deno.test('the cache is used only when it matches doc.aibdoc; otherwise (a pull,
     assertEquals(again.live.rev, rev);
     await store.close();
     // the file changed while AIB was closed (a git pull): rebuilt from it; rev goes on rising
-    const file = `${dirs.project}${sep}docs${sep}plan${sep}doc.aibdoc`;
+    const file = `${dirs.project}${sep}aib-docs${sep}plan${sep}doc.aibdoc`;
     await Deno.writeTextFile(file, (await Deno.readTextFile(file)).replace('Budget is tight.', 'Budget is fine.'));
     store = new DocStore(dirs.state, { idleMs: 60_000 });
     again = await store.open(dirs.project, 'plan');
@@ -291,7 +291,7 @@ Deno.test('one Markdown copy per page: NN-<title>.md with the note; renames and 
   }
 });
 
-Deno.test('a doc of the old layout (docs/<name>.md + state) moves to docs/<name>/ with one page: ids, comments and drawings kept', async () => {
+Deno.test('a doc of the old layout (docs/<name>.md + state) moves to aib-docs/<name>/ with one page: ids, comments and drawings kept', async () => {
   const dirs = await tempDirs();
   try {
     // a drawing scene to put in the old assets folder: made with the new layout in a scratch project
@@ -302,7 +302,7 @@ Deno.test('a doc of the old layout (docs/<name>.md + state) moves to docs/<name>
     await tool(maker, scratch, 'drawing_create', { doc: 'x', caption: 'Flow' });
     await tool(maker, scratch, 'drawing_edit', { doc: 'x', drawing: 'flow', ops: [{ op: 'add_box', text: 'Build', id: 'B' }] });
     await maker.close();
-    const scene = await Deno.readTextFile(`${scratch}${sep}docs${sep}x${sep}assets${sep}flow.excalidraw`);
+    const scene = await Deno.readTextFile(`${scratch}${sep}aib-docs${sep}x${sep}assets${sep}flow.excalidraw`);
 
     // the old layout: docs/Plan.md, docs/Plan.assets/, and the state in <stateDir>/docs/<old id>/
     const md = '# Plan\n\nThe launch moves to October.\n\n![Flow](Plan.assets/flow.excalidraw.svg)\n';
@@ -340,7 +340,7 @@ Deno.test('a doc of the old layout (docs/<name>.md + state) moves to docs/<name>
       assertEquals(doc.live.topIds()[1], para, 'the blocks keep their ids');
       assertEquals(doc.live.comments.list().threads[0].quote, 'October');
       // the new files are there, the old ones gone
-      const dir = `${docs}${sep}plan`;
+      const dir = `${dirs.project}${sep}aib-docs${sep}plan`;
       assertEquals(
         mdBody(await Deno.readTextFile(`${dir}${sep}01-page-1.md`)),
         '# Plan\n\nThe launch moves to October.\n\n![Flow](assets/flow.excalidraw.svg)\n',

@@ -155,7 +155,7 @@ Deno.test('the comment tools: who may resolve, since, and the comments survive a
     const info = store.info(doc) as { comments: ThreadView[]; commentSeq: number; chat: string };
     assertEquals([info.comments.length, info.chat, info.commentSeq > seq], [3, 'claude:s1', true]);
     await store.close();
-    const md = mdBody(await Deno.readTextFile(`${dirs.project}${sep}docs${sep}plan${sep}01-page-1.md`));
+    const md = mdBody(await Deno.readTextFile(`${dirs.project}${sep}aib-docs${sep}plan${sep}01-page-1.md`));
     assertEquals(md, `# Plan\n\n${PARA}\n`);
     // a restart: the threads, their anchors and the linked chat come back from the saved state
     store = new DocStore(dirs.state, { idleMs: 60_000 });

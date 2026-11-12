@@ -125,7 +125,7 @@ Deno.test('the drawing tools through runDocTool: create in a doc, read, edit, Me
 Deno.test('a drawing inside a doc survives a restart; its files sit next to the Markdown copy', async () => {
   const dirs = await tempDirs();
   let store = new DocStore(dirs.state, { idleMs: 60_000 });
-  const assets = `${dirs.project}${sep}docs${sep}plan${sep}assets${sep}`;
+  const assets = `${dirs.project}${sep}aib-docs${sep}plan${sep}assets${sep}`;
   let before = '';
   try {
     await tool(store, dirs.project, 'doc_create', { doc: 'plan', markdown: '# Plan\n' });
@@ -155,7 +155,7 @@ Deno.test('a drawing inside a doc survives a restart; its files sit next to the 
 
     // The files: the Markdown links the picture; the JSON and the SVG hold the scene.
     assertEquals(
-      mdBody(await Deno.readTextFile(`${dirs.project}${sep}docs${sep}plan${sep}01-page-1.md`)),
+      mdBody(await Deno.readTextFile(`${dirs.project}${sep}aib-docs${sep}plan${sep}01-page-1.md`)),
       '# Plan\n\n![Flow](assets/flow.excalidraw.svg)\n',
     );
     const json = JSON.parse(await Deno.readTextFile(`${assets}flow.excalidraw`));
@@ -186,8 +186,8 @@ Deno.test('a drawing inside a doc survives a restart; its files sit next to the 
 Deno.test('Markdown round trip with a drawing: read in from the .md and its files, byte for byte; from the SVG alone too', async () => {
   const dirs = await tempDirs();
   const store = new DocStore(dirs.state, { idleMs: 60_000 });
-  const md = `${dirs.project}${sep}docs${sep}plan${sep}01-page-1.md`;
-  const assets = `${dirs.project}${sep}docs${sep}plan${sep}assets${sep}`;
+  const md = `${dirs.project}${sep}aib-docs${sep}plan${sep}01-page-1.md`;
+  const assets = `${dirs.project}${sep}aib-docs${sep}plan${sep}assets${sep}`;
   try {
     await tool(store, dirs.project, 'doc_create', { doc: 'plan', markdown: '# Plan\n\nIntro.\n' });
     await tool(store, dirs.project, 'drawing_create', { doc: 'plan', caption: 'Release flow' });
@@ -257,7 +257,7 @@ function present(user: UserClient, p: Json) {
 Deno.test('a file-tool edit of the .excalidraw JSON is taken in element by element, with the guards; refusals are kept', async () => {
   const dirs = await tempDirs();
   const store = new DocStore(dirs.state, { idleMs: 60_000 });
-  const path = `${dirs.project}${sep}docs${sep}plan${sep}assets${sep}flow.excalidraw`;
+  const path = `${dirs.project}${sep}aib-docs${sep}plan${sep}assets${sep}flow.excalidraw`;
   try {
     await tool(store, dirs.project, 'doc_create', { doc: 'plan', markdown: '# Plan\n' });
     await tool(store, dirs.project, 'drawing_create', { doc: 'plan', caption: 'Flow' });
