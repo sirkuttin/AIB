@@ -131,6 +131,41 @@ func TestMcpForwardGivesUpWithAnError(t *testing.T) {
 	}
 }
 
+// AIB was quit on purpose while its chats run in the keeper: the address file says closed, and a request is answered at once (no 15 s
+// wait) with a clear error; a tools/call gets a tool result with isError so the model can read it and try again later.
+func TestMcpForwardAnswersAtOnceWhileAIBIsClosed(t *testing.T) {
+	dir := t.TempDir()
+	addr := filepath.Join(dir, "a.json")
+	os.WriteFile(addr, []byte(`{"closed":true,"pid":1}`), 0o600)
+	out := &syncBuffer{}
+	f, _ := newForwarder(addr, "", out)
+	f.retryFor = 10 * time.Second
+	start := time.Now()
+	f.run(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"publish"}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n" + `{"jsonrpc":"2.0","method":"notifications/x"}` + "\n"))
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("waited %v for a closed AIB", took)
+	}
+	lines := out.lines()
+	if len(lines) != 2 {
+		t.Fatalf("want two answers, got %v", lines)
+	}
+	byID := map[string]map[string]any{}
+	for _, l := range lines {
+		var m map[string]any
+		json.Unmarshal([]byte(l), &m)
+		byID[itoa(int(m["id"].(float64)))] = m
+	}
+	call := byID["1"]["result"].(map[string]any)
+	text := call["content"].([]any)[0].(map[string]any)["text"].(string)
+	if call["isError"] != true || !strings.Contains(text, "AIB is closed") || !strings.Contains(text, "try again later") {
+		t.Fatalf("tools/call answer %v", byID["1"])
+	}
+	if e := byID["2"]["error"].(map[string]any); !strings.Contains(e["message"].(string), "AIB is closed") {
+		t.Fatalf("tools/list answer %v", byID["2"])
+	}
+}
+
 func TestMcpForwardRefusesNonLoopback(t *testing.T) {
 	dir := t.TempDir()
 	addr := filepath.Join(dir, "a.json")

@@ -43,6 +43,7 @@ type keeper struct {
 	channels map[string]*channel
 	conns    map[*conn]struct{}
 	orphan   *orphanCommand
+	held     bool // the last AIB left on purpose (hold op): no orphan restart, no orphan give-up, until a client claims or spawns
 	stopping bool
 	changed  chan struct{}
 
@@ -205,7 +206,7 @@ func (k *keeper) listen() error {
 func (k *keeper) writeInfo() {
 	k.mu.Lock()
 	info := map[string]any{"pid": k.pid, "protocol": protocolVersion, "keeper": keeperVersion, "token": k.token,
-		"started": k.started.UnixMilli(), "orphanCommand": k.orphan}
+		"started": k.started.UnixMilli(), "orphanCommand": k.orphan, "held": k.held}
 	for key, v := range k.info {
 		info[key] = v
 	}
@@ -357,6 +358,35 @@ func (k *keeper) setOrphan(o *orphanCommand) {
 	k.writeInfo()
 }
 
+// hold: the client that sends it is leaving on purpose (the person quit AIB with work running) and the channels are to wait for
+// the next AIB, however long that takes: no orphan command and no "orphaned" stop meanwhile. It ends when a client claims or spawns
+// a channel (an AIB taking over, or starting work of its own); a client that only looks (hello, list, attach, status) leaves it.
+func (k *keeper) hold() {
+	k.mu.Lock()
+	k.held = true
+	k.mu.Unlock()
+	k.logf("hold: the client is leaving on purpose; no orphan restart until an AIB takes a channel")
+	k.writeInfo()
+}
+
+func (k *keeper) isHeld() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.held
+}
+
+// unhold: a client claimed or spawned a channel (an AIB is back).
+func (k *keeper) unhold() {
+	k.mu.Lock()
+	was := k.held
+	k.held = false
+	k.mu.Unlock()
+	if was {
+		k.logf("hold: a client is back; the hold ends")
+		k.writeInfo()
+	}
+}
+
 func (k *keeper) status() map[string]any {
 	k.mu.Lock()
 	clients := []string{}
@@ -364,12 +394,13 @@ func (k *keeper) status() map[string]any {
 		clients = append(clients, c.client)
 	}
 	orphan := k.orphan
+	held := k.held
 	addr := k.info["address"]
 	k.mu.Unlock()
 	sort.Strings(clients)
 	return map[string]any{"keeper": keeperVersion, "protocol": protocolVersion, "pid": k.pid, "started": k.started.UnixMilli(),
 		"dir": k.dir, "address": addr, "live": k.liveCount(), "channels": len(k.channelList()), "clients": clients,
-		"orphanCommand": orphan}
+		"orphanCommand": orphan, "held": held}
 }
 
 // ---- timers: journal flush, orphan restart (rule V1), idle exit (rule V2) ---------------------------------------------------
@@ -414,6 +445,10 @@ func (k *keeper) monitor() {
 			}
 		} else {
 			quietSince = time.Time{}
+		}
+		if k.isHeld() {
+			attempts, lastAttempt = 0, time.Time{} // held: the channels wait for the next AIB, however long
+			continue
 		}
 		if live > 0 && clients == 0 && now.Sub(noClientSince) >= k.opts.orphanAfter && now.Sub(lastAttempt) >= k.opts.orphanRetry {
 			if attempts >= k.opts.orphanTries {

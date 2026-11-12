@@ -125,7 +125,7 @@ Must be the first frame, within 10 s.
 ```json
 → {"op":"hello","id":1,"token":"9c1f…","min":1,"max":1,"client":"AIB 0.2.3"}
 ← {"ok":true,"re":1,"protocol":1,"keeper":"1.0.0","pid":4242,
-   "features":["pty","notes","truncate","orphan","signal","once","channel-ids","scrollback","labels"]}
+   "features":["pty","notes","truncate","orphan","signal","once","channel-ids","scrollback","labels","hold"]}
 ```
 
 `min`/`max` is the protocol range the client speaks (`max` 0 = same as `min`). Errors (each closes the connection):
@@ -325,6 +325,19 @@ Sets (or with `null` clears) the orphan command. It is shown in `keeper.json` an
 
 `env` in it is the complete environment; omitted = the keeper's.
 
+### hold
+
+The client is leaving on purpose and the channels are to wait for the next AIB, however long that takes (AIB sends it when the
+person quits AIB while chats work). Until a client `claim`s or `spawn`s a channel (an AIB taking the chats over, or starting work of
+its own), the orphan restart (section 6) does not run and the keeper never stops channels as `orphaned`. A client that only looks
+(`hello`, `list`, `attach`, `status`) leaves the hold in place. `status` and `keeper.json` show `"held": true` meanwhile. Feature
+`hold` (keeper 1.3.0).
+
+```json
+→ {"op":"hold","id":19}
+← {"ok":true,"re":19}
+```
+
 ### shutdown
 
 ```json
@@ -367,6 +380,8 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   hidden, outside the keeper's jobs). If still no client 10 s later, again; at most 3 times. If no client has come 10 s after
   the third attempt (or there is no orphan command), it kills every channel (reason `orphaned`) and exits. Any authenticated
   connection counts as a client; one connecting resets the count.
+- **Hold:** after `hold` (section 4) neither of the two rules above runs until a client claims or spawns a channel; the exit rule
+  (V2) still does once no channel is live.
 - **Keeper crash:** the children die (Windows Job Objects). The next keeper adds an `exit` record with reason `keeper_lost`
   to every channel that was live. Nothing is ever resent.
 
@@ -394,3 +409,7 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
 - keeper 1.2.0 (protocol still 1): spawn's `scrollback` (feature `scrollback`) and `label` (feature `labels`, shown in `list`), and
   `once` on `resize`. AIB runs its chat terminals and agents' client terminals in the keeper only when both features are there; with
   an older keeper they run inside AIB as before.
+- keeper 1.3.0 (protocol still 1): the `hold` op (feature `hold`): AIB quit on purpose while chats work, so no orphan restart and no
+  `orphaned` stop until a client claims or spawns a channel; `held` in `status` and `keeper.json`. `mcp-forward` answers at once when its
+  address file says `{"closed":true}` (AIB was quit on purpose) and gives a `tools/call` it cannot deliver a tool result with
+  `isError` instead of a JSON-RPC error.
