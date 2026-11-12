@@ -1165,6 +1165,63 @@ Deno.test({
         assertEquals(await p.eval('window.__restores'), 6);
       });
 
+      await step('beta.8 QA: narrow header and toolbar, colour swatches, comment counts, history words, theme follow, scope menus', async () => {
+        await s.tool(CHAT, 'doc_create', { doc: 'qa8', markdown: 'First words.\n', title: 'Overview' });
+        await s.tool(CHAT, 'doc_page', { doc: 'qa8', action: 'add', title: 'Risks', markdown: 'Risky words.' });
+        const doc = await live(s, 'qa8');
+        doc.live.comments.add('user', 'A note on the whole doc.', null, 'test');
+        // beside the chat (400 px): the doc name is in the header, the toolbar never scrolls, the rest sits in "⋯"
+        const p = await open('qa8', '', 400);
+        await shows(p, 'First words.');
+        await p.waitFor(`document.querySelector('#docApp').classList.contains('narrow')`, 8000, 'the narrow layout');
+        assertEquals(await p.eval(`document.querySelector('#docCrumbs').hidden`), false);
+        assert(String(await p.eval(`document.querySelector('#docCrumbs').textContent`)).includes('Overview'), 'name and page in the header');
+        assertEquals(await p.eval(`getComputedStyle(document.querySelector('#docCrumbs')).textOverflow`), 'ellipsis');
+        assert(await p.eval(`(() => { const t = document.querySelector('#toolbar'); return t.scrollWidth <= t.clientWidth; })()`), 'no horizontal scrollbar');
+        assert(await p.eval(`!!document.querySelector('#toolbar .tb-more').offsetParent`), 'the ⋯ button shows');
+        await p.click('#toolbar .tb-more');
+        const items = await p.eval<string[]>(`[...document.querySelectorAll('#docLayer .menu .mi')].map((e) => e.textContent)`);
+        for (const w of ['Underline', 'Text colour', 'Highlight', 'Align', 'Bulleted list', 'Task list']) {
+          assert(items.some((x) => x.includes(w)), `"${w}" is in the ⋯ menu: ${items.join('|')}`);
+        }
+        await p.key('Escape');
+        await p.shot('qa8-narrow');
+        // wider: the colour menu shows six different colours, one ring, and no agent note
+        await p.viewport(1000);
+        await p.waitFor(`!document.querySelector('#docApp').classList.contains('narrow')`, 8000, 'the wide layout');
+        await p.click('#toolbar [data-tool="color"]');
+        const colours = await p.eval<string[]>(`[...document.querySelectorAll('.cpop .sw2[data-color]')].map((e) => getComputedStyle(e).color)`);
+        assertEquals(colours.length, 6);
+        assertEquals(new Set(colours).size, 6, `six different colours: ${colours.join(' | ')}`);
+        assertEquals(await p.eval(`[...document.querySelectorAll('.cpop .sws')[0].querySelectorAll('.sw2')].filter((e) => getComputedStyle(e).boxShadow !== 'none').length`), 1);
+        assert(!String(await p.eval(`document.querySelector('.cpop').textContent`)).includes('agents'), 'no agent note');
+        await p.key('Escape');
+        // Comments: the count, the list and the empty line agree; AIB's own menu in place of a select
+        await p.click('#btnComments');
+        await p.waitFor(`document.querySelectorAll('#rail .thr').length === 1`, 8000, 'the whole-doc thread');
+        assertEquals(await p.eval(`document.querySelector('#rail .rail-h .f').textContent`), '· 1 open here');
+        assertEquals(await p.eval(`document.querySelector('#commentCount').textContent`), '1');
+        assertEquals(await p.eval(`!!document.querySelector('#rail .rail-empty')`), false);
+        assertEquals(await p.eval(`document.querySelectorAll('#rail select').length`), 0);
+        await p.click('#rail .rail-h .scope');
+        assertEquals(await p.eval(`[...document.querySelectorAll('#docLayer .menu .mi')].map((e) => e.textContent)`), ['This page', 'All pages']);
+        await p.key('Escape');
+        // History: plain words
+        await p.click('#btnHistory');
+        await p.waitFor(`document.querySelectorAll('#historyList .hv').length >= 1`, 8000, 'the versions');
+        const rows = await p.eval<string[]>(`[...document.querySelectorAll('#historyList .hv .w')].map((e) => e.textContent)`);
+        for (const r of rows) assert(/^(Created|Edited) by /.test(r) && !/rev \d/.test(r), `plain words: ${r}`);
+        assertEquals(await p.eval(`document.querySelectorAll('#rail select').length`), 0);
+        await p.click('#rail .rail-h .scope');
+        assertEquals(await p.eval(`document.querySelectorAll('#docLayer .menu .mi').length`), 3, 'All pages and the two pages');
+        await p.key('Escape');
+        // a theme change in another window repaints the open doc
+        await p.eval(`window.dispatchEvent(new StorageEvent('storage', { key: 'aib-theme', newValue: 'teal-light' }))`);
+        assertEquals(await p.eval(`document.documentElement.getAttribute('data-theme')`), 'teal-light');
+        await p.eval(`window.dispatchEvent(new StorageEvent('storage', { key: 'aib-theme', newValue: 'teal-dark' }))`);
+        assertEquals(await p.eval(`document.documentElement.getAttribute('data-theme')`), 'teal-dark');
+      });
+
       await step(
         'reopen after a restart: no duplicate blocks; keystrokes that never reached AIB are named',
         async () => {

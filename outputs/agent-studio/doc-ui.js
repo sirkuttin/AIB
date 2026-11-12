@@ -1311,7 +1311,7 @@
     app.classList.toggle('wide-rail', w >= 1100);
     app.classList.toggle('narrow', w < 600);
     $('pagePicker').hidden = w >= 900;
-    $('docCrumbs').hidden = w < 900 && w >= 600 ? false : w < 600;
+    $('docCrumbs').hidden = false; // the doc name stays in view at every width (beside the chat it takes a row of its own)
     if (app.className !== before) D.emit('layout', w);
   }
   D.layout = layout;
@@ -1319,7 +1319,8 @@
 
   // live theme: another AIB window or the Settings picker changed it
   window.addEventListener('storage', (e) => {
-    if (e.key === 'aib-theme' && window.AIBThemes && window.AIBThemes.apply) window.AIBThemes.apply(e.newValue);
+    const T = window.AibThemes; // themes.js: paint() sets <html data-theme>; the choice is already saved by the window that made it
+    if (e.key === 'aib-theme' && T && T.paint && T.valid(e.newValue)) T.paint(e.newValue);
   });
 
   // ---------------------------------------------------------------------------------------------------------------------------

@@ -374,6 +374,23 @@ button:focus-visible,
 .narrow .tbar .tb-wide {
   display: none;
 }
+/* beside the chat: the folded tools hide and the ⋯ button lists them, so the bar never scrolls sideways */
+.tbar .tb-more {
+  display: none;
+}
+.narrow .tbar .tb-fold {
+  display: none;
+}
+.narrow .tbar .tb-more {
+  display: inline-flex;
+}
+.narrow .tbar {
+  overflow-x: hidden;
+  padding: 5px 8px;
+}
+.narrow .tb.sel {
+  min-width: 96px;
+}
 
 /* ---------- body: page list, text, rail ---------- */
 .dbody {
@@ -434,7 +451,8 @@ button:focus-visible,
   top: 0;
   bottom: 0;
   width: min(340px, 92%);
-  box-shadow: -8px 0 28px var(--shadow-med);
+  border-left: 1px solid var(--line-field);
+  box-shadow: 0 8px 22px var(--shadow-med); /* the same edge and shadow as the app's menus */
 }
 
 /* ---------- page list ---------- */
@@ -863,6 +881,24 @@ button:focus-visible,
   cursor: pointer;
   padding: 0;
   color: var(--text);
+}
+.cpop .sw2.tc-grey {
+  color: var(--muted);
+}
+.cpop .sw2.tc-red {
+  color: var(--danger);
+}
+.cpop .sw2.tc-orange {
+  color: var(--syn-number);
+}
+.cpop .sw2.tc-green {
+  color: var(--ok);
+}
+.cpop .sw2.tc-blue {
+  color: var(--info);
+}
+.cpop .sw2.tc-purple {
+  color: var(--syn-keyword);
 }
 .cpop .sw2[aria-pressed='true'] {
   box-shadow: 0 0 0 2px var(--accent);
@@ -1858,14 +1894,34 @@ button:focus-visible,
   font-size: 12px;
   color: var(--muted);
 }
-.rail-h select {
+.rail-h .scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
   font: inherit;
   font-size: 12px;
+  font-weight: 400;
   color: var(--text-2);
   background: var(--bg-field);
   border: 1px solid var(--line-control);
   border-radius: 5px;
   height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.rail-h .scope:hover {
+  background: var(--hover);
+}
+.rail-h .scope .scope-t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail-h .scope .caret-s {
+  font-size: 9px;
+  color: var(--muted);
 }
 .rail-x {
   border: 0;
@@ -2173,8 +2229,12 @@ button:focus-visible,
 .narrow .hbtn {
   padding: 0 8px;
 }
+.narrow .dhead {
+  flex-wrap: wrap;
+}
 .narrow .crumbs {
-  display: none;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 .narrow .doc {
   font-size: 15px;

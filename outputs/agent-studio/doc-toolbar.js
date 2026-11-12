@@ -1,8 +1,7 @@
 'use strict';
 /* The doc page's editing chrome (doc.html, on top of doc-ui.js): the fixed toolbar (style, B I S code link, colour ▾, highlight ▾,
    align ▾, lists, tasks, + Insert ▾, and the "Claude Code is writing <section>" chips), the selection toolbar with its colour
-   popover, the "/" menu, the + and ⋮⋮ handles left of each block and the block menu. Highlights leave out teal and blue (the
-   agents' colours). Everything is built with DOM calls and placed through the CSSOM: the page's CSP allows no inline style. */
+   popover, the "/" menu, the + and ⋮⋮ handles left of each block and the block menu. Highlights leave out teal and blue. Everything is built with DOM calls and placed through the CSSOM: the page's CSP allows no inline style. */
 (function () {
   const D = window.AIBDoc;
   const { el, btn, icon, $ } = D;
@@ -149,7 +148,7 @@
       group: 'Layout',
       id: 'columns3',
       label: '3 columns',
-      icon: 'columns',
+      icon: 'columns3',
       keys: 'columns three layout',
       top: true,
       json: () => ({ type: 'columns', content: [column(), column(), column()] }),
@@ -344,36 +343,56 @@
     bar.append(
       tool('bold', strong('b', 'B'), 'Bold (Ctrl+B)', () => run((c) => c.toggleBold())),
       tool('italic', strong('i', 'I'), 'Italic (Ctrl+I)', () => run((c) => c.toggleItalic())),
-      tool('underline', strong('u', 'U'), 'Underline (Ctrl+U)', () => run((c) => c.toggleUnderline())),
-      tool('strike', strong('s', 'S'), 'Strikethrough (Ctrl+Shift+S)', () => run((c) => c.toggleStrike())),
-      tool('code', icon('code'), 'Code (Ctrl+E)', () => run((c) => c.toggleCode())),
+      tool('underline', strong('u', 'U'), 'Underline (Ctrl+U)', () => run((c) => c.toggleUnderline()), 'tb-fold'),
+      tool('strike', strong('s', 'S'), 'Strikethrough (Ctrl+Shift+S)', () => run((c) => c.toggleStrike()), 'tb-fold'),
+      tool('code', icon('code'), 'Code (Ctrl+E)', () => run((c) => c.toggleCode()), 'tb-fold'),
       tool('link', icon('link'), 'Link (Ctrl+K)', (b) => linkForm(b)),
-      sep(),
+      sep('tb-fold'),
     );
     const a = el('span', 'aglyph', 'A');
     a.append(el('i', 'tc-swatch'));
-    const color = tool('color', a, 'Text colour', (b) => colorPop(b, 'color'), 'tb-wide');
+    const color = tool('color', a, 'Text colour', (b) => colorPop(b, 'color'), 'tb-wide tb-fold');
     color.append(caret());
     const h = el('span', 'hglyph', 'H');
-    const hl = tool('highlight', h, 'Highlight', (b) => colorPop(b, 'highlight'), 'tb-wide');
+    const hl = tool('highlight', h, 'Highlight', (b) => colorPop(b, 'highlight'), 'tb-wide tb-fold');
     hl.append(caret());
-    const al = tool('align', icon('align-left'), 'Align', (b) => alignMenu(b), 'tb-wide');
+    const al = tool('align', icon('align-left'), 'Align', (b) => alignMenu(b), 'tb-wide tb-fold');
     al.append(caret());
-    bar.append(color, hl, al, sep('tb-wide'));
+    bar.append(color, hl, al, sep('tb-wide tb-fold'));
     bar.append(
-      tool('ul', icon('ul'), 'Bulleted list', () => run((c) => c.toggleBulletList())),
-      tool('ol', icon('ol'), 'Numbered list', () => run((c) => c.toggleOrderedList())),
-      tool('task', icon('task'), 'Task list', () => run((c) => c.toggleTaskList())),
-      sep(),
+      tool('ul', icon('ul'), 'Bulleted list', () => run((c) => c.toggleBulletList()), 'tb-fold'),
+      tool('ol', icon('ol'), 'Numbered list', () => run((c) => c.toggleOrderedList()), 'tb-fold'),
+      tool('task', icon('task'), 'Task list', () => run((c) => c.toggleTaskList()), 'tb-fold'),
+      sep('tb-fold'),
     );
     const ins = tool('insert', '+ Insert', 'Insert a block', (b) =>
       D.menu(b, [], { items: (q) => blockItems(q, { here: true }), filter: 'Filter blocks…' }),
     );
     ins.append(caret());
-    bar.append(ins, el('span', 'sp'));
+    // Beside the chat the bar has no room for everything: the tools marked tb-fold hide and "⋯" lists them (docs.css .narrow)
+    const more = tool('more', '⋯', 'More formatting', (b) => moreMenu(b), 'tb-more');
+    bar.append(ins, more, el('span', 'sp'));
     const chips = el('span', 'chips');
     chips.id = 'writingChips';
     bar.append(chips);
+  }
+  /** The folded tools as one menu: the ones that act at once run; colour, highlight and align open their own menu here. */
+  function moreMenu(anchor) {
+    const e = tt();
+    const act = (label, icn, on, fn) => ({ label, icon: icn, on, run: () => run(fn) });
+    D.menu(anchor, [
+      act('Underline', 'U', e && e.isActive('underline'), (c) => c.toggleUnderline()),
+      act('Strikethrough', 'S', e && e.isActive('strike'), (c) => c.toggleStrike()),
+      act('Code', 'code', e && e.isActive('code'), (c) => c.toggleCode()),
+      { sep: true },
+      { label: 'Text colour', icon: 'A', run: () => colorPop(anchor, 'color') },
+      { label: 'Highlight', icon: 'H', run: () => colorPop(anchor, 'highlight') },
+      { label: 'Align', icon: 'align-left', run: () => alignMenu(anchor) },
+      { sep: true },
+      act('Bulleted list', 'ul', e && e.isActive('bulletList'), (c) => c.toggleBulletList()),
+      act('Numbered list', 'ol', e && e.isActive('orderedList'), (c) => c.toggleOrderedList()),
+      act('Task list', 'task', e && e.isActive('taskList'), (c) => c.toggleTaskList()),
+    ]);
   }
   function run(fn) {
     const e = tt();
@@ -473,7 +492,7 @@
       b.setAttribute('aria-pressed', String(curH === c));
       hs.append(b);
     }
-    pop.append(hs, el('div', 'foot', 'Teal and blue are left out of highlights: those are the agents’ colours.'));
+    pop.append(hs);
     for (const b of pop.querySelectorAll('button')) b.addEventListener('mousedown', (ev) => ev.preventDefault());
     D.menu(anchor, [], { cls: 'cpop-host', focus: false });
     const open = D.menuOpen();
