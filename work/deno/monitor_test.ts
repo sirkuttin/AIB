@@ -1362,7 +1362,8 @@ Deno.test("parity: normalize and update_metadata over every fixture record", asy
       }
       assertEquals(name, expected.error, JSON.stringify(row).slice(0, 80));
     } else {assertEquals(
-        plain(m.normalize(row as m.Dict, i)),
+        // `steered` (a message sent while the agent worked) is Deno only; the Python reference never had it.
+        plain(m.normalize(row as m.Dict, i).map(({ steered: _, ...e }) => e)),
         expected.ok,
         JSON.stringify(row).slice(0, 80),
       );}

@@ -331,6 +331,9 @@ export function normalize(row: Dict, number: number): Event[] {
     text.images = pictures.flatMap((e) => e.images as Dict[]);
     events = events.filter((e) => !Object.hasOwn(e, 'images') || e === text);
   }
+  // B15: a message Claude Code saved as sent while it worked (a queued_command attachment, what a steer becomes) carries `steered`, so
+  // the history shows "Sent while working" like the live chat. Deno only: the Python reference never had it.
+  if (truthy(dget(row, 'queued'))) for (const event of events) if (event.kind === 'user') event.steered = true;
   events.forEach((event, i) => (event.id = `${number}-${i}`));
   return events;
 }
