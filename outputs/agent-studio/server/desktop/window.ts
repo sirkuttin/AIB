@@ -28,12 +28,27 @@ export const KEEPER_URL = 'about:blank';
 export const GEOMETRY_FILE = 'desktop-window.json';
 export const DEFAULT_SIZE = { width: 1280, height: 860 };
 export const FIRST_PORT = 8777;
-/** The tray menu of a tray-only start (`--start-in-tray`): the same items as the agent host's own icon. */
-export const TRAY_ONLY_ITEMS: TrayItem[] = [
+/**
+ * The app's tray menu, with or without a window: Open AIB, a greyed status line ("2 chats running"), Quit AIB (never stops a chat:
+ * with work going on the window closes and AIB stays here until it is done) and Stop all chats and quit (the only deliberate stop;
+ * a second click confirms it, see stopConfirmLabel).
+ */
+export const TRAY_ITEMS: TrayItem[] = [
   { id: 'open', label: 'Open AIB' },
   { id: 'status', label: '', disabled: true },
-  { id: 'stop', label: 'Stop chats and quit' },
+  { id: 'quit', label: 'Quit AIB' },
+  { id: 'stop', label: 'Stop all chats and quit' },
 ];
+/** The menu position of Stop all chats and quit (its label turns into the confirm line for STOP_CONFIRM_MS). */
+export const STOP_INDEX = 3;
+/** How long the confirm line stays armed after the first click on Stop all chats and quit. */
+export const STOP_CONFIRM_MS = 10_000;
+
+/** The confirm line that replaces "Stop all chats and quit" after its first click (no native box: the menu item itself asks). */
+export function stopConfirmLabel(working: number): string {
+  const what = working > 0 ? `${working} chat${working === 1 ? '' : 's'}` : 'everything';
+  return `Click again to stop ${what} and quit`;
+}
 
 /** The tray-only status line and tooltip for `working` chats, `needsYou` of them waiting for the person. */
 export function trayOnlyView(working: number, needsYou: number): { status: string; tooltip: string } {
@@ -88,19 +103,14 @@ export function portGiven(args: string[]): boolean {
   return args.some((a) => a === '--port' || a.startsWith('--port='));
 }
 
-export type CloseDecision = 'quit' | 'ask';
+export type CloseDecision = 'quit' | 'tray';
 
-/** Closing the window: no chat working quits; chats working, or a count that can't be read (null), asks first. */
-export function closeDecision(busy: number | null): CloseDecision {
-  return busy === 0 ? 'quit' : 'ask';
-}
-
-export function closeQuestion(busy: number | null): string {
-  // The native box (MessageBoxW) has fixed OK/Cancel labels, so the lines say what each one does.
-  const one = busy === 1;
-  const head = busy === null || busy < 1 ? 'Chats may still be working.' : `${busy} chat${one ? ' is' : 's are'} still working.`;
-  const it = one ? 'it' : 'them';
-  return `${head}\n\nOK: stop ${it} and quit AIB.\nCancel: keep ${it} running; AIB stays in the tray.`;
+/**
+ * Closing the window or Quit AIB (the owner's decision, 2026-11-10: quitting never stops a chat). Nothing working: quit. Something
+ * working, or a count that can't be read (null): the window goes, AIB stays in the tray and quits by itself once nothing works.
+ */
+export function closeDecision(work: number | null): CloseDecision {
+  return work === 0 ? 'quit' : 'tray';
 }
 
 export interface Geometry {
@@ -316,36 +326,33 @@ export interface DesktopOptions {
   /** How many chats are working (host.busyConnections().length); a throw counts as unknown. */
   busyCount: () => Promise<number>;
   /**
-   * Ask the agent host to stop (host_client.stopHost). Quitting always calls it first: forced after OK ("stop them and quit"),
-   * unforced otherwise, so an idle host goes at once and a host with chats working refuses and keeps them running (under its own
-   * tray icon; it exits by itself a few seconds after the last one finishes). A refusal or failure never holds the quit up.
+   * A separate agent host (an older version's, being drained): ask it to stop (host_client.stopHost). Quitting calls it first:
+   * forced only for Stop all chats and quit, unforced otherwise, so an idle host goes at once and a host with chats working refuses
+   * and keeps them running under its own tray icon (it exits by itself a few seconds after the last one finishes). With a separate
+   * host the app itself quits at once: the chats are not in this process. A refusal or failure never holds the quit up.
    */
   stopHost?: (force: boolean) => Promise<unknown>;
-  /**
-   * True (default, today's behaviour): closing the window or Quit AIB while chats work asks "OK: stop them and quit / Cancel: keep
-   * them running in the tray". False: no question; the app quits and the working chats go on in the agent host, under the host's
-   * own tray icon (docs/app-lifecycle design 4.4, waiting for the owner's decision). Only with a separate host (stopHost given).
-   */
-  askOnClose?: boolean;
   /** The window loaded our page (the update helper's health marker is written then). */
   onPageLoaded?: () => void;
-  /** The normal close path (the web server). stopAgents: OK was chosen. Never returns in the real app (Deno.exit). */
+  /** The normal close path (the web server). stopAgents: Stop all chats and quit. Never returns in the real app (Deno.exit). */
   quit: (stopAgents: boolean) => Promise<void>;
   saveDelayMs?: number;
   /**
    * Start with no window, only the tray icon (`--start-in-tray`: the keeper restarting AIB after a crash, rule V1, so nothing pops
-   * up over the person's work). The menu is then Open AIB, a greyed status line ("2 chats running") and Stop chats and quit (asks
-   * first). Open AIB makes the window as usual. While no window was ever opened, AIB quits by itself once nothing has worked for
-   * trayIdleQuitMs (the chats that were open come back at the next start, as after an idle agent host).
+   * up over the person's work). Open AIB makes the window as usual. Until then AIB is "in the background": it quits by itself once
+   * nothing has worked for trayIdleQuitMs (the chats that were open come back at the next start, as after an idle agent host).
+   * Closing the window or Quit AIB while something works puts AIB in the background the same way.
    */
   startInTray?: boolean;
-  /** Terminal shells running a command (a tray-only start does not quit while one does: it would end the shell). */
+  /** Terminal shells running a command (AIB does not quit while one does: it would end the shell). */
   terminalsBusy?: () => number;
-  /** What works now, for the tray-only status line and its idle quit. Default: busyCount, nobody waiting. */
+  /** Merges running in this process (AIB does not quit while one does: it would leave a half-done repo). */
+  mergesRunning?: () => number;
+  /** What works now, for the status line, the quit decision and the idle quit. Default: busyCount, nobody waiting. */
   trayCounts?: () => Promise<{ working: number; needsYou: number }>;
-  /** Tray-only start: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
+  /** In the background: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
   trayIdleQuitMs?: number;
-  /** Tray-only start: how often the status line and the idle rule look (default 2 s; 0 = tests call trayTick()). */
+  /** How often the status line and the idle rule look (default 2 s; 0 = tests call trayTick()). */
   trayPollMs?: number;
   /** The watchdog period; 0 turns it off (tests drive watchdogTick() themselves). Default WATCHDOG_MS. */
   watchdogMs?: number;
@@ -357,7 +364,11 @@ const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 export class DesktopApp {
   window: WindowHandle | null = null;
   #quitting = false;
-  #asking = false;
+  /** No window and quitting by itself once nothing works (a tray-only start, or a quit while something worked). */
+  #background = false;
+  /** Stop all chats and quit was clicked once: a second click before this time stops everything. */
+  #stopArmedUntil = 0;
+  #stopTimer: ReturnType<typeof setTimeout> | undefined;
   #loadedOnce = false;
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
   readonly origin: string;
@@ -403,7 +414,10 @@ export class DesktopApp {
 
   async start(): Promise<void> {
     if (!this.options.startInTray) await this.openWindow();
-    else log.info('window: started in the tray (no window until Open AIB)');
+    else {
+      this.#background = true;
+      log.info('window: started in the tray (no window until Open AIB)');
+    }
     try {
       this.keepKeeperHidden(this.shell.createKeeper());
     } catch (error) {
@@ -411,43 +425,44 @@ export class DesktopApp {
     }
     const every = this.options.watchdogMs ?? WATCHDOG_MS;
     if (every > 0) this.#watchdog = setInterval(() => void this.watchdogTick(), every);
-    if (this.options.startInTray) {
-      this.shell.createTray(
-        this.options.trayIcon,
-        WINDOW_TITLE,
-        TRAY_ONLY_ITEMS,
-        () => void this.showWindow(),
-        (id) => void (id === 'open' ? this.showWindow() : id === 'stop' ? this.requestStop() : undefined),
-      );
-      await this.trayTick();
-      this.trayState('shown');
-      const poll = this.options.trayPollMs ?? 2000;
-      if (poll > 0) this.#trayTimer = setInterval(() => void this.trayTick(), poll);
-      return;
-    }
     this.shell.createTray(
       this.options.trayIcon,
       WINDOW_TITLE,
-      [{ id: 'open', label: 'Open AIB' }, { id: 'quit', label: 'Quit AIB' }],
+      TRAY_ITEMS,
       () => void this.showWindow(),
-      (id) => void (id === 'open' ? this.showWindow() : id === 'quit' ? this.requestQuit() : undefined),
+      (id) => void this.onTrayMenu(id),
     );
+    await this.trayTick();
     this.trayState('shown');
+    const poll = this.options.trayPollMs ?? 2000;
+    if (poll > 0) this.#trayTimer = setInterval(() => void this.trayTick(), poll);
+  }
+
+  onTrayMenu(id: string): Promise<void> {
+    if (id === 'open') return this.showWindow();
+    if (id === 'quit') return this.requestQuit();
+    if (id === 'stop') return this.requestStop();
+    return Promise.resolve();
+  }
+
+  /** True while AIB has no window and quits by itself once nothing works. */
+  get background(): boolean {
+    return this.#background;
   }
 
   /** AIB_TEST_TRAY_STATE (tests on an invisible desktop): the app icon's state, like the host's and the helper's. Never throws. */
   trayState(why: string): void {
+    const stopLabel = this.#stopLabel;
     import('./host_tray.ts').then(({ writeTrayState }) =>
       writeTrayState('app', {
         shown: why !== 'removed',
         why,
         trayOnly: !!this.options.startInTray,
+        background: this.#background,
         windowOpened: this.#windowOpened,
         tooltip: this.#trayView?.tooltip ?? WINDOW_TITLE,
         status: this.#trayView?.status ?? '',
-        items: this.options.startInTray
-          ? TRAY_ONLY_ITEMS.map((i) => (i.id === 'status' ? this.#trayView?.status ?? '' : i.label))
-          : ['Open AIB', 'Quit AIB'],
+        items: TRAY_ITEMS.map((i) => (i.id === 'status' ? this.#trayView?.status ?? '' : i.id === 'stop' ? stopLabel : i.label)),
       })
     ).catch(() => {});
   }
@@ -462,12 +477,29 @@ export class DesktopApp {
     }
   }
 
-  /** Tray-only start: refresh the status line; quit once nothing has worked for trayIdleQuitMs while no window was ever opened. */
+  /** Everything quitting must not cut off: chats working (queued, helpers, waiting for the person), terminal commands, merges. */
+  async work(): Promise<{ working: number; needsYou: number; terminals: number; merges: number; total: number } | null> {
+    const counts = await this.#counts();
+    if (!counts) return null;
+    const safe = (f?: () => number) => {
+      try {
+        const n = f?.() ?? 0;
+        return Number.isInteger(n) && n > 0 ? n : 0;
+      } catch {
+        return 0; // unknown: not busy
+      }
+    };
+    const terminals = safe(this.options.terminalsBusy);
+    const merges = safe(this.options.mergesRunning);
+    return { ...counts, terminals, merges, total: counts.working + terminals + merges };
+  }
+
+  /** Every trayPollMs: refresh the status line; in the background, quit once nothing has worked for trayIdleQuitMs. */
   async trayTick(now = Date.now()): Promise<void> {
     if (this.#quitting) return;
-    const counts = await this.#counts();
-    if (counts) {
-      const view = trayOnlyView(counts.working, counts.needsYou);
+    const work = await this.work();
+    if (work) {
+      const view = trayOnlyView(work.working, work.needsYou);
       if (view.status !== this.#trayView?.status) {
         this.#trayView = view;
         try {
@@ -477,50 +509,74 @@ export class DesktopApp {
       }
     }
     const idleMs = this.options.trayIdleQuitMs ?? 10_000;
-    if (this.#windowOpened || idleMs <= 0) return;
-    let terminals = 0;
-    try {
-      terminals = this.options.terminalsBusy?.() ?? 0;
-    } catch { /* unknown: not busy */ }
-    if (!counts || counts.working > 0 || terminals > 0) {
+    if (!this.#background || idleMs <= 0) {
+      this.#idleSince = null;
+      return;
+    }
+    if (!work || work.total > 0) {
       this.#idleSince = null;
       return;
     }
     this.#idleSince ??= now;
     if (now - this.#idleSince >= idleMs) {
-      log.info('tray: started in the tray and nothing has worked for %s s; quitting', Math.round((now - this.#idleSince) / 1000));
+      log.info('tray: in the background and nothing has worked for %s s; quitting', Math.round((now - this.#idleSince) / 1000));
       await this.quit(false);
     }
   }
 
-  /** Tray "Stop chats and quit" (tray-only start): asks first when something works, then stops the chats and quits. */
-  async requestStop(): Promise<void> {
-    if (this.#quitting || this.#asking) return;
-    const counts = await this.#counts();
-    if (counts && counts.working === 0) {
+  get #stopLabel(): string {
+    return Date.now() < this.#stopArmedUntil ? this.#armedLabel : TRAY_ITEMS[STOP_INDEX].label;
+  }
+
+  #armedLabel = '';
+
+  #setStopLabel(label: string): void {
+    try {
+      this.shell.updateTray?.(this.#trayView?.tooltip ?? WINDOW_TITLE, STOP_INDEX, label);
+    } catch { /* not fatal */ }
+  }
+
+  /**
+   * Tray "Stop all chats and quit", the only deliberate way to stop everything. With nothing working it just quits. Otherwise the
+   * first click turns the item into "Click again to stop 2 chats and quit" for STOP_CONFIRM_MS (no native box); a second click in
+   * that time stops the chats, their helpers and terminals, and quits.
+   */
+  async requestStop(now = Date.now()): Promise<void> {
+    if (this.#quitting) return;
+    if (now < this.#stopArmedUntil) {
+      clearTimeout(this.#stopTimer);
+      log.info('tray: Stop all chats and quit confirmed; stopping everything');
+      await this.quit(true);
+      return;
+    }
+    const work = await this.work();
+    if (work && work.total === 0) {
+      log.info('tray: Stop all chats and quit with nothing working; quitting');
       await this.quit(false);
       return;
     }
-    this.#asking = true;
-    let ok = false;
-    try {
-      const what = counts ? trayOnlyView(counts.working, counts.needsYou).status : 'Chats may still be working';
-      ok = await this.shell.ask(`Stop chats and quit AIB?\n\n${what}. Their current turn is interrupted.`);
-    } catch {
-      ok = false; // no answer: the safe default
-    } finally {
-      this.#asking = false;
-    }
-    if (ok) await this.quit(true);
-    else log.info('tray: Stop chats and quit cancelled');
+    this.#armedLabel = stopConfirmLabel(work?.working ?? 0);
+    this.#stopArmedUntil = now + STOP_CONFIRM_MS;
+    this.#setStopLabel(this.#armedLabel);
+    this.trayState('stop armed');
+    log.info('tray: Stop all chats and quit clicked once (%s); a second click within %s s stops everything', this.#armedLabel, STOP_CONFIRM_MS / 1000);
+    clearTimeout(this.#stopTimer);
+    this.#stopTimer = setTimeout(() => {
+      this.#stopArmedUntil = 0;
+      if (this.#quitting) return;
+      this.#setStopLabel(TRAY_ITEMS[STOP_INDEX].label);
+      this.trayState('stop disarmed');
+    }, STOP_CONFIRM_MS);
   }
 
-  /** Stops the watchdog and the tray-only timer (tests; the real app ends with Deno.exit). */
+  /** Stops the watchdog and the tray timers (tests; the real app ends with Deno.exit). */
   stop(): void {
     clearInterval(this.#watchdog);
     this.#watchdog = undefined;
     clearInterval(this.#trayTimer);
     this.#trayTimer = undefined;
+    clearTimeout(this.#stopTimer);
+    this.#stopTimer = undefined;
   }
 
   /**
@@ -553,9 +609,11 @@ export class DesktopApp {
     const g = await loadGeometry(this.geometryPath);
     const win = this.shell.createWindow({ title: WINDOW_TITLE, width: g.width, height: g.height });
     this.window = win;
-    if (!this.#windowOpened) {
+    const wasBackground = this.#background;
+    this.#background = false; // the person is back: no quitting by itself while the window is there
+    if (!this.#windowOpened || wasBackground) {
       this.#windowOpened = true;
-      if (this.options.startInTray) this.trayState('window opened');
+      this.trayState('window opened');
     }
     try {
       win.setSize(g.width, g.height);
@@ -586,6 +644,10 @@ export class DesktopApp {
     } catch {
       await this.openWindow();
       return;
+    }
+    if (this.#background) {
+      this.#background = false; // a window hidden by Quit AIB is shown again: the person is back
+      this.trayState('window shown');
     }
     this.toFront(why);
   }
@@ -671,62 +733,65 @@ export class DesktopApp {
     }
   }
 
-  /** The window was closed (it is already gone): quit, or ask when chats are working. */
+  /** The window was closed (it is already gone): quit when nothing works, else AIB goes on in the tray. */
   async onWindowClosed(win: WindowHandle): Promise<void> {
     clearTimeout(this.#saveTimer);
     if (this.#quitting || win !== this.window) return;
-    const answer = await this.decide();
-    if (answer === 'tray' && !win.isClosed()) {
+    await this.decide('the window was closed', win);
+  }
+
+  /** Tray "Quit AIB": the same rule as closing the window. */
+  async requestQuit(): Promise<void> {
+    if (this.#quitting) return;
+    await this.decide('Quit AIB');
+  }
+
+  /**
+   * Closing the window or Quit AIB never stops a chat (owner's decision 2026-11-10). 'quit': nothing works, AIB quits. 'tray': the
+   * window goes (hidden when it is still there), AIB stays in the tray with the status line ("2 chats running") and quits by itself
+   * once nothing has worked for trayIdleQuitMs; Open AIB or a tray click brings the window back with every chat as it is. With a
+   * separate agent host (an older version's, being drained) the app quits at once: the host keeps its chats under its own icon.
+   */
+  async decide(why = 'quit', win: WindowHandle | null = this.window): Promise<'quit' | 'tray'> {
+    if (this.options.stopHost) {
+      const busy = await this.busy();
+      log.info('close (%s): %s chat(s) working; %s', why, busy ?? 'unknown', busy === 0 ? 'stopping the agent host' : 'they keep running in the agent host');
+      await this.quit(false);
+      return 'quit';
+    }
+    const work = await this.work();
+    if (this.#quitting) return 'quit';
+    if (this.window !== win) {
+      log.info('close (%s): a new window was opened meanwhile; AIB stays', why);
+      return 'tray';
+    }
+    const total = work ? work.total : null;
+    if (closeDecision(total) === 'quit') {
+      log.info('close (%s): nothing is working; quitting', why);
+      await this.quit(false);
+      return 'quit';
+    }
+    log.info(
+      'close (%s): %s; the window closes, nothing is stopped, AIB stays in the tray and quits by itself once nothing works',
+      why,
+      work ? `${work.working} chat(s), ${work.terminals} terminal command(s), ${work.merges} merge(s) working` : 'what works is unknown',
+    );
+    if (win && !win.isClosed()) {
       try {
         win.hide();
       } catch { /* gone */ }
     }
-  }
-
-  /** Tray "Quit AIB": the same question. */
-  async requestQuit(): Promise<void> {
-    if (this.#quitting) return;
-    await this.decide();
-  }
-
-  /**
-   * 'quit' (nothing working), 'stop' (OK: stop the agents and quit) or 'tray' (Cancel, or a question already open). With
-   * askOnClose false and a separate agent host (stopHost given), closing never asks and never stops a chat: the app quits, the host
-   * keeps the working chats running and shows its own tray icon until they finish or an app attaches again.
-   */
-  async decide(): Promise<'quit' | 'stop' | 'tray'> {
-    if (this.#asking) return 'tray';
-    const busy = await this.busy();
-    if (this.options.stopHost && this.options.askOnClose === false) {
-      log.info('close: %s chat(s) working; %s', busy ?? 'unknown', busy === 0 ? 'stopping the agent host' : 'they keep running in the agent host');
-      await this.quit(false);
-      return 'quit';
-    }
-    log.info('close: %s chat(s) working; %s', busy ?? 'unknown', closeDecision(busy) === 'quit' ? 'quitting' : 'asking');
-    if (closeDecision(busy) === 'quit') {
-      await this.quit(false);
-      return 'quit';
-    }
-    this.#asking = true;
-    let ok = false;
-    try {
-      ok = await this.shell.ask(closeQuestion(busy));
-    } catch {
-      ok = false; // no answer: the safe default
-    } finally {
-      this.#asking = false;
-    }
-    log.info('close: answered %s', ok ? 'OK (stop the chats and quit)' : 'Cancel (keep the chats running; AIB stays in the tray)');
-    if (!ok) return 'tray';
-    await this.quit(true);
-    return 'stop';
+    this.#background = true;
+    this.#idleSince = null;
+    this.trayState('background');
+    return 'tray';
   }
 
   async quit(stopAgents: boolean): Promise<void> {
     if (this.#quitting) return;
     this.#quitting = true;
     this.stop();
-    log.info('quitting: %s', stopAgents ? 'stopping the working chats and the agent host' : 'no chat is stopped (an idle agent host stops, a busy one keeps running)');
+    log.info('quitting: %s', stopAgents ? 'Stop all chats and quit: stopping every chat' : 'nothing is working, so nothing is stopped');
     try {
       await this.options.stopHost?.(stopAgents);
     } catch { /* not running, or refused: quit anyway */ }

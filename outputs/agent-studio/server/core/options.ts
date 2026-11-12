@@ -35,7 +35,7 @@ export interface Options {
   /** The agent host's --tray: its own tray icon while chats work with no app attached (the built app's host). */
   tray: boolean;
   /**
-   * --start-in-tray (the desktop app): start with no window, only the tray icon (Open AIB / Stop chats and quit). The keeper's
+   * --start-in-tray (the desktop app): start with no window, only the tray icon (Open AIB / Stop all chats and quit). The keeper's
    * orphan restart uses it, so AIB coming back after a crash never puts a window over the person's work.
    */
   startInTray: boolean;

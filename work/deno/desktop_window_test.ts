@@ -9,7 +9,6 @@ import {
   saveLastPort,
   cleanGeometry,
   closeDecision,
-  closeQuestion,
   DEFAULT_SIZE,
   DesktopApp,
   type DesktopOptions,
@@ -25,7 +24,10 @@ import {
   rateLimiter,
   saveGeometry,
   type Shell,
-  TRAY_ONLY_ITEMS,
+  STOP_CONFIRM_MS,
+  STOP_INDEX,
+  stopConfirmLabel,
+  TRAY_ITEMS,
   trayOnlyView,
   type WindowHandle,
 } from '../../outputs/agent-studio/server/desktop/window.ts';
@@ -88,16 +90,13 @@ Deno.test('portFree sees a real listener; portGiven reads --port', () => {
   assertEquals(portGiven(['--host-port', '1']), false);
 });
 
-Deno.test('close decision: only a known zero quits without asking', () => {
+Deno.test('close decision: only a known zero quits; anything working, or unknown, keeps AIB in the tray', () => {
   assertEquals(closeDecision(0), 'quit');
-  assertEquals(closeDecision(1), 'ask');
-  assertEquals(closeDecision(null), 'ask');
-  assertEquals(
-    closeQuestion(2),
-    '2 chats are still working.\n\nOK: stop them and quit AIB.\nCancel: keep them running; AIB stays in the tray.',
-  );
-  assertEquals(closeQuestion(1), '1 chat is still working.\n\nOK: stop it and quit AIB.\nCancel: keep it running; AIB stays in the tray.');
-  assert(closeQuestion(null).startsWith('Chats may still be working.'));
+  assertEquals(closeDecision(1), 'tray');
+  assertEquals(closeDecision(null), 'tray');
+  assertEquals(stopConfirmLabel(2), 'Click again to stop 2 chats and quit');
+  assertEquals(stopConfirmLabel(1), 'Click again to stop 1 chat and quit');
+  assertEquals(stopConfirmLabel(0), 'Click again to stop everything and quit', 'only a terminal command or a merge runs');
 });
 
 Deno.test('geometry: cleaned, saved and loaded', async () => {
@@ -246,13 +245,19 @@ function fakeShell(answer = false) {
   return { s, shell };
 }
 
+/**
+ * The app as main.ts makes it. stopHost null (default): one process with the keeper, the shipped setup; a function: a separate
+ * agent host (an older version's, being drained).
+ */
 async function makeApp(
   busy: () => Promise<number>,
-  answer = false,
-  stopHost: (force: boolean) => Promise<unknown> = () => Promise.resolve({ stopped: true }),
+  stopHost: ((force: boolean) => Promise<unknown>) | null = null,
+  extra: Partial<DesktopOptions> = {},
 ) {
   const dir = await Deno.makeTempDir();
-  const { s, shell } = fakeShell(answer);
+  const { s, shell } = fakeShell();
+  const updates: [string, number, string][] = [];
+  shell.updateTray = (tooltip, index, label) => void updates.push([tooltip, index, label]);
   const quits: boolean[] = [];
   const order: string[] = [];
   const stops: boolean[] = [];
@@ -261,16 +266,18 @@ async function makeApp(
     stateDir: dir,
     trayIcon: trayIconPng(),
     busyCount: busy,
-    stopHost: (force) => (stops.push(force), order.push(`stop:${force}`), stopHost(force)),
+    ...(stopHost ? { stopHost: (force: boolean) => (stops.push(force), order.push(`stop:${force}`), stopHost(force)) } : {}),
     quit: (stop) => (quits.push(stop), order.push('quit'), Promise.resolve()),
     saveDelayMs: 0,
     watchdogMs: 0,
+    trayPollMs: 0,
+    ...extra,
   };
   const removeTray = shell.removeTray!;
   shell.removeTray = () => (order.push('tray removed'), removeTray());
   const app = new DesktopApp(shell, options);
   await app.start();
-  return { app, s, quits, stops, order, dir, done: () => Deno.remove(dir, { recursive: true }) };
+  return { app, s, updates, quits, stops, order, dir, done: () => (app.stop(), Deno.remove(dir, { recursive: true })) };
 }
 
 Deno.test('start: one window titled AIB on the page, a keeper, a tray, one binding only', async () => {
@@ -283,7 +290,7 @@ Deno.test('start: one window titled AIB on the page, a keeper, a tray, one bindi
     assertEquals([...w.bound.keys()], ['aibDesktop'], 'it only says "the app"; notifications go through the server');
     assertEquals(await w.bound.get('aibDesktop')!(), true);
     assertEquals(s.keepers, 1);
-    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', 'Quit AIB']);
+    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
     const png = trayIconPng();
     assertEquals([...png.slice(1, 4)], [0x50, 0x4e, 0x47], 'a PNG');
     assertEquals(s.tray?.icon, png, 'the tray gets the colour icon tray_icon.ts chose (16 or 32 px)');
@@ -306,77 +313,74 @@ Deno.test('closing with no chat working quits through the normal path, no questi
   }
 });
 
-Deno.test('closing with chats working asks; Cancel keeps running in the tray, the tray reopens a new window', async () => {
-  const { s, quits, done } = await makeApp(() => Promise.resolve(2), false);
+Deno.test('closing with chats working: no question, nothing stopped; AIB stays in the tray and the tray reopens a new window', async () => {
+  const { s, quits, app, done } = await makeApp(() => Promise.resolve(2));
   try {
     s.windows[0].emit('close');
     await tick();
-    assertEquals(s.questions, [closeQuestion(2)]);
+    assertEquals(s.questions, [], 'no native box');
     assertEquals(quits, []);
+    assertEquals(s.trayRemoved, 0, 'the tray icon stays while they work');
+    assert(app.background, 'quits by itself once nothing works');
     s.tray!.onClick();
     await tick();
     assertEquals(s.windows.length, 2, 'the closed window is gone: a new one');
     assertEquals(s.windows[1].urls, ['http://127.0.0.1:8890/']);
+    assert(!app.background, 'the person is back');
     s.tray!.onMenu('open'); // already open: show and focus, no third window
     await tick();
     assertEquals(s.windows.length, 2);
     assertEquals(s.windows[1].log.slice(-2), ['show', 'focus']);
   } finally {
+    app.stop();
     await done();
   }
 });
 
-Deno.test('OK stops the agents and quits; an unreadable count asks too', async () => {
-  const a = await makeApp(() => Promise.resolve(1), true);
-  try {
-    a.s.windows[0].emit('close');
-    await tick();
-    assertEquals(a.quits, [true]);
-  } finally {
-    await a.done();
-  }
-  const b = await makeApp(() => Promise.reject(new Error('host gone')), false);
+Deno.test('an unreadable count never quits: AIB stays in the tray, no question', async () => {
+  const b = await makeApp(() => Promise.reject(new Error('host gone')));
   try {
     b.s.windows[0].emit('close');
     await tick();
-    assertEquals(b.s.questions, [closeQuestion(null)]);
+    assertEquals(b.s.questions, []);
     assertEquals(b.quits, []);
+    assert(b.app.background);
+    await b.app.trayTick(Date.now() + 60_000);
+    assertEquals(b.quits, [], 'an unknown count is never idle');
   } finally {
+    b.app.stop();
     await b.done();
   }
 });
 
-Deno.test('tray: icon, tooltip AIB, menu Open AIB / Quit AIB; left click and Open show the window, Quit asks', async () => {
-  const a = await makeApp(() => Promise.resolve(2), false);
+Deno.test('tray: icon, menu Open AIB / status / Quit AIB / Stop all chats and quit; left click and Open show the window', async () => {
+  const a = await makeApp(() => Promise.resolve(2));
   try {
     assertEquals(a.s.tray?.tooltip, 'AIB');
-    assertEquals(a.s.tray?.items, [{ id: 'open', label: 'Open AIB' }, { id: 'quit', label: 'Quit AIB' }]);
-    a.s.windows[0].emit('close'); // 2 working, Cancel: AIB stays in the tray with no window
+    assertEquals(a.s.tray?.items, TRAY_ITEMS);
+    assertEquals(TRAY_ITEMS.map((i) => [i.label, !!i.disabled]), [
+      ['Open AIB', false],
+      ['', true],
+      ['Quit AIB', false],
+      ['Stop all chats and quit', false],
+    ]);
+    assertEquals(a.updates.at(-1), ['AIB · 2 chats running', 1, '2 chats running'], 'the status line, window or not');
+    a.s.windows[0].emit('close'); // 2 working: AIB stays in the tray with no window
     await tick();
     assertEquals(a.s.windows[0].closed, true);
     a.s.tray!.onClick();
     await tick();
     assertEquals(a.s.windows.length, 2, 'a left click makes a new window');
     a.s.windows[1].emit('close');
-    await tick();
-    a.s.tray!.onMenu('open');
-    await tick();
+    await tick(20);
+    await a.app.onTrayMenu('open');
     assertEquals(a.s.windows.length, 3, 'Open AIB makes a new window');
     a.s.tray!.onMenu('nonsense');
     await tick();
     assertEquals(a.s.windows.length, 3, 'an unknown id does nothing');
-    const asked = a.s.questions.length;
-    a.s.tray!.onMenu('quit');
-    await tick();
-    assertEquals(a.s.questions.length, asked + 1, 'Quit AIB asks while chats work');
-    assertEquals(a.quits, []);
-    assertEquals(a.s.trayRemoved, 0, 'Cancel keeps the tray icon');
-    a.s.answer = true;
-    a.s.tray!.onMenu('quit');
-    await tick();
-    assertEquals(a.quits, [true]);
-    assertEquals(a.s.trayRemoved, 1, 'quitting removes the icon');
+    assertEquals(a.s.questions, [], 'never a native box');
   } finally {
+    a.app.stop();
     await a.done();
   }
 });
@@ -407,19 +411,22 @@ Deno.test('Windows tray: callback events, menu commands and the NOTIFYICONDATAW 
   assertEquals(v.getUint16(40 + 127 * 2, true), 0, 'the tooltip keeps its terminating zero');
 });
 
-Deno.test('tray Quit asks the same question; with nothing working it just quits', async () => {
-  const a = await makeApp(() => Promise.resolve(3), false);
+Deno.test('tray Quit AIB with chats working hides the window and stays in the tray; with nothing working it just quits', async () => {
+  const a = await makeApp(() => Promise.resolve(3));
   try {
     a.s.tray!.onMenu('quit');
     await tick();
-    assertEquals(a.s.questions, [closeQuestion(3)]);
-    assertEquals(a.quits, []);
-    assertEquals(a.s.windows[0].closed, false, 'Cancel leaves the open window alone');
-    a.s.answer = true;
-    a.s.tray!.onMenu('quit');
+    assertEquals(a.s.questions, []);
+    assertEquals(a.quits, [], 'no chat is stopped');
+    assertEquals(a.s.windows[0].visible, false, 'the window goes');
+    assert(a.app.background);
+    a.s.tray!.onMenu('open');
     await tick();
-    assertEquals(a.quits, [true]);
+    assertEquals(a.s.windows.length, 1, 'the hidden window comes back: same page, nothing reloaded');
+    assertEquals(a.s.windows[0].visible, true);
+    assert(!a.app.background);
   } finally {
+    a.app.stop();
     await a.done();
   }
   const b = await makeApp(() => Promise.resolve(0));
@@ -427,8 +434,118 @@ Deno.test('tray Quit asks the same question; with nothing working it just quits'
     b.s.tray!.onMenu('quit');
     await tick();
     assertEquals(b.quits, [false]);
+    assertEquals(b.s.trayRemoved, 1, 'quitting removes the icon');
   } finally {
     await b.done();
+  }
+});
+
+Deno.test('in the background AIB quits by itself once nothing has worked for a while: chats, helpers, queues, terminal commands, merges', async () => {
+  const counts = { working: 1, needsYou: 0 };
+  let terminals = 0;
+  let merges = 0;
+  const a = await makeApp(() => Promise.resolve(counts.working), null, {
+    trayCounts: () => Promise.resolve({ ...counts }),
+    terminalsBusy: () => terminals,
+    mergesRunning: () => merges,
+    trayIdleQuitMs: 5000,
+  });
+  try {
+    const t0 = Date.now();
+    await a.app.trayTick(t0);
+    await a.app.trayTick(t0 + 60_000);
+    assertEquals(a.quits, [], 'the window is open: never quits by itself');
+    a.s.windows[0].emit('close');
+    await tick();
+    assert(a.app.background);
+    counts.working = 0;
+    terminals = 1; // a command still runs in a chat's terminal
+    await a.app.trayTick(t0 + 61_000);
+    await a.app.trayTick(t0 + 70_000);
+    assertEquals(a.quits, [], 'a terminal command keeps it');
+    terminals = 0;
+    merges = 1;
+    await a.app.trayTick(t0 + 80_000);
+    assertEquals(a.quits, [], 'a merge keeps it');
+    merges = 0;
+    await a.app.trayTick(t0 + 81_000);
+    await a.app.trayTick(t0 + 85_500);
+    assertEquals(a.quits, [], 'idle 4.5 s: not yet');
+    await a.app.trayTick(t0 + 86_100);
+    assertEquals(a.quits, [false], 'idle 5.1 s: quits, nothing stopped by force');
+  } finally {
+    a.app.stop();
+    await a.done();
+  }
+  // Closing with only a terminal command or a merge running (no chat) keeps AIB in the tray too.
+  for (const extra of [{ terminalsBusy: () => 1 }, { mergesRunning: () => 1 }]) {
+    const b = await makeApp(() => Promise.resolve(0), null, extra);
+    try {
+      b.s.windows[0].emit('close');
+      await tick();
+      assertEquals(b.quits, []);
+      assert(b.app.background);
+    } finally {
+      b.app.stop();
+      await b.done();
+    }
+  }
+});
+
+Deno.test('a window opened again while the close rule is still counting is never hidden', async () => {
+  let release: (n: number) => void = () => {};
+  let slow = false;
+  const a = await makeApp(() => (slow ? new Promise<number>((r) => (release = r)) : Promise.resolve(2)));
+  try {
+    slow = true;
+    a.s.windows[0].emit('close'); // the count is slow to come
+    await tick();
+    slow = false;
+    await a.app.onTrayMenu('open'); // the person is back first
+    assertEquals(a.s.windows.length, 2);
+    release(2);
+    await tick(20);
+    assertEquals(a.s.windows[1].visible, true, 'the new window stays');
+    assert(!a.app.background);
+    assertEquals(a.quits, []);
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('Stop all chats and quit: the first click turns the item into a confirm line; a second click stops everything; it times out', async () => {
+  const a = await makeApp(() => Promise.resolve(2));
+  try {
+    const t0 = Date.now();
+    await a.app.requestStop(t0);
+    assertEquals(a.quits, [], 'one click stops nothing');
+    assertEquals(a.s.questions, [], 'no native box');
+    assertEquals(a.updates.at(-1)?.slice(1), [STOP_INDEX, 'Click again to stop 2 chats and quit']);
+    await a.app.requestStop(t0 + 2000);
+    assertEquals(a.quits, [true], 'confirmed: every chat is stopped');
+    assertEquals(a.s.trayRemoved, 1);
+  } finally {
+    a.app.stop();
+    await a.done();
+  }
+  const b = await makeApp(() => Promise.resolve(1));
+  try {
+    const t0 = Date.now();
+    await b.app.requestStop(t0);
+    await b.app.requestStop(t0 + STOP_CONFIRM_MS + 1);
+    assertEquals(b.quits, [], 'too late: that click only arms it again');
+    assertEquals(b.updates.at(-1)?.slice(1), [STOP_INDEX, 'Click again to stop 1 chat and quit']);
+  } finally {
+    b.app.stop();
+    await b.done();
+  }
+  const c = await makeApp(() => Promise.resolve(0));
+  try {
+    c.s.tray!.onMenu('stop');
+    await tick();
+    assertEquals(c.quits, [false], 'nothing works: it just quits');
+  } finally {
+    await c.done();
   }
 });
 
@@ -596,8 +713,9 @@ Deno.test({
   },
 });
 
-Deno.test('quitting stops the agent host too: unforced with nothing working, forced after OK, never after Cancel', async () => {
-  const a = await makeApp(() => Promise.resolve(0));
+Deno.test('a separate agent host: quitting never asks and asks it to stop unforced; Stop all chats and quit forces it', async () => {
+  const stopHost = () => Promise.resolve({ stopped: true });
+  const a = await makeApp(() => Promise.resolve(0), stopHost);
   try {
     a.s.windows[0].emit('close');
     await tick();
@@ -605,24 +723,28 @@ Deno.test('quitting stops the agent host too: unforced with nothing working, for
   } finally {
     await a.done();
   }
-  const b = await makeApp(() => Promise.resolve(2), true);
-  try {
-    b.s.windows[0].emit('close');
-    await tick();
-    assertEquals(b.order, ['stop:true', 'tray removed', 'quit']);
-  } finally {
-    await b.done();
+  for (const close of [true, false]) {
+    const b = await makeApp(() => Promise.resolve(2), stopHost);
+    try {
+      if (close) b.s.windows[0].emit('close');
+      else b.s.tray!.onMenu('quit');
+      await tick();
+      assertEquals(b.s.questions, []);
+      assertEquals(b.order, ['stop:false', 'tray removed', 'quit'], 'the chats keep running in the agent host, under its own icon');
+    } finally {
+      await b.done();
+    }
   }
-  const c = await makeApp(() => Promise.resolve(2), false);
+  const c = await makeApp(() => Promise.resolve(2), stopHost);
   try {
-    c.s.windows[0].emit('close');
-    await tick();
-    assertEquals(c.order, [], 'Cancel keeps the host and the tray');
-    assertEquals(c.s.tray?.items.length, 2);
+    const t0 = Date.now();
+    await c.app.requestStop(t0);
+    await c.app.requestStop(t0 + 100);
+    assertEquals(c.order, ['stop:true', 'tray removed', 'quit']);
   } finally {
     await c.done();
   }
-  const d = await makeApp(() => Promise.resolve(0), false, () => Promise.reject(new Error('refused')));
+  const d = await makeApp(() => Promise.resolve(0), () => Promise.reject(new Error('refused')));
   try {
     d.s.tray!.onMenu('quit');
     await tick();
@@ -642,7 +764,7 @@ Deno.test({
       const [host] = fx.spawn([DENO, 'run', '-A', '--quiet', FAKE_HOST, fx.state, 'C:/x', 'studio-dev', '0.0.9', 'deno', '1'], 'fake-host');
       await until(async () => (await readInfo(fx.state))?.pid === host.pid, 'fake host file', 30);
       // The window's busy count said 0, but the host's own count is what stopHost(force=false) goes by.
-      const app = await makeApp(() => Promise.resolve(0), false, (force) => stopHost(fx.state, force, 5));
+      const app = await makeApp(() => Promise.resolve(0), (force) => stopHost(fx.state, force, 5));
       try {
         app.s.windows[0].emit('close');
         await until(() => app.quits.length === 1, 'quit');
@@ -780,35 +902,6 @@ Deno.test('keeper: put on about:blank and hidden; any load or focus hides it aga
   }
 });
 
-Deno.test('askOnClose false (the design 4.4 switch): closing or Quit with chats working never asks; the host is asked to stop unforced', async () => {
-  for (const close of [true, false]) {
-    const dir = await Deno.makeTempDir();
-    const { s, shell } = fakeShell(true);
-    const order: string[] = [];
-    const app = new DesktopApp(shell, {
-      url: 'http://127.0.0.1:8890/',
-      stateDir: dir,
-      trayIcon: trayIconPng(),
-      busyCount: () => Promise.resolve(2),
-      stopHost: (force) => (order.push(`stop:${force}`), Promise.resolve({})),
-      quit: (stop) => (order.push(`quit:${stop}`), Promise.resolve()),
-      askOnClose: false,
-      saveDelayMs: 0,
-      watchdogMs: 0,
-    });
-    try {
-      await app.start();
-      if (close) s.windows[0].emit('close');
-      else s.tray!.onMenu('quit');
-      await tick();
-      assertEquals(s.questions, []);
-      assertEquals(order, ['stop:false', 'quit:false'], 'the chats keep running in the agent host');
-    } finally {
-      await Deno.remove(dir, { recursive: true });
-    }
-  }
-});
-
 Deno.test('the first load of our page calls onPageLoaded once (the update health marker)', async () => {
   const dir = await Deno.makeTempDir();
   const { s, shell } = fakeShell();
@@ -880,14 +973,13 @@ async function trayOnlyApp(counts: { working: number; needsYou: number }, answer
   return { app, s, updates, quits, done: () => (app.stop(), Deno.remove(dir, { recursive: true })) };
 }
 
-Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu Open AIB / status / Stop chats and quit', async () => {
+Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu Open AIB / status / Quit AIB / Stop all chats and quit', async () => {
   const counts = { working: 2, needsYou: 1 };
   const { app, s, updates, quits, done } = await trayOnlyApp(counts);
   try {
     assertEquals(s.windows.length, 0, 'nothing pops up over the person\'s work');
     assertEquals(s.keepers, 1, 'the hidden keeper window keeps the runtime alive');
-    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', '', 'Stop chats and quit']);
-    assertEquals(TRAY_ONLY_ITEMS.map((i) => !!i.disabled), [false, true, false], 'the status line is greyed');
+    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
     assertEquals(updates.at(-1), ['AIB · 1 chat needs you, 1 running', 1, '1 chat needs you, 1 running']);
     counts.needsYou = 0;
     await app.trayTick();
@@ -902,31 +994,25 @@ Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu
   }
 });
 
-Deno.test('tray-only start: Stop chats and quit asks first; Cancel keeps everything, OK stops the chats and quits', async () => {
+Deno.test('tray-only start: Stop all chats and quit confirms in the menu (no box), then stops the chats and quits', async () => {
   const counts = { working: 1, needsYou: 0 };
-  const cancel = await trayOnlyApp(counts, false);
+  const a = await trayOnlyApp(counts);
   try {
-    cancel.s.tray!.onMenu('stop');
-    await until(() => cancel.s.questions.length === 1, 'the question');
-    assert(cancel.s.questions[0].startsWith('Stop chats and quit AIB?'), cancel.s.questions[0]);
-    assert(cancel.s.questions[0].includes('1 chat running'), cancel.s.questions[0]);
-    await new Promise((r) => setTimeout(r, 20));
-    assertEquals(cancel.quits, []);
+    a.s.tray!.onMenu('stop');
+    await until(() => a.updates.some((u) => u[1] === STOP_INDEX), 'the confirm line');
+    assertEquals(a.updates.at(-1)?.slice(1), [STOP_INDEX, 'Click again to stop 1 chat and quit']);
+    assertEquals(a.quits, []);
+    a.s.tray!.onMenu('stop');
+    await until(() => a.quits.length === 1, 'quit');
+    assertEquals(a.quits, [true], 'stop the agents');
+    assertEquals(a.s.trayRemoved, 1, 'no dead icon left behind');
+    assertEquals(a.s.questions, []);
   } finally {
-    await cancel.done();
-  }
-  const ok = await trayOnlyApp(counts, true);
-  try {
-    ok.s.tray!.onMenu('stop');
-    await until(() => ok.quits.length === 1, 'quit');
-    assertEquals(ok.quits, [true], 'stop the agents');
-    assertEquals(ok.s.trayRemoved, 1, 'no dead icon left behind');
-  } finally {
-    await ok.done();
+    await a.done();
   }
 });
 
-Deno.test('tray-only start: quits by itself once nothing has worked for a while, unless the window was opened', async () => {
+Deno.test('tray-only start: quits by itself once nothing has worked for a while, unless the window is open', async () => {
   const counts = { working: 1, needsYou: 0 };
   const a = await trayOnlyApp(counts, false, 5000);
   try {
@@ -954,7 +1040,6 @@ Deno.test('tray-only start: quits by itself once nothing has worked for a while,
   }
   assertEquals(trayOnlyView(0, 0).status, 'No chat is working');
 });
-
 Deno.test('tray-only start: the orphan command adds --start-in-tray for the desktop app only; an update drops it again', () => {
   assertEquals(orphanCommand([], true).args!.slice(-1), ['--start-in-tray']);
   assertEquals(orphanCommand(['--port', '8821'], true).args!.slice(-3), ['--port', '8821', '--start-in-tray']);

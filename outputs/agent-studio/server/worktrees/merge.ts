@@ -48,6 +48,11 @@ export const HOOKS: Record<string, () => unknown> = {};
 
 const RUNNING = new Set<string>(); // chat keys with a merge running in this process
 
+/** How many merges run in this process now (quitting AIB waits in the tray for them: a cut-off merge would leave a half-done repo). */
+export function mergesRunning(): number {
+  return RUNNING.size;
+}
+
 /** What Merge needs from the server: the state folder, a chat's live state, and the live ops (prompt, worktree-note). */
 export interface MergeStudio {
   stateDir: string;

@@ -14,7 +14,7 @@
  *   5. The agent's artifact tool is the keeper's MCP forwarder (`AIB-keeper mcp-forward`, run from the data folder's keeper-bin),
  *      never A's AIB.exe, so B removes the update's .old-* files at its start while the chat still runs.
  *   6. B is killed hard mid-turn: the keeper starts AIB again with --start-in-tray (rule V1): no window, only the tray icon (Open AIB,
- *      a status line, Stop chats and quit); the turn goes on there, and once nothing works the tray-only AIB quits by itself, which
+ *      a status line, Quit AIB, Stop all chats and quit); the turn goes on there, and once nothing works the tray-only AIB quits by itself, which
  *      leaves no process behind: no AIB, no keeper, no agent, no forwarder.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -308,7 +308,7 @@ Deno.test({
         30,
       );
       assertEquals([tray.trayOnly, tray.windowOpened], [true, false]);
-      assertEquals([tray.items[0], tray.items[2]], ['Open AIB', 'Stop chats and quit']);
+      assertEquals([tray.items[0], tray.items[2], tray.items[3]], ['Open AIB', 'Quit AIB', 'Stop all chats and quit']);
       for (let i = 0; i < 6; i++) { // over a few seconds: no window of the restarted AIB ever shows
         // Windows' own per-process input windows (the UAC input indicator overlay, IME) are not AIB's and never show on screen.
         const shown = desk.windows().filter((w) => w.pid === cPid && w.visible && !/^(UAC|IME$|MSCTFIME UI$|Default IME$)/.test(w.cls));
