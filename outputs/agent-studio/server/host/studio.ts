@@ -1239,13 +1239,18 @@ export class Studio {
     return Promise.resolve(Object.fromEntries(open.map((c) => [c.id, c.writes.written()])));
   }
 
-  /** Open connections that must not be cut off: working, still opening, or waiting for a person. */
+  /**
+   * Open connections that must not be cut off: working, still opening, waiting for a person, or idle with background helpers still
+   * running ('helpers': a Claude Code turn ended while its helpers go on; stopping the agent would kill them).
+   */
   busyList(): Json[] {
     const busy: Json[] = [];
     for (const c of [...this.connections.values()]) {
       const state = c.attention().state;
       if (state === 'working' || state === 'opening' || state === 'needs_you') {
         busy.push({ id: c.id, provider: c.provider, cwd: c.cwd, state });
+      } else if (state === 'idle' && c.helpersRunning?.()) {
+        busy.push({ id: c.id, provider: c.provider, cwd: c.cwd, state: 'helpers' });
       }
     }
     return busy;
