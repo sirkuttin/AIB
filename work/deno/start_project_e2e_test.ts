@@ -283,6 +283,10 @@ async function runEarly(fx: Fixture, keep: (b: Browser) => void): Promise<void> 
     transcript(claude, `s-${i}`, d, i + 1, `Work on ${['Alpha', 'Beta', 'Delta'][i]}`);
   });
   const [ALPHA, BETA, DELTA] = dirs.map(key);
+  // The user added these projects (AIB lists saved agent chats of added projects only).
+  const addedEarly: Record<string, { path: string; at: number }> = {};
+  for (const path of dirs) addedEarly[projectKey(path)] = { path, at: 1 };
+  Deno.writeTextFileSync(`${fx.state}${SEP}studio-added-projects.json`, JSON.stringify({ version: 1, savedAt: 1, added: addedEarly }));
   // Last session: Alpha's chat was open (it would be reopened at start).
   const ws = { v: 1, active: ALPHA, tabs: { [ALPHA]: ['claude:s-0'] }, last: { [ALPHA]: 'claude:s-0' }, recent: ALPHA };
   Deno.writeTextFileSync(
