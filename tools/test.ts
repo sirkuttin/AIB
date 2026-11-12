@@ -31,6 +31,7 @@ Options:
   --junit DIR     a JUnit file per test file
   --no-rerun      do not run a failed file again on its own
   --no-log        do not write the log file (see Logs)
+  --no-shard      run each file in one process (SHARDS in tools/test.ts splits a few long files into several)
   --help          this text
   -- ARGS         passed on to deno test (deno task test -- --filter "parity")
 
@@ -93,9 +94,26 @@ const HINT: Record<string, number> = {
   'chat_folders_test.ts': 6,
   'signin_test.ts': 6,
 };
-const weight = (file: string) => SLOW[file] ?? HINT[file] ?? 3;
+/**
+ * Long files whose tests do not depend on each other (each builds its own fixture), run as N processes of every N-th test
+ * (work/deno/_shard_preload.ts, loaded with --preload; the file is unchanged). Together the shards run each test once.
+ */
+export const SHARDS: Record<string, number> = {
+  'worktree_sync_interop_test.ts': 3,
+  'worktree_sync_test.ts': 3,
+  'worktree_merge_clash_test.ts': 2,
+};
+const weight = (file: string) => (SLOW[file] ?? HINT[file] ?? 3) / (SHARDS[file] ?? 1);
 
-type Result = { file: string; ok: boolean; seconds: number; summary: string; output: string };
+/** A pool entry: a file, or one shard of it ("worktree_sync_test.ts [2/3]"). */
+type Entry = { file: string; shard?: [number, number] };
+const label = (e: Entry) => e.shard ? `${e.file} [${e.shard[0]}/${e.shard[1]}]` : e.file;
+const entries = (files: string[], shard: boolean): Entry[] =>
+  files.flatMap((file) =>
+    shard && SHARDS[file] ? Array.from({ length: SHARDS[file] }, (_, i) => ({ file, shard: [i + 1, SHARDS[file]] as [number, number] })) : [{ file }]
+  );
+
+type Result = { file: string; ok: boolean; seconds: number; summary: string; output: string; entry: Entry };
 
 interface Options {
   tier: 'all' | 'fast' | 'slow';
@@ -112,6 +130,7 @@ interface Options {
   list: boolean;
   why: string;
   allSlow: boolean;
+  shard: boolean;
 }
 
 function parseArgs(args: string[]): Options {
@@ -130,6 +149,7 @@ function parseArgs(args: string[]): Options {
     list: false,
     why: '',
     allSlow: false,
+    shard: true,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -150,6 +170,7 @@ function parseArgs(args: string[]): Options {
     else if (arg === '--list') options.list = true;
     else if (arg === '--why') options.why = args[++i];
     else if (arg === '--all-slow') options.allSlow = true;
+    else if (arg === '--no-shard') options.shard = false;
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg} (--help lists them)`);
     else options.filters.push(arg);
   }
@@ -216,29 +237,30 @@ export class RunLog {
 
 // ---- running ---------------------------------------------------------------------------------------------------------------
 
-async function runFile(file: string, extra: string[], junit: string): Promise<Result> {
+async function runFile(entry: Entry, extra: string[], junit: string): Promise<Result> {
   const started = performance.now();
+  const { file, shard } = entry;
   const args = ['test', '-A', ...extra];
-  if (junit) args.push(`--junit-path=${junit}/${file.replace(/\.ts$/, '.xml')}`);
+  const env: Record<string, string> = { NO_COLOR: '1' };
+  if (shard) {
+    args.push(`--preload=${native(new URL('_shard_preload.ts', TESTS))}`);
+    env.AIB_TEST_SHARD = `${shard[0]}/${shard[1]}`;
+  }
+  if (junit) args.push(`--junit-path=${junit}/${file.replace(/\.ts$/, shard ? `.${shard[0]}of${shard[1]}.xml` : '.xml')}`);
   args.push(native(new URL(file, TESTS)));
-  const child = new Deno.Command(Deno.execPath(), {
-    args,
-    cwd: native(APP),
-    stdin: 'null',
-    stdout: 'piped',
-    stderr: 'piped',
-    env: { NO_COLOR: '1' },
-  }).spawn();
+  const child = new Deno.Command(Deno.execPath(), { args, cwd: native(APP), stdin: 'null', stdout: 'piped', stderr: 'piped', env }).spawn();
   const [status, out, err] = await Promise.all([child.status, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   const output = out + err;
   const summary = output.match(/^(?:ok|FAILED) \| .*$/m)?.[0] ?? `exit code ${status.code}`;
-  return { file, ok: status.success, seconds: (performance.now() - started) / 1000, summary, output };
+  return { file: label(entry), ok: status.success, seconds: (performance.now() - started) / 1000, summary, output, entry };
 }
 
 /** The Deno pool. Returns the summary line and whether every file passed. */
-async function runDeno(files: string[], options: Options, log: RunLog, label: string): Promise<{ ok: boolean; line: string }> {
+async function runDeno(files: string[], options: Options, log: RunLog, tier: string): Promise<{ ok: boolean; line: string }> {
   const started = performance.now();
-  log.say(`${files.length} test files (${label}), ${options.jobs} at a time`);
+  const pool = entries(files, options.shard);
+  const sharded = pool.length - files.length;
+  log.say(`${files.length} test files (${tier}), ${options.jobs} at a time${sharded ? `; ${pool.filter((e) => e.shard).map((e) => e.file).filter((f, i, a) => a.indexOf(f) === i).join(', ')} in shards` : ''}`);
   // Type-check every file once, in one process, then run each with --no-check: after an edit, the first files in the pool used to
   // check the same server modules side by side (up to 5 s each). Same checks, done once. If it fails, each file checks itself as
   // before, so only the files with the type error fail.
@@ -262,25 +284,25 @@ async function runDeno(files: string[], options: Options, log: RunLog, label: st
     }
   }
   const results: Result[] = [];
-  const queue = [...files];
+  const queue = [...pool];
   const report = (r: Result, alone = '') => {
     log.say(`${r.ok ? 'ok    ' : 'FAILED'} ${r.seconds.toFixed(1).padStart(6)} s  ${r.file}${alone}  ${r.summary.replace(/^(ok|FAILED) \| /, '')}`);
     if (!r.ok) log.say(`\n----- ${r.file}${alone} -----\n${r.output}\n----- end of ${r.file}${alone} -----\n`);
     else log.raw(`----- output of ${r.file} -----\n${r.output}\n----- end of ${r.file} -----\n`);
   };
   const worker = async () => {
-    for (let file = queue.shift(); file; file = queue.shift()) {
-      const result = await runFile(file, extra, options.junit);
+    for (let entry = queue.shift(); entry; entry = queue.shift()) {
+      const result = await runFile(entry, extra, options.junit);
       results.push(result);
       report(result);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(options.jobs, files.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(options.jobs, pool.length) }, worker));
   const sensitive: string[] = [];
   if (options.rerun) {
     for (const first of results.filter((r) => !r.ok)) {
       log.say(`rerunning ${first.file} on its own`);
-      const again = await runFile(first.file, extra, options.junit);
+      const again = await runFile(first.entry, extra, options.junit);
       report(again, ' (alone)');
       if (again.ok) sensitive.push(first.file);
       results[results.indexOf(first)] = again;
@@ -293,7 +315,7 @@ async function runDeno(files: string[], options: Options, log: RunLog, label: st
   }, [0, 0, 0]);
   log.say('\nslowest files:');
   for (const r of [...results].sort((a, b) => b.seconds - a.seconds).slice(0, 5)) log.say(`  ${r.seconds.toFixed(1).padStart(6)} s  ${r.file}`);
-  const line = `${failed.length ? 'FAILED' : 'ok'} | ${results.length} files | ${counts[0]} passed | ${counts[1]} failed | ${counts[2]} ignored | ` +
+  const line = `${failed.length ? 'FAILED' : 'ok'} | ${files.length} files${sharded ? ` (${pool.length} processes)` : ''} | ${counts[0]} passed | ${counts[1]} failed | ${counts[2]} ignored | ` +
     `${((performance.now() - started) / 1000).toFixed(0)} s`;
   log.say(`\n${line}`);
   for (const file of sensitive) log.say(`  timing-sensitive: ${file} failed in the pool, passed alone`);
