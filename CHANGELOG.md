@@ -70,6 +70,8 @@
 - Claude Code chats on the newest models (5.x) keep a to-do checklist again: AIB turns on Claude Code's task tools
   (CLAUDE_CODE_ENABLE_TODO_TOOLS=1 unless you set it yourself), and the checklist shows as a plan card that ticks off its
   steps.
+- A chat has one plan card: each update replaces it, and while steps are open it stays the chat's last item, also after you
+  send another message, instead of leaving a snapshot in the earlier turn.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.

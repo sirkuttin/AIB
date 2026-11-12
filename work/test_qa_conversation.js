@@ -152,7 +152,7 @@ test('Interrupt: a subagent not heard from since shows Interrupted, not still wo
   assert.equal(SU.classify(page.hook.children.get('child-1')).label, 'Interrupted');
 });
 
-test('an unfinished plan stays in its own turn once you have sent another message', () => {
+test('an unfinished plan moves down with the chat after you send another message, and is drawn once', () => {
   /* the fragment's children land in the list (as in test_views_unread.js) */
   El.prototype.replaceChildren = function (...items) {
     this.children = items.flatMap((i) => (i.id === 'fragment' ? i.children : [i]));
@@ -195,7 +195,24 @@ test('an unfinished plan stays in its own turn once you have sent another messag
   const planAt = k.findIndex((c) => /plan/.test(c)),
     users = k.map((c, i) => (/bubble user/.test(c) ? i : -1)).filter((i) => i >= 0);
   assert.equal(users.length, 2, k.join(' | '));
-  assert.ok(planAt > users[0] && planAt < users[1], 'the plan stays above your next message: ' + k.join(' | '));
+  assert.ok(planAt > users[1], 'the unfinished plan is below your latest message: ' + k.join(' | '));
+  assert.ok(planAt < k.length - 1, 'still before the closing "turn finished" line: ' + k.join(' | '));
+  // a later update of the same plan replaces it: one card, never a snapshot left behind in an earlier turn
+  page.hook.showRows(
+    box,
+    [
+      ...turn1,
+      { role: 'user', label: 'You', value: 'url', time: 5 },
+      { ...plan, time: 6, entries: [{ content: 'step one', status: 'in_progress' }] },
+      { role: 'assistant', label: 'Assistant', value: 'Working on it', time: 7 },
+    ],
+    'main',
+  );
+  assert.equal(kinds().filter((c) => /plan/.test(c)).length, 1, 'one plan card: ' + kinds().join(' | '));
+  // a finished plan stays where it ended and is still drawn once
+  const done = { ...plan, time: 8, entries: [{ content: 'step one', status: 'completed' }] };
+  page.hook.showRows(box, [...turn1, { role: 'user', label: 'You', value: 'url', time: 5 }, done, { role: 'user', label: 'You', value: 'next', time: 9 }], 'main');
+  assert.equal(kinds().filter((c) => /plan/.test(c)).length, 1, 'one plan card when done: ' + kinds().join(' | '));
 });
 
 test('an answered approval or question leaves one compact line in the chat; pending or withdrawn ones do not', () => {

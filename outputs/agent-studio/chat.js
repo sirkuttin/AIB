@@ -1486,7 +1486,7 @@
       flat = window.ChatViewsUI.flatFrom(proj, win.start);
     } else {
       const docked = box.id === 'messages' ? dockedPlan(rows) : null,
-        drawn = docked ? planLast(shown, rows, docked) : shown;
+        drawn = docked ? planLast(shown, rows, docked) : box.id === 'messages' ? latestPlanOnly(shown, rows) : shown;
       const draw = tag(box.id === 'messages' && window.ChatViews ? viewBubble : bubble);
       if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, draw));
       else for (const row of drawn) fragment.append(draw(row));
@@ -4475,12 +4475,17 @@
       }
     return null;
   }
-  /* An unfinished plan is the chat's last item while its turn is the latest (it scrolls with the history), placed before the
-     closing "turn finished" line. Once you have sent another message it stays in its own turn, above the later turns. */
+  /* A chat has one plan card: every plan update is the whole list, so only the newest is drawn. Earlier copies would read as
+     snapshots left behind in the history. */
+  function latestPlanOnly(shown, rows) {
+    let last = null;
+    for (let i = rows.length - 1; i >= 0 && !last; i--) if (rows[i].role === 'plan') last = rows[i];
+    return last ? shown.filter((r) => r.role !== 'plan' || r === last) : shown;
+  }
+  /* An unfinished plan is the chat's last item (it scrolls with the history), placed before the closing "turn finished" line,
+     also after you send another message: it moves down with the chat until every step is done, then stays where it ended. */
   function planLast(shown, rows, plan) {
-    const at = rows.indexOf(plan);
-    if (rows.slice(at + 1).some((r) => r.role === 'user' && isMsgRow(r))) return shown;
-    const rest = shown.filter((r) => r !== plan);
+    const rest = latestPlanOnly(shown, rows).filter((r) => r !== plan);
     let end = rest.length;
     while (end > 0 && rest[end - 1].role === 'turn-end') end--;
     return [...rest.slice(0, end), plan, ...rest.slice(end)];
