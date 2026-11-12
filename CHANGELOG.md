@@ -109,6 +109,8 @@
   in one pass, typing no longer re-lays out the history, and only changed rows are redrawn.
 - The plan card lists steps in progress first, then steps to do, then one folded "✓ N done ▸" line that opens on click.
 - The Activity tab shows how many subagents are working right now, like the counts on Changes and Artifacts.
+- The chat keeps your place when its width changes: opening a doc or artifact, a file beside the chat, or a narrower
+  window. At the bottom it stays at the newest message; while reading, the same row stays where it was.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.

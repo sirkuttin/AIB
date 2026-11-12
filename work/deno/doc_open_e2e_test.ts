@@ -106,7 +106,7 @@ e2e('Open doc on the card opens the doc in the Artifacts viewer, in the full edi
   assert(st.ver === true, 'no version chip for a doc');
   assert(st.fileTabs === 0 && !st.beside, 'no tab, nothing beside the chat');
   assert(/where=artifacts/.test(String(st.src)), `src ${st.src}`);
-  // the editor loads and is editable; at the column's width the toolbar folds and the pages are a header picker
+  // the editor loads and is editable, with no sideways scroll at the column's width
   await page.waitFor(
     `(() => { const d = document.querySelector('iframe.ar-docframe').contentDocument; return d && d.querySelector('#docApp .ProseMirror[contenteditable="true"]'); })() && true`,
     20000,
@@ -120,7 +120,9 @@ e2e('Open doc on the card opens the doc in the Artifacts viewer, in the full edi
   })()`);
   assert(Number(fit.w) > 200, `frame width ${fit.w}`);
   assert(Number(fit.scroll) <= Number(fit.client) + 1, `no sideways scroll: ${fit.scroll} > ${fit.client}`);
-  assert(fit.narrow === true && fit.picker === true && fit.more !== 'none', `folded layout: ${JSON.stringify(fit)}`);
+  // the column widens for a doc (920 px by default, less on a small window): below 900 px the pages are a header picker
+  assert(Number(fit.w) >= 600, `the column widened for the doc: ${fit.w}`);
+  if (Number(fit.w) < 900) assert(fit.picker === true, `pages as a header picker below 900 px: ${JSON.stringify(fit)}`);
   await page.shot('doc-in-artifacts');
   chat.end();
 });
