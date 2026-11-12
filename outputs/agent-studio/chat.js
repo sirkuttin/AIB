@@ -364,8 +364,14 @@
     const box = $('messages'),
       target = unit && [...box.children].find((el) => el.dataset && el.dataset.pk === unit.key);
     if (target) {
-      delete box.dataset.paused;
+      /* the opened prompt is where you read now: the next update must not pull it away (follows again if it is at the end) */
+      if (!box.dataset.paused) {
+        UNREAD.mark = markNow();
+        UNREAD.jumped = false;
+      }
+      box.dataset.paused = '1';
       box.scrollTop += target.getBoundingClientRect().top - box.getBoundingClientRect().top - 8;
+      resumeIfAtEnd(box);
     }
   }
   const refreshComposer = () => {
@@ -957,6 +963,7 @@
     $('newChatBar').hidden = true;
     delete $('messages').dataset.paused;
     delete $('messages').dataset.unseen;
+    $('messages')._userUp = false;
     syncJump();
     selected = c;
     renderAttachments();
@@ -4661,12 +4668,16 @@
     const scrolledUp = () => {
       if (box.scrollHeight - box.clientHeight <= 1) return;
       box._userUp = true;
+      box._upAt = Date.now();
       pause();
       if (id === 'messages') syncJump();
     };
     box.addEventListener('wheel', (e) => e.deltaY < 0 && scrolledUp(), { passive: true });
     box.addEventListener('keydown', (e) => {
-      if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && !e.target.closest?.('input, textarea, [contenteditable="true"]'))
+      if (
+        ['ArrowUp', 'PageUp', 'Home'].includes(e.key) &&
+        !e.target.closest?.('input, textarea, [contenteditable="true"]')
+      )
         scrolledUp();
     });
     box.addEventListener('scroll', () => {
@@ -4738,7 +4749,10 @@
   /* Everything fits on screen, or the list is already at its end: nothing is waiting below, so follow is back on (a
      scroll event would say so, but none fires when the content does not scroll). */
   function resumeIfAtEnd(box) {
-    if (!box.dataset.paused || box.scrollHeight - box.scrollTop - box.clientHeight > 48) return;
+    /* After your own scroll up only the very bottom counts (a redraw that leaves you a few px short does not resume), and not
+       in the first half second: a smooth scroll has not moved yet when the wheel event pauses, so the list still reads 0 px. */
+    if (!box.dataset.paused || box.scrollHeight - box.scrollTop - box.clientHeight > (box._userUp ? 1 : 48)) return;
+    if (box._userUp && Date.now() - (box._upAt || 0) < 500) return;
     if (box.id === 'messages') {
       if (Date.now() < UNREAD.holdUntil) return; // a view switch is still settling
       fadeNewLine(box);
@@ -4746,6 +4760,7 @@
       UNREAD.mark = null;
       UNREAD.jumped = false;
     }
+    box._userUp = false;
     delete box.dataset.paused;
     delete box.dataset.unseen;
   }
@@ -4761,6 +4776,7 @@
     delete box.dataset.unseen;
     UNREAD.mark = null;
     UNREAD.jumped = false;
+    box._userUp = false;
     box.scrollTop = box.scrollHeight;
     syncJump();
   }

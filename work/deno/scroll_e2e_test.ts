@@ -43,7 +43,6 @@ export const KNOWN_FAILING = new Set<string>([
   '4c "Show all" on a long block at the bottom: the block stays where it was, also when the next update arrives',
   '6a opening a chat with unread messages lands on the "New" line',
   '6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the row you were reading',
-  '8b small smooth-scroll ticks up (15 px each, 45 px total) stop following; small in-place growth does not resume it',
 ]);
 
 function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
@@ -672,7 +671,7 @@ scrollTest('8a one wheel notch up while updates stream: follow stops at once and
 });
 
 scrollTest('8b small smooth-scroll ticks up (15 px each, 45 px total) stop following; small in-place growth does not resume it', async (lab) => {
-  // Today: three 15 px ticks pause the list at 45 px from the bottom, then the first redraw turns follow back on (273 of the
+  // Before beta.8: three 15 px ticks pause the list at 45 px from the bottom, then the first redraw turns follow back on (273 of the
   // recorded frames unpaused) and the list ends at the bottom (gap 0) although you never scrolled there.
   // The owner's bug class: an upward scroll that ends within 48 px of the bottom. resumeIfAtEnd (chat.js ~4741) still uses the old
   // 48 px rule after each redraw, so if a redraw leaves the gap at 2..48 px, follow comes back on without you reaching the bottom.
@@ -688,6 +687,80 @@ scrollTest('8b small smooth-scroll ticks up (15 px each, 45 px total) stop follo
   // one more real step after that must not pull the list down either
   const r2 = await streamWhileReading(page, chat, 1, 'TICKSTEP');
   assert(r2.tops.length === 1 && r2.tops[0] === x0.top && r2.end.paused, `then a new step moved the list: ${r2.tops.join(', ')}`);
+});
+
+/** Updates every 100-200 ms (the message grows by a word; every fourth update is a new step) until stop() is called. */
+function pump(chat: Chat, tag: string) {
+  let on = true, n = 0;
+  const done = (async () => {
+    while (on) {
+      if (n % 4 === 3) chat.tool(`${tag}-s${n}`, `Fast step ${tag} ${n}`, 'completed');
+      else chat.say(` ${tag}${n}`);
+      n++;
+      await sleep(n % 2 ? 100 : 200);
+    }
+  })();
+  return async () => {
+    on = false;
+    await done;
+    return n;
+  };
+}
+
+/** While updates stream: from `from` on, the frames must stay paused and still at one scrollTop (what you scrolled to). */
+async function heldWhileStreaming(page: Page, what: string, gesture: () => Promise<void>, chat: Chat, tag: string) {
+  const stop = pump(chat, tag);
+  await settle(600); // streaming at the bottom first
+  await assertFollowing(page, `${what}: following while updates stream`);
+  await gesture();
+  await settle(300); // the scroll itself is over
+  const x0 = await m(page);
+  assert(x0.paused && x0.gap > 1, `${what}: paused above the bottom: ${JSON.stringify(x0)}`);
+  await startFrames(page);
+  await settle(2000);
+  const frames = await stopFrames(page);
+  const n = await stop();
+  const tops = [...new Set(frames.map((f) => f.top))], resumed = frames.filter((f) => !f.paused).length;
+  assert(resumed === 0, `${what}: follow came back on in ${resumed}/${frames.length} frames (${n} updates)`);
+  assert(tops.length === 1 && tops[0] === x0.top, `${what}: scrollTop moved while updates streamed: ${x0.top} -> ${tops.join(', ')}`);
+}
+
+scrollTest('8b2 one real 100 px wheel notch up while updates stream every 100-200 ms: follow stops and stays off', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await heldWhileStreaming(page, 'one 100 px notch', () => wheel(page, -100), chat, 'FASTNOTCH');
+});
+
+scrollTest('8b3 smooth scroll (one wheel event, then the list moves up in small steps) while updates stream: follow stays off', async (lab) => {
+  // A smooth scroll: the wheel event arrives while the list is still at the bottom (0 px), and the list moves on the next frames.
+  // An update drawn in between must not take the 0 px for "you are back at the bottom" (resumeIfAtEnd ignored _userUp).
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await heldWhileStreaming(
+    page,
+    'smooth scroll',
+    async () => {
+      await page.eval(`(() => {
+        const box = document.getElementById('messages');
+        box.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }));
+        // like Chrome's own animation, the scroll gives up if the page moves the list itself in between (a jump to the end)
+        return new Promise((done) => {
+          let k = 0, expect = box.scrollTop;
+          const step = () => {
+            if (k++ === 0) return setTimeout(() => requestAnimationFrame(step), 180); // an update lands before the list moves
+            if (Math.abs(box.scrollTop - expect) > 1) return done(false);
+            box.scrollTop -= 12;
+            expect = box.scrollTop;
+            if (k <= 10) requestAnimationFrame(step);
+            else done(true);
+          };
+          requestAnimationFrame(step);
+        });
+      })()`);
+    },
+    chat,
+    'SMOOTH',
+  );
 });
 
 scrollTest('8c scrolling back down partway (not to the bottom) stays paused; updates do not move the list', async (lab) => {
