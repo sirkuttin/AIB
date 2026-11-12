@@ -622,6 +622,8 @@ export class Connection {
   #endEarly: { seq: number; fire: () => void } | null = null;
   /** Subagent sessions that started (or resumed) running during the current prompt turn: the helpers Claude Code holds it for. */
   #turnHelpers = new Set<string>();
+  /** Claude Code subagent sessions seen running (or waiting for the user) live and not yet ended, whichever turn started them. */
+  #liveHelpers = new Set<string>();
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -1334,6 +1336,7 @@ export class Connection {
     this.sequence = isInt(s.sequence) ? s.sequence : 0;
     this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
     this.subagents = new Map(entries(s.subagents) as [string, Json][]);
+    this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
     const b = isDict(s.breadth) ? s.breadth : {};
     this.breadth = {
       ...newState(),
@@ -1386,6 +1389,7 @@ export class Connection {
       events: this.events,
       sequence: this.sequence,
       subagents: [...this.subagents],
+      liveHelpers: [...this.#liveHelpers],
       breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
       writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
       promptReceipts: [...this.promptReceipts],
@@ -1534,6 +1538,14 @@ export class Connection {
     return isDict(meta) && isDict(get(meta, 'claudeCode'));
   }
 
+  /**
+   * Background helpers of this chat still run although no turn may be working (Claude Code's held turns): the chat must not be cut
+   * off (Studio.busyList), but it is not busy for the page or the queue.
+   */
+  helpersRunning(): boolean {
+    return !this.closed && this.#liveHelpers.size > 0;
+  }
+
   /** A helper started during the current prompt turn is still running (or waits for the user). */
   #helpersRunning(): boolean {
     for (const child of this.#turnHelpers) {
@@ -1557,9 +1569,12 @@ export class Connection {
       const child = get(update, 'sessionId');
       let state = get(update, 'state');
       state = isDict(state) ? get(state, 'state') : state;
-      if (isStr(child) && (state === 'running' || state === 'requires_action') && this.busy && !this.autonomous) {
+      const live = state === 'running' || state === 'requires_action';
+      if (isStr(child) && live && this.busy && !this.autonomous) {
         this.#turnHelpers.add(child);
       }
+      if (isStr(child) && live) this.#liveHelpers.add(child);
+      else if (isStr(child) && isStr(state)) this.#liveHelpers.delete(child);
       return;
     }
     if (get(params, 'sessionId') !== this.sessionId) return; // a subagent's own updates
