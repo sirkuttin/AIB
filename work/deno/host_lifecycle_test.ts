@@ -208,12 +208,12 @@ t('working, exactly: queued prompts and agent install or sign-in jobs count; an 
 t('tray menu: Open AIB runs the last app launch command; Stop chats and quit (confirmed) stops the host', async () => {
   const h = makeHost({ busy: 2 });
   try {
-    h.host.opAttach({ pid: 1, webInstanceId: 'w1', launch: ['C:\\AIB\\AIB.exe', 'serve', '--port', '8901'] });
+    h.host.opAttach({ pid: 1, webInstanceId: 'w1', launch: ['C:\\AIB\\AIB.exe', 'serve', '--port', '8901'] }); // port-guard: not bound (a fake launcher records it)
     h.host.opAttach({ pid: 1, webInstanceId: 'w1', launch: ['bad', 7] }); // not a list of strings: ignored
     h.host.opDetach({ pid: 1, webInstanceId: 'w1' });
     h.menu.open();
     await sleep(0);
-    assertEquals(h.spawned, [['C:\\AIB\\AIB.exe', 'serve', '--port', '8901']]);
+    assertEquals(h.spawned, [['C:\\AIB\\AIB.exe', 'serve', '--port', '8901']]); // port-guard: not bound (a fake launcher records it)
     assertEquals(h.host.stopEvent.isSet(), false);
     h.menu.stop();
     assertEquals(h.host.stopEvent.isSet(), true);

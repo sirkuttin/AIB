@@ -13,7 +13,7 @@ import {
   tokenMatches,
 } from '../../outputs/agent-studio/server/web/security.ts';
 
-const PORT = 47001, TOKEN = 'secret-token-123';
+const PORT = 47001, TOKEN = 'secret-token-123'; // port-guard: not bound (the Gate only compares Host and Origin headers with it)
 const page = { Host: `127.0.0.1:${PORT}`, Origin: `http://127.0.0.1:${PORT}`, 'Sec-Fetch-Site': 'same-origin', 'X-Studio-Token': TOKEN };
 const without = (h: Record<string, string>, ...names: string[]) =>
   Object.fromEntries(Object.entries(h).filter(([k]) => !names.includes(k)));

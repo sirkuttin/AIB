@@ -66,7 +66,7 @@ Deno.test('busy reasons and the restart plan match deploy.py', async () => {
       }
     }
   }
-  const args = ['deno run -A main.ts serve --port 8790', 'C:\\w\\out.log', 'C:\\w\\err.log', "C:\\it's\\run.cmd", 'C:\\app'];
+  const args = ['deno run -A main.ts serve --port 8790', 'C:\\w\\out.log', 'C:\\w\\err.log', "C:\\it's\\run.cmd", 'C:\\app']; // port-guard: not bound (a command line deploy only parses)
   assertEquals(
     deploy.launcherTexts(...(args as [string, string, string, string, string])),
     await py.call('deploy', 'launcher_texts', args),
@@ -115,7 +115,7 @@ Deno.test('deploy refuses in a worktree but not in the main checkout', async () 
     assertEquals(deploy.worktreeRefusal(main), null);
     assertEquals(deploy.worktreeRefusal(wt), 'aib deploy must run from the main checkout, not a worktree');
     const c = capture();
-    assertEquals(await deploy.main(['--port', '1'], { ...c.hooks, root: wt }), 1);
+    assertEquals(await deploy.main(['--port', '1'], { ...c.hooks, root: wt }), 1); // port-guard: not bound (port 1: deploy finds nothing there)
     assert(c.err.join('\n').includes('not a worktree'));
     assertEquals(c.out, []);
   } finally {
@@ -125,7 +125,7 @@ Deno.test('deploy refuses in a worktree but not in the main checkout', async () 
 
 Deno.test('deploy flags: argparse errors, help, prefixes', async () => {
   assertEquals(deploy.parseArgs([]), { port: 8767, settle: 15, timeout: 0, host: false, wait: false, dry_run: false });
-  assertEquals(deploy.parseArgs(['--port=8790', '--settle', '3', '--dry', '--host', '--wa', '--timeout', '60']), {
+  assertEquals(deploy.parseArgs(['--port=8790', '--settle', '3', '--dry', '--host', '--wa', '--timeout', '60']), { // port-guard: not bound (argv parsing)
     port: 8790,
     settle: 3,
     timeout: 60,
