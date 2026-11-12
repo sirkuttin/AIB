@@ -19,14 +19,15 @@
     "test": "deno run -A ../../tools/test.ts",
     "test:fast": "deno run -A ../../tools/test.ts --fast",
     "test:slow": "deno run -A ../../tools/test.ts --slow",
+    "test:affected": "deno run -A ../../tools/test.ts --affected",
     "test:serial": "deno test -A ../../work/deno/",
     "test:update-e2e": "AIB_SLOW_TESTS=1 deno test -A ../../work/deno/app_update_e2e_test.ts",
-    "check": "deno check server/ ../../work/deno/ ../../tools/build.ts ../../tools/make_icons.ts ../../tools/test.ts",
+    "check": "deno check server/ ../../work/deno/ ../../tools/build.ts ../../tools/make_icons.ts ../../tools/test.ts ../../tools/affected.ts",
     "lint": "deno lint",
     "build": "deno run -A ../../tools/build.ts",
     "icons": "deno run -A --node-modules-dir=none --no-lock ../../tools/make_icons.ts"
   },
-  "fmt": { "lineWidth": 140, "singleQuote": true, "include": ["server/", "../../work/deno/", "../../tools/build.ts", "../../tools/make_icons.ts", "../../tools/test.ts"] },
-  "lint": { "include": ["server/", "../../work/deno/", "../../tools/build.ts", "../../tools/make_icons.ts", "../../tools/test.ts"] },
+  "fmt": { "lineWidth": 140, "singleQuote": true, "include": ["server/", "../../work/deno/", "../../tools/build.ts", "../../tools/make_icons.ts", "../../tools/test.ts", "../../tools/affected.ts"] },
+  "lint": { "include": ["server/", "../../work/deno/", "../../tools/build.ts", "../../tools/make_icons.ts", "../../tools/test.ts", "../../tools/affected.ts"] },
   "exclude": ["node_modules/", "public/", "agent_locks/", "docs/"]
 }
