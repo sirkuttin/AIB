@@ -261,6 +261,20 @@ export function newToken(): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
+/**
+ * The drawing page's headers (GET /doc-drawing.html and its boot script): its own CSP, because Excalidraw runs its workers from blob:
+ * URLs, compiles WebAssembly and sets inline styles on its canvas UI. Only this page gets them; every other page keeps
+ * securityHeaders' CSP.
+ */
+export function drawingHeaders(artifactOrigin: string): Record<string, string> {
+  return {
+    ...securityHeaders(artifactOrigin),
+    'Content-Security-Policy':
+      `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; ` +
+      `font-src 'self' data:; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'self'; base-uri 'none'`,
+  };
+}
+
 /** The headers every Studio response carries (monitor.py Handler.respond); frame-src/img-src also allow the artifact origin. */
 export function securityHeaders(artifactOrigin: string): Record<string, string> {
   return {

@@ -1,4 +1,5 @@
 /** Folder and branch lookups for a chat: the Changes view's folder, the artifact folder, the repository branch (chat_folders.py). */
+import { docRows } from '../docs/rows.ts';
 import { clip, isDict, isStr, ValueError } from '../core/py.ts';
 import { isNetworkPath, tokenMatches } from '../web/security.ts';
 import * as osp from '../platform/ospath.ts';
@@ -136,6 +137,11 @@ export async function changesResponse(
     const offset = first(args, 'offset', '0');
     const result = await changes.getChanges(cwd, base || null, /^\d+$/.test(offset) ? Number(offset) : 0);
     if (record && result.git) result.worktree = { branch: isStr(record.branch) ? record.branch : '' }; // the page offers Discard
+    if (result.git && Array.isArray(result.files)) {
+      // a doc's files show as one row "2 pages changed" (docs/rows.ts); its paths are listed there, not as files
+      const docs = docRows(String(result.root), (result.files as { path: string }[]).map((f) => f.path));
+      if (docs.length) (result as unknown as Record<string, unknown>).docs = docs;
+    }
     return [200, result];
   } catch (error) {
     if (error instanceof changes.ChangesError) return [400, { error: error.message, code: error.code }];

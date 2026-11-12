@@ -66,8 +66,10 @@ export const ID_RE = /^[0-9a-f]{16}\n?$/;
 export const WRITE_TOOLS = ['write', 'edit', 'multiedit', 'notebookedit']; // Claude Code's own tool names (lower case)
 export const PATH_KEYS = ['file_path', 'notebook_path', 'path', 'filePath', 'filename'];
 
+/** A local doc's history (isDocHistory) keeps every version this young, plus v1: a snapshot every 10 s would fill MAX_VERSIONS in 5 min. */
+export const DOC_HISTORY_SECONDS = 30 * 24 * 3600;
 /** The retention limits, mutable so tests can lower them (the Python tests patch artifacts.MAX_VERSIONS / MAX_BYTES). */
-export const limits = { maxVersions: MAX_VERSIONS, maxBytes: MAX_BYTES };
+export const limits = { maxVersions: MAX_VERSIONS, maxBytes: MAX_BYTES, docHistorySeconds: DOC_HISTORY_SECONDS };
 
 export type Json = Record<string, unknown>;
 export interface Version extends Json {
@@ -381,6 +383,16 @@ function copy<T>(value: T): T {
 
 export type Clock = () => number;
 
+/**
+ * A local doc's history (docs/history.ts): no chat, no source file, versions noted "rev <n>", entry <doc>.aibdoc.json (or <doc>.md
+ * before that). The Artifacts panel and picker never list these; the doc's History panel shows them.
+ */
+export function isDocHistory(m: { conversationId?: unknown; sourcePath?: unknown; entry?: unknown; versions?: { note?: unknown }[] }): boolean {
+  if (m.conversationId || m.sourcePath) return false;
+  if (typeof m.entry === 'string' && m.entry.endsWith('.aibdoc.json')) return true;
+  return /^rev \d+/.test(String(m.versions?.[0]?.note ?? ''));
+}
+
 export class ArtifactStore {
   readonly root: string;
   /** 'http://127.0.0.1:<port>' once the artifact origin listener is up */
@@ -463,7 +475,39 @@ export class ArtifactStore {
     };
     if (manifest.kind === 'md') out.viewUrl = out.url + '?view=1';
     if (pyTruthy(manifest.sourceMissing)) out.sourceMissing = true;
+    if (isDict(manifest.fromDoc)) out.fromDoc = manifest.fromDoc; // AIB's own field (Deno only): "Built from <doc › page>"
+    if (isStr(manifest.becameDoc) && manifest.becameDoc) out.becameDoc = manifest.becameDoc; // Edit made it a doc (Deno only)
     return out;
+  }
+
+  /**
+   * Edit on a Markdown artifact: it became the doc `name` (made at doc rev `rev`, so Undo knows nobody typed since), or null when
+   * Undo took it back. An extra manifest field, like fromDoc: the Python server keeps it when it rewrites the manifest.
+   */
+  setBecameDoc(artifactId: unknown, name: string | null, rev = 0): Manifest {
+    const manifest = this.get(artifactId);
+    if (name) {
+      manifest.becameDoc = name;
+      manifest.becameDocRev = rev;
+    } else {
+      delete manifest.becameDoc;
+      delete manifest.becameDocRev;
+    }
+    this.#save(manifest);
+    return manifest;
+  }
+
+  /**
+   * "Built from <doc › page>": the doc page an artifact shows (`fromDoc`: {doc, title, page, pageTitle, rev}, the page's rev when it
+   * was published), or null to drop the link. An extra manifest field: the Python server keeps it when it rewrites the manifest.
+   */
+  setFromDoc(artifactId: unknown, fromDoc: Json | null): Manifest {
+    const manifest = this.get(artifactId);
+    if (JSON.stringify(manifest.fromDoc ?? null) === JSON.stringify(fromDoc)) return manifest;
+    if (fromDoc) manifest.fromDoc = fromDoc;
+    else delete manifest.fromDoc;
+    this.#save(manifest);
+    return manifest;
   }
 
   item(artifactId: unknown): Json {
@@ -477,7 +521,9 @@ export class ArtifactStore {
 
   list(conversationId: string | null = null, also: readonly string[] = []): Json[] {
     const wanted = [conversationId, ...also];
-    const items = this.all().filter((m) => conversationId === null || wanted.includes((m.conversationId ?? null) as string | null));
+    const items = this.all().filter((m) =>
+      !isDocHistory(m) && (conversationId === null || wanted.includes((m.conversationId ?? null) as string | null))
+    );
     items.sort((a, b) => (Number(!pyTruthy(a.pinned)) - Number(!pyTruthy(b.pinned))) || (b.updatedAt - a.updatedAt));
     return items.map((m) => this.summary(m));
   }
@@ -627,10 +673,22 @@ export class ArtifactStore {
     return [manifest, true];
   }
 
-  /** Keep the newest MAX_VERSIONS / MAX_BYTES; v1 and the latest stay; pinned artifacts keep everything. */
+  /**
+   * Keep the newest MAX_VERSIONS / MAX_BYTES; v1 and the latest stay; pinned artifacts keep everything. A doc's history has its own
+   * limit instead: every version from the last DOC_HISTORY_SECONDS (30 days), plus v1 and the latest.
+   */
   #retain(manifest: Manifest): void {
     if (pyTruthy(manifest.pinned)) return;
     const versions = manifest.versions;
+    if (isDocHistory(manifest)) {
+      const cutoff = this.clock() - limits.docHistorySeconds;
+      for (let k = versions.length - 2; k >= 1; k--) {
+        if (versions[k].at >= cutoff) continue;
+        const [victim] = versions.splice(k, 1);
+        rmtree(pathOf(this.folder(manifest.id), `v${victim.n}`));
+      }
+      return;
+    }
     for (;;) {
       const total = versions.reduce((sum, v) => sum + (v.size ?? 0), 0);
       if (versions.length <= limits.maxVersions && total <= limits.maxBytes) return;
@@ -1127,6 +1185,8 @@ export class Service {
 
   #publish(body: Json): Json {
     const conversationId = Service.conversation(body, (ident) => this.chat(ident));
+    // "Built from <doc › page>": resolved by the web route (studio_routes.ts) from the tool's `fromDoc`, never taken from the caller
+    const fromDoc = isDict(body[FROM_DOC_RESOLVED]) ? body[FROM_DOC_RESOLVED] as Json : null;
     const hasPath = body.path !== null && body.path !== undefined;
     const hasContent = body.content !== null && body.content !== undefined;
     if (hasPath === hasContent) throw new ArtifactError('Give exactly one of path or content');
@@ -1143,6 +1203,14 @@ export class Service {
       const owner = existing.conversationId ?? null;
       if (owner !== conversationId && owner !== (body.conversationId ?? null)) {
         throw new ArtifactError('That artifact belongs to another chat', 403, 'wrong_conversation');
+      }
+      if (isStr(existing.becameDoc) && existing.becameDoc) {
+        throw new ArtifactError(
+          `This artifact is now the doc "${existing.becameDoc}": the user edits it there. Read it with doc_read and change it with ` +
+            'doc_edit (the never-overwrite guards keep what the user typed); do not publish it again.',
+          409,
+          'became_doc',
+        );
       }
     }
     let manifest: Manifest;
@@ -1198,9 +1266,16 @@ export class Service {
         changed = true;
       }
     }
+    if (fromDoc && JSON.stringify(manifest.fromDoc ?? null) !== JSON.stringify(fromDoc)) {
+      manifest = this.store.setFromDoc(manifest.id, fromDoc);
+      changed = true;
+    }
     return changed ? this.event(manifest) : this.store.summary(manifest);
   }
 }
+
+/** The body key the web route puts the resolved "built from" doc page under (whatever the caller sent there is dropped first). */
+export const FROM_DOC_RESOLVED = '\u0000fromDoc';
 
 function errorReply(error: unknown): Reply {
   if (error instanceof ArtifactError) return [error.status, { error: error.message, code: error.code }];

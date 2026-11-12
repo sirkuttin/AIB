@@ -154,6 +154,31 @@
   background: var(--panel-2);
   border-bottom: 1px solid var(--line);
 }
+.ar-built {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-5);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.ar-built[hidden] {
+  display: none;
+}
+.ar-built b {
+  color: var(--text);
+}
+.ar-built.ar-stale {
+  border-left: 3px solid var(--warn);
+}
+.ar-built-t {
+  min-width: 0;
+}
 .ar-fresh-t {
   min-width: 0;
   overflow: hidden;
@@ -356,6 +381,17 @@
   background: var(--hover-overlay);
   color: var(--warn);
 }
+.ar-gnote {
+  padding: 0 8px 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ar-out {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+}
 .ar-sep {
   height: 1px;
   margin: 4px 2px;
@@ -419,6 +455,47 @@
   text-align: center;
   text-transform: lowercase;
 }
+/* Option C: the two cards differ by shape before a word is read. An artifact: dashed and round, an outlined window icon, View. A doc
+   (doc-links.js, .doc-card): a solid square teal icon, a teal bar on the left, Open doc. */
+.art-card:not(.doc-card) {
+  border-style: dashed;
+  border-color: var(--accent-line);
+  border-radius: 12px;
+}
+.art-card-win {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid var(--accent-line);
+  border-radius: 10px;
+}
+.art-card.doc-card {
+  border-left: 3px solid var(--accent);
+  border-radius: 3px 8px 8px 3px;
+}
+.art-card .doc-card-ic {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.art-card-svg {
+  width: 18px;
+  height: 18px;
+}
+.art-btn.art-btn-acc {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.art-btn.art-btn-acc:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
 .art-card-body {
   flex: 1 1 auto;
   min-width: 0;
@@ -475,4 +552,44 @@ a.artifact-link:hover {
 }
 a.artifact-link code {
   color: inherit;
+}
+
+/* Option C, the title bar's word buttons: Edit (Markdown artifacts become a doc) and Request a change (every other kind). */
+.ar-word {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ar-word.ar-edit {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ar-word[hidden] {
+  display: none;
+}
+.ar-word:disabled {
+  opacity: 0.6;
+}
+/* A became-doc artifact's latest version: the doc's text as it is now, read-only. */
+.ar-live {
+  padding: 12px 16px;
+  overflow: auto;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.ar-live-note {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ar-switch[hidden],
+.ar-built-t[hidden] {
+  display: none;
 }

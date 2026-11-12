@@ -26,6 +26,13 @@ export class Artifacts {
   #cwd = new Map<string, string | null>();
   #refreshing: Promise<void> | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;
+  /** Per chat (lasting id): its last turn end and whether it was busy, as last listed. */
+  #turns = new Map<string, { ended: string; busy: boolean }>();
+  /**
+   * The turn signal: called with a chat's lasting id when its turn ended (attention.turnEndedAt moved: a finished, failed or
+   * cancelled turn, however short, between two refreshes), it stopped being busy, or its connection closed or went.
+   */
+  onTurnEnd: ((chat: string) => void) | null = null;
 
   constructor(
     stateDir: string,
@@ -64,6 +71,7 @@ export class Artifacts {
       try {
         const listed = (await this.host.liveList()).connections;
         this.#connections = (Array.isArray(listed) ? listed : []).filter((c): c is Json => !!c && typeof c === 'object' && !c.closed);
+        this.#turnSignal();
         if (writes) {
           const written = await this.host.liveWrites();
           this.#writes = written && typeof written === 'object' && !Array.isArray(written) ? written as Record<string, unknown> : {};
@@ -73,6 +81,28 @@ export class Artifacts {
       }
     })();
     return this.#refreshing;
+  }
+
+  #turnSignal(): void {
+    const now = new Map<string, { ended: string; busy: boolean }>();
+    for (const c of this.#connections) {
+      const chat = this.chatOf(c.id as string);
+      const attention = c.attention && typeof c.attention === 'object' ? c.attention as Json : {};
+      const was = now.get(chat);
+      const ended = String(attention.turnEndedAt ?? '');
+      now.set(chat, { ended: was && was.ended > ended ? was.ended : ended, busy: !!c.busy || !!was?.busy });
+    }
+    const ended: string[] = [];
+    for (const [chat, was] of this.#turns) {
+      const is = now.get(chat);
+      if (!is || is.ended !== was.ended || (was.busy && !is.busy)) ended.push(chat);
+    }
+    this.#turns = now;
+    for (const chat of ended) {
+      try {
+        this.onTurnEnd?.(chat);
+      } catch { /* a doc's trouble never stops the list */ }
+    }
   }
 
   openConnections(): Json[] {

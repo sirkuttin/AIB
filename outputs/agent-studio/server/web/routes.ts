@@ -24,6 +24,31 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/files/read                 the Files view: one file, read only
  *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
  *   POST /api/live/worktree/merge-request     the Changes tab's Merge button: a one-shot merge permission, then the chat is asked to merge
+ *   POST /api/live/docs/open                  local docs: the page opens a doc (docs_routes.ts)
+ *   GET  /api/live/docs/list                  local docs: the docs of a chat's project folder (Files, Ctrl+K, chips, picker)
+ *   GET  /api/live/docs/info                  local docs: rev, skipped file edits, history of an open doc
+ *   GET  /api/live/docs/socket                local docs: the editor's WebSocket
+ *   POST /api/live/docs/tool                  local docs: an agent's doc_* tool (agent key)
+ *   POST /api/live/docs/comment/send          local docs: "Send to agent" queues a comment thread to the doc's chat
+ *   GET  /api/live/docs/built                 local docs: "Built from <doc › page>": has the page changed since?
+ *   GET  /api/live/docs/shown                 local docs: the artifacts built from a doc (its "Shown in N artifacts" chip)
+ *   GET  /api/live/docs/became                local docs: an artifact that became a doc (Edit): the doc's text now, Undo or not
+ *   POST /api/live/docs/from-artifact         local docs: Edit on a Markdown artifact makes it a doc
+ *   POST /api/live/docs/from-artifact/undo    local docs: Undo of Edit while nobody changed the doc
+ *   POST /api/live/docs/link                  local docs: link a doc to the chat the user picked
+ *   POST /api/live/docs/page                  local docs: the user's page operations (add, rename, move, duplicate, delete)
+ *   POST /api/live/docs/page/request          local docs: the user answers an agent's page delete request (delete / keep)
+ *   POST /api/live/docs/claim/release         local docs: "Stop and keep the text" on blocks an agent is rewriting
+ *   POST /api/live/docs/notes/dismiss         local docs: dismiss a refused-edit note
+ *   POST /api/live/docs/edit                  local docs: the user's block operations through the server (chart from a table...)
+ *   POST /api/live/docs/comment               local docs: the user's comments (add, reply, resolve, reopen)
+ *   GET  /api/live/docs/history               local docs: the versions with authors and the pages each changed
+ *   GET  /api/live/docs/history/version       local docs: one version's pages, to show and compare
+ *   POST /api/live/docs/history/restore       local docs: restore the whole doc or one page
+ *   POST /api/live/docs/export                local docs: Markdown to the Downloads folder
+ *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
+ *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
+ *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
@@ -39,6 +64,31 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/search', 'read', 'get'],
   ['GET', '/api/live/files/read', 'read', 'get'],
   ['GET', '/api/live/files/outside', 'read', 'get'],
+  ['POST', '/api/live/docs/open', 'write', 'body'],
+  ['GET', '/api/live/docs/list', 'read', 'get'],
+  ['GET', '/api/live/docs/info', 'read', 'get'],
+  ['GET', '/api/live/docs/built', 'read', 'get'],
+  ['GET', '/api/live/docs/became', 'read', 'get'],
+  ['POST', '/api/live/docs/from-artifact', 'write', 'body'],
+  ['POST', '/api/live/docs/from-artifact/undo', 'write', 'body'],
+  ['GET', '/api/live/docs/shown', 'read', 'get'],
+  ['GET', '/api/live/docs/socket', 'write', 'get'],
+  ['POST', '/api/live/docs/tool', 'artifacts.tool', 'own-gate'],
+  ['POST', '/api/live/docs/comment/send', 'write', 'body'],
+  ['POST', '/api/live/docs/link', 'write', 'body'],
+  ['POST', '/api/live/docs/page', 'write', 'body'],
+  ['POST', '/api/live/docs/page/request', 'write', 'body'],
+  ['POST', '/api/live/docs/claim/release', 'write', 'body'],
+  ['POST', '/api/live/docs/notes/dismiss', 'write', 'body'],
+  ['POST', '/api/live/docs/edit', 'write', 'body'],
+  ['POST', '/api/live/docs/comment', 'write', 'body'],
+  ['GET', '/api/live/docs/history', 'read', 'get'],
+  ['GET', '/api/live/docs/history/version', 'read', 'get'],
+  ['POST', '/api/live/docs/history/restore', 'write', 'body'],
+  ['POST', '/api/live/docs/export', 'write', 'body'],
+  ['POST', '/api/live/docs/duplicate', 'write', 'body'],
+  ['POST', '/api/live/docs/trash', 'write', 'body'],
+  ['POST', '/api/live/docs/reveal', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

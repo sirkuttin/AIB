@@ -10,7 +10,7 @@ import { HostUnavailable } from '../host/host_client.ts';
 import { keeperProblem } from '../keeper/link.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { ViewPrefs } from '../state/view_prefs.ts';
-import { authorize, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
+import { authorize, drawingHeaders, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
 import { liveRoutes } from './live_routes.ts';
@@ -33,6 +33,9 @@ import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_rout
 import { RemovedProjects } from '../desktop/project_delete.ts';
 import { projectRemove } from './project_routes.ts';
 import { filesRoutes } from './files_routes.ts';
+import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
+import { DocStore } from '../docs/store.ts';
+import { ArtifactHistory } from '../docs/history.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -42,15 +45,34 @@ const MONITOR_ASSETS = new Set(['app.js', 'style.css', 'sidebar.js', 'sidebar.cs
 const MAX_BODY = 1_000_000;
 
 /** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
-const VENDOR_ASSET = /^\/vendor\/xterm\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
+const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
+/** The drawing page's Excalidraw bundle (tools/drawing/build.mjs): its code-split chunks, its CSS and its fonts. The server-only
+ * Mermaid converter is not served. */
+const EXCALIDRAW_ASSET = /^\/vendor\/excalidraw\/((?:chunks\/|assets\/|fonts\/[A-Za-z]+\/)?[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:js|css|woff2))$/;
+
+/** The drawing editor page and its boot script: served with their own CSP (security.ts drawingHeaders). */
+const DRAWING_PAGE: Record<string, string> = { '/doc-drawing.html': 'drawing.html', '/doc-drawing-boot.js': 'drawing-boot.js' };
 
 /** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
 export function studioAsset(path: string): string | null {
   if (path === '/' || path === '/chat.html') return 'chat.html';
+  if (path === '/doc.html') return 'doc.html'; // the local docs' editor page (a test page until the UI lands)
+  const excalidraw = path.match(EXCALIDRAW_ASSET);
+  if (excalidraw && !excalidraw[1].includes('..') && excalidraw[1] !== 'mermaid_headless.js') {
+    try {
+      return Deno.statSync(`${APP_ROOT}${sep}vendor${sep}excalidraw${sep}${excalidraw[1].replace(/\//g, sep)}`).isFile
+        ? `vendor/excalidraw/${excalidraw[1]}`
+        : null;
+    } catch {
+      return null;
+    }
+  }
   const vendored = path.match(VENDOR_ASSET);
   if (vendored) {
     try {
-      return Deno.statSync(`${APP_ROOT}${sep}vendor${sep}xterm${sep}${vendored[1]}`).isFile ? `vendor/xterm/${vendored[1]}` : null;
+      return Deno.statSync(`${APP_ROOT}${sep}vendor${sep}${vendored[1]}${sep}${vendored[2]}`).isFile
+        ? `vendor/${vendored[1]}/${vendored[2]}`
+        : null;
     } catch {
       return null;
     }
@@ -101,6 +123,7 @@ function projectsView(c: WebContext): Record<string, unknown> {
 }
 
 function contentType(name: string): string {
+  if (name.endsWith('.woff2')) return 'font/woff2';
   return (name.endsWith('.html') ? 'text/html' : name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8';
 }
 
@@ -138,6 +161,8 @@ export interface WebContext {
   gate: Gate | null;
   /** The live list the editor roots read (refreshed before each editor request). */
   editorList: Record<string, unknown>;
+  /** The open local docs (docs/store.ts). */
+  docs: DocStore;
   /** The chats' terminal shells (terminal/sessions.ts); ended when this server closes. */
   terminals: TerminalSessions;
   /** The desktop app's own notifications (desktop/notify.ts), set by main.ts in the app; null in a server run (a browser uses the
@@ -206,6 +231,12 @@ export class WebServer {
     for (const [key, handler] of filesRoutes()) {
       this.native.set(key, async (c, url, body, request) => {
         const [status, payload] = await handler(c, url, body, request);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of docsRoutes()) {
+      this.native.set(key, async (c, url, body) => {
+        const [status, payload] = await handler(c, url, body);
         return this.json(status, payload);
       });
     }
@@ -302,6 +333,7 @@ export class WebServer {
           this.ctx.port = port;
           this.gate = new Gate(port, () => this.ctx.token);
           this.ctx.gate = this.gate;
+          this.ctx.docs.start();
           globalThis.addEventListener('unload', this.#onUnload);
           resolve(port);
         },
@@ -314,6 +346,10 @@ export class WebServer {
     const path = url.pathname;
     const method = request.method.toUpperCase() === 'HEAD' ? 'GET' : request.method.toUpperCase();
     try {
+      if (method === 'GET' && path === DOCS_SOCKET) {
+        const answer = docsSocket(this.ctx, request, url);
+        return 'response' in answer ? answer.response : this.json(answer.refused[0], answer.refused[1]);
+      }
       if (method === 'GET' && path === TERMINAL_SOCKET) {
         const answer = terminalSocket(this.ctx, request, url);
         return 'response' in answer ? answer.response : this.json(answer.refused[0], answer.refused[1]);
@@ -334,6 +370,14 @@ export class WebServer {
       if (method === 'GET') {
         const handler = this.native.get(`GET ${path}`);
         if (handler) return await handler(this.ctx, url, null, request);
+        const drawing = DRAWING_PAGE[path];
+        if (drawing) {
+          const body = await Deno.readFile(`${APP_ROOT}${sep}server${sep}docs${sep}drawing${sep}page${sep}${drawing}`);
+          return new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': contentType(drawing), ...drawingHeaders(this.artifactOrigin) },
+          });
+        }
         const asset = studioAsset(path);
         if (asset === 'chat.html') {
           const page = withViewPrefs(await Deno.readTextFile(APP_ROOT + sep + asset), this.ctx.viewPrefs.public().prefs);
@@ -396,6 +440,7 @@ export class WebServer {
     globalThis.removeEventListener('unload', this.#onUnload);
     if (release) await this.ctx.terminals.releaseAll();
     else await this.ctx.terminals.endAll();
+    await this.ctx.docs.close();
     await this.#server?.shutdown();
   }
 
@@ -463,6 +508,7 @@ export function makeContext(
     gate: null,
     editorList: {},
     terminals: new TerminalSessions({ keeper: options.terminalKeeper ?? null }),
+    docs: new DocStore(options.stateDir, { history: new ArtifactHistory(() => ctx.artifacts?.store ?? null) }),
     desktopNotify: null,
   };
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
@@ -472,6 +518,8 @@ export function makeContext(
     () => ctx.token,
     async (chat) => chatStudioOf(ctx, await savedFolders(ctx, chat)),
   );
+  // a chat's turn ended (its turnEndedAt moved, or its connection went): the docs drop its presence and claims, show its refused notes
+  ctx.artifacts.onTurnEnd = (chat) => ctx.docs.turnEnded(chat);
   return ctx;
 }
 

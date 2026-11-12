@@ -77,6 +77,97 @@
     return n;
   }
 
+  // ---- docs ---------------------------------------------------------------------------------------------------------------
+  // AIB's docs live in aib-docs/<doc>/ (doc.aibdoc + its copies). In the tree the aib-docs folder is ONE row ("4 docs ›") that
+  // switches to the Docs tab; the project's own docs/ is ordinary files. In the filter and Changed lists a doc's files become its
+  // one doc row. `docs`: GET /api/live/docs/list's docs ({name, title, dir, owned, pages}).
+  function docIndex(docs) {
+    const byDir = new Map(),
+      owned = new Map(); // owned path -> doc
+    for (const d of docs || []) {
+      if (!d || !isStr(d.dir)) continue;
+      byDir.set(slash(d.dir), d);
+      for (const p of d.owned || []) owned.set(slash(p), d);
+    }
+    return { byDir, owned };
+  }
+  // The doc row's change badge: "A" when its doc.aibdoc is new, else "M" when any file it owns changed. From the Changes data
+  // when there is some, else from the listing's changed count of the doc's folder.
+  function docBadge(d, changes, entry) {
+    let st = '';
+    if (changes) {
+      for (const p of d.owned || []) {
+        const f = changes.get(slash(p));
+        if (!f) continue;
+        const b = badgeOf(f);
+        if (/\/doc\.aibdoc$/.test(slash(p))) st = b.status === 'A' ? 'A' : b.status === 'D' ? 'D' : st || 'M';
+        else st = st || 'M';
+      }
+    } else if (entry && (Number(entry.changed) > 0 || entry.status)) st = 'M';
+    return st ? { status: st, added: 0, removed: 0, text: st } : null;
+  }
+  const docRow = (d, depth, changes, entry) => ({
+    kind: 'doc',
+    path: slash(d.dir),
+    name: d.title || d.name,
+    doc: d,
+    pages: Math.max(1, Number(d.pages) || 1),
+    depth,
+    ignored: false,
+    open: false,
+    canOpen: false,
+    badge: docBadge(d, changes, entry),
+    changed: 0,
+    artifact: false,
+  });
+  const DOCS_FOLDER = 'aib-docs';
+  const NEW_DOC = DOCS_FOLDER + '/+new-doc';
+
+  // ---- the Docs tab ---------------------------------------------------------------------------------------------------------
+  // One flat list, most recently edited first. Each row: title, "this chat" when the doc is linked to the open chat (`chatKeys`),
+  // and its line: the live "Claude Code is writing Risks" while an agent works, else "3 pages · not committed yet" (a new doc) or
+  // "4 pages · edited 1 h ago by you"; the change badge until committed. `nowMs` for the relative time.
+  function docsList(docs, changes, chatKeys, nowMs) {
+    const keys = (chatKeys || []).filter(Boolean);
+    return (docs || [])
+      .filter((d) => d && d.name && !d.legacy)
+      .map((d) => {
+        const badge = docBadge(d, changes, null);
+        return {
+          doc: d,
+          name: d.name,
+          title: d.title || d.name,
+          mine: !!(d.chat && keys.includes(d.chat)),
+          pages: Math.max(1, Number(d.pages) || 1),
+          badge,
+          writing: Array.isArray(d.writing) && d.writing.length ? d.writing[0] : null,
+          line: docsLine(d, badge, nowMs),
+          at: Number(d.editedAt) || 0,
+        };
+      })
+      .sort((a, b) => b.at - a.at || a.title.localeCompare(b.title));
+  }
+  function ago(at, nowMs) {
+    const secs = Math.max(0, ((nowMs == null ? Date.now() : nowMs) / 1000) - Number(at));
+    if (secs < 45) return 'just now';
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return mins + ' min ago';
+    const hours = Math.round(secs / 3600);
+    if (hours < 24) return hours + ' h ago';
+    const days = Math.round(secs / 86400);
+    return days === 1 ? 'yesterday' : days + ' days ago';
+  }
+  function docsLine(d, badge, nowMs) {
+    const w = Array.isArray(d.writing) && d.writing.length ? d.writing[0] : null;
+    if (w) return (w.name || 'An agent') + ' is writing ' + (w.section || w.page || 'this doc');
+    const n = Math.max(1, Number(d.pages) || 1),
+      pages = n + (n === 1 ? ' page' : ' pages');
+    if (badge && badge.status === 'A') return pages + ' · not committed yet';
+    if (!(Number(d.editedAt) > 0)) return pages;
+    const who = d.editedBy === 'You' ? 'you' : d.editedBy;
+    return pages + ' · edited ' + ago(d.editedAt, nowMs) + (who ? ' by ' + who : '');
+  }
+
   // ---- the tree -----------------------------------------------------------------------------------------------------------
   // cache: {dir -> entries[] | 'loading' | {error}}, open: Set of open folders. Entries come from /api/live/files/list.
   // Returns the rows on screen, depth-first, with depth. An ignored folder opens only with showIgnored. Folders not listed yet
@@ -85,7 +176,8 @@
     const o = opts || {},
       out = [],
       changes = o.changes || null,
-      arts = o.artifacts || null;
+      arts = o.artifacts || null,
+      docs = o.docs || null; // docIndex()
     const walk = (dir, depth) => {
       const list = cache[dir];
       if (list === 'loading' || list === undefined) {
@@ -97,6 +189,28 @@
         return;
       }
       for (const e of list) {
+        if (docs && docs.owned.has(slash(e.path))) continue;
+        // a doc's folder: never a row of its own (the Docs tab lists the docs)
+        if (docs && e.dir && docs.byDir.has(slash(e.path))) continue;
+        if (e.dir && dir === '' && e.path === DOCS_FOLDER) {
+          // aib-docs: one row that switches to the Docs tab; opened (Show in Files) it lists what is there besides the docs
+          const isOpen = open.has(e.path);
+          out.push({
+            kind: 'docsfolder',
+            path: e.path,
+            name: e.name,
+            count: docs ? docs.byDir.size : 0,
+            depth,
+            ignored: !!e.ignored,
+            open: isOpen,
+            canOpen: false,
+            badge: null,
+            changed: changes ? changedBelow(changes, e.path) : Number(e.changed) || 0,
+            artifact: false,
+          });
+          if (isOpen) walk(e.path, depth + 1);
+          continue;
+        }
         const isOpen = !!e.dir && open.has(e.path) && (!e.ignored || o.showIgnored);
         const row = {
           kind: e.dir ? 'dir' : 'file',
@@ -123,12 +237,26 @@
     return out;
   }
   // The filter and the Changed toggle turn the tree into a flat list: one row per file with its folder after the name.
+  // A doc's files become its one doc row (once); `o.docs`: docIndex().
   function flatRows(paths, opts) {
     const o = opts || {},
       changes = o.changes || null,
-      arts = o.artifacts || null;
-    return (paths || []).map((p) => {
-      const path = slash(p);
+      arts = o.artifacts || null,
+      docs = o.docs || null,
+      seen = new Set(),
+      out = [];
+    for (const p of paths || []) {
+      const path = slash(p),
+        d = docs ? docs.owned.get(path) : null;
+      if (d) {
+        if (!seen.has(d.dir)) out.push(Object.assign(docRow(d, 0, changes, null), { folder: '' }));
+        seen.add(d.dir);
+        continue;
+      }
+      out.push(fileRow(path));
+    }
+    return out;
+    function fileRow(path) {
       return {
         kind: 'file',
         path,
@@ -142,7 +270,7 @@
         changed: 0,
         artifact: !!(arts && arts.has(path)),
       };
-    });
+    }
   }
   const changedPaths = (map) => Array.from((map || new Map()).keys()).sort((a, b) => a.localeCompare(b));
   // Where a query matches inside a name, for <mark>: [before, hit, after] or null.
@@ -154,7 +282,7 @@
 
   // Arrow keys on the tree. rows: treeRows() output; sel: the selected path. Returns {sel, toggle, open, close, activate}.
   function keyMove(rows, sel, key) {
-    const list = (rows || []).filter((r) => r.kind === 'dir' || r.kind === 'file');
+    const list = (rows || []).filter((r) => r.kind === 'dir' || r.kind === 'file' || r.kind === 'doc' || r.kind === 'newdoc');
     if (!list.length) return { sel: '' };
     let i = list.findIndex((r) => r.path === sel);
     const cur = list[i];
@@ -226,6 +354,34 @@
   const tabId = (scope, path) => scopeId(scope) + '|' + slash(path);
   function emptyTabs() {
     return { tabs: [], active: '' };
+  }
+  // A doc tab: one per doc in a project (whichever chat opened it); `doc`: {name, title, page}. path = the doc's folder.
+  const docTabId = (name) => 'doc|' + String(name || '');
+  function openDocTab(st, scope, d, opts) {
+    const o = opts || {},
+      id = docTabId(d.name),
+      tabs = (st.tabs || []).slice();
+    const at = tabs.findIndex((t) => t.id === id);
+    if (at >= 0) {
+      const t = Object.assign({}, tabs[at], { doc: Object.assign({}, tabs[at].doc, d.page ? { page: d.page } : {}) });
+      if (o.keep) t.preview = false;
+      tabs[at] = t;
+      return { tabs, active: id };
+    }
+    const tab = {
+      id,
+      kind: 'doc',
+      path: slash(d.dir || DOCS_FOLDER + '/' + d.name),
+      name: d.title || d.name,
+      scope,
+      preview: !o.keep,
+      line: 0,
+      doc: { name: d.name, title: d.title || d.name, page: d.page || '' },
+    };
+    const prev = o.keep ? -1 : tabs.findIndex((t) => t.preview);
+    if (prev >= 0) tabs[prev] = tab;
+    else tabs.push(tab);
+    return { tabs, active: id };
   }
   function openTab(st, scope, path, opts) {
     const o = opts || {},
@@ -325,6 +481,14 @@
     scopeMenu,
     scopeLabel,
     tabId,
+    docIndex,
+    docBadge,
+    NEW_DOC,
+    DOCS_FOLDER,
+    docsList,
+    docsLine,
+    docTabId,
+    openDocTab,
     emptyTabs,
     openTab,
     keepTab,

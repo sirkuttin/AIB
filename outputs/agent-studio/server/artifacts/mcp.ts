@@ -16,6 +16,8 @@ import { isDict, pyJsonDumps, pyStr, pyStrip } from '../core/py.ts';
 import { pyTypeName, truthy } from '../transcripts/pycompat.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { join, normpath } from '../platform/ospath.ts';
+import { DOC_TOOL_NAMES, DOC_TOOLS } from '../docs/tool_defs.ts';
+import { DRAWING_TOOL_NAMES, DRAWING_TOOLS } from '../docs/drawing/tool_defs.ts';
 
 type Json = Record<string, unknown>;
 
@@ -45,8 +47,10 @@ export const TOOLS: Json[] = [
     name: 'publish',
     title: 'Publish an artifact',
     description:
-      'Show the user an HTML page, diagram (SVG), report, Markdown document, image, PDF, CSV or JSON file in the Artifacts panel next to the chat. ' +
-      'Use it for anything the user should look at: a generated page, a chart, an explainer, a report. Do NOT use it for source code or files the user ' +
+      'Show the user an HTML page, diagram (SVG), image, PDF, CSV, JSON, or a one-off Markdown report in the Artifacts panel next to the chat: ' +
+      'something to look at or click through. Do NOT use it for a plan, spec, notes, checklist or anything the user will want to edit or keep in ' +
+      'the project: make a doc with doc_create. If the page shows content from a doc (a timeline of its Rollout page, a chart of its table), pass ' +
+      '"fromDoc": {"doc": "<name>", "page": "<page>"} so the user can rebuild it when the doc changes. Do NOT use it for source code or files the user ' +
       'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with ' +
       '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and ' +
       'unpkg.com are allowed, but the page cannot make network requests, so embed its data inline. To change a page you already published, call `update` with its id ' +
@@ -70,6 +74,17 @@ export const TOOLS: Json[] = [
           description: 'With `content`: the file name including extension, e.g. "chart.html". Decides the kind when `kind` is omitted.',
         },
         kind: { type: 'string', enum: KINDS, description: 'Optional. Derived from the file extension when omitted.' },
+        fromDoc: {
+          type: 'object',
+          description: 'Optional. The doc page this artifact shows, e.g. {"doc": "release-plan", "page": "Rollout"}: the user sees ' +
+            '"Built from" with a link to it, and "Rebuild from the doc" once the page changes.',
+          properties: {
+            doc: { type: 'string', description: 'The doc\'s name, as doc_list gives it.' },
+            page: { type: 'string', description: "The page's title or id. Default: the doc's first page." },
+          },
+          required: ['doc'],
+          additionalProperties: false,
+        },
       },
       required: ['title'],
       additionalProperties: false,
@@ -81,7 +96,7 @@ export const TOOLS: Json[] = [
     description:
       'Publish a new version of an artifact you already published in this conversation (the user can compare and restore versions). Pass its `id` and the ' +
       'new `path` or `content`. Use this instead of `publish` when revising a page. Identical content creates no new version. Keep referring to it as ' +
-      '[Title](studio-artifact://<id>).',
+      '[Title](studio-artifact://<id>). When the user asks to rebuild an artifact from its doc, read that page with doc_read first, then update.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -93,6 +108,17 @@ export const TOOLS: Json[] = [
         },
         content: { type: 'string', description: 'The new file text. Give this or `path`, not both.' },
         note: { type: 'string', description: 'Optional one-line description of what changed, shown in the version list.' },
+        fromDoc: {
+          type: 'object',
+          description: 'Optional. The doc page this artifact shows, e.g. {"doc": "release-plan", "page": "Rollout"}: the user sees ' +
+            '"Built from" with a link to it, and "Rebuild from the doc" once the page changes.',
+          properties: {
+            doc: { type: 'string', description: 'The doc\'s name, as doc_list gives it.' },
+            page: { type: 'string', description: "The page's title or id. Default: the doc's first page." },
+          },
+          required: ['doc'],
+          additionalProperties: false,
+        },
       },
       required: ['id'],
       additionalProperties: false,
@@ -455,6 +481,7 @@ async function toolPublish(ctx: ToolContext, args: Json): Promise<Json> {
     if (!KINDS.includes(kind)) throw new ToolError('`kind` must be one of: ' + KINDS.join(', '));
     body.kind = kind;
   }
+  if (isDict(args.fromDoc)) body.fromDoc = args.fromDoc;
   const item = await http(ctx, 'POST', '/api/live/artifacts/publish', null, body);
   const out = pick(item, ['id', 'version', 'link', 'url']);
   const name = truthy(pyGet(item, 'title')) ? pyGet(item, 'title') : title;
@@ -472,6 +499,7 @@ async function toolUpdate(ctx: ToolContext, args: Json): Promise<Json> {
   const body: Json = { conversationId: ctx.conversation, id: identifier, ...sourceArgs(ctx, args) };
   const note = optionalString(args, 'note');
   if (note) body.note = note;
+  if (isDict(args.fromDoc)) body.fromDoc = args.fromDoc;
   const item = await http(ctx, 'POST', '/api/live/artifacts/publish', null, body);
   const out = pick(item, ['id', 'version', 'link']);
   const title = pyGet(item, 'title');
@@ -529,8 +557,20 @@ const WORKTREE_HANDLERS: Record<string, Handler> = {
   resolve_edit_clash: toolResolveClash,
 };
 
+/** The doc tools run in Studio (POST /api/live/docs/tool, with this conversation's key); a refusal is the agent's to act on. */
+async function docTool(ctx: ToolContext, name: string, args: Json): Promise<Json> {
+  const reply = await http(ctx, 'POST', '/api/live/docs/tool', null, { conversationId: ctx.conversation, tool: name, args }, true);
+  if (isDict(reply) && Object.hasOwn(reply, 'error') && Object.hasOwn(reply, 'status')) throw new ToolError(`AIB: ${pyStr(reply.error)}`);
+  const ok = isDict(reply) && reply.ok !== false;
+  const result = isDict(reply) && isDict(reply.result) ? reply.result : reply;
+  return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(ok ? {} : { isError: true }) };
+}
+const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
+  [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES].map((name) => [name, (ctx, args) => docTool(ctx, name, args)]),
+);
+
 function handlers(ctx: ToolContext): Record<string, Handler> {
-  return ctx.worktree ? { ...HANDLERS, ...WORKTREE_HANDLERS } : HANDLERS;
+  return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...DOC_HANDLERS };
 }
 
 async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<Json> {
@@ -566,7 +606,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
     });
   }
   if (method === 'ping') return ok({});
-  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : [])] });
+  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
   if (method === 'tools/call') {
     const name = Object.hasOwn(params, 'name') ? params.name : null;
     if (Array.isArray(name) || isDict(name)) throw new PyError('TypeError', `unhashable type: '${pyTypeName(name)}'`);

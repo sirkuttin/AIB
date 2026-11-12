@@ -289,7 +289,7 @@ function setup(opts) {
   opts = opts || {};
   const calls = [],
     posts = [];
-  let files = FILES;
+  let files = opts.files || FILES;
   const ok = (body) => ({ ok: true, status: 200, json: async () => body });
   const fetchImpl = async (url, init) => {
     calls.push(url);
@@ -318,6 +318,7 @@ function setup(opts) {
     }
     const body = opts.scope ? { git: true, scope: opts.scope, files } : { git: true, files };
     if (opts.branch) body.worktree = { branch: opts.branch };
+    if (opts.docs) body.docs = opts.docs;
     return ok(body);
   };
   const ids = {};
@@ -618,4 +619,31 @@ test('one click on Merge asks the chat at once (no confirmation); a conflicted f
     rows(c).map((r) => !!r.querySelector('.cg-conflict')),
     [false, true, false],
   );
+});
+
+test('local docs: a doc is one row "2 pages changed" (its files are not listed), the tab counts it once; Merge asks the chat with no confirmation', async () => {
+  const docPaths = ['docs/plan/doc.aibdoc', 'docs/plan/01-overview.md', 'docs/plan/02-risks.md'];
+  const files = docPaths.map((p) => ({ path: p, status: 'M', added: 2, removed: 1 })).concat([{ path: 'docs/README.md', status: 'M', added: 1, removed: 0 }]);
+  const docs = [{ doc: 'plan', dir: 'docs/plan', title: 'Release plan', pages: 2, paths: docPaths }];
+  const status = { worktree: true, base: 'main', label: 'Merge into main', enabled: true, state: 'ready', message: '' };
+  const t = setup({ scope: 'branch', branch: 'studio/x', status, files, docs });
+  const opened = [];
+  t.win.AgentDocLinks = { openDoc: (o) => opened.push(o) };
+  t.ui().show('changes');
+  await flush();
+  const rs = rows(t);
+  assert.equal(rs.length, 2, 'one doc row and docs/README.md');
+  assert.ok(rs[0].classList.contains('cg-doc-btn'));
+  assert.match(rs[0].textContent, /Release plan/);
+  assert.match(rs[0].textContent, /2 pages changed/);
+  assert.equal(rs[1].dataset.path, 'docs/README.md', "a user's docs/README.md stays a file row");
+  assert.deepEqual(t.ui().files().map((f) => f.path), ['docs/README.md']);
+  assert.equal(C.shownCount({ git: true, files, docs }), 2);
+  rs[0].click();
+  assert.deepEqual(opened.map((o) => [o.name, o.from]), [['plan', 'chat']]);
+  // Merge asks the chat at once (beta.7, merge via the agent): no confirmation, docs included
+  pane(t).querySelector('.cg-merge-btn').click();
+  await flush();
+  assert.equal(pane(t).querySelector('.cg-confirm'), null);
+  assert.equal(C.mergeQuestion(0, 'main', docs), 'Merge the doc Release plan (2 pages changed) into main? Edits the chat has not committed yet are committed first.');
 });

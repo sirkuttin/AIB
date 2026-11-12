@@ -12,7 +12,7 @@ import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
 import { changesResponse, type ChatStudio, repoBranch } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
-import { MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
+import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
 import { getUpdate, postUpdateCheck, postUpdateInstall } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
@@ -20,6 +20,8 @@ import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { ROUTES } from './routes.ts';
 import type { WebContext } from './server.ts';
 import { bringBack, restoreFolders } from './project_routes.ts';
+import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
+import { DocRefusal } from '../docs/live_doc.ts';
 
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
@@ -301,6 +303,14 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     if (action === 'merge') return await refusedReply(() => merge.mergeFromTool(mergeStudio(ctx), conversation));
     return await refusedReply(() => merge.resolveClash(mergeStudio(ctx), conversation, action, true));
   }
+  if (path === DOCS_TOOL) { // an agent's doc tool: the key is bound to the body's conversation, as for publish
+    const [body, bad] = await ownGateBody(request, 4 * 1024 * 1024);
+    if (bad) return bad;
+    const allowed = gateFor(ctx, request, path, body.conversationId);
+    if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
+    await ctx.artifacts.prepare(true, body.conversationId);
+    return await docsTool(ctx, body);
+  }
   // /api/live/artifacts/*: publish is for the agent tool (its key, bound to the body's conversation), the rest for the page.
   const toolRoute = ROUTES.scopeFor('POST', path) === SCOPE_ARTIFACTS_TOOL;
   if (!toolRoute) {
@@ -318,5 +328,26 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
   }
   const publishing = path === '/api/live/artifacts/publish' || path === '/api/live/artifacts/preview';
   await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : null);
+  delete body[FROM_DOC_RESOLVED];
+  if (path === '/api/live/artifacts/publish') {
+    // "Built from <doc › page>": the tool's fromDoc, or (an update without one) the link the artifact has, at the page's rev now
+    let from: unknown = body.fromDoc;
+    if (from === undefined && typeof body.id === 'string') {
+      try {
+        from = ctx.artifacts.service.store.get(body.id).fromDoc;
+      } catch { /* the publish says what is wrong */ }
+      if (from && typeof from === 'object') from = { doc: (from as Json).doc, page: (from as Json).page };
+    }
+    if (from !== undefined && from !== null) {
+      try {
+        body[FROM_DOC_RESOLVED] = await resolveFromDoc(ctx, String(body.conversationId ?? ''), from);
+      } catch (error) {
+        if (!(error instanceof DocRefusal)) throw error;
+        if (body.fromDoc !== undefined) return [400, { error: error.message, code: error.code }];
+        // an update of an artifact whose doc page is gone: published, the old link kept
+      }
+    }
+    delete body.fromDoc;
+  }
   return artifactCall(() => ctx.artifacts.service.handlePost(request, path, body));
 }

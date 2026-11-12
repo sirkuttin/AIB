@@ -305,6 +305,39 @@
   --status-done-glyph: "✓"; /* Done / Your turn */
   --status-error-glyph: "✕"; /* Failed */
   --status-idle-glyph: "○"; /* Idle, not running, elsewhere */
+  /* the doc page (docs.css): agents' presence, highlights (never teal or blue), callouts, charts, comment anchors, Compare */
+  --agent-a: var(--accent);
+  --agent-b: var(--info);
+  --tint-a: color-mix(in srgb, var(--agent-a) 15%, transparent);
+  --tint-b: color-mix(in srgb, var(--agent-b) 15%, transparent);
+  /* highlights: never teal or blue (the agents' colours) */
+  --hl-yellow: color-mix(in srgb, var(--warn) 30%, var(--bg));
+  --hl-green: color-mix(in srgb, var(--ok) 24%, var(--bg));
+  --hl-pink: color-mix(in srgb, var(--danger) 20%, var(--bg));
+  --hl-purple: color-mix(in srgb, var(--syn-keyword) 22%, var(--bg));
+  --hl-grey: color-mix(in srgb, var(--muted) 22%, var(--bg));
+  --co-info-bg: color-mix(in srgb, var(--info) 9%, var(--bg));
+  --co-info-line: color-mix(in srgb, var(--info) 30%, var(--bg));
+  --co-warn-bg: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  --co-warn-line: color-mix(in srgb, var(--warn) 32%, var(--bg));
+  --co-ok-bg: color-mix(in srgb, var(--ok) 9%, var(--bg));
+  --co-ok-line: color-mix(in srgb, var(--ok) 30%, var(--bg));
+  --chart-1: var(--accent);
+  --chart-2: var(--syn-number);
+  --chart-3: var(--syn-keyword);
+  --chart-4: var(--info);
+  --chart-5: var(--ok);
+  --chart-6: var(--danger);
+  --anchor-bg: color-mix(in srgb, var(--warn) 22%, transparent);
+  --anchor-act-bg: color-mix(in srgb, var(--warn) 36%, transparent);
+  --anchor-line: color-mix(in srgb, var(--warn) 70%, transparent);
+  --ins-bg: var(--cg-add-bg);
+  --del-bg: var(--cg-del-bg);
+  --ins-text: color-mix(in srgb, var(--ok) 70%, var(--text));
+  --del-text: color-mix(in srgb, var(--danger) 70%, var(--text));
+  --oldbar-bg: color-mix(in srgb, var(--warn) 15%, var(--bg));
+  --oldbar-text: color-mix(in srgb, var(--warn) 74%, var(--text));
+  --oldbar-line: color-mix(in srgb, var(--warn) 33%, var(--bg));
 }
 
 /* AIB teal (dark): the default theme. Bay teal accent, the icon's agent lights for status. */
