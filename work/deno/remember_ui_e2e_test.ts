@@ -16,8 +16,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
+import { builtDist } from './_build_cache.ts';
 import { devToolsPortNow, pickPort, refusedPort } from './_ports.ts';
-import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
 /** OS-chosen (after the build), port + 1 free: B must open on the port A used last (desktop-port.json). */
@@ -28,11 +29,6 @@ const WM_CLOSE = 0x0010;
 const DEC = new TextDecoder();
 type Json = Record<string, unknown>;
 
-async function build(out: string): Promise<void> {
-  const args = ['run', '-A', `${REPO_ROOT}\\tools\\build.ts`, '--targets', 'windows-x64', '--out', out, '--no-smoke'];
-  const r = await new Deno.Command(Deno.execPath(), { args, stdout: 'piped', stderr: 'piped' }).output();
-  if (!r.success) throw new Error(`build failed: ${DEC.decode(r.stderr)}`);
-}
 
 async function unzip(zip: string, into: string): Promise<void> {
   Deno.mkdirSync(into, { recursive: true });
@@ -124,9 +120,8 @@ Deno.test({
 });
 
 async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, string>): Promise<void> {
-  const dist = `${fx.root}\\dist`;
   const started = Date.now();
-  await build(dist);
+  const dist = await builtDist(); // built once per source, shared (_build_cache.ts)
   console.log(`build: ${((Date.now() - started) / 1000).toFixed(0)} s`);
   const appA = `${fx.root}\\install\\A`, appB = `${fx.root}\\install\\B`;
   await unzip(`${dist}\\AIB-${APP_VERSION}-windows-x64.zip`, appA);

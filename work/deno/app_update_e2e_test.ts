@@ -3,7 +3,7 @@
  * invisible desktop (_hidden_desktop.ts) with a temp data folder, temp APPDATA/LOCALAPPDATA, a page port the OS picked and
  * WebView2's DevTools on a port it picked itself (--remote-debugging-port=0, read back from DevToolsActivePort).
  *
- *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.99 (B); install A from its zip into a temp folder.
+ *   1. Build AIB at APP_VERSION (A) and at NEXT_VERSION (B); install A from its zip into a temp folder.
  *   2. Start A (the desktop app, no --port: it reuses the port saved in desktop-port.json). Write a localStorage key through the
  *      WebView2 DevTools port (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS), open a chat with the fake agent and start a turn that waits.
  *   3. Check for updates against a local fake release server serving B (zip, SHA256SUMS, release.json) and click Install now while
@@ -17,9 +17,10 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, httpJson, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
+import { builtDist, NEXT_VERSION } from './_build_cache.ts';
 import { devToolsPortNow, ownerPort, pickPort } from './_ports.ts';
 import { HostClient, pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
 /** OS-chosen (after the builds), with port + 1 free: the update must bring B back on this same port (desktop-port.json), where
@@ -28,15 +29,9 @@ let PORT = 0;
 /** The app folder: WebView2 keeps its profile next to the exe (AIB.exe.WebView2); its DevToolsActivePort names the CDP port, new
  * after every restart. */
 let cdpRoot = '';
-const NEXT = '0.1.0-beta.99';
+const NEXT = NEXT_VERSION; // one B for every update test: one cached build
 type Json = Record<string, unknown>;
 
-async function build(out: string, version?: string): Promise<void> {
-  const args = ['run', '-A', `${REPO_ROOT}\\tools\\build.ts`, '--targets', 'windows-x64', '--out', out, '--no-smoke'];
-  if (version) args.push('--version', version);
-  const r = await new Deno.Command(Deno.execPath(), { args, stdout: 'piped', stderr: 'piped' }).output();
-  if (!r.success) throw new Error(`build failed: ${new TextDecoder().decode(r.stderr)}`);
-}
 
 async function cdpEval(expression: string): Promise<unknown> {
   const cdp = devToolsPortNow(cdpRoot);
@@ -102,8 +97,8 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     await using fx = new Fixture();
-    const distA = `${fx.root}\\distA`, distB = `${fx.root}\\distB`, install = `${fx.root}\\install`, trays = `${fx.root}\\trays`;
-    await Promise.all([build(distA), build(distB, NEXT)]);
+    const install = `${fx.root}\\install`, trays = `${fx.root}\\trays`;
+    const [distA, distB] = await Promise.all([builtDist(), builtDist(NEXT)]); // built once per source, shared (_build_cache.ts)
     Deno.mkdirSync(install);
     Deno.mkdirSync(trays);
     const tar = await new Deno.Command('C:\\Windows\\System32\\tar.exe', {
@@ -239,8 +234,8 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     await using fx = new Fixture();
-    const dist = `${fx.root}/dist`, install = `${fx.root}/install`, trays = `${fx.root}/trays`;
-    await build(dist);
+    const install = `${fx.root}/install`, trays = `${fx.root}/trays`;
+    const dist = await builtDist();
     Deno.mkdirSync(install);
     Deno.mkdirSync(trays);
     await new Deno.Command('C:/Windows/System32/tar.exe', { args: ['-xf', `${dist}/AIB-${APP_VERSION}-windows-x64.zip`, '-C', install] })
