@@ -83,20 +83,19 @@ export class Lab {
     }, 'connection ready', 60);
     const sid = st.sessionId as string;
     let file = '';
-    const lab = this;
     const append = (o: unknown) => Deno.writeTextFileSync(file, JSON.stringify(o) + '\n', { append: true });
     const chat: Chat = {
       id,
       sid,
       key: `claude:${sid}`,
-      async start() {
-        file = `${lab.fx.root}\\script-${++lab.#scripts}.jsonl`;
+      start: async () => {
+        file = `${this.fx.root}\\script-${++this.#scripts}.jsonl`;
         Deno.writeTextFileSync(file, '');
-        const [s, body] = await lab.web.post('prompt', { id, text: `script:${file}`, clientMessageId: `t${lab.#scripts}` });
+        const [s, body] = await this.web.post('prompt', { id, text: `script:${file}`, clientMessageId: `t${this.#scripts}` });
         if (s !== 200) throw new Error(`prompt: ${s} ${JSON.stringify(body)}`);
       },
-      nextPrompt() {
-        file = `${lab.fx.root}\\script-${++lab.#scripts}.jsonl`;
+      nextPrompt: () => {
+        file = `${this.fx.root}\\script-${++this.#scripts}.jsonl`;
         Deno.writeTextFileSync(file, '');
         return `script:${file}`;
       },

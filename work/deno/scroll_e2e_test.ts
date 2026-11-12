@@ -43,6 +43,7 @@ export const KNOWN_FAILING = new Set<string>([
   '4c "Show all" on a long block at the bottom: the block stays where it was, also when the next update arrives',
   '6a opening a chat with unread messages lands on the "New" line',
   '6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the row you were reading',
+  '8b small smooth-scroll ticks up (15 px each, 45 px total) stop following; small in-place growth does not resume it',
 ]);
 
 function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
@@ -636,4 +637,175 @@ scrollTest('7b subagent view, scrolled up: updates do not move what you read; ba
   await assertFollowing(page, 'back at the end', 'submessages');
   const p = await update(page, () => child({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nAfter coming back SUBBACK' } }), 'SUBBACK', 'submessages');
   assert(!p, p);
+});
+
+// ---- 8. real wheel input (Input.dispatchMouseEvent mouseWheel) while updates stream ----------------------------------------------
+
+/** Record scrollTop every frame while `n` updates arrive; returns the distinct scrollTop values seen and the end state. */
+async function streamWhileReading(page: Page, chat: Chat, n: number, tag: string, small = false) {
+  await startFrames(page);
+  for (let i = 0; i < n; i++) {
+    if (small) chat.say(` ${tag}${i}`); // the same message grows by a word: the list barely gets taller
+    else {
+      chat.tool(`${tag}-t${i}`, `Step ${tag} ${i}`, 'completed');
+      chat.say(`Reply ${tag}${i} ` + 'words '.repeat(20));
+    }
+    await shown(page, `${tag}${i}`);
+    await settle(700);
+  }
+  await settle(800);
+  const frames = await stopFrames(page);
+  return { tops: [...new Set(frames.map((f) => f.top))], resumed: frames.filter((f) => !f.paused).length, end: await m(page) };
+}
+
+scrollTest('8a one wheel notch up while updates stream: follow stops at once and nothing pulls you back down', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -100);
+  await settle(300);
+  const x0 = await m(page);
+  assert(x0.paused && x0.gap >= 90, `one notch up pauses: ${JSON.stringify(x0)}`);
+  const r = await streamWhileReading(page, chat, 3, 'NOTCH');
+  assert(r.tops.length === 1 && r.tops[0] === x0.top, `scrollTop moved while reading: ${x0.top} -> ${r.tops.join(', ')}`);
+  assert(r.resumed === 0 && r.end.paused, `follow came back on in ${r.resumed} frames`);
+  assert(r.end.jump === '3 new messages ↓', `jump button: ${JSON.stringify(r.end.jump)}`);
+});
+
+scrollTest('8b small smooth-scroll ticks up (15 px each, 45 px total) stop following; small in-place growth does not resume it', async (lab) => {
+  // The owner's bug class: an upward scroll that ends within 48 px of the bottom. resumeIfAtEnd (chat.js ~4741) still uses the old
+  // 48 px rule after each redraw, so if a redraw leaves the gap at 2..48 px, follow comes back on without you reaching the bottom.
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  for (let i = 0; i < 3; i++) await wheel(page, -15);
+  await settle(300);
+  const x0 = await m(page);
+  assert(x0.paused && x0.gap >= 40 && x0.gap <= 48, `three 15 px ticks up: paused, 40-48 px from the bottom: ${JSON.stringify(x0)}`);
+  const r = await streamWhileReading(page, chat, 3, 'TICK', true);
+  assert(r.resumed === 0 && r.end.paused, `follow came back on in ${r.resumed} frames (end: ${JSON.stringify(r.end)})`);
+  assert(r.tops.length === 1 && r.tops[0] === x0.top, `scrollTop moved: ${x0.top} -> ${r.tops.join(', ')}`);
+  // one more real step after that must not pull the list down either
+  const r2 = await streamWhileReading(page, chat, 1, 'TICKSTEP');
+  assert(r2.tops.length === 1 && r2.tops[0] === x0.top && r2.end.paused, `then a new step moved the list: ${r2.tops.join(', ')}`);
+});
+
+scrollTest('8c scrolling back down partway (not to the bottom) stays paused; updates do not move the list', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -600);
+  await settle(300);
+  await wheel(page, 300);
+  await wheel(page, 280);
+  await settle(300);
+  const x0 = await m(page);
+  assert(x0.paused && x0.gap >= 10, `partway back down: still paused, ${x0.gap} px from the bottom: ${JSON.stringify(x0)}`);
+  const r = await streamWhileReading(page, chat, 2, 'PART');
+  assert(r.tops.length === 1 && r.tops[0] === x0.top && r.end.paused, `the list moved or resumed: ${r.tops.join(', ')} ${JSON.stringify(r.end)}`);
+});
+
+scrollTest('8d wheeling down to the very bottom resumes following', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -600);
+  await settle(300);
+  chat.tool('wd', 'Arrives while up', 'completed');
+  chat.say('Arrives while up WHEELUP');
+  await shown(page, 'WHEELUP');
+  await settle();
+  assert((await m(page)).paused, 'paused while up');
+  for (let i = 0; i < 8; i++) await wheel(page, 120);
+  await settle(500);
+  await assertFollowing(page, 'wheeled down to the bottom');
+  const p = await update(page, () => chat.say('\n\nAfter wheeling down WHEELDOWN'), 'WHEELDOWN');
+  assert(!p, p);
+});
+
+async function jumpButton(lab: Lab, words: number) {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -800);
+  await settle(300);
+  for (let i = 0; i < 2; i++) {
+    chat.tool(`j${i}`, `Jump step ${i}`, 'completed');
+    chat.say(`Jump reply ${i} JUMP${i} ` + 'words '.repeat(words));
+  }
+  await shown(page, 'JUMP1');
+  await settle();
+  assert((await m(page)).jump === '2 new messages ↓', `button: ${(await m(page)).jump}`);
+  await clickHere(page, '#jumpNew');
+  await settle(600);
+  return chat;
+}
+
+scrollTest('8e jump button, long unread part: "2 new messages ↓" puts the New line at the top, then "↓ Latest" goes to the end and follows', async (lab) => {
+  const page = lab.page;
+  const chat = await jumpButton(lab, 400);
+  const line = await topOf(page, '#messages > .new-line');
+  const x1 = await m(page);
+  assert(line !== null && line >= 0 && line <= 20, `first click puts the New line at the top: ${line} (${JSON.stringify(x1)})`);
+  assert(x1.paused && x1.jump === '↓ Latest', `then the button reads "↓ Latest": ${JSON.stringify(x1)}`);
+  await clickHere(page, '#jumpNew');
+  await settle(600);
+  await assertFollowing(page, 'after "↓ Latest"');
+  const p = await update(page, () => chat.say('\n\nAfter Latest AFTERLATEST'), 'AFTERLATEST');
+  assert(!p, p);
+});
+
+scrollTest('8f jump button, short unread part: one click reaches the end, the button goes and following is back', async (lab) => {
+  const page = lab.page;
+  const chat = await jumpButton(lab, 20);
+  await assertFollowing(page, 'after one click (the unread part fits on screen)');
+  const x = await m(page);
+  assert(x.jump === null, `the button is gone: ${JSON.stringify(x.jump)}`);
+  const p = await update(page, () => chat.say('\n\nAfter the click SHORTJUMP'), 'SHORTJUMP');
+  assert(!p, p);
+});
+
+// ---- 9. a saved chat another program is writing (no live connection: /api/transcript every 1.5 s) ------------------------------
+
+async function openSavedGrowing(lab: Lab) {
+  const s = lab.savedChat('saved-scroll-1');
+  s.user('Please look at the code');
+  for (let i = 0; i < 30; i++) {
+    s.say(`Saved message ${i}. ` + 'Some words to fill a line or two. '.repeat(6));
+    s.tool('Read', { file_path: `C:/proj/src/file_${i}.ts` }, 'content\n'.repeat(5));
+  }
+  s.say('SAVEDEND');
+  await lab.page.waitFor(`!!document.querySelector('button.connection[data-key="${s.key}"]')`, 20000, 'saved chat in the sidebar');
+  await lab.select(s);
+  await shown(lab.page, 'SAVEDEND', 'messages', 20000);
+  await settle(2000);
+  return s;
+}
+
+scrollTest('9a saved chat being written, following: long output and code blocks keep the newest row visible, no frame off the bottom', async (lab) => {
+  const page = lab.page;
+  const s = await openSavedGrowing(lab);
+  await assertFollowing(page, 'saved chat open');
+  const problems: string[] = [];
+  for (let k = 0; k < 3; k++) {
+    const p = await update(page, () => {
+      if (k === 0) s.tool('Bash', { command: 'pytest -q' }, Array.from({ length: 90 }, (_, i) => `ok test_${i}`).join('\n'));
+      s.say(`Growing ${k} SAVEDGROW${k}\n\n\`\`\`\n` + 'code line\n'.repeat(60) + '```\n');
+    }, `SAVEDGROW${k}`, 'messages', 2000);
+    if (p) problems.push(`update ${k}: ${p}`);
+  }
+  assert(!problems.length, problems.join('\n'));
+});
+
+scrollTest('9b saved chat being written, scrolled up: new rows do not move what you read', async (lab) => {
+  const page = lab.page;
+  const s = await openSavedGrowing(lab);
+  await wheel(page, -800);
+  await settle(400);
+  const before = await anchor(page);
+  const x0 = await m(page);
+  await startFrames(page);
+  s.say('While you read SAVEDWHILEUP');
+  await shown(page, 'SAVEDWHILEUP', 'messages', 20000);
+  await settle(2000);
+  const frames = await stopFrames(page);
+  const tops = [...new Set(frames.map((f) => f.top))];
+  assert(tops.length === 1 && tops[0] === x0.top, `scrollTop moved: ${x0.top} -> ${tops.join(', ')}`);
+  const now = await whereIs(page, before!.text);
+  assert(now !== null && Math.abs(now - before!.off) <= 1, `the row you read moved from ${before!.off} to ${now}`);
 });
