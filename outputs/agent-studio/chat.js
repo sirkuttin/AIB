@@ -3375,8 +3375,10 @@
       await listConversations();
       const key = sessionStorage.getItem('studio-selected') || sessionStorage.getItem('studio-saved');
       const prior = conversations.find((c) => c.key === key) || window.AgentWorkspaceUI?.restoreTarget?.();
-      if (prior) await openConversation(prior);
-      else showNewChat();
+      if (prior) {
+        window.AgentWorkspaceUI?.keepProjectFor?.(prior); // reopening it keeps the project you had in the sidebar
+        await openConversation(prior);
+      } else showNewChat();
     } catch (error) {
       fail(error);
     }

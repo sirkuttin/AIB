@@ -91,6 +91,12 @@ test('the keys that move: layout and view state, by exact name or per-bucket pre
     'studio-textsize-v1:<1400',
     'studio-textsize-v1:>=1800',
     'studio-layout-v1:<1800',
+    'studio-seen-turns',
+    'studio-new-chat-agent',
+    'studio-sidebar-epoch',
+    'aib-sidebar-mode',
+    'aib-file-tabs-v1',
+    'aib-files-open-v1',
   ])
     assert.equal(V.synced(k), true, k);
   for (const k of [
@@ -99,11 +105,11 @@ test('the keys that move: layout and view state, by exact name or per-bucket pre
     'studio-pending-sends-v1',
     'studio-read-state-v2',
     'studio-last-viewed-v1',
-    'studio-seen-turns',
     'studio-subagents-finished:claude:abc',
     'studio-project-prefs-v1',
     'studio-agent-options-v1',
-    'studio-new-chat-agent',
+    'studio-selected',
+    'aib-doc-page:abc',
     'studio-textsize-v1:',
     'aib-token.x',
     '',
@@ -153,7 +159,7 @@ test('start: values an older copy remembered move to the data folder once', asyn
   assert.equal(p.posts[0].headers['X-Studio-Token'], 'tok0');
 });
 
-test('changes are sent debounced, removals as null; other keys and sessionStorage are not', async () => {
+test('changes are sent at once (next tick), removals as null; other keys and sessionStorage are not', async () => {
   const p = page({}, {});
   p.storage.setItem('studio-textsize-v1:<1800', '{"chat":110}');
   p.storage.setItem('studio-textsize-v1:<1800', '{"chat":120}');
@@ -161,7 +167,11 @@ test('changes are sent debounced, removals as null; other keys and sessionStorag
   p.storage.setItem('studio-drafts-v1', 'draft');
   p.other.setItem('studio-workspace-v1', 'session copy');
   assert.equal(p.storage.getItem('studio-drafts-v1'), 'draft', 'the real setItem still runs');
-  assert.ok(p.timers.every((t) => t.ms === 500));
+  assert.deepEqual(
+    p.timers.map((t) => t.ms),
+    [0],
+    'one send on the next tick for the whole burst, nothing waits for the page to close',
+  );
   await p.runTimers();
   assert.equal(p.posts.length, 1);
   assert.deepEqual(p.posts[0].body, {
@@ -181,6 +191,86 @@ test('a failed save is retried later with the newest values; a stale token is re
   const last = p.posts[p.posts.length - 1];
   assert.deepEqual(last.body, { set: { 'studio-chat-views': '{"a":"prompts"}' } });
   assert.notEqual(last.headers['X-Studio-Token'], p.posts[p.posts.length - 2].headers['X-Studio-Token']);
+});
+
+test('a change made while a save is on its way goes out right after it; a busy stream of changes is one request per 100 ms', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const p = page({}, {});
+  let t = 1000;
+  // swap in a slow first answer and a clock
+  p.ctl.stop();
+  const S = storageClass();
+  const storage = new S();
+  const timers = [],
+    posts = [];
+  const fetch = async (url, o) => {
+    if (url === '/api/live/bootstrap') return { ok: true, status: 200, json: async () => ({ token: 't' }) };
+    posts.push(JSON.parse(o.body));
+    if (posts.length === 1) await gate;
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const doc = { getElementById: () => ({ textContent: '{"prefs":{}}' }), addEventListener() {} };
+  const ctl = V.init(
+    { document: doc, addEventListener() {} },
+    {
+      storage,
+      proto: S.prototype,
+      fetch,
+      now: () => t,
+      setTimeout: (fn, ms) => (timers.push({ fn, ms }), timers.length),
+      clearTimeout: () => {},
+    },
+  );
+  storage.setItem('studio-workspace-v1', '{"active":"a"}');
+  const first = timers.shift().fn(); // on its way, not answered yet
+  await new Promise((r) => setImmediate(r));
+  storage.setItem('studio-workspace-v1', '{"active":"b"}');
+  storage.setItem('aib-file-tabs-v1', '{}');
+  assert.equal(timers.length, 0, 'waits for the request on its way');
+  t += 30;
+  release();
+  await first;
+  assert.equal(timers.length, 1, 'sent again as soon as the first one ended');
+  assert.equal(timers[0].ms, 70, 'no sooner than 100 ms after the previous request');
+  await timers.shift().fn();
+  assert.deepEqual(posts, [
+    { set: { 'studio-workspace-v1': '{"active":"a"}' } },
+    { set: { 'studio-workspace-v1': '{"active":"b"}', 'aib-file-tabs-v1': '{}' } },
+  ]);
+  assert.deepEqual(ctl.pending(), {});
+});
+
+test('a malformed batch (400) is not sent again; keys the server refused are not either', async () => {
+  const p = page({}, {}, [400, 200]);
+  p.storage.setItem('studio-chat-views', 'x');
+  await p.runTimers();
+  assert.deepEqual(p.ctl.pending(), {});
+  p.storage.setItem('studio-workspace-v1', '{"active":"a"}');
+  await p.runTimers();
+  assert.equal(p.posts.length, 2);
+  assert.equal(p.timers.length, 0, 'no retry planned');
+});
+
+test('the one-time move covers the new keys: a page from before this build pushes its files tabs, open folders and seen turns up', async () => {
+  const p = page(
+    { 'studio-workspace-v1': '{"v":1,"active":"w:c:/p"}' },
+    {
+      'studio-workspace-v1': '{"v":1,"active":"w:c:/old"}',
+      'aib-file-tabs-v1': '{"w:c:/p":{"tabs":[]}}',
+      'aib-files-open-v1': '{"w:c:/p\nmain":["src"]}',
+      'studio-seen-turns': '{"claude:a":5}',
+      'aib-sidebar-mode': 'files',
+    },
+  );
+  assert.equal(p.storage.getItem('studio-workspace-v1'), '{"v":1,"active":"w:c:/p"}', 'the data folder still wins');
+  await p.runTimers();
+  assert.deepEqual(Object.keys(p.posts[0].body.set).sort(), [
+    'aib-file-tabs-v1',
+    'aib-files-open-v1',
+    'aib-sidebar-mode',
+    'studio-seen-turns',
+  ]);
 });
 
 test('without the data block (a server without view preferences) nothing is hooked or sent', () => {

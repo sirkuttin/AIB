@@ -5,8 +5,13 @@
      * at start: the server writes the saved values into chat.html (<script type="application/json" id="aibViewPrefs">); each one
        is put into localStorage before any other page script reads it. A key the data folder does not have yet is taken from
        localStorage instead and sent to the server (the one-time move of what an older copy of the app remembered).
-     * afterwards: every localStorage.setItem / removeItem of one of these keys is sent to the server (debounced, and once more
-       when the page is hidden or closed).
+     * afterwards: every localStorage.setItem / removeItem of one of these keys is sent to the server at once (the changes of one
+       moment go together; while one request is on its way the next changes wait for it). Nothing waits for the page to close:
+       quitting AIB ends the app process at once, so a change still waiting then would be lost (seen with 0.1.0-beta.8-test4:
+       a project picked half a second before quitting was gone after the restart). Hiding or closing the page still sends
+       anything left, as a last try.
+     * each key stands alone: one the server refuses (too big, say) is dropped from the queue, the rest are saved; a server that
+       cannot write its file just now (503) or cannot be reached gets the same keys again a few seconds later.
    Without the data block (a server without view preferences) nothing is changed. Per-chat drafts, read positions, caches and
    other transient state stay in this browser only. */
 (function (root) {
@@ -32,6 +37,12 @@
     'studio-notifications-app', // the desktop app's notification choices (notify-ui.js; a browser's stay in that browser)
     'aib-theme', // the colour theme (themes.js)
     'aib-status-glyphs', // status symbols on or off (themes.js)
+    'studio-seen-turns', // "your turn" chats already looked at, so they do not come back to the inbox (workspace-ui.js)
+    'aib-sidebar-mode', // the sidebar's Chats | Files switch (files-ui.js)
+    'aib-file-tabs-v1', // file tabs open per project (files-ui.js)
+    'aib-files-open-v1', // folders open in the Files tree, per project and tree (files-ui.js)
+    'studio-sidebar-epoch', // when this copy of AIB first ran: older finished chats do not show as unread (sidebar-ui.js)
+    'studio-new-chat-agent', // the agent last picked for a new chat, the fallback when Settings names none (agent-choice.js)
   ]);
   const PREFIXES = Object.freeze([
     'studio-textsize-v1:', // chat text and interface size, code font, line spacing
@@ -39,7 +50,7 @@
   ]);
   const synced = (k) =>
     typeof k === 'string' && (KEYS.includes(k) || PREFIXES.some((p) => k.startsWith(p) && k.length > p.length));
-  const DEBOUNCE_MS = 500,
+  const GAP_MS = 100, // at most one request per GAP_MS while something keeps changing (a width being dragged)
     RETRY_MS = 5000;
 
   /* What to do at start. saved: {key: value} from the data folder; local: {key: value} of the synced keys in localStorage.
@@ -110,13 +121,20 @@
     let pending = { ...upload },
       timer = 0,
       sending = false,
+      lastSent = -Infinity,
       token = '';
+    const clock = opts.now || (() => Date.now());
     const schedule = (ms) => {
       if (timer) cancel(timer);
       timer = later(() => {
         timer = 0;
         return flush(false);
       }, ms);
+    };
+    // A change goes out on the next tick (the writes of one click travel together), or GAP_MS after the previous request.
+    const soon = () => {
+      if (timer || sending) return; // already planned, or sent right after the request on its way
+      schedule(Math.max(0, lastSent + GAP_MS - clock()));
     };
     async function getToken(fresh) {
       if (token && !fresh) return token;
@@ -136,30 +154,32 @@
     }
     async function flush(keepalive) {
       if (!doFetch || !Object.keys(pending).length) return false;
-      if (sending && !keepalive) {
-        schedule(DEBOUNCE_MS);
-        return false;
-      }
+      if (sending && !keepalive) return false; // the request on its way sends what is left when it ends
       const batch = pending;
       pending = {};
       sending = true;
+      lastSent = clock();
+      let retry = false;
       try {
         const body = JSON.stringify({ set: batch });
         let r = await post(body, keepalive, false);
         if (r.status === 403) r = await post(body, keepalive, true); // Studio restarted: a new token
-        if (!r.ok && r.status !== 400) throw new Error('view-prefs ' + r.status);
-        return r.ok; // a 400 (a value too big, say) is not retried: the same body would fail again
+        if (r.status === 400) return false; // a malformed batch: the same body would fail again
+        if (!r.ok) throw new Error('view-prefs ' + r.status); // 503: the file is busy just now
+        return true; // keys the server refused (too big) are not sent again: they would be refused again
       } catch (e) {
         pending = { ...batch, ...pending }; // newer changes win
-        schedule(RETRY_MS);
+        retry = true;
         return false;
       } finally {
         sending = false;
+        if (retry) schedule(RETRY_MS);
+        else if (Object.keys(pending).length && !timer) soon();
       }
     }
     function note(k, v) {
       pending[k] = v;
-      schedule(DEBOUNCE_MS);
+      soon();
     }
 
     const isOurs = (s) => {
@@ -194,7 +214,8 @@
         if (win.document.visibilityState === 'hidden') unload();
       });
     }
-    if (Object.keys(pending).length) schedule(DEBOUNCE_MS);
+    if (Object.keys(pending).length) soon();
+    else if (doFetch) getToken(false).catch(() => {}); // ready before the first change, so it is one request, not two
     live = {
       seeded: Object.keys(seed),
       uploading: Object.keys(upload),

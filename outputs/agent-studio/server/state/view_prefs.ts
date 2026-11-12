@@ -6,7 +6,10 @@
  *
  * The page owns the meaning: this store keeps opaque strings under localStorage key names (view-prefs.js lists which keys).
  * The page reads them from chat.html (server.ts writes them into a JSON data block) and writes changes with
- * POST /api/live/view-prefs {set: {key: string | null}} (null removes the key).
+ * POST /api/live/view-prefs {set: {key: string | null}} (null removes the key). Each key stands alone: a bad or oversized one is
+ * refused (listed in the answer's `refused`) and the rest are saved. This is also where the sidebar's project, its open tabs and
+ * last chat per project, the Files tabs and open folders and the inbox's seen turns live, so a new copy of the app unzipped into
+ * another folder (a fresh WebView2 profile) opens where the last one left off.
  *
  *   studio-view.json: {"version": 1, "prefs": {key: string}}
  */
@@ -18,7 +21,7 @@ export class ViewPrefs extends JsonFileStore {
   static FILE = 'studio-view.json';
   static MAX_KEYS = 200;
   static MAX_VALUE = 256 * 1024; // characters, per key (the per-chat view choices and chat names are the big ones)
-  static MAX_TOTAL = 1024 * 1024; // characters, all values together
+  static MAX_TOTAL = 2 * 1024 * 1024; // characters, all values together
   /** A localStorage key name the page uses: 'studio-...', 'aib-...' or 'agentStudio.…', with a bucket suffix like ':<1400'. */
   static KEY = /^(?:studio-|aib-|agentStudio\.)[A-Za-z0-9._:<>=-]{1,100}$/;
 
@@ -81,29 +84,40 @@ export class ViewPrefs extends JsonFileStore {
     this.seen = this.stamp();
   }
 
-  /** Apply {set: {key: string | null}}. The whole patch is refused when any key or value is invalid or the result is too big. */
-  update(body: unknown): Promise<boolean> {
+  /**
+   * Apply {set: {key: string | null}} key by key: a key with a bad name or value, or one that would push the file past MAX_TOTAL,
+   * is refused on its own and the others are still saved (one oversized value must never cost the open project and tabs).
+   * Returns {changed, refused: [key]}. A malformed body is a ValueError; a file that cannot be read or written just now is a
+   * ViewPrefsBusy (the route answers 503 and the page sends the same keys again a little later).
+   */
+  update(body: unknown): Promise<{ changed: boolean; refused: string[] }> {
     if (!isDict(body) || !isDict(body.set)) return Promise.reject(new ValueError('Invalid request'));
     const changes = entriesOf(body.set);
     if (changes.length > ViewPrefs.MAX_KEYS) return Promise.reject(new ValueError('Too many view preferences at once'));
+    const refused: string[] = [];
+    const valid: [string, string | null][] = [];
     for (const [key, value] of changes) {
-      if (!ViewPrefs.key(key)) return Promise.reject(new ValueError('Invalid view preference name'));
-      if (value !== null && (typeof value !== 'string' || value.length > ViewPrefs.MAX_VALUE)) {
-        return Promise.reject(new ValueError('Invalid view preference value'));
-      }
+      const ok = ViewPrefs.key(key) && (value === null || (typeof value === 'string' && value.length <= ViewPrefs.MAX_VALUE));
+      if (ok) valid.push([key, value as string | null]);
+      else refused.push(String(key).slice(0, 120));
     }
     return this.locked(() => {
       this.sync();
       const before = deepCopy(this.prefs);
       const next = { ...this.prefs };
-      for (const [key, value] of changes) {
-        if (value === null) delete next[key];
-        else next[key] = value as string;
+      // Removals first, then the new values smallest first, so the small ones (the workspace, a width) always fit.
+      for (const [key, value] of valid) if (value === null) delete next[key];
+      const sets = valid.filter(([, v]) => v !== null).sort((a, b) => (a[1] as string).length - (b[1] as string).length);
+      for (const [key, value] of sets) {
+        const had = next[key];
+        next[key] = value as string;
+        if (Object.keys(next).length > ViewPrefs.MAX_KEYS || ViewPrefs.#total(next) > ViewPrefs.MAX_TOTAL) {
+          if (had === undefined) delete next[key];
+          else next[key] = had;
+          refused.push(key);
+        }
       }
-      if (Object.keys(next).length > ViewPrefs.MAX_KEYS || ViewPrefs.#total(next) > ViewPrefs.MAX_TOTAL) {
-        throw new ValueError('View preferences are too big to save');
-      }
-      if (sameJson(next, before)) return false;
+      if (sameJson(next, before)) return { changed: false, refused };
       this.prefs = next;
       try {
         this.#save();
@@ -111,11 +125,16 @@ export class ViewPrefs extends JsonFileStore {
         if (!isOSError(error)) throw error;
         this.prefs = before;
         this.warning = `AIB could not save view preferences: ${errorText(error)}`;
-        throw new ValueError(this.warning);
+        throw new ViewPrefsBusy(this.warning);
       }
       this.warning = '';
       this.counter++;
-      return true;
+      return { changed: true, refused };
     });
   }
+}
+
+/** The state file could not be read or written just now (another program has it open, a full disk): try again later. */
+export class ViewPrefsBusy extends Error {
+  override name = 'ViewPrefsBusy';
 }

@@ -3,7 +3,7 @@
  * POST /api/live/view-prefs behind the page gate. The page half (view-prefs.js) is tested in work/test_view_prefs.js.
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { ViewPrefs } from "../../outputs/agent-studio/server/state/view_prefs.ts";
+import { ViewPrefs, ViewPrefsBusy } from "../../outputs/agent-studio/server/state/view_prefs.ts";
 import {
   makeContext,
   WebServer,
@@ -28,13 +28,13 @@ Deno.test("view prefs: saved in studio-view.json, read back by a new store, null
           "studio-textsize-v1:<1800": '{"chat":120}',
         },
       }),
-      true,
+      { changed: true, refused: [] },
     );
     assertEquals(
       await store.update({
         set: { "studio-workspace-v1": '{"active":"all"}' },
       }),
-      false,
+      { changed: false, refused: [] },
       "no change, no save",
     );
     const again = new ViewPrefs(dir);
@@ -52,28 +52,75 @@ Deno.test("view prefs: saved in studio-view.json, read back by a new store, null
     assertEquals([file.version, file.prefs], [1, {
       "studio-workspace-v1": '{"active":"all"}',
     }]);
+    for (const bad of [null, {}, { set: "x" }, { set: [] }]) await assertRejects(() => store.update(bad), ValueError);
+    // a bad key or value is refused on its own; it never costs the good ones in the same request
     for (
-      const bad of [
-        null,
-        {},
-        { set: "x" },
-        { set: { "not-ours": "1" } },
-        { set: { "studio-x": 5 } },
-        { set: { "studio-x": "ok", "../evil": "x" } },
-        { set: { "studio-x": "x".repeat(ViewPrefs.MAX_VALUE + 1) } },
-      ]
-    ) await assertRejects(() => store.update(bad), ValueError);
+      const [bad, name] of [
+        [{ "not-ours": "1" }, "not-ours"],
+        [{ "studio-x": 5 }, "studio-x"],
+        [{ "../evil": "x" }, "../evil"],
+        [{ "studio-x": "x".repeat(ViewPrefs.MAX_VALUE + 1) }, "studio-x"],
+      ] as [Record<string, unknown>, string][]
+    ) {
+      assertEquals(await store.update({ set: { ...bad, "studio-side-hidden": "1" } }), { changed: true, refused: [name] });
+      await store.update({ set: { "studio-side-hidden": null } });
+    }
     assertEquals(store.public().prefs, {
       "studio-workspace-v1": '{"active":"all"}',
     });
-    // the total size is capped too
+    // the total size is capped too: the values that do not fit are refused, the small ones (the project, the tabs) still saved
     const big = "x".repeat(ViewPrefs.MAX_VALUE);
-    const many: Record<string, string> = {};
-    for (let i = 0; i < 5; i++) many[`studio-big-${i}`] = big;
-    await assertRejects(() => store.update({ set: many }), ValueError);
+    const many: Record<string, string> = { "studio-workspace-v1": '{"active":"w:c:/p"}' };
+    const fit = Math.floor(ViewPrefs.MAX_TOTAL / ViewPrefs.MAX_VALUE) - 1;
+    for (let i = 0; i < fit + 3; i++) many[`studio-big-${i}`] = big;
+    const r = await store.update({ set: many });
+    assertEquals(r.changed, true);
+    assertEquals(r.refused.length, 3, JSON.stringify(r.refused));
+    assertEquals(store.public().prefs["studio-workspace-v1"], '{"active":"w:c:/p"}');
+    assert(Object.values(store.public().prefs).reduce((n, v) => n + v.length, 0) <= ViewPrefs.MAX_TOTAL);
+    const back = new ViewPrefs(dir).public().prefs;
+    assertEquals(back["studio-workspace-v1"], '{"active":"w:c:/p"}', "and it is on disk");
     // a corrupt file is set aside, not fatal
     Deno.writeTextFileSync(`${dir}${sep}studio-view.json`, "{nope");
     assertEquals(new ViewPrefs(dir).public().prefs, {});
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("view prefs: a file that cannot be written just now is a ViewPrefsBusy (503, sent again), and nothing changes", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "aib-view-busy-" });
+  try {
+    const store = new ViewPrefs(dir);
+    await store.update({ set: { "studio-workspace-v1": "a" } });
+    // the file's place taken by a folder: the save fails with an OS error
+    Deno.removeSync(`${dir}${sep}studio-view.json`);
+    Deno.mkdirSync(`${dir}${sep}studio-view.json`);
+    Deno.writeTextFileSync(`${dir}${sep}studio-view.json${sep}x`, "x");
+    const fresh = new ViewPrefs(dir);
+    await assertRejects(() => fresh.update({ set: { "studio-workspace-v1": "b" } }), ViewPrefsBusy);
+    assertEquals(fresh.public().prefs["studio-workspace-v1"], undefined, "not taken as saved");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("view prefs: the state a new copy of the app needs survives a restart from another folder (store level)", async () => {
+  // what a page from another build folder writes, read back by a new process on the same data folder
+  const dir = await Deno.makeTempDir({ prefix: "aib-view-move-" });
+  try {
+    const ws = JSON.stringify({ v: 1, active: "w:c:/repos/app", tabs: { "w:c:/repos/app": ["claude:s1"] }, last: { "w:c:/repos/app": "claude:s1" } });
+    await new ViewPrefs(dir).update({
+      set: {
+        "studio-workspace-v1": ws,
+        "aib-file-tabs-v1": '{"w:c:/repos/app":{"tabs":[{"path":"README.md","scope":{"id":"main"}}]}}',
+        "aib-files-open-v1": '{"w:c:/repos/app\nmain":["src"]}',
+        "studio-seen-turns": '{"claude:s1":1700000000}',
+      },
+    });
+    const prefs = new ViewPrefs(dir).public().prefs;
+    assertEquals(prefs["studio-workspace-v1"], ws);
+    assertEquals(Object.keys(prefs).sort(), ["aib-file-tabs-v1", "aib-files-open-v1", "studio-seen-turns", "studio-workspace-v1"]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -159,7 +206,10 @@ Deno.test("the web server: chat.html has the saved values, POST /api/live/view-p
     assertEquals(r.status, 403, "another origin is refused");
     await r.body?.cancel();
     r = await post({ set: { nope: "1" } });
-    assertEquals(r.status, 400);
+    assertEquals(r.status, 200, "a bad key is refused on its own");
+    assertEquals((await r.json()).refused, ["nope"]);
+    r = await post({ set: "nope" });
+    assertEquals(r.status, 400, "a malformed body");
     await r.body?.cancel();
     const page = await (await fetch(`${origin}/`)).text();
     const m = page.match(
