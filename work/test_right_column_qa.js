@@ -190,3 +190,75 @@ test('option C: builtBanner and the card line name the doc page', () => {
   const m = A.cardModel({ op: 'publish', input: {}, result: { id: 'a', version: 1 }, status: 'completed' }, [Object.assign({ kind: 'html', version: 1 }, a)]);
   assert.equal(A.cardLine(m), 'Artifact \u00b7 HTML page \u00b7 v1 \u00b7 built from Release plan \u203a Rollout');
 });
+
+test('Edit and Request a change: Markdown gets Edit (one click makes the doc, opens it at the block you read), others Request a change', async () => {
+  const { UI, view, shell, ctx } = viewer();
+  const posts = [];
+  const realFetch = ctx.fetch;
+  ctx.fetch = async (url, init) => {
+    if (/docs\/from-artifact$/.test(url)) {
+      posts.push(JSON.parse(init.body));
+      return { ok: true, status: 200, json: async () => ({ ok: true, name: 'load-test-summary', title: 'Load test summary', dir: 'aib-docs/load-test-summary', blocks: ['b1', 'b2', 'b3'] }) };
+    }
+    if (/docs\/became/.test(url)) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, became: { name: 'load-test-summary', title: 'Load test summary', undo: true, markdown: 'Typed **now**.' } }) };
+    }
+    return realFetch(url, init);
+  };
+  const opened = [];
+  ctx.AgentDocLinks = { openDoc: (o) => opened.push(o), cached: () => [], listFor: async () => [], forget() {} };
+  ctx.AgentMarkdown = { render: (box, md) => box.append(Object.assign(shell.document.createElement('p'), { textContent: 'MD:' + md })) };
+  UI.upsert(art('m1', 'Load test summary', 2, 100, { kind: 'md', conversationId: 'chat1' }));
+  UI.setVisible(true);
+  await flush();
+  const edit = view.querySelector('.ar-edit'),
+    request = view.querySelector('.ar-request');
+  assert.equal(edit.hidden, false);
+  assert.equal(edit.textContent, '\u270e Edit');
+  assert.equal(edit.title, A.EDIT_TIP);
+  assert.match(A.EDIT_TIP, /saved in aib-docs\/ and nothing is committed until you commit/);
+  assert.equal(request.hidden, true);
+  UI._S.scroll = { x: 0, y: 900, f: 1 };
+  edit.click();
+  await flush();
+  assert.deepEqual(posts, [{ id: 'chat1', artifact: 'm1' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(opened[0])), { name: 'load-test-summary', title: 'Load test summary', block: 'b3', chat: { id: 'chat1' }, from: 'chat' });
+  // now a doc: the banner, the picker's "→ doc", no Edit, and the doc's text now in the stage
+  const became = view.querySelector('.ar-became');
+  assert.equal(became.hidden, false);
+  assert.equal(became.querySelector('.ar-built-t').textContent, 'Now a doc: Load test summary \u00b7 ');
+  assert.equal(became.querySelector('.ar-undo').hidden, false);
+  assert.equal(edit.hidden, true);
+  assert.equal(A.pickerGroups(UI._S.list, 'm1', 0, [], [])[0].items[0].meta, '\u2192 doc');
+  await flush();
+  const live = view.querySelector('.ar-live');
+  assert.ok(live, 'the live preview');
+  assert.equal(live.querySelector('p').textContent, 'MD:Typed **now**.');
+  assert.equal(live.querySelector('.ar-live-note').textContent, 'v1\u2013v2 stay here as read-only history');
+  // an HTML artifact: Request a change puts it in the box as a link chip and focuses the box
+  const box = shell.document.createElement('textarea');
+  box.id = 'prompt';
+  shell.document.body.append(box);
+  const byId = ctx.document.getElementById.bind(ctx.document);
+  ctx.document.getElementById = (id) => (id === 'prompt' ? box : byId(id));
+  UI.upsert(art('h1', 'Checkout v2 timeline', 1, 200));
+  await UI.open('h1');
+  await flush();
+  assert.equal(view.querySelector('.ar-edit').hidden, true);
+  assert.equal(request.hidden, false);
+  request.click();
+  assert.equal(box.value, '[Checkout v2 timeline](studio-artifact://h1) ');
+  assert.equal(shell.document.activeElement, box);
+  request.click();
+  assert.equal(box.value, '[Checkout v2 timeline](studio-artifact://h1) ', 'never twice');
+});
+
+test('Edit helpers: which word button, and the block at a scroll fraction', () => {
+  assert.equal(A.barAction({ kind: 'md' }), 'edit');
+  assert.equal(A.barAction({ kind: 'html' }), 'request');
+  assert.equal(A.barAction({ kind: 'md', becameDoc: 'x' }), '');
+  assert.equal(A.blockAt(['a', 'b', 'c', 'd', 'e'], 0), 'a');
+  assert.equal(A.blockAt(['a', 'b', 'c', 'd', 'e'], 0.5), 'c');
+  assert.equal(A.blockAt(['a', 'b', 'c', 'd', 'e'], 1), 'e');
+  assert.equal(A.blockAt([], 0.4), '');
+});

@@ -105,7 +105,7 @@ export const SCROLL_SCRIPT = `<script>(function(){try{var m=/studio-scroll=(-?[0
 function go(){if(m)window.scrollTo(+m[1],+m[2]);}
 if(m){go();window.addEventListener('load',function(){go();setTimeout(go,60);});}
 var t=0;window.addEventListener('scroll',function(){if(t)return;t=requestAnimationFrame(function(){t=0;
-try{parent.postMessage({type:'studio-artifact-scroll',x:window.scrollX,y:window.scrollY},'*');}catch(e){}});},{passive:true});}catch(e){}})();</script>`;
+try{parent.postMessage({type:'studio-artifact-scroll',x:window.scrollX,y:window.scrollY,f:Math.max(0,document.documentElement.scrollHeight-innerHeight)?window.scrollY/Math.max(1,document.documentElement.scrollHeight-innerHeight):0},'*');}catch(e){}});},{passive:true});}catch(e){}})();</script>`;
 
 const S = `[${PY_SPACE}]`; // Python's \s
 const NS = `[^${PY_SPACE}]`; // Python's \S

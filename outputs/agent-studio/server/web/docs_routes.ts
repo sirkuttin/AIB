@@ -14,6 +14,12 @@
  *                                                   page, pageTitle, rev, builtRev, changed, edits} | {gone: 'doc'|'page'} | null}.
  *   GET  /api/live/docs/shown?doc=<doc>             the doc header's "Shown in N artifacts": {artifacts: [{id, title, kind,
  *                                                   conversationId, page, pageTitle}]} (this project's artifacts built from it).
+ *   POST /api/live/docs/from-artifact {id, artifact}  Edit on a Markdown artifact: a new doc named after its title (" (2)" when
+ *                                                   taken) from its latest Markdown, linked to chat `id`; the artifact's manifest
+ *                                                   gets becameDoc. -> {name, title, dir, doc, blocks: [first page's ids]}.
+ *   POST /api/live/docs/from-artifact/undo {id, artifact}  Undo: only while the doc is as it was made (409 `edited` after); the doc
+ *                                                   goes and becameDoc is cleared.
+ *   GET  /api/live/docs/became?id=<chat>&artifact=  the viewer of a became-doc artifact: the doc's Markdown now, its rev, `undo`.
  *   POST /api/live/docs/link {doc, id}              link the doc to chat `id` (the user picked it): comments "Send" go there.
  *   GET  /api/live/docs/info?doc=<doc>              what the UI can show about an open doc: store.info (pages, rev, epoch, skipped
  *                                                   file edits, lossy blocks, linked chat, comment threads, claims, delete requests,
@@ -123,6 +129,79 @@ export function docsRoutes(): Map<string, Route> {
     const root = await rootFor(ctx, { id: [url.searchParams.get('id') ?? ''], root: [url.searchParams.get('root') || 'main'] });
     if (typeof root !== 'string') return root;
     return [200, { ok: true, docs: await ctx.docs.list(root), others: await ctx.docs.others(root) }];
+  });
+  // Edit on a Markdown artifact: it becomes a doc (one click, no dialog), linked to this chat.
+  routes.set('POST /api/live/docs/from-artifact', async (ctx, _url, body) => {
+    const root = await rootFor(ctx, { id: [String(body?.id ?? '')], root: ['main'] });
+    if (typeof root !== 'string') return root;
+    const store = ctx.artifacts.service.store;
+    let m;
+    try {
+      m = store.get(body?.artifact);
+    } catch {
+      return [404, { error: 'No such artifact', code: 'no_artifact' }];
+    }
+    if (m.kind !== 'md') return [400, { error: 'Only a Markdown artifact can be edited as a doc', code: 'not_markdown' }];
+    if (typeof m.becameDoc === 'string' && m.becameDoc) return [409, { error: `It is the doc "${m.becameDoc}" already`, code: 'became_doc', name: m.becameDoc }];
+    const markdown = store.source(m.id).text;
+    const base = String(m.title || 'Untitled doc').replace(/[^A-Za-z0-9 ._-]+/g, ' ').replace(/^[^A-Za-z0-9]+/, '').replace(/\s+/g, ' ').trim().slice(0, 70) || 'Untitled doc';
+    try {
+      let name = base;
+      for (let k = 2; await ctx.docs.exists(root, name) || await folderTaken(ctx, root, name); k++) name = `${base} (${k})`;
+      const doc = await ctx.docs.open(root, name, markdown);
+      ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.id ?? '')), true);
+      await ctx.docs.flush(doc);
+      store.setBecameDoc(m.id, doc.name, doc.live.rev);
+      ctx.artifacts.service.event(store.get(m.id));
+      return [200, { ok: true, name: doc.name, title: doc.title, dir: (await ctx.docs.infoWithOwned(doc)).dir, doc: doc.id, blocks: doc.live.topIds() }];
+    } catch (error) {
+      return refused(error);
+    }
+  });
+  routes.set('POST /api/live/docs/from-artifact/undo', async (ctx, _url, body) => {
+    const root = await rootFor(ctx, { id: [String(body?.id ?? '')], root: ['main'] });
+    if (typeof root !== 'string') return root;
+    const store = ctx.artifacts.service.store;
+    let m;
+    try {
+      m = store.get(body?.artifact);
+    } catch {
+      return [404, { error: 'No such artifact', code: 'no_artifact' }];
+    }
+    if (typeof m.becameDoc !== 'string' || !m.becameDoc) return [200, { ok: true, undone: false }];
+    try {
+      const doc = await ctx.docs.open(root, m.becameDoc);
+      if (doc.live.rev !== Number(m.becameDocRev)) {
+        return [409, { error: 'Someone has changed the doc since, so it stays. Move it to the trash from the doc if you want it gone.', code: 'edited' }];
+      }
+      await ctx.docs.discard(doc);
+    } catch (error) {
+      if (!(error instanceof DocRefusal) || error.code !== 'no_doc') return refused(error);
+    }
+    store.setBecameDoc(m.id, null);
+    return [200, { ok: true, undone: true }];
+  });
+  // The viewer of an artifact that became a doc: the doc's text now (read-only there), and whether Undo still applies.
+  routes.set('GET /api/live/docs/became', async (ctx, url) => {
+    const root = await rootFor(ctx, { id: [url.searchParams.get('id') ?? ''], root: ['main'] });
+    if (typeof root !== 'string') return root;
+    let m;
+    try {
+      m = ctx.artifacts.service.store.get(url.searchParams.get('artifact') ?? '');
+    } catch {
+      return [404, { error: 'No such artifact', code: 'no_artifact' }];
+    }
+    if (typeof m.becameDoc !== 'string' || !m.becameDoc) return [200, { ok: true, became: null }];
+    try {
+      const doc = await ctx.docs.open(root, m.becameDoc);
+      const pages = doc.live.pageList();
+      const markdown = pages.length === 1
+        ? ctx.docs.pageMarkdown(doc, pages[0].id)
+        : pages.map((p) => `# ${p.title}\n\n${ctx.docs.pageMarkdown(doc, p.id)}`).join('\n');
+      return [200, { ok: true, became: { name: doc.name, title: doc.title, rev: doc.live.rev, undo: doc.live.rev === Number(m.becameDocRev), markdown } }];
+    } catch {
+      return [200, { ok: true, became: { name: m.becameDoc, gone: true } }];
+    }
   });
   // "Built from <doc › page>" in the Artifacts viewer: has the page changed since the artifact was built?
   routes.set('GET /api/live/docs/built', async (ctx, url) => {
@@ -503,6 +582,17 @@ export async function docsTool(ctx: WebContext, body: Json): Promise<Reply> {
   const agent = chat.includes(':') ? chat.slice(0, chat.indexOf(':')) : 'agent';
   const [ok, result] = await runDocTool(ctx.docs, root, agent, tool, args, chat);
   return [200, { ok, result }];
+}
+
+/** A folder of that name in aib-docs/ that is no doc (AIB never writes into it). */
+async function folderTaken(ctx: WebContext, root: string, name: string): Promise<boolean> {
+  try {
+    const { docName } = await import('../docs/store.ts');
+    await Deno.stat(ctx.docs.docDir(root, docName(name)));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sameProject(a: string, b: string): boolean {

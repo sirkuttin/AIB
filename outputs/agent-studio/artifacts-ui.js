@@ -140,7 +140,9 @@
       id: a.id,
       badge: kindInfo(a.kind).badge,
       title: a.title || 'Untitled',
-      meta: 'v' + (num(a.version) || 1) + (relTime(a.updatedAt, nowMs) ? ' · ' + relTime(a.updatedAt, nowMs) : ''),
+      meta: a.becameDoc
+        ? '\u2192 doc'
+        : 'v' + (num(a.version) || 1) + (relTime(a.updatedAt, nowMs) ? ' · ' + relTime(a.updatedAt, nowMs) : ''),
       pinned: !!a.pinned,
       on: a.id === selectedId,
     });
@@ -450,6 +452,18 @@
   }
   /* "Built from <doc › page>" for an artifact (its fromDoc), and the banner the viewer shows: `state` is GET /api/live/docs/built's
      answer (null while it loads). Returns {from, stale, line, rebuild} where `rebuild` is the message "Rebuild from the doc" sends. */
+  const EDIT_TIP = "Edit opens this as a doc beside the chat. You and agents can both change it. It's saved in aib-docs/ and " +
+    'nothing is committed until you commit.';
+  /* The title bar's word button: Markdown artifacts get Edit (it becomes a doc), every other kind Request a change; none once it
+     became a doc. */
+  const barAction = (a) => (!a ? '' : a.becameDoc ? '' : a.kind === 'md' ? 'edit' : 'request');
+  /* Edit's cursor: the block nearest the viewer's scroll position, from how far down the page the viewer is. */
+  function blockAt(ids, fraction) {
+    const list = Array.isArray(ids) ? ids : [];
+    if (!list.length) return '';
+    const f = Math.min(1, Math.max(0, Number(fraction) || 0));
+    return list[Math.min(list.length - 1, Math.round(f * (list.length - 1)))];
+  }
   const docPageName = (f) => (f ? String(f.title || f.doc || 'doc') + ' \u203a ' + String(f.pageTitle || 'page') : '');
   function builtBanner(a, state) {
     const f = a && a.fromDoc;
@@ -649,6 +663,9 @@
     cardLine,
     builtBanner,
     docPageName,
+    barAction,
+    blockAt,
+    EDIT_TIP,
     outputsCardModel,
     writtenVersion,
     placeLeft,
@@ -1115,6 +1132,141 @@
     if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
     ui.more.setAttribute('aria-label', 'More');
     paintBuilt(a);
+    paintBecame(a);
+  }
+  /* -- Edit: a Markdown artifact becomes a doc; the viewer then shows the doc's text as it is now -- */
+  const becameStates = new Map(); // artifact id -> {at, state, loading}
+  const BECAME_MS = 2000;
+  function becameState(a) {
+    const rec = becameStates.get(a.id);
+    if (!(rec && (rec.loading || Date.now() - rec.at < BECAME_MS)) && S.chat.id) {
+      const next = { at: Date.now(), state: rec ? rec.state : null, loading: true };
+      becameStates.set(a.id, next);
+      api('/api/live/docs/became?' + q({ id: S.chat.id, artifact: a.id })).then(
+        (r) => {
+          const before = JSON.stringify(next.state);
+          next.state = (r && r.became) || null;
+          next.loading = false;
+          next.at = Date.now();
+          const cur = current();
+          if (cur && cur.id === a.id) {
+            paintBecame(cur);
+            if (JSON.stringify(next.state) !== before && livePreview(cur)) paintLive(cur);
+          }
+        },
+        () => {
+          next.loading = false;
+          next.at = Date.now();
+        },
+      );
+    }
+    return rec ? rec.state : null;
+  }
+  function paintBecame(a) {
+    if (!ui) return;
+    const act = barAction(a);
+    ui.edit.hidden = act !== 'edit' || !S.chat.id;
+    ui.request.hidden = act !== 'request';
+    const name = a && a.becameDoc;
+    ui.became.hidden = !name;
+    if (!name) return;
+    const st = becameState(a);
+    ui.becameText.replaceChildren(doc.createTextNode('Now a doc: '), el('b', '', (st && st.title) || name), doc.createTextNode(' \u00b7 '));
+    const undo = !!(st && st.undo);
+    ui.undoBtn.hidden = !undo;
+    ui.becameSep.hidden = !undo;
+  }
+  /* The latest version of a became-doc artifact shows the doc's text now (read-only), refreshed while the column shows it; an older
+     version (v1..vN) is the frozen file as before. */
+  const livePreview = (a) => !!(a && a.becameDoc && S.picked == null && S.mode === 'page');
+  let liveTimer = 0;
+  function paintLive(a) {
+    const st = becameState(a);
+    const box = el('div', 'ar-live markdown');
+    box.setAttribute('aria-label', 'The doc as it is now (read-only)');
+    if (st && st.gone) box.append(el('p', 'ar-msg', 'The doc "' + st.name + '" is gone. The versions above still show what it was.'));
+    else if (!st) box.append(el('p', 'ar-msg', 'Reading the doc\u2026'));
+    else {
+      const M = win.AgentMarkdown;
+      if (M && M.render) M.render(box, st.markdown || '');
+      else box.append(el('pre', 'ar-src', st.markdown || ''));
+    }
+    box.append(el('p', 'ar-live-note', 'v1\u2013v' + (num(a.version) || 1) + ' stay here as read-only history'));
+    setStage(box);
+    if (liveTimer) win.clearTimeout(liveTimer);
+    liveTimer = win.setTimeout(() => {
+      liveTimer = 0;
+      const cur = current();
+      if (S.visible && cur && cur.id === a.id && livePreview(cur)) becameState(cur);
+    }, BECAME_MS);
+    if (liveTimer && liveTimer.unref) liveTimer.unref();
+  }
+  async function editAsDoc() {
+    const a = current();
+    if (!a || barAction(a) !== 'edit' || !S.chat.id) return;
+    // how far down the viewer is reading (the frame's own scroll is another origin's: the stage's position stands in)
+    const st = ui.stage,
+      frac = st && st.scrollHeight > st.clientHeight ? st.scrollTop / (st.scrollHeight - st.clientHeight) : S.scroll && S.scroll.f ? S.scroll.f : 0;
+    ui.edit.disabled = true;
+    try {
+      const r = await api('/api/live/docs/from-artifact', { id: S.chat.id, artifact: a.id });
+      upsert(Object.assign({}, a, { becameDoc: r.name }));
+      const D = DL();
+      if (D && D.openDoc) D.openDoc({ name: r.name, title: r.title, block: blockAt(r.blocks, frac), chat: { id: S.chat.id }, from: 'chat' });
+      S.stageKey = '';
+      paintAll();
+      paintStage('refresh');
+    } catch (e) {
+      note('Could not make the doc: ' + e.message);
+    } finally {
+      ui.edit.disabled = false;
+    }
+  }
+  function openBecameDoc() {
+    const a = current(),
+      D = DL();
+    if (!a || !a.becameDoc || !D || !D.openDoc) return;
+    D.openDoc({ name: a.becameDoc, chat: { id: S.chat.id }, from: 'chat' });
+  }
+  async function undoEdit() {
+    const a = current();
+    if (!a || !a.becameDoc) return;
+    try {
+      await api('/api/live/docs/from-artifact/undo', { id: S.chat.id, artifact: a.id });
+      const next = Object.assign({}, a);
+      delete next.becameDoc;
+      const i = S.list.findIndex((x) => x.id === a.id);
+      if (i >= 0) {
+        const list = S.list.slice();
+        list[i] = next;
+        setList(list);
+      } else S.extras[a.id] = next;
+      becameStates.delete(a.id);
+      if (DL() && DL().forget) DL().forget();
+      S.stageKey = '';
+      paintAll();
+      paintStage('refresh');
+      note('Undone: the doc is gone and this is an artifact again.');
+    } catch (e) {
+      note(e.message);
+      becameStates.delete(a.id);
+      paintBecame(a);
+    }
+  }
+  /* Request a change: the artifact goes into the message box as a link chip, the box gets the focus for the words. */
+  function requestChange() {
+    const a = current();
+    const box = doc.getElementById('prompt');
+    if (!a || !box) return;
+    const link = '[' + String(a.title || 'Artifact').replace(/[\[\]]/g, '') + '](studio-artifact://' + a.id + ') ';
+    if (!String(box.value || '').includes('studio-artifact://' + a.id)) box.value = link + String(box.value || '');
+    try {
+      box.dispatchEvent(new win.Event('input', { bubbles: true }));
+    } catch (e) {
+      /* no Event here */
+    }
+    if (box.focus) box.focus();
+    if (box.setSelectionRange) box.setSelectionRange(box.value.length, box.value.length);
   }
   /* -- "Built from <doc › page>": the banner, the stale line and "Rebuild from the doc" -- */
   const builtStates = new Map(); // artifact id -> {at, version, state, loading}
@@ -1339,6 +1491,10 @@
     S.stageKey = key;
     if (!sameArtifact) S.scroll = null;
     S.scrollFor = a.id;
+    if (livePreview(a) && ver === latest) {
+      paintLive(a);
+      return;
+    }
     const url = frameUrlFor(a, ver);
     if (!url) {
       stageMessage('This artifact has no page to show yet.');
@@ -1888,7 +2044,15 @@
     more.setAttribute('aria-label', 'More');
     more.setAttribute('aria-haspopup', 'menu');
     more.setAttribute('aria-expanded', 'false');
-    bar.append(pick, ver, spacer, ext, more);
+    const edit = el('button', 'ar-word ar-edit', '\u270e Edit');
+    edit.type = 'button';
+    edit.title = EDIT_TIP;
+    edit.hidden = true;
+    const request = el('button', 'ar-word ar-request', 'Request a change');
+    request.type = 'button';
+    request.title = 'Puts this artifact in the message box, ready for you to say what to change';
+    request.hidden = true;
+    bar.append(pick, ver, spacer, edit, request, ext, more);
     const avail = el('div', 'ar-avail');
     avail.hidden = true;
     avail.setAttribute('role', 'status');
@@ -1918,6 +2082,17 @@
     const rebuildBtn = el('button', 'ar-switch ar-rebuild', 'Rebuild from the doc');
     rebuildBtn.type = 'button';
     stale.append(staleText, rebuildBtn);
+    // after Edit: "Now a doc: Load test summary · Open doc ↗ · Undo"
+    const became = el('div', 'ar-built ar-became');
+    became.hidden = true;
+    became.setAttribute('role', 'status');
+    const becameText = el('span', 'ar-built-t', '');
+    const becameOpen = el('button', 'ar-switch ar-became-open', 'Open doc \u2197');
+    becameOpen.type = 'button';
+    const becameSep = el('span', 'ar-built-t', ' \u00b7 ');
+    const undoBtn = el('button', 'ar-switch ar-undo', 'Undo');
+    undoBtn.type = 'button';
+    became.append(becameText, becameOpen, becameSep, undoBtn);
     const noteEl = el('p', 'ar-note');
     noteEl.hidden = true;
     noteEl.setAttribute('role', 'status');
@@ -1931,7 +2106,7 @@
     const pop = el('div', 'ar-pop');
     pop.hidden = true;
     pop.setAttribute('role', 'menu');
-    view.append(bar, avail, fresh, built, stale, noteEl, stage, empty, foot, pop);
+    view.append(bar, avail, fresh, built, stale, became, noteEl, stage, empty, foot, pop);
     ui = {
       view,
       bar,
@@ -1946,6 +2121,12 @@
       freshText,
       built,
       builtText,
+      edit,
+      request,
+      became,
+      becameText,
+      becameSep,
+      undoBtn,
       stale,
       staleText,
       note: noteEl,
@@ -1977,6 +2158,10 @@
       ver.focus({ preventScroll: true }); // QA m10: the Switch button goes away; the version chip takes the focus
     });
     builtOpen.addEventListener('click', () => openBuiltDoc());
+    edit.addEventListener('click', () => editAsDoc());
+    request.addEventListener('click', () => requestChange());
+    becameOpen.addEventListener('click', () => openBecameDoc());
+    undoBtn.addEventListener('click', () => undoEdit());
     rebuildBtn.addEventListener('click', () => rebuild());
     freshOpen.addEventListener('click', () => {
       const id = S.fresh;
@@ -2025,7 +2210,8 @@
       if (!d || d.type !== 'studio-artifact-scroll' || !ui.frame || e.source !== ui.frame.contentWindow) return;
       const x = Number(d.x),
         y = Number(d.y);
-      if (Number.isFinite(x) && Number.isFinite(y)) S.scroll = { x, y };
+      const f = Number(d.f);
+      if (Number.isFinite(x) && Number.isFinite(y)) S.scroll = { x, y, f: Number.isFinite(f) ? f : 0 };
     });
     win.setInterval(() => refreshCards(), 30000);
     paintCount();

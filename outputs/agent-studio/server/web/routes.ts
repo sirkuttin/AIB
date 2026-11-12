@@ -31,6 +31,9 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/docs/comment/send          local docs: "Send to agent" queues a comment thread to the doc's chat
  *   GET  /api/live/docs/built                 local docs: "Built from <doc › page>": has the page changed since?
  *   GET  /api/live/docs/shown                 local docs: the artifacts built from a doc (its "Shown in N artifacts" chip)
+ *   GET  /api/live/docs/became                local docs: an artifact that became a doc (Edit): the doc's text now, Undo or not
+ *   POST /api/live/docs/from-artifact         local docs: Edit on a Markdown artifact makes it a doc
+ *   POST /api/live/docs/from-artifact/undo    local docs: Undo of Edit while nobody changed the doc
  *   POST /api/live/docs/link                  local docs: link a doc to the chat the user picked
  *   POST /api/live/docs/page                  local docs: the user's page operations (add, rename, move, duplicate, delete)
  *   POST /api/live/docs/page/request          local docs: the user answers an agent's page delete request (delete / keep)
@@ -63,6 +66,9 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/docs/list', 'read', 'get'],
   ['GET', '/api/live/docs/info', 'read', 'get'],
   ['GET', '/api/live/docs/built', 'read', 'get'],
+  ['GET', '/api/live/docs/became', 'read', 'get'],
+  ['POST', '/api/live/docs/from-artifact', 'write', 'body'],
+  ['POST', '/api/live/docs/from-artifact/undo', 'write', 'body'],
   ['GET', '/api/live/docs/shown', 'read', 'get'],
   ['GET', '/api/live/docs/socket', 'write', 'get'],
   ['POST', '/api/live/docs/tool', 'artifacts.tool', 'own-gate'],

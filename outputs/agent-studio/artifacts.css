@@ -553,3 +553,43 @@ a.artifact-link:hover {
 a.artifact-link code {
   color: inherit;
 }
+
+/* Option C, the title bar's word buttons: Edit (Markdown artifacts become a doc) and Request a change (every other kind). */
+.ar-word {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ar-word.ar-edit {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ar-word[hidden] {
+  display: none;
+}
+.ar-word:disabled {
+  opacity: 0.6;
+}
+/* A became-doc artifact's latest version: the doc's text as it is now, read-only. */
+.ar-live {
+  padding: 12px 16px;
+  overflow: auto;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.ar-live-note {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ar-switch[hidden],
+.ar-built-t[hidden] {
+  display: none;
+}

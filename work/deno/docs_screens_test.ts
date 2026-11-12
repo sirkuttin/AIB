@@ -360,6 +360,78 @@ Deno.test('"Built from <doc › page>": publish with fromDoc keeps the page and 
   }
 });
 
+Deno.test('Edit on a Markdown artifact: a doc named after it (" (2)" when taken), linked; update refused became_doc; the live text; Undo while untouched', async () => {
+  const s = await studio();
+  configureKeys(s.state);
+  s.ctx.gate = new Gate(9, () => 'token');
+  try {
+    s.chat('c1', 'claude', 'a', null, true);
+    await s.ctx.artifacts.refresh();
+    const publish = async (body: Json): Promise<[number, Json]> => {
+      const text = JSON.stringify({ conversationId: 'c1', ...body });
+      const request = new Request('http://127.0.0.1/api/live/artifacts/publish', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': String(new TextEncoder().encode(text).length),
+          'X-Studio-Artifact-Key': issue('c1')!,
+          Host: '127.0.0.1:9',
+        },
+        body: text,
+      });
+      const [status, payload] = await ownGatePost(s.ctx, request, new URL(request.url));
+      return [status, payload as Json];
+    };
+    // a doc of that name exists already: the new one is "Load test summary (2)"
+    await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Load test summary', create: 'Older.\n' });
+    const [, made] = await publish({ title: 'Load test summary', filename: 'summary.md', content: '# Load test\n\np99 latency 412 ms.\n\nCart saturates first.\n' });
+    const id = String(made.id);
+    const [st, edited] = await s.call('POST /api/live/docs/from-artifact', { id: 'claude:a', artifact: id });
+    assertEquals(st, 200, JSON.stringify(edited));
+    assertEquals([edited.name, edited.title, edited.dir], ['load-test-summary-2', 'Load test summary (2)', 'aib-docs/load-test-summary-2']);
+    assertEquals((edited.blocks as string[]).length, 3, 'the block ids, for the cursor');
+    const doc = s.ctx.docs.get(String(edited.doc))!;
+    assertEquals(doc.chat, 'claude:a', 'linked to this chat');
+    assertEquals(s.ctx.docs.pageMarkdown(doc), '# Load test\n\np99 latency 412 ms.\n\nCart saturates first.\n');
+    const store = s.ctx.artifacts.service.store;
+    assertEquals(store.get(id).becameDoc, 'load-test-summary-2');
+    assertEquals((store.list(null) as Json[]).find((a) => a.id === id)!.becameDoc, 'load-test-summary-2');
+    // Edit again: it is a doc already
+    assertEquals((await s.call('POST /api/live/docs/from-artifact', { id: 'claude:a', artifact: id }))[1].code, 'became_doc');
+    // the agent's next update is refused, naming the doc and the doc tools
+    const [refusedStatus, refused] = await publish({ id, content: '# New\n' });
+    assertEquals([refusedStatus, refused.code], [409, 'became_doc']);
+    assert(String(refused.error).includes('load-test-summary-2') && String(refused.error).includes('doc_edit'));
+    assertEquals(store.get(id).versions.length, 1, 'no new version');
+    // the viewer shows the doc's text now, and Undo while nobody has changed it
+    let [, b] = await s.call('GET /api/live/docs/became', null, `id=claude:a&artifact=${id}`);
+    assertEquals([(b.became as Json).undo, (b.became as Json).title], [true, 'Load test summary (2)']);
+    const user = new UserClient(doc.live);
+    user.type(doc.live.topIds()[1], 0, 'Measured: ');
+    [, b] = await s.call('GET /api/live/docs/became', null, `id=claude:a&artifact=${id}`);
+    assert(String((b.became as Json).markdown).includes('Measured: p99 latency'), 'the live text');
+    assertEquals((b.became as Json).undo, false, 'typed in: no Undo');
+    assertEquals((await s.call('POST /api/live/docs/from-artifact/undo', { id: 'claude:a', artifact: id }))[1].code, 'edited');
+    assertEquals(store.get(id).becameDoc, 'load-test-summary-2');
+    // a second artifact, untouched after Edit: Undo removes the doc and turns it back
+    const [, two] = await publish({ title: 'Notes', filename: 'notes.md', content: 'Just notes.\n' });
+    const [, e2] = await s.call('POST /api/live/docs/from-artifact', { id: 'claude:a', artifact: two.id });
+    assertEquals(e2.name, 'notes');
+    assert(await exists(`${s.project}${sep}aib-docs${sep}notes${sep}doc.aibdoc`));
+    const [, undone] = await s.call('POST /api/live/docs/from-artifact/undo', { id: 'claude:a', artifact: two.id });
+    assertEquals(undone.undone, true);
+    assertEquals(await exists(`${s.project}${sep}aib-docs${sep}notes`), false, 'the doc is gone');
+    assertEquals(store.get(String(two.id)).becameDoc, undefined);
+    assertEquals((await publish({ id: two.id, content: 'Notes again.\n' }))[0], 200, 'an artifact again: update works');
+    // an HTML artifact has no Edit
+    const [, page] = await publish({ title: 'Page', filename: 'p.html', content: '<p>x</p>' });
+    assertEquals((await s.call('POST /api/live/docs/from-artifact', { id: 'claude:a', artifact: page.id }))[1].code, 'not_markdown');
+  } finally {
+    configureKeys(null);
+    await s.done();
+  }
+});
+
 Deno.test('the turn signal: a turn under 2 s and a cancelled turn both leave the refused note; one made good leaves none; presence and claims go', async () => {
   const s = await studio();
   try {

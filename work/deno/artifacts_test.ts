@@ -1221,7 +1221,7 @@ Deno.test('interop: Deno writes, Python reads and extends; Deno reads that back'
   assertEquals(store.source(m.id, 3).text, 'one\n');
 });
 
-Deno.test('interop: a "built from" link (fromDoc, Deno only) survives Python rewriting the manifest', async () => {
+Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) survive Python rewriting the manifest', async () => {
   using tmp = temp();
   const root = join(tmp.dir, 'artifacts');
   const clock = new Clock(1000.0);
@@ -1230,6 +1230,7 @@ Deno.test('interop: a "built from" link (fromDoc, Deno only) survives Python rew
   const m = store.create('c1', 'Timeline', 'html', 't.html', enc('<p>one</p>'), { project: 'P' });
   const fromDoc = { doc: 'release-plan', title: 'Release plan', page: 'p2', pageTitle: 'Rollout', rev: 7 };
   store.setFromDoc(m.id, fromDoc);
+  store.setBecameDoc(m.id, 'timeline', 3);
   await py.call('artifacts_shim', 'store_run', [root, [
     { call: 'add_version', args: [m.id, b('<p>two</p>')], kwargs: { by: 'tool', title: 'Timeline v2' } },
     { call: 'set_pinned', args: [m.id, true] },
@@ -1239,6 +1240,7 @@ Deno.test('interop: a "built from" link (fromDoc, Deno only) survives Python rew
   assertEquals(after.title, 'Timeline v2');
   assertEquals(after.fromDoc, fromDoc);
   assertEquals(store.summary(after).fromDoc, fromDoc);
+  assertEquals([after.becameDoc, after.becameDocRev, store.summary(after).becameDoc], ['timeline', 3, 'timeline'], 'Edit made it a doc: kept too');
 });
 
 Deno.test('parity teardown', async () => {

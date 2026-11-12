@@ -476,7 +476,25 @@ export class ArtifactStore {
     if (manifest.kind === 'md') out.viewUrl = out.url + '?view=1';
     if (pyTruthy(manifest.sourceMissing)) out.sourceMissing = true;
     if (isDict(manifest.fromDoc)) out.fromDoc = manifest.fromDoc; // AIB's own field (Deno only): "Built from <doc › page>"
+    if (isStr(manifest.becameDoc) && manifest.becameDoc) out.becameDoc = manifest.becameDoc; // Edit made it a doc (Deno only)
     return out;
+  }
+
+  /**
+   * Edit on a Markdown artifact: it became the doc `name` (made at doc rev `rev`, so Undo knows nobody typed since), or null when
+   * Undo took it back. An extra manifest field, like fromDoc: the Python server keeps it when it rewrites the manifest.
+   */
+  setBecameDoc(artifactId: unknown, name: string | null, rev = 0): Manifest {
+    const manifest = this.get(artifactId);
+    if (name) {
+      manifest.becameDoc = name;
+      manifest.becameDocRev = rev;
+    } else {
+      delete manifest.becameDoc;
+      delete manifest.becameDocRev;
+    }
+    this.#save(manifest);
+    return manifest;
   }
 
   /**
@@ -1185,6 +1203,14 @@ export class Service {
       const owner = existing.conversationId ?? null;
       if (owner !== conversationId && owner !== (body.conversationId ?? null)) {
         throw new ArtifactError('That artifact belongs to another chat', 403, 'wrong_conversation');
+      }
+      if (isStr(existing.becameDoc) && existing.becameDoc) {
+        throw new ArtifactError(
+          `This artifact is now the doc "${existing.becameDoc}": the user edits it there. Read it with doc_read and change it with ` +
+            'doc_edit (the never-overwrite guards keep what the user typed); do not publish it again.',
+          409,
+          'became_doc',
+        );
       }
     }
     let manifest: Manifest;

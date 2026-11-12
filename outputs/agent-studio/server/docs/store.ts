@@ -66,7 +66,7 @@ import {
 import * as Y from 'yjs';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
-const NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/;
+const NAME = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$/;
 /** The note each Markdown copy starts with. */
 /** AIB's own folder in the project: every doc is aib-docs/<doc>/. */
 export const DOCS_FOLDER = 'aib-docs';
@@ -1553,6 +1553,22 @@ export class DocStore {
       }
       return { chat: String(a.chat ?? ''), name: String(a.name ?? ''), page: page?.title ?? '', section };
     });
+  }
+
+  /**
+   * Undo of an artifact's Edit: the doc goes entirely (its folder, its cache), as if never made. The caller checks that nobody
+   * changed it since it was made. Open pages are told it is gone.
+   */
+  async discard(doc: OpenDoc): Promise<void> {
+    if (doc.timer !== null) clearTimeout(doc.timer);
+    if (doc.snapTimer !== null) clearTimeout(doc.snapTimer);
+    await doc.busy.catch(() => {});
+    doc.live.sendControl({ type: 'closed' });
+    this.docs.delete(doc.id);
+    doc.agents.destroy();
+    doc.live.destroy();
+    await Deno.remove(doc.dir, { recursive: true }).catch(() => {});
+    await Deno.remove(this.#cacheDir(doc.id), { recursive: true }).catch(() => {});
   }
 
   /** info() plus the files the doc owns (the Files view, Ctrl+K, Changes and Merge hide exactly these). */
