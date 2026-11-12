@@ -241,6 +241,7 @@ export async function main(argv: string[]): Promise<void> {
     ? new KeeperLink({ dataDir: stateDir, ...(studio ? { orphan: orphanCommand() } : {}) })
     : null;
   let closing = false;
+  let desktopApp: DesktopApp | null = null; // the window and tray (desktop app only), made once the server listens
   let close = async (_why?: string, _release?: boolean) => {};
   const ctx = makeContext({
     stateDir,
@@ -271,6 +272,9 @@ export async function main(argv: string[]): Promise<void> {
     busyChats: async () => (await host.busyConnections()).length,
     quit: (release) => void setTimeout(() => void close('installing an update', release), 50),
     chatsKeepRunning: !studio, // the agent host outlives this app: an update never stops a working chat
+    // Quit while chats worked (AIB only stays in the tray): "Install when chats finish" waits for the next launch, so an update
+    // never opens a window after the person quit.
+    holdInstall: () => desktopApp?.background ?? false,
     // One process with the keeper: Install now leaves the chats in the keeper and the new version takes them over.
     keeper: studio?.keeper
       ? async () => {
@@ -337,7 +341,7 @@ export async function main(argv: string[]): Promise<void> {
   }
   if (desktop) {
     const { nativeShell } = await import('./desktop/native.ts');
-    const app = new DesktopApp(nativeShell(), {
+    const app = desktopApp = new DesktopApp(nativeShell(), {
       url: `${url}/`,
       stateDir,
       trayIcon: trayIconPng(),

@@ -36,7 +36,8 @@
   helper, a question waiting for you), a terminal command runs or a merge is under way: no question box; the window closes and
   AIB stays in the tray, "AIB · 2 chats running" (or "1 chat needs you"). Open AIB or a click on the icon shows your chats as
   they are, questions that came meanwhile included. Once nothing works, AIB quits by itself about 10 s later. With nothing
-  working, Quit quits at once, as before.
+  working, Quit quits at once, as before. A pending "Install when chats finish" waits meanwhile and installs at the next
+  launch (or when you open the window again), so an update never opens a window after you quit.
 - The tray menu is Open AIB, a status line, Quit AIB and Stop all chats and quit, the one way to stop everything. Its first
   click turns the item into "Click again to stop 2 chats and quit" for 10 s; a second click stops them and quits. No box.
 - AIB ended by a signal (macOS/Linux `kill`, a session ending) with a chat working leaves the chat in the keeper, which brings

@@ -125,6 +125,9 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
 - **Download and verify:** the package for this platform and architecture goes to `<data>/updates/<version>/`. Its SHA-256 must
   equal the one line for exactly that file name in the release's `SHA256SUMS` asset; otherwise the file is deleted and refused.
 - **Notify:** an amber line, "AIB 0.1.x is ready to install. Install now / Later". Nothing installs without that click.
+- **Held after a quit:** while AIB only stays in the tray because the person quit with work going on (or a tray-only start),
+  "Install when chats finish" is held (`holdInstall`, `DesktopApp.background`): it stays pending in `state.json` and goes ahead at
+  the next launch, or as soon as the window is opened again, so an update never opens a window after a quit.
 - **Install in place:** Windows (the per-user zip), macOS (the zipped `AIB.app`) and Linux when running from an AppImage. "Install
   now" works while chats work when the release's `release.json` (written by `tools/build.ts`, checked against `SHA256SUMS`) names
   this agent-host protocol: the app quits, the chats keep running in the host, the new version attaches to it and hands it over once
