@@ -6,7 +6,7 @@
  *    exactly {id, key, option};
  *  - answer: form questions only (a link question is refused), a withdrawn question is refused;
  *  - send: plain text only (attachments and "/" commands refused); a chat that is not running, closed or not ready is refused with
- *    "Open it in AIB on your PC";
+ *    "tap Continue this chat";
  *  - queue: edit / remove / send now only for a message queued in that chat right now;
  *  - switches: Answer / Send / Approve off for a phone -> those routes refused; turned on again on the PC -> allowed;
  *  - the phone activity log: one line per action with the chat, never the message text or the command.
@@ -199,7 +199,7 @@ Deno.test({
 
 Deno.test({
   ...OPTS,
-  name: 'send: plain text is delivered; attachments and "/" commands are refused; a chat not running gets "Open it in AIB on your PC"',
+  name: 'send: plain text is delivered; attachments and "/" commands are refused; a chat not running gets "tap Continue this chat"',
   async fn() {
     const s = await phoneOn();
     try {
@@ -226,7 +226,7 @@ Deno.test({
       for (const id of ['nope', 'shut']) {
         const r = await send({ id, text: 'hello', clientMessageId: 'm4' });
         assertEquals([r.status, r.json.code], [409, 'not_live'], id);
-        assert(String(r.json.error).includes('Open it in AIB on your PC'));
+        assert(String(r.json.error).includes('Tap Continue this chat'));
       }
       assertEquals((await send({ id: 'opening', text: 'hello', clientMessageId: 'm4' })).json.code, 'not_ready');
       assertEquals(s.liveCalls.length, 0);

@@ -225,6 +225,12 @@ export interface ChatPayload {
   waiting: Waiting[];
   /** Can take a message now (ready, not read only). */
   ready: boolean;
+  /** The connection has ended (the phone offers Continue this chat, by savedKey). */
+  closed: boolean;
+  /** provider:sessionId, the chat's stable key ('' before the agent gave it a session). */
+  savedKey: string;
+  /** Why it ended or could not open ('' when it did not). */
+  error: string;
   /** Messages waiting to be sent in this chat (text, whether one is being sent or edited). */
   queue: { items: QueuedItem[]; paused: boolean; message: string };
   /** Messages that may or may not have reached the agent before AIB restarted. */
@@ -330,6 +336,9 @@ export async function chatPayload(
     helpers: helpersOf(state.subagents),
     waiting,
     ready: !!state.ready && !state.readOnly && !state.rebuilding && !state.closed,
+    closed: !!state.closed,
+    savedKey: str(state.provider, 60) && str(state.sessionId, 300) ? `${str(state.provider, 60)}:${str(state.sessionId, 300)}` : '',
+    error: state.closed ? str(state.error, 400) : '',
     queue: { items: queued, paused: !!queue.paused, message: str(queue.message, 120) },
     unknown,
     events: events.map((e) => {

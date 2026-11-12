@@ -512,6 +512,35 @@ button.ph-card {
 .ph-send:disabled {
   opacity: 0.6;
 }
+/* a chat that is not running: Continue this chat at the bottom, like the composer */
+.app[data-screen='saved'] {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.ph-continue {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: 8px calc(16px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.ph-continue .ph-note {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.ph-continue .ph-btn {
+  margin-top: 10px;
+}
+.ph-continue .ph-error {
+  margin: 4px 0 8px;
+  overflow-wrap: anywhere;
+}
+.ph-card.saved .ph-title {
+  font-weight: 500;
+}
 /* queued messages */
 .ph-queued {
   margin: 0 0 8px;

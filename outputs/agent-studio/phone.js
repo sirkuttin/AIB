@@ -18,6 +18,10 @@
    to the artifact origin in replies) show as cards; Open asks the PC for a short-lived link on the phone's artifact origin
    (https://<name>:8443) and shows it full screen with Close: pages, SVG and Markdown in a sandboxed frame (never same-origin),
    pictures as pictures, text in a sandboxed frame. A PDF, or any artifact while that origin is not set up, says "Open on your PC".
+   Not running (owner decisions 3b, 4): home lists the chats that are not running (title, when last active); one opens read only
+   with its saved messages and Continue this chat (only when this phone may send), which starts it again on the PC with its saved
+   agent and settings; a chat another app has open is refused with the reason. A chat whose newest messages are on screen (page
+   visible, scrolled to the end) is marked read on the PC, at most every READ_MS.
    Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom, artifactRef...) are
    exported for node tests. */
 (function (root) {
@@ -27,6 +31,7 @@
   const TIMEOUT_MS = 10000;
   const TAIL = 300;
   const DB = 'aib-phone';
+  const READ_MS = 5000; // a chat's read position goes to the PC at most this often
   const RECONNECT_MS = 20000; // "Reconnecting…" this long before saying AIB is closed (the keeper restarts a crashed AIB in 5 s)
 
   // ---- pure helpers ---------------------------------------------------------------------------------------------------------
@@ -326,6 +331,26 @@
     return false;
   }
 
+  /* The words under a chat that is not running: "Not running · Claude Code · last active 3 h ago". */
+  function savedWords(c, now) {
+    const e = elapsed(obj(c).lastActive, now);
+    const when = e ? 'last active ' + (e === 'just now' ? e : e + ' ago') : '';
+    return ['Not running', str(obj(c).agent), when].filter(Boolean).join(' · ');
+  }
+
+  /* The event a live chat may be marked read up to on the PC, or 0: the page is visible, the chat's end is on screen, it runs, and
+     there is something newer than what was last sent (`sent`: {seq, at}) and READ_MS has passed since then. */
+  function readTarget(chat, view, sent, now) {
+    const c = obj(chat);
+    const v = obj(view);
+    const last = obj(sent);
+    if (!v.visible || !v.atEnd || c.gone || c.closed || !c.id) return 0;
+    const seq = Number(c.cursor) || 0;
+    if (seq <= (Number(last.seq) || 0)) return 0;
+    if ((now || Date.now()) - (Number(last.at) || 0) < READ_MS) return 0;
+    return seq;
+  }
+
   /* The text both sides hash for the two check words (server/remote/words.ts checkWords). */
   const checkInput = (secretHex, phoneNonce, pcNonce) => 'aib-pair-check|' + secretHex + '|' + phoneNonce + '|' + pcNonce;
 
@@ -415,6 +440,9 @@
     approvalButtons,
     abilities,
     actionable,
+    savedWords,
+    readTarget,
+    READ_MS,
     offlineView,
     isIPhone,
     setupSteps,
@@ -466,6 +494,10 @@
     editing: null, // {messageId, leaseId, text, renewed}
     artifacts: '', // the phone's artifact origin (https://<name>:8443), '' while it is not set up: artifacts open on the PC
     viewer: null, // {id, version, title, kind, state: 'loading' | 'open' | 'pc' | 'error', view?, url?, why?} while one is open
+    savedKey: '', // the chat that is not running shown now (provider:sessionId)
+    saved: null, // its saved messages (GET /api/remote/saved), or {gone: true}
+    continuing: false, // Continue this chat was tapped and the PC has not answered yet
+    readSent: { id: '', seq: 0, at: 0 }, // the read position last sent to the PC
   };
 
   function el(tag, cls, text) {
@@ -551,6 +583,7 @@
     if (doc.visibilityState === 'hidden') return;
     try {
       if (S.screen === 'chat') await loadChat(false);
+      else if (S.screen === 'saved') await loadSaved();
       else if (S.screen === 'home' || (S.offline && S.device)) await loadHome();
       else return;
       if (S.offline) {
@@ -563,6 +596,43 @@
       goneOffline(error.message);
     }
     schedule(S.screen === 'chat' ? CHAT_MS : HOME_MS);
+    markRead();
+  }
+
+  /* The chat on screen is read up to its newest event: tell the PC (its unread dot clears). Needs See chats. */
+  function markRead() {
+    if (S.screen !== 'chat' || !S.chat || S.offline || !S.scopes.includes('phone.read')) return;
+    const d = doc.documentElement;
+    const view = {
+      visible: doc.visibilityState !== 'hidden',
+      atEnd: root.innerHeight + root.scrollY >= Math.max(d.scrollHeight, doc.body ? doc.body.scrollHeight : 0) - 120,
+    };
+    const sent = S.readSent.id === S.chatId ? S.readSent : { id: S.chatId, seq: 0, at: 0 };
+    const seq = readTarget(S.chat, view, sent, Date.now());
+    if (!seq) return;
+    S.readSent = { id: S.chatId, seq, at: Date.now() };
+    call('POST', '/api/remote/read', { id: S.chatId, seq }).catch(() => {});
+  }
+
+  /* A chat that is not running: its saved messages (read only). It was started again (here or on the PC): open the live chat. */
+  async function loadSaved() {
+    const key = S.savedKey;
+    const r = await call('GET', '/api/remote/saved?key=' + encodeURIComponent(key) + '&tail=' + TAIL);
+    if (r.status === 401) return removed();
+    if (key !== S.savedKey || S.screen !== 'saved') return;
+    if (r.status === 404) {
+      S.saved = { gone: true, title: S.saved ? S.saved.title : '' };
+      draw();
+      return;
+    }
+    if (r.status !== 200) throw new Offline('refused');
+    const sig = (x, scopes) => JSON.stringify([x && x.events && x.events.length, x && x.lastActive, x && x.title, scopes]);
+    const before = sig(S.saved, S.scopes);
+    if (Array.isArray(r.data.scopes)) S.scopes = r.data.scopes;
+    if (r.data.live) return openChat(r.data.live, (S.saved && S.saved.title) || S.chatTitle);
+    const changed = before !== sig(r.data, S.scopes);
+    S.saved = r.data;
+    if (changed) draw();
   }
 
   /* AIB stopped answering (or still does not): "Reconnecting…" first, then closed / can't reach (offlineView). */
@@ -727,7 +797,13 @@
     if (!home) {
       body.append(el('p', 'ph-empty', 'Loading your chats…'));
     } else if (!home.chats.length) {
-      body.append(el('p', 'ph-empty', 'No chats are running on ' + S.pcName + '. Start one in AIB on the PC.'));
+      body.append(
+        el(
+          'p',
+          'ph-empty',
+          'No chats are running on ' + S.pcName + '.' + ((home.saved || []).length ? '' : ' Start one in AIB on the PC.'),
+        ),
+      );
     } else {
       const need = home.chats.filter((c) => c.needs > 0);
       const main = home.chats.find((c) => c.id === home.main && c.needs === 0);
@@ -745,8 +821,79 @@
         for (const c of rest) body.append(chatCard(c));
       }
     }
+    const saved = home && Array.isArray(home.saved) ? home.saved : [];
+    if (saved.length) {
+      body.append(el('h2', 'ph-section', 'Not running · ' + saved.length));
+      for (const c of saved) body.append(savedCard(c));
+    }
     frag.append(body);
     return frag;
+  }
+
+  function savedCard(c) {
+    const card = button('ph-card saved', '', () => openSaved(c.key, c.title));
+    card.dataset.saved = c.key;
+    card.append(el('span', 'ph-title', c.title));
+    card.append(el('span', 'ph-meta', savedWords(c)));
+    return card;
+  }
+
+  /* Continue this chat (or why this phone can't): the bottom bar of a chat that is not running. */
+  function continueBar(key) {
+    const bar = el('div', 'ph-continue');
+    bar.id = 'phContinue';
+    if (S.actError) {
+      const err = el('p', 'ph-error', S.actError);
+      err.setAttribute('role', 'alert');
+      bar.append(err);
+    }
+    if (!abilities(S.scopes).send) {
+      bar.append(
+        el(
+          'p',
+          'ph-note',
+          'To continue this chat from this phone, turn on "Send messages, stop turns and continue chats" for this phone in AIB on ' +
+            S.pcName +
+            ': Settings → Devices.',
+        ),
+      );
+      return bar;
+    }
+    bar.append(
+      el(
+        'p',
+        'ph-note',
+        'Continue this chat starts it again on ' + S.pcName + ' with its saved agent and settings. Then you can send messages here.',
+      ),
+    );
+    const go = button('ph-btn', S.continuing ? 'Starting…' : 'Continue this chat', () => continueChat(key));
+    go.id = 'phContinueBtn';
+    go.disabled = S.continuing || S.offline;
+    bar.append(go);
+    return bar;
+  }
+
+  /* The saved chat screen: header, its saved messages (read only), Continue this chat. */
+  function drawSaved() {
+    const c = S.saved;
+    const title = (c && c.title) || S.chatTitle || 'Chat';
+    const parts = [header(title, { back: goHome, chip: S.offline ? ['Offline', 'off'] : ['Not running', ''] })];
+    if (S.offline) parts.push(offlineBox());
+    const body = el('main', 'ph-chat' + (S.offline ? ' ph-stale' : ''));
+    if (!c) body.append(el('p', 'ph-empty', 'Loading…'));
+    else if (c.gone) body.append(el('p', 'ph-empty', 'This chat is no longer in the list on ' + S.pcName + '.'));
+    else {
+      body.append(el('p', 'ph-earlier', 'Not running on ' + S.pcName + '. These are its saved messages.'));
+      if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
+      const rows = rowsFrom(c.events);
+      const list = el('div', 'ph-list');
+      drawRows(list, rows);
+      if (!rows.length) list.append(el('p', 'ph-empty', c.history ? 'No messages yet.' : 'The messages of this chat are on your PC.'));
+      body.append(list);
+    }
+    parts.push(body);
+    if (c && !c.gone) parts.push(continueBar(S.savedKey));
+    return parts;
   }
 
   function drawRows(box, rows) {
@@ -1140,7 +1287,9 @@
       return body;
     }
     if (c.gone) {
-      body.append(el('p', 'ph-empty', 'This chat is not running on ' + S.pcName + ' any more. Open it in AIB on the PC.'));
+      body.append(
+        el('p', 'ph-empty', 'This chat is not running on ' + S.pcName + ' any more. Go back to your chats: it is listed under Not running.'),
+      );
       return body;
     }
     const can = abilities(S.scopes);
@@ -1168,7 +1317,12 @@
     if (queue) body.append(queue);
     const live = liveLine(c, rows);
     if (live) body.append(el('p', 'ph-live', live));
+    if (c.closed) {
+      body.append(el('p', 'ph-pconly', 'This chat stopped on ' + S.pcName + '.' + (c.error ? ' ' + c.error : '')));
+      return body;
+    }
     if (!can.send) body.append(el('p', 'ph-pconly', 'Sending from this phone is off. Reply in AIB on ' + S.pcName + '.'));
+    else if (c.state === 'opening' && !S.offline) body.append(el('p', 'ph-pconly', 'Starting this chat on ' + S.pcName + '…'));
     else if (!c.ready && !S.offline) body.append(el('p', 'ph-pconly', 'This chat cannot take messages right now. Open it in AIB on your PC.'));
     return body;
   }
@@ -1184,6 +1338,7 @@
     if (S.offline) parts.push(offlineBox());
     parts.push(chatMain());
     if (c && !c.gone && !S.offline && abilities(S.scopes).send && c.ready) parts.push(composer());
+    else if (c && c.closed && c.savedKey) parts.push(continueBar(c.savedKey));
     const sh = S.offline ? null : sheet();
     if (sh) parts.push(sh);
     return parts;
@@ -1305,6 +1460,8 @@
         ? drawHome()
         : S.screen === 'chat'
           ? drawChat()
+          : S.screen === 'saved'
+            ? drawSaved()
           : S.screen === 'pair'
             ? drawPair()
             : S.screen === 'removed'
@@ -1341,6 +1498,10 @@
     S.chat = null;
     S.chatId = '';
     S.chatEvents = [];
+    S.savedKey = '';
+    S.saved = null;
+    S.continuing = false;
+    S.actError = '';
     S.open.clear();
     draw();
     root.scrollTo(0, 0);
@@ -1348,8 +1509,57 @@
     tick();
   }
 
+  function openSaved(key, title) {
+    S.screen = 'saved';
+    S.savedKey = key;
+    S.chatTitle = title || '';
+    S.saved = null;
+    S.chat = null;
+    S.chatId = '';
+    S.continuing = false;
+    S.actError = '';
+    S.open.clear();
+    draw();
+    root.scrollTo(0, 0);
+    clearTimeout(S.timer);
+    loadSaved()
+      .then(() => schedule(HOME_MS))
+      .catch((error) => {
+        if (!(error instanceof Offline)) throw error;
+        S.offline = true;
+        draw();
+        schedule(HOME_MS);
+      });
+  }
+
+  /* Continue this chat: the PC starts it again with its saved settings; then the chat opens here as a live chat. */
+  async function continueChat(key) {
+    if (S.continuing || !key) return;
+    S.continuing = true;
+    S.actError = '';
+    draw();
+    let r = null;
+    try {
+      r = await call('POST', '/api/remote/continue', { key });
+    } catch {
+      r = null;
+    }
+    S.continuing = false;
+    if (r && r.status === 401) return removed();
+    if (!r || r.status !== 200 || !r.data.id) {
+      S.actError = r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was started.';
+      draw();
+      return;
+    }
+    const title = (S.saved && S.saved.title) || (S.chat && S.chat.title) || S.chatTitle;
+    openChat(r.data.id, title);
+  }
+
   function openChat(id, title, withSheet) {
     S.screen = 'chat';
+    S.savedKey = '';
+    S.saved = null;
+    S.continuing = false;
     S.chatId = id;
     S.chatTitle = title || '';
     S.chat = null;
@@ -1756,7 +1966,7 @@
 
   doc.addEventListener('visibilitychange', () => {
     if (doc.visibilityState === 'hidden') clearTimeout(S.timer);
-    else if (S.screen === 'home' || S.screen === 'chat') {
+    else if (S.screen === 'home' || S.screen === 'chat' || S.screen === 'saved') {
       clearTimeout(S.timer);
       tick();
     } else if (S.screen === 'offline') {
@@ -1787,6 +1997,8 @@
       drawViewer();
     }
   });
+  // Scrolled to the end of a chat: mark it read on the PC (markRead keeps to READ_MS).
+  root.addEventListener('scroll', () => markRead(), { passive: true });
   doc.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && S.viewer) closeArtifact();
   });

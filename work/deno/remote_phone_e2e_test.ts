@@ -48,7 +48,9 @@ import {
   remoteStudio,
   serveStatus,
   tailscaleStatus,
+  writeSavedChat,
 } from "./_remote_fixture.ts";
+import { OwnerRegistry } from "../../outputs/agent-studio/server/ownership/probe.ts";
 import {
   readRemoteArtifactPort,
   readRemotePort,
@@ -473,7 +475,7 @@ Deno.test({
     assertEquals((await act("cancel", { id })).status, 200);
     await until(async () => !(await chat()).json.busy, "stopped", 30);
 
-    // not running any more: "Open it in AIB on your PC"
+    // not running any more: "Tap Continue this chat"
     await web.post("disconnect", { id });
     const closed = await act("prompt", {
       id,
@@ -509,6 +511,145 @@ Deno.test({
       ["stop", "done"],
       ["send", "refused: not_live"],
     ]);
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name:
+    "end to end: a saved chat that is not running is on home, reads read only, Continue makes it live with its saved agent; a message reaches the agent; reading clears the PC's unread; Send off and open elsewhere refused",
+  async fn() {
+    await using fx = new PhoneFixture();
+    const claude = fx.root + SEP + "claude";
+    writeSavedChat(claude, fx.workspace, {
+      sessionId: "s-saved",
+      prompt: "Tidy the README",
+      reply: "Tidied.",
+      ageSeconds: 3600,
+    });
+    writeSavedChat(claude, fx.workspace, {
+      sessionId: "s-other",
+      prompt: "Open in another copy",
+      ageSeconds: 3600,
+    });
+    const web = await fx.startWeb();
+    const port = fx.phonePort;
+    await until(
+      async () =>
+        (await phoneGet(port, "/api/remote/bootstrap")).status === 200,
+      "the phone port",
+      30,
+    );
+    const phone = await pairOverHttp(web, port);
+    const post = (path: string, body: Json) =>
+      raw(
+        port,
+        "POST",
+        path,
+        phoneHeaders({ [DEVICE_HEADER]: phone.token }, "POST"),
+        JSON.stringify(body),
+      );
+
+    // home: both saved chats under "not running", nothing live
+    const home = await phoneGet(port, "/api/remote/home", phone.token);
+    assertEquals(home.status, 200, home.text);
+    assertEquals(home.json.chats, []);
+    const keys = (home.json.saved as Json[]).map((c) => c.key).sort();
+    assertEquals(keys, ["claude:s-other", "claude:s-saved"]);
+    const saved = await phoneGet(
+      port,
+      "/api/remote/saved?key=claude:s-saved&tail=100",
+      phone.token,
+    );
+    assertEquals(saved.status, 200, saved.text);
+    assertEquals(saved.json.title, "Tidy the README");
+    assert(JSON.stringify(saved.json.events).includes("Tidied."));
+
+    // Send off: Continue refused, nothing opened
+    const [, view] = await httpJson("GET", web.port, "/api/live/devices", web.token);
+    const deviceId = (view.devices as Json[])[0].id as string;
+    await httpJson("POST", web.port, "/api/live/devices/scopes", web.token, {
+      id: deviceId,
+      scopes: ["phone.read"],
+    });
+    const off = await post("/api/remote/continue", { key: "claude:s-saved" });
+    assertEquals([off.status, off.json.code], [403, "scope"]);
+    await httpJson("POST", web.port, "/api/live/devices/scopes", web.token, {
+      id: deviceId,
+      scopes: ["phone.read", "phone.answer", "phone.prompt", "phone.approve"],
+    });
+    // the phone cannot pick the agent, model or folder
+    const picked = await post("/api/remote/continue", {
+      key: "claude:s-saved",
+      provider: "codex",
+      cwd: fx.root,
+      model: "x",
+    });
+    assertEquals([picked.status, picked.json.code], [403, "pc_only"]);
+    assertEquals(
+      ((await web.listing()).connections as Json[]).filter((c) => !c.closed),
+      [],
+    );
+
+    // open in another AIB copy (its announcement in the owners folder): refused with that reason, nothing taken over
+    const other = new OwnerRegistry(fx.owners, { clientName: "AIB (other copy)" });
+    assert(other.announce("claude", "s-other", fx.workspace, "ready"));
+    const elsewhere = await post("/api/remote/continue", { key: "claude:s-other" });
+    assertEquals([elsewhere.status, elsewhere.json.code], [409, "session_in_use"], elsewhere.text);
+    assert(String(elsewhere.json.error).includes("AIB (other copy)"), elsewhere.text);
+    assert(String(elsewhere.json.error).includes("Nothing was opened or sent."));
+
+    // Continue: live with its saved agent, folder and session
+    const started = await post("/api/remote/continue", { key: "claude:s-saved" });
+    assertEquals(started.status, 200, started.text);
+    const id = started.json.id as string;
+    const chat = () => phoneGet(port, `/api/remote/chat?id=${id}&tail=100`, phone.token);
+    await until(async () => (await chat()).json.ready, "the chat is live", 60);
+    const entry = ((await web.listing()).connections as Json[]).find((c) => c.id === id)!;
+    assertEquals([entry.provider, entry.sessionId], ["claude", "s-saved"]);
+    assertEquals(
+      String(entry.cwd).toLowerCase(),
+      Deno.realPathSync(fx.workspace).toLowerCase(),
+    );
+    const after = await phoneGet(port, "/api/remote/home", phone.token);
+    assertEquals((after.json.saved as Json[]).map((c) => c.key), ["claude:s-other"]);
+    assertEquals((after.json.chats as Json[]).map((c) => c.id), [id]);
+
+    // a plain message reaches the agent
+    const sent = await post("/api/remote/prompt", { id, text: "hello", clientMessageId: "phone-r1" });
+    assertEquals(sent.status, 200, sent.text);
+    const done = await until(async () => {
+      const c = await chat();
+      const text = JSON.stringify(c.json.events);
+      return !c.json.busy && text.includes('"text":"hello"') && text.includes("# Rich reply") ? c : null;
+    }, "the agent's answer", 60);
+
+    // the turn ended after the PC last looked: unread on the PC until the phone shows the end
+    const ended = await until(async () => {
+      const l = ((await web.listing()).connections as Json[]).find((c) => c.id === id);
+      return Date.parse(String((l?.attention as Json)?.turnEndedAt ?? "")) || 0;
+    }, "turn ended", 30);
+    const seen = async () => {
+      const [, rs] = await httpJson("GET", web.port, "/api/live/read-state", web.token);
+      return ((rs.chats as Record<string, Json>)["claude:s-saved"]?.seenAt as number) ?? 0;
+    };
+    assert((await seen()) < ended, "unread on the PC");
+    const read = await post("/api/remote/read", { id, seq: done.json.cursor });
+    assertEquals([read.status, read.json.marked], [200, true], read.text);
+    assert((await seen()) >= ended, "read on the PC");
+
+    const lines = fx.read(fx.state + SEP + "remote-audit.jsonl").split("\n")
+      .filter(Boolean).map((l) => JSON.parse(l))
+      .filter((l) => l.action === "continue" || l.action === "read");
+    assertEquals(lines.map((l) => [l.action, l.chat, l.result]), [
+      ["continue", "claude:s-saved", "refused: switched off"],
+      ["continue", "claude:s-saved", "refused: settings"],
+      ["continue", "claude:s-other", "refused: session_in_use"],
+      ["continue", id, "started on the PC"],
+      ["read", id, "marked read on the PC"],
+    ]);
+    assert(!fx.read(fx.state + SEP + "remote-audit.jsonl").includes("Tidy"));
+    other.withdraw("claude", "s-other");
   },
 });
 
@@ -1030,6 +1171,111 @@ async function signInPage(
     "home",
   );
 }
+
+Deno.test({
+  ...OPTS,
+  name:
+    'phone page at 375 px: "Not running" chats on home, one opens read only with Continue this chat (hidden when Send is off), continues into the live chat, which is then marked read on the PC; no sideways scroll',
+  ignore: !browserPath,
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+    const browser = await Browser.launch();
+    try {
+      fake.state.serve = serveStatus(readRemotePort(s.state)!);
+      await pc(s, "POST", "/api/live/devices/access", { on: true });
+      const longTitle = "Refactor the checkout flow so PaymentStepWithAVeryLongNameAndNoSpacesAtAllInIt keeps the basket";
+      s.saveChat({
+        sessionId: "s-long",
+        prompt: longTitle,
+        reply: "Done. See C:\\Users\\someone\\code\\a-very-long-project-folder-name\\src\\components\\checkout\\PaymentStep.tsx " +
+          "word ".repeat(60),
+        ageSeconds: 7200,
+      });
+      s.saveChat({ sessionId: "s-two", prompt: "Write the release notes", ageSeconds: 600 });
+      s.chats.push(longChat());
+      s.answerLive((name, body) => {
+        if (name !== "connect") return [200, { ok: true }];
+        assertEquals(body, { provider: "claude", cwd: s.project, resume: "s-long", background: true });
+        s.chats.push({
+          id: "c-new",
+          provider: "claude",
+          sessionId: "s-long",
+          cwd: s.project,
+          busy: false,
+          closed: false,
+          attention: { state: "idle", needs: 0, turnEndedAt: new Date().toISOString(), busySince: null },
+          subagents: {},
+          events: [{ seq: 1, kind: "user", time: Date.now() / 1000, data: { text: longTitle } }],
+          permissions: [],
+          elicitations: [],
+        });
+        return [200, { id: "c-new", provider: "claude" }];
+      });
+      const phone = await pairPhone(s);
+      const page = await browser.open("about:blank", 375, 812);
+      await page.send("Emulation.setDeviceMetricsOverride", {
+        width: 375,
+        height: 812,
+        deviceScaleFactor: 2,
+        mobile: true,
+      });
+      await serveFor(page, s, { on: true });
+      await signInPage(page, phone.token, phone.id);
+      await page.waitFor('!!document.querySelector(\'.ph-card.saved[data-saved="claude:s-long"]\')', 15000, "the not-running list");
+      assertEquals(
+        await page.eval('[...document.querySelectorAll(".ph-section")].map((h) => h.textContent).at(-1)'),
+        "Not running · 2",
+      );
+      assert(
+        String(await page.eval('document.querySelector(\'.ph-card.saved[data-saved="claude:s-long"] .ph-meta\').textContent'))
+          .startsWith("Not running · Claude Code · last active 2 h ago"),
+      );
+      assert(await page.eval(NO_SIDEWAYS), `home: sideways scroll ${await page.eval(WIDTHS)}`);
+
+      // read only, with Continue this chat
+      await page.click('.ph-card.saved[data-saved="claude:s-long"]');
+      await page.waitFor(
+        'document.getElementById("app").dataset.screen === "saved" && !!document.getElementById("phContinueBtn")',
+        15000,
+        "the saved chat",
+      );
+      assertEquals(await page.eval('document.getElementById("phContinueBtn").textContent'), "Continue this chat");
+      assert(String(await page.eval('document.querySelector(".ph-list").textContent')).includes("PaymentStep.tsx"));
+      assertEquals(await page.eval('!!document.getElementById("phComposer")'), false, "no composer while it is not running");
+      const button = await page.eval<number[]>(
+        `(() => { const b = document.getElementById('phContinueBtn').getBoundingClientRect(); return [b.height, b.bottom, innerHeight]; })()`,
+      );
+      assert(button[0] >= 44 && button[1] <= button[2], `Continue: ${button}`);
+      assert(await page.eval(NO_SIDEWAYS), `saved chat: sideways scroll ${await page.eval(WIDTHS)}`);
+
+      // Send off on the PC: the button goes, the note says which switch
+      await pc(s, "POST", "/api/live/devices/scopes", { id: phone.id, scopes: ["phone.read"] });
+      await page.waitFor('!document.getElementById("phContinueBtn")', 15000, "Continue hidden");
+      assert(String(await page.eval('document.getElementById("phContinue").textContent')).includes('"Send messages, stop turns and continue chats"'));
+      assert(await page.eval(NO_SIDEWAYS), `Send off: sideways scroll ${await page.eval(WIDTHS)}`);
+      await pc(s, "POST", "/api/live/devices/scopes", {
+        id: phone.id,
+        scopes: ["phone.read", "phone.answer", "phone.prompt", "phone.approve"],
+      });
+      await page.waitFor('!!document.getElementById("phContinueBtn")', 15000, "Continue back");
+
+      // Continue: the live chat with its composer
+      await page.click("#phContinueBtn");
+      await page.waitFor(
+        'document.getElementById("app").dataset.screen === "chat" && window.__aibPhone.chatId === "c-new" && !!document.getElementById("phComposer")',
+        15000,
+        "the live chat",
+      );
+      assert(await page.eval(NO_SIDEWAYS), `continued: sideways scroll ${await page.eval(WIDTHS)}`);
+      // its end is on screen: marked read on the PC
+      await until(() => s.ctx.readState.public().chats["claude:s-long"]?.seenAt > 0, "read on the PC", 15);
+    } finally {
+      await browser.close().catch(() => {});
+      await s.close();
+    }
+  },
+});
 
 Deno.test({
   ...OPTS,

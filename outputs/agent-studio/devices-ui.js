@@ -19,7 +19,7 @@
   const SCOPES = [
     ['phone.read', 'See chats'],
     ['phone.answer', 'Answer questions'],
-    ['phone.prompt', 'Send messages and stop turns'],
+    ['phone.prompt', 'Send messages, stop turns and continue chats'],
     ['phone.approve', 'Approve requests once'],
     ['phone.push', 'Push notifications'],
   ];

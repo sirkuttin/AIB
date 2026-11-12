@@ -10,6 +10,7 @@ import { Audit, type AuditEntry } from './audit.ts';
 import { cleanScopes, DEFAULT_SCOPES, DeviceStore, type PublicDevice } from './devices.ts';
 import { Pairing, PairingError } from './pairing.ts';
 import { homePayload, TitleCache } from './payloads.ts';
+import { SavedChats } from './saved.ts';
 import { ArtifactTickets, remoteArtifactOrigin, RemoteArtifactServer } from './artifact_server.ts';
 import { BIND_RETRY_MS, PortBusy, portFree, remoteArtifactPort, remotePort } from './port.ts';
 import { PushSender, VapidKeys } from './push.ts';
@@ -56,6 +57,8 @@ export class PhoneAccess {
   readonly pairing = new Pairing();
   readonly audit: Audit;
   readonly titles = new TitleCache();
+  /** The chats that are not running, for the phone (remote/saved.ts). */
+  readonly saved = new SavedChats();
   /** The VAPID keys (push-keys.json) and the sender of phone pushes (remote/push.ts). */
   readonly vapid: VapidKeys;
   readonly push: PushSender;
