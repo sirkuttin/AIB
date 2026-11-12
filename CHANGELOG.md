@@ -44,14 +44,6 @@
   click turns the item into "Click again to stop 2 chats and quit" for 10 s; a second click stops them and quits. No box.
 - AIB ended by a signal (macOS/Linux `kill`, a session ending) with a chat working leaves the chat in the keeper, which brings
   AIB back in the tray, as after a crash; it no longer stops the chats.
-
-## 0.1.0-beta.7 (beta)
-
-- Installing or signing in to a Beta agent turns it On, and a Ready Beta agent shows in New chat unless you turned it off.
-  Agents that aren't ready show greyed out, with the reason and "Set up in Settings ›".
-- Buttons on Settings agent cards keep the card in place (no scroll jump).
-- The first message of a new chat is always sent, even if you switch chats while the agent starts, and links in agent
-  errors are clickable.
 - Merge from the chat: the agent merges its chat's work into main on its own when the work is done and tested (for example
   before a release), or when you ask; no button needed. Each merge posts a "Merged into main" line in the chat. The work lands on the project's main branch (main, else
   master), also for a chat started from another branch. If main has moved, the agent first takes main into its worktree and
@@ -64,6 +56,35 @@
   uncommitted edits in the project folder come along only when the folder is on main; on another branch they stay there,
   the chat's first note says so, and edits you save are copied into the chat again once the folder is back on main. Chats
   started before keep working from their branch.
+- Claude chats leave Working when the reply ends, even while background helpers still run, and your queued messages go at
+  once. A chat whose helpers still run counts as working for quitting, updates and the keeper.
+- Subagents: a working helper is a card with its model and type, tokens used and what it is doing now ("Running: …",
+  "Editing chat.js"); a finished one is a single line with its outcome when it failed or stopped, its model and how long it
+  ran. The subagent header shows the model and tokens too. Stop sits on the subagent's title row with an in-place
+  Stop · Cancel instead of a pop-up.
+- Scrolling: scrolling up, even one wheel notch, stops following at once, and following comes back only at the very bottom or
+  with "↓ Latest". A following chat stays at the bottom when content grows after a redraw, when an approval card or the
+  terminal appears, and when the message box grows. Opening a step or "Show all" near the bottom keeps it where it is.
+  Opening a chat with unread messages lands on the "New" line, and switching Full / Chat / Prompts keeps the row you were
+  reading. Long blocks no longer flash open for a frame on every update.
+- Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
+  arrives after them.
+- Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.
+- Inbox: the chat you have open never counts as "your turn", even while AIB is in the background, and the badge and its list
+  always agree.
+
+## 0.1.0-beta.7 (beta)
+
+- Installing or signing in to a Beta agent turns it On, and a Ready Beta agent shows in New chat unless you turned it off.
+  Agents that aren't ready show greyed out, with the reason and "Set up in Settings ›".
+- Buttons on Settings agent cards keep the card in place (no scroll jump).
+- The first message of a new chat is always sent, even if you switch chats while the agent starts, and links in agent
+  errors are clickable.
+- Merge into main asks the agent: the Changes tab's Merge button sends the chat a fixed merge request (shown as a collapsed
+  "Merge requested" chip) and gives that chat a one-time permission to merge, tied to its work at the click. Without the
+  click, the agent's merge tool merges nothing and points you to the button. A merge that lands uses the permission up;
+  conflicts keep it for the next round; your next own message ends it. No confirmation dialog. The button is off, with the
+  reason, for closed, archived, read-only and Elsewhere chats.
 - Beta agents: every card can install its agent. OpenCode installs with npm (@opencode/cli). Cursor CLI, Goose and Mistral
   Vibe run the vendor's documented installer in the card's terminal panel, with the command shown first. Cards check what
   the agent needs first (Node.js 22 or the package's minimum, uv for Mistral Vibe on Windows) and offer "Install Node.js 26
