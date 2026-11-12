@@ -649,8 +649,8 @@ Deno.test('settings: defaults when no file; the hidden flag never reaches the pa
   const store = new SettingsStore(dir);
   const data = store.snapshot();
   assertEquals(data.agents, { builtin: { omp: true, claude: true, codex: true }, custom: [] });
-  assertEquals(data.server, { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true });
-  assertEquals((store.public().settings as { server: unknown }).server, { autoReconnect: true, autoUpdateCheck: true });
+  assertEquals(data.server, { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false });
+  assertEquals((store.public().settings as { server: unknown }).server, { autoReconnect: true, autoUpdateCheck: true, keepAwake: false });
   assert(!exists(file(dir, SettingsStore.FILE)));
 });
 
