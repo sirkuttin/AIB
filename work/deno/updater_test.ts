@@ -800,6 +800,43 @@ Deno.test("install is deferred while chats work; when-idle waits, then installs 
   }
 });
 
+Deno.test("Install when chats finish is held while AIB only stays in the tray after a quit; it installs at the next launch or when the window is back", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  {
+    const view = { background: false };
+    const { svc, state, launched, quit } = await ready(env, 1, { holdInstall: () => view.background });
+    assertEquals(await svc.install(true), { state: "waiting", chats: 1 });
+    view.background = true; // the person quit AIB while the chat worked: AIB stays in the tray
+    state.busy = 0;
+    await svc.tick();
+    assertEquals([launched, quit], [[], []], "no update (and no new window) after a quit");
+    assertEquals(svc.status().installWhenIdle, true, "still pending");
+    // The next launch: a new app on the same data folder, its window open, picks the pending install up on its first tick.
+    const next = await ready(env, 0, { holdInstall: () => false });
+    assertEquals(next.svc.status().installWhenIdle, true, "kept in state.json");
+    await next.svc.tick();
+    assertEquals([next.launched.length, next.quit], [1, [1]]);
+  }
+  {
+    const view = { background: true };
+    const { svc, launched } = await ready(env, 0, { holdInstall: () => view.background });
+    svc.state.installWhenIdle = true;
+    await svc.tick();
+    assertEquals(launched, []);
+    view.background = false; // the person opened the window again
+    await svc.tick();
+    assertEquals(launched.length, 1);
+  }
+  {
+    const { svc, launched } = await ready(env, 0, { holdInstall: () => { throw new Error("no window state"); } });
+    svc.state.installWhenIdle = true;
+    await svc.tick();
+    assertEquals(launched.length, 1, "an unknown window state never holds an install");
+  }
+});
+
 Deno.test("with the agent host (chatsKeepRunning) Install now goes ahead while chats work; the new app starts with the same arguments", async () => {
   using env = new Env();
   await using fake = await FakeGitHub.start({ info: JSON.stringify({ version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION }) });

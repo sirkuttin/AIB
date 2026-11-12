@@ -28,6 +28,9 @@ import { spawnDetached } from '../platform/spawn_detached.ts';
 import { cleanEnv, type HelperArgs, type InstallTarget, installTarget } from './update_helper.ts';
 import { PROTOCOL_VERSION } from '../host/host_client.ts';
 import { missingFeatures } from '../keeper/client.ts';
+import { getLogger } from '../core/log.ts';
+
+const log = getLogger('updates');
 
 const envGet = (name: string): string | undefined => {
   try {
@@ -561,6 +564,12 @@ export interface UpdateServiceOptions {
    * chats work, and the new version attaches to the running host. False (in-process mode): an install waits for the chats.
    */
   chatsKeepRunning?: boolean;
+  /**
+   * True while the person has quit AIB and it only stays in the tray for work still going on (DesktopApp.background): the install
+   * they asked to wait for ("Install when chats finish") is held, so an update never opens a window after a quit; it stays
+   * pending (state.json) and goes ahead at the next launch, or as soon as the window is opened again.
+   */
+  holdInstall?: () => boolean;
   /** The arguments this app was started with; the helper starts the new version with the same ones. Default: Deno.args. */
   appArgs?: string[];
   /** Starts the detached helper (update_helper.ts). Replaced in tests. */
@@ -633,6 +642,7 @@ export class UpdateService {
   readonly exists: (path: string) => boolean;
   readonly app: AppInfo;
   state: UpdateState;
+  readonly holdInstall: () => boolean;
   #checking = false;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #stopped = false;
@@ -644,6 +654,7 @@ export class UpdateService {
     this.quit = options.quit ?? null;
     this.chatsKeepRunning = !!options.chatsKeepRunning;
     this.keeper = options.keeper ?? null;
+    this.holdInstall = options.holdInstall ?? (() => false);
     // A tray-only start (the keeper's orphan restart) is not how the person runs AIB: the new version opens its window again.
     this.appArgs = [...(options.appArgs ?? Deno.args)].filter((a) => a !== '--start-in-tray');
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
@@ -1090,10 +1101,19 @@ export class UpdateService {
     if (this.#timer !== null) clearTimeout(this.#timer);
   }
 
+  #held(): boolean {
+    let held = false;
+    try {
+      held = this.holdInstall();
+    } catch { /* unknown: not held */ }
+    if (held) log.info('update: the install waiting for idle chats is held: AIB was quit and only stays in the tray; it installs at the next launch');
+    return held;
+  }
+
   /** One pass: an automatic check when one is due, and the install the person asked to wait for once no chat is working. */
   async tick(): Promise<void> {
     await this.check(false);
-    if (this.state.installWhenIdle && this.status().state === 'ready' && !await this.#busy()) {
+    if (this.state.installWhenIdle && this.status().state === 'ready' && !this.#held() && !await this.#busy()) {
       await this.#go(await this.keeperHandover() === true); // idle chats in the keeper are left to the new version too
     }
   }
