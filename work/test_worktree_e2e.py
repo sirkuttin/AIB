@@ -32,7 +32,7 @@ sys.path.insert(0, str(_isolation.TESTS / 'contract'))
 import host_client
 import server_under_test
 import worktrees
-from _e2e_support import FakeHost, Fixture, Web, free_port, make_repo, run_git
+from _e2e_support import FakeHost, Fixture, Web, make_repo, run_git
 
 SERVER_KIND = server_under_test.server_kind()   # AIB_SERVER: deno-split (default), deno or python
 LAUNCHER = _isolation.TESTS / 'worktree-e2e-agent.py'
@@ -86,18 +86,16 @@ class E2EFixture(Fixture):
             return [server_under_test.deno_executable(), 'run', '-A', '--quiet', str(_isolation.APP / 'server' / 'main.ts')]
         raise unittest.SkipTest(f'test_worktree_e2e runs against AIB_SERVER=python, deno or deno-split, not {SERVER_KIND!r}')
 
-    def start_web(self, *extra, port=None, wait=True):
-        port = port or free_port()
-        if port in server_under_test.FORBIDDEN_PORTS:
-            raise AssertionError(f'refusing port {port}')
-        log = open(self.root / f'web-{port}-{len(self.logs)}.log', 'wb')
+    def start_web(self, *extra, wait=True):
+        """A web server on a port the OS picks (`--port 0`); Web.wait_ready reads it back from the server's log."""
+        log = open(self.root / f'web-{len(self.logs)}.log', 'wb')
         self.logs.append(log)
         serve = ['serve', '--in-process'] if SERVER_KIND == 'deno' else (['serve'] if SERVER_KIND == 'deno-split' else [])
-        process = subprocess.Popen([*self.program(), *serve, '--port', str(port), *self.agent_flags(), '--host-idle-minutes', '0', *extra],
+        process = subprocess.Popen([*self.program(), *serve, '--port', '0', *self.agent_flags(), '--host-idle-minutes', '0', *extra],
                                    cwd=str(_isolation.APP), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                    env=self.env(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.processes.append(process)
-        web = Web(process, port, log.name)
+        web = Web(process, 0, log.name)
         if wait:
             web.wait_ready(self)
         return web

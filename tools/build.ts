@@ -760,40 +760,33 @@ async function buildTarget(target: Target, version: string, stageDir: string, in
   return names;
 }
 
-/** A free local port from 8920 up (never the live Studio's 8767/8768). */
-function freePort(from = 8920): number {
-  for (let port = from; port < from + 200; port++) {
-    try {
-      const l = Deno.listen({ hostname: '127.0.0.1', port });
-      l.close();
-      const l2 = Deno.listen({ hostname: '127.0.0.1', port: port + 1 }); // the artifact origin
-      l2.close();
-      return port;
-    } catch { /* taken */ }
-  }
-  throw new Error('no free port for the smoke check');
-}
-
 /**
  * Starts the built app headless (`AIB serve --in-process`, no window) with a fresh temp state folder and asks it for the page: the
  * page files must be inside the binary. Only for the target this machine can run. Stops what it started.
  */
 export async function smokeCheck(exe: string): Promise<string> {
   const state = await Deno.makeTempDir({ prefix: 'aib-build-smoke-' });
-  const port = freePort();
+  // Port 0: the OS picks a free one and the app says which ("AIB: http://127.0.0.1:N" on stdout). Never a fixed or guessed port.
   const child = new Deno.Command(exe, {
-    args: ['serve', '--in-process', '--port', String(port)],
+    args: ['serve', '--in-process', '--port', '0'],
     env: { AGENT_STUDIO_STATE_DIR: state },
     stdin: 'null',
-    stdout: 'null',
+    stdout: 'piped',
     stderr: 'piped',
   }).spawn();
   let exited: number | null = null;
   child.status.then((st) => (exited = st.code));
   const stderr = new Response(child.stderr).text();
+  let out = '';
+  const stdout = (async () => {
+    for await (const chunk of child.stdout.pipeThrough(new TextDecoderStream())) out += chunk;
+  })().catch(() => {});
   try {
+    let port = 0;
     for (let i = 0; i < 60 && exited === null; i++) {
       await new Promise((r) => setTimeout(r, 500));
+      port ||= Number(out.match(/AIB: http:\/\/127\.0\.0\.1:(\d+)/)?.[1] ?? 0);
+      if (!port) continue;
       try {
         const page = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(3000) });
         const html = await page.text();
@@ -818,6 +811,7 @@ export async function smokeCheck(exe: string): Promise<string> {
     }
     await child.status;
     await stderr.catch(() => '');
+    await stdout;
     await Deno.remove(state, { recursive: true }).catch(() => {});
   }
 }
