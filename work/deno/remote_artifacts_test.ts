@@ -718,3 +718,107 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  ...OPTS,
+  name: 'phone page: a phone that just paired (no reload) gets the artifact origin, so artifact cards say Open, not "Open on your PC"',
+  ignore: !browserPath,
+  async fn() {
+    const s = await artifactsOn();
+    const browser = await Browser.launch(KEEP_FRAMES);
+    try {
+      const [, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
+      const secret = /#p=([0-9a-f]{12})$/.exec(code.url as string)![1];
+      const page = await browser.open('about:blank', 375, 812);
+      await serveFor(page, s, { html: '' });
+      await page.goto(`https://${NAME}/phone.html#p=${secret}`);
+      await page.waitFor('document.getElementById("app").dataset.screen === "pair" && !!document.getElementById("pairGo")', 15000, 'pair');
+      await page.click('#pairGo');
+      await page.waitFor('!!document.getElementById("checkWords")', 15000, 'check words');
+      const [, view] = await pc(s, 'GET', '/api/live/devices');
+      const pending = ((view.pairing as Json).pending as Json[])[0];
+      const [ok] = await pc(s, 'POST', '/api/live/devices/approve', { claim: pending.id });
+      assertEquals(ok, 200);
+      await page.waitFor('document.getElementById("app").dataset.screen === "setup"', 15000, 'paired');
+      assertEquals(await page.eval('window.__aibPhone.artifacts'), ORIGIN, 'the artifact origin is known without a reload');
+      await page.close();
+    } finally {
+      await browser.close();
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'phone page at 375 px: helpers box padded, Live chip green dot, helper state dots, inline artifact link 44 px to tap',
+  ignore: !browserPath,
+  async fn() {
+    const s = await artifactsOn();
+    const browser = await Browser.launch(KEEP_FRAMES);
+    try {
+      const report = s.ctx.artifacts.store.create('claude:sess-c', 'Report', 'html', 'report.html', enc(HTML));
+      const chat = chatWith('c', [
+        { seq: 1, kind: 'user', data: { text: 'Make the report' } },
+        {
+          seq: 2,
+          kind: 'update',
+          data: {
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `Done: [the report](studio-artifact://${report.id}) is ready.` },
+            },
+          },
+        },
+      ]);
+      chat.subagents = {
+        a: { title: 'Codex tests', state: 'running' },
+        b: { title: 'Claude api', state: 'completed' },
+        c: { title: 'Gemini docs', state: 'needs_you' },
+        d: { title: 'Idle one', state: 'weird' },
+      };
+      s.chats.push(chat);
+      const phone = await pairPhone(s);
+      const page = await browser.open('about:blank', 375, 812);
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
+      await serveFor(page, s, { html: '' });
+      await signInPage(page, phone.token, phone.id);
+      // the chip: muted text, a green dot (not the warning colour)
+      const chip = await page.eval<Json>(`(() => {
+        const c = document.querySelector('.ph-chip.live'); const cs = getComputedStyle(c); const d = getComputedStyle(c, '::before');
+        const probe = document.createElement('i'); document.body.append(probe);
+        const rgb = (name) => { probe.style.color = getComputedStyle(document.documentElement).getPropertyValue(name); return getComputedStyle(probe).color; };
+        const out = { text: cs.color, dot: d.backgroundColor, muted: rgb('--muted'), ok: rgb('--ok'), need: rgb('--hd-need'), accent: rgb('--accent') };
+        probe.remove(); return out; })()`);
+      assertEquals(chip.text, chip.muted, 'Live chip text is muted');
+      assertEquals(chip.dot, chip.ok, 'Live chip dot is the good colour');
+      assert(chip.dot !== chip.need);
+      // home: a dot per helper row, by state
+      await page.waitFor('document.querySelectorAll(".ph-helpers li .ph-dot").length === 4', 15000, 'home helpers');
+      const dots = await page.eval<string[]>(`[...document.querySelectorAll('.ph-helpers li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
+      const expected = [chip.accent, chip.ok, chip.need, chip.muted];
+      assertEquals(dots, expected, 'working = accent, done = good, needs you = warning, idle = muted');
+      await page.click('.ph-card');
+      await page.waitFor('document.querySelector(".ph-helpers.ph-card") && document.querySelector(".ph-msg a")', 15000, 'the chat');
+      // chat header: the text is well inside the box on both sides
+      const box = await page.eval<number[]>(`(() => {
+        const ul = document.querySelector('.ph-helpers.ph-card'); const b = ul.getBoundingClientRect(); const li = ul.querySelector('li');
+        const first = li.firstElementChild.getBoundingClientRect(); const last = li.lastElementChild.getBoundingClientRect();
+        return [first.left - b.left, b.right - last.right]; })()`);
+      assert(box[0] >= 12 && box[1] >= 12, `helpers box inner padding ${box}`);
+      const chatDots = await page.eval<string[]>(`[...document.querySelectorAll('.ph-helpers li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
+      assertEquals(chatDots, expected);
+      // the inline link: at least 44 px tall, the paragraph has not grown
+      const link = await page.eval<number[]>(`(() => { const a = document.querySelector('.ph-msg a'); const r = a.getBoundingClientRect();
+        const p = a.parentElement.getBoundingClientRect(); return [r.height, p.height]; })()`);
+      assert(link[0] >= 44, `inline artifact link height ${link[0]}`);
+      assert(link[1] < 40, `the paragraph kept its line height ${link[1]}`);
+      await page.shot('phone-qa-chat');
+      assertEquals(page.errors, [], 'console errors');
+      await page.close();
+    } finally {
+      await browser.close();
+      await s.close();
+    }
+  },
+});

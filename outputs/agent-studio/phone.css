@@ -75,8 +75,16 @@ body {
   color: var(--muted);
 }
 .ph-chip.live {
-  color: var(--hd-work);
-  border-color: currentColor;
+  color: var(--muted);
+}
+.ph-chip.live::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--ok);
 }
 .ph-chip.off {
   color: var(--hd-need);
@@ -162,8 +170,41 @@ button.ph-card {
   padding: 3px 0;
   font-size: 14px;
 }
-.ph-helpers li span:first-child {
+.ph-helpers li {
+  align-items: center;
+}
+.ph-helpers li span:nth-child(2) {
+  flex: 1;
   min-width: 0;
+}
+.ph-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hd-idle);
+}
+.ph-dot.need {
+  background: var(--hd-need);
+}
+.ph-dot.work {
+  background: var(--accent);
+}
+.ph-dot.turn {
+  background: var(--ok);
+}
+.ph-dot.idle {
+  background: var(--muted);
+}
+/* The helpers box in the chat header: a card, so it keeps the card's inner padding (the list's own padding is for inside a card). */
+.ph-helpers.ph-card {
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+}
+/* A link in a reply: at least 44 px to tap, without moving the text (vertical padding on an inline box does not move lines). */
+.ph-msg a {
+  padding: 12px 2px;
 }
 .ph-helpers li span:last-child {
   flex: none;

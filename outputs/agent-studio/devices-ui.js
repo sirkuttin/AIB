@@ -91,6 +91,7 @@
         ? 'Your PC has a certificate for ' + name + '.'
         : "Turn it on once in Tailscale's admin page: DNS, then HTTPS Certificates. Your PC's name will appear in public " +
           'certificate logs, so rename the PC first if its name says too much.',
+      link: ts.https ? null : { text: 'Open', href: 'https://login.tailscale.com/admin/dns' },
     });
     steps.push({
       done: !!ts.serving,
@@ -128,7 +129,9 @@
         D.view = v;
         if (!(v.pairing && v.pairing.open)) D.pair = null;
         const sig = JSON.stringify(v) + '|' + JSON.stringify(D.pair);
-        if (sig !== D.sig) {
+        // a box that was attached after its last draw (Settings: another section, then back) is redrawn even if nothing changed
+        const undrawn = Object.values(D.boxes).some((b) => b && b.isConnected && !b._dvDrawn);
+        if (sig !== D.sig || undrawn) {
           D.sig = sig;
           draw();
         }
@@ -212,7 +215,7 @@
     cb.checked = !!v.on;
     cb.disabled = D.busy === 'access';
     cb.addEventListener('change', () => act('devices/access', { on: cb.checked }, 'access'));
-    l.append(cb, el('span', 'Phone access'));
+    l.append(cb, el('span', 'Let paired phones reach AIB'));
     line.append(l);
     frag.append(line);
     let status;
@@ -261,6 +264,16 @@
         const head = el('div', null, 'dv-check-head');
         head.append(el('span', step.done ? '✓' : '•', 'dv-mark'), el('b', step.title));
         li.append(head, el('p', step.detail, 'st-note'));
+        if (step.link) {
+          // target=_blank: the desktop app hands it to the system browser (desktop-bridge.js)
+          const open = el('a', step.link.text, 'dv-open');
+          open.href = step.link.href;
+          open.target = '_blank';
+          open.rel = 'noopener noreferrer';
+          const lrow = el('div', null, 'st-actions');
+          lrow.append(open);
+          li.append(lrow);
+        }
         if (step.command) {
           const row = el('div', null, 'st-actions');
           const code = el('code', step.command, 'st-command dv-command');
@@ -349,7 +362,7 @@
       list.append(l);
     }
     box.append(list);
-    box.append(el('p', "You can change these later on the phone's row under Paired phones.", 'st-note'));
+    box.append(el('p', "You can change these later on the phone's row under Phones.", 'st-note'));
     const row = el('div', null, 'st-actions');
     row.append(
       btn('Reject', () => act('devices/reject', { claim: claim.id }, 'reject'), '', !!D.busy),
@@ -476,7 +489,7 @@
         });
     }, 'primary', !ready || !!D.busy || !!D.pair);
     add.id = 'dvAdd';
-    if (!ready) add.title = 'Turn on Phone access and finish the Tailscale steps first.';
+    if (!ready) add.title = 'Turn on "Let paired phones reach AIB" and finish the Tailscale steps first.';
     row.append(add);
     row.append(btn(D.showActivity ? 'Hide phone activity' : 'Phone activity', () => {
       D.showActivity = !D.showActivity;
@@ -532,8 +545,14 @@
   }
 
   function draw() {
-    if (D.boxes.access && D.boxes.access.isConnected) drawAccess(D.boxes.access);
-    if (D.boxes.phones && D.boxes.phones.isConnected) drawPhones(D.boxes.phones);
+    if (D.boxes.access && D.boxes.access.isConnected) {
+      drawAccess(D.boxes.access);
+      D.boxes.access._dvDrawn = true;
+    }
+    if (D.boxes.phones && D.boxes.phones.isConnected) {
+      drawPhones(D.boxes.phones);
+      D.boxes.phones._dvDrawn = true;
+    }
   }
 
   // kind: 'access' | 'phones'; host: {get(path), post(name, body)} (settings-ui.js's host).
@@ -545,7 +564,7 @@
     refresh();
   }
 
-  const api = { render, ago, countdown, checklist, scopesAfter, activityLine, SCOPES, _state: D };
+  const api = { render, refresh, ago, countdown, checklist, scopesAfter, activityLine, SCOPES, _state: D };
   root.AIBDevicesUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

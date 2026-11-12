@@ -968,3 +968,17 @@ html[data-ui-scaled] .st-page {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+/* The "Open" link of a checklist step: an external link that looks like the neighbouring buttons. */
+.dv-checks .dv-open {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: var(--button-bg);
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+.dv-checks .dv-open:hover {
+  border-color: var(--accent);
+}

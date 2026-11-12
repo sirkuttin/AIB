@@ -66,6 +66,9 @@
     in_progress: 'working',
     working: 'working',
     pending: 'waiting',
+    needs_you: 'needs you',
+    needs_input: 'needs you',
+    needs: 'needs you',
     completed: 'done',
     done: 'done',
     finished: 'done',
@@ -76,6 +79,11 @@
     stopped: 'stopped',
   };
   const helperWord = (state) => HELPER_WORDS[str(state).toLowerCase()] || str(state) || 'unknown';
+  /* The colour of a helper's state dot: needs you = need (warning), working = work (accent), done = turn (good), else idle (muted). */
+  const helperTone = (state) => {
+    const w = helperWord(state);
+    return w === 'needs you' ? 'need' : w === 'working' ? 'work' : w === 'done' ? 'turn' : 'idle';
+  };
 
   /* ---- artifacts ---- */
   const ARTIFACT_ID = /^[0-9a-f]{16}$/;
@@ -400,6 +408,7 @@
     elapsed,
     liveLine,
     helperWord,
+    helperTone,
     checkInput,
     fieldsOf,
     contentFrom,
@@ -689,7 +698,11 @@
       ul.setAttribute('aria-label', 'Helpers');
       for (const h of c.helpers) {
         const li = el('li');
-        li.append(el('span', '', h.title), el('span', 'ph-state ' + (helperWord(h.state) === 'working' ? 'work' : ''), helperWord(h.state)));
+        li.append(
+          el('span', '', h.title),
+          el('span', 'ph-state ' + (helperWord(h.state) === 'working' ? 'work' : ''), helperWord(h.state)),
+        );
+        li.prepend(el('span', 'ph-dot ' + helperTone(h.state)));
         ul.append(li);
       }
       card.append(ul);
@@ -1137,7 +1150,7 @@
       ul.setAttribute('aria-label', 'Helpers');
       for (const h of helpers) {
         const li = el('li');
-        li.append(el('span', '', h.title), el('span', '', helperWord(h.state)));
+        li.append(el('span', 'ph-dot ' + helperTone(h.state)), el('span', '', h.title), el('span', '', helperWord(h.state)));
         ul.append(li);
       }
       body.append(ul);
@@ -1517,6 +1530,10 @@
         const push = (boot.status === 200 && boot.data.push) || {};
         S.push.key = typeof push.key === 'string' ? push.key : '';
         S.push.on = push.on === true;
+        if (boot.status === 200) {
+          S.artifacts = typeof boot.data.artifacts === 'string' ? boot.data.artifacts : '';
+          if (boot.data.pcName) S.pcName = boot.data.pcName;
+        }
       } catch {
         /* Finish setup says so when the button is tapped */
       }
