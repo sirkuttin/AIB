@@ -113,6 +113,9 @@
   change is saved to AIB's data folder at once instead of half a second later, so quitting right after picking a project
   no longer loses it, and reopening the chat that was in the middle no longer moves the sidebar to that chat's project.
   Files tabs and open folders, the Chats | Files switch and the inbox's seen chats are kept in the data folder too.
+  This also holds when the last chat runs in a worktree made from a Claude Code worktree (.claude/worktrees): AIB used to
+  open on the first project in the list and that project's chat. A chat listed under two projects keeps its tab in its own
+  project only.
 
 ## 0.1.0-beta.7 (beta)
 

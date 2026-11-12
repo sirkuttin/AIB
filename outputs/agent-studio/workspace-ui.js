@@ -88,6 +88,26 @@
   // server adds what only the disk knows (a .git FILE pointing into a worktrees folder) and is asked once per folder.
   const kinds = new Map(),
     askedKinds = new Set();
+  /* Folder kinds still on their way. Until they answer, a chat in a worktree of a Claude worktree (an AIB worktree made from
+     .claude/worktrees/<name>) is filed under that Claude worktree, which the dropdown does not list, instead of the repository it
+     belongs to. Seen with beta.8-test6: the saved project (its only open chat was such a chat) looked gone at the first list, so the
+     sidebar moved to the first project in the dropdown and that project's last chat opened. While kinds are pending the saved
+     project stays, and chat.js waits for them (settled) before reopening last session's chat. */
+  let kindsPending = 0;
+  const settledWaiters = [];
+  const settling = () => kindsPending > 0;
+  function settled(maxMs) {
+    if (!settling()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (v) => {
+        const i = settledWaiters.indexOf(done);
+        if (i >= 0) settledWaiters.splice(i, 1);
+        resolve(v);
+      };
+      settledWaiters.push(done);
+      if (maxMs > 0) root.setTimeout(() => done(false), maxMs);
+    });
+  }
   function kindOfPath(path) {
     const k = kinds.get(path) || {};
     return { worktree: !!k.worktree || St().isWorktreePath(path), scratch: !!k.scratch || St().isScratchPath(path) };
@@ -112,6 +132,14 @@
     );
     if (!need.length) return;
     need.forEach((p) => askedKinds.add(p));
+    kindsPending++;
+    const answered = () => {
+      kindsPending--;
+      if (settling()) return;
+      lastSig = '';
+      host.rerender(); // the list files the chats by their final project before anyone waiting goes on
+      for (const w of settledWaiters.slice()) w(true);
+    };
     Promise.resolve(host.getJson('/api/live/folders/kinds', { paths: JSON.stringify(need), parents: '1' })).then(
       (r) => {
         let changed = false;
@@ -122,13 +150,14 @@
             changed = true;
           }
         }
-        if (changed) {
+        if (changed && kindsPending > 1) {
           lastSig = '';
           host.rerender();
         }
+        answered();
       },
       () => {
-        /* the text rules still apply */
+        answered(); // the text rules still apply
       },
     );
   }
@@ -2089,9 +2118,12 @@
           ),
         ),
       );
+    // Once every chat is filed under its final project, a chat's tab is only in that project (older keys of it are dropped).
+    if (items.length && !settling()) commit(St().dropStrayTabs(ws, new Map(items.map((i) => [i.key, i.projectKey]))));
     // One project at a time: "All chats" (kept by older versions) and projects that are gone move to the open chat's project,
-    // else the most recent one, else the first in the dropdown.
-    if (items.length || projects.length)
+    // else the most recent one, else the first in the dropdown. While folder kinds are pending, a saved project with open tabs
+    // stays: its chats may only be filed under it once they answer.
+    if ((items.length || projects.length) && !(settling() && St().tabsOf(ws, ws.active).length))
       commit(
         St().pickActive(
           ws,
@@ -2196,7 +2228,11 @@
     const pk = projectKeyOf(c),
       key = keyOf(c),
       prev = host.getSelected();
-    const keep = keepFor && keepFor === key && ws.active !== St().ALL && !!projectOfKey(ws.active);
+    const keep =
+      keepFor &&
+      keepFor === key &&
+      ws.active !== St().ALL &&
+      (!!projectOfKey(ws.active) || (settling() && St().tabsOf(ws, ws.active).length > 0));
     keepFor = '';
     draft = null;
     commit(St().openTab(ws, pk, key, prev && projectKeyOf(prev) === pk ? keyOf(prev) : undefined));
@@ -2631,6 +2667,7 @@
     openNewProject,
     restoreTarget,
     keepProjectFor,
+    settled,
     inProject,
     listSignature,
     hasWorkspace,

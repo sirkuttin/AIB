@@ -519,3 +519,25 @@ test('applyPrefs exposes the effective colour id next to the explicit one', () =
   assert.equal(alpha.color, '');
   assert.ok(W.PALETTE.some((c) => c.id === alpha.colorId));
 });
+
+test('dropStrayTabs: a chat keeps its tab only in the project the list files it under', () => {
+  const st = {
+    ...W.empty(),
+    active: 'main',
+    tabs: { main: ['c1'], wt: ['c1', 'c9'], other: ['c2'] },
+    last: { main: 'c1', wt: 'c1', other: 'c2' },
+    recent: 'main',
+  };
+  const own = new Map([
+    ['c1', 'main'],
+    ['c2', 'other'],
+  ]);
+  const out = W.dropStrayTabs(st, own);
+  assert.deepEqual(out.tabs, { main: ['c1'], wt: ['c9'], other: ['c2'] }, 'c9 is not in the list: it stays');
+  assert.deepEqual(out.last, { main: 'c1', other: 'c2' }, "wt's last chat pointed at the stray tab");
+  assert.equal(out.recent, 'main');
+  assert.equal(W.dropStrayTabs(out, own), out, 'nothing stray: the same state');
+  const lastUsed = W.dropStrayTabs({ ...st, tabs: { wt: ['c1'] }, last: { wt: 'c1' }, recent: 'wt' }, own);
+  assert.deepEqual(lastUsed.tabs, {});
+  assert.equal(lastUsed.recent, 'main', "the project used last moves with its chat to the chat's own project");
+});

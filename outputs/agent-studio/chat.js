@@ -3369,6 +3369,9 @@
       if (bootstrap.features?.formElicitation) await loadQuestionUI();
       if (window.AgentSettingsUI) await window.AgentSettingsUI.load();
       await listConversations();
+      // Chats are filed under their final project once the folder kinds answer (a worktree of a Claude worktree): wait for that,
+      // so last session's chat reopens in its own project and the saved project stays (workspace-ui.js settled).
+      await window.AgentWorkspaceUI?.settled?.(1500);
       const key = sessionStorage.getItem('studio-selected') || sessionStorage.getItem('studio-saved');
       const prior = conversations.find((c) => c.key === key) || window.AgentWorkspaceUI?.restoreTarget?.();
       if (prior) {

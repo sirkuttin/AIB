@@ -562,6 +562,23 @@
     }
     return out;
   }
+  /* A chat's tab lives in its own project only. ownerOf: chat key -> the project the list files it under now. A chat listed in the
+     tabs of another project (an older key of the same chat: it was opened while its folder was still filed under a Claude worktree,
+     .claude/worktrees/...) is dropped there, with that project's last chat when it pointed at it. Keys the list does not have stay. */
+  function dropStrayTabs(st, ownerOf) {
+    const own = ownerOf instanceof Map ? ownerOf : new Map(Object.entries(ownerOf || {}));
+    let out = st;
+    for (const pk of Object.keys(st.tabs)) {
+      const kept = st.tabs[pk].filter((k) => !own.has(k) || own.get(k) === pk);
+      if (kept.length !== st.tabs[pk].length) out = withTabs(out, pk, kept);
+    }
+    // The project used last lost its tabs that way: the chat opened there last belongs to its own project.
+    if (out !== st && st.recent && !(out.tabs[st.recent] || []).length) {
+      const moved = (st.tabs[st.recent] || []).filter((k) => own.has(k)).pop();
+      out = { ...out, recent: moved ? own.get(moved) : '' };
+    }
+    return out;
+  }
   // Put the open tabs of project `pk` in a new order (a split layout shrank back to one pane). Only a reordering of the same tabs counts.
   function orderTabs(st, pk, list) {
     const cur = tabsOf(st, pk),
@@ -930,6 +947,7 @@
     closeTab,
     renameTab,
     pruneTabs,
+    dropStrayTabs,
     orderTabs,
     setActive,
     rememberLast,
