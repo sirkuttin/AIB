@@ -41,7 +41,7 @@ parser.add_argument('--held-turn', action='store_true', help="Claude Code's held
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
-parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read). Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
+parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read), 'steer-late:<gate>' (X3: a steer is answered promptRequired just before the turn ends). After a steer-bash command ends, Claude's own cycle is held while <gate>.cycle-hold exists, until <gate>.cycle-end exists. Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
 args = parser.parse_args()
 if args.fixture_login:
     if args.auth_file:
@@ -550,6 +550,12 @@ def steer_request(key, params):
     """_session/steering, as the three real adapters answer it (a recorded run each)."""
     turn = steer_ctx.get('turn')
     text = steer_text(params)
+    if turn and turn['open'] and turn.get('late'):   # X3: the adapter answers promptRequired a few ms before the turn's end_turn arrives
+        result(key, {'outcome': 'promptRequired', 'reason': 'noRunningTurn'})
+        steer_usage(HUMAN, 1600)
+        time.sleep(0.01)
+        steer_end(turn)
+        return
     if turn and turn['open']:
         turn['steers'].append(text)
         if turn['on_steer']:
@@ -580,8 +586,8 @@ def steer_scenario(key, text):
         threading.Thread(target=steer_helper, args=(key, rest), daemon=True).start()
     elif text == 'steer-perm':
         threading.Thread(target=steer_perm, args=(key,), daemon=True).start()
-    elif verb in ('steer-wait', 'steer-drop'):
-        threading.Thread(target=steer_wait_turn, args=(key, rest, verb == 'steer-drop'), daemon=True).start()
+    elif verb in ('steer-wait', 'steer-drop', 'steer-late'):
+        threading.Thread(target=steer_wait_turn, args=(key, rest, verb), daemon=True).start()
     elif not text.startswith(STEER_PLAIN_EXCLUDED) and text not in STEER_PLAIN_EXCLUDED and not args.rich and not args.demo and not args.held_turn:
         steer_say('Fixture reply: ' + text)
         steer_usage(HUMAN)
@@ -591,13 +597,15 @@ def steer_scenario(key, text):
     return True
 
 
-def steer_wait_turn(key, gate, drop):
+def steer_wait_turn(key, gate, verb):
     """Plain work until <gate> exists. Steers get a reply at once and the turn goes on; with drop (Codex v1 at the turn's end) they are never read."""
     def reply(t):
         time.sleep(0.05)
         steer_say('Steered reply: ' + t)
         steer_usage(HUMAN, 1500)
+    drop = verb == 'steer-drop'
     turn = steer_begin(key, None if drop else lambda t: threading.Thread(target=reply, args=(t,), daemon=True).start())
+    turn['late'] = verb == 'steer-late'
     steer_say('Working. ')
     while True:
         state = steer_wait(turn, lambda: os.path.exists(gate))
@@ -607,6 +615,8 @@ def steer_wait_turn(key, gate, drop):
         break
     if state == 'cancel':
         steer_end(turn, 'cancelled')
+        return
+    if not turn['open']:   # steer-late: the turn already ended
         return
     steer_say('Finished. ')
     steer_usage(HUMAN)
@@ -686,6 +696,11 @@ def steer_bash(key, gate):
     if who == 'claude':
         def notified():   # when it ends Claude Code starts its own cycle; the Bash card gets nothing more
             child.wait()
+            if os.path.exists(gate + '.cycle-hold'):   # a test that wants to look at the autonomous cycle holds it until <gate>.cycle-end exists
+                deadline = time.time() + 300
+                steer_say('Reading the command output. ')
+                while not os.path.exists(gate + '.cycle-end') and time.time() < deadline:
+                    time.sleep(0.02)
             steer_say('The command finished.')
             steer_usage({'kind': 'task-notification', 'producer': 'session-task', 'runId': 'steer-run'})
         threading.Thread(target=notified, daemon=True).start()
@@ -782,8 +797,14 @@ def steer_perm(key):
     if turn['cancel'].is_set():
         steer_end(turn, 'cancelled')
         return
-    asked = turn['steers'][:]
     update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed' if outcome != 'reject_once' else 'failed', 'rawOutput': 'Shell cwd was reset' if outcome != 'reject_once' else 'Rejected'})
+    steer_wait(turn, lambda: False, 1.0)   # the model goes on for a moment: a steer that arrives now (a held one, released by the answer) is read in this turn
+    if turn['steers']:
+        time.sleep(0.1)
+    if turn['cancel'].is_set():
+        steer_end(turn, 'cancelled')
+        return
+    asked = turn['steers'][:]
     steer_say('Done.')
     steer_usage(HUMAN)
     for t in asked:   # the steer's own cycle
