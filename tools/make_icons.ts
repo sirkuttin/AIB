@@ -1,42 +1,58 @@
 /**
- * Renders the app icon masters (outputs/agent-studio/icons/src/*.svg, viewBox 0 0 100 100) into every icon file the app and the
- * packages use. Re-run it after changing the art, then commit what it wrote (the build only reads these files, it never renders):
+ * Writes every icon file the app and the packages use from the masters in outputs/agent-studio/icons/src/. Re-run it after changing
+ * the art, then commit what it wrote (the build only reads these files, it never renders):
  *
  *   deno run -A --node-modules-dir=none --no-lock tools/make_icons.ts   (the root package.json would make deno look in node_modules)
  *
- *   icons/icon.ico                     Windows (build.ts embeds it in AIB.exe): 16 20 24 32 from icon-small.svg, 40 48 64 128 256
- *                                      from icon.svg
- *   icons/32x32.png                    icon-small.svg (macOS .icns ic11)
+ * The art (option C of the small-sizes icon round): no tile, a solid black top hat with a 1 px teal rim (#2BB3A3) so it holds its
+ * edge on a dark taskbar, and the two agent squares (amber, coral) on the crown. Two kinds of master:
+ *   icon-16.txt .. icon-32.txt   hand-drawn pixel grids for 16 20 24 32 px, one character per pixel (PIXEL below). The small sizes
+ *                                are drawn on the pixel grid, not shrunk from the vector, so no edge smears over two pixels.
+ *   icon.svg                     the vector, viewBox 0 0 100 100, for 40 px and up and the favicon.
+ *
+ *   icons/icon.ico                     Windows (build.ts embeds it in AIB.exe): 16 20 24 32 from the grids, 40 48 64 128 256 from
+ *                                      icon.svg; every image a 32-bit RGBA PNG, see-through outside the hat
+ *   icons/32x32.png                    the 32 px grid (macOS .icns ic11)
  *   icons/128x128.png, 128x128@2x.png  icon.svg at 128 and 256 (.icns ic07, ic08)
  *   icons/icon.png                     icon.svg at 512 (.icns ic09; the Linux AppImage/.deb icon, .DirIcon)
- *   server/desktop/tray_icon_data.ts   the tray PNGs: icon-small.svg at 16 and 32 (the colour icon on every taskbar)
- *   chat.html, index.html              <link rel="icon">: icon-small.svg as a data: URL
+ *   server/desktop/tray_icon_data.ts   the tray PNGs: the 16 20 24 32 px grids (the colour icon on every taskbar)
+ *   chat.html, index.html              <link rel="icon">: icon.svg as a data: URL
  *
- * The renderer is resvg compiled to WebAssembly (npm:@resvg/resvg-wasm, the exact version below), fetched by deno: no global install,
- * no native tool. The masters have no text, so no fonts are loaded.
+ * The vector renderer is resvg compiled to WebAssembly (npm:@resvg/resvg-wasm, the exact version below), fetched by deno: no global
+ * install, no native tool. The masters have no text, so no fonts are loaded.
  */
-import { decodePng, makeIco, pngSize } from './build.ts';
+import { crc32, decodePng, makeIco, pngSize } from './build.ts';
 
 const RESVG = 'npm:@resvg/resvg-wasm@2.6.2';
 const HERE = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 const APP = `${HERE.replace(/\/tools$/, '')}/outputs/agent-studio`;
 export const ICON_SRC = `${APP}/icons/src`;
 
-/** The .ico's images, smallest first: the small master up to 32 px (bigger shapes that stay readable), the full one from 40. */
+/** The pixel-grid sizes (icon-<size>.txt). */
+export const GRID_SIZES = [16, 20, 24, 32];
+/** The grid characters: '.' see-through, the rest opaque colours. */
+export const PIXEL: Record<string, [number, number, number, number]> = {
+  '.': [0, 0, 0, 0],
+  K: [0x16, 0x15, 0x1b, 255], // the hat
+  T: [0x2b, 0xb3, 0xa3, 255], // the teal rim
+  A: [0xff, 0xc2, 0x47, 255], // amber agent
+  C: [0xff, 0x7a, 0x59, 255], // coral agent
+};
+export const RIM: [number, number, number] = [0x2b, 0xb3, 0xa3];
+export const HAT: [number, number, number] = [0x16, 0x15, 0x1b];
+
+/** The .ico's images, smallest first: the hand-drawn grids up to 32 px, the vector from 40. */
 export const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-export const icoMaster = (size: number) => size <= 32 ? 'icon-small.svg' : 'icon.svg';
+export const icoMaster = (size: number) => GRID_SIZES.includes(size) ? `icon-${size}.txt` : 'icon.svg';
 /** The PNGs next to the .ico: [file, master, size]. */
 export const PNGS: [string, string, number][] = [
-  ['32x32.png', 'icon-small.svg', 32],
+  ['32x32.png', 'icon-32.txt', 32],
   ['128x128.png', 'icon.svg', 128],
   ['128x128@2x.png', 'icon.svg', 256],
   ['icon.png', 'icon.svg', 512],
 ];
-/** The tray images in tray_icon_data.ts: [key, master, size]. */
-export const TRAY: [string, string, number][] = [
-  ['color-16', 'icon-small.svg', 16],
-  ['color-32', 'icon-small.svg', 32],
-];
+/** The tray images in tray_icon_data.ts: [key, master, size], one per grid so Windows never scales the 1 px rim away. */
+export const TRAY: [string, string, number][] = GRID_SIZES.map((size) => [`color-${size}`, `icon-${size}.txt`, size]);
 /** The pages that get the favicon. */
 export const FAVICON_PAGES = ['chat.html', 'index.html'];
 
@@ -57,12 +73,59 @@ export function trayDataModule(images: [string, Uint8Array][]): string {
   const b64 = (d: Uint8Array) => btoa(Array.from(d, (b) => String.fromCharCode(b)).join(''));
   return [
     '// Generated by tools/make_icons.ts from outputs/agent-studio/icons/src/: do not edit, re-run the script.',
-    '/** The tray icon PNGs, base64: the small app icon (icon-small.svg) at 16 and 32 px. */',
+    '/** The tray icon PNGs, base64: the hand-drawn app icon grids (icon-16.txt .. icon-32.txt) at 16 20 24 32 px. */',
     'export const TRAY_PNG_BASE64: Record<string, string> = {',
     ...images.map(([key, png]) => `  '${key}': '${b64(png)}',`),
     '};',
     '',
   ].join('\n');
+}
+
+/** A grid master's RGBA pixels: size rows of size characters from PIXEL (blank lines and trailing spaces ignored). */
+export function parseGrid(text: string, size: number): Uint8Array {
+  const rows = text.split(/\r?\n/).map((r) => r.trimEnd()).filter((r) => r);
+  if (rows.length !== size || rows.some((r) => r.length !== size)) throw new Error(`the ${size} px grid is not ${size} by ${size}`);
+  const rgba = new Uint8Array(size * size * 4);
+  rows.forEach((row, y) =>
+    [...row].forEach((ch, x) => {
+      const px = PIXEL[ch];
+      if (!px) throw new Error(`the ${size} px grid has an unknown pixel '${ch}' at ${x},${y}`);
+      rgba.set(px, (y * size + x) * 4);
+    })
+  );
+  return rgba;
+}
+
+/** An 8-bit RGBA PNG of the pixels (filter 0 on every row: what decodePng and png_badge.ts read). */
+export async function encodePng(width: number, height: number, rgba: Uint8Array): Promise<Uint8Array> {
+  const stride = width * 4;
+  const raw = new Uint8Array(height * (stride + 1));
+  for (let y = 0; y < height; y++) raw.set(rgba.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
+  const stream = new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'));
+  const idat = new Uint8Array(await new Response(stream).arrayBuffer());
+  const chunk = (kind: string, data: Uint8Array) => {
+    const out = new Uint8Array(12 + data.length);
+    const v = new DataView(out.buffer);
+    v.setUint32(0, data.length);
+    out.set([...kind].map((c) => c.charCodeAt(0)), 4);
+    out.set(data, 8);
+    v.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  };
+  const ihdr = new Uint8Array(13);
+  const hv = new DataView(ihdr.buffer);
+  hv.setUint32(0, width);
+  hv.setUint32(4, height);
+  ihdr.set([8, 6, 0, 0, 0], 8); // 8-bit RGBA, deflate, adaptive filtering, no interlace
+  const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const parts = [signature, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', new Uint8Array())];
+  const png = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    png.set(p, at);
+    at += p.length;
+  }
+  return png;
 }
 
 async function renderer(): Promise<(svg: string, size: number) => Uint8Array> {
@@ -87,18 +150,21 @@ export async function hasColour(png: Uint8Array, rgb: [number, number, number]):
 
 async function main() {
   const render = await renderer();
-  const svg = Object.fromEntries(
-    await Promise.all(
-      ['icon.svg', 'icon-small.svg'].map(async (n) => [n, await Deno.readTextFile(`${ICON_SRC}/${n}`)]),
-    ),
-  );
-  const ico = ICO_SIZES.map((size) => render(svg[icoMaster(size)], size));
-  if (!(await hasColour(ico[0], [0x13, 0x86, 0x7a]))) throw new Error('the 16 px icon has no tile colour #13867A');
+  const vector = await Deno.readTextFile(`${ICON_SRC}/icon.svg`);
+  const grids: Record<string, Uint8Array> = {};
+  for (const size of GRID_SIZES) {
+    grids[`icon-${size}.txt`] = await encodePng(size, size, parseGrid(await Deno.readTextFile(`${ICON_SRC}/icon-${size}.txt`), size));
+  }
+  const image = (master: string, size: number) => master === 'icon.svg' ? render(vector, size) : grids[master];
+  const ico = ICO_SIZES.map((size) => image(icoMaster(size), size));
+  for (const png of [ico[0], ico[ico.length - 1]]) {
+    if (!(await hasColour(png, RIM)) || !(await hasColour(png, HAT))) throw new Error('an icon image has no teal rim or no black hat');
+  }
   await Deno.writeFile(`${APP}/icons/icon.ico`, makeIco(ico));
-  for (const [file, master, size] of PNGS) await Deno.writeFile(`${APP}/icons/${file}`, render(svg[master], size));
-  const tray = TRAY.map(([key, master, size]): [string, Uint8Array] => [key, render(svg[master], size)]);
+  for (const [file, master, size] of PNGS) await Deno.writeFile(`${APP}/icons/${file}`, image(master, size));
+  const tray = TRAY.map(([key, master, size]): [string, Uint8Array] => [key, image(master, size)]);
   await Deno.writeTextFile(`${APP}/server/desktop/tray_icon_data.ts`, trayDataModule(tray));
-  const link = faviconLink(svg['icon-small.svg']);
+  const link = faviconLink(vector);
   for (const page of FAVICON_PAGES) {
     const path = `${APP}/${page}`;
     await Deno.writeTextFile(path, withFavicon(await Deno.readTextFile(path), link));
