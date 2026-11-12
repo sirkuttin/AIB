@@ -1799,6 +1799,20 @@
         window.SubagentsUI?.noteEvent(children.get(sid), e);
       }
     });
+    // Model, tokens and what each helper is doing now (subagents-ui.js details); a part not known now keeps what was known before.
+    const facts = window.SubagentsUI?.details?.(events, snapshot.sessionId);
+    if (facts)
+      for (const [id, d] of facts) {
+        const c = children.get(id);
+        if (!c) continue;
+        children.set(id, {
+          ...c,
+          model: d.model || c.model || '',
+          tokens: d.tokens || c.tokens || 0,
+          activity: d.activity || c.activity || '',
+          agentType: c.agentType || d.agentType || '',
+        });
+      }
     /* You pressed Interrupt and the turn ended cancelled: a subagent the agent last reported as running, and has not been heard
        from since, is shown as Interrupted rather than still working. Anything it sends later puts it back. */
     if (interrupted < 0) return;
@@ -1873,6 +1887,23 @@
       }[state.toLowerCase()] || state
     );
   }
+  /* The chat's own model id: what its replies come from (inUse), else the model setting it advertises; for a saved chat, the main
+     transcript's model. A helper that names no model shows this one. */
+  function chatModel() {
+    if (current && snapshot) {
+      if (typeof snapshot.inUse?.model === 'string' && snapshot.inUse.model.trim()) return snapshot.inUse.model;
+      try {
+        const chip = window.AgentComposerChips?.describe({ settings: snapshot.settings || null })?.chips?.find(
+          (c) => c.id === 'model',
+        );
+        return typeof chip?.value === 'string' ? chip.value : '';
+      } catch {
+        return '';
+      }
+    }
+    const main = agents.find((a) => a.main);
+    return typeof main?.model === 'string' ? main.model : '';
+  }
   function renderAgents() {
     const rows = sortAgents(current ? [...children.values()] : agents.filter((a) => !a.main));
     if (window.SubagentsUI) {
@@ -1883,6 +1914,7 @@
         now: Date.now() / 1000,
         convKey: selected?.key || '',
         selectedKey: subSelection?.key,
+        chatModel: chatModel(),
         empty: 'No subagents yet',
         onModel: (m) => {
           actCounts = { subagents: m.top.length + m.done.length, working: m.working.length, failed: m.failed };
@@ -2000,12 +2032,10 @@
     const rows = allAgentRows(),
       row = rows.find((r) => r.key === subSelection.key) || subSelection;
     subSelection = row;
-    const h = window.SubagentsUI?.header(row, Date.now() / 1000);
+    const h = window.SubagentsUI?.header(row, Date.now() / 1000, chatModel());
     if (h) {
       $('subchatTitle').textContent = h.title;
-      $('subchatStatus').textContent = [h.type, h.state, h.duration, row.live ? 'live' : 'saved transcript']
-        .filter(Boolean)
-        .join(' · ');
+      $('subchatStatus').textContent = window.SubagentsUI.subtitle(h, row.live);
     }
     const kids = window.SubagentsUI?.childrenOf(rows, row) || [],
       mine = commands.filter((t) => t.agentKey === row.key).slice(0, 6);
@@ -4666,7 +4696,10 @@
     };
     box.addEventListener('wheel', (e) => e.deltaY < 0 && scrolledUp(), { passive: true });
     box.addEventListener('keydown', (e) => {
-      if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && !e.target.closest?.('input, textarea, [contenteditable="true"]'))
+      if (
+        ['ArrowUp', 'PageUp', 'Home'].includes(e.key) &&
+        !e.target.closest?.('input, textarea, [contenteditable="true"]')
+      )
         scrolledUp();
     });
     box.addEventListener('scroll', () => {
@@ -4860,6 +4893,8 @@
     refresh,
     refreshToken,
     renderSubagentControls,
+    renderSubHead,
+    chatModel,
     disarmStop,
     repaintMain,
     liveExtra,

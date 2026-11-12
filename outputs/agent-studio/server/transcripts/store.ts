@@ -388,7 +388,7 @@ export class Store {
       completed = failed || ['end_turn', 'stop_sequence', 'max_tokens'].includes(dget(msg, 'stop_reason') as string);
       break;
     }
-    const hints = { firstPrompt: clip(prompt, 300), failed, completed };
+    const hints = { firstPrompt: clip(prompt, 300), failed, completed, tokens: usageTokens(tail) };
     if (this.hintCache.size > 2000) this.hintCache.clear();
     this.hintCache.set(path, [sig, hints]);
     return hints;
@@ -426,6 +426,7 @@ export class Store {
           item.failed = (extra.failed as boolean) ||
             ['failed', 'error', 'errored'].includes(pyStr(or(dget(side, 'status'), dget(side, 'state'), '')).toLowerCase());
           item.completedMarker = extra.completed;
+          item.tokens = extra.tokens ?? null;
           item.result = clip(pyStrip(or(dget(or(item.last, {}) as Dict, 'text'), '') as string), 200);
           if (pyStrip(described)) item.name = clip(splitlines(pyStrip(described))[0], 120);
           else if (extra.firstPrompt) item.name = clip(splitlines(extra.firstPrompt as string)[0], 120);
@@ -442,6 +443,27 @@ export class Store {
       Number(!a.active) - Number(!b.active) || (b.created as number) - (a.created as number) || strCmp(a.key as string, b.key as string)
     );
   }
+}
+
+const USAGE_FIELDS = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'];
+const USAGE = new TextEncoder().encode('"usage"');
+
+/** Tokens of a subagent's newest assistant turn with usage (input + cache + output, the way Claude Code totals a helper), or null. */
+export function usageTokens(tail: Uint8Array): number | null {
+  for (const line of bytesSplitlines(tail).reverse()) {
+    if (!bytesInclude(line, USAGE)) continue;
+    const row = loadsBytes(line);
+    const msg = isDict(row) ? dget(row, 'message') : null;
+    const usage = isDict(msg) ? dget(msg, 'usage') : null;
+    if (!isDict(usage) || dget(msg as Dict, 'role') !== 'assistant') continue;
+    let total = 0;
+    for (const k of USAGE_FIELDS) {
+      const v = usage[k];
+      if (typeof v === 'number' && Number.isInteger(v) && v > 0) total += v;
+    }
+    return total || null;
+  }
+  return null;
 }
 
 function sortSessions(items: Dict[]): Dict[] {

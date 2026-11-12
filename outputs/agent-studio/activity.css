@@ -296,6 +296,68 @@ body.subchat-open .rs-split {
   background: var(--accent-wash-4);
   color: var(--link);
 }
+/* A working subagent is a card of up to three lines: name + run time; model · type + tokens; what it is doing now. Lines 2-3 start
+   under the name (dot 8 px + gap 8 px). */
+.sa-card.sa-big {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  height: auto;
+  min-height: 28px;
+  padding-top: 6px;
+  padding-bottom: 7px;
+}
+.sa-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.sa-l1 {
+  height: 18px;
+}
+.sa-l2,
+.sa-l3 {
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.sa-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sa-tokens {
+  flex: 0 0 auto;
+}
+.sa-doing {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+/* A finished subagent stays one 28 px line: outcome (only Failed / Stopped / Interrupted) and short model before the run time. */
+.sa-outcome,
+.sa-model {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.sa-model {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sa-failed .sa-outcome {
+  color: var(--danger-text);
+  font-weight: 550;
+}
+.subagent-card.sa-failed .sa-when {
+  color: var(--text-muted);
+}
 .sa-completed .sa-dot {
   background: var(--status-done);
 }

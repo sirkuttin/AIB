@@ -974,7 +974,7 @@ class Store:
             failed = bool(row.get('isApiErrorMessage') or row.get('error'))
             completed = failed or msg.get('stop_reason') in ('end_turn', 'stop_sequence', 'max_tokens')
             break
-        hints = {'firstPrompt': prompt[:300], 'failed': failed, 'completed': completed}
+        hints = {'firstPrompt': prompt[:300], 'failed': failed, 'completed': completed, 'tokens': usage_tokens(tail)}
         if len(self.hint_cache) > 2000:
             self.hint_cache.clear()
         self.hint_cache[path] = (sig, hints)
@@ -1007,6 +1007,7 @@ class Store:
                     item['firstPrompt'] = extra['firstPrompt']
                     item['failed'] = extra['failed'] or str(side.get('status') or side.get('state') or '').lower() in ('failed', 'error', 'errored')
                     item['completedMarker'] = extra['completed']
+                    item['tokens'] = extra.get('tokens')
                     item['result'] = ((item.get('last') or {}).get('text') or '').strip()[:200]
                     if described.strip():
                         item['name'] = described.strip().splitlines()[0][:120]
@@ -1018,6 +1019,27 @@ class Store:
             except (OSError, ValueError):
                 continue
         return sorted(result, key=lambda a: (not a['active'], -a['created'], a['key']))
+
+
+USAGE_FIELDS = ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens')
+
+
+def usage_tokens(tail):
+    """Tokens of a subagent's newest assistant turn with usage (input + cache + output, the way Claude Code totals a helper), or None."""
+    for line in reversed(tail.splitlines()):
+        if b'"usage"' not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeError):
+            continue
+        msg = row.get('message') if isinstance(row, dict) else None
+        usage = msg.get('usage') if isinstance(msg, dict) else None
+        if not isinstance(usage, dict) or msg.get('role') != 'assistant':
+            continue
+        total = sum(v for v in (usage.get(k) for k in USAGE_FIELDS) if type(v) is int and v > 0)
+        return total or None
+    return None
 
 
 class Catalog:
