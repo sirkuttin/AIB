@@ -405,6 +405,29 @@ Deno.test('worktree tools are offered only to a worktree chat', async () => {
   lab.fake.reply = [409, { error: 'The chat is busy' }];
   const refused = await shim.call('merge_into_project', {});
   assertEquals([refused.isError, firstText(refused)], [true, 'Not merged: The chat is busy']);
+  lab.fake.reply = [409, { error: 'The chat is busy', target: 'main' }];
+  assertEquals(firstText(await shim.call('merge_into_project', {})), 'Not merged into main: The chat is busy');
+  lab.fake.reply = [200, { state: 'conflicts', message: 'Resolve f.txt.', target: 'main' }];
+  assertEquals(
+    firstText(await shim.call('merge_into_project', {})),
+    'Not merged into main yet. Resolve f.txt. Then call merge_into_project again.',
+  );
+  lab.fake.reply = [200, {
+    state: 'merged',
+    message: 'Merged into main (1 commit)',
+    base: 'main',
+    target: 'main',
+    started: 'feat/x',
+    helpers: ['tests'],
+  }];
+  assertEquals(
+    firstText(await shim.call('merge_into_project', {})),
+    'Merged into main (1 commit). Your copy now continues from the new main. This chat started from feat/x; its work landed on main. ' +
+      'Still running, not waited for (AIB cannot tell where they work): tests. If one works in your worktree, check that its changes ' +
+      'landed as you meant.',
+  );
+  const description = String((((await shim.request('tools/list')).result as Json).tools as Json[])[3].description);
+  assert(description.includes('say yes in the') && !description.includes('not enough'), 'a typed yes is enough');
   assert((await shim.call('resolve_edit_clash', { action: 'nope' })).isError);
 });
 

@@ -136,13 +136,17 @@ export const TOOLS: Json[] = [
 export const WORKTREE_TOOLS: Json[] = [
   {
     name: 'merge_into_project',
-    title: "Merge this chat's work into the project",
+    title: "Merge this chat's work into the project's main branch",
     description:
-      'Merge the work of this chat (done in its own copy of the project, on its own branch) into the project. It works only after the user pressed ' +
-      'Merge into main (or their base branch) in the Changes tab; AIB then sends you a message asking you to merge. A "yes" typed in the chat is not ' +
-      'enough, and the permission ends when your work changes after the click or the user sends a new message. Without it nothing is merged and the ' +
-      "reply tells you to point the user to that button. It merges this chat's own work and nothing else. The reply says how many commits were " +
-      'merged, or exactly why nothing was merged (for example: conflicts to resolve, or a terminal you started is still running) and what to do.',
+      "Merge this chat's work (done in its own worktree, on its own branch) into the project's main branch: main, else master, else the " +
+      'branch the chat started from. When your work is done, ask the user "Merge into main?" and call this as soon as they say yes in the ' +
+      "chat; no button press is needed (the Merge button in the Changes tab only sends you that request). It lands this chat's own changes " +
+      'and nothing else, and AIB posts a "Merged into ..." line in the chat for every merge. If main has moved, AIB first merges main into ' +
+      'your worktree; if that conflicts, nothing lands on main and the reply lists the files: resolve them in your worktree (keep what both ' +
+      "sides intended, remove the conflict markers, commit), then call this again. The user's uncommitted edits in the main checkout are " +
+      "set aside and put back. To take in a helper's work from another worktree, run `git merge <their branch>` in your worktree first " +
+      '(all worktrees share the branches). Helpers in other worktrees never block a merge; a terminal still running in your worktree does. ' +
+      'The reply names the target branch, then says what landed or exactly why nothing did and what to do.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -424,16 +428,18 @@ async function http(
     }
     if (response.status < 200 || response.status >= 300) {
       let message: unknown = null;
+      let target: unknown = null; // the merge tool's target branch, named in its refusal
       try {
         const parsed = JSON.parse(new TextDecoder().decode(response.body));
         message = isDict(parsed) ? (Object.hasOwn(parsed, 'error') ? parsed.error : null) : null;
+        target = isDict(parsed) && typeof parsed.target === 'string' ? parsed.target : null;
       } catch {
         message = null;
       }
       if (response.status === 401 || response.status === 403) {
         message = truthy(message) ? message : 'AIB refused the artifact key for this conversation';
       } else if (soft && truthy(message)) {
-        return { error: message, status: response.status } as Json;
+        return { error: message, status: response.status, ...(target ? { target } : {}) } as Json;
       }
       throw new ToolError(`AIB returned ${response.status}: ${pyStr(truthy(message) ? message : response.reason)}`);
     }
@@ -524,17 +530,28 @@ async function toolList(ctx: ToolContext, _args: Json): Promise<Json> {
 /** Plain text for the agent: what happened, or the exact reason nothing did. */
 async function worktreeCall(ctx: ToolContext, action: string): Promise<Json> {
   const reply = await http(ctx, 'POST', '/api/live/worktree/tool', null, { conversationId: ctx.conversation, action }, true);
+  const target = truthy(pyGet(reply, 'target')) ? pyStr(pyGet(reply, 'target')) : '';
   if (truthy(pyGet(reply, 'error'))) {
-    const what = action === 'merge' ? 'Not merged' : 'Not done';
+    const what = action === 'merge' ? (target ? `Not merged into ${target}` : 'Not merged') : 'Not done';
     return { content: [{ type: 'text', text: `${what}: ${pyStr(pyGet(reply, 'error'))}` }], isError: true };
   }
   if (action === 'merge') {
     if (pyGet(reply, 'state') === 'conflicts') {
       return {
-        content: [{ type: 'text', text: 'Not merged yet. ' + loose(pyGet(reply, 'message')) + ' Then call merge_into_project again.' }],
+        content: [{
+          type: 'text',
+          text: `Not merged${target ? ` into ${target}` : ''} yet. ` + loose(pyGet(reply, 'message')) + ' Then call merge_into_project again.',
+        }],
       };
     }
     let text = `${pyStr(pyGet(reply, 'message'))}. Your copy now continues from the new ${pyStr(pyGet(reply, 'base'))}.`;
+    const started = truthy(pyGet(reply, 'started')) ? pyStr(pyGet(reply, 'started')) : '';
+    if (target && started && started !== target) text += ` This chat started from ${started}; its work landed on ${target}.`;
+    const helpers = pyGet(reply, 'helpers');
+    if (Array.isArray(helpers) && helpers.length) {
+      text += ` Still running, not waited for (AIB cannot tell where they work): ${helpers.map((h) => pyStr(h)).join(', ')}. ` +
+        'If one works in your worktree, check that its changes landed as you meant.';
+    }
     if (truthy(pyGet(reply, 'guidance'))) text += '\n' + pyStr(pyGet(reply, 'guidance'));
     return { content: [{ type: 'text', text }] };
   }

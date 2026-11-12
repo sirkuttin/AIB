@@ -110,12 +110,16 @@ TOOLS = [
 WORKTREE_TOOLS = [
     {
         'name': 'merge_into_project',
-        'title': 'Merge this chat\'s work into the project',
-        'description': ('Merge the work of this chat (done in its own copy of the project, on its own branch) into the project. It works only after the user pressed '
-                        'Merge into main (or their base branch) in the Changes tab; AIB then sends you a message asking you to merge. A "yes" typed in the chat is not '
-                        'enough, and the permission ends when your work changes after the click or the user sends a new message. Without it nothing is merged and the '
-                        "reply tells you to point the user to that button. It merges this chat's own work and nothing else. The reply says how many commits were "
-                        'merged, or exactly why nothing was merged (for example: conflicts to resolve, or a terminal you started is still running) and what to do.'),
+        'title': 'Merge this chat\'s work into the project\'s main branch',
+        'description': ("Merge this chat's work (done in its own worktree, on its own branch) into the project's main branch: main, else master, else the "
+                        'branch the chat started from. When your work is done, ask the user "Merge into main?" and call this as soon as they say yes in the '
+                        "chat; no button press is needed (the Merge button in the Changes tab only sends you that request). It lands this chat's own changes "
+                        'and nothing else, and AIB posts a "Merged into ..." line in the chat for every merge. If main has moved, AIB first merges main into '
+                        'your worktree; if that conflicts, nothing lands on main and the reply lists the files: resolve them in your worktree (keep what both '
+                        'sides intended, remove the conflict markers, commit), then call this again. The user\'s uncommitted edits in the main checkout are '
+                        "set aside and put back. To take in a helper's work from another worktree, run `git merge <their branch>` in your worktree first "
+                        '(all worktrees share the branches). Helpers in other worktrees never block a merge; a terminal still running in your worktree does. '
+                        'The reply names the target branch, then says what landed or exactly why nothing did and what to do.'),
         'inputSchema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
     },
     {
@@ -213,14 +217,17 @@ def http(method, route, query=None, body=None, soft=False):
                 raw = response.read()
         except urllib.error.HTTPError as error:
             raw = error.read()
+            target = None  # the merge tool's target branch, named in its refusal
             try:
-                message = json.loads(raw.decode('utf-8', 'replace')).get('error')
+                parsed = json.loads(raw.decode('utf-8', 'replace'))
+                message = parsed.get('error')
+                target = parsed.get('target') if isinstance(parsed.get('target'), str) else None
             except (ValueError, AttributeError):
                 message = None
             if error.code in (401, 403):
                 message = message or 'AIB refused the artifact key for this conversation'
             elif soft and message:
-                return {'error': message, 'status': error.code}
+                return {'error': message, 'status': error.code, **({'target': target} if target else {})}
             raise ToolError(f'AIB returned {error.code}: {message or error.reason}')
         except (urllib.error.URLError, OSError, TimeoutError) as error:
             last = error
@@ -305,13 +312,22 @@ def tool_list(args):
 def worktree_call(action):
     """Plain text for the agent: what happened, or the exact reason nothing did."""
     reply = http('POST', '/api/live/worktree/tool', body={'conversationId': os.environ.get('STUDIO_CONVERSATION_ID', ''), 'action': action}, soft=True)
+    target = str(reply.get('target')) if reply.get('target') else ''
     if reply.get('error'):
-        what = 'Not merged' if action == 'merge' else 'Not done'
+        what = (f'Not merged into {target}' if target else 'Not merged') if action == 'merge' else 'Not done'
         return {'content': [{'type': 'text', 'text': f'{what}: {reply["error"]}'}], 'isError': True}
     if action == 'merge':
         if reply.get('state') == 'conflicts':
-            return {'content': [{'type': 'text', 'text': 'Not merged yet. ' + str(reply.get('message') or '') + ' Then call merge_into_project again.'}]}
+            into = f' into {target}' if target else ''
+            return {'content': [{'type': 'text', 'text': f'Not merged{into} yet. ' + str(reply.get('message') or '') + ' Then call merge_into_project again.'}]}
         text = f'{reply.get("message")}. Your copy now continues from the new {reply.get("base")}.'
+        started = str(reply.get('started')) if reply.get('started') else ''
+        if target and started and started != target:
+            text += f' This chat started from {started}; its work landed on {target}.'
+        helpers = reply.get('helpers')
+        if isinstance(helpers, list) and helpers:
+            text += (f' Still running, not waited for (AIB cannot tell where they work): {", ".join(str(h) for h in helpers)}. '
+                     'If one works in your worktree, check that its changes landed as you meant.')
         if reply.get('guidance'):
             text += '\n' + str(reply['guidance'])
         return {'content': [{'type': 'text', 'text': text}]}

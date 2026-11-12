@@ -38,7 +38,6 @@ import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease 
 import { HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
 import { expandUser } from '../platform/pypath.ts';
 import { home, isdir, join, realpath } from '../platform/ospath.ts';
-import { userPrompted } from '../worktrees/merge_request.ts';
 import { Recovery, StateStore } from '../state/recovery.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { builtinLaunch } from '../web/shared.ts';
@@ -889,8 +888,6 @@ export class Studio {
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
-    // The user's own next message ends a merge permission the Changes tab's Merge button gave (merge_request.ts).
-    if (this.hasStateDir) c.onUserPrompt = (conn, text, messageId) => userPrompted(this.stateDir, conn.cwd, text, messageId);
     if (this.liveSync) {
       const sync = this.liveSync;
       c.onTurnStart = (conn) => sync.turnStarted(conn);

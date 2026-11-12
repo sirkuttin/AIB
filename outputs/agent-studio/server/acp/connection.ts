@@ -1485,6 +1485,11 @@ export class Connection {
       const value = get(update, name);
       if (isStr(value) && pyStrip(value)) entry[name] = clip(value, 500);
     }
+    // Where the child works, when the agent says (worktrees/merge.ts: only a helper inside the chat's own worktree holds a merge).
+    for (const name of ['cwd', 'worktree', 'worktreePath', 'workingDirectory']) {
+      const value = get(update, name);
+      if (isStr(value) && pyStrip(value)) entry.cwd = clip(value, 1000);
+    }
     if (isDict(get(update, 'capabilities'))) {
       entry.capabilities = update.capabilities;
     }

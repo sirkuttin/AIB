@@ -104,7 +104,7 @@ async function refusedReply<T>(work: () => Promise<T> | T): Promise<Reply> {
   try {
     return [200, await work()];
   } catch (error) {
-    if (error instanceof merge.Refused) return [error.status, { error: error.message, code: error.code }];
+    if (error instanceof merge.Refused) return [error.status, { ...error.extra, error: error.message, code: error.code }];
     if (error instanceof EditorError) return [error.status, { error: error.message, code: error.code }];
     throw error;
   }
