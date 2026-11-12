@@ -390,7 +390,7 @@
       return;
     }
     if (selected?.key !== key) return;
-    const rows = normalized({ events: w.events, context: w.context }, key, true),
+    const rows = normalized({ events: w.events, context: w.context, start: w.start }, key, true),
       unit = window.ChatViews.project(rows, 'prompts', {}).units.find((u) => sameHit(u.prompt, hit));
     if (unit) window.ChatViewsUI.openPrompt(unit.key);
     rowExtra.main = 1e9; // show every loaded prompt, so the opened one is drawn
@@ -1458,16 +1458,13 @@
       );
     }
     let flat = shown;
-    /* main list: every drawn row carries its index in rows (data-ri), so a view change can find the same row again */
+    /* every drawn row carries its stable id (data-rid, tagRow); main list rows also their index in rows (data-ri) */
     const index = signatureKey === 'main' ? new Map(rows.map((r, i) => [r, i])) : null,
-      tag = (render) =>
-        index
-          ? (row) => {
-              const el = render(row);
-              if (el && el.dataset && index.has(row)) el.dataset.ri = index.get(row);
-              return el;
-            }
-          : render;
+      tag = (render) => (row) => {
+        const el = tagRow(row, render(row));
+        if (index && el && el.dataset && index.has(row)) el.dataset.ri = index.get(row);
+        return el;
+      };
     if (proj) {
       const ctx = {
         bubble: tag(viewBubble),
@@ -1542,6 +1539,13 @@
       announceTurns(box, selected ? aliasKey(selected) : '', rows, '');
     }
   }
+  /* A drawn row carries its row's stable id (data-rid: 'L:' + event number, 'T:' + transcript index), the same in the main list,
+     a split pane and every view, so the scroll controller (scroll-controller.js) can find the row you read again. */
+  function tagRow(row, el) {
+    if (row && row.rid && el && el.dataset && !el.dataset.rid) el.dataset.rid = row.rid;
+    return el;
+  }
+  const tagged = (render) => (row) => tagRow(row, render(row));
   /* Several link/file rows in a row with the same time: the time shows on the first one only. */
   function markRepeatedTimes(box) {
     let prev = null;
@@ -1604,8 +1608,12 @@
       attachments: transcriptImage(e, key),
     });
     /* data.context: older events the plan fold needs (the update_plan that set the plan, background launches...) from before this page. They are folded, never drawn. */
-    const ctx = (data.context || []).map((e) => ({ ...toRow(e), ctx: true })),
-      rows = data.events.filter((e) => thinkingOn() || e.kind !== 'thinking').map(toRow);
+    /* row ids: 'T:' + the event's index in the whole transcript (data.start: the window's first), stable when older pages load */
+    const base = Number.isFinite(data.start) ? data.start : 0,
+      ctx = (data.context || []).map((e, i) => ({ ...toRow(e), ctx: true, rid: 'C:' + i })),
+      rows = data.events
+        .map((e, i) => (thinkingOn() || e.kind !== 'thinking' ? { ...toRow(e), rid: 'T:' + (base + i) } : null))
+        .filter(Boolean);
     const paired = window.ToolViews?.pairSaved ? window.ToolViews.pairSaved([...ctx, ...rows]) : [...ctx, ...rows];
     markRunningCall(paired, key);
     const out = window.PlanUI ? window.PlanUI.fold(paired, { working: savedWorking(key) }) : paired;
@@ -1641,8 +1649,13 @@
       tools = new Map(), // toolCallId -> {row, turn}
       uses = new Map(), // toolCallId -> how many calls used it
       asks = new Map(); // approval / question key -> its record row
-    let turn = 0;
+    let turn = 0,
+      at = -1;
     for (const event of evs) {
+      at++;
+      /* every row carries a stable id: 'L:' + the event number of its first event (a merged message keeps its first chunk's,
+         a step its tool_call's), so the same chat has the same ids in the main list, a split pane and every view */
+      const rid = 'L:' + (Number.isFinite(event.seq) ? event.seq : at);
       let role,
         label,
         value,
@@ -1681,7 +1694,7 @@
           role = 'tool';
           label = (u.title || key) + ' · ' + (u.status || 'started');
           value = JSON.stringify(u, null, 2).slice(0, 40000);
-          const row = { role, label, value, time: event.replay ? 0 : event.time, raw: u },
+          const row = { role, label, value, time: event.replay ? 0 : event.time, raw: u, rid },
             n = (uses.get(key) || 0) + 1;
           uses.set(key, n);
           if (n > 1) row.uid = key + '#' + n;
@@ -1692,6 +1705,7 @@
           rows.push({
             role: 'plan',
             label: 'Plan',
+            rid,
             time: event.replay ? 0 : event.time,
             entries: Array.isArray(u.entries) ? u.entries : [],
             value: (u.entries || []).map((e) => e.status + ': ' + e.content).join('\n'),
@@ -1710,6 +1724,7 @@
             role: 'answered',
             ask: event.kind,
             key,
+            rid,
             params: event.data.params || {},
             time: event.replay ? 0 : event.time,
           };
@@ -1754,6 +1769,7 @@
           value,
           time: event.replay ? 0 : event.time,
           attachments,
+          rid,
           ...(actions ? { actions } : {}),
         });
     }
@@ -1810,7 +1826,9 @@
       rows.filter((r) => r.role === 'user'),
       seen,
     );
-    return items.length ? [...rows, ...items.map((item) => ({ role: 'unknown-send', unknownSend: item }))] : rows;
+    return items.length
+      ? [...rows, ...items.map((item, n) => ({ role: 'unknown-send', unknownSend: item, rid: 'P:' + n }))]
+      : rows;
   }
   async function dismissUnknown(item) {
     try {
@@ -2232,7 +2250,7 @@
     const w = await pollHistory(target);
     subFetch = { key: target, at: Date.now() };
     if (subSelection?.key === target) {
-      showRows($('submessages'), normalized({ events: w.events, context: w.context }, target), 'sub');
+      showRows($('submessages'), normalized({ events: w.events, context: w.context, start: w.start }, target), 'sub');
       syncLoadEarlier($('submessages'), target, w, 'sub');
     }
   }
@@ -3810,7 +3828,7 @@
   }
   function renderMainHistory(w, key) {
     const box = $('messages');
-    showRows(box, normalized({ events: w.events, context: w.context }, key, true), 'main', {
+    showRows(box, normalized({ events: w.events, context: w.context, start: w.start }, key, true), 'main', {
       earlier: w.start > 0,
       ...savedExtra(key, w),
       find: findState(w),
@@ -3860,7 +3878,7 @@
         renderMainHistory(w, key);
       } else {
         subSignature = '';
-        showRows(box, normalized({ events: w.events, context: w.context }, key), 'sub');
+        showRows(box, normalized({ events: w.events, context: w.context, start: w.start }, key), 'sub');
         syncLoadEarlier(box, key, w, 'sub');
       }
       box.scrollTop = box.scrollHeight - oldHeight + oldTop;
@@ -4133,7 +4151,7 @@
     } else {
       const w = await pollHistory(c.key);
       m.histKey = c.key;
-      m.rows = normalized({ events: w.events, context: w.context }, c.key);
+      m.rows = normalized({ events: w.events, context: w.context, start: w.start }, c.key);
     }
     return m.rows;
   }
@@ -4250,14 +4268,14 @@
           live: working.live,
         }),
         ctx = {
-          bubble: viewBubble,
+          bubble: tagged(viewBubble),
           groupRows: (list, render) => window.ToolViews?.groupRows?.(list, render) || list.map(render),
         };
       if (view === 'prompts') fragment.append(...window.ChatViewsUI.promptNodes(proj, 0, ctx));
       else fragment.append(...window.ChatViewsUI.listNodes(proj, 0, ctx));
     } else if (!drawn.length) fragment.append(text('p', 'No messages yet.', 'empty-state'));
-    else if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, bubble));
-    else for (const row of drawn) fragment.append(bubble(row));
+    else if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, tagged(bubble)));
+    else for (const row of drawn) fragment.append(tagged(bubble)(row));
     box.replaceChildren(fragment);
     markRepeatedTimes(box);
     if (!condensed)
@@ -4306,7 +4324,7 @@
         historyWindows.get(m.histKey) !== hist
       )
         return;
-      m.rows = normalized({ events: hist.events, context: hist.context }, m.histKey);
+      m.rows = normalized({ events: hist.events, context: hist.context, start: hist.start }, m.histKey);
       st.grow = true;
       paintMirror(box, m.rows);
       ok = true;

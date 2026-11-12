@@ -1299,6 +1299,11 @@
           sync();
         });
         box.append(btn, body);
+        /* the rows this fold hides, by their ids: an anchor on one of them finds the fold (scroll-controller.js) */
+        if (run[0].rid && box.dataset) {
+          box.dataset.ridFrom = run[0].rid;
+          box.dataset.ridTo = run[run.length - 1].rid || run[0].rid;
+        }
         sync();
         out.push(box);
       } else for (const r of run) out.push(renderRow(r));

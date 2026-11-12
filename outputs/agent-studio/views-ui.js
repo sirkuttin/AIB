@@ -99,6 +99,13 @@
   const OPEN = new Set(); // folds whose "Show steps" is open: keyed by the first row's time plus the prompt, so it survives new turns and rebuilds
   const isOpen = (key) => OPEN.has(key);
 
+  /* A fold hides rows: it carries the ids of the first and last (scroll-controller.js finds an anchor on a hidden row through it). */
+  function ridRange(el, rows) {
+    const ids = (rows || []).map((r) => r && r.rid).filter(Boolean);
+    if (!ids.length || !el.dataset) return;
+    el.dataset.ridFrom = ids[0];
+    el.dataset.ridTo = ids[ids.length - 1];
+  }
   function stepsBlock(fold, ctx) {
     const wrap = make('div', 'steps-block'),
       btn = make('button', 'steps-toggle'),
@@ -131,6 +138,7 @@
       paint();
     });
     wrap.append(btn, list);
+    ridRange(wrap, fold.rows);
     paint();
     return wrap;
   }
@@ -245,6 +253,8 @@
       head = promptHead(unit, ctx),
       body = make('div', 'pv-body');
     item.dataset.pk = unit.key;
+    if (unit.prompt && unit.prompt.rid) item.dataset.rid = unit.prompt.rid;
+    ridRange(item, [unit.prompt, ...(unit.rows || [])]);
     body.id = idOf(unit.key);
     const paint = () => {
       const open = POPEN.has(unit.key);
