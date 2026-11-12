@@ -553,6 +553,12 @@ export const WORKTREE_PROMPT =
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 
+/** The `_claude/origin` kinds of a cycle Claude Code started on its own (claude-agent-acp's AUTONOMOUS_RESULT_ORIGINS). */
+const AUTONOMOUS_ORIGINS = new Set(['task-notification', 'peer', 'coordinator', 'observer', 'observer-activity']);
+
+/** What #untilReplyEnds races the response against. */
+const HELD = Symbol('held');
+
 const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB cannot tell whether the agent received it. ' +
   'Check the conversation. If it is missing, press Send again.';
 
@@ -607,6 +613,15 @@ export class Connection {
   turnEndedAt: number | null = null;
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
+  /**
+   * True while `busy` stands for a model cycle Claude Code started on its own (a background helper finished and it answers the
+   * task notification), not for a prompt of ours. Ends at that cycle's result (see #watchHeldTurn).
+   */
+  autonomous = false;
+  /** The running prompt's early end: called when its reply ended but Claude Code holds the response for background helpers. */
+  #endEarly: { seq: number; fire: () => void } | null = null;
+  /** Subagent sessions that started (or resumed) running during the current prompt turn: the helpers Claude Code holds it for. */
+  #turnHelpers = new Set<string>();
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -1015,7 +1030,10 @@ export class Connection {
     if (isStr(method)) {
       if (method === 'session/cancel') {
         const sid = get(get(message, 'params', {}) as Json, 'sessionId');
-        if (!this.sessionId || sid === this.sessionId) this.cancelSeq = this.promptSeq;
+        if (!this.sessionId || sid === this.sessionId) {
+          this.cancelSeq = this.promptSeq;
+          if (this.autonomous) void this.#endAutonomous('cancelled'); // as cancel() did live
+        }
       }
       return;
     }
@@ -1501,6 +1519,102 @@ export class Connection {
     }
   }
 
+  // ---- Claude Code's held turns and the cycles it starts on its own ------------------------------------------------------------
+  /**
+   * The Claude Code adapter (claude-agent-acp) holds a prompt's response open while background helpers (Agent with
+   * run_in_background) that the turn started still run: the reply has ended, but the response comes only once they finish, or when
+   * the next prompt arrives (the adapter then settles the held turn at once). It also starts model cycles on its own when a
+   * background task finishes, with no prompt at all. Its updates say both: the usage_update of a result carries
+   * `_meta['_claude/origin']` (no other update does), `human` for a prompt's result, `task-notification` (and the other kinds in
+   * AUTONOMOUS_ORIGINS) for a cycle it started. Only this adapter announces `agentCapabilities._meta.claudeCode`.
+   */
+  #claudeHolds(): boolean {
+    const caps = isDict(this.initial) ? get(this.initial, 'agentCapabilities') : null;
+    const meta = isDict(caps) ? get(caps, '_meta') : null;
+    return isDict(meta) && isDict(get(meta, 'claudeCode'));
+  }
+
+  /** A helper started during the current prompt turn is still running (or waits for the user). */
+  #helpersRunning(): boolean {
+    for (const child of this.#turnHelpers) {
+      const state = this.subagents.get(child)?.state;
+      if (state === 'running' || state === 'requires_action') return true;
+    }
+    return false;
+  }
+
+  /**
+   * One session/update seen (after it is recorded): ends a prompt turn whose reply ended while its helpers still run, and shows a
+   * cycle Claude Code started on its own as working until its result. Same on a rebuild from the keeper's record, which replays the
+   * same lines. Returns a promise when the turn's end must be handled before the next line is read.
+   */
+  #watchHeldTurn(params: Json): Promise<void> | void {
+    if (!this.ready || this.closed || !this.#claudeHolds()) return;
+    const update = get(params, 'update');
+    if (!isDict(update)) return;
+    const kind = get(update, 'sessionUpdate');
+    if (kind === 'subagent_update') {
+      const child = get(update, 'sessionId');
+      let state = get(update, 'state');
+      state = isDict(state) ? get(state, 'state') : state;
+      if (isStr(child) && (state === 'running' || state === 'requires_action') && this.busy && !this.autonomous) {
+        this.#turnHelpers.add(child);
+      }
+      return;
+    }
+    if (get(params, 'sessionId') !== this.sessionId) return; // a subagent's own updates
+    const meta = get(update, '_meta');
+    if (kind === 'usage_update') {
+      const origin = isDict(meta) ? get(meta, '_claude/origin') : null;
+      if (!isDict(origin)) return; // usage during the turn, not a result
+      if (this.autonomous) return this.#endAutonomous('end_turn');
+      const early = this.#endEarly;
+      if (
+        early && this.busy && !AUTONOMOUS_ORIGINS.has(get(origin, 'kind') as string) && this.cancelSeq < early.seq &&
+        this.#helpersRunning()
+      ) {
+        this.#endEarly = null;
+        early.fire();
+        return new Promise((resolve) => setTimeout(resolve, 0)); // the turn's end is recorded before what comes after it
+      }
+      return;
+    }
+    // Claude Code's own cycle: model output of the main conversation while no prompt runs.
+    if (
+      !this.busy && (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') &&
+      !(isDict(meta) && isDict(get(meta, 'claudeCode')) && get(get(meta, 'claudeCode') as Json, 'parentToolUseId'))
+    ) {
+      this.autonomous = true;
+      this.busy = true;
+      this.turnStartedAt = now();
+      this.error = '';
+    }
+  }
+
+  /** Claude Code's own cycle ended (its result came, or it was stopped): the chat is idle again and the queue goes on. */
+  #endAutonomous(stopReason: string): Promise<void> {
+    this.autonomous = false;
+    this.turnEndedAt = this.#now();
+    const result = { stopReason };
+    this.#queueNoteOutcome(result, false);
+    this.event('turn_end', result);
+    const done = (async () => {
+      const hook = this.onTurnEnd;
+      if (hook && !this.#replaying && stopReason !== 'cancelled') {
+        try {
+          await hook(this);
+        } catch (error) {
+          log.exception(error, 'on_turn_end hook failed');
+        }
+      }
+      await this.#finishTurn();
+      await this.#queueAfterTurn();
+      if (!this.#replaying) this.#scheduleSnapshot();
+    })().catch((error) => log.exception(error, 'Ending a cycle the agent started on its own failed'));
+    this.turn = done;
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   /** One JSON-RPC message to the agent. Writes go out in call order; throws when the agent's stdin is known to be gone. */
   write(message: unknown, once?: string): void {
     if (this.channel) {
@@ -1811,6 +1925,7 @@ export class Connection {
       }
       this.writes.observe(params);
       this.event('update', params);
+      return this.#watchHeldTurn(params);
     } else if (method === 'elicitation/complete') {
       this.completeElicitation(params);
     } else if (method === '$/cancel_request') {
@@ -2396,7 +2511,8 @@ export class Connection {
     if (this.closed || !this.ready || !this.sessionId) {
       throw new ValueError('This connection is not ready');
     }
-    if (this.busy) {
+    // A cycle Claude Code started on its own does not refuse a prompt: the prompt's turn takes the cycle over, as the adapter does.
+    if (this.busy && !this.autonomous) {
       throw new ValueError(
         'Wait for the current turn, or interrupt it before sending another prompt',
       );
@@ -2437,6 +2553,8 @@ export class Connection {
   /** The turn begins: busy, and the receipt is "working". Shared by prompt() and a turn rebuilt from the keeper's record. */
   #startTurn(clientMessageId: string | null, fingerprint: string): number {
     this.busy = true;
+    this.autonomous = false; // a prompt sent while Claude Code ran a cycle of its own takes that cycle over
+    this.#turnHelpers.clear();
     this.turnStartedAt = now();
     this.error = '';
     this.promptSeq += 1;
@@ -2475,21 +2593,24 @@ export class Connection {
       if (replayed) { // the old AIB sent it: wait for its response, from the record or live
         const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
         if (promptReceipt) promptReceipt.sent = true; // the agent has it already (a deliberate stop records it as delivered)
-        result = await this.#awaitReplayed(replayed.entry, replayed.id);
+        result = await this.#untilReplyEnds(seq, this.#awaitReplayed(replayed.entry, replayed.id));
       } else if (this.cancelSeq >= seq) { // cancelled while the hook above was still working: the agent never had this turn
         result = { stopReason: 'cancelled' };
       } else {
         // (not `receipt`: that is the keeper's receipt note for this turn, below)
         const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
         if (promptReceipt) promptReceipt.sent = true;
-        result = await this.request('session/prompt', {
-          sessionId: this.sessionId,
-          prompt: blocks,
-        }, 86400, {
-          // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
-          note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
-          once: clientMessageId ? `prompt:${clientMessageId}` : undefined,
-        });
+        result = await this.#untilReplyEnds(
+          seq,
+          this.request('session/prompt', {
+            sessionId: this.sessionId,
+            prompt: blocks,
+          }, 86400, {
+            // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
+            note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
+            once: clientMessageId ? `prompt:${clientMessageId}` : undefined,
+          }),
+        );
         await this.#studioContextSent(context);
       }
       this.turnEndedAt = this.#now();
@@ -2525,6 +2646,32 @@ export class Connection {
       await this.#queueAfterTurn();
       if (!this.#replaying) this.#scheduleSnapshot(); // quiet now (or skipped when the queue started the next turn)
     }
+  }
+
+  /**
+   * The prompt's response, or `{stopReason: 'end_turn'}` as soon as its reply ended while Claude Code holds the response for
+   * background helpers the turn started (see #watchHeldTurn). The held response still comes later, when the helpers finish or the
+   * next prompt arrives; by then this turn is over, so it changes nothing (a cycle Claude Code ran inside the held turn ends with it).
+   */
+  async #untilReplyEnds(seq: number, response: Promise<unknown>): Promise<unknown> {
+    let fire: () => void = () => {};
+    const ended = new Promise<typeof HELD>((resolve) => (fire = () => resolve(HELD)));
+    const early = { seq, fire };
+    this.#endEarly = early;
+    try {
+      const first = await Promise.race([response, ended]);
+      if (first !== HELD) return first;
+    } finally {
+      if (this.#endEarly === early) this.#endEarly = null;
+    }
+    response.then(
+      () => {
+        if (this.autonomous) void this.#endAutonomous('end_turn');
+        else if (!this.busy && !this.#replaying) this.#scheduleSnapshot(); // the last request in flight is answered now
+      },
+      (error) => log.warning('The held response of an ended turn failed: %s', errorText(error)),
+    );
+    return { stopReason: 'end_turn' };
   }
 
   /** [text, token] of the note to put in front of this prompt (kept out of the user event and the fingerprint), or null. */
@@ -3101,6 +3248,8 @@ export class Connection {
     const outcome = option === null || option === undefined ? { outcome: 'cancelled' } : { outcome: 'selected', optionId: option };
     this.write({ jsonrpc: '2.0', id: pending.rpcId, result: { outcome } });
     this.permissions.delete(key as string);
+    // A background helper of Claude Code asks between turns: once answered, a message queued meanwhile can go.
+    if (!this.busy && this.#claudeHolds()) void this.#queuePump();
   }
 
   receiveElicitation(rpcId: unknown, params: unknown): void {
@@ -3188,6 +3337,7 @@ export class Connection {
     }
     this.write({ jsonrpc: '2.0', id: pending.rpcId, result });
     this.elicitations.delete(key as string);
+    if (this.ready && !this.busy && this.#claudeHolds()) void this.#queuePump(); // as permission() does
     if (action !== 'accept' && !this.ready && !this.closed) {
       const what = get(pending.params, 'mode') === 'form' ? 'a question' : 'a link request';
       const said = clip(pyStr(get(pending.params, 'message', '')), 120);
@@ -3363,6 +3513,7 @@ export class Connection {
       scoped: true,
       reason: 'The turn was cancelled.',
     });
+    if (this.autonomous) void this.#endAutonomous('cancelled'); // stopped: its result may never come
   }
 
   async #waitExit(ms: number): Promise<boolean> {

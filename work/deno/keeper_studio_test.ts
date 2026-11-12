@@ -183,6 +183,41 @@ for (const when of ['streaming', 'question', 'answered', 'idle'] as const) {
 }
 
 Deno.test({
+  name: "keeper studio: crash while Claude Code holds an ended turn for its helper: the rebuild shows it idle, the follow-up as working",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new KeeperStudioLab();
+    const flags = ['--held-turn'];
+    const a = lab.studio(flags);
+    const c = await a.connect('omp', lab.work);
+    const gate = lab.dir + SEP + 'helper-gate';
+    await a.liveCall('prompt', { id: c.id, text: `helper:${gate}`, clientMessageId: 'm1' });
+    await until(() => !c.busy && c.events.some((e) => e.kind === 'turn_end'), 'the reply ended', 10);
+    assertEquals(c.pending.size, 1); // the held response
+    lab.crash(a);
+    await pause(300);
+
+    const b = lab.studio(flags);
+    assertEquals(await b.adoptKeeper(), 1);
+    const r = b.connections.get(c.id)!;
+    assert(r && !r.closed && r.ready && !r.rebuildError, 'rebuilt under the same id');
+    assert(!r.busy, 'the ended turn stays ended');
+    assertEquals(r.events.filter((e) => e.kind === 'turn_end').length, 1);
+    assertEquals(b.store!.receipt('omp', 'fake-session', 'm1')!.state, 'finished');
+    assertEquals(r.subagents.get('helper-1')?.state, 'running');
+    Deno.writeTextFileSync(gate, 'go');
+    await until(() => r.busy && r.autonomous, 'the follow-up working', 10);
+    Deno.writeTextFileSync(gate + '.end', 'go');
+    await until(() => !r.busy && r.pending.size === 0, 'the follow-up ended and the held response came', 10);
+    assertEquals(r.events.filter((e) => e.kind === 'turn_end').length, 2);
+    await b.liveCall('prompt', { id: r.id, text: 'after', clientMessageId: 'm2' });
+    await until(() => !r.busy && said(r).includes('Fixture reply: after'), 'the next turn', 10);
+    assertEquals(prompts(lab.received()).length, 2);
+  },
+});
+
+Deno.test({
   name: 'keeper studio: the picks of a new chat (model, mode, effort) survive a crash and rebuild and are never applied twice',
   ...T,
   async fn() {

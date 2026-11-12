@@ -37,6 +37,8 @@ parser.add_argument('--beta-auth', action='store_true', help="With --auth-requir
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--terminal-env', action='store_true', help="With --beta-auth: the terminal method also advertises env {'AIB_FIXTURE_LOGIN': 'from-agent'} (ACP v1 map shape); --fixture-login writes that variable's value into --auth-file")
+parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; any other prompt gets 'Fixture reply: <text>'")
+parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 args = parser.parse_args()
 if args.fixture_login:
@@ -379,6 +381,53 @@ def caps_next():
     emit({'id': 'cap-%d' % len(run['results']), 'method': step['method'], 'params': params})
 
 
+held = {}   # --held-turn: 'turn' = the prompt whose response is held; 'helper-perm' = the helper's open permission (an Event)
+
+
+def held_turn(key, text):
+    """--held-turn prompts (see the flag's help): the shape of claude-agent-acp's updates, as a real run showed them."""
+    if 'turn' in held:   # the adapter settles a held turn when the next prompt arrives
+        result(held.pop('turn'), {'stopReason': 'end_turn'})
+    human = {'_claude/origin': {'kind': 'human'}}
+    if not (text.startswith('helper:') or text.startswith('helper-ask:')):
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture reply: ' + text}})
+        update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 2000, '_meta': human})
+        result(key, {'stopReason': 'end_turn'})
+        return
+    ask = text.startswith('helper-ask:')
+    gate = text.split(':', 1)[1]
+    child = 'helper-1'
+    update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1000})   # usage during the turn: no origin
+    update({'sessionUpdate': 'tool_call', 'toolCallId': 'agent-1', 'title': 'Agent', 'kind': 'think', 'status': 'pending', '_meta': {'claudeCode': {'toolName': 'Agent'}}})
+    update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'title': 'Background helper', 'capabilities': {'cancel': {}}, 'state': {'state': 'running'}})
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': 'agent-1', 'status': 'completed'})
+    update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Started a helper.'}})
+    update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1500})
+    update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1500, '_meta': human})   # the result: the reply ended
+    held['turn'] = key
+
+    def helper():
+        deadline = time.time() + 300
+        while not os.path.exists(gate) and time.time() < deadline:
+            time.sleep(0.02)
+        emit({'method': 'session/update', 'params': {'sessionId': child, 'update': {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'helper at work'}, '_meta': {'claudeCode': {'parentToolUseId': 'agent-1'}}}}})
+        if ask:
+            answered = threading.Event()
+            held['helper-perm'] = answered
+            emit({'id': 'helper-perm', 'method': 'session/request_permission', 'params': {'sessionId': child, 'toolCall': {'title': 'Helper approval', 'toolCallId': 'helper-tool'}, 'options': [{'optionId': 'yes', 'name': 'Allow once', 'kind': 'allow_once'}]}})
+            answered.wait(300)
+            emit({'method': 'session/update', 'params': {'sessionId': child, 'update': {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'helper approved'}, '_meta': {'claudeCode': {'parentToolUseId': 'agent-1'}}}}})
+        update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'state': {'state': 'idle', 'stopReason': 'end_turn'}})
+        update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1700})
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Helper finished.'}})   # Claude Code's own follow-up
+        while not os.path.exists(gate + '.end') and time.time() < deadline:
+            time.sleep(0.02)
+        update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1800, '_meta': {'_claude/origin': {'kind': 'task-notification'}}})
+        if held.get('turn') == key:
+            result(held.pop('turn'), {'stopReason': 'end_turn'})
+    threading.Thread(target=helper, daemon=True).start()
+
+
 for line in sys.stdin:
     if _received_log:
         with open(_received_log, 'a', encoding='utf-8') as _log:
@@ -405,6 +454,8 @@ for line in sys.stdin:
             capabilities['mcpCapabilities'] = {'http': args.mcp_http, 'sse': False}
         if args.list_sessions:
             capabilities.setdefault('sessionCapabilities', {})['list'] = {}
+        if args.held_turn and not args.not_claude:
+            capabilities['_meta'] = {'claudeCode': {'promptQueueing': True}}
         init = {'protocolVersion': args.protocol_version, 'agentCapabilities': capabilities}
         if args.auth_required and args.beta_auth:
             wants_terminal = bool(((params.get('clientCapabilities') or {}).get('auth') or {}).get('terminal'))
@@ -497,6 +548,10 @@ for line in sys.stdin:
     elif method == 'session/prompt' and args.subagent and any(b.get('text') == 'delegate' for b in params['prompt']):
         emit({'method': 'session/update', 'params': {'sessionId': SID(), 'update': {'sessionUpdate': 'subagent_update', 'sessionId': 'child-1', 'title': 'Review the fixture', 'description': 'Reads the fixture and reports', 'capabilities': {'cancel': {}}, 'state': {'state': 'running'}}}})
         waiting['turn'] = key
+    elif method == 'session/prompt' and args.held_turn:
+        held_turn(key, next((b.get('text', '') for b in params['prompt'] if b.get('type') == 'text' and not b.get('text', '').startswith('<studio-context>')), ''))
+    elif key == 'helper-perm' and 'helper-perm' in held:
+        held.pop('helper-perm').set()
     elif method == 'session/prompt':
         blocks = params['prompt']
         images = [block for block in blocks if block.get('type') == 'image']
