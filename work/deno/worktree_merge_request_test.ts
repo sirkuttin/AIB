@@ -273,3 +273,15 @@ Deno.test('a busy chat may be asked; nothing to merge or a refused message is re
   const failed = await assertRejects(() => m.requestMerge(ctx.studio, ctx.id), m.Refused) as m.Refused;
   assertEquals([failed.code, failed.message], ['prompt_failed', 'Could not ask the chat to merge: This connection is not ready']);
 });
+
+Deno.test('T25: on a working chat that can steer, the button still queues its message for the turn end (never the steer route)', async () => {
+  using box = new Sandbox();
+  const ctx = await chat(box);
+  commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
+  setState(ctx, { state: 'prompting', busy: true, steerable: true, steerAgent: 'claude' });
+  ctx.studio.answer = [200, { ok: true, queued: true }];
+  const asked = await m.requestMerge(ctx.studio, ctx.id);
+  assertEquals([asked.queued, asked.message], [true, 'Merge requested. The chat merges when it finishes its turn']);
+  assertEquals(queued(ctx).map((p) => p.text), [TEXT]);
+  assertEquals(ctx.studio.calls.filter(([op]) => op === 'steer' || op === 'prompt'), [], "AIB's own sends wait for the turn end");
+});
