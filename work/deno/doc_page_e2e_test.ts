@@ -1080,6 +1080,25 @@ Deno.test({
         await s.endTurn('c1', 'claude', 'a');
       });
 
+      await step('the header chip "Shown in 1 artifact: <title>" opens that artifact; a doc nothing is built from has none', async () => {
+        await s.tool(CHAT, 'doc_create', { doc: 'shown', markdown: 'Dates.\n', title: 'Rollout' });
+        const doc = await live(s, 'shown');
+        const store = s.ctx.artifacts.service.store;
+        const a = store.create('claude:a', 'Checkout v2 timeline', 'html', 't.html', new TextEncoder().encode('<p>x</p>'), { project: s.project });
+        store.setFromDoc(a.id, { doc: 'shown', title: 'shown', page: doc.live.firstPage, pageTitle: 'Rollout', rev: 1 });
+        const p = await open('shown');
+        await shows(p, 'Dates.');
+        await p.waitFor(`!document.querySelector('#docShown').hidden`, 8000, 'the chip');
+        assertEquals(await p.eval(`document.querySelector('#docShown').textContent`), 'Shown in 1 artifact: Checkout v2 timeline');
+        await p.eval(`window.__told = []; AIBDoc.tell = (m) => window.__told.push(m)`);
+        await p.click('#docShown');
+        assertEquals(await p.eval(`window.__told[0]`), { type: 'aib-doc:show-artifact', id: a.id, chat: 'claude:a' });
+        assertEquals(await p.violations(), []);
+        const q = await open('plan');
+        await shows(q, 'Beta from Claude.');
+        assertEquals(await q.eval(`document.querySelector('#docShown').hidden`), true);
+      });
+
       await step('the ⋯ menu: Show in Files, Duplicate doc, Move doc to trash; chat.html can send the tab to a page', async () => {
         await s.tool(CHAT, 'doc_create', { doc: 'menu', markdown: 'Keep me.\n', title: 'Overview' });
         await s.tool(CHAT, 'doc_page', { doc: 'menu', action: 'add', title: 'Risks', markdown: 'Risky words.' });

@@ -2269,3 +2269,28 @@ button:focus-visible,
 .ins + .delt {
   margin-left: 3px;
 }
+
+/* The header's "Shown in 1 artifact: <title>" chip: dashed and round, the artifact's shape (option C); it opens the artifact. */
+.shown-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 10px;
+  border: 1px dashed var(--accent-line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.shown-chip:hover {
+  background: var(--accent-wash-3);
+  color: var(--text);
+}
+.shown-chip[hidden] {
+  display: none;
+}

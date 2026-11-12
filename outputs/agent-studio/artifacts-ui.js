@@ -445,7 +445,29 @@
       sub: failed ? 'The publish did not finish' : id ? parts.join(' · ') : 'Publishing…',
       diffFrom: id && version >= 2 ? version - 1 : null,
       canOpen: !!id && !failed,
+      builtFrom: art && art.fromDoc ? docPageName(art.fromDoc) : '',
     };
+  }
+  /* "Built from <doc › page>" for an artifact (its fromDoc), and the banner the viewer shows: `state` is GET /api/live/docs/built's
+     answer (null while it loads). Returns {from, stale, line, rebuild} where `rebuild` is the message "Rebuild from the doc" sends. */
+  const docPageName = (f) => (f ? String(f.title || f.doc || 'doc') + ' \u203a ' + String(f.pageTitle || 'page') : '');
+  function builtBanner(a, state) {
+    const f = a && a.fromDoc;
+    if (!f || !f.doc) return null;
+    const st = state || null;
+    const named = st && !st.gone ? Object.assign({}, f, { title: st.title || f.title, pageTitle: st.pageTitle || f.pageTitle }) : f;
+    const from = docPageName(named);
+    if (st && st.gone) return { from, stale: false, gone: st.gone, line: '', rebuild: '' };
+    if (st && st.changed) {
+      const n = Math.max(1, num(st.edits));
+      return {
+        from,
+        stale: true,
+        line: from + ' changed after this was built (' + n + (n === 1 ? ' edit' : ' edits') + ').',
+        rebuild: 'Rebuild ' + (a.title || 'this artifact') + ' from ' + from + '.',
+      };
+    }
+    return { from, stale: false, line: '', rebuild: '' };
   }
   /* The card's second line: what it is and where it lives ("Artifact · HTML page · v2 · kept with this chat, view only"); a card
      still publishing or failed says only that. `fromDoc` (a "built from" link) names the doc page it shows. */
@@ -625,6 +647,8 @@
     parseResult,
     cardModel,
     cardLine,
+    builtBanner,
+    docPageName,
     outputsCardModel,
     writtenVersion,
     placeLeft,
@@ -912,6 +936,7 @@
           sourcePath: it.sourcePath || null,
           conversationId: it.conversationId,
           url: it.url,
+          fromDoc: it.fromDoc || null,
         };
         S.items[id] = it;
       } catch (e) {
@@ -1089,6 +1114,71 @@
     ui.fresh.hidden = !fresh;
     if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
     ui.more.setAttribute('aria-label', 'More');
+    paintBuilt(a);
+  }
+  /* -- "Built from <doc › page>": the banner, the stale line and "Rebuild from the doc" -- */
+  const builtStates = new Map(); // artifact id -> {at, version, state, loading}
+  const BUILT_TTL = 5000;
+  function builtState(a) {
+    const rec = builtStates.get(a.id);
+    const fresh = rec && rec.version === num(a.version) && Date.now() - rec.at < BUILT_TTL;
+    if (!fresh && !(rec && rec.loading) && S.chat.id) {
+      const next = { at: Date.now(), version: num(a.version), state: rec ? rec.state : null, loading: true };
+      builtStates.set(a.id, next);
+      api('/api/live/docs/built?' + q({ id: S.chat.id, artifact: a.id })).then(
+        (r) => {
+          next.state = (r && r.built) || null;
+          next.loading = false;
+          next.at = Date.now();
+          if (current() && current().id === a.id) paintBuilt(current());
+        },
+        () => {
+          next.loading = false;
+        },
+      );
+    }
+    return rec ? rec.state : null;
+  }
+  function paintBuilt(a) {
+    if (!ui) return;
+    const b = a ? builtBanner(a, a.fromDoc ? builtState(a) : null) : null;
+    ui.built.hidden = !b;
+    ui.stale.hidden = !(b && b.stale);
+    if (!b) return;
+    ui.builtText.replaceChildren(doc.createTextNode('Built from '), el('b', '', b.from), doc.createTextNode(b.gone ? (b.gone === 'page' ? ' (that page was deleted)' : ' (that doc is gone)') : ' · '));
+    ui.built.querySelector('.ar-built-open').hidden = !!b.gone;
+    if (b.stale) ui.staleText.textContent = b.line + ' ';
+  }
+  function openBuiltDoc() {
+    const a = current(),
+      f = a && a.fromDoc,
+      D = DL();
+    if (!f || !D || !D.openDoc) return;
+    D.openDoc({ name: f.doc, title: f.title, page: f.page, chat: { id: S.chat.id }, from: 'chat' });
+  }
+  /* "Rebuild from the doc": a normal message to this chat, as if typed ("Rebuild Checkout v2 timeline from Release plan › Rollout."). */
+  function rebuild() {
+    const a = current();
+    if (!a) return;
+    const b = builtBanner(a, builtState(a));
+    if (!b || !b.rebuild) return;
+    const box = doc.getElementById('prompt'),
+      form = doc.getElementById('promptForm');
+    if (!box || !form) return;
+    if (String(box.value || '').trim()) {
+      note('Send or clear your draft first: Rebuild from the doc sends a message to this chat.');
+      return;
+    }
+    box.value = b.rebuild;
+    try {
+      box.dispatchEvent(new win.Event('input', { bubbles: true })); // the composer sizes itself and keeps its draft state
+    } catch (e) {
+      /* no Event here */
+    }
+    if (form.requestSubmit) form.requestSubmit();
+    else form.dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
+    const rec = builtStates.get(a.id);
+    if (rec) rec.at = 0; // asked again on the next paint (the agent's update moves the rev)
   }
   function paintAll() {
     paintCount();
@@ -1565,7 +1655,7 @@
   }
 
   /* -- cards in the chat stream -- */
-  const cardSig = (m) => (m ? [m.id, m.title, m.version, m.sub, m.canOpen].join('|') : '');
+  const cardSig = (m) => (m ? [m.id, m.title, m.version, m.sub, m.canOpen, m.builtFrom || ''].join('|') : '');
   /* QA m3: an old card shows the version its turn wrote, not the newest. Needs the version times (one item read per artifact). */
   const itemAsked = new Set();
   function cardVersion(card) {
@@ -1813,6 +1903,21 @@
     const freshOpen = el('button', 'ar-switch ar-fresh-open', 'Open');
     freshOpen.type = 'button';
     fresh.append(freshText, freshOpen);
+    // "Built from Release plan › Rollout · Open doc ↗", then "… changed after this was built (2 edits). Rebuild from the doc"
+    const built = el('div', 'ar-built');
+    built.hidden = true;
+    built.setAttribute('role', 'status');
+    const builtText = el('span', 'ar-built-t', '');
+    const builtOpen = el('button', 'ar-switch ar-built-open', 'Open doc \u2197');
+    builtOpen.type = 'button';
+    built.append(builtText, builtOpen);
+    const stale = el('div', 'ar-built ar-stale');
+    stale.hidden = true;
+    stale.setAttribute('role', 'status');
+    const staleText = el('span', 'ar-built-t', '');
+    const rebuildBtn = el('button', 'ar-switch ar-rebuild', 'Rebuild from the doc');
+    rebuildBtn.type = 'button';
+    stale.append(staleText, rebuildBtn);
     const noteEl = el('p', 'ar-note');
     noteEl.hidden = true;
     noteEl.setAttribute('role', 'status');
@@ -1826,7 +1931,7 @@
     const pop = el('div', 'ar-pop');
     pop.hidden = true;
     pop.setAttribute('role', 'menu');
-    view.append(bar, avail, fresh, noteEl, stage, empty, foot, pop);
+    view.append(bar, avail, fresh, built, stale, noteEl, stage, empty, foot, pop);
     ui = {
       view,
       bar,
@@ -1839,6 +1944,10 @@
       switchBtn,
       fresh,
       freshText,
+      built,
+      builtText,
+      stale,
+      staleText,
       note: noteEl,
       stage,
       empty,
@@ -1867,6 +1976,8 @@
       paintStage('open');
       ver.focus({ preventScroll: true }); // QA m10: the Switch button goes away; the version chip takes the focus
     });
+    builtOpen.addEventListener('click', () => openBuiltDoc());
+    rebuildBtn.addEventListener('click', () => rebuild());
     freshOpen.addEventListener('click', () => {
       const id = S.fresh;
       S.fresh = '';

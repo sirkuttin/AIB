@@ -415,7 +415,39 @@
     firstOpen = false;
     $('docApp').setAttribute('aria-busy', 'false');
     D.emit('opened', info);
+    loadShown();
   }
+
+  // The header's dashed chip "Shown in 1 artifact: Checkout v2 timeline": the artifacts built from this doc (publish with fromDoc).
+  // Clicking it opens the artifact in the right column (chat.html, aib-doc:show-artifact). No marks go into the doc itself.
+  D.shown = [];
+  async function loadShown() {
+    try {
+      const r = await D.get('/api/live/docs/shown');
+      D.shown = Array.isArray(r.artifacts) ? r.artifacts : [];
+    } catch (error) {
+      D.shown = [];
+    }
+    paintShown();
+  }
+  function paintShown() {
+    const chip = $('docShown');
+    if (!chip) return;
+    const list = D.shown;
+    chip.hidden = !list.length;
+    if (!list.length) return;
+    const n = list.length;
+    chip.textContent = 'Shown in ' + n + (n === 1 ? ' artifact: ' : ' artifacts: ') + list.map((a) => a.title || 'Untitled').join(', ');
+    chip.title = list.map((a) => (a.title || 'Untitled') + ' (built from ' + (a.pageTitle || 'a page') + ')').join('\n') +
+      '\nClick: open it in the Artifacts column';
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    const chip = $('docShown');
+    if (chip) chip.addEventListener('click', () => {
+      const a = D.shown[0];
+      if (a) D.tell({ type: 'aib-doc:show-artifact', id: a.id, chat: a.conversationId || '' });
+    });
+  });
 
   /** AIB reloaded the doc under the page (a restart): drop this copy, open again, name what never reached AIB. */
   async function reopen({ reason, texts }) {

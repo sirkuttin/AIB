@@ -1203,6 +1203,10 @@
         drawBeside();
       } else closeFileTab(tab.id);
       refreshDocs(tab.scope);
+    } else if (data.type === 'aib-doc:show-artifact') {
+      // the doc header's "Shown in 1 artifact" chip: that artifact in the right column
+      const A = AR();
+      if (A && A.open && str(data.id)) A.open(str(data.id));
     } else if (data.type === 'aib-doc:docs-changed') {
       // "Duplicate doc" made a new doc: Files, Ctrl+K and the picker list it without a reload
       refreshDocs(tab.scope);

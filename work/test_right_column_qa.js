@@ -47,7 +47,7 @@ function viewer() {
     badge = shell.document.createElement('span');
   UI.mount({ view, badge, tab, win: ctx, reveal() {} });
   UI.sync({ id: 'chat1', busy: false, cwd: '' });
-  return { UI, view, shell, S: UI._S };
+  return { UI, view, shell, ctx, S: UI._S };
 }
 const flush = async () => {
   for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
@@ -128,4 +128,65 @@ test('QA m1: a menu wider than the room right of its button moves left, inside t
   assert.equal(A.placeLeft(10, 210, 300), 10);
   assert.equal(A.placeLeft(150, 210, 300), 86, 'the menu ends 4 px inside the right edge');
   assert.equal(A.placeLeft(150, 400, 300), 4, 'wider than the column: from its left edge');
+});
+
+test('option C: "Built from Release plan › Rollout · Open doc", then "changed after this was built (2 edits)"; Rebuild sends the message', async () => {
+  const { UI, view, shell, ctx } = viewer();
+  let built = { doc: 'release-plan', title: 'Release plan', page: 'p2', pageTitle: 'Rollout', changed: false, edits: 0 };
+  const realFetch = ctx.fetch;
+  ctx.fetch = async (url, init) =>
+    /docs\/built/.test(url) ? { ok: true, status: 200, json: async () => ({ ok: true, built }) } : realFetch(url, init);
+  const fromDoc = { doc: 'release-plan', title: 'Release plan', page: 'p2', pageTitle: 'Rollout', rev: 4 };
+  UI.upsert(art('a1', 'Checkout v2 timeline', 1, 100, { fromDoc }));
+  await flush();
+  const banner = view.querySelector('.ar-built');
+  assert.equal(banner.hidden, false);
+  assert.equal(banner.querySelector('.ar-built-t').textContent, 'Built from Release plan \u203a Rollout \u00b7 ');
+  assert.equal(banner.querySelector('.ar-built-open').textContent, 'Open doc \u2197');
+  assert.equal(view.querySelector('.ar-stale').hidden, true, 'not changed: no rebuild line');
+  // the page changes: the stale line and its button
+  built = Object.assign({}, built, { changed: true, edits: 2 });
+  UI.upsert(art('a1', 'Checkout v2 timeline', 2, 200, { fromDoc }));
+  await flush();
+  const stale = view.querySelector('.ar-stale');
+  assert.equal(stale.hidden, false);
+  assert.equal(stale.querySelector('.ar-built-t').textContent, 'Release plan \u203a Rollout changed after this was built (2 edits). ');
+  // Rebuild from the doc: a normal message in the composer, sent
+  const form = shell.document.createElement('form');
+  form.id = 'promptForm';
+  const box = shell.document.createElement('textarea');
+  box.id = 'prompt';
+  shell.document.body.append(form, box);
+  const byId = ctx.document.getElementById.bind(ctx.document);
+  ctx.document.getElementById = (id) => (id === 'prompt' ? box : id === 'promptForm' ? form : byId(id));
+  let sent = null;
+  form.requestSubmit = () => {
+    sent = box.value;
+  };
+  stale.querySelector('.ar-rebuild').click();
+  assert.equal(sent, 'Rebuild Checkout v2 timeline from Release plan \u203a Rollout.');
+  // a draft in the box is never replaced
+  sent = null;
+  box.value = 'my draft';
+  stale.querySelector('.ar-rebuild').click();
+  assert.equal(sent, null);
+  assert.equal(box.value, 'my draft');
+  assert.match(view.querySelector('.ar-note').textContent, /Send or clear your draft first/);
+  // no link: no banner
+  UI.upsert(art('b1', 'Other', 1, 300));
+  await UI.open('b1');
+  await flush();
+  assert.equal(view.querySelector('.ar-built').hidden, true);
+});
+
+test('option C: builtBanner and the card line name the doc page', () => {
+  const a = { id: 'a', title: 'Timeline', fromDoc: { doc: 'p', title: 'Release plan', page: 'x', pageTitle: 'Rollout', rev: 1 } };
+  assert.equal(A.builtBanner({ id: 'b' }, null), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(A.builtBanner(a, null))), { from: 'Release plan \u203a Rollout', stale: false, line: '', rebuild: '' });
+  const st = A.builtBanner(a, { title: 'Plan', pageTitle: 'Dates', changed: true, edits: 1 });
+  assert.equal(st.line, 'Plan \u203a Dates changed after this was built (1 edit).');
+  assert.equal(st.rebuild, 'Rebuild Timeline from Plan \u203a Dates.');
+  assert.equal(A.builtBanner(a, { gone: 'page' }).gone, 'page');
+  const m = A.cardModel({ op: 'publish', input: {}, result: { id: 'a', version: 1 }, status: 'completed' }, [Object.assign({ kind: 'html', version: 1 }, a)]);
+  assert.equal(A.cardLine(m), 'Artifact \u00b7 HTML page \u00b7 v1 \u00b7 built from Release plan \u203a Rollout');
 });
