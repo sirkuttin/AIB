@@ -1,6 +1,6 @@
 # AIB — Agent Integration Bay
 
-**Honest AIB provides you the ground truth for all your agents, subagents, and procceses across all your projects. Nothing hidden.**
+**Honest AIB provides you the ground truth for all your agents, subagents, and processes across all your projects. Nothing hidden.**
 
 
 AIB allows you to run Claude Code, Codex, OMP and ten more agents via ACP side by side, in the same project. Local Artifacts and Docs shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. AIB runs on your computer with the agent sign-ins you already have.
