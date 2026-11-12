@@ -302,6 +302,10 @@ export async function main(argv: string[]): Promise<void> {
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
+  // Phone access (Settings > Devices), when it is on: the phone port for Tailscale Serve, on its own fixed port (remote/access.ts).
+  // In the background: a busy port is retried for ~20 s and then reported in Devices, never swapped for another.
+  ctx.phone.options.log = (m) => log.announce('studio', 'phone access: %s', m);
+  void ctx.phone.start();
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
   if (studio) {
     await studio.adoptKeeper(); // the take-over started above: chats whose agents still run in the keeper go on where they are
@@ -341,6 +345,7 @@ export async function main(argv: string[]): Promise<void> {
     for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
     await ctx.artifacts.stop().catch(() => {});
+    await ctx.phone.close().catch(() => {});
     await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
     // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
     if (release && studio) await studio.release({ hold }).catch(() => {});

@@ -38,6 +38,9 @@ import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
 import { ArtifactHistory } from '../docs/history.ts';
+import { type AccessOptions, PhoneAccess } from '../remote/access.ts';
+import type { DeviceStore } from '../remote/devices.ts';
+import { devicesRoutes } from './devices_routes.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -194,6 +197,10 @@ export interface WebContext {
   /** The desktop app's own notifications (desktop/notify.ts), set by main.ts in the app; null in a server run (a browser uses the
    * web Notification API instead). */
   desktopNotify: DesktopNotifications | null;
+  /** Phone access (remote/access.ts): the switch, Tailscale checks, the phone port, pairing. Settings > Devices. */
+  phone: PhoneAccess;
+  /** The paired phones (<state>/devices.json; remote/devices.ts), the same store phone.devices holds. */
+  devices: DeviceStore;
 }
 
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
@@ -283,6 +290,12 @@ export class WebServer {
       });
     }
     for (const [key, handler] of docsRoutes()) {
+      this.native.set(key, async (c, url, body) => {
+        const [status, payload] = await handler(c, url, body);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of devicesRoutes()) {
       this.native.set(key, async (c, url, body) => {
         const [status, payload] = await handler(c, url, body);
         return this.json(status, payload);
@@ -532,6 +545,8 @@ export function makeContext(
     terminalKeeper?: KeeperLink | null;
     /** Stores to share (an --in-process Studio passes its own, so one instance of each file is read and written). */
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
+    /** Phone access options (tests: a fake Tailscale CLI, a short bind retry). */
+    phone?: AccessOptions;
   },
 ): WebContext {
   const ctx: WebContext = {
@@ -562,7 +577,14 @@ export function makeContext(
     terminals: new TerminalSessions({ keeper: options.terminalKeeper ?? null }),
     docs: new DocStore(options.stateDir, { history: new ArtifactHistory(() => ctx.artifacts?.store ?? null) }),
     desktopNotify: null,
+    phone: null as unknown as PhoneAccess,
+    devices: null as unknown as DeviceStore,
   };
+  ctx.phone = new PhoneAccess(ctx, options.stateDir, {
+    avoid: () => (ctx.port ? [ctx.port, ctx.port + 1] : []),
+    ...options.phone,
+  });
+  ctx.devices = ctx.phone.devices;
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(
     options.stateDir,

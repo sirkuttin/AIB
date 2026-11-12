@@ -155,3 +155,23 @@ Deno.test('tokens and network paths', async () => {
   assertEquals(refuseNetworkPath('C:\\ok'), 'C:\\ok');
   assert(/^[A-Za-z0-9_-]{43}$/.test(newToken()));
 });
+
+Deno.test('phone access leaves the page Gate as it was: a tailnet name in STUDIO_ALLOWED_HOSTS is still dropped', () => {
+  const name = 'studio-pc.tail-a1b2.ts.net';
+  const before = Deno.env.get('STUDIO_ALLOWED_HOSTS');
+  Deno.env.set('STUDIO_ALLOWED_HOSTS', `${name},localhost`);
+  try {
+    const gate = new Gate(PORT, () => TOKEN);
+    assertEquals(gate.names, ['127.0.0.1', 'localhost'], 'only loopback names');
+    assert(!gate.allowsHost(name) && !gate.allowsHost(`${name}:${PORT}`), 'the tailnet name is not a page host');
+    assert(!gate.allowsOrigin(`https://${name}`), 'nor an origin');
+    const phoneLike = { Host: name, Origin: `https://${name}`, 'Sec-Fetch-Site': 'same-origin', 'X-Studio-Token': TOKEN, 'Tailscale-User-Login': 'a@b' };
+    for (const [path, scope] of [['/api/live/bootstrap', 'bootstrap'], ['/api/live/list', 'read'], ['/chat.html', 'static']]) {
+      const r = authorize({ method: 'GET', path, headers: new Headers(phoneLike) }, gate, scope);
+      assert(!(r instanceof Principal), `${path} through Serve is refused by the page Gate`);
+    }
+  } finally {
+    if (before === undefined) Deno.env.delete('STUDIO_ALLOWED_HOSTS');
+    else Deno.env.set('STUDIO_ALLOWED_HOSTS', before);
+  }
+});
