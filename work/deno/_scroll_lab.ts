@@ -10,6 +10,7 @@
 import { Fixture, nativePath, PY, sleep, until, type Web } from './_host_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { WORK } from './_parity.ts';
+import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 
 export { browserPath, sleep };
 export type { Page };
@@ -18,6 +19,13 @@ export const SCROLL_AGENT = nativePath(new URL('scroll-fixture/agent.py', WORK))
 
 /** Fixture with the scripted agent as the Claude launcher. */
 export class ScrollFixture extends Fixture {
+  constructor() {
+    super();
+    // The workspace is a project the user added (AIB lists saved chats of added projects only; savedChat() writes there).
+    const added = { [projectKey(this.workspace)]: { path: this.workspace, at: 1 } };
+    Deno.writeTextFileSync(`${this.state}\\studio-added-projects.json`, JSON.stringify({ version: 1, savedAt: 1, start: 'fresh', added }));
+  }
+
   override agentFlags(): string[] {
     const flags = super.agentFlags();
     flags[flags.indexOf('--claude-launcher') + 1] = SCROLL_AGENT;
