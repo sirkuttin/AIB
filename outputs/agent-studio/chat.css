@@ -3771,17 +3771,18 @@ span.chip-static:hover {
   color: var(--muted);
   white-space: normal;
 }
-.composer-actions .send-key-hint {
-  flex: 1 1 0;
-  min-width: 0;
-  margin: 0 0 0 4px;
+/* One line under the message box, only while the agent works. It is its own row of the form (not in the Attach column), so it never
+   narrows the text box; one line, cut with an ellipsis (the title has the full words), so a narrow window does not make it taller. */
+#promptForm > .send-key-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0 12px 8px;
   font-size: 11px;
   line-height: 14px;
   color: var(--muted);
-  white-space: normal;
-}
-.composer-actions:has(.send-key-hint:not([hidden])) #attachImages {
-  margin-right: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sent-tag {
   color: var(--muted);

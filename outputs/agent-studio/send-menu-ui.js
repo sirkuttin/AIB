@@ -248,15 +248,16 @@
     return api;
   }
 
-  // ---- the key hint next to Attach -------------------------------------------------------------------------
-  function keyHintNode(doc, attach) {
+  // ---- the key hint under the message box ------------------------------------------------------------------
+  // host: the composer form. The hint is a row of its own (chat.css), shown only while the agent works.
+  function keyHintNode(doc, host) {
     let node = doc.getElementById ? doc.getElementById('sendKeyHint') : null;
     if (node) return node;
-    node = doc.createElement('span');
+    node = doc.createElement('p');
     node.id = 'sendKeyHint';
     node.className = 'send-key-hint';
     node.hidden = true;
-    if (attach && attach.after) attach.after(node);
+    if (host && host.append) host.append(node);
     return node;
   }
 

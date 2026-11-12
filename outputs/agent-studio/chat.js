@@ -1232,8 +1232,9 @@
     sendMenu ||= SM && SM.init({ doc: document, root: document, send: $('send'), onPick: (id) => sendWith(id) });
     sendMenu?.update(composer);
     if (SM) {
-      const hintNode = SM.keyHintNode(document, $('attachImages'));
+      const hintNode = SM.keyHintNode(document, $('promptForm'));
       hintNode.textContent = composer.keyHint;
+      hintNode.title = composer.keyHint; // the full words when a narrow window cuts the line
       hintNode.hidden = !composer.working || !composer.keyHint;
     }
     $('send').textContent = opening ? 'Opening…' : 'Send';
@@ -3544,7 +3545,11 @@
   $('prompt').onkeydown = (e) => {
     if (window.AgentDocLinks?.handleKey(e)) return;
     if (window.AgentBreadth?.handleKey(e)) return;
-    const intent = window.AgentSendMenu?.keyIntent(e, { busy: !!snapshot?.busy }) || '';
+    const intent = window.AgentSendMenu
+      ? window.AgentSendMenu.keyIntent(e, { busy: !!snapshot?.busy })
+      : e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing
+        ? 'default'
+        : '';
     if (intent) {
       e.preventDefault();
       if (!$('prompt').value.trim() && !selectedAttachments().length) return;
