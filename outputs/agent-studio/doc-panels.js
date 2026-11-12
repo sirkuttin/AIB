@@ -456,14 +456,12 @@
 
   let versions = [];
   let historyPage = 'all';
-  let historyLinked = null; // the agent the doc is linked to, named on the "Created by" row
   let viewing = null; // {n, version, data, compare}
 
   async function loadHistory() {
     try {
       const r = await D.get('/api/live/docs/history');
       versions = Array.isArray(r.versions) ? r.versions : [];
-      historyLinked = r.linkedName || null;
     } catch (error) {
       versions = [];
       D.fail(error);
@@ -498,13 +496,14 @@
     renderHistoryList();
   }
 
-  /** "Created by Claude Code" / "Created by you" for the first version, "Edited by …" for the others (the server's "rev 3; created" is
-      bookkeeping, not words). */
+  /** "Created by Claude Code" / "Created by you" for the first version, "Edited by …" for the others (the server records who made the doc; with no record: just "Created"). */
   function versionWords(v) {
     const extra = String(v.note || '').replace(/^rev \d+;?\s*/, '').trim();
     const real = (v.authors || []).filter((n) => n && n !== 'AIB');
     const created = extra === 'created';
-    const names = real.length ? real : created ? [historyLinked || 'You'] : ['AIB'];
+    // a doc with no recorded creator says just "Created": never a guess
+    if (created && !real.length) return [document.createTextNode('Created')];
+    const names = real.length ? real : ['AIB'];
     const out = [document.createTextNode(created ? 'Created by ' : 'Edited by ')];
     names.forEach((n, i) => {
       if (i) out.push(document.createTextNode(', '));

@@ -152,6 +152,8 @@ export interface OpenDoc {
   note: string;
   /** The chat this doc is linked to (its lasting id, "provider:sessionId"): "Send to agent" on a comment goes there. */
   chat: string | null;
+  /** Who made the doc: "user" or the chat id of the agent that called doc_create. Null for a doc made before this was recorded. */
+  createdBy: string | null;
   /** Files of the old layout to remove once the new ones are written. */
   legacy: string[];
   /** The agents working in it, per chat: presence, claims, page delete requests, refused notes (agents.ts). */
@@ -184,6 +186,7 @@ interface CacheMeta extends Meta {
   artifactId?: string | null;
   snapRev?: number;
   chat?: string | null;
+  createdBy?: string;
   /** The last change: when (seconds) and by whom ("user", a chat id, "file"). */
   editedAt?: number;
   editedBy?: string;
@@ -523,6 +526,7 @@ export class DocStore {
     projectRoot: string,
     nameValue: unknown,
     create?: string,
+    by?: string,
   ): Promise<OpenDoc> {
     const { name, title } = docRef(nameValue);
     const id = await docId(projectRoot, name);
@@ -545,7 +549,7 @@ export class DocStore {
     }
     let pending = this.#opening.get(id);
     if (!pending) {
-      pending = this.#load(id, projectRoot, name, title, create).finally(() => this.#opening.delete(id));
+      pending = this.#load(id, projectRoot, name, title, create, create !== undefined ? by : undefined).finally(() => this.#opening.delete(id));
       this.#opening.set(id, pending);
     }
     return await pending;
@@ -679,6 +683,7 @@ export class DocStore {
     name: string,
     title: string,
     create?: string,
+    by?: string,
   ): Promise<OpenDoc> {
     const dir = this.docDir(projectRoot, name);
     const file = `${dir}${sep}${AIBDOC}`;
@@ -800,6 +805,7 @@ export class DocStore {
       snapTimer: null,
       note: '',
       chat: typeof meta?.chat === 'string' ? meta.chat : null,
+      createdBy: by || (typeof meta?.createdBy === 'string' ? meta.createdBy : null),
       legacy: legacyFiles,
       agents: new DocAgents(live),
       epoch: `${this.epoch}.${++this.#loads}`,
@@ -977,6 +983,7 @@ export class DocStore {
       artifactId: doc.artifactId,
       snapRev: doc.snapRev,
       chat: doc.chat,
+      createdBy: doc.createdBy ?? undefined,
       editedAt: doc.edited?.at,
       editedBy: doc.edited?.by ?? undefined,
     };
@@ -1339,7 +1346,7 @@ export class DocStore {
     const history = this.options.history;
     if (!history || (doc.snapRev === doc.live.rev && doc.artifactId)) return null;
     if (doc.snapTimer !== null) clearTimeout(doc.snapTimer), doc.snapTimer = null;
-    const by = [...doc.authors].sort().join('+') || (note === 'created' ? 'system' : 'user');
+    const by = [...doc.authors].sort().join('+') || (note === 'created' ? (doc.createdBy || 'system') : 'user');
     const text = stringifyAib(exportAib(doc.live, doc.title, doc.ids));
     const n = history.snapshot(doc, text, by, `rev ${doc.live.rev}${note || doc.note ? '; ' + (note || doc.note) : ''}`, 'json');
     doc.snapRev = doc.live.rev;

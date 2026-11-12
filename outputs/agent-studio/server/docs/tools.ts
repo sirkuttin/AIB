@@ -34,7 +34,7 @@ export async function runDocTool(
     if (tool === 'doc_create') {
       const markdown = args.markdown === undefined ? '' : args.markdown;
       if (typeof markdown !== 'string') throw new DocRefusal('bad_op', '`markdown` is the first content, as a string');
-      const created = await store.open(projectRoot, args.doc, markdown);
+      const created = await store.open(projectRoot, args.doc, markdown, chat || undefined);
       if (chat) store.link(created, chat, false);
       if (args.title !== undefined) created.live.renamePage(created.live.firstPage, args.title, created.live.system);
       created.agents.seen.set(who, created.live.rev);

@@ -1216,10 +1216,20 @@ Deno.test({
         await p.waitFor(`document.querySelectorAll('#historyList .hv').length >= 1`, 8000, 'the versions');
         const rows = await p.eval<string[]>(`[...document.querySelectorAll('#historyList .hv .w')].map((e) => e.textContent)`);
         for (const r of rows) assert(/^(Created|Edited) by /.test(r) && !/rev \d/.test(r), `plain words: ${r}`);
+        assertEquals(rows[rows.length - 1], 'Created by Claude Code', 'the creator is the agent that called doc_create');
         assertEquals(await p.eval(`document.querySelectorAll('#rail select').length`), 0);
         await p.click('#rail .rail-h .scope');
         assertEquals(await p.eval(`document.querySelectorAll('#docLayer .menu .mi').length`), 3, 'All pages and the two pages');
         await p.key('Escape');
+        // a doc made by the user says "Created by you"; one with no recorded creator says just "Created", never a guess
+        for (const [name, by, want] of [['qa8u', 'user', 'Created by you'], ['qa8n', undefined, 'Created']] as const) {
+          await s.ctx.docs.open(s.project, name, 'Words.'+String.fromCharCode(10), by);
+          const q = await open(name, '', 1000);
+          await shows(q, 'Words.');
+          await q.click('#btnHistory');
+          await q.waitFor(`document.querySelectorAll('#historyList .hv').length >= 1`, 8000, 'the versions');
+          assertEquals(await q.eval(`[...document.querySelectorAll('#historyList .hv .w')].pop().textContent`), want);
+        }
         // a theme change in another window repaints the open doc
         await p.eval(`window.dispatchEvent(new StorageEvent('storage', { key: 'aib-theme', newValue: 'teal-light' }))`);
         assertEquals(await p.eval(`document.documentElement.getAttribute('data-theme')`), 'teal-light');
