@@ -233,35 +233,6 @@ aside .project-group {
   width: 100%;
   margin: 0;
 }
-details.side-more {
-  flex: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-}
-details.side-more > summary {
-  display: flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  list-style: none;
-  color: var(--muted);
-  font-size: 13px;
-}
-details.side-more[open] {
-  padding-bottom: 8px;
-}
-details.side-more .note {
-  margin: 4px 12px;
-  font-size: 11px;
-  line-height: 1.5;
-}
-@media (max-height: 900px) {
-  details.side-more .note {
-    display: none;
-  }
-}
 
 /* ---- tab strip --------------------------------------------------------------------------------------------- */
 .ws-tabs {
