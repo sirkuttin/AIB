@@ -2782,7 +2782,7 @@
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
     $('ncFolder').textContent = f.cwd
       ? f.cwd + (newBranch.cwd === f.cwd && newBranch.branch ? ' · ' + newBranch.branch : '')
-      : 'No project folder yet. Type one below, or add a project with + above the chat list.';
+      : 'Add a project folder to start: type one below, or use New project (+ above the chat list).';
     const typing = f.source === 'none' || f.source === 'input';
     $('ncFolderInput').hidden = !typing;
     $('ncFolderInput').disabled = startingNew;

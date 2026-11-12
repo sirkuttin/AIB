@@ -19,6 +19,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/agent-options              the model / mode / effort lists a new chat can offer (state/agent_options.ts)
  *   POST /api/live/desktop/notify             the desktop app shows a notification natively (desktop/notify.ts)
  *   POST /api/live/project-remove             "Delete project…": remove a project from AIB, optionally its folder (project_routes.ts)
+ *   POST /api/live/project-add                add projects to AIB (the New project dialog; project_routes.ts)
  *   GET  /api/live/files/list                 the Files view: one folder of a chat's folder (files_routes.ts)
  *   GET  /api/live/files/search               the Files view: file names matching a filter
  *   GET  /api/live/files/read                 the Files view: one file, read only
@@ -60,6 +61,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agent-options', 'write', 'body'],
   ['POST', '/api/live/desktop/notify', 'write', 'body'],
   ['POST', '/api/live/project-remove', 'write', 'body'],
+  ['POST', '/api/live/project-add', 'write', 'body'],
   ['GET', '/api/live/files/list', 'read', 'get'],
   ['GET', '/api/live/files/search', 'read', 'get'],
   ['GET', '/api/live/files/read', 'read', 'get'],

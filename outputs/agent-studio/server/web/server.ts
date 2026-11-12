@@ -31,7 +31,8 @@ import { TerminalSessions } from '../terminal/sessions.ts';
 import type { KeeperLink } from '../keeper/link.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 import { RemovedProjects } from '../desktop/project_delete.ts';
-import { projectRemove } from './project_routes.ts';
+import { filterSessions, projectAdd, projectRemove, visibleFolders } from './project_routes.ts';
+import { AddedProjects } from '../desktop/added_projects.ts';
 import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
@@ -114,12 +115,24 @@ export function withThemePref(html: string, pref: string | undefined, symbols?: 
   return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + attrs);
 }
 
-/** The project preferences plus the removed projects, under one revision (the list route reports the same one). */
+/** The project preferences plus the removed and the added projects, under one revision (the list route reports the same one). */
 function projectsRevision(c: WebContext): string {
-  return `${c.projectPrefs.revision()}+${c.removedProjects.revision()}`;
+  return `${c.projectPrefs.revision()}+${c.removedProjects.revision()}+${c.addedProjects.revision()}`;
 }
-function projectsView(c: WebContext): Record<string, unknown> {
-  return { ...c.projectPrefs.public(), removed: c.removedProjects.public().removed, revision: projectsRevision(c) };
+async function projectsView(c: WebContext): Promise<Record<string, unknown>> {
+  try {
+    await c.addedProjects.ready(); // an existing user's list is made before the page first sees it
+  } catch (error) {
+    console.error('The added-projects list could not be made yet', error);
+  }
+  const added = c.addedProjects.public();
+  return {
+    ...c.projectPrefs.public(),
+    removed: c.removedProjects.public().removed,
+    added: added.added,
+    addedStart: added.start,
+    revision: projectsRevision(c),
+  };
 }
 
 function contentType(name: string): string {
@@ -140,6 +153,9 @@ export interface WebContext {
   projectPrefs: ProjectPrefs;
   /** Projects removed from AIB ("Delete project…"): served with the project preferences. */
   removedProjects: RemovedProjects;
+  /** The projects the user added (desktop/added_projects.ts): served with the project preferences; saved chats of other folders
+   * are not listed. */
+  addedProjects: AddedProjects;
   readState: ReadState;
   settings: SettingsStore;
   /** The transcript viewer's data (monitor.py): OMP sessions and Claude Code projects. */
@@ -213,10 +229,14 @@ export class WebServer {
       const result = await n.show(cleanNotifyRequest(body));
       return this.json(200, { ok: true, shown: result.shown, reason: result.reason ?? '', mechanism: n.mechanism });
     });
-    this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
+    this.native.set('GET /api/live/project-prefs', async (c) => this.json(200, await projectsView(c)));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
       await c.projectPrefs.update(body);
-      return this.json(200, { ...projectsView(c), ok: true });
+      return this.json(200, { ...(await projectsView(c)), ok: true });
+    });
+    this.native.set('POST /api/live/project-add', async (c, _url, body) => {
+      await projectAdd(c.addedProjects, body, c.removedProjects);
+      return this.json(200, { ...(await projectsView(c)), ok: true });
     });
     this.native.set('POST /api/live/project-remove', async (c, _url, body) => {
       const [status, payload] = await projectRemove(c, body);
@@ -395,6 +415,11 @@ export class WebServer {
             token: () => this.ctx.token,
             appRoot: APP_ROOT,
           });
+          // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
+          if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
+            const listed = reply.body as { sessions?: unknown };
+            if (Array.isArray(listed.sessions)) listed.sessions = await filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+          }
           if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
           return new Response(JSON.stringify(reply.body), {
             status: reply.status,
@@ -500,6 +525,7 @@ export function makeContext(
     conversations: options.stores?.conversations ?? new ConversationState(options.stateDir),
     projectPrefs: options.stores?.projectPrefs ?? new ProjectPrefs(options.stateDir),
     removedProjects: new RemovedProjects(options.stateDir),
+    addedProjects: new AddedProjects(options.stateDir),
     readState: options.stores?.readState ?? new ReadState(options.stateDir),
     settings: options.stores?.settings ?? new SettingsStore(options.stateDir),
     transcripts: options.transcripts,
@@ -517,6 +543,7 @@ export function makeContext(
     docs: new DocStore(options.stateDir, { history: new ArtifactHistory(() => ctx.artifacts?.store ?? null) }),
     desktopNotify: null,
   };
+  ctx.addedProjects.collect = () => visibleFolders(ctx); // an existing user's first list: the projects the page showed before
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(
     options.stateDir,

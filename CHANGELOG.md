@@ -2,6 +2,12 @@
 
 ## 0.1.0-beta.8 (beta)
 
+- Projects are only the ones you add. A new AIB starts with no projects, even if you used Claude Code or OMP before: add one
+  with New project (+ above the chat list), or start a chat in a folder. Saved chats of folders you did not add stay out of
+  the project list, the chat list, Ctrl+K and the inbox, and so does "Find more chats via agent"; nothing on disk changes.
+  If you used AIB before, every project you had stays. A project you add stays listed until you remove it with Delete
+  project, even when it has no chats yet, and its old chats do not bring it back. Chats in a git worktree belong to the
+  project of the main folder.
 - New app icon: a solid black top hat with a thin teal rim and the two agent squares on it, with no teal tile behind it. The
   hat is about a third bigger, so it is easier to spot on the taskbar, in the tray and in Alt+Tab. The black shows on light
   taskbars and the teal rim on dark ones. The 16 to 32 px versions are drawn pixel by pixel, so they are sharp instead of

@@ -817,6 +817,18 @@
     for (const k of Object.keys(pending || {})) if (!real.has(k)) out[k] = pending[k];
     return out;
   }
+  // The server's added projects ({key: {path, at}}, studio-added-projects.json) in the pending shape, so withPending lists the
+  // ones with no chat yet (a project the user added stays in the list until "Delete project…" takes it off).
+  function addedAsPending(added) {
+    const out = {};
+    if (!added || typeof added !== 'object' || Array.isArray(added)) return out;
+    for (const k of Object.keys(added)) {
+      const v = added[k];
+      if (isStr(k) && v && typeof v === 'object' && isStr(v.path))
+        out[k] = { key: k, path: String(v.path).slice(0, 1024), name: folderLeaf(v.path) || String(v.path) };
+    }
+    return out;
+  }
   // buildProjects output + pending entries that have no chat yet (zero counts).
   function withPending(projects, pending) {
     const have = new Set((projects || []).map((p) => p.key)),
@@ -893,6 +905,7 @@
     smartStart,
     hintState,
     sanitizePending,
+    addedAsPending,
     addPending,
     prunePending,
     withPending,

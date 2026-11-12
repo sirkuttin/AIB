@@ -230,8 +230,10 @@
   const activeProjectKey = () => St().stripProject(ws, (itemOf(selectedKey) || {}).projectKey, draft ? draft.pk : '');
   const projectOfKey = (pk) => projects.find((p) => p.key === pk) || null;
 
-  // Projects = those derived from the chats + "pending" ones made with the New project dialog that have no chat yet,
-  // all with the saved names / order. A pending project disappears from the pending list once its first chat exists.
+  // Projects = those derived from the chats + the projects the user added that have no chat yet (the server's added list; the
+  // server lists saved chats of added projects only) + "pending" ones made with the New project dialog whose add the server has
+  // not confirmed yet, all with the saved names / order. A pending project leaves the pending list once its first chat exists
+  // or the server lists it as added.
   const PENDING_KEY = 'studio-pending-projects-v1';
   let pending = {};
   function readPending() {
@@ -250,14 +252,15 @@
   }
   function rebuildProjects() {
     const real = St().buildProjects(items.filter((i) => !removedProject(i.projectKey) || i.liveId));
-    if (items.length) {
-      const left = St().prunePending(pending, new Set(real.map((p) => p.key)));
+    const added = St().addedAsPending(addedProjects);
+    if (items.length || addedProjects) {
+      const left = St().prunePending(pending, new Set(real.map((p) => p.key).concat(Object.keys(added))));
       if (Object.keys(left).length !== Object.keys(pending).length) {
         pending = left;
         writePending();
       }
     }
-    projects = St().applyPrefs(St().withPending(real, pending), prefs);
+    projects = St().applyPrefs(St().withPending(real, Object.assign({}, added, pending)), prefs);
   }
 
   // ---- actions ------------------------------------------------------------------------------
@@ -1356,6 +1359,35 @@
   // until a new chat starts in the folder or one of its chats is restored (the server then forgets the removal).
   let removedKeys = new Set();
   const removedProject = (pk) => !!pk && removedKeys.has(pk);
+  // The projects the user added ({key: {path, at}}), from the server with the preferences; null from a server without the list.
+  let addedProjects = null,
+    pendingSent = false;
+  // Projects made with the New project dialog before the server kept the list (only in this browser's storage): sent once.
+  function sendPending() {
+    if (pendingSent || !addedProjects || !host || !host.postJson) return;
+    pendingSent = true;
+    const paths = Object.keys(pending)
+      .filter((k) => !addedProjects[k])
+      .map((k) => pending[k].path);
+    if (paths.length)
+      Promise.resolve(host.postJson('project-add', { paths })).then(
+        (res) => adoptAdded(res),
+        () => {},
+      );
+  }
+  // A project-add answer: the added and removed lists only (a name or colour save still on its way keeps its own answer).
+  function adoptAdded(r) {
+    if (!pendingSaves) return adoptPrefs(r);
+    const ad = r && r.added && typeof r.added === 'object' && !Array.isArray(r.added) ? r.added : null;
+    const rm = r && r.removed && typeof r.removed === 'object' && !Array.isArray(r.removed) ? r.removed : null;
+    if (ad) addedProjects = ad;
+    if (rm) removedKeys = new Set(Object.keys(rm));
+    if (host) {
+      rebuildProjects();
+      lastSig = '';
+      host.rerender();
+    }
+  }
   function readLocalPrefs() {
     try {
       const raw = root.localStorage.getItem(PREFS_LOCAL);
@@ -1382,8 +1414,11 @@
     prefs = St().sanitizePrefs(r);
     const rm = r && r.removed && typeof r.removed === 'object' && !Array.isArray(r.removed) ? r.removed : null;
     if (rm) removedKeys = new Set(Object.keys(rm));
+    const ad = r && r.added && typeof r.added === 'object' && !Array.isArray(r.added) ? r.added : null;
+    if (ad) addedProjects = ad;
     prefsRev = (r && r.revision) || prefsRev;
     prefsVer++;
+    if (ad) sendPending();
     if (host) {
       lastSig = '';
       host.rerender();
@@ -1493,6 +1528,15 @@
         if (O && O.deleteMany) await O.deleteMany(chats, remove);
         else await remove();
         removedKeys.add(pk);
+        if (addedProjects && addedProjects[pk]) {
+          addedProjects = Object.assign({}, addedProjects);
+          delete addedProjects[pk];
+        }
+        if (pending[pk]) {
+          pending = Object.assign({}, pending);
+          delete pending[pk];
+          writePending();
+        }
         if (ws.active === pk) commit(St().setActive(ws, otherProject(pk)));
         rebuildProjects();
         lastSig = '';
@@ -2285,6 +2329,12 @@
       pending = St().addPending(pending, pk, res.path);
       writePending();
     }
+    // The project is added on the server (it stays pending here until the server lists it).
+    if (host.postJson)
+      Promise.resolve(host.postJson('project-add', { path: res.path })).then(
+        (r) => adoptAdded(r),
+        () => {},
+      );
     const patch = {};
     if (res.name) patch.name = res.name;
     if (prefs && St().prefOf(prefs, pk).hidden) patch.hidden = false;
@@ -2671,6 +2721,8 @@
     inProject,
     listSignature,
     hasWorkspace,
+    // No project at all (a new user): the chat list then says how to add one.
+    noProjects: () => !!host && !projects.length,
     activeProject,
     focusProjectOf,
     selectProject,

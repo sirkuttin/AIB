@@ -131,7 +131,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);
     const reply = await conversationAction(studioOf(ctx), body);
-    if (reply[0] === 200) await bringBack(ctx.removedProjects, folders); // restoring a chat brings its removed project back
+    if (reply[0] === 200) await bringBack(ctx.removedProjects, folders, ctx.addedProjects); // restoring a chat brings its removed project back
     return reply;
   });
   // ---- editors ----

@@ -134,6 +134,10 @@ class Server:
             folder.mkdir()
         self.omp_dir = pathlib.Path(self.omp_override or self.omp_dir)
         self.claude_dir = pathlib.Path(self.claude_override or self.claude_dir)
+        if self.omp_override or self.claude_override:
+            # Fixture history: the data folder of an AIB used before (an empty chat-marks file), so the Deno server lists the
+            # fixtures' saved chats (it lists a fresh data folder's agent history only for projects the user added).
+            (self.state_dir / 'studio-conversations.json').write_text('{"version": 1, "savedAt": 0, "entries": {}}', encoding='utf-8')
         command = self.command() + ['--port', '0', '--state-dir', str(self.state_dir), '--omp-sessions', str(self.omp_dir),
                                     '--claude-projects', str(self.claude_dir), '--no-auto-reconnect', '--no-owner-announcements',
                                     *self.extra_args]

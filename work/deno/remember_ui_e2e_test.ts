@@ -16,6 +16,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { Fixture, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
 const PORT = 8826;
@@ -126,7 +127,11 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
   await unzip(`${dist}\\AIB-${APP_VERSION}-windows-x64.zip`, appA);
   await unzip(`${dist}\\AIB-${APP_VERSION}-windows-x64.zip`, appB);
   const claude = `${fx.root}\\claude`;
-  savedChats(fx.root, claude);
+  const folders = savedChats(fx.root, claude);
+  // The three projects were added before (AIB lists a data folder's agent history only for added projects).
+  const added: Record<string, { path: string; at: number }> = {};
+  for (const path of folders) added[projectKey(path)] = { path, at: 1 };
+  Deno.writeTextFileSync(`${fx.state}\\studio-added-projects.json`, JSON.stringify({ version: 1, savedAt: 1, start: 'fresh', added }));
   const env: Record<string, string> = {
     AGENT_STUDIO_STATE_DIR: fx.state,
     APPDATA: `${fx.root}\\appdata`,
