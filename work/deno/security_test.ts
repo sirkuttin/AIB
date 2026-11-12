@@ -166,7 +166,7 @@ Deno.test('phone access leaves the page Gate as it was: a tailnet name in STUDIO
     assert(!gate.allowsHost(name) && !gate.allowsHost(`${name}:${PORT}`), 'the tailnet name is not a page host');
     assert(!gate.allowsOrigin(`https://${name}`), 'nor an origin');
     const phoneLike = { Host: name, Origin: `https://${name}`, 'Sec-Fetch-Site': 'same-origin', 'X-Studio-Token': TOKEN, 'Tailscale-User-Login': 'a@b' };
-    for (const [path, scope] of [['/api/live/bootstrap', 'bootstrap'], ['/api/live/list', 'read'], ['/chat.html', 'static']]) {
+    for (const [path, scope] of [['/api/live/bootstrap', 'bootstrap'], ['/api/live/list', 'read'], ['/theme.css', 'static']]) {
       const r = authorize({ method: 'GET', path, headers: new Headers(phoneLike) }, gate, scope);
       assert(!(r instanceof Principal), `${path} through Serve is refused by the page Gate`);
     }
