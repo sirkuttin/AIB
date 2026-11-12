@@ -1,11 +1,13 @@
 /**
- * Worktree per chat, stage E: Merge (worktree_merge.py). Lands a worktree chat's own commits on its base branch (usually main).
+ * Worktree per chat, stage E: Merge (worktree_merge.py). Lands a worktree chat's own commits on the project's main branch.
  *
  * Runs in the web process over a small MergeStudio (state folder, liveState, liveCall): the chat's state and the conflict prompt go
  * through liveState / liveCall, every git step is run here. The registry record (worktrees.ts) says which worktree, branch, base
  * branch, snapshot S and diffBase belong to the chat.
  *
- *   1. refuse while the chat is busy, has queued messages, running terminals or running subagents
+ * The target is the project's main branch (main, else master, else the branch the chat started from): `chat.base`.
+ *
+ *   1. refuse while the chat is busy, has queued messages, running terminals, or subagents that work inside its worktree
  *   2. commit what is uncommitted in the worktree ("Studio: work from chat <title>")
  *   3. base moved past the branch: `git merge <base>` in the worktree; conflicts go to the chat as a prompt, and Studio checks the
  *      answer itself (no unmerged entries, no conflict markers in the files that conflicted, base is an ancestor of HEAD)
@@ -56,7 +58,8 @@ export interface MergeStudio {
 /** The merge did not happen; message is the one line to show. `code` is a short machine word. */
 export class Refused extends Error {
   override name = 'Refused';
-  constructor(message: string, readonly code = 'refused', readonly status = 409) {
+  /** `extra`: more fields for the reply (the tool's target branch). */
+  constructor(message: string, readonly code = 'refused', readonly status = 409, readonly extra: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -235,11 +238,50 @@ export function commitMessage(title: unknown): string {
 
 const RUNNING_STATE = /^(running|working|in[-_ ]progress|active|starting|queued|busy|streaming)$/i;
 
+/** The folder a subagent says it works in ('' when it did not say). */
+function helperFolder(info: Record<string, unknown>): string {
+  for (const name of ['cwd', 'worktree', 'worktreePath', 'workingDirectory']) {
+    const value = info[name];
+    if (typeof value === 'string' && pyStrip(value)) return pyStrip(value);
+  }
+  return '';
+}
+
+/** True when `folder` is `root` or lies inside it. */
+export function insideFolder(folder: string, root: string): boolean {
+  if (!folder || !root) return false;
+  const a = normcase(realpath(folder)).replace(/[\\/]+$/, '');
+  const b = normcase(realpath(root)).replace(/[\\/]+$/, '');
+  return a === b || a.startsWith(b + '\\') || a.startsWith(b + '/');
+}
+
+/** The running subagents of a chat: [name, folder it works in or ''] each. */
+export function runningHelpers(state: Record<string, unknown>): [string, string][] {
+  const subagents = pyTruthy(state.subagents) && isDict(state.subagents) ? Object.entries(state.subagents) : [];
+  return subagents.filter(([, v]) => isDict(v) && RUNNING_STATE.test(pyStr(v.state || ''))).map(([key, v]) => {
+    const info = v as Record<string, unknown>;
+    return [clip(pyStrip(pyStr(info.title || info.name || key)), 80), helperFolder(info)];
+  });
+}
+
+/** The running subagents that did not say where they work (Merge does not wait for them; the tool's reply names them). */
+export function unplacedHelpers(state: Record<string, unknown>): string[] {
+  return runningHelpers(state).filter(([, folder]) => !folder).map(([name]) => name);
+}
+
 /**
  * '' when a chat's public state says it is idle, else one line saying what it is still doing. checkBusy=false is for the moment a
  * turn has just ended (or is about to start) on the caller's own thread; checkQueue=false ignores messages that wait for that moment.
+ * With `worktree` (Merge), a running subagent only counts when it says it works inside that folder: a helper in its own worktree, or
+ * one that did not say where it works, cannot be told to touch the chat's copy. Without it (live sync) every running one counts.
  */
-export function stateIdleReason(state: Record<string, unknown>, checkBusy = true, checkQueue = true, forAgent = false): string {
+export function stateIdleReason(
+  state: Record<string, unknown>,
+  checkBusy = true,
+  checkQueue = true,
+  forAgent = false,
+  worktree = '',
+): string {
   if (pyTruthy(state.closed)) return 'The chat is closed; reopen it to merge';
   if (checkBusy && (state.state !== 'ready' || pyTruthy(state.busy))) {
     return 'Wait for the chat to finish its turn';
@@ -257,13 +299,11 @@ export function stateIdleReason(state: Record<string, unknown>, checkBusy = true
     return `A terminal you started is still running${command ? ` (${command})` : ''}${terminal.id ? `, terminal ${pyStr(terminal.id)}` : ''}. ` +
       'Stop it first (kill or release that terminal; ask the user if they want it kept running), then call merge_into_project again';
   }
-  const subagents = pyTruthy(state.subagents) && isDict(state.subagents) ? Object.entries(state.subagents) : [];
-  const running = subagents.find(([, v]) => isDict(v) && RUNNING_STATE.test(pyStr(v.state || '')));
+  const running = runningHelpers(state).find(([, folder]) => !worktree || insideFolder(folder, worktree));
   if (running) {
     if (!forAgent) return 'A subagent of this chat is still running';
-    const info = running[1] as Record<string, unknown>;
-    const name = clip(pyStrip(pyStr(info.title || info.name || running[0])), 80);
-    return `Your subagent ${name} is still running. Wait for it to finish or stop it, then call merge_into_project again`;
+    const where = worktree ? " in this chat's worktree" : '';
+    return `Your subagent ${running[0]} is still running${where}. Wait for it to finish or stop it, then call merge_into_project again`;
   }
   return '';
 }
@@ -278,7 +318,12 @@ export class Chat {
   wt = '';
   project = '';
   branch = '';
+  /** Where the merge lands: the project's main branch (main, else master, else the branch the chat started from). */
   base = '';
+  /** The branch the chat started from (the project folder's branch when the chat was made). */
+  startBase = '';
+  /** The target found when the chat was opened ('' until then). */
+  target = '';
   snapshot = '';
   user = '';
 
@@ -306,6 +351,8 @@ export class Chat {
     chat.registry = new wt.Registry(studio.stateDir);
     chat.key = record.key;
     chat.reload();
+    chat.target = await targetBranch(chat.project, chat.startBase);
+    chat.base = chat.target;
     return chat;
   }
 
@@ -318,10 +365,11 @@ export class Chat {
     this.wt = str(record.path);
     this.project = str(record.project);
     this.branch = str(record.branch);
-    this.base = str(record.base) || '';
+    this.startBase = str(record.base) || '';
+    this.base = this.target || this.startBase;
     this.snapshot = str(record.snapshot) || '';
     this.user = str(record.user) || this.snapshot; // the user base U; S while live sync has not moved it
-    if (!(this.base && this.snapshot)) {
+    if (!(this.startBase && this.snapshot)) {
       throw new Refused('This chat has no base branch to merge into', 'no_base', 400);
     }
   }
@@ -340,8 +388,16 @@ export class Chat {
   /** '' when the chat is idle, else one line saying what it is still doing. */
   async idleReason(): Promise<string> {
     // The agent's own tool runs mid-turn, and the button's message (or the user's next one) may wait in the queue behind it.
-    return stateIdleReason(await this.refreshState(), !this.fromTool, !this.fromTool, this.fromTool);
+    return stateIdleReason(await this.refreshState(), !this.fromTool, !this.fromTool, this.fromTool, this.wt);
   }
+}
+
+/** The branch a chat's work merges into: the project's main branch (main, else master), else the branch it started from. */
+export async function targetBranch(project: string, startBase: string): Promise<string> {
+  for (const name of ['main', 'master']) {
+    if (project && await rev(project, `refs/heads/${name}`)) return name;
+  }
+  return startBase;
 }
 
 // ---- the pieces --------------------------------------------------------------------------------------------------
@@ -703,8 +759,13 @@ async function unstash(folder: string, stash: StashRef): Promise<string[]> {
   return files.length ? files : ['(see git status)'];
 }
 
-export function treeConflictLine(_chat: unknown, files: string[]): string {
+export function treeConflictLine(chat: { base: string; startBase?: string } | null, files: string[]): string {
   const shown = shownList(files, 12);
+  if (chat && chat.startBase && chat.startBase !== chat.base) {
+    return `Merging stopped: in ${shown} your changes touch lines that are not the same in ${chat.base} as in ${chat.startBase} (where this ` +
+      `chat started), or that the user edited in the project folder. AIB will not decide between them. Rework your change in those files ` +
+      `so it applies to ${chat.base} and keeps what both sides intended, commit it, then call merge_into_project again.`;
+  }
   return `Merging stopped: your changes touch the same lines the user edited in the project folder, in: ${shown}. AIB will not decide ` +
     `between the two. Rework your change in those files so it keeps what both sides intended, commit it, then merge again. ` +
     `Do not discard the user's lines.`;
@@ -1136,41 +1197,11 @@ export async function status(studio: MergeStudio, chatId: unknown): Promise<Reco
 }
 
 // ---- the button asks the agent (merge_request.ts) -------------------------------------------------------------------
-export const NOT_ASKED = "The user hasn't asked to merge this work, so nothing was merged. If they want it merged, tell them to press " +
-  'Merge into {base} in the Changes tab; AIB then asks you to merge';
-export const CHANGED = "This chat's work changed after the user pressed Merge into {base}, so nothing was merged. Tell them what changed " +
-  'and to press Merge into {base} in the Changes tab again if they still want it merged';
-
 /** '' or why the button cannot ask this chat now (closed, read only). Archived and Elsewhere chats are checked by the route. */
 export function requestBlocked(state: Record<string, unknown>): string {
   if (pyTruthy(state.closed)) return 'This chat is closed. Continue it to merge its work';
   if (pyTruthy(state.readOnly)) return "This chat is read only, so it can't merge";
   return '';
-}
-
-/**
- * What the chat changed since its user base U, as one hash: the worktree as it is (commits, uncommitted edits, new files) diffed
- * against U. Live sync moves U and the worktree file together, so a synced user edit does not change it; an edit by the agent does.
- */
-export async function changeFingerprint(chat: Chat): Promise<{ fingerprint: string; head: string; tree: string }> {
-  const head = await rev(chat.wt, 'HEAD');
-  const scratch = Deno.makeTempDirSync({ prefix: '.studio-mergefp-', dir: await gitDir(chat.wt) });
-  let tree: string;
-  try {
-    const env = { GIT_INDEX_FILE: join(scratch, 'index') };
-    await git(['read-tree', 'HEAD'], chat.wt, { env });
-    await git(['add', '-A'], chat.wt, { env });
-    tree = strip((await git(['write-tree'], chat.wt, { env })).stdout);
-  } finally {
-    try {
-      Deno.removeSync(scratch, { recursive: true });
-    } catch { /* ignore_errors */ }
-  }
-  const diff = await rawDiff(chat.wt, chat.user, tree);
-  const lines = [...diff].map(([path, [mode, sha, status]]) => `${status} ${mode} ${sha}\t${path}`).sort();
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(lines.join('\n')));
-  const fingerprint = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return { fingerprint, head, tree };
 }
 
 export interface RequestOptions {
@@ -1179,8 +1210,9 @@ export interface RequestOptions {
 }
 
 /**
- * The Merge button: record a one-shot merge permission for this chat and send it the fixed merge message as from the user (queued
- * while the agent works). Returns {ok, state: 'requested', queued, message}; throws Refused with the line to show.
+ * The Merge button: a shortcut that sends the chat the fixed merge message as from the user (queued while the agent works). The
+ * agent then merges with its tool, as it does after a "yes" typed in the chat. Returns {ok, state: 'requested', queued, message};
+ * throws Refused with the line to show.
  */
 export async function requestMerge(studio: MergeStudio, chatId: unknown, options: RequestOptions = {}): Promise<MergeResult> {
   const chat = await Chat.open(studio, chatId);
@@ -1188,8 +1220,6 @@ export async function requestMerge(studio: MergeStudio, chatId: unknown, options
   if (blocked) throw new Refused(blocked, 'unavailable');
   if (RUNNING.has(chat.key)) throw new Refused('A merge of this chat is already running', 'running');
   if (!(await wt.touchedPaths(chat.wt, chat.user)).length) throw new Refused('Nothing to merge yet', 'nochanges');
-  const print = await changeFingerprint(chat);
-  mr.setPermission(studio.stateDir, chat.key, { chat: chat.id, ...print, time: Date.now() / 1000, rounds: false });
   const text = mr.mergeRequestText(chat.base);
   let status: number, payload: unknown;
   try {
@@ -1198,7 +1228,6 @@ export async function requestMerge(studio: MergeStudio, chatId: unknown, options
     [status, payload] = [500, { error: error instanceof Error ? error.message : String(error) }];
   }
   if (status !== 200) {
-    mr.dropPermission(studio.stateDir, chat.key);
     throw new Refused('Could not ask the chat to merge: ' + payloadError(payload, 'it did not accept the message'), 'prompt_failed');
   }
   const queued = isDict(payload) && payload.queued === true;
@@ -1211,34 +1240,26 @@ export async function requestMerge(studio: MergeStudio, chatId: unknown, options
 }
 
 /**
- * The agent's merge_into_project tool: merges only with the permission the button recorded (see merge_request.ts), else refuses
- * with a line the agent can pass on. A merge that lands uses the permission up; conflicts keep it for the next round.
+ * The agent's merge_into_project tool. The owner decides in the chat (a typed "yes" is enough, as is the Merge button's message);
+ * every merge that lands posts AIB's own "Merged into <main> ..." line in the chat, so each one is on the record. The reply (and a
+ * refusal) names the target branch (`target`) and the branch the chat started from (`started`); a merged reply also names running
+ * helpers Merge did not wait for because they did not say where they work (`helpers`).
  */
 export async function mergeFromTool(studio: MergeStudio, chatId: unknown): Promise<MergeResult> {
-  const chat = await Chat.open(studio, chatId, true);
-  const base = chat.base || 'main';
-  const permission = mr.getPermission(studio.stateDir, chat.key);
-  if (!permission) throw new Refused(NOT_ASKED.replaceAll('{base}', base), 'not_asked');
-  if (!permission.rounds) {
-    let now: string;
-    try {
-      now = (await changeFingerprint(chat)).fingerprint;
-    } catch (error) {
-      if (error instanceof GitError) throw new Refused(clip(error.message, 200), 'git_failed');
-      throw error;
+  let chat: Chat | null = null;
+  try {
+    chat = await Chat.open(studio, chatId, true);
+    const result = await merge(studio, chatId, '', true);
+    const out: MergeResult = { ...result, target: chat.base, started: chat.startBase };
+    const helpers = unplacedHelpers(await chat.refreshState());
+    if (helpers.length) out.helpers = helpers;
+    return out;
+  } catch (error) {
+    if (error instanceof Refused && chat) {
+      throw new Refused(error.message, error.code, error.status, { ...error.extra, target: chat.base, started: chat.startBase });
     }
-    if (now !== permission.fingerprint) {
-      mr.dropPermission(studio.stateDir, chat.key);
-      throw new Refused(CHANGED.replaceAll('{base}', base), 'changed');
-    }
+    throw error;
   }
-  const result = await merge(studio, chatId, '', true);
-  if (result.state === 'merged') mr.dropPermission(studio.stateDir, chat.key);
-  else if (result.state === 'conflicts') {
-    const current = mr.getPermission(studio.stateDir, chat.key);
-    if (current) mr.setPermission(studio.stateDir, chat.key, { ...current, rounds: true });
-  }
-  return result;
 }
 
 // ---- the pieces of worktree_sync.py that Merge and the amber line use: they live in sync.ts ----------------------------

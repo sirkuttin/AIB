@@ -40,11 +40,13 @@
 - Buttons on Settings agent cards keep the card in place (no scroll jump).
 - The first message of a new chat is always sent, even if you switch chats while the agent starts, and links in agent
   errors are clickable.
-- Merge into main asks the agent: the Changes tab's Merge button sends the chat a fixed merge request (shown as a collapsed
-  "Merge requested" chip) and gives that chat a one-time permission to merge, tied to its work at the click. Without the
-  click, the agent's merge tool merges nothing and points you to the button. A merge that lands uses the permission up;
-  conflicts keep it for the next round; your next own message ends it. No confirmation dialog. The button is off, with the
-  reason, for closed, archived, read-only and Elsewhere chats.
+- Merge from the chat: when a chat's work is done the agent asks "Merge into main?" and merges when you say yes; no button
+  needed. Each merge posts a "Merged into main" line in the chat. The work lands on the project's main branch (main, else
+  master), also for a chat started from another branch. If main has moved, the agent first takes main into its worktree and
+  resolves any conflicts there; main only ever gets a clean merge, and your uncommitted edits in the main checkout are set
+  aside and put back. Helpers working in their own worktrees no longer hold a merge. The Changes tab's Merge button still
+  works: it sends the chat the merge request (a collapsed "Merge requested" chip). It is off, with the reason, for closed,
+  archived, read-only and Elsewhere chats.
 - Beta agents: every card can install its agent. OpenCode installs with npm (@opencode/cli). Cursor CLI, Goose and Mistral
   Vibe run the vendor's documented installer in the card's terminal panel, with the command shown first. Cards check what
   the agent needs first (Node.js 22 or the package's minimum, uv for Mistral Vibe on Windows) and offer "Install Node.js 26
