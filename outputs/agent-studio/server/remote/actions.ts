@@ -12,7 +12,8 @@
  *                queued messages (a Stop or a failed turn paused them).
  *   authenticate never from a phone.
  *
- * A chat that is not running on the PC is refused with "Open it in AIB on your PC" (owner decision pending: no connect from a phone).
+ * A chat that is not running on the PC is refused with "tap Continue this chat" (owner decision 3b: the phone starts it again with
+ * POST /api/remote/continue, remote/saved.ts; an action never starts a chat by itself).
  */
 import type { WebContext } from '../web/server.ts';
 
@@ -44,7 +45,7 @@ export class Refusal extends Error {
 }
 
 export const REFUSALS = {
-  notLive: () => new Refusal(409, 'not_live', 'This chat is not running on your PC. Open it in AIB on your PC to continue it.'),
+  notLive: () => new Refusal(409, 'not_live', 'This chat is not running on your PC. Tap Continue this chat to start it again, then send.'),
   notReady: () => new Refusal(409, 'not_ready', 'This chat is still starting or cannot take messages. Try again in a moment.'),
   gone: () => new Refusal(409, 'gone', 'This was already answered or withdrawn.'),
   urlQuestion: () => new Refusal(403, 'pc_only', 'This question opens a web page. Finish this on your PC.'),

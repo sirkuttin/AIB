@@ -6,7 +6,8 @@
 import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
 import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { openSource, type Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
 import type { AccessOptions } from '../../outputs/agent-studio/server/remote/access.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
@@ -197,11 +198,53 @@ export interface FakeChat {
   auth?: Json | null;
 }
 
-/** An in-process Studio (page port 0) with a fake agent host the test fills; phone access options come from the test. */
-export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
+/** One saved Claude Code chat of the fixture's project (a transcript file, as Claude Code writes it). `ageSeconds`: how long ago it
+ * was last written (its rows' times and the file's modified time). */
+export interface SavedChatSpec {
+  sessionId: string;
+  rows?: Json[];
+  prompt?: string;
+  reply?: string;
+  ageSeconds?: number;
+}
+
+export function writeSavedChat(claudeDir: string, project: string, spec: SavedChatSpec): string {
+  const when = new Date(Date.now() - (spec.ageSeconds ?? 3600) * 1000);
+  const stamp = when.toISOString();
+  const base = { sessionId: spec.sessionId, cwd: project, timestamp: stamp };
+  const rows = spec.rows ?? [
+    { type: 'user', ...base, message: { role: 'user', content: spec.prompt ?? `Work on ${spec.sessionId}` } },
+    {
+      type: 'assistant',
+      ...base,
+      message: { role: 'assistant', model: 'fixture', content: [{ type: 'text', text: spec.reply ?? 'Done.' }] },
+    },
+  ];
+  Deno.mkdirSync(`${claudeDir}${sep}enc`, { recursive: true });
+  const file = `${claudeDir}${sep}enc${sep}${spec.sessionId}.jsonl`;
+  Deno.writeTextFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  Deno.utimeSync(file, when, when);
+  return file;
+}
+
+/** An in-process Studio (page port 0) with a fake agent host the test fills; phone access options come from the test.
+ * `saved`: real saved transcripts (a Claude Code folder under the root) and one added project, `project`, they belong to. */
+export async function remoteStudio(phone: AccessOptions = {}, root?: string, extra: { saved?: boolean } = {}) {
   root ??= await tempDir('aib-remote-');
   const state = `${root}${sep}state`;
   await Deno.mkdir(state, { recursive: true });
+  const claudeDir = `${root}${sep}claude`;
+  const project = `${root}${sep}projects${sep}shop`;
+  let transcripts = {} as unknown as Source;
+  if (extra.saved) {
+    for (const dir of [claudeDir, `${root}${sep}omp`, project]) await Deno.mkdir(dir, { recursive: true });
+    const added = { [projectKey(project)]: { path: project, at: 1 } };
+    Deno.writeTextFileSync(
+      `${state}${sep}studio-added-projects.json`,
+      JSON.stringify({ version: 1, savedAt: 1, start: 'fresh', added }),
+    );
+    transcripts = await openSource(`${root}${sep}omp`, claudeDir);
+  }
   // The phone port is fixed in remote-port.json (never port 0); an OS-chosen number, as for any child that comes back on its port.
   if (readRemotePort(state) === null) saveRemotePort(state, pickPort(), pickPort()); // and the artifact port (Phase D)
   const chats: FakeChat[] = [];
@@ -261,7 +304,7 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
     updates: {} as UpdateService,
     webInstanceId: 'test',
     cliPort: 0,
-    transcripts: {} as unknown as Source,
+    transcripts,
     claudeProjects: state,
     ompSessions: state,
     shutdown: () => {},
@@ -276,6 +319,9 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
     root,
     state,
     chats,
+    claudeDir,
+    project,
+    saveChat: (spec: SavedChatSpec) => writeSavedChat(claudeDir, project, spec),
     stateCalls,
     liveCalls,
     answerLive(fn: (name: string, body: Json) => [number, unknown]) {

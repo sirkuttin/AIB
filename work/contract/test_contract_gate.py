@@ -278,6 +278,8 @@ class PhonePortContract(unittest.TestCase):
         routes += [('GET', p) for p in ('/manifest.webmanifest', '/sw.js', '/icons/icon-256.png')]
         # phase D: a signed artifact link (no such artifact here)
         routes += [('GET', '/api/remote/artifact?id=0123456789abcdef'), ('GET', '/api/remote/artifact?id=x')]
+        # chats that are not running: read only, Continue this chat, marked read on the PC
+        routes += [('GET', '/api/remote/saved?key=claude:x'), ('POST', '/api/remote/continue'), ('POST', '/api/remote/read')]
         self.assertGreater(len(routes), 100)
         for method, path in routes:
             status, _, body = self.phone(method, path, {} if method == 'POST' else None, X_AIB_Device=token, Cookie='__Host-aib-phone=' + cookie)

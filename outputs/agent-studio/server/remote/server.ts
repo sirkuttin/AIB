@@ -7,6 +7,10 @@
  * Credentials: the device token in the X-AIB-Device header on every API call (the phone keeps it in IndexedDB); an
  * __Host- HttpOnly Secure SameSite=Strict cookie only for GET images (an <img> cannot send a header). Never the reverse.
  *
+ * Not running (owner decisions 3b, 4): home lists the chats that are not running; GET /api/remote/saved shows one read only; POST
+ * /api/remote/continue starts it again with its saved settings (Send switch); POST /api/remote/read marks a chat read on the PC up
+ * to what the phone showed (See chats), at most once per READ_GAP_MS per chat. Paired phones never expire (owner decision 2b).
+ *
  * Phase D: GET /api/remote/artifact mints a short-lived signed link for one artifact and this phone, on the phone's artifact port
  * (remote/artifact_server.ts, https://<name>:8443); the page CSP lets the phone page frame that origin and load its images.
  */
@@ -19,7 +23,8 @@ import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
-import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, type TitleCache } from './payloads.ts';
+import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, revisionOf, type TitleCache } from './payloads.ts';
+import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChats, savedHistory } from './saved.ts';
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
 import type { Manifest } from '../artifacts/artifacts.ts';
 import { bindWithRetry } from './port.ts';
@@ -50,7 +55,11 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
 };
 export const MANIFEST_PATH = '/manifest.webmanifest';
 
-export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action' | 'push';
+export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action' | 'push' | 'continue' | 'read';
+/** A chat's read position is written at most this often for one phone (the phone sends it at most every 5 s anyway). */
+export const READ_GAP_MS = 2000;
+/** At most one "read" line per phone and chat in the activity log in this time. */
+const READ_AUDIT_MS = 10 * 60 * 1000;
 
 /** Every route the phone port answers (method, path, how it is authorised). Default deny: anything else is 404. */
 export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
@@ -64,6 +73,10 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['GET', '/api/remote/image', 'image'],
   // Phase D: a signed link to one artifact on the phone's artifact port.
   ['GET', '/api/remote/artifact', 'device'],
+  // Owner decisions 3b and 4: a chat that is not running, read only; Continue this chat; reading marks it read on the PC.
+  ['GET', '/api/remote/saved', 'device'],
+  ['POST', '/api/remote/continue', 'continue'],
+  ['POST', '/api/remote/read', 'read'],
   // Phase B: answer, approve once, send, stop, the chat's own queued messages (remote/actions.ts checks every body).
   ['POST', '/api/remote/elicitation', 'action'],
   ['POST', '/api/remote/permission', 'action'],
@@ -87,6 +100,9 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
   'GET /api/remote/chat': 'phone.read',
   'GET /api/remote/image': 'phone.read',
   'GET /api/remote/artifact': 'phone.read',
+  'GET /api/remote/saved': 'phone.read',
+  'POST /api/remote/continue': 'phone.prompt',
+  'POST /api/remote/read': 'phone.read',
   'POST /api/remote/elicitation': 'phone.answer',
   'POST /api/remote/permission': 'phone.approve',
   'POST /api/remote/prompt': 'phone.prompt',
@@ -105,7 +121,8 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
 const SCOPE_WORDS: Record<string, string> = {
   'phone.answer': 'answer questions',
   'phone.approve': 'approve requests',
-  'phone.prompt': 'send messages or stop turns',
+  'phone.read': 'see chats',
+  'phone.prompt': 'send messages, stop turns or continue chats',
   'phone.push': 'get notifications',
 };
 
@@ -116,6 +133,8 @@ export interface RemoteHost {
   pairing: Pairing;
   audit: Audit;
   titles: TitleCache;
+  /** The chats that are not running (remote/saved.ts). */
+  saved: SavedChats;
   /** The VAPID keys a phone subscribes with (remote/push.ts). */
   vapid: VapidKeys;
   /** The tailnet name requests must be addressed to ('' = refuse everything). */
@@ -205,6 +224,9 @@ async function drain(request: Request): Promise<void> {
 export class RemoteServer {
   readonly gate: RemoteGate;
   #server: HttpServer | null = null;
+  /** device id + chat key -> when its read position was last written / last logged */
+  #readAt = new Map<string, number>();
+  #readLogged = new Map<string, number>();
   port = 0;
 
   constructor(readonly host: RemoteHost) {
@@ -310,6 +332,10 @@ export class RemoteServer {
           return await this.#action(request, path);
         case 'push':
           return await this.#push(request, path);
+        case 'continue':
+          return await this.#continue(request);
+        case 'read':
+          return await this.#read(request);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -435,16 +461,30 @@ export class RemoteServer {
     if (device instanceof Response) return device;
     if (path === '/api/remote/home') {
       const home = await homePayload(this.host.ctx, this.host.pcName(), this.host.titles);
+      const saved = (await this.host.saved.list(this.host.ctx)).map(publicSaved);
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
       const scopes = [...device.scopes];
-      const revision = home.revision + '.' + scopes.map((x) => x.slice(6, 8)).join('');
+      const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('');
       const known = url.searchParams.get('rev') ?? request.headers.get('If-None-Match')?.replace(/"/g, '');
       if (known && known === revision) {
         return new Response(null, { status: 304, headers: { ...securityHeadersRemote(), ETag: `"${revision}"` } });
       }
-      return this.json(200, { ...home, revision, scopes }, { ETag: `"${revision}"` });
+      return this.json(200, { ...home, saved, revision, scopes }, { ETag: `"${revision}"` });
     }
     if (path === '/api/remote/artifact') return this.#artifact(url, device);
+    if (path === '/api/remote/saved') {
+      const key = url.searchParams.get('key') ?? '';
+      const chat = await this.host.saved.find(this.host.ctx, key);
+      if (!chat) {
+        // running again (here or on the PC): the phone opens the live chat instead
+        const live = await this.#liveByKey(key);
+        if (live) return this.json(200, { key, live, scopes: [...device.scopes] });
+        return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
+      }
+      const tail = Number(url.searchParams.get('tail') ?? SAVED_TAIL);
+      const history = await savedHistory(this.host.ctx, chat, tail, remoteArtifactOrigin(this.host.name()));
+      return this.json(200, { ...history, live: null, scopes: [...device.scopes] });
+    }
     const id = url.searchParams.get('id') ?? '';
     const tail = Number(url.searchParams.get('tail') ?? DEFAULT_TAIL);
     const after = Math.max(0, Math.trunc(Number(url.searchParams.get('after') ?? 0)) || 0);
@@ -538,6 +578,109 @@ export class RemoteServer {
       if (k in answer) out[k] = answer[k];
     }
     return this.json(200, out);
+  }
+
+  /** The live connection id of a chat by its key (provider:sessionId), when it is running. */
+  async #liveByKey(key: string): Promise<string | null> {
+    if (!key) return null;
+    const listing = await this.host.ctx.host.liveList() as Record<string, unknown>;
+    for (const raw of Array.isArray(listing?.connections) ? listing.connections : []) {
+      const c = raw as Record<string, unknown>;
+      if (c && !c.closed && typeof c.id === 'string' && `${c.provider}:${c.sessionId}` === key) return c.id;
+    }
+    return null;
+  }
+
+  /** Continue this chat: a listed chat that is not running starts again on the PC with its saved agent and settings. */
+  async #continue(request: Request): Promise<Response> {
+    const body = await this.#body(request);
+    const key = typeof body?.key === 'string' ? body.key.slice(0, 400) : '';
+    const device = this.#device(request, 'phone.prompt');
+    if (device instanceof Response) {
+      const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
+      if (known && device.headers.get('X-AIB-Refused') === 'scope') {
+        this.host.audit.write({ device: known.id, name: known.name, action: 'continue', chat: key, result: 'refused: switched off' });
+      }
+      return device;
+    }
+    const log = (result: string, chat = key) =>
+      this.host.audit.write({ device: device.id, name: device.name, action: 'continue', chat, result });
+    if (!body || !key) {
+      log('refused: invalid request');
+      return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    }
+    // Only the chat's key: the agent, model, mode, folder and settings are the chat's saved ones, never the phone's.
+    if (Object.keys(body).some((k) => !CONTINUE_FIELDS.has(k))) {
+      log('refused: settings');
+      return this.json(403, {
+        error: 'From a phone a chat continues with its saved agent and settings. To change them, continue it in AIB on your PC.',
+        code: 'pc_only',
+      });
+    }
+    const running = await this.#liveByKey(key);
+    if (running) return this.json(200, { ok: true, id: running, already: true });
+    const chat = await this.host.saved.find(this.host.ctx, key);
+    if (!chat) {
+      log('refused: not_found');
+      return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
+    }
+    const result = await continueSaved(this.host.ctx, chat);
+    this.host.saved.invalidate();
+    if (result.status !== 200) {
+      log(`refused: ${result.code}`);
+      return this.json(result.status, { error: result.error, code: result.code });
+    }
+    log('started on the PC', result.id);
+    return this.json(200, { ok: true, id: result.id });
+  }
+
+  /**
+   * The phone showed a live chat's newest events up to `seq`: mark it read on the PC (the same read-state store the PC page writes).
+   * Up to the newest event: read now (as the PC does when you look at a chat); an older one: read up to that event's time. Positions
+   * only move forward.
+   */
+  async #read(request: Request): Promise<Response> {
+    const body = await this.#body(request);
+    const device = this.#device(request, 'phone.read');
+    if (device instanceof Response) return device;
+    const id = body?.id;
+    const seq = Math.trunc(Number(body?.seq));
+    if (typeof id !== 'string' || !id || id.length > 100 || !(seq >= 0)) {
+      return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    }
+    const ctx = this.host.ctx;
+    const listing = await ctx.host.liveList() as Record<string, unknown>;
+    const entry = (Array.isArray(listing?.connections) ? listing.connections as Record<string, unknown>[] : [])
+      .find((c) => c && c.id === id && !c.closed);
+    if (!entry) return this.json(409, { error: 'This chat is not running on your PC.', code: 'not_live' });
+    const provider = typeof entry.provider === 'string' ? entry.provider : '';
+    const sessionId = typeof entry.sessionId === 'string' ? entry.sessionId : '';
+    if (!provider || !sessionId) return this.json(200, { ok: true, marked: false });
+    const key = `${provider}:${sessionId}`;
+    const slot = `${device.id} ${key}`;
+    const now = Date.now();
+    if (now - (this.#readAt.get(slot) ?? 0) < READ_GAP_MS) return this.json(200, { ok: true, marked: false, throttled: true });
+    const cursor = Number(entry.cursor) || 0;
+    let seenAt = 0;
+    if (seq >= cursor) seenAt = now;
+    else if (seq > 0) {
+      const state = await ctx.host.liveState(id, seq - 1) as Record<string, unknown> | null;
+      const event = (Array.isArray(state?.events) ? state!.events as Record<string, unknown>[] : []).find((e) => e && e.seq === seq);
+      const time = Number(event?.time);
+      if (time > 0) seenAt = Math.min(now, Math.round(time * 1000));
+    }
+    if (!seenAt) return this.json(200, { ok: true, marked: false });
+    this.#readAt.set(slot, now);
+    while (this.#readAt.size > 1000) this.#readAt.delete(this.#readAt.keys().next().value!);
+    const before = ctx.readState.public().chats[key]?.seenAt ?? 0;
+    await ctx.readState.update({ set: { [key]: { seenAt } } });
+    const marked = seenAt > before;
+    if (marked && now - (this.#readLogged.get(slot) ?? 0) >= READ_AUDIT_MS) {
+      this.#readLogged.set(slot, now);
+      while (this.#readLogged.size > 1000) this.#readLogged.delete(this.#readLogged.keys().next().value!);
+      this.host.audit.write({ device: device.id, name: device.name, action: 'read', chat: id, result: 'marked read on the PC' });
+    }
+    return this.json(200, { ok: true, marked });
   }
 
   async #image(request: Request, url: URL): Promise<Response> {
