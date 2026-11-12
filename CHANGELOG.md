@@ -87,6 +87,23 @@
   steps.
 - A chat has one plan card: each update replaces it, and while steps are open it stays the chat's last item, also after you
   send another message, instead of leaving a snapshot in the earlier turn.
+- Plan steps in progress spin while anything works for the chat, its own reply or its helpers after the reply ended; three
+  dots only when nothing works.
+- Subagent cards show the helper's own model (e.g. Sonnet 5.5) and its real run time. A helper is no longer marked
+  "Interrupted" when you interrupt the main reply (Claude Code keeps background helpers running); one the agent really
+  stopped says "Stopped", one that failed says "Failed". A helper's settings no longer change the chat's model and mode chips.
+- The right column widens to 600 px while a doc or artifact shows in the Artifacts tab and goes back to your width when it
+  closes or you switch tabs; a drag while viewing is remembered as the viewer width.
+- Limits chip after Ctx: subscription usage per agent account, percent used ("5h 42% · wk 18%", "wk 26%"), with reset times
+  and freshness on hover, the warning colour from 85% and red when blocked. Claude Code from the limits it already sends,
+  Codex from its session files (else its app-server), Mistral Vibe from its account request, Qwen as "limit reached".
+  Official sources only; no chip for OMP and agents without one. Chip tooltips open toward the side with room.
+- Asking any agent for "a doc" makes an AIB doc (`doc_create`); AIB's tool server and start note say so, and Codex now gets
+  AIB's start note. Tool rows for AIB's own tools read "Create doc: <title>", "Publish: …" and so on.
+- A chat's start note says to merge finished helpers into its copy and to merge into main itself once the work is done and
+  tested.
+- Memory and speed: the page no longer keeps every redrawn screen in memory (a leak since beta.1), long blocks are measured
+  in one pass, typing no longer re-lays out the history, and only changed rows are redrawn.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.
