@@ -189,6 +189,7 @@ func (c *conn) dispatch(req *request, body []byte) {
 		if prev != nil {
 			prev.send(map[string]any{"ev": "fenced", "channel": ch.id, "epoch": epoch}, nil)
 		}
+		k.unhold() // a client takes a channel over: an AIB is back
 		c.send(reply(req, map[string]any{"epoch": epoch}), nil)
 	case "write", "note", "closeStdin", "resize", "signal", "kill", "truncate":
 		c.channelOp(req, body)
@@ -198,6 +199,9 @@ func (c *conn) dispatch(req *request, body []byte) {
 			return
 		}
 		k.setOrphan(req.Orphan)
+		c.send(reply(req, nil), nil)
+	case "hold":
+		k.hold()
 		c.send(reply(req, nil), nil)
 	case "shutdown":
 		if k.liveCount() > 0 && !req.Force {
@@ -336,6 +340,7 @@ func (c *conn) spawn(req *request) {
 		return
 	}
 	k.addChannel(ch)
+	c.k.unhold() // a client starts something of its own: an AIB is back
 	c.send(reply(req, map[string]any{"channel": id, "pid": ch.pid, "epoch": uint64(1), "kind": kindName}), nil)
 }
 

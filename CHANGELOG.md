@@ -32,12 +32,14 @@
 - Docs in worktree chats: a chat working in a git worktree reads and writes docs in the main project's `aib-docs/`, never in
   its own worktree folder, so every chat sees the same docs.
 - Docs show their title, not the folder name, in Files, pickers and chat cards.
-- Quitting AIB never stops a chat. Closing the window or Quit AIB while a chat works (a turn, a queued message, a background
-  helper, a question waiting for you), a terminal command runs or a merge is under way: no question box; the window closes and
-  AIB stays in the tray, "AIB · 2 chats running" (or "1 chat needs you"). Open AIB or a click on the icon shows your chats as
-  they are, questions that came meanwhile included. Once nothing works, AIB quits by itself about 10 s later. With nothing
-  working, Quit quits at once, as before. A pending "Install when chats finish" waits meanwhile and installs at the next
-  launch (or when you open the window again), so an update never opens a window after you quit.
+- Quitting AIB never stops a chat, and AIB really quits. Closing the window or Quit AIB while a chat works (a turn, a queued
+  message, a background helper, a question waiting for you) or a terminal command runs: no question box; AIB exits the way
+  Install now does, and the keeper holds the chats: the agents go on and everything they say is recorded. The next AIB you
+  start (this one, or a newer build unzipped into another folder) takes them over as they are, questions that came meanwhile
+  included, and sends queued messages then. A merge under way is let finish first. While AIB is closed, an agent's AIB tools
+  (artifacts, docs) answer at once "AIB is closed; try again later". With nothing working, Quit quits at once, as before.
+  If the running keeper is too old to hold chats (or a chat runs outside it), AIB stays in the tray until nothing works, as
+  before. If a newer AIB cannot take the keeper's chats over, a notice says so and nothing is stopped.
 - The tray menu is Open AIB, a status line, Quit AIB and Stop all chats and quit, the one way to stop everything. Its first
   click turns the item into "Click again to stop 2 chats and quit" for 10 s; a second click stops them and quits. No box.
 - AIB ended by a signal (macOS/Linux `kill`, a session ending) with a chat working leaves the chat in the keeper, which brings

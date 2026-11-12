@@ -28,11 +28,20 @@ notifications through the web API, updates as "open the installer" instructions)
   exits; the running app sees the file and shows its window. If a `serve` owns the folder instead, the launch shows a message box
   ("AIB is already running for this data folder ... Quit it first, or use --state-dir for a separate copy.") and exits with code 2;
   a second `serve` prints that line and exits with code 2. Another `--state-dir` is another lock (`single_instance.ts`).
-- **Window and tray:** quitting never stops a chat (the owner's decision, 2026-11-10). Closing the window or the tray's "Quit AIB"
-  quits at once when nothing works. When something works (a chat in `Studio.workingList`: a turn, an agent opening, a question
-  waiting, queued messages, background helpers, an install or sign-in job; or a terminal command; or a merge running in AIB) there is
-  no question: the window closes (Quit AIB hides it), AIB stays in the tray "in the background" and quits by itself once nothing has
-  worked for 10 s. Open AIB, a click on the icon or a second launch brings the window back with every chat as it is. The tray icon
+- **Window and tray:** quitting never stops a chat (the owner's decisions, 2026-11-10 and 2026-11-11). Closing the window or the
+  tray's "Quit AIB" quits at once when nothing works. When something works (a chat in `Studio.workingList`: a turn, an agent opening,
+  a question waiting, queued messages, background helpers, an install or sign-in job; or a terminal command; or a merge running in
+  AIB) there is no question, and AIB exits the way Install now does, minus starting a new version (`DesktopApp.decide` 'leave'): the
+  window goes, a running merge is let finish (up to 2 min), then main.ts `close(…, release, hold)` tells the keeper `hold` (keeper
+  1.3.0: no orphan restart and no "orphaned" stop until a client claims or spawns a channel), leaves terminal shells and chats in it
+  (`Studio.release({ hold })`) and writes `{"closed": true}` to the forwarder's address file, so an agent's artifact/docs tool
+  answers at once "AIB is closed; try again later" (a tool result with `isError`). Queued messages, questions and merges wait for
+  the next AIB: whichever AIB.exe is started next on that data folder (the same build or a newer one unzipped elsewhere) takes the
+  chats over from the keeper's record (`Studio.adoptKeeper`, the update's code) when the running keeper has what it needs
+  (`KEEPER_NEEDS`, the same list as release.json's `keeper.needs`); otherwise the page's banner says the chats keep running in the
+  keeper and nothing is stopped. Leaving needs `canLeave` (`Studio.quitHandover`: every working chat runs in the keeper, which
+  offers `hold`; no busy terminal outside it). When it cannot, AIB stays in the tray "in the background" as before and quits by
+  itself once nothing has worked for 10 s; Open AIB, a click on the icon or a second launch brings the window back. The tray icon
   (`tray_icon.ts`, embedded PNGs; see Icons below) has one menu, window or not: "Open AIB", a greyed status line ("2 chats
   running", "1 chat needs you", tooltip "AIB · ..."), "Quit AIB" and "Stop all chats and quit", the only deliberate stop: its first
   click turns the item into "Click again to stop N chats and quit" for 10 s, a second click stops every chat and quits (no native
@@ -125,7 +134,7 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
 - **Download and verify:** the package for this platform and architecture goes to `<data>/updates/<version>/`. Its SHA-256 must
   equal the one line for exactly that file name in the release's `SHA256SUMS` asset; otherwise the file is deleted and refused.
 - **Notify:** an amber line, "AIB 0.1.x is ready to install. Install now / Later". Nothing installs without that click.
-- **Held after a quit:** while AIB only stays in the tray because the person quit with work going on (or a tray-only start),
+- **Held after a quit:** while AIB only stays in the tray (a tray-only start, or a quit the keeper could not hold),
   "Install when chats finish" is held (`holdInstall`, `DesktopApp.background`): it stays pending in `state.json` and goes ahead at
   the next launch, or as soon as the window is opened again, so an update never opens a window after a quit.
 - **Install in place:** Windows (the per-user zip), macOS (the zipped `AIB.app`) and Linux when running from an AppImage. "Install

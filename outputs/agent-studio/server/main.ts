@@ -24,7 +24,7 @@ import { decideKeeper, KeeperLink } from './keeper/link.ts';
 import { keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
-import { orphanCommand, Studio } from './host/studio.ts';
+import { holdKeeper, orphanCommand, Studio } from './host/studio.ts';
 import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
 import { UpdateService } from './desktop/updater.ts';
 import { makeContext, WebServer } from './web/server.ts';
@@ -242,7 +242,7 @@ export async function main(argv: string[]): Promise<void> {
     : null;
   let closing = false;
   let desktopApp: DesktopApp | null = null; // the window and tray (desktop app only), made once the server listens
-  let close = async (_why?: string, _release?: boolean) => {};
+  let close = async (_why?: string, _release?: boolean, _hold?: boolean) => {};
   const ctx = makeContext({
     stateDir,
     host,
@@ -272,8 +272,8 @@ export async function main(argv: string[]): Promise<void> {
     busyChats: async () => (await host.busyConnections()).length,
     quit: (release) => void setTimeout(() => void close('installing an update', release), 50),
     chatsKeepRunning: !studio, // the agent host outlives this app: an update never stops a working chat
-    // Quit while chats worked (AIB only stays in the tray): "Install when chats finish" waits for the next launch, so an update
-    // never opens a window after the person quit.
+    // AIB only in the tray (the keeper's restart after a crash, or a quit the keeper could not hold): "Install when chats finish"
+    // waits for the next launch, so an update never opens a window after the person quit.
     holdInstall: () => desktopApp?.background ?? false,
     // One process with the keeper: Install now leaves the chats in the keeper and the new version takes them over.
     keeper: studio?.keeper
@@ -313,18 +313,29 @@ export async function main(argv: string[]): Promise<void> {
     console.log(`AIB: ${url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.`);
   } else {
     console.log(
-      `AIB: ${url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (${isCompiled() ? 'AIB' : SOURCE_COMMAND} --stop-host ends the host).`,
+      `AIB: ${url}\nAgents run in the separate agent host, so this server can be restarted without stopping them (${
+        isCompiled() ? 'AIB' : SOURCE_COMMAND
+      } --stop-host ends the host).`,
     );
   }
-  close = async (why = 'quit', release = false) => {
+  close = async (why = 'quit', release = false, hold = false) => {
     if (closing) return;
     closing = true;
-    log.announce('studio', 'closing (%s)%s', why, release && studio ? '; leaving the chats in the keeper' : '');
+    log.announce(
+      'studio',
+      'closing (%s)%s',
+      why,
+      release && studio ? (hold ? '; the keeper holds the chats until AIB is started again' : '; leaving the chats in the keeper') : '',
+    );
+    // hold (Quit AIB with work running): the keeper restarts no AIB in the tray and keeps every chat and terminal shell until the next
+    // AIB takes them over. Told through each link before it closes (terminal shells alone may be what works); Studio.release repeats
+    // it last.
+    for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
     await ctx.artifacts.stop().catch(() => {});
     await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
     // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
-    if (release && studio) await studio.release().catch(() => {});
+    if (release && studio) await studio.release({ hold }).catch(() => {});
     else await host.close().catch(() => {});
     folderLock?.release();
     Deno.exit(0);
@@ -346,20 +357,32 @@ export async function main(argv: string[]): Promise<void> {
       stateDir,
       trayIcon: trayIconPng(),
       busyCount: async () => (await host.busyConnections()).length,
-      // Closing the window or Quit AIB never stops a chat: with something working AIB stays in the tray and quits by itself once
-      // nothing works (window.ts decide). Split (an older version's host, being drained): the app quits at once and the host is
+      // Closing the window or Quit AIB never stops a chat: with something working AIB leaves it to the keeper and exits, as Install
+      // now does (window.ts decide; canLeave). Split (an older version's host, being drained): the app quits at once and the host is
       // asked to stop unforced (an idle host goes, a busy one keeps its chats under its own icon); Stop all chats and quit forces it.
       stopHost: studio ? undefined : async (force) => {
         const result = await stopHost(stateDir, force, 5, `the app quitting (pid ${Deno.pid}${force ? ', OK: stop them' : ''})`);
         log.announce('studio', 'quit: agent host %s', result.stopped ? 'stopped' : `kept (${result.message})`);
         return result;
       },
-      quit: () => close('the app was quit'),
+      quit: (_stop, leave) => leave ? close('the app was quit with work running', true, true) : close('the app was quit'),
+      // Quit AIB with work running exits only when the keeper can hold all of it; else AIB stays in the tray until nothing works.
+      canLeave: studio?.keeper
+        ? async () => {
+          const why = await studio!.quitHandover();
+          if (why) return why;
+          const outside = ctx.terminals.busyOutsideKeeper();
+          if (outside) return `${outside} terminal command(s) run outside the keeper`;
+          const shells = await terminalKeeper?.client(false).catch(() => null);
+          if (shells && !shells.has('hold')) return `the running keeper (${shells.keeperVersion}) cannot hold terminals`;
+          return '';
+        }
+        : undefined,
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
-      terminalsBusy: () => ctx.terminals.busyCount(), // AIB does not quit under a command running in a terminal
-      mergesRunning, // nor in the middle of a merge
+      terminalsBusy: () => ctx.terminals.busyCount(), // a command running in a terminal is work: left to the keeper, never cut off
+      mergesRunning, // Quit AIB lets a running merge finish before AIB exits
       trayCounts: studio
         ? () => {
           const working = studio!.workingList();

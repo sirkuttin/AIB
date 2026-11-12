@@ -466,6 +466,20 @@ export class TerminalSessions {
     return n;
   }
 
+  /** Shells running a command that do not run in the keeper (they would end with AIB): quitting then keeps AIB in the tray. */
+  busyOutsideKeeper(): number {
+    let n = 0;
+    for (const s of this.#sessions.values()) {
+      if (s.pty instanceof KeeperPty && s.pty.inKeeper) continue;
+      let busy = false;
+      try {
+        busy = s.pty.busy();
+      } catch { /* unknown */ }
+      if (busy || s.prompt.busy) n++;
+    }
+    return n;
+  }
+
   /**
    * Attach a socket: open (or reuse) the shell, or tell the page why not and close the socket. `command`: a program instead of a shell
    * (a Beta agent's sign-in). `resume`: only a shell that already runs (the page reconnecting after a restart); none is refused with

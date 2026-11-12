@@ -14,7 +14,10 @@ package main
 //   - a 200 reply's body is written to stdout as one line; a 202 (a notification or a response) writes nothing;
 //   - while AIB cannot be reached (no file, or nothing listens: an AIB restart or an update switch), it tries again for up to 15 s.
 //     Only a refused or failed connection is retried, never a message that may have been delivered, so nothing runs twice. A request
-//     that still cannot be delivered gets a JSON-RPC error with its id.
+//     that still cannot be delivered gets an error with its id: a tools/call a tool result with isError (so the model reads it and
+//     can try again later), anything else a JSON-RPC error.
+//   - an address file that says {"closed":true} (the person quit AIB while its chats keep running in the keeper) is answered at
+//     once with "AIB is closed" (keeper 1.3.0), no 15 s wait: nobody is about to come back.
 //   - only loopback http URLs are used; no proxy.
 //
 // It never runs inside a serving keeper (the keeper itself still contains no HTTP), and the keeper's serve path never calls it.
@@ -124,17 +127,24 @@ func (f *forwarder) write(line []byte) {
 	f.out.Write(append(bytes.TrimRight(line, "\r\n"), '\n'))
 }
 
-// endpoint reads the address file: a loopback http URL, or an error (missing, unreadable, or not loopback).
+// errAIBClosed: the address file says AIB was closed on purpose; no point waiting for it.
+var errAIBClosed = errors.New("AIB is closed")
+
+// endpoint reads the address file: a loopback http URL, or an error (missing, unreadable, closed, or not loopback).
 func (f *forwarder) endpoint() (string, error) {
 	raw, err := os.ReadFile(f.addressFile)
 	if err != nil {
 		return "", err
 	}
 	var doc struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		Closed bool   `json:"closed"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return "", err
+	}
+	if doc.Closed {
+		return "", errAIBClosed
 	}
 	u, err := url.Parse(doc.URL)
 	if err != nil || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != "::1") {
@@ -179,7 +189,7 @@ func (f *forwarder) forward(message []byte) []byte {
 			}
 		}
 		lastErr = err
-		if time.Now().After(deadline) {
+		if errors.Is(err, errAIBClosed) || time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -187,7 +197,21 @@ func (f *forwarder) forward(message []byte) []byte {
 	if !isRequest {
 		return nil
 	}
-	return rpcError(head.ID, "AIB is not running, so this tool cannot answer now ("+lastErr.Error()+"). Try again once AIB runs.")
+	if errors.Is(lastErr, errAIBClosed) {
+		return unavailable(head.ID, head.Method, "AIB is closed, so this tool cannot answer now. Your chat keeps running; try again later, once AIB is open again.")
+	}
+	return unavailable(head.ID, head.Method, "AIB is not running, so this tool cannot answer now ("+lastErr.Error()+"). Try again later, once AIB runs.")
+}
+
+// unavailable answers a request AIB could not take: a tools/call gets a tool result with isError (MCP: tool errors go in the result,
+// where the model sees them and can retry), anything else a JSON-RPC error.
+func unavailable(id json.RawMessage, method, message string) []byte {
+	if method != "tools/call" {
+		return rpcError(id, message)
+	}
+	out, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{
+		"content": []map[string]any{{"type": "text", "text": message}}, "isError": true}})
+	return out
 }
 
 func (f *forwarder) post(target string, message []byte) (int, []byte, error) {

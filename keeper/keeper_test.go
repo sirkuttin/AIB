@@ -472,6 +472,82 @@ func TestOrphanCommandSetAtRuntimeAndClientReturns(t *testing.T) {
 }
 
 // Fifty clients at once, half of them dropping in the middle of a frame: the channel and the others are unaffected.
+// hold (keeper 1.3.0): the client leaves on purpose (the person quit AIB with work running). No orphan command runs and the channels
+// are never stopped as orphaned, however long nobody comes. A client that only looks (hello, list, attach) leaves the hold; one that
+// claims a channel (the next AIB taking over) ends it, and rule V1 applies again once that one leaves without hold.
+func TestHoldKeepsChannelsUntilAClientTakesOver(t *testing.T) {
+	data := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "orphan.txt")
+	oc, _ := json.Marshal(orphanCommand{Command: agentBin, Args: []string{"touch", marker}})
+	k := startKeeper(t, data, "--orphan-command", string(oc), "--orphan-after", "200ms", "--orphan-retry", "200ms", "--orphan-tries", "2")
+	c := dial(t, k)
+	if h := c.must("status", nil, nil).h; h["held"] != false {
+		t.Fatalf("held before any hold: %v", h)
+	}
+	spawnEcho(t, c, "held", "tree")
+	c.must("attach", map[string]any{"channel": "held"}, nil)
+	child, grand := readTree(t, c, "held")
+	c.must("hold", nil, nil)
+	c.nc.Close()
+	stillHeld := func(what string) {
+		t.Helper()
+		// Far past orphan-after + tries * retry: still running, no orphan command, both processes alive.
+		if k.waitExit(2 * time.Second) {
+			t.Fatalf("%s: the keeper gave up on held channels", what)
+		}
+		if b, _ := os.ReadFile(marker); len(b) > 0 {
+			t.Fatalf("%s: the orphan command ran while held: %q", what, b)
+		}
+		if !processAlive(child) || !processAlive(grand) {
+			t.Fatalf("%s: a held channel's processes were stopped", what)
+		}
+		info, _ := os.ReadFile(filepath.Join(data, "keeper", "keeper.json"))
+		if !strings.Contains(string(info), `"held": true`) {
+			t.Fatalf("%s: keeper.json does not say held: %s", what, info)
+		}
+	}
+	stillHeld("nobody came")
+	// A client that only looks (a test reading the record, a status probe) comes and goes: still held.
+	look := dial(t, k)
+	look.must("list", nil, nil)
+	look.must("attach", map[string]any{"channel": "held"}, nil)
+	if h := look.must("status", nil, nil).h; h["held"] != true {
+		t.Fatalf("status while held: %v", h)
+	}
+	look.nc.Close()
+	stillHeld("a client only looked")
+	// An AIB comes back and claims the channel: the hold ends; V1 applies again once it leaves without hold.
+	c2 := dial(t, k)
+	c2.must("claim", map[string]any{"channel": "held"}, nil)
+	if h := c2.must("status", nil, nil).h; h["held"] != false {
+		t.Fatalf("still held after a client took the channel over: %v", h)
+	}
+	l := c2.must("list", nil, nil).h["channels"].([]any)[0].(map[string]any)
+	if !l["live"].(bool) {
+		t.Fatalf("channel died: %v", l)
+	}
+	c2.nc.Close()
+	if !k.waitExit(10 * time.Second) {
+		t.Fatal("rule V1 did not apply again after the hold ended")
+	}
+	waitGone(t, child, 3*time.Second)
+	if b, _ := os.ReadFile(marker); strings.Count(string(b), "started") != 2 {
+		t.Fatalf("orphan command after the hold ended: %q", b)
+	}
+}
+
+// A held keeper with no live channel left still exits by rule V2 (nothing to keep).
+func TestHoldStillExitsWhenNothingRuns(t *testing.T) {
+	data := t.TempDir()
+	k := startKeeper(t, data, "--exit-after", "500ms")
+	c := dial(t, k)
+	c.must("hold", nil, nil)
+	c.nc.Close()
+	if !k.waitExit(5 * time.Second) {
+		t.Fatal("a held keeper with nothing running did not exit")
+	}
+}
+
 func TestManyClientsAndDroppedFrames(t *testing.T) {
 	k := startKeeper(t, t.TempDir())
 	owner := dial(t, k)

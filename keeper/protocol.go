@@ -37,10 +37,12 @@ const (
 // (go build -ldflags "-X main.keeperVersion=1.1.1"); releases use the value here.
 // 1.1.0: the `mcp-forward` subcommand (no protocol change).
 // 1.2.0: spawn's `scrollback` (a bounded journal, for terminals) and `label` (opaque text shown in list); `once` on resize.
-var keeperVersion = "1.2.0"
+// 1.3.0: the `hold` op (feature `hold`): no orphan restart until a client claims or spawns; mcp-forward answers at once while
+// AIB is closed.
+var keeperVersion = "1.3.0"
 
 // features are advertised in hello. Additions only.
-var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels"}
+var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels", "hold"}
 
 var errFrame = errors.New("bad frame")
 

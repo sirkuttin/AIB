@@ -80,6 +80,25 @@ export function keeperProblem(): string {
   return problem;
 }
 
+let takeover = '';
+
+/**
+ * The page's banner while chats left running in the keeper (an earlier AIB quit or crashed) cannot be taken over by this AIB: the
+ * running keeper refuses it or lacks what it needs ('' = nothing to say). Nothing is stopped: the chats keep running in the keeper.
+ */
+export function keeperTakeoverProblem(): string {
+  return takeover;
+}
+
+/** Set (or with '' clear) the takeover banner: `why` is the reason, in a few words. */
+export function noteKeeperTakeoverProblem(why: string): void {
+  takeover = why
+    ? `AIB could not take over the chats still running in the keeper (${
+      why.replace(/\s+/g, ' ').trim().slice(0, 200)
+    }). Nothing was stopped: they keep running there. Open them with the AIB version that started them.`
+    : '';
+}
+
 /** A chat could not start in the keeper (spawn failed): remember why for Settings > About; '' clears it. */
 export function noteKeeperProblem(why: string): void {
   problem = why.replace(/\s+/g, ' ').trim().slice(0, 300);

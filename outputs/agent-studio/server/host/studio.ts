@@ -28,9 +28,16 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
 import { forwarderOf } from '../keeper/client.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
-import { type ChannelInfo, type KeeperClient, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
+import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
-import { type KeeperChannel, KeeperLink, keeperSetting, keeperWanted, noteKeeperProblem } from '../keeper/link.ts';
+import {
+  type KeeperChannel,
+  KeeperLink,
+  keeperSetting,
+  keeperWanted,
+  noteKeeperProblem,
+  noteKeeperTakeoverProblem,
+} from '../keeper/link.ts';
 import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
@@ -942,9 +949,23 @@ export class Studio {
       client = await keeper.client(false); // only a keeper that already runs: nothing to take over otherwise
     } catch (error) {
       log.warning('keeper: could not reach the keeper: %s', errorText(error));
+      // A keeper that answers but refuses this AIB (another protocol): its chats keep running there; the page says so.
+      if (error instanceof KeeperError && error.code !== 'closed') {
+        noteKeeperTakeoverProblem(`the keeper refused this AIB: ${errorText(error)}`);
+      }
       return 0;
     }
     if (!client) return 0;
+    const missing = missingFeatures(client.features);
+    if (missing.length) {
+      // The same rule as Install now's (release.json keeper.needs): a keeper without what this AIB needs is not taken over, and
+      // nothing in it is stopped.
+      const why = `the running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')}`;
+      announce('studio', 'keeper: not taking chats over: %s', why);
+      noteKeeperTakeoverProblem(why);
+      return 0;
+    }
+    noteKeeperTakeoverProblem('');
     let adopted = 0;
     const listed = await client.list();
     for (const info of listed) {
@@ -1547,12 +1568,29 @@ export class Studio {
   deliberateStop = false;
 
   /**
+   * Can quitting AIB leave every working chat in the keeper, held there until an AIB is started again (keeper 1.3.0 `hold`)? ''
+   * when yes; otherwise why not (the keeper is off, a working chat runs outside it, the running keeper is too old to hold).
+   */
+  async quitHandover(): Promise<string> {
+    const why = this.keeperHandover();
+    if (why) return why;
+    let client: KeeperClient | null = null;
+    try {
+      client = await this.keeper!.client(false);
+    } catch (error) {
+      return `the keeper cannot be reached (${errorText(error)})`;
+    }
+    if (client && !client.has('hold')) return `the running keeper (${client.keeperVersion || 'unknown version'}) cannot hold chats`;
+    return '';
+  }
+
+  /**
    * Exit for an update (or a restart) without touching the chats that run in the keeper: they keep running and recording, and the
    * next AIB rebuilds them from the keeper's record (adoptKeeper) and claims them. Everything else is stopped as in close(): chats
    * outside the keeper are closed, live sync and timers stop. Their session leases are released, the recovery list keeps them, and
    * no receipt is marked "unknown" (the turns go on). Returns how many chats were left running in the keeper.
    */
-  async release(): Promise<number> {
+  async release(options: { hold?: boolean } = {}): Promise<number> {
     if (this.#closed) return 0;
     this.#closed = true;
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
@@ -1575,9 +1613,16 @@ export class Studio {
     await Promise.all(others.map((c) => c.close().catch((error) => log.exception(error, 'Closing a connection failed'))));
     for (const c of kept) c.releaseLease(); // the next AIB takes the lease when it takes the chat
     if (this.owners) this.owners.withdrawAll();
-    if (this.#mcpHttp) await this.#mcpHttp.close();
+    if (this.#mcpHttp) await this.#mcpHttp.close(!!options.hold); // hold: the forwarder answers "AIB is closed" at once
+    if (options.hold) await holdKeeper(this.keeper); // last thing before leaving (a no-op when main.ts already said it)
     this.keeper?.disconnect(); // the keeper keeps the agents; whoever connects next (the update helper, then the new AIB) is its client
-    announce('studio', 'released %s chat(s) to the keeper; %s closed', kept.length, others.length);
+    announce(
+      'studio',
+      'released %s chat(s) to the keeper; %s closed%s',
+      kept.length,
+      others.length,
+      options.hold ? '; the keeper holds them until AIB is started again' : '',
+    );
     return kept.length;
   }
 
@@ -1613,6 +1658,24 @@ export class Studio {
     if (this.store) this.store.markWorkingUnknown();
     if (this.#mcpHttp) await this.#mcpHttp.close();
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
+  }
+}
+
+/**
+ * Tell the keeper this AIB leaves on purpose (the person quit with work running): it runs no orphan restart and never stops the
+ * channels as orphaned until the next AIB takes them over (keeper 1.3.0 `hold`). Only an already connected keeper; never throws. True when
+ * the keeper holds.
+ */
+export async function holdKeeper(link: KeeperLink | null | undefined): Promise<boolean> {
+  if (!link) return false;
+  try {
+    const client = await link.client(false);
+    if (!client?.has('hold')) return false;
+    await client.hold();
+    return true;
+  } catch (error) {
+    log.warning('keeper: hold failed: %s', errorText(error));
+    return false;
   }
 }
 

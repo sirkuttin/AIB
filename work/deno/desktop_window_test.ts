@@ -246,8 +246,8 @@ function fakeShell(answer = false) {
 }
 
 /**
- * The app as main.ts makes it. stopHost null (default): one process with the keeper, the shipped setup; a function: a separate
- * agent host (an older version's, being drained).
+ * The app as main.ts makes it. stopHost null (default): one process; a function: a separate agent host (an older version's, being
+ * drained). No canLeave (default): as with no keeper, so Quit AIB with work keeps AIB in the tray; extra.canLeave: the keeper's rule.
  */
 async function makeApp(
   busy: () => Promise<number>,
@@ -259,6 +259,7 @@ async function makeApp(
   const updates: [string, number, string][] = [];
   shell.updateTray = (tooltip, index, label) => void updates.push([tooltip, index, label]);
   const quits: boolean[] = [];
+  const leaves: boolean[] = [];
   const order: string[] = [];
   const stops: boolean[] = [];
   const options: DesktopOptions = {
@@ -267,7 +268,7 @@ async function makeApp(
     trayIcon: trayIconPng(),
     busyCount: busy,
     ...(stopHost ? { stopHost: (force: boolean) => (stops.push(force), order.push(`stop:${force}`), stopHost(force)) } : {}),
-    quit: (stop) => (quits.push(stop), order.push('quit'), Promise.resolve()),
+    quit: (stop, leave) => (quits.push(stop), leaves.push(!!leave), order.push('quit'), Promise.resolve()),
     saveDelayMs: 0,
     watchdogMs: 0,
     trayPollMs: 0,
@@ -277,7 +278,7 @@ async function makeApp(
   shell.removeTray = () => (order.push('tray removed'), removeTray());
   const app = new DesktopApp(shell, options);
   await app.start();
-  return { app, s, updates, quits, stops, order, dir, done: () => (app.stop(), Deno.remove(dir, { recursive: true })) };
+  return { app, s, updates, quits, leaves, stops, order, dir, done: () => (app.stop(), Deno.remove(dir, { recursive: true })) };
 }
 
 Deno.test('start: one window titled AIB on the page, a keeper, a tray, one binding only', async () => {
@@ -437,6 +438,91 @@ Deno.test('tray Quit AIB with chats working hides the window and stays in the tr
     assertEquals(b.s.trayRemoved, 1, 'quitting removes the icon');
   } finally {
     await b.done();
+  }
+});
+
+Deno.test('Quit AIB or closing the window with work the keeper can hold: AIB exits, leaving it to the keeper (as Install now does)', async () => {
+  for (const how of ['menu', 'close'] as const) {
+    const a = await makeApp(() => Promise.resolve(2), null, { canLeave: () => Promise.resolve('') });
+    try {
+      if (how === 'menu') a.s.tray!.onMenu('quit');
+      else a.s.windows[0].emit('close');
+      await tick(20);
+      assertEquals(a.s.questions, [], 'no native box');
+      assertEquals([a.quits, a.leaves], [[false], [true]], `${how}: quit, nothing stopped, the chats left to the keeper`);
+      assert(!a.app.background, 'AIB does not stay in the tray');
+      assertEquals(a.s.trayRemoved, 1, 'the icon goes with AIB');
+      assertEquals(a.s.windows[0].visible === false || a.s.windows[0].closed, true, 'the window is gone');
+    } finally {
+      await a.done();
+    }
+  }
+  // Only a terminal command (in the keeper) works: the same.
+  const t = await makeApp(() => Promise.resolve(0), null, { canLeave: () => Promise.resolve(''), terminalsBusy: () => 1 });
+  try {
+    t.s.tray!.onMenu('quit');
+    await tick(20);
+    assertEquals([t.quits, t.leaves], [[false], [true]]);
+  } finally {
+    await t.done();
+  }
+});
+
+Deno.test('Quit AIB when the keeper cannot hold the work (too old, a chat outside it, or the check fails): AIB stays in the tray as before', async () => {
+  for (const canLeave of [() => Promise.resolve('the running keeper (1.2.0) cannot hold chats'), () => Promise.reject(new Error('boom'))]) {
+    const a = await makeApp(() => Promise.resolve(1), null, { canLeave, trayIdleQuitMs: 5000 });
+    try {
+      a.s.tray!.onMenu('quit');
+      await tick(20);
+      assertEquals(a.quits, [], 'nothing stopped, AIB does not exit');
+      assert(a.app.background, 'in the tray, quitting by itself once nothing works');
+      assertEquals(a.s.windows[0].visible, false);
+    } finally {
+      a.app.stop();
+      await a.done();
+    }
+  }
+});
+
+Deno.test('Quit AIB lets a running merge finish before AIB exits; opening the window meanwhile calls the exit off', async () => {
+  let merges = 1;
+  const a = await makeApp(() => Promise.resolve(1), null, { canLeave: () => Promise.resolve(''), mergesRunning: () => merges });
+  try {
+    a.s.tray!.onMenu('quit');
+    await tick(600);
+    assertEquals(a.quits, [], 'the merge still runs: AIB waits');
+    assertEquals(a.s.windows[0].visible, false, 'with the window gone');
+    merges = 0;
+    await until(() => a.quits.length === 1, 'exit after the merge', 3);
+    assertEquals(a.leaves, [true]);
+  } finally {
+    await a.done();
+  }
+  merges = 1;
+  const b = await makeApp(() => Promise.resolve(1), null, { canLeave: () => Promise.resolve(''), mergesRunning: () => merges });
+  try {
+    b.s.tray!.onMenu('quit');
+    await tick(300);
+    b.s.tray!.onMenu('open');
+    await tick(20);
+    merges = 0;
+    await tick(600);
+    assertEquals(b.quits, [], 'the person came back: AIB stays');
+    assertEquals(b.s.windows[0].visible, true);
+  } finally {
+    b.app.stop();
+    await b.done();
+  }
+  const c = await makeApp(() => Promise.resolve(1), null, {
+    canLeave: () => Promise.resolve(''),
+    mergesRunning: () => 1,
+    mergeWaitMs: 400,
+  });
+  try {
+    c.s.tray!.onMenu('quit');
+    await until(() => c.quits.length === 1, 'a merge that never ends does not keep AIB forever', 3);
+  } finally {
+    await c.done();
   }
 });
 
