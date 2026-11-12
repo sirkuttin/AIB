@@ -540,9 +540,8 @@ header #status {
   box-shadow: 0 6px 24px var(--shadow-soft);
   pointer-events: none;
 }
-/* The Limits chip sits at the end of the row and its tooltip is wider than Ctx's: open it leftwards from the chip's right
-   edge, so it never runs past a narrow window's right edge. */
-.chip-wrap:has(> .chip-limits) > .chip-tip {
+/* composer-chips.js picks the side with room when the tooltip opens: from the chip's right edge near a narrow window's right edge. */
+.chip-tip[data-side='right'] {
   left: auto;
   right: 0;
 }

@@ -793,6 +793,24 @@
         tip.setAttribute('role', 'tooltip');
         fillTip(doc, tip, chip.details);
         wrap.append(tip);
+        /* Open the tooltip toward the side with room: from the chip's left edge when it fits, else from its right edge
+           (a chip near a narrow window's right edge), else whichever side has more room. */
+        const place = () => {
+          const win = doc.defaultView;
+          if (!win || typeof wrap.getBoundingClientRect !== 'function') return;
+          const shown = tip.style.display;
+          tip.style.visibility = 'hidden';
+          tip.style.display = 'flex';
+          const w = tip.offsetWidth || 0;
+          tip.style.display = shown;
+          tip.style.visibility = '';
+          const r = wrap.getBoundingClientRect(),
+            roomRight = win.innerWidth - r.left,
+            roomLeft = r.right;
+          tip.dataset.side = w <= roomRight - 8 ? 'left' : w <= roomLeft - 8 ? 'right' : roomRight >= roomLeft ? 'left' : 'right';
+        };
+        wrap.addEventListener('mouseenter', place);
+        wrap.addEventListener('focusin', place);
       }
       if (chip.pending && o.onCancelPending) {
         const cancel = el(doc, 'button', '×', 'chip-cancel');
