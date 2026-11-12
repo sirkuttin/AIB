@@ -8,12 +8,15 @@
  * Run (from outputs/agent-studio):
  *   deno test -A ../../work/deno/scroll_e2e_test.ts                      the passing tests; KNOWN_FAILING ones are listed as ignored
  *   AIB_SCROLL_ALL=1 deno test -A ../../work/deno/scroll_e2e_test.ts     also the known-failing ones (they fail until fixed)
+ *   AIB_SCROLL_PENDING=1 deno test -A ../../work/deno/scroll_e2e_test.ts also the PENDING ones: bugs the scroll design found
+ *                                                                        (B1-B9 and the owner's Q6/Q7 calls), fixed step by step
  *   ... --filter "2b"                                                    one test by its number
  * Without Chrome or Edge (CHROME_PATH chooses one) every test is ignored. When a bug is fixed, delete its name from KNOWN_FAILING.
  */
 import { assert } from './_assert.ts';
 import {
   anchor,
+  BOX,
   browserPath,
   type Chat,
   clickHere,
@@ -23,25 +26,49 @@ import {
   m,
   type Page,
   png,
+  rowFramesProblems,
   settle,
   shown,
   sleep,
   startFrames,
+  startRowFrames,
   stopFrames,
+  stopRowFrames,
   topOf,
   wheel,
   whereIs,
 } from './_scroll_lab.ts';
 
 const ALL = Deno.env.get('AIB_SCROLL_ALL') === '1';
+const PENDING_ON = Deno.env.get('AIB_SCROLL_PENDING') === '1';
 
 /** Tests that fail today (each a scrolling bug; the comment in the test gives the cause). Empty since beta.8's scroll fixes. */
 export const KNOWN_FAILING = new Set<string>([]);
 
+/** Bugs the scroll design found by reading (outputs/scroll-architecture, 1.3: B1-B9) and the owner's calls on it (Q6: a chat,
+ *  subagent or pane opens back where you were reading; Q7: that place survives a restart). Each fails today for the reason in its
+ *  comment. They are kept apart from KNOWN_FAILING so the AIB_SCROLL_ALL=1 gate stays the passing set; each step of the scroll
+ *  controller that fixes one takes its name out of this list in the same commit, and from then on it runs in every gate. */
+export const PENDING = new Set<string>([
+  'B1 two subagents: scrolled up in one, the next one opens at its bottom and follows; back in the first you are where you were',
+  "B2 split view: clicking into the other pane keeps both panes' places",
+  'B3 split side pane read 30 px above the bottom: the next update does not pull it down',
+  'B4a "Show earlier" over long code blocks: the row under the button never moves, not even for a frame',
+  'B5 pictures in steps above you load as you scroll up: the row you read never moves',
+  'B6 saved chat with "Load earlier": a redraw while you read never dips the text, not even for a frame',
+  'B7 an opened "Thoughts" stays the only one open when the window slides',
+  'B8 subagent view and split panes: no browser scroll anchoring, the row you read stays still on every frame',
+  'B9a a scroll right after a view switch counts: following stops and stays off',
+  'B9b a scroll while the right column slides open counts: following stops and stays off',
+  'T1 split view: Show thinking toggled while you read a side pane keeps your place there',
+  'Q6 back to a chat you were reading: it opens where you were, with the New line and the count for what came in',
+  'Q7 reading midway, AIB restarts (a fresh browser profile): the chat opens at the row you were reading',
+]);
+
 function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
   Deno.test({
     name,
-    ignore: !browserPath || (KNOWN_FAILING.has(name) && !ALL),
+    ignore: !browserPath || (KNOWN_FAILING.has(name) && !ALL) || (PENDING.has(name) && !PENDING_ON),
     sanitizeResources: false,
     sanitizeOps: false,
     async fn() {
@@ -468,8 +495,11 @@ scrollTest('5 "Show earlier" adds older rows above without moving the row you ar
     const b = document.getElementById('messages'), e = b.querySelector('.show-earlier').nextElementSibling;
     return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(e.getBoundingClientRect().top - b.getBoundingClientRect().top) };
   })()`);
+  await startRowFrames(page, row.text);
   await clickHere(page, '#messages .show-earlier');
   await settle(1000);
+  const drawn = rowFramesProblems(await stopRowFrames(page), row, 1);
+  assert(!drawn, `while the earlier rows were drawn: ${drawn}`);
   const now = await whereIs(page, row.text);
   assert(now !== null && Math.abs(now - row.off) <= 1, `the row under the button moved from ${row.off} to ${now}`);
   chat.say('\n\nUpdate after earlier EARLYNEXT');
@@ -534,7 +564,10 @@ scrollTest('6c switching Full / Chat / Prompts at the bottom stays at the bottom
   const page = lab.page;
   const chat = await openSeeded(lab, 20);
   for (const v of ['chat', 'prompts', 'full'] as const) {
+    await startFrames(page);
     await setView(page, v);
+    const bad = framesProblems(await stopFrames(page));
+    assert(!bad, `switching to ${v}, frame by frame: ${bad}`);
     await assertFollowing(page, `at the bottom, switched to ${v}`);
   }
   await setView(page, 'chat');
@@ -554,13 +587,16 @@ scrollTest('6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the
   const x0 = await m(page);
   await setView(page, 'chat');
   const inChat = await m(page);
+  await startRowFrames(page, before!.text);
   await setView(page, 'full');
+  const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);
   const now = await whereIs(page, before!.text);
   const x1 = await m(page);
   assert(
     now !== null && Math.abs(now - before!.off) <= 2,
     `"${before!.text.slice(0, 40)}" was at ${before!.off} px (scrollTop ${x0.top}); after Chat (scrollTop ${inChat.top}) and back it is at ${now} (scrollTop ${x1.top})`,
   );
+  assert(!drawn, `switching back to Full, frame by frame: ${drawn}`);
 });
 
 scrollTest('6e reload at the bottom: the chat comes back at the bottom and follows', async (lab) => {
@@ -878,4 +914,407 @@ scrollTest('9b saved chat being written, scrolled up: new rows do not move what 
   assert(tops.length === 1 && tops[0] === x0.top, `scrollTop moved: ${x0.top} -> ${tops.join(', ')}`);
   const now = await whereIs(page, before!.text);
   assert(now !== null && Math.abs(now - before!.off) <= 1, `the row you read moved from ${before!.off} to ${now}`);
+});
+
+// ---- B. bugs the scroll design found by reading, and the owner's calls Q6 / Q7 (PENDING until the step that fixes each) ----------
+// Every check here looks at every animation frame, not once after a second: a jump that a timer puts right 60 ms later is a jump.
+
+const MIRROR = '.mirror-msgs';
+
+/** Two chats side by side: the focused pane shows one in #messages, the other pane a live copy of the other (.mirror-msgs). */
+async function openSplit(lab: Lab) {
+  const page = lab.page;
+  const a = await lab.chat();
+  await a.start();
+  seed(a, 30, 'Alpha');
+  a.say('Alpha done ALPHAEND');
+  const b = await lab.chat();
+  await b.start();
+  seed(b, 30, 'Beta');
+  b.say('Beta done BETAEND');
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  await lab.select(b);
+  await shown(page, 'BETAEND');
+  await settle(800);
+  await page.eval(`AgentSplitUI.splitTab(${JSON.stringify(a.key)}, 'row')`);
+  await page.waitFor(`document.querySelectorAll('.mirror-msgs').length === 1 && document.querySelector('.mirror-msgs').children.length > 5`, 15000, 'a side pane with a copy of a chat');
+  await settle(1500);
+  const key = await page.eval<string>(`document.querySelector('.mirror-msgs').dataset.mirror`);
+  return { a, b, side: key === a.key ? a : b, main: key === a.key ? b : a };
+}
+
+/** Scroll a list by script, the way a scrollbar drag does (no wheel, no key): the page must take it as you moving the list. */
+function scrollBy(page: Page, dy: number, box = 'messages') {
+  return page.eval<number>(`(() => { const b = ${BOX}(${JSON.stringify(box)}); b.scrollTop += ${dy}; return Math.round(b.scrollTop); })()`);
+}
+
+// B1 (chat.js openSubagent ~2075): opening a subagent resets its rows but not #submessages' paused flag, so the next one opens at
+// the first one's pixel offset, not following. The owner's Q6: going back to the first one opens where you were reading.
+scrollTest('B1 two subagents: scrolled up in one, the next one opens at its bottom and follows; back in the first you are where you were', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await chat.start();
+  chat.say('Starting two helpers');
+  for (const i of [1, 2]) {
+    chat.step({ u: { sessionUpdate: 'tool_call', toolCallId: `agent-${i}`, title: 'Agent', kind: 'think', status: 'pending', _meta: { claudeCode: { toolName: 'Agent' } } } });
+    chat.step({ u: { sessionUpdate: 'subagent_update', sessionId: `child-${i}`, title: `Helper ${i}`, capabilities: { cancel: {} }, state: { state: 'running' } } });
+  }
+  const child = (i: number, u: Record<string, unknown>) => chat.step({ sid: `child-${i}`, u: { ...u, _meta: { claudeCode: { parentToolUseId: `agent-${i}` } } } });
+  for (const i of [1, 2]) {
+    for (let k = 0; k < 25; k++) {
+      child(i, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Helper ${i} message ${k}. ` + 'Helper words. '.repeat(15) + '\n\n' } });
+      child(i, { sessionUpdate: 'tool_call', toolCallId: `h${i}-${k}`, title: `Helper ${i} read ${k}`, kind: 'read', status: 'completed' });
+    }
+  }
+  await lab.select(chat);
+  await page.waitFor(`document.querySelectorAll('#subagentList button[data-key^="child-"]').length >= 2`, 15000, 'two subagent cards');
+  await clickHere(page, '#subagentList button[data-key="child-1"]');
+  await shown(page, 'Helper 1 read 24', 'submessages');
+  await settle();
+  await wheel(page, -600, 'submessages');
+  await settle(400);
+  const before = await anchor(page, 'submessages');
+  assert(before && (await m(page, 'submessages')).paused, 'reading in the first helper');
+  await clickHere(page, '#subchatBack');
+  await page.waitFor(`!document.body.classList.contains('subchat-open')`, 8000, 'the history closed');
+  await clickHere(page, '#subagentList button[data-key="child-2"]');
+  await shown(page, 'Helper 2 read 24', 'submessages');
+  await settle();
+  await assertFollowing(page, 'the second helper opened', 'submessages');
+  const p = await update(page, () => child(2, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nSecond helper goes on SECONDHELPER' } }), 'SECONDHELPER', 'submessages');
+  assert(!p, `the second helper does not follow: ${p}`);
+  await clickHere(page, '#subchatBack');
+  await page.waitFor(`!document.body.classList.contains('subchat-open')`, 8000, 'the history closed');
+  await startRowFrames(page, before!.text, 'submessages');
+  await clickHere(page, '#subagentList button[data-key="child-1"]');
+  await shown(page, 'Helper 1 read 24', 'submessages');
+  await settle();
+  const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);
+  const now = await whereIs(page, before!.text, 'submessages');
+  assert(now !== null && Math.abs(now - before!.off) <= 2, `back in the first helper the row you read is at ${now}, was ${before!.off}`);
+  assert(!drawn, `opening the first helper again, frame by frame: ${drawn}`);
+  assert((await m(page, 'submessages')).paused, 'still reading there (not following)');
+});
+
+// B2 (split-ui.js saveScroll/restoreScroll ~158, focusPane ~461): the pane you leave gets a brand-new .mirror-msgs that paints "at
+// the end"; the pane you enter gets the live #messages moved in and host.open -> beginConversation resets it.
+scrollTest("B2 split view: clicking into the other pane keeps both panes' places", async (lab) => {
+  const page = lab.page;
+  await openSplit(lab);
+  for (let i = 0; i < 6; i++) await wheel(page, -150, 'messages');
+  for (let i = 0; i < 6; i++) await wheel(page, -150, MIRROR);
+  await settle(600);
+  const mainBefore = await anchor(page, 'messages'), sideBefore = await anchor(page, MIRROR);
+  assert(mainBefore && sideBefore, 'a row at the top of each pane');
+  await clickHere(page, '#splitStage .pane:not(.foc) .mirror-head');
+  await page.waitFor(`!!document.querySelector('.mirror-msgs') && document.getElementById('messages').textContent.includes(${JSON.stringify(sideBefore!.text.slice(0, 30))})`, 15000, 'the panes swapped');
+  await settle(2000);
+  const nowMain = await whereIs(page, sideBefore!.text, 'messages');
+  const nowSide = await whereIs(page, mainBefore!.text, MIRROR);
+  const bad = [];
+  if (nowMain === null || Math.abs(nowMain - sideBefore!.off) > 2) bad.push(`the pane you clicked into shows its row at ${nowMain}, it was at ${sideBefore!.off}`);
+  if (nowSide === null || Math.abs(nowSide - mainBefore!.off) > 2) bad.push(`the pane you left shows its row at ${nowSide}, it was at ${mainBefore!.off}`);
+  assert(!bad.length, bad.join('; '));
+});
+
+// B3 (chat.js paintMirror ~4205, mirrorBottom ~4143): a side pane's only state is "within 48 px of the end when it paints", so a
+// reader 30 px above the end is pulled down by the next tick.
+scrollTest('B3 split side pane read 30 px above the bottom: the next update does not pull it down', async (lab) => {
+  const page = lab.page;
+  const { side } = await openSplit(lab);
+  await wheel(page, -30, MIRROR);
+  await settle(400);
+  const x0 = await m(page, MIRROR);
+  assert(x0.gap >= 20, `the side pane is a little above its end: ${JSON.stringify(x0)}`);
+  await startFrames(page, MIRROR);
+  side.say('\n\nNew in the side pane SIDEREAD');
+  await shown(page, 'SIDEREAD', MIRROR);
+  await settle(2000);
+  const frames = await stopFrames(page);
+  const tops = [...new Set(frames.map((f) => f.top))];
+  assert(tops.length === 1 && tops[0] === x0.top, `the side pane moved while you read it: ${x0.top} -> ${tops.join(', ')}`);
+});
+
+/** A turn of n messages, each with a code block long enough to be clamped, and a step after each. */
+function seedCode(chat: Chat, n: number, tag: string) {
+  for (let i = 0; i < n; i++) {
+    chat.say(`${tag} ${i} here is the file:\n\n\`\`\`\n` + Array.from({ length: 30 }, (_, k) => `${tag.toLowerCase()} ${i} line ${k}`).join('\n') + '\n```\n\n');
+    chat.tool(`${tag}-${i}`, `${tag} step ${i}`, 'completed');
+  }
+}
+
+// B4 (chat.js showRows ~1452 / ~1508 / ~1521): the place is set before clamp-ui shrinks the new code blocks above it (its
+// MutationObserver runs after), so the row you read jumps for a few frames until the 60 ms timer puts it back.
+scrollTest('B4a "Show earlier" over long code blocks: the row under the button never moves, not even for a frame', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await chat.start();
+  seedCode(chat, 90, 'Early');
+  chat.say('CODEEARLYEND');
+  await lab.select(chat);
+  await shown(page, 'CODEEARLYEND');
+  await settle();
+  await page.waitFor('!!document.querySelector("#messages .show-earlier")', 5000, 'Show earlier button');
+  await scrollBy(page, -1e6);
+  await settle(400);
+  const row = await page.eval<{ text: string; off: number }>(`(() => {
+    const b = document.getElementById('messages'), e = b.querySelector('.show-earlier').nextElementSibling;
+    return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(e.getBoundingClientRect().top - b.getBoundingClientRect().top) };
+  })()`);
+  await startRowFrames(page, row.text);
+  await clickHere(page, '#messages .show-earlier');
+  await settle(1200);
+  const drawn = rowFramesProblems(await stopRowFrames(page), row, 1);
+  assert(!drawn, drawn);
+});
+
+// B4b passes today (the view switch's row anchor is put back inside the same frame as the clamp): kept as a regular test so the
+// controller cannot bring it back.
+scrollTest('B4b scrolled up over long code blocks, Full -> Chat: the row you read never moves, not even for a frame', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await chat.start();
+  seedCode(chat, 40, 'Code');
+  chat.say('CODEVIEWEND');
+  await lab.select(chat);
+  await shown(page, 'CODEVIEWEND');
+  await settle();
+  for (let i = 0; i < 8; i++) await wheel(page, -150);
+  await settle(400);
+  // put a message (drawn in both views) exactly at the top of the view
+  await page.eval(`(() => {
+    const b = document.getElementById('messages'), top = b.getBoundingClientRect().top;
+    const e = [...b.children].find((x) => x.matches('.bubble.assistant') && x.getBoundingClientRect().top >= top);
+    b.scrollTop += e.getBoundingClientRect().top - top;
+  })()`);
+  await settle(400);
+  const before = await anchor(page);
+  assert(before && Math.abs(before.off) <= 1, `a message at the top: ${JSON.stringify(before)}`);
+  await startRowFrames(page, before!.text);
+  await setView(page, 'chat');
+  const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);
+  assert(!drawn, drawn);
+});
+
+// B5 (tool-views.js ~1180 loading = 'lazy'; chat.js holdAnchor ~1375): step pictures load as you near them, above you, and grow
+// from 0 to 130 px; nothing puts the row you read back (the load listener skips once you scrolled, the growth watcher only follows).
+scrollTest('B5 pictures in steps above you load as you scroll up: the row you read never moves', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await chat.start();
+  const picture = await png(640, 420);
+  for (let i = 0; i < 30; i++) {
+    chat.say(`Picture message ${i}. ` + 'Words to fill a line or two. '.repeat(5));
+    chat.tool(`pic-${i}`, `Screenshot ${i}`, 'completed', { content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: picture } }] });
+  }
+  chat.say('PICTURESEND');
+  await lab.select(chat);
+  await shown(page, 'PICTURESEND');
+  await settle(1500);
+  const problems: string[] = [];
+  for (let n = 0; n < 12; n++) {
+    // move up the way a scrollbar drag does, and take the row at the top at once (before any picture above has loaded)
+    const before = await page.eval<{ text: string; off: number; h: number } | null>(`(() => {
+      const b = document.getElementById('messages');
+      b.scrollTop -= 450;
+      const top = b.getBoundingClientRect().top;
+      for (const e of b.children) {
+        const r = e.getBoundingClientRect();
+        if (r.height && r.bottom > top + 1) return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(r.top - top), h: Math.round(r.height) };
+      }
+      return null;
+    })()`);
+    if (!before) break;
+    await startRowFrames(page, before.text);
+    await sleep(700);
+    const bad = rowFramesProblems(await stopRowFrames(page), before, 2);
+    if (bad) problems.push(`notch ${n} ("${before.text.slice(0, 30)}"): ${bad}`);
+    if ((await m(page)).top <= 0) break;
+  }
+  assert(!problems.length, problems.join('\n'));
+});
+
+// B6 (stream-ui.js patchChildren ~421, chat.js syncLoadEarlier ~3818): every redraw removes the "Load earlier messages" button and
+// puts it back after the scroll position was restored, so the text dips by the button's height until the 60 ms timer.
+scrollTest('B6 saved chat with "Load earlier": a redraw while you read never dips the text, not even for a frame', async (lab) => {
+  const page = lab.page;
+  const s = lab.savedChat('saved-dip-1');
+  s.user('Please look at the code');
+  for (let i = 0; i < 150; i++) s.say(`Saved dip message ${i}. ` + 'Some words to fill a line or two. '.repeat(4));
+  s.say('SAVEDDIPEND');
+  await page.waitFor(`!!document.querySelector('button.connection[data-key="${s.key}"]')`, 20000, 'saved chat in the sidebar');
+  await lab.select(s);
+  await shown(page, 'SAVEDDIPEND', 'messages', 20000);
+  await page.waitFor('!!document.querySelector("#messages .load-history")', 8000, 'the Load earlier button');
+  await settle(2000);
+  await wheel(page, -800);
+  await settle(400);
+  const before = await anchor(page);
+  await startRowFrames(page, before!.text);
+  s.say('While you read SAVEDDIP');
+  await shown(page, 'SAVEDDIP', 'messages', 20000);
+  await settle(2500);
+  const drawn = rowFramesProblems(await stopRowFrames(page), before!, 1);
+  assert(!drawn, drawn);
+});
+
+// B7 (chat.js showRows ~1416-1418 / ~1497): open <details> are opened again by their index after each redraw; kept rows keep their
+// own state, and when the window slides the index points at another element, which opens by itself.
+scrollTest('B7 an opened "Thoughts" stays the only one open when the window slides', async (lab) => {
+  const page = lab.page;
+  await page.eval(`(() => { const t = document.getElementById('thinking'); if (!t.checked) { t.checked = true; t.onchange(); } })()`);
+  const chat = await lab.chat();
+  await chat.start();
+  for (let i = 0; i < 80; i++) {
+    chat.step({ u: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `Thinking about part ${i}.` } } });
+    chat.tool(`th-${i}`, `Look at part ${i}`, 'completed');
+  }
+  chat.say('THOUGHTSEND');
+  await lab.select(chat);
+  await shown(page, 'THOUGHTSEND');
+  await settle();
+  await clickHere(page, '#messages > details.thoughts > summary');
+  await settle(400);
+  await page.key('End');
+  await settle(600);
+  const open0 = await page.eval<number>(`document.querySelectorAll('#messages details.thoughts[open]').length`);
+  assert(open0 === 1, `one Thoughts open after the click: ${open0}`);
+  for (let k = 0; k < 2; k++) {
+    chat.tool(`slide-${k}`, `Slide step ${k}`, 'completed');
+    chat.step({ u: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `Sliding thought ${k}.` } } });
+    chat.say(`Slide reply SLIDE${k}`);
+    await shown(page, `SLIDE${k}`);
+    await settle(800);
+  }
+  const open = await page.eval<string[]>(`[...document.querySelectorAll('#messages details.thoughts[open]')].map((d) => d.textContent.slice(0, 40))`);
+  assert(open.length === 1, `Thoughts open after the window slid: ${open.length} (${open.join(' | ')})`);
+});
+
+// B8 (chat.css ~261 sets overflow-anchor: none on #messages only): the subagent view and the side panes have Chrome's own scroll
+// anchoring on, so the browser moves them and then AIB's code moves them again.
+scrollTest('B8 subagent view and split panes: no browser scroll anchoring, the row you read stays still on every frame', async (lab) => {
+  const page = lab.page;
+  const child = await openSubagent(lab);
+  await wheel(page, -600, 'submessages');
+  await settle(400);
+  const before = await anchor(page, 'submessages');
+  await startRowFrames(page, before!.text, 'submessages');
+  for (let k = 0; k < 3; k++) {
+    child({ sessionUpdate: 'tool_call', toolCallId: `b8-${k}`, title: `Anchor step ${k}`, kind: 'execute', status: 'completed', rawOutput: 'o\n'.repeat(30) });
+    child({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\n\nAnchor reply B8REPLY${k} ` + 'words '.repeat(60) } });
+    await shown(page, `B8REPLY${k}`, 'submessages');
+    await settle(700);
+  }
+  const drawn = rowFramesProblems(await stopRowFrames(page), before!, 1);
+  const anchoring = await page.eval<string>(`getComputedStyle(document.getElementById('submessages')).overflowAnchor`);
+  const probe = await page.eval<string>(`(() => { const d = document.createElement('div'); d.className = 'mirror-msgs'; document.body.append(d);
+    const v = getComputedStyle(d).overflowAnchor; d.remove(); return v; })()`);
+  const bad = [drawn, anchoring !== 'none' && `#submessages has overflow-anchor: ${anchoring}`, probe !== 'none' && `.mirror-msgs has overflow-anchor: ${probe}`].filter(Boolean);
+  assert(!bad.length, bad.join('; '));
+});
+
+// B9 (chat.js scroll handler ~4824 / ~4832): every scroll inside UNREAD.holdUntil (600 ms after a view switch) is dropped, and any
+// scroll inside the 400 ms width window snaps a following list back to the bottom, whatever caused it.
+scrollTest('B9a a scroll right after a view switch counts: following stops and stays off', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await clickHere(page, '#viewSwitch button[data-view="chat"]');
+  const top = await scrollBy(page, -400);
+  await settle(1500);
+  const x0 = await m(page);
+  assert(x0.paused && x0.gap >= 350, `scrolled up right after the switch: ${JSON.stringify(x0)} (moved to ${top})`);
+  chat.say('\n\nAfter the switch B9AREPLY');
+  await shown(page, 'B9AREPLY');
+  await settle(1200);
+  const x1 = await m(page);
+  assert(x1.paused && x1.top === x0.top, `the update pulled the list: ${JSON.stringify(x0)} -> ${JSON.stringify(x1)}`);
+});
+
+scrollTest('B9b a scroll while the right column slides open counts: following stops and stays off', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  const [status, made] = await lab.web.post('artifacts/publish', { conversationId: chat.id, title: 'Slide page', content: '<h1>Slide</h1>' + '<p>Body.</p>'.repeat(40) });
+  assert(status === 200, `artifacts/publish: ${status}`);
+  chat.say(`\n\nHere is the page: [Slide page](studio-artifact://${made.id}) SLIDEPAGE`);
+  await shown(page, 'SLIDEPAGE');
+  await page.waitFor(`!!document.querySelector('#messages a.artifact-link')`, 15000, 'the artifact link');
+  await settle(800);
+  await clickHere(page, '#messages a.artifact-link');
+  await sleep(60);
+  await scrollBy(page, -500);
+  await page.waitFor(`document.body.classList.contains('ar-viewing')`, 10000, 'the viewer open');
+  await settle(1500);
+  const x = await m(page);
+  assert(x.paused && x.gap >= 300, `scrolled up while the column slid: ${JSON.stringify(x)}`);
+  chat.end();
+});
+
+// T1 (stream-ui.js mirrorShouldReset ~43; chat.js paintMirror ~4168): a Thinking toggle resets a side pane to its bottom.
+scrollTest('T1 split view: Show thinking toggled while you read a side pane keeps your place there', async (lab) => {
+  const page = lab.page;
+  await openSplit(lab);
+  for (let i = 0; i < 6; i++) await wheel(page, -150, MIRROR);
+  await settle(600);
+  const before = await anchor(page, MIRROR);
+  assert(before, 'a row at the top of the side pane');
+  await page.eval(`(() => { const t = document.getElementById('thinking'); t.checked = !t.checked; t.onchange(); })()`);
+  await settle(3500);
+  const now = await whereIs(page, before!.text, MIRROR);
+  assert(now !== null && Math.abs(now - before!.off) <= 2, `the row you read in the side pane is at ${now}, was ${before!.off}`);
+});
+
+// Q6 (the owner chose A): beginConversation (chat.js ~999) drops the place; every chat opens at the bottom or at the New line.
+scrollTest('Q6 back to a chat you were reading: it opens where you were, with the New line and the count for what came in', async (lab) => {
+  const page = lab.page;
+  const a = await openSeeded(lab, 30);
+  for (let i = 0; i < 6; i++) await wheel(page, -150);
+  await settle(500);
+  const before = await anchor(page);
+  assert(before && (await m(page)).paused, 'reading the first chat');
+  const b = await lab.chat();
+  await b.start();
+  b.say('The other chat OTHERQ6');
+  await lab.select(b);
+  await shown(page, 'OTHERQ6');
+  await settle();
+  for (let i = 0; i < 2; i++) {
+    a.tool(`q6-${i}`, `Step while away ${i}`, 'completed');
+    a.say(`While away ${i} AWAYQ6${i} ` + 'words '.repeat(40));
+  }
+  await settle(3500);
+  await startRowFrames(page, before!.text);
+  await lab.select(a);
+  await shown(page, 'AWAYQ61');
+  await settle(1200);
+  const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);
+  const now = await whereIs(page, before!.text);
+  const x = await m(page);
+  const line = await page.eval<boolean>(`!!document.querySelector('#messages > .new-line')`);
+  const bad = [];
+  if (now === null || Math.abs(now - before!.off) > 2) bad.push(`the row you read is at ${now}, was ${before!.off}`);
+  if (drawn) bad.push(`while it opened: ${drawn}`);
+  if (!x.paused) bad.push('it follows (you were reading)');
+  if (!line) bad.push('no New line above what came in');
+  if (x.jump !== '2 new messages ↓') bad.push(`the button says ${JSON.stringify(x.jump)}`);
+  assert(!bad.length, bad.join('; '));
+});
+
+// Q7 (the owner chose B): the place is kept only in the page, so a restart (or a new build folder: a fresh browser profile) loses it.
+scrollTest('Q7 reading midway, AIB restarts (a fresh browser profile): the chat opens at the row you were reading', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab, 30);
+  for (let i = 0; i < 6; i++) await wheel(page, -150);
+  await settle(1500);
+  const before = await anchor(page);
+  assert(before && (await m(page)).paused, 'reading');
+  await page.eval('localStorage.clear(); sessionStorage.clear()');
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  await lab.select(chat);
+  await shown(page, 'SEEDEND', 'messages', 20000);
+  await settle(1500);
+  const now = await whereIs(page, before!.text);
+  const x = await m(page);
+  assert(now !== null && Math.abs(now - before!.off) <= 2 && x.paused, `after the restart the row you read is at ${now} (was ${before!.off}), paused ${x.paused}`);
 });

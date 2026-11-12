@@ -18,7 +18,23 @@
  * Without Chrome or Edge (CHROME_PATH chooses one) every test is ignored. When a bug is fixed, delete its name from KNOWN_FAILING.
  */
 import { assert } from './_assert.ts';
-import { browserPath, type Chat, clickHere, following, Lab, m, type M, type Page, settle, shown, sleep, wheel } from './_scroll_lab.ts';
+import {
+  browserPath,
+  type Chat,
+  clickHere,
+  following,
+  Lab,
+  m,
+  type M,
+  type Page,
+  rowFramesProblems,
+  settle,
+  shown,
+  sleep,
+  startRowFrames,
+  stopRowFrames,
+  wheel,
+} from './_scroll_lab.ts';
 
 const ALL = Deno.env.get('AIB_LAYOUT_ALL') === '1';
 
@@ -30,6 +46,11 @@ export const KNOWN_FAILING = new Set<string>([
   'L6d Settings: each section opens at its top, no double scrollbars, no sideways scroll',
   'L7a split view: the side pane at the bottom stays at the bottom when the window narrows, and keeps following',
   'L2p with the viewer open (chat column ~440 px), the empty message box has no scrollbar of its own',
+  // Found when these two started checking every frame (scroll design R6): the old width watcher puts the row back only after the
+  // frame that shows it re-wrapped (it reads the anchor on scroll, a redraw replaces the element), so for a frame or more the row is
+  // hundreds of px off (L1c: at 439 / 461 instead of -4 in 5 of 73 frames; L2a: at 428 instead of -17). The scroll controller fixes it.
+  'L1c reading midway, open a doc from the Artifacts tab: the row you were reading stays at the top of the view',
+  'L2a reading midway, the window gets narrower then wider: the row you were reading stays at the top',
 ]);
 
 function layoutTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
@@ -217,11 +238,14 @@ layoutTest('L1c reading midway, open a doc from the Artifacts tab: the row you w
   await page.waitFor(`!!document.querySelector('.ar-empty .ar-doc')`, 8000, 'the doc row in the Artifacts tab');
   await readMidway(page);
   const { a, x } = await readingState(page);
+  await startRowFrames(page, a!.text);
   await clickHere(page, '.ar-empty .ar-doc');
   await waitViewing(page, true);
+  const drawn = rowFramesProblems(await stopRowFrames(page), a!, 24);
   const moved = await rowMoved(page, a);
   const y = await m(page);
   assert(!moved, `${moved} (scrollTop ${x.top} -> ${y.top}, scrollHeight ${x.height} -> ${y.height})`);
+  assert(!drawn, `while the column widened, frame by frame: ${drawn}`);
   assert(y.paused, 'still paused (you were reading)');
   chat.end();
 });
@@ -316,8 +340,8 @@ async function reload(lab: Lab, chat: { key: string }) {
 }
 
 /** Reading midway, run `act`, then the row must still be at the top and the list still paused. */
-async function keepsReadingRow(page: Page, act: () => Promise<unknown>, what: string, box = 'messages') {
-  await readMidway(page, box);
+async function keepsReadingRow(page: Page, act: () => Promise<unknown>, what: string, box = 'messages', scrollFirst = true) {
+  if (scrollFirst) await readMidway(page, box);
   const { a, x } = await readingState(page, box);
   await act();
   await settle(1200);
@@ -363,12 +387,20 @@ async function fileLinkInReply(lab: Lab, chat: Chat) {
 layoutTest('L2a reading midway, the window gets narrower then wider: the row you were reading stays at the top', async (lab) => {
   const page = lab.page;
   await openSeeded(lab, 40);
-  await keepsReadingRow(page, () => page.viewport(1200, 900), 'window 1600 -> 1200');
+  await readMidway(page);
+  const r0 = await readingState(page);
+  await startRowFrames(page, r0.a!.text);
+  await keepsReadingRow(page, () => page.viewport(1200, 900), 'window 1600 -> 1200', 'messages', false);
+  const narrower = rowFramesProblems(await stopRowFrames(page), r0.a!, 24);
+  assert(!narrower, `window 1600 -> 1200, frame by frame: ${narrower}`);
   const { a } = await readingState(page);
+  await startRowFrames(page, a!.text);
   await page.viewport(1600, 900);
   await settle(1200);
+  const wider = rowFramesProblems(await stopRowFrames(page), a!, 24);
   const moved = await rowMoved(page, a);
   assert(!moved, `window 1200 -> 1600: ${moved}`);
+  assert(!wider, `window 1200 -> 1600, frame by frame: ${wider}`);
 });
 
 layoutTest('L2b following, the window gets narrower and shorter, then back: the chat stays at the bottom, following', async (lab) => {

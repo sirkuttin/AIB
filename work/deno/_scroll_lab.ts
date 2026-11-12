@@ -188,8 +188,11 @@ export interface M {
   tall: number;
 }
 
+/** A list by id ('messages') or by CSS selector ('.pane:not(.foc) .mirror-msgs'): the same code in every probe below. */
+export const BOX = `((b) => (/^[A-Za-z][\\w-]*$/.test(b) ? document.getElementById(b) : document.querySelector(b)))`;
+
 export const PROBE = `(id) => {
-  const box = document.getElementById(id);
+  const box = ${BOX}(id);
   const kids = [...box.children].filter((e) => e.offsetParent !== null && !e.classList.contains('new-line'));
   const last = kids[kids.length - 1];
   const b = box.getBoundingClientRect();
@@ -231,10 +234,42 @@ export function stopFrames(page: Page): Promise<M[]> {
 /** Wait until the list's text contains `text` (the step reached the page). */
 export function shown(page: Page, text: string, box = 'messages', ms = 15000): Promise<unknown> {
   return page.waitFor(
-    `document.getElementById(${JSON.stringify(box)}).textContent.includes(${JSON.stringify(text)})`,
+    `${BOX}(${JSON.stringify(box)}).textContent.includes(${JSON.stringify(text)})`,
     ms,
-    `"${text}" in #${box}`,
+    `"${text}" in ${box}`,
   );
+}
+
+/** Record, every animation frame, where the row whose text starts with `text` (as anchor() read it) is against the list's
+ *  top, and its height: {off, h} per frame, null in frames where the row is not drawn. A test that measures only once after a
+ *  second sees the end state; this sees the frames the owner sees, so a jump that a timer puts right later still fails. */
+export async function startRowFrames(page: Page, text: string, box = 'messages'): Promise<void> {
+  await page.eval(`(() => {
+    const b = ${BOX}(${JSON.stringify(box)}), want = ${JSON.stringify(text)};
+    window.__rows = [];
+    window.__rowsOn = true;
+    const tick = () => {
+      if (!window.__rowsOn) return;
+      const top = b.getBoundingClientRect().top;
+      const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === want);
+      const r = e ? e.getBoundingClientRect() : null;
+      window.__rows.push(r && r.height ? { off: Math.round(r.top - top), h: Math.round(r.height), st: Math.round(b.scrollTop) } : null);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  })()`);
+}
+export function stopRowFrames(page: Page): Promise<({ off: number; h: number; st: number } | null)[]> {
+  return page.eval(`(() => { window.__rowsOn = false; return window.__rows; })()`);
+}
+/** Frames in which the row was drawn somewhere other than `off` (more than `tol` px; a row that re-wrapped keeps the same
+ *  point of itself: a negative offset scales with its height). '' when every drawn frame had it in place. */
+export function rowFramesProblems(frames: ({ off: number; h: number } | null)[], before: { off: number; h?: number }, tol = 1): string {
+  const drawn = frames.filter((f): f is { off: number; h: number } => !!f);
+  const want = (f: { h: number }) => (before.off < 0 && before.h ? Math.round((before.off * f.h) / before.h) : before.off);
+  const bad = drawn.filter((f) => Math.abs(f.off - want(f)) > tol);
+  if (!drawn.length) return `the row was not drawn in any of ${frames.length} frames`;
+  return bad.length ? `the row was off its place in ${bad.length}/${drawn.length} frames: at ${[...new Set(bad.map((f) => f.off))].slice(0, 8).join(', ')} instead of ${before.off}` : '';
 }
 
 /** Let pending timers (holdAnchor 60/250/800 ms, the 600 ms touch window) and a poll or two run out. */
@@ -243,7 +278,7 @@ export const settle = (ms = 1000) => sleep(ms);
 /** Scroll the list by a wheel gesture at its centre (a real input event, so the page sees you reading). */
 export async function wheel(page: Page, dy: number, box = 'messages'): Promise<void> {
   const [x, y] = await page.eval<[number, number]>(
-    `(() => { const r = document.getElementById(${JSON.stringify(box)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`,
+    `(() => { const r = ${BOX}(${JSON.stringify(box)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`,
   );
   await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy });
   await sleep(150);
@@ -254,7 +289,7 @@ export const PYTHON = PY;
 /** The first row at the top of the list's view: its text and its offset from the list's top (what must not move while you read). */
 export function anchor(page: Page, box = 'messages'): Promise<{ text: string; off: number } | null> {
   return page.eval(`(() => {
-    const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
+    const b = ${BOX}(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
     for (const e of b.children) {
       const r = e.getBoundingClientRect();
       if (r.height && r.bottom > top + 1) return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(r.top - top) };
@@ -266,7 +301,7 @@ export function anchor(page: Page, box = 'messages'): Promise<{ text: string; of
 /** Where the row with this exact text (as anchor() read it) is now, against the list's top; null when it is gone. */
 export function whereIs(page: Page, text: string, box = 'messages'): Promise<number | null> {
   return page.eval(`(() => {
-    const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
+    const b = ${BOX}(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
     const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === ${JSON.stringify(text)});
     return e ? Math.round(e.getBoundingClientRect().top - top) : null;
   })()`);
@@ -276,7 +311,7 @@ export function whereIs(page: Page, text: string, box = 'messages'): Promise<num
 export function topOf(page: Page, selector: string, box = 'messages'): Promise<number | null> {
   return page.eval(`(() => {
     const all = document.querySelectorAll(${JSON.stringify(selector)}), e = all[all.length - 1];
-    return e ? Math.round(e.getBoundingClientRect().top - document.getElementById(${JSON.stringify(box)}).getBoundingClientRect().top) : null;
+    return e ? Math.round(e.getBoundingClientRect().top - ${BOX}(${JSON.stringify(box)}).getBoundingClientRect().top) : null;
   })()`);
 }
 

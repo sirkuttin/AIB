@@ -178,7 +178,7 @@ test('5. the terminal takes the active theme when made, when shown, and on every
 // ---- 6. the pinned question card and the plan ---------------------------------------------------------------------------------
 test('6. a message list that follows the newest row keeps following when a pinned card or the terminal shrinks it', () => {
   const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const block = src.slice(src.indexOf('  if (typeof ResizeObserver'), src.indexOf('function fadeNewLine'));
+  const block = src.slice(src.indexOf('  if (typeof ResizeObserver'), src.indexOf('  /* The list gets narrower or wider'));
   assert.match(block, /const box = \$\('messages'\)/);
   assert.match(block, /h < lastHeight && !box\.dataset\.paused/);
   assert.match(block, /box\.scrollTop = box\.scrollHeight/);
@@ -206,7 +206,7 @@ test('6. a message list that follows the newest row keeps following when a pinne
 
 test('6b. a message list that follows keeps following when its content grows after a redraw; not right after your own click', () => {
   const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const start = src.indexOf("  for (const id of ['messages', 'submessages']) {");
+  const start = src.indexOf("  for (const id of ['messages', 'submessages']) {", src.indexOf('  /* Content that grows after a redraw'));
   assert.ok(start > 0, 'the content-growth watcher exists');
   const block = src.slice(start, src.indexOf('function fadeNewLine'));
   const boxes = {},
