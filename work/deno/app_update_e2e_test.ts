@@ -130,6 +130,7 @@ Deno.test({
       for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
       const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
       const aPid = desk.spawn([exe, ...flags], app);
+      PORT = await ownerPort(fx.state, 90); // the port A really bound: if another process took the saved one first, A picked and saved another, and B must come back on that
       pids.add(aPid);
       for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
 

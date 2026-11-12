@@ -22,7 +22,7 @@ import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { WORK } from './_parity.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { pickPort } from './_ports.ts';
+import { ownerPort, pickPort } from './_ports.ts';
 import { builtDist, NEXT_VERSION } from './_build_cache.ts';
 import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 import { KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
@@ -151,6 +151,7 @@ Deno.test({
       const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
       flags[flags.indexOf('--claude-launcher') + 1] = KEEPER_AGENT;
       const aPid = desk.spawn([exe, ...flags], app);
+      PORT = await ownerPort(fx.state, 90); // the port A really bound: if another process took the saved one first, A picked and saved another, and B must come back on that
       pids.add(aPid);
       for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
 

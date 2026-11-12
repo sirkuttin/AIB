@@ -19,7 +19,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { Fixture, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { builtDist } from './_build_cache.ts';
-import { devToolsPortNow, pickPort, refusedPort } from './_ports.ts';
+import { devToolsPortNow, ownerPort, pickPort, refusedPort } from './_ports.ts';
 import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 
@@ -171,6 +171,7 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
 
   // ---- A: the first copy. Open Beta's chat, then pick Delta (no tabs there: Beta's chat stays in the middle) and close at once.
   const aPid = spawn(appA);
+  PORT = await ownerPort(fx.state, 90); // the port A really bound: if another process took the saved one first, A picked and saved another, and B must come back on that
   await until(ready, "A's page with the three projects", 120);
   assertEquals(await active(), 'alpha', 'a fresh data folder starts on the first project');
   const key = (name: string) => cdpEval(`AgentWorkspaceUI.paletteProjects().find((p) => p.name === '${name}').key`).then(String);
