@@ -9,7 +9,7 @@ import type { WebContext } from '../web/server.ts';
 import { Audit, type AuditEntry } from './audit.ts';
 import { cleanScopes, DEFAULT_SCOPES, DeviceStore, type PublicDevice } from './devices.ts';
 import { Pairing, PairingError } from './pairing.ts';
-import { TitleCache } from './payloads.ts';
+import { homePayload, TitleCache } from './payloads.ts';
 import { BIND_RETRY_MS, PortBusy, portFree, remotePort } from './port.ts';
 import { qrSvg } from './qr.ts';
 import { RemoteServer } from './server.ts';
@@ -17,6 +17,14 @@ import { readTailscale, type Runner, serveCommand, type TailscaleState } from '.
 import { hex } from './words.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
+/** A phone's switches as Settings > Devices names them (for the activity log). */
+const SCOPE_LABELS: Record<string, string> = {
+  'phone.read': 'See chats',
+  'phone.answer': 'Answer',
+  'phone.prompt': 'Send',
+  'phone.approve': 'Approve once',
+  'phone.push': 'Push',
+};
 
 /** Tests only (AGENT_STUDIO_TEST=1): a shorter wait for a busy phone port (AIB_TEST_REMOTE_BIND_MS). */
 function testBindRetryMs(): number | undefined {
@@ -225,6 +233,16 @@ export class PhoneAccess {
     return removed;
   }
 
+  async setScopes(id: unknown, scopes: unknown): Promise<PublicDevice | null> {
+    if (typeof id !== 'string' || !Array.isArray(scopes)) return null;
+    const device = await this.devices.setScopes(id, scopes);
+    if (device) {
+      const words = device.scopes.map((x) => SCOPE_LABELS[x]).join(', ');
+      this.audit.write({ device: id, name: device.name, action: 'switches', result: `set on the PC: ${words}` });
+    }
+    return device;
+  }
+
   async removeAll(): Promise<number> {
     const count = await this.devices.removeAll();
     this.pairing.cancel();
@@ -232,8 +250,16 @@ export class PhoneAccess {
     return count;
   }
 
-  activity(limit = 200): AuditEntry[] {
-    return this.audit.tail(limit);
+  /** The newest log lines, each phone action with the title of its chat when that chat still runs (looked up now, never stored). */
+  async activity(limit = 200): Promise<(AuditEntry & { chatTitle: string })[]> {
+    const entries = this.audit.tail(limit);
+    const titles = new Map<string, string>();
+    if (entries.some((e) => e.chat)) {
+      try {
+        for (const c of (await homePayload(this.ctx, this.pcName(), this.titles)).chats) titles.set(c.id, c.title);
+      } catch { /* the agent host is starting: ids only */ }
+    }
+    return entries.map((e) => ({ ...e, chat: e.chat ?? '', chatTitle: e.chat ? titles.get(e.chat) ?? '' : '' }));
   }
 
   /** Everything Settings > Devices draws. No tokens, no pairing secret except the open code's own words, URL and QR. */

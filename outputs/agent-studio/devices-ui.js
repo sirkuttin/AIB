@@ -23,13 +23,6 @@
     ['phone.approve', 'Approve requests once'],
     ['phone.push', 'Push notifications'],
   ];
-  const SHORT = {
-    'phone.read': 'See chats',
-    'phone.answer': 'Answer',
-    'phone.prompt': 'Send',
-    'phone.approve': 'Approve once',
-    'phone.push': 'Push',
-  };
 
   const D = {
     host: null,
@@ -49,6 +42,20 @@
   };
 
   // ---- pure helpers (node tests) ----
+  /* A phone's scopes after one switch changes (See chats always stays on). */
+  function scopesAfter(have, scope, on) {
+    const set = new Set(have || []);
+    if (on) set.add(scope);
+    else set.delete(scope);
+    set.add('phone.read');
+    return SCOPES.map(([s]) => s).filter((s) => set.has(s));
+  }
+  /* One Phone activity line: time · phone · action · chat: result. */
+  function activityLine(e, when) {
+    const who = e.name || (e.device ? 'a phone' : 'AIB');
+    const chat = e.chat ? ' · ' + (e.chatTitle ? '"' + e.chatTitle + '"' : 'chat ' + String(e.chat).slice(0, 8)) : '';
+    return when + ' · ' + who + ' · ' + e.action + chat + ': ' + e.result;
+  }
   function ago(seconds, now) {
     const s = Math.max(0, Math.floor((now || Date.now()) / 1000 - Number(seconds || 0)));
     if (!seconds) return 'never';
@@ -283,6 +290,25 @@
     return D.scopes[id];
   }
 
+  /* A paired phone's switches; each change is saved at once and the phone's next request is checked against it. */
+  function drawSwitches(d) {
+    const list = el('div', null, 'dv-scopes');
+    list.setAttribute('aria-label', 'What ' + d.name + ' may do');
+    const have = d.scopes || [];
+    for (const [scope, label] of SCOPES) {
+      const l = el('label', null, 'st-toggle'),
+        cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = have.includes(scope);
+      cb.disabled = scope === 'phone.read' || !!D.busy;
+      cb.dataset.scope = scope;
+      cb.addEventListener('change', () => act('devices/scopes', { id: d.id, scopes: scopesAfter(have, scope, cb.checked) }, 'scopes'));
+      l.append(cb, el('span', label));
+      list.append(l);
+    }
+    return list;
+  }
+
   function drawApprove(frag, claim) {
     const box = el('section', null, 'dv-approve');
     box.setAttribute('role', 'dialog');
@@ -307,7 +333,7 @@
       list.append(l);
     }
     box.append(list);
-    box.append(el('p', 'For now the phone page only shows chats. These switches are saved with the phone.', 'st-note'));
+    box.append(el('p', "You can change these later on the phone's row under Paired phones.", 'st-note'));
     const row = el('div', null, 'st-actions');
     row.append(
       btn('Reject', () => act('devices/reject', { claim: claim.id }, 'reject'), '', !!D.busy),
@@ -391,7 +417,7 @@
       const head = el('div', null, 'st-agent-head');
       head.append(el('b', d.name), el('span', 'Last seen ' + ago(d.lastSeen), 'st-tag'));
       row.append(head);
-      row.append(el('p', (d.scopes || []).map((s) => SHORT[s] || s).join(' · '), 'st-note'));
+      row.append(drawSwitches(d));
       const actions = el('div', null, 'st-actions');
       if (D.confirm === d.id) {
         actions.append(
@@ -468,16 +494,11 @@
     if (D.showActivity) {
       const log = el('div', null, 'dv-activity');
       const entries = D.activity || [];
+      log.append(el('p', 'What each phone did: time, phone, action, chat and result. Message text and commands are never kept.', 'st-note'));
       if (!entries.length) log.append(el('p', 'No phone activity yet.', 'st-note'));
       for (const e of entries.slice(0, 100)) {
         const t = new Date(e.time * 1000);
-        log.append(
-          el(
-            'p',
-            t.toLocaleString() + ' · ' + (e.name || (e.device ? 'a phone' : 'AIB')) + ' · ' + e.action + ': ' + e.result,
-            'st-note',
-          ),
-        );
+        log.append(el('p', activityLine(e, t.toLocaleString()), 'st-note'));
       }
       frag.append(log);
     }
@@ -508,7 +529,7 @@
     refresh();
   }
 
-  const api = { render, ago, countdown, checklist, SCOPES, _state: D };
+  const api = { render, ago, countdown, checklist, scopesAfter, activityLine, SCOPES, _state: D };
   root.AIBDevicesUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

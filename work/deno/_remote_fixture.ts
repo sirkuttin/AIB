@@ -186,6 +186,11 @@ export interface FakeChat {
   permissions: Json[];
   elicitations: Json[];
   breadth?: Json;
+  /** Phase B: can take a message (default: not closed), its queue, unknown receipts, a sign-in request. */
+  ready?: boolean;
+  queue?: Json;
+  unknownReceipts?: Json[];
+  auth?: Json | null;
 }
 
 /** An in-process Studio (page port 0) with a fake agent host the test fills; phone access options come from the test. */
@@ -197,6 +202,9 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
   if (readRemotePort(state) === null) saveRemotePort(state, pickPort());
   const chats: FakeChat[] = [];
   const stateCalls: [string, number][] = [];
+  /** Every live op the agent host got ([name, body]); `liveAnswer` sets what it answers. */
+  const liveCalls: [string, Json][] = [];
+  let liveAnswer: (name: string, body: Json) => [number, unknown] = () => [200, { ok: true }];
   const host = {
     hostMode: 'test',
     liveInfo: () => Promise.resolve({ connections: [], instanceId: 'test' }),
@@ -213,6 +221,8 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
           attention: c.attention,
           subagents: c.subagents,
           breadth: c.breadth ?? {},
+          ready: c.ready ?? !c.closed,
+          cursor: c.events.length ? c.events.at(-1)!.seq : 0,
           events: [],
         })),
       }),
@@ -223,13 +233,20 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
       return Promise.resolve({
         ...c,
         projectRoot: c.cwd,
+        ready: c.ready ?? !c.closed,
+        queue: c.queue ?? { items: [], paused: false, reason: '', message: '' },
+        unknownReceipts: c.unknownReceipts ?? [],
+        auth: c.auth ?? null,
         events: c.events.filter((e) => (e.seq as number) > after),
         cursor: c.events.length ? c.events.at(-1)!.seq : 0,
         reset: false,
       });
     },
     liveWrites: () => Promise.resolve({}),
-    liveCall: () => Promise.resolve([200, { ok: true }]),
+    liveCall: (name: string, body: Json) => {
+      liveCalls.push([name, body]);
+      return Promise.resolve(liveAnswer(name, body));
+    },
     emitArtifact: () => Promise.resolve(true),
     busyConnections: () => Promise.resolve([]),
     close: () => Promise.resolve(),
@@ -256,6 +273,10 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
     state,
     chats,
     stateCalls,
+    liveCalls,
+    answerLive(fn: (name: string, body: Json) => [number, unknown]) {
+      liveAnswer = fn;
+    },
     /** The page's own token (a test checks the phone port never returns it). */
     get token() {
       return ctx.token;

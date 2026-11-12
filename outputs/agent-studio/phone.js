@@ -1,8 +1,11 @@
 'use strict';
 /* The phone page (phone.html), served only on the phone port (server/remote/server.ts) through Tailscale Serve.
-   Screens: pairing, home (needs you first, the main chat with its helpers folded, other chats), one chat in a condensed read-only
-   view, "can't reach the PC", and "this phone is no longer paired". The layout is chosen by the server (remote bootstrap says
-   layout 'phone'), never by the window width. Read only in this version: answering, approving and sending stay on the PC.
+   Screens: pairing, home (needs you first, the main chat with its helpers folded, other chats), one chat in the condensed view with
+   a composer at the bottom (Send; Stop while the agent works), its queued messages (Edit, Remove, Send now), and two sheets: the
+   approval sheet (Deny / Allow once; "Allow always" and mode switches stay on the PC) and the question sheet (form questions).
+   Each control shows only when this phone's switch for it is on (Settings → Devices on the PC); the server checks the same switches.
+   While the PC can't be reached, nothing can be sent or answered. The layout is chosen by the server (remote bootstrap says
+   layout 'phone'), never by the window width.
    The device token lives in IndexedDB on this origin and goes in the X-AIB-Device header; images load by the HttpOnly cookie.
    Polls every 4 s (home) or 3 s (a chat) while the page is visible, and stops while it is hidden.
    Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input) are exported for node tests. */
@@ -129,10 +132,84 @@
     return running ? 'Step ' + running.n + ' · ' + running.title + time : 'Working' + time;
   }
 
+  /* The fields of a form question (the agent's requestedSchema), in order, as the question sheet draws them:
+     {key, title, description, required, type: 'choice' | 'multi' | 'bool' | 'number' | 'text', choices?: [{value, label}]} */
+  function fieldsOf(schema) {
+    const props = obj(obj(schema).properties);
+    const required = Array.isArray(obj(schema).required) ? obj(schema).required : [];
+    const out = [];
+    for (const key of Object.keys(props)) {
+      const s = obj(props[key]);
+      const f = { key, title: str(s.title) || key, description: str(s.description), required: required.includes(key), type: 'text' };
+      const one = Array.isArray(s.oneOf) ? s.oneOf : Array.isArray(s.anyOf) ? s.anyOf : null;
+      const items = obj(s.items);
+      if (s.type === 'boolean') {
+        f.type = 'bool';
+        f.choices = [{ value: true, label: 'Yes' }, { value: false, label: 'No' }];
+      } else if (one || Array.isArray(s.enum)) {
+        f.type = 'choice';
+        f.choices = one ? one.map((x) => ({ value: obj(x).const, label: str(obj(x).title) || String(obj(x).const) })) : s.enum.map((x) => ({ value: x, label: String(x) }));
+      } else if (s.type === 'array' && (Array.isArray(items.enum) || Array.isArray(items.anyOf))) {
+        f.type = 'multi';
+        f.choices = Array.isArray(items.anyOf)
+          ? items.anyOf.map((x) => ({ value: obj(x).const, label: str(obj(x).title) || String(obj(x).const) }))
+          : items.enum.map((x) => ({ value: x, label: String(x) }));
+      } else if (s.type === 'number' || s.type === 'integer') {
+        f.type = 'number';
+        f.integer = s.type === 'integer';
+      }
+      out.push(f);
+    }
+    return out;
+  }
+
+  /* The answer to send from what was picked and typed: {content, missing: [field titles]}. Empty optional fields are left out. */
+  function contentFrom(fields, values) {
+    const content = {};
+    const missing = [];
+    for (const f of fields) {
+      let v = obj(values)[f.key];
+      if (f.type === 'number' && typeof v === 'string') v = v.trim() === '' ? undefined : Number(v);
+      if (f.type === 'text' && typeof v === 'string' && !v.trim()) v = undefined;
+      if (f.type === 'multi' && Array.isArray(v) && !v.length && !f.required) v = undefined;
+      if (v === undefined || (typeof v === 'number' && Number.isNaN(v))) {
+        if (f.required) missing.push(f.title);
+        continue;
+      }
+      content[f.key] = v;
+    }
+    return { content, missing };
+  }
+
+  /* The approval sheet's buttons for a request: Deny then Allow once, each only when the PC lets a phone pick it. */
+  function approvalButtons(wait) {
+    const options = Array.isArray(obj(wait).options) ? wait.options : [];
+    const out = [];
+    const deny = options.find((o) => o.kind === 'reject_once');
+    const allow = options.find((o) => o.kind === 'allow_once');
+    if (deny) out.push({ label: 'Deny', optionId: deny.optionId, tone: 'deny' });
+    if (allow) out.push({ label: 'Allow once', optionId: allow.optionId, tone: 'allow' });
+    return out;
+  }
+
+  /* What this phone may do, from its switches: {answer, approve, send}. */
+  function abilities(scopes) {
+    const list = Array.isArray(scopes) ? scopes : [];
+    return { answer: list.includes('phone.answer'), approve: list.includes('phone.approve'), send: list.includes('phone.prompt') };
+  }
+
+  /* Can this waiting item be handled on this phone now? */
+  function actionable(wait, can) {
+    if (!wait || !wait.key || wait.pcOnly) return false;
+    if (wait.kind === 'permission') return can.approve && approvalButtons(wait).length > 0;
+    if (wait.kind === 'question') return can.answer;
+    return false;
+  }
+
   /* The text both sides hash for the two check words (server/remote/words.ts checkWords). */
   const checkInput = (secretHex, phoneNonce, pcNonce) => 'aib-pair-check|' + secretHex + '|' + phoneNonce + '|' + pcNonce;
 
-  const api = { rowsFrom, stateWords, elapsed, liveLine, helperWord, checkInput };
+  const api = { rowsFrom, stateWords, elapsed, liveLine, helperWord, checkInput, fieldsOf, contentFrom, approvalButtons, abilities, actionable };
   if (typeof module === 'object' && module.exports) {
     module.exports = api;
     return;
@@ -159,6 +236,14 @@
     timer: 0,
     pairSecret: '', // hex, from the QR's '#p='
     pairing: null,
+    scopes: [], // this phone's switches (bootstrap, then every home / chat answer)
+    sheet: null, // {kind: 'permission' | 'question', key} while a sheet is up
+    sheetAuto: false, // opened from a "Needs you" card: put the sheet up once the chat loads
+    answers: {}, // question key -> {field: value}
+    draft: '', // the composer's text
+    sending: false,
+    actError: '', // the last refused or failed action, shown above the composer or in the sheet
+    editing: null, // {messageId, leaseId, text, renewed}
   };
 
   function el(tag, cls, text) {
@@ -268,6 +353,7 @@
     if (r.status !== 200) throw new Offline('refused');
     S.home = r.data;
     S.homeRev = r.data.revision || '';
+    if (Array.isArray(r.data.scopes)) S.scopes = r.data.scopes;
     if (r.data.pcName) S.pcName = r.data.pcName;
     if (S.screen === 'home') draw();
   }
@@ -286,8 +372,20 @@
     const c = r.data;
     if (!after || c.reset) S.chatEvents = c.events;
     else if (c.events.length) S.chatEvents = S.chatEvents.concat(c.events).slice(-TAIL * 2);
-    const changed = !S.chat || !after || c.events.length || c.state !== S.chat.state || c.needs !== S.chat.needs || c.busy !== S.chat.busy;
+    const sig = (x) => JSON.stringify([x.state, x.needs, x.busy, x.ready, x.waiting, x.queue, x.unknown, x.scopes]);
+    const changed = !S.chat || !after || c.events.length || sig(c) !== sig(S.chat);
     S.chat = { ...c, truncated: after ? S.chat.truncated : c.truncated };
+    if (Array.isArray(c.scopes)) S.scopes = c.scopes;
+    // A sheet whose request was answered (here or on the PC) goes away.
+    if (S.sheet && !(c.waiting || []).some((w) => w.key === S.sheet.key)) S.sheet = null;
+    if (S.sheetAuto) {
+      S.sheetAuto = false;
+      const can = abilities(S.scopes);
+      const first = (c.waiting || []).find((w) => actionable(w, can));
+      if (first) S.sheet = { kind: first.kind, key: first.key };
+    }
+    if (S.editing && !((c.queue && c.queue.items) || []).some((i) => i.id === S.editing.messageId)) S.editing = null;
+    if (S.editing && Date.now() - S.editing.renewed > 60000) renewEdit();
     if (S.screen === 'chat' && changed) draw();
   }
 
@@ -339,7 +437,9 @@
 
   function chatCard(c, opts) {
     const w = stateWords(c);
-    const card = button('ph-card' + (w.tone === 'need' ? ' need' : '') + (opts && opts.main ? ' main' : ''), '', () => openChat(c.id, c.title));
+    const card = button('ph-card' + (w.tone === 'need' ? ' need' : '') + (opts && opts.main ? ' main' : ''), '', () =>
+      openChat(c.id, c.title, c.needs > 0),
+    );
     card.dataset.chat = c.id;
     if (c.needs > 0) card.append(el('span', 'ph-badge', String(c.needs)));
     card.append(el('span', 'ph-title', c.title));
@@ -426,47 +526,304 @@
     }
   }
 
+  function waitingBox(wait, can) {
+    const box = el('div', 'ph-wait');
+    box.dataset.wait = wait.key || wait.kind;
+    box.append(
+      el(
+        'b',
+        '',
+        wait.kind === 'permission' ? 'Waiting for your approval' : wait.kind === 'question' ? 'Waiting for your answer' : 'Waiting for you to sign in',
+      ),
+    );
+    box.append(el('span', 'ph-wait-title', wait.title));
+    if (!S.offline && actionable(wait, can)) {
+      const open = button('ph-btn', wait.kind === 'permission' ? 'Allow or deny' : 'Answer', () => {
+        S.sheet = { kind: wait.kind, key: wait.key };
+        S.actError = '';
+        draw();
+      });
+      open.dataset.open = wait.key;
+      box.append(open);
+    } else if (!S.offline) {
+      box.append(el('p', 'ph-note', 'Finish this on your PC.'));
+    }
+    return box;
+  }
+
+  function queueBox(c, can) {
+    const items = (c.queue && c.queue.items) || [];
+    if (!items.length) return null;
+    const box = el('section', 'ph-queue');
+    box.setAttribute('aria-label', 'Messages waiting to send');
+    box.append(el('h2', 'ph-section', 'Waiting to send · ' + items.length));
+    if (c.queue.paused && c.queue.message) box.append(el('p', 'ph-note', c.queue.message + '.'));
+    let actions = false;
+    for (const item of items) {
+      const row = el('div', 'ph-queued');
+      row.dataset.queued = item.id;
+      const mine = S.editing && S.editing.messageId === item.id;
+      if (mine) {
+        const ta = el('textarea', 'ph-input');
+        ta.id = 'queueEdit';
+        ta.rows = 3;
+        ta.value = S.editing.text;
+        ta.setAttribute('aria-label', 'Edit the queued message');
+        ta.addEventListener('input', () => (S.editing.text = ta.value));
+        row.append(ta);
+        const acts = el('div', 'ph-row');
+        acts.append(
+          button('ph-btn quiet', 'Cancel', () => queueEdit(item.id, 'cancel')),
+          button('ph-btn', 'Save', () => queueEdit(item.id, 'save')),
+        );
+        row.append(acts);
+      } else {
+        row.append(el('p', 'ph-queued-text', item.text.length > 400 ? item.text.slice(0, 400) + '…' : item.text));
+        if (item.files) row.append(el('p', 'ph-note', item.files === 1 ? 'With 1 file' : 'With ' + item.files + ' files'));
+        if (item.sending) row.append(el('p', 'ph-note', 'Sending now…'));
+        else if (item.editing) row.append(el('p', 'ph-note', 'Being edited on your PC.'));
+        else if (can.send && !S.offline) {
+          actions = true;
+          const acts = el('div', 'ph-row');
+          const edit = button('ph-btn quiet', 'Edit', () => queueEdit(item.id, 'acquire'));
+          edit.dataset.act = 'edit';
+          const remove = button('ph-btn quiet', 'Remove', () => act('queue-remove', { id: c.id, messageId: item.id }));
+          remove.dataset.act = 'remove';
+          const now = button('ph-btn quiet', 'Send now', () => act('queue-send-now', { id: c.id, messageId: item.id }));
+          now.dataset.act = 'send-now';
+          acts.append(edit, remove, now);
+          row.append(acts);
+        }
+      }
+      box.append(row);
+    }
+    if (actions) box.append(el('p', 'ph-note', 'Send now stops the current turn and sends that message first.'));
+    return box;
+  }
+
+  function unknownBox(c, can) {
+    if (!can.send || S.offline || !(c.unknown || []).length) return null;
+    const box = el('section', 'ph-wait');
+    for (const u of c.unknown) {
+      box.append(el('p', '', 'AIB restarted while a message was being sent. The agent may not have received it.'));
+      box.append(button('ph-btn quiet', 'It arrived, dismiss', () => act('dismiss-unknown', { id: c.id, clientMessageId: u.clientMessageId })));
+    }
+    return box;
+  }
+
+  /* The bottom bar: the message box and Send, and Stop while the agent works. The same element stays between polls, so the text
+     and the caret are never lost; only its buttons change. */
+  let composerEl = null;
+  function composer() {
+    if (!composerEl) {
+      const bar = el('form', 'ph-composer');
+      bar.id = 'phComposer';
+      bar.noValidate = true;
+      const err = el('p', 'ph-error ph-act-error');
+      err.id = 'phActError';
+      err.setAttribute('role', 'alert');
+      const row = el('div', 'ph-composer-row');
+      const ta = el('textarea', 'ph-input');
+      ta.id = 'phPrompt';
+      ta.rows = 1;
+      ta.setAttribute('aria-label', 'Message');
+      ta.addEventListener('input', () => {
+        S.draft = ta.value;
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+      });
+      const stop = el('button', 'ph-stop', 'Stop');
+      stop.type = 'button';
+      stop.id = 'phStop';
+      stop.setAttribute('aria-label', 'Stop the current turn');
+      stop.addEventListener('click', () => act('cancel', { id: S.chatId }));
+      const send = el('button', 'ph-send', 'Send');
+      send.type = 'submit';
+      send.id = 'phSend';
+      row.append(ta, stop, send);
+      bar.append(err, row);
+      bar.addEventListener('submit', (event) => {
+        event.preventDefault();
+        sendDraft();
+      });
+      composerEl = bar;
+    }
+    const bar = composerEl;
+    const c = S.chat || {};
+    const ta = bar.querySelector('#phPrompt');
+    if (ta.value !== S.draft) ta.value = S.draft;
+    ta.placeholder = c.busy ? 'Queue a message' : 'Message';
+    bar.querySelector('#phSend').disabled = S.sending;
+    bar.querySelector('#phStop').hidden = !c.busy;
+    const err = bar.querySelector('#phActError');
+    err.textContent = S.sheet ? '' : S.actError;
+    err.hidden = !err.textContent;
+    return bar;
+  }
+
+  function sheet() {
+    const c = S.chat;
+    const wait = c && S.sheet ? (c.waiting || []).find((w) => w.key === S.sheet.key) : null;
+    if (!wait) return null;
+    const dim = el('div', 'ph-dim');
+    dim.addEventListener('click', closeSheet);
+    const box = el('section', 'ph-sheet');
+    box.id = 'phSheet';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.dataset.kind = wait.kind;
+    box.append(el('div', 'ph-grab'));
+    const can = abilities(S.scopes);
+    if (wait.kind === 'permission') {
+      box.setAttribute('aria-label', 'Allow or deny');
+      box.append(el('h2', 'ph-sheet-title', c.agent + ' asks to: ' + wait.title));
+      if (wait.detail) box.append(el('pre', 'ph-cmd', wait.detail));
+      if (c.folder) box.append(el('p', 'ph-note', 'In ' + c.folder));
+      const buttons = can.approve ? approvalButtons(wait) : [];
+      if (buttons.length) {
+        const row = el('div', 'ph-row ph-answer');
+        for (const b of buttons) {
+          const x = button('ph-btn ' + b.tone, b.label, () => act('permission', { id: c.id, key: wait.key, option: b.optionId }, true));
+          x.dataset.option = b.optionId;
+          x.disabled = S.sending;
+          row.append(x);
+        }
+        box.append(row);
+        if (wait.hidden > 0) box.append(el('p', 'ph-note', 'Other choices are on your PC.'));
+      } else box.append(el('p', 'ph-note', 'Finish this on your PC.'));
+    } else {
+      box.setAttribute('aria-label', 'Answer the question');
+      box.append(el('h2', 'ph-sheet-title', wait.title));
+      if (wait.pcOnly || !can.answer) {
+        box.append(el('p', 'ph-note', 'Finish this on your PC.'));
+      } else {
+        const values = (S.answers[wait.key] = S.answers[wait.key] || {});
+        const fields = fieldsOf(wait.schema);
+        for (const f of fields) box.append(fieldEl(f, values));
+        const row = el('div', 'ph-row ph-answer');
+        const decline = button('ph-btn deny', 'Decline', () => act('elicitation', { id: c.id, key: wait.key, action: 'decline' }, true));
+        decline.disabled = S.sending;
+        const go = button('ph-btn allow', 'Send answer', () => {
+          const { content, missing } = contentFrom(fields, values);
+          if (missing.length) {
+            S.actError = 'Fill in: ' + missing.join(', ') + '.';
+            return draw();
+          }
+          act('elicitation', { id: c.id, key: wait.key, action: 'accept', content }, true);
+        });
+        go.id = 'phAnswer';
+        go.disabled = S.sending;
+        row.append(decline, go);
+        box.append(row);
+      }
+    }
+    if (S.actError) {
+      const e = el('p', 'ph-error', S.actError);
+      e.setAttribute('role', 'alert');
+      box.append(e);
+    }
+    box.append(button('ph-btn quiet', 'Close', closeSheet));
+    const wrap = el('div', 'ph-sheet-wrap');
+    wrap.append(dim, box);
+    return wrap;
+  }
+
+  function fieldEl(f, values) {
+    const wrap = el('div', 'ph-field');
+    wrap.dataset.field = f.key;
+    wrap.append(el('p', 'ph-field-title', f.title + (f.required ? '' : ' (optional)')));
+    if (f.description) wrap.append(el('p', 'ph-note', f.description));
+    if (f.type === 'choice' || f.type === 'bool' || f.type === 'multi') {
+      for (const ch of f.choices) {
+        const picked = f.type === 'multi' ? (values[f.key] || []).includes(ch.value) : values[f.key] === ch.value;
+        const b = button('ph-opt' + (picked ? ' on' : ''), ch.label, () => {
+          if (f.type === 'multi') {
+            const now = new Set(values[f.key] || []);
+            if (now.has(ch.value)) now.delete(ch.value);
+            else now.add(ch.value);
+            values[f.key] = [...now];
+          } else values[f.key] = ch.value;
+          draw();
+        });
+        b.setAttribute('aria-pressed', picked ? 'true' : 'false');
+        wrap.append(b);
+      }
+    } else {
+      const input = el(f.type === 'number' ? 'input' : 'textarea', 'ph-input');
+      input.id = 'phField-' + f.key;
+      if (f.type === 'number') {
+        input.type = 'number';
+        input.inputMode = f.integer ? 'numeric' : 'decimal';
+      } else input.rows = 2;
+      input.value = values[f.key] == null ? '' : String(values[f.key]);
+      input.setAttribute('aria-label', f.title);
+      input.addEventListener('input', () => (values[f.key] = input.value));
+      wrap.append(input);
+    }
+    return wrap;
+  }
+
+  function closeSheet() {
+    S.sheet = null;
+    S.actError = '';
+    draw();
+  }
+
+  function chatMain() {
+    const c = S.chat;
+    const body = el('main', 'ph-chat' + (S.offline ? ' ph-stale' : ''));
+    if (!c) {
+      body.append(el('p', 'ph-empty', 'Loading…'));
+      return body;
+    }
+    if (c.gone) {
+      body.append(el('p', 'ph-empty', 'This chat is not running on ' + S.pcName + ' any more. Open it in AIB on the PC.'));
+      return body;
+    }
+    const can = abilities(S.scopes);
+    const helpers = c.helpers || [];
+    if (helpers.length) {
+      const ul = el('ul', 'ph-helpers ph-card');
+      ul.setAttribute('aria-label', 'Helpers');
+      for (const h of helpers) {
+        const li = el('li');
+        li.append(el('span', '', h.title), el('span', '', helperWord(h.state)));
+        ul.append(li);
+      }
+      body.append(ul);
+    }
+    if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
+    const rows = rowsFrom(S.chatEvents);
+    const list = el('div', 'ph-list');
+    drawRows(list, rows);
+    if (!rows.length) list.append(el('p', 'ph-empty', 'No messages yet.'));
+    body.append(list);
+    for (const wait of c.waiting || []) body.append(waitingBox(wait, can));
+    const unknown = unknownBox(c, can);
+    if (unknown) body.append(unknown);
+    const queue = queueBox(c, can);
+    if (queue) body.append(queue);
+    const live = liveLine(c, rows);
+    if (live) body.append(el('p', 'ph-live', live));
+    if (!can.send) body.append(el('p', 'ph-pconly', 'Sending from this phone is off. Reply in AIB on ' + S.pcName + '.'));
+    else if (!c.ready && !S.offline) body.append(el('p', 'ph-pconly', 'This chat cannot take messages right now. Open it in AIB on your PC.'));
+    return body;
+  }
+
+  /* The chat screen: header, the conversation, the composer (when this phone may send and the PC answers) and the sheet. */
   function drawChat() {
-    const frag = doc.createDocumentFragment();
     const c = S.chat;
     const title = (c && c.title) || S.chatTitle || 'Chat';
     const w = c && !c.gone ? stateWords(c) : null;
-    frag.append(header(title, { back: goHome, chip: S.offline ? ['Offline', 'off'] : w ? [w.text.split(' · ')[0], w.tone === 'work' ? 'live' : ''] : null }));
-    if (S.offline) frag.append(offlineBox());
-    const body = el('main', S.offline ? 'ph-stale' : '');
-    if (!c) body.append(el('p', 'ph-empty', 'Loading…'));
-    else if (c.gone) body.append(el('p', 'ph-empty', 'This chat is not running on ' + S.pcName + ' any more. Open it in AIB on the PC.'));
-    else {
-      for (const wait of c.waiting || []) {
-        const box = el('div', 'ph-wait');
-        box.append(el('b', '', wait.kind === 'permission' ? 'Waiting for your approval' : wait.kind === 'question' ? 'Waiting for your answer' : 'Waiting for you to sign in'));
-        box.append(el('span', '', wait.title));
-        box.append(el('p', 'ph-note', 'Answer it in AIB on ' + S.pcName + '.'));
-        body.append(box);
-      }
-      const helpers = c.helpers || [];
-      if (helpers.length) {
-        const ul = el('ul', 'ph-helpers ph-card');
-        ul.setAttribute('aria-label', 'Helpers');
-        for (const h of helpers) {
-          const li = el('li');
-          li.append(el('span', '', h.title), el('span', '', helperWord(h.state)));
-          ul.append(li);
-        }
-        body.append(ul);
-      }
-      if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
-      const rows = rowsFrom(S.chatEvents);
-      const list = el('div', 'ph-list');
-      drawRows(list, rows);
-      if (!rows.length) list.append(el('p', 'ph-empty', 'No messages yet.'));
-      body.append(list);
-      const live = liveLine(c, rows);
-      if (live) body.append(el('p', 'ph-live', live));
-      body.append(el('p', 'ph-pconly', 'Reading only. Reply in AIB on ' + S.pcName + '.'));
-    }
-    frag.append(body);
-    return frag;
+    const parts = [
+      header(title, { back: goHome, chip: S.offline ? ['Offline', 'off'] : w ? [w.text.split(' · ')[0], w.tone === 'work' ? 'live' : ''] : null }),
+    ];
+    if (S.offline) parts.push(offlineBox());
+    parts.push(chatMain());
+    if (c && !c.gone && !S.offline && abilities(S.scopes).send && c.ready) parts.push(composer());
+    const sh = S.offline ? null : sheet();
+    if (sh) parts.push(sh);
+    return parts;
   }
 
   function guessName() {
@@ -565,9 +922,21 @@
     return frag;
   }
 
+  /* Put the screen's parts in #app. The composer, when it is already there, is never taken out (the keyboard stays up). */
+  function place(parts) {
+    const keep = composerEl && parts.includes(composerEl) && composerEl.parentNode === app ? composerEl : null;
+    if (!keep) return app.replaceChildren(...parts);
+    for (const n of [...app.childNodes]) if (n !== keep) n.remove();
+    const at = parts.indexOf(keep);
+    keep.before(...parts.slice(0, at));
+    keep.after(...parts.slice(at + 1));
+  }
+
   function draw() {
     const y = root.scrollY;
-    const focusId = doc.activeElement && doc.activeElement.id;
+    const active = doc.activeElement;
+    const focusId = active && active.id;
+    const range = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
     const parts =
       S.screen === 'home'
         ? drawHome()
@@ -578,17 +947,29 @@
             : S.screen === 'removed'
               ? drawRemoved()
               : el('p', 'ph-loading', 'Connecting…');
-    app.replaceChildren(parts);
+    place(Array.isArray(parts) ? parts : [parts]);
     app.dataset.screen = S.screen;
+    app.dataset.sheet = S.sheet ? S.sheet.kind : '';
     if (focusId) {
       const f = doc.getElementById(focusId);
-      if (f && f.focus) f.focus({ preventScroll: true });
+      if (f && f.focus && doc.activeElement !== f) {
+        f.focus({ preventScroll: true });
+        if (range && f.setSelectionRange) {
+          try {
+            f.setSelectionRange(range[0], range[1]);
+          } catch {
+            /* not a text box */
+          }
+        }
+      }
     }
     root.scrollTo(0, y);
   }
 
   function goHome() {
+    if (S.editing) queueEdit(S.editing.messageId, 'cancel');
     S.screen = 'home';
+    S.sheet = null;
     S.chat = null;
     S.chatId = '';
     S.chatEvents = [];
@@ -599,13 +980,19 @@
     tick();
   }
 
-  function openChat(id, title) {
+  function openChat(id, title, withSheet) {
     S.screen = 'chat';
     S.chatId = id;
     S.chatTitle = title || '';
     S.chat = null;
     S.chatEvents = [];
     S.open.clear();
+    S.sheet = null;
+    S.sheetAuto = !!withSheet;
+    S.answers = {};
+    S.draft = '';
+    S.actError = '';
+    S.editing = null;
     draw();
     root.scrollTo(0, 0);
     clearTimeout(S.timer);
@@ -617,6 +1004,81 @@
         draw();
         schedule(CHAT_MS);
       });
+  }
+
+  // ---- actions (answer, approve once, send, stop, queued messages) ----
+  /* One phone action; on success the chat reloads at once. A refusal's own words are shown (in the sheet when it is up). */
+  async function act(op, body, fromSheet) {
+    if (S.sending) return null;
+    S.sending = true;
+    S.actError = '';
+    draw();
+    let r = null;
+    try {
+      r = await call('POST', '/api/remote/' + op, body);
+    } catch {
+      r = null;
+    }
+    S.sending = false;
+    if (r && r.status === 401) {
+      removed();
+      return null;
+    }
+    if (!r || r.status !== 200) {
+      S.actError = r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was sent.';
+      draw();
+      return null;
+    }
+    if (fromSheet) {
+      S.sheet = null;
+      if (body && body.key) delete S.answers[body.key];
+    }
+    draw();
+    clearTimeout(S.timer);
+    tick();
+    return r.data;
+  }
+
+  function newMessageId() {
+    return 'phone-' + randomHex(12);
+  }
+
+  async function sendDraft() {
+    const text = S.draft;
+    const c = S.chat;
+    if (!c || !text.trim() || S.sending) return;
+    const done = await act(c.busy ? 'queue' : 'prompt', { id: c.id, text, clientMessageId: newMessageId() });
+    if (done) {
+      S.draft = '';
+      const ta = doc.getElementById('phPrompt');
+      if (ta) {
+        ta.value = '';
+        ta.style.height = 'auto';
+      }
+    }
+  }
+
+  async function queueEdit(messageId, action) {
+    const ed = S.editing;
+    const body = { id: S.chatId, messageId, action };
+    if (action !== 'acquire') body.leaseId = ed ? ed.leaseId : null;
+    if (action === 'save') body.text = ed ? ed.text : '';
+    if (action === 'cancel') S.editing = null;
+    const r = await act('queue-edit', body);
+    if (action === 'acquire' && r && r.leaseId) {
+      S.editing = { messageId, leaseId: r.leaseId, text: typeof r.text === 'string' ? r.text : '', renewed: Date.now() };
+      draw();
+    } else if (action === 'save' && r) {
+      S.editing = null;
+      draw();
+    }
+  }
+
+  function renewEdit() {
+    const ed = S.editing;
+    if (!ed) return;
+    ed.renewed = Date.now();
+    call('POST', '/api/remote/queue-edit', { id: S.chatId, messageId: ed.messageId, action: 'renew', leaseId: ed.leaseId }).catch(() => {});
   }
 
   // ---- pairing ----
@@ -742,6 +1204,7 @@
     if (boot.data.layout !== 'phone') return;
     if (boot.data.paired) {
       S.device = boot.data.device;
+      S.scopes = (boot.data.device && boot.data.device.scopes) || [];
       S.screen = 'home';
       draw();
       tick();

@@ -9,6 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
+import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -203,9 +204,39 @@ export interface ChatPayload {
   firstSeq: number;
   truncated: boolean;
   helpers: Helper[];
-  /** What waits for you (titles only); answering from the phone comes in the next phase. */
-  waiting: { kind: 'permission' | 'question' | 'sign-in'; title: string }[];
+  /** What waits for you: what the sheets need (permission: only the options a phone may pick; question: the form). */
+  waiting: Waiting[];
+  /** Can take a message now (ready, not read only). */
+  ready: boolean;
+  /** Messages waiting to be sent in this chat (text, whether one is being sent or edited). */
+  queue: { items: QueuedItem[]; paused: boolean; message: string };
+  /** Messages that may or may not have reached the agent before AIB restarted. */
+  unknown: { clientMessageId: string; at: number }[];
   events: unknown[];
+}
+
+export interface QueuedItem {
+  id: string;
+  text: string;
+  files: number;
+  sending: boolean;
+  editing: boolean;
+}
+
+export interface Waiting {
+  kind: 'permission' | 'question' | 'sign-in';
+  title: string;
+  key?: string;
+  /** permission: the command or file it is about. */
+  detail?: string;
+  /** permission: the options a phone may pick (allow / deny once). */
+  options?: PhoneOption[];
+  /** permission: options left on the PC (Allow always and the like). */
+  hidden?: number;
+  /** Must be answered on the PC (a link question, AIB's merge request, sign-in, or no once-only option). */
+  pcOnly?: boolean;
+  /** question: the form's fields (the agent's requestedSchema). */
+  schema?: unknown;
 }
 
 export async function chatPayload(
@@ -221,15 +252,44 @@ export async function chatPayload(
   const n = Math.max(1, Math.min(MAX_TAIL, Math.trunc(tail) || DEFAULT_TAIL));
   const events = all.slice(-n);
   const attention = obj(state.attention);
-  const waiting: ChatPayload['waiting'] = [];
+  const waiting: Waiting[] = [];
   for (const p of Array.isArray(state.permissions) ? state.permissions : []) {
     const params = obj(obj(p).params);
-    waiting.push({ kind: 'permission', title: str(obj(params.toolCall).title, 200) || 'An agent asks to run something' });
+    const { title, detail } = permissionDetail(params);
+    const picked = phoneOptions(params);
+    waiting.push({
+      kind: 'permission',
+      key: str(obj(p).key, 100),
+      title,
+      detail,
+      options: picked.options,
+      hidden: picked.hidden,
+      pcOnly: picked.pcOnly,
+    });
   }
   for (const e of Array.isArray(state.elicitations) ? state.elicitations : []) {
-    waiting.push({ kind: 'question', title: str(obj(obj(e).params).message, 200) || 'An agent has a question' });
+    const params = obj(obj(e).params);
+    const form = params.mode === 'form';
+    waiting.push({
+      kind: 'question',
+      key: str(obj(e).key, 100),
+      title: typeof params.message === 'string' && params.message.trim() ? params.message.slice(0, 2000) : 'An agent has a question',
+      pcOnly: !form,
+      ...(form ? { schema: params.requestedSchema ?? {} } : {}),
+    });
   }
-  if (state.auth) waiting.push({ kind: 'sign-in', title: 'An agent needs you to sign in' });
+  if (state.auth) waiting.push({ kind: 'sign-in', title: 'An agent needs you to sign in', pcOnly: true });
+  const queue = obj(state.queue);
+  const queued: QueuedItem[] = (Array.isArray(queue.items) ? queue.items : []).map(obj).map((i) => ({
+    id: str(i.id, 128),
+    text: typeof i.text === 'string' ? i.text.slice(0, 8000) : '',
+    files: Array.isArray(i.attachments) ? i.attachments.length : 0,
+    sending: !!i.sending,
+    editing: !!i.editing,
+  }));
+  const unknown = (Array.isArray(state.unknownReceipts) ? state.unknownReceipts : []).map(obj)
+    .filter((r) => typeof r.clientMessageId === 'string')
+    .map((r) => ({ clientMessageId: r.clientMessageId as string, at: Number(r.at) || 0 }));
   const marks = ctx.conversations.public().entries;
   const mark = obj(marks[`${str(state.provider, 60)}:${str(state.sessionId, 200)}`]);
   const agent = agentName(state.provider);
@@ -251,6 +311,9 @@ export async function chatPayload(
     truncated: all.length > events.length,
     helpers: helpersOf(state.subagents),
     waiting,
+    ready: !!state.ready && !state.readOnly && !state.rebuilding && !state.closed,
+    queue: { items: queued, paused: !!queue.paused, message: str(queue.message, 120) },
+    unknown,
     events: events.map((e) => {
       const seq = Number(obj(e).seq) || 0;
       return withoutBytes(e, (k) => `/api/remote/image?id=${encodeURIComponent(id)}&seq=${seq}&n=${k}`);

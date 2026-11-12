@@ -168,7 +168,7 @@ Deno.test('the phone activity log has no message text and rotates at its cap', a
     const tail = audit.tail(5);
     assertEquals(tail.length, 5);
     assertEquals(tail[0].device, 'd19', 'newest first');
-    assertEquals(Object.keys(tail[0]).sort(), ['action', 'device', 'name', 'result', 'time']);
+    assertEquals(Object.keys(tail[0]).sort(), ['action', 'chat', 'device', 'name', 'result', 'time']);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

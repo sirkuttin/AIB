@@ -11,6 +11,7 @@ import { APP_ROOT, APP_VERSION } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { type WebContext, withThemePref } from '../web/server.ts';
+import { ACTION_OPS, checkAction, Refusal } from './actions.ts';
 import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
@@ -35,7 +36,7 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
   '/markdown.js': 'markdown.js',
 };
 
-export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image';
+export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action';
 
 /** Every route the phone port answers (method, path, how it is authorised). Default deny: anything else is 404. */
 export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
@@ -46,6 +47,17 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['GET', '/api/remote/home', 'device'],
   ['GET', '/api/remote/chat', 'device'],
   ['GET', '/api/remote/image', 'image'],
+  // Phase B: answer, approve once, send, stop, the chat's own queued messages (remote/actions.ts checks every body).
+  ['POST', '/api/remote/elicitation', 'action'],
+  ['POST', '/api/remote/permission', 'action'],
+  ['POST', '/api/remote/prompt', 'action'],
+  ['POST', '/api/remote/queue', 'action'],
+  ['POST', '/api/remote/cancel', 'action'],
+  ['POST', '/api/remote/queue-send-now', 'action'],
+  ['POST', '/api/remote/queue-edit', 'action'],
+  ['POST', '/api/remote/queue-remove', 'action'],
+  ['POST', '/api/remote/dismiss-unknown', 'action'],
+  ['POST', '/api/remote/authenticate', 'action'], // always refused: signing an agent in is PC only
 ];
 const ROUTE_AUTH = new Map(REMOTE_ROUTES.map(([m, p, a]) => [`${m} ${p}`, a]));
 /** The scope each device route needs. */
@@ -53,6 +65,22 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
   'GET /api/remote/home': 'phone.read',
   'GET /api/remote/chat': 'phone.read',
   'GET /api/remote/image': 'phone.read',
+  'POST /api/remote/elicitation': 'phone.answer',
+  'POST /api/remote/permission': 'phone.approve',
+  'POST /api/remote/prompt': 'phone.prompt',
+  'POST /api/remote/queue': 'phone.prompt',
+  'POST /api/remote/cancel': 'phone.prompt',
+  'POST /api/remote/queue-send-now': 'phone.prompt',
+  'POST /api/remote/queue-edit': 'phone.prompt',
+  'POST /api/remote/queue-remove': 'phone.prompt',
+  'POST /api/remote/dismiss-unknown': 'phone.prompt',
+  'POST /api/remote/authenticate': 'phone.read',
+};
+/** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Devices on the PC). */
+const SCOPE_WORDS: Record<string, string> = {
+  'phone.answer': 'answer questions',
+  'phone.approve': 'approve requests',
+  'phone.prompt': 'send messages or stop turns',
 };
 
 /** What the phone port needs from Phone access (remote/access.ts). */
@@ -151,7 +179,15 @@ export class RemoteServer {
         code: 'wrong_login',
       });
     }
-    if (scope && !device.scopes.includes(scope)) return this.json(403, { error: 'This phone may not do that.', code: 'scope' });
+    if (scope && !device.scopes.includes(scope)) {
+      const what = SCOPE_WORDS[scope];
+      return this.json(403, {
+        error: what
+          ? `This phone may not ${what}. Turn it on for this phone in AIB on your PC: Settings → Devices.`
+          : 'This phone may not do that.',
+        code: 'scope',
+      }, { 'X-AIB-Refused': 'scope' });
+    }
     this.host.devices.touch(device.id);
     return device;
   }
@@ -200,6 +236,8 @@ export class RemoteServer {
           return await this.#deviceRoute(request, url, path);
         case 'image':
           return await this.#image(request, url);
+        case 'action':
+          return await this.#action(request, path);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -283,18 +321,71 @@ export class RemoteServer {
     if (device instanceof Response) return device;
     if (path === '/api/remote/home') {
       const home = await homePayload(this.host.ctx, this.host.pcName(), this.host.titles);
+      // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
+      const scopes = [...device.scopes];
+      const revision = home.revision + '.' + scopes.map((x) => x.slice(6, 8)).join('');
       const known = url.searchParams.get('rev') ?? request.headers.get('If-None-Match')?.replace(/"/g, '');
-      if (known && known === home.revision) {
-        return new Response(null, { status: 304, headers: { ...securityHeadersRemote(), ETag: `"${home.revision}"` } });
+      if (known && known === revision) {
+        return new Response(null, { status: 304, headers: { ...securityHeadersRemote(), ETag: `"${revision}"` } });
       }
-      return this.json(200, home, { ETag: `"${home.revision}"` });
+      return this.json(200, { ...home, revision, scopes }, { ETag: `"${revision}"` });
     }
     const id = url.searchParams.get('id') ?? '';
     const tail = Number(url.searchParams.get('tail') ?? DEFAULT_TAIL);
     const after = Math.max(0, Math.trunc(Number(url.searchParams.get('after') ?? 0)) || 0);
     const chat = id ? await chatPayload(this.host.ctx, id, tail, after, this.host.titles) : null;
     if (!chat) return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found' });
-    return this.json(200, chat);
+    return this.json(200, { ...chat, scopes: [...device.scopes] });
+  }
+
+  /** A phone action (remote/actions.ts): device and switch, the body checked against the chat now, then the live op; one log line. */
+  async #action(request: Request, path: string): Promise<Response> {
+    const { op, audit } = ACTION_OPS[path];
+    const body = await this.#body(request);
+    const chatOf = (value: unknown) => (typeof value === 'string' ? value.slice(0, 100) : '');
+    const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
+    if (device instanceof Response) {
+      const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
+      if (known && device.headers.get('X-AIB-Refused') === 'scope') {
+        this.host.audit.write({
+          device: known.id,
+          name: known.name,
+          action: audit,
+          chat: chatOf(body?.id),
+          result: 'refused: switched off',
+        });
+      }
+      return device;
+    }
+    const log = (chat: unknown, result: string) =>
+      this.host.audit.write({ device: device.id, name: device.name, action: audit, chat: chatOf(chat), result });
+    if (!body) {
+      log('', 'refused: invalid request');
+      return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    }
+    let checked: Record<string, unknown>;
+    try {
+      checked = await checkAction(this.host.ctx, op, body);
+    } catch (error) {
+      if (!(error instanceof Refusal)) throw error;
+      log(body.id, `refused: ${error.code}`);
+      return this.json(error.status, { error: error.message, code: error.code });
+    }
+    const [status, payload] = await this.host.ctx.host.liveCall(op, checked);
+    log(checked.id, status === 200 ? 'done' : `failed (${status})`);
+    const answer = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+    if (status !== 200) {
+      return this.json(status, {
+        error: typeof answer.error === 'string' ? answer.error : 'That did not work.',
+        code: answer.code ?? 'failed',
+      });
+    }
+    // Only what the phone needs back (never a full queue or state of another chat).
+    const out: Record<string, unknown> = { ok: true };
+    for (const k of ['accepted', 'duplicate', 'turnState', 'leaseId', 'text', 'queued', 'clientMessageId']) {
+      if (k in answer) out[k] = answer[k];
+    }
+    return this.json(200, out);
   }
 
   async #image(request: Request, url: URL): Promise<Response> {

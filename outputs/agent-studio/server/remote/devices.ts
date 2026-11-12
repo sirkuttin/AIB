@@ -9,7 +9,7 @@ import { inDir, JsonFileStore, VERSION } from '../state/base.ts';
 import { now, quarantine, readJsonFile, saveJson } from '../state/json.ts';
 import { randomToken, sha256Hex } from './words.ts';
 
-/** What a phone may do. Phase A uses phone.read only; the rest are stored per phone for the next phases. */
+/** What a phone may do: see chats (always), answer questions, send messages and stop turns, approve once, get pushes. */
 export const PHONE_SCOPES = ['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve', 'phone.push'] as const;
 export type PhoneScope = typeof PHONE_SCOPES[number];
 /** Owner decision 2c: a new phone may see chats, answer, send and approve once (no passkey), and get pushes. */
@@ -149,6 +149,21 @@ export class DeviceStore extends JsonFileStore {
         this.#save();
       }
       return had;
+    });
+  }
+
+  /** The owner changed a phone's switches on the PC; the phone's next request is checked against them. */
+  setScopes(id: string, scopes: unknown): Promise<PublicDevice | null> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      const d = this.devices.get(id);
+      if (!d) return null;
+      d.scopes = cleanScopes(scopes);
+      this.counter++;
+      this.#save();
+      const { tokenHash: _t, cookieHash: _c, ...rest } = d;
+      return { ...rest, scopes: [...rest.scopes] };
     });
   }
 

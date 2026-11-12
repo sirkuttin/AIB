@@ -1,6 +1,6 @@
 /**
  * Settings > Devices on the PC (routes.ts DENO_ONLY, page token): Phone access on/off, Check again, Add a phone (pairing code, QR,
- * six words), approve or reject a phone that claimed the code, remove one phone or all, and the phone activity log. These run on
+ * six words), approve or reject a phone that claimed the code, a phone's switches, remove one phone or all, and the phone activity log. These run on
  * the page port only; the phone port (remote/server.ts) never answers them.
  */
 import { ValueError } from '../core/py.ts';
@@ -46,8 +46,13 @@ export function devicesRoutes(): Map<string, Handler> {
   );
   routes.set('POST /api/live/devices/reject', (ctx, _url, body) => [200, { ok: true, rejected: ctx.phone.reject(body?.claim) }]);
   routes.set('POST /api/live/devices/remove', async (ctx, _url, body) => [200, { ok: true, removed: await ctx.phone.remove(body?.id) }]);
+  routes.set('POST /api/live/devices/scopes', async (ctx, _url, body) => {
+    const device = await ctx.phone.setScopes(body?.id, body?.scopes);
+    if (!device) return [404, { error: 'That phone is no longer paired.', code: 'no_device' }];
+    return [200, { ok: true, device }];
+  });
   routes.set('POST /api/live/devices/remove-all', async (ctx) => [200, { ok: true, removed: await ctx.phone.removeAll() }]);
-  routes.set('GET /api/live/devices/activity', (ctx) => [200, { entries: ctx.phone.activity() }]);
+  routes.set('GET /api/live/devices/activity', async (ctx) => [200, { entries: await ctx.phone.activity() }]);
   for (const [key, handler] of routes) routes.set(key, wrap(handler));
   return routes;
 }

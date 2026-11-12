@@ -10,6 +10,12 @@
  * With a headless Chrome (no window) on the phone page at 375 px, where this test plays Tailscale Serve (DevTools Fetch
  * interception: the page really is https://<tailnet name>, a secure context): pairing through the page (check words equal the
  * PC's), home, a chat, offline and "no longer paired", with no sideways scroll; and chat.html at 375 px laid out as before.
+ *
+ * Phase B: from the phone (forged Serve headers, a real AIB and the fake agent) a form question is answered and a request approved
+ * once, and the agent goes on; plain text sends, "/" is refused, a queued message is removed, Stop ends a turn, a closed chat is
+ * refused; each action is one line in the phone activity log. In the headless page at 375 px: a "Needs you" card opens the
+ * question sheet, the approval sheet shows Deny / Allow once with the long command wrapped, the composer (16 px, Stop) keeps the
+ * text through polls, queued messages have Edit / Remove / Send now, and the switches turned off on the PC hide those controls.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { DENO, Fixture, httpJson, type Json, openConversation, SEP, sleep, until, type Web } from './_host_fixture.ts';
@@ -23,6 +29,7 @@ import {
   LOGIN,
   NAME,
   nonce,
+  pairPhone,
   pc,
   phoneHeaders,
   type Raw,
@@ -188,6 +195,91 @@ Deno.test({
       30,
     );
     assertEquals(again.status, 200);
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name:
+    'end to end: from the phone, answer a form question and approve once; the agent continues; plain text sends, "/" refused, queue, Stop',
+  async fn() {
+    await using fx = new PhoneFixture();
+    const web = await fx.startWeb();
+    const port = fx.phonePort;
+    await until(async () => (await phoneGet(port, '/api/remote/bootstrap')).status === 200, 'the phone port', 30);
+    const phone = await pairOverHttp(web, port);
+    const id = await openConversation(web, fx);
+    const act = (op: string, body: Json) =>
+      raw(port, 'POST', `/api/remote/${op}`, phoneHeaders({ [DEVICE_HEADER]: phone.token }, 'POST'), JSON.stringify(body));
+    const chat = () => phoneGet(port, `/api/remote/chat?id=${id}&tail=100`, phone.token);
+    const waiting = async (kind: string) =>
+      await until(async () => ((await chat()).json.waiting as Json[] ?? []).find((w) => w.kind === kind) ?? null, kind, 30);
+    const said = async (text: string) =>
+      await until(
+        async () => {
+          const c = await chat();
+          return !c.json.busy && JSON.stringify(c.json.events).includes(text) ? c : null;
+        },
+        text,
+        30,
+      );
+
+    // the phone sends plain text: a form question comes back
+    const sent = await act('prompt', { id, text: 'form', clientMessageId: 'phone-1' });
+    assertEquals(sent.status, 200, sent.text);
+    const q = await waiting('question');
+    assertEquals(q.pcOnly, false);
+    const answered = await act('elicitation', { id, key: q.key, action: 'accept', content: { name: 'Ada', plan: 'pro' } });
+    assertEquals(answered.status, 200, answered.text);
+    await said('Fixture form response');
+    assert(JSON.stringify((await chat()).json.events).includes('\\"plan\\": \\"pro\\"'), 'the agent got the answer');
+
+    // a permission: Allow once from the phone, the agent continues
+    assertEquals((await act('prompt', { id, text: 'approve', clientMessageId: 'phone-2' })).status, 200);
+    const p = await waiting('permission');
+    assertEquals((p.options as Json[]).map((o) => o.kind), ['allow_once', 'reject_once']);
+    assertEquals((await act('permission', { id, key: p.key, option: 'not-an-option' })).status, 403);
+    const ok = await act('permission', { id, key: p.key, option: (p.options as Json[])[0].optionId });
+    assertEquals(ok.status, 200, ok.text);
+    await said('Fixture response');
+
+    // refused: an agent or AIB command (a link question is refused in remote_actions_test.ts: this agent runs --rich)
+    assertEquals((await act('prompt', { id, text: '/compact', clientMessageId: 'phone-3' })).json.code, 'text_only');
+
+    // Stop: a turn that waits until stopped
+    assertEquals((await act('prompt', { id, text: 'wait', clientMessageId: 'phone-5' })).status, 200);
+    await until(async () => (await chat()).json.busy, 'working', 30);
+    const queued = await act('queue', { id, text: 'after the stop', clientMessageId: 'phone-6' });
+    assertEquals(queued.status, 200, queued.text);
+    const item = await until(async () => (((await chat()).json.queue as Json).items as Json[])[0], 'queued', 30);
+    assertEquals(item.text, 'after the stop');
+    assertEquals((await act('queue-remove', { id, messageId: item.id })).status, 200);
+    assertEquals((await act('cancel', { id })).status, 200);
+    await until(async () => !(await chat()).json.busy, 'stopped', 30);
+
+    // not running any more: "Open it in AIB on your PC"
+    await web.post('disconnect', { id });
+    const closed = await act('prompt', { id, text: 'hi', clientMessageId: 'phone-7' });
+    assertEquals([closed.status, closed.json.code], [409, 'not_live']);
+
+    const log = fx.read(fx.state + SEP + 'remote-audit.jsonl');
+    for (const secret of ['Ada', 'after the stop', '/compact', 'Fixture approval', 'Fixture form']) {
+      assert(!log.includes(secret), `the log holds ${secret}`);
+    }
+    const lines = log.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.chat === id);
+    assertEquals(lines.map((l) => [l.action, l.result]), [
+      ['send', 'done'],
+      ['answer', 'done'],
+      ['send', 'done'],
+      ['approve', 'refused: pc_only'],
+      ['approve', 'done'],
+      ['send', 'refused: text_only'],
+      ['send', 'done'],
+      ['queue', 'done'],
+      ['queue: remove', 'done'],
+      ['stop', 'done'],
+      ['send', 'refused: not_live'],
+    ]);
   },
 });
 
@@ -433,6 +525,323 @@ Deno.test({
       assert(await page.eval(NO_SIDEWAYS), `removed: sideways scroll ${await page.eval(WIDTHS)}`);
       assertEquals(page.errors, [], 'console errors');
       assertEquals(page.csp, [], 'CSP violations');
+      await page.close();
+    } finally {
+      await browser.close();
+      await s.close();
+    }
+  },
+});
+
+/** Put a paired phone's token where phone.js keeps it (IndexedDB on the phone origin), then load the page again. */
+async function signInPage(page: Page, token: string, id: string): Promise<void> {
+  await page.goto(`https://${NAME}/phone.html`);
+  await page.waitFor('!!document.getElementById("app").dataset.screen', 15000, 'the phone page');
+  await page.eval(`new Promise((resolve, reject) => {
+    const req = indexedDB.open('aib-phone', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => {
+      const tx = req.result.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put({ token: ${JSON.stringify(token)}, device: { id: ${JSON.stringify(id)} } }, 'device');
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    };
+    req.onerror = () => reject(req.error);
+  })`);
+  await page.goto(`https://${NAME}/phone.html`);
+  await page.waitFor('document.getElementById("app").dataset.screen === "home" && !!document.querySelector(".ph-card")', 15000, 'home');
+}
+
+Deno.test({
+  ...OPTS,
+  name:
+    'phone page at 375 px: "Needs you" opens the question sheet; approval sheet Deny / Allow once; composer, Stop, queue; switches off hide them',
+  ignore: !browserPath,
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner });
+    const browser = await Browser.launch();
+    try {
+      fake.state.serve = serveStatus(readRemotePort(s.state)!);
+      await pc(s, 'POST', '/api/live/devices/access', { on: true });
+      const main = longChat();
+      const long = 'npm run e2e -- --update-snapshots --reporter=verbose ' +
+        'C:\\Users\\someone\\code\\a-very-long-project-folder-name\\src\\components\\checkout\\PaymentStepWithAVeryLongName.test.tsx ' +
+        'x'.repeat(120);
+      main.attention = { ...main.attention, state: 'needs_you', needs: 1 };
+      main.permissions = [{
+        key: 'perm1',
+        params: {
+          toolCall: { title: 'Run the end-to-end tests', rawInput: { command: long } },
+          options: [
+            { optionId: 'yes', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'always', name: 'Allow always', kind: 'allow_always' },
+            { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+          ],
+        },
+      }];
+      main.queue = { items: [{ id: 'q1', text: 'then update the docs', attachments: [], sending: false, editing: false }], paused: false };
+      const blog: FakeChat = {
+        id: 'blog',
+        provider: 'codex',
+        sessionId: 'sess-blog',
+        cwd: 'C:\\code\\blog',
+        busy: false,
+        closed: false,
+        attention: { state: 'needs_you', needs: 1, turnEndedAt: null, busySince: null },
+        subagents: {},
+        breadth: { sessionInfo: { title: 'Blog site' } },
+        events: [{ seq: 1, kind: 'user', data: { text: 'Convert the posts' } }],
+        permissions: [],
+        elicitations: [{
+          key: 'q1',
+          params: {
+            mode: 'form',
+            message: 'Which date format for posts?',
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                format: {
+                  type: 'string',
+                  title: 'Date format',
+                  oneOf: [{ const: 'long', title: '12 November 2026' }, { const: 'iso', title: '2026-11-12' }],
+                },
+                note: { type: 'string', title: 'Anything else' },
+              },
+              required: ['format'],
+            },
+          },
+        }],
+      };
+      s.chats.push(main, blog);
+      // the fake agent host: an answered request goes away, a queued message joins the queue
+      s.answerLive((name, body) => {
+        const c = s.chats.find((x) => x.id === body.id)!;
+        if (name === 'elicitation') c.elicitations = [];
+        if (name === 'permission') c.permissions = [];
+        if (name === 'elicitation' || name === 'permission') c.attention = { ...c.attention, state: 'idle', needs: 0 };
+        if (name === 'queue-remove') (c.queue as Json).items = ((c.queue as Json).items as Json[]).filter((i) => i.id !== body.messageId);
+        if (name === 'queue') {
+          ((c.queue as Json).items as Json[]).push({ id: 'q2', text: body.text, attachments: [], sending: false, editing: false });
+        }
+        return [200, { ok: true }];
+      });
+      const phone = await pairPhone(s);
+      const page = await browser.open('about:blank', 375, 812);
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
+      const up = { on: true };
+      await serveFor(page, s, up);
+      await signInPage(page, phone.token, phone.id);
+      assert(await page.eval(NO_SIDEWAYS), `home: sideways scroll ${await page.eval(WIDTHS)}`);
+
+      // "Needs you" -> the chat with the question sheet already up
+      await page.click('.ph-card[data-chat="blog"]');
+      await page.waitFor('document.getElementById("app").dataset.sheet === "question"', 15000, 'the question sheet');
+      assert(await page.eval(NO_SIDEWAYS), `question sheet: sideways scroll ${await page.eval(WIDTHS)}`);
+      const opts = await page.eval<number[]>(
+        '[...document.querySelectorAll("#phSheet .ph-opt")].map((b) => b.getBoundingClientRect().height)',
+      );
+      assert(opts.length === 2 && opts.every((h) => h >= 44), `choices are big targets: ${opts}`);
+      await page.shot('phone-question-sheet');
+      await page.click('#phAnswer'); // nothing picked: it says what is missing, nothing is sent
+      await page.waitFor('document.querySelector("#phSheet .ph-error")?.textContent === "Fill in: Date format."', 5000, 'missing');
+      const before = s.liveCalls.length;
+      await page.click('#phSheet [data-field="format"] button:last-of-type');
+      await page.click('#phField-note');
+      await page.type('Use the long one on the home page');
+      assertEquals(await page.eval('getComputedStyle(document.getElementById("phField-note")).fontSize'), '16px');
+      assertEquals(s.liveCalls.length, before);
+      await page.click('#phAnswer');
+      await page.waitFor('document.getElementById("app").dataset.sheet === ""', 15000, 'the sheet closes');
+      assertEquals(s.liveCalls.at(-1), ['elicitation', {
+        id: 'blog',
+        key: 'q1',
+        action: 'accept',
+        content: { format: 'iso', note: 'Use the long one on the home page' },
+      }]);
+
+      // the main chat: an approval waits; its sheet has two big buttons and the long command wraps
+      await page.click('.ph-back');
+      await page.waitFor('document.getElementById("app").dataset.screen === "home"', 15000, 'home');
+      await page.click('.ph-card[data-chat="main"]');
+      await page.waitFor('document.getElementById("app").dataset.sheet === "permission"', 15000, 'the approval sheet');
+      const sheet = await page.eval<Json>(`(() => {
+        const s = document.getElementById('phSheet').getBoundingClientRect();
+        const cmd = document.querySelector('#phSheet .ph-cmd');
+        const buttons = [...document.querySelectorAll('#phSheet .ph-answer .ph-btn')].map((b) => [b.textContent, Math.round(b.getBoundingClientRect().height)]);
+        return { top: s.top, bottom: Math.round(s.bottom), height: innerHeight, cmdWraps: cmd.scrollWidth <= cmd.clientWidth, buttons,
+          notes: [...document.querySelectorAll('#phSheet .ph-note')].map((n) => n.textContent) };
+      })()`);
+      assertEquals(sheet.buttons, [['Deny', 48], ['Allow once', 48]]);
+      assert(sheet.cmdWraps, 'the command wraps');
+      assert(
+        (sheet.top as number) >= 0 && (sheet.bottom as number) <= (sheet.height as number),
+        `the sheet fits: ${JSON.stringify(sheet)}`,
+      );
+      assert((sheet.notes as string[]).includes('Other choices are on your PC.'));
+      assert(await page.eval(NO_SIDEWAYS), `approval sheet: sideways scroll ${await page.eval(WIDTHS)}`);
+      await page.shot('phone-approval-sheet');
+      await page.click('#phSheet [data-option="yes"]');
+      await page.waitFor('document.getElementById("app").dataset.sheet === ""', 15000, 'the sheet closes');
+      assertEquals(s.liveCalls.at(-1), ['permission', { id: 'main', key: 'perm1', option: 'yes' }]);
+
+      // the composer at the bottom: 16 px text, Stop while working; typing survives the 3 s polls
+      const bar = await page.eval<Json>(`(() => {
+        const f = document.getElementById('phComposer').getBoundingClientRect();
+        return { bottom: Math.round(f.bottom), height: innerHeight, font: getComputedStyle(document.getElementById('phPrompt')).fontSize,
+          stop: !document.getElementById('phStop').hidden };
+      })()`);
+      assertEquals([bar.bottom, bar.font, bar.stop], [bar.height, '16px', true]);
+      await page.click('#phPrompt');
+      await page.type('Also check the mobile layout');
+      await sleep(3500);
+      assertEquals(
+        await page.eval('[document.activeElement.id, document.getElementById("phPrompt").value]'),
+        ['phPrompt', 'Also check the mobile layout'],
+        'the text and the caret stay through a poll',
+      );
+      assert(await page.eval(NO_SIDEWAYS), `chat with composer: sideways scroll ${await page.eval(WIDTHS)}`);
+      await page.click('#phSend');
+      await page.waitFor('document.getElementById("phPrompt").value === ""', 15000, 'sent');
+      assertEquals(s.liveCalls.at(-1)?.[0], 'queue', 'a working chat queues the message');
+      assertEquals((s.liveCalls.at(-1)?.[1] as Json).text, 'Also check the mobile layout');
+      await page.waitFor('document.querySelectorAll(".ph-queued").length === 2', 15000, 'the queued message shows');
+      await page.shot('phone-chat-composer-queue');
+      assertEquals(
+        await page.eval('[...document.querySelectorAll(".ph-queued[data-queued=q1] .ph-btn")].map((b) => b.textContent)'),
+        ['Edit', 'Remove', 'Send now'],
+      );
+      await page.click('.ph-queued[data-queued="q1"] [data-act="remove"]');
+      await page.waitFor('document.querySelectorAll(".ph-queued").length === 1', 15000, 'removed');
+      assertEquals(s.liveCalls.at(-1), ['queue-remove', { id: 'main', messageId: 'q1' }]);
+      await page.click('#phStop');
+      await until(() => s.liveCalls.at(-1)?.[0] === 'cancel', 'Stop', 10);
+      assertEquals(s.liveCalls.at(-1), ['cancel', { id: 'main' }]);
+
+      // switches off on the PC: the composer, Stop and the queue buttons go away at the next poll
+      main.permissions = [{
+        key: 'perm2',
+        params: { toolCall: { title: 'Run lint' }, options: [{ optionId: 'yes', name: 'Allow once', kind: 'allow_once' }] },
+      }];
+      main.attention = { ...main.attention, state: 'needs_you', needs: 1 };
+      await pc(s, 'POST', '/api/live/devices/scopes', { id: phone.id, scopes: ['phone.read'] });
+      await page.waitFor(
+        '!document.getElementById("phComposer") && !!document.querySelector(".ph-wait[data-wait=perm2]")',
+        15000,
+        'controls hidden',
+      );
+      assertEquals(await page.eval('document.querySelectorAll(".ph-wait .ph-btn, .ph-queued .ph-btn").length'), 0);
+      assert(await page.eval('document.body.textContent.includes("Sending from this phone is off.")'));
+      assert(await page.eval('document.querySelector(".ph-wait[data-wait=perm2]").textContent.includes("Finish this on your PC.")'));
+      assert(await page.eval(NO_SIDEWAYS), `switches off: sideways scroll ${await page.eval(WIDTHS)}`);
+      await page.shot('phone-switches-off');
+
+      // on again, then the PC can't be reached: nothing to send or answer while offline
+      await pc(s, 'POST', '/api/live/devices/scopes', {
+        id: phone.id,
+        scopes: ['phone.read', 'phone.prompt', 'phone.approve', 'phone.answer'],
+      });
+      await page.waitFor('!!document.getElementById("phComposer") && !!document.querySelector(".ph-wait .ph-btn")', 15000, 'controls back');
+      up.on = false;
+      await page.waitFor('!!document.querySelector(".ph-offline")', 15000, 'offline');
+      assertEquals(
+        await page.eval(
+          '[!!document.getElementById("phComposer"), document.querySelectorAll(".ph-wait .ph-btn, .ph-queued .ph-btn").length]',
+        ),
+        [false, 0],
+      );
+      assert(await page.eval(NO_SIDEWAYS), `offline: sideways scroll ${await page.eval(WIDTHS)}`);
+      assertEquals(page.errors, [], 'console errors');
+      assertEquals(page.csp, [], 'CSP violations');
+      await page.close();
+    } finally {
+      await browser.close();
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: "PC: Settings > Devices shows each phone's switches (a change is saved at once) and Phone activity with the chat's title",
+  ignore: !browserPath,
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner });
+    const browser = await Browser.launch();
+    try {
+      fake.state.serve = serveStatus(readRemotePort(s.state)!);
+      await pc(s, 'POST', '/api/live/devices/access', { on: true });
+      s.chats.push({
+        id: 'c1',
+        provider: 'claude',
+        sessionId: 'sess-c1',
+        cwd: 'C:\\code\\shop',
+        busy: false,
+        closed: false,
+        attention: { state: 'idle', needs: 0, turnEndedAt: null, busySince: null },
+        subagents: {},
+        breadth: { sessionInfo: { title: 'Checkout redesign' } },
+        events: [],
+        permissions: [],
+        elicitations: [],
+      });
+      const phone = await pairPhone(s, 'Pixel 9', ['phone.read', 'phone.answer']);
+      const sent = await raw(
+        s.phonePort(),
+        'POST',
+        '/api/remote/prompt',
+        phoneHeaders({ [DEVICE_HEADER]: phone.token }, 'POST'),
+        JSON.stringify({ id: 'c1', text: 'hello', clientMessageId: 'm1' }),
+      );
+      assertEquals(sent.status, 403, 'Send is off for this phone');
+      const page = await browser.open('about:blank', 1280, 900);
+      await page.goto(`http://127.0.0.1:${s.port}/chat.html`);
+      await page.waitFor('!!document.getElementById("openSettings")', 15000, 'chat page');
+      await page.click('#openSettings');
+      await page.waitFor(`document.body.classList.contains('settings-open')`, 8000, 'settings open');
+      await page.eval(`[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'Devices').click()`);
+      const row = `.dv-device[data-device="${phone.id}"]`;
+      await page.waitFor(`!!document.querySelector('${row} input[data-scope="phone.prompt"]')`, 8000, "the phone's switches");
+      assertEquals(
+        await page.eval(`[...document.querySelectorAll('${row} input[data-scope]')].map((i) => [i.dataset.scope, i.checked, i.disabled])`),
+        [
+          ['phone.read', true, true],
+          ['phone.answer', true, false],
+          ['phone.prompt', false, false],
+          ['phone.approve', false, false],
+          ['phone.push', false, false],
+        ],
+      );
+      await page.click(`${row} input[data-scope="phone.prompt"]`);
+      await until(
+        async () => {
+          const [, v] = await pc(s, 'GET', '/api/live/devices');
+          return ((v.devices as Json[])[0].scopes as string[]).includes('phone.prompt');
+        },
+        'the switch is saved',
+        10,
+      );
+      await page.waitFor(`document.querySelector('${row} input[data-scope="phone.prompt"]').checked`, 8000, 'drawn on');
+      const again = await raw(
+        s.phonePort(),
+        'POST',
+        '/api/remote/prompt',
+        phoneHeaders({ [DEVICE_HEADER]: phone.token }, 'POST'),
+        JSON.stringify({ id: 'c1', text: 'hello', clientMessageId: 'm2' }),
+      );
+      assertEquals(again.status, 200, 'Send is on now');
+      await page.eval(`[...document.querySelectorAll('.dv-slot button')].find((b) => b.textContent === 'Phone activity').click()`);
+      const lines = await page.waitFor(
+        `(() => { const l = [...document.querySelectorAll('.dv-activity p')].map((p) => p.textContent); return l.length > 3 ? l : null; })()`,
+        8000,
+        'Phone activity',
+      ) as string[];
+      assert(lines.some((l) => l.endsWith('· Pixel 9 · send · "Checkout redesign": done')), lines.join('\n'));
+      assert(lines.some((l) => l.endsWith('· Pixel 9 · send · "Checkout redesign": refused: switched off')), lines.join('\n'));
+      assert(!lines.join('\n').includes('hello'), 'no message text');
+      await page.shot('pc-devices-switches');
+      assertEquals(page.errors, [], 'console errors');
       await page.close();
     } finally {
       await browser.close();

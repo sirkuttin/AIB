@@ -61,6 +61,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/devices/reject',
     'POST /api/live/devices/remove',
     'POST /api/live/devices/remove-all',
+    'POST /api/live/devices/scopes',
     'GET /api/live/devices/activity',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));

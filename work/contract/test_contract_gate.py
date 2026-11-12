@@ -257,6 +257,10 @@ class PhonePortContract(unittest.TestCase):
         answers = [body]
         routes = re.findall(r"\['(GET|POST)', '(/[^']*)'", (APP / 'server' / 'web' / 'routes.ts').read_text(encoding='utf-8'))
         routes += [('GET', p) for p in ('/phone.html', '/chat.html', '/api/remote/bootstrap', '/api/remote/home', '/api/remote/chat?id=x', '/api/remote/image?id=x&seq=1&n=0')]
+        # the phone's actions (answer, approve once, send, stop, queue; authenticate is always refused)
+        actions = re.findall(r"\['POST', '(/api/remote/[^']*)', 'action'\]", (APP / 'server' / 'remote' / 'server.ts').read_text(encoding='utf-8'))
+        self.assertGreaterEqual(len(actions), 10)
+        routes += [('POST', p) for p in actions]
         self.assertGreater(len(routes), 100)
         for method, path in routes:
             status, _, body = self.phone(method, path, {} if method == 'POST' else None, X_AIB_Device=token, Cookie='__Host-aib-phone=' + cookie)

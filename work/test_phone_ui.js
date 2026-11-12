@@ -71,3 +71,61 @@ test('Devices: the Tailscale checklist says what to do next, and shows the serve
   assert.equal(D.countdown(1000 + 292, 1000 * 1000), '4:52');
   assert.equal(D.ago(0), 'never');
 });
+
+test('question sheet: fields from the form schema (choices, yes / no, several, number, text) and the answer to send', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      format: { type: 'string', title: 'Date format', oneOf: [{ const: 'long', title: '12 November 2026' }, { const: 'iso' }] },
+      size: { type: 'string', enum: ['s', 'm'] },
+      ok: { type: 'boolean', title: 'Publish now' },
+      tags: { type: 'array', items: { enum: ['a', 'b'] } },
+      count: { type: 'integer', title: 'How many' },
+      note: { type: 'string', description: 'Free text' },
+    },
+    required: ['format', 'count'],
+  };
+  const fields = P.fieldsOf(schema);
+  assert.deepEqual(fields.map((f) => [f.key, f.type, f.required]), [
+    ['format', 'choice', true],
+    ['size', 'choice', false],
+    ['ok', 'bool', false],
+    ['tags', 'multi', false],
+    ['count', 'number', true],
+    ['note', 'text', false],
+  ]);
+  assert.deepEqual(fields[0].choices, [{ value: 'long', label: '12 November 2026' }, { value: 'iso', label: 'iso' }]);
+  assert.deepEqual(P.contentFrom(fields, {}).missing, ['Date format', 'How many']);
+  assert.deepEqual(P.contentFrom(fields, { format: 'iso', count: '3', note: '  ', ok: false, tags: [] }), {
+    content: { format: 'iso', count: 3, ok: false },
+    missing: [],
+  });
+});
+
+test('approval sheet: Deny then Allow once, only for the options the PC sends; what this phone may do', () => {
+  const wait = { kind: 'permission', key: 'k', options: [{ optionId: 'y', kind: 'allow_once' }, { optionId: 'n', kind: 'reject_once' }] };
+  assert.deepEqual(P.approvalButtons(wait), [
+    { label: 'Deny', optionId: 'n', tone: 'deny' },
+    { label: 'Allow once', optionId: 'y', tone: 'allow' },
+  ]);
+  assert.deepEqual(P.approvalButtons({ options: [] }), []);
+  const all = P.abilities(['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve']);
+  assert.deepEqual(all, { answer: true, approve: true, send: true });
+  const none = P.abilities(['phone.read']);
+  assert.equal(P.actionable(wait, all), true);
+  assert.equal(P.actionable(wait, none), false, 'Approve off: no buttons');
+  assert.equal(P.actionable({ ...wait, pcOnly: true }, all), false, 'PC only');
+  assert.equal(P.actionable({ kind: 'question', key: 'q' }, all), true);
+  assert.equal(P.actionable({ kind: 'question', key: 'q' }, { ...all, answer: false }), false, 'Answer off');
+  assert.equal(P.actionable({ kind: 'sign-in', pcOnly: true }, all), false);
+});
+
+test("Devices: a phone's switches keep See chats on; a Phone activity line names the phone, action, chat and result", () => {
+  assert.deepEqual(D.scopesAfter(['phone.read', 'phone.prompt'], 'phone.approve', true), ['phone.read', 'phone.prompt', 'phone.approve']);
+  assert.deepEqual(D.scopesAfter(['phone.read', 'phone.prompt'], 'phone.prompt', false), ['phone.read']);
+  assert.deepEqual(D.scopesAfter([], 'phone.read', false), ['phone.read']);
+  const e = { name: 'Pixel 9', device: 'd1', action: 'approve', chat: 'abcdef123456', chatTitle: 'Checkout redesign', result: 'done' };
+  assert.equal(D.activityLine(e, '12/11/2026 14:06'), '12/11/2026 14:06 · Pixel 9 · approve · "Checkout redesign": done');
+  assert.equal(D.activityLine({ ...e, chatTitle: '' }, 'T'), 'T · Pixel 9 · approve · chat abcdef12: done');
+  assert.equal(D.activityLine({ action: 'phone access', result: 'turned on' }, 'T'), 'T · AIB · phone access: turned on');
+});

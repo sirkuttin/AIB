@@ -372,3 +372,193 @@ button.ph-card {
 .ph-stale {
   opacity: 0.65;
 }
+/* ---- chat screen with a composer (phase B) ---- */
+.app[data-screen='chat'] {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.ph-chat {
+  flex: 1;
+  padding-bottom: 16px;
+}
+.ph-wait-title {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.ph-wait .ph-btn {
+  margin-top: 10px;
+}
+.ph-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ph-row .ph-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+}
+.ph-answer .ph-btn.allow {
+  flex-grow: 2;
+}
+.ph-btn.deny {
+  background: transparent;
+  color: var(--danger-text);
+  border: 1px solid var(--danger-text);
+}
+.ph-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  resize: none;
+}
+/* the composer: always at the bottom of the screen, above the phone's home bar */
+.ph-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: 8px calc(12px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.ph-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ph-composer .ph-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 160px;
+}
+.ph-send,
+.ph-stop {
+  flex: none;
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 22px;
+  font: inherit;
+  font-weight: 600;
+}
+.ph-send {
+  border: 0;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ph-stop {
+  border: 1px solid var(--danger-text);
+  background: transparent;
+  color: var(--danger-text);
+}
+.ph-stop[hidden],
+.ph-act-error[hidden] {
+  display: none;
+}
+.ph-act-error {
+  margin: 0 0 8px;
+}
+.ph-send:disabled {
+  opacity: 0.6;
+}
+/* queued messages */
+.ph-queued {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+.ph-queued-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.ph-queued .ph-btn {
+  min-height: 44px;
+  padding: 6px 8px;
+  font-size: 15px;
+}
+/* the sheets: up from the bottom, over a dimmed chat; tall content scrolls inside the sheet */
+.ph-dim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.4);
+}
+.ph-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 11;
+  max-width: 640px;
+  max-height: 88vh;
+  max-height: 88dvh;
+  margin: 0 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 10px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  overflow-wrap: anywhere;
+}
+.ph-grab {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 8px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.ph-sheet-title {
+  margin: 4px 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.ph-cmd {
+  margin: 8px 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.ph-field {
+  margin: 12px 0;
+}
+.ph-field-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.ph-opt {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.ph-opt.on {
+  border: 2px solid var(--accent);
+  padding: 9px 13px;
+  font-weight: 600;
+}

@@ -321,7 +321,7 @@ Deno.test({
       const seqs = (body.events as Json[]).map((e) => e.seq);
       assertEquals(seqs, [43, 44, 45, 46, 47, 48, 49, 50, 51, 52]);
       assertEquals([body.truncated, body.firstSeq, body.cursor], [true, 43, 52]);
-      assertEquals(body.waiting, [{ kind: 'permission', title: 'Run npm test' }]);
+      assertEquals(body.waiting, [{ kind: 'permission', key: 'p1', title: 'Run npm test', detail: '', options: [], hidden: 0, pcOnly: true }]);
       assert(!r.text.includes(PNG) && !r.text.includes('JVBERi0x'), 'no inline file bytes');
       assert(!('inUse' in body) && !('settings' in body) && !('permissions' in body), 'no model lookup, settings or permission bodies');
       const att = ((body.events as Json[]).find((e) => e.seq === 51)!.data as Json).attachments as Json[];

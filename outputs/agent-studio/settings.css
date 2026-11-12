@@ -918,6 +918,16 @@ html[data-ui-scaled] .st-page {
   gap: 6px;
   margin: 8px 0;
 }
+/* the page's plain label rule adds 18 px above and below: switches sit close together */
+.dv-scopes .st-toggle {
+  margin: 0;
+}
+/* a paired phone's switches: one wrapping line under its name */
+.dv-device .dv-scopes {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
 .dv-pair-grid {
   display: flex;
   flex-wrap: wrap;
