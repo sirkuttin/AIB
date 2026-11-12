@@ -920,6 +920,7 @@
       if (S.dirty) paintStage('show');
     }
     if (!v && was) closePop();
+    syncViewing();
   }
   function shown() {
     if (S.chat.id) loadList();
@@ -1249,8 +1250,17 @@
     if (dn) parts.push(dn + (dn === 1 ? ' doc' : ' docs'));
     ui.tab.setAttribute('aria-label', 'Artifacts' + (parts.length ? ', ' + parts.join(' and ') : '') + (S.fresh ? ', something new' : ''));
   }
+  /* body.ar-viewing: a doc or artifact is showing in the visible Artifacts tab (resize-ui.js widens the column to 600 px). */
+  function syncViewing() {
+    const b = win && win.document && win.document.body;
+    if (b) b.classList.toggle('ar-viewing', !!(ui && S.visible && !ui.stage.hidden));
+  }
   function paintBar() {
     if (!ui) return;
+    paintBar2();
+    syncViewing();
+  }
+  function paintBar2() {
     if (S.doc) return paintDocBar();
     ui.ver.hidden = false;
     ui.ext.hidden = false;

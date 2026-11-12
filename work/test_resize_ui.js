@@ -80,6 +80,17 @@ test('layout defaults, user widths, and a hidden panel', () => {
     activity: 220,
   });
 });
+test('a doc or artifact showing widens the column to 600, or to your viewer width; the chat keeps 420', () => {
+  const v = (o) => R.computeLayout({ vw: 1920, activity: 280, side: 240, sideOn: true, actOn: true, ...o }).activity;
+  assert.equal(v({ viewer: true }), 600);
+  assert.equal(v({ viewer: true, viewerW: 700 }), 700);
+  assert.equal(v({ viewer: true, activity: 400 }), 600, 'the normal width is kept apart');
+  assert.equal(v({ viewer: false, viewerW: 700 }), 280, 'back to the normal width when the viewer closes');
+  const narrow = R.computeLayout({ vw: 1100, activity: 280, side: 240, sideOn: true, actOn: true, viewer: true });
+  assert.ok(1100 - narrow.side - narrow.activity >= 420, JSON.stringify(narrow));
+  assert.equal(R.computeLayout({ vw: 1440, viewer: true, sideOn: true, actOn: false }).activity, 0);
+  assert.equal(R.sanitize('{"viewer":640.2}').viewer, 640);
+});
 test('side panels yield before the chat drops under 420 px', () => {
   for (const vw of [1100, 1150, 1280, 1366, 1440, 1600]) {
     const r = R.computeLayout({ vw, side: 480, activity: 600, sideOn: true, actOn: true });
@@ -128,11 +139,12 @@ test('stored sizes: junk becomes defaults', () => {
   assert.deepEqual(R.sanitize('{"side":300.4,"activity":"x","composer":-5,"split":120}'), {
     side: 300,
     activity: null,
+    viewer: null,
     composer: null,
     split: 120,
   });
-  assert.deepEqual(R.sanitize('not json'), { side: null, activity: null, composer: null, split: null });
-  assert.deepEqual(R.sanitize(null), { side: null, activity: null, composer: null, split: null });
+  assert.deepEqual(R.sanitize('not json'), { side: null, activity: null, viewer: null, composer: null, split: null });
+  assert.deepEqual(R.sanitize(null), { side: null, activity: null, viewer: null, composer: null, split: null });
 });
 
 test('QA M3/m13: the chat list stops at 480 px; split panes side by side raise the chat column floor', () => {

@@ -4,7 +4,7 @@
    or Enter resets, arrow keys / Home / End on focused handles, Ctrl+B (chat list) and Ctrl+Alt+B (Activity). Sizes are kept in
    localStorage per window-width bucket. The pure helpers at the top have node tests; the DOM part starts at init(). */
 (function (root) {
-  const DEF = { side: 240, activity: 280 },
+  const DEF = { side: 240, activity: 280, viewer: 600 },
     SIDE = { min: 200, max: 480 }, // a wider chat list only takes room from the chat (QA m13)
     ACT = { min: 220, max: Infinity },
     COMPOSER_MIN = 56,
@@ -68,7 +68,10 @@
       aMin = sc(ACT.min, k),
       aMax = sc(ACT.max, k);
     let side = sideOn ? clamp(num(o.side) ? o.side : sc(DEF.side, k), sMin, sMax) : 0;
-    const user = clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax);
+    /* A doc or artifact showing in the right column: its own width (default 600), kept apart from the normal one. */
+    const user = o.viewer
+      ? clamp(num(o.viewerW) ? o.viewerW : sc(DEF.viewer, k), aMin, aMax)
+      : clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax);
     let act = actOn ? user : 0;
     const over = side + act + minChat - vw;
     if (over > 0) {
@@ -117,7 +120,7 @@
     }
     o = o && typeof o === 'object' ? o : {};
     const pick = (k) => (num(o[k]) && o[k] > 0 ? Math.round(o[k]) : null);
-    return { side: pick('side'), activity: pick('activity'), composer: pick('composer'), split: pick('split') };
+    return { side: pick('side'), activity: pick('activity'), viewer: pick('viewer'), composer: pick('composer'), split: pick('split') };
   }
   const storageKey = (width) => 'studio-layout-v1:' + bucketKey(width);
   const pure = {
@@ -223,6 +226,7 @@
       AUI().setHidden(v);
     };
 
+    const viewing = () => body.classList.contains('ar-viewing');
     function layout() {
       const vw = win.innerWidth,
         sideOn = wideSide() && !sideHidden,
@@ -232,6 +236,8 @@
         vw,
         side: sizes.side,
         activity: sizes.activity,
+        viewer: viewing(),
+        viewerW: sizes.viewer,
         sideOn,
         actOn,
         /* An open history widens the column only on the Activity tab (on Changes / Artifacts it is hidden: changes-ui.js sets rc-other-tab). */
@@ -244,7 +250,7 @@
         if (rootEl.style.getPropertyValue(k) !== v) rootEl.style.setProperty(k, v);
       };
       set('--side-w', eff.side + 'px');
-      set('--activity-w', (actOn ? eff.activity : sizes.activity || sc(DEF.activity, k)) + 'px');
+      set('--activity-w', (actOn ? eff.activity : (viewing() ? sizes.viewer || sc(DEF.viewer, k) : sizes.activity || sc(DEF.activity, k))) + 'px');
       body.classList.toggle('side-off', wideSide() && sideHidden);
       const vh = win.innerHeight / chatK(),
         ch = num(sizes.composer) ? clampComposer(sizes.composer, vh) : null;
@@ -330,7 +336,7 @@
         inverted: true,
         collapsible: true,
         get def() {
-          return sc(DEF.activity, uiK());
+          return sc(viewing() ? DEF.viewer : DEF.activity, uiK());
         },
         min: () => sc(ACT.min, uiK()),
         max: () => maxActivity(win.innerWidth, eff.side, uiK(), splitFloor()),
@@ -341,12 +347,12 @@
           if (r.collapsed) setActHidden(true);
           else {
             setActHidden(false);
-            sizes.activity = r.size;
+            sizes[viewing() ? 'viewer' : 'activity'] = r.size;
           }
         },
         reset() {
           setActHidden(false);
-          sizes.activity = null;
+          sizes[viewing() ? 'viewer' : 'activity'] = null;
         },
         toggle: () => setActHidden(!actHidden()),
         available: () => wideAct() && (!actHidden() || !!(dragging && dragging.id === 'activity')),
@@ -644,6 +650,16 @@
     if (win.AgentTextSize && typeof win.AgentTextSize.onChange === 'function')
       win.AgentTextSize.onChange(() => layout());
     api.layout = layout;
+    /* artifacts-ui.js sets body.ar-viewing while the viewer shows a doc or artifact: widen / narrow the column then. */
+    if (typeof win.MutationObserver === 'function') {
+      let was = viewing();
+      new win.MutationObserver(() => {
+        if (viewing() !== was) {
+          was = viewing();
+          layout();
+        }
+      }).observe(body, { attributes: true, attributeFilter: ['class'] });
+    }
     api.toggleSide = toggleSide;
     api.toggleActivity = toggleActivity;
     api.reduced = reduced;

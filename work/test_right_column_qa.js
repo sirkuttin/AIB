@@ -310,3 +310,67 @@ test('Edit helpers: which word button, and the block at a scroll fraction', () =
   assert.equal(A.blockAt(['a', 'b', 'c', 'd', 'e'], 1), 'e');
   assert.equal(A.blockAt([], 0.4), '');
 });
+
+/* Right column: 600 px while a doc or artifact shows (beta.8). */
+const RZ = require(path.join(APP, 'resize-ui.js'));
+function column(width) {
+  const shell = page({ width });
+  const w = shell.window;
+  const props = {};
+  shell.document.documentElement = {
+    style: {
+      setProperty: (k, v) => (props[k] = v),
+      removeProperty: (k) => delete props[k],
+      getPropertyValue: (k) => props[k] || '',
+    },
+  };
+  let cb = null;
+  w.MutationObserver = function (f) {
+    cb = f;
+    this.observe = () => {};
+  };
+  RZ.init(w);
+  const act = () => parseInt(props['--activity-w'], 10);
+  const viewing = (on) => {
+    shell.body.classList.toggle('ar-viewing', on);
+    cb();
+  };
+  return { shell, w, act, viewing, props, handle: () => shell.body.querySelector('.rs-activity') };
+}
+test('right column: 600 px on doc or artifact open, back to your width on close or tab switch', () => {
+  const c = column(1600);
+  assert.equal(c.act(), 280);
+  c.viewing(true);
+  assert.equal(c.act(), 600);
+  c.viewing(false);
+  assert.equal(c.act(), 280);
+});
+test('right column: a keyboard resize while viewing is remembered as the viewer width, normal width stays apart', () => {
+  const c = column(1600);
+  c.viewing(true);
+  const h = c.handle();
+  for (const f of h.listeners.keydown || []) f({ key: 'ArrowLeft', shiftKey: true, preventDefault() {} });
+  assert.equal(c.act(), 664);
+  c.viewing(false);
+  assert.equal(c.act(), 280, 'the normal width is untouched');
+  c.viewing(true);
+  assert.equal(c.act(), 664, 'the viewer width is remembered');
+  assert.equal(JSON.parse(c.w.localStorage.getItem('studio-layout-v1:>=1400'.replace('>=1400', '<1800'))).viewer, 664);
+});
+test('right column: on a narrow window the chat keeps its 420 px minimum', () => {
+  const c = column(1150);
+  c.viewing(true);
+  assert.ok(1150 - 200 - c.act() >= 420 || 1150 - parseInt(c.props['--side-w'], 10) - c.act() >= 420, String(c.act()));
+  assert.ok(c.act() >= 220 && c.act() < 600);
+});
+test('artifacts viewer sets body.ar-viewing only while it is visible and showing something', () => {
+  const { UI, shell } = viewer();
+  const b = shell.body;
+  assert.equal(b.classList.contains('ar-viewing'), false);
+  UI.upsert(art('a1', 'First', 1, 100));
+  assert.equal(b.classList.contains('ar-viewing'), false, 'tab not shown');
+  UI.setVisible(true);
+  assert.equal(b.classList.contains('ar-viewing'), true);
+  UI.setVisible(false);
+  assert.equal(b.classList.contains('ar-viewing'), false);
+});
