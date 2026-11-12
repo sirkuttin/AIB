@@ -601,7 +601,7 @@ export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex', 'om
  * during the turn: the steer may get its own model cycle, whose output comes a moment after the first cycle's result (recording C4).
  * Any main-session output in that time cancels the early end. Tests lower it.
  */
-export const steerTiming = { settleMs: 3000, steerTimeoutSeconds: 30 };
+export const steerTiming = { settleMs: 3000, steerTimeoutSeconds: 30, steerLateSeconds: 300 };
 
 /** The note on a queued message a steer could not deliver (the agent refused it or did not answer). */
 export const STEER_FAILED_NOTE = "Couldn't send now: sends when this turn ends.";
@@ -786,6 +786,12 @@ export class Connection {
   #replayedSteers = new Map<string, Promise<string>>();
   /** steer notes by JSON-RPC id of the _session/steering they announce (a rebuild shows the message and applies the answer). */
   #steerNotes = new Map<string, Json>();
+  /**
+   * Steers whose answer did not come within steerTiming.steerTimeoutSeconds, by message id: the message waits in the after-turn
+   * queue, but is not sent from there until the late answer says the agent did not take it (or steerLateSeconds pass), so a steer
+   * the agent took late is never sent a second time as a prompt.
+   */
+  #steerLate = new Set<string>();
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -3849,21 +3855,26 @@ export class Connection {
     this.promptReceipts.set(item.id, { fingerprint: String(item.fingerprint), state: 'steering' });
     while (this.promptReceipts.size > 1000) this.promptReceipts.delete(this.promptReceipts.keys().next().value!);
     this.#receiptChanged(item.id);
-    let result: unknown;
-    try {
-      result = await this.request('_session/steering', {
-        sessionId: this.sessionId,
-        prompt: blocks,
-        _meta: { steering: { idleBehavior: 'promptRequired' } },
-      }, steerTiming.steerTimeoutSeconds, {
-        note: (rpc) => ({ t: 'steer', rpc, receipt: item.id, text: item.text, files, fingerprint: item.fingerprint }),
-        once: `steer:${item.id}`,
-      });
-    } catch (error) {
-      log.warning('The agent did not take a message sent while it works: %s', errorText(error));
+    // The request may answer after the lane gave up on it (steerTimeoutSeconds): the late answer is still read (#steerLateAnswer).
+    const answer: Promise<{ result?: unknown; error?: unknown }> = this.request('_session/steering', {
+      sessionId: this.sessionId,
+      prompt: blocks,
+      _meta: { steering: { idleBehavior: 'promptRequired' } },
+    }, steerTiming.steerLateSeconds, {
+      note: (rpc) => ({ t: 'steer', rpc, receipt: item.id, text: item.text, files, fingerprint: item.fingerprint }),
+      once: `steer:${item.id}`,
+    }).then((result) => ({ result }), (error) => ({ error }));
+    const first = await within(answer, steerTiming.steerTimeoutSeconds * 1000);
+    if (first === false) {
+      log.warning('chat %s: the agent did not answer a message sent while it works within %s s', this.id, steerTiming.steerTimeoutSeconds);
+      this.#steerLateAnswer(item, answer, images, files, context);
       return 'failed';
     }
-    const outcome = isDict(result) ? result.outcome : null;
+    if (Object.hasOwn(first, 'error')) {
+      log.warning('The agent did not take a message sent while it works: %s', errorText(first.error));
+      return 'failed';
+    }
+    const outcome = isDict(first.result) ? first.result.outcome : null;
     if (outcome === 'injected' || outcome === 'startedNewTurn') {
       if (outcome === 'startedNewTurn') log.warning('chat %s: the agent started a turn of its own for a steer', this.id);
       this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
@@ -3873,6 +3884,37 @@ export class Connection {
     if (outcome === 'promptRequired') return 'promptRequired';
     log.warning('chat %s: a steer came back %s', this.id, pyRepr(outcome));
     return 'failed';
+  }
+
+  /**
+   * A steer that timed out goes to the after-turn queue with its id (#steerLane), but stays unsent there (#queuePump) until its answer
+   * comes: taken (injected) → it leaves the queue and shows as sent while working, as if it had answered in time; anything else (not
+   * taken, an error, steerLateSeconds with no answer) → it is free to go after the turn, with the same id.
+   */
+  #steerLateAnswer(
+    item: SteerItem,
+    answer: Promise<{ result?: unknown; error?: unknown }>,
+    images: ImageBlock[],
+    files: FileSummary[],
+    context: [string, unknown] | null,
+  ): void {
+    this.#steerLate.add(item.id);
+    void answer.then((late) => {
+      this.#steerLate.delete(item.id);
+      const outcome = !Object.hasOwn(late, 'error') && isDict(late.result) ? late.result.outcome : null;
+      if ((outcome === 'injected' || outcome === 'startedNewTurn') && !this.closed) {
+        const q = this.queue;
+        const at = q.items.findIndex((i) => i.id === item.id);
+        if (at >= 0) q.items.splice(at, 1);
+        log.info('chat %s: the agent took message %s late; it is not sent again', this.id, item.id);
+        this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
+        void this.#studioContextSent(context);
+      } else {
+        log.info('chat %s: the late answer to message %s: not taken (%s)', this.id, item.id, pyRepr(outcome));
+      }
+      this.#queueChanged();
+      void this.#queuePump();
+    });
   }
 
   /**
@@ -4090,6 +4132,7 @@ export class Connection {
         q.inflight || !q.items.length || q.pauseReason() || q.steer.length // the steer lane goes first
       ) return;
       if (this.permissions.size || this.elicitations.size || this.auth) return;
+      if (this.#steerLate.has(q.items[0].id)) return; // its steer may still land (#steerLateAnswer), which then pumps again
       const item = q.items.shift()!;
       q.inflight = item;
       let failure: [string, string] | null = null;

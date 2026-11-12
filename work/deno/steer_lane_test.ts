@@ -7,7 +7,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { type Json, promptText, SteerLab, turnEnds, userEvents } from './_steer.ts';
-import { CODEX_UNREAD_NOTE, STEER_FAILED_NOTE } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { CODEX_UNREAD_NOTE, STEER_FAILED_NOTE, steerTiming } from '../../outputs/agent-studio/server/acp/connection.ts';
 
 const lane = (c: { public(): Json }) => (c.public().steerLane as Json[]).map((i) => [i.text, i.state, i.heldReason ?? '']);
 const queued = (c: { queuePublic(): Json }) => (c.queuePublic().items as Json[]).map((i) => [i.text, i.note]);
@@ -278,6 +278,62 @@ Deno.test('a steer the agent refuses waits in the after-turn queue with a note, 
   assertEquals(c.promptReceipts.get('s1')?.state, 'working');
   await p.reply(next.id, { stopReason: 'end_turn' });
   await until(() => !c.busy, 'done');
+});
+
+Deno.test('a steer that times out but was taken late is never sent twice: it waits unsent in the queue until its answer comes', async () => {
+  const saved = { ...steerTiming };
+  steerTiming.steerTimeoutSeconds = 0.3;
+  steerTiming.steerLateSeconds = 2;
+  try {
+    await using lab = new SteerLab();
+    const { c, p } = await lab.chat('claude');
+    // 1. taken late: it leaves the queue and shows as sent while working; no second prompt
+    await c.prompt('go', 'm1');
+    const prompt = await p.take('session/prompt');
+    assertEquals((await c.steer('please', 's1')).state, 'queued', 'no answer in time: it waits for the turn end');
+    const steer = await p.take('_session/steering');
+    assertEquals(queued(c), [['please', STEER_FAILED_NOTE]]);
+    await p.reply(prompt.id, { stopReason: 'end_turn' });
+    await until(() => !c.busy, 'the turn ended');
+    await pause(300);
+    assertEquals(p.all('session/prompt').length, 1, 'not sent as a prompt while its steer may still land');
+    assertEquals((await c.steer('please', 's1')).duplicate, true, 'a retry of the same id is the same message');
+    await p.reply(steer.id, { outcome: 'injected' });
+    await until(() => !queued(c).length, 'it left the queue');
+    assertEquals(userEvents(c).map((u) => [u.text, u.steered ?? false]), [['go', false], ['please', true]]);
+    assertEquals(c.promptReceipts.get('s1')?.state, 'injected');
+    await pause(300);
+    assertEquals(p.all('session/prompt').length, 1, 'sent once');
+
+    // 2. the late answer says not taken: it goes after the turn, with the same id
+    await c.prompt('again', 'm2');
+    const prompt2 = await p.take('session/prompt');
+    await c.steer('second', 's2');
+    const steer2 = await p.take('_session/steering');
+    await until(() => queued(c).length === 1, 'queued');
+    await p.reply(prompt2.id, { stopReason: 'end_turn' });
+    await until(() => !c.busy, 'the turn ended');
+    await p.reply(steer2.id, { outcome: 'promptRequired', reason: 'noRunningTurn' });
+    const next = await p.take('session/prompt');
+    assertEquals(promptText(next), 'second');
+    assertEquals(c.promptReceipts.get('s2')?.state, 'working');
+    await p.reply(next.id, { stopReason: 'end_turn' });
+    await until(() => !c.busy, 'done');
+
+    // 3. no answer at all: after steerLateSeconds it goes after the turn
+    await c.prompt('third', 'm3');
+    const prompt3 = await p.take('session/prompt');
+    await c.steer('silent', 's3');
+    await p.take('_session/steering');
+    await until(() => queued(c).length === 1, 'queued');
+    await p.reply(prompt3.id, { stopReason: 'end_turn' });
+    const last = await p.take('session/prompt', 10);
+    assertEquals(promptText(last), 'silent');
+    await p.reply(last.id, { stopReason: 'end_turn' });
+    await until(() => !c.busy, 'done');
+  } finally {
+    Object.assign(steerTiming, saved);
+  }
 });
 
 Deno.test('B13: Codex ends its turn with no answer after a steer: the message comes back paused, to send again', async () => {
