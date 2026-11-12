@@ -657,7 +657,7 @@ a.fx-path code {
 .fx-docpages {
   flex: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 /* an agent writing the doc right now */
 .fx-docdot {
@@ -680,7 +680,7 @@ a.fx-path code {
   }
 }
 .fx-newdoc {
-  color: var(--link);
+  color: var(--accent);
 }
 .fx-newdoc-plus {
   flex: 0 0 14px;
