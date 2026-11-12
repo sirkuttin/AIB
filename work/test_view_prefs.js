@@ -175,6 +175,7 @@ test('changes are sent at once (next tick), removals as null; other keys and ses
   );
   await p.runTimers();
   assert.equal(p.posts.length, 1);
+  assert.equal(p.posts[0].keepalive, true, 'keepalive: it still arrives if the window closes right after');
   assert.deepEqual(p.posts[0].body, {
     set: { 'studio-textsize-v1:<1800': '{"chat":120}', 'studio-side-hidden': null },
   });

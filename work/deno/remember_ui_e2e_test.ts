@@ -10,6 +10,8 @@
  *      and close the window AT ONCE (WM_CLOSE 50 ms later): with the old 500 ms debounce that pick never reached the data folder.
  *   3. Start B from its own folder on the same data folder: its localStorage had nothing, yet Delta is the project and Beta's chat
  *      is open in the middle, as in A (before the fix, reopening that chat moved the sidebar to Beta). Both seen with beta.8-test4.
+ *   4. B, whose saves each take 1 s (AIB_TEST_SLOW_VIEW_PREFS_MS, a busy machine), picks Alpha and is closed 50 ms later: Alpha is
+ *      in the data folder after B exited.
  * Only processes this test started are killed. Gives up after 15 minutes.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -146,12 +148,13 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
     '--owners-dir',
     fx.owners,
   ];
-  const spawn = (dir: string) => {
+  const spawn = (dir: string, extra: Record<string, string> = {}) => {
+    const all = { ...env, ...extra };
     try {
-      for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
+      for (const [k, v] of Object.entries(all)) Deno.env.set(k, v);
       return desk.spawn([`${dir}\\AIB\\AIB.exe`, ...flags], `${dir}\\AIB`);
     } finally {
-      for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
+      for (const k of Object.keys(all)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
     }
   };
   const ready = () => cdpEval(`!!(window.AgentWorkspaceUI && AgentWorkspaceUI._items().length >= 3)`);
@@ -168,7 +171,11 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
   await until(() => cdpEval(`!!document.querySelector('#connections button[data-key="claude:s-Beta"]')`), "Beta's chat in the list", 20);
   await cdpEval(`document.querySelector('#connections button[data-key="claude:s-Beta"]').click(), 1`);
   await until(async () => (await title()) === 'Work on Beta', "Beta's chat open in A", 30);
-  await until(async () => JSON.parse(String(await cdpEval(`localStorage.getItem('studio-workspace-v1')`))).last?.[beta], 'its tab noted', 10);
+  await until(
+    async () => JSON.parse(String(await cdpEval(`localStorage.getItem('studio-workspace-v1')`))).last?.[beta],
+    'its tab noted',
+    10,
+  );
   const win = await until(() => desk.windows().find((w) => w.pid === aPid && w.visible && w.title === 'AIB') ?? null, "A's window", 30);
   await cdpEval(`AgentWorkspaceUI.selectProject(${JSON.stringify(delta)}), 1`);
   await new Promise((r) => setTimeout(r, 50));
@@ -179,13 +186,30 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
   assertEquals(ws.active, delta, 'the pick reached the data folder before AIB.exe was gone (the old 500 ms debounce lost it)');
   assertEquals(ws.last[beta], 'claude:s-Beta', "and Beta's open chat");
 
-  // ---- B: another folder, an empty WebView2 profile, the same data folder
+  // ---- B: another folder, an empty WebView2 profile, the same data folder. Its saves are slow (each one answered 1 s late, as
+  // on a busy machine), for the last step.
   assert(!exists(`${appB}\\AIB\\AIB.exe.WebView2\\EBWebView\\Default\\Local Storage`), "B's WebView profile has no localStorage yet");
-  spawn(appB);
+  const bPid = spawn(appB, { AIB_TEST_SLOW_VIEW_PREFS_MS: '1000' });
   await until(ready, "B's page", 120);
   assertEquals(await until(async () => (await title()) === 'Work on Beta' ? 'ok' : null, "Beta's chat open in B", 30), 'ok');
   await new Promise((r) => setTimeout(r, 3000)); // a few list polls: nothing moves the sidebar afterwards either
   assertEquals(await active(), 'delta', "the project you had open (it used to jump to the reopened chat's project, Beta)");
+
+  // ---- B quits 50 ms after a pick whose save takes 1 s: it is on disk before AIB exits (ViewPrefs.settle, then the web
+  // server's close waits for it).
+  const alpha = await key('Alpha');
+  const bWin = await until(() => desk.windows().find((w) => w.pid === bPid && w.visible && w.title === 'AIB') ?? null, "B's window", 30);
+  await new Promise((r) => setTimeout(r, 1500)); // B's own start-up saves are done
+  await cdpEval(`AgentWorkspaceUI.selectProject(${JSON.stringify(alpha)}), 1`);
+  await new Promise((r) => setTimeout(r, 50));
+  assert(desk.post(bWin, WM_CLOSE), 'WM_CLOSE posted to B');
+  await until(() => exited(bPid), 'B exited', 60);
+  const fileB = JSON.parse(Deno.readTextFileSync(`${fx.state}\\studio-view.json`));
+  assertEquals(
+    JSON.parse(fileB.prefs['studio-workspace-v1']).active,
+    alpha,
+    'a slow save of the pick is on disk before AIB.exe is gone (it used to exit while the save was on its way)',
+  );
 }
 
 function exists(path: string): boolean {

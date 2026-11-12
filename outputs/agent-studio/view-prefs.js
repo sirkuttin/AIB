@@ -155,7 +155,9 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': t },
         body,
-        keepalive: !!keepalive,
+        // keepalive: a save sent just before the window closes still reaches Studio, which waits for it before AIB exits
+        // (ViewPrefs.settle). The browser allows 64 KB of keepalive bodies on their way; a bigger one goes without.
+        keepalive: !!keepalive || body.length < 32000,
       });
     }
     async function flush(keepalive) {

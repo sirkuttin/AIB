@@ -251,3 +251,25 @@ Deno.test("view prefs: a page's older batch that arrives after its newer one doe
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test('view prefs: settle() (quitting) waits for a save on its way and for a short quiet time, and gives up after maxMs', async () => {
+  const dir = await Deno.makeTempDir({ prefix: 'aib-view-' });
+  try {
+    const store = new ViewPrefs(dir);
+    let t0 = Date.now();
+    assertEquals(await store.settle(1500, 100), true);
+    assert(Date.now() - t0 >= 95, 'waits the quiet time even with nothing on its way (a save may still be coming)');
+    store.begin(); // a slow save: answered 400 ms later
+    setTimeout(() => store.end(), 400);
+    t0 = Date.now();
+    assertEquals(await store.settle(1500, 100), true);
+    assert(Date.now() - t0 >= 490, 'until it is answered, then the quiet time');
+    store.begin(); // never answered
+    t0 = Date.now();
+    assertEquals(await store.settle(300, 100), false, 'gives up');
+    assert(Date.now() - t0 < 1000);
+    store.end();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

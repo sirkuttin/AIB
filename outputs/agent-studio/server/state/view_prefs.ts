@@ -88,6 +88,34 @@ export class ViewPrefs extends JsonFileStore {
    * older batch of the same page that arrives late must not overwrite a newer one. */
   #order = new Map<string, { page: string; seq: number }>();
 
+  /* Saves on their way (POST /api/live/view-prefs): quitting waits for them (settle), so a project picked just before the window
+     closed is on disk before AIB exits. The page sends with keepalive, so a request already sent outlives the closed page while
+     the process lives. */
+  #inFlight = 0;
+  #lastSeen = 0;
+  /** The route calls begin() when a save arrives and end() when it is answered. */
+  begin(): void {
+    this.#inFlight++;
+    this.#lastSeen = Date.now();
+  }
+  end(): void {
+    this.#inFlight = Math.max(0, this.#inFlight - 1);
+    this.#lastSeen = Date.now();
+  }
+  /**
+   * Resolves once no save is on its way and none arrived for quietMs (counted from the call at the earliest: a save the page sent
+   * just before its window closed may still be on its way to this process), or after maxMs. True when it settled in time.
+   */
+  async settle(maxMs = 1500, quietMs = 250): Promise<boolean> {
+    const start = Date.now();
+    for (;;) {
+      const t = Date.now();
+      if (this.#inFlight === 0 && t - Math.max(start, this.#lastSeen) >= quietMs) return true;
+      if (t - start >= maxMs) return false;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
   /**
    * Apply {set: {key: string | null}, page?, seq?} key by key (a key an older batch of the same page brings is skipped): a key with a bad name or value, or one that would push the file past MAX_TOTAL,
    * is refused on its own and the others are still saved (one oversized value must never cost the open project and tabs).

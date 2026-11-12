@@ -197,11 +197,16 @@ export class WebServer {
     });
     this.native.set('POST /api/live/view-prefs', async (c, _url, body) => {
       let result;
+      c.viewPrefs.begin(); // quitting waits for it (main.ts close, ViewPrefs.settle)
       try {
+        const slow = Number(Deno.env.get('AIB_TEST_SLOW_VIEW_PREFS_MS') ?? 0); // tests: a save that takes long (a busy machine)
+        if (slow > 0) await new Promise((r) => setTimeout(r, Math.min(slow, 5000)));
         result = await c.viewPrefs.update(body);
       } catch (error) {
         if (error instanceof ViewPrefsBusy) return this.json(503, { error: error.message, code: 'busy' });
         throw error;
+      } finally {
+        c.viewPrefs.end();
       }
       const view = c.viewPrefs.public();
       return this.json(200, { revision: view.revision, warning: view.warning, refused: result.refused, ok: true });
