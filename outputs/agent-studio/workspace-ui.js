@@ -284,6 +284,8 @@
               ? ws.last[pk]
               : tabs[0];
       if (target && openKey(target)) return;
+      // A project with no open chat shows the new-chat view in it, never the chat of the project we came from.
+      if (!target && selectedKey && (itemOf(selectedKey) || {}).projectKey !== pk && newChatIn(pk)) return;
       if (draft) draft.pk = pk;
     } else if (paneKey && openKey(paneKey)) return;
     lastSig = '';
@@ -2721,6 +2723,10 @@
         : Promise.resolve(),
     // For files-ui.js: the project on screen, its name, its chats that need you, and the narrow-window drawer.
     currentProject: () => (ws && ws.active !== St().ALL ? ws.active : ''),
+    currentProjectPath: () => {
+      const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
+      return p ? p.path || '' : '';
+    },
     currentProjectName: () => {
       const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
       return p ? p.name : '';

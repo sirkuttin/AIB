@@ -974,6 +974,8 @@
       if (updated) selected = updated;
     }
     renderConversations();
+    // The title the agent gave the chat later (it arrives with the list) shows in the header as it does in the tab.
+    if (selected && !newDraft && !window.AgentHeaderUI?.isEditing?.() && $('title').textContent !== titleOf(selected)) $('title').textContent = titleOf(selected);
     if (
       selected &&
       !current &&

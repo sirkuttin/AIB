@@ -296,6 +296,14 @@
     if (chat.branch) return { id: chat.id, root: 'chat', label: 'Copy', branch: chat.branch, chatKey: chat.key, title: chat.title };
     return { id: chat.id, root: 'main', label: 'Folder', branch: '', chatKey: chat.key, title: chat.title, path: projectPath || chat.cwd || '' };
   }
+  // With no chat in the project: its own folder, shown through the project route (no chat id). {id: 'project:<path>', root: 'project', path}.
+  function projectScope(projectPath) {
+    const p = String(projectPath || '');
+    if (!p) return null;
+    return { id: 'project:' + p, root: 'project', label: 'Folder', branch: '', chatKey: '', title: '', path: p };
+  }
+  // The query of a Files request for a scope: a project folder is asked by its path, every other scope by its chat.
+  const scopeArgs = (s) => (s.root === 'project' ? { root: 'project', project: s.path } : { id: s.id, root: s.root });
   const scopeId = (s) => (s ? s.id + '|' + s.root : '');
   // The scope menu: this chat's copy, the main folder, other chats' copies, and "Follow the open chat".
   function scopeMenu(chat, projectPath, others, current, following) {
@@ -306,7 +314,10 @@
       out.push({ kind: 'scope', text: "This chat's copy", sub: chat.branch, scope: s, on: scopeId(s) === cur });
     }
     const mainChat = chat && chat.id ? chat : (others || [])[0];
-    if (mainChat && mainChat.id) {
+    if (!(mainChat && mainChat.id) && projectPath) {
+      const s = projectScope(projectPath);
+      out.push({ kind: 'scope', text: 'Project folder', sub: projectPath, scope: s, on: scopeId(s) === cur });
+    } else if (mainChat && mainChat.id) {
       const s = { id: mainChat.id, root: 'main', label: 'Folder', branch: '', chatKey: mainChat.key, title: mainChat.title, path: projectPath };
       out.push({ kind: 'scope', text: 'Main folder', sub: projectPath || '', scope: s, on: scopeId(s) === cur });
     }
@@ -459,6 +470,8 @@
     markHit,
     keyMove,
     followScope,
+    projectScope,
+    scopeArgs,
     scopeId,
     scopeMenu,
     scopeLabel,
