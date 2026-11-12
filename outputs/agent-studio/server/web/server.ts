@@ -9,7 +9,7 @@ import type { LiveBackend } from '../host/backend.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { keeperProblem } from '../keeper/link.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
-import { ViewPrefs } from '../state/view_prefs.ts';
+import { ViewPrefs, ViewPrefsBusy } from '../state/view_prefs.ts';
 import { authorize, drawingHeaders, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
@@ -196,9 +196,15 @@ export class WebServer {
       return this.json(200, { ...c.readState.public(), ok: true });
     });
     this.native.set('POST /api/live/view-prefs', async (c, _url, body) => {
-      await c.viewPrefs.update(body);
+      let result;
+      try {
+        result = await c.viewPrefs.update(body);
+      } catch (error) {
+        if (error instanceof ViewPrefsBusy) return this.json(503, { error: error.message, code: 'busy' });
+        throw error;
+      }
       const view = c.viewPrefs.public();
-      return this.json(200, { revision: view.revision, warning: view.warning, ok: true });
+      return this.json(200, { revision: view.revision, warning: view.warning, refused: result.refused, ok: true });
     });
     // The desktop app shows the page's notifications itself. {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
     this.native.set('POST /api/live/desktop/notify', async (c, _url, body) => {

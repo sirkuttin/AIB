@@ -75,6 +75,10 @@
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.
 - Inbox: the chat you have open never counts as "your turn", even while AIB is in the background, and the badge and its list
   always agree.
+- AIB opens on the project you had open when you quit it, also when you start a new copy unzipped into another folder. A
+  change is saved to AIB's data folder at once instead of half a second later, so quitting right after picking a project
+  no longer loses it, and reopening the chat that was in the middle no longer moves the sidebar to that chat's project.
+  Files tabs and open folders, the Chats | Files switch and the inbox's seen chats are kept in the data folder too.
 
 ## 0.1.0-beta.7 (beta)
 

@@ -2183,16 +2183,25 @@
       el('span', it ? it.title : 'New chat', 'ahead-name'),
     );
   }
+  /* The chat the page reopens at start (keepProjectFor): it opens without moving the sidebar off the project you had. You can
+     pick a project with no open tabs while another project's chat stays in the middle; reopening that chat used to switch the
+     sidebar to the chat's project, so AIB seemed to forget the project you had open. */
+  let keepFor = '';
+  function keepProjectFor(c) {
+    keepFor = c && ws && ws.active !== St().ALL ? keyOf(c) : '';
+  }
   // Called when the page starts showing a chat: it joins the tab set of its project, next to the one you came from.
   function noteOpened(c) {
     if (!host || !c) return;
     const pk = projectKeyOf(c),
       key = keyOf(c),
       prev = host.getSelected();
+    const keep = keepFor && keepFor === key && ws.active !== St().ALL && !!projectOfKey(ws.active);
+    keepFor = '';
     draft = null;
     commit(St().openTab(ws, pk, key, prev && projectKeyOf(prev) === pk ? keyOf(prev) : undefined));
     commit(St().rememberLast(ws, pk, key));
-    commit(St().activeAfterOpen(ws, pk));
+    if (!keep) commit(St().activeAfterOpen(ws, pk));
     if (splitReady()) S().noteOpened(key, ws.active);
     if (FU() && FU().showChat) FU().showChat();
     lastSig = '';
@@ -2621,6 +2630,7 @@
     addProject,
     openNewProject,
     restoreTarget,
+    keepProjectFor,
     inProject,
     listSignature,
     hasWorkspace,
