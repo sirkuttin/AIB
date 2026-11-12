@@ -75,3 +75,22 @@ test('mid-turn the same card shows the step in progress and the ones still to do
     'pending:Cool and peel the egg',
   ]);
 });
+
+test("in-progress steps spin while the chat's helpers still work after the reply ended, and show dots when nothing works", () => {
+  const at = updates.findIndex(
+    (u) => u.update.sessionUpdate === 'plan' && u.update.entries.some((e) => e.status === 'in_progress'),
+  );
+  context.__events = [
+    { kind: 'user', time: 1, data: { sessionId: 's1', text: 'go', attachments: [] } },
+    ...updates.slice(0, at + 1).map((data, i) => ({ kind: 'update', time: 2 + i, data })),
+    { kind: 'turn_end', time: 999, data: { sessionId: 's1', stopReason: 'end_turn' } }, // the reply ended with steps still open
+  ];
+  const planOf = (snap) => {
+    context.__snap = snap;
+    chat.run('snapshot=globalThis.__snap;events=globalThis.__events');
+    return chat.run("liveRows('s1')").filter((r) => r.role === 'plan').pop();
+  };
+  assert.equal(!!planOf({ sessionId: 's1', busy: false, subagents: { h1: { state: 'running' } } }).active, true, 'a helper is running');
+  assert.equal(!!planOf({ sessionId: 's1', busy: true, subagents: {} }).active, true, 'the agent is replying');
+  assert.equal(!!planOf({ sessionId: 's1', busy: false, subagents: { h1: { state: 'completed' } } }).active, false, 'nothing works');
+});

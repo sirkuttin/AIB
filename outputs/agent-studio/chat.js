@@ -1766,7 +1766,9 @@
         else r.value = answeredText(r);
       }
     }
-    const folded = window.PlanUI ? window.PlanUI.fold(rows, { live: true }) : rows;
+    /* In-progress steps spin while work is going on for this chat: its own reply, or helpers still running after the reply ended. */
+    const helpersWorking = Object.values(snapshot?.subagents || {}).some((a) => a && agentIsActive({ ...a, live: true }));
+    const folded = window.PlanUI ? window.PlanUI.fold(rows, { live: true, working: !!snapshot?.busy || helpersWorking }) : rows;
     return uncapped ? folded : folded.slice(-500); // a condensed view caps after it has projected (views.js), so the latest prompt is never cut off
   }
   /* What you chose on an approval or a question card, by request key (this page only; another window's answer reads "Answered"). */
