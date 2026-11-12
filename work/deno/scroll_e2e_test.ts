@@ -50,7 +50,6 @@ export const KNOWN_FAILING = new Set<string>([]);
  *  comment. They are kept apart from KNOWN_FAILING so the AIB_SCROLL_ALL=1 gate stays the passing set; each step of the scroll
  *  controller that fixes one takes its name out of this list in the same commit, and from then on it runs in every gate. */
 export const PENDING = new Set<string>([
-  'B1 two subagents: scrolled up in one, the next one opens at its bottom and follows; back in the first you are where you were',
   "B2 split view: clicking into the other pane keeps both panes' places",
   'B3 split side pane read 30 px above the bottom: the next update does not pull it down',
   'B4a "Show earlier" over long code blocks: the row under the button never moves, not even for a frame',
