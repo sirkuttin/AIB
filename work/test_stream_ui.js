@@ -254,3 +254,68 @@ test('the Merge button\'s message is a compact "Merge requested" chip, live and 
   assert.equal(S.classifyUser('yes, merge it'), null);
   assert.equal(S.classifyUser(MERGE_REQUEST.replace('If main', 'If dev')), null);
 });
+
+// ---- patchChildren: a redraw keeps the rows that would be drawn the same --------------------------------------------------
+function fakeNode(html, tag = 'DIV') {
+  return { nodeType: 1, nodeName: tag, outerHTML: html, parent: null, remove() { this.parent?.drop(this); } };
+}
+function fakeBox() {
+  const box = {
+    childNodes: [],
+    drop(n) {
+      this.childNodes = this.childNodes.filter((x) => x !== n);
+      n.parent = null;
+    },
+    insertBefore(n, at) {
+      if (n.parent) n.parent.drop(n);
+      const i = at ? this.childNodes.indexOf(at) : -1;
+      if (i < 0) this.childNodes.push(n);
+      else this.childNodes.splice(i, 0, n);
+      n.parent = this;
+    },
+    replaceChildren(frag) {
+      for (const n of this.childNodes) n.parent = null;
+      this.childNodes = [];
+      for (const n of frag.childNodes) this.insertBefore(n, null);
+    },
+  };
+  return box;
+}
+const frag = (...nodes) => ({ childNodes: nodes });
+
+test('patchChildren keeps unchanged rows, swaps changed ones, follows a sliding window', () => {
+  const box = fakeBox();
+  const a = fakeNode('<p>a</p>'), b = fakeNode('<p>b</p>'), c = fakeNode('<p>c</p>');
+  assert.equal(S.patchChildren(box, frag(a, b, c)), 0);
+  assert.deepEqual(box.childNodes, [a, b, c]);
+  // the window slides: a drops off, c changes, d arrives; b is kept as the same node
+  const c2 = fakeNode('<p>c!</p>'), d = fakeNode('<p>d</p>');
+  assert.equal(S.patchChildren(box, frag(fakeNode('<p>b</p>'), c2, d)), 1);
+  assert.deepEqual(box.childNodes, [b, c2, d]);
+  assert.equal(a.parent, null, 'the dropped row left the list');
+});
+
+test('patchChildren always replaces top-level buttons (their handlers hold the old rows)', () => {
+  const box = fakeBox();
+  const more = fakeNode('<button>Show earlier</button>', 'BUTTON'), row = fakeNode('<p>r</p>');
+  S.patchChildren(box, frag(more, row));
+  const more2 = fakeNode('<button>Show earlier</button>', 'BUTTON');
+  assert.equal(S.patchChildren(box, frag(more2, fakeNode('<p>r</p>'))), 1);
+  assert.deepEqual(box.childNodes, [more2, row]);
+});
+
+test('patchChildren compares with the markup a row was built with, not what was done to it later', () => {
+  const box = fakeBox();
+  const row = fakeNode('<pre>x</pre>');
+  S.patchChildren(box, frag(row));
+  row.outerHTML = '<pre class="clamp-on">x</pre><button>Show all</button>'; // clamped after it was drawn
+  assert.equal(S.patchChildren(box, frag(fakeNode('<pre>x</pre>'))), 1);
+  assert.deepEqual(box.childNodes, [row]);
+});
+
+test('patchChildren draws everything when nodes carry no markup (a fake page)', () => {
+  const box = fakeBox();
+  const n = { nodeType: 1, nodeName: 'DIV', remove() {} };
+  assert.equal(S.patchChildren(box, frag(n)), 0);
+  assert.deepEqual(box.childNodes, [n]);
+});
