@@ -37,8 +37,10 @@ TOOLS = [
     {
         'name': 'publish',
         'title': 'Publish an artifact',
-        'description': ('Show the user an HTML page, diagram (SVG), report, Markdown document, image, PDF, CSV or JSON file in the Artifacts panel next to the chat. '
-                        'Use it for anything the user should look at: a generated page, a chart, an explainer, a report. Do NOT use it for source code or files the user '
+        'description': ('Show the user an HTML page, diagram (SVG), image, PDF, CSV, JSON, or a one-off Markdown report in the Artifacts panel next to the chat: '
+                        'something to look at or click through. Do NOT use it for a plan, spec, notes, checklist or anything the user will want to edit or keep in '
+                        'the project: make a doc with doc_create. If the page shows content from a doc (a timeline of its Rollout page, a chart of its table), pass '
+                        '"fromDoc": {"doc": "<name>", "page": "<page>"} so the user can rebuild it when the doc changes. Do NOT use it for source code or files the user '
                         'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with '
                         '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and '
                         'unpkg.com are allowed, but the page cannot make network requests, so embed its data inline. To change a page you already published, call `update` with its id '
@@ -51,6 +53,17 @@ TOOLS = [
                 'content': {'type': 'string', 'description': 'The file text to publish (HTML, SVG, Markdown, CSV, JSON, ...). Give this or `path`, not both.'},
                 'filename': {'type': 'string', 'description': 'With `content`: the file name including extension, e.g. "chart.html". Decides the kind when `kind` is omitted.'},
                 'kind': {'type': 'string', 'enum': KINDS, 'description': 'Optional. Derived from the file extension when omitted.'},
+                'fromDoc': {
+                    'type': 'object',
+                    'description': ('Optional. The doc page this artifact shows, e.g. {"doc": "release-plan", "page": "Rollout"}: the user sees '
+                                    '"Built from" with a link to it, and "Rebuild from the doc" once the page changes.'),
+                    'properties': {
+                        'doc': {'type': 'string', 'description': "The doc's name, as doc_list gives it."},
+                        'page': {'type': 'string', 'description': "The page's title or id. Default: the doc's first page."},
+                    },
+                    'required': ['doc'],
+                    'additionalProperties': False,
+                },
             },
             'required': ['title'],
             'additionalProperties': False,
@@ -61,7 +74,7 @@ TOOLS = [
         'title': 'Update an artifact',
         'description': ('Publish a new version of an artifact you already published in this conversation (the user can compare and restore versions). Pass its `id` and the '
                         'new `path` or `content`. Use this instead of `publish` when revising a page. Identical content creates no new version. Keep referring to it as '
-                        '[Title](studio-artifact://<id>).'),
+                        '[Title](studio-artifact://<id>). When the user asks to rebuild an artifact from its doc, read that page with doc_read first, then update.'),
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -69,6 +82,17 @@ TOOLS = [
                 'path': {'type': 'string', 'description': 'Path of the file with the new version (absolute, or relative to the session folder). Give this or `content`, not both.'},
                 'content': {'type': 'string', 'description': 'The new file text. Give this or `path`, not both.'},
                 'note': {'type': 'string', 'description': 'Optional one-line description of what changed, shown in the version list.'},
+                'fromDoc': {
+                    'type': 'object',
+                    'description': ('Optional. The doc page this artifact shows, e.g. {"doc": "release-plan", "page": "Rollout"}: the user sees '
+                                    '"Built from" with a link to it, and "Rebuild from the doc" once the page changes.'),
+                    'properties': {
+                        'doc': {'type': 'string', 'description': "The doc's name, as doc_list gives it."},
+                        'page': {'type': 'string', 'description': "The page's title or id. Default: the doc's first page."},
+                    },
+                    'required': ['doc'],
+                    'additionalProperties': False,
+                },
             },
             'required': ['id'],
             'additionalProperties': False,
@@ -247,6 +271,8 @@ def tool_publish(args):
         if kind not in KINDS:
             raise ToolError('`kind` must be one of: ' + ', '.join(KINDS))
         body['kind'] = kind
+    if isinstance(args.get('fromDoc'), dict):
+        body['fromDoc'] = args['fromDoc']
     item = http('POST', '/api/live/artifacts/publish', body=body)
     out = {k: item.get(k) for k in ('id', 'version', 'link', 'url')}
     name = item.get('title') or title
@@ -261,6 +287,8 @@ def tool_update(args):
     note = optional_string(args, 'note')
     if note:
         body['note'] = note
+    if isinstance(args.get('fromDoc'), dict):
+        body['fromDoc'] = args['fromDoc']
     item = http('POST', '/api/live/artifacts/publish', body=body)
     out = {k: item.get(k) for k in ('id', 'version', 'link')}
     return text_result(f'Updated "{item.get("title") or identifier}" (artifact {out["id"]}), now v{out["version"]}.', out)

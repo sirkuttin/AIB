@@ -475,7 +475,21 @@ export class ArtifactStore {
     };
     if (manifest.kind === 'md') out.viewUrl = out.url + '?view=1';
     if (pyTruthy(manifest.sourceMissing)) out.sourceMissing = true;
+    if (isDict(manifest.fromDoc)) out.fromDoc = manifest.fromDoc; // AIB's own field (Deno only): "Built from <doc › page>"
     return out;
+  }
+
+  /**
+   * "Built from <doc › page>": the doc page an artifact shows (`fromDoc`: {doc, title, page, pageTitle, rev}, the page's rev when it
+   * was published), or null to drop the link. An extra manifest field: the Python server keeps it when it rewrites the manifest.
+   */
+  setFromDoc(artifactId: unknown, fromDoc: Json | null): Manifest {
+    const manifest = this.get(artifactId);
+    if (JSON.stringify(manifest.fromDoc ?? null) === JSON.stringify(fromDoc)) return manifest;
+    if (fromDoc) manifest.fromDoc = fromDoc;
+    else delete manifest.fromDoc;
+    this.#save(manifest);
+    return manifest;
   }
 
   item(artifactId: unknown): Json {
@@ -1153,6 +1167,8 @@ export class Service {
 
   #publish(body: Json): Json {
     const conversationId = Service.conversation(body, (ident) => this.chat(ident));
+    // "Built from <doc › page>": resolved by the web route (studio_routes.ts) from the tool's `fromDoc`, never taken from the caller
+    const fromDoc = isDict(body[FROM_DOC_RESOLVED]) ? body[FROM_DOC_RESOLVED] as Json : null;
     const hasPath = body.path !== null && body.path !== undefined;
     const hasContent = body.content !== null && body.content !== undefined;
     if (hasPath === hasContent) throw new ArtifactError('Give exactly one of path or content');
@@ -1224,9 +1240,16 @@ export class Service {
         changed = true;
       }
     }
+    if (fromDoc && JSON.stringify(manifest.fromDoc ?? null) !== JSON.stringify(fromDoc)) {
+      manifest = this.store.setFromDoc(manifest.id, fromDoc);
+      changed = true;
+    }
     return changed ? this.event(manifest) : this.store.summary(manifest);
   }
 }
+
+/** The body key the web route puts the resolved "built from" doc page under (whatever the caller sent there is dropped first). */
+export const FROM_DOC_RESOLVED = '\u0000fromDoc';
 
 function errorReply(error: unknown): Reply {
   if (error instanceof ArtifactError) return [error.status, { error: error.message, code: error.code }];

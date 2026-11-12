@@ -782,6 +782,20 @@ export class LiveDoc {
     return this.#entries.has(id) && !this.#roots.has(id);
   }
 
+  /**
+   * The rev a page last changed at (a block on it, its title or place), and how many of its blocks changed after `sinceRev`: an
+   * artifact built from the page ("Built from Release plan › Rollout") is stale once this moves past the rev it was built at.
+   */
+  pageRev(page: string, sinceRev = Infinity): { rev: number; edits: number } {
+    let rev = this.#pageRevs.get(page)?.[0] ?? 0, edits = 0;
+    for (const { id } of this.#walk(rootOf(page))) {
+      const e = this.#entries.get(id)!;
+      if (e.rev > rev) rev = e.rev;
+      if (e.rev > sinceRev) edits++;
+    }
+    return { rev, edits };
+  }
+
   /** All blocks in doc order, with depth (0 = top level). */
   #walk(
     from: string,

@@ -77,8 +77,10 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_create',
     title: 'Create a doc',
-    description: 'Make a new doc shared with the user (its folder: aib-docs/<name>/ in the project), optionally from Markdown (its ' +
-      'first page). Refused with doc_exists if the name is taken. Returns its blocks and `rev`, like doc_read. ' +
+    description: "Make a new doc shared with the user (in the project's aib-docs/ folder, committed with it; the user finds it in the Docs " +
+      'tab). Docs are for writing the user and agents keep editing: plans, specs, notes, decisions, checklists. Put the facts (dates, ' +
+      'owners, numbers) in the doc. To show them as a chart or an interactive page, publish an artifact with fromDoc. Optionally from ' +
+      'Markdown (its first page). Refused with doc_exists if the name is taken. Returns its blocks and `rev`, like doc_read. ' +
       DOC_INSTRUCTIONS,
     inputSchema: {
       type: 'object',
@@ -94,7 +96,9 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_read',
     title: 'Read a doc',
-    description: 'Read a doc shared with the user. A doc has pages (like tabs): reads are of one page, "page" (id or title; ' +
+    description: 'Read a doc shared with the user. A helper that builds a view of a doc (a chart, a timeline) reads it with this and ' +
+      'publishes with fromDoc; it does not edit the doc unless the main agent\'s brief says so. A doc has pages (like tabs): reads are of ' +
+      'one page, "page" (id or title; ' +
       'default the first). mode "outline" (the pages with their ids, titles and block counts, then the page\'s headings + top-level ' +
       'blocks with a preview: start here), "full" (default: every block of the page in order with `id`, `h`, `md`; lists, quotes ' +
       'and tables list their `kids`; callouts, columns and toggles too; `attrs`: callout variant, column width, cell colspan/rowspan, ' +

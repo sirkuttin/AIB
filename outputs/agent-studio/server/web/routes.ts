@@ -29,6 +29,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/docs/socket                local docs: the editor's WebSocket
  *   POST /api/live/docs/tool                  local docs: an agent's doc_* tool (agent key)
  *   POST /api/live/docs/comment/send          local docs: "Send to agent" queues a comment thread to the doc's chat
+ *   GET  /api/live/docs/built                 local docs: "Built from <doc › page>": has the page changed since?
+ *   GET  /api/live/docs/shown                 local docs: the artifacts built from a doc (its "Shown in N artifacts" chip)
  *   POST /api/live/docs/link                  local docs: link a doc to the chat the user picked
  *   POST /api/live/docs/page                  local docs: the user's page operations (add, rename, move, duplicate, delete)
  *   POST /api/live/docs/page/request          local docs: the user answers an agent's page delete request (delete / keep)
@@ -60,6 +62,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/docs/open', 'write', 'body'],
   ['GET', '/api/live/docs/list', 'read', 'get'],
   ['GET', '/api/live/docs/info', 'read', 'get'],
+  ['GET', '/api/live/docs/built', 'read', 'get'],
+  ['GET', '/api/live/docs/shown', 'read', 'get'],
   ['GET', '/api/live/docs/socket', 'write', 'get'],
   ['POST', '/api/live/docs/tool', 'artifacts.tool', 'own-gate'],
   ['POST', '/api/live/docs/comment/send', 'write', 'body'],

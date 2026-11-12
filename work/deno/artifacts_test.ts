@@ -1221,6 +1221,26 @@ Deno.test('interop: Deno writes, Python reads and extends; Deno reads that back'
   assertEquals(store.source(m.id, 3).text, 'one\n');
 });
 
+Deno.test('interop: a "built from" link (fromDoc, Deno only) survives Python rewriting the manifest', async () => {
+  using tmp = temp();
+  const root = join(tmp.dir, 'artifacts');
+  const clock = new Clock(1000.0);
+  const store = new ArtifactStore(root, clock.now);
+  store.origin = 'http://127.0.0.1:1';
+  const m = store.create('c1', 'Timeline', 'html', 't.html', enc('<p>one</p>'), { project: 'P' });
+  const fromDoc = { doc: 'release-plan', title: 'Release plan', page: 'p2', pageTitle: 'Rollout', rev: 7 };
+  store.setFromDoc(m.id, fromDoc);
+  await py.call('artifacts_shim', 'store_run', [root, [
+    { call: 'add_version', args: [m.id, b('<p>two</p>')], kwargs: { by: 'tool', title: 'Timeline v2' } },
+    { call: 'set_pinned', args: [m.id, true] },
+  ], 1006.0]);
+  const after = store.get(m.id);
+  assertEquals(after.versions.length, 2);
+  assertEquals(after.title, 'Timeline v2');
+  assertEquals(after.fromDoc, fromDoc);
+  assertEquals(store.summary(after).fromDoc, fromDoc);
+});
+
 Deno.test('parity teardown', async () => {
   await py.close();
 });

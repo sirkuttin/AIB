@@ -10,6 +10,10 @@
  *                                                   chat (linked chat), open, editedAt, editedBy, writing: [{chat, name, page,
  *                                                   section}]}], others: [aib-docs/<x>: files there that are no doc]}. The
  *                                                   Docs tab, Files, Ctrl+K, chips and the Artifacts picker.
+ *   GET  /api/live/docs/built?id=<chat>&artifact=   an artifact built from a doc page (its manifest's fromDoc): {built: {doc, title,
+ *                                                   page, pageTitle, rev, builtRev, changed, edits} | {gone: 'doc'|'page'} | null}.
+ *   GET  /api/live/docs/shown?doc=<doc>             the doc header's "Shown in N artifacts": {artifacts: [{id, title, kind,
+ *                                                   conversationId, page, pageTitle}]} (this project's artifacts built from it).
  *   POST /api/live/docs/link {doc, id}              link the doc to chat `id` (the user picked it): comments "Send" go there.
  *   GET  /api/live/docs/info?doc=<doc>              what the UI can show about an open doc: store.info (pages, rev, epoch, skipped
  *                                                   file edits, lossy blocks, linked chat, comment threads, claims, delete requests,
@@ -120,6 +124,40 @@ export function docsRoutes(): Map<string, Route> {
     if (typeof root !== 'string') return root;
     return [200, { ok: true, docs: await ctx.docs.list(root), others: await ctx.docs.others(root) }];
   });
+  // "Built from <doc › page>" in the Artifacts viewer: has the page changed since the artifact was built?
+  routes.set('GET /api/live/docs/built', async (ctx, url) => {
+    const root = await rootFor(ctx, { id: [url.searchParams.get('id') ?? ''], root: ['main'] });
+    if (typeof root !== 'string') return root;
+    const artifact = url.searchParams.get('artifact') ?? '';
+    let from: Json | null = null;
+    try {
+      const m = ctx.artifacts.service.store.get(artifact);
+      from = m.fromDoc && typeof m.fromDoc === 'object' ? m.fromDoc as Json : null;
+    } catch {
+      return [404, { error: 'No such artifact', code: 'no_artifact' }];
+    }
+    if (!from) return [200, { ok: true, built: null }];
+    return [200, { ok: true, built: await builtState(ctx, root, from) }];
+  });
+  // The doc header's chip "Shown in 2 artifacts": the artifacts of this project built from the doc (any page).
+  routes.set(
+    'GET /api/live/docs/shown',
+    onDoc((ctx, doc) => {
+      const out: Json[] = [];
+      for (const a of ctx.artifacts.service.store.list(null) as Json[]) {
+        const f = a.fromDoc as Json | undefined;
+        if (!f || f.doc !== doc.name) continue;
+        try {
+          const m = ctx.artifacts.service.store.get(a.id);
+          if (m.project && !sameProject(String(m.project), doc.projectRoot)) continue;
+        } catch {
+          continue;
+        }
+        out.push({ id: a.id, title: a.title, kind: a.kind, conversationId: a.conversationId, page: f.page, pageTitle: f.pageTitle });
+      }
+      return [200, { ok: true, artifacts: out }];
+    }),
+  );
   routes.set(
     'POST /api/live/docs/link',
     onDoc((ctx, doc, args) => {
@@ -421,6 +459,40 @@ export async function sendComment(ctx: WebContext, doc: OpenDoc, thread: unknown
 }
 
 /** POST /api/live/docs/tool, after the own gate checked the conversation's key against the body's conversationId. */
+/**
+ * The doc page an artifact is built from (the publish/update tool's `fromDoc` {doc, page}): {doc (folder name), title, page (id),
+ * pageTitle, rev (the page's rev now)}. Refused like a doc tool when the doc or the page is not there.
+ */
+export async function resolveFromDoc(ctx: WebContext, conversationId: string, value: unknown): Promise<Json> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DocRefusal('bad_from_doc', '`fromDoc` must be {"doc": "<name>", "page": "<page title or id>"}');
+  }
+  const v = value as Json;
+  const chat = ctx.artifacts.chatOf(conversationId);
+  const root = await rootFor(ctx, { id: [chat], root: ['main'] });
+  if (typeof root !== 'string') throw new DocRefusal('no_project', 'This chat has no project folder, so it has no docs.');
+  const doc = await ctx.docs.open(root, v.doc);
+  const page = doc.live.resolvePage(v.page);
+  const p = doc.live.pageList().find((x) => x.id === page)!;
+  return { doc: doc.name, title: doc.title, page, pageTitle: p.title, rev: doc.live.pageRev(page).rev };
+}
+
+/** Where an artifact built from a doc page stands: the names now, and the edits to that page since it was built. */
+async function builtState(ctx: WebContext, root: string, from: Json): Promise<Json> {
+  let doc: OpenDoc;
+  try {
+    doc = await ctx.docs.open(root, from.doc);
+  } catch {
+    return { doc: from.doc, title: from.title, pageTitle: from.pageTitle, gone: 'doc' };
+  }
+  const page = doc.live.pageList().find((p) => p.id === from.page);
+  if (!page) return { doc: doc.name, title: doc.title, pageTitle: from.pageTitle, gone: 'page' };
+  const built = Number(from.rev) || 0;
+  const now = doc.live.pageRev(page.id, built);
+  return { doc: doc.name, title: doc.title, page: page.id, pageTitle: page.title, rev: now.rev, builtRev: built, changed: now.rev > built,
+    edits: now.rev > built ? Math.max(1, now.edits) : 0 };
+}
+
 export async function docsTool(ctx: WebContext, body: Json): Promise<Reply> {
   const conversation = String(body.conversationId ?? '');
   const chat = ctx.artifacts.chatOf(conversation);
@@ -431,6 +503,11 @@ export async function docsTool(ctx: WebContext, body: Json): Promise<Reply> {
   const agent = chat.includes(':') ? chat.slice(0, chat.indexOf(':')) : 'agent';
   const [ok, result] = await runDocTool(ctx.docs, root, agent, tool, args, chat);
   return [200, { ok, result }];
+}
+
+function sameProject(a: string, b: string): boolean {
+  const k = (p: string) => p.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+  return Deno.build.os === 'windows' ? k(a).toLowerCase() === k(b).toLowerCase() : k(a) === k(b);
 }
 
 function offered(request: Request): string[] {

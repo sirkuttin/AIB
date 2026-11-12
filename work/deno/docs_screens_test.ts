@@ -22,6 +22,9 @@ import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend
 import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
 import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
 import { UserClient } from './_docs.ts';
+import { ownGatePost } from '../../outputs/agent-studio/server/web/studio_routes.ts';
+import { Gate } from '../../outputs/agent-studio/server/web/security.ts';
+import { configure as configureKeys, issue } from '../../outputs/agent-studio/server/artifacts/keys.ts';
 
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -288,6 +291,71 @@ Deno.test('the Docs tab list: "Claude Code is writing <section>" while it works,
     const [, after] = await s.call('GET /api/live/docs/list', null, 'id=claude:a');
     assertEquals((after.docs as Json[]).find((d) => d.name === 'plan')!.writing, []);
   } finally {
+    await s.done();
+  }
+});
+
+Deno.test('"Built from <doc › page>": publish with fromDoc keeps the page and its rev; the page changes; Rebuild = update; the doc chip finds it', async () => {
+  const s = await studio();
+  configureKeys(s.state);
+  s.ctx.gate = new Gate(9, () => 'token');
+  try {
+    s.chat('c1', 'claude', 'a', null, true);
+    await s.ctx.artifacts.refresh();
+    await s.tool('c1', 'doc_create', { doc: 'Release plan', markdown: '# Overview\n\nShip it.\n' });
+    await s.tool('c1', 'doc_page', { doc: 'release-plan', action: 'add', title: 'Rollout' });
+    const doc = s.ctx.docs.get(await docId(s.project, 'release-plan'))!;
+    const rollout = doc.live.pageList()[1].id;
+    const publish = async (body: Json): Promise<[number, Json]> => {
+      const text = JSON.stringify({ conversationId: 'c1', ...body });
+      const request = new Request('http://127.0.0.1/api/live/artifacts/publish', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': String(new TextEncoder().encode(text).length),
+          'X-Studio-Artifact-Key': issue('c1')!,
+          Host: '127.0.0.1:9',
+        },
+        body: text,
+      });
+      const [status, payload] = await ownGatePost(s.ctx, request, new URL(request.url));
+      return [status, payload as Json];
+    };
+    const [st, made] = await publish({ title: 'Checkout v2 timeline', filename: 't.html', content: '<p>25 Nov</p>', fromDoc: { doc: 'Release plan', page: 'rollout' } });
+    assertEquals(st, 200, JSON.stringify(made));
+    const id = String(made.id);
+    const m = s.ctx.artifacts.service.store.get(id);
+    assertEquals(m.fromDoc, { doc: 'release-plan', title: 'Release plan', page: rollout, pageTitle: 'Rollout', rev: doc.live.pageRev(rollout).rev });
+    assertEquals((s.ctx.artifacts.service.store.list(null) as Json[]).find((a) => a.id === id)!.fromDoc, m.fromDoc, 'the list carries it');
+    // a caller cannot plant a resolved link
+    const [, other] = await publish({ title: 'x', filename: 'x.html', content: 'x', '\u0000fromDoc': { doc: 'evil' } });
+    assertEquals(s.ctx.artifacts.service.store.get(String(other.id)).fromDoc, undefined);
+    // a doc or page that is not there is refused, with the doc tools' words
+    const [bad, why] = await publish({ title: 'y', filename: 'y.html', content: 'y', fromDoc: { doc: 'release-plan', page: 'Metrics' } });
+    assertEquals([bad, why.code], [400, 'no_page']);
+    const built = async () => (await s.call('GET /api/live/docs/built', null, `id=claude:a&artifact=${id}`))[1].built as Json;
+    assertEquals([(await built()).changed, (await built()).edits, (await built()).pageTitle], [false, 0, 'Rollout']);
+    // the user edits the Rollout page twice: the artifact is stale, 2 edits
+    const user = new UserClient(doc.live);
+    const [, read] = await s.tool('c1', 'doc_read', { doc: 'release-plan', page: 'Rollout' });
+    const first = (read.blocks as { id: string }[])[0].id;
+    await s.tool('c1', 'doc_edit', { doc: 'release-plan', page: 'Rollout', ops: [{ op: 'insert', target: { kind: 'root' }, side: 'end', source: inline('Web 50%: 27 Nov') }] });
+    user.type(first, 0, 'Dates: ');
+    const now = await built();
+    assertEquals([now.changed, now.edits, now.title, now.pageTitle], [true, 2, 'Release plan', 'Rollout']);
+    // an edit on another page does not make it stale; the doc chip lists it
+    const [, shown] = await s.call('GET /api/live/docs/shown', null, `doc=${doc.id}`);
+    assertEquals((shown.artifacts as Json[]).map((a) => [a.id, a.title, a.pageTitle]), [[id, 'Checkout v2 timeline', 'Rollout']]);
+    // Rebuild from the doc: the agent reads the page and updates; the update keeps the link at the page's rev now
+    const [up] = await publish({ id, content: '<p>27 Nov</p>' });
+    assertEquals(up, 200);
+    assertEquals((s.ctx.artifacts.service.store.get(id).fromDoc as Json).rev, doc.live.pageRev(rollout).rev);
+    assertEquals((await built()).changed, false);
+    // the page goes: the banner says so
+    s.ctx.docs.userPageOp(doc, 'delete', { page: rollout });
+    assertEquals((await built()).gone, 'page');
+  } finally {
+    configureKeys(null);
     await s.done();
   }
 });
