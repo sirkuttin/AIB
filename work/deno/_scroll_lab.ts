@@ -27,6 +27,32 @@ export class ScrollFixture extends Fixture {
   }
 }
 
+/** One owner of the chat lists' scroll position, checked while the tests run: every page wraps the scrollTop setter, and a
+ *  write to a list the scroll controller manages (class scroll-list) that does not come from scroll-controller.js is recorded
+ *  (page code only: a test's own script, which has no URL, moves the list the way you would). `ownerProblems` reads them. */
+export const OWNER_GUARD = `(() => {
+  const d = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+  if (!d || !d.set) return;
+  window.__badWrites = [];
+  Object.defineProperty(Element.prototype, 'scrollTop', {
+    configurable: true,
+    get: d.get,
+    set(v) {
+      if (this.classList && this.classList.contains('scroll-list')) {
+        const st = String(new Error().stack || '');
+        if (!st.includes('scroll-controller.js') && st.includes('http://'))
+          window.__badWrites.push((this.id || this.className) + ' <- ' + st.split(String.fromCharCode(10)).slice(2, 4).map((l) => l.trim()).join(' | '));
+      }
+      d.set.call(this, v);
+    },
+  });
+})()`;
+export async function ownerProblems(page: Page): Promise<string> {
+  if (Deno.env.get('AIB_SCROLL_V2') === '0') return ''; // the old code writes from everywhere: that is what it is
+  const bad = await page.eval<string[]>('window.__badWrites || []').catch(() => []);
+  return bad.length ? `scrollTop set on a managed list outside scroll-controller.js: ${[...new Set(bad)].slice(0, 4).join(' ;; ')}` : '';
+}
+
 export interface Chat {
   id: string;
   sid: string;
@@ -63,7 +89,9 @@ export class Lab {
     try {
       lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements']);
       lab.browser = await Browser.launch();
-      lab.page = await lab.browser.open(`http://127.0.0.1:${lab.web.port}/chat.html`, width, height);
+      lab.page = await lab.browser.open('about:blank', width, height);
+      await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: OWNER_GUARD });
+      await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
       await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
       if (Deno.env.get('AIB_SCROLL_V2') === '0') {
         // the one-release switch back to the old main-list scroll code (chat.js SCROLL_V2): the same tests against it

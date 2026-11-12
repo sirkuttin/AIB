@@ -39,7 +39,7 @@ test('only scroll-controller.js sets scrollTop on a managed list; every other wr
 
 test('the managed lists are attached to the controller and marked for CSS (overflow-anchor: none)', () => {
   const chat = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  assert.match(chat, /SCROLL_ROLES = \{ submessages: 'sub', commandDetails: 'command', \.\.\.\(SCROLL_V2 \? \{ messages: 'main' \} : \{\}\) \}/);
+  assert.match(chat, /SCROLL_ROLES = SCROLL_V2 \? \{ messages: 'main', submessages: 'sub', commandDetails: 'command' \} : \{\}/);
   assert.match(chat, /ScrollController\.attach\(box, \{ role: 'mirror'/);
   const css = fs.readFileSync(path.join(APP, 'chat.css'), 'utf8');
   assert.match(css, /\.scroll-list \{\s*overflow-anchor: none;/);

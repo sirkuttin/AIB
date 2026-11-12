@@ -59,7 +59,8 @@
     if (s.mode === 'follow') return FOLLOW;
     if (s.mode !== 'anchor' || typeof s.rid !== 'string' || !kindOf(s.rid)) return null;
     const num = (v) => (Number.isFinite(v) ? Math.round(v * 10) / 10 : 0);
-    return { mode: 'anchor', rid: s.rid, off: num(s.off), h: num(s.h), w: num(s.w) };
+    const fp = typeof s.fp === 'string' ? s.fp.slice(0, 60) : '';
+    return { mode: 'anchor', rid: s.rid, off: num(s.off), h: num(s.h), w: num(s.w), ...(fp ? { fp } : {}), ...(Number.isFinite(s.at) && s.at > 0 ? { at: s.at } : {}) };
   }
   function configure(opts) {
     saving = { storage: opts.storage, storageKey: opts.storageKey || 'studio-scroll-v1', max: opts.max || 200, timer: 0 };
@@ -90,18 +91,20 @@
       if (saving.storage.getItem(saving.storageKey) !== text) saving.storage.setItem(saving.storageKey, text);
     } catch (e) {}
   }
-  /* A moment after the last change (scrolling changes the anchor on every frame; it is written once you stop). */
+  /* 1.5 s after the last change (scrolling changes the anchor on every frame; it is written once you stop). Leaving the page
+     writes at once. */
   function saveSoon() {
     if (!saving) return;
     if (saving.timer) (root.clearTimeout || clearTimeout)(saving.timer);
-    saving.timer = (root.setTimeout || setTimeout)(saveNow, 400);
+    saving.timer = (root.setTimeout || setTimeout)(saveNow, 1500);
   }
   function remember(k, state) {
     if (!k) return;
+    const prev = store.get(k);
     store.delete(k); // the newest at the end: the oldest go first when the saved list is full
     store.set(k, state);
     while (store.size > 1000) store.delete(store.keys().next().value);
-    if (persisted(k)) saveSoon();
+    if (persisted(k) && (!prev || prev.mode !== state.mode || prev.rid !== state.rid)) saveSoon();
   }
 
   function attach(box, opts) {
@@ -115,6 +118,8 @@
       lastW = box.clientWidth,
       lastH = box.clientHeight,
       lostLayout = false, // hidden or moved in the page since the last apply: the browser reset the position, not you
+      restoring = false, // a place loaded by switchTo: trusted only on the same row (id and fingerprint), until it is found once
+      inObserver = false,
       detached = false,
       touchY = null;
     const observed = new Set();
@@ -135,7 +140,11 @@
       state = next;
       if (key) remember(prefix + ':' + key, next);
       emit();
-      if (prev.mode !== next.mode && opts.onChange) opts.onChange(next, prev, cause);
+      if (prev.mode !== next.mode && opts.onChange) {
+        /* from inside a ResizeObserver: the listeners' layout work (the jump button) waits for the next frame */
+        if (inObserver && root.requestAnimationFrame) root.requestAnimationFrame(() => opts.onChange(next, prev, cause));
+        else opts.onChange(next, prev, cause);
+      }
     }
     function markSettled() {
       settled = box.scrollTop;
@@ -145,16 +154,28 @@
 
     /* The row an anchor points at: the row itself, else the fold that holds it, else the nearest drawn row (earlier first).
        null when no drawn row has the same kind of id (a live chat that became a saved one: AIB keeps the pixel place). */
-    function rowFor(rid) {
+    function rowFor(rid, fp, at) {
       if (!rid) return null;
       const want = orderOf(rid),
         kind = kindOf(rid);
       let before = null,
-        after = null;
+        after = null,
+        sameFp = null,
+        sameAt = null;
+      for (const el of kids()) {
+        const d = el.dataset;
+        if (d && fp && d.fp === fp && drawn(el) && (!sameFp || Math.abs(orderOf(d.rid) - want) < Math.abs(orderOf(sameFp.dataset.rid) - want)))
+          sameFp = el;
+        if (d && at && +d.at === at && fp && d.fp && d.fp.split(':')[0] === fp.split(':')[0] && drawn(el)) sameAt = el;
+      }
       for (const el of kids()) {
         const d = el.dataset;
         if (!d) continue;
-        if (d.rid === rid && drawn(el)) return { el, exact: true };
+        if (d.rid === rid && drawn(el)) {
+          /* a saved place: the same id on another row means the ids were given again (a new connection numbers from 1) */
+          if (!restoring || !fp || !d.fp || d.fp === fp) return { el, exact: true };
+          break;
+        }
         if (d.ridFrom && kindOf(d.ridFrom) === kind) {
           const a = orderOf(d.ridFrom),
             b = orderOf(d.ridTo || d.ridFrom);
@@ -166,10 +187,23 @@
         if (o <= want) before = el;
         else if (!after) after = el;
       }
+      /* the row under another id: the same fingerprint, else the same time and role (replayed rows have no time) */
+      if (sameFp) return { el: sameFp, exact: true };
+      if (sameAt) return { el: sameAt, exact: true };
+      if (restoring) return null; // a saved place is only trusted on its own row
       const el = before || after;
       return el ? { el, exact: false } : null;
     }
     const ridOf = (el) => el.dataset.rid || el.dataset.ridFrom;
+    /* What an anchor remembers of its row besides the id: its fingerprint and time (chat.js tagRow), for a row whose id changed
+       (a live chat read back from its saved transcript, a connection that numbers its events again). */
+    function placeOf(el, off, h) {
+      const d = el.dataset,
+        out = { mode: 'anchor', rid: ridOf(el), off, h, w: box.clientWidth };
+      if (d.fp) out.fp = d.fp;
+      if (d.at && +d.at > 0) out.at = +d.at;
+      return out;
+    }
 
     /* The row at the top of the view now (the first row whose bottom is inside it), found by a binary search over the rows. */
     function anchorAtTop() {
@@ -191,7 +225,7 @@
       while (i < rows.length - 1 && !drawn(rows[i])) i++; // a fold's hidden rows have no box
       const el = rows[i],
         r = el.getBoundingClientRect();
-      return { mode: 'anchor', rid: ridOf(el), off: r.top - top, h: r.height, w: box.clientWidth };
+      return placeOf(el, r.top - top, r.height);
     }
 
     function apply() {
@@ -212,12 +246,22 @@
       if (state.mode === 'follow') target = max;
       else if (!state.rid) target = Number.isFinite(state.top) ? state.top : box.scrollTop;
       else {
-        const hit = rowFor(state.rid);
+        const hit = rowFor(state.rid, state.fp, state.at);
         if (!hit) {
-          if (opts.onLost && !kids().some((el) => isRow(el) && kindOf(ridOf(el)) === kindOf(state.rid)) && kids().some(isRow))
-            opts.onLost(state); // rows are drawn, none of this kind: the place points at rows that are gone
+          /* Rows are drawn and none is this place's row. A place loaded for a chat you open: the opening rule (onLost 'restore':
+             the New line, else the end). A row that went while you read (a live chat read back from its saved transcript): you
+             stay where you are, nothing is marked read. */
+          const wasRestoring = restoring;
+          if (kids().some(isRow)) restoring = false;
+          if (wasRestoring && kids().some(isRow) && opts.onLost) opts.onLost(state, 'restore');
           markSettled();
           return;
+        }
+        restoring = false;
+        if (hit.exact && ridOf(hit.el) !== state.rid) {
+          /* found under another id (by its fingerprint or time): the place takes the row's id now; not a change of yours */
+          state = { ...state, rid: ridOf(hit.el) };
+          if (key) remember(prefix + ':' + key, state);
         }
         if (max <= 0 && hit.exact) {
           set(FOLLOW, 'fits'); // nothing to scroll and the row is drawn: there is no place to keep
@@ -266,7 +310,15 @@
       if (state.mode === 'follow' && scrollable()) set(anchorAtTop(), 'user');
     }
     function onWheel(e) {
-      if (e.deltaY < 0) earlyUp();
+      if (e.deltaY >= 0 || e.ctrlKey) return; // Ctrl+wheel and a touchpad pinch zoom the text, they do not scroll
+      for (let n = e.target; n && n !== box && n.nodeType === 1; n = n.parentElement) {
+        /* a box inside the list (a wide table, a code block) that can still scroll up takes this wheel itself */
+        if (n.scrollTop > 0 && n.scrollHeight > n.clientHeight + 1 && root.getComputedStyle) {
+          const oy = root.getComputedStyle(n).overflowY;
+          if (oy === 'auto' || oy === 'scroll') return;
+        }
+      }
+      earlyUp();
     }
     function onKey(e) {
       const t = e.target;
@@ -311,7 +363,7 @@
         r = el.getBoundingClientRect();
       if (off == null && isRow(el)) {
         settled = box.scrollTop;
-        set({ mode: 'anchor', rid: ridOf(el), off: r.top - top, h: r.height, w: box.clientWidth }, cause);
+        set(placeOf(el, r.top - top, r.height), cause);
         return;
       }
       const max = box.scrollHeight - box.clientHeight,
@@ -319,7 +371,7 @@
       if (t >= max - 1) return follow(cause); // that place is past the end: you are at the newest row
       box.scrollTop = Math.max(0, t);
       markSettled();
-      set(isRow(el) ? { mode: 'anchor', rid: ridOf(el), off: el.getBoundingClientRect().top - boxTop(), h: r.height, w: box.clientWidth } : anchorAtTop(), cause);
+      set(isRow(el) ? placeOf(el, el.getBoundingClientRect().top - boxTop(), r.height) : anchorAtTop(), cause);
     }
     function follow(cause) {
       set(FOLLOW, cause || 'follow');
@@ -336,6 +388,7 @@
       const saved = key ? store.get(prefix + ':' + key) : null;
       const s = saved || (fallback ? fallback() : null) || FOLLOW;
       lostLayout = true; // the list is redrawn for another chat: its position now is not something you did
+      restoring = s.mode === 'anchor';
       set(s, 'switch');
       if (saving && persisted(prefix + ':' + key)) saveNow();
       /* applied by the drawer's afterRedraw once the new rows are drawn (the rows still in the list belong to the last key) */
@@ -348,7 +401,12 @@
       ro = new RO((entries) => {
         for (const e of entries)
           if (e.target === box && e.contentRect && !e.contentRect.height && !e.contentRect.width) lostLayout = true;
-        apply();
+        inObserver = true;
+        try {
+          apply();
+        } finally {
+          inObserver = false;
+        }
       });
       ro.observe(box);
     }
@@ -400,7 +458,13 @@
       box,
       apply,
       beforeRedraw() {
-        if (!detached && box.clientHeight) takePending(false);
+        if (!detached && box.clientHeight && !lostLayout) takePending(true);
+      },
+      /* A place set by the page, not by you (a lost place handed to the opening rule): listeners see cause 'switch'. */
+      replace(next) {
+        restoring = false;
+        set(next, 'switch');
+        apply();
       },
       afterRedraw() {
         if (detached) return;

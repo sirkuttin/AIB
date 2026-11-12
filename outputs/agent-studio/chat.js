@@ -234,6 +234,7 @@
       /* the scroll state is not touched: the redraw puts the row you read (or the fold that holds it now) back in place */
       viewStore.set(key, view);
       rowExtra.main = 0;
+      box._winStart = null; // the window is counted in rows or in prompts: start it again for this view
       mainSignature = '';
       window.ChatViewsUI?.sync();
       viewSwitching = true;
@@ -271,18 +272,35 @@
       return true;
     }
   })();
-  const SCROLL_ROLES = { submessages: 'sub', commandDetails: 'command', ...(SCROLL_V2 ? { messages: 'main' } : {}) };
+  const SCROLL_ROLES = SCROLL_V2 ? { messages: 'main', submessages: 'sub', commandDetails: 'command' } : {};
   function managed(box) {
     if (!box || !window.ScrollController || !SCROLL_ROLES[box.id]) return null;
     if (!box._scrollCtl)
       box._scrollCtl = window.ScrollController.attach(box, {
         role: SCROLL_ROLES[box.id],
         clamp: box.id === 'submessages' || box.id === 'messages',
-        ...(box.id === 'messages' ? { onChange: mainScrollChanged, onLost: () => box._scrollCtl.follow('lost') } : {}),
+        onLost: (place, how) => scrollPlaceLost(box, how),
+        ...(box.id === 'messages' ? { onChange: mainScrollChanged } : {}),
       });
     return box._scrollCtl;
   }
   const mainCtl = () => managed($('messages'));
+  /* A saved place whose row is not in the chat any more (its ids were given again, the chat was compacted): the opening rule,
+     the New line if something is unread, else the end. Nothing is marked read by it. (A row that goes while you read keeps
+     you where you are: the controller does not call this then.) */
+  function scrollPlaceLost(box, how) {
+    const ctl = box._scrollCtl;
+    if (!ctl || how !== 'restore') return;
+    ctl.replace(window.ScrollController.FOLLOW);
+    if (box.id !== 'messages' || !UNREAD.mark || unreadCount() <= 0) return;
+    const line = box.querySelector(':scope > .new-line');
+    if (!line) return;
+    UNREAD.jumped = true;
+    ctl.anchorTo(line, 12, 'line');
+    syncJump();
+  }
+  /* The most rows a list draws to keep a place you left far up in drawn (the window otherwise widens from it to the end). */
+  const PLACE_DRAW_MAX = 300;
   /* Your place in each chat survives a restart and a new build folder (the owner's Q7): kept under a localStorage key that
      view-prefs.js copies to AIB's data folder (studio-view.json). The newest 200 chats. */
   window.ScrollController?.configure({ storage: localStorage, storageKey: 'studio-scroll-v1', max: 200 });
@@ -1048,6 +1066,8 @@
     if (mainCtl()) {
       /* the chat you open comes back where you left it (the owner's Q6); one never read here follows (or opens at its New line) */
       $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
+      $('messages')._winStart = null; // another chat: its own window
+      $('messages')._tail = null;
       mainCtl().switchTo(aliasKey(c), () => window.ScrollController.FOLLOW);
     } else {
       delete $('messages').dataset.paused; // old main-list scroll code
@@ -1468,6 +1488,7 @@
     else subSignature = signature;
     const ctl = managed(box);
     if (ctl) ctl.beforeRedraw(); // a scroll you made that the browser has not reported yet counts before anything is redrawn
+    const tail = rows.length && window.StreamUI ? window.StreamUI.rowsSignature(rows.slice(-1)) : '';
     const top = box.scrollTop,
       anchor = !ctl && box.dataset.paused ? scrollAnchor(box) : null;
     /* (kept rows keep their own open state: only the old path opens <details> again by index) */
@@ -1502,7 +1523,7 @@
     /* and the row you read is always drawn (a chat or subagent opened again where you left it) */
     if (ctl && reading && win.start > 0) {
       const at = ctl.anchorIndex(proj ? proj.units.map((u) => unitRid(u)) : rows.map((r) => r.rid || ''));
-      if (at >= 0 && at < win.start) {
+      if (at >= 0 && at < win.start && total - at <= PLACE_DRAW_MAX) {
         rowExtra[signatureKey] = (rowExtra[signatureKey] || 0) + win.start - at;
         win = windowOf(total, rowExtra[signatureKey]);
       }
@@ -1573,7 +1594,9 @@
           if (l) ctl.anchorTo(l, 12, 'line');
           else ctl.follow('line');
         }
-        if (!ctl.following) box.dataset.unseen = '1'; // drawn again while you read: the jump button offers the latest
+        /* something new at the end while you read (not a redraw of the same rows: a view switch, "Show earlier"): ↓ Latest */
+        if (!ctl.following && box._tail != null && tail !== box._tail) box.dataset.unseen = '1';
+        box._tail = tail;
       }
     } else if (followBox(box)) box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
     else if (UNREAD.scrollLine && box.id === 'messages') {
@@ -1624,8 +1647,24 @@
   /* A drawn row carries its row's stable id (data-rid: 'L:' + event number, 'T:' + transcript index), the same in the main list,
      a split pane and every view, so the scroll controller (scroll-controller.js) can find the row you read again. */
   function tagRow(row, el) {
-    if (row && row.rid && el && el.dataset && !el.dataset.rid) el.dataset.rid = row.rid;
+    if (row && row.rid && el && el.dataset && !el.dataset.rid) {
+      el.dataset.rid = row.rid;
+      el.dataset.fp = rowPrintKey(row);
+      const t = rowTime(row);
+      if (t > 0) el.dataset.at = String(t);
+    }
     return el;
+  }
+  /* A row's fingerprint: its role and a hash of what identifies it (a step's call id, else the first 80 characters of its text).
+     The same row has the same one in a live chat and in its saved transcript, and after its events are numbered again. */
+  function rowPrintKey(row) {
+    const src =
+      row.role === 'tool'
+        ? String(row.raw?.toolCallId || row.callId || row.call?.name || '')
+        : String(row.value || '').slice(0, 80);
+    let h = 5381;
+    for (let i = 0; i < src.length; i++) h = ((h << 5) + h + src.charCodeAt(i)) | 0;
+    return (row.role || 'row') + ':' + (h >>> 0).toString(36);
   }
   const tagged = (render) => (row) => tagRow(row, render(row));
   /* The id a condensed view's unit (a prompt and what follows) answers to: its prompt's, else its first row's. */
@@ -2188,6 +2227,7 @@
     $('inspectorNote').textContent = 'Read-only history. Messages are sent through the main agent.';
     subSelection = agent;
     managed($('submessages'))?.switchTo(agent.key, () => window.ScrollController.FOLLOW); // each subagent keeps its own place
+    $('submessages')._winStart = null;
     rowExtra.sub = 0;
     subSignature = '';
     subLinksSignature = '';
@@ -3686,6 +3726,7 @@
       commandSignature = signature;
       const box = $('commandDetails'),
         ctl = managed(box),
+        top = box.scrollTop,
         fragment = document.createDocumentFragment();
       if (ctl) ctl.beforeRedraw();
       const metadata = text('div', '', 'command-summary');
@@ -3702,7 +3743,8 @@
         text('pre', task.output || 'No output saved yet.', 'command-code'),
       );
       box.replaceChildren(fragment);
-      ctl?.afterRedraw(); // follows while the output grows, or keeps the place you scrolled to
+      if (ctl) ctl.afterRedraw(); // follows while the output grows, or keeps the place you scrolled to
+      else box.scrollTop = followBox(box) ? box.scrollHeight : top; // old main-list scroll code (aib-scroll-v2 = '0')
     } catch (error) {
       if (selectedCommand?.id === id) $('subchatStatus').textContent = 'Could not update command: ' + error.message;
     }
@@ -4253,7 +4295,7 @@
   /* A side pane's scroll position is the scroll controller's, under the same key as the main list's for that chat (role 'mirror'
      shares the main store): click into the pane and the chat opens where you read it there, and the pane you leave keeps yours. */
   function mirrorCtl(box) {
-    if (!window.ScrollController) return null;
+    if (!SCROLL_V2) return null;
     if (!box._scrollCtl) {
       box._scrollCtl = window.ScrollController.attach(box, { role: 'mirror', nearTop: { px: MIRROR_NEAR, fn: () => growMirror(box) } });
       box._scrollCtl.switchTo(box.dataset.mirror || '', () => window.ScrollController.FOLLOW);
@@ -4300,6 +4342,11 @@
     const ctl = mirrorCtl(box);
     if (!box._mirrorBound) {
       box._mirrorBound = true;
+      if (!ctl)
+        box.addEventListener('scroll', () => {
+          const s = box._mirrorWin; // old main-list scroll code: grow the window near the top, not on its own writes
+          if (s && Math.abs(box.scrollTop - (s.lastSet ?? -1)) > 2 && box.scrollTop < MIRROR_NEAR) growMirror(box);
+        });
       box.addEventListener(
         'wheel',
         (e) => {
@@ -4313,7 +4360,7 @@
       if (Number.isInteger(st.winStart)) st.winStart += rows.length - st.total;
       st.histStart = hist.start;
     }
-    const atEnd = ctl ? ctl.following : true;
+    const atEnd = ctl ? ctl.following : !box._painted || box.scrollHeight - box.scrollTop - box.clientHeight < 48;
     let f = SU.freezeWindow(rows.length, st.extra, st.winStart, atEnd);
     st.extra = f.extra;
     if (st.grow) {
@@ -4324,7 +4371,7 @@
     /* the row you read in this pane is always drawn (a pane opened again, the window reset by a Thinking or view change) */
     if (ctl && !atEnd && f.win.start > 0) {
       const at = ctl.anchorIndex(rows.map((r) => r.rid || ''));
-      if (at >= 0 && at < f.win.start) {
+      if (at >= 0 && at < f.win.start && rows.length - at <= PLACE_DRAW_MAX) {
         st.extra += f.win.start - at;
         f = SU.freezeWindow(rows.length, st.extra, st.winStart, atEnd);
       }
@@ -4359,6 +4406,8 @@
       announceTurns(box, key, rows, chat ? titleOf(chat) : '');
     }
     if (ctl) ctl.beforeRedraw();
+    const oldTop = box.scrollTop,
+      oldAnchor = ctl || atEnd ? null : scrollAnchor(box);
     const fragment = document.createDocumentFragment();
     if (condensed) {
       const proj = window.ChatViews.project(drawn, view, {
@@ -4380,6 +4429,13 @@
     else box.replaceChildren(fragment);
     markRepeatedTimes(box);
     if (ctl) ctl.afterRedraw();
+    else if (atEnd) box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
+    else {
+      box.scrollTop = oldTop; // old main-list scroll code (aib-scroll-v2 = '0')
+      if (restoreAnchor(box, oldAnchor)) holdAnchor(box, oldAnchor, () => box.scrollHeight - box.scrollTop - box.clientHeight >= 48);
+    }
+    box._painted = true;
+    st.lastSet = box.scrollTop;
     fillMirror(box);
   }
   /* One step back: widen the window; at the start of the loaded rows fetch an older saved page (one at a time). */
@@ -4911,7 +4967,7 @@
   }
   /* old main-list scroll code (aib-scroll-v2 = '0'), from here to fadeNewLine: the scroll handlers and the shrink, width and
      growth watchers. With the controller none of them is attached. */
-  for (const id of SCROLL_V2 ? [] : ['messages']) {
+  for (const id of SCROLL_V2 ? [] : ['messages', 'submessages', 'commandDetails']) {
     const box = $(id);
     const pause = () => {
       if (!box.dataset.paused && id === 'messages') {
@@ -5004,7 +5060,7 @@
      thousands of px, and that never scrolls by itself (overflow-anchor: none). A list that follows goes back to its newest
      row; a list you are reading puts the row that was at the top of the view back at the same place, at the same point of
      that row (a long message that wraps taller keeps the line you were on, not the pixel offset). */
-  for (const id of SCROLL_V2 ? [] : ['messages']) {
+  for (const id of SCROLL_V2 ? [] : ['messages', 'submessages']) {
     const box = $(id);
     if (!box || typeof ResizeObserver !== 'function') continue;
     let width = box.clientWidth,
@@ -5053,7 +5109,7 @@
   /* Content that grows after a redraw (a "Show all" toggle added a moment later, a picture loading, a running step's output
      filling in) never scrolls either, so a list that follows was left a few rows short of its newest one. While a list follows,
      any growth keeps it at the bottom; growth right after your own click or key in it (opening a step) is left where it is. */
-  for (const id of SCROLL_V2 ? [] : ['messages']) {
+  for (const id of SCROLL_V2 ? [] : ['messages', 'submessages']) {
     const box = $(id);
     if (!box || typeof MutationObserver !== 'function') continue;
     let touchedAt = 0;

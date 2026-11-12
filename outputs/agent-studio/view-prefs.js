@@ -44,6 +44,7 @@
     'studio-sidebar-epoch', // when this copy of AIB first ran: older finished chats do not show as unread (sidebar-ui.js)
     'studio-new-chat-agent', // the agent last picked for a new chat, the fallback when Settings names none (agent-choice.js)
     'studio-scroll-v1', // where you were reading in each chat, the newest 200 (scroll-controller.js)
+    'aib-scroll-v2', // '0': the one-release switch back to the old scroll code (chat.js SCROLL_V2)
   ]);
   const PREFIXES = Object.freeze([
     'studio-textsize-v1:', // chat text and interface size, code font, line spacing

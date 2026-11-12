@@ -27,6 +27,7 @@ import {
   m,
   type M,
   type Page,
+  ownerProblems,
   rowFramesProblems,
   settle,
   shown,
@@ -57,6 +58,8 @@ function layoutTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number
       try {
         await fn(lab);
         assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
+        const owner = await ownerProblems(lab.page);
+        assert(!owner, owner);
       } finally {
         await lab.close();
       }
@@ -449,6 +452,21 @@ layoutTest('L2g following, chat text size and interface size change: the chat st
   await keepsFollowing(page, () => page.eval('AgentTextSize.setChat(130)'), 'chat text 130 %');
   await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 125 %');
   await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(100)'), 'interface 100 %');
+});
+
+// At 150 % interface size the browser rounds positions (a write of 1000.5 reads back as 1000.67): the controller reads back what
+// it wrote, so its own writes never look like you scrolling.
+layoutTest('L2q at 150 % interface size: reading keeps its row through a chat text change; following stays at the bottom through size changes', async (lab) => {
+  const page = lab.page;
+  await page.eval('AgentTextSize.setUi(150)');
+  await settle(800);
+  await openSeeded(lab, 40);
+  await keepsFollowing(page, () => page.eval('AgentTextSize.setChat(130)'), 'chat text 130 % at 150 %');
+  await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 150 -> 125 %');
+  await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(150)'), 'interface 125 -> 150 %');
+  await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(100)'), 'chat text 100 % at 150 %');
+  await keepsReadingRow(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 150 -> 125 % while reading', 'messages', false);
+  await page.eval('AgentTextSize.setUi(100)');
 });
 
 layoutTest('L2h reading midway, the chat list and the right column hide and show (Ctrl+B, Ctrl+Alt+B): the row stays', async (lab) => {

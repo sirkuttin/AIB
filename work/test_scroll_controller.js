@@ -331,3 +331,65 @@ test('row ids order by their number; sends not shown yet come last', () => {
   assert.equal(SC.kindOf('T:4'), 'T');
   assert.equal(SC.kindOf('x'), '');
 });
+
+/* ---- review fixes (S1, S2, S5) ---- */
+const fpRows = (box) => box.children.forEach((r, i) => (r.dataset.fp = 'assistant:' + (i + 1)));
+
+test('S1: a live chat read back as a saved one (L: ids become T: ids) keeps the row you read; nothing changes state', () => {
+  const { box, ctl, changes } = setup(rows(20));
+  fpRows(box);
+  box.userScroll(1000);
+  const n = changes.length;
+  box.children.forEach((r, i) => (r.dataset.rid = 'T:' + (i + 40))); // the same rows, other ids
+  box.children.splice(0, 2); // and two fewer rows above
+  ctl.afterRedraw();
+  assert.equal(box.topOf('T:50'), 0, 'found by its fingerprint, in place');
+  assert.equal(changes.length, n, 'no follow, nothing marked read');
+  const lost = setup(rows(20));
+  lost.box.userScroll(1000);
+  const before = lost.box.scrollTop;
+  lost.box.children.forEach((r, i) => (r.dataset.rid = 'T:' + i));
+  lost.ctl.afterRedraw();
+  assert.equal(lost.box.scrollTop, before, 'no fingerprint to go by: the pixels stay');
+  assert.equal(lost.ctl.state.mode, 'anchor');
+});
+
+test('S2: a saved place is trusted only on its own row: the same id on another row (renumbered) is searched by fingerprint, else lost', () => {
+  const box0 = setup(rows(20), { role: 'main' });
+  fpRows(box0.box);
+  box0.ctl.switchTo('k1');
+  box0.ctl.afterRedraw();
+  box0.box.userScroll(1000);
+  const place = box0.ctl.state;
+  assert.equal(place.fp, 'assistant:11');
+  const lostCalls = [];
+  const { box, ctl } = (() => {
+    const b = new (require('./scroll_fake.js').List)(rows(30));
+    const o = require('./scroll_fake.js').observers();
+    const c = SC.attach(b, { role: 'main', ResizeObserver: o.RO, MutationObserver: o.MO, onLost: (s, how) => lostCalls.push(how) });
+    return { box: b, ctl: c };
+  })();
+  box.children.forEach((r, i) => (r.dataset.fp = 'assistant:' + (i - 4))); // renumbered from 1: L:11 is another row now
+  ctl.switchTo('k1');
+  ctl.afterRedraw();
+  assert.equal(box.children.find((r) => r.dataset.fp === 'assistant:11').getBoundingClientRect().top - TOP, 0, 'the row with its text');
+  box.children.forEach((r) => (r.dataset.fp = 'other'));
+  ctl.switchTo('k2');
+  SC.store.set('main:k3', place);
+  ctl.switchTo('k3');
+  ctl.afterRedraw();
+  assert.deepEqual(lostCalls, ['restore'], 'nowhere to be found: the opening rule decides');
+});
+
+test('S5: Ctrl+wheel (text size, pinch) and a wheel a scrolling box inside the list takes do not stop following', () => {
+  const { box, ctl } = setup(rows(20));
+  ctl.afterRedraw();
+  box.fire('wheel', { deltaY: -100, ctrlKey: true });
+  assert.equal(ctl.following, true);
+  const inner = { nodeType: 1, scrollTop: 40, scrollHeight: 400, clientHeight: 100, parentElement: box };
+  const saved = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = () => ({ overflowY: 'auto' });
+  box.fire('wheel', { deltaY: -100, target: inner });
+  globalThis.getComputedStyle = saved;
+  assert.equal(ctl.following, true);
+});

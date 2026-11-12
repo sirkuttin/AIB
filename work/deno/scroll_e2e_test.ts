@@ -26,6 +26,7 @@ import {
   m,
   type Page,
   png,
+  ownerProblems,
   rowFramesProblems,
   settle,
   shown,
@@ -64,6 +65,8 @@ function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number
       try {
         await fn(lab);
         assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
+        const owner = await ownerProblems(lab.page);
+        assert(!owner, owner);
       } finally {
         await lab.close();
       }
@@ -1306,4 +1309,188 @@ scrollTest('Q7 reading midway, AIB restarts (a fresh browser profile): the chat 
   const now = await whereIs(page, before!.text);
   const x = await m(page);
   assert(now !== null && Math.abs(now - before!.off) <= 2 && x.paused, `after the restart the row you read is at ${now} (was ${before!.off}), paused ${x.paused}`);
+});
+
+// ---- R. the review of the scroll controller (S1-S8) and the owner's calls on it ---------------------------------------------------
+
+const places = (page: Page) => page.eval<Record<string, Record<string, unknown>>>(`JSON.parse(localStorage.getItem('studio-scroll-v1') || '{}')`);
+
+// S2: a restart without the keeper numbers the chat's events again; a saved place keeps a fingerprint of its row (role and the
+// start of its text), so it opens on the same text even when its id now names another row; with neither, the opening rule.
+scrollTest('R1 a saved place whose ids were given again opens on the same text; one with no such row opens at the end', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab, 30);
+  for (let i = 0; i < 6; i++) await wheel(page, -150);
+  await settle(2000);
+  const before = await anchor(page);
+  const saved = (await places(page))['main:' + chat.key] as { rid: string; fp?: string };
+  assert(saved && saved.rid && saved.fp, `a place with a fingerprint was saved: ${JSON.stringify(saved)}`);
+  // the same place under an id that now names another row (events numbered again from 1)
+  const n = Number(saved.rid.slice(2));
+  await page.eval(`(() => { const p = JSON.parse(localStorage.getItem('studio-scroll-v1')); p['main:' + ${JSON.stringify(chat.key)}].rid = 'L:' + ${n - 6}; localStorage.setItem('studio-scroll-v1', JSON.stringify(p)); sessionStorage.clear(); })()`);
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  await lab.select(chat);
+  await shown(page, 'SEEDEND');
+  await settle(1500);
+  const now = await whereIs(page, before!.text);
+  assert(now !== null && Math.abs(now - before!.off) <= 2, `opened on the same text: at ${now}, was ${before!.off}`);
+  // a place that matches no row at all: the opening rule (nothing unread: the end, following)
+  await page.eval(`(() => { const p = JSON.parse(localStorage.getItem('studio-scroll-v1')); p['main:' + ${JSON.stringify(chat.key)}] = { mode: 'anchor', rid: 'L:3', fp: 'assistant:nothing', off: 0, h: 50, w: 900 }; localStorage.setItem('studio-scroll-v1', JSON.stringify(p)); sessionStorage.clear(); })()`);
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  await lab.select(chat);
+  await shown(page, 'SEEDEND');
+  await settle(1500);
+  await assertFollowing(page, 'a place that is gone');
+});
+
+// S3: a place far up a long chat does not make the list draw everything from there to the end.
+scrollTest('R2 a saved place near the top of a long chat: the list draws a capped number of rows', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await chat.start();
+  seed(chat, 230); // 460 rows, of which the newest 150 are drawn
+  chat.say('LONGEND');
+  await lab.select(chat);
+  await shown(page, 'LONGEND');
+  await settle();
+  await page.eval(`(() => { const p = JSON.parse(localStorage.getItem('studio-scroll-v1') || '{}'); p['main:' + ${JSON.stringify(chat.key)}] = { mode: 'anchor', rid: 'L:4', off: 0, h: 50, w: 900 }; localStorage.setItem('studio-scroll-v1', JSON.stringify(p)); sessionStorage.clear(); })()`);
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  await lab.select(chat);
+  await shown(page, 'LONGEND');
+  await settle(1500);
+  const drawn = await page.eval<number>(`document.getElementById('messages').children.length`);
+  assert(drawn <= 320, `drew ${drawn} rows for a place 450 rows up`);
+});
+
+// S3: the window start of one chat must not carry over to the next (a short chat read, then a long one opened again).
+scrollTest('R3 reading a short chat, then back to a long one you were reading: the long one draws its usual window', async (lab) => {
+  const page = lab.page;
+  const long = await lab.chat();
+  await long.start();
+  seed(long, 120);
+  long.say('LONGCHATEND');
+  await lab.select(long);
+  await shown(page, 'LONGCHATEND');
+  await settle();
+  for (let i = 0; i < 4; i++) await wheel(page, -150);
+  await settle(500);
+  const short = await lab.chat();
+  await short.start();
+  seed(short, 8, 'Short');
+  short.say('SHORTEND');
+  await lab.select(short);
+  await shown(page, 'SHORTEND');
+  await settle();
+  await wheel(page, -300);
+  await settle(500);
+  await lab.select(long);
+  await shown(page, 'LONGCHATEND');
+  await settle(1200);
+  const drawn = await page.eval<number>(`document.getElementById('messages').children.length`);
+  assert(drawn <= 170, `the long chat drew ${drawn} rows (its window is 150)`);
+  assert((await m(page)).paused, 'still where you were reading');
+});
+
+// S4: "↓ Latest" is for something new at the end; a view switch or "Show earlier" draws the same rows again.
+scrollTest('R4 reading, Full -> Chat -> Full with nothing new: no "↓ Latest" button', async (lab) => {
+  const page = lab.page;
+  await openSeeded(lab, 30);
+  for (let i = 0; i < 6; i++) await wheel(page, -150);
+  await settle(500);
+  assert((await m(page)).jump === null, 'no button after scrolling up');
+  await setView(page, 'chat');
+  await setView(page, 'full');
+  const x = await m(page);
+  assert(x.paused && x.jump === null, `after the switches: ${JSON.stringify(x.jump)}`);
+});
+
+// S5: Ctrl+wheel changes the text size; it is not you scrolling up.
+scrollTest('R5 Ctrl+wheel over a following chat keeps it following', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab, 30);
+  const [x, y] = await page.eval<[number, number]>(`(() => { const r = document.getElementById('messages').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: -100, modifiers: 2 });
+  await settle(800);
+  const x0 = await m(page);
+  assert(!x0.paused && x0.gap <= 1, `still following after Ctrl+wheel: ${JSON.stringify(x0)}`);
+  await page.eval('AgentTextSize.setChat(100)'); // (the probe's row boxes are not comparable under the chat zoom)
+  await settle(800);
+  await assertFollowing(page, 'after Ctrl+wheel');
+  const p = await update(page, () => chat.say('\n\nAfter the zoom CTRLWHEEL'), 'CTRLWHEEL');
+  assert(!p, p);
+  await page.eval('AgentTextSize.setChat(100)');
+});
+
+// S6: a text size change is layout: the controller's state (the row you read) is not touched by it.
+scrollTest('R6 reading midway, the chat text size changes: the place is still the same row', async (lab) => {
+  const page = lab.page;
+  await openSeeded(lab, 30);
+  for (let i = 0; i < 6; i++) await wheel(page, -150);
+  await settle(500);
+  const s0 = await page.eval<string>(`document.getElementById('messages')._scrollCtl.state.rid`);
+  await page.eval('AgentTextSize.setChat(130)');
+  await settle(1000);
+  await page.eval('AgentTextSize.setChat(100)');
+  await settle(1000);
+  const s1 = await page.eval<string>(`document.getElementById('messages')._scrollCtl.state.rid`);
+  assert(s0 && s1 === s0, `the place moved from ${s0} to ${s1}`);
+});
+
+// S7: focus the other pane three times: each pane keeps its place every time, and no controller is left behind.
+scrollTest('R7 split view: click into the other pane three times, both keep their places, no controllers pile up', async (lab) => {
+  const page = lab.page;
+  await openSplit(lab);
+  for (let i = 0; i < 6; i++) await wheel(page, -150, 'messages');
+  for (let i = 0; i < 4; i++) await wheel(page, -150, MIRROR);
+  await settle(600);
+  let mainA = await anchor(page, 'messages'), sideA = await anchor(page, MIRROR);
+  const problems: string[] = [];
+  for (let k = 0; k < 3; k++) {
+    await clickHere(page, '#splitStage .pane:not(.foc) .mirror-head');
+    await page.waitFor(`document.getElementById('messages').textContent.includes(${JSON.stringify(sideA!.text.slice(0, 30))})`, 15000, 'the panes swapped');
+    await settle(1500);
+    const nowMain = await whereIs(page, sideA!.text, 'messages'), nowSide = await whereIs(page, mainA!.text, MIRROR);
+    if (nowMain === null || Math.abs(nowMain - sideA!.off) > 2) problems.push(`switch ${k + 1}: the pane you entered at ${nowMain}, was ${sideA!.off}`);
+    if (nowSide === null || Math.abs(nowSide - mainA!.off) > 2) problems.push(`switch ${k + 1}: the pane you left at ${nowSide}, was ${mainA!.off}`);
+    [mainA, sideA] = [sideA, mainA];
+  }
+  const live = await page.eval<number>(`ScrollController.live.size`);
+  assert(!problems.length, problems.join('; '));
+  assert(live <= 4, `${live} controllers attached (main, sub, command, one pane at most)`);
+});
+
+// The owner's call: "Show earlier" while a reply streams stops following (you are reading older rows now); ↓ Latest brings you back.
+scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest" brings you back to following', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await chat.start();
+  seed(chat, 90);
+  chat.say('EARLIERSTREAM');
+  await lab.select(chat);
+  await shown(page, 'EARLIERSTREAM');
+  await settle();
+  const stop = pump(chat, 'EARLYPUMP');
+  await settle(600);
+  await assertFollowing(page, 'streaming at the bottom');
+  await page.eval(`document.querySelector('#messages .show-earlier').click()`); // a keyboard user: Tab to it, Enter
+  await settle(1200);
+  const x = await m(page);
+  assert(x.paused, `stopped following: ${JSON.stringify(x)}`);
+  await startFrames(page);
+  await settle(1500);
+  const frames = await stopFrames(page);
+  assert(!frames.some((f) => !f.paused), 'and it stays stopped while the reply streams');
+  assert(x.jump !== null || (await m(page)).jump !== null, 'the jump button offers the way back');
+  await clickHere(page, '#jumpNew');
+  await settle(600);
+  if ((await m(page)).paused) {
+    await clickHere(page, '#jumpNew'); // the first click may take you to the New line
+    await settle(600);
+  }
+  await stop();
+  await settle(800);
+  await assertFollowing(page, 'after ↓ Latest');
 });

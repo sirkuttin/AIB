@@ -160,6 +160,25 @@
   function moved() {
     if (root.ScrollController && root.ScrollController.reattachAll) root.ScrollController.reattachAll();
   }
+  /* old main-list scroll code (localStorage aib-scroll-v2 = '0', one release): the lists' pixel positions kept across a move */
+  const oldScroll = () => {
+    try {
+      return root.localStorage && root.localStorage.getItem('aib-scroll-v2') === '0';
+    } catch (e) {
+      return false;
+    }
+  };
+  function saveScroll() {
+    if (!oldScroll()) return [];
+    const out = [],
+      m = doc().getElementById('messages');
+    if (m) out.push([m, m.scrollTop]);
+    for (const b of doc().querySelectorAll('.mirror-msgs')) out.push([b, b.scrollTop]);
+    return out;
+  }
+  function restoreScroll(list) {
+    for (const [n, top] of list) if (n.isConnected && n.scrollTop !== top) n.scrollTop = top; // old main-list scroll code
+  }
   function dropMirror(p) {
     if (!p.mirror) return;
     if (host.mirror && host.mirror.release) host.mirror.release(p.mirror.msgs);
@@ -200,7 +219,8 @@
     return box;
   }
   function build() {
-    const d = doc();
+    const keep = saveScroll(),
+      d = doc();
     if (!stage) {
       stage = el('div', 'split-stage');
       stage.id = 'splitStage';
@@ -221,6 +241,7 @@
       }
     stage.replaceChildren(buildNode(L.tree));
     shapeSig = T().shape(L).split('@')[0];
+    restoreScroll(keep);
     moved();
   }
   function applySizes() {
@@ -239,6 +260,7 @@
   }
   function teardown() {
     if (!stage) return;
+    const keep = saveScroll();
     for (const p of panes.values()) dropMirror(p);
     main.append(...liveNodes);
     stage.remove();
@@ -247,6 +269,7 @@
     shapeSig = '';
     strip0.hidden = false;
     doc().body.classList.remove('split-on');
+    restoreScroll(keep);
     moved();
   }
   function render() {
@@ -264,6 +287,7 @@
     if (reshaped && root.ResizeUI && typeof root.ResizeUI.layout === 'function') root.ResizeUI.layout();
   }
   function update() {
+    const keep = saveScroll();
     let move = false;
     order = T().groups(L.tree);
     order.forEach((g, i) => {
@@ -285,6 +309,7 @@
         }
       } else drawMirror(p, g);
     });
+    restoreScroll(keep);
     if (move) moved();
   }
 
