@@ -1,7 +1,7 @@
 'use strict';
 // Local docs, the ways in (doc-links.js + files-state.js + files-ui.js, with workspace-ui.js): one Files row per doc (its files
 // hidden, a user's docs/README.md stays a file), "+ New doc", doc tabs and frames by the doc-tab contract, the open rule (Files and
-// Ctrl+K: a tab; a chat: beside at 1280 px and wider), DOC tool rows with "open ↗" and the doc-created card, page chips resolved by
+// Ctrl+K: a tab; a chat: the right column's Artifacts viewer, else a tab; never beside the chat), DOC tool rows with "open ↗" and the doc-created card, page chips resolved by
 // page id at click, /doc with its page list, the Artifacts picker's doc rows, Ctrl+K's doc hits. Fake DOM, no browser.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,7 +82,19 @@ function setup(o) {
       reveal() {},
     }),
   };
-  ctx.AgentArtifactsUI = { state: () => ({ list: [] }), open() {} };
+  // the Artifacts viewer shows the open chat (claude:a1); opts.noViewer: an AIB without it (docs then open as tabs)
+  const viewer = [];
+  ctx.AgentArtifactsUI = opts.noViewer
+    ? { state: () => ({ list: [] }), open() {} }
+    : {
+        state: () => ({ list: [] }),
+        open() {},
+        openDoc: (d, o) => {
+          if (o && o.chat && o.chat !== 'claude:a1') return false;
+          viewer.push(Object.assign({}, d, { background: !!(o && o.background) }));
+          return true;
+        },
+      };
   const list = opts.list || [conv('a1', ROOT), conv('a2', ROOT)];
   const getJson = async (path, q) => {
     calls.push({ path, q: Object.assign({}, q) });
@@ -144,7 +156,7 @@ function setup(o) {
   FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, post, conversations: () => list, open: async () => {} });
   W.sync(list, list[0]);
   FU.sync(list[0]);
-  return { shell, ctx, W, FU, DL, calls, posts, notices, list, docs };
+  return { shell, ctx, W, FU, DL, calls, posts, notices, list, docs, viewer };
 }
 const flush = async () => {
   for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
@@ -304,9 +316,9 @@ test('files-state: aib-docs is a folder like any other; inside it one row per do
     ['newdoc', FS.NEW_DOC, 1],
   ]);
   assert.ok(!FS.treeRows(bare, new Set(), {}).some((r) => r.path === 'aib-docs'), 'no docs feature: no folder');
-  // a project with only files, or folders after "aib-docs" in order: the folder still sits first among the folders
+  // a project with only files, or with dot-folders: the folder is the first row, above every other folder
   assert.deepEqual(FS.treeRows({ '': [entry('a.txt')] }, new Set(), { newDoc: true }).map((r) => r.path), ['aib-docs', 'a.txt']);
-  assert.deepEqual(FS.treeRows({ '': [entry('.git', { dir: true }), entry('zeta', { dir: true })] }, new Set(), { newDoc: true }).map((r) => r.path), ['.git', 'aib-docs', 'zeta']);
+  assert.deepEqual(FS.treeRows({ '': [entry('.git', { dir: true }), entry('zeta', { dir: true })] }, new Set(), { newDoc: true }).map((r) => r.path), ['aib-docs', '.git', 'zeta']);
   // the Changed list: the doc's files are one doc row
   const flat = FS.flatRows(['docs/README.md', 'aib-docs/release-plan/02-risks.md', 'aib-docs/release-plan/doc.aibdoc', 'src/app.js'], { docs: idx });
   assert.deepEqual(flat.map((r) => [r.kind, r.path]), [
@@ -316,6 +328,32 @@ test('files-state: aib-docs is a folder like any other; inside it one row per do
   ]);
   // a new doc.aibdoc makes the badge A
   assert.equal(FS.docBadge(plan(), FS.changesMap([{ path: 'aib-docs/release-plan/doc.aibdoc', status: 'U', added: 4 }], '')).text, 'A');
+});
+
+test('aib-docs is always the first row, whatever order the listing comes in; it carries the doc count and the changed count', () => {
+  const docs = [plan(), Object.assign(plan(), { name: 'onboarding', title: 'Onboarding', dir: 'aib-docs/onboarding', owned: [] }), Object.assign(plan(), { name: 'x', dir: 'notes/x', owned: [] })];
+  const idx = FS.docIndex(docs);
+  const listed = (order) => ({ '': order.map((n) => (n.includes('.') && !n.startsWith('.') ? entry(n) : entry(n, { dir: true, changed: n === 'aib-docs' ? 1 : 0 }))) });
+  for (const order of [
+    ['.github', '.vscode', 'aib-docs', 'src', 'README.md'],
+    ['zeta', 'src', 'README.md', 'aib-docs', '.github'],
+    ['README.md', 'aib-docs', 'a', '.a'],
+  ]) {
+    const rows = FS.treeRows(listed(order), new Set(), { docs: idx, newDoc: true });
+    assert.equal(rows[0].path, 'aib-docs', order.join(','));
+    assert.equal(rows.filter((r) => r.path === 'aib-docs').length, 1);
+    assert.deepEqual([rows[0].docsFolder, rows[0].docCount], [true, 2], 'only the docs inside aib-docs count');
+  }
+  // the empty "no docs yet" row is first too
+  const empty = FS.treeRows({ '': [entry('.github', { dir: true }), entry('src', { dir: true })] }, new Set(), { docs: FS.docIndex([]), newDoc: true });
+  assert.deepEqual(empty.map((r) => r.path), ['aib-docs', '.github', 'src']);
+  assert.deepEqual([empty[0].virtual, empty[0].docsFolder, empty[0].docCount], [true, true, 0]);
+  // the count text
+  assert.equal(FS.docsFolderCount(3, 0), '3 docs');
+  assert.equal(FS.docsFolderCount(1, 0), '1 doc');
+  assert.equal(FS.docsFolderCount(3, 1), '3 docs · 1 changed');
+  assert.equal(FS.docsFolderCount(0, 2), '2 changed');
+  assert.equal(FS.docsFolderCount(0, 0), '');
 });
 
 test('doc tabs: one per doc; a single click is a preview the next one replaces; opening again keeps it', () => {
@@ -342,7 +380,11 @@ test('the Artifacts picker: artifacts, then "Docs this chat wrote" under a divid
   assert.deepEqual(g.map((x) => x.label), ['This chat', 'Docs this chat wrote']);
   assert.deepEqual(g[0].items.map((i) => [i.badge, i.title, i.meta.replace(/ · .*/, '')]), [['html', 'Checkout v2 timeline', 'v2']]);
   assert.deepEqual(g[1].items.map((i) => [i.doc, i.title, i.meta]), [[true, 'Release plan', '2 pages']]);
-  assert.equal(g[1].note, 'Opens beside the chat, where you can edit it');
+  assert.equal(g[1].note, 'Open here to edit; you and agents both can');
+  assert.equal(g[1].items[0].on, false);
+  const sel = A.pickerGroups(list, 'doc:release-plan', 0, docs, ['claude:a1'], 'a1');
+  assert.equal(sel[1].items[0].on, true, 'the doc shown in the viewer is the picked row');
+  assert.equal(sel[0].items[0].fresh, true, 'a row that came while you looked away is marked new');
   assert.equal(g[1].divider, true);
   assert.ok(!g.some((x) => x.items.some((i) => i.title === 'Onboarding')), 'a doc another chat wrote is left out');
   assert.ok(!g.some((x) => x.items.some((i) => i.id === 'h1')), 'the doc history is left out');
@@ -450,6 +492,35 @@ test('Files: aib-docs expands to one row per doc (title, page count, badge, no c
   assert.equal(rows(t)[0].dataset.kind, 'doc');
   const s = await t.FU.search('md');
   assert.deepEqual(s.matches.map((m) => m.path), ['docs/README.md']);
+});
+
+test('Files: the aib-docs row has the accent doc icon (not the folder outline), keeps its caret, and says "2 docs · 2 changed" (the doc count muted)', async () => {
+  const t = setup({ docs: [plan(), Object.assign(plan(), { name: 'onboarding', title: 'Onboarding', dir: 'aib-docs/onboarding', owned: [] })] });
+  t.FU.setMode('files');
+  await flush();
+  await t.DL.listFor('claude:a1', 'main');
+  t.FU.paint();
+  await flush();
+  const row = rowOf(t, 'aib-docs');
+  assert.equal(t.shell.body.querySelectorAll('.fx-row')[0], row, 'the first row');
+  assert.ok(row.classList.contains('fx-docsdir'));
+  assert.ok(row.querySelector('.fx-docico'), 'the doc icon');
+  assert.equal(row.querySelector('.fx-caret').textContent, '▸', 'the caret stays');
+  const c = row.querySelector('.fx-docscount');
+  assert.equal(c.textContent, '2 docs · 2 changed');
+  assert.equal(c.querySelector('.fx-docsn').textContent, '2 docs');
+  assert.equal(c.querySelector('.fx-dirchg').textContent, '2 changed');
+  assert.equal(row.querySelectorAll('.fx-dirchg').length, 1, 'one changed count');
+  // no changes: the doc count alone
+  const u = setup({ docs: [plan()], changes: [] });
+  u.FU.setMode('files');
+  await flush();
+  await u.DL.listFor('claude:a1', 'main');
+  u.FU.paint();
+  await flush();
+  const r2 = rowOf(u, 'aib-docs');
+  assert.equal(r2.querySelector('.fx-docscount').textContent, '1 doc');
+  assert.equal(r2.querySelector('.fx-dirchg'), null);
 });
 
 test('Files: a doc row opens a preview tab on one click and keeps it on a double-click; Enter keeps it', async () => {
@@ -591,51 +662,75 @@ async function draw(t, row) {
   return { line, out };
 }
 
-test('a DOC tool row names doc › page and its "open ↗" opens it beside the chat at 1280 px and wider, else as a tab', async () => {
+test('a DOC tool row names doc › page and its "open ↗" opens it in the Artifacts viewer at every width; never beside the chat', async () => {
   const t = setup();
   await t.DL.listFor('claude:a1', 'main');
   const { line } = await draw(t, docRow('doc_edit', { doc: 'release-plan', page: 'Risks', ops: [] }, { doc: 'release-plan', page: 'p2', ok: true }));
   assert.equal(line.querySelector('.tool-line-kind').textContent, 'doc');
   assert.equal(line.querySelector('.tool-line-text').textContent, 'Wrote Risks in Release plan');
   const open = line.querySelector('.doc-open');
-  assert.equal(open.textContent, 'open \u2197');
-  assert.equal(open.title, 'Open Release plan \u203a Risks');
+  assert.equal(open.textContent, 'open ↗');
+  assert.equal(open.title, 'Open Release plan › Risks');
   open.click();
   await flush();
-  const [b] = frames(t, 'beside');
-  assert.ok(b, 'beside the chat');
-  assert.deepEqual([query(b.frame.src).page, query(b.frame.src).where], ['p2', 'beside']);
-  assert.ok(t.shell.body.classList.contains('sf-beside-on'));
-  // narrow window: a tab below
+  assert.deepEqual(t.viewer.map((v) => [v.name, v.page, v.background]), [['release-plan', 'p2', false]]);
+  assert.equal(frames(t).length, 0, 'no tab, nothing beside the chat');
+  assert.ok(!t.shell.body.classList.contains('sf-beside-on'));
+  // narrow window: the same
   const n = setup({ width: 1000 });
   await n.DL.listFor('claude:a1', 'main');
   n.ctx.innerWidth = 1000;
   const r2 = await draw(n, docRow('doc_edit', { doc: 'release-plan', page: 'p1' }, { doc: 'release-plan', page: 'p1', ok: true }));
   r2.line.querySelector('.doc-open').click();
   await flush();
-  assert.equal(frames(n, 'beside').length, 0);
-  assert.equal(query(frames(n, 'main')[0].frame.src).page, 'p1');
+  assert.deepEqual(n.viewer.map((v) => v.page), ['p1']);
+  // the viewer shows another chat: a kept tab
+  n.DL.openDoc({ name: 'release-plan', page: 'p2', chat: { id: 'claude:a2' }, from: 'chat' });
+  await flush();
+  assert.equal(query(frames(n, 'main')[0].frame.src).page, 'p2');
+  assert.equal(query(frames(n, 'main')[0].frame.src).where, 'tab');
   assert.equal(frames(n, 'main')[0].tab.preview, false);
+  // no viewer at all: a tab too
+  const o = setup({ noViewer: true });
+  await o.DL.listFor('claude:a1', 'main');
+  o.DL.openDoc({ name: 'release-plan', chat: { id: 'claude:a1' }, from: 'chat' });
+  await flush();
+  assert.equal(frames(o, 'main').length, 1);
+  assert.equal(frames(o, 'beside').length, 0);
 });
 
-test('doc_create adds a doc-created card whose Open opens the doc; an already open doc is sent to the page instead of reloading', async () => {
+test('doc_create adds a doc-created card whose Open shows the doc in the Artifacts viewer', async () => {
   const t = setup();
   await t.DL.listFor('claude:a1', 'main');
   const { out, line } = await draw(t, docRow('doc_create', { doc: 'release-plan' }, { doc: 'release-plan', created: true, pages: [{ id: 'p1', title: 'Overview' }] }));
   assert.notEqual(out, line, 'wrapped with a card');
   const card = out.querySelector('.doc-card');
   assert.equal(card.querySelector('.art-card-title').textContent, 'Release plan');
-  assert.equal(card.querySelector('.art-card-sub').textContent, 'Doc \u00b7 2 pages \u00b7 in Files under aib-docs, you and agents edit it');
+  assert.equal(card.querySelector('.art-card-sub').textContent, 'Doc · 2 pages · in Files under aib-docs, you and agents edit it');
   assert.equal(card.querySelector('.art-btn').textContent, 'Open doc');
   assert.ok(card.querySelector('.doc-card-ic'), 'the solid square doc icon');
+  assert.equal(t.viewer.length, 0, 'a doc_create already done when drawn (history) is not announced');
   card.querySelector('.art-btn').click();
   await flush();
-  const [rec] = frames(t, 'beside');
-  const sent = [];
-  rec.frame.contentWindow = { postMessage: (m, o) => sent.push([m, o]) };
-  t.DL.openDoc({ name: 'release-plan', page: 'p2', chat: { id: 'claude:a1' }, from: 'chat' });
-  assert.deepEqual(JSON.parse(JSON.stringify(sent)), [[{ type: 'aib-doc:goto', page: 'p2', block: '', thread: '' }, 'http://127.0.0.1:9']]);
-  assert.equal(frames(t, 'beside').length, 1);
+  assert.deepEqual(t.viewer.map((v) => [v.name, v.background]), [['release-plan', false]]);
+});
+
+test('an agent making a doc while you watch: announced in the Artifacts viewer in the background, once; no tab, the chat stays in front', async () => {
+  const t = setup();
+  await t.DL.listFor('claude:a1', 'main');
+  const call = (result) => ({
+    role: 'tool',
+    uid: 'mk',
+    call: Object.assign({ id: 'mk1', name: 'mcp__studio_artifact__doc_create', input: { doc: 'Launch notes' } }, result ? { result: { text: JSON.stringify(result) } } : {}),
+  });
+  await draw(t, call(null));
+  assert.equal(t.viewer.length, 0, 'still running');
+  const done = call({ doc: 'launch-notes', docTitle: 'Launch notes', created: true });
+  await draw(t, done);
+  await draw(t, done); // drawn again (a re-render): announced once
+  assert.deepEqual(t.viewer.map((v) => [v.name, v.title, v.background]), [['launch-notes', 'Launch notes', true]]);
+  assert.equal(frames(t).length, 0, 'no tab opened');
+  assert.equal(t.FU._state().view, 'chat', 'the chat stays in front');
 });
 
 test('page chips: named from the doc list, resolved by page id at click (renamed or deleted), live and after a reload', async () => {
@@ -659,8 +754,7 @@ test('page chips: named from the doc list, resolved by page id at click (renamed
   t.shell.document.dispatch('click', { target: a });
   await flush();
   assert.equal(a.querySelector('.doc-chip-t').textContent, 'Release plan \u203a Top risks');
-  const [rec] = frames(t, 'beside');
-  assert.equal(query(rec.frame.src).page, 'p2');
+  assert.deepEqual(t.viewer.map((v) => v.page), ['p2']);
   // deleted: "deleted page", a note, nothing opens
   t.docs[0].pageList.pop();
   const b = chip('p2');
@@ -681,8 +775,7 @@ test('/doc with a page: an existing page opens; an unknown page is made; a new d
   const chat = { id: 'claude:a1', key: 'claude:a1' };
   let r = await t.DL.runCommand('/doc release plan > risk', chat);
   assert.equal(r.message, '');
-  let rec = frames(t, 'beside')[0];
-  assert.equal(query(rec.frame.src).page, 'p2');
+  assert.deepEqual(t.viewer.map((v) => [v.name, v.page, v.background]), [['release-plan', 'p2', false]]);
   r = await t.DL.runCommand('/doc release plan > launch notes: list what ships', chat);
   const added = t.posts.find(([p]) => p === 'docs/page');
   assert.deepEqual(added[1], { doc: 'id-release-plan', action: 'add', title: 'Launch notes' });
@@ -692,20 +785,28 @@ test('/doc with a page: an existing page opens; an unknown page is made; a new d
   r = await t.DL.runCommand('/doc release notes', chat);
   const made = t.posts.find(([p, b]) => p === 'docs/open' && b.create !== undefined);
   assert.deepEqual(made[1], { id: 'claude:a1', name: 'Release notes', create: '' });
-  rec = frames(t, 'beside').find((x) => x.tab.doc.name === 'release-notes');
-  assert.ok(rec, 'opened beside the chat');
+  assert.ok(t.viewer.some((v) => v.name === 'release-notes'), 'shown in the Artifacts viewer');
   assert.deepEqual(JSON.parse(JSON.stringify(await t.DL.runCommand('/doc', chat))), { error: 'Name the doc: /doc release plan' });
 });
 
-test('doc frames: show-in-files selects the doc row in Files, open from beside moves it to a tab, duplicate and trash list the docs again', async () => {
+test('doc frames: show-in-files selects the doc row in Files; the Artifacts viewer frame: open stays there, "open as tab" makes a tab, title and trash reach it; duplicate and trash list the docs again', async () => {
   const t = setup();
   await openDocsFolder(t);
   t.FU.openDoc(t.FU.currentScope(), { name: 'release-plan', title: 'Release plan', where: 'beside' });
   await flush();
-  const [rec] = frames(t, 'beside');
-  assert.ok(rec, 'a doc beside the chat');
-  rec.frame.contentWindow = { postMessage() {} };
-  const send = (data) => t.FU.onFrameMessage({ origin: 'http://127.0.0.1:9', source: rec.frame.contentWindow, data });
+  assert.equal(frames(t, 'beside').length, 0, 'a doc never opens beside the chat: a tab');
+  assert.equal(t.FU._state().tabs.tabs[0].doc.name, 'release-plan');
+  t.FU.closeActive();
+  await flush();
+  // the Artifacts viewer hands its frame over
+  const heard = [];
+  const frame = { contentWindow: { postMessage() {} }, remove() {} };
+  const handle = t.FU.attachDocFrame(frame, t.FU.currentScope(), { name: 'release-plan', title: 'Release plan' }, {
+    open: (d) => heard.push(['open', d.name, d.page]),
+    title: (x) => heard.push(['title', x.title, x.pageTitle]),
+    closed: () => heard.push(['closed']),
+  });
+  const send = (data) => t.FU.onFrameMessage({ origin: 'http://127.0.0.1:9', source: frame.contentWindow, data });
   rowOf(t, 'aib-docs').click(); // closed
   t.FU.setMode('chats');
   await flush();
@@ -719,11 +820,20 @@ test('doc frames: show-in-files selects the doc row in Files, open from beside m
   send({ type: 'aib-doc:docs-changed' });
   await flush();
   assert.ok(t.calls.filter((c) => c.path === '/api/live/docs/list').length > before, 'duplicate: the docs are listed again');
+  send({ type: 'aib-doc:open', name: 'release-plan', page: 'p2' });
+  send({ type: 'aib-doc:title', title: 'Release plan 2', page: 'p2', pageTitle: 'Risks' });
+  assert.deepEqual(heard, [['open', 'release-plan', 'p2'], ['title', 'Release plan 2', 'Risks']]);
   send({ type: 'aib-doc:open', name: 'release-plan', where: 'tab' });
   await flush();
-  assert.equal(frames(t, 'beside').length, 0, '"Open as tab" leaves the beside column');
-  assert.equal(t.FU._state().tabs.tabs.length, 1);
+  assert.equal(t.FU._state().tabs.tabs.length, 1, '"Open it" asked for a tab: a tab');
   assert.equal(t.FU._state().tabs.tabs[0].doc.name, 'release-plan');
+  const mid0 = t.calls.filter((c) => c.path === '/api/live/docs/list').length;
+  send({ type: 'aib-doc:closed' });
+  await flush();
+  assert.deepEqual(heard[heard.length - 1], ['closed']);
+  assert.ok(t.calls.filter((c) => c.path === '/api/live/docs/list').length > mid0, 'trash: the docs are listed again');
+  assert.equal(frames(t, 'artifacts').length, 0, 'the viewer frame is forgotten');
+  handle.detach();
   await flush();
   const [main] = frames(t, 'main');
   main.frame.contentWindow = { postMessage() {} };

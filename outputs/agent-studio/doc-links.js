@@ -588,7 +588,7 @@
 
   // ---- /doc ------------------------------------------------------------------------------------------------------------------
   // Runs /doc for the chat `chat` ({id, key}): finds or makes the doc (a new one is linked to this chat), finds or adds the page,
-  // opens it beside the chat. Resolves {message} (the brief for the agent, aimed at the doc and page) or {error}.
+  // shows it in the right column's Artifacts viewer. Resolves {message} (the brief for the agent, aimed at the doc and page) or {error}.
   async function runCommand(text, chat) {
     const cmd = parseDocCommand(text);
     if (!cmd) return { error: 'Not a /doc command' };

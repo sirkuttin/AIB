@@ -4,10 +4,12 @@
   //  - A Chats | Files switch under Find (Ctrl+Shift+E). The Chats half carries the amber count of this project's chats that
   //    need you.
   //  - Files mode: the scope button (which copy of the project: follows the open chat by default), a filter (Ctrl+Shift+F) and a
-  //    "Changed n" toggle, a lazy tree (one folder at a time; .git never, ignored entries as one dimmed row), change badges from the
-  //    chat's Changes data (a click opens that file's diff), "n changed" on folders, ⧉ on files that are artifacts.
-  //  - Files open as tabs in the chat tab strip (a single click opens an italic preview tab that the next click replaces) and show
-  //    in the middle, read only. From a reply, at 1280 px and wider, a file opens beside the chat instead.
+  //    "Changed n" toggle, a lazy tree (one folder at a time; .git never, ignored entries as one dimmed row; aib-docs always first,
+  //    with the doc icon and "3 docs"), change badges from the chat's Changes data (a click opens that file's diff), "n changed"
+  //    on folders, ⧉ on files that are artifacts.
+  //  - Files and docs open as tabs in the chat tab strip (a single click opens an italic preview tab that the next click
+  //    replaces) and show in the middle. From a reply, at 1280 px and wider, a file opens beside the chat instead (a pane with a
+  //    draggable divider); a doc from a chat opens in the right column's Artifacts viewer (artifacts-ui.js).
   //  - Paths in replies that name an existing file in the chat's folder become file links (never artifacts).
   // Pure decisions live in files-state.js. Paths and names from disk are untrusted: text only, never HTML.
   const doc = () => root.document;
@@ -630,7 +632,7 @@
       n.style.setProperty('--d', String(r.depth));
       return n;
     }
-    const n = el('div', null, 'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.ignored ? ' ignored' : '') + (r.path === sel ? ' sel' : ''));
+    const n = el('div', null, 'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.docsFolder ? ' fx-docsdir' : '') + (r.ignored ? ' ignored' : '') + (r.path === sel ? ' sel' : ''));
     n.dataset.path = r.path;
     n.dataset.kind = r.kind;
     n.setAttribute('role', 'treeitem');
@@ -639,7 +641,8 @@
     if (r.kind === 'dir') n.setAttribute('aria-expanded', String(!!r.open));
     const caret = el('span', r.kind === 'dir' && r.canOpen ? (r.open ? '▾' : '▸') : '', 'fx-caret');
     caret.setAttribute('aria-hidden', 'true');
-    n.append(caret, r.kind === 'dir' ? icon(DIR_D, 'fx-ico') : fileIcon(r.name));
+    // aib-docs: the docs' own accent icon instead of the folder outline
+    n.append(caret, r.docsFolder ? docIcon('fx-ico fx-docico') : r.kind === 'dir' ? icon(DIR_D, 'fx-ico') : fileIcon(r.name));
     const name = el('span', null, 'fx-name');
     const hit = query.trim() && results ? F().markHit(r.name, query) : null;
     if (hit) name.append(doc().createTextNode(hit[0]), el('mark', hit[1]), doc().createTextNode(hit[2]));
@@ -648,7 +651,14 @@
     if (r.folder) n.append(el('span', r.folder, 'fx-dirpath'));
     n.title = r.path + (r.ignored ? '\nIgnored (.gitignore)' : '');
     if (r.ignored) n.append(el('span', 'ignored', 'fx-tag'));
-    if (r.kind === 'dir' && r.changed && !r.ignored) n.append(el('span', r.changed + ' changed', 'fx-dirchg'));
+    if (r.docsFolder && (r.docCount || r.changed)) {
+      // "3 docs · 1 changed": the doc count muted, the changed part in the usual colour
+      const c = el('span', null, 'fx-docscount');
+      if (r.docCount) c.append(el('span', F().docsFolderCount(r.docCount, 0), 'fx-docsn'));
+      if (r.docCount && r.changed) c.append(el('span', ' · ', 'fx-docsn'));
+      if (r.changed) c.append(el('span', r.changed + ' changed', 'fx-dirchg'));
+      n.append(c);
+    } else if (r.kind === 'dir' && r.changed && !r.ignored) n.append(el('span', r.changed + ' changed', 'fx-dirchg'));
     if (r.artifact) {
       const a = btn(null, 'fx-art', 'Open in Artifacts');
       a.append(el('span', '⧉'));

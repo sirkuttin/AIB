@@ -114,3 +114,47 @@ test('3 columns has its own icon', () => {
   assert.match(src, /id: 'columns3',\s*label: '3 columns',\s*icon: 'columns3'/);
   assert.ok(!/Teal and blue are left out/.test(src), 'the agents note is gone');
 });
+
+test('the Artifacts viewer shows a doc from the chat in a frame; an agent-made doc is only announced (count, marked row); an artifact replaces the doc', async () => {
+  const shell = page({ ids: ['artifactsView'] });
+  const w = shell.window;
+  w.setInterval = () => 1;
+  w.clearInterval = () => {};
+  w.fetch = async () => ({ ok: true, status: 200, json: async () => ({ token: 't', artifacts: [] }) });
+  const ctx = load(shell, ['artifacts-ui.js']);
+  ctx.location = { origin: 'http://127.0.0.1:9' };
+  const UI = ctx.ArtifactsUI;
+  const badge = shell.document.createElement('span'),
+    tab = shell.document.createElement('button');
+  let reveals = 0;
+  UI.mount({ view: shell.byId.artifactsView, badge, tab, win: ctx, reveal: () => reveals++ });
+  UI.sync({ id: 'chat1', busy: false, cwd: '' });
+  UI.setVisible(true);
+  // an agent made it: announced, not opened, no reveal
+  assert.equal(UI.openDoc({ name: 'launch-notes', title: 'Launch notes' }, { chat: 'chat1', background: true }), true);
+  assert.equal(UI.state().doc, null);
+  assert.equal(UI.state().fresh, 'doc:launch-notes');
+  assert.equal(reveals, 0);
+  assert.equal(badge.textContent, '1');
+  assert.match(tab.getAttribute('aria-label'), /1 doc.*new/);
+  const row = shell.byId.artifactsView.querySelector('.ar-doc');
+  assert.ok(row && row.classList.contains('ar-new') && row.querySelector('.ar-newdot'), 'the row is marked new');
+  assert.ok(!row.textContent.includes('\u2197'), 'no arrow on the row');
+  // another chat's doc is not shown here
+  assert.equal(UI.openDoc({ name: 'x' }, { chat: 'chat2' }), false);
+  // clicked: shown in a frame, revealed, the mark goes
+  row.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(UI.state().doc.name, 'launch-notes');
+  assert.equal(UI.state().fresh, '');
+  assert.equal(reveals, 1);
+  const frame = shell.byId.artifactsView.querySelector('iframe.ar-docframe');
+  assert.ok(frame, 'the doc frame');
+  assert.equal(shell.byId.artifactsView.querySelector('.ar-ver').hidden, true, 'no version chip for a doc');
+  // an artifact replaces the doc
+  UI.upsert({ id: 'a1', title: 'First', kind: 'html', version: 1, versions: 1, updatedAt: 1, url: 'http://a/a1/v1/', conversationId: 'chat1' });
+  assert.equal(badge.textContent, '2', 'the count is artifacts plus docs');
+  await UI.open('a1');
+  assert.equal(UI.state().doc, null);
+  assert.equal(shell.byId.artifactsView.querySelector('iframe.ar-docframe'), null, 'the doc frame is gone');
+});

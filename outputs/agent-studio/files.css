@@ -664,8 +664,17 @@ a.fx-path code {
 
 /* ---- local docs: one row per doc, "+ New doc", doc tabs and frames (doc-links.js, files-ui.js) ---- */
 .fx-row.fx-doc .fx-docico,
+.fx-row.fx-docsdir .fx-docico,
 .sf-ftab .sf-docico {
   color: var(--accent);
+}
+/* aib-docs (always the first row): "3 docs · 1 changed", the doc count muted */
+.fx-docscount {
+  flex: none;
+  font-size: 12px;
+}
+.fx-docsn {
+  color: var(--muted);
 }
 .fx-docpages {
   flex: none;

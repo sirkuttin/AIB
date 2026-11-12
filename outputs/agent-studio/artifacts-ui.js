@@ -782,7 +782,7 @@
       const newest = added.slice().sort((a, b) => num(b.updatedAt) - num(a.updatedAt))[0];
       if (newest.id !== S.selId) S.fresh = newest.id;
     }
-    if (S.fresh && (S.fresh === S.selId || !known(S.fresh))) S.fresh = '';
+    if (S.fresh && !isDocId(S.fresh) && (S.fresh === S.selId || !known(S.fresh))) S.fresh = '';
     paintCount();
     relinkAll();
     refreshCards();
@@ -901,6 +901,9 @@
       S.dirty = true;
       S.stageKey = '';
       S.fresh = '';
+      S.doc = null;
+      S.docExtras = [];
+      dropDoc();
       closePop();
       paintCount();
       paintAll();
@@ -968,6 +971,7 @@
     }
     S.selId = id;
     S.userPicked = true;
+    S.doc = null;
     if (S.fresh === id) S.fresh = '';
     S.mode = 'page';
     S.cmp = null;
@@ -987,7 +991,9 @@
   }
   function selectArtifact(id) {
     if (S.fresh === id) S.fresh = '';
-    if (id === S.selId) return;
+    const wasDoc = !!S.doc;
+    S.doc = null;
+    if (id === S.selId && !wasDoc) return;
     S.selId = id;
     S.userPicked = true;
     S.picked = null;
@@ -1022,42 +1028,185 @@
       }, 5000);
   }
 
-  /* -- local docs in the picker: doc-links.js keeps the project's doc list; picking a doc opens it beside the chat (a tab below
-     1280 px), never inside this narrow viewer. -- */
+  /* -- local docs: doc-links.js keeps the project's doc list. A doc from this chat (its card, a link, /doc, the picker's "Docs this
+     chat wrote", Open doc) opens here, in the full doc editor (doc.html in a frame; files-ui.js answers the frame's messages). A
+     doc an agent makes while you watch is announced, not opened: the tab's count goes up and its row is marked new. -- */
   const DL = () => win && win.AgentDocLinks;
-  let docsAsked = '';
+  const FUI = () => win && win.AgentFilesUI;
+  const isDocId = (id) => String(id || '').indexOf('doc:') === 0;
+  let docsAsked = '',
+    docsHooked = false;
   function projectDocs() {
     const D = DL();
-    if (!D || !S.chat.id) return [];
+    if (!D || !S.chat.id) return S.docExtras.slice();
+    if (!docsHooked && D.onList) {
+      docsHooked = true;
+      D.onList(() => paintAll());
+    }
     const now = D.cached(S.chat.id, 'main');
     if (!now && docsAsked !== S.chat.id) {
       docsAsked = S.chat.id;
-      D.listFor(S.chat.id, 'main').then(() => paintBar());
+      D.listFor(S.chat.id, 'main').then(() => paintAll());
     }
-    return now || [];
+    return (now || []).concat(S.docExtras);
   }
   function chatKeys() {
-    const FU = win && win.AgentFilesUI,
+    const FU = FUI(),
       c = FU && FU.currentChat ? FU.currentChat() : null;
     return [S.chat.id, c && c.key, c && c.id].filter(Boolean);
   }
+  /* This chat's docs for the picker and the count: the docs linked to it, plus the ones it opened or made here; one row a doc. */
+  function myDocs() {
+    const out = [];
+    for (const d of linkedDocs(projectDocs(), chatKeys())) if (!out.some((o) => o.name === d.name)) out.push(d);
+    return out;
+  }
+  function rememberDoc(d) {
+    if (myDocs().some((o) => o.name === d.name)) return;
+    const all = (DL() && DL().cached(S.chat.id, 'main')) || [];
+    const hit = all.find((o) => o.name === d.name);
+    S.docExtras = S.docExtras
+      .filter((o) => o.name !== d.name)
+      .concat([Object.assign({}, hit || { name: d.name, title: d.title || d.name, pages: 1 }, { chat: S.chat.id })]);
+  }
+  const docTitle = (name) => {
+    const hit = myDocs().find((d) => d.name === name);
+    return (hit && (hit.title || hit.name)) || (S.doc && S.doc.name === name ? S.doc.title : '') || name;
+  };
+  /* Open a doc in the viewer. opts: {chat: the chat it came from (another chat's doc is not shown here: false), background: an
+     agent made it (mark it new, never switch to it, never take the focus)}. Returns whether it is shown or announced here. */
+  function openDoc(d, opts) {
+    opts = opts || {};
+    if (!S.mounted || !ui || !d || !d.name || !S.chat.id) return false;
+    if (opts.chat && opts.chat !== S.chat.id) return false;
+    rememberDoc(d);
+    if (opts.background) {
+      if (!(S.doc && S.doc.name === d.name)) S.fresh = 'doc:' + d.name;
+      paintAll();
+      return true;
+    }
+    const same = !!(S.doc && S.doc.name === d.name && ui.docFrame && ui.docFrame.parentNode === ui.stage);
+    S.doc = { name: d.name, title: d.title || docTitle(d.name), page: d.page || '', block: d.block || '', thread: d.thread || '' };
+    S.userPicked = true;
+    if (S.fresh === 'doc:' + d.name) S.fresh = '';
+    if (same) {
+      if (d.page || d.block || d.thread)
+        try {
+          ui.docFrame.contentWindow.postMessage({ type: 'aib-doc:goto', page: d.page || '', block: d.block || '', thread: d.thread || '' }, win.location.origin);
+        } catch (e) {
+          /* still loading */
+        }
+    } else {
+      S.dirty = true;
+      S.stageKey = '';
+    }
+    ui.reveal();
+    paintAll();
+    paintStage('open');
+    return true;
+  }
   function openDocRow(it) {
-    const D = DL();
-    if (D && D.openDoc) D.openDoc({ name: it.name, title: it.title, chat: { id: S.chat.id }, from: 'chat' });
+    openDoc({ name: it.name, title: it.title });
   }
   function docButton(it) {
-    const row = popItem('ar-doc');
+    const row = popItem('ar-doc' + (it.on ? ' on' : '') + (it.fresh ? ' ar-new' : ''));
     row.dataset.doc = it.name;
-    const out = el('span', 'ar-out', '↗');
-    out.setAttribute('aria-hidden', 'true');
-    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta), out);
-    row.title = 'Open ' + it.title + ' beside the chat';
-    row.setAttribute('aria-label', it.title + ', ' + it.meta + ': opens beside the chat');
+    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
+    if (it.fresh) row.append(newDot());
+    row.title = 'Open ' + it.title + ' here';
+    row.setAttribute('aria-label', it.title + ', ' + it.meta + (it.fresh ? ', new' : ''));
     row.addEventListener('click', () => {
       closePop();
       openDocRow(it);
     });
     return row;
+  }
+  /* The mark on a row that came while you were not looking (the "New: …" line names it too). */
+  function newDot() {
+    const d = el('span', 'ar-newdot');
+    d.setAttribute('aria-hidden', 'true');
+    d.title = 'New';
+    return d;
+  }
+  /* The doc frame: kept while the viewer shows that doc, dropped (and its messages forgotten) when anything else is shown. */
+  let docRec = null;
+  function dropDoc() {
+    if (docRec) docRec.detach();
+    docRec = null;
+    if (ui && ui.docFrame) {
+      if (ui.docFrame.parentNode) ui.docFrame.remove();
+      ui.docFrame = null;
+    }
+  }
+  function paintDocStage() {
+    if (!S.visible) {
+      S.dirty = true;
+      return;
+    }
+    S.dirty = false;
+    const key = 'doc:' + S.doc.name;
+    if (S.stageKey === key && ui.docFrame && ui.docFrame.parentNode === ui.stage) return;
+    S.renderSeq++;
+    S.stageKey = key;
+    const D = DL(),
+      d = S.doc;
+    const f = el('iframe', 'ar-frame ar-docframe');
+    f.title = 'Doc: ' + (d.title || d.name);
+    f.src = D && D.docUrl ? D.docUrl({ chat: S.chat.id, name: d.name, page: d.page, block: d.block, thread: d.thread, where: 'artifacts' }) : 'about:blank';
+    dropDoc();
+    ui.docFrame = f;
+    setStage(f);
+    ui.docFrame = f;
+    const FU = FUI();
+    if (FU && FU.attachDocFrame)
+      docRec = FU.attachDocFrame(f, { id: S.chat.id, root: 'main', label: 'Folder', branch: '', chatKey: '', title: '' }, d, {
+        open: (o) => openDoc(o),
+        title: (t) => {
+          if (!S.doc || S.doc.name !== d.name) return;
+          if (t.title) S.doc.title = t.title;
+          if (t.page) S.doc.page = t.page;
+          f.title = 'Doc: ' + S.doc.title;
+          paintBar();
+        },
+        closed: () => {
+          if (!S.doc || S.doc.name !== d.name) return;
+          S.doc = null;
+          S.docExtras = S.docExtras.filter((o) => o.name !== d.name);
+          dropDoc();
+          if (D && D.forget) D.forget();
+          S.stageKey = '';
+          S.dirty = true;
+          paintAll();
+          paintStage('open');
+        },
+      });
+  }
+  function paintDocBar() {
+    const d = S.doc;
+    ui.bar.hidden = false;
+    ui.stage.hidden = false;
+    ui.empty.hidden = true;
+    ui.foot.hidden = true;
+    for (const n of [ui.avail, ui.built, ui.stale, ui.became, ui.ver, ui.ext, ui.more, ui.edit, ui.request]) n.hidden = true;
+    const others = S.list.filter((x) => !isDocHistory(x)).length + myDocs().filter((o) => o.name !== d.name).length;
+    const plain = others === 0;
+    ui.pick.replaceChildren(el('span', 'ar-k', 'doc'), el('span', 'ar-pick-title', d.title || d.name));
+    if (!plain) ui.pick.append(el('span', 'ar-caret', '▾'));
+    ui.pick.disabled = plain;
+    ui.pick.classList.toggle('plain', plain);
+    ui.pick.title = (d.title || d.name) + ' (doc)';
+    ui.pick.setAttribute('aria-haspopup', plain ? 'false' : 'menu');
+    paintFresh();
+  }
+  function freshInfo() {
+    if (!S.fresh) return null;
+    if (isDocId(S.fresh)) return { title: docTitle(S.fresh.slice(4)) };
+    return known(S.fresh);
+  }
+  function paintFresh() {
+    const fresh = freshInfo();
+    ui.fresh.hidden = !fresh;
+    if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
   }
   /* A group's head: a divider before "Docs this chat wrote", its label and its note line. */
   function groupHead(g) {
@@ -1071,7 +1220,7 @@
   function paintEmptyDocs() {
     if (!ui) return;
     let box = ui.empty.querySelector('.ar-docs-empty');
-    const groups = pickerGroups([], '', undefined, projectDocs(), chatKeys());
+    const groups = pickerGroups([], '', undefined, myDocs(), chatKeys(), S.fresh);
     if (!groups.length) {
       if (box) box.remove();
       return;
@@ -1090,13 +1239,22 @@
   /* -- painting: tab badge, toolbar, banner -- */
   function paintCount() {
     if (!ui) return;
-    const n = S.list.length;
+    const a = S.list.filter((x) => !isDocHistory(x)).length,
+      dn = myDocs().length,
+      n = a + dn;
     ui.badge.textContent = n > 99 ? '99+' : String(n);
     ui.badge.hidden = !n;
-    ui.tab.setAttribute('aria-label', 'Artifacts' + (n ? ', ' + n + (n === 1 ? ' artifact' : ' artifacts') : ''));
+    const parts = [];
+    if (a) parts.push(a + (a === 1 ? ' artifact' : ' artifacts'));
+    if (dn) parts.push(dn + (dn === 1 ? ' doc' : ' docs'));
+    ui.tab.setAttribute('aria-label', 'Artifacts' + (parts.length ? ', ' + parts.join(' and ') : '') + (S.fresh ? ', something new' : ''));
   }
   function paintBar() {
     if (!ui) return;
+    if (S.doc) return paintDocBar();
+    ui.ver.hidden = false;
+    ui.ext.hidden = false;
+    ui.more.hidden = false;
     const a = current(),
       none = !a;
     ui.bar.hidden = none;
@@ -1109,7 +1267,7 @@
       paintEmptyDocs();
       return;
     }
-    const plain = pickerIsPlain(S.list.length ? S.list : [a], projectDocs(), chatKeys());
+    const plain = pickerIsPlain(S.list.length ? S.list : [a], myDocs(), chatKeys());
     ui.pick.replaceChildren(
       el('span', 'ar-k', kindInfo(a.kind).badge),
       el('span', 'ar-pick-title', a.title || 'Untitled'),
@@ -1132,9 +1290,7 @@
       ui.availText.textContent = av.text + ' · ';
       ui.switchBtn.textContent = av.action;
     }
-    const fresh = S.fresh ? known(S.fresh) : null;
-    ui.fresh.hidden = !fresh;
-    if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
+    paintFresh();
     ui.more.setAttribute('aria-label', 'More');
     paintBuilt(a);
     paintBecame(a);
@@ -1346,6 +1502,7 @@
   /* -- stage -- */
   function setStage(node) {
     if (!ui) return;
+    if (!(ui.docFrame && node === ui.docFrame)) dropDoc();
     ui.stage.replaceChildren(node);
     ui.frame = null;
   }
@@ -1360,6 +1517,7 @@
   }
   /* A new page loads in a hidden second frame and replaces the first when it has loaded: no white flash. */
   function swapFrame(url, kind, keepScroll) {
+    dropDoc();
     const spec = frameSpec(kind),
       f = doc.createElement('iframe');
     f.className = 'ar-frame loading';
@@ -1465,10 +1623,12 @@
   }
   async function paintStage(reason) {
     if (!ui) return;
+    if (S.doc) return paintDocStage();
     const a = current();
     if (!a) {
       S.dirty = false;
       S.stageKey = '';
+      dropDoc();
       ui.stage.replaceChildren();
       ui.frame = null;
       return;
@@ -1587,11 +1747,12 @@
     }
     closePop();
     const a = current(),
-      docs = projectDocs();
-    if (!a || pickerIsPlain(S.list, docs, chatKeys())) return;
+      docs = myDocs();
+    if (!a && !S.doc) return;
+    if (S.doc ? ui.pick.disabled : pickerIsPlain(S.list, docs, chatKeys())) return;
     ui.popFor = 'pick';
     ui.pick.setAttribute('aria-expanded', 'true');
-    const groups = pickerGroups(S.list, a.id, undefined, docs, chatKeys());
+    const groups = pickerGroups(S.list, S.doc ? 'doc:' + S.doc.name : a.id, undefined, docs, chatKeys(), S.fresh);
     const frag = doc.createDocumentFragment();
     for (const g of groups) {
       frag.append(...groupHead(g));
@@ -1600,7 +1761,7 @@
           frag.append(docButton(it));
           continue;
         }
-        const row = popItem(it.on ? 'on' : '');
+        const row = popItem((it.on ? 'on' : '') + (it.fresh ? ' ar-new' : ''));
         row.dataset.id = it.id;
         const star = el('span', 'ar-star' + (it.pinned ? ' on' : ''), it.pinned ? '★' : '☆');
         star.setAttribute('role', 'button');
@@ -1617,6 +1778,7 @@
           el('span', 'ar-it-meta', it.meta),
           star,
         );
+        if (it.fresh) row.insertBefore(newDot(), star);
         row.addEventListener('click', () => {
           closePop();
           selectArtifact(it.id);
@@ -1625,7 +1787,7 @@
       }
     }
     ui.pop.replaceChildren(frag);
-    ui.pop.setAttribute('aria-label', 'Artifacts in this chat');
+    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this chat');
     placePop(ui.pick, false);
     focusFirst();
   }
@@ -2074,12 +2236,12 @@
     const freshOpen = el('button', 'ar-switch ar-fresh-open', 'Open');
     freshOpen.type = 'button';
     fresh.append(freshText, freshOpen);
-    // "Built from Release plan › Rollout · Open doc ↗", then "… changed after this was built (2 edits). Rebuild from the doc"
+    // "Built from Release plan › Rollout · Open doc", then "… changed after this was built (2 edits). Rebuild from the doc"
     const built = el('div', 'ar-built');
     built.hidden = true;
     built.setAttribute('role', 'status');
     const builtText = el('span', 'ar-built-t', '');
-    const builtOpen = el('button', 'ar-switch ar-built-open', 'Open doc \u2197');
+    const builtOpen = el('button', 'ar-switch ar-built-open', 'Open doc');
     builtOpen.type = 'button';
     built.append(builtText, builtOpen);
     const stale = el('div', 'ar-built ar-stale');
@@ -2089,12 +2251,12 @@
     const rebuildBtn = el('button', 'ar-switch ar-rebuild', 'Rebuild from the doc');
     rebuildBtn.type = 'button';
     stale.append(staleText, rebuildBtn);
-    // after Edit: "Now a doc: Load test summary · Open doc ↗ · Undo"
+    // after Edit: "Now a doc: Load test summary · Open doc · Undo"
     const became = el('div', 'ar-built ar-became');
     became.hidden = true;
     became.setAttribute('role', 'status');
     const becameText = el('span', 'ar-built-t', '');
-    const becameOpen = el('button', 'ar-switch ar-became-open', 'Open doc \u2197');
+    const becameOpen = el('button', 'ar-switch ar-became-open', 'Open doc');
     becameOpen.type = 'button';
     const becameSep = el('span', 'ar-built-t', ' \u00b7 ');
     const undoBtn = el('button', 'ar-switch ar-undo', 'Undo');
@@ -2148,6 +2310,7 @@
       tab: o.tab,
       reveal: o.reveal || (() => {}),
       frame: null,
+      docFrame: null,
       popFor: '',
     };
     S.mounted = true;
@@ -2176,7 +2339,8 @@
     freshOpen.addEventListener('click', () => {
       const id = S.fresh;
       S.fresh = '';
-      if (id) selectArtifact(id);
+      if (isDocId(id)) openDoc({ name: id.slice(4), title: docTitle(id.slice(4)) });
+      else if (id) selectArtifact(id);
       paintAll();
       pick.focus({ preventScroll: true });
     });
@@ -2252,8 +2416,9 @@
     decorateToolRow,
     linkify,
     open,
+    openDoc,
     upsert,
-    state: () => ({ chat: S.chat, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh }),
+    state: () => ({ chat: S.chat, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh, doc: S.doc }),
     _S: S,
   });
   root.ArtifactsUI = api2;

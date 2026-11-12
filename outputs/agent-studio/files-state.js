@@ -124,6 +124,15 @@
     artifact: false,
   });
   const DOCS_FOLDER = 'aib-docs';
+  // How many docs aib-docs holds (its direct sub-folders that are docs), from docIndex().
+  const docsIn = (docs) => Array.from(docs.byDir.keys()).filter((d) => d.indexOf(DOCS_FOLDER + '/') === 0 && d.indexOf('/', DOCS_FOLDER.length + 1) < 0).length;
+  // The aib-docs row's count: "3 docs", "3 docs · 1 changed", "1 changed" while the docs are not listed yet; '' for nothing.
+  function docsFolderCount(docCount, changed) {
+    const parts = [];
+    if (docCount > 0) parts.push(docCount + (docCount === 1 ? ' doc' : ' docs'));
+    if (changed > 0) parts.push(changed + ' changed');
+    return parts.join(' · ');
+  }
   const NEW_DOC = DOCS_FOLDER + '/+new-doc';
 
   // ---- the tree -----------------------------------------------------------------------------------------------------------
@@ -146,13 +155,18 @@
         out.push({ kind: 'error', path: dir + '/!', depth, text: list.error });
         return;
       }
-      // No aib-docs folder yet: it shows as an empty folder holding only "+ New doc", in its place among the folders.
+      // aib-docs is always the first row of the tree, above every other folder (dot-folders too). No aib-docs folder yet: it shows
+      // as an empty folder holding only "+ New doc", first all the same.
       const virt = dir === '' && o.newDoc && !list.some((e) => e.dir && e.path === DOCS_FOLDER);
+      const isDocsDir = (e) => dir === '' && e.dir && e.path === DOCS_FOLDER;
+      const entries = dir === '' ? list.filter(isDocsDir).concat(list.filter((e) => !isDocsDir(e))) : list;
       let virtDone = !virt;
       const virtRow = () => {
         virtDone = true;
         const isOpen = open.has(DOCS_FOLDER);
         out.push({
+          docsFolder: true,
+          docCount: docs ? docsIn(docs) : 0,
           kind: 'dir',
           path: DOCS_FOLDER,
           name: DOCS_FOLDER,
@@ -167,8 +181,8 @@
         });
         if (isOpen) out.push({ kind: 'newdoc', path: NEW_DOC, depth: depth + 1 });
       };
-      for (const e of list) {
-        if (!virtDone && (!e.dir || e.name.localeCompare(DOCS_FOLDER, undefined, { sensitivity: 'base' }) > 0)) virtRow();
+      if (!virtDone) virtRow();
+      for (const e of entries) {
         if (docs && docs.owned.has(slash(e.path))) continue;
         // a doc's folder: one doc row, no caret, never expands
         const d = docs && e.dir ? docs.byDir.get(slash(e.path)) : null;
@@ -190,6 +204,7 @@
           artifact: false,
         };
         if (e.dir) row.changed = changes ? changedBelow(changes, e.path) : Number(e.changed) || 0;
+        if (isDocsDir(e)) Object.assign(row, { docsFolder: true, docCount: docs ? docsIn(docs) : 0 });
         else {
           row.badge = changes ? badgeOf(changes.get(e.path)) : letterBadge(e.status);
           row.artifact = !!(arts && arts.has(e.path));
@@ -197,7 +212,6 @@
         out.push(row);
         if (isOpen) walk(e.path, depth + 1);
       }
-      if (!virtDone) virtRow();
       // the last row inside aib-docs
       if (dir === DOCS_FOLDER && o.newDoc) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
     };
@@ -453,6 +467,7 @@
     docBadge,
     NEW_DOC,
     DOCS_FOLDER,
+    docsFolderCount,
     docTabId,
     openDocTab,
     emptyTabs,
