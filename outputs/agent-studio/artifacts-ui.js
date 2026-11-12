@@ -128,14 +128,14 @@
     on: false,
   });
   /* Picker rows in groups: "Pinned" and "This chat" list artifacts; below a divider, "Docs this chat wrote" lists the docs linked to
-     this chat (rows end in ↗: they open beside the chat, never in this column). The project's other docs are not listed: Files and
-     Ctrl+K have every doc. An empty group is left out. */
-  const DOCS_NOTE = 'Opens beside the chat, where you can edit it';
+     this chat (and a doc this chat opened here). A doc opens in this viewer, in the full doc editor. The project's other docs are
+     not listed: Files and Ctrl+K have every doc, and open them as tabs. An empty group is left out. */
+  const DOCS_NOTE = 'Open here to edit; you and agents both can';
   const linkedDocs = (docs, chatKeys) => {
     const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean);
     return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat && keys.includes(d.chat));
   };
-  function pickerGroups(list, selectedId, nowMs, docs, chatKeys) {
+  function pickerGroups(list, selectedId, nowMs, docs, chatKeys, freshId) {
     const row = (a) => ({
       id: a.id,
       badge: kindInfo(a.kind).badge,
@@ -145,11 +145,14 @@
         : 'v' + (num(a.version) || 1) + (relTime(a.updatedAt, nowMs) ? ' · ' + relTime(a.updatedAt, nowMs) : ''),
       pinned: !!a.pinned,
       on: a.id === selectedId,
+      fresh: !!freshId && a.id === freshId,
     });
     const ordered = orderArtifacts((Array.isArray(list) ? list : []).filter((a) => !isDocHistory(a))),
       pinned = ordered.filter((a) => a.pinned).map(row),
       rest = ordered.filter((a) => !a.pinned).map(row);
-    const mine = linkedDocs(docs, chatKeys).map(docRow);
+    const mine = linkedDocs(docs, chatKeys)
+      .map(docRow)
+      .map((r) => Object.assign(r, { on: r.id === selectedId, fresh: !!freshId && r.id === freshId }));
     const groups = [];
     if (pinned.length) groups.push({ key: 'pinned', label: 'Pinned', items: pinned });
     if (rest.length) groups.push({ key: 'chat', label: 'This chat', items: rest });
@@ -452,7 +455,7 @@
   }
   /* "Built from <doc › page>" for an artifact (its fromDoc), and the banner the viewer shows: `state` is GET /api/live/docs/built's
      answer (null while it loads). Returns {from, stale, line, rebuild} where `rebuild` is the message "Rebuild from the doc" sends. */
-  const EDIT_TIP = "Edit opens this as a doc beside the chat. You and agents can both change it. It's saved in aib-docs/ and " +
+  const EDIT_TIP = "Edit opens this as a doc here. You and agents can both change it. It's saved in aib-docs/ and " +
     'nothing is committed until you commit.';
   /* The title bar's word button: Markdown artifacts get Edit (it becomes a doc), every other kind Request a change; none once it
      became a doc. */
@@ -704,6 +707,8 @@
     stageKey: '',
     reloadPending: false,
     fresh: '',
+    doc: null, // the doc shown in the viewer: {name, title, page, block, thread}
+    docExtras: [], // docs this chat opened or made that the doc list does not link to it (yet)
   };
   let ui = null;
   const el = (tag, cls, txt) => {
