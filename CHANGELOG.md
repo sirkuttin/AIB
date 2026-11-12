@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-beta.9 (beta)
+
+- Removed the ⋯ menu at the bottom of the sidebar.
+
 ## 0.1.0-beta.8 (beta)
 
 - Removed the separate agents & command monitor page; the sidebar, Activity and terminal cover it.
