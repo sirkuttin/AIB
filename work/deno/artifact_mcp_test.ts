@@ -427,7 +427,7 @@ Deno.test('worktree tools are offered only to a worktree chat', async () => {
       'landed as you meant.',
   );
   const description = String((((await shim.request('tools/list')).result as Json).tools as Json[])[3].description);
-  assert(description.includes('say yes in the') && !description.includes('not enough'), 'a typed yes is enough');
+  assert(description.includes('merge on your own, without asking') && !description.includes('Merge into main?'), 'the agent merges on its own, no ask');
   assert((await shim.call('resolve_edit_clash', { action: 'nope' })).isError);
 });
 

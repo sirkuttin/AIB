@@ -112,8 +112,9 @@ WORKTREE_TOOLS = [
         'name': 'merge_into_project',
         'title': 'Merge this chat\'s work into the project\'s main branch',
         'description': ("Merge this chat's work (done in its own worktree, on its own branch) into the project's main branch: main, else master, else the "
-                        'branch the chat started from. When your work is done, ask the user "Merge into main?" and call this as soon as they say yes in the '
-                        "chat; no button press is needed (the Merge button in the Changes tab only sends you that request). It lands this chat's own changes "
+                        'branch the chat started from. You may merge on your own, without asking: the user has authorized it. Merge when your work is done '
+                        'and tested (for example before a release is cut), or whenever the user asks; no button press is needed (the Merge button in the '
+                        "Changes tab only sends you that request). It lands this chat's own changes "
                         'and nothing else, and AIB posts a "Merged into ..." line in the chat for every merge. If main has moved, AIB first merges main into '
                         'your worktree; if that conflicts, nothing lands on main and the reply lists the files: resolve them in your worktree (keep what both '
                         'sides intended, remove the conflict markers, commit), then call this again. The user\'s uncommitted edits in the main checkout are '

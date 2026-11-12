@@ -40,8 +40,8 @@
 - Buttons on Settings agent cards keep the card in place (no scroll jump).
 - The first message of a new chat is always sent, even if you switch chats while the agent starts, and links in agent
   errors are clickable.
-- Merge from the chat: when a chat's work is done the agent asks "Merge into main?" and merges when you say yes; no button
-  needed. Each merge posts a "Merged into main" line in the chat. The work lands on the project's main branch (main, else
+- Merge from the chat: the agent merges its chat's work into main on its own when the work is done and tested (for example
+  before a release), or when you ask; no button needed. Each merge posts a "Merged into main" line in the chat. The work lands on the project's main branch (main, else
   master), also for a chat started from another branch. If main has moved, the agent first takes main into its worktree and
   resolves any conflicts there; main only ever gets a clean merge, and your uncommitted edits in the main checkout are set
   aside and put back. Helpers working in their own worktrees no longer hold a merge. The Changes tab's Merge button still
