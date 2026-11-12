@@ -6,7 +6,7 @@
        is put into localStorage before any other page script reads it. A key the data folder does not have yet is taken from
        localStorage instead and sent to the server (the one-time move of what an older copy of the app remembered).
      * afterwards: every localStorage.setItem / removeItem of one of these keys is sent to the server at once (the changes of one
-       moment go together; while one request is on its way the next changes wait for it). Nothing waits for the page to close:
+       moment go together; while one request is on its way the next changes go right after it). Nothing waits for the page to close:
        quitting AIB ends the app process at once, so a change still waiting then would be lost (seen with 0.1.0-beta.8-test4:
        a project picked half a second before quitting was gone after the restart). Hiding or closing the page still sends
        anything left, as a last try.
@@ -50,8 +50,10 @@
   ]);
   const synced = (k) =>
     typeof k === 'string' && (KEYS.includes(k) || PREFIXES.some((p) => k.startsWith(p) && k.length > p.length));
-  const GAP_MS = 100, // at most one request per GAP_MS while something keeps changing (a width being dragged)
-    RETRY_MS = 5000;
+  /* No pause between requests: one at a time is the only limit (a drag saves once, at the end). A 100 ms gap after each request
+     held a project picked just after another save (opening a chat saves too) past AIB's immediate quit: lost, about one start
+     in three of remember_ui_e2e_test. */
+  const RETRY_MS = 5000;
 
   /* What to do at start. saved: {key: value} from the data folder; local: {key: value} of the synced keys in localStorage.
      Returns {seed: {key: value} to write into localStorage, upload: {key: value} to send to the server}. */
@@ -113,8 +115,7 @@
     } catch (e) {}
     const { seed, upload } = plan(saved, local);
     /* What the data folder has, key by key. Writing the value it already has sends nothing: the page rewrites the same sidebar
-       state on every list update, and each of those requests made a change right after it wait (GAP_MS), so a project picked
-       just before quitting could be lost behind one. */
+       state on every list update; each of those was a request a change made right after it had to wait for. */
     const known = new Map();
     for (const k of Object.keys(saved)) if (synced(k)) known.set(k, saved[k]);
     for (const k of Object.keys(seed)) {
@@ -126,9 +127,7 @@
     let pending = { ...upload },
       timer = 0,
       sending = false,
-      lastSent = -Infinity,
       token = '';
-    const clock = opts.now || (() => Date.now());
     const schedule = (ms) => {
       if (timer) cancel(timer);
       timer = later(() => {
@@ -136,10 +135,10 @@
         return flush(false);
       }, ms);
     };
-    // A change goes out on the next tick (the writes of one click travel together), or GAP_MS after the previous request.
+    // A change goes out on the next tick (the writes of one click travel together), or right after the request on its way.
     const soon = () => {
       if (timer || sending) return; // already planned, or sent right after the request on its way
-      schedule(Math.max(0, lastSent + GAP_MS - clock()));
+      schedule(0);
     };
     async function getToken(fresh) {
       if (token && !fresh) return token;
@@ -164,7 +163,6 @@
       pending = {};
       for (const k of Object.keys(batch)) known.set(k, batch[k]); // a failed batch goes back into pending
       sending = true;
-      lastSent = clock();
       let retry = false;
       try {
         const body = JSON.stringify({ set: batch });

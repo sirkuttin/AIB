@@ -193,7 +193,7 @@ test('a failed save is retried later with the newest values; a stale token is re
   assert.notEqual(last.headers['X-Studio-Token'], p.posts[p.posts.length - 2].headers['X-Studio-Token']);
 });
 
-test('a change made while a save is on its way goes out right after it; a busy stream of changes is one request per 100 ms', async () => {
+test('a change made while a save is on its way goes out right after it, with no pause (a pick just before quitting must not wait)', async () => {
   let release;
   const gate = new Promise((r) => (release = r));
   const p = page({}, {});
@@ -232,7 +232,7 @@ test('a change made while a save is on its way goes out right after it; a busy s
   release();
   await first;
   assert.equal(timers.length, 1, 'sent again as soon as the first one ended');
-  assert.equal(timers[0].ms, 70, 'no sooner than 100 ms after the previous request');
+  assert.equal(timers[0].ms, 0, 'no pause after the previous request: AIB can quit 50 ms after a pick');
   await timers.shift().fn();
   assert.deepEqual(posts, [
     { set: { 'studio-workspace-v1': '{"active":"a"}' } },
