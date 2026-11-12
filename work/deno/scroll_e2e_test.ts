@@ -672,6 +672,8 @@ scrollTest('8a one wheel notch up while updates stream: follow stops at once and
 });
 
 scrollTest('8b small smooth-scroll ticks up (15 px each, 45 px total) stop following; small in-place growth does not resume it', async (lab) => {
+  // Today: three 15 px ticks pause the list at 45 px from the bottom, then the first redraw turns follow back on (273 of the
+  // recorded frames unpaused) and the list ends at the bottom (gap 0) although you never scrolled there.
   // The owner's bug class: an upward scroll that ends within 48 px of the bottom. resumeIfAtEnd (chat.js ~4741) still uses the old
   // 48 px rule after each redraw, so if a redraw leaves the gap at 2..48 px, follow comes back on without you reaching the bottom.
   const page = lab.page;
