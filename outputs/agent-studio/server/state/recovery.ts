@@ -15,7 +15,8 @@ import { entriesOf, now, quarantine, readJsonFile, saveJson } from './json.ts';
 export const MAX_CONVERSATIONS = 50;
 export const MAX_RECEIPTS_PER_SESSION = 200;
 export const MAX_SESSIONS_WITH_RECEIPTS = 50;
-export const RECEIPT_STATES = ['working', 'finished', 'error', 'unknown'] as const;
+/** 'steering' (a steer in flight) and 'injected' (the agent took it) are steer-on-send's; a Python host never wrote them. */
+export const RECEIPT_STATES = ['working', 'finished', 'error', 'unknown', 'steering', 'injected'] as const;
 export type ReceiptState = typeof RECEIPT_STATES[number];
 
 export interface Conversation {
@@ -94,7 +95,9 @@ export class StateStore {
         if (pyLen(messageId) >= 1 && pyLen(messageId) <= 128 && isDict(receipt) && isStr(receipt.fingerprint)) {
           // A server that stopped mid-turn cannot know whether the agent received or finished it.
           const raw = receipt.state;
-          const state: ReceiptState = raw === 'working' || raw === 'unknown' || !isReceiptState(raw) ? 'unknown' : raw;
+          const state: ReceiptState = raw === 'working' || raw === 'steering' || raw === 'unknown' || !isReceiptState(raw)
+            ? 'unknown'
+            : raw;
           const entry: Receipt = { fingerprint: clip(receipt.fingerprint, 128), state, at: pyFloat(pyOr(receipt.at, 0)) };
           if (state === 'unknown' && receipt.dismissed === true) entry.dismissed = true;
           cleaned.delete(messageId);
@@ -221,7 +224,7 @@ export class StateStore {
     let changed = false;
     for (const items of this.receipts.values()) {
       for (const receipt of items.values()) {
-        if (receipt.state === 'working') {
+        if (receipt.state === 'working' || receipt.state === 'steering') { // a steer in flight: AIB cannot tell either
           receipt.state = 'unknown';
           changed = true;
         }

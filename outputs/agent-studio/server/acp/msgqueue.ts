@@ -52,8 +52,30 @@ export interface QueueItem {
   note: string;
 }
 
+/**
+ * A message sent while the agent works (steer-on-send): it goes to the agent now, through `_session/steering`, not after the turn.
+ *   held      waits because an approval or question is open (heldReason 'approval'); goes once the card is answered
+ *   sending   the steer request is out; the agent's answer has not come yet
+ *   injected  the agent took it (the item leaves the lane at once; only the route's answer and the receipt say so)
+ *   fallback  the agent said its turn is over (promptRequired): it goes as an ordinary prompt as soon as AIB is idle
+ * The lane goes first and one item at a time; it is never paused by the after-turn queue's holds.
+ */
+export interface SteerItem {
+  id: string;
+  text: string;
+  attachments: unknown[];
+  fingerprint: unknown;
+  queuedAt: number;
+  state: 'held' | 'sending' | 'injected' | 'fallback';
+  heldReason: string;
+}
+
 /** The saved form of an item (as read back from a store file it may be any JSON). */
 export type SavedItem = Record<string, unknown>;
+
+/** The note a steered message gets when it lands in the after-turn queue because AIB restarted while it was being sent. */
+export const STEER_RESTART_NOTE = 'AIB restarted while this was being sent, so it may already have reached the agent. Remove it, or ' +
+  'press Resume to send it again.';
 
 export type Clock = () => number;
 
@@ -72,6 +94,8 @@ export class MessageQueue {
   leaseSeconds: number;
   /** The user asked to interrupt the running turn and send the first item. */
   sendNow = false;
+  /** Messages sent while the agent works (steer lane): first in first out, ahead of `items`. See SteerItem. */
+  steer: SteerItem[] = [];
 
   constructor(leaseSeconds?: number | null, clock?: Clock | null) {
     this.clock = clock || wallClock;
@@ -217,18 +241,54 @@ export class MessageQueue {
     return { items, paused: !!reason, reason, message: reason ? (messages[reason] ?? '') : '', leaseSeconds: this.leaseSeconds };
   }
 
-  // ---- persistence ---------------------------------------------------------------------------
-  /** Every item (the one in flight first) without its edit lease: what the store keeps. */
-  toSaved(): SavedItem[] {
-    return [...(this.inflight ? [this.inflight] : []), ...this.items].map((item) => ({ ...item, lease: null }));
+  /** The steer lane as the page sees it (snapshot `steerLane`). */
+  steerPublic(light = false): Record<string, unknown>[] {
+    return this.steer.map((item) => ({
+      id: item.id,
+      text: light ? clip(item.text, 300) : item.text,
+      attachments: MessageQueue.attachmentSummary(item.attachments),
+      queuedAt: item.queuedAt,
+      state: item.state,
+      ...(item.heldReason ? { heldReason: item.heldReason } : {}),
+    }));
   }
 
-  /** Replace the items with saved ones (invalid entries dropped); the queue starts paused with `hold` if anything was restored. */
-  load(saved: unknown, hold = 'restart'): void {
+  findSteer(itemId: string): SteerItem | null {
+    return this.steer.find((item) => item.id === itemId) ?? null;
+  }
+
+  // ---- persistence ---------------------------------------------------------------------------
+  /**
+   * Every item without its edit lease: what the store keeps. Steer-lane items come first, marked `lane: 'steer'` with their state
+   * (a Python host, or an older AIB, reads them as ordinary queued messages, which is what they become after a restart anyway).
+   */
+  toSaved(): SavedItem[] {
+    const lane: SavedItem[] = this.steer.map((item) => ({
+      id: item.id,
+      text: item.text,
+      attachments: item.attachments,
+      fingerprint: item.fingerprint,
+      queuedAt: item.queuedAt,
+      lease: null,
+      note: '',
+      lane: 'steer',
+      state: item.state,
+    }));
+    return [...lane, ...[...(this.inflight ? [this.inflight] : []), ...this.items].map((item) => ({ ...item, lease: null }))];
+  }
+
+  /**
+   * Replace the items with saved ones (invalid entries dropped); the queue starts paused with `hold` if anything was restored.
+   * keepLane: a chat rebuilt from the keeper (its turn never stopped): steer-lane items go back into the lane. Otherwise (the agent
+   * restarted with AIB) they become ordinary queued messages at the front, and one that was being sent says it may have arrived.
+   */
+  load(saved: unknown, hold = 'restart', keepLane = false): void {
     this.items = [];
+    this.steer = [];
+    const front: QueueItem[] = [];
     for (const raw of Array.isArray(saved) ? saved : []) {
       if (isDict(raw) && isStr(raw.id) && isStr(raw.text)) {
-        this.items.push({
+        const item: QueueItem = {
           id: clip(raw.id, 128),
           text: raw.text,
           attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
@@ -236,10 +296,30 @@ export class MessageQueue {
           queuedAt: pyFloat(pyOr(raw.queuedAt, 0)),
           lease: null,
           note: pyStr(pyOr(raw.note, '')),
-        });
+        };
+        if (raw.lane !== 'steer') {
+          this.items.push(item);
+          continue;
+        }
+        const state = ['held', 'sending', 'fallback'].includes(raw.state as string) ? raw.state as SteerItem['state'] : 'held';
+        if (keepLane) {
+          this.steer.push({
+            id: item.id,
+            text: item.text,
+            attachments: item.attachments,
+            fingerprint: item.fingerprint,
+            queuedAt: item.queuedAt,
+            state,
+            heldReason: '',
+          });
+        } else {
+          if (state === 'sending') item.note = STEER_RESTART_NOTE;
+          front.push(item);
+        }
       }
     }
-    this.items = this.items.slice(0, MAX_ITEMS);
+    this.items = [...front, ...this.items].slice(0, MAX_ITEMS);
+    this.steer = this.steer.slice(0, MAX_ITEMS);
     this.hold = this.items.length ? hold : '';
   }
 }

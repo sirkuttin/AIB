@@ -113,7 +113,15 @@ const STATUS_DONE = new RegExp(`<status>[${S}]*(completed|failed|killed|cancelle
 const EXPIRES = new RegExp(`expires in[${S}]+((?:[\\p{Nd}]+[${S}]*[hms][${S}]*)+)`, 'u');
 const DURATION_PART = new RegExp(`([\\p{Nd}]+)[${S}]*([hms])`, 'gu');
 const MONITOR_STARTED = new RegExp(`^[${S}]*Monitor started \\(task[${S}]+([A-Za-z0-9_-]+)`, 'u');
-const BACKGROUNDED = new RegExp(`^[${S}]*(?:Backgrounded as job|Command running in background with ID:)[${S}]*([A-Za-z0-9_-]+)`, 'iu');
+// B6: also Claude Code's moves of a running command (a steer, its timeout, Ctrl+B), each on the result's first line.
+const MOVED = String.raw`Command was moved to the background \(ID:|[^\n]*?timeout and was moved to the background \(ID:|` +
+  String.raw`[^\n]*?manually backgrounded by user with ID:`;
+const BACKGROUNDED = new RegExp(
+  `^[${S}]*(?:Backgrounded as job|Command running in background with ID:|${MOVED})[${S}]*([A-Za-z0-9_-]+)`,
+  'iu',
+);
+/** The opening of a result that says its command went to the background (only the tool's own first line counts). */
+const BACKGROUND_LEAD = new RegExp(`^(?:Command running in background|Backgrounded as job|${MOVED})`);
 const NOTICE = /<task-notification>[\s\S]*?<\/task-notification>/gu;
 
 const toolNameOf = (task: Task) => pyStr(or(task.tool, '')).toLowerCase();
@@ -279,7 +287,7 @@ export class Transcript {
             const lead = lstrip(output);
             if (
               match &&
-              (truthy(task.background) || lead.startsWith('Command running in background') || lead.startsWith('Backgrounded as job'))
+              (truthy(task.background) || BACKGROUND_LEAD.test(lead))
             ) {
               job = match[1];
             }

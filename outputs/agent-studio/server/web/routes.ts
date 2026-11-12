@@ -50,6 +50,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
  *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
  *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
+ *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
+ *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
@@ -92,6 +94,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/docs/duplicate', 'write', 'body'],
   ['POST', '/api/live/docs/trash', 'write', 'body'],
   ['POST', '/api/live/docs/reveal', 'write', 'body'],
+  ['POST', '/api/live/steer', 'write', 'body'],
+  ['POST', '/api/live/tool-stop', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

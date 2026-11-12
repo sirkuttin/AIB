@@ -11,7 +11,7 @@
  * Python `with self.lock:` block does no blocking work, so it is a stretch of synchronous code here.
  */
 import { AddedProjects } from '../desktop/added_projects.ts';
-import { Connection, type ConnectionOptions, errorText, ThreadEvent } from '../acp/connection.ts';
+import { Connection, type ConnectionOptions, errorText, NotStoppable, ThreadEvent } from '../acp/connection.ts';
 import { sessionOp } from '../acp/breadth.ts';
 import type { McpServer } from '../acp/breadth.ts';
 import { PromptStateUnknown } from '../acp/rpc_errors.ts';
@@ -85,6 +85,8 @@ export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
   'queue-move',
   'queue-resume',
   'queue-send-now',
+  'steer',
+  'tool-stop',
   'dismiss-unknown',
   'worktree-discard',
   'worktree-archive',
@@ -1537,6 +1539,19 @@ export class Studio {
       const result = await connection.prompt(text, messageId, attachments);
       if (connection.provider && connection.sessionId && !result.duplicate) await this.#mark('handled', connection); // replying is acting
       return [200, { ok: true, ...result }];
+    }
+    if (name === 'steer') { // send now while the agent works (steer-on-send); idle: an ordinary prompt
+      const result = await connection.steer(text, messageId, attachments);
+      if (connection.provider && connection.sessionId && !result.duplicate) await this.#mark('handled', connection); // replying is acting
+      return [200, { ok: true, ...result }];
+    }
+    if (name === 'tool-stop') { // Stop on a "Still running in the background" row
+      try {
+        return [200, await connection.stopBackgroundTool(need(body, 'toolCallId'))];
+      } catch (error) {
+        if (error instanceof NotStoppable) return [409, { error: error.message, code: 'not_stoppable' }];
+        throw error;
+      }
     }
     if (name === 'queue') {
       const result = await connection.queueAdd(text, messageId, attachments);
