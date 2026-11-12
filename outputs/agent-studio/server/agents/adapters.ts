@@ -46,6 +46,15 @@ export function installPackages(agentId: string): readonly Package[] | null {
   if (own.call(BETA_PACKAGES, agentId)) return BETA_PACKAGES[agentId];
   return null;
 }
+/**
+ * The environment the Claude Code adapter gets on top of AIB's. Claude Code 2.1.x turns its to-do tools (TaskCreate/TaskUpdate/
+ * TaskList/TaskGet, or TodoWrite when tasks are off) on only for models up to the 4.x line, unless CLAUDE_CODE_ENABLE_TODO_TOOLS is
+ * set; with a newer model (Opus 5.5, Sonnet 5, Haiku 5.5) the agent has no checklist at all. The adapter turns the tools into ACP
+ * `plan` updates, which the chat draws as its plan. A value the owner set in AIB's own environment (say 0) is left alone.
+ */
+export function claudeEnv(base: Record<string, string | undefined>): Record<string, string> {
+  return base.CLAUDE_CODE_ENABLE_TODO_TOOLS === undefined ? { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } : {};
+}
 export const COMPLETE_MARKER = '.complete';
 export const CLAUDE_INSTALL = 'npm i -g @agentclientprotocol/claude-agent-acp';
 export const CODEX_INSTALL = 'npm i -g @agentclientprotocol/codex-acp';

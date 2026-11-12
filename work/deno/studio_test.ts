@@ -471,3 +471,28 @@ Deno.test('the host command starts the Deno host; host flags parse like agent_ho
   assert(refused);
   assertEquals([...LIVE_POST_OPS].sort(), [...routes].sort());
 });
+
+Deno.test({
+  name: "a Claude Code chat's agent starts with its to-do tools on; other agents get no extra environment",
+  ...T,
+  async fn() {
+    await using lab = new Lab();
+    const launcher = lab.state.replace(/state$/, 'claude-launcher.js');
+    Deno.writeTextFileSync(launcher, '');
+    const manager = lab.manager([], { claudeLauncher: launcher, nodeCommand: Deno.execPath() });
+    const seen: Json[] = [];
+    manager.connectionFactory = (_command, cwd, provider, options) => {
+      seen.push({ provider, env: options?.env ?? null });
+      return new Connection(fake(), cwd, provider);
+    };
+    const preset = Deno.env.get('CLAUDE_CODE_ENABLE_TODO_TOOLS');
+    const expected = preset === undefined ? { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } : {};
+    const [argv, env] = await manager.agentLaunch('claude');
+    assert(argv.includes(Deno.realPathSync(launcher)), argv.join(' '));
+    assertEquals(env, expected);
+    assertEquals((await manager.agentLaunch('omp'))[1], {});
+    const c = await manager.connect('claude', lab.dir);
+    await until(() => c.ready, 'claude chat ready');
+    assertEquals(seen.at(-1), { provider: 'claude', env: preset === undefined ? expected : null });
+  },
+});

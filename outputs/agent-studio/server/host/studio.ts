@@ -542,7 +542,7 @@ export class Studio {
       }
       const row = await builtinLaunch(this.#agentOptions(), this.settings, provider);
       if (!row.found) throw new ValueError(`${agentRegistry.BUILTIN_NAMES[provider]} is not available: ${row.problem}`);
-      return [row.argv, {}];
+      return [row.argv, provider === 'claude' ? adapters.claudeEnv(Deno.env.toObject()) : {}];
     }
     if (isBeta(provider)) return await this.#betaLaunch(provider, fresh);
     const agent = agentRegistry.isCustom(provider) ? this.settings.customAgent(provider) : null;
