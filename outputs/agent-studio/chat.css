@@ -2007,9 +2007,39 @@ a.elicitation-open {
   font-size: 11px;
   color: var(--muted);
 }
+/* Title row of the subagent inspector: title shrinks with an ellipsis, Stop stays at the right end on the same line.
+   Button size matches .chat-toolbar button (10px text, 5px 9px padding, 6px radius). */
+#subchatPane .pane-heading > div:not(.subchat-title-row) {
+  flex: 1;
+  min-width: 0;
+}
+.subchat-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.subchat-title-row h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stop-subagent-box {
+  flex: none;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin: -5px 0;
+}
+.stop-subagent-box button {
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
 #stopSubagent {
-  font-size: 11px;
-  margin: 8px 0 0;
   border-color: var(--stop-subagent-line);
   color: var(--danger-bright);
 }
