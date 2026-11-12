@@ -385,6 +385,9 @@
     const s = str(a.activity) || (a.live ? '' : str(a.last && (a.last.text || a.last.intent)));
     return s ? oneLine(s).slice(0, 200) : '';
   }
+  /* The words of the background line: the send menu's one copy table (send-menu-ui.js), the same as on a command's row. */
+  const BACKGROUND_TEXT = () =>
+    (root.AgentSendMenu && root.AgentSendMenu.COPY && root.AgentSendMenu.COPY.bgRunning) || 'Still running in the background';
   /* The outcome a finished line names; '' for a normal finish (Done) so only the exceptions show. */
   const OUTCOME = { failed: 'Failed', stopped: 'Stopped' };
   function model(rows, now, chatModel) {
@@ -398,6 +401,8 @@
       const modelText = modelName(a.model, chatModel),
         tokens = tokensText(a.tokens),
         activity = c.group === 'working' ? doing(a) : '',
+        /* went on in the background after a steer (Claude Code): its card says so; no Stop, it runs inside the agent's process */
+        background = c.group === 'working' && a.background === true,
         outcome = c.group === 'finished' ? (c.kind === 'stopped' ? c.label : OUTCOME[c.kind] || '') : '';
       const when =
         c.group === 'working'
@@ -436,6 +441,7 @@
         modelText,
         tokens,
         activity,
+        background,
         outcome,
         source: a.live ? 'live' : 'saved',
         end,
@@ -565,6 +571,7 @@
         b.append(l2);
       }
       if (i.activity) b.append(el('span', 'sa-line sa-l3 sa-doing', i.activity));
+      if (i.background) b.append(el('span', 'sa-line sa-l3 sa-bg', BACKGROUND_TEXT()));
       return b;
     }
     b.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
@@ -599,6 +606,7 @@
         i.modelText,
         i.tokens,
         i.activity,
+        i.background,
         i.outcome,
       ]),
     ]);

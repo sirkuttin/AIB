@@ -1385,6 +1385,9 @@
     }
     if (window.ToolViews?.line && row.role === 'tool' && (row.raw || row.call)) {
       const line = window.ToolViews.line(row, () => bubbleFull(row));
+      // a command or helper that went on in the background after a steer: the pill (and Stop) sit on the row itself, under its line
+      const pill = toolBackgroundPill(row);
+      if (pill) line.insertBefore(pill, line.querySelector(':scope > .tool-detail'));
       // a doc tool row: DOC label, "open ↗", the doc-created card (doc-links.js)
       const docRow = window.AgentDocLinks?.decorateToolRow ? window.AgentDocLinks.decorateToolRow(line, row) : line;
       if (docRow !== line || line.classList?.contains('doc-tool')) return docRow;
@@ -1415,6 +1418,15 @@
     }
     box.append(result);
     return box;
+  }
+  /* "Still running in the background" (+ Stop when AIB can stop it) for a tool row the server marked (update.background). */
+  function toolBackgroundPill(row) {
+    const bg = row.role === 'tool' && window.AgentSendMenu?.backgroundOf(row.raw);
+    if (!bg) return null;
+    return window.AgentSendMenu.backgroundPill(document, bg, async () => {
+      await post('tool-stop', { id: current, toolCallId: row.raw.toolCallId });
+      await refresh();
+    });
   }
   function bubbleFull(row) {
     const article = text('article', '', 'bubble ' + row.role);
@@ -1452,15 +1464,10 @@
     } else if (row.value && row.role === 'notice' && (row.label === 'error' || row.label === 'disconnected'))
       article.append(linkedPre(row.value)); // an agent's error often names a page to open (a plan to upgrade, a sign-in)
     else if (row.value) article.append(text('pre', row.value));
-    {
-      const bg = row.role === 'tool' && window.AgentSendMenu?.backgroundOf(row.raw);
-      if (bg)
-        article.append(
-          window.AgentSendMenu.backgroundPill(document, bg, async () => {
-            await post('tool-stop', { id: current, toolCallId: row.raw.toolCallId });
-            await refresh();
-          }),
-        );
+    if (!window.ToolViews?.line) {
+      // (with tool lines the pill is on the line, not repeated in its opened detail)
+      const pill = toolBackgroundPill(row);
+      if (pill) article.append(pill);
     }
     if (row.actions?.length) article.append(clashButtons(row.actions));
     for (const [index, image] of (row.attachments || []).entries()) {
@@ -2070,9 +2077,13 @@
     }
   }
   function collectChildren() {
+    /* helpers AIB marked as going on in the background after a steer (the server's tool_call_update with background.helper) */
+    const inBackground = new Map();
     events.forEach((e) => {
       if (e.kind !== 'update') return;
       const u = e.data.update || {};
+      if (u.sessionUpdate === 'tool_call_update' && u.background && typeof u.background.helper === 'string')
+        inBackground.set(u.background.helper, u.background.state === 'running');
       if (u.sessionUpdate === 'subagent_update') {
         const child = u.subagent || u;
         const id = child.sessionId || child.subagentSessionId;
@@ -2105,6 +2116,7 @@
         window.SubagentsUI?.noteEvent(children.get(sid), e);
       }
     });
+    for (const [id, child] of children) child.background = inBackground.get(id) === true;
     // Model, tokens and what each helper is doing now (subagents-ui.js details); a part not known now keeps what was known before.
     const facts = window.SubagentsUI?.details?.(events, snapshot.sessionId);
     if (facts)

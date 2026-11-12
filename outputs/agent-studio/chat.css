@@ -3807,3 +3807,8 @@ span.chip-static:hover {
   padding: 2px 10px;
   font-size: 11px;
 }
+/* on a tool line: under the line's text, no rule above it */
+.tool-line > .bg-pill {
+  padding: 2px 8px 4px 30px;
+  border-top: 0;
+}
