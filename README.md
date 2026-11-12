@@ -4,7 +4,7 @@
 
 **_An agent pool divided against itself cannot stand_** 
 
-AIB allows you to run Claude Code, Codex, OMP and ten more agents via ACP side by side, in the same project. Local Artifacts and Docs shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. AIB runs on your computer with the agent sign-ins you already have.
+AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents providers via ACP side by side, in the same project. Local Artifacts and Docs shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. AIB runs on your computer with the agent sign-ins you already have.
 
 **[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64).
 
