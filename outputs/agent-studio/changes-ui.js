@@ -751,7 +751,7 @@
     let listSig = '';
     /* Files the Merge status names as conflicted (merge-ui.js). */
     const conflicted = () => (mergeUi && mergeUi.conflicts ? mergeUi.conflicts() : []);
-    /* A doc: one row, "2 pages changed". Clicked, the doc opens (beside the chat when there is room); no diff in v1. */
+    /* A doc: one row, "2 pages changed". Clicked, the doc opens in the Artifacts tab; no diff in v1. */
     function rowForDoc(d) {
       const item = el('div', 'cg-item cg-doc');
       item.setAttribute('role', 'listitem');

@@ -4,10 +4,12 @@
   //  - A Chats | Files switch under Find (Ctrl+Shift+E). The Chats half carries the amber count of this project's chats that
   //    need you.
   //  - Files mode: the scope button (which copy of the project: follows the open chat by default), a filter (Ctrl+Shift+F) and a
-  //    "Changed n" toggle, a lazy tree (one folder at a time; .git never, ignored entries as one dimmed row), change badges from the
-  //    chat's Changes data (a click opens that file's diff), "n changed" on folders, ⧉ on files that are artifacts.
-  //  - Files open as tabs in the chat tab strip (a single click opens an italic preview tab that the next click replaces) and show
-  //    in the middle, read only. From a reply, at 1280 px and wider, a file opens beside the chat instead.
+  //    "Changed n" toggle, a lazy tree (one folder at a time; .git never, ignored entries as one dimmed row; aib-docs always first,
+  //    with the doc icon and "3 docs"), change badges from the chat's Changes data (a click opens that file's diff), "n changed"
+  //    on folders, ⧉ on files that are artifacts.
+  //  - Files and docs open as tabs in the chat tab strip (a single click opens an italic preview tab that the next click
+  //    replaces) and show in the middle. From a reply, at 1280 px and wider, a file opens beside the chat instead (a pane with a
+  //    draggable divider); a doc from a chat opens in the right column's Artifacts viewer (artifacts-ui.js).
   //  - Paths in replies that name an existing file in the chat's folder become file links (never artifacts).
   // Pure decisions live in files-state.js. Paths and names from disk are untrusted: text only, never HTML.
   const doc = () => root.document;
@@ -630,7 +632,7 @@
       n.style.setProperty('--d', String(r.depth));
       return n;
     }
-    const n = el('div', null, 'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.ignored ? ' ignored' : '') + (r.path === sel ? ' sel' : ''));
+    const n = el('div', null, 'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.docsFolder ? ' fx-docsdir' : '') + (r.ignored ? ' ignored' : '') + (r.path === sel ? ' sel' : ''));
     n.dataset.path = r.path;
     n.dataset.kind = r.kind;
     n.setAttribute('role', 'treeitem');
@@ -639,7 +641,8 @@
     if (r.kind === 'dir') n.setAttribute('aria-expanded', String(!!r.open));
     const caret = el('span', r.kind === 'dir' && r.canOpen ? (r.open ? '▾' : '▸') : '', 'fx-caret');
     caret.setAttribute('aria-hidden', 'true');
-    n.append(caret, r.kind === 'dir' ? icon(DIR_D, 'fx-ico') : fileIcon(r.name));
+    // aib-docs: the docs' own accent icon instead of the folder outline
+    n.append(caret, r.docsFolder ? docIcon('fx-ico fx-docico') : r.kind === 'dir' ? icon(DIR_D, 'fx-ico') : fileIcon(r.name));
     const name = el('span', null, 'fx-name');
     const hit = query.trim() && results ? F().markHit(r.name, query) : null;
     if (hit) name.append(doc().createTextNode(hit[0]), el('mark', hit[1]), doc().createTextNode(hit[2]));
@@ -648,7 +651,14 @@
     if (r.folder) n.append(el('span', r.folder, 'fx-dirpath'));
     n.title = r.path + (r.ignored ? '\nIgnored (.gitignore)' : '');
     if (r.ignored) n.append(el('span', 'ignored', 'fx-tag'));
-    if (r.kind === 'dir' && r.changed && !r.ignored) n.append(el('span', r.changed + ' changed', 'fx-dirchg'));
+    if (r.docsFolder && (r.docCount || r.changed)) {
+      // "3 docs · 1 changed": the doc count muted, the changed part in the usual colour
+      const c = el('span', null, 'fx-docscount');
+      if (r.docCount) c.append(el('span', F().docsFolderCount(r.docCount, 0), 'fx-docsn'));
+      if (r.docCount && r.changed) c.append(el('span', ' · ', 'fx-docsn'));
+      if (r.changed) c.append(el('span', r.changed + ' changed', 'fx-dirchg'));
+      n.append(c);
+    } else if (r.kind === 'dir' && r.changed && !r.ignored) n.append(el('span', r.changed + ' changed', 'fx-dirchg'));
     if (r.artifact) {
       const a = btn(null, 'fx-art', 'Open in Artifacts');
       a.append(el('span', '⧉'));
@@ -1051,23 +1061,38 @@
   }
   // ---- doc tabs -------------------------------------------------------------------------------------------------------------
   // A doc shows in the doc page (doc.html) in a frame, by the doc-tab contract: a tab in the strip (from Files, New doc, Ctrl+K; a
-  // preview tab on a single click), or beside the chat (from a chat at 1280 px and wider). A doc already open is re-used: its frame
-  // is told to go to the page. Frames stay alive while their tab exists (moving a frame would reload it).
-  const frames = new Map(); // 'main|' or 'beside|' + tab id -> {frame, tab, where}
+  // preview tab on a single click). Docs from a chat open in the right column's Artifacts viewer instead (artifacts-ui.js owns
+  // that frame and hands it here with attachDocFrame, so its messages are answered the same way). Docs never open beside the
+  // chat. A doc already open is re-used: its frame is told to go to the page. Frames stay alive while their tab exists.
+  const frames = new Map(); // 'main|' or 'artifacts|' + tab id -> {frame, tab, where, hooks}
   function openDoc(scope, d) {
     if (!scope || !d || !d.name) return;
-    const where = d.where === 'beside' ? 'beside' : 'tab';
-    if (where === 'beside') {
-      beside = F().openDocTab(beside, scope, d, { keep: true });
-      setBeside(true);
-      gotoIfOpen('beside', d);
-      drawBeside();
-    } else {
-      setTabsHere(F().openDocTab(tabsHere(), scope, d, { keep: !d.preview }));
-      gotoIfOpen('main', d);
-      showFile();
-      if (W() && W().closeDrawer) W().closeDrawer();
-    }
+    setTabsHere(F().openDocTab(tabsHere(), scope, d, { keep: !d.preview }));
+    gotoIfOpen('main', d);
+    showFile();
+    if (W() && W().closeDrawer) W().closeDrawer();
+  }
+  // The Artifacts viewer's doc frame. hooks: {open(d), title(t), closed()}. Returns {detach()}.
+  function attachDocFrame(frame, scope, d, hooks) {
+    const tab = {
+      id: F().docTabId(d.name),
+      kind: 'doc',
+      path: d.dir || F().DOCS_FOLDER + '/' + d.name,
+      name: d.title || d.name,
+      scope,
+      preview: false,
+      line: 0,
+      doc: { name: d.name, title: d.title || d.name, page: d.page || '' },
+    };
+    const key = 'artifacts|' + tab.id;
+    for (const [k, r] of Array.from(frames)) if (r.where === 'artifacts' && r.frame !== frame) frames.delete(k);
+    const rec = { frame, tab, where: 'artifacts', hooks: hooks || {} };
+    frames.set(key, rec);
+    return {
+      detach() {
+        if (frames.get(key) === rec) frames.delete(key);
+      },
+    };
   }
   function gotoIfOpen(where, d) {
     const rec = frames.get(where + '|' + F().docTabId(d.name));
@@ -1080,13 +1105,9 @@
     }
   }
   const originOf = () => (root.location && root.location.origin) || '*';
-  // Where doc frames live: main = #docView right after #fileView (box), beside = the beside box's third child.
+  // Where doc frames live: #docView right after #fileView (box).
   let docViewEl = null;
   function docHolder(where, box) {
-    if (where === 'beside') {
-      const b = besideBox();
-      return b ? b.children[2] : null;
-    }
     if (docViewEl && docViewEl.parentNode) return docViewEl;
     if (!box || !box.parentNode) return null;
     docViewEl = el('section', null, 'sf-docview');
@@ -1103,7 +1124,7 @@
       const f = el('iframe', null, 'sf-docframe');
       f.title = 'Doc: ' + tab.name;
       f.src = DL()
-        ? DL().docUrl({ chat: tab.scope.id, name: tab.doc.name, page: tab.doc.page, preview: !!tab.preview, where: where === 'beside' ? 'beside' : 'tab' })
+        ? DL().docUrl({ chat: tab.scope.id, name: tab.doc.name, page: tab.doc.page, preview: !!tab.preview, where: 'tab' })
         : 'about:blank';
       rec = { frame: f, tab, where };
       frames.set(key, rec);
@@ -1130,15 +1151,11 @@
     const tab = rec.tab,
       str = (v) => (typeof v === 'string' ? v : '');
     if (data.type === 'aib-doc:open') {
-      const name = str(data.name) || tab.doc.name,
-        wide = F().opensBeside(root.innerWidth || 0);
-      const where = data.where === 'tab' ? 'tab' : data.where === 'beside' && wide ? 'beside' : wide && rec.where === 'beside' ? 'beside' : 'tab';
-      // "Open as tab" from beside the chat: the doc moves to the strip
-      if (rec.where === 'beside' && where === 'tab' && name === tab.doc.name) {
-        beside = F().closeTab(beside, tab.id).state;
-        drawBeside();
-      }
-      openDoc(tab.scope, { name, title: name === tab.doc.name ? tab.doc.title : name, page: str(data.page), block: str(data.block), where, preview: false });
+      const name = str(data.name) || tab.doc.name;
+      const d = { name, title: name === tab.doc.name ? tab.doc.title : name, page: str(data.page), block: str(data.block), preview: false };
+      // from the Artifacts viewer a doc stays there unless the page asks for a tab
+      if (rec.where === 'artifacts' && data.where !== 'tab' && rec.hooks.open) rec.hooks.open(d);
+      else openDoc(tab.scope, d);
     } else if (data.type === 'aib-doc:show-in-files') {
       showInFiles(currentScope() || tab.scope, str(data.dir) || tab.path);
     } else if (data.type === 'aib-doc:pick-chat') {
@@ -1153,6 +1170,11 @@
     } else if (data.type === 'aib-doc:pin') {
       if (rec.where === 'main' && tab.preview) keepTab(tab.id);
     } else if (data.type === 'aib-doc:title') {
+      if (rec.where === 'artifacts') {
+        tab.name = str(data.title) || tab.name;
+        if (rec.hooks.title) rec.hooks.title({ title: str(data.title), page: str(data.page), pageTitle: str(data.pageTitle) });
+        return;
+      }
       const patch = (t) =>
         t.id === tab.id
           ? Object.assign({}, t, {
@@ -1161,18 +1183,15 @@
               doc: Object.assign({}, t.doc, { title: str(data.title) || t.doc.title, page: str(data.page) || t.doc.page }),
             })
           : t;
-      if (rec.where === 'beside') {
-        beside = { tabs: beside.tabs.map(patch), active: beside.active };
-        drawBeside();
-      } else {
+      {
         const h = tabsHere();
         setTabsHere({ tabs: h.tabs.map(patch), active: h.active });
         if (W() && W().refresh) W().refresh();
       }
     } else if (data.type === 'aib-doc:closed') {
-      if (rec.where === 'beside') {
-        beside = F().closeTab(beside, tab.id).state;
-        drawBeside();
+      if (rec.where === 'artifacts') {
+        frames.delete('artifacts|' + tab.id);
+        if (rec.hooks.closed) rec.hooks.closed();
       } else closeFileTab(tab.id);
       refreshDocs(tab.scope);
     } else if (data.type === 'aib-doc:show-artifact') {
@@ -1230,37 +1249,155 @@
     drawMain();
     if (W() && W().refresh) W().refresh();
   }
-  // The width beside the chat, in px, from the chat area (main's children keep clear of the Activity column with a margin, so a
-  // percentage of main would be wrong): the chat keeps about 520 px, the file gets the rest, between 360 px and half.
-  let besideW = 0;
+  // The width beside the chat. The room is the space between the chat list and the right column; the pane takes a fraction of
+  // it (45 % until you drag the divider; the fraction is remembered, so it fits every window size), the pane keeps at least
+  // 360 px and the chat at least 420 px (the pane's minimum wins when there is room for neither).
+  const BESIDE_KEY = 'aib-beside-frac-v1',
+    BESIDE_DEF = 0.45,
+    BESIDE_MIN = 360,
+    BESIDE_CHAT_MIN = 420;
+  let besideW = 0,
+    besideFrac = null; // null: the default
+  function readFrac() {
+    const v = Number(store.get(BESIDE_KEY, null));
+    return v > 0 && v < 1 ? v : null;
+  }
+  const cssPx = (name) => {
+    try {
+      return parseFloat(root.getComputedStyle(doc().documentElement).getPropertyValue(name)) || 0;
+    } catch (e) {
+      return 0;
+    }
+  };
+  // The room in screen px: main's width less the chat list and (when it shows) the right column.
+  function besideRoom() {
+    const d = doc(),
+      main = d.querySelector('main');
+    if (!main || !main.getBoundingClientRect) return 0;
+    const w = main.getBoundingClientRect().width,
+      b = d.body,
+      side = b.classList.contains('side-off') ? 0 : cssPx('--side-w'),
+      act = b.classList.contains('activity-off') || (root.innerWidth || 0) < 1100 ? 0 : cssPx('--activity-w');
+    return Math.max(0, w - side - act);
+  }
+  const besideBounds = (room) => ({ min: BESIDE_MIN, max: Math.max(BESIDE_MIN, Math.round(room - BESIDE_CHAT_MIN)) });
+  function paneWidth(room, frac) {
+    const bd = besideBounds(room);
+    return Math.round(Math.min(Math.max(room * (frac == null ? BESIDE_DEF : frac), bd.min), bd.max));
+  }
   function layoutBeside() {
     const d = doc(),
       b = d.body,
       main = d.querySelector('main');
     if (!b || !main || !b.classList.contains('sf-beside-on')) return;
-    const ref = d.getElementById('chat') && !d.getElementById('chat').hidden ? d.getElementById('chat') : main.querySelector('header');
-    if (!ref || !ref.getBoundingClientRect) return;
-    const r = ref.getBoundingClientRect(),
-      area = r.right + besideW - r.left;
-    if (!(area > 0)) return;
-    const w = Math.round(Math.max(360, Math.min(area - 520, area / 2)));
+    const room = besideRoom();
+    if (!(room > 0)) return;
+    const w = paneWidth(room, besideFrac);
+    const h = d.getElementById('fileBesideDivider');
+    if (h) {
+      const bd = besideBounds(room);
+      h.setAttribute('aria-valuemin', String(bd.min));
+      h.setAttribute('aria-valuemax', String(bd.max));
+      h.setAttribute('aria-valuenow', String(w));
+    }
     if (w === besideW) return;
     besideW = w;
     if (main.style && main.style.setProperty) main.style.setProperty('--sf-bw', w + 'px');
+  }
+  function setBesideFrac(frac, save) {
+    besideFrac = frac == null ? null : Math.min(0.95, Math.max(0.05, frac));
+    if (save) store.set(BESIDE_KEY, besideFrac == null ? '' : String(besideFrac));
+    layoutBeside();
+  }
+  // The divider on the pane's left edge: drag it, arrow keys on it (Shift: bigger steps), Home / End, double-click or Enter
+  // resets to 45 %. The look and the step sizes are the resize handles' (resize-ui.js).
+  function besideDivider() {
+    const h = el('div', null, 'rs-handle rs-v sf-beside-div');
+    h.id = 'fileBesideDivider';
+    h.setAttribute('role', 'separator');
+    h.setAttribute('aria-orientation', 'vertical');
+    h.setAttribute('aria-label', 'Resize the files beside the chat');
+    h.title = 'Resize the files beside the chat (double-click to reset)';
+    h.tabIndex = 0;
+    const RU = () => root.ResizeUI || {};
+    let drag = null;
+    const right = () => {
+      const box = doc().getElementById('fileBeside');
+      return box && box.getBoundingClientRect ? box.getBoundingClientRect().right : 0;
+    };
+    const end = (cancel) => {
+      if (!drag) return;
+      try {
+        h.releasePointerCapture(drag.id);
+      } catch (e) {
+        /* already released */
+      }
+      if (cancel) setBesideFrac(drag.frac, false);
+      else store.set(BESIDE_KEY, besideFrac == null ? '' : String(besideFrac));
+      drag = null;
+      h.classList.remove('rs-active');
+      doc().body.classList.remove('rs-dragging');
+    };
+    h.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      try {
+        h.setPointerCapture(e.pointerId);
+      } catch (err) {
+        /* no capture */
+      }
+      drag = { id: e.pointerId, frac: besideFrac, grab: right() - e.clientX - besideW };
+      h.classList.add('rs-active');
+      doc().body.classList.add('rs-dragging');
+    });
+    h.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const room = besideRoom();
+      if (!(room > 0)) return;
+      const bd = besideBounds(room),
+        w = Math.min(Math.max(right() - e.clientX - drag.grab, bd.min), bd.max);
+      setBesideFrac(w / room, false);
+    });
+    h.addEventListener('pointerup', (e) => {
+      if (drag && e.pointerId === drag.id) end(false);
+    });
+    h.addEventListener('pointercancel', () => end(true));
+    h.addEventListener('lostpointercapture', () => end(false));
+    h.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      setBesideFrac(null, true);
+    });
+    h.addEventListener('keydown', (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.key === 'Escape' && drag) {
+        e.preventDefault();
+        end(true);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        setBesideFrac(null, true);
+        return;
+      }
+      const room = besideRoom();
+      if (!(room > 0) || !RU().keyStep) return;
+      const bd = besideBounds(room);
+      const next = RU().keyStep(e.key, { value: besideW, min: bd.min, max: bd.max, def: paneWidth(room, null), shift: e.shiftKey, inverted: true, axis: 'x' });
+      if (next == null) return;
+      e.preventDefault();
+      setBesideFrac(next / room, true);
+    });
+    return h;
   }
   function setBeside(on) {
     const b = doc().body;
     const was = !!(b && b.classList.contains('sf-beside-on'));
     if (b) b.classList.toggle('sf-beside-on', !!on);
     if (on && !was) {
-      besideW = 420; // the stylesheet's default until measured
-      const main = doc().querySelector('main');
-      if (main && main.style && main.style.removeProperty) main.style.removeProperty('--sf-bw');
+      besideW = 0;
+      besideFrac = readFrac();
     }
-    if (on) {
-      layoutBeside();
-      layoutBeside(); // once more: the first pass measured with the old width
-    }
+    if (on) layoutBeside();
     if (!on) beside = F().emptyTabs();
     if (els && els.beside) els.beside.hidden = !on;
     if (root.ResizeUI && root.ResizeUI.layout) root.ResizeUI.layout();
@@ -1639,9 +1776,7 @@
       box.hidden = true;
       const strip = el('div', null, 'ws-tabs sf-beside-strip');
       const view_ = el('div', null, 'sf-fileview');
-      const docs_ = el('div', null, 'sf-docview');
-      docs_.hidden = true;
-      box.append(strip, view_, docs_);
+      box.append(strip, view_, besideDivider());
       main.append(box);
       if (els) els.beside = box;
     }
@@ -1652,14 +1787,12 @@
     if (!box) return;
     const tab = beside.tabs.find((x) => x.id === beside.active);
     box.hidden = !tab;
-    pruneFrames('beside', tab ? beside.tabs : []);
     if (!tab) {
       setBeside(false);
       return;
     }
     const strip = box.children[0],
-      v = box.children[1],
-      dv = box.children[2];
+      v = box.children[1];
     const list = el('div', null, 'ws-tablist');
     list.setAttribute('role', 'tablist');
     list.setAttribute('aria-label', 'Files beside the chat');
@@ -1687,14 +1820,6 @@
       drawBeside();
     };
     strip.replaceChildren(list, el('span', null, 'ws-spacer'), close);
-    if (tab.kind === 'doc' && dv) {
-      v.hidden = true;
-      v.replaceChildren();
-      dv.hidden = false;
-      showDocFrame(dv, tab, 'beside');
-      return;
-    }
-    if (dv) dv.hidden = true;
     v.hidden = false;
     renderView(v, tab, 'beside');
   }
@@ -2075,6 +2200,12 @@
     besideBox();
     d.addEventListener('keydown', onKey, true);
     if (root.addEventListener) root.addEventListener('resize', () => layoutBeside());
+    // the chat list or the right column changed width (resize-ui.js sets --side-w / --activity-w on <html>): fit the pane again
+    if (typeof root.MutationObserver === 'function' && d.documentElement && d.body) {
+      const mo = new root.MutationObserver(() => layoutBeside());
+      mo.observe(d.documentElement, { attributes: true, attributeFilter: ['style'] });
+      mo.observe(d.body, { attributes: true, attributeFilter: ['class'] });
+    }
     d.addEventListener('pointerdown', (e) => {
       if (menu && !(e.target && e.target.closest && (e.target.closest('.fx-menu') || e.target === menu._back))) closeMenu(false);
     });
@@ -2129,6 +2260,7 @@
     currentScope,
     search: searchFiles,
     openDoc,
+    attachDocFrame,
     startNewDoc,
     chatOfNode,
     currentChat: () => chat,

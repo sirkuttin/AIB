@@ -190,7 +190,7 @@ test('option C: "Built from Release plan › Rollout · Open doc", then "changed
   const banner = view.querySelector('.ar-built');
   assert.equal(banner.hidden, false);
   assert.equal(banner.querySelector('.ar-built-t').textContent, 'Built from Release plan \u203a Rollout \u00b7 ');
-  assert.equal(banner.querySelector('.ar-built-open').textContent, 'Open doc \u2197');
+  assert.equal(banner.querySelector('.ar-built-open').textContent, 'Open doc');
   assert.equal(view.querySelector('.ar-stale').hidden, true, 'not changed: no rebuild line');
   // the page changes: the stale line and its button
   built = Object.assign({}, built, { changed: true, edits: 2 });

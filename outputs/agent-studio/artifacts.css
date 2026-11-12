@@ -396,11 +396,18 @@
   color: var(--muted);
   font-size: 11px;
 }
-.ar-out {
+/* A row that arrived while you were not looking (an agent made a doc, a new artifact): a 6 px accent dot at its end. */
+.ar-newdot {
   flex: 0 0 auto;
-  width: 14px;
-  text-align: center;
-  color: var(--muted);
+  width: 6px;
+  height: 6px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+/* A doc in the viewer: the doc page itself (same origin, the full editor), on the app's own background. */
+.ar-docframe {
+  background: var(--bg);
 }
 .ar-sep {
   height: 1px;

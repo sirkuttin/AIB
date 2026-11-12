@@ -1,7 +1,7 @@
 'use strict';
 /* global CSS */
-/* The doc page (doc.html): one local doc in a tab or beside a chat.
-   /doc.html?chat=<chat id>&name=<doc name or title>[&page=<id>][&block=<id>][&thread=<id>][&new=1][&preview=1][&where=beside|tab]
+/* The doc page (doc.html): one local doc in a tab or in the right column's Artifacts viewer.
+   /doc.html?chat=<chat id>&name=<doc name or title>[&page=<id>][&block=<id>][&thread=<id>][&new=1][&preview=1][&where=artifacts|tab]
    (the doc-tab contract). It opens the doc (POST /api/live/docs/open), binds the vendored editor (vendor/docs/editor.js) to the
    server's live Y.Doc over the doc socket, and draws the header (crumbs, Saved, Comments, History, ⋯), the page list, live agent
    presence, claimed sections, page delete requests and refused-edit notes. doc-toolbar.js adds the toolbar, menus and block
@@ -1301,7 +1301,7 @@
   }
 
   // ---------------------------------------------------------------------------------------------------------------------------
-  // Layout by the doc pane's own width (a tab or beside the chat)
+  // Layout by the doc pane's own width (a tab, or the Artifacts column: narrow)
 
   function layout() {
     const w = document.documentElement.clientWidth;
@@ -1311,7 +1311,7 @@
     app.classList.toggle('wide-rail', w >= 1100);
     app.classList.toggle('narrow', w < 600);
     $('pagePicker').hidden = w >= 900;
-    $('docCrumbs').hidden = false; // the doc name stays in view at every width (beside the chat it takes a row of its own)
+    $('docCrumbs').hidden = false; // the doc name stays in view at every width (in a narrow column it takes a row of its own)
     if (app.className !== before) D.emit('layout', w);
   }
   D.layout = layout;

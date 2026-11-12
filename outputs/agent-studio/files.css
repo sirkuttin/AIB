@@ -584,7 +584,8 @@ body.sf-file-on main > #fileView {
 }
 
 /* ---- beside the chat (1280 px and wider): a column on the right of the middle, with its own tab strip ---- */
-/* --sf-bw is set by files-ui.js from the chat area: the chat keeps about 520 px, the file gets the rest (360 px to half). */
+/* --sf-bw is set by files-ui.js: 45 % of the room between the chat list and the right column until the divider is dragged; the
+   pane keeps 360 px, the chat 420 px. */
 main {
   position: relative;
 }
@@ -605,6 +606,18 @@ body.sf-beside-on main {
 }
 .sf-beside[hidden] {
   display: none;
+}
+/* The pane is zoomed with the interface size; --sf-bw is in screen px. */
+html[data-ui-scaled] .sf-beside {
+  width: calc(var(--sf-bw, 420px) / var(--ui-scale));
+}
+/* The divider on the pane's left edge (the resize handles' look, workspace.css .rs-handle / .rs-v), over the border line. */
+.sf-beside > .sf-beside-div {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 6;
 }
 .sf-beside-close {
   margin-left: auto;
@@ -651,8 +664,17 @@ a.fx-path code {
 
 /* ---- local docs: one row per doc, "+ New doc", doc tabs and frames (doc-links.js, files-ui.js) ---- */
 .fx-row.fx-doc .fx-docico,
+.fx-row.fx-docsdir .fx-docico,
 .sf-ftab .sf-docico {
   color: var(--accent);
+}
+/* aib-docs (always the first row): "3 docs · 1 changed", the doc count muted */
+.fx-docscount {
+  flex: none;
+  font-size: 12px;
+}
+.fx-docsn {
+  color: var(--muted);
 }
 .fx-docpages {
   flex: none;

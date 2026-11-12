@@ -347,7 +347,6 @@
   let host = null;
   const doc = () => root.document;
   const FU = () => root.AgentFilesUI;
-  const F = () => root.AgentFilesState;
   const el = (tag, text, cls) => {
     const n = doc().createElement(tag);
     if (text != null && text !== '') n.textContent = String(text);
@@ -401,14 +400,20 @@
   const chatOf = (node) => (FU() && FU().chatOfNode ? FU().chatOfNode(node) : null);
   const openChat = () => (FU() && FU().currentChat ? FU().currentChat() : null);
 
-  // Open a doc. from: 'files' | 'ctrlk' | 'new' (a tab in the strip) or 'chat' (beside the chat at 1280 px and wider, else a tab).
+  // Open a doc. from: 'files' | 'ctrlk' | 'new': a tab in the strip. from: 'chat' (a card, link or row in a reply, /doc, the
+  // Artifacts picker, Open doc): the right column's Artifacts viewer, when it shows that chat; else a tab. background: show it
+  // in the Artifacts tab without switching to it (an agent made the doc).
+  const AU = () => root.AgentArtifactsUI;
   function openDoc(o) {
     const U = FU();
-    if (!U || !U.openDoc || !o || !o.name) return false;
+    if (!o || !o.name) return false;
     const c = o.chat || openChat();
     if (!c || !c.id) return false;
-    const wide = F() ? F().opensBeside(root.innerWidth || 0) : false;
-    const where = o.where || (o.from === 'chat' && wide ? 'beside' : 'tab');
+    const d = { name: o.name, title: o.title || o.name, page: o.page || '', block: o.block || '', thread: o.thread || '' };
+    const A = AU();
+    if (o.from === 'chat' && o.where !== 'tab' && A && A.openDoc && A.openDoc(d, { chat: c.id, background: !!o.background })) return true;
+    if (o.background) return false;
+    if (!U || !U.openDoc) return false;
     U.openDoc(o.scope || { id: c.id, root: 'main', label: 'Folder', branch: '', chatKey: c.key || '', title: c.title || '' }, {
       name: o.name,
       title: o.title || o.name,
@@ -416,7 +421,7 @@
       block: o.block || '',
       thread: o.thread || '',
       dir: o.dir || '',
-      where,
+      where: 'tab',
       preview: !!o.preview,
     });
     return true;
@@ -504,6 +509,25 @@
     ic.append(cardIcon('doc'));
     card.append(ic, body, acts);
   }
+  // An agent making a doc while you watch: a doc_create row first seen running, later done. It shows in the Artifacts tab in
+  // the background (the tab's count goes up and the row is marked new); nothing takes the focus. A row that arrives done
+  // (opening a chat's history) is not new.
+  const running = new Set(),
+    announced = new Set();
+  const rowId = (row) => String((row && row.raw && row.raw.toolCallId) || (row && row.call && row.call.id) || '');
+  function noticeCreate(call, row, c) {
+    const id = rowId(row);
+    if (!id || call.tool !== 'doc_create') return;
+    if (call.status === 'running' || call.status === '' || call.status === 'pending') {
+      running.add(id);
+      return;
+    }
+    if (call.status !== 'ok' || !call.doc || !running.has(id) || announced.has(id) || !c || !c.id) return;
+    running.delete(id);
+    announced.add(id);
+    const title = resultTitle(call) || (call.result && typeof call.result.title === 'string' ? call.result.title : '') || titleFromTyped(call.doc);
+    listFor(c.id, 'main', true).then(() => openDoc({ name: call.doc, title, chat: c, from: 'chat', background: true }));
+  }
   // chat.js passes every tool row here first: a doc tool row gets the DOC label, its words and "open ↗"; doc_create adds a card.
   function decorateToolRow(box, row) {
     if (!box || !host) return box;
@@ -517,6 +541,7 @@
     box.classList.add('doc-tool');
     const c = chatOf(box) || openChat(),
       docs = c && c.id ? cached(c.id, 'main') : null;
+    noticeCreate(call, row, c);
     paintRow(box, call, docs);
     if (call.doc && call.tool !== 'doc_list' && call.status !== 'failed') {
       let acts = Array.from(box.children || []).find((k) => k.classList && k.classList.contains('tool-acts'));
@@ -563,7 +588,7 @@
 
   // ---- /doc ------------------------------------------------------------------------------------------------------------------
   // Runs /doc for the chat `chat` ({id, key}): finds or makes the doc (a new one is linked to this chat), finds or adds the page,
-  // opens it beside the chat. Resolves {message} (the brief for the agent, aimed at the doc and page) or {error}.
+  // shows it in the right column's Artifacts viewer. Resolves {message} (the brief for the agent, aimed at the doc and page) or {error}.
   async function runCommand(text, chat) {
     const cmd = parseDocCommand(text);
     if (!cmd) return { error: 'Not a /doc command' };
@@ -788,6 +813,8 @@
     _reset: () => {
       lists.clear();
       listeners.clear();
+      running.clear();
+      announced.clear();
       host = null;
       pop = null;
       popState = null;

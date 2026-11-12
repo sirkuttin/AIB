@@ -3209,7 +3209,7 @@
     const value = $('prompt').value,
       images = selectedAttachments().slice();
     if ((!value.trim() && !images.length) || !current || sendingKey || (!imageCapability() && images.length)) return;
-    // /doc <name>[ > page][: brief]: AIB opens (or makes) the doc beside the chat; only the brief goes to the agent.
+    // /doc <name>[ > page][: brief]: AIB opens (or makes) the doc in the Artifacts tab; only the brief goes to the agent.
     if (window.AgentDocLinks?.isDocCommand(value)) {
       const docKey = aliasKey(selected);
       sendingKey = docKey;

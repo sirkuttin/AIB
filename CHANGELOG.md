@@ -22,8 +22,20 @@
 - Docs export: the doc's ⋯ menu exports one page or all pages as Markdown to Downloads (colours drop out, columns stack,
   charts become a table). Duplicate doc and Move doc to trash are in the same menu.
 - Artifacts and docs: a chat shows a doc as a solid-edged doc card (Open doc) and an artifact as a dashed card with a window
-  icon (View). The artifact picker lists this chat's artifacts, then "Docs this chat wrote" (rows end in an arrow and open
-  beside the chat).
+  icon (View). The artifact picker lists this chat's artifacts, then "Docs this chat wrote".
+- Where docs open: a doc from a chat (its card's Open doc, a doc link or "open ↗" in a reply, `/doc`, the picker's "Docs this
+  chat wrote", Open doc on "Built from" and after Edit) opens in the right column's Artifacts tab, where artifacts open, in the
+  full doc editor; the chat keeps its full width. A doc opened from Files or Ctrl+K opens as a tab in the tab strip, like a
+  file (a preview tab on a single click, kept on a double-click). Docs never open beside the chat any more.
+- A doc an agent makes while you work never takes the focus: the Artifacts tab's count goes up (it now counts this chat's
+  docs too), and the doc's row there is marked with a dot and a "New: <doc> · Open" line.
+- Files: `aib-docs` is always the first row of the tree, above every other folder (dot-folders too), even before the first
+  doc exists. It has the accent doc icon instead of the folder outline, and on the right says how many docs it holds: "3
+  docs", or "3 docs · 1 changed" when it has changes.
+- A file beside the chat starts at 45% of the room between the chat list and the right column, not a narrow strip. Drag the
+  divider on its left edge to resize it (the chat keeps 420 px, the file 360 px); the width is remembered as a share of that
+  room, so it fits any window size. Double-click or Enter on the divider resets it; the arrow keys move it (Shift for bigger
+  steps).
 - Built from: a page built from a doc shows "Built from <doc>" with Open doc; when the doc has changed since, it says so and
   offers "Rebuild from the doc", which sends the chat a normal message. The doc header shows "Shown in N artifacts".
 - Markdown artifacts have an Edit button (it replaces "Make it a doc"). Request a change puts the artifact into the message
