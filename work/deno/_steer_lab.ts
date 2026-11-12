@@ -259,8 +259,16 @@ export async function openPage(lab: SteerLab, chat: SteerChat, width = 1400, hei
   const key = `${chat.provider}:${chat.sessionId}`;
   const sel = `button.connection[data-key="${key}"]`;
   await page.waitFor(`!!document.querySelector(${JSON.stringify(sel)})`, 20000, `sidebar row ${key}`);
-  await page.click(sel);
-  await page.waitFor(`document.querySelector(${JSON.stringify(sel)})?.classList.contains('selected')`, 20000, 'chat open');
+  // the row can be drawn a moment before the page listens to it: click again until it is selected
+  for (let attempt = 1;; attempt++) {
+    await page.click(sel);
+    try {
+      await page.waitFor(`document.querySelector(${JSON.stringify(sel)})?.classList.contains('selected')`, 3000, 'chat open');
+      break;
+    } catch (error) {
+      if (attempt >= 6) throw error;
+    }
+  }
   return page;
 }
 
