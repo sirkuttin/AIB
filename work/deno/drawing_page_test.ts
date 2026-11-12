@@ -32,8 +32,8 @@ Deno.test({
   fn: async () => {
     const hub = new LiveDoc();
     const ac = new AbortController();
-    const port = 8793; // clear of the live Studio ports (8767, 8768, 8777, 8778)
-    const server = startDemo(hub, port, ac.signal);
+    const server = startDemo(hub, 0, ac.signal); // the OS picks a free port: never a fixed one
+    const port = server.addr.port;
     const profile = await Deno.makeTempDir({ prefix: 'aib-drawing-profile-' });
     try {
       const first = drawing_edit(hub, { drawing: 'd1', ops: [{ op: 'add_box', text: 'Agent box', id: 'b1' }] });

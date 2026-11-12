@@ -40,12 +40,13 @@ class Lab extends Fixture {
   override get env(): Record<string, string> {
     return this.keeper ? { ...super.env, AIB_KEEPER: '1', AIB_KEEPER_BIN: this.keeperBin } : super.env; // '1': anything but '0' is on
   }
-  async startOn(port: number, extra: string[]): Promise<Web> {
+  /** A web server on a port the OS picks (`--port 0`, read back from its output). */
+  async startOn(extra: string[]): Promise<Web> {
     const [child, log] = this.spawn(
-      [DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--port', String(port), ...this.agentFlags(), '--host-idle-minutes', '0', ...extra],
-      `web-${port}`,
+      [DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--port', '0', ...this.agentFlags(), '--host-idle-minutes', '0', ...extra],
+      'web',
     );
-    const web = new Web(child, port, log);
+    const web = new Web(child, log);
     await web.waitReady(this);
     return web;
   }
@@ -72,14 +73,14 @@ async function seenAgain(web: Web, id: string, before: number, started: number):
   return Date.now() - started;
 }
 
-async function one(mode: 'split' | 'split+keeper' | 'merged+keeper', port: number): Promise<Json> {
+async function one(mode: 'split' | 'split+keeper' | 'merged+keeper'): Promise<Json> {
   const lab = new Lab();
   lab.keeper = mode !== 'split';
   if (lab.keeper) lab.keeperBin = await keeperBinary();
   const extra = mode === 'merged+keeper' ? ['--in-process'] : [];
   let logOf = '';
   try {
-    let web = await lab.startOn(port, extra);
+    let web = await lab.startOn(extra);
     logOf = web.logPath;
     const id = await openConversation(web, lab);
     await web.post('prompt', { id, text: 'stream:4000:50', clientMessageId: 'timing' });
@@ -98,7 +99,7 @@ async function one(mode: 'split' | 'split+keeper' | 'merged+keeper', port: numbe
     const before = chunks(await web.state(id));
     await web.kill();
     started = Date.now();
-    web = await lab.startOn(port, extra);
+    web = await lab.startOn(extra);
     const ms = await seenAgain(web, id, before, started);
     return { mode, ms };
   } catch (error) {
@@ -114,7 +115,6 @@ ${hostLog.slice(-1500)}`);
 }
 
 const results: Json[] = [];
-let port = 8821;
 for (let i = 0; i < RUNS; i++) {
   for (
     const mode of (Deno.env.get('TIMING_STEP1') ? ['split', 'split+keeper', 'merged+keeper'] : ['split', 'merged+keeper']) as (
@@ -123,11 +123,10 @@ for (let i = 0; i < RUNS; i++) {
   ) {
     let r: Json;
     try {
-      r = await one(mode, port);
+      r = await one(mode);
     } catch (error) {
       r = { mode, failed: String(error) };
     }
-    port = port >= 8827 ? 8821 : port + 2; // the artifact origin takes port + 1
     console.log(JSON.stringify(r));
     results.push(r);
   }

@@ -7,6 +7,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { implementation, serve } from '../../outputs/agent-studio/server/platform/http_serve.ts';
 import { redirectTarget, servePort, startBlank, startRedirect } from '../../outputs/agent-studio/server/desktop/serve_address.ts';
 import { DENO, Fixture, MAIN, TEST_OPTIONS, until } from './_host_fixture.ts';
+import { waitListenedPort } from './_ports.ts';
 
 function withImpl<T>(impl: 'node' | 'deno', fn: () => Promise<T>): Promise<T> {
   const before = Deno.env.get('AIB_HTTP_IMPL');
@@ -104,12 +105,10 @@ for (const impl of ['node', 'deno'] as const) {
     ...TEST_OPTIONS,
     fn: () =>
       withImpl(impl, async () => {
-        const probe = Deno.listen({ hostname: '127.0.0.1', port: 0 });
-        const port = (probe.addr as Deno.NetAddr).port;
-        probe.close();
-        const server = startRedirect(port, 'http://127.0.0.1:8777/')!;
+        const server = startRedirect(0, 'http://127.0.0.1:8777/')!; // the OS picks the port; 8777 is only the redirect's text
         try {
           assert(server, 'bound');
+          const port = server.addr.port;
           for (const path of ['/', '/chat.html?c=abc', '/api/x']) {
             const r = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: 'manual' });
             assertEquals(r.status, 302);
@@ -130,8 +129,10 @@ Deno.test({
   ...TEST_OPTIONS,
   fn: async () => {
     await using fx = new Fixture();
-    const port = 8941;
-    fx.spawn([DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--in-process', '--port', String(port), '--state-dir', fx.state], 'serve');
+    const [child, log] = fx.spawn([DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--in-process', '--port', '0', '--state-dir', fx.state], 'serve');
+    let exited = false;
+    child.status.then(() => (exited = true));
+    const port = await waitListenedPort(() => fx.read(log), 'serve', 60, () => exited); // from stdout: the OS picked it
     const path = `${fx.state}/studio.log`;
     const text = await until(
       () => {
@@ -142,7 +143,7 @@ Deno.test({
       60,
     );
     assert(
-      /\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} INFO studio: AIB \S+ on http:\/\/127\.0\.0\.1:8941 \(pid \d+, server, data /.test(text),
+      new RegExp(String.raw`\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} INFO studio: AIB \S+ on http://127\.0\.0\.1:${port} \(pid \d+, server, data `).test(text),
       text,
     );
   },
@@ -168,9 +169,11 @@ Deno.test({
   ...TEST_OPTIONS,
   fn: async () => {
     await using fx = new Fixture();
-    const port = 8812;
-    const args = ['run', '-A', '--quiet', MAIN, 'serve', '--in-process', '--port', String(port), '--state-dir', fx.state];
-    const [web] = fx.spawn([DENO, ...args], 'serve');
+    const args = ['run', '-A', '--quiet', MAIN, 'serve', '--in-process', '--port', '0', '--state-dir', fx.state];
+    const [web, log] = fx.spawn([DENO, ...args], 'serve');
+    let exited = false;
+    web.status.then(() => (exited = true));
+    const port = await waitListenedPort(() => fx.read(log), 'serve', 60, () => exited); // the OS picked it
     const origin = `http://127.0.0.1:${port}`;
     const boot = await until(async () => {
       const r = await fetch(`${origin}/api/live/bootstrap`);
@@ -179,7 +182,7 @@ Deno.test({
     const token = String(boot.token);
 
     // The lock came first: a second serve on the same folder refuses with code 2 while this one runs.
-    const [second] = fx.spawn([DENO, ...args.map((a) => (a === String(port) ? String(port + 2) : a))], 'second');
+    const [second] = fx.spawn([DENO, ...args], 'second');
     assertEquals((await second.status).code, 2);
 
     // A chat's terminal (terminal/sessions.ts) inside that server.
@@ -223,12 +226,10 @@ for (const impl of ['node', 'deno'] as const) {
     ...TEST_OPTIONS,
     fn: () =>
       withImpl(impl, async () => {
-        const probe = Deno.listen({ hostname: '127.0.0.1', port: 0 });
-        const port = (probe.addr as Deno.NetAddr).port;
-        probe.close();
-        const server = startBlank(port)!;
+        const server = startBlank(0)!; // the OS picks the port
         try {
           assert(server, 'bound');
+          const port = server.addr.port;
           const r = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' });
           assertEquals(r.status, 200, 'the runtime finds a server at once: no "Server not ready after 15s"');
           assertEquals(await r.text(), '<!doctype html><title>AIB</title>');

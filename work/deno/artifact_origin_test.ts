@@ -8,6 +8,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PyParity } from './_parity.ts';
+import { heldPort } from './_ports.ts';
 import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { injectScroll, markdownPage, OriginServer, renderMarkdown } from '../../outputs/agent-studio/server/artifacts/origin.ts';
 import { LIB_DIR, localLibUrl, rewriteLibUrls } from '../../outputs/agent-studio/server/artifacts/libs.ts';
@@ -51,18 +52,12 @@ async function raw(port: number, target: string, host: string | null, method = '
   return { status: Number(lines[0].split(' ')[1]), headers, body };
 }
 
-function freePort(): number {
-  for (;;) {
-    const listener = Deno.listen({ hostname: '127.0.0.1', port: 0 });
-    const port = (listener.addr as Deno.NetAddr).port;
-    listener.close();
-    if (port !== 8767 && port !== 8768 && port !== 8766 && port < 65000) return port;
-  }
-}
 
 const tmp = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-origin-' })).replace(/^\\\\\?\\/, '');
 const store = new ArtifactStore(join(tmp, 'artifacts'));
-const studioPort = freePort();
+// The "Studio port" the origins are told about: held open by this file until teardown (the OS picked it), so it is certainly ours.
+const studioHold = heldPort();
+const studioPort = studioHold.port;
 const origin = OriginServer.start(store.root, studioPort);
 store.origin = origin.url;
 const MD =
@@ -481,5 +476,6 @@ Deno.test('origin teardown', async () => {
   await py.call('artifacts_shim', 'origin_stop', [pyPort]);
   await origin.stop();
   await py.close();
+  studioHold.close();
   Deno.removeSync(tmp, { recursive: true });
 });

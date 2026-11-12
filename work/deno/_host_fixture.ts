@@ -6,6 +6,7 @@
 import { python, WORK } from './_parity.ts';
 import { HostClient, pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { refusedPort, waitListenedPort } from './_ports.ts';
 
 const WIN = Deno.build.os === 'windows';
 export const SEP = WIN ? '\\' : '/';
@@ -27,13 +28,6 @@ export const PY: string = (() => {
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-export function freePort(): number {
-  const listener = Deno.listen({ hostname: '127.0.0.1', port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  return port;
-}
 
 export type Json = Record<string, unknown>;
 
@@ -76,13 +70,24 @@ export class Web {
   instance = '';
   webInstance = '';
   boot: Json = {};
-  constructor(readonly process: Deno.ChildProcess, readonly port: number, readonly logPath: string) {}
+  /** The page port: 0 until the server reports the one the OS gave it (`--port 0`; waitReady and waitPort read it back). */
+  port = 0;
+  #exited = false;
+  constructor(readonly process: Deno.ChildProcess, readonly logPath: string) {
+    this.process.status.then(() => (this.#exited = true));
+  }
+
+  /** Wait for the "AIB: http://127.0.0.1:N" line in the server's log. */
+  async waitPort(fixture: Fixture, seconds = 60): Promise<number> {
+    if (!this.port) this.port = await waitListenedPort(() => fixture.read(this.logPath), 'web server', seconds, () => this.#exited);
+    return this.port;
+  }
 
   async waitReady(fixture: Fixture, seconds = 60): Promise<void> {
     const deadline = Date.now() + seconds * 1000;
-    let exited = false;
-    this.process.status.then(() => (exited = true));
+    await this.waitPort(fixture, seconds);
     while (Date.now() < deadline) {
+      const exited = this.#exited;
       if (exited) throw new Error(`web server exited: ${fixture.read(this.logPath)}`);
       try {
         const [status, boot] = await httpJson('GET', this.port, '/api/live/bootstrap', null, undefined, 5000);
@@ -187,16 +192,28 @@ export class Fixture {
     return [child, log];
   }
 
-  async startWeb(extra: string[] = [], options: { port?: number; wait?: boolean; env?: Record<string, string> } = {}): Promise<Web> {
-    const port = options.port ?? freePort();
-    const [child, log] = this.spawn(
-      [DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--port', String(port), ...this.agentFlags(), '--host-idle-minutes', '0', ...extra],
-      `web-${port}`,
-      options.env,
-    );
-    const web = new Web(child, port, log);
-    if (options.wait ?? true) await web.waitReady(this);
-    return web;
+  /**
+   * A web server on a port the OS picks (`--port 0`); its `port` is read back from its output.
+   * pinPort: the command line must name the port (deploy finds a server by its `--port N` and restarts it there). The OS picks that
+   * number too, and should another process take it before the server binds it, it is started again on a new one: never a failure.
+   */
+  async startWeb(extra: string[] = [], options: { wait?: boolean; env?: Record<string, string>; pinPort?: boolean } = {}): Promise<Web> {
+    for (let attempt = 1;; attempt++) {
+      const port = options.pinPort ? refusedPort() : 0;
+      const [child, log] = this.spawn(
+        [DENO, 'run', '-A', '--quiet', MAIN, 'serve', '--port', String(port), ...this.agentFlags(), '--host-idle-minutes', '0', ...extra],
+        'web',
+        options.env,
+      );
+      const web = new Web(child, log);
+      if (!(options.wait ?? true)) return web;
+      try {
+        await web.waitReady(this);
+        return web;
+      } catch (error) {
+        if (!options.pinPort || attempt >= 5 || !/AddrInUse|already in use|10048/i.test(this.read(log))) throw error;
+      }
+    }
   }
 
   async startHost(extra: string[] = []): Promise<Deno.ChildProcess> {

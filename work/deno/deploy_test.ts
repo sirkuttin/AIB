@@ -5,7 +5,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PyParity } from './_parity.ts';
-import { DENO, Fixture, freePort, MAIN, SEP, until } from './_host_fixture.ts';
+import { DENO, Fixture, MAIN, SEP, until } from './_host_fixture.ts';
+import { refusedPort } from './_ports.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as deploy from '../../outputs/agent-studio/server/host/deploy.ts';
@@ -165,7 +166,7 @@ Deno.test({
     const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, () => Response.json({ token: 't' }));
     try {
       let c = capture();
-      assertEquals(await deploy.main(['--port', String(freePort()), '--dry-run'], { ...c.hooks, root: main }), 1);
+      assertEquals(await deploy.main(['--port', String(refusedPort()), '--dry-run'], { ...c.hooks, root: main }), 1);
       assert(/^Not restarted: <urlopen error \[WinError 10061\] /.test(c.err[0]), c.err[0]);
       c = capture();
       assertEquals(await deploy.main(['--port', String(server.addr.port), '--dry-run'], { ...c.hooks, root: main }), 1);
@@ -196,7 +197,7 @@ Deno.test({
     const keeperEnv = Deno.env.get('AIB_KEEPER');
     Deno.env.set('AIB_KEEPER', '0');
     try {
-      const web = await fixture.startWeb();
+      const web = await fixture.startWeb([], { pinPort: true }); // deploy finds the server by the `--port N` on its command line
       const port = web.port;
       assert(port !== 8767 && port !== 8768);
       const host = (await readInfo(fixture.state))!;
