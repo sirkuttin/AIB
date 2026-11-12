@@ -213,7 +213,7 @@ export function anchor(page: Page, box = 'messages'): Promise<{ text: string; of
     const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
     for (const e of b.children) {
       const r = e.getBoundingClientRect();
-      if (r.height && r.bottom > top + 1) return { text: e.textContent.replace(/\s+/g, ' ').slice(0, 80), off: Math.round(r.top - top) };
+      if (r.height && r.bottom > top + 1) return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(r.top - top) };
     }
     return null;
   })()`);
@@ -223,7 +223,7 @@ export function anchor(page: Page, box = 'messages'): Promise<{ text: string; of
 export function whereIs(page: Page, text: string, box = 'messages'): Promise<number | null> {
   return page.eval(`(() => {
     const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
-    const e = [...b.children].find((x) => x.textContent.replace(/\s+/g, ' ').slice(0, 80) === ${JSON.stringify(text)});
+    const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === ${JSON.stringify(text)});
     return e ? Math.round(e.getBoundingClientRect().top - top) : null;
   })()`);
 }

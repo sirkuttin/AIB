@@ -40,7 +40,9 @@ export const KNOWN_FAILING = new Set<string>([
   '2b approval card pinned under a following list: it stays at the bottom and keeps following',
   '2d terminal dock opened and resized under a following list: it stays at the bottom and keeps following',
   '4a opening a big step at the bottom: it stays where you clicked, also when the next update arrives',
+  '4c "Show all" on a long block at the bottom: the block stays where it was, also when the next update arrives',
   '6a opening a chat with unread messages lands on the "New" line',
+  '6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the row you were reading',
 ]);
 
 function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
@@ -79,6 +81,17 @@ async function openSeeded(lab: Lab, n = 30): Promise<Chat> {
   await shown(lab.page, 'SEEDEND');
   await settle();
   return chat;
+}
+
+/** Type four lines in the composer and delete them with the keyboard (as when you send: the composer grows, then shrinks). */
+async function typeAndClear(page: Page) {
+  await page.eval('document.getElementById("prompt").focus()');
+  await page.type('line one\nline two\nline three\nline four');
+  await settle(400);
+  await page.key('a', 2);
+  await page.key('Backspace');
+  await settle(600);
+  assert((await page.eval('document.getElementById("prompt").value')) === '', 'composer cleared');
 }
 
 async function setView(page: Page, view: 'full' | 'chat' | 'prompts') {
@@ -169,11 +182,13 @@ scrollTest('1b Chat view, following: every kind of update keeps the newest row f
 scrollTest('1c narrow window (860 px), following: updates keep the newest row fully visible', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab);
+  await page.viewport(860, 800); // the sidebar folds away under 900 px, so the chat is opened first at full width
+  await settle(800);
   await assertFollowing(page, 'at 860 px');
   const p1 = await update(page, () => chat.say('\n\nNarrow reply NARROW1 ' + 'words '.repeat(120)), 'NARROW1');
   const p2 = await update(page, () => chat.tool('n2', 'Narrow step NARROW2', 'in_progress'), 'NARROW2');
   assert(!p1 && !p2, [p1, p2].join('\n'));
-}, [860, 800]);
+});
 
 // ---- 2. the list gets shorter or longer from outside: a following list stays at the bottom ------------------------------------
 
@@ -189,11 +204,15 @@ scrollTest('2a composer grows to 4 lines: a following list stays at the bottom a
 });
 
 scrollTest('2b approval card pinned under a following list: it stays at the bottom and keeps following', async (lab) => {
-  // Today: the card takes ~185 px from the list; the list is left 100-120 px above the bottom with follow switched OFF (paused),
-  // so later replies only light the jump button. The ResizeObserver (chat.js ~4685) runs too late: the list was re-drawn shorter in
-  // the same poll and the scroll handler (chat.js ~4642, the 48 px rule) already marked it paused.
+  // Today (after you typed in the composer and cleared it, as when sending): the card takes 185 px from the list, which is left
+  // 138 px above the bottom with follow switched OFF (data-paused), so later replies only light the jump button. Measured order:
+  // the list shrinks, Chrome's scroll anchoring moves scrollTop (+47 px, the earlier composer change) and fires a scroll event; the
+  // scroll handler (chat.js ~4642, the 48 px rule) takes it for you scrolling up and pauses; the ResizeObserver (chat.js ~4685)
+  // runs after that and does nothing because the list is paused.
   const page = lab.page;
   const chat = await openSeeded(lab);
+  await typeAndClear(page);
+  await assertFollowing(page, 'composer typed in and cleared');
   chat.step({ ask: 'Run rm -rf build' });
   await page.waitFor('(document.getElementById("approvals").textContent || "").includes("rm -rf build")', 15000, 'approval card');
   await settle();
@@ -219,10 +238,11 @@ scrollTest('2c two queued messages: the queue box appears and a following list s
 });
 
 scrollTest('2d terminal dock opened and resized under a following list: it stays at the bottom and keeps following', async (lab) => {
-  // Today: opening the dock (300 px) leaves the list ~76 px above the bottom and paused; the next reply is not followed
-  // ("1 new message ↓"). Same cause as 2b: the list shrinks and a scroll event marks it paused before the ResizeObserver acts.
+  // Today (after typing in and clearing the composer): opening the dock leaves the list above the bottom and paused; the next reply
+  // is not followed ("1 new message ↓"). Same cause as 2b: the list shrinks, a scroll event pauses it before the ResizeObserver acts.
   const page = lab.page;
   const chat = await openSeeded(lab);
+  await typeAndClear(page);
   await clickHere(page, '.aib-term-toggle');
   await page.waitFor('!!document.getElementById("terminalDock") && document.getElementById("terminalDock").getBoundingClientRect().height > 50', 15000, 'terminal dock');
   await settle(1500);
@@ -260,10 +280,10 @@ scrollTest('3a scrolled up: updates do not move what you read, the jump button c
   assert(x0.paused && x0.gap >= 600, `scrolled up and paused: ${JSON.stringify(x0)}`);
   await startFrames(page);
   for (let i = 0; i < 3; i++) {
+    chat.tool(`r${i}`, `Step while reading ${i}`, 'completed'); // a step first: text right after text joins the same message
     chat.say(`While you read ${i} READ${i} ` + 'more words '.repeat(20));
-    chat.tool(`r${i}`, `Step while reading ${i}`, 'completed');
   }
-  await shown(page, 'Step while reading 2');
+  await shown(page, 'READ2');
   await settle(1500);
   const frames = await stopFrames(page);
   const moved = frames.filter((f) => Math.abs(f.top - x0.top) > 1);
@@ -372,6 +392,8 @@ scrollTest('4a opening a big step at the bottom: it stays where you clicked, als
 
 scrollTest('4b opening a small step at the bottom: it stays where you clicked, also when the next update arrives', (lab) => openStep(lab, false));
 
+// 4c today: same cause as 4a. "Show all" opens the block in place (its top stays at 369 px), but the list keeps following with
+// 1117 px below the view; the next update scrolls to the end and the block's start is 786 px above the list's top.
 scrollTest('4c "Show all" on a long block at the bottom: the block stays where it was, also when the next update arrives', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab, 20);
@@ -513,7 +535,7 @@ scrollTest('6b switching to another chat and back: a following chat is still at 
   assert(!p, p);
 });
 
-scrollTest('6c switching Full / Chat / Prompts at the bottom stays at the bottom; scrolled up keeps the row you read', async (lab) => {
+scrollTest('6c switching Full / Chat / Prompts at the bottom stays at the bottom and keeps following', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab, 20);
   for (const v of ['chat', 'prompts', 'full'] as const) {
@@ -523,17 +545,30 @@ scrollTest('6c switching Full / Chat / Prompts at the bottom stays at the bottom
   await setView(page, 'chat');
   const p = await update(page, () => chat.say('\n\nIn the Chat view VIEWREPLY'), 'VIEWREPLY');
   assert(!p, p);
-  await setView(page, 'full');
+});
+
+// 6d today: scrolled 900 px up from the end of a 60-step turn ("Read seed file 42" at the top), Full -> Chat lands on the turn's
+// prompt at scrollTop 22 (4800 px from the end) and Chat -> Full stays there. views-ui.js anchorOf (~395) keeps only the prompt that
+// owns the top row (offset 0 unless the prompt itself is the top row) and restoreAnchor (~408) puts that prompt at the top.
+scrollTest('6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the row you were reading', async (lab) => {
+  const page = lab.page;
+  await openSeeded(lab, 60);
   await wheel(page, -900);
   await settle(400);
   const before = await anchor(page);
+  const x0 = await m(page);
   await setView(page, 'chat');
+  const inChat = await m(page);
   await setView(page, 'full');
   const now = await whereIs(page, before!.text);
-  assert(now !== null && Math.abs(now - before!.off) <= 2, `Full -> Chat -> Full moved the row you read from ${before!.off} to ${now}`);
+  const x1 = await m(page);
+  assert(
+    now !== null && Math.abs(now - before!.off) <= 2,
+    `"${before!.text.slice(0, 40)}" was at ${before!.off} px (scrollTop ${x0.top}); after Chat (scrollTop ${inChat.top}) and back it is at ${now} (scrollTop ${x1.top})`,
+  );
 });
 
-scrollTest('6d reload at the bottom: the chat comes back at the bottom and follows', async (lab) => {
+scrollTest('6e reload at the bottom: the chat comes back at the bottom and follows', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab, 20);
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
@@ -559,6 +594,7 @@ async function openSubagent(lab: Lab): Promise<(step: Record<string, unknown>) =
     child({ sessionUpdate: 'tool_call', toolCallId: `c${i}`, title: `Child read ${i}`, kind: 'read', status: 'completed' });
   }
   await lab.select(chat);
+  await page.waitFor(`!!document.querySelector('#subagentList button[data-key="child-1"]')`, 15000, 'subagent card');
   await clickHere(page, '#subagentList button[data-key="child-1"]');
   await shown(page, 'Child read 24', 'submessages');
   await settle();
