@@ -142,6 +142,8 @@ export function nativeShell(): Shell {
   let tray: Any = null; // held for the app's life, so the native icon is never collected
   let windowsTray: WindowsTray | null = null;
   let trayItems: TrayItem[] = [];
+  /** The newest tooltip (updateTray): the Windows icon starts on a worker, and updates before it is up are applied once it is. */
+  let trayTooltip = '';
   // Windows: a balloon on our own tray icon (a toast on Windows 10/11); its click comes back through the tray worker.
   const winNotify = Deno.build.os === 'windows'
     ? windowsNotify({
@@ -189,12 +191,19 @@ export function nativeShell(): Shell {
       // Windows: Deno.Tray's icon never gets its clicks (tray_win.ts), so AIB runs its own icon on a worker thread; Deno.Tray only
       // if that can't start. Elsewhere Deno.Tray.
       trayItems = items.map((i) => ({ ...i }));
+      trayTooltip = tooltip;
       if (Deno.build.os === 'windows') {
         void startWindowsTray(icon, tooltip, items, onClick, onMenu, (m) => log.info(m), { onBalloonClick: () => winNotify?.clicked() })
           .then((t) => {
-            if (t) windowsTray = t;
-            else denoTray(icon, tooltip, items, onClick, onMenu);
-            writeTrayState('app', { shown: true, tooltip, icons: t ? t.icons.map(String) : [] });
+            // The first tray tick (status line, "AIB · Phone access on · ...") runs before the worker's icon is up: apply it now.
+            if (t) {
+              windowsTray = t;
+              trayItems.forEach((item, i) => {
+                if (item.label !== items[i]?.label) t.setItemLabel(i, item.label, !!item.disabled);
+              });
+              if (trayTooltip !== tooltip) t.setTooltip(trayTooltip);
+            } else denoTray(icon, trayTooltip, trayItems, onClick, onMenu);
+            writeTrayState('app', { shown: true, tooltip: trayTooltip, icons: t ? t.icons.map(String) : [] });
           });
         return;
       }
@@ -202,6 +211,7 @@ export function nativeShell(): Shell {
     },
     updateTray(tooltip: string, index: number, label: string) {
       if (trayItems[index]) trayItems[index].label = label;
+      trayTooltip = tooltip;
       if (windowsTray) {
         windowsTray.setItemLabel(index, label, !!trayItems[index]?.disabled);
         windowsTray.setTooltip(tooltip);

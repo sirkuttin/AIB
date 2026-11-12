@@ -73,6 +73,7 @@ export const SLOW: Record<string, number> = {
   'host_proxy_test.ts': 16,
   'drawing_page_test.ts': 15, // a headless Chrome or Edge on the drawing page
   'remote_phone_e2e_test.ts': 22, // phone access: real AIBs with a fake Tailscale CLI, and the phone page in a headless Chrome
+  'remote_tray_e2e_test.ts': 10, // phone access keeps AIB in the tray: a real AIB with --start-in-tray (and, AIB_SLOW_TESTS=1, a built AIB.exe)
   'attention_modes_test.ts': 60, // the attention watcher through the real agent hosts: in-process, the keeper (Go) and a split host
 };
 /** Rough serial seconds of the slower fast-tier files, so they start first too. Unlisted files count as 3 s. */

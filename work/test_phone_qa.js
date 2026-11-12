@@ -77,6 +77,27 @@ test('Devices copy: the switch is not the card heading, the note names the Phone
   assert.ok(!fs.readFileSync(path.join(APP, 'devices-ui.js'), 'utf8').includes('Paired phones'));
 });
 
+test('Devices: one line under the switch says closing the window keeps AIB in the tray while phone access is on', async () => {
+  const LINE = 'While this is on, closing the AIB window keeps AIB running in the tray. Use Quit to stop it.';
+  for (const on of [true, false]) {
+    const { UI, make } = await devices();
+    const view = { ...VIEW, on };
+    const m = make();
+    UI.render('access', m.box, { get: async () => view, post: async () => view });
+    await flush();
+    assert.equal(UI.TRAY_NOTE, LINE);
+    const ps = m.box.querySelectorAll('p');
+    const note = ps.find((p) => p.textContent === LINE);
+    assert.ok(note, `the line is there (phone access ${on ? 'on' : 'off'}): ${ps.map((p) => p.textContent).join('|')}`);
+    assert.equal(note.id, 'dvTrayNote');
+    assert.match(note.className, /\bst-note\b/);
+    const kids = note.parentNode.children;
+    const at = kids.indexOf(note);
+    assert.ok(at > 0 && /\bdv-switch\b/.test(kids[at - 1].className), 'directly under the switch row');
+    assert.equal(kids[at - 1].querySelector('input').id, 'dvAccess');
+  }
+});
+
 test('helper state dots: needs you = warning, working = accent, done = good, idle = muted', () => {
   assert.equal(P.helperTone('needs_you'), 'need');
   assert.equal(P.helperTone('running'), 'work');

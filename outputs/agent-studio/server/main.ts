@@ -401,6 +401,9 @@ export async function main(argv: string[]): Promise<void> {
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
+      // Phone access on (Settings > Devices): closing the window keeps AIB in the tray, so the phone port, the attention watcher,
+      // notifications and pushes keep working; no idle quit in the tray; Quit AIB as always (owner's decision 2026-11-12).
+      phoneOn: () => ctx.phone.on,
       terminalsBusy: () => ctx.terminals.busyCount(), // a command running in a terminal is work: left to the keeper, never cut off
       mergesRunning, // Quit AIB lets a running merge finish before AIB exits
       trayCounts: studio

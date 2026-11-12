@@ -198,6 +198,8 @@
     return s;
   }
 
+  const TRAY_NOTE = 'While this is on, closing the AIB window keeps AIB running in the tray. Use Quit to stop it.';
+
   function drawAccess(box) {
     const v = D.view;
     const out = slot(box);
@@ -218,6 +220,10 @@
     l.append(cb, el('span', 'Let paired phones reach AIB'));
     line.append(l);
     frag.append(line);
+    // Owner's decision 2026-11-12: with phone access on, closing the window keeps AIB in the tray (window.ts onWindowClosed).
+    const trayNote = el('p', TRAY_NOTE, 'st-note');
+    trayNote.id = 'dvTrayNote';
+    frag.append(trayNote);
     let status;
     if (!v.on) status = el('p', 'Off. Nothing on your PC is reachable from other devices.', 'st-note');
     else if (D.busy === 'access' || D.busy === 'check') status = el('p', 'Checking Tailscale…', 'st-note');
@@ -564,7 +570,7 @@
     refresh();
   }
 
-  const api = { render, refresh, ago, countdown, checklist, scopesAfter, activityLine, SCOPES, _state: D };
+  const api = { render, refresh, ago, countdown, checklist, scopesAfter, activityLine, SCOPES, TRAY_NOTE, _state: D };
   root.AIBDevicesUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

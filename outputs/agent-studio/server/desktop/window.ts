@@ -50,15 +50,21 @@ export function stopConfirmLabel(working: number): string {
   return `Click again to stop ${what} and quit`;
 }
 
-/** The tray-only status line and tooltip for `working` chats, `needsYou` of them waiting for the person. */
-export function trayOnlyView(working: number, needsYou: number): { status: string; tooltip: string } {
+/** What the tray tooltip says while phone access is on (Settings > Devices "Let paired phones reach AIB"). */
+export const PHONE_ON_TOOLTIP = 'Phone access on';
+
+/**
+ * The tray-only status line and tooltip for `working` chats, `needsYou` of them waiting for the person. While phone access is on
+ * the tooltip says so first ("AIB · Phone access on · 2 chats running"); the status line in the menu stays the counts.
+ */
+export function trayOnlyView(working: number, needsYou: number, phoneOn = false): { status: string; tooltip: string } {
   const plural = (n: number) => `${n} chat${n === 1 ? '' : 's'}`;
   const status = needsYou
     ? `${plural(needsYou)} need${needsYou === 1 ? 's' : ''} you${working > needsYou ? `, ${working - needsYou} running` : ''}`
     : working
     ? `${plural(working)} running`
     : 'No chat is working';
-  return { status, tooltip: `AIB · ${status}` };
+  return { status, tooltip: phoneOn ? `AIB · ${PHONE_ON_TOOLTIP} · ${status}` : `AIB · ${status}` };
 }
 
 // ---------- pure rules ----------
@@ -109,8 +115,11 @@ export type CloseDecision = 'quit' | 'tray';
  * Closing the window or Quit AIB (the owner's decisions, 2026-11-10 and 2026-11-11: quitting never stops a chat, and AIB exits as
  * Install now does). Nothing working: quit. Something working, or a count that can't be read (null): the chats are left to the
  * keeper and AIB exits (DesktopApp.decide), or, when the keeper cannot hold them, AIB stays in the tray until nothing works.
+ * keepInTray: the window was closed while phone access is on (owner's decision 2026-11-12, "Yes, keep in tray"): AIB stays in
+ * the tray whatever works, so paired phones, notifications and pushes keep working; only Quit AIB stops it (Quit never passes it).
  */
-export function closeDecision(work: number | null): CloseDecision {
+export function closeDecision(work: number | null, keepInTray = false): CloseDecision {
+  if (keepInTray) return 'tray';
   return work === 0 ? 'quit' : 'tray';
 }
 
@@ -363,6 +372,12 @@ export interface DesktopOptions {
   trayCounts?: () => Promise<{ working: number; needsYou: number }>;
   /** In the background: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
   trayIdleQuitMs?: number;
+  /**
+   * Phone access is on (Settings > Devices). Then closing the window keeps AIB in the tray (the web server, the phone port, the
+   * attention watcher, notifications and pushes go on), the background never quits by itself, and the tooltip says so. Quit AIB
+   * is unchanged. Read on every close and tray tick, so turning it off in the tray brings back the idle quit. A throw counts as off.
+   */
+  phoneOn?: () => boolean;
   /** How often the status line and the idle rule look (default 2 s; 0 = tests call trayTick()). */
   trayPollMs?: number;
   /** The watchdog period; 0 turns it off (tests drive watchdogTick() themselves). Default WATCHDOG_MS. */
@@ -456,9 +471,18 @@ export class DesktopApp {
     return Promise.resolve();
   }
 
-  /** True while AIB has no window and quits by itself once nothing works. */
+  /** True while AIB has no window (it quits by itself once nothing works, unless phone access is on). */
   get background(): boolean {
     return this.#background;
+  }
+
+  /** Phone access is on (options.phoneOn); false when not given or it throws. */
+  phoneOn(): boolean {
+    try {
+      return this.options.phoneOn?.() === true;
+    } catch {
+      return false;
+    }
   }
 
   /** AIB_TEST_TRAY_STATE (tests on an invisible desktop): the app icon's state, like the host's and the helper's. Never throws. */
@@ -472,6 +496,7 @@ export class DesktopApp {
         background: this.#background,
         windowOpened: this.#windowOpened,
         tooltip: this.#trayView?.tooltip ?? WINDOW_TITLE,
+        phoneOn: this.phoneOn(),
         status: this.#trayView?.status ?? '',
         items: TRAY_ITEMS.map((i) => (i.id === 'status' ? this.#trayView?.status ?? '' : i.id === 'stop' ? stopLabel : i.label)),
       })
@@ -509,9 +534,10 @@ export class DesktopApp {
   async trayTick(now = Date.now()): Promise<void> {
     if (this.#quitting) return;
     const work = await this.work();
+    const phoneOn = this.phoneOn();
     if (work) {
-      const view = trayOnlyView(work.working, work.needsYou);
-      if (view.status !== this.#trayView?.status) {
+      const view = trayOnlyView(work.working, work.needsYou, phoneOn);
+      if (view.status !== this.#trayView?.status || view.tooltip !== this.#trayView?.tooltip) {
         this.#trayView = view;
         try {
           this.shell.updateTray?.(view.tooltip, 1, view.status);
@@ -520,7 +546,9 @@ export class DesktopApp {
       }
     }
     const idleMs = this.options.trayIdleQuitMs ?? 10_000;
-    if (!this.#background || idleMs <= 0) {
+    // Phone access on: AIB stays in the tray for the phones however long nothing works. Turned off while AIB has no window: the
+    // usual idle rule again (it quits once nothing has worked for idleMs; work running keeps it until that finishes).
+    if (!this.#background || idleMs <= 0 || phoneOn) {
       this.#idleSince = null;
       return;
     }
@@ -749,10 +777,21 @@ export class DesktopApp {
     }
   }
 
-  /** The window was closed (it is already gone): the same rule as Quit AIB. */
+  /**
+   * The window was closed (it is already gone): the same rule as Quit AIB, except while phone access is on: then AIB stays in the
+   * tray (owner's decision 2026-11-12), so the phones, notifications and pushes keep working; Open AIB brings the window back.
+   */
   async onWindowClosed(win: WindowHandle): Promise<void> {
     clearTimeout(this.#saveTimer);
     if (this.#quitting || win !== this.window) return;
+    if (this.phoneOn()) { // closeDecision(work, true): 'tray' whatever works
+      log.info('close (the window was closed): phone access is on; AIB stays in the tray for the phones (Quit AIB stops it)');
+      this.#hide(win);
+      this.#background = true;
+      this.#idleSince = null;
+      this.trayState('background: phone access');
+      return;
+    }
     await this.decide('the window was closed', win);
   }
 
