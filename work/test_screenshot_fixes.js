@@ -289,3 +289,59 @@ test('7. a title the age would cut gets line 1 to itself, the age moves to the e
   const chat = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
   assert.match(chat, /AgentSidebarUI\?\.watchTitles\?\.\(box\)/);
 });
+
+test('6c. one wheel notch up stops following at once; following resumes only at the very bottom', () => {
+  const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
+  const start = src.indexOf("  for (const id of ['messages', 'submessages', 'commandDetails']) {");
+  const end = src.indexOf('  /* The message list gets shorter when something is pinned under it');
+  assert.ok(start > 0 && end > start, 'the scroll handler block exists');
+  const block = src.slice(start, end);
+  const boxes = {};
+  const mk = (id) => {
+    const on = {};
+    return (boxes[id] = {
+      id,
+      clientHeight: 400,
+      scrollHeight: 2000,
+      scrollTop: 1600,
+      dataset: {},
+      addEventListener: (t, fn) => (on[t] = fn),
+      fire: (t, e) => on[t](e || {}),
+    });
+  };
+  ['messages', 'submessages', 'commandDetails'].forEach(mk);
+  const UNREAD = { holdUntil: 0 };
+  const run = new Function('$', 'UNREAD', 'markNow', 'syncJump', 'fadeNewLine', 'markSeen', block);
+  run((id) => boxes[id], UNREAD, () => ({ key: 'k' }), () => {}, () => {}, () => {});
+  const m = boxes.messages;
+  // one notch up that ends 30 px from the bottom: paused right away, and the scroll event that follows keeps it paused
+  m.fire('wheel', { deltaY: -100 });
+  assert.equal(m.dataset.paused, '1');
+  m.scrollTop = 1570;
+  m.fire('scroll');
+  assert.equal(m.dataset.paused, '1', 'still paused 30 px from the bottom after your own scroll up');
+  // scrolling down but not all the way: still paused
+  m.scrollTop = 1595;
+  m.fire('scroll');
+  assert.equal(m.dataset.paused, '1');
+  // at the very bottom: following again
+  m.scrollTop = 1600;
+  m.fire('scroll');
+  assert.equal(m.dataset.paused, undefined);
+  // a wheel down never pauses
+  m.fire('wheel', { deltaY: 100 });
+  assert.equal(m.dataset.paused, undefined);
+  // PageUp in the list pauses; typing in a box inside it does not
+  m.fire('keydown', { key: 'PageUp', target: { closest: () => null } });
+  assert.equal(m.dataset.paused, '1');
+  m.scrollTop = 1600;
+  m.fire('scroll');
+  m.fire('keydown', { key: 'ArrowUp', target: { closest: () => ({}) } });
+  assert.equal(m.dataset.paused, undefined);
+  // a list with nothing to scroll is never paused by the wheel
+  const s = boxes.submessages;
+  s.scrollHeight = 400;
+  s.scrollTop = 0;
+  s.fire('wheel', { deltaY: -100 });
+  assert.equal(s.dataset.paused, undefined);
+});

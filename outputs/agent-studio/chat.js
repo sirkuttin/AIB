@@ -4649,18 +4649,35 @@
   }
   for (const id of ['messages', 'submessages', 'commandDetails']) {
     const box = $(id);
+    const pause = () => {
+      if (!box.dataset.paused && id === 'messages') {
+        UNREAD.mark = markNow();
+        UNREAD.jumped = false;
+      }
+      box.dataset.paused = '1';
+    };
+    /* Any upward scroll you make stops following at once, even one wheel notch that ends nearer the bottom than the 48 px below
+       (the next update would otherwise pull you back down). Following comes back only when you reach the very bottom again. */
+    const scrolledUp = () => {
+      if (box.scrollHeight - box.clientHeight <= 1) return;
+      box._userUp = true;
+      pause();
+      if (id === 'messages') syncJump();
+    };
+    box.addEventListener('wheel', (e) => e.deltaY < 0 && scrolledUp(), { passive: true });
+    box.addEventListener('keydown', (e) => {
+      if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && !e.target.closest?.('input, textarea, [contenteditable="true"]'))
+        scrolledUp();
+    });
     box.addEventListener('scroll', () => {
       if (id === 'messages' && Date.now() < UNREAD.holdUntil) {
         syncJump(); // a view switch moved the scroll position: that is not you reading
         return;
       }
-      if (box.scrollHeight - box.scrollTop - box.clientHeight > 48) {
-        if (!box.dataset.paused && id === 'messages') {
-          UNREAD.mark = markNow();
-          UNREAD.jumped = false;
-        }
-        box.dataset.paused = '1';
-      } else {
+      const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+      if (gap > 48 || (box._userUp && gap > 1)) pause();
+      else {
+        box._userUp = false;
         if (id === 'messages') {
           if (box.dataset.paused) fadeNewLine(box);
           markSeen(UNREAD.chat, UNREAD.newest);
