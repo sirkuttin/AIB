@@ -48,6 +48,7 @@ import { betaAgent } from '../agents/beta_catalog.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
+import { descendants, refreshDescendants } from '../platform/descendants.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
@@ -635,6 +636,16 @@ export class Connection {
   #turnHelpers = new Set<string>();
   /** Claude Code subagent sessions seen running (or waiting for the user) live and not yet ended, whichever turn started them. */
   #liveHelpers = new Set<string>();
+  /**
+   * Claude Code background shells (Bash or PowerShell with run_in_background) seen started and not seen ended: task id -> the pids of
+   * the agent's processes that started with the command (null when they could not be listed: the shell then counts until a
+   * task-notification cycle). See backgroundShellsRunning.
+   */
+  #bgShells = new Map<string, number[] | null>();
+  /** Bash/PowerShell tool calls of this chat -> when their tool_call came (seconds): a background shell started after it. */
+  #shellCalls = new Map<string, number>();
+  /** The agent's processes when the current prompt turn began (Claude Code only): none of them is a shell that turn starts. */
+  #turnProcesses: Set<number> | null = null;
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -1353,6 +1364,11 @@ export class Connection {
     this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
     this.subagents = new Map(entries(s.subagents) as [string, Json][]);
     this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
+    this.#bgShells = new Map(
+      (Array.isArray(s.bgShells) ? s.bgShells : []).filter((e): e is [string, number[] | null] =>
+        Array.isArray(e) && isStr(e[0]) && (e[1] === null || (Array.isArray(e[1]) && e[1].every(isInt)))
+      ),
+    );
     const b = isDict(s.breadth) ? s.breadth : {};
     this.breadth = {
       ...newState(),
@@ -1406,6 +1422,7 @@ export class Connection {
       sequence: this.sequence,
       subagents: [...this.subagents],
       liveHelpers: [...this.#liveHelpers],
+      bgShells: [...this.#bgShells],
       breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
       writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
       promptReceipts: [...this.promptReceipts],
@@ -1562,6 +1579,83 @@ export class Connection {
     return !this.closed && this.#liveHelpers.size > 0;
   }
 
+  /**
+   * A Claude Code background shell of this chat still runs (a long test run started with Bash run_in_background, its reply long
+   * ended): like helpersRunning, the chat must not be cut off on quit, update or idle exit (Studio.busyList 'background'), but it is
+   * not busy for the page or the queue. Claude Code tells a client like AIB only that the command went to the background (the Bash
+   * result's `_meta.claudeCode.toolResponse.backgroundTaskId`), never that it ended, so the end is read from the OS: the agent's
+   * processes that started with the command are gone (platform/descendants.ts). A shell whose processes could not be listed counts
+   * until a task-notification cycle of Claude Code (it starts one when a background task ends).
+   */
+  backgroundShellsRunning(): boolean {
+    if (this.closed || !this.#bgShells.size) return false;
+    const pid = this.process?.pid;
+    const now = pid ? descendants(pid) : null;
+    if (now) {
+      const live = new Set(now.map((d) => d.pid));
+      for (const [task, pids] of [...this.#bgShells]) {
+        if (pids !== null && !pids.some((p) => live.has(p))) {
+          this.#bgShells.delete(task);
+          log.info('chat %s: background shell %s ended', this.id, task);
+        }
+      }
+    }
+    return this.#bgShells.size > 0;
+  }
+
+  /** The background shells this chat counts as running now (task ids), for tests and the log. */
+  backgroundShells(): string[] {
+    return this.backgroundShellsRunning() ? [...this.#bgShells.keys()] : [];
+  }
+
+  /** The agent's processes now, as the turn begins (an MCP server, the PowerShell tool's own shell): see #watchShells. */
+  #noteTurnProcesses(): void {
+    this.#turnProcesses = null;
+    const pid = this.process?.pid;
+    if (this.#replaying || !pid || !this.#claudeHolds()) return;
+    refreshDescendants();
+    const now = descendants(pid);
+    if (now) this.#turnProcesses = new Set(now.map((d) => d.pid));
+  }
+
+  /** Bash/PowerShell calls and the background shells they started, the chat's own or a helper's (see backgroundShellsRunning). */
+  #watchShells(update: Json, kind: unknown, meta: unknown): void {
+    const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
+    const id = get(update, 'toolCallId');
+    if (!isStr(id)) return;
+    const tool = isDict(claude) ? get(claude, 'toolName') : null;
+    if (kind === 'tool_call' && (tool === 'Bash' || tool === 'PowerShell')) {
+      if (!this.#shellCalls.has(id)) this.#shellCalls.set(id, this.#now());
+      while (this.#shellCalls.size > 200) this.#shellCalls.delete(this.#shellCalls.keys().next().value!);
+      return;
+    }
+    if (kind !== 'tool_call_update') return;
+    const response = isDict(claude) ? get(claude, 'toolResponse') : null;
+    let task = isDict(response) ? get(response, 'backgroundTaskId') : null;
+    if (!isStr(task) || !task) {
+      // The same fact in the result text, which every client gets: "Command running in background with ID: <id>. Output is ...".
+      const raw = get(update, 'rawOutput');
+      const m = isStr(raw) ? /^Command running in background with ID: (\S+?)\.(?:\s|$)/.exec(raw) : null;
+      task = m ? m[1] : null;
+    }
+    if (!isStr(task) || !task || this.#bgShells.has(task)) return;
+    const since = this.#shellCalls.get(id) ?? this.#now() - 10;
+    const pid = this.process?.pid;
+    refreshDescendants(); // the command started a moment ago: a snapshot from before it would not have it
+    const now = pid ? descendants(pid) : null;
+    // The processes that started with the command: not there when the turn began, and not older than its tool call (two seconds of
+    // slack for ps's whole-second start times). An older one (an MCP server, the PowerShell tool's own shell) is not it. None: the
+    // command already ended. A process of unknown age counts (never cut one off).
+    const before = this.#turnProcesses;
+    const pids = now
+      ? now.filter((d) => !before?.has(d.pid) && (d.started === null || d.started >= since - 2)).map((d) => d.pid)
+      : null;
+    if (pids && !pids.length) return;
+    this.#bgShells.set(task, pids);
+    while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
+    log.info('chat %s: background shell %s started (%s)', this.id, task, pids ? `processes ${pids.join(', ')}` : 'processes unknown');
+  }
+
   /** A helper started during the current prompt turn is still running (or waits for the user). */
   #helpersRunning(): boolean {
     for (const child of this.#turnHelpers) {
@@ -1581,6 +1675,9 @@ export class Connection {
     const update = get(params, 'update');
     if (!isDict(update)) return;
     const kind = get(update, 'sessionUpdate');
+    if (kind === 'tool_call' || kind === 'tool_call_update') {
+      this.#watchShells(update, kind, get(update, '_meta')); // a helper's shells run in the same agent
+    }
     if (kind === 'subagent_update') {
       const child = get(update, 'sessionId');
       let state = get(update, 'state');
@@ -1598,6 +1695,11 @@ export class Connection {
     if (kind === 'usage_update') {
       const origin = isDict(meta) ? get(meta, '_claude/origin') : null;
       if (!isDict(origin)) return; // usage during the turn, not a result
+      if (get(origin, 'kind') === 'task-notification') {
+        // A background task ended: one shell whose processes could not be listed stops counting (the others are read from the OS).
+        const unknown = [...this.#bgShells].find(([, pids]) => pids === null);
+        if (unknown) this.#bgShells.delete(unknown[0]);
+      }
       if (this.autonomous) return this.#endAutonomous('end_turn');
       const early = this.#endEarly;
       if (
@@ -2596,6 +2698,7 @@ export class Connection {
     this.busy = true;
     this.autonomous = false; // a prompt sent while Claude Code ran a cycle of its own takes that cycle over
     this.#turnHelpers.clear();
+    this.#noteTurnProcesses();
     this.turnStartedAt = now();
     this.error = '';
     this.promptSeq += 1;

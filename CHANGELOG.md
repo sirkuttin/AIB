@@ -2,6 +2,9 @@
 
 ## 0.1.0-beta.8 (beta)
 
+- Quitting AIB no longer kills a command Claude started in the background (Bash with run_in_background, such as a long test
+  run) after its reply ended. The chat counts as working for Quit AIB, updates and the tray until the command ends, so the
+  keeper holds it and the next AIB takes it over. It does not show as Working in the chat or hold your queued messages.
 - Local docs: the project's docs live in the `aib-docs/` folder, shown in Files. Open the folder: each doc is one row with
   its page count, and "+ New doc" is the last row. A doc is a folder in `aib-docs/` holding `doc.aibdoc` (the full doc) and
   a Markdown copy of each page, so the docs travel with the project and its git history; Files shows the doc, not those

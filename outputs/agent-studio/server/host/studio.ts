@@ -1127,7 +1127,9 @@ export class Studio {
    */
   keeperHandover(): string {
     if (!this.keeper) return 'the keeper is off';
-    const working = [...this.connections.values()].filter((c) => !c.closed && (c.busy || !c.ready || c.permissions.size));
+    const working = [...this.connections.values()].filter((c) =>
+      !c.closed && (c.busy || !c.ready || c.permissions.size || c.helpersRunning?.() || c.backgroundShellsRunning?.())
+    );
     const outside = working.filter((c) => !c.channel || c.channel.lost || !c.channel.client || c.channel.client.closed);
     if (outside.length) return `${outside.length} working chat(s) run outside the keeper`;
     return '';
@@ -1276,7 +1278,9 @@ export class Studio {
 
   /**
    * Open connections that must not be cut off: working, still opening, waiting for a person, or idle with background helpers still
-   * running ('helpers': a Claude Code turn ended while its helpers go on; stopping the agent would kill them).
+   * running ('helpers': a Claude Code turn ended while its helpers go on; stopping the agent would kill them), or with a background
+   * shell still running ('background': a Bash command Claude Code started with run_in_background, such as a long test run; stopping
+   * the agent would kill it). Neither of the last two shows as working in the chat or holds its queue.
    */
   busyList(): Json[] {
     const busy: Json[] = [];
@@ -1286,6 +1290,8 @@ export class Studio {
         busy.push({ id: c.id, provider: c.provider, cwd: c.cwd, state });
       } else if (state === 'idle' && c.helpersRunning?.()) {
         busy.push({ id: c.id, provider: c.provider, cwd: c.cwd, state: 'helpers' });
+      } else if (state === 'idle' && c.backgroundShellsRunning?.()) {
+        busy.push({ id: c.id, provider: c.provider, cwd: c.cwd, state: 'background' });
       }
     }
     return busy;

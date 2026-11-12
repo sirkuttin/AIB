@@ -10,6 +10,7 @@
  *     the chat (held) and never runs its orphan command; the agent goes on and the question arrives with no AIB. The next AIB takes
  *     the chat over: every chunk once and in order, the question once, the answer and the queued message reach the agent once.
  *   - A chat whose only work is a background helper: the same; the agent's helper process lives on until it is done.
+ *   - A chat whose only work is a background shell (Bash run_in_background, the reply ended): the same; the shell lives on.
  *   - Quitting with nothing working quits at once and the keeper goes, as before.
  *   - Stop all chats and quit (two clicks in the menu, no box) stops the agent and its children.
  *   - AIB killed (a signal: main.ts releases working chats to the keeper, no hold) or crashing: a new AIB takes the chat over with
@@ -485,6 +486,50 @@ Deno.test({
     lab.open(gate);
     lab.open(gate + '.end');
     await until(() => b.workingList().length === 0, 'the helper finished', 20);
+    assert(!lab.orphanRan());
+  },
+});
+
+Deno.test({
+  name: 'quit with work: a chat whose only work is a background shell (Bash run_in_background) is held; the shell lives on and the next AIB has it',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    const childFile = lab.path('child-3');
+    const a = lab.studio(['--held-turn', '--child-pid-file', childFile], true);
+    const { app, quits, leaves, closed } = lab.app(a);
+    await app.start();
+    const c = await a.connect('omp', lab.work);
+    await until(() => Deno.statSync(childFile).size > 0, 'the agent child', 10);
+    const agentPid = c.process!.pid;
+    const gate = lab.gate();
+    await a.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' });
+    await until(() => !c.busy && turnEnds(c) === 1, 'the reply ended, the shell goes on', 15);
+    const shellPid = Number(Deno.readTextFileSync(childFile + '.shell'));
+    assert(pidAlive(shellPid));
+    assertEquals(c.attention().state, 'idle', 'not working in the chat');
+    assertEquals(a.workingList().map((w) => w.state), ['background']);
+
+    await app.onTrayMenu('quit'); // Quit AIB
+    await until(() => quits.length === 1, 'quit', 5);
+    assertEquals(leaves, [true], 'left to the keeper, not quit as idle');
+    await closed();
+    lab.studios.splice(lab.studios.indexOf(a), 1);
+    await noRestart(lab, [agentPid, shellPid]);
+
+    const b = lab.studio(['--held-turn'], true);
+    assertEquals(await b.adoptKeeper(), 1);
+    const r = b.connections.get(c.id)!;
+    assertEquals(r.process!.pid, agentPid);
+    await until(
+      () => b.workingList().some((w) => w.state === 'background'),
+      'the shell still runs, on the next AIB',
+      10,
+    );
+    lab.open(gate);
+    await until(() => !pidAlive(shellPid), 'the shell ended', 20);
+    await until(() => b.workingList().length === 0, 'the chat dropped out of the list', 20);
     assert(!lab.orphanRan());
   },
 });
