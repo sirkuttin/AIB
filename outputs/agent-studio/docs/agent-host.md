@@ -119,12 +119,13 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   never resent) and is reconnected by `session/load` when automatic reconnect is on.
 * **Tray, not a window, after a crash** (rule V1). The orphan command is AIB's own command line plus `--start-in-tray` (desktop app
   only; `serve` has no window). Such a start opens **no window** (the runtime's startup window is tamed too): only the tray icon, with
-  Open AIB, a greyed status line ("2 chats running", "1 chat needs you") and Stop chats and quit (asks first while something works;
-  OK stops the chats and quits). Open AIB, a left click or a second launch makes the window as usual. While no window was ever opened,
-  AIB quits by itself once nothing has worked for 10 s (idle chats go to the recovery list, as with the idle agent host). If the data
+  Open AIB, a greyed status line ("2 chats running", "1 chat needs you"), Quit AIB and Stop all chats and quit (a second click
+  within 10 s confirms; no box). Open AIB, a left click or a second launch makes the window as usual. While no window is open, AIB
+  quits by itself once nothing has worked for 10 s (idle chats go to the recovery list, as with the idle agent host). This is the
+  same "background" state as closing the window or Quit AIB while something works (DESKTOP.md, Window and tray). If the data
   folder is already taken (another AIB came back first) it exits quietly: no "show your window" signal, no message box. An update
   started from such an AIB drops the flag (`updater.ts` appArgs), so the new version opens its window. Code: `window.ts`
-  (`startInTray`, `TRAY_ONLY_ITEMS`, `trayTick`), `native.ts` (`updateTray`), `studio.ts` `orphanCommand`, `single_instance.ts` `quiet`.
+  (`startInTray`, `TRAY_ITEMS`, `trayTick`), `native.ts` (`updateTray`), `studio.ts` `orphanCommand`, `single_instance.ts` `quiet`.
 * **The artifact tool through the keeper's forwarder** (design 3.7). A chat started in the keeper gets one `studio_artifact` stdio
   entry: `<keeper program> mcp-forward <data>/artifact-mcp.json`, with the conversation's key and id in `MCP_FORWARD_HEADERS`. The
   keeper program is the copy in `<data>/keeper-bin/<hash>/` (built app) that no update touches, so no agent child runs from the old

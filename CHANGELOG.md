@@ -32,6 +32,15 @@
 - Docs in worktree chats: a chat working in a git worktree reads and writes docs in the main project's `aib-docs/`, never in
   its own worktree folder, so every chat sees the same docs.
 - Docs show their title, not the folder name, in Files, pickers and chat cards.
+- Quitting AIB never stops a chat. Closing the window or Quit AIB while a chat works (a turn, a queued message, a background
+  helper, a question waiting for you), a terminal command runs or a merge is under way: no question box; the window closes and
+  AIB stays in the tray, "AIB · 2 chats running" (or "1 chat needs you"). Open AIB or a click on the icon shows your chats as
+  they are, questions that came meanwhile included. Once nothing works, AIB quits by itself about 10 s later. With nothing
+  working, Quit quits at once, as before.
+- The tray menu is Open AIB, a status line, Quit AIB and Stop all chats and quit, the one way to stop everything. Its first
+  click turns the item into "Click again to stop 2 chats and quit" for 10 s; a second click stops them and quits. No box.
+- AIB ended by a signal (macOS/Linux `kill`, a session ending) with a chat working leaves the chat in the keeper, which brings
+  AIB back in the tray, as after a crash; it no longer stops the chats.
 
 ## 0.1.0-beta.7 (beta)
 

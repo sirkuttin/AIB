@@ -28,11 +28,19 @@ notifications through the web API, updates as "open the installer" instructions)
   exits; the running app sees the file and shows its window. If a `serve` owns the folder instead, the launch shows a message box
   ("AIB is already running for this data folder ... Quit it first, or use --state-dir for a separate copy.") and exits with code 2;
   a second `serve` prints that line and exits with code 2. Another `--state-dir` is another lock (`single_instance.ts`).
-- **Window and tray:** closing the window quits when no chat is working. When chats are working it asks: OK stops them and quits,
-  Cancel keeps them running and AIB stays in the tray. The tray icon (`tray_icon.ts`, embedded PNGs; see Icons below) has "Open AIB" and
-  "Quit AIB"; Quit asks the same question. A window's close cannot be cancelled in `deno desktop`, so a hidden keeper window keeps
-  the program alive while it lives in the tray, and a new window is made when the person comes back (`window.ts`, tested with a fake
-  shell in `work/deno/desktop_window_test.ts`; the real shell is `native.ts`). On Windows the tray icon is AIB's own
+- **Window and tray:** quitting never stops a chat (the owner's decision, 2026-11-10). Closing the window or the tray's "Quit AIB"
+  quits at once when nothing works. When something works (a chat in `Studio.workingList`: a turn, an agent opening, a question
+  waiting, queued messages, background helpers, an install or sign-in job; or a terminal command; or a merge running in AIB) there is
+  no question: the window closes (Quit AIB hides it), AIB stays in the tray "in the background" and quits by itself once nothing has
+  worked for 10 s. Open AIB, a click on the icon or a second launch brings the window back with every chat as it is. The tray icon
+  (`tray_icon.ts`, embedded PNGs; see Icons below) has one menu, window or not: "Open AIB", a greyed status line ("2 chats
+  running", "1 chat needs you", tooltip "AIB · ..."), "Quit AIB" and "Stop all chats and quit", the only deliberate stop: its first
+  click turns the item into "Click again to stop N chats and quit" for 10 s, a second click stops every chat and quits (no native
+  box). A window's close cannot be cancelled in `deno desktop`, so a hidden keeper window keeps the program alive while it lives in
+  the tray, and a new window is made when the person comes back (`window.ts` `decide`, `trayTick`, `requestStop`, tested with a fake
+  shell in `work/deno/desktop_window_test.ts` and end to end with the real keeper in `work/deno/quit_keeps_agents_test.ts`; the real
+  shell is `native.ts`). The desktop app ended by a signal with something working releases the chats to the keeper (as Install now
+  does), which starts it again in the tray. On Windows the tray icon is AIB's own
   (`tray_win.ts`, `tray_win_worker.ts`): Deno 2.9.8's `Deno.Tray` puts the icon's message window on the JavaScript thread, which
   never reads Windows messages, so its menu and clicks never arrive. AIB's icon lives on a worker thread with a real message loop
   (left click opens the window, right click shows the menu, the web server keeps answering while the menu is open) and is removed
@@ -50,8 +58,8 @@ notifications through the web API, updates as "open the installer" instructions)
   `aibDesktop`, which tells the page it runs in the app. The choices are saved in the data folder (`studio-notifications-app`).
 - **Agent host:** a separate long-lived process by design (`AIB host`). Closing the window does not cut off a turn when the person
   chose to keep chats running. With no app attached the host shows its own tray icon while something works and exits 10 s after
-  nothing does (docs/agent-host.md, "Lifecycle of the built app's host"). The close question stays for now (`askOnClose`; false
-  gives design 4.4's "no question, the chats go on under the host's icon").
+  nothing does (docs/agent-host.md, "Lifecycle of the built app's host"). With such a host (an older version's, being drained) the
+  app quits at once and never asks: the host keeps its working chats under its own icon.
 - **No console windows:** on Windows the app and every child it starts share one hidden console (`platform/console.ts`).
 - **Start menu (Windows):** on first run the app adds `AIB.lnk` to the per-user Start menu, pointing at the running `AIB.exe`
   (`shortcut.ts`). Not on macOS or Linux.
@@ -133,8 +141,7 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
   that cannot run (missing or refusing to start: AIB logs why and Settings > About AIB shows one line) and for an older version's
   agent host, such as beta.3's: with nothing working it is stopped at once and AIB runs as one process; with a chat working it
   drains as above, the banner says why, and the next start is one process. If AIB crashes, the keeper starts it again **in the tray only**
-  (`--start-in-tray`: no window; menu Open AIB / status / Stop chats and quit; it quits by itself once nothing works and no window was
-  opened). Agents' artifact tool runs from the keeper's folder (its MCP forwarder), so an update's `.old-*` files go at the next start
+  (`--start-in-tray`: no window; the usual tray menu; it quits by itself once nothing works, unless the window is open). Agents' artifact tool runs from the keeper's folder (its MCP forwarder), so an update's `.old-*` files go at the next start
   even while chats run. Install now goes ahead
   while chats work when the release's `release.json` says the new version can drive the running keeper (`keeper: {protocols, needs}`):
   the app leaves the chats in the keeper, the helper stays connected to the keeper while it swaps the files, and the new version takes

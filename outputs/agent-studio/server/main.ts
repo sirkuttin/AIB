@@ -32,6 +32,7 @@ import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
+import { mergesRunning } from './worktrees/merge.ts';
 import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
@@ -326,7 +327,12 @@ export async function main(argv: string[]): Promise<void> {
   };
   for (const signal of (Deno.build.os === 'windows' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM']) as Deno.Signal[]) {
     try {
-      Deno.addSignalListener(signal, () => void close(`signal ${signal}`));
+      // The desktop app ended by a signal (a kill, a session ending on macOS/Linux) is not "Stop all chats": working chats stay in the
+      // keeper, which starts AIB again in the tray (rule V1), as after a crash. A source run or `serve` stops them as before (Ctrl+C).
+      Deno.addSignalListener(signal, () => {
+        const keep = desktop && !!studio?.keeper && studio.workingList().length > 0;
+        void close(`signal ${signal}`, keep);
+      });
     } catch { /* not supported here */ }
   }
   if (desktop) {
@@ -336,8 +342,9 @@ export async function main(argv: string[]): Promise<void> {
       stateDir,
       trayIcon: trayIconPng(),
       busyCount: async () => (await host.busyConnections()).length,
-      // In-process mode (and one process with the keeper) has no separate host: closing stops its agents. Split: OK forces the host down; with nothing working it is
-      // stopped too (unforced: a chat that just started keeps it), so no invisible process idles on after the app is gone.
+      // Closing the window or Quit AIB never stops a chat: with something working AIB stays in the tray and quits by itself once
+      // nothing works (window.ts decide). Split (an older version's host, being drained): the app quits at once and the host is
+      // asked to stop unforced (an idle host goes, a busy one keeps its chats under its own icon); Stop all chats and quit forces it.
       stopHost: studio ? undefined : async (force) => {
         const result = await stopHost(stateDir, force, 5, `the app quitting (pid ${Deno.pid}${force ? ', OK: stop them' : ''})`);
         log.announce('studio', 'quit: agent host %s', result.stopped ? 'stopped' : `kept (${result.message})`);
@@ -347,7 +354,8 @@ export async function main(argv: string[]): Promise<void> {
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
-      terminalsBusy: () => ctx.terminals.busyCount(), // a tray-only AIB does not quit under a command running in a terminal
+      terminalsBusy: () => ctx.terminals.busyCount(), // AIB does not quit under a command running in a terminal
+      mergesRunning, // nor in the middle of a merge
       trayCounts: studio
         ? () => {
           const working = studio!.workingList();
