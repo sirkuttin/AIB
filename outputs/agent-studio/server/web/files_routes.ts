@@ -10,10 +10,12 @@
  *   GET /api/live/files/outside?id&path[&peek=1]  a file OUTSIDE the chat's folder, by absolute path, only when the chat's own tool
  *                                             calls or messages name it (worktrees/outside_files.ts); same answer as read plus
  *                                             `outside: {kind, branch, repo, folder, text}`; peek=1 leaves out the text
+ * With no chat open, `root=project&project=<folder>` (no `id`) shows the folder of a project the user added, nothing else.
  * Needs the Studio token, like the Changes routes.
  */
 import { isStr } from '../core/py.ts';
 import { parseQs } from '../artifacts/origin.ts';
+import { projectKey } from '../desktop/project_delete.ts';
 import { changesFolder } from '../worktrees/chat_folders.ts';
 import * as files from '../worktrees/files.ts';
 import { mainCheckoutOf, recordForPath } from '../worktrees/worktrees.ts';
@@ -32,6 +34,16 @@ const one = (args: Record<string, string[]>, name: string, fallback = '') => (Ob
 
 /** The folder a Files request works in, or a reply that refuses. */
 export async function rootFor(ctx: WebContext, args: Record<string, string[]>): Promise<string | Reply> {
+  // `root=project&project=<folder>`: a project with no chat open. Only a folder the user added to AIB (exactly, by its key) is
+  // shown; nothing else from the request is ever a folder.
+  if (one(args, 'root') === 'project') {
+    const path = one(args, 'project');
+    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+    const added = ctx.addedProjects?.public().added;
+    const known = added && Object.hasOwn(added, projectKey(path)) ? added[projectKey(path)].path : '';
+    if (!known || !osp.isdir(known) || isNetworkPath(known)) return [404, { error: 'This project has no folder AIB knows.', code: 'unknown_folder' }];
+    return known;
+  }
   const id = one(args, 'id');
   let cwd: string | null;
   try {

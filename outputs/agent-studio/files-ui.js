@@ -170,12 +170,15 @@
       .map(chatInfo)
       .filter(Boolean);
   }
+  const projectPathNow = () => (W() && W().currentProjectPath ? W().currentProjectPath() : '');
   function currentScope() {
     if (!following && pinned) return pinned;
     const c = chat && chat.projectKey === projectKey() ? chat : null;
     if (c) return F().followScope(c, c.projectPath);
     const any = projectChats()[0];
-    return any ? F().followScope(Object.assign({}, any, { branch: '' }), any.projectPath) : null;
+    if (any) return F().followScope(Object.assign({}, any, { branch: '' }), any.projectPath);
+    // No chat in this project: its own folder (the server shows only folders the user added).
+    return F().projectScope(projectPathNow());
   }
   // Open folders are remembered per project and per tree: the chat's own copy is one tree (its chat id), the main folder another.
   const OPEN_KEY = 'aib-files-open-v1',
@@ -235,7 +238,7 @@
   // folder or docs/ is listed again.
   function docsOf(scope) {
     const D = DL();
-    if (!D || !scope || scope.root === 'outside') return null;
+    if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return null;
     const now = D.cached(scope.id, scope.root);
     if (!now) loadDocs(scope, false);
     if (!now || scope.root !== 'chat') return now;
@@ -252,7 +255,7 @@
   }
   function loadDocs(scope, force) {
     const D = DL();
-    if (!D || !scope || scope.root === 'outside') return Promise.resolve([]);
+    if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return Promise.resolve([]);
     return D.listFor(scope.id, scope.root, force).then((docs) => {
       paint();
       return docs;
@@ -268,7 +271,7 @@
     t.cache[dir] = 'loading';
     if (dir === '' || dir === F().DOCS_FOLDER) loadDocs(scope, true);
     try {
-      const r = await host.getJson('/api/live/files/list', { id: scope.id, root: scope.root, dir });
+      const r = await host.getJson('/api/live/files/list', Object.assign(F().scopeArgs(scope), { dir }));
       t.cache[dir] = (r && r.entries) || [];
       t.root = (r && r.root) || t.root;
       t.git = !!(r && r.git);
@@ -386,7 +389,7 @@
       return;
     }
     try {
-      const r = await host.getJson('/api/live/files/search', { id: scope.id, root: scope.root, q });
+      const r = await host.getJson('/api/live/files/search', Object.assign(F().scopeArgs(scope), { q }));
       if (mine !== searchSeq) return;
       const all = (r && r.matches) || [],
         matches = withoutDocFiles(scope, all);
@@ -567,7 +570,7 @@
       rows = hits.concat(rows.filter((r) => !hits.some((h) => h.path === r.path)));
     } else if (changedOnly)
       rows = F().flatRows(changes ? F().changedPaths(changes) : changedFromListing(t), { changes, artifacts: arts, docs });
-    else rows = F().treeRows(t.cache, t.open, { changes, artifacts: arts, showIgnored, docs, newDoc: !!DL() && scope.root !== 'outside' });
+    else rows = F().treeRows(t.cache, t.open, { changes, artifacts: arts, showIgnored, docs, newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project' });
     return { rows, scope, tree: t, changes };
   }
   // Without the Changes data (another chat's copy), the Changed list comes from what the listings already showed.
@@ -598,7 +601,7 @@
     const lab = F().scopeLabel(scope);
     els.scopeBtn.replaceChildren(el('span', lab.lbl, 'lbl'), el('b', lab.name), el('span', '▾', 'fx-caretdown'));
     els.scopeBtn.title =
-      (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No chat open') +
+      (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No project folder') +
       (tree && tree.root ? '\n' + tree.root : '') +
       '\nChoose which copy of the project to show';
     els.scopeBtn.setAttribute('aria-label', 'Showing files of: ' + lab.lbl + ' ' + lab.name + '. Change');
@@ -608,7 +611,7 @@
     els.ignoredBtn.textContent = showIgnored ? 'Hide ignored' : 'Show ignored';
     els.ignoredBtn.hidden = !!query.trim() || changedOnly;
     const frag = doc().createDocumentFragment();
-    if (!scope) frag.append(el('p', 'Open a chat in this project to see its files.', 'fx-empty'));
+    if (!scope) frag.append(el('p', 'This project has no folder to show.', 'fx-empty'));
     else if (query.trim() && !results) frag.append(el('p', 'Searching…', 'fx-empty'));
     else if (query.trim() && results && !rows.length) frag.append(el('p', results.error || 'No file matches.', 'fx-empty'));
     else if (changedOnly && !rows.length) frag.append(el('p', 'Nothing changed here.', 'fx-empty'));
@@ -989,7 +992,7 @@
     const scope = currentScope(),
       others = projectChats().filter((c) => !chat || c.key !== chat.key);
     const c = chat && chat.projectKey === projectKey() ? chat : null;
-    const model = F().scopeMenu(c, (c && c.projectPath) || (others[0] && others[0].projectPath) || '', others, scope, following);
+    const model = F().scopeMenu(c, (c && c.projectPath) || (others[0] && others[0].projectPath) || projectPathNow(), others, scope, following);
     const m = menuShell('Show files of', els.scopeBtn);
     m.append(el('div', 'Show files of', 'fx-menu-head'));
     for (const it of model) {
@@ -1463,7 +1466,7 @@
     host
       .getJson(
         outside ? '/api/live/files/outside' : '/api/live/files/read',
-        outside ? { id: tab.scope.id, path: tab.scope.abs || tab.path } : { id: tab.scope.id, root: tab.scope.root, path: tab.path },
+        outside ? { id: tab.scope.id, path: tab.scope.abs || tab.path } : Object.assign(F().scopeArgs(tab.scope), { path: tab.path }),
       )
       .then(
         (d) => {
@@ -1851,7 +1854,7 @@
       hit = exists.get(k);
     if (hit && Date.now() - hit.at < 20000) return hit.promise;
     const rec = { at: Date.now(), promise: null };
-    rec.promise = host.getJson('/api/live/files/list', { id: scope.id, root: scope.root, dir }).then(
+    rec.promise = host.getJson('/api/live/files/list', Object.assign(F().scopeArgs(scope), { dir })).then(
       (r) => {
         const names = new Map();
         for (const e of (r && r.entries) || []) names.set(e.name.toLowerCase(), e);
@@ -2237,8 +2240,8 @@
     const scope = currentScope();
     if (!scope || !q) return Promise.resolve({ scope, matches: [] });
     return Promise.all([
-      host.getJson('/api/live/files/search', { id: scope.id, root: scope.root, q }),
-      DL() ? DL().listFor(scope.id, scope.root) : Promise.resolve([]),
+      host.getJson('/api/live/files/search', Object.assign(F().scopeArgs(scope), { q })),
+      DL() && scope.root !== 'project' ? DL().listFor(scope.id, scope.root) : Promise.resolve([]),
     ]).then(([r]) => ({ scope, matches: withoutDocFiles(scope, (r && r.matches) || []) }));
   }
 
