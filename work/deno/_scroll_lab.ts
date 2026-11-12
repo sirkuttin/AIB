@@ -1,0 +1,309 @@
+/**
+ * The scroll e2e harness (scroll_e2e_test.ts): a real Studio web server (Deno, in-process agent host, its own temp state folder,
+ * a free port; never 8767/8768/8777/8778), the scripted agent work/scroll-fixture/agent.py as "Claude Code", and a headless
+ * Chrome or Edge (no window) on chat.html. A test appends one line per step to a chat's script file and the agent sends it at
+ * once, so what arrives and when is decided by the test, not a timer.
+ *
+ * Measuring: `m(page, box)` reads the list's scrollTop / scrollHeight / clientHeight, its distance from the bottom (gap), whether
+ * it is paused, and the newest row's box against the list's box. `frames(page, box, ms)` records the same every animation frame.
+ */
+import { Fixture, nativePath, PY, sleep, until, type Web } from './_host_fixture.ts';
+import { Browser, browserPath, type Page } from './_doc_browser.ts';
+import { WORK } from './_parity.ts';
+
+export { browserPath, sleep };
+export type { Page };
+
+export const SCROLL_AGENT = nativePath(new URL('scroll-fixture/agent.py', WORK));
+
+/** Fixture with the scripted agent as the Claude launcher. */
+export class ScrollFixture extends Fixture {
+  override agentFlags(): string[] {
+    const flags = super.agentFlags();
+    flags[flags.indexOf('--claude-launcher') + 1] = SCROLL_AGENT;
+    return flags;
+  }
+}
+
+export interface Chat {
+  id: string;
+  sid: string;
+  key: string;
+  /** Start a scripted turn (the next lines of a fresh script file). */
+  start(): Promise<void>;
+  /** Append steps to the open turn's script. */
+  step(...lines: unknown[]): void;
+  /** Shorthands. */
+  say(text: string): void;
+  tool(id: string, title: string, status?: string, extra?: Record<string, unknown>): void;
+  toolDone(id: string, output?: string): void;
+  end(): void;
+}
+
+export class Lab {
+  fx = new ScrollFixture();
+  web!: Web;
+  browser!: Browser;
+  page!: Page;
+  #scripts = 0;
+
+  static async open(width = 1600, height = 900): Promise<Lab> {
+    const lab = new Lab();
+    try {
+      lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements']);
+      lab.browser = await Browser.launch();
+      lab.page = await lab.browser.open(`http://127.0.0.1:${lab.web.port}/chat.html`, width, height);
+      await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+    } catch (error) {
+      await lab.close();
+      throw error;
+    }
+    return lab;
+  }
+
+  /** A new live chat with the scripted agent (its own sub-folder of the workspace, so two chats can share or not). */
+  async chat(folder = ''): Promise<Chat> {
+    const cwd = folder ? `${this.fx.workspace}\\${folder}` : this.fx.workspace;
+    if (folder) Deno.mkdirSync(cwd, { recursive: true });
+    const [status, connection] = await this.web.post('connect', { provider: 'claude', cwd, background: true });
+    if (status !== 200) throw new Error(`connect: ${status} ${JSON.stringify(connection)}`);
+    const id = connection.id as string;
+    const st = await until(async () => {
+      const s = await this.web.state(id);
+      return s.ready && s.sessionId ? s : null;
+    }, 'connection ready', 60);
+    const sid = st.sessionId as string;
+    let file = '';
+    const lab = this;
+    const append = (o: unknown) => Deno.writeTextFileSync(file, JSON.stringify(o) + '\n', { append: true });
+    const chat: Chat = {
+      id,
+      sid,
+      key: `claude:${sid}`,
+      async start() {
+        file = `${lab.fx.root}\\script-${++lab.#scripts}.jsonl`;
+        Deno.writeTextFileSync(file, '');
+        const [s, body] = await lab.web.post('prompt', { id, text: `script:${file}`, clientMessageId: `t${lab.#scripts}` });
+        if (s !== 200) throw new Error(`prompt: ${s} ${JSON.stringify(body)}`);
+      },
+      step: (...lines) => lines.forEach(append),
+      say: (text) => append({ u: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } }),
+      tool: (tid, title, status = 'in_progress', extra = {}) =>
+        append({ u: { sessionUpdate: 'tool_call', toolCallId: tid, title, kind: 'execute', status, ...extra } }),
+      toolDone: (tid, output) =>
+        append({
+          u: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: tid,
+            status: 'completed',
+            ...(output != null ? { rawOutput: output } : {}),
+          },
+        }),
+      end: () => append({ end: 'end_turn' }),
+    };
+    return chat;
+  }
+
+  /** Select a chat in the sidebar (a real click) and wait for its list to be drawn. */
+  async select(chat: Chat): Promise<void> {
+    const sel = `button.connection[data-key="${chat.key}"]`;
+    await this.page.waitFor(`!!document.querySelector(${JSON.stringify(sel)})`, 20000, `sidebar row ${chat.key}`);
+    await this.page.click(sel);
+    await this.page.waitFor(
+      `document.querySelector(${JSON.stringify(sel)})?.classList.contains('selected') && !!document.querySelector('#messages > *')`,
+      20000,
+      'chat open',
+    );
+  }
+
+  async close(): Promise<void> {
+    try {
+      await this.page?.close();
+    } catch { /* gone */ }
+    try {
+      await this.browser?.close();
+    } catch { /* gone */ }
+    await this.fx.cleanup();
+  }
+}
+
+/** One measurement of a list. */
+export interface M {
+  top: number;
+  height: number;
+  client: number;
+  gap: number;
+  paused: boolean;
+  rows: number;
+  /** newest top-level row: its top and bottom against the list's visible box (0 = list top; client = list bottom) */
+  lastTop: number;
+  lastBottom: number;
+  lastText: string;
+  jump: string | null;
+  /** long blocks (pre / terminal output) drawn taller than the clamp although nobody pressed "Show all" (a flash open) */
+  tall: number;
+}
+
+export const PROBE = `(id) => {
+  const box = document.getElementById(id);
+  const kids = [...box.children].filter((e) => e.offsetParent !== null && !e.classList.contains('new-line'));
+  const last = kids[kids.length - 1];
+  const b = box.getBoundingClientRect();
+  const r = last ? last.getBoundingClientRect() : { top: 0, bottom: 0 };
+  const j = document.getElementById('jumpNew');
+  return {
+    top: Math.round(box.scrollTop), height: box.scrollHeight, client: box.clientHeight,
+    gap: Math.round(box.scrollHeight - box.scrollTop - box.clientHeight), paused: !!box.dataset.paused, rows: box.children.length,
+    lastTop: Math.round(r.top - b.top), lastBottom: Math.round(r.bottom - b.top),
+    lastText: last ? String(last.textContent).replace(/\\s+/g, ' ').slice(0, 60) : '',
+    jump: j && !j.hidden ? j.textContent : null,
+    tall: [...box.querySelectorAll('pre, .client-terminal-output')].filter((e) => {
+      if (e.classList.contains('clamp-on') || e.offsetParent === null) return false;
+      const t = e.nextElementSibling;
+      if (t && t.classList.contains('clamp-toggle') && t.getAttribute('aria-expanded') === 'true') return false;
+      return e.offsetHeight > 360;
+    }).length,
+  };
+}`;
+
+export function m(page: Page, box = 'messages'): Promise<M> {
+  return page.eval<M>(`(${PROBE})(${JSON.stringify(box)})`);
+}
+
+/** Record a measurement every animation frame for `ms` (starts now; resolves with the list). */
+export async function startFrames(page: Page, box = 'messages'): Promise<void> {
+  await page.eval(`(() => {
+    const probe = ${PROBE};
+    window.__frames = [];
+    window.__framesOn = true;
+    const tick = () => { if (!window.__framesOn) return; window.__frames.push(probe(${JSON.stringify(box)})); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  })()`);
+}
+export function stopFrames(page: Page): Promise<M[]> {
+  return page.eval<M[]>(`(() => { window.__framesOn = false; return window.__frames; })()`);
+}
+
+/** Wait until the list's text contains `text` (the step reached the page). */
+export function shown(page: Page, text: string, box = 'messages', ms = 15000): Promise<unknown> {
+  return page.waitFor(
+    `document.getElementById(${JSON.stringify(box)}).textContent.includes(${JSON.stringify(text)})`,
+    ms,
+    `"${text}" in #${box}`,
+  );
+}
+
+/** Let pending timers (holdAnchor 60/250/800 ms, the 600 ms touch window) and a poll or two run out. */
+export const settle = (ms = 1000) => sleep(ms);
+
+/** Scroll the list by a wheel gesture at its centre (a real input event, so the page sees you reading). */
+export async function wheel(page: Page, dy: number, box = 'messages'): Promise<void> {
+  const [x, y] = await page.eval<[number, number]>(
+    `(() => { const r = document.getElementById(${JSON.stringify(box)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`,
+  );
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy });
+  await sleep(150);
+}
+
+export const PYTHON = PY;
+
+/** The first row at the top of the list's view: its text and its offset from the list's top (what must not move while you read). */
+export function anchor(page: Page, box = 'messages'): Promise<{ text: string; off: number } | null> {
+  return page.eval(`(() => {
+    const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
+    for (const e of b.children) {
+      const r = e.getBoundingClientRect();
+      if (r.height && r.bottom > top + 1) return { text: e.textContent.replace(/\s+/g, ' ').slice(0, 80), off: Math.round(r.top - top) };
+    }
+    return null;
+  })()`);
+}
+
+/** Where the row with this exact text (as anchor() read it) is now, against the list's top; null when it is gone. */
+export function whereIs(page: Page, text: string, box = 'messages'): Promise<number | null> {
+  return page.eval(`(() => {
+    const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
+    const e = [...b.children].find((x) => x.textContent.replace(/\s+/g, ' ').slice(0, 80) === ${JSON.stringify(text)});
+    return e ? Math.round(e.getBoundingClientRect().top - top) : null;
+  })()`);
+}
+
+/** The top of the last element matching a selector, against the list's top (null: none). */
+export function topOf(page: Page, selector: string, box = 'messages'): Promise<number | null> {
+  return page.eval(`(() => {
+    const all = document.querySelectorAll(${JSON.stringify(selector)}), e = all[all.length - 1];
+    return e ? Math.round(e.getBoundingClientRect().top - document.getElementById(${JSON.stringify(box)}).getBoundingClientRect().top) : null;
+  })()`);
+}
+
+/** A real mouse click on the last element matching a selector, where it is now: never scrolls it into view first (that would
+ *  move the list the test is measuring). Fails if the element is not inside the window. */
+export async function clickHere(page: Page, selector: string): Promise<void> {
+  const at = await page.eval<[number, number] | string>(`(() => {
+    const all = document.querySelectorAll(${JSON.stringify(selector)}), e = all[all.length - 1];
+    if (!e) return 'no element';
+    const r = e.getBoundingClientRect(), x = r.left + Math.min(20, r.width / 2), y = r.top + r.height / 2;
+    if (y < 0 || y > innerHeight || r.height === 0) return 'outside the window at y=' + Math.round(y);
+    return [x, y];
+  })()`);
+  if (typeof at === 'string') throw new Error(`clickHere ${selector}: ${at}`);
+  for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+    await page.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
+  }
+}
+
+/** A solid-colour PNG (base64) of the given size: a picture whose height is only known once it decodes. */
+export async function png(width: number, height: number): Promise<string> {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (bytes: Uint8Array) => {
+    let c = 0xffffffff;
+    for (const b of bytes) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Uint8Array) => {
+    const out = new Uint8Array(12 + data.length), view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    out.set(new TextEncoder().encode(type), 4);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, crc(out.subarray(4, 8 + data.length)));
+    return out;
+  };
+  const ihdr = new Uint8Array(13), hv = new DataView(ihdr.buffer);
+  hv.setUint32(0, width);
+  hv.setUint32(4, height);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+  const raw = new Uint8Array((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) raw.set([40, 120, 200], y * (width * 3 + 1) + 1 + x * 3);
+  const z = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', z), chunk('IEND', new Uint8Array())];
+  const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) all.set(p, (o += p.length) - p.length);
+  let bin = '';
+  for (const b of all) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+/** Follow mode: at the bottom (1 px), not paused, the newest row's bottom inside the list. */
+export function following(x: M): string {
+  const bad = [];
+  if (x.gap > 1) bad.push(`${x.gap} px from the bottom`);
+  if (x.paused) bad.push('paused (follow switched off)');
+  if (x.lastBottom > x.client + 1) bad.push(`newest row ends ${x.lastBottom - x.client} px below the list`);
+  return bad.join(', ');
+}
+
+/** Frames recorded while following: every frame at the bottom and no long block flashed open. */
+export function framesProblems(frames: M[]): string {
+  const off = frames.filter((f) => f.gap > 1 && !f.paused);
+  const tall = frames.filter((f) => f.tall > 0);
+  const bad = [];
+  if (off.length) bad.push(`${off.length}/${frames.length} frames not at the bottom (gaps ${off.slice(0, 6).map((f) => f.gap).join(', ')})`);
+  if (tall.length) bad.push(`${tall.length}/${frames.length} frames with a long block drawn unclamped`);
+  if (frames.some((f) => f.paused)) bad.push(`follow switched off in ${frames.filter((f) => f.paused).length} frames`);
+  return bad.join('; ');
+}
