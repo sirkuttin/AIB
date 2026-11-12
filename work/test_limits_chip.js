@@ -201,3 +201,8 @@ test('rendered: a focusable value-only chip with its hover lines; new numbers up
   chips.render(box, { ...model, limits: high }, { disabled: false, busy: false });
   assert.ok(chip._class.has('chip-tone-high') && !chip._class.has('chip-tone-blocked'));
 });
+
+test('the Limits tooltip opens leftwards from the chip, so it never runs past a narrow window', () => {
+  const css = require('node:fs').readFileSync(path.join(APP_DIR, 'header.css'), 'utf8');
+  assert.match(css, /\.chip-wrap:has\(> \.chip-limits\) > \.chip-tip \{\s*left: auto;\s*right: 0;/);
+});
