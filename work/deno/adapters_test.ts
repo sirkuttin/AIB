@@ -404,3 +404,13 @@ Deno.test('resolveClaude and resolveCodex give the rows Python gives on the same
   assertEquals(adapters.resolveOmp(''), await py.call('adapters', 'resolve_omp', ['']));
   assertEquals(adapters.resolveOmp('no-such-omp-xyz'), await py.call('adapters', 'resolve_omp', ['no-such-omp-xyz']));
 });
+
+// ---- the Claude adapter's environment ------------------------------------------------------------------------------------
+
+Deno.test("Claude Code gets its to-do tools turned on, unless AIB's own environment already decides it", () => {
+  // Claude Code 2.1.x offers TaskCreate/TaskUpdate/TaskList/TaskGet only to models up to the 4.x line without this variable.
+  assertEquals(adapters.claudeEnv({}), { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' });
+  assertEquals(adapters.claudeEnv({ PATH: 'x' }), { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' });
+  assertEquals(adapters.claudeEnv({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' }), {});
+  assertEquals(adapters.claudeEnv({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }), {});
+});
