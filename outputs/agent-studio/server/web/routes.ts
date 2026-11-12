@@ -61,6 +61,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/remove-all         Settings > Devices: Remove all phones
  *   POST /api/live/devices/scopes             Settings > Devices: a paired phone's switches (Answer, Send, Approve once, Push)
  *   GET  /api/live/devices/activity           Settings > Devices: Phone activity
+ *   POST /api/live/presence                   the page: its window has focus or not, time since the last input (attention/presence.ts)
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
@@ -115,6 +116,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/devices/remove-all', 'write', 'body'],
   ['POST', '/api/live/devices/scopes', 'write', 'body'],
   ['GET', '/api/live/devices/activity', 'read', 'get'],
+  ['POST', '/api/live/presence', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

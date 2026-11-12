@@ -11,6 +11,7 @@ import { cleanScopes, DEFAULT_SCOPES, DeviceStore, type PublicDevice } from './d
 import { Pairing, PairingError } from './pairing.ts';
 import { homePayload, TitleCache } from './payloads.ts';
 import { BIND_RETRY_MS, PortBusy, portFree, remotePort } from './port.ts';
+import { PushSender, VapidKeys } from './push.ts';
 import { qrSvg } from './qr.ts';
 import { RemoteServer } from './server.ts';
 import { readTailscale, type Runner, serveCommand, type TailscaleState } from './tailscale.ts';
@@ -44,6 +45,8 @@ export interface AccessOptions {
   isFree?: (port: number) => boolean;
   /** Ports AIB itself uses (the page and artifact ports): never chosen as the phone port. */
   avoid?: () => number[];
+  /** Tests: the fetch pushes go out with (a fake push service). */
+  pushFetch?: typeof fetch;
   log?: (message: string) => void;
 }
 
@@ -52,6 +55,9 @@ export class PhoneAccess {
   readonly pairing = new Pairing();
   readonly audit: Audit;
   readonly titles = new TitleCache();
+  /** The VAPID keys (push-keys.json) and the sender of phone pushes (remote/push.ts). */
+  readonly vapid: VapidKeys;
+  readonly push: PushSender;
   on = false;
   via = 'tailscale';
   tailscale: TailscaleState | null = null;
@@ -64,6 +70,8 @@ export class PhoneAccess {
   constructor(readonly ctx: WebContext, readonly stateDir: string, readonly options: AccessOptions = {}) {
     this.devices = new DeviceStore(stateDir);
     this.audit = new Audit(stateDir);
+    this.vapid = new VapidKeys(stateDir);
+    this.push = new PushSender(this.devices, this.vapid, options.pushFetch);
     const [status, data] = readJsonFile(inDir(stateDir, ACCESS_FILE));
     if (status === 'ok' && data && typeof data === 'object') this.on = (data as { on?: unknown }).on === true;
   }
@@ -243,10 +251,12 @@ export class PhoneAccess {
     return device;
   }
 
+  /** Every phone goes, and the push keys are made new: a subscription that survived anywhere can no longer be sent to. */
   async removeAll(): Promise<number> {
     const count = await this.devices.removeAll();
     this.pairing.cancel();
-    this.audit.write({ action: 'remove all phones', result: `${count} removed on the PC` });
+    await this.vapid.rotate();
+    this.audit.write({ action: 'remove all phones', result: `${count} removed on the PC; new push keys` });
     return count;
   }
 

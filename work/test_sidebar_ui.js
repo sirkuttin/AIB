@@ -92,6 +92,7 @@ function setup({ stored = {}, hidden = false } = {}) {
   const sandbox = { window, Object, Array, String, Number, Promise, Error, Map, Set, Date, JSON, Math, isNaN, RegExp };
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'ownership-ui.js'), 'utf8'), sandbox);
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'status-words.js'), 'utf8'), sandbox);
+  vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'notify-rules.js'), 'utf8'), sandbox);
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'sidebar-ui.js'), 'utf8'), sandbox);
   return { ui: window.AgentSidebarUI, document, store, window };
 }

@@ -37,7 +37,7 @@ parser.add_argument('--beta-auth', action='store_true', help="With --auth-requir
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--terminal-env', action='store_true', help="With --beta-auth: the terminal method also advertises env {'AIB_FIXTURE_LOGIN': 'from-agent'} (ACP v1 map shape); --fixture-login writes that variable's value into --auth-file")
-parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; 'bgshell:<gate>' starts a background Bash shell (a real child process) that runs until <gate> exists; any other prompt gets 'Fixture reply: <text>'")
+parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'approve' asks a permission whose answer ends the turn; 'gate:<file>' ends its turn once <file> exists; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; 'bgshell:<gate>' starts a background Bash shell (a real child process) that runs until <gate> exists; any other prompt gets 'Fixture reply: <text>'")
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
@@ -423,6 +423,20 @@ def held_turn(key, text):
     human = {'_claude/origin': {'kind': 'human'}}
     if text.startswith('bgshell:'):
         background_shell(key, text.split(':', 1)[1], human)
+        return
+    if text == 'approve':   # a permission on the main session; its answer ends the turn (the 'approve-test' answer below)
+        waiting['permission'] = key
+        emit({'id': 'approve-test', 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': {'title': 'Fixture approval', 'toolCallId': 'fake-tool'}, 'options': [{'optionId': 'yes', 'name': 'Allow once', 'kind': 'allow_once'}, {'optionId': 'no', 'name': 'Reject', 'kind': 'reject_once'}]}})
+        return
+    if text.startswith('gate:'):   # a turn that ends (reply, result) once the test creates the named file
+        def open_gate(turn_key=key, path=text[5:]):
+            deadline = time.time() + 300
+            while not os.path.exists(path) and time.time() < deadline:
+                time.sleep(0.02)
+            update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture reply: gate'}})
+            update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 2000, '_meta': human})
+            result(turn_key, {'stopReason': 'end_turn'})
+        threading.Thread(target=open_gate, daemon=True).start()
         return
     if not (text.startswith('helper:') or text.startswith('helper-ask:')):
         update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture reply: ' + text}})

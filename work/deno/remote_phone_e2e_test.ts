@@ -482,6 +482,11 @@ Deno.test({
       const pending = ((view.pairing as Json).pending as Json[])[0];
       assertEquals(words, (pending.checkWords as string[]).join(' '), 'the phone and the PC show the same two words');
       await pc(s, 'POST', '/api/live/devices/approve', { claim: pending.id });
+      // Phase C: Finish setup comes first (notifications); not an iPhone, so no Home Screen step
+      await page.waitFor('document.getElementById("app").dataset.screen === "setup"', 15000, 'finish setup');
+      assertEquals(await page.eval('[...document.querySelectorAll(".ph-step")].map((x) => x.dataset.step)'), ['notify']);
+      assert(await page.eval(NO_SIDEWAYS), `finish setup: sideways scroll ${await page.eval(WIDTHS)}`);
+      await page.click('#setupDone');
       await page.waitFor('document.getElementById("app").dataset.screen === "home" && !!document.querySelector(".ph-card")', 15000, 'home');
       const cookies = (await page.send('Network.getCookies', { urls: [`https://${NAME}/`] })).cookies as Json[];
       const cookie = cookies.find((c) => c.name === COOKIE_NAME)!;
@@ -506,10 +511,15 @@ Deno.test({
       );
       await page.click('.ph-fold');
       assert(await page.eval(NO_SIDEWAYS), `chat with steps open: sideways scroll ${await page.eval(WIDTHS)}`);
-      // offline: the phone port stops (AIB closed, PC asleep): Serve answers 502
+      // offline: the phone port stops (AIB closed): Serve answers 502. "Reconnecting…" first (the keeper restarts a crashed AIB in
+      // 5 s; 20 s in the app, shortened here), then AIB is closed on the PC, never that the chats still run (owner decision 7).
+      await page.eval('window.__aibPhone.reconnectMs = 2500');
       up.on = false;
-      await page.waitFor('document.body.textContent.includes("Can\'t reach STUDIO-PC")', 15000, 'the offline screen');
-      assert(await page.eval('document.body.textContent.includes("Tailscale is on, on this phone.")'));
+      await page.waitFor('document.querySelector(".ph-offline")?.dataset.offline === "reconnecting"', 15000, 'reconnecting');
+      assert(await page.eval('document.body.textContent.includes("Reconnecting…")'));
+      await page.waitFor('document.querySelector(".ph-offline")?.dataset.offline === "closed"', 15000, 'the closed screen');
+      assert(await page.eval('document.body.textContent.includes("AIB is closed on STUDIO-PC")'));
+      assert(await page.eval('!/still running|keep running/i.test(document.body.textContent)'), 'never says the chats still run');
       assert(await page.eval('document.querySelectorAll(".ph-msg").length >= 3'), 'the last view stays readable');
       assert(await page.eval(NO_SIDEWAYS), `offline: sideways scroll ${await page.eval(WIDTHS)}`);
       up.on = true;
@@ -877,6 +887,118 @@ Deno.test({
       if (Deno.env.get('AIB_PRINT_LAYOUT')) console.log(JSON.stringify(got));
       assertEquals({ scrollWidth: got.scrollWidth, columns: got.columns }, CHAT_HTML_375);
       await page.close();
+    } finally {
+      await browser.close();
+      await s.close();
+    }
+  },
+});
+
+// ---- phase C: Finish setup, notifications, the iPhone step ---------------------------------------------------------------------
+
+/** A browser's notification and push parts, faked in the page (a headless browser has no push service): permission asked only by a
+ * tap, the subscription made with the PC's key. The permission is kept in sessionStorage, as a browser keeps it across loads. */
+function pushStubs(p256dh: string, auth: string): string {
+  const sub = JSON.stringify({ endpoint: 'https://fcm.googleapis.com/fcm/send/aib-test', expirationTime: null, keys: { p256dh, auth } });
+  return `(() => {
+    const key = 'aib-test-permission';
+    window.__asked = 0;
+    window.__subscribed = 0;
+    let sub = null;
+    const reg = { pushManager: {
+      getSubscription: () => Promise.resolve(sub),
+      subscribe: (o) => {
+        window.__subscribed++;
+        sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/aib-test', options: { applicationServerKey: o.applicationServerKey.buffer },
+          toJSON: () => (${sub}), unsubscribe: () => Promise.resolve(true) };
+        return Promise.resolve(sub);
+      } } };
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true,
+      value: { register: () => Promise.resolve(reg), ready: Promise.resolve(reg), addEventListener() {} } });
+    window.PushManager = function PushManager() {};
+    window.Notification = function Notification() {};
+    Object.defineProperty(window.Notification, 'permission', { get: () => sessionStorage.getItem(key) || 'default' });
+    window.Notification.requestPermission = () => {
+      window.__asked++;
+      sessionStorage.setItem(key, 'granted');
+      return Promise.resolve('granted');
+    };
+  })()`;
+}
+
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
+const STEPS = '[...document.querySelectorAll(".ph-step")].map((x) => [x.dataset.step, x.dataset.state])';
+
+Deno.test({
+  ...OPTS,
+  name: 'phone page at 375 px: Finish setup turns notifications on from a tap; subscribes again on every open; iPhone step on iPhone only',
+  ignore: !browserPath,
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner });
+    const browser = await Browser.launch();
+    try {
+      fake.state.serve = serveStatus(readRemotePort(s.state)!);
+      await pc(s, 'POST', '/api/live/devices/access', { on: true });
+      s.chats.push(longChat());
+      const phone = await pairPhone(s);
+      const keys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+      const b64u = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const p256dh = b64u(new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey)));
+      const auth = b64u(crypto.getRandomValues(new Uint8Array(16)));
+
+      // Android (not an iPhone): one step and its button; no permission prompt until it is tapped
+      const page = await browser.open('about:blank', 375, 812);
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
+      await page.send('Page.addScriptToEvaluateOnNewDocument', { source: pushStubs(p256dh, auth) });
+      await serveFor(page, s, { on: true });
+      await signInPage(page, phone.token, phone.id);
+      assert(await page.eval('!!document.getElementById("setupOpen")'), 'home offers notifications while they are off');
+      assertEquals(await page.eval('window.__asked'), 0, 'never asked without a tap');
+      await page.click('#setupOpen');
+      await page.waitFor('document.getElementById("app").dataset.screen === "setup"', 15000, 'finish setup');
+      assertEquals(await page.eval(STEPS), [['notify', 'todo']]);
+      assert(await page.eval(NO_SIDEWAYS), `setup: sideways scroll ${await page.eval(WIDTHS)}`);
+      await page.click('#pushOn');
+      await page.waitFor('document.querySelector(".ph-step")?.dataset.state === "done"', 15000, 'notifications on');
+      assertEquals(await page.eval('window.__asked'), 1);
+      const [, view] = await pc(s, 'GET', '/api/live/devices');
+      assertEquals((view.devices as Json[]).map((d) => d.pushOn), [true], 'the PC has the subscription');
+      const stored = s.ctx.devices.pushTargets()[0].push;
+      assertEquals([stored.endpoint, stored.p256dh, stored.auth], ['https://fcm.googleapis.com/fcm/send/aib-test', p256dh, auth]);
+      await page.click('#setupDone');
+      await page.waitFor('document.getElementById("app").dataset.screen === "home"', 15000, 'home');
+      assert(await page.eval('!document.getElementById("setupOpen")'), 'no setup offer once notifications are on');
+      // every page open subscribes again (here the PC lost the subscription; new keys after Remove all work the same way)
+      await s.ctx.devices.setPush(phone.id, null);
+      await page.goto(`https://${NAME}/phone.html`);
+      await page.waitFor('document.getElementById("app").dataset.screen === "home"', 15000, 'home again');
+      await until(() => s.ctx.devices.pushTargets().length === 1, 'subscribed again on open', 15);
+      assertEquals(await page.eval('window.__asked'), 0, 'no prompt on open (already allowed)');
+      // a push's link opens the chat with its sheet
+      await page.goto(`https://${NAME}/phone.html#chat=main&sheet=1`);
+      await page.waitFor('document.getElementById("app").dataset.screen === "chat"', 15000, 'the chat from a push');
+      assertEquals(await page.eval('location.hash'), '');
+      assertEquals(page.errors, [], 'console errors');
+      assertEquals(page.csp, [], 'CSP violations');
+      await page.close();
+
+      // iPhone: the Home Screen step first; no notification button until AIB is opened from the Home Screen
+      const ios = await browser.open('about:blank', 375, 812);
+      await ios.send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 3, mobile: true });
+      await ios.send('Emulation.setUserAgentOverride', { userAgent: IPHONE_UA, platform: 'iPhone' });
+      await ios.send('Page.addScriptToEvaluateOnNewDocument', { source: pushStubs(p256dh, auth) });
+      await serveFor(ios, s, { on: true });
+      await signInPage(ios, phone.token, phone.id);
+      await ios.click('#setupOpen');
+      await ios.waitFor('document.getElementById("app").dataset.screen === "setup"', 15000, 'finish setup on iPhone');
+      assertEquals(await ios.eval(STEPS), [['home', 'todo'], ['notify', 'todo']]);
+      assert(await ios.eval('document.body.textContent.includes("Add to Home Screen")'));
+      assert(await ios.eval('!document.getElementById("pushOn")'), 'iPhone: notifications only from the Home Screen app');
+      assert(await ios.eval(NO_SIDEWAYS), `iPhone setup: sideways scroll ${await ios.eval(WIDTHS)}`);
+      assertEquals(ios.errors, [], 'console errors');
+      await ios.close();
     } finally {
       await browser.close();
       await s.close();

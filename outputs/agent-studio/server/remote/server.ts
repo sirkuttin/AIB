@@ -18,6 +18,8 @@ import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
 import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, type TitleCache } from './payloads.ts';
 import { bindWithRetry } from './port.ts';
+import { cleanPushSub } from './devices.ts';
+import type { VapidKeys } from './push.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 export const DEVICE_HEADER = 'X-AIB-Device';
@@ -25,7 +27,9 @@ export const COOKIE_NAME = '__Host-aib-phone';
 const COOKIE_MAX_AGE = 400 * 24 * 3600; // Chrome's cap; renewed whenever the phone page loads
 const MAX_BODY = 16 * 1024;
 
-/** The phone page's files (and only these) are served on the phone port. Never chat.html, '/', or the page bootstrap. */
+/** The phone page's files (and only these) are served on the phone port. Never chat.html, '/', or the page bootstrap. The service
+ * worker (pwa/sw.js, at the root so its scope is the whole phone origin) and the app icons are served here only: the page port
+ * serves top-level page files only, never pwa/ or icons/. */
 export const REMOTE_STATIC: Readonly<Record<string, string>> = {
   '/phone.html': 'phone.html',
   '/themes.js': 'themes.js',
@@ -34,13 +38,19 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
   '/phone.js': 'phone.js',
   '/phone-words.js': 'phone-words.js',
   '/markdown.js': 'markdown.js',
+  '/sw.js': `pwa${sep}sw.js`,
+  '/icons/icon-128.png': `icons${sep}128x128.png`,
+  '/icons/icon-256.png': `icons${sep}128x128@2x.png`,
+  '/icons/icon-512.png': `icons${sep}icon.png`,
 };
+export const MANIFEST_PATH = '/manifest.webmanifest';
 
-export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action';
+export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action' | 'push';
 
 /** Every route the phone port answers (method, path, how it is authorised). Default deny: anything else is 404. */
 export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ...Object.keys(REMOTE_STATIC).map((p) => ['GET', p, 'static'] as [string, string, RemoteAuth]),
+  ['GET', MANIFEST_PATH, 'static'],
   ['GET', '/api/remote/bootstrap', 'bootstrap'],
   ['POST', '/api/remote/pair/claim', 'pair'],
   ['POST', '/api/remote/pair/status', 'pair'],
@@ -57,7 +67,11 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/queue-edit', 'action'],
   ['POST', '/api/remote/queue-remove', 'action'],
   ['POST', '/api/remote/dismiss-unknown', 'action'],
+  ['POST', '/api/remote/queue-resume', 'action'], // a queue that Stop paused goes on
   ['POST', '/api/remote/authenticate', 'action'], // always refused: signing an agent in is PC only
+  // Phase C: this phone's Web Push subscription (the Push switch on the PC decides whether anything is sent to it).
+  ['POST', '/api/remote/push/subscribe', 'push'],
+  ['POST', '/api/remote/push/unsubscribe', 'push'],
 ];
 const ROUTE_AUTH = new Map(REMOTE_ROUTES.map(([m, p, a]) => [`${m} ${p}`, a]));
 /** The scope each device route needs. */
@@ -74,13 +88,17 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
   'POST /api/remote/queue-edit': 'phone.prompt',
   'POST /api/remote/queue-remove': 'phone.prompt',
   'POST /api/remote/dismiss-unknown': 'phone.prompt',
+  'POST /api/remote/queue-resume': 'phone.prompt',
   'POST /api/remote/authenticate': 'phone.read',
+  'POST /api/remote/push/subscribe': 'phone.push',
+  'POST /api/remote/push/unsubscribe': 'phone.read',
 };
 /** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Devices on the PC). */
 const SCOPE_WORDS: Record<string, string> = {
   'phone.answer': 'answer questions',
   'phone.approve': 'approve requests',
   'phone.prompt': 'send messages or stop turns',
+  'phone.push': 'get notifications',
 };
 
 /** What the phone port needs from Phone access (remote/access.ts). */
@@ -90,6 +108,8 @@ export interface RemoteHost {
   pairing: Pairing;
   audit: Audit;
   titles: TitleCache;
+  /** The VAPID keys a phone subscribes with (remote/push.ts). */
+  vapid: VapidKeys;
   /** The tailnet name requests must be addressed to ('' = refuse everything). */
   name(): string;
   /** The Tailscale login of this PC: only phones signed in with it may pair. */
@@ -111,7 +131,28 @@ export function securityHeadersRemote(): Record<string, string> {
 }
 
 function contentType(name: string): string {
+  if (name.endsWith('.png')) return 'image/png';
   return (name.endsWith('.html') ? 'text/html' : name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8';
+}
+
+/** The web app manifest (Add to Home Screen, Android's install): the phone page, standalone, AIB's icons. */
+export function manifestOf(pcName: string): Record<string, unknown> {
+  return {
+    id: '/phone.html',
+    name: `AIB on ${pcName}`,
+    short_name: 'AIB',
+    description: 'Your AIB chats on your phone.',
+    start_url: '/phone.html',
+    scope: '/',
+    display: 'standalone',
+    background_color: '#16151b',
+    theme_color: '#16151b',
+    icons: [
+      { src: '/icons/icon-128.png', sizes: '128x128', type: 'image/png' },
+      { src: '/icons/icon-256.png', sizes: '256x256', type: 'image/png' },
+      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    ],
+  };
 }
 
 function cookieOf(headers: Headers): string | null {
@@ -229,7 +270,7 @@ export class RemoteServer {
         case 'static':
           return await this.#static(request, path);
         case 'bootstrap':
-          return this.#bootstrap(request);
+          return await this.#bootstrap(request);
         case 'pair':
           return await this.#pair(request, path);
         case 'device':
@@ -238,6 +279,8 @@ export class RemoteServer {
           return await this.#image(request, url);
         case 'action':
           return await this.#action(request, path);
+        case 'push':
+          return await this.#push(request, path);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -250,9 +293,19 @@ export class RemoteServer {
   }
 
   async #static(request: Request, path: string): Promise<Response> {
+    if (path === MANIFEST_PATH) {
+      return new Response(JSON.stringify(manifestOf(this.host.pcName())), {
+        status: 200,
+        headers: { ...securityHeadersRemote(), 'Content-Type': 'application/manifest+json; charset=utf-8' },
+      });
+    }
     const name = REMOTE_STATIC[path];
     let body: Uint8Array<ArrayBuffer> = await Deno.readFile(APP_ROOT + sep + name);
     const headers: Record<string, string> = { 'Content-Type': contentType(name), ...securityHeadersRemote() };
+    if (path === '/sw.js') {
+      headers['Cache-Control'] = 'no-cache'; // the browser looks for a newer service worker on every page load
+      headers['Service-Worker-Allowed'] = '/';
+    }
     if (path === '/phone.html') {
       // The phone shows the PC's colour theme (only the theme id goes on <html>; no other view preference).
       const theme = this.host.ctx.viewPrefs.public().prefs['aib-theme'];
@@ -265,12 +318,42 @@ export class RemoteServer {
     return new Response(body, { status: 200, headers });
   }
 
-  #bootstrap(request: Request): Response {
+  async #bootstrap(request: Request): Promise<Response> {
     const base = { layout: 'phone', pcName: this.host.pcName(), version: APP_VERSION };
     if (!request.headers.has(DEVICE_HEADER)) return this.json(200, { ...base, paired: false });
     const device = this.#device(request, null);
     if (device instanceof Response) return device;
-    return this.json(200, { ...base, paired: true, device: { id: device.id, name: device.name, scopes: [...device.scopes] } });
+    // The public VAPID key the phone subscribes with, and whether this PC has its subscription (the phone resubscribes anyway).
+    let pushKey = '';
+    try {
+      pushKey = await this.host.vapid.publicKey();
+    } catch (error) {
+      console.error('Phone push keys could not be read', error);
+    }
+    return this.json(200, {
+      ...base,
+      paired: true,
+      device: { id: device.id, name: device.name, scopes: [...device.scopes] },
+      push: { key: pushKey, on: !!device.push },
+    });
+  }
+
+  /** This phone turns notifications on (its subscription) or off. */
+  async #push(request: Request, path: string): Promise<Response> {
+    const body = await this.#body(request);
+    const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
+    if (device instanceof Response) return device;
+    if (path === '/api/remote/push/unsubscribe') {
+      await this.host.devices.setPush(device.id, null);
+      this.host.audit.write({ device: device.id, name: device.name, action: 'notifications', result: 'turned off on the phone' });
+      return this.json(200, { ok: true, on: false });
+    }
+    const sub = cleanPushSub(body?.subscription, Date.now() / 1000);
+    if (!sub) return this.json(400, { error: 'This phone sent no usable notification address. Try again.', code: 'invalid' });
+    const had = device.push?.endpoint === sub.endpoint;
+    await this.host.devices.setPush(device.id, sub);
+    if (!had) this.host.audit.write({ device: device.id, name: device.name, action: 'notifications', result: 'turned on on the phone' });
+    return this.json(200, { ok: true, on: true });
   }
 
   async #pair(request: Request, path: string): Promise<Response> {

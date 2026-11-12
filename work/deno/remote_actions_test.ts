@@ -84,6 +84,7 @@ Deno.test({
       'POST /api/remote/queue',
       'POST /api/remote/queue-edit',
       'POST /api/remote/queue-remove',
+      'POST /api/remote/queue-resume',
       'POST /api/remote/queue-send-now',
     ]);
     const s = await phoneOn();
@@ -314,6 +315,36 @@ Deno.test({
         { id: 'q-sending', text: 'queued q-sending', files: 0, sending: true, editing: false },
         { id: 'q1', text: 'queued q1', files: 0, sending: false, editing: false },
       ]);
+    } finally {
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'queue-resume: a queue that Stop paused goes on from a phone with Send on; refused without Send or with nothing queued',
+  async fn() {
+    const s = await phoneOn();
+    try {
+      const item = { id: 'q1', text: 'next', attachments: [], sending: false, editing: false };
+      s.chats.push(
+        chat('c1', { queue: { items: [item], paused: true, message: 'Paused after you stopped the turn' } }),
+        chat('c2'),
+      );
+      const sender = await pairPhone(s, 'Pixel 9');
+      const reader = await pairPhone(s, 'Pixel 8', ['phone.read', 'phone.answer', 'phone.approve']);
+      const off = await post(s, reader.token, '/api/remote/queue-resume', { id: 'c1' });
+      assertEquals([off.status, off.json.code], [403, 'scope'], 'Send is off for this phone');
+      const empty = await post(s, sender.token, '/api/remote/queue-resume', { id: 'c2' });
+      assertEquals([empty.status, empty.json.code], [409, 'not_queued'], 'nothing queued there');
+      assertEquals(s.liveCalls.length, 0);
+      const ok = await post(s, sender.token, '/api/remote/queue-resume', { id: 'c1', extra: 'dropped' });
+      assertEquals(ok.status, 200);
+      assertEquals(s.liveCalls, [['queue-resume', { id: 'c1' }]], 'the agent host gets only the chat');
+      const [, log] = await pc(s, 'GET', '/api/live/devices/activity');
+      const lines = (log.entries as Json[]).filter((e) => e.action === 'queue: resume').map((e) => [e.name, e.result]);
+      assertEquals(lines, [['Pixel 9', 'done'], ['Pixel 9', 'refused: not_queued'], ['Pixel 8', 'refused: switched off']], 'newest first');
     } finally {
       await s.close();
     }

@@ -8,7 +8,8 @@
  *                acceptEdits / bypassPermissions / default: each switches the chat's mode) and whose id or label does not say
  *                "always" / "don't ask again" / "session". AIB's own merge tools are PC only. Anything unclear is refused.
  *   prompt/queue plain text only: no attachments, nothing that starts with "/" (an agent or AIB command such as /doc).
- *   queue-*      only messages that are queued in that chat right now (not one being sent).
+ *   queue-*      only messages that are queued in that chat right now (not one being sent); queue-resume only while the chat has
+ *                queued messages (a Stop or a failed turn paused them).
  *   authenticate never from a phone.
  *
  * A chat that is not running on the PC is refused with "Open it in AIB on your PC" (owner decision pending: no connect from a phone).
@@ -32,6 +33,7 @@ export const ACTION_OPS: Readonly<Record<string, { op: string; audit: string }>>
   '/api/remote/queue-edit': { op: 'queue-edit', audit: 'queue: edit' },
   '/api/remote/queue-remove': { op: 'queue-remove', audit: 'queue: remove' },
   '/api/remote/dismiss-unknown': { op: 'dismiss-unknown', audit: 'dismiss' },
+  '/api/remote/queue-resume': { op: 'queue-resume', audit: 'queue: resume' },
   '/api/remote/authenticate': { op: 'authenticate', audit: 'sign in' },
 };
 
@@ -225,6 +227,11 @@ export async function checkAction(ctx: WebContext, op: string, body: Json): Prom
       const out: Json = { id, messageId: item, action, leaseId: leaseId ?? null };
       if (action === 'save') out.text = text(body);
       return out;
+    }
+    case 'queue-resume': {
+      const items = Array.isArray(obj(state.queue).items) ? obj(state.queue).items as unknown[] : [];
+      if (!items.length) throw REFUSALS.notQueued();
+      return { id };
     }
     case 'dismiss-unknown': {
       const mid = messageId(body);

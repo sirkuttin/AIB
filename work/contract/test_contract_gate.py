@@ -242,6 +242,11 @@ class PhonePortContract(unittest.TestCase):
             found += [raw.hex(), base64.b64encode(raw).decode()]
         except OSError:
             pass
+        try:  # the phone push keys' private half (sealed or in the file); the public key is the phone's to have
+            private = json.loads((state / 'push-keys.json').read_text(encoding='utf-8')).get('privateKey', '')
+            found += [private, private.split(':')[-1]]
+        except (OSError, ValueError):
+            pass
         return [s for s in found if isinstance(s, str) and len(s) >= 16]
 
     def test_no_phone_port_answer_carries_a_page_or_host_secret(self):
@@ -259,13 +264,18 @@ class PhonePortContract(unittest.TestCase):
         routes += [('GET', p) for p in ('/phone.html', '/chat.html', '/api/remote/bootstrap', '/api/remote/home', '/api/remote/chat?id=x', '/api/remote/image?id=x&seq=1&n=0')]
         # the phone's actions (answer, approve once, send, stop, queue; authenticate is always refused)
         actions = re.findall(r"\['POST', '(/api/remote/[^']*)', 'action'\]", (APP / 'server' / 'remote' / 'server.ts').read_text(encoding='utf-8'))
-        self.assertGreaterEqual(len(actions), 10)
+        self.assertGreaterEqual(len(actions), 11)
         routes += [('POST', p) for p in actions]
+        # phase C: the phone's notification subscription, the service worker, the manifest and the icons
+        push = re.findall(r"\['POST', '(/api/remote/[^']*)', 'push'\]", (APP / 'server' / 'remote' / 'server.ts').read_text(encoding='utf-8'))
+        self.assertEqual(sorted(push), ['/api/remote/push/subscribe', '/api/remote/push/unsubscribe'])
+        routes += [('POST', p) for p in push]
+        routes += [('GET', p) for p in ('/manifest.webmanifest', '/sw.js', '/icons/icon-256.png')]
         self.assertGreater(len(routes), 100)
         for method, path in routes:
             status, _, body = self.phone(method, path, {} if method == 'POST' else None, X_AIB_Device=token, Cookie='__Host-aib-phone=' + cookie)
             answers.append(body)
-            if not path.startswith(('/api/remote/', '/phone')):
+            if not path.startswith(('/api/remote/', '/phone', '/manifest.webmanifest', '/sw.js', '/icons/')):
                 self.assertIn(status, (403, 404), f'{method} {path}')
         secrets = self.secrets()
         self.assertGreaterEqual(len(secrets), 2, 'the page token and at least one host secret to look for')

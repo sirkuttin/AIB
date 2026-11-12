@@ -39,6 +39,7 @@ import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
 import { ArtifactHistory } from '../docs/history.ts';
 import { type AccessOptions, PhoneAccess } from '../remote/access.ts';
+import { Presence } from '../attention/presence.ts';
 import type { DeviceStore } from '../remote/devices.ts';
 import { devicesRoutes } from './devices_routes.ts';
 
@@ -201,6 +202,9 @@ export interface WebContext {
   phone: PhoneAccess;
   /** The paired phones (<state>/devices.json; remote/devices.ts), the same store phone.devices holds. */
   devices: DeviceStore;
+  /** Whether the owner is at the PC (the page reports it: POST /api/live/presence): no desktop notification while an AIB window
+   * has focus, no phone push while the owner is working in it (attention/presence.ts). */
+  presence: Presence;
 }
 
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
@@ -251,12 +255,18 @@ export class WebServer {
       const view = c.viewPrefs.public();
       return this.json(200, { revision: view.revision, warning: view.warning, refused: result.refused, ok: true });
     });
-    // The desktop app shows the page's notifications itself. {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
+    // The desktop app shows a notification itself: the Settings test (the AttentionWatcher shows the others from the server, never
+    // the page). {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
     this.native.set('POST /api/live/desktop/notify', async (c, _url, body) => {
       const n = c.desktopNotify;
       if (!n) return this.json(409, { error: 'Only the AIB desktop app shows notifications itself' });
       const result = await n.show(cleanNotifyRequest(body));
       return this.json(200, { ok: true, shown: result.shown, reason: result.reason ?? '', mechanism: n.mechanism });
+    });
+    // The page: its window has focus or not, and how long since the last input in it (attention/presence.ts).
+    this.native.set('POST /api/live/presence', (c, _url, body) => {
+      c.presence.report(body?.focused, body?.idleMs);
+      return this.json(200, { ok: true });
     });
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
@@ -579,6 +589,7 @@ export function makeContext(
     desktopNotify: null,
     phone: null as unknown as PhoneAccess,
     devices: null as unknown as DeviceStore,
+    presence: new Presence(),
   };
   ctx.phone = new PhoneAccess(ctx, options.stateDir, {
     avoid: () => (ctx.port ? [ctx.port, ctx.port + 1] : []),

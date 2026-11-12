@@ -130,6 +130,7 @@ test('the project menu ends with "Delete project…" after a separator', async (
   const ctx = D.load(shell, [
     'status-words.js',
     'ownership-ui.js',
+    'notify-rules.js',
     'sidebar-ui.js',
     'workspace-state.js',
     'split-tree.js',
@@ -183,6 +184,7 @@ test('a removed project stays gone after a chat list reload, and comes back when
   const ctx = D.load(shell, [
     'status-words.js',
     'ownership-ui.js',
+    'notify-rules.js',
     'sidebar-ui.js',
     'workspace-state.js',
     'split-tree.js',

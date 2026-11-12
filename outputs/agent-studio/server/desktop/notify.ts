@@ -1,8 +1,9 @@
 /**
  * The desktop app's own notifications ("Needs you", "Your turn", the grouped "3 agents are waiting for you", the Settings test).
- * The page decides WHEN to notify (notify-ui.js: transitions, grouping, never while AIB is in front); in the desktop app it then
- * asks this server with POST /api/live/desktop/notify and the app process shows it natively, not through the web Notification
- * API (WebView2 has no browser permission prompt and no site settings, so the web API was simply "blocked").
+ * The server decides WHEN to notify (attention/watcher.ts: the AttentionWatcher and its Notifier, with the page's own rules from
+ * notify-rules.js: transitions, grouping, never while an AIB window has focus), so they also come with the window closed; the page
+ * only sends the Settings test with POST /api/live/desktop/notify. The app process shows them natively, not through the web
+ * Notification API (WebView2 has no browser permission prompt and no site settings, so the web API was simply "blocked").
  *
  * Per OS (the OS layer is injected, so all of this is tested with fakes in work/deno/desktop_notify_test.ts):
  *   - Windows: a balloon on AIB's own tray icon (Shell_NotifyIconW NIM_MODIFY + NIF_INFO, tray_win.ts balloonData). Windows 10 and

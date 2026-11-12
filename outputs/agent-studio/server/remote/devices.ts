@@ -1,7 +1,9 @@
 /**
  * Paired phones (<state>/devices.json): one record per phone with its name, the SHA-256 of its device token (sent in a header on
  * every API call) and of its image cookie (sent only by the browser on GET images and page files), its scopes, the Tailscale login
- * that paired it, when it was paired and when it was last seen. Never the raw token or cookie.
+ * that paired it, when it was paired and when it was last seen, and its Web Push subscription (the push service's address and the
+ * phone's two keys, which encrypt what is sent to it) once the phone turned notifications on. Never the raw token or cookie.
+ * Removing a phone removes its subscription with it.
  *
  * Last seen is kept in memory and written at most every 5 minutes (a phone polls every few seconds).
  */
@@ -15,6 +17,14 @@ export type PhoneScope = typeof PHONE_SCOPES[number];
 /** Owner decision 2c: a new phone may see chats, answer, send and approve once (no passkey), and get pushes. */
 export const DEFAULT_SCOPES: readonly PhoneScope[] = PHONE_SCOPES;
 
+/** A phone's Web Push subscription (PushSubscription.toJSON() on the phone). */
+export interface PushSub {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  at: number;
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -24,9 +34,34 @@ export interface Device {
   login: string;
   created: number;
   lastSeen: number;
+  push?: PushSub;
 }
 
-export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash'>;
+/** What Settings > Devices gets: no hashes and no subscription, only whether the phone has one. */
+export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push'> & { pushOn: boolean };
+
+const publicOf = (d: Device): PublicDevice => {
+  const { tokenHash: _t, cookieHash: _c, push, ...rest } = d;
+  return { ...rest, scopes: [...rest.scopes], pushOn: !!push };
+};
+
+/** A subscription from a phone, checked: an https push service address and the two keys (base64url). Null when it is not one. */
+export function cleanPushSub(value: unknown, at: number): PushSub | null {
+  const v = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const keys = v.keys && typeof v.keys === 'object' ? v.keys as Record<string, unknown> : {};
+  const endpoint = typeof v.endpoint === 'string' ? v.endpoint : '';
+  const b64 = (x: unknown, min: number, max: number) =>
+    typeof x === 'string' && x.length >= min && x.length <= max && /^[A-Za-z0-9_-]+=*$/.test(x);
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  if (endpoint.length > 1000 || url.protocol !== 'https:' || url.username || url.password) return null;
+  if (!b64(keys.p256dh, 80, 100) || !b64(keys.auth, 16, 30)) return null;
+  return { endpoint, p256dh: keys.p256dh as string, auth: keys.auth as string, at };
+}
 
 const SEEN_WRITE_SECONDS = 300;
 const MAX_DEVICES = 50;
@@ -83,6 +118,8 @@ export class DeviceStore extends JsonFileStore {
       const d = raw as Record<string, unknown>;
       if (typeof d.id !== 'string' || typeof d.tokenHash !== 'string' || typeof d.cookieHash !== 'string') continue;
       const lastSeen = Math.max(Number(d.lastSeen) || 0, memorySeen.get(d.id) ?? 0);
+      const p = d.push && typeof d.push === 'object' ? d.push as Record<string, unknown> : null;
+      const push = p ? cleanPushSub({ endpoint: p.endpoint, keys: { p256dh: p.p256dh, auth: p.auth } }, Number(p.at) || 0) : null;
       this.devices.set(d.id, {
         id: d.id,
         name: cleanName(d.name),
@@ -92,6 +129,7 @@ export class DeviceStore extends JsonFileStore {
         login: typeof d.login === 'string' ? d.login : '',
         created: Number(d.created) || 0,
         lastSeen,
+        ...(push ? { push } : {}),
       });
     }
     this.unreadable = false;
@@ -108,7 +146,7 @@ export class DeviceStore extends JsonFileStore {
 
   list(): PublicDevice[] {
     this.sync();
-    return [...this.devices.values()].map(({ tokenHash: _t, cookieHash: _c, ...rest }) => ({ ...rest, scopes: [...rest.scopes] }));
+    return [...this.devices.values()].map(publicOf);
   }
 
   /** Add a phone; returns its record and the raw token and cookie (shown to the phone once, never stored). */
@@ -134,8 +172,7 @@ export class DeviceStore extends JsonFileStore {
       this.devices.set(id, device);
       this.counter++;
       this.#save();
-      const { tokenHash: _t, cookieHash: _c, ...rest } = device;
-      return { device: rest, token, cookie };
+      return { device: publicOf(device), token, cookie };
     });
   }
 
@@ -162,9 +199,53 @@ export class DeviceStore extends JsonFileStore {
       d.scopes = cleanScopes(scopes);
       this.counter++;
       this.#save();
-      const { tokenHash: _t, cookieHash: _c, ...rest } = d;
-      return { ...rest, scopes: [...rest.scopes] };
+      return publicOf(d);
     });
+  }
+
+  /** The phone's push subscription (null: drop it). Another phone with the same subscription loses it (one browser, re-paired). */
+  setPush(id: string, push: PushSub | null): Promise<boolean> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      const d = this.devices.get(id);
+      if (!d) return false;
+      if (push) {
+        for (const other of this.devices.values()) if (other !== d && other.push?.endpoint === push.endpoint) delete other.push;
+        d.push = push;
+      } else delete d.push;
+      this.counter++;
+      this.#save();
+      return true;
+    });
+  }
+
+  /** The push service said this subscription is gone (404 / 410): drop it wherever it is. */
+  dropPush(endpoint: string): Promise<number> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      let n = 0;
+      for (const d of this.devices.values()) {
+        if (d.push?.endpoint === endpoint) {
+          delete d.push;
+          n++;
+        }
+      }
+      if (n) {
+        this.counter++;
+        this.#save();
+      }
+      return n;
+    });
+  }
+
+  /** The phones a push goes to now: a subscription and the Push switch on. */
+  pushTargets(): { id: string; name: string; push: PushSub }[] {
+    this.sync();
+    return [...this.devices.values()]
+      .filter((d) => d.push && d.scopes.includes('phone.push'))
+      .map((d) => ({ id: d.id, name: d.name, push: { ...d.push! } }));
   }
 
   removeAll(): Promise<number> {

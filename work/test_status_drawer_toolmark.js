@@ -17,7 +17,7 @@ const { cssRules } = require('./css_rules');
 
 function elsewherePage() {
   const page = makePage({
-    scripts: ['status-words.js', 'attention-ui.js', 'sidebar-ui.js'],
+    scripts: ['status-words.js', 'attention-ui.js', 'notify-rules.js', 'sidebar-ui.js'],
     window: { setInterval: () => 0, clearInterval() {} },
   });
   const c = {

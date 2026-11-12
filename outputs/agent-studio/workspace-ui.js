@@ -2085,19 +2085,33 @@
   const mutedProject = (pk) => !!(prefs && pk && St().prefOf(prefs, pk).muted);
   function notifyChats() {
     const N = root.AgentNotifyUI;
-    if (!N || !N.observeItems) return;
+    if (!N || !N.observeItems || !root.AgentNotifyRules) return;
+    const R = root.AgentNotifyRules; // the same rules as the server's notifications (notify-rules.js)
     N.observeItems(
-      items.map((i) => ({
-        key: i.key,
-        title: i.title,
-        state: i.state,
-        needs: i.needs,
-        yourTurn: i.yourTurn,
-        yourTurnAt: i.yourTurnAt,
-        eligible: !i.archived && !i.deleted && !hiddenProject(i.projectKey) && !i.projectWorktree && !i.projectScratch,
-        muted: mutedProject(i.projectKey),
-        selected: i.key === selectedKey,
-      })),
+      items.map((i) => {
+        const f = R.flags(
+          {
+            archived: i.archived,
+            deleted: i.deleted,
+            held: i.held,
+            projectKey: i.projectKey,
+            worktree: i.projectWorktree,
+            scratch: i.projectScratch,
+          },
+          prefs,
+        );
+        return {
+          key: i.key,
+          title: i.title,
+          state: i.state,
+          needs: i.needs,
+          yourTurn: i.yourTurn,
+          yourTurnAt: i.yourTurnAt,
+          eligible: f.eligible,
+          muted: f.muted,
+          selected: i.key === selectedKey,
+        };
+      }),
     );
   }
   // Called by the page every time the conversation list is drawn.
@@ -2625,6 +2639,9 @@
               return { key: k, name: p ? p.name : k };
             }),
         unmute: (key) => setPrefOf(key, { muted: false }),
+        // whether AIB is in front and when you last used it: the server's notifications and phone pushes skip you then
+        presence: (body) =>
+          host.postJson ? Promise.resolve(host.postJson('presence', body)).then(() => true, () => false) : false,
       });
   }
 

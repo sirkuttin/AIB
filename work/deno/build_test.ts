@@ -201,7 +201,8 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
   assertEquals(new TextDecoder().decode(icns.subarray(8, 12)), "ic07");
   for (const [name, dir, want] of [
     ["server", true, true],
-    ["icons", true, false],
+    ["icons", true, true], // the phone page's manifest icons (remote/server.ts REMOTE_STATIC)
+    ["pwa", true, true], // the phone page's service worker
     ["agent_locks", true, true],
     ["vendor", true, true],
     ["docs", true, false],

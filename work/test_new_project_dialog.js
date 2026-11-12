@@ -13,7 +13,7 @@ const settle = async () => {
 // answers: (path, name) => check payload. created: what POST folders/create returns.
 function harness(answers, { projects = [], created = null } = {}) {
   const shell = page();
-  const ctx = load(shell, ['workspace-state.js', 'new-project-ui.js']);
+  const ctx = load(shell, ['notify-rules.js', 'workspace-state.js', 'new-project-ui.js']);
   const calls = { checks: [], posts: [], done: [] };
   ctx.AgentNewProjectUI.init({
     getJson: (path, params) => {

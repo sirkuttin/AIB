@@ -8,7 +8,13 @@
    layout 'phone'), never by the window width.
    The device token lives in IndexedDB on this origin and goes in the X-AIB-Device header; images load by the HttpOnly cookie.
    Polls every 4 s (home) or 3 s (a chat) while the page is visible, and stops while it is hidden.
-   Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input) are exported for node tests. */
+   Phase C: a service worker (/sw.js, pwa/sw.js) keeps the page's own files, so the page still opens when AIB is closed; it then
+   says "Reconnecting…" for about 20 s (the keeper starts a crashed AIB again in 5 s), then that AIB is closed on the PC (Tailscale
+   Serve answers 502) or that the PC can't be reached (no answer at all), with Try again. It never claims the chats still run.
+   Notifications: the Finish setup screen (after pairing, and from home) turns them on with a tap (a phone only asks from a tap);
+   on an iPhone it first says to add the page to the Home Screen (iPhone sends pushes only to Home Screen apps). The page subscribes
+   again each time it opens. A tap on a push opens the chat with its sheet up (#chat=<id>&sheet=1, or a message from the worker).
+   Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input, offlineView, setupSteps...) are exported for node tests. */
 (function (root) {
   const HOME_MS = 4000;
   const CHAT_MS = 3000;
@@ -16,6 +22,7 @@
   const TIMEOUT_MS = 10000;
   const TAIL = 300;
   const DB = 'aib-phone';
+  const RECONNECT_MS = 20000; // "Reconnecting…" this long before saying AIB is closed (the keeper restarts a crashed AIB in 5 s)
 
   // ---- pure helpers ---------------------------------------------------------------------------------------------------------
   const str = (v) => (typeof v === 'string' ? v : '');
@@ -209,7 +216,98 @@
   /* The text both sides hash for the two check words (server/remote/words.ts checkWords). */
   const checkInput = (secretHex, phoneNonce, pcNonce) => 'aib-pair-check|' + secretHex + '|' + phoneNonce + '|' + pcNonce;
 
-  const api = { rowsFrom, stateWords, elapsed, liveLine, helperWord, checkInput, fieldsOf, contentFrom, approvalButtons, abilities, actionable };
+  /* What the page says while AIB does not answer. why: 'down' (Tailscale Serve answered 502/503/504: nothing listens behind it, so
+     AIB is closed or phone access is off) or 'unreachable' (no answer: Tailscale off on the phone, the PC asleep or offline).
+     {kind: 'reconnecting' | 'closed' | 'unreachable', title, lines: [text], checks: [text], retry: bool}. Never says the chats run. */
+  function offlineView(since, now, why, pcName, waitMs) {
+    const pc = pcName || 'your PC';
+    if (now - since < (waitMs || RECONNECT_MS))
+      return { kind: 'reconnecting', title: 'Reconnecting…', lines: ['AIB on ' + pc + ' is not answering. Trying again.'], checks: [], retry: false };
+    if (why === 'down')
+      return {
+        kind: 'closed',
+        title: 'AIB is closed on ' + pc,
+        lines: ['Open AIB on your PC, then tap Try again.', 'If AIB is open, check that phone access is on in Settings → Devices.'],
+        checks: [],
+        retry: true,
+      };
+    return {
+      kind: 'unreachable',
+      title: "Can't reach " + pc,
+      lines: [],
+      checks: ['Tailscale is on, on this phone.', 'The PC is awake and AIB is running.'],
+      retry: true,
+    };
+  }
+
+  /* An iPhone or iPad (iPadOS says "Macintosh" but has a touch screen): pushes need the page on the Home Screen there. */
+  function isIPhone(ua, touchPoints) {
+    const s = String(ua || '');
+    return /iPhone|iPod|iPad/.test(s) || (/Macintosh/.test(s) && Number(touchPoints) > 1);
+  }
+
+  /* The Finish setup steps. o: {iphone, standalone, supported, permission ('default'|'granted'|'denied'), on (subscribed here),
+     allowed (this phone's Push switch on the PC)}. [{id: 'home' | 'notify', state: 'todo' | 'done' | 'blocked' | 'off', text}] */
+  function setupSteps(o) {
+    const steps = [];
+    if (o.iphone)
+      steps.push({
+        id: 'home',
+        state: o.standalone ? 'done' : 'todo',
+        text: o.standalone
+          ? 'AIB is on your Home Screen.'
+          : 'Tap the Share button, then Add to Home Screen. Open AIB from there: iPhone sends notifications only to apps on the Home Screen.',
+      });
+    let notify;
+    if (!o.allowed) notify = { state: 'off', text: 'Notifications are off for this phone. Turn on Push for it in AIB on your PC: Settings → Devices.' };
+    else if (o.iphone && !o.standalone) notify = { state: 'todo', text: 'After step 1, open AIB from the Home Screen and turn notifications on there.' };
+    else if (!o.supported) notify = { state: 'off', text: 'This browser cannot show notifications from AIB.' };
+    else if (o.permission === 'denied') notify = { state: 'blocked', text: 'Notifications are blocked for this page. Allow them in the browser’s site settings.' };
+    else if (o.permission === 'granted' && o.on) notify = { state: 'done', text: 'Notifications are on. You get one when a chat needs you or finishes.' };
+    else notify = { state: 'todo', text: 'Get a notification when a chat needs you or finishes. It says only that, and the chat’s name.' };
+    steps.push({ id: 'notify', ...notify });
+    return steps;
+  }
+
+  /* What a push or a link asks to open: '#chat=<id>&sheet=1' -> {chat, sheet}, or null. */
+  function openTarget(hash) {
+    const m = /^#chat=([^&]{1,100})(&sheet=1)?$/.exec(String(hash || ''));
+    if (!m) return null;
+    try {
+      return { chat: decodeURIComponent(m[1]), sheet: !!m[2] };
+    } catch {
+      return null;
+    }
+  }
+
+  /* base64url -> bytes (the application server key a phone subscribes with). */
+  function keyBytes(b64url) {
+    const b64 = String(b64url || '').replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  const api = {
+    rowsFrom,
+    stateWords,
+    elapsed,
+    liveLine,
+    helperWord,
+    checkInput,
+    fieldsOf,
+    contentFrom,
+    approvalButtons,
+    abilities,
+    actionable,
+    offlineView,
+    isIPhone,
+    setupSteps,
+    openTarget,
+    keyBytes,
+    RECONNECT_MS,
+  };
   if (typeof module === 'object' && module.exports) {
     module.exports = api;
     return;
@@ -233,7 +331,12 @@
     open: new Set(), // folds the reader opened
     lastOk: 0,
     offline: false,
+    offlineSince: 0, // when AIB stopped answering
+    offlineWhy: '', // 'down' (Serve: nothing listens, AIB closed) or 'unreachable' (no answer)
+    reconnectMs: RECONNECT_MS, // tests shorten it
     timer: 0,
+    push: { key: '', on: false, permission: '', busy: false, error: '' }, // this phone's notifications
+    openOnStart: null, // {chat, sheet}: a push or link asked to open this chat
     pairSecret: '', // hex, from the QR's '#p='
     pairing: null,
     scopes: [], // this phone's switches (bootstrap, then every home / chat answer)
@@ -338,12 +441,19 @@
       S.lastOk = Date.now();
     } catch (error) {
       if (!(error instanceof Offline)) throw error;
-      if (!S.offline) {
-        S.offline = true;
-        draw();
-      }
+      goneOffline(error.message);
     }
     schedule(S.screen === 'chat' ? CHAT_MS : HOME_MS);
+  }
+
+  /* AIB stopped answering (or still does not): "Reconnecting…" first, then closed / can't reach (offlineView). */
+  function goneOffline(why) {
+    if (!S.offline) {
+      S.offline = true;
+      S.offlineSince = Date.now();
+    }
+    S.offlineWhy = why === 'down' ? 'down' : why === 'unreachable' ? 'unreachable' : S.offlineWhy || 'down';
+    if (offlineView(S.offlineSince, Date.now(), S.offlineWhy, S.pcName, S.reconnectMs).kind !== S.offlineShown) draw();
   }
 
   async function loadHome() {
@@ -414,25 +524,40 @@
   }
 
   function offlineBox() {
-    const box = el('section', 'ph-offline');
-    box.setAttribute('role', 'alert');
-    box.append(el('h2', '', "Can't reach " + S.pcName));
-    if (S.lastOk) {
+    const v = offlineView(S.offlineSince, Date.now(), S.offlineWhy, S.pcName, S.reconnectMs);
+    S.offlineShown = v.kind; // what the page says now (goneOffline redraws when it changes)
+    const box = el('section', 'ph-offline ' + v.kind);
+    box.dataset.offline = v.kind;
+    box.setAttribute('role', v.kind === 'reconnecting' ? 'status' : 'alert');
+    box.append(el('h2', '', v.title));
+    for (const line of v.lines) box.append(el('p', '', line));
+    if (S.lastOk && v.kind !== 'reconnecting') {
       const t = new Date(S.lastOk);
       const hhmm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
       box.append(el('p', 'ph-note', 'Last update ' + hhmm + '. Showing what you saw then.'));
     }
-    box.append(el('p', '', 'Check that:'));
-    const ul = el('ul', 'ph-steps');
-    ul.append(el('li', '', 'Tailscale is on, on this phone.'), el('li', '', 'The PC is awake and AIB is running.'));
-    box.append(ul);
-    box.append(
-      button('ph-btn', 'Try again', () => {
-        clearTimeout(S.timer);
-        tick();
-      }),
-    );
+    if (v.checks.length) {
+      box.append(el('p', '', 'Check that:'));
+      const ul = el('ul', 'ph-steps');
+      for (const c of v.checks) ul.append(el('li', '', c));
+      box.append(ul);
+    }
+    if (v.retry)
+      box.append(
+        button('ph-btn', 'Try again', () => {
+          clearTimeout(S.timer);
+          S.offlineSince = Date.now(); // trying again: "Reconnecting…" first
+          draw();
+          retry();
+        }),
+      );
     return box;
+  }
+
+  /* Try again: the start screen when the page opened offline (no bootstrap yet), else the normal poll. */
+  function retry() {
+    if (!S.booted) return start();
+    tick();
   }
 
   function chatCard(c, opts) {
@@ -466,6 +591,14 @@
     const frag = doc.createDocumentFragment();
     frag.append(header('AIB', { sub: S.pcName, chip: S.offline ? ['Offline', 'off'] : ['Live', 'live'] }));
     if (S.offline) frag.append(offlineBox());
+    else if (S.device && !pushReady()) {
+      const bar = el('div', 'ph-setup-bar');
+      bar.append(el('span', '', 'Get a notification when a chat needs you.'));
+      const go = button('ph-btn quiet', 'Set up', () => openSetup());
+      go.id = 'setupOpen';
+      bar.append(go);
+      frag.append(bar);
+    }
     const body = el('main', S.offline ? 'ph-stale' : '');
     const home = S.home;
     if (!home) {
@@ -558,6 +691,11 @@
     box.setAttribute('aria-label', 'Messages waiting to send');
     box.append(el('h2', 'ph-section', 'Waiting to send · ' + items.length));
     if (c.queue.paused && c.queue.message) box.append(el('p', 'ph-note', c.queue.message + '.'));
+    if (c.queue.paused && can.send && !S.offline && items.some((i) => !i.sending && !i.editing)) {
+      const resume = button('ph-btn quiet', 'Resume sending', () => act('queue-resume', { id: c.id }));
+      resume.dataset.act = 'resume';
+      box.append(resume); // a Stop (or a failed turn) paused the queue: it goes on from here too
+    }
     let actions = false;
     for (const item of items) {
       const row = el('div', 'ph-queued');
@@ -946,7 +1084,11 @@
             ? drawPair()
             : S.screen === 'removed'
               ? drawRemoved()
-              : el('p', 'ph-loading', 'Connecting…');
+              : S.screen === 'setup'
+                ? drawSetup()
+                : S.screen === 'offline'
+                  ? drawOfflineStart()
+                  : el('p', 'ph-loading', 'Connecting…');
     place(Array.isArray(parts) ? parts : [parts]);
     app.dataset.screen = S.screen;
     app.dataset.sheet = S.sheet ? S.sheet.kind : '';
@@ -1156,9 +1298,18 @@
       await stored('device', { token: r.data.token, device: r.data.device });
       S.pairing = null;
       S.pairSecret = '';
-      S.screen = 'home';
-      draw();
-      tick();
+      S.scopes = (r.data.device && r.data.device.scopes) || [];
+      try {
+        const boot = await call('GET', '/api/remote/bootstrap'); // now paired: the push key
+        const push = (boot.status === 200 && boot.data.push) || {};
+        S.push.key = typeof push.key === 'string' ? push.key : '';
+        S.push.on = push.on === true;
+      } catch {
+        /* Finish setup says so when the button is tapped */
+      }
+      S.booted = true;
+      bootPush();
+      openSetup(); // Finish setup: notifications (and on an iPhone, the Home Screen first)
       return;
     }
     if (r && r.status === 200 && r.data.state === 'rejected') {
@@ -1174,11 +1325,152 @@
     setTimeout(pollClaim, PAIR_POLL_MS);
   }
 
+  // ---- the service worker, notifications ----
+  function registerWorker() {
+    const sw = root.navigator.serviceWorker;
+    if (!sw || S.worker) return;
+    S.worker = true;
+    sw.register('/sw.js', { scope: '/' }).catch(() => {
+      /* no worker: no copy for when AIB is closed, and no notifications */
+    });
+    sw.addEventListener('message', (event) => {
+      const d = event.data || {};
+      if (d.type === 'aib-open' && d.chat && S.device) openChat(String(d.chat), '', !!d.sheet); // a tap on a push
+    });
+  }
+
+  const pushSupported = () =>
+    !!(root.navigator.serviceWorker && root.PushManager && typeof root.Notification === 'function');
+  const permissionNow = () => (typeof root.Notification === 'function' ? root.Notification.permission : 'denied');
+  const pushAllowed = () => S.scopes.includes('phone.push');
+  const standalone = () =>
+    root.navigator.standalone === true ||
+    !!(root.matchMedia && root.matchMedia('(display-mode: standalone)').matches);
+  const iphone = () => isIPhone(root.navigator.userAgent, root.navigator.maxTouchPoints);
+  const pushReady = () => !pushAllowed() || (S.push.on && permissionNow() === 'granted');
+
+  function withTimeout(promise, ms) {
+    let t;
+    return Promise.race([promise, new Promise((_, reject) => (t = setTimeout(() => reject(new Error('timed out')), ms)))]).finally(
+      () => clearTimeout(t),
+    );
+  }
+
+  /* Subscribe (or subscribe again) and give the PC the subscription. Only once permission is granted; never asks for it. */
+  async function subscribe() {
+    if (!pushSupported() || !pushAllowed() || !S.push.key || permissionNow() !== 'granted') return false;
+    const reg = await withTimeout(root.navigator.serviceWorker.ready, 10000);
+    let sub = await reg.pushManager.getSubscription();
+    const want = keyBytes(S.push.key);
+    const have = sub && sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+    if (sub && have && (have.length !== want.length || have.some((b, i) => b !== want[i]))) {
+      await sub.unsubscribe().catch(() => {}); // the PC made new keys (Remove all phones): the old subscription is dead
+      sub = null;
+    }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
+    const r = await call('POST', '/api/remote/push/subscribe', { subscription: sub.toJSON() });
+    S.push.on = r.status === 200;
+    if (r.status !== 200) S.push.error = r.data.error || 'Your PC did not take the notification address. Try again.';
+    return S.push.on;
+  }
+
+  /* At every page open: subscribe again when notifications are already allowed (quietly; Finish setup shows any problem). */
+  async function bootPush() {
+    S.push.permission = permissionNow();
+    try {
+      await subscribe();
+    } catch {
+      /* Finish setup offers the button again */
+    }
+  }
+
+  /* "Turn on notifications": a tap (iPhone and Chrome ask only from one). */
+  async function turnOnNotifications() {
+    if (S.push.busy) return;
+    S.push.busy = true;
+    S.push.error = '';
+    draw();
+    try {
+      let perm = permissionNow();
+      if (perm !== 'granted') perm = await root.Notification.requestPermission();
+      S.push.permission = perm;
+      if (perm === 'granted' && !(await subscribe()) && !S.push.error) S.push.error = 'Notifications could not be turned on. Try again.';
+    } catch (error) {
+      if (!(error instanceof Offline)) S.push.error = 'Notifications could not be turned on here. Try again.';
+      else S.push.error = "Can't reach " + S.pcName + '. Try again.';
+    }
+    S.push.busy = false;
+    draw();
+  }
+
+  function openSetup() {
+    S.screen = 'setup';
+    S.push.permission = permissionNow();
+    draw();
+    root.scrollTo(0, 0);
+  }
+
+  function drawSetup() {
+    const frag = doc.createDocumentFragment();
+    frag.append(header('Finish setup'));
+    const body = el('main', 'ph-setup');
+    body.append(el('p', '', 'Paired with ' + S.pcName + '. You can close this and open it again any time.'));
+    const steps = setupSteps({
+      iphone: iphone(),
+      standalone: standalone(),
+      supported: pushSupported(),
+      permission: permissionNow(),
+      on: S.push.on,
+      allowed: pushAllowed(),
+    });
+    let n = 0;
+    for (const step of steps) {
+      n++;
+      const box = el('section', 'ph-step ' + step.state);
+      box.dataset.step = step.id;
+      box.dataset.state = step.state;
+      box.append(el('p', 'ph-note', 'Step ' + n + (step.id === 'home' ? ' · iPhone only' : '')));
+      box.append(el('h2', '', step.id === 'home' ? 'Add to Home Screen' : 'Turn on notifications'));
+      box.append(el('p', '', step.text));
+      if (step.id === 'notify' && step.state === 'todo' && !(iphone() && !standalone())) {
+        const b = button('ph-btn', S.push.busy ? 'Turning on…' : 'Turn on notifications', () => turnOnNotifications());
+        b.id = 'pushOn';
+        b.disabled = S.push.busy;
+        box.append(b);
+      }
+      if (step.id === 'notify' && S.push.error) {
+        const e = el('p', 'ph-error', S.push.error);
+        e.setAttribute('role', 'alert');
+        box.append(e);
+      }
+      body.append(box);
+    }
+    const done = button('ph-btn quiet', 'Done', () => {
+      S.screen = 'home';
+      draw();
+      tick();
+    });
+    done.id = 'setupDone';
+    body.append(done);
+    frag.append(body);
+    return frag;
+  }
+
+  /* The page opened while AIB does not answer (the worker's copy): no chats to show, only what is wrong. */
+  function drawOfflineStart() {
+    const frag = doc.createDocumentFragment();
+    frag.append(header('AIB', { sub: S.pcName, chip: ['Offline', 'off'] }));
+    frag.append(offlineBox());
+    return frag;
+  }
+
   // ---- start ----
   async function start() {
     const m = /^#p=([0-9a-f]{12})$/i.exec(root.location.hash || '');
     if (m) S.pairSecret = m[1].toLowerCase();
+    S.openOnStart = openTarget(root.location.hash) || S.openOnStart;
     if (root.location.hash) root.history.replaceState(null, '', root.location.pathname); // the secret leaves the address bar
+    registerWorker();
     const saved = await stored('device');
     if (saved && saved.token) {
       S.token = saved.token;
@@ -1187,12 +1479,19 @@
     let boot;
     try {
       boot = await call('GET', '/api/remote/bootstrap');
-    } catch {
-      S.offline = true;
-      S.screen = S.token ? 'home' : 'pair';
+    } catch (error) {
+      // AIB is closed or the PC can't be reached: the service worker opened the page from its copy.
+      S.screen = 'offline';
+      goneOffline(error && error.message);
       draw();
-      schedule(HOME_MS);
+      clearTimeout(S.timer);
+      S.timer = setTimeout(() => retry(), S.offline && Date.now() - S.offlineSince < S.reconnectMs ? 2000 : HOME_MS);
       return;
+    }
+    S.booted = true;
+    if (S.offline) {
+      S.offline = false;
+      S.offlineSince = 0;
     }
     if (boot.data.pcName) S.pcName = boot.data.pcName;
     if (boot.status === 401) return removed();
@@ -1205,6 +1504,16 @@
     if (boot.data.paired) {
       S.device = boot.data.device;
       S.scopes = (boot.data.device && boot.data.device.scopes) || [];
+      const push = boot.data.push || {};
+      S.push.key = typeof push.key === 'string' ? push.key : '';
+      S.push.on = push.on === true;
+      bootPush(); // subscribe again on every page open (a new key after Remove all, a subscription the browser renewed)
+      const open = S.openOnStart;
+      S.openOnStart = null;
+      if (open && open.chat) {
+        openChat(open.chat, '', open.sheet);
+        return;
+      }
       S.screen = 'home';
       draw();
       tick();
@@ -1219,7 +1528,18 @@
     else if (S.screen === 'home' || S.screen === 'chat') {
       clearTimeout(S.timer);
       tick();
+    } else if (S.screen === 'offline') {
+      clearTimeout(S.timer);
+      retry();
     }
+  });
+  // A push's link while the page is already open (the same page, only the #chat=... part changes).
+  root.addEventListener('hashchange', () => {
+    const open = openTarget(root.location.hash);
+    if (!open) return;
+    root.history.replaceState(null, '', root.location.pathname);
+    if (S.device && S.booted) openChat(open.chat, '', open.sheet);
+    else S.openOnStart = open;
   });
   root.__aibPhone = S; // tests read the page's state
   start();
