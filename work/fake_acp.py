@@ -41,6 +41,7 @@ parser.add_argument('--held-turn', action='store_true', help="Claude Code's held
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
+parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read), 'steer-late:<gate>' (X3: a steer is answered promptRequired just before the turn ends). After a steer-bash command ends, Claude's own cycle is held while <gate>.cycle-hold exists, until <gate>.cycle-end exists. Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
 args = parser.parse_args()
 if args.fixture_login:
     if args.auth_file:
@@ -469,6 +470,349 @@ def held_turn(key, text):
     threading.Thread(target=helper, daemon=True).start()
 
 
+# ---- steer-on-send (--steer): replays work/steer-recordings (see the flag's help) -------------------------------------------------------
+
+steer_ctx = {'turn': None}   # the running steer scenario: {'key', 'steers' (texts), 'cancel' (Event), 'open', 'on_steer'}
+STEER_WAITER = (
+    "import os, subprocess, sys, time\n"
+    "gate = sys.argv[1]\n"
+    "deadline = time.time() + 300\n"
+    "if len(sys.argv) < 3:\n"
+    "    leaf = subprocess.Popen([sys.executable, '-c', open(gate + '.waiter.py').read(), gate, 'leaf'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+    "    open(gate + '.pids', 'w').write('%d %d' % (os.getpid(), leaf.pid))\n"
+    "while not os.path.exists(gate) and time.time() < deadline:\n"
+    "    time.sleep(0.05)\n"
+)
+STEER_PLAIN_EXCLUDED = ('write:', 'edit:', 'delete:', 'commit:', 'say:', 'context', 'call-tool:', 'caps:', 'bulk:', 'stream:', 'sleep:', 'gate:', 'leave-open', 'url',
+                        'wait', 'form', 'approve', 'child-ask', 'agent-cancel', 'mcp', '/compact', 'delegate', 'settings?', 'model?')
+
+
+def steer_text(params):
+    return next((b.get('text', '') for b in params.get('prompt') or [] if b.get('type') == 'text' and not b.get('text', '').startswith('<studio-context>')), '')
+
+
+def steer_command(gate):
+    """The 'command': a real process with a real child (<gate>.pids = 'parent leaf'), alive until <gate> exists (or 300 s), so a Stop can be checked to kill exactly these."""
+    import subprocess
+    with open(gate + '.waiter.py', 'w') as f:
+        f.write(STEER_WAITER)
+    flags = 0x08000000 if sys.platform == 'win32' else 0   # CREATE_NO_WINDOW
+    return subprocess.Popen([sys.executable, '-c', STEER_WAITER, gate], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+
+
+def steer_outcome():
+    return {'outcome': 'injected', 'queue': 'steering'} if args.steer == 'omp' else {'outcome': 'injected'}
+
+
+def steer_begin(key, on_steer=None):
+    turn = {'key': key, 'steers': [], 'cancel': threading.Event(), 'open': True, 'on_steer': on_steer}
+    steer_ctx['turn'] = turn
+    return turn
+
+
+def steer_end(turn, stop='end_turn'):
+    turn['open'] = False
+    if steer_ctx.get('turn') is turn:
+        steer_ctx['turn'] = None
+    result(turn['key'], {'stopReason': stop})
+
+
+def steer_wait(turn, until, timeout=300):
+    """Wait for a steer ('steer'), the condition ('go'), a session/cancel ('cancel') or the deadline ('timeout')."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if turn['cancel'].is_set():
+            return 'cancel'
+        if turn['steers']:
+            return 'steer'
+        if until():
+            return 'go'
+        time.sleep(0.02)
+    return 'timeout'
+
+
+def steer_say(text):
+    update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': text}})
+
+
+def steer_usage(origin=None, used=1000):
+    """A usage_update. Claude marks the end of a reply with origin human (one per steered reply: a prompt can carry two) or task-notification."""
+    body = {'sessionUpdate': 'usage_update', 'size': 200000, 'used': used}
+    if origin and args.steer == 'claude':
+        body['_meta'] = {'_claude/origin': origin}
+    update(body)
+
+
+HUMAN = {'kind': 'human'}
+
+
+def steer_request(key, params):
+    """_session/steering, as the three real adapters answer it (a recorded run each)."""
+    turn = steer_ctx.get('turn')
+    text = steer_text(params)
+    if turn and turn['open'] and turn.get('late'):   # X3: the adapter answers promptRequired a few ms before the turn's end_turn arrives
+        result(key, {'outcome': 'promptRequired', 'reason': 'noRunningTurn'})
+        steer_usage(HUMAN, 1600)
+        time.sleep(0.01)
+        steer_end(turn)
+        return
+    if turn and turn['open']:
+        turn['steers'].append(text)
+        if turn['on_steer']:
+            turn['on_steer'](text)
+        result(key, steer_outcome())
+        return
+    if waiting.get('turn') or waiting.get('permission'):   # an existing fixture turn (gate:, sleep:, wait, approve) counts as a running turn
+        if args.steer == 'omp' and waiting.get('permission'):
+            emit({'method': '$/cancel_request', 'params': {'requestId': 'approve-test'}})
+        result(key, steer_outcome())
+        steer_say('Steered reply: ' + text)
+        return
+    behavior = (((params.get('_meta') or {}).get('steering') or {}).get('idleBehavior'))
+    if args.steer == 'claude' and behavior != 'promptRequired':   # without idleBehavior the adapter starts a turn nobody asked for (C3)
+        result(key, {'outcome': 'startedNewTurn'})
+        steer_say('Steered reply: ' + text)
+        steer_usage(HUMAN)
+        return
+    result(key, {'outcome': 'promptRequired', 'reason': 'noRunningTurn'})
+
+
+def steer_scenario(key, text):
+    """The recorded scenarios by prompt. True if the prompt was one of them (or a plain message of a steerable fixture)."""
+    verb, _, rest = text.partition(':')
+    if verb == 'steer-bash':
+        threading.Thread(target=steer_bash, args=(key, rest), daemon=True).start()
+    elif verb == 'steer-helper':
+        threading.Thread(target=steer_helper, args=(key, rest), daemon=True).start()
+    elif text == 'steer-perm':
+        threading.Thread(target=steer_perm, args=(key,), daemon=True).start()
+    elif verb in ('steer-wait', 'steer-drop', 'steer-late'):
+        threading.Thread(target=steer_wait_turn, args=(key, rest, verb), daemon=True).start()
+    elif not text.startswith(STEER_PLAIN_EXCLUDED) and text not in STEER_PLAIN_EXCLUDED and not args.rich and not args.demo and not args.held_turn:
+        steer_say('Fixture reply: ' + text)
+        steer_usage(HUMAN)
+        result(key, {'stopReason': 'end_turn'})
+    else:
+        return False
+    return True
+
+
+def steer_wait_turn(key, gate, verb):
+    """Plain work until <gate> exists. Steers get a reply at once and the turn goes on; with drop (Codex v1 at the turn's end) they are never read."""
+    def reply(t):
+        time.sleep(0.05)
+        steer_say('Steered reply: ' + t)
+        steer_usage(HUMAN, 1500)
+    drop = verb == 'steer-drop'
+    turn = steer_begin(key, None if drop else lambda t: threading.Thread(target=reply, args=(t,), daemon=True).start())
+    turn['late'] = verb == 'steer-late'
+    steer_say('Working. ')
+    while True:
+        state = steer_wait(turn, lambda: os.path.exists(gate))
+        if state == 'steer':
+            turn['steers'].clear()
+            continue
+        break
+    if state == 'cancel':
+        steer_end(turn, 'cancelled')
+        return
+    if not turn['open']:   # steer-late: the turn already ended
+        return
+    steer_say('Finished. ')
+    steer_usage(HUMAN)
+    steer_end(turn)
+
+
+def steer_bash(key, gate):
+    """A foreground command, then a steer: C1 (Claude backgrounds it, toolResponse.backgroundTaskId), X1 (Codex answers; the command runs on and its
+    update arrives after end_turn), O1 (OMP backgrounds it: card completed, then in_progress again, details.async)."""
+    who = args.steer
+    tool = {'codex': 'exec-steer-bash'}.get(who, 'toolu_steer_bash')
+    command = 'for i in $(seq 1 60); do echo tick $i; sleep 1; done; echo finished'
+    turn = steer_begin(key)
+    claude = {'claudeCode': {'toolName': 'Bash'}}
+    if who == 'claude':
+        steer_usage(used=25000)
+        update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'name': 'Bash', 'rawInput': {}, 'status': 'pending', 'title': 'Terminal', 'kind': 'execute', 'content': [], '_meta': claude})
+        update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'rawInput': {'command': command, 'description': 'Tick loop'}, 'title': command, '_meta': claude})
+    elif who == 'codex':
+        update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'name': 'exec_command', 'kind': 'execute', 'title': command, 'status': 'in_progress', 'content': [{'type': 'terminal', 'terminalId': tool}],
+                'rawInput': {'command': command, 'cwd': session_cwd}, '_meta': {'terminal_info': {'cwd': session_cwd, 'terminal_id': tool}}})
+    else:
+        update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'status': 'pending', 'title': '$ ' + command, 'kind': 'execute', 'rawInput': {'command': command}})
+    child = steer_command(gate)
+    ticks = [0]
+    backgrounded = threading.Event()
+
+    def tick():   # the running output, until the command ends
+        while child.poll() is None and not turn['cancel'].is_set():
+            ticks[0] += 1
+            if who == 'codex':
+                update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, '_meta': {'terminal_output_delta': {'data': 'tick%d\r\n' % ticks[0], 'terminal_id': tool}}})
+            elif who == 'omp':
+                details = {'async': {'state': 'running', 'jobId': 'bg_1', 'type': 'bash'}} if backgrounded.is_set() else {}
+                update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'in_progress',
+                        'rawOutput': {'content': [{'type': 'text', 'text': ''.join('tick %d\n' % i for i in range(1, ticks[0] + 1))}], 'details': details}})
+            time.sleep(0.5)
+    threading.Thread(target=tick, daemon=True).start()
+    state = steer_wait(turn, lambda: child.poll() is not None)
+    if state == 'cancel':   # Interrupt: a foreground command dies with it
+        if child.poll() is None:
+            child.kill()
+        steer_end(turn, 'cancelled')
+        return
+    if state != 'steer':   # nobody steered: the command ends, the reply follows
+        if who == 'claude':
+            update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed', 'rawOutput': 'tick 60\nfinished', '_meta': claude})
+        elif who == 'codex':
+            update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'name': 'exec_command', 'status': 'completed', '_meta': {'terminal_exit': {'exit_code': child.returncode, 'signal': None, 'terminal_id': tool}}})
+        elif who == 'omp':
+            update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed', 'rawOutput': {'content': [{'type': 'text', 'text': 'finished'}], 'details': {}}})
+        steer_say('The command finished.')
+        steer_usage(HUMAN)
+        steer_end(turn)
+        return
+    time.sleep(0.3)
+    asked = turn['steers'][:]
+    if who == 'claude':
+        update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, '_meta': {'claudeCode': {'toolResponse': {'stdout': '', 'stderr': '', 'interrupted': False, 'isImage': False, 'noOutputExpected': False,
+                'backgroundTaskId': 'bsteer1', 'backgroundedToDeliverMessage': True}, 'toolName': 'Bash'}}})
+        update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed', '_meta': claude,
+                'rawOutput': 'Command was moved to the background (ID: bsteer1) so that a message that arrived while it was running can reach you; it was not interrupted. Output is being written to: tasks/bsteer1.output. You can stop it with TaskStop; it is stopped after 30m in the background.'})
+    elif who == 'omp':
+        backgrounded.set()
+        note = 'tick 1\n\nBackgrounded early to handle an incoming message; the command keeps running.\n\nBackgrounded as job bg_1 (killed once it has run 120s in total; `timeout: 0` disables the deadline); its output is injected into the conversation as a follow-up the moment it finishes.'
+        update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed',
+                'rawOutput': {'content': [{'type': 'text', 'text': note}], 'details': {'async': {'state': 'running', 'jobId': 'bg_1', 'type': 'bash'}, 'timeoutSeconds': 120}},
+                'content': [{'type': 'content', 'content': {'type': 'text', 'text': '$ ' + command}}, {'type': 'content', 'content': {'type': 'text', 'text': note}}]})
+    for t in asked:
+        steer_say('Steered reply: ' + t)
+    steer_usage(None, 34000)
+    if who == 'claude':
+        steer_usage(HUMAN, 34000)   # one human usage_update per steered reply
+    if who == 'codex':
+        update({'sessionUpdate': 'session_info_update', '_meta': {'codex': {'threadStatus': {'type': 'idle'}}}})
+    steer_end(turn)   # stopReason is end_turn for all three; the command still runs
+    if who == 'claude':
+        def notified():   # when it ends Claude Code starts its own cycle; the Bash card gets nothing more
+            child.wait()
+            if os.path.exists(gate + '.cycle-hold'):   # a test that wants to look at the autonomous cycle holds it until <gate>.cycle-end exists
+                deadline = time.time() + 300
+                steer_say('Reading the command output. ')
+                while not os.path.exists(gate + '.cycle-end') and time.time() < deadline:
+                    time.sleep(0.02)
+            steer_say('The command finished.')
+            steer_usage({'kind': 'task-notification', 'producer': 'session-task', 'runId': 'steer-run'})
+        threading.Thread(target=notified, daemon=True).start()
+    elif who == 'codex':
+        def exited():   # the tool update arrives after the turn, no follow-up turn
+            code = child.wait()
+            update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'name': 'exec_command', 'status': 'completed', '_meta': {'terminal_exit': {'exit_code': code, 'signal': None, 'terminal_id': tool}}})
+        threading.Thread(target=exited, daemon=True).start()
+
+
+def steer_helper(key, gate):
+    """C2 (Claude): a foreground helper; a steer backgrounds it (session_message ':reply'), the reply ends with a human usage_update, but the prompt is
+    held until the helper finished (subagent idle, follow-up cycle, task-notification usage_update, end_turn)."""
+    child, tool = 'steer-helper-1', 'toolu_steer_agent'
+    turn = steer_begin(key)
+    steer_usage(used=25700)
+    update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'title': 'Agent', 'kind': 'think', 'status': 'pending', '_meta': {'claudeCode': {'toolName': 'Agent'}}})
+    update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'title': 'general-purpose', 'description': 'Run foreground tick loop', 'capabilities': {'cancel': {}}, 'state': {'state': 'running'}})
+    update({'sessionUpdate': 'session_message', 'messageId': tool, 'senderSessionId': SID(), 'recipientSessionId': child, 'content': [{'type': 'text', 'text': 'Run the tick loop in the foreground.'}]})
+    helper_cmd = steer_command(gate)
+    state = steer_wait(turn, lambda: helper_cmd.poll() is not None)
+    if state == 'cancel':
+        if helper_cmd.poll() is None:
+            helper_cmd.kill()
+        steer_end(turn, 'cancelled')
+        return
+    asked = turn['steers'][:]
+    if asked:
+        update({'sessionUpdate': 'session_message', 'messageId': tool + ':reply', 'senderSessionId': child, 'recipientSessionId': SID(), 'content': [{'type': 'text', 'text': 'Async agent launched successfully.'}]})
+        for t in asked:
+            steer_say('Steered reply: ' + t)
+        steer_usage(None, 34900)
+        steer_usage(HUMAN)
+        while helper_cmd.poll() is None and not turn['cancel'].is_set():   # the prompt stays held until the helper finished
+            time.sleep(0.02)
+    if turn['cancel'].is_set():
+        steer_end(turn, 'cancelled')
+        return
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed'})
+    update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'state': {'state': 'idle', 'stopReason': 'end_turn'}})
+    steer_say('The helper finished.')
+    steer_usage(None, 35500)
+    steer_usage({'kind': 'task-notification', 'producer': 'session-task'} if asked else HUMAN)
+    steer_end(turn)
+
+
+def steer_perm(key):
+    """A permission card is open when the steer arrives. Claude (C4): injected, card stays, answered later: the first cycle ends (human usage_update), the steer
+    gets its own cycle (a second human usage_update), one end_turn. OMP (O2): the card is cancelled ($/cancel_request, tool failed 'superseded by user
+    steering') and the model asks again. Codex: like Claude, one reply."""
+    tool = 'toolu_steer_perm'
+    answers = {}
+    steer_ctx['answers'] = answers
+    turn = steer_begin(key)
+    update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'title': 'echo hello > note.txt', 'kind': 'execute', 'status': 'pending'})
+
+    def ask(request_id):
+        answers.pop(request_id, None)
+        answers[request_id + ':event'] = threading.Event()
+        emit({'id': request_id, 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': {'toolCallId': tool, 'title': 'echo hello > note.txt', 'kind': 'execute', 'status': 'pending', 'rawInput': {'command': 'echo hello > note.txt'}},
+              'options': [{'optionId': 'allow_once', 'name': 'Allow once', 'kind': 'allow_once'}, {'optionId': 'reject_once', 'name': 'Reject', 'kind': 'reject_once'}]}})
+
+    def answered(request_id, timeout=600):
+        event = answers[request_id + ':event']
+        deadline = time.time() + timeout
+        while not event.is_set() and time.time() < deadline:
+            if turn['cancel'].is_set():
+                return 'cancelled'
+            time.sleep(0.02)
+        return answers.get(request_id)
+    ask('steer-perm')
+    if args.steer == 'omp':
+        state = steer_wait(turn, lambda: answers['steer-perm:event'].is_set())
+        if state == 'cancel':
+            steer_end(turn, 'cancelled')
+            return
+        if state == 'steer':   # the card is withdrawn, the model asks again
+            asked = turn['steers'][:]
+            emit({'method': '$/cancel_request', 'params': {'requestId': 'steer-perm'}})
+            update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'failed', 'rawOutput': {'content': [{'type': 'text', 'text': 'Permission request superseded by user steering'}], 'details': {}}})
+            time.sleep(0.5)
+            ask('steer-perm-2')
+            outcome = answered('steer-perm-2')
+            if turn['cancel'].is_set():
+                steer_end(turn, 'cancelled')
+                return
+            update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed' if outcome != 'reject_once' else 'failed', 'rawOutput': {'content': [{'type': 'text', 'text': '(no output)'}], 'details': {}}})
+            steer_say('done\n\n' + ' '.join('Steered reply: ' + t for t in asked))
+            steer_end(turn)
+            return
+        outcome = answers.get('steer-perm')
+    else:
+        outcome = answered('steer-perm')
+    if turn['cancel'].is_set():
+        steer_end(turn, 'cancelled')
+        return
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed' if outcome != 'reject_once' else 'failed', 'rawOutput': 'Shell cwd was reset' if outcome != 'reject_once' else 'Rejected'})
+    steer_wait(turn, lambda: False, 1.0)   # the model goes on for a moment: a steer that arrives now (a held one, released by the answer) is read in this turn
+    if turn['steers']:
+        time.sleep(0.1)
+    if turn['cancel'].is_set():
+        steer_end(turn, 'cancelled')
+        return
+    asked = turn['steers'][:]
+    steer_say('Done.')
+    steer_usage(HUMAN)
+    for t in asked:   # the steer's own cycle
+        steer_say('Steered reply: ' + t)
+        steer_usage(HUMAN)
+    steer_end(turn)
+
+
 for line in sys.stdin:
     if _received_log:
         with open(_received_log, 'a', encoding='utf-8') as _log:
@@ -497,7 +841,15 @@ for line in sys.stdin:
             capabilities.setdefault('sessionCapabilities', {})['list'] = {}
         if args.held_turn and not args.not_claude:
             capabilities['_meta'] = {'claudeCode': {'promptQueueing': True}}
+        if args.steer == 'claude':
+            capabilities['_meta'] = {'claudeCode': {'promptQueueing': True}, 'authStatus': {}}
         init = {'protocolVersion': args.protocol_version, 'agentCapabilities': capabilities}
+        if args.steer:
+            init['_meta'] = {'steering': {'supported': True}}
+            if args.steer != 'other':
+                init['agentInfo'] = {'claude': {'name': '@agentclientprotocol/claude-agent-acp', 'title': 'Claude Agent', 'version': '0.97.0'},
+                                     'codex': {'name': '@agentclientprotocol/codex-acp', 'title': 'Codex', 'version': '2.6.0'},
+                                     'omp': {'name': 'omp', 'title': 'omp', 'version': '18.13.1'}}[args.steer]
         if args.auth_required and args.beta_auth:
             wants_terminal = bool(((params.get('clientCapabilities') or {}).get('auth') or {}).get('terminal'))
             init['authMethods'] = [{'id': 'gemini-api-key', 'name': 'Use an API key', 'description': 'Key in _meta.api-key'}]
@@ -600,6 +952,19 @@ for line in sys.stdin:
             update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Limits sent'}})
             update({'sessionUpdate': 'usage_update', 'used': 1000, 'size': 200000, '_meta': {'_claude/rateLimit': json.loads(said[10:]), '_claude/model': 'claude-opus-5-5'}})
             result(key, {'stopReason': 'end_turn'})
+    elif method == '_session/steering':
+        if args.steer:
+            steer_request(key, params)
+        else:
+            emit({'id': key, 'error': {'code': -32601, 'message': 'Method not found: _session/steering'}})
+    elif method == 'session/cancel' and steer_ctx.get('turn'):
+        steer_ctx['turn']['cancel'].set()
+    elif method is None and key in ('steer-perm', 'steer-perm-2') and 'answers' in steer_ctx:
+        outcome = message.get('result', {}).get('outcome', {})
+        steer_ctx['answers'][key] = outcome.get('optionId') or outcome.get('outcome')
+        steer_ctx['answers'][key + ':event'].set()
+    elif method == 'session/prompt' and args.steer and steer_scenario(key, next((b.get('text', '') for b in params['prompt'] if b.get('type') == 'text' and not b.get('text', '').startswith('<studio-context>')), '')):
+        pass
     elif method == 'session/prompt' and args.held_turn:
         held_turn(key, next((b.get('text', '') for b in params['prompt'] if b.get('type') == 'text' and not b.get('text', '').startswith('<studio-context>')), ''))
     elif key == 'helper-perm' and 'helper-perm' in held:
