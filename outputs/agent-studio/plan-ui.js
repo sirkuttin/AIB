@@ -250,6 +250,7 @@
           entries,
           sources: [src.raw],
           value: checklist(entries),
+          ...(row.rid ? { rid: row.rid } : {}), // the card's row id is its first plan's (scroll-controller.js anchors by it)
           ...(row.ctx ? { ctx: true } : {}),
         };
         out.push(cur);
@@ -298,6 +299,7 @@
       role: 'nextstep',
       label: 'Next step',
       time: row.time,
+      ...(row.rid ? { rid: row.rid } : {}),
       recap,
       ask,
       actions,

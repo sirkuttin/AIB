@@ -247,6 +247,10 @@ details p {
 input[type='checkbox'] {
   accent-color: var(--accent);
 }
+/* A list whose scroll position scroll-controller.js owns: Chrome's own scroll anchoring would move it as well (and twice). */
+.scroll-list {
+  overflow-anchor: none;
+}
 #messages {
   flex: 1;
   overflow: auto;

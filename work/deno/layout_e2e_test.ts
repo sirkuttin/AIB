@@ -18,17 +18,32 @@
  * Without Chrome or Edge (CHROME_PATH chooses one) every test is ignored. When a bug is fixed, delete its name from KNOWN_FAILING.
  */
 import { assert } from './_assert.ts';
-import { browserPath, type Chat, clickHere, following, Lab, m, type M, type Page, settle, shown, sleep, wheel } from './_scroll_lab.ts';
+import {
+  browserPath,
+  type Chat,
+  clickHere,
+  following,
+  Lab,
+  m,
+  type M,
+  type Page,
+  ownerProblems,
+  rowFramesProblems,
+  settle,
+  shown,
+  sleep,
+  startRowFrames,
+  stopRowFrames,
+  wheel,
+} from './_scroll_lab.ts';
 
 const ALL = Deno.env.get('AIB_LAYOUT_ALL') === '1';
 
 /** Tests that fail today: each is a finding in the layout audit (the comment in the test gives the cause and the fix). */
 export const KNOWN_FAILING = new Set<string>([
-  'L2g following, chat text size and interface size change: the chat stays at the bottom, following',
   'L2m a window resize across a layout bucket (1600 -> 1300 -> 1600) gives the composer and the list back their heights',
   'L4c composer handle: drags between 56 px and a height that leaves the chat list 120 px, the height survives a reload',
   'L6d Settings: each section opens at its top, no double scrollbars, no sideways scroll',
-  'L7a split view: the side pane at the bottom stays at the bottom when the window narrows, and keeps following',
   'L2p with the viewer open (chat column ~440 px), the empty message box has no scrollbar of its own',
 ]);
 
@@ -43,6 +58,8 @@ function layoutTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number
       try {
         await fn(lab);
         assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
+        const owner = await ownerProblems(lab.page);
+        assert(!owner, owner);
       } finally {
         await lab.close();
       }
@@ -217,11 +234,14 @@ layoutTest('L1c reading midway, open a doc from the Artifacts tab: the row you w
   await page.waitFor(`!!document.querySelector('.ar-empty .ar-doc')`, 8000, 'the doc row in the Artifacts tab');
   await readMidway(page);
   const { a, x } = await readingState(page);
+  await startRowFrames(page, a!.text);
   await clickHere(page, '.ar-empty .ar-doc');
   await waitViewing(page, true);
+  const drawn = rowFramesProblems(await stopRowFrames(page), a!, 24);
   const moved = await rowMoved(page, a);
   const y = await m(page);
   assert(!moved, `${moved} (scrollTop ${x.top} -> ${y.top}, scrollHeight ${x.height} -> ${y.height})`);
+  assert(!drawn, `while the column widened, frame by frame: ${drawn}`);
   assert(y.paused, 'still paused (you were reading)');
   chat.end();
 });
@@ -316,8 +336,8 @@ async function reload(lab: Lab, chat: { key: string }) {
 }
 
 /** Reading midway, run `act`, then the row must still be at the top and the list still paused. */
-async function keepsReadingRow(page: Page, act: () => Promise<unknown>, what: string, box = 'messages') {
-  await readMidway(page, box);
+async function keepsReadingRow(page: Page, act: () => Promise<unknown>, what: string, box = 'messages', scrollFirst = true) {
+  if (scrollFirst) await readMidway(page, box);
   const { a, x } = await readingState(page, box);
   await act();
   await settle(1200);
@@ -363,12 +383,20 @@ async function fileLinkInReply(lab: Lab, chat: Chat) {
 layoutTest('L2a reading midway, the window gets narrower then wider: the row you were reading stays at the top', async (lab) => {
   const page = lab.page;
   await openSeeded(lab, 40);
-  await keepsReadingRow(page, () => page.viewport(1200, 900), 'window 1600 -> 1200');
+  await readMidway(page);
+  const r0 = await readingState(page);
+  await startRowFrames(page, r0.a!.text);
+  await keepsReadingRow(page, () => page.viewport(1200, 900), 'window 1600 -> 1200', 'messages', false);
+  const narrower = rowFramesProblems(await stopRowFrames(page), r0.a!, 24);
+  assert(!narrower, `window 1600 -> 1200, frame by frame: ${narrower}`);
   const { a } = await readingState(page);
+  await startRowFrames(page, a!.text);
   await page.viewport(1600, 900);
   await settle(1200);
+  const wider = rowFramesProblems(await stopRowFrames(page), a!, 24);
   const moved = await rowMoved(page, a);
   assert(!moved, `window 1200 -> 1600: ${moved}`);
+  assert(!wider, `window 1200 -> 1600, frame by frame: ${wider}`);
 });
 
 layoutTest('L2b following, the window gets narrower and shorter, then back: the chat stays at the bottom, following', async (lab) => {
@@ -424,6 +452,21 @@ layoutTest('L2g following, chat text size and interface size change: the chat st
   await keepsFollowing(page, () => page.eval('AgentTextSize.setChat(130)'), 'chat text 130 %');
   await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 125 %');
   await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(100)'), 'interface 100 %');
+});
+
+// At 150 % interface size the browser rounds positions (a write of 1000.5 reads back as 1000.67): the controller reads back what
+// it wrote, so its own writes never look like you scrolling.
+layoutTest('L2q at 150 % interface size: reading keeps its row through a chat text change; following stays at the bottom through size changes', async (lab) => {
+  const page = lab.page;
+  await page.eval('AgentTextSize.setUi(150)');
+  await settle(800);
+  await openSeeded(lab, 40);
+  await keepsFollowing(page, () => page.eval('AgentTextSize.setChat(130)'), 'chat text 130 % at 150 %');
+  await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 150 -> 125 %');
+  await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(150)'), 'interface 125 -> 150 %');
+  await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(100)'), 'chat text 100 % at 150 %');
+  await keepsReadingRow(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 150 -> 125 % while reading', 'messages', false);
+  await page.eval('AgentTextSize.setUi(100)');
 });
 
 layoutTest('L2h reading midway, the chat list and the right column hide and show (Ctrl+B, Ctrl+Alt+B): the row stays', async (lab) => {

@@ -27,7 +27,7 @@ El.prototype.insertBefore = function (node, ref) {
   this.children.splice(i < 0 ? this.children.length : i, 0, node);
 };
 
-const SCRIPTS = ['read-state.js', 'stream-ui.js', 'tool-views.js', 'plan-ui.js', 'views.js', 'views-ui.js'];
+const SCRIPTS = ['read-state.js', 'stream-ui.js', 'tool-views.js', 'plan-ui.js', 'views.js', 'views-ui.js', 'scroll-controller.js'];
 const ev = (kind, data, time) => ({ kind, time, data: { sessionId: 's', ...data } });
 const say = (text, time) => ev('user', { text }, time);
 const reply = (text, time) =>
@@ -73,6 +73,7 @@ function unreadPage(view = 'full') {
   const scrollUp = () => {
     box.scrollHeight = 5000;
     box.clientHeight = 500;
+    page.hook.mainCtl().apply(); // laid out on screen (its ResizeObserver): the list follows, at its end
     box.scrollTop = 100;
     box.listeners.scroll();
   };
@@ -110,12 +111,14 @@ test('read some messages, switch Full > Chat > Prompts > Full: the unread count 
   const seen = [];
   for (const view of ['chat', 'prompts', 'full']) {
     t.page.hook.setView(view);
-    /* the browser fires scroll events by itself when the content changes height: even one at the bottom changes nothing */
-    t.box.scrollHeight = 300;
-    t.box.scrollTop = 0;
+    /* the browser lays the list out again and fires scroll events by itself when the content changes height. The scroll
+       controller (scroll-controller.js) has put the list back after layout, before those events arrive (its ResizeObserver,
+       here called by hand), so they report the place it left the list at: none of that is you scrolling. */
+    t.box.scrollHeight = 4000;
+    t.page.hook.mainCtl().apply();
     t.box.listeners.scroll();
     t.box.scrollHeight = 5000;
-    t.box.scrollTop = 100;
+    t.page.hook.mainCtl().apply();
     t.box.listeners.scroll();
     assert.deepEqual(t.pending(), first, view + ': nothing became read or unread');
     /* Prompts draws no message bubbles, so it draws no line; the others put it before the first unread row */

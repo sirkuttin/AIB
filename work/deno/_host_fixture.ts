@@ -29,7 +29,20 @@ Deno.env.set('AGENT_STUDIO_TEST', '1');
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** AIB_TEST_PORT_BASE (e.g. 21000): take ports from [base, base + 2000) in turn, so suites run side by side never pick the same
+ *  free port (the OS hands out "free" ports another suite is about to bind). Without it, any free port. */
+let nextPort = Number(Deno.env.get('AIB_TEST_PORT_BASE') || 0);
+const portEnd = nextPort + 2000;
 export function freePort(): number {
+  while (nextPort && nextPort < portEnd) {
+    const want = nextPort++;
+    if ([8767, 8768, 8777, 8778].includes(want)) continue; // never the live AIB's ports
+    try {
+      const l = Deno.listen({ hostname: '127.0.0.1', port: want });
+      l.close();
+      return want;
+    } catch { /* taken: the next one */ }
+  }
   const listener = Deno.listen({ hostname: '127.0.0.1', port: 0 });
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
