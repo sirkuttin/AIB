@@ -1,39 +1,7 @@
 /* The phone page (phone.html). Its own small stylesheet: the desktop chat.html and its CSS are never loaded on the phone.
    Phone sizes: drawn for 375 px wide, safe-area insets, 44 px tap targets, 16 px inputs (iPhone does not zoom). No sideways scroll:
    long words and paths wrap; only code blocks scroll inside themselves. */
-:root {
-  --bg: #f6f6f8;
-  --card: #ffffff;
-  --text: #16151b;
-  --muted: #5d5b66;
-  --line: #e2e1e6;
-  --accent: #1f8f82;
-  --accent-text: #ffffff;
-  --need: #c2410c;
-  --need-bg: #fff1eb;
-  --work: #1f8f82;
-  --turn: #8a6100;
-  --you: #e7f6f3;
-  --code: #f0f0f3;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #121116;
-    --card: #1c1b22;
-    --text: #ecebf0;
-    --muted: #a3a1ad;
-    --line: #2e2d36;
-    --accent: #2bb3a3;
-    --accent-text: #0e1513;
-    --need: #ff8a65;
-    --need-bg: #2b1a14;
-    --work: #2bb3a3;
-    --turn: #ffc247;
-    --you: #18302c;
-    --code: #24232b;
-  }
-}
+/* Colours: theme.css tokens only (the phone page loads themes.js and theme.css; the server marks <html> with the PC's theme). */
 * {
   box-sizing: border-box;
 }
@@ -107,11 +75,11 @@ body {
   color: var(--muted);
 }
 .ph-chip.live {
-  color: var(--work);
+  color: var(--hd-work);
   border-color: currentColor;
 }
 .ph-chip.off {
-  color: var(--need);
+  color: var(--hd-need);
   border-color: currentColor;
 }
 /* ---- sections and cards ---- */
@@ -131,7 +99,7 @@ body {
   min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--card);
+  background: var(--card-bg);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -140,8 +108,8 @@ button.ph-card {
   cursor: pointer;
 }
 .ph-card.need {
-  border-color: var(--need);
-  background: var(--need-bg);
+  border-color: var(--hd-need);
+  background: var(--chip-needs-bg);
 }
 .ph-card.main {
   padding: 14px 16px;
@@ -160,14 +128,14 @@ button.ph-card {
 }
 .ph-meta .need,
 .ph-state.need {
-  color: var(--need);
+  color: var(--hd-need);
   font-weight: 600;
 }
 .ph-state.work {
-  color: var(--work);
+  color: var(--hd-work);
 }
 .ph-state.turn {
-  color: var(--turn);
+  color: var(--hd-turn);
 }
 .ph-badge {
   float: right;
@@ -175,8 +143,9 @@ button.ph-card {
   margin-left: 8px;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--need);
-  color: #fff;
+  background: var(--chip-needs-bg);
+  color: var(--hd-need);
+  border: 1px solid var(--hd-need);
   font-size: 14px;
   text-align: center;
 }
@@ -216,7 +185,7 @@ button.ph-card {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--card);
+  background: var(--card-bg);
   color: var(--text);
   font: inherit;
   font-size: 16px;
@@ -230,7 +199,7 @@ button.ph-card {
   border: 0;
   border-radius: 12px;
   background: var(--accent);
-  color: var(--accent-text);
+  color: var(--on-accent);
   font: inherit;
   font-weight: 600;
 }
@@ -250,14 +219,14 @@ button.ph-card {
   margin: 12px 0;
   padding: 10px 12px;
   border-radius: 10px;
-  background: var(--need-bg);
-  color: var(--need);
+  background: var(--chip-needs-bg);
+  color: var(--hd-need);
 }
 .ph-words {
   margin: 8px 0;
   padding: 14px;
   border-radius: 12px;
-  background: var(--card);
+  background: var(--card-bg);
   border: 1px solid var(--line);
   font-size: 24px;
   font-weight: 700;
@@ -276,12 +245,12 @@ button.ph-card {
   margin: 12px 0;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid var(--need);
-  background: var(--need-bg);
+  border: 1px solid var(--hd-need);
+  background: var(--chip-needs-bg);
 }
 .ph-wait b {
   display: block;
-  color: var(--need);
+  color: var(--hd-need);
 }
 .ph-earlier {
   margin: 12px 0;
@@ -296,7 +265,7 @@ button.ph-card {
   margin-left: 32px;
   padding: 10px 12px;
   border-radius: 14px 14px 4px 14px;
-  background: var(--you);
+  background: var(--bubble-user-bg);
   white-space: pre-wrap;
 }
 .ph-msg.agent > :first-child {
@@ -314,7 +283,7 @@ button.ph-card {
 .ph-msg pre,
 .ph-msg code {
   font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
-  background: var(--code);
+  background: var(--code-bg);
   border-radius: 6px;
 }
 .ph-msg pre {
@@ -377,9 +346,9 @@ button.ph-card {
   margin: 12px 0;
   padding: 8px 12px;
   border-radius: 10px;
-  background: var(--card);
+  background: var(--card-bg);
   border: 1px solid var(--line);
-  color: var(--work);
+  color: var(--text);
   font-size: 14px;
 }
 .ph-pconly {
@@ -394,7 +363,7 @@ button.ph-card {
   padding: 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: var(--card);
+  background: var(--card-bg);
 }
 .ph-offline h2 {
   margin: 0 0 4px;

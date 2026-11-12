@@ -10,7 +10,7 @@
 import { APP_ROOT, APP_VERSION } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
-import type { WebContext } from '../web/server.ts';
+import { type WebContext, withThemePref } from '../web/server.ts';
 import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
@@ -27,6 +27,8 @@ const MAX_BODY = 16 * 1024;
 /** The phone page's files (and only these) are served on the phone port. Never chat.html, '/', or the page bootstrap. */
 export const REMOTE_STATIC: Readonly<Record<string, string>> = {
   '/phone.html': 'phone.html',
+  '/themes.js': 'themes.js',
+  '/theme.css': 'theme.css',
   '/phone.css': 'phone.css',
   '/phone.js': 'phone.js',
   '/phone-words.js': 'phone-words.js',
@@ -211,9 +213,12 @@ export class RemoteServer {
 
   async #static(request: Request, path: string): Promise<Response> {
     const name = REMOTE_STATIC[path];
-    const body = await Deno.readFile(APP_ROOT + sep + name);
+    let body: Uint8Array<ArrayBuffer> = await Deno.readFile(APP_ROOT + sep + name);
     const headers: Record<string, string> = { 'Content-Type': contentType(name), ...securityHeadersRemote() };
     if (path === '/phone.html') {
+      // The phone shows the PC's colour theme (only the theme id goes on <html>; no other view preference).
+      const theme = this.host.ctx.viewPrefs.public().prefs['aib-theme'];
+      body = new TextEncoder().encode(withThemePref(new TextDecoder().decode(body), theme));
       // A paired phone's cookie is renewed each time the page loads (rolling expiry; Chrome caps a cookie at 400 days).
       const cookie = cookieOf(request.headers);
       const device = this.host.devices.byCookie(cookie);

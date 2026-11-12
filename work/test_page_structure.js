@@ -15,6 +15,7 @@ const VOID = new Set(['meta', 'link', 'input', 'br', 'img', 'hr', 'source', 'wbr
 const SCRIPT_SRC = /<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)"/g; // reads the tag, not its exact spelling
 const LOADED_ON_DEMAND = new Set(['elicitation-ui.js']); // fetched by chat.js only when the server supports questions
 const DOC_HTML = fs.readFileSync(path.join(APP, 'doc.html'), 'utf8'); // the doc page loads its own scripts
+const PHONE_HTML = fs.readFileSync(path.join(APP, 'phone.html'), 'utf8'); // the phone page (phone port only) loads its own
 const scripts = () => [...HTML.matchAll(SCRIPT_SRC)].map((m) => m[1]);
 
 /** Elements of an HTML text in document order as {tag, attrs, parents} (parents: the open elements around it, outermost first). */
@@ -82,7 +83,7 @@ test('every served module is loaded', () => {
   // The server serves any plainly named .js/.css in the app folder (studioAsset); every such script except the monitor
   // dashboard's own must be loaded by chat.html, or it is dead code.
   const served = fs.readdirSync(APP).filter((n) => n.endsWith('.js') && servedAsset('/' + n));
-  const loaded = new Set([...scripts(), ...[...DOC_HTML.matchAll(SCRIPT_SRC)].map((m) => m[1])]);
+  const loaded = new Set([...scripts(), ...[...DOC_HTML.matchAll(SCRIPT_SRC)].map((m) => m[1]), ...[...PHONE_HTML.matchAll(SCRIPT_SRC)].map((m) => m[1])]);
   assert.deepEqual(
     served.filter((n) => !loaded.has(n) && !LOADED_ON_DEMAND.has(n)),
     [],
