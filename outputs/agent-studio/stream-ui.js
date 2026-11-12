@@ -383,6 +383,49 @@
     sync();
     return card;
   }
+  /* ---- Redraw by difference: put the fragment's rows into the list, keeping each row already there that would be drawn the
+     same (its markup when it was built matches the new one's). A kept row is not touched, so the browser does not style and lay
+     out the whole window again on every update (a chat streaming into a long history spent ~40 ms a poll on that), and what
+     the reader did to it stays: a step opened, a long block shown in full, text selected.
+     Top-level buttons ("Show earlier") are always replaced: their click handlers hold the rows of the draw that made them.
+     Returns the number of rows kept. */
+  const printOf = (n) => (n.nodeType === 1 ? n.outerHTML : '#' + n.nodeType + ':' + n.textContent);
+  function patchChildren(box, fragment) {
+    const fresh = Array.from(fragment.childNodes || []);
+    if (
+      !box.childNodes ||
+      fresh.some((n) => !(n.nodeType === 3 || (n.nodeType === 1 && typeof n.outerHTML === 'string')))
+    ) {
+      box.replaceChildren(fragment); // a page without markup to compare (the test pages): draw it all
+      return 0;
+    }
+    const spare = new Map(); // print -> old rows with that print, in order
+    for (const old of Array.from(box.childNodes)) {
+      if (old._drawPrint == null || old.nodeName === 'BUTTON') continue;
+      const list = spare.get(old._drawPrint);
+      if (list) list.push(old);
+      else spare.set(old._drawPrint, [old]);
+    }
+    let kept = 0;
+    const want = fresh.map((n) => {
+      const print = printOf(n);
+      const list = spare.get(print);
+      if (list && list.length) {
+        kept++;
+        return list.shift();
+      }
+      n._drawPrint = print;
+      return n;
+    });
+    const keep = new Set(want);
+    for (const old of Array.from(box.childNodes)) if (!keep.has(old)) old.remove();
+    for (let i = 0; i < want.length; i++) {
+      const at = box.childNodes[i] || null;
+      if (at !== want[i]) box.insertBefore(want[i], at);
+    }
+    return kept;
+  }
+
   function earlierButton(hidden, reveal, onClick) {
     const b = make('button', 'show-earlier', 'Show earlier messages (' + hidden + ' more)');
     b.type = 'button';
@@ -411,6 +454,7 @@
     divider,
     noteCard,
     earlierButton,
+    patchChildren,
     WINDOW_ROWS,
     WINDOW_CHUNK,
   };

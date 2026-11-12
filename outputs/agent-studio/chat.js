@@ -1491,7 +1491,8 @@
       if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, draw));
       else for (const row of drawn) fragment.append(draw(row));
     }
-    box.replaceChildren(fragment);
+    if (window.StreamUI?.patchChildren) window.StreamUI.patchChildren(box, fragment);
+    else box.replaceChildren(fragment);
     for (const i of opens) if (box.querySelectorAll('details')[i]) box.querySelectorAll('details')[i].open = true;
     placeNewLine(box, flat, rows);
     if (followBox(box)) box.scrollTop = box.scrollHeight;

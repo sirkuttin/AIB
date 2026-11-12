@@ -24,28 +24,47 @@
     button.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
-  function apply(box) {
+  /* `recheck`: also measure blocks that were hidden last time (inside a closed step), after a toggle or click may have shown them.
+     Blocks are measured in one pass: every new block is clamped first, then all are read, then labelled, so a redraw costs one
+     layout, not one per block. A hidden block is not measured again on every mutation (that forced a layout on each streaming
+     update), only on the next toggle, click or when the list itself becomes visible. */
+  function apply(box, recheck) {
     if (!box) return;
+    if (box.getClientRects && box.getClientRects().length === 0) return; // the list is hidden: measured when it shows
     const keep = expanded.get(box.id) || new Set();
     expanded.set(box.id, keep);
     const blocks = box.querySelectorAll(BLOCKS);
+    const fresh = [];
     for (let i = 0; i < blocks.length; i++) {
-      const pre = blocks[i];
-      if (pre.dataset.clamp) continue;
+      const pre = blocks[i],
+        state = pre.dataset.clamp;
+      if (state && !(recheck && state === 'later')) continue;
       if (pre.closest('.clamp-skip')) {
         pre.dataset.clamp = 'skip';
         continue;
       }
-      if (pre.getClientRects().length === 0) continue; // inside a closed <details>: measure when it opens
+      fresh.push(i);
+    }
+    if (!fresh.length) return;
+    for (const i of fresh) blocks[i].classList.add('clamp-block', 'clamp-on');
+    const seen = fresh.map((i) => {
+      const pre = blocks[i];
+      if (pre.getClientRects().length === 0) return 'later'; // inside a closed <details>: measure when it opens
+      return pre.scrollHeight <= pre.clientHeight + 4 ? 'fits' : 'long';
+    });
+    fresh.forEach((i, n) => {
+      const pre = blocks[i];
+      pre.dataset.clamp = seen[n];
+      if (seen[n] === 'later') {
+        pre.classList.remove('clamp-block', 'clamp-on');
+        return;
+      }
+      if (seen[n] === 'fits') {
+        pre.classList.remove('clamp-on');
+        return;
+      }
       const key = blockKey(i, pre.textContent);
       const lines = lineCount(pre.textContent);
-      pre.classList.add('clamp-block', 'clamp-on');
-      if (pre.scrollHeight <= pre.clientHeight + 4) {
-        pre.classList.remove('clamp-on');
-        pre.dataset.clamp = 'fits';
-        continue;
-      }
-      pre.dataset.clamp = 'long';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'clamp-toggle';
@@ -59,7 +78,7 @@
         setLabel(button, nowOpen, lines);
       });
       pre.after(button);
-    }
+    });
   }
 
   function watch(id) {
@@ -68,21 +87,32 @@
     let queued = false;
     const run = () => {
       queued = false;
-      apply(box);
+      apply(box, true);
     };
-    // Clamp rebuilt rows in the observer itself: it runs before the next paint, so a long block is never drawn at full
-    // height for a frame (a timer here made the whole history flash open and jump on every update).
-    new MutationObserver(() => apply(box)).observe(box, { childList: true, subtree: true });
-    box.addEventListener(
-      'toggle',
-      () => {
-        if (!queued) {
-          queued = true;
-          setTimeout(run, 30);
-        }
-      },
-      true,
-    );
+    const later = () => {
+      if (!queued) {
+        queued = true;
+        setTimeout(run, 30);
+      }
+    };
+    // Clamp rebuilt rows in the observer itself: it runs before the next paint, so a long block is never drawn at full height
+    // for a frame (a timer here made the whole history flash open and jump on every update). The toggle buttons it adds are
+    // its own mutations: dropped, so they do not run it again.
+    const observer = new MutationObserver(() => {
+      apply(box);
+      observer.takeRecords?.();
+    });
+    observer.observe(box, { childList: true, subtree: true });
+    box.addEventListener('toggle', later, true);
+    box.addEventListener('click', later, true);
+    if (typeof ResizeObserver === 'function') {
+      let shown = false;
+      new ResizeObserver(() => {
+        const now = box.clientHeight > 0;
+        if (now && !shown) run();
+        shown = now;
+      }).observe(box);
+    }
     apply(box);
   }
 

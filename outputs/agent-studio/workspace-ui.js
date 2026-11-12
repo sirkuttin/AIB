@@ -1303,6 +1303,9 @@
   function autosize() {
     const box = doc().getElementById('prompt');
     if (!box || !box.style) return;
+    /* A one-line composer whose text still fits stays as it is. Resetting to 'auto' to measure laid the whole page out twice on
+       every key press (the chat history above shrinks and grows with the composer), which made typing stutter in a long chat. */
+    if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
     box.style.height = 'auto';
     const cap = root.ResizeUI && root.ResizeUI.composerCap ? root.ResizeUI.composerCap(root) : 200;
     const h = Math.min(cap, Math.max(56, box.scrollHeight || 0));

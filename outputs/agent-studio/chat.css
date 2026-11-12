@@ -261,6 +261,9 @@ input[type='checkbox'] {
   overflow-anchor: none;
   padding: 10px 30px 20px;
   scrollbar-width: thin;
+  /* Its size comes from the column it fills, never from its rows: without this every layout of the chat column (each key
+     press in the composer, each streaming update next to the list) laid out the whole visible history again, ~10 ms a time. */
+  contain: size;
 }
 .bubble {
   border: 1px solid var(--line);
@@ -891,6 +894,7 @@ header p {
   overflow: auto;
   padding: 10px 16px;
   scrollbar-width: thin;
+  contain: size; /* as #messages: sized by its pane, not by its rows */
 }
 .subchat-note {
   font-size: 10px;
