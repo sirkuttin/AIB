@@ -556,6 +556,13 @@ Deno.test({
           );
           // delete from the row's ⋯ menu, with the confirm
           const rollout = doc.live.pageList()[1].id;
+          // `titles()` is the server's list; the page draws it a moment later. Clicking before it has would aim at the old
+          // layout, and the redraw can slide another row under the pointer (the delete then hit Overview, not Rollout plan).
+          await p.waitFor(
+            `[...document.querySelectorAll('#pageList .pg .nm')].map((n) => n.textContent).join() === ${JSON.stringify(titles().join())}`,
+            8000,
+            'the page list drawn in the new order',
+          );
           await p.click(`#pageList .pg[data-page="${rollout}"] .more`);
           await p.click('.menu .mi.dng');
           await p.click('.pop .btn.dng');
