@@ -98,6 +98,8 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
   transcript(claude, "s-main", aibWt, 1, "Work on main");
   transcript(claude, "s-art", art, 2, "Artifact test");
   transcript(claude, "s-zeta", zeta, 3, "Work on zeta");
+  // An AIB used before this version: no added-projects list yet, so every project it showed is kept on the first list.
+  Deno.removeSync(`${fx.state}${SEP}studio-added-projects.json`);
   // studio-worktrees.json: the AIB worktree's project is the Claude worktree (what the server files the chat under).
   Deno.writeTextFileSync(
     `${fx.state}${SEP}studio-worktrees.json`,

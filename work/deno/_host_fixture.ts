@@ -6,6 +6,7 @@
 import { python, WORK } from './_parity.ts';
 import { HostClient, pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 
 const WIN = Deno.build.os === 'windows';
 export const SEP = WIN ? '\\' : '/';
@@ -135,6 +136,13 @@ export class Fixture {
 
   constructor() {
     for (const name of ['state', 'owners', 'workspace', 'omp', 'claude']) Deno.mkdirSync(this.root + SEP + name);
+    // The workspace is a project the user added: AIB lists a data folder's saved agent chats only for added projects
+    // (desktop/added_projects.ts), and the scroll / layout labs write saved chats there.
+    const added = { [projectKey(this.workspace)]: { path: this.workspace, at: 1 } };
+    Deno.writeTextFileSync(
+      this.state + SEP + 'studio-added-projects.json',
+      JSON.stringify({ version: 1, savedAt: 1, start: 'fresh', added }),
+    );
   }
 
   /** AIB_KEEPER=0: this fixture tests the split agent host (the fallback when the keeper cannot run); keeper tests drop it. */
