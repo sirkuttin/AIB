@@ -379,9 +379,17 @@ export function startAttention(ctx: AttentionContext, options: { pollMs?: number
       }
       : undefined,
   });
+  let sending: Promise<void> = Promise.resolve();
   const watcher = new AttentionWatcher(
     { ...ctx, firstPrompt: (id) => ctx.phone.titles.titles.get(id) ?? '' },
-    { stateDir: ctx.stateDir, pollMs: options.pollMs, onFire: (fires) => notifier.fire(fires) },
+    {
+      stateDir: ctx.stateDir,
+      pollMs: options.pollMs,
+      // in order, without holding up the next look (a slow push service never delays a "needs you")
+      onFire: (fires) => {
+        sending = sending.then(() => notifier.fire(fires)).catch(() => {});
+      },
+    },
   );
   watcher.start();
   return watcher;
