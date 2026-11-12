@@ -131,7 +131,6 @@ test('the one-pane page is the page of today', () => {
       ['div', 'ownershipBar'],
       ['section', 'setup'],
       ['div', 'error'],
-      ['div', 'updateBanner'],
       ['div', 'studioNotice'],
       ['div', 'authPrompts'],
       ['div', 'setupQuestions'],

@@ -4681,7 +4681,7 @@
     settingsChanged,
   });
   window.StartPageUI?.init();
-  window.AibUpdates?.init({ get: (path, params) => get(path, params), post }, $('updateBanner'));
+  window.AibUpdates?.init({ get: (path, params) => get(path, params), post }); // the Update button at the strip's right end
 
   try {
     renderAgents();

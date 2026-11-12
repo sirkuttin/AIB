@@ -434,43 +434,7 @@ test('a click on the app\'s notification opens its chat (openFromDesktop)', () =
   assert.equal(N.openFromDesktop({ type: 'chat', key: 'x' }), false, 'not ready yet: the app tries again');
 });
 
-test('the amber update line', () => {
-  const ready = { state: 'ready', inPlace: true, installWhenIdle: false, available: { version: '0.1.2' } };
-  const b = U.banner(ready, new Set());
-  assert.equal(b.show, true);
-  assert.equal(b.text, 'AIB 0.1.2 is ready to install.');
-  assert.deepEqual(
-    b.buttons.map((x) => x.label),
-    ['Install now', 'Later'],
-  );
-  assert.equal(U.banner(ready, new Set(['0.1.2'])).show, false, 'Later hides it');
-  assert.equal(U.banner(ready, new Set(['0.1.1'])).show, true, 'a newer version asks again');
-  for (const state of ['none', 'found', 'refused', 'error', 'unconfigured'])
-    assert.equal(U.banner({ state, available: { version: '9' } }, new Set()).show, false, state);
-  const busy = U.banner(ready, new Set(), { kind: 'busy', chats: 2 });
-  assert.match(busy.text, /^2 chats are working/);
-  assert.deepEqual(
-    busy.buttons.map((x) => x.label),
-    ['Install when chats finish', 'Later'],
-  );
-  const installing = U.banner(ready, new Set(), { kind: 'installing', chats: 2 });
-  assert.equal(installing.text, 'Installing AIB 0.1.2. AIB will close and open again by itself. Your working chats keep running.');
-  assert.deepEqual(installing.buttons, []);
-  assert.equal(
-    U.banner(ready, new Set(), { kind: 'installing', chats: 0 }).text,
-    'Installing AIB 0.1.2. AIB will close and open again by itself.',
-  );
-  const waiting = U.banner(Object.assign({}, ready, { installWhenIdle: true }), new Set(['0.1.2']));
-  assert.equal(waiting.show, true, 'a waiting install stays visible');
-  assert.match(waiting.text, /will install when your chats finish/);
-  const manual = U.banner(Object.assign({}, ready, { inPlace: false, instructions: 'Open the file.' }), new Set());
-  assert.match(manual.text, /downloaded and verified\. Open the file\./);
-  assert.deepEqual(
-    manual.buttons.map((x) => x.id),
-    ['later'],
-    'never an Install button where it cannot install',
-  );
-});
+// The amber update line is gone: the Update button at the top right replaced it (test_update_button.js).
 
 test('the Settings card: a source run says updates come through the desktop app, and a failed check says when (QA 4 #11, #12)', () => {
   const src = { state: 'unconfigured', current: '0.1.0-beta.2', desktop: false, configured: false };

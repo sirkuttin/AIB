@@ -27,6 +27,7 @@ import type { LiveBackend } from './host/backend.ts';
 import { holdKeeper, orphanCommand, Studio } from './host/studio.ts';
 import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
 import { UpdateService } from './desktop/updater.ts';
+import { notifyUpdateReady } from './desktop/notify.ts';
 import { makeContext, WebServer } from './web/server.ts';
 import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
@@ -275,6 +276,9 @@ export async function main(argv: string[]): Promise<void> {
     // AIB only in the tray (the keeper's restart after a crash, or a quit the keeper could not hold): "Install when chats finish"
     // waits for the next launch, so an update never opens a window after the person quit.
     holdInstall: () => desktopApp?.background ?? false,
+    // One desktop notification per version once an update is downloaded and verified ("Desktop notifications" on), sent here so it
+    // also comes while the window is closed to the tray. A server run has no desktop notifications.
+    onReady: (version) => void notifyUpdateReady(ctx.desktopNotify, ctx.viewPrefs.public().prefs, version),
     // One process with the keeper: Install now leaves the chats in the keeper and the new version takes them over.
     keeper: studio?.keeper
       ? async () => {

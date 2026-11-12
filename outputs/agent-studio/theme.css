@@ -141,9 +141,10 @@
   --studio-notice-line: color-mix(in srgb, var(--warn) 34%, var(--bg)); /* .studio-notice {border} */
   --studio-notice-bg: color-mix(in srgb, var(--warn) 11%, var(--bg)); /* .studio-notice {background} */
   --studio-notice-text: color-mix(in srgb, var(--warn) 42%, var(--text)); /* .studio-notice {color} */
-  --update-btn-line: color-mix(in srgb, var(--warn) 54%, var(--bg-field)); /* .update-banner .update-btn {border} */
-  --update-btn-text: color-mix(in srgb, var(--warn) 28%, var(--text)); /* .update-banner .update-btn {color} */
-  --update-btn-bg: color-mix(in srgb, var(--warn) 19%, var(--bg)); /* .update-banner .update-btn:hover {background} */
+  --update-btn-line: var(--accent); /* .upd-btn {border-color} */
+  --update-btn-text: var(--on-accent); /* .upd-btn {color} */
+  --update-btn-bg: var(--accent); /* .upd-btn {background} */
+  --update-btn-hover-bg: color-mix(in srgb, var(--accent) 85%, var(--text)); /* .upd-btn:hover {background} */
   --activity-dot-bg: color-mix(in srgb, var(--line) 58%, var(--text-faint)); /* .sa-dot {background}; .ac-dot {background} */
   --activity-dot-failed-bg: color-mix(in srgb, var(--danger) 84%, var(--bg)); /* .sa-failed .sa-dot,.proc-failed .sa-dot {background} */
   --activity-failed-text: color-mix(in srgb, var(--danger-bright) 94%, var(--bg)); /* .sa-failed .sa-title {color}; .proc-failed .proc-title {color} */
@@ -433,7 +434,6 @@
   --syn-del-bg: #33191d;
   --mark-failed-text: #ff6b6b;
   --studio-notice-text: #f0d9a0;
-  --update-btn-text: #f7e6b8;
   --activity-dot-failed-bg: #d9666e;
   --field-invalid-line: #c25f5f;
   --count-turn-text: #0e1f17;

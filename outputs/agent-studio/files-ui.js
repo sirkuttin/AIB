@@ -93,6 +93,9 @@
     beside = F() ? F().emptyTabs() : { tabs: [], active: '' },
     view = 'chat'; // what the middle shows: 'chat' or 'file'
   const reads = new Map(); // tab id -> {loading, data, error, mode, gutter: Set|null}
+  // "What's new in AIB <version>" tabs (updates-ui.js, once after an update): tab id -> {version, releases}. Not saved: the notes
+  // come from the server once, so the tab is gone after a reload.
+  const notesData = new Map();
   let els = null;
 
   const store = {
@@ -116,7 +119,7 @@
     const out = {};
     for (const pk of Object.keys(tabsByProject)) {
       const t = tabsByProject[pk];
-      if (t && t.tabs.length) out[pk] = { tabs: t.tabs.filter((x) => !x.preview).slice(0, 40), active: '' };
+      if (t && t.tabs.length) out[pk] = { tabs: t.tabs.filter((x) => !x.preview && x.kind !== 'notes').slice(0, 40), active: '' };
     }
     store.set(TABS_KEY, JSON.stringify(out));
   }
@@ -1245,6 +1248,7 @@
     const r = F().closeTab(tabsHere(), id);
     setTabsHere(r.state);
     reads.delete(id);
+    notesData.delete(id);
     pruneFrames('main', r.state.tabs);
     if (!r.next) showChat();
     else showFile();
@@ -1410,7 +1414,9 @@
 
   // ---- the tab strip (workspace-ui.js asks for these nodes) -----------------------------------------------------------
   const tabTitle = (t) =>
-    t.kind === 'doc'
+    t.kind === 'notes'
+      ? t.name + '\nRelease notes, read only'
+      : t.kind === 'doc'
       ? t.name + (t.pageTitle ? ' › ' + t.pageTitle : '') + ' (doc)' + (t.preview ? '\nPreview: the next file or doc you open replaces it. Double-click to keep it.' : '')
       : (t.scope && t.scope.root === 'outside' ? (t.scope.abs || t.path) + '\n' + outsideText(t.scope.where) : t.path) +
     (t.scope && t.scope.branch ? '\n⎇ ' + t.scope.branch : '') + (t.preview ? '\nPreview: the next file you open replaces it. Double-click to keep it.' : '');
@@ -1421,7 +1427,10 @@
     main.setAttribute('role', 'tab');
     main.setAttribute('aria-selected', String(!!active));
     main.title = tabTitle(t);
-    if (t.kind === 'doc') {
+    if (t.kind === 'notes') {
+      wrap.classList.add('sf-notestab');
+      main.append(icon(FILE_D, 'sf-fico'), el('span', t.name, 'ws-tab-title'));
+    } else if (t.kind === 'doc') {
       wrap.classList.add('sf-doctab');
       main.append(docIcon('sf-fico sf-docico'), el('span', t.name + (t.pageTitle ? ' › ' + t.pageTitle : ''), 'ws-tab-title'));
     } else main.append(icon(FILE_D, 'sf-fico'), el('span', t.name, 'ws-tab-title'));
@@ -1766,7 +1775,70 @@
       view = 'chat';
       return;
     }
+    if (tab.kind === 'notes') return renderNotes(box, tab);
     renderView(box, tab, 'main');
+  }
+
+  // ---- "What's new in AIB <version>": the release notes, once after an update (updates-ui.js) ------------------------------
+  // notes: {version, releases: [{version, date, page, body}]} newest first (the version just installed on top). Opens a read-only
+  // tab in the strip and shows it. Returns true when it opened.
+  function openNotes(notes) {
+    if (!notes || typeof notes.version !== 'string' || !Array.isArray(notes.releases) || !notes.releases.length) return false;
+    if (!F() || !doc().getElementById('chatTabs')) return false;
+    const id = 'notes:' + notes.version;
+    notesData.set(id, notes);
+    const tab = { id, kind: 'notes', path: '', name: "What's new in AIB " + notes.version, scope: { id: 'aib-notes', root: 'notes' }, preview: false };
+    const h = tabsHere();
+    setTabsHere({ tabs: h.tabs.filter((x) => x.id !== id).concat([tab]), active: id });
+    showFile();
+    const body = doc().querySelector && doc().querySelector('#fileView .sf-notes');
+    if (body) body.scrollTop = 0;
+    if (W() && W().closeDrawer) W().closeDrawer();
+    return true;
+  }
+  // A date from the release ("2026-11-12T10:00:00Z") as the person's local date; '' when there is none.
+  function noteDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    try {
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    } catch (e) {
+      return iso.slice(0, 10);
+    }
+  }
+  function renderNotes(box, tab) {
+    const notes = notesData.get(tab.id);
+    const head = el('div', null, 'sf-fv-head');
+    const crumb = el('div', null, 'sf-fv-crumb');
+    crumb.append(doc().createTextNode('AIB / '), el('b', tab.name));
+    head.append(crumb);
+    const body = el('div', null, 'sf-fv-body sf-notes');
+    body.setAttribute('role', 'region');
+    body.setAttribute('aria-label', tab.name + ', read only');
+    body.tabIndex = 0;
+    if (!notes) body.append(el('p', 'These release notes are no longer here. They show once after an update.', 'fx-note'));
+    else
+      for (const r of notes.releases) {
+        const sec = el('section', null, 'sf-note-rel' + (r.version === notes.version ? ' current' : ''));
+        sec.dataset.version = r.version;
+        const h = el('h2', 'AIB ' + r.version, 'sf-note-ver');
+        const meta = el('p', null, 'sf-note-meta');
+        const when = noteDate(r.date);
+        meta.append(doc().createTextNode((r.version === notes.version ? 'Installed now' : 'Earlier release') + (when ? ' · ' + when : '')));
+        const md = el('div', null, 'markdown sf-note-body');
+        if (root.AgentMarkdown && root.AgentMarkdown.render) root.AgentMarkdown.render(md, r.body);
+        else md.textContent = r.body;
+        sec.append(h, meta, md);
+        body.append(sec);
+      }
+    const foot = el('div', null, 'fx-pv-foot');
+    foot.append(
+      el('span', notes ? notes.releases.length + (notes.releases.length === 1 ? ' release' : ' releases') + ' · newest first' : ''),
+      el('span', null, 'fx-spacer'),
+      el('span', 'Read-only'),
+    );
+    box.replaceChildren(head, body, foot);
   }
   // Beside the chat: its own small tab strip and a file view, at the right of the chat.
   function besideBox() {
@@ -2265,6 +2337,7 @@
     currentScope,
     search: searchFiles,
     openDoc,
+    openNotes,
     attachDocFrame,
     startNewDoc,
     chatOfNode,
@@ -2275,6 +2348,7 @@
     _reset: () => {
       trees.clear();
       reads.clear();
+      notesData.clear();
       projectArts.clear();
       exists.clear();
       outsideSeen.clear();

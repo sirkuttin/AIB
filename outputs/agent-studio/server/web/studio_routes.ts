@@ -14,7 +14,7 @@ import { findPrompts } from '../transcripts/prompts.ts';
 import { changesResponse, type ChatStudio, repoBranch } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
-import { getUpdate, postUpdateCheck, postUpdateInstall } from '../desktop/updater.ts';
+import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
@@ -239,6 +239,8 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('GET /api/live/update', (ctx) => Promise.resolve(getUpdate(ctx.updates)));
   routes.set('POST /api/live/update/check', (ctx, _url, body) => Promise.resolve(postUpdateCheck(ctx.updates, body ?? {})));
   routes.set('POST /api/live/update/install', (ctx, _url, body) => postUpdateInstall(ctx.updates, body ?? {}));
+  routes.set('GET /api/live/update/notes', (ctx) => Promise.resolve(getUpdateNotes(ctx.updates)));
+  routes.set('POST /api/live/update/notes', (ctx, _url, body) => Promise.resolve(postUpdateNotes(ctx.updates, body ?? {})));
   // ---- artifacts (GET; the gate already ran, with the agent key for the list) ----
   for (const path of ['/api/live/artifacts', '/api/live/artifacts/item', '/api/live/artifacts/source', '/api/live/artifacts/diff']) {
     routes.set(`GET ${path}`, async (ctx, url, _body, request) => {

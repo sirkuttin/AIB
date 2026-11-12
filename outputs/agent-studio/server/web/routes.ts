@@ -18,6 +18,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/view-prefs                 save the page's view and appearance preferences (state/view_prefs.ts)
  *   POST /api/live/agent-options              the model / mode / effort lists a new chat can offer (state/agent_options.ts)
  *   POST /api/live/desktop/notify             the desktop app shows a notification natively (desktop/notify.ts)
+ *   GET  /api/live/update/notes               the release notes to show once after an update ("What's new in AIB <version>")
+ *   POST /api/live/update/notes               the page showed them: not offered again
  *   POST /api/live/project-remove             "Delete project…": remove a project from AIB, optionally its folder (project_routes.ts)
  *   POST /api/live/project-add                add projects to AIB (the New project dialog; project_routes.ts)
  *   GET  /api/live/files/list                 the Files view: one folder of a chat's folder (files_routes.ts)
@@ -60,6 +62,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/view-prefs', 'write', 'body'],
   ['POST', '/api/live/agent-options', 'write', 'body'],
   ['POST', '/api/live/desktop/notify', 'write', 'body'],
+  ['GET', '/api/live/update/notes', 'read', 'get'],
+  ['POST', '/api/live/update/notes', 'write', 'body'],
   ['POST', '/api/live/project-remove', 'write', 'body'],
   ['POST', '/api/live/project-add', 'write', 'body'],
   ['GET', '/api/live/folders/gone', 'read', 'get'], // folders that no longer exist (folder_presence.ts)

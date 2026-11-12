@@ -546,7 +546,6 @@ test("an error notice raised while a file tab shows is visible: files.css's file
     return n;
   };
   const error = mk('error');
-  mk('updateBanner');
   mk('studioNotice');
   t.FU.setMode('files');
   await flush();
@@ -562,7 +561,7 @@ test("an error notice raised while a file tab shows is visible: files.css's file
   await flush();
   assert.match(error.textContent, /Could not open in Artifacts/);
   assert.ok(visible(error, t.shell.body), 'the error line shows over the file view');
-  for (const id of ['updateBanner', 'studioNotice']) assert.ok(!hiddenByCss(t.shell.byId[id], t.shell.body), id + ' is spared too');
+  for (const id of ['studioNotice']) assert.ok(!hiddenByCss(t.shell.byId[id], t.shell.body), id + ' is spared too');
   assert.equal(declarationsFor(rules, 'body.sf-file-on main > #fileView').order, '1', 'the file view sits under the notices');
 });
 
