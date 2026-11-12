@@ -341,3 +341,15 @@ test('a child the agent stopped (idle, stopReason cancelled) is Stopped; an erro
   assert.equal(done.group, 'finished');
   assert.equal(done.kind, 'idle');
 });
+
+test('the Activity tab shows how many subagents are working, and nothing when none are', () => {
+  const h = makePage({});
+  const tab = h.element('paneTab-activity');
+  h.run('setActCounts({subagents:5,working:2,failed:0});paintActivityTabBadge()');
+  const badge = () => tab.querySelector('.pane-badge');
+  assert.ok(badge(), 'a count badge like Changes and Artifacts');
+  assert.equal(badge().textContent, '2');
+  assert.equal(badge().hidden, false);
+  h.run('setActCounts({subagents:5,working:0,failed:0});paintActivityTabBadge()');
+  assert.equal(badge().hidden, true);
+});

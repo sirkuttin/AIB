@@ -108,6 +108,7 @@
 - Memory and speed: the page no longer keeps every redrawn screen in memory (a leak since beta.1), long blocks are measured
   in one pass, typing no longer re-lays out the history, and only changed rows are redrawn.
 - The plan card lists steps in progress first, then steps to do, then one folded "✓ N done ▸" line that opens on click.
+- The Activity tab shows how many subagents are working right now, like the counts on Changes and Artifacts.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.

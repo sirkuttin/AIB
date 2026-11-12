@@ -2043,11 +2043,27 @@
     subFetch = { key: '', at: 0 },
     subLinksSignature = '',
     actCounts = { subagents: 0, working: 0, failed: 0 };
+  /* The Activity tab's count: subagents working right now, like Changes and Artifacts show theirs. */
+  function paintActivityTabBadge() {
+    const tab = $('paneTab-activity');
+    if (!tab) return;
+    let b = tab.querySelector('.pane-badge');
+    if (!b) {
+      b = document.createElement('span');
+      b.className = 'pane-badge';
+      tab.append(b);
+    }
+    const n = actCounts.working;
+    b.textContent = n > 99 ? '99+' : String(n);
+    b.hidden = !n;
+    tab.setAttribute('aria-label', 'Activity' + (n ? ', ' + n + (n === 1 ? ' subagent' : ' subagents') + ' working' : ''));
+  }
   function renderActivityStrip() {
     window.ActivityUI?.renderStrip($('activityChips'), {
       ...actCounts,
       processes: commands.filter(isRunningCommand).length,
     });
+    paintActivityTabBadge();
   }
   function allAgentRows() {
     return current ? [...children.values()] : agents.filter((a) => !a.main);
@@ -2573,6 +2589,7 @@
     agents = [];
     events = [];
     actCounts = { subagents: 0, working: 0, failed: 0 };
+    paintActivityTabBadge();
     const folder = AgentChoice.resolveFolder({
       explicit: o.cwd,
       activeProject: window.AgentWorkspaceUI?.activeProject?.(),
@@ -4970,6 +4987,8 @@
    `state` for the few variables they set up or check. Nothing else from this file is reachable from outside. */
   window.StudioChat = {
     DraftStore,
+    paintActivityTabBadge,
+    setActCounts: (c) => (actCounts = c),
     headerYourTurn,
     collectChildren,
     children,
