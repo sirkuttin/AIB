@@ -10,6 +10,7 @@
  * Python ran connect's setup, the reconnect workers and the heartbeat on threads under an RLock; here they are async tasks. Every
  * Python `with self.lock:` block does no blocking work, so it is a stretch of synchronous code here.
  */
+import { AddedProjects } from '../desktop/added_projects.ts';
 import { Connection, type ConnectionOptions, errorText, ThreadEvent } from '../acp/connection.ts';
 import { sessionOp } from '../acp/breadth.ts';
 import type { McpServer } from '../acp/breadth.ts';
@@ -236,6 +237,8 @@ export class Studio {
    */
   readonly instanceId: string;
   readonly stateDir: string;
+  /** The projects the user added (desktop/added_projects.ts): a chat opened here adds its folder. */
+  readonly addedProjects: AddedProjects | null;
   readonly hasStateDir: boolean;
   ownerProbe: OwnerProbe;
   readonly owners: OwnerRegistry | null;
@@ -309,6 +312,7 @@ export class Studio {
     const name = construct.port !== undefined && construct.port !== null ? construct.port : options.port ?? 0;
     // Recovery state is kept only when a state directory was configured explicitly.
     this.store = this.hasStateDir ? new StateStore(this.stateDir, `recovery-${name}`) : null;
+    this.addedProjects = this.hasStateDir ? new AddedProjects(this.stateDir) : null;
     this.recovery = this.store ? new Recovery(this.store) : null;
     if (this.recovery) this.recovery.queues = new QueueStore(this.stateDir, `queues-${name}`); // queued messages survive a host restart (paused)
     const dir = this.hasStateDir ? this.stateDir : null;
@@ -843,6 +847,8 @@ export class Studio {
       if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
       this.connections.set(c.id, c);
+      // Its folder is a project from now on (the page, auto-reconnect, a keeper take-over and agent-started chats all come here).
+      if (this.addedProjects) void this.addedProjects.addOpened(c.projectRoot || workspace);
       if (resume) this.announce(c, 'opening'); // claim before session/load so other clients can see it
       const finishSetup = async () => {
         try {

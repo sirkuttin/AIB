@@ -129,13 +129,7 @@ export const folderOfSession = (item: unknown): unknown => isDict(item) ? (item.
  * Saved chats of added projects only (the rest of the agents' history is not shown in AIB). `conversations` keeps the chats in
  * Recently deleted listed there (a removed project's chats, so restoring one still brings its project back).
  */
-export async function filterSessions<T>(added: AddedProjects, sessions: T[], conversations: ConversationState | null = null): Promise<T[]> {
-  try {
-    await added.ready();
-  } catch (error) {
-    console.error('The added-projects list could not be made; every saved chat is listed for now', error);
-    return sessions;
-  }
+export function filterSessions<T>(added: AddedProjects, sessions: T[], conversations: ConversationState | null = null): T[] {
   const entries = conversations ? conversations.public().entries : {};
   const deleted = (item: unknown) => {
     if (!isDict(item) || !isStr(item.provider)) return false;
@@ -145,26 +139,25 @@ export async function filterSessions<T>(added: AddedProjects, sessions: T[], con
   return sessions.filter((item) => added.shows(folderOfSession(item)) || deleted(item));
 }
 
+/** The pages "Find more chats via agent" reads at most per click, skipping pages that had no chat of an added project. */
+export const DISCOVER_PAGES = 5;
+
 /**
- * The folders of every project the page listed before this version (an existing user's first list): saved chats with messages,
- * AIB's own chat records that are not deleted, the open and recovered chats; minus the projects removed with "Delete project…".
+ * POST /api/live/discover: the agent's session/list, chats of added projects only. A page whose chats are all elsewhere is
+ * skipped (the next one is asked, up to DISCOVER_PAGES), so the button never answers "0 more" while more exist.
  */
-export async function visibleFolders(ctx: {
-  transcripts: { sessions(): Promise<Record<string, unknown>[]> };
-  conversations: ConversationState;
-  removedProjects: RemovedProjects;
-  host: { liveList(): Promise<unknown> };
-}): Promise<string[]> {
-  const out: unknown[] = [];
-  for (const item of await ctx.transcripts.sessions()) if (item.hasMessages) out.push(folderOfSession(item));
-  for (const entry of Object.values(ctx.conversations.public().entries)) if (!entry.deletedAt) out.push(entry.projectRoot || entry.cwd);
-  try {
-    const live = await ctx.host.liveList();
-    if (isDict(live)) {
-      for (const c of Array.isArray(live.connections) ? live.connections : []) if (isDict(c) && !c.closed) out.push(c.projectRoot || c.cwd);
-      for (const r of Array.isArray(live.recovered) ? live.recovered : []) if (isDict(r)) out.push(r.projectRoot || r.cwd);
-    }
-  } catch { /* the agent host is not up: its chats are AIB's own and get added when they connect */ }
-  const removed = ctx.removedProjects.public().removed;
-  return out.filter((f): f is string => isStr(f) && !!f.trim() && !Object.hasOwn(removed, projectKey(f)));
+export async function discoverAdded(
+  call: (body: Json) => Promise<[number, unknown]>,
+  added: AddedProjects,
+  body: Json | null,
+): Promise<[number, unknown]> {
+  let request: Json = { ...(body ?? {}) };
+  for (let page = 1;; page++) {
+    const [status, payload] = await call(request);
+    if (status !== 200 || !isDict(payload) || !Array.isArray(payload.sessions)) return [status, payload];
+    payload.sessions = filterSessions(added, payload.sessions);
+    const next = payload.nextCursor;
+    if ((payload.sessions as unknown[]).length || !isStr(next) || !next || page >= DISCOVER_PAGES) return [status, payload];
+    request = { ...request, cursor: next };
+  }
 }

@@ -1360,21 +1360,7 @@
   let removedKeys = new Set();
   const removedProject = (pk) => !!pk && removedKeys.has(pk);
   // The projects the user added ({key: {path, at}}), from the server with the preferences; null from a server without the list.
-  let addedProjects = null,
-    pendingSent = false;
-  // Projects made with the New project dialog before the server kept the list (only in this browser's storage): sent once.
-  function sendPending() {
-    if (pendingSent || !addedProjects || !host || !host.postJson) return;
-    pendingSent = true;
-    const paths = Object.keys(pending)
-      .filter((k) => !addedProjects[k])
-      .map((k) => pending[k].path);
-    if (paths.length)
-      Promise.resolve(host.postJson('project-add', { paths })).then(
-        (res) => adoptAdded(res),
-        () => {},
-      );
-  }
+  let addedProjects = null;
   // A project-add answer: the added and removed lists only (a name or colour save still on its way keeps its own answer).
   function adoptAdded(r) {
     if (!pendingSaves) return adoptPrefs(r);
@@ -1418,7 +1404,6 @@
     if (ad) addedProjects = ad;
     prefsRev = (r && r.revision) || prefsRev;
     prefsVer++;
-    if (ad) sendPending();
     if (host) {
       lastSig = '';
       host.rerender();

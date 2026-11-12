@@ -802,7 +802,7 @@
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
     for (const k of Object.keys(raw).slice(0, 30)) {
       const v = raw[k];
-      if (isStr(k) && v && typeof v === 'object' && isStr(v.path))
+      if (isStr(k) && v && typeof v === 'object' && isStr(v.path) && v.gone !== true)
         out[k] = { key: k, path: String(v.path).slice(0, 512), name: cleanName(v.name) || folderLeaf(v.path) };
     }
     return out;
@@ -818,13 +818,14 @@
     return out;
   }
   // The server's added projects ({key: {path, at}}, studio-added-projects.json) in the pending shape, so withPending lists the
-  // ones with no chat yet (a project the user added stays in the list until "Delete project…" takes it off).
+  // ones with no chat yet (a project the user added stays in the list until "Delete project…" takes it off). One whose folder is
+  // gone ({gone: true}) is left out; it comes back when the server sees the folder again.
   function addedAsPending(added) {
     const out = {};
     if (!added || typeof added !== 'object' || Array.isArray(added)) return out;
     for (const k of Object.keys(added)) {
       const v = added[k];
-      if (isStr(k) && v && typeof v === 'object' && isStr(v.path))
+      if (isStr(k) && v && typeof v === 'object' && isStr(v.path) && v.gone !== true)
         out[k] = { key: k, path: String(v.path).slice(0, 1024), name: folderLeaf(v.path) || String(v.path) };
     }
     return out;
