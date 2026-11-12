@@ -30,7 +30,7 @@ notifications through the web API, updates as "open the installer" instructions)
   a second `serve` prints that line and exits with code 2. Another `--state-dir` is another lock (`single_instance.ts`).
 - **Window and tray:** quitting never stops a chat (the owner's decisions, 2026-11-10 and 2026-11-11). Closing the window or the
   tray's "Quit AIB" quits at once when nothing works. When something works (a chat in `Studio.workingList`: a turn, an agent opening,
-  a question waiting, queued messages, background helpers, an install or sign-in job; or a terminal command; or a merge running in
+  a question waiting, queued messages, background helpers, a Claude background shell (`'background'`), an install or sign-in job; or a terminal command; or a merge running in
   AIB) there is no question, and AIB exits the way Install now does, minus starting a new version (`DesktopApp.decide` 'leave'): the
   window goes, a running merge is let finish (up to 2 min), then main.ts `close(…, release, hold)` tells the keeper `hold` (keeper
   1.3.0: no orphan restart and no "orphaned" stop until a client claims or spawns a channel), leaves terminal shells and chats in it

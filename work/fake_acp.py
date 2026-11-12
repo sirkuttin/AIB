@@ -37,7 +37,7 @@ parser.add_argument('--beta-auth', action='store_true', help="With --auth-requir
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--terminal-env', action='store_true', help="With --beta-auth: the terminal method also advertises env {'AIB_FIXTURE_LOGIN': 'from-agent'} (ACP v1 map shape); --fixture-login writes that variable's value into --auth-file")
-parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; any other prompt gets 'Fixture reply: <text>'")
+parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; 'bgshell:<gate>' starts a background Bash shell (a real child process) that runs until <gate> exists; any other prompt gets 'Fixture reply: <text>'")
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
@@ -385,11 +385,45 @@ def caps_next():
 held = {}   # --held-turn: 'turn' = the prompt whose response is held; 'helper-perm' = the helper's open permission (an Event)
 
 
+def background_shell(key, gate, human):
+    """'bgshell:<gate>' (--held-turn): Bash with run_in_background, as claude-agent-acp 0.97.0 sent it to a client without the AIR
+    asyncTasks capability (a real run, 2026-11-11): the tool call, its result with `_meta.claudeCode.toolResponse.backgroundTaskId` and
+    the "Command running in background" text, the reply, and the response at once (a shell never holds the turn). The command is a real
+    child process that runs until <gate> exists; nothing says it ended except Claude Code's own cycle that answers the task
+    notification (usage_update with origin task-notification)."""
+    import subprocess
+    tool = 'bash-1'
+    claude = {'claudeCode': {'toolName': 'Bash'}}
+    update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1000})
+    update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'name': 'Bash', 'rawInput': {}, 'status': 'pending', 'title': 'Terminal', 'kind': 'execute', 'content': [], '_meta': claude})
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'rawInput': {'command': 'npm test', 'run_in_background': True}, 'title': 'npm test', '_meta': claude})
+    time.sleep(0.2)
+    waiter = 'import os, sys, time' + chr(10) + 'while not os.path.exists(sys.argv[1]): time.sleep(0.05)'
+    shell = subprocess.Popen([sys.executable, '-c', waiter, gate], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if args.child_pid_file:
+        with open(args.child_pid_file + '.shell', 'w') as f:
+            f.write(str(shell.pid))
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, '_meta': {'claudeCode': {'toolResponse': {'stdout': '', 'stderr': '', 'interrupted': False, 'isImage': False, 'noOutputExpected': False, 'backgroundTaskId': 'bfake1'}, 'toolName': 'Bash'}}})
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed', 'rawOutput': 'Command running in background with ID: bfake1. Output is being written to: tasks/bfake1.output. You will be notified when it completes.', 'content': [{'type': 'content', 'content': {'type': 'text', 'text': 'Command running in background with ID: bfake1.'}}], '_meta': claude})
+    update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Started the tests in the background.'}})
+    update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1500, '_meta': human})
+    result(key, {'stopReason': 'end_turn'})
+
+    def notified():
+        shell.wait()
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'The tests finished.'}})   # Claude Code's own cycle
+        update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1800, '_meta': {'_claude/origin': {'kind': 'task-notification', 'producer': 'session-task'}}})
+    threading.Thread(target=notified, daemon=True).start()
+
+
 def held_turn(key, text):
     """--held-turn prompts (see the flag's help): the shape of claude-agent-acp's updates, as a real run showed them."""
     if 'turn' in held:   # the adapter settles a held turn when the next prompt arrives
         result(held.pop('turn'), {'stopReason': 'end_turn'})
     human = {'_claude/origin': {'kind': 'human'}}
+    if text.startswith('bgshell:'):
+        background_shell(key, text.split(':', 1)[1], human)
+        return
     if not (text.startswith('helper:') or text.startswith('helper-ask:')):
         update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture reply: ' + text}})
         update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 2000, '_meta': human})
