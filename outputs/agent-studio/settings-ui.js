@@ -178,6 +178,12 @@
       keywords: ['auto reconnect', 'restart', 'recover', 'open before', 'no-auto-reconnect'],
     },
     {
+      id: 'keep-awake',
+      section: 'server',
+      label: 'Keep this PC awake while AIB runs',
+      keywords: ['sleep', 'awake', 'caffeinate', 'power', 'standby', 'idle', 'phone', 'wake lock', 'insomnia'],
+    },
+    {
       id: 'server-info',
       section: 'server',
       label: 'State folder, versions and process IDs',
@@ -1997,6 +2003,22 @@
     if (typeof running === 'boolean')
       box.append(note('The agent host that is running now started with this ' + (running ? 'on' : 'off') + '.'));
   }
+  function renderKeepAwake(box) {
+    const on = !!(S.data && S.data.settings.server && S.data.settings.server.keepAwake);
+    box.append(toggle('Keep this PC awake while AIB runs', on, (v) => saveQuiet({ server: { keepAwake: v } })));
+    box.append(
+      note(
+        'Stops sleep while AIB is open, so agents keep working and your phone can reach AIB. The screen can still turn off. Closing a laptop lid still sleeps the PC.',
+      ),
+    );
+    const st = (S.data && S.data.keepAwake) || {};
+    if (st.on && st.error) {
+      const line = note('The PC may still sleep: ' + st.error, 'bad');
+      line.setAttribute('role', 'alert');
+      line.dataset.keepAwakeError = '1';
+      box.append(line);
+    }
+  }
   function renderUpdates(box) {
     const server = () => (S.data && S.data.settings.server) || {};
     if (!root.AibUpdates) return;
@@ -2083,6 +2105,7 @@
     'text-size': renderTextSize,
     'default-view': renderDefaultView,
     'auto-reconnect': renderAutoReconnect,
+    'keep-awake': renderKeepAwake,
     'server-info': renderServerInfo,
     updates: renderUpdates,
     'server-restart': renderServerRestart,
@@ -2103,6 +2126,7 @@
     'text-size': 'Text size',
     'default-view': 'Default chat view',
     'auto-reconnect': 'Reconnect after a restart',
+    'keep-awake': 'Keep the PC awake',
     'server-info': 'About AIB',
     updates: 'Updates',
     'server-restart': 'Restart the web server',

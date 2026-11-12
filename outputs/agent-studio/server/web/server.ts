@@ -4,6 +4,7 @@
  * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here; stage B's private Python web server is gone.
  * The HTTP API is identical to the Python server's; work/contract/ checks it against both servers.
  */
+import { type Backend, KeepAwake, realBackend } from '../platform/keep_awake.ts';
 import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts';
 import type { LiveBackend } from '../host/backend.ts';
 import { HostUnavailable } from '../host/host_client.ts';
@@ -205,6 +206,8 @@ export interface WebContext {
   /** Whether the owner is at the PC (the page reports it: POST /api/live/presence): no desktop notification while an AIB window
    * has focus, no phone push while the owner is working in it (attention/presence.ts). */
   presence: Presence;
+  /** "Keep this PC awake while AIB runs" (platform/keep_awake.ts): applied from Settings and at start, released on close. */
+  keepAwake: KeepAwake;
 }
 
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
@@ -557,6 +560,8 @@ export function makeContext(
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
     /** Phone access options (tests: a fake Tailscale CLI, a short bind retry). */
     phone?: AccessOptions;
+    /** The OS backend for keep-awake (tests: a recording one, or null); default: the real one for this OS (none in a test run). */
+    keepAwakeBackend?: Backend | null;
   },
 ): WebContext {
   const ctx: WebContext = {
@@ -590,6 +595,7 @@ export function makeContext(
     phone: null as unknown as PhoneAccess,
     devices: null as unknown as DeviceStore,
     presence: new Presence(),
+    keepAwake: new KeepAwake(options.keepAwakeBackend === undefined ? realBackend() : options.keepAwakeBackend),
   };
   ctx.phone = new PhoneAccess(ctx, options.stateDir, {
     avoid: () => (ctx.port ? [ctx.port, ctx.port + 1] : []),
