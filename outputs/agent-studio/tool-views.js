@@ -732,6 +732,18 @@
       out.push((result.isError ? 'Error output:' : 'Output:') + '\n\n' + fence(result.text, ''));
     return out.join('\n\n');
   }
+  /* Codex (codex-acp) reports an MCP call as kind "execute", title "mcp.<server>.<tool>", rawInput {server, tool, arguments},
+     _meta.is_mcp_tool_call. Seen as that, it read as a shell call ("bash: studio_artifact"). Give it the tool's own name and
+     arguments, the way Claude Code's mcp__<server>__<tool> calls look. */
+  function mcpRaw(raw) {
+    const input = raw && raw.rawInput;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return raw;
+    if (typeof input.server !== 'string' || typeof input.tool !== 'string' || !input.server || !input.tool) return raw;
+    const marked = (raw._meta && raw._meta.is_mcp_tool_call) || /^mcp\./.test(String(raw.title || ''));
+    if (!marked) return raw;
+    const args = input.arguments && typeof input.arguments === 'object' && !Array.isArray(input.arguments) ? input.arguments : {};
+    return { ...raw, toolName: 'mcp__' + input.server + '__' + input.tool, rawInput: args };
+  }
   const toolNameOf = (raw) =>
     (raw && raw._meta && raw._meta.claudeCode && raw._meta.claudeCode.toolName) ||
     (raw && raw.toolName) ||
@@ -753,7 +765,7 @@
     return prettyJSON(o);
   };
   function rawMarkdown(raw) {
-    raw = raw || {};
+    raw = mcpRaw(raw || {});
     const input = asObject(raw.rawInput);
     if (input)
       return callMarkdown({
@@ -872,6 +884,27 @@
     for (const v of Object.values(obj)) if (typeof v === 'string' && v.trim()) return oneLine(v);
     return '';
   };
+  /* AIB's own tools (the studio_artifact MCP server) in plain words, from any agent: "Create doc: Release plan". */
+  const AIB_TOOLS = {
+    doc_create: 'Create doc',
+    doc_edit: 'Edit doc',
+    doc_read: 'Read doc',
+    doc_list: 'List docs',
+    doc_comment: 'Comment on doc',
+    doc_reply: 'Reply in doc',
+    publish: 'Publish',
+    update: 'Update artifact',
+  };
+  const aibTool = (name) => {
+    const m = /^mcp__studio_artifact__(\w+)$/.exec(String(name || ''));
+    return m ? m[1] : '';
+  };
+  /* A title, with what it is about when the agent says so in its text ("Action: MCP doc_create on studio_artifact"). */
+  function titleWithAction(raw) {
+    const title = raw.title || raw.toolCallId || 'Tool call';
+    const m = /^Action:\s*(.+)$/m.exec(contentText(raw));
+    return m && raw.title ? title + ': ' + m[1].trim() : title;
+  }
   /* {label, text, status} for a tool row. status: running|ok|failed|pending|'' */
   function resultFailed(text) {
     return /^\s*(?:exit code:?|exited with(?: code)?|returncode:?)\s*[1-9]\d*/i.test(String(text || ''));
@@ -882,12 +915,14 @@
       name = '',
       inp = null;
     if (row.raw) {
-      const raw = row.raw,
+      const raw = mcpRaw(row.raw),
         input = asObject(raw.rawInput);
       name = toolNameOf(raw);
       inp = input;
       a = analyze(name, input || {});
-      if (!input) a = { type: 'title', name, title: raw.title || raw.toolCallId || 'Tool call', kind: raw.kind };
+      /* No tool name to go by (e.g. Codex's "Guardian Review", rawInput {threadId}): the agent's own title says more than the
+         first string of its input. */
+      if (!input || (!name && raw.title)) a = { type: 'title', name, title: titleWithAction(raw), kind: raw.kind };
       status =
         { pending: 'pending', in_progress: 'running', completed: 'ok', failed: 'failed' }[raw.status] ||
         (raw.status ? '' : 'pending');
@@ -943,6 +978,9 @@
       if (['agent', 'task', 'subagent'].includes(n)) {
         label = 'task';
         text = (n === 'agent' ? 'Agent' : 'Task') + ': ' + (firstText(input) || 'launched');
+      } else if (AIB_TOOLS[aibTool(name)]) {
+        const what = oneLine(strOf(input, ['docTitle', 'doc', 'title', 'id']));
+        text = AIB_TOOLS[aibTool(name)] + (what ? ': ' + what : '');
       } else {
         text = prettyName(name) + (firstText(input) ? ': ' + firstText(input) : '');
       }
@@ -967,7 +1005,7 @@
     return '';
   };
   function actionOf(call) {
-    const raw = call && typeof call === 'object' ? call : {},
+    const raw = call && typeof call === 'object' ? mcpRaw(call) : {},
       input = asObject(raw.rawInput) || {},
       name = toolNameOf(raw),
       a = analyze(name, input),
@@ -1269,7 +1307,7 @@
     return out;
   }
   function render(raw) {
-    raw = raw && typeof raw === 'object' ? raw : {};
+    raw = raw && typeof raw === 'object' ? mcpRaw(raw) : {};
     const kind = KINDS.includes(raw.kind) ? raw.kind : 'other',
       status = STATUSES.includes(raw.status) ? raw.status : raw.status ? 'other' : 'pending';
     const box = make('div', '', 'tool-view tool-kind-' + kind);
