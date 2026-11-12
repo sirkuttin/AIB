@@ -503,7 +503,8 @@
       .filter((r) => {
         // The open chat stays when it is blocked on you (it still needs you, and the badge counts it like the cards do);
         // a "your turn" you are looking at is seen (seenTurns below).
-        if (r.key === selectedKey && watching() && r.kind !== 'needs') return false;
+        // The chat you have open never counts as "your turn", even while AIB is in the background: it is the chat you're on.
+        if (r.key === selectedKey && r.kind !== 'needs') return false;
         if (r.kind === 'yourTurn') {
           const it = itemOf(r.key);
           if (it && (seenTurns[r.key] || 0) >= it.yourTurnAt) return false;
@@ -2039,8 +2040,18 @@
     );
   }
   // Called by the page every time the conversation list is drawn.
+  let lastSyncArgs = null;
+  /* Coming back to AIB (focus or the window shown again): redraw at once, so the inbox badge and its list agree. The badge
+     used to keep a count from while AIB was in the background until the next update, and the list it opened was empty. */
+  if (typeof root.addEventListener === 'function') {
+    const again = () => lastSyncArgs && sync(...lastSyncArgs);
+    root.addEventListener('focus', again);
+    const d = doc();
+    if (d && typeof d.addEventListener === 'function') d.addEventListener('visibilitychange', again);
+  }
   function sync(conversations, selected) {
     if (!host || !root.AgentSidebarUI) return;
+    lastSyncArgs = [conversations, selected];
     items = (conversations || []).filter((c) => c && c.provider).map(normalize);
     byKey = new Map(items.map((i) => [i.key, i]));
     rebuildProjects();

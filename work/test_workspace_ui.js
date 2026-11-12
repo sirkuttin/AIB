@@ -206,3 +206,18 @@ test('a shown chat the list no longer has keeps its tab: never "No open chats" o
   t.sync([], null); // another view: the phantom tab goes
   assert.equal(tabLabels(t.shell).length, 0);
 });
+
+test('the chat you have open never shows in the inbox count as "your turn", even while AIB is in the background', () => {
+  const open = conv('o', 'C:/p', { yourTurn: true, yourTurnAt: 50, live: liveChat() }),
+    other = conv('x', 'C:/p', { yourTurn: true, yourTurnAt: 60 });
+  const t = setup({ conversations: [open], selected: open });
+  t.shell.document.visibilityState = 'hidden'; // AIB in the background: before the fix the open chat counted here
+  t.sync([open], open);
+  const env = () => t.shell.byId.chatTabs.querySelector('.ws-inbox-btn');
+  const counted = () => /(^| )has( |$)/.test(env().className);
+  assert.equal(counted(), false, 'no count for the chat you are on');
+  // another chat's turn still counts
+  t.sync([open, other], open);
+  assert.equal(counted(), true);
+  assert.match(env().textContent, /1/);
+});
