@@ -988,6 +988,11 @@ Deno.test({
             8000,
             'columns stacked',
           );
+          await p.waitFor(
+            `document.querySelector('#docApp').classList.contains('narrow')`,
+            8000,
+            'the narrow header (its picker moves when the doc name takes a row)',
+          );
           await p.shot('11-narrow');
           await p.click('#pagePicker');
           await p.waitFor(
