@@ -96,9 +96,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['GET', '/', 'static', 'monitor'],
-  ['GET', '/api/activity', 'read', 'monitor'],
   ['GET', '/api/agents', 'read', 'monitor'],
-  ['GET', '/api/bootstrap', 'bootstrap', 'monitor'],
   ['GET', '/api/command', 'read', 'monitor'],
   ['GET', '/api/commands', 'read', 'monitor'],
   ['GET', '/api/live/agents/install', 'write', 'get'],
@@ -129,12 +127,6 @@ export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/sessions', 'read', 'monitor'],
   ['GET', '/api/transcript', 'read', 'monitor'],
   ['GET', '/api/transcript/image', 'image', 'monitor'],
-  ['GET', '/app.js', 'static', 'monitor'],
-  ['GET', '/conversation.html', 'static', 'monitor'],
-  ['GET', '/index.html', 'static', 'monitor'],
-  ['GET', '/sidebar.css', 'static', 'monitor'],
-  ['GET', '/sidebar.js', 'static', 'monitor'],
-  ['GET', '/style.css', 'static', 'monitor'],
   ['POST', '/api/live/agents/install', 'write', 'body'],
   ['POST', '/api/live/agents/install/cancel', 'write', 'body'],
   ['POST', '/api/live/agents/signin', 'write', 'body'],

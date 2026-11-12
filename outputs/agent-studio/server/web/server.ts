@@ -43,7 +43,6 @@ import { ArtifactHistory } from '../docs/history.ts';
 const WEB_STARTED = Date.now() / 1000;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
-const MONITOR_ASSETS = new Set(['app.js', 'style.css', 'sidebar.js', 'sidebar.css']);
 const MAX_BODY = 1_000_000;
 
 /** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
@@ -80,7 +79,7 @@ export function studioAsset(path: string): string | null {
     }
   }
   const match = path.match(ASSET_NAME);
-  if (!match || MONITOR_ASSETS.has(match[1])) return null;
+  if (!match) return null;
   try {
     return Deno.statSync(APP_ROOT + sep + match[1]).isFile ? match[1] : null;
   } catch {
@@ -429,10 +428,7 @@ export class WebServer {
         }
         if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
         if (routeKind('GET', path) === 'monitor') {
-          const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), {
-            token: () => this.ctx.token,
-            appRoot: APP_ROOT,
-          });
+          const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1));
           // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
           if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
             const listed = reply.body as { sessions?: unknown };

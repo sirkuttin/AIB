@@ -116,7 +116,7 @@ for (const t of [
   add('terminal', t, ['--term-bg'], TEXT);
 add('terminal', '--term-fg', ['--term-sel'], TEXT, 'selected text');
 
-const PAGE_SKIP = new Set(['theme.css', 'style.css', 'sidebar.css']); // the old monitor pages have their own colours
+const PAGE_SKIP = new Set(['theme.css']);
 function pageSheets() {
   return fs
     .readdirSync(APP)

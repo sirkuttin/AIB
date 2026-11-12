@@ -7,7 +7,7 @@
  * store.ts (folders, cards, agents, cache, model in use), pycompat.ts / purepath.ts / xml_notice.ts (Python behaviour).
  */
 import { pyStr, pyStrip, ValueError } from '../core/py.ts';
-import { RouteTable, SCOPE_BOOTSTRAP, SCOPE_IMAGE, SCOPE_READ, SCOPE_STATIC } from '../web/security.ts';
+import { RouteTable, SCOPE_IMAGE, SCOPE_READ } from '../web/security.ts';
 import { type Dict, type Event, type Json, TEXT_LIMIT } from './normalize.ts';
 import { casefold, clipped, concat, isOSError, isoTimestamp, parseQs, pyInt, PyTypeError, strCmp, truthy } from './pycompat.ts';
 import { isDir, isFile, isRelativeTo, join, name, purePath, resolveLoose, rglobTail, statSig, stem, withoutSuffix } from './purepath.ts';
@@ -202,17 +202,14 @@ export async function commandOutput(session: string, task: Task, tmp = tempDir()
 }
 
 // Every route this server answers and the scope it needs (see security.authorize). Unknown /api/ routes are refused.
-export const STATIC_PATHS = ['/', '/index.html', '/conversation.html', '/app.js', '/style.css', '/sidebar.js', '/sidebar.css'];
+// The chat page's reads of saved transcripts. (The separate monitor page and its files, /api/bootstrap and /api/activity are gone.)
 export const ROUTES = new RouteTable();
-ROUTES.add('GET', '/api/bootstrap', SCOPE_BOOTSTRAP);
 ROUTES.add('GET', '/api/transcript/image', SCOPE_IMAGE);
-for (const path of ['/api/sessions', '/api/agents', '/api/commands', '/api/command', '/api/transcript', '/api/activity']) {
+for (const path of ['/api/sessions', '/api/agents', '/api/commands', '/api/command', '/api/transcript']) {
   ROUTES.add('GET', path, SCOPE_READ);
 }
-for (const path of STATIC_PATHS) ROUTES.add('GET', path, SCOPE_STATIC);
 
 export const JSON_TYPE = 'application/json; charset=utf-8';
-const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css' };
 
 export interface Reply {
   status: number;
@@ -222,15 +219,10 @@ export interface Reply {
 }
 
 export interface HandlerOptions {
-  /** The page token /api/bootstrap hands out. */
-  token?: () => string;
-  /** Folder of the page files (index.html, app.js, ...); default outputs/agent-studio. */
-  appRoot?: string;
   /** Where Claude Code writes background task output (tempfile.gettempdir()). */
   tempDir?: string;
 }
 
-const APP_ROOT = new URL('../../', import.meta.url);
 /** JSON.rawJSON (V8): a number written with exactly these digits (a nanosecond mtime exceeds a double's precision). */
 const rawJson = (text: string): unknown => (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(text);
 
@@ -288,7 +280,6 @@ export async function transcriptPage(transcript: Transcript, arg: (name: string,
  */
 export async function handleGet(source: Source, path: string, query: string, options: HandlerOptions = {}): Promise<Reply> {
   const json = (status: number, body: unknown): Reply => ({ status, body, contentType: JSON_TYPE });
-  if (path === '/api/bootstrap') return json(200, { token: options.token ? options.token() : '' });
   const args = parseQs(query);
   const arg = (key: string, fallback = '') => args.get(key)?.[0] ?? fallback;
   try {
@@ -332,25 +323,6 @@ export async function handleGet(source: Source, path: string, query: string, opt
     if (path === '/api/transcript') {
       const transcript = await loadKey(source, arg('key'));
       return json(200, await transcriptPage(transcript, arg));
-    }
-    if (path === '/api/activity') {
-      const events: Event[] = [];
-      for (const agent of await source.agents(arg('session'))) {
-        if (truthy(agent.main)) continue;
-        const transcript = await loadKey(source, agent.key);
-        for (const event of transcript.events.slice(-20)) {
-          if (event.kind !== 'thinking') events.push({ ...event, agent: agent.name, key: agent.key });
-        }
-      }
-      events.sort((a, b) => strCmp(pyStr(a.time), pyStr(b.time)));
-      return json(200, { events: events.slice(-120) });
-    }
-    if (STATIC_PATHS.includes(path)) {
-      const filename = path === '/' ? 'index.html' : path.slice(1);
-      const ext = filename.slice(filename.lastIndexOf('.'));
-      const root = options.appRoot ?? decodeURIComponent(APP_ROOT.pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-      const body = await Deno.readFile(join(root, filename));
-      return { status: 200, body, contentType: (MIME[ext] ?? 'text/plain') + '; charset=utf-8' };
     }
     return json(404, { error: 'Not found' });
   } catch (error) {

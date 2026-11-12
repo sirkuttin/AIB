@@ -252,10 +252,6 @@ details.side-more > summary {
 details.side-more[open] {
   padding-bottom: 8px;
 }
-details.side-more .monitor {
-  margin: 4px 12px;
-  font-size: 12px;
-}
 details.side-more .note {
   margin: 4px 12px;
   font-size: 11px;

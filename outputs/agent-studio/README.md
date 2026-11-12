@@ -2,7 +2,7 @@
 
 Run `deno run -A server/main.ts --open` from this folder (Deno 2.x). The default address is **http://127.0.0.1:8767**. Node.js and the agent adapters you want to use are required (see Installing the agents below). No editor or other agent app needs to be running. The desktop app (a native window, tray icon and updater around the same server) is described in [docs/DESKTOP.md](docs/DESKTOP.md).
 
-The home page is the unified chat interface. Its sidebar lists saved OMP and Claude Code conversations alongside Studio-owned connections, with a Ctrl+K quick switcher for search. Select a saved conversation to view its history, agents, and background commands in place. Resume in Studio loads an idle saved chat when the agent supports it. New conversation starts a fresh chat. Existing sign-ins and agent configuration are used. The older monitor dashboard remains at /index.html.
+The home page is the unified chat interface. Its sidebar lists saved OMP and Claude Code conversations alongside Studio-owned connections, with a Ctrl+K quick switcher for search. Select a saved conversation to view its history, agents, and background commands in place. Resume in Studio loads an idle saved chat when the agent supports it. New conversation starts a fresh chat. Existing sign-ins and agent configuration are used.
 
 Connected in Studio and Working in Studio are confirmed connection states. Saved sessions show their latest saved activity; that does not prove whether another client is still running them. Stop a chat in its other client before using Resume in Studio. Browsing saved history never connects to or interrupts that agent.
 
@@ -10,7 +10,7 @@ Connected in Studio and Working in Studio are confirmed connection states. Saved
 
 - Independent ACP stdio connections, new conversations, streaming text and thinking, tool details, plans, and approval choices supplied by the agent.
 - Mode/config selectors when the agent advertises them. A change made while the agent is working is queued by the agent host and applied when the turn ends; the Model chip shows the model the replies really come from (read from the agent's own transcript) and warns when the agent advertises another. See [docs/models-and-settings.md](docs/models-and-settings.md).
-- Live main/subagent streams when the adapter sends them, plus the existing persisted transcript and command monitor.
+- Live main/subagent streams when the adapter sends them, plus the persisted transcript and background commands.
 - Interrupt the active turn, disconnect an owned connection, or keep several connections running and switch between them.
 - Browser refresh reconnects to the same locally running connection. Closing a browser tab does not stop the server or its agents.
 - Optional session loading by ID when the agent advertises support. Resume only idle saved sessions; this is not an attachment to a connection already owned by another app.

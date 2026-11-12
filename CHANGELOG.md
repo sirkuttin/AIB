@@ -2,6 +2,7 @@
 
 ## 0.1.0-beta.8 (beta)
 
+- Removed the separate agents & command monitor page; the sidebar, Activity and terminal cover it.
 - Projects are only the ones you add. A new AIB starts with no projects, even if you used Claude Code or OMP before: add one
   with New project (+ above the chat list), or start a chat in a folder. Saved chats of folders you did not add stay out of
   the project list, the chat list, Ctrl+K and the inbox, and so does "Find more chats via agent"; nothing on disk changes.
