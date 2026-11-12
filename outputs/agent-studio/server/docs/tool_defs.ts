@@ -16,6 +16,17 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
   '[<doc title> › <page title>](aib-doc://<doc name>/<page id>) (page ids: doc_read outline; [<doc title>](aib-doc://<doc name>) for ' +
   'the whole doc): AIB shows it as a chip that opens the page, even after a rename. Never name the doc files or aib-docs/ paths.';
 
+/**
+ * What "doc" means in AIB, said the same way in every channel an agent reads: the MCP server's `instructions` (artifacts/mcp.ts),
+ * doc_create's description, and the ACP system prompt (acp/connection.ts ARTIFACT_PROMPT). Agents also see other "docs" skills and
+ * connectors (the claude.ai Docs skill synced into ~/.agents/skills, Google Docs); without this they pick one of those.
+ */
+export const DOCS_RULE = 'In AIB, a "doc" or "document" means an AIB doc: a shared, editable document in the project that the user ' +
+  'opens in the Docs tab. When the user asks for a doc or a document (to make, write, draft, read or edit one), use the doc tools of ' +
+  'the studio_artifact server: doc_create to make one; doc_list, doc_read and doc_edit for the ones that exist. Do not use any other ' +
+  'docs skill, plugin or connector for it (such as a "docs" skill for claude.ai Docs, or Google Docs) unless the user names that ' +
+  'service, and do not go looking for a skill file first: the doc tools need nothing else.';
+
 const DOC = {
   type: 'string',
   description: 'The doc\'s name, e.g. "plan". It lives in aib-docs/<name>/ in the chat\'s project (doc.aibdoc + a Markdown copy per page).',
@@ -77,8 +88,9 @@ export const DOC_TOOLS: Json[] = [
   {
     name: 'doc_create',
     title: 'Create a doc',
-    description: "Make a new doc shared with the user (in the project's aib-docs/ folder, committed with it; the user finds it in the Docs " +
-      'tab). Docs are for writing the user and agents keep editing: plans, specs, notes, decisions, checklists. Put the facts (dates, ' +
+    description: "Make a new AIB doc shared with the user (in the project's aib-docs/ folder, committed with it; the user finds it in the Docs " +
+      'tab). This is the tool whenever the user asks for a doc or a document, even "a doc of anything": not claude.ai Docs, Google ' +
+      'Docs or a docs skill, unless the user names one of those. Docs are for writing the user and agents keep editing: plans, specs, notes, decisions, checklists. Put the facts (dates, ' +
       'owners, numbers) in the doc. To show them as a chart or an interactive page, publish an artifact with fromDoc. Optionally from ' +
       'Markdown (its first page). Refused with doc_exists if the name is taken. Returns its blocks and `rev`, like doc_read. ' +
       DOC_INSTRUCTIONS,

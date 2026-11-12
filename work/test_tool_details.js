@@ -376,3 +376,50 @@ test('steps still in progress stay listed one by one until they are done and som
   // done and followed by a message: folded
   assert.equal(TV.groupRows([msg, t(1), t(2), t(3), t(4), msg], render).length, 3);
 });
+
+/* Recorded from codex-acp 2.6.0 (session/update payloads of a real Codex run in AIB, 2026-11-11; markdown shortened). */
+const CODEX_MCP_DOC_CREATE = {
+  sessionUpdate: 'tool_call',
+  toolCallId: 'exec-89681579-fa6f-4976-bfa0-88796e17f32a',
+  kind: 'execute',
+  title: 'mcp.studio_artifact.doc_create',
+  status: 'in_progress',
+  rawInput: {
+    server: 'studio_artifact',
+    tool: 'doc_create',
+    arguments: { doc: 'random-notes', docTitle: 'A Few Random Things', title: 'Random Notes', markdown: '# A Few Random Things' },
+  },
+  _meta: { is_mcp_tool_call: true },
+};
+const CODEX_GUARDIAN_REVIEW = {
+  sessionUpdate: 'tool_call',
+  toolCallId: 'guardian_assessment:3e1577b8-2fb7-45e8-aea4-c8974fe1f63c',
+  kind: 'think',
+  title: 'Guardian Review',
+  status: 'in_progress',
+  content: [{ type: 'content', content: { type: 'text', text: 'Status: In progress\nAction: MCP doc_create on studio_artifact' } }],
+  rawInput: { threadId: '01a1ce16-30b7-7ac0-bde7-f337f51f0d81' },
+};
+
+test('Codex MCP calls show the tool, not "bash" or a thread id; AIB doc tools read "Create doc: <title>"', () => {
+  const S = (raw) => TV.summarize({ role: 'tool', raw });
+  const c = S(CODEX_MCP_DOC_CREATE);
+  assert.deepEqual([c.label, c.text, c.status], ['tool', 'Create doc: A Few Random Things', 'running']);
+  // the reviewer row Codex adds before an MCP call: its title and what it reviews, never "Tool: <thread id>"
+  const g = S(CODEX_GUARDIAN_REVIEW);
+  assert.equal(g.text, 'Guardian Review: MCP doc_create on studio_artifact');
+  assert.ok(!g.text.includes('01a1ce16'));
+  // another server's MCP call from Codex reads like Claude Code's mcp__<server>__<tool>
+  const rea = { ...CODEX_MCP_DOC_CREATE, title: 'mcp.rea.open_binary', rawInput: { server: 'rea', tool: 'open_binary', arguments: { path: 'x.exe' } } };
+  assert.equal(S(rea).text, 'open binary: x.exe');
+  // the same AIB tool from Claude Code (mcp__studio_artifact__doc_create) reads the same
+  assert.equal(TV.summarize(callRow('mcp__studio_artifact__doc_create', { doc: 'plan', docTitle: 'Release plan' })).text, 'Create doc: Release plan');
+  assert.equal(TV.summarize(callRow('mcp__studio_artifact__doc_edit', { doc: 'plan' })).text, 'Edit doc: plan');
+  // the details show the arguments, not the {server, tool, arguments} wrapper
+  const md = TV.rawMarkdown(CODEX_MCP_DOC_CREATE);
+  assert.ok(md.includes('A Few Random Things'));
+  assert.ok(!md.includes('"server"'), md);
+  // a plain rawInput that happens to have server/tool fields but is not an MCP call stays as it was
+  const plain = { toolCallId: 'p', kind: 'execute', title: 'deploy', rawInput: { command: 'deploy', server: 'prod', tool: 'x' } };
+  assert.equal(S(plain).text, 'Ran deploy');
+});

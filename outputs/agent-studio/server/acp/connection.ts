@@ -53,6 +53,7 @@ import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseN
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
+import { DOCS_RULE } from '../docs/tool_defs.ts';
 import {
   clip,
   isDict,
@@ -535,15 +536,23 @@ export function resolveProgram(program: string, env: Record<string, string>): st
 
 // ---- the connection -----------------------------------------------------------------------------------------------------------
 
+/**
+ * Codex connects to MCP servers in the background: a first prompt sent as the chat opens can find no studio_artifact tools yet
+ * (seen in real runs: an ALL_TOOLS search 1 s into the turn came back empty, the same search a second later listed them).
+ */
+export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__studio_artifact__doc_create) can take a few seconds to ' +
+  'appear at the start of a chat: if you do not see them yet, wait a few seconds and look again (more than once) before telling ' +
+  'the user they are missing.';
+
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. When you make something the user ' +
-  'should look at rather than source code (an HTML page, report, chart, diagram, SVG, Markdown document or image), ' +
+  'mean this viewer and its studio_artifact tool. ' + DOCS_RULE + ' When you make something else the user ' +
+  'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
   'or among source files, then publish it with the studio_artifact publish tool (pass a file path or the content) and mention it in your reply ' +
   'as the Markdown link the tool returns. When you change it, use the studio_artifact update tool so it gets a new ' +
   'version, and do not tell the user to open the file by hand. Only publish to claude.ai (or any other web ' +
-  'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link.';
+  'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING;
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
@@ -3220,7 +3229,8 @@ export class Connection {
     const out: Json = {};
     const caps = isDict(this.initial) ? get(pyTruthy(this.initial) ? this.initial : {}, 'agentCapabilities') : null;
     const sessionCaps = isDict(caps) ? get(caps, 'sessionCapabilities') : null;
-    if (isDict(sessionCaps) && pyTruthy(get(sessionCaps, 'systemPrompt'))) {
+    // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
+    if (isDict(sessionCaps) && isDict(get(sessionCaps, 'systemPrompt'))) {
       const content: Json[] = [{ type: 'text', text: ARTIFACT_PROMPT }];
       const worktree = this.worktree;
       if (worktree) { // only a chat that works in its own worktree (the merge tool comes with it)
