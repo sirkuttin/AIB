@@ -15,6 +15,7 @@ import { resolveBeta } from '../agents/beta_agents.ts';
 import { BUILTIN_NPM, builtinSetup, defaultProbe, refreshWindowsPath, type SetupProbe, setupView } from '../agents/beta_setup.ts';
 import { isDict, ValueError } from '../core/py.ts';
 import { codeWarning, HostUnavailable } from '../host/host_client.ts';
+import { keeperTakeoverProblem } from '../keeper/link.ts';
 import { packageContext, packageLabel } from '../state/paths.ts';
 import { Registry } from '../worktrees/worktrees.ts';
 
@@ -367,9 +368,12 @@ function pyText(value: unknown): string {
 export async function notices(self: Pick<StudioContext, 'options' | 'hostInfo' | 'waitingChats'>): Promise<Record<string, unknown>> {
   packageCache ??= { value: packageContext() };
   const migration = self.options.migration || { state: 'none' };
+  const hostWarning = await codeWarning(self.hostInfo ?? null);
+  const takeover = keeperTakeoverProblem();
   return {
     migration,
-    hostCodeWarning: await codeWarning(self.hostInfo ?? null),
+    // The keeper's chats this AIB cannot take over (keeperTakeoverProblem) share the host warning's banner line.
+    hostCodeWarning: takeover ? [hostWarning, takeover].filter(Boolean).join(' ') : hostWarning,
     packageContext: packageCache.value,
     packageNotice: packageNotice(packageCache.value, self.options.stateDir ?? ''),
     sandboxNotice: sandboxNotice(migration),

@@ -163,15 +163,26 @@ export class ArtifactMcpHttp {
     return this.#server?.addr.port ?? 0;
   }
 
-  async close(): Promise<void> {
+  /**
+   * Stop listening and take the published address back (only our own: a newer AIB may have written its address already). `closed`:
+   * the person quit AIB while its chats keep running in the keeper; the address file then says {"closed": true}, so the keeper's
+   * forwarder answers a tool call at once with "AIB is closed; try again later" instead of waiting for an AIB that is not coming.
+   */
+  async close(closed = false): Promise<void> {
     const server = this.#server;
     if (!server) return;
     this.#server = null;
     OWN_URLS.delete(this.#url);
     const file = this.studio.addressFile;
     if (file) {
-      try { // only our own: a newer AIB may have written its address already
-        if (JSON.parse(Deno.readTextFileSync(file)).pid === Deno.pid) Deno.removeSync(file);
+      try {
+        if (JSON.parse(Deno.readTextFileSync(file)).pid === Deno.pid) {
+          if (!closed) Deno.removeSync(file);
+          else {
+            Deno.writeTextFileSync(`${file}.${Deno.pid}.tmp`, JSON.stringify({ closed: true, pid: Deno.pid }));
+            Deno.renameSync(`${file}.${Deno.pid}.tmp`, file);
+          }
+        }
       } catch { /* gone */ }
     }
     await Promise.race([server.shutdown().catch(() => {}), new Promise((r) => setTimeout(r, 1000))]);

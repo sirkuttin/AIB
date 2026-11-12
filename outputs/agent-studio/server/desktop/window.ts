@@ -30,8 +30,8 @@ export const DEFAULT_SIZE = { width: 1280, height: 860 };
 export const FIRST_PORT = 8777;
 /**
  * The app's tray menu, with or without a window: Open AIB, a greyed status line ("2 chats running"), Quit AIB (never stops a chat:
- * with work going on the window closes and AIB stays here until it is done) and Stop all chats and quit (the only deliberate stop;
- * a second click confirms it, see stopConfirmLabel).
+ * with work going on AIB exits and the keeper holds the chats until an AIB is started again) and Stop all chats and quit (the only
+ * deliberate stop; a second click confirms it, see stopConfirmLabel).
  */
 export const TRAY_ITEMS: TrayItem[] = [
   { id: 'open', label: 'Open AIB' },
@@ -106,8 +106,9 @@ export function portGiven(args: string[]): boolean {
 export type CloseDecision = 'quit' | 'tray';
 
 /**
- * Closing the window or Quit AIB (the owner's decision, 2026-11-10: quitting never stops a chat). Nothing working: quit. Something
- * working, or a count that can't be read (null): the window goes, AIB stays in the tray and quits by itself once nothing works.
+ * Closing the window or Quit AIB (the owner's decisions, 2026-11-10 and 2026-11-11: quitting never stops a chat, and AIB exits as
+ * Install now does). Nothing working: quit. Something working, or a count that can't be read (null): the chats are left to the
+ * keeper and AIB exits (DesktopApp.decide), or, when the keeper cannot hold them, AIB stays in the tray until nothing works.
  */
 export function closeDecision(work: number | null): CloseDecision {
   return work === 0 ? 'quit' : 'tray';
@@ -334,19 +335,29 @@ export interface DesktopOptions {
   stopHost?: (force: boolean) => Promise<unknown>;
   /** The window loaded our page (the update helper's health marker is written then). */
   onPageLoaded?: () => void;
-  /** The normal close path (the web server). stopAgents: Stop all chats and quit. Never returns in the real app (Deno.exit). */
-  quit: (stopAgents: boolean) => Promise<void>;
+  /**
+   * The normal close path (the web server). stopAgents: Stop all chats and quit. leave: Quit AIB with work running; the chats stay in
+   * the keeper, which holds them until an AIB is started again (no restart in the tray). Never returns in the real app (Deno.exit).
+   */
+  quit: (stopAgents: boolean, leave?: boolean) => Promise<void>;
+  /**
+   * Can Quit AIB leave everything that works to the keeper and exit? '' when yes (every working chat and terminal command runs in a
+   * keeper that can hold them), else why not; then AIB stays in the tray until nothing works. Not given: never (no keeper).
+   */
+  canLeave?: () => Promise<string>;
+  /** How long Quit AIB waits for a running merge before AIB exits (default 120 s; a cut-off merge would leave a half-done repo). */
+  mergeWaitMs?: number;
   saveDelayMs?: number;
   /**
    * Start with no window, only the tray icon (`--start-in-tray`: the keeper restarting AIB after a crash, rule V1, so nothing pops
    * up over the person's work). Open AIB makes the window as usual. Until then AIB is "in the background": it quits by itself once
    * nothing has worked for trayIdleQuitMs (the chats that were open come back at the next start, as after an idle agent host).
-   * Closing the window or Quit AIB while something works puts AIB in the background the same way.
+   * Quit AIB while something works that the keeper cannot hold (canLeave says why) puts AIB in the background the same way.
    */
   startInTray?: boolean;
-  /** Terminal shells running a command (AIB does not quit while one does: it would end the shell). */
+  /** Terminal shells running a command (counted as work: Quit AIB leaves them to the keeper, or AIB stays in the tray). */
   terminalsBusy?: () => number;
-  /** Merges running in this process (AIB does not quit while one does: it would leave a half-done repo). */
+  /** Merges running in this process (AIB does not exit in the middle of one: it would leave a half-done repo). */
   mergesRunning?: () => number;
   /** What works now, for the status line, the quit decision and the idle quit. Default: busyCount, nobody waiting. */
   trayCounts?: () => Promise<{ working: number; needsYou: number }>;
@@ -364,7 +375,7 @@ const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 export class DesktopApp {
   window: WindowHandle | null = null;
   #quitting = false;
-  /** No window and quitting by itself once nothing works (a tray-only start, or a quit while something worked). */
+  /** No window and quitting by itself once nothing works (a tray-only start, or a quit the keeper could not take). */
   #background = false;
   /** Stop all chats and quit was clicked once: a second click before this time stops everything. */
   #stopArmedUntil = 0;
@@ -559,7 +570,11 @@ export class DesktopApp {
     this.#stopArmedUntil = now + STOP_CONFIRM_MS;
     this.#setStopLabel(this.#armedLabel);
     this.trayState('stop armed');
-    log.info('tray: Stop all chats and quit clicked once (%s); a second click within %s s stops everything', this.#armedLabel, STOP_CONFIRM_MS / 1000);
+    log.info(
+      'tray: Stop all chats and quit clicked once (%s); a second click within %s s stops everything',
+      this.#armedLabel,
+      STOP_CONFIRM_MS / 1000,
+    );
     clearTimeout(this.#stopTimer);
     this.#stopTimer = setTimeout(() => {
       this.#stopArmedUntil = 0;
@@ -632,6 +647,7 @@ export class DesktopApp {
   /** Tray click, "Open AIB", or a second launch: show and focus the window, or make a new one if it was closed. */
   async showWindow(why = 'show'): Promise<void> {
     if (this.#quitting) return;
+    this.#leaving = false; // Quit AIB waiting for a merge: the person is back, AIB stays
     const win = this.window;
     if (!win || win.isClosed()) {
       await this.openWindow();
@@ -733,7 +749,7 @@ export class DesktopApp {
     }
   }
 
-  /** The window was closed (it is already gone): quit when nothing works, else AIB goes on in the tray. */
+  /** The window was closed (it is already gone): the same rule as Quit AIB. */
   async onWindowClosed(win: WindowHandle): Promise<void> {
     clearTimeout(this.#saveTimer);
     if (this.#quitting || win !== this.window) return;
@@ -747,15 +763,24 @@ export class DesktopApp {
   }
 
   /**
-   * Closing the window or Quit AIB never stops a chat (owner's decision 2026-11-10). 'quit': nothing works, AIB quits. 'tray': the
-   * window goes (hidden when it is still there), AIB stays in the tray with the status line ("2 chats running") and quits by itself
-   * once nothing has worked for trayIdleQuitMs; Open AIB or a tray click brings the window back with every chat as it is. With a
-   * separate agent host (an older version's, being drained) the app quits at once: the host keeps its chats under its own icon.
+   * Closing the window or Quit AIB never stops a chat (owner's decisions 2026-11-10 and 2026-11-11). 'quit': nothing works, AIB
+   * quits. 'leave': something works and the keeper can hold all of it (canLeave): the window goes, a running merge is let finish,
+   * then AIB exits the way Install now does, minus starting a new version: the chats stay in the keeper, which holds them (no
+   * restart in the tray) until an AIB is started again; that one takes them over. 'tray': the keeper cannot hold it (off, too old, a
+   * chat or terminal command outside it): the window goes, AIB stays in the tray with the status line and quits by itself once
+   * nothing has worked for trayIdleQuitMs. With a separate agent host (an older version's, being drained) the app quits at once: the
+   * host keeps its chats under its own icon.
    */
-  async decide(why = 'quit', win: WindowHandle | null = this.window): Promise<'quit' | 'tray'> {
+  async decide(why = 'quit', win: WindowHandle | null = this.window): Promise<'quit' | 'leave' | 'tray'> {
+    if (this.#leaving) return 'leave';
     if (this.options.stopHost) {
       const busy = await this.busy();
-      log.info('close (%s): %s chat(s) working; %s', why, busy ?? 'unknown', busy === 0 ? 'stopping the agent host' : 'they keep running in the agent host');
+      log.info(
+        'close (%s): %s chat(s) working; %s',
+        why,
+        busy ?? 'unknown',
+        busy === 0 ? 'stopping the agent host' : 'they keep running in the agent host',
+      );
       await this.quit(false);
       return 'quit';
     }
@@ -771,27 +796,78 @@ export class DesktopApp {
       await this.quit(false);
       return 'quit';
     }
-    log.info(
-      'close (%s): %s; the window closes, nothing is stopped, AIB stays in the tray and quits by itself once nothing works',
-      why,
-      work ? `${work.working} chat(s), ${work.terminals} terminal command(s), ${work.merges} merge(s) working` : 'what works is unknown',
-    );
-    if (win && !win.isClosed()) {
-      try {
-        win.hide();
-      } catch { /* gone */ }
+    const what = work
+      ? `${work.working} chat(s), ${work.terminals} terminal command(s), ${work.merges} merge(s) working`
+      : 'what works is unknown';
+    let cannot = 'there is no keeper';
+    try {
+      if (this.options.canLeave) cannot = await this.options.canLeave();
+    } catch (error) {
+      cannot = error instanceof Error ? error.message : String(error);
     }
+    if (this.#quitting) return 'quit';
+    if (!cannot) {
+      log.info('close (%s): %s; nothing is stopped: the keeper holds the chats and AIB exits', why, what);
+      this.#hide(win);
+      this.#leaving = true;
+      if (!await this.#mergesDone()) {
+        log.info('close (%s): the window was opened again while a merge finished; AIB stays', why);
+        return 'tray';
+      }
+      await this.quit(false, true);
+      return 'leave';
+    }
+    log.info(
+      'close (%s): %s; the keeper cannot hold it (%s): AIB stays in the tray and quits by itself once nothing works',
+      why,
+      what,
+      cannot,
+    );
+    this.#hide(win);
     this.#background = true;
     this.#idleSince = null;
     this.trayState('background');
     return 'tray';
   }
 
-  async quit(stopAgents: boolean): Promise<void> {
+  /** Quit AIB is leaving the chats to the keeper (waiting for a merge to finish first). Opening the window again calls it off. */
+  #leaving = false;
+
+  #hide(win: WindowHandle | null): void {
+    if (win && !win.isClosed()) {
+      try {
+        win.hide();
+      } catch { /* gone */ }
+    }
+  }
+
+  /** Wait (up to mergeWaitMs) until no merge runs in this process. False when the window was opened again meanwhile. */
+  async #mergesDone(): Promise<boolean> {
+    const until = Date.now() + (this.options.mergeWaitMs ?? 120_000);
+    const running = () => {
+      try {
+        return this.options.mergesRunning?.() ?? 0;
+      } catch {
+        return 0;
+      }
+    };
+    if (running() > 0) log.info('quit: waiting for %s merge(s) to finish before AIB exits', running());
+    while (running() > 0 && this.#leaving && Date.now() < until) await new Promise((r) => setTimeout(r, 250));
+    return this.#leaving;
+  }
+
+  async quit(stopAgents: boolean, leave = false): Promise<void> {
     if (this.#quitting) return;
     this.#quitting = true;
     this.stop();
-    log.info('quitting: %s', stopAgents ? 'Stop all chats and quit: stopping every chat' : 'nothing is working, so nothing is stopped');
+    log.info(
+      'quitting: %s',
+      stopAgents
+        ? 'Stop all chats and quit: stopping every chat'
+        : leave
+        ? 'the chats stay in the keeper until AIB is started again'
+        : 'nothing is working, so nothing is stopped',
+    );
     try {
       await this.options.stopHost?.(stopAgents);
     } catch { /* not running, or refused: quit anyway */ }
@@ -799,6 +875,6 @@ export class DesktopApp {
       this.shell.removeTray?.();
     } catch { /* quitting anyway */ }
     this.trayState('removed');
-    await this.options.quit(stopAgents);
+    await this.options.quit(stopAgents, leave);
   }
 }

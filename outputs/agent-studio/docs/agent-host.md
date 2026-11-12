@@ -115,6 +115,14 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   the running one holds no live channel ("replacing the running keeper 1.0.0 (pid N) with 1.0.1: it holds no chats"); until then new
   chats go to the running one ("the newer keeper 1.0.1 is used once the running one (1.0.0) holds no chats"). Test builds stamp a
   version with `go build -ldflags "-X main.keeperVersion=1.0.1"`.
+* **Quit with work running** (owner's decision 2026-11-11). The same release as Install now, minus the helper and the new version:
+  the app sends `hold` (keeper 1.3.0, feature `hold`), releases its chats and terminal shells (`Studio.release({ hold: true })`) and
+  exits. The held keeper runs no orphan command and never stops its channels as orphaned until a client claims or spawns a channel (the next AIB taking over), so nothing
+  restarts AIB in the tray; the agents keep running and the keeper records them. Whichever AIB is started next on the data folder
+  takes the chats over (`adoptKeeper`), from any folder and any version that can drive the keeper (`KEEPER_NEEDS`); one that cannot
+  takes nothing over, stops nothing, and says so in the page's banner. Logged: "closing (the app was quit with work running); the
+  keeper holds the chats until AIB is started again", "released N chat(s) to the keeper; ... the keeper holds them". With an older
+  keeper (no `hold`) the app stays in the tray instead, as before.
 * **Keeper death.** Its Job Objects end every agent. Each chat closes with "Interrupted: the keeper ... stopped ..." (receipt `error`,
   never resent) and is reconnected by `session/load` when automatic reconnect is on.
 * **Tray, not a window, after a crash** (rule V1). The orphan command is AIB's own command line plus `--start-in-tray` (desktop app
@@ -122,7 +130,8 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   Open AIB, a greyed status line ("2 chats running", "1 chat needs you"), Quit AIB and Stop all chats and quit (a second click
   within 10 s confirms; no box). Open AIB, a left click or a second launch makes the window as usual. While no window is open, AIB
   quits by itself once nothing has worked for 10 s (idle chats go to the recovery list, as with the idle agent host). This is the
-  same "background" state as closing the window or Quit AIB while something works (DESKTOP.md, Window and tray). If the data
+  same "background" state as Quit AIB while something works that the keeper cannot hold (DESKTOP.md, Window and tray); Quit AIB
+  in a tray-only AIB leaves the chats to the keeper like any other quit. If the data
   folder is already taken (another AIB came back first) it exits quietly: no "show your window" signal, no message box. An update
   started from such an AIB drops the flag (`updater.ts` appArgs), so the new version opens its window. Code: `window.ts`
   (`startInTray`, `TRAY_ITEMS`, `trayTick`), `native.ts` (`updateTray`), `studio.ts` `orphanCommand`, `single_instance.ts` `quiet`.

@@ -417,6 +417,15 @@ export class KeeperClient {
     await this.request({ op: 'setOrphanCommand', orphan });
   }
 
+  /**
+   * Keeper 1.3.0 (`hold`): this client leaves on purpose (the person quit AIB with work running). Until a client claims or spawns a
+   * channel (the next AIB taking over) the keeper runs no orphan command and never stops the channels as orphaned: they wait for the
+   * next AIB, however long. A client that only looks (list, attach, status) leaves the hold in place.
+   */
+  async hold(): Promise<void> {
+    await this.request({ op: 'hold' });
+  }
+
   async shutdown(force = false): Promise<void> {
     await this.request({ op: 'shutdown', force });
   }
