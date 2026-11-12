@@ -29,17 +29,23 @@ SUPPORTED_VERSIONS = ('2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05')
 KINDS = ['html', 'svg', 'md', 'image', 'pdf', 'csv', 'json', 'text']
 HTTP_TIMEOUT = 60
 
-INSTRUCTIONS = ('Use these tools to show the user an HTML page, diagram, report or document in AIB\'s Artifacts panel. '
-                'Do not use them for source code. When you mention an artifact in a reply, write it as a Markdown link '
-                '[Title](studio-artifact://<id>).')
+DOCS_RULE = ('In AIB, a "doc" or "document" means an AIB doc: a shared, editable document in the project that the user '
+             'opens in the Docs tab. When the user asks for a doc or a document (to make, write, draft, read or edit one), use the doc tools of '
+             'the studio_artifact server: doc_create to make one; doc_list, doc_read and doc_edit for the ones that exist. Do not use any other '
+             'docs skill, plugin or connector for it (such as a "docs" skill for claude.ai Docs, or Google Docs) unless the user names that '
+             'service, and do not go looking for a skill file first: the doc tools need nothing else.')
+
+INSTRUCTIONS = ('These are AIB\'s own tools, for the app the user is chatting in. ' + DOCS_RULE + ' Use publish to show the '
+                'user an HTML page, diagram, chart, image or one-off report in AIB\'s Artifacts panel; not for source code. When you mention an '
+                'artifact in a reply, write it as a Markdown link [Title](studio-artifact://<id>).')
 
 TOOLS = [
     {
         'name': 'publish',
         'title': 'Publish an artifact',
         'description': ('Show the user an HTML page, diagram (SVG), image, PDF, CSV, JSON, or a one-off Markdown report in the Artifacts panel next to the chat: '
-                        'something to look at or click through. Do NOT use it for a plan, spec, notes, checklist or anything the user will want to edit or keep in '
-                        'the project: make a doc with doc_create. If the page shows content from a doc (a timeline of its Rollout page, a chart of its table), pass '
+                        'something to look at or click through. Do NOT use it when the user asks for a doc or a document, or for a plan, spec, notes, checklist '
+                        'or anything the user will want to edit or keep in the project: make an AIB doc with doc_create. If the page shows content from a doc (a timeline of its Rollout page, a chart of its table), pass '
                         '"fromDoc": {"doc": "<name>", "page": "<page>"} so the user can rebuild it when the doc changes. Do NOT use it for source code or files the user '
                         'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with '
                         '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and '

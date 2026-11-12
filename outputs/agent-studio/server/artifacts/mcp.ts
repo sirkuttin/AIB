@@ -16,7 +16,7 @@ import { isDict, pyJsonDumps, pyStr, pyStrip } from '../core/py.ts';
 import { pyTypeName, truthy } from '../transcripts/pycompat.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { join, normpath } from '../platform/ospath.ts';
-import { DOC_TOOL_NAMES, DOC_TOOLS } from '../docs/tool_defs.ts';
+import { DOC_TOOL_NAMES, DOC_TOOLS, DOCS_RULE } from '../docs/tool_defs.ts';
 import { DRAWING_TOOL_NAMES, DRAWING_TOOLS } from '../docs/drawing/tool_defs.ts';
 
 type Json = Record<string, unknown>;
@@ -27,9 +27,9 @@ export const SUPPORTED_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '20
 export const KINDS = ['html', 'svg', 'md', 'image', 'pdf', 'csv', 'json', 'text'];
 const HTTP_TIMEOUT_MS = 60_000;
 
-export const INSTRUCTIONS = "Use these tools to show the user an HTML page, diagram, report or document in AIB's Artifacts panel. " +
-  'Do not use them for source code. When you mention an artifact in a reply, write it as a Markdown link ' +
-  '[Title](studio-artifact://<id>).';
+export const INSTRUCTIONS = "These are AIB's own tools, for the app the user is chatting in. " + DOCS_RULE + ' Use publish to show the ' +
+  "user an HTML page, diagram, chart, image or one-off report in AIB's Artifacts panel; not for source code. When you mention an " +
+  'artifact in a reply, write it as a Markdown link [Title](studio-artifact://<id>).';
 
 /**
  * Deno only (the Python reference has no /_lib/): the libraries the artifact origin bundles (libs.ts), appended to publish's
@@ -48,8 +48,8 @@ export const TOOLS: Json[] = [
     title: 'Publish an artifact',
     description:
       'Show the user an HTML page, diagram (SVG), image, PDF, CSV, JSON, or a one-off Markdown report in the Artifacts panel next to the chat: ' +
-      'something to look at or click through. Do NOT use it for a plan, spec, notes, checklist or anything the user will want to edit or keep in ' +
-      'the project: make a doc with doc_create. If the page shows content from a doc (a timeline of its Rollout page, a chart of its table), pass ' +
+      'something to look at or click through. Do NOT use it when the user asks for a doc or a document, or for a plan, spec, notes, checklist ' +
+      'or anything the user will want to edit or keep in the project: make an AIB doc with doc_create. If the page shows content from a doc (a timeline of its Rollout page, a chart of its table), pass ' +
       '"fromDoc": {"doc": "<name>", "page": "<page>"} so the user can rebuild it when the doc changes. Do NOT use it for source code or files the user ' +
       'only needs on disk. Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, with ' +
       '`filename` such as "report.html" so AIB knows the kind). HTML pages are shown sandboxed: scripts from cdnjs.cloudflare.com, cdn.jsdelivr.net and ' +

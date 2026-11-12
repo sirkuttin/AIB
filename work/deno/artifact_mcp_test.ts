@@ -7,13 +7,13 @@ import { assert, assertEquals } from './_assert.ts';
 import { PY_REF_DIR, python } from './_parity.ts';
 import { APP_ROOT, TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { artifactToolCommand, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
+import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { ARTIFACT_URL_FILE } from '../../outputs/agent-studio/server/host/studio.ts';
 import { ARTIFACT_PROMPT, Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { selectMcpServers, validateMcpServers } from '../../outputs/agent-studio/server/acp/breadth.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
+import { DOC_TOOL_NAMES, DOCS_RULE } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
 import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
 import { pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
 
@@ -271,6 +271,31 @@ Deno.test('initialize negotiation and tools/list', async () => {
     assert((tools[0].description as string).includes(path), path); // agents learn the bundled libraries here
   }
   assertEquals((tools[1].inputSchema as Json).required, ['id']);
+});
+
+Deno.test('a "doc" means an AIB doc: the MCP instructions, doc_create and publish say so to any MCP client', async () => {
+  // An agent that gets no ACP system prompt still reads these. The owner's Codex chat went for the claude.ai "docs" skill instead.
+  await using lab = new Lab();
+  const shim = lab.shim();
+  const result = (await shim.request('initialize', { protocolVersion: '2025-06-18', capabilities: {} })).result as Json;
+  assertEquals(result.instructions, INSTRUCTIONS);
+  const instructions = result.instructions as string;
+  assert(instructions.includes(DOCS_RULE), 'the doc rule is in the instructions');
+  for (const words of ['AIB doc', 'doc_create', 'claude.ai Docs', 'Google Docs', 'unless the user names', 'Artifacts panel']) {
+    assert(instructions.includes(words), words);
+  }
+  const tools = ((await shim.request('tools/list')).result as Json).tools as Json[];
+  const describe = (name: string) => tools.find((t) => t.name === name)!.description as string;
+  for (const words of ['AIB doc', 'whenever the user asks for a doc or a document', 'claude.ai Docs', 'Google Docs', 'docs skill']) {
+    assert(describe('doc_create').includes(words), `doc_create: ${words}`);
+  }
+  assert(describe('publish').includes('Do NOT use it when the user asks for a doc or a document'), 'publish sends docs to doc_create');
+  assert(describe('publish').includes('make an AIB doc with doc_create'));
+});
+
+Deno.test('the ACP system prompt says the same about docs as the MCP instructions', () => {
+  assert(ARTIFACT_PROMPT.includes(DOCS_RULE));
+  assert(!ARTIFACT_PROMPT.includes('Markdown document'), 'a Markdown document is a doc now, not something to publish');
 });
 
 Deno.test('unknown method, unknown tool and garbage', async () => {

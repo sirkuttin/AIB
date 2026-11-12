@@ -53,6 +53,7 @@ import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseN
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
+import { DOCS_RULE } from '../docs/tool_defs.ts';
 import {
   clip,
   isDict,
@@ -537,8 +538,8 @@ export function resolveProgram(program: string, env: Record<string, string>): st
 
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. When you make something the user ' +
-  'should look at rather than source code (an HTML page, report, chart, diagram, SVG, Markdown document or image), ' +
+  'mean this viewer and its studio_artifact tool. ' + DOCS_RULE + ' When you make something else the user ' +
+  'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
   'or among source files, then publish it with the studio_artifact publish tool (pass a file path or the content) and mention it in your reply ' +
   'as the Markdown link the tool returns. When you change it, use the studio_artifact update tool so it gets a new ' +
