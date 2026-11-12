@@ -31,6 +31,24 @@ function report() {
 }
 `;
 
+/**
+ * Remove a folder a process has just exited from. Windows signals a process as exited a moment before it has closed its
+ * handles (its working directory, its open log), so the first removal can still fail with "being used by another process". Retry
+ * for up to 10 s, then fail with the real error: a handle that is still held after that is a leak the test should report.
+ */
+async function removeWhenReleased(dir: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try {
+      Deno.removeSync(dir, { recursive: true });
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
 function probeScript(dir: string): string {
   const path = `${dir}\\probe.ts`;
   Deno.writeTextFileSync(
@@ -102,7 +120,7 @@ for (const mode of ['default', 'attach']) {
         assertEquals(r.child.visible, false, 'the child shows no window');
         assert(r.child.pids.includes(r.pid), `the child shares the parent's hidden console: ${JSON.stringify(r.child)}`);
       } finally {
-        Deno.removeSync(dir, { recursive: true });
+        await removeWhenReleased(dir);
       }
     },
   });
