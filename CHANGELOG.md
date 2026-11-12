@@ -115,6 +115,7 @@
 - The Activity tab shows how many subagents are working right now, like the counts on Changes and Artifacts.
 - The chat keeps your place when its width changes: opening a doc or artifact, a file beside the chat, or a narrower
   window. At the bottom it stays at the newest message; while reading, the same row stays where it was.
+- The chat no longer shows raw "Delegation" blocks for messages an agent sends its helpers; the tool row and the helper's own view already show them.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.

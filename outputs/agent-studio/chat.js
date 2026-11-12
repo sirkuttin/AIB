@@ -1698,9 +1698,9 @@
           });
           continue;
         } else if (kind === 'session_message') {
-          role = 'notice';
-          label = 'Delegation';
-          value = JSON.stringify(u.content || u, null, 2);
+          /* A message the agent sends a helper (SendMessage, or a helper's brief): its tool row and the helper's own view already
+             show it, so it gets no row of its own (it was a raw "Delegation" block). */
+          continue;
         } else continue;
       } else if (event.kind === 'permission' || event.kind === 'elicitation') {
         /* An approval or a question: once it is answered its card goes, and this compact line stays in the chat. */
