@@ -487,7 +487,16 @@ header #status {
 .chip-tone-high .chip-v {
   color: var(--hd-fail);
 }
+/* Limits chip when a limit is reached: red value on the "didn't start" red fill */
+.chip-tone-blocked {
+  background: var(--bad-fill);
+  border-color: var(--bad-line);
+}
+.chip-tone-blocked .chip-v {
+  color: var(--hd-fail);
+}
 .chip-ctx,
+.chip-limits,
 .chip-branch,
 .chip-agent {
   cursor: default;
@@ -501,7 +510,8 @@ header #status {
 /* value-only chips like the mockup; the label stays in the tooltip and for screen readers */
 .composer-row .chip-agent .chip-k,
 .composer-row .chip-model .chip-k,
-.composer-row .chip-mode .chip-k {
+.composer-row .chip-mode .chip-k,
+.composer-row .chip-limits .chip-k {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -530,12 +540,19 @@ header #status {
   box-shadow: 0 6px 24px var(--shadow-soft);
   pointer-events: none;
 }
+/* composer-chips.js picks the side with room when the tooltip opens: from the chip's right edge near a narrow window's right edge. */
+.chip-tip[data-side='right'] {
+  left: auto;
+  right: 0;
+}
 .chip-tip-line {
   overflow-wrap: anywhere;
 }
 .chip-wrap:hover > .chip-tip,
 .chip-ctx:focus-visible + .chip-tip,
-.chip-ctx:focus + .chip-tip {
+.chip-ctx:focus + .chip-tip,
+.chip-limits:focus-visible + .chip-tip,
+.chip-limits:focus + .chip-tip {
   display: flex;
 }
 /* Attach lives inside the message box, next to Send, so it is easy to find. */

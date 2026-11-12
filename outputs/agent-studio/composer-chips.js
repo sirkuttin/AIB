@@ -1,7 +1,8 @@
 (function (root) {
   'use strict';
   // Compact setting chips under the message box: agent (read-only in a chat), model, mode, effort, branch, context % (with
-  // the session-details tooltip: context, cost, session id, notices). No Project chip: a chat keeps its agent; only the New
+  // the session-details tooltip: context, cost, session id, notices), usage limits (percent used per window, with resets).
+  // No Project chip: a chat keeps its agent; only the New
   // chat page (opts.onAgent) lets the Agent chip pick one.
   // A chip with choices opens a menu that lists them directly (one row each, the current one checked, one click picks and
   // closes; arrow keys, Enter, Escape and type-ahead). Choices come from the same advertised settings as the settings panel
@@ -116,6 +117,94 @@
 
   function valueName(option) {
     return choiceName(option, option.currentValue);
+  }
+
+  // ---- the Limits chip ---------------------------------------------------------------------------------------------
+  // The account's subscription limits (server/state/usage_limits.ts snapshot): percent used per window, labels from the data
+  // ("5h 42% · wk 18%", "wk 26%"). Hover: each window's reset time (local and "in 2h 10m"), the plan when known, how fresh the
+  // numbers are. Same tones as Ctx: high at 85% or more; blocked (red) when a window is rejected / at 100% or the cap is reached.
+  // A window whose reset time has passed is dropped (its numbers are old); no window left and not blocked: no chip.
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad2 = (n) => String(n).padStart(2, '0');
+  // Local time of a reset: "14:20" today, "Sun 03:00" within the week, "Nov 20 03:00" later.
+  function localWhen(ms, nowMs) {
+    const d = new Date(ms),
+      now = new Date(nowMs);
+    const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    if (d.toDateString() === now.toDateString()) return hm;
+    if (ms - nowMs < 6 * 86400000) return DAYS[d.getDay()] + ' ' + hm;
+    return MONTHS[d.getMonth()] + ' ' + d.getDate() + ' ' + hm;
+  }
+  // "in 2h 10m", "in 3d 4h", "in 12m", "in under a minute".
+  function untilText(ms, nowMs) {
+    const mins = Math.floor((ms - nowMs) / 60000);
+    if (mins < 1) return 'in under a minute';
+    const d = Math.floor(mins / 1440),
+      h = Math.floor((mins % 1440) / 60),
+      m = mins % 60;
+    if (d) return 'in ' + d + 'd' + (h ? ' ' + h + 'h' : '');
+    if (h) return 'in ' + h + 'h' + (m ? ' ' + m + 'm' : '');
+    return 'in ' + m + 'm';
+  }
+  function agoText(seconds, nowMs) {
+    const mins = Math.floor((nowMs - seconds * 1000) / 60000);
+    if (mins < 1) return 'updated just now';
+    if (mins < 60) return 'updated ' + mins + ' min ago';
+    const h = Math.floor(mins / 60);
+    if (h < 24) return 'updated ' + h + ' h ago';
+    const d = Math.floor(h / 24);
+    return 'updated ' + d + (d === 1 ? ' day' : ' days') + ' ago';
+  }
+  const pctText = (n) => Math.round(n) + '%';
+  const resetText = (at, nowMs) =>
+    at ? 'resets ' + localWhen(at * 1000, nowMs) + ' (' + untilText(at * 1000, nowMs) + ')' : '';
+
+  // {value, tone, details} for the chip, or null when there is nothing to show. Pure (nowMs is passed in).
+  function describeLimits(limits, nowMs) {
+    if (!limits || typeof limits !== 'object' || !Array.isArray(limits.windows)) return null;
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const live = (at) => !at || at * 1000 > now;
+    const windows = limits.windows.filter(
+      (w) => w && typeof w === 'object' && typeof w.label === 'string' && live(Number(w.resetsAt) || 0),
+    );
+    const capped = !!(limits.blocked && live(Number(limits.blocked.resetsAt) || 0));
+    const numbered = windows.filter((w) => typeof w.usedPercent === 'number');
+    const isBlocked = (w) => w.status === 'rejected' || (typeof w.usedPercent === 'number' && w.usedPercent >= 100);
+    const byLength = (a, b) => (Number(a.minutes) || 0) - (Number(b.minutes) || 0);
+    // The chip: the all-models windows, shortest first; model-scoped ones only when there is nothing else (all are in the hover).
+    let shown = numbered.filter((w) => !w.scope).sort(byLength);
+    if (!shown.length) shown = numbered.slice().sort((a, b) => b.usedPercent - a.usedPercent);
+    shown = shown.slice(0, 3);
+    const rejected = windows.filter((w) => !w.scope && w.status === 'rejected' && typeof w.usedPercent !== 'number');
+    if (!shown.length && !capped && !rejected.length) return null;
+    const blocked = capped || rejected.length > 0 || shown.some(isBlocked);
+    const high = shown.some((w) => Math.round(w.usedPercent) >= 85); // as shown, like Ctx
+    const value = shown.length
+      ? shown.map((w) => w.label + ' ' + pctText(w.usedPercent)).join(' \u00B7 ')
+      : 'limit reached';
+    const details = [];
+    if (capped) {
+      const at = Number(limits.blocked.resetsAt) || 0;
+      details.push('Limit reached' + (at ? ' \u00B7 ' + resetText(at, now) : ''));
+    }
+    for (const w of windows) {
+      const at = Number(w.resetsAt) || 0;
+      const used =
+        typeof w.usedPercent === 'number'
+          ? pctText(w.usedPercent) + ' used' + (isBlocked(w) ? ' \u00B7 limit reached' : '')
+          : w.status === 'rejected'
+            ? 'limit reached'
+            : 'no number yet';
+      details.push(String(w.name || w.label) + ': ' + used + (at ? ' \u00B7 ' + resetText(at, now) : ''));
+    }
+    if (typeof limits.plan === 'string' && limits.plan) details.push('Plan: ' + limits.plan);
+    for (const n of Array.isArray(limits.notes) ? limits.notes : []) if (typeof n === 'string' && n) details.push(n);
+    if (Number(limits.updatedAt) > 0) {
+      const ago = agoText(Number(limits.updatedAt), now);
+      details.push(ago.charAt(0).toUpperCase() + ago.slice(1));
+    }
+    return { value, tone: blocked ? 'blocked' : high ? 'high' : '', details };
   }
 
   // Which chips exist and what they say. Pure, so it can be tested without a DOM.
@@ -235,6 +324,10 @@
     } else if (details.length) {
       chips.push({ id: 'ctx', label: 'Ctx', value: '\u2013', tone: '', title: '', details });
     }
+    // After Ctx: the account's usage limits; no chip for agents with no official source (the server sends none).
+    const lim = describeLimits(model.limits, model.now);
+    if (lim)
+      chips.push({ id: 'limits', label: 'Limits', value: lim.value, tone: lim.tone, title: '', details: lim.details });
     // The Agent chip comes first and is read-only: a conversation keeps its agent (Continue with another agent is in the chat's right-click menu).
     if (model.agent)
       chips.unshift({
@@ -587,7 +680,7 @@
     const d = describe(model);
     const commands = Array.isArray(model.commands) ? model.commands : [];
     const hasModelCommand = commands.some((c) => c && c.name === 'model');
-    const isStatic = (c) => c.id === 'ctx' || c.id === 'branch';
+    const isStatic = (c) => c.id === 'ctx' || c.id === 'branch' || c.id === 'limits';
     const staticSig = JSON.stringify(d.chips.filter(isStatic).map((c) => [c.id, c.value, c.title, c.tone, c.details]));
     const signature = JSON.stringify([
       d.chips.map((c) =>
@@ -611,8 +704,10 @@
           if (chipEl) {
             chipEl.title = c.title || '';
             chipEl.classList.toggle('chip-tone-high', c.tone === 'high');
+            chipEl.classList.toggle('chip-tone-blocked', c.tone === 'blocked');
+            if (c.id === 'limits') chipEl.setAttribute('aria-label', 'Usage limits ' + c.value + '. Details');
           }
-          const tip = c.details && box.querySelector && box.querySelector('.chip-ctx + .chip-tip');
+          const tip = c.details && box.querySelector && box.querySelector('.chip-' + c.id + ' + .chip-tip');
           if (tip) fillTip(doc, tip, c.details);
         }
       }
@@ -656,7 +751,8 @@
           (interactive ? '' : ' chip-static') +
           (chip.pending ? ' chip-pending' : '') +
           (chip.warn ? ' chip-mismatch' : '') +
-          (chip.tone === 'high' ? ' chip-tone-high' : ''),
+          (chip.tone === 'high' ? ' chip-tone-high' : '') +
+          (chip.tone === 'blocked' ? ' chip-tone-blocked' : ''),
       );
       if (interactive) {
         button.type = 'button';
@@ -684,14 +780,37 @@
       button.title = base + (chip.warn ? '\n' + chip.warn : '') + (chip.hint ? '\n' + chip.hint : '');
       if (o.disabled && interactive) button.classList.add('chip-locked');
       wrap.append(button);
-      if (chip.id === 'ctx' && chip.details) {
+      if ((chip.id === 'ctx' || chip.id === 'limits') && chip.details) {
         button.tabIndex = 0;
         button.title = '';
-        button.setAttribute('aria-label', 'Context ' + chip.value + '. Session details');
+        button.setAttribute(
+          'aria-label',
+          chip.id === 'ctx'
+            ? 'Context ' + chip.value + '. Session details'
+            : 'Usage limits ' + chip.value + '. Details',
+        );
         const tip = el(doc, 'span', null, 'chip-tip');
         tip.setAttribute('role', 'tooltip');
         fillTip(doc, tip, chip.details);
         wrap.append(tip);
+        /* Open the tooltip toward the side with room: from the chip's left edge when it fits, else from its right edge
+           (a chip near a narrow window's right edge), else whichever side has more room. */
+        const place = () => {
+          const win = doc.defaultView;
+          if (!win || typeof wrap.getBoundingClientRect !== 'function') return;
+          const shown = tip.style.display;
+          tip.style.visibility = 'hidden';
+          tip.style.display = 'flex';
+          const w = tip.offsetWidth || 0;
+          tip.style.display = shown;
+          tip.style.visibility = '';
+          const r = wrap.getBoundingClientRect(),
+            roomRight = win.innerWidth - r.left,
+            roomLeft = r.right;
+          tip.dataset.side = w <= roomRight - 8 ? 'left' : w <= roomLeft - 8 ? 'right' : roomRight >= roomLeft ? 'left' : 'right';
+        };
+        wrap.addEventListener('mouseenter', place);
+        wrap.addEventListener('focusin', place);
       }
       if (chip.pending && o.onCancelPending) {
         const cancel = el(doc, 'button', '×', 'chip-cancel');
@@ -779,6 +898,7 @@
     friendlyModel,
     sameModel,
     describe,
+    describeLimits,
     render,
     menuItems,
     place,
