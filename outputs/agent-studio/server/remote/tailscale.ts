@@ -25,6 +25,10 @@ export interface TailscaleState {
   serving: boolean;
   /** What https://<name>/ is served from now, when it is not AIB's phone port ('' when nothing is). */
   servingOther: string;
+  /** Phase D: `tailscale serve` sends https://<name>:8443/ to AIB's artifact port (artifacts open on the phone). */
+  artifactServing: boolean;
+  /** What https://<name>:8443/ is served from now, when it is not AIB's artifact port ('' when nothing is). */
+  artifactServingOther: string;
   /** Funnel (public internet) is on for this name: phone access refuses to start. */
   funnel: boolean;
   /** Why something could not be read, for the Devices page ('' when all went well). */
@@ -99,30 +103,46 @@ function jsonPart(text: string): string {
 }
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
 
-/** What `tailscale serve status --json` says about https://<name>:443/ and Funnel. */
-export function readServe(serve: Json, name: string, port: number): { serving: boolean; servingOther: string; funnel: boolean } {
+/** What `tailscale serve status --json` says about https://<name>:443/ (the phone port), https://<name>:8443/ (the artifact port)
+ * and Funnel (on for any port of this name: phone access refuses to start). */
+export function readServe(
+  serve: Json,
+  name: string,
+  port: number,
+  artifactPort = 0,
+): { serving: boolean; servingOther: string; artifactServing: boolean; artifactServingOther: string; funnel: boolean } {
   let funnel = false;
   for (const [key, on] of Object.entries(obj(serve.AllowFunnel))) {
     if (on && cleanName(key.replace(/:\d+$/, '')) === name) funnel = true;
   }
-  let serving = false;
-  let servingOther = '';
   const web = obj(serve.Web);
-  for (const [key, value] of Object.entries(web)) {
-    const host = cleanName(key.replace(/:\d+$/, ''));
-    const hostPort = key.match(/:(\d+)$/)?.[1] ?? '443';
-    if (host !== name || hostPort !== '443') continue;
-    const root = obj(obj(obj(value).Handlers)['/']);
-    const proxy = typeof root.Proxy === 'string' ? root.Proxy : '';
-    const m = proxy.match(/^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost):(\d+)\/?$/i) ?? proxy.match(/^(\d+)$/);
-    if (m && Number(m[1]) === port) serving = true;
-    else servingOther = proxy || 'something else';
-  }
-  return { serving, servingOther: serving ? '' : servingOther, funnel };
+  const at = (httpsPort: string, want: number): [boolean, string] => {
+    let serving = false;
+    let other = '';
+    for (const [key, value] of Object.entries(web)) {
+      const host = cleanName(key.replace(/:\d+$/, ''));
+      const hostPort = key.match(/:(\d+)$/)?.[1] ?? '443';
+      if (host !== name || hostPort !== httpsPort) continue;
+      const root = obj(obj(obj(value).Handlers)['/']);
+      const proxy = typeof root.Proxy === 'string' ? root.Proxy : '';
+      const m = proxy.match(/^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost):(\d+)\/?$/i) ?? proxy.match(/^(\d+)$/);
+      if (m && want && Number(m[1]) === want) serving = true;
+      else other = proxy || 'something else';
+    }
+    return [serving, serving ? '' : other];
+  };
+  const [serving, servingOther] = at('443', port);
+  const [artifactServing, artifactServingOther] = at('8443', artifactPort);
+  return { serving, servingOther, artifactServing, artifactServingOther, funnel };
 }
 
 /** Read Tailscale's state. Never throws: what could not be read is in `problem`. */
-export async function readTailscale(port: number, run: Runner = defaultRunner, clock = () => Date.now() / 1000): Promise<TailscaleState> {
+export async function readTailscale(
+  port: number,
+  run: Runner = defaultRunner,
+  clock = () => Date.now() / 1000,
+  artifactPort = 0,
+): Promise<TailscaleState> {
   const state: TailscaleState = {
     installed: false,
     signedIn: false,
@@ -133,6 +153,8 @@ export async function readTailscale(port: number, run: Runner = defaultRunner, c
     https: false,
     serving: false,
     servingOther: '',
+    artifactServing: false,
+    artifactServingOther: '',
     funnel: false,
     problem: '',
     checkedAt: clock(),
@@ -171,7 +193,7 @@ export async function readTailscale(port: number, run: Runner = defaultRunner, c
     try {
       parsed = obj(JSON.parse(jsonPart(serve.stdout) || '{}'));
     } catch { /* "No serve config" as text in older versions */ }
-    Object.assign(state, readServe(parsed, state.name, port));
+    Object.assign(state, readServe(parsed, state.name, port, artifactPort));
   }
   return state;
 }
@@ -179,4 +201,9 @@ export async function readTailscale(port: number, run: Runner = defaultRunner, c
 /** The command the owner runs once (Devices shows it with a Copy button). */
 export function serveCommand(port: number): string {
   return `tailscale serve --bg --https=443 http://127.0.0.1:${port}`;
+}
+
+/** Phase D: the second command, for artifacts on the phone (https 8443 to the artifact port). */
+export function artifactServeCommand(port: number): string {
+  return `tailscale serve --bg --https=8443 http://127.0.0.1:${port}`;
 }

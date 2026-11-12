@@ -6,6 +6,9 @@
  *
  * Credentials: the device token in the X-AIB-Device header on every API call (the phone keeps it in IndexedDB); an
  * __Host- HttpOnly Secure SameSite=Strict cookie only for GET images (an <img> cannot send a header). Never the reverse.
+ *
+ * Phase D: GET /api/remote/artifact mints a short-lived signed link for one artifact and this phone, on the phone's artifact port
+ * (remote/artifact_server.ts, https://<name>:8443); the page CSP lets the phone page frame that origin and load its images.
  */
 import { APP_ROOT, APP_VERSION } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
@@ -17,6 +20,8 @@ import { cleanName, type Device, type DeviceStore, type PhoneScope } from './dev
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
 import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, type TitleCache } from './payloads.ts';
+import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
+import type { Manifest } from '../artifacts/artifacts.ts';
 import { bindWithRetry } from './port.ts';
 import { cleanPushSub } from './devices.ts';
 import type { VapidKeys } from './push.ts';
@@ -57,6 +62,8 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['GET', '/api/remote/home', 'device'],
   ['GET', '/api/remote/chat', 'device'],
   ['GET', '/api/remote/image', 'image'],
+  // Phase D: a signed link to one artifact on the phone's artifact port.
+  ['GET', '/api/remote/artifact', 'device'],
   // Phase B: answer, approve once, send, stop, the chat's own queued messages (remote/actions.ts checks every body).
   ['POST', '/api/remote/elicitation', 'action'],
   ['POST', '/api/remote/permission', 'action'],
@@ -79,6 +86,7 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
   'GET /api/remote/home': 'phone.read',
   'GET /api/remote/chat': 'phone.read',
   'GET /api/remote/image': 'phone.read',
+  'GET /api/remote/artifact': 'phone.read',
   'POST /api/remote/elicitation': 'phone.answer',
   'POST /api/remote/permission': 'phone.approve',
   'POST /api/remote/prompt': 'phone.prompt',
@@ -112,21 +120,42 @@ export interface RemoteHost {
   vapid: VapidKeys;
   /** The tailnet name requests must be addressed to ('' = refuse everything). */
   name(): string;
+  /** Phase D: https://<name>:8443 while the artifact port listens, else ''. */
+  artifactOrigin(): string;
+  /** Signs the artifact links the phone opens (checked by the artifact port). */
+  tickets: ArtifactTickets;
   /** The Tailscale login of this PC: only phones signed in with it may pair. */
   ownerLogin(): string;
   pcName(): string;
 }
 
-export function securityHeadersRemote(): Record<string, string> {
+/** How the phone shows an artifact kind: a sandboxed page, a picture, text in a sandboxed frame, or "Open on your PC" (a PDF:
+ * phone browsers do not show one inside a page). */
+export const PHONE_VIEW: Readonly<Record<string, 'page' | 'image' | 'text' | 'pc'>> = {
+  html: 'page',
+  svg: 'page',
+  md: 'page',
+  image: 'image',
+  csv: 'text',
+  json: 'text',
+  text: 'text',
+  pdf: 'pc',
+};
+
+/** The phone port's headers. `artifacts` (https://<name>:8443, or '') is the only other origin the page may frame or load
+ * pictures from. */
+export function securityHeadersRemote(artifacts = ''): Record<string, string> {
+  const other = artifacts ? ' ' + artifacts : '';
   return {
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
     'Cross-Origin-Resource-Policy': 'same-origin',
-    'Content-Security-Policy':
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; " +
-      "frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'",
+    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" + other +
+      "; connect-src 'self'; " +
+      "font-src 'self'; frame-src " + (artifacts || "'none'") + "; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; " +
+      "object-src 'none'",
   };
 }
 
@@ -185,7 +214,7 @@ export class RemoteServer {
   json(status: number, body: unknown, extra: Record<string, string> = {}): Response {
     return new Response(JSON.stringify(body), {
       status,
-      headers: { 'Content-Type': 'application/json; charset=utf-8', ...securityHeadersRemote(), ...extra },
+      headers: { 'Content-Type': 'application/json; charset=utf-8', ...securityHeadersRemote(this.host.artifactOrigin()), ...extra },
     });
   }
 
@@ -301,7 +330,7 @@ export class RemoteServer {
     }
     const name = REMOTE_STATIC[path];
     let body: Uint8Array<ArrayBuffer> = await Deno.readFile(APP_ROOT + sep + name);
-    const headers: Record<string, string> = { 'Content-Type': contentType(name), ...securityHeadersRemote() };
+    const headers: Record<string, string> = { 'Content-Type': contentType(name), ...securityHeadersRemote(this.host.artifactOrigin()) };
     if (path === '/sw.js') {
       headers['Cache-Control'] = 'no-cache'; // the browser looks for a newer service worker on every page load
       headers['Service-Worker-Allowed'] = '/';
@@ -335,6 +364,8 @@ export class RemoteServer {
       paired: true,
       device: { id: device.id, name: device.name, scopes: [...device.scopes] },
       push: { key: pushKey, on: !!device.push },
+      // where this PC's artifacts open on the phone ('' while the artifact port is not up: "Open on your PC")
+      artifacts: this.host.artifactOrigin(),
     });
   }
 
@@ -413,12 +444,50 @@ export class RemoteServer {
       }
       return this.json(200, { ...home, revision, scopes }, { ETag: `"${revision}"` });
     }
+    if (path === '/api/remote/artifact') return this.#artifact(url, device);
     const id = url.searchParams.get('id') ?? '';
     const tail = Number(url.searchParams.get('tail') ?? DEFAULT_TAIL);
     const after = Math.max(0, Math.trunc(Number(url.searchParams.get('after') ?? 0)) || 0);
-    const chat = id ? await chatPayload(this.host.ctx, id, tail, after, this.host.titles) : null;
+    const links = remoteArtifactOrigin(this.host.name());
+    const chat = id ? await chatPayload(this.host.ctx, id, tail, after, this.host.titles, links) : null;
     if (!chat) return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found' });
     return this.json(200, { ...chat, scopes: [...device.scopes] });
+  }
+
+  /**
+   * One artifact for the phone's viewer: its title, kind and version, how the phone shows it, and a signed link on the artifact
+   * port for this phone and this artifact (TICKET_SECONDS). `v` picks a version (the one a chat message named); else the latest.
+   * Any artifact on this PC can be opened by id: a phone that may see chats already sees every chat these come from.
+   */
+  #artifact(url: URL, device: Device): Response {
+    const id = url.searchParams.get('id') ?? '';
+    if (!/^[0-9a-f]{16}$/.test(id)) return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    const store = this.host.ctx.artifacts?.store;
+    let manifest: Manifest;
+    try {
+      if (!store) throw new Error('no store');
+      manifest = store.get(id);
+    } catch {
+      return this.json(404, { error: 'This artifact is no longer on the PC.', code: 'not_found' });
+    }
+    const want = Math.trunc(Number(url.searchParams.get('v') ?? 0));
+    const latest = manifest.versions[manifest.versions.length - 1];
+    const version = manifest.versions.find((v) => v.n === want) ?? latest;
+    const view = PHONE_VIEW[manifest.kind] ?? 'pc';
+    const base = { id, title: manifest.title, kind: manifest.kind, version: version.n, latest: latest.n };
+    const origin = this.host.artifactOrigin();
+    if (view === 'pc' || !origin) {
+      return this.json(200, {
+        ...base,
+        view: 'pc',
+        why: view === 'pc' ? 'PDFs open on your PC.' : 'Artifacts open on this phone once phone access on your PC is fully set up.',
+      });
+    }
+    // the store's own link without its loopback origin: /a/<id>/v<n>/<entry>
+    const own = store!.versionUrl(manifest, version);
+    const path = own.slice(own.indexOf('/a/'));
+    const ticket = this.host.tickets.mint(device.id, id);
+    return this.json(200, { ...base, view, url: `${origin}/r/${ticket}${path}${manifest.kind === 'md' ? '?view=1' : ''}` });
   }
 
   /** A phone action (remote/actions.ts): device and switch, the body checked against the chat now, then the live op; one log line. */

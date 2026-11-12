@@ -14,7 +14,12 @@
    Notifications: the Finish setup screen (after pairing, and from home) turns them on with a tap (a phone only asks from a tap);
    on an iPhone it first says to add the page to the Home Screen (iPhone sends pushes only to Home Screen apps). The page subscribes
    again each time it opens. A tap on a push opens the chat with its sheet up (#chat=<id>&sheet=1, or a message from the worker).
-   Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input, offlineView, setupSteps...) are exported for node tests. */
+   Phase D: artifacts. A chat's artifacts (the artifact events, finished studio_artifact calls, studio-artifact:// links and links
+   to the artifact origin in replies) show as cards; Open asks the PC for a short-lived link on the phone's artifact origin
+   (https://<name>:8443) and shows it full screen with Close: pages, SVG and Markdown in a sandboxed frame (never same-origin),
+   pictures as pictures, text in a sandboxed frame. A PDF, or any artifact while that origin is not set up, says "Open on your PC".
+   Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom, artifactRef...) are
+   exported for node tests. */
 (function (root) {
   const HOME_MS = 4000;
   const CHAT_MS = 3000;
@@ -72,11 +77,107 @@
   };
   const helperWord = (state) => HELPER_WORDS[str(state).toLowerCase()] || str(state) || 'unknown';
 
+  /* ---- artifacts ---- */
+  const ARTIFACT_ID = /^[0-9a-f]{16}$/;
+  const ARTIFACT_KINDS = {
+    html: 'HTML page',
+    svg: 'SVG image',
+    md: 'Markdown',
+    image: 'Image',
+    pdf: 'PDF',
+    csv: 'CSV table',
+    json: 'JSON',
+    text: 'Text',
+  };
+  const artifactKind = (k) => ARTIFACT_KINDS[k] || 'File';
+  /* An artifact summary ({id, title, kind, version}) from an object that names one, or null. */
+  function artifactOf(o) {
+    o = obj(o);
+    const id = str(o.id).toLowerCase();
+    if (!ARTIFACT_ID.test(id)) return null;
+    return {
+      id,
+      title: str(o.title).slice(0, 200) || 'Artifact',
+      kind: str(o.kind),
+      version: Math.max(0, Number(o.version) || 0),
+    };
+  }
+  /* Every piece of text a finished tool call carries its answer in (rawOutput, content, MCP content blocks). */
+  function textsOf(v, out, depth) {
+    out = out || [];
+    if (depth > 6 || v == null) return out;
+    if (typeof v === 'string') out.push(v);
+    else if (Array.isArray(v)) v.forEach((x) => textsOf(x, out, (depth || 0) + 1));
+    else if (typeof v === 'object') {
+      if (artifactOf(v)) out.push(JSON.stringify(v));
+      if (typeof v.text === 'string') out.push(v.text);
+      if (v.content !== undefined) textsOf(v.content, out, (depth || 0) + 1);
+      if (v.structuredContent !== undefined) out.push(JSON.stringify(v.structuredContent));
+    }
+    return out;
+  }
+  /* The artifact a studio_artifact result text names (plain JSON, or JSON after a sentence), or null. */
+  function artifactInText(text) {
+    const t = String(text || '');
+    const a = t.indexOf('{'),
+      b = t.lastIndexOf('}');
+    for (const part of a >= 0 && b > a ? [t, t.slice(a, b + 1)] : [t]) {
+      try {
+        const found = artifactOf(JSON.parse(part));
+        if (found) return found;
+      } catch {
+        /* not JSON */
+      }
+    }
+    return null;
+  }
+  const isArtifactTool = (u) => {
+    try {
+      return /studio_artifact/i.test(JSON.stringify([u.title, u.toolName, u._meta]).slice(0, 3000));
+    } catch {
+      return false;
+    }
+  };
+  /* The artifact an event shows: an artifact event (made or new version), or a finished studio_artifact call's answer. `tool`:
+     this call was named as a studio_artifact call earlier (updates often carry no title). */
+  function artifactFrom(e, tool) {
+    e = obj(e);
+    const data = obj(e.data);
+    if (e.kind === 'artifact') return artifactOf(data.artifact);
+    const u = obj(data.update);
+    if (u.sessionUpdate !== 'tool_call' && u.sessionUpdate !== 'tool_call_update') return null;
+    if (u.status !== 'completed' || !(tool || isArtifactTool(u))) return null;
+    for (const t of textsOf([u.rawOutput, u.content])) {
+      const found = artifactInText(t);
+      if (found) return found;
+    }
+    return null;
+  }
+  /* {id, version} of a link to an artifact: studio-artifact://<id>, or a link to /a/<id>/v<n>/ on the phone's artifact origin
+     (`origin`), else null. */
+  function artifactRef(href, origin) {
+    const h = String(href || '');
+    let m = /^studio-artifact:\/\/([0-9a-f]{16})\/?$/i.exec(h);
+    if (m) return { id: m[1].toLowerCase(), version: 0 };
+    if (!origin || h.slice(0, origin.length + 1) !== origin + '/') return null;
+    m = /^\/(?:r\/[^/]+\/)?a\/([0-9a-f]{16})\/v([0-9]{1,6})\//.exec(h.slice(origin.length));
+    return m ? { id: m[1], version: Number(m[2]) } : null;
+  }
+
   /* Events (the phone payload) -> condensed rows, the "Chat" view: your prompts, the agent's messages, a fold for each run of
-     steps between them, notices. {kind:'you'|'agent'|'steps'|'notice', key, text?, images?, steps?} */
+     steps between them, notices, artifact cards (one per artifact version).
+     {kind:'you'|'agent'|'steps'|'notice'|'artifact', key, text?, images?, steps?, artifact?} */
   function rowsFrom(events) {
     const rows = [];
     const steps = new Map(); // toolCallId -> step
+    const shown = new Set(); // artifact id + version with a card already
+    const card = (art, key) => {
+      if (!art) return;
+      const at = art.id + ':' + art.version;
+      if (shown.has(at) || (art.version === 0 && [...shown].some((x) => x.startsWith(art.id + ':')))) return;
+      shown.add(at);
+      rows.push({ kind: 'artifact', key: key + 'a', artifact: art });
+    };
     const imagesOf = (list) => (Array.isArray(list) ? list : []).filter((a) => a && a.url).map((a) => a.url);
     for (const e of Array.isArray(events) ? events : []) {
       const data = obj(e.data);
@@ -109,7 +210,11 @@
             if (u.status) step.status = str(u.status);
           }
           step.done = step.status === 'completed' || step.status === 'failed';
+          if (kind === 'tool_call' || isArtifactTool(u)) step.artifactTool = step.artifactTool || isArtifactTool(u);
+          card(artifactFrom(e, step.artifactTool), key);
         }
+      } else if (e.kind === 'artifact') {
+        card(artifactFrom(e), key);
       } else if (e.kind === 'permission' || e.kind === 'elicitation') {
         const params = obj(data.params);
         const title = str(obj(params.toolCall).title) || str(params.message);
@@ -306,6 +411,9 @@
     setupSteps,
     openTarget,
     keyBytes,
+    artifactFrom,
+    artifactRef,
+    artifactKind,
     RECONNECT_MS,
   };
   if (typeof module === 'object' && module.exports) {
@@ -347,6 +455,8 @@
     sending: false,
     actError: '', // the last refused or failed action, shown above the composer or in the sheet
     editing: null, // {messageId, leaseId, text, renewed}
+    artifacts: '', // the phone's artifact origin (https://<name>:8443), '' while it is not set up: artifacts open on the PC
+    viewer: null, // {id, version, title, kind, state: 'loading' | 'open' | 'pc' | 'error', view?, url?, why?} while one is open
   };
 
   function el(tag, cls, text) {
@@ -645,6 +755,10 @@
         }
         continue;
       }
+      if (r.kind === 'artifact') {
+        box.append(artifactCard(r.artifact));
+        continue;
+      }
       const m = el('div', 'ph-msg ' + r.kind);
       if (r.kind === 'agent' && root.AgentMarkdown) root.AgentMarkdown.render(m, r.text);
       else if (r.text) m.textContent = r.text;
@@ -657,6 +771,104 @@
       }
       box.append(m);
     }
+  }
+
+  /* An artifact in the chat: its kind, title and version; Open shows it here, or it says to open it on the PC. */
+  function artifactCard(a) {
+    const card = el('div', 'ph-art');
+    card.dataset.artifact = a.id;
+    const text = el('div', 'ph-art-text');
+    text.append(
+      el('span', 'ph-art-kind', artifactKind(a.kind) + (a.version > 1 ? ' · v' + a.version : '')),
+      el('b', 'ph-art-title', a.title),
+    );
+    card.append(text);
+    if (a.kind === 'pdf' || !S.artifacts) card.append(el('span', 'ph-note', 'Open on your PC'));
+    else {
+      const open = button('ph-btn quiet', 'Open', () => openArtifact(a.id, a.version, a));
+      open.dataset.openArtifact = a.id;
+      open.setAttribute('aria-label', 'Open ' + a.title);
+      card.append(open);
+    }
+    return card;
+  }
+
+  // ---- the artifact viewer (full screen, outside #app so polls never reload the frame) ----
+  let viewerEl = null;
+  const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads'; // as on the PC; never allow-same-origin
+  async function openArtifact(id, version, known) {
+    const k = obj(known);
+    S.viewer = { id, version: version || 0, title: str(k.title) || 'Artifact', kind: str(k.kind), state: 'loading' };
+    drawViewer();
+    let r;
+    try {
+      r = await call('GET', '/api/remote/artifact?id=' + encodeURIComponent(id) + (version ? '&v=' + version : ''));
+    } catch {
+      r = null;
+    }
+    if (!S.viewer || S.viewer.id !== id) return; // closed meanwhile
+    if (!r || r.status !== 200) {
+      const why = (r && r.data && r.data.error) || "Your PC can't be reached right now. Try again.";
+      S.viewer = { ...S.viewer, state: 'error', why };
+    } else if (r.data.view === 'pc' || !r.data.url) {
+      S.viewer = { ...S.viewer, ...artifactOf(r.data), state: 'pc', why: str(r.data.why) };
+    } else {
+      S.viewer = { ...S.viewer, ...artifactOf(r.data), state: 'open', view: r.data.view, url: r.data.url };
+    }
+    drawViewer();
+  }
+  function closeArtifact() {
+    S.viewer = null;
+    drawViewer();
+  }
+  function drawViewer() {
+    const v = S.viewer;
+    doc.documentElement.classList.toggle('ph-viewing', !!v);
+    if (!v) {
+      if (viewerEl) viewerEl.remove();
+      viewerEl = null;
+      return;
+    }
+    const box = el('div', 'ph-viewer');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', v.title);
+    box.dataset.state = v.state;
+    const bar = el('div', 'ph-viewer-bar');
+    const name = el('div', 'ph-viewer-name');
+    name.append(
+      el('b', '', v.title),
+      el('span', 'ph-art-kind', artifactKind(v.kind) + (v.version > 1 ? ' · v' + v.version : '')),
+    );
+    const close = button('ph-btn quiet', 'Close', closeArtifact);
+    close.id = 'viewerClose';
+    bar.append(name, close);
+    box.append(bar);
+    const body = el('div', 'ph-viewer-body');
+    if (v.state === 'loading') body.append(el('p', 'ph-empty', 'Opening…'));
+    else if (v.state === 'open' && v.view === 'image') {
+      const img = el('img', 'ph-viewer-img');
+      img.alt = v.title;
+      img.src = v.url;
+      body.append(img);
+    } else if (v.state === 'open') {
+      const frame = el('iframe', 'ph-viewer-frame');
+      frame.setAttribute('sandbox', SANDBOX);
+      frame.setAttribute('referrerpolicy', 'no-referrer');
+      frame.title = v.title;
+      frame.src = v.url;
+      body.append(frame);
+    } else {
+      const note = el('div', 'ph-viewer-note');
+      note.append(el('p', '', v.state === 'pc' ? 'Open this on your PC: AIB → Artifacts.' : v.why));
+      if (v.state === 'pc' && v.why) note.append(el('p', 'ph-note', v.why));
+      body.append(note);
+    }
+    box.append(body);
+    if (viewerEl) viewerEl.replaceWith(box);
+    else doc.body.append(box);
+    viewerEl = box;
+    close.focus({ preventScroll: true });
   }
 
   function waitingBox(wait, can) {
@@ -1090,6 +1302,7 @@
                   ? drawOfflineStart()
                   : el('p', 'ph-loading', 'Connecting…');
     place(Array.isArray(parts) ? parts : [parts]);
+    if (S.viewer && (S.screen === 'removed' || S.screen === 'pair')) closeArtifact(); // this phone may not see it any more
     app.dataset.screen = S.screen;
     app.dataset.sheet = S.sheet ? S.sheet.kind : '';
     if (focusId) {
@@ -1503,6 +1716,7 @@
     if (boot.data.layout !== 'phone') return;
     if (boot.data.paired) {
       S.device = boot.data.device;
+      S.artifacts = typeof boot.data.artifacts === 'string' ? boot.data.artifacts : '';
       S.scopes = (boot.data.device && boot.data.device.scopes) || [];
       const push = boot.data.push || {};
       S.push.key = typeof push.key === 'string' ? push.key : '';
@@ -1540,6 +1754,24 @@
     root.history.replaceState(null, '', root.location.pathname);
     if (S.device && S.booted) openChat(open.chat, '', open.sheet);
     else S.openOnStart = open;
+  });
+  // Artifact links in replies (studio-artifact://<id>, or a link to the phone's artifact origin) open the viewer here.
+  app.addEventListener('click', (event) => {
+    const a = event.target && event.target.closest ? event.target.closest('a') : null;
+    if (!a) return;
+    const ref = a.dataset.artifactId
+      ? { id: a.dataset.artifactId, version: 0 }
+      : artifactRef(a.getAttribute('href'), S.artifacts);
+    if (!ref || !ARTIFACT_ID.test(ref.id)) return;
+    event.preventDefault();
+    if (S.artifacts) openArtifact(ref.id, ref.version);
+    else {
+      S.viewer = { id: ref.id, version: ref.version, title: 'Artifact', kind: '', state: 'pc', why: '' };
+      drawViewer();
+    }
+  });
+  doc.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && S.viewer) closeArtifact();
   });
   root.__aibPhone = S; // tests read the page's state
   start();

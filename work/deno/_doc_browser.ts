@@ -155,7 +155,9 @@ export class Browser {
     this.profile = profile;
     this.port = port;
   }
-  static async launch(): Promise<Browser> {
+  /** `extra`: more Chrome switches (a test that plays a server for sandboxed frames keeps them in the page's process, where its
+   * request interception sees them: --disable-features=IsolateSandboxedIframes). */
+  static async launch(extra: string[] = []): Promise<Browser> {
     assert(browserPath, 'Chrome or Edge');
     const profile = await temp('aib-docpage-profile-');
     const proc = new Deno.Command(browserPath!, {
@@ -171,6 +173,7 @@ export class Browser {
         `--user-data-dir=${profile}`,
         '--window-size=1280,900',
         '--remote-debugging-port=0',
+        ...extra,
         'about:blank',
       ],
       stdout: 'null',

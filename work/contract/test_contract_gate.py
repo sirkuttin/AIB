@@ -200,7 +200,9 @@ class PhonePortContract(unittest.TestCase):
         cli = json.dumps([deno_executable(), 'run', '-A', '--quiet', str(fake), str(cls.answers)])
         cls.server = Server(env={'AIB_TAILSCALE_CLI': cli}).__enter__()
         cls.phone_port = pick_port()
-        (pathlib.Path(cls.server.state_dir) / 'remote-port.json').write_text(json.dumps({'version': 1, 'port': cls.phone_port}), encoding='utf-8')
+        cls.artifact_port = pick_port()
+        (pathlib.Path(cls.server.state_dir) / 'remote-port.json').write_text(
+            json.dumps({'version': 1, 'port': cls.phone_port, 'artifactPort': cls.artifact_port}), encoding='utf-8')
         reply = cls.server.post('/api/live/devices/access', {'on': True})
         assert reply.status == 200 and reply.json()['listening'], reply.text()
 
@@ -209,12 +211,15 @@ class PhonePortContract(unittest.TestCase):
         cls.server.__exit__(None, None, None)
         shutil.rmtree(cls.temp, ignore_errors=True)
 
-    def phone(self, method, path, body=None, **extra):
-        headers = {'Host': TAILNET_NAME, 'Tailscale-User-Login': TAILNET_LOGIN, 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors'}
+    def phone(self, method, path, body=None, _artifacts=False, **extra):
+        """A request as Tailscale Serve sends it: to the phone port, or (`_artifacts`, Phase D) to the artifact port (https 8443)."""
+        host = TAILNET_NAME + ':8443' if _artifacts else TAILNET_NAME
+        headers = {'Host': host, 'Tailscale-User-Login': TAILNET_LOGIN, 'Sec-Fetch-Site': 'same-site' if _artifacts else 'same-origin',
+                   'Sec-Fetch-Mode': 'navigate' if _artifacts else 'cors'}
         if method == 'POST':
             headers['Origin'] = 'https://' + TAILNET_NAME
         headers.update({k.replace('_', '-'): v for k, v in extra.items()})
-        connection = http.client.HTTPConnection('127.0.0.1', self.phone_port, timeout=30)
+        connection = http.client.HTTPConnection('127.0.0.1', self.artifact_port if _artifacts else self.phone_port, timeout=30)
         try:
             data = None if body is None else json.dumps(body).encode('utf-8')
             connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
@@ -271,12 +276,29 @@ class PhonePortContract(unittest.TestCase):
         self.assertEqual(sorted(push), ['/api/remote/push/subscribe', '/api/remote/push/unsubscribe'])
         routes += [('POST', p) for p in push]
         routes += [('GET', p) for p in ('/manifest.webmanifest', '/sw.js', '/icons/icon-256.png')]
+        # phase D: a signed artifact link (no such artifact here)
+        routes += [('GET', '/api/remote/artifact?id=0123456789abcdef'), ('GET', '/api/remote/artifact?id=x')]
         self.assertGreater(len(routes), 100)
         for method, path in routes:
             status, _, body = self.phone(method, path, {} if method == 'POST' else None, X_AIB_Device=token, Cookie='__Host-aib-phone=' + cookie)
             answers.append(body)
             if not path.startswith(('/api/remote/', '/phone', '/manifest.webmanifest', '/sw.js', '/icons/')):
                 self.assertIn(status, (403, 404), f'{method} {path}')
+        # phase D: the artifact port (https 8443) answers no page or phone route, and refuses links it did not sign
+        artifact_paths = [(m, p) for m, p in routes if not p.startswith('/api/remote/artifact')]
+        artifact_paths += [('GET', '/_lib/mermaid.min.js'), ('GET', '/r/x.0123456789abcdef.9999999999.' + 'A' * 43 + '/a/0123456789abcdef/v1/a.html'),
+                           ('GET', '/a/0123456789abcdef/v1/a.html')]
+        lib_ok = False
+        for method, path in artifact_paths:
+            status, headers, body = self.phone(method, path, {} if method == 'POST' else None, _artifacts=True,
+                                               Cookie='__Host-aib-phone=' + cookie)
+            answers.append(body)
+            if path == '/_lib/mermaid.min.js':
+                lib_ok = status == 200
+            else:
+                self.assertIn(status, (403, 404, 405), f'artifact port: {method} {path}')
+            self.assertIn('frame-ancestors https://' + TAILNET_NAME, headers.get('content-security-policy', ''), path)
+        self.assertTrue(lib_ok, 'the artifact port answers (its libraries)')
         secrets = self.secrets()
         self.assertGreaterEqual(len(secrets), 2, 'the page token and at least one host secret to look for')
         for secret in secrets:

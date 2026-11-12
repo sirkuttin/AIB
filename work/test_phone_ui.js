@@ -59,14 +59,14 @@ test('status words match the PC: Needs you, Working, Your turn, Idle', () => {
 test('Devices: the Tailscale checklist says what to do next, and shows the serve command until it is done', () => {
   const view = { serveCommand: 'tailscale serve --bg --https=443 http://127.0.0.1:8779', tailscale: null };
   let steps = D.checklist(view);
-  assert.deepEqual(steps.map((s) => s.done), [false, false, false]);
+  assert.deepEqual(steps.map((s) => s.done), [false, false, false, false]);
   assert.match(steps[0].detail, /tailscale\.com\/download/);
   const ts = { signedIn: true, machine: 'studio-pc', tailnet: 'tail-a1b2.ts.net', name: 'studio-pc.tail-a1b2.ts.net', login: 'a@b', https: true, serving: false };
   steps = D.checklist({ ...view, tailscale: ts });
   assert.equal(steps[0].detail, 'Found as STUDIO-PC on tail-a1b2.ts.net, signed in as a@b.');
   assert.equal(steps[2].command, view.serveCommand);
   steps = D.checklist({ ...view, tailscale: { ...ts, serving: true } });
-  assert.deepEqual(steps.map((s) => s.done), [true, true, true]);
+  assert.deepEqual(steps.map((s) => s.done), [true, true, true, false]);
   assert.equal(steps[2].command, '');
   assert.equal(D.countdown(1000 + 292, 1000 * 1000), '4:52');
   assert.equal(D.ago(0), 'never');
@@ -128,4 +128,90 @@ test("Devices: a phone's switches keep See chats on; a Phone activity line names
   assert.equal(D.activityLine(e, '12/11/2026 14:06'), '12/11/2026 14:06 · Pixel 9 · approve · "Checkout redesign": done');
   assert.equal(D.activityLine({ ...e, chatTitle: '' }, 'T'), 'T · Pixel 9 · approve · chat abcdef12: done');
   assert.equal(D.activityLine({ action: 'phone access', result: 'turned on' }, 'T'), 'T · AIB · phone access: turned on');
+});
+
+test('Devices: the second serve command (artifacts on the phone), its check, and a busy artifact port', () => {
+  const view = {
+    serveCommand: 'tailscale serve --bg --https=443 http://127.0.0.1:8779',
+    artifactCommand: 'tailscale serve --bg --https=8443 http://127.0.0.1:8780',
+    artifactProblem: null,
+  };
+  const ts = { signedIn: true, name: 'studio-pc.tail-a1b2.ts.net', https: true, serving: true, artifactServing: false };
+  let step = D.checklist({ ...view, tailscale: ts })[3];
+  assert.equal(step.title, 'Artifacts open on your phone');
+  assert.equal(step.done, false);
+  assert.equal(step.command, view.artifactCommand);
+  assert.match(step.detail, /artifacts open on your PC only/);
+  assert.deepEqual(
+    D.checklist({ ...view, tailscale: ts }).map((s) => s.id),
+    [undefined, undefined, 'dvServeCommand', 'dvArtifactCommand'],
+  );
+  step = D.checklist({ ...view, tailscale: { ...ts, artifactServingOther: 'http://127.0.0.1:9000' } })[3];
+  assert.match(step.detail, /^https:\/\/studio-pc\.tail-a1b2\.ts\.net:8443 is shared to http:\/\/127\.0\.0\.1:9000 now/);
+  step = D.checklist({ ...view, tailscale: { ...ts, artifactServing: true } })[3];
+  assert.deepEqual([step.done, step.command], [true, '']);
+  const busy = {
+    code: 'artifact_port_busy',
+    message: 'Port 8780 is busy: another program uses it, so artifacts open on your PC only.', // port-guard: not bound
+  };
+  step = D.checklist({ ...view, artifactProblem: busy, tailscale: { ...ts, artifactServing: true } })[3];
+  assert.deepEqual([step.done, step.detail, step.command], [false, busy.message, '']);
+});
+
+test('artifacts in a chat: one card per artifact version, from artifact events and finished studio_artifact calls', () => {
+  const id = '0123456789abcdef';
+  const summary = { id, title: 'Sales report', kind: 'html', version: 1, url: 'https://n:8443/a/' + id + '/v1/r.html' };
+  const rows = P.rowsFrom([
+    { seq: 1, kind: 'user', data: { text: 'Make it' } },
+    update(2, {
+      sessionUpdate: 'tool_call',
+      toolCallId: 't1',
+      title: 'mcp__studio_artifact__publish',
+      status: 'in_progress',
+    }),
+    update(3, {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 't1',
+      status: 'completed',
+      rawOutput: { content: [{ type: 'text', text: 'Published.\n' + JSON.stringify(summary) }] },
+    }),
+    { seq: 4, kind: 'artifact', data: { type: 'artifact', artifact: summary } }, // the same version: no second card
+    say(5, 'Here it is.'),
+    { seq: 6, kind: 'artifact', data: { type: 'artifact', artifact: { ...summary, version: 2 } } },
+    update(7, {
+      sessionUpdate: 'tool_call',
+      toolCallId: 't2',
+      title: 'Read a.ts',
+      status: 'completed',
+      rawOutput: JSON.stringify(summary),
+    }),
+    { seq: 8, kind: 'artifact', data: { type: 'artifact', artifact: { id: 'nope', title: 'x' } } },
+  ]);
+  assert.deepEqual(
+    rows.map((r) => [r.kind, r.artifact && [r.artifact.id, r.artifact.title, r.artifact.kind, r.artifact.version]]),
+    [
+      ['you', undefined],
+      ['steps', undefined],
+      ['artifact', [id, 'Sales report', 'html', 1]],
+      ['agent', undefined],
+      ['artifact', [id, 'Sales report', 'html', 2]],
+      ['steps', undefined],
+    ],
+  );
+  const failed = { sessionUpdate: 'tool_call_update', toolCallId: 'x', status: 'failed', title: 'studio_artifact' };
+  assert.equal(P.artifactFrom(update(9, failed)), null);
+  assert.equal(P.artifactKind('md'), 'Markdown');
+  assert.equal(P.artifactKind('zip'), 'File');
+});
+
+test('artifact links: studio-artifact://, and links to the phone artifact origin (with or without a signed part)', () => {
+  const id = '0123456789abcdef';
+  const origin = 'https://studio-pc.tail-a1b2.ts.net:8443';
+  assert.deepEqual(P.artifactRef('studio-artifact://' + id), { id, version: 0 });
+  assert.deepEqual(P.artifactRef(origin + '/a/' + id + '/v3/notes.md?view=1', origin), { id, version: 3 });
+  assert.deepEqual(P.artifactRef(origin + '/r/dev.' + id + '.1.mac/a/' + id + '/v1/r.html', origin), { id, version: 1 });
+  assert.equal(P.artifactRef(origin + '/a/' + id + '/v3/notes.md', ''), null, 'no artifact origin: not an artifact link');
+  assert.equal(P.artifactRef('http://127.0.0.1:8768/a/' + id + '/v1/r.html', origin), null); // port-guard: not bound
+  assert.equal(P.artifactRef(origin + 'x/a/' + id + '/v1/r.html', origin), null);
+  assert.equal(P.artifactRef('https://example.com/', origin), null);
 });

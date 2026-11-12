@@ -5,7 +5,9 @@
  *          on the phone; there is no server relation between chats, so none is made up). Needs-you chats first. A revision lets the
  *          phone poll cheaply (304 when nothing changed).
  *   chat   the last N events of one live chat, images replaced by URLs (/api/remote/image, cookie only) and other file bytes
- *          dropped; no model-in-use lookup, no settings, no permission bodies beyond a title.
+ *          dropped; no model-in-use lookup, no settings, no permission bodies beyond a title. Artifact links (absolute loopback
+ *          URLs of the PC's artifact origin, in live events and in the history a chat replays) point at the phone's artifact
+ *          origin https://<name>:8443 instead (Phase D); what is stored is never changed.
  */
 import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
@@ -147,6 +149,21 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   return { revision: revisionOf(body), ...body };
 }
 
+/** A loopback artifact URL's origin (any port: history may come from an AIB that ran on another one), when an artifact path or
+ * the libraries follow. Other loopback URLs (an agent's dev server) are left alone. */
+const LOOPBACK_ARTIFACT = /\bhttps?:\/\/(?:127\.0\.0\.1|localhost):[0-9]{1,5}(?=\/(?:a\/[0-9a-f]{16}\/v[0-9]{1,6}\/|_lib\/))/g;
+
+/** A copy of `value` with every loopback artifact URL in its strings moved to `origin` (the phone's artifact origin). */
+export function withArtifactOrigin(value: unknown, origin: string): unknown {
+  if (!origin) return value;
+  if (typeof value === 'string') return value.includes('://') ? value.replace(LOOPBACK_ARTIFACT, origin) : value;
+  if (Array.isArray(value)) return value.map((v) => withArtifactOrigin(v, origin));
+  if (!value || typeof value !== 'object') return value;
+  const out: Json = {};
+  for (const [k, v] of Object.entries(value as Json)) out[k] = withArtifactOrigin(v, origin);
+  return out;
+}
+
 /** A copy of `value` with image bytes replaced by URLs and other embedded file bytes dropped. */
 export function withoutBytes(value: unknown, image: (n: number, mime: string) => string, counter = { n: 0 }): unknown {
   if (Array.isArray(value)) return value.map((v) => withoutBytes(v, image, counter));
@@ -245,6 +262,7 @@ export async function chatPayload(
   tail: number,
   after: number,
   titles: TitleCache,
+  artifactOrigin = '',
 ): Promise<ChatPayload | null> {
   const state = await ctx.host.liveState(id, after) as Json | null;
   if (!state) return null;
@@ -316,7 +334,8 @@ export async function chatPayload(
     unknown,
     events: events.map((e) => {
       const seq = Number(obj(e).seq) || 0;
-      return withoutBytes(e, (k) => `/api/remote/image?id=${encodeURIComponent(id)}&seq=${seq}&n=${k}`);
+      const light = withoutBytes(e, (k) => `/api/remote/image?id=${encodeURIComponent(id)}&seq=${seq}&n=${k}`);
+      return withArtifactOrigin(light, artifactOrigin);
     }),
   };
 }

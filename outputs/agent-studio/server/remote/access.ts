@@ -1,6 +1,6 @@
 /**
  * Phone access (Settings > Devices): the owner's switch, the connection (Tailscale for now), the Tailscale checks, the phone port's
- * listener, pairing and the paired phones. Off by default (<state>/phone-access.json). While it is on, AIB reads Tailscale when it
+ * listener and (Phase D) the phone's artifact port next to it, pairing and the paired phones. Off by default (<state>/phone-access.json). While it is on, AIB reads Tailscale when it
  * starts and on Check again, refuses to listen when Funnel is on for this PC's name, and keeps the phone port bound.
  */
 import { inDir } from '../state/base.ts';
@@ -10,11 +10,12 @@ import { Audit, type AuditEntry } from './audit.ts';
 import { cleanScopes, DEFAULT_SCOPES, DeviceStore, type PublicDevice } from './devices.ts';
 import { Pairing, PairingError } from './pairing.ts';
 import { homePayload, TitleCache } from './payloads.ts';
-import { BIND_RETRY_MS, PortBusy, portFree, remotePort } from './port.ts';
+import { ArtifactTickets, remoteArtifactOrigin, RemoteArtifactServer } from './artifact_server.ts';
+import { BIND_RETRY_MS, PortBusy, portFree, remoteArtifactPort, remotePort } from './port.ts';
 import { PushSender, VapidKeys } from './push.ts';
 import { qrSvg } from './qr.ts';
 import { RemoteServer } from './server.ts';
-import { readTailscale, type Runner, serveCommand, type TailscaleState } from './tailscale.ts';
+import { artifactServeCommand, readTailscale, type Runner, serveCommand, type TailscaleState } from './tailscale.ts';
 import { hex } from './words.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
@@ -35,7 +36,7 @@ function testBindRetryMs(): number | undefined {
 }
 
 export interface AccessProblem {
-  code: 'port_busy' | 'funnel' | 'tailscale' | 'failed';
+  code: 'port_busy' | 'artifact_port_busy' | 'funnel' | 'tailscale' | 'failed';
   message: string;
 }
 
@@ -64,6 +65,12 @@ export class PhoneAccess {
   port: number | null = null;
   problem: AccessProblem | null = null;
   server: RemoteServer | null = null;
+  /** Phase D: the artifact port (Serve's https 8443), its listener and why it is not up (the phone page works without it). */
+  artifactPort: number | null = null;
+  artifactServer: RemoteArtifactServer | null = null;
+  artifactProblem: AccessProblem | null = null;
+  /** Signed artifact links for paired phones (in memory: a restart ends them). */
+  readonly tickets = new ArtifactTickets();
   #busy: Promise<void> | null = null;
   #closed = false;
 
@@ -78,6 +85,16 @@ export class PhoneAccess {
 
   name(): string {
     return this.server?.listening && this.tailscale?.signedIn ? this.tailscale.name : '';
+  }
+
+  /** https://<name>:8443 while the artifact port listens, else '' (artifacts then stay "Open on your PC"). */
+  artifactOrigin(): string {
+    return this.artifactServer?.listening ? remoteArtifactOrigin(this.name()) : '';
+  }
+
+  /** The artifact store folder the artifact port serves ('' before the web server made it). */
+  root(): string {
+    return this.ctx.artifacts?.store.root ?? '';
   }
 
   ownerLogin(): string {
@@ -110,9 +127,11 @@ export class PhoneAccess {
   async #bringUp(): Promise<void> {
     if (this.#closed || !this.on) return;
     this.problem = null;
-    const port = this.port ?? remotePort(this.stateDir, this.options.isFree ?? portFree, this.options.avoid?.() ?? []);
+    const isFree = this.options.isFree ?? portFree;
+    const port = this.port ?? remotePort(this.stateDir, isFree, this.options.avoid?.() ?? []);
     this.port = port;
-    this.tailscale = await readTailscale(port, this.options.runner);
+    this.artifactPort ??= remoteArtifactPort(this.stateDir, port, isFree, this.options.avoid?.() ?? []);
+    this.tailscale = await readTailscale(port, this.options.runner, undefined, this.artifactPort);
     const ts = this.tailscale;
     if (!ts.signedIn) {
       await this.#down();
@@ -136,32 +155,67 @@ export class PhoneAccess {
       this.audit.write({ action: 'phone port', result: 'refused to start: Funnel is on' });
       return;
     }
-    if (this.server?.listening) return;
-    const server = new RemoteServer(this);
+    if (!this.server?.listening) {
+      const server = new RemoteServer(this);
+      try {
+        await server.listen(port, this.#retryMs());
+      } catch (error) {
+        if (!(error instanceof PortBusy)) throw error;
+        this.problem = {
+          code: 'port_busy',
+          message: `Port ${port} is busy: another program uses it, so phones cannot reach AIB. Close that program, then click ` +
+            `Check again.`,
+        };
+        this.#log(this.problem.message);
+        return;
+      }
+      if (this.#closed || !this.on) {
+        await server.close();
+        return;
+      }
+      this.server = server;
+      this.#log(`phone port listening on 127.0.0.1:${port} for ${ts.name}`);
+    }
+    await this.#artifactsUp();
+  }
+
+  #retryMs(): number {
+    return this.options.bindRetryMs ?? testBindRetryMs() ?? BIND_RETRY_MS;
+  }
+
+  /** The artifact port, on its own fixed port: busy is reported (artifacts stay "Open on your PC"), never another port. */
+  async #artifactsUp(): Promise<void> {
+    this.artifactProblem = null;
+    if (this.artifactServer?.listening || this.artifactPort === null) return;
+    const port = this.artifactPort;
+    const server = new RemoteArtifactServer(this);
     try {
-      await server.listen(port, this.options.bindRetryMs ?? testBindRetryMs() ?? BIND_RETRY_MS);
+      await server.listen(port, this.#retryMs());
     } catch (error) {
       if (!(error instanceof PortBusy)) throw error;
-      this.problem = {
-        code: 'port_busy',
-        message: `Port ${port} is busy: another program uses it, so phones cannot reach AIB. Close that program, then click ` +
-          `Check again.`,
+      this.artifactProblem = {
+        code: 'artifact_port_busy',
+        message: `Port ${port} is busy: another program uses it, so artifacts open on your PC only. Close that program, then ` +
+          `click Check again.`,
       };
-      this.#log(this.problem.message);
+      this.#log(this.artifactProblem.message);
       return;
     }
-    if (this.#closed || !this.on) {
+    if (this.#closed || !this.on || !this.server) {
       await server.close();
       return;
     }
-    this.server = server;
-    this.#log(`phone port listening on 127.0.0.1:${port} for ${ts.name}`);
+    this.artifactServer = server;
+    this.#log(`phone artifact port listening on 127.0.0.1:${port}`);
   }
 
   async #down(): Promise<void> {
     const server = this.server;
+    const artifacts = this.artifactServer;
     this.server = null;
-    await server?.close();
+    this.artifactServer = null;
+    this.artifactProblem = null;
+    await Promise.all([server?.close(), artifacts?.close()]);
   }
 
   async setOn(on: boolean): Promise<void> {
@@ -182,7 +236,7 @@ export class PhoneAccess {
   check(): Promise<void> {
     if (!this.on) {
       return this.#serialize(async () => {
-        this.tailscale = await readTailscale(this.port ?? 0, this.options.runner);
+        this.tailscale = await readTailscale(this.port ?? 0, this.options.runner, undefined, this.artifactPort ?? 0);
       });
     }
     return this.#serialize(() => this.#bringUp());
@@ -285,6 +339,10 @@ export class PhoneAccess {
       url: this.url(),
       problem: this.problem,
       serveCommand: this.port ? serveCommand(this.port) : '',
+      artifactPort: this.artifactPort,
+      artifactListening: !!this.artifactServer?.listening,
+      artifactCommand: this.artifactPort ? artifactServeCommand(this.artifactPort) : '',
+      artifactProblem: this.artifactProblem,
       tailscale: ts
         ? {
           installed: ts.installed,
@@ -296,6 +354,8 @@ export class PhoneAccess {
           https: ts.https,
           serving: ts.serving,
           servingOther: ts.servingOther,
+          artifactServing: ts.artifactServing,
+          artifactServingOther: ts.artifactServingOther,
           funnel: ts.funnel,
           problem: ts.problem,
           checkedAt: ts.checkedAt,

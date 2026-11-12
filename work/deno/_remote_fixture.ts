@@ -161,11 +161,15 @@ export function tailscaleStatus(over: Json = {}): Json {
   };
 }
 
-export function serveStatus(port: number, funnel = false): Json {
+/** `tailscale serve status --json` with https 443 sent to the phone port and (Phase D, `artifactPort`) https 8443 to the artifact
+ * port; Funnel on for 443 (`true`) or for the port named. */
+export function serveStatus(port: number, funnel: boolean | string = false, artifactPort = 0): Json {
+  const web: Json = { [`${NAME}:443`]: { Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } } } };
+  if (artifactPort) web[`${NAME}:8443`] = { Handlers: { '/': { Proxy: `http://127.0.0.1:${artifactPort}` } } };
   return {
-    TCP: { '443': { HTTPS: true } },
-    Web: { [`${NAME}:443`]: { Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } } } },
-    ...(funnel ? { AllowFunnel: { [`${NAME}:443`]: true } } : {}),
+    TCP: { '443': { HTTPS: true }, ...(artifactPort ? { '8443': { HTTPS: true } } : {}) },
+    Web: web,
+    ...(funnel ? { AllowFunnel: { [`${NAME}:${funnel === true ? '443' : funnel}`]: true } } : {}),
   };
 }
 
@@ -199,7 +203,7 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
   const state = `${root}${sep}state`;
   await Deno.mkdir(state, { recursive: true });
   // The phone port is fixed in remote-port.json (never port 0); an OS-chosen number, as for any child that comes back on its port.
-  if (readRemotePort(state) === null) saveRemotePort(state, pickPort());
+  if (readRemotePort(state) === null) saveRemotePort(state, pickPort(), pickPort()); // and the artifact port (Phase D)
   const chats: FakeChat[] = [];
   const stateCalls: [string, number][] = [];
   /** Every live op the agent host got ([name, body]); `liveAnswer` sets what it answers. */
@@ -282,8 +286,11 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string) {
       return ctx.token;
     },
     phonePort: () => ctx.phone.server?.port ?? 0,
+    /** Phase D: the phone's artifact port (0 while it does not listen). */
+    artifactPort: () => ctx.phone.artifactServer?.port ?? 0,
     async close() {
       await ctx.phone.close().catch(() => {});
+      await ctx.artifacts?.stop().catch(() => {});
       await web.close().catch(() => {});
       for (let i = 0; i < 20; i++) {
         try {

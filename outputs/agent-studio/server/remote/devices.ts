@@ -265,6 +265,12 @@ export class DeviceStore extends JsonFileStore {
     return this.#find('tokenHash', token);
   }
 
+  /** The phone with this id (a signed artifact link names it; remote/artifact_server.ts), or null: a removed phone is gone. */
+  byId(id: string): Device | null {
+    this.sync();
+    return this.devices.get(id) ?? null;
+  }
+
   /** The phone with this image cookie, or null. */
   byCookie(cookie: string | null): Device | null {
     return this.#find('cookieHash', cookie);

@@ -100,6 +100,22 @@
         : (ts.servingOther ? 'https://' + name + ' is shared to ' + ts.servingOther + ' now; this command replaces that. ' : '') +
           'Run this once in a terminal on this PC, then click Check again:',
       command: ts.serving ? '' : v.serveCommand,
+      id: 'dvServeCommand',
+    });
+    // Phase D: the second command sends https://<name>:8443 to AIB's artifact port, so artifacts open on the phone.
+    const port = v.artifactProblem;
+    steps.push({
+      done: !!ts.artifactServing && !port,
+      title: 'Artifacts open on your phone',
+      detail: port
+        ? port.message
+        : ts.artifactServing
+          ? 'Tailscale Serve sends https://' + name + ':8443 to AIB, so artifacts open on your phone.'
+          : (ts.artifactServingOther
+              ? 'https://' + name + ':8443 is shared to ' + ts.artifactServingOther + ' now; this command replaces that. '
+              : '') + 'Run this once too, then click Check again. Until then artifacts open on your PC only:',
+      command: ts.artifactServing || port ? '' : v.artifactCommand || '',
+      id: 'dvArtifactCommand',
     });
     return steps;
   }
@@ -248,12 +264,12 @@
         if (step.command) {
           const row = el('div', null, 'st-actions');
           const code = el('code', step.command, 'st-command dv-command');
-          code.id = 'dvServeCommand';
+          code.id = step.id;
           row.append(
             code,
-            btn(D.copied ? 'Copied' : 'Copy', () => {
+            btn(D.copied === step.id ? 'Copied' : 'Copy', () => {
               const done = () => {
-                D.copied = true;
+                D.copied = step.id;
                 draw();
                 setTimeout(() => {
                   D.copied = false;
