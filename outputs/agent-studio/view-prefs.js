@@ -189,10 +189,19 @@
         if (retry) schedule(RETRY_MS);
       }
     }
+    /* Set once the page is leaving (pagehide, or hidden). This file's leave handler runs first (it is the first page script), so
+       a write another script makes in its own leave handler (scroll-controller.js saves the place you were reading) came after
+       the last send, and the next-tick send never ran: the data folder kept the older value and chat.html seeded it over the newer
+       one at the next start. While leaving, a write goes out at once, with keepalive. */
+    let leaving = false;
     function note(k, v) {
       if (!Object.prototype.hasOwnProperty.call(pending, k) && known.has(k) && known.get(k) === v) return; // it has it already
       pending[k] = v;
-      soon();
+      if (leaving) {
+        if (timer) cancel(timer);
+        timer = 0;
+        flush(true);
+      } else soon();
     }
 
     const isOurs = (s) => {
@@ -217,14 +226,19 @@
       return r;
     };
     const unload = () => {
+      leaving = true;
       if (timer) cancel(timer);
       timer = 0;
       flush(true);
     };
-    if (win.addEventListener) win.addEventListener('pagehide', unload);
+    if (win.addEventListener) {
+      win.addEventListener('pagehide', unload);
+      win.addEventListener('pageshow', () => (leaving = false)); // back from the back/forward cache
+    }
     if (win.document && win.document.addEventListener) {
       win.document.addEventListener('visibilitychange', () => {
         if (win.document.visibilityState === 'hidden') unload();
+        else leaving = false;
       });
     }
     if (Object.keys(pending).length) soon();
