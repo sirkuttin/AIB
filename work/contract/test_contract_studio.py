@@ -92,6 +92,8 @@ class StudioContract(unittest.TestCase):
     # ---- settings and conversation marks ----
     def test_settings(self):
         # The Beta agents (server/agents/beta_catalog.ts) are Deno-only: drop their rows from the subject's lists before comparing.
+        # So is the per-agent `setup` block (install prerequisites, server/agents/beta_setup.ts; commits 4db7392, 12e4d91 added it
+        # to the built-in cards too): the Python reference has no such key, so drop it from the subject's agent rows.
         beta = {'copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo'}
 
         def no_beta(data, server):
@@ -99,7 +101,7 @@ class StudioContract(unittest.TestCase):
                 return data
             def walk(v):
                 if isinstance(v, dict):
-                    return {k: walk(x) for k, x in v.items()}
+                    return {k: walk(x) for k, x in v.items() if not (k == 'setup' and 'id' in v and 'installBlock' in v)}
                 if isinstance(v, list):
                     return [walk(x) for x in v if not (isinstance(x, dict) and x.get('id') in beta)]
                 return v
