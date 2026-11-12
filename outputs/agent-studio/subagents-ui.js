@@ -45,6 +45,11 @@
       if (/^(failed|error)$/.test(l)) return { group: 'finished', kind: 'failed', label: 'Failed' };
       if (/^(cancelled|canceled|stopped|killed|interrupted)$/.test(l))
         return { group: 'finished', kind: 'stopped', label: l === 'interrupted' ? 'Interrupted' : 'Stopped' };
+      /* The agent's own word on how the work ended (subagents RFD form: {state: 'idle', stopReason}): a child the agent stopped is
+         Stopped, one that ended on an error Failed. */
+      const why = a.state && typeof a.state === 'object' ? String(a.state.stopReason || '').toLowerCase() : '';
+      if (/^(cancelled|canceled)$/.test(why)) return { group: 'finished', kind: 'stopped', label: 'Stopped' };
+      if (why === 'error') return { group: 'finished', kind: 'failed', label: 'Failed' };
       if (/^(completed|complete)$/.test(l)) return { group: 'finished', kind: 'completed', label: 'Completed' };
       return { group: 'finished', kind: 'idle', label: LABELS[l] || s || 'Idle' };
     }
@@ -204,6 +209,27 @@
     const meta = (u && u._meta) || {};
     return str(u && u.model) || str(meta.model) || str(meta.claudeCode && meta.claudeCode.model);
   };
+  /* A child session's config_option_update (claude-agent-acp's subagent form): {model, agentType}. The model option's current
+     choice by its shown name ("Sonnet 5.5") when that names a model, else its value ("sonnet"). */
+  function configFacts(u) {
+    const out = {};
+    for (const o of Array.isArray(u && u.configOptions) ? u.configOptions : []) {
+      if (!o || typeof o !== 'object') continue;
+      const value = str(o.currentValue);
+      if (!value) continue;
+      if (o.id === 'model' || o.category === 'model') {
+        const pick = (Array.isArray(o.options) ? o.options : []).find((x) => x && x.value === o.currentValue);
+        const name = str(pick && pick.name);
+        out.model = name && parse(name) ? name : value;
+      } else if (o.id === 'agent') out.agentType = value;
+    }
+    return out;
+  }
+  /* Model ids the chat's turns report spending on (turn_end usage: _meta.quota.model_usage[].model), newest last. */
+  function spentModels(e) {
+    const q = e && e.data && e.data._meta && e.data._meta.quota;
+    return (Array.isArray(q && q.model_usage) ? q.model_usage : []).map((m) => str(m && m.model)).filter(Boolean);
+  }
   /* Per child session: {model, tokens, activity, agentType, toolUseId} from a live chat's recorded updates. Sources: the parent's
      Agent / Task tool call (input model + subagent_type; its result's totalTokens / usage), the subagent_update itself (model, usage,
      the tool use it belongs to), the parent's <task-notification> (total_tokens), and the child's own updates (its latest tool call or
@@ -217,7 +243,9 @@
       if (!own.has(id)) own.set(id, {});
       return own.get(id);
     };
+    const spent = []; // model ids with a version, from the chat's turn results
     for (const e of events || []) {
+      if (e && e.kind === 'turn_end') for (const m of spentModels(e)) if (parse(m) && parse(m).version) spent.push(m);
       if (!e || e.kind !== 'update' || !e.data) continue;
       const u = e.data.update || {},
         sid = e.data.sessionId,
@@ -243,6 +271,12 @@
         if (str(cc.parentToolUseId) && !link.has(sid)) link.set(sid, cc.parentToolUseId);
         const m = ownModel(u);
         if (m) f.model = m;
+        if (kind === 'config_option_update') {
+          const c = configFacts(u);
+          if (c.model) f.configModel = c.model;
+          if (c.agentType) f.agentType = c.agentType;
+          continue;
+        }
         if (kind === 'tool_call' || (kind === 'tool_call_update' && u.toolCallId === f.toolId)) {
           if (kind === 'tool_call' || !f.call) f.call = {};
           for (const k of ['title', 'kind', 'rawInput', 'locations', '_meta']) if (u[k] != null) f.call[k] = u[k];
@@ -297,9 +331,16 @@
         tool = (use && tools.get(use)) || {},
         input = tool.input || {},
         d = {};
-      const model = f.model || str(input.model);
+      /* The model the helper runs: what its own session reports (its config's model choice, a model id on its updates), else the
+         Agent call's `model` input. A family alone ("sonnet") takes the version the chat's turns report spending on that family. */
+      let model = f.configModel || f.model || str(input.model);
+      const pm = model && parse(model);
+      if (pm && !pm.version) {
+        const full = spent.filter((s) => parse(s).family === pm.family).pop();
+        if (full) model = full;
+      }
       if (model) d.model = model;
-      const type = str(input.subagent_type);
+      const type = str(input.subagent_type) || str(f.agentType);
       if (type) d.agentType = type;
       const tokens =
         f.tokens ||

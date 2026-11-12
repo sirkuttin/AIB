@@ -74,6 +74,9 @@
   "Editing chat.js"); a finished one is a single line with its outcome when it failed or stopped, its model and how long it
   ran. The subagent header shows the model and tokens too. Stop sits on the subagent's title row with an in-place
   Stop · Cancel instead of a pop-up.
+  A helper shows the model it really runs (a Sonnet helper of an Opus chat says Sonnet 5.5) and its run time from start
+  to finish. Interrupt stops only the reply: background helpers keep working and no longer show as Interrupted, and a
+  helper's own settings no longer replace the chat's model and mode chips.
 - Scrolling: scrolling up, even one wheel notch, stops following at once, and following comes back only at the very bottom or
   with "↓ Latest". A following chat stays at the bottom when content grows after a redraw, when an approval card or the
   terminal appears, and when the message box grows. Opening a step or "Show all" near the bottom keeps it where it is.

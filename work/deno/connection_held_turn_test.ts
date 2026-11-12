@@ -213,3 +213,22 @@ Deno.test('held turn: another agent whose subagent stays running is not counted 
   lab.open_(gate + '.end');
   await until(() => !c.busy, 'the response', LONG);
 });
+
+Deno.test("held turn: a helper's own config (its model, mode, type) stays on its session; the chat's settings are unchanged", async () => {
+  await using lab = new HeldLab();
+  const c = await lab.open(['--held-turn']);
+  const before = JSON.stringify(c.settings.configOptions ?? null);
+  const gate = lab.gate();
+  await c.prompt(`helper:${gate}`);
+  await until(
+    () => events(c, 'update').some((e) => ((e.data as Json).update as Json).sessionUpdate === 'config_option_update'),
+    "the helper's config",
+    LONG,
+  );
+  const cfg = events(c, 'update').find((e) => ((e.data as Json).update as Json).sessionUpdate === 'config_option_update')!;
+  assertEquals((cfg.data as Json).sessionId, 'helper-1'); // recorded for the page (the card's model)
+  assertEquals(JSON.stringify(c.settings.configOptions ?? null), before);
+  lab.open_(gate);
+  lab.open_(gate + '.end');
+  await until(() => helperState(c) === 'idle' && !c.busy && !c.autonomous, 'all done', LONG);
+});

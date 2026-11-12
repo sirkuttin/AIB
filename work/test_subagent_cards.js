@@ -244,3 +244,100 @@ test('chat.js: live children get model, tokens and activity; the inspector subti
   h.run('renderSubHead()');
   assert.equal(h.element('subchatStatus').textContent, 'Opus 5.5 · Working · <1m · live');
 });
+
+/* A real claude-agent-acp 0.97.0 stream (subagents form, which AIB declares), trimmed: two background helpers started with the
+   Agent input model "sonnet" by an Opus chat; the owner pressed Interrupt while both were in long commands; both ran on and ended
+   on their own. The parent's Agent call never reaches the client in this form: the model comes as the child's config option. */
+const RFD = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'subagent-cards-fixture', 'claude_acp_rfd_interrupt.json'), 'utf8'),
+);
+const WIDEN = 'a4ea6b53148419096',
+  QA = 'a3771e24db1406b8d';
+const at = (iso) => Date.parse('2026-11-12T' + iso + 'Z') / 1000;
+function rfdPage(events) {
+  const h = makePage({
+    window: {
+      AgentComposerChips: require(path.join(APP_DIR, 'composer-chips.js')),
+      SubagentsUI: require(path.join(APP_DIR, 'subagents-ui.js')),
+    },
+  });
+  h.run(`current='conn';snapshot={sessionId:'${RFD.mainSessionId}',inUse:{model:'claude-opus-5-5'},subagents:{}}`);
+  h.state.events = events;
+  h.run('children.clear();collectChildren()');
+  const U = h.context.window.SubagentsUI;
+  const rows = (now) => {
+    const m = U.model([...h.hook.children.values()], now, 'claude-opus-5-5');
+    return Object.fromEntries([...m.top, ...m.done].map((i) => [i.key, i]));
+  };
+  return { h, U, rows };
+}
+
+test('recorded stream: a background helper started with model "sonnet" shows Sonnet 5.5, not the chat model', () => {
+  const { U } = setup();
+  const d = U.details(RFD.events, RFD.mainSessionId);
+  assert.equal(d.get(WIDEN).model, 'Sonnet 5.5');
+  assert.equal(d.get(WIDEN).agentType, 'general-purpose');
+  assert.equal(d.get(QA).model, 'Sonnet 5.5');
+  assert.equal(d.get(QA).agentType, 'studio-qa');
+  const { rows } = rfdPage(RFD.events.slice(0, 10)); // both started, working
+  const r = rows(at('05:46:00'));
+  assert.equal(r[WIDEN].group, 'working');
+  assert.equal(r[WIDEN].modelText, 'Sonnet 5.5');
+  assert.equal(r[QA].modelText, 'Sonnet 5.5');
+  assert.doesNotMatch(r[WIDEN].tip, /the chat’s model/);
+});
+
+test('recorded stream: Interrupt on the reply leaves running background helpers working, with their real run time', () => {
+  const cancelled = RFD.events.findIndex((e) => e.kind === 'turn_end' && e.data.stopReason === 'cancelled');
+  assert.ok(cancelled > 0);
+  // Just after the interrupt, before either helper says anything again (each is in a long command).
+  let { rows } = rfdPage(RFD.events.slice(0, cancelled + 1));
+  let r = rows(at('05:51:19'));
+  for (const id of [WIDEN, QA]) {
+    assert.equal(r[id].group, 'working', id + ' is not marked Interrupted');
+    assert.equal(r[id].label, 'Working');
+    assert.equal(r[id].outcome, '');
+  }
+  assert.equal(r[WIDEN].when, 'running 7m', 'from its Agent call at 05:44:00');
+  // The whole stream: both ended on their own after the interrupt; the run time is Agent call to end.
+  ({ rows } = rfdPage(RFD.events));
+  r = rows(at('05:53:00'));
+  for (const id of [WIDEN, QA]) {
+    assert.equal(r[id].group, 'finished');
+    assert.equal(r[id].outcome, '', id + ' finished normally (no "Interrupted")');
+    assert.equal(r[id].ran, '8m', id + ' ran about 8 minutes, not "<1m"');
+    assert.equal(r[id].modelText, 'Sonnet 5.5');
+  }
+});
+
+test('a family-only model from the Agent input takes the version the chat spent on it', () => {
+  const { U } = setup();
+  const ev = (sid, update, time = 1) => ({ kind: 'update', time, data: { sessionId: sid, update } });
+  const agentCall = (id, input) =>
+    ev('m', { sessionUpdate: 'tool_call', toolCallId: id, title: 'Agent', rawInput: input, _meta: { claudeCode: { toolName: 'Agent' } } });
+  const child = (sid, use) =>
+    ev(sid, { sessionUpdate: 'agent_thought_chunk', content: { text: 'x' }, _meta: { claudeCode: { parentToolUseId: use } } });
+  const spent = { kind: 'turn_end', time: 2, data: { stopReason: 'end_turn', _meta: { quota: { model_usage: [
+    { model: 'claude-opus-5-5' }, { model: 'claude-sonnet-5-5' }] } } } };
+  const events = [
+    agentCall('t1', { description: 'bg', model: 'sonnet', run_in_background: true, subagent_type: 'general-purpose' }),
+    child('c1', 't1'),
+    agentCall('t2', { description: 'fg', model: 'haiku' }),
+    child('c2', 't2'),
+    spent,
+  ];
+  const d = U.details(events, 'm');
+  assert.equal(d.get('c1').model, 'claude-sonnet-5-5', 'background call input is read');
+  assert.equal(U.modelName(d.get('c1').model, 'claude-opus-5-5'), 'Sonnet 5.5');
+  assert.equal(d.get('c2').model, 'haiku', 'no Haiku spend seen: the family stays');
+  assert.equal(U.modelName('haiku', 'claude-opus-5-5'), 'Haiku');
+});
+
+test('a child the agent stopped (idle, stopReason cancelled) is Stopped; an error end is Failed; a normal end is Done', () => {
+  const { U } = setup();
+  assert.equal(U.classify({ live: true, state: { state: 'idle', stopReason: 'cancelled' } }).label, 'Stopped');
+  assert.equal(U.classify({ live: true, state: { state: 'idle', stopReason: 'error' } }).kind, 'failed');
+  const done = U.classify({ live: true, state: { state: 'idle', stopReason: 'end_turn' } });
+  assert.equal(done.group, 'finished');
+  assert.equal(done.kind, 'idle');
+});
