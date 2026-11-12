@@ -4688,6 +4688,23 @@
       lastHeight = h;
     }).observe(box);
   }
+  /* Content that grows after a redraw (a "Show all" toggle added a moment later, a picture loading, a running step's output
+     filling in) never scrolls either, so a list that follows was left a few rows short of its newest one. While a list follows,
+     any growth keeps it at the bottom; growth right after your own click or key in it (opening a step) is left where it is. */
+  for (const id of ['messages', 'submessages']) {
+    const box = $(id);
+    if (!box || typeof MutationObserver !== 'function') continue;
+    let touchedAt = 0;
+    const touched = () => (touchedAt = Date.now());
+    box.addEventListener('pointerdown', touched, true);
+    box.addEventListener('keydown', touched, true);
+    const stick = () => {
+      if (box.dataset.paused || Date.now() - touchedAt < 600) return;
+      if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight;
+    };
+    new MutationObserver(stick).observe(box, { childList: true, subtree: true, characterData: true });
+    box.addEventListener('load', stick, true); // pictures: load does not bubble, so listen while it travels down
+  }
   /* Reaching the latest message: the line stays a few seconds, dimmed, then goes. */
   function fadeNewLine(box) {
     const l = box.querySelector(':scope > .new-line');

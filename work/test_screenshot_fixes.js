@@ -204,6 +204,59 @@ test('6. a message list that follows the newest row keeps following when a pinne
   assert.equal(box.scrollTop, 40);
 });
 
+test('6b. a message list that follows keeps following when its content grows after a redraw; not right after your own click', () => {
+  const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
+  const start = src.indexOf("  for (const id of ['messages', 'submessages']) {");
+  assert.ok(start > 0, 'the content-growth watcher exists');
+  const block = src.slice(start, src.indexOf('function fadeNewLine'));
+  const boxes = {},
+    observers = [];
+  const mk = (id) => {
+    const listeners = {};
+    return (boxes[id] = {
+      id,
+      clientHeight: 400,
+      scrollHeight: 400,
+      scrollTop: 0,
+      dataset: {},
+      addEventListener: (t, fn) => (listeners[t] = fn),
+      fire: (t) => listeners[t](),
+    });
+  };
+  mk('messages');
+  mk('submessages');
+  const run = new Function('MutationObserver', '$', block.replace(/\/\*[\s\S]*?\*\/\s*$/, ''));
+  run(
+    function (fn) {
+      this.observe = (target) => observers.push({ target, fn });
+    },
+    (id) => boxes[id],
+  );
+  const m = boxes.messages,
+    grow = () => observers.find((o) => o.target === m).fn();
+  // following, the content grew by a toggle row: back at the bottom
+  m.scrollHeight = 430;
+  grow();
+  assert.equal(m.scrollTop, 430);
+  // scrolled up to read: left alone
+  m.dataset.paused = '1';
+  m.scrollTop = 50;
+  m.scrollHeight = 470;
+  grow();
+  assert.equal(m.scrollTop, 50);
+  // following, but you just clicked inside (opened a step): left alone
+  delete m.dataset.paused;
+  m.scrollTop = 70;
+  m.fire('pointerdown');
+  m.scrollHeight = 600;
+  grow();
+  assert.equal(m.scrollTop, 70);
+  // a picture finished loading while following
+  m.fire('load');
+  assert.equal(m.scrollTop, 70, 'still inside the click grace');
+  assert.ok(observers.some((o) => o.target === boxes.submessages), 'the subagent view follows too');
+});
+
 // ---- 7. sidebar titles get the card's room --------------------------------------------------------------------------------------
 test('7. a title the age would cut gets line 1 to itself, the age moves to the end of line 2; one that fits is left', () => {
   const S = require(path.join(APP, 'sidebar-ui.js'));
