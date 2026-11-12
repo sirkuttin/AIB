@@ -242,6 +242,8 @@ export class Page {
   readonly errors: string[] = [];
   readonly csp: string[] = [];
   readonly logs: string[] = [];
+  /** DevTools events a test listens to (method -> handler), e.g. Fetch.requestPaused. */
+  readonly listeners = new Map<string, (params: Json) => void>();
   constructor(url: string, readonly id: string, readonly port: number) {
     this.#ws = new WebSocket(url);
     this.ready = new Promise((r) => (this.#ws.onopen = () => r()));
@@ -255,6 +257,7 @@ export class Page {
         } else w.resolve(msg.result ?? {});
         return;
       }
+      if (msg.method && this.listeners.has(msg.method)) this.listeners.get(msg.method)!(msg.params ?? {});
       if (msg.method === 'Runtime.exceptionThrown') {
         const d = msg.params.exceptionDetails;
         this.errors.push(

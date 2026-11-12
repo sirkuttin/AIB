@@ -18,6 +18,13 @@ import { hex } from './words.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
 
+/** Tests only (AGENT_STUDIO_TEST=1): a shorter wait for a busy phone port (AIB_TEST_REMOTE_BIND_MS). */
+function testBindRetryMs(): number | undefined {
+  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1') return undefined;
+  const ms = Number(Deno.env.get('AIB_TEST_REMOTE_BIND_MS'));
+  return ms > 0 ? ms : undefined;
+}
+
 export interface AccessProblem {
   code: 'port_busy' | 'funnel' | 'tailscale' | 'failed';
   message: string;
@@ -116,7 +123,7 @@ export class PhoneAccess {
     if (this.server?.listening) return;
     const server = new RemoteServer(this);
     try {
-      await server.listen(port, this.options.bindRetryMs ?? BIND_RETRY_MS);
+      await server.listen(port, this.options.bindRetryMs ?? testBindRetryMs() ?? BIND_RETRY_MS);
     } catch (error) {
       if (!(error instanceof PortBusy)) throw error;
       this.problem = {
