@@ -651,7 +651,7 @@
     else name.textContent = r.name;
     n.append(name);
     if (r.folder) n.append(el('span', r.folder, 'fx-dirpath'));
-    n.title = r.path + (r.ignored ? '\nIgnored (.gitignore)' : '');
+    n.title = r.path + (r.ignored ? '\nIgnored by git' : '');
     if (r.ignored) n.append(el('span', 'ignored', 'fx-tag'));
     if (r.docsFolder && (r.docCount || r.changed)) {
       // "3 docs · 1 changed": the doc count muted, the changed part in the usual colour

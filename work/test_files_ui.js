@@ -179,6 +179,7 @@ test('the tree is lazy: one folder per request; ignored entries are one dimmed r
   assert.deepEqual(rows(t).map((r) => r.dataset.path), ['data', 'node_modules', 'outputs', 'scripts', 'README.md']);
   const nm = rowOf(t, 'node_modules');
   assert.ok(nm.classList.contains('ignored'));
+  assert.equal(nm.title, 'node_modules\nIgnored by git', 'the tooltip says git, since .git/info/exclude counts too');
   assert.equal(nm.querySelector('.fx-tag').textContent, 'ignored');
   nm.click();
   await flush();
