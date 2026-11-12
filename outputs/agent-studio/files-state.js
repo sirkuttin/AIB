@@ -303,7 +303,7 @@
     const cur = scopeId(current);
     if (chat && chat.id && chat.branch) {
       const s = { id: chat.id, root: 'chat', label: 'Copy', branch: chat.branch, chatKey: chat.key, title: chat.title };
-      out.push({ kind: 'scope', text: "This chat's copy", sub: chat.branch, scope: s, on: scopeId(s) === cur });
+      out.push({ kind: 'scope', text: chat.title || "This chat's copy", sub: 'This chat \u00b7 ' + chat.branch, scope: s, on: scopeId(s) === cur });
     }
     const mainChat = chat && chat.id ? chat : (others || [])[0];
     if (mainChat && mainChat.id) {
@@ -322,10 +322,10 @@
     out.push({ kind: 'follow', text: 'Follow the open chat', on: !!following });
     return out;
   }
-  // The scope button's text: "Copy ⎇ branch" or "Folder name".
+  // The scope button's text: "Copy <chat name>" (⎇ branch when the chat has no name) or "Folder name".
   function scopeLabel(s) {
     if (!s) return { lbl: 'Folder', name: 'No chat open' };
-    if (s.branch) return { lbl: 'Copy', name: '\u2387 ' + s.branch };
+    if (s.branch) return { lbl: 'Copy', name: s.title || '\u2387 ' + s.branch };
     const p = slash(s.path || '').replace(/\/+$/, '');
     return { lbl: 'Folder', name: p.slice(p.lastIndexOf('/') + 1) || p || 'Project folder' };
   }

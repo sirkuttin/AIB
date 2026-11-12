@@ -595,7 +595,9 @@
     if (mode !== 'files') return;
     loadProjectArtifacts(false);
     const { rows, scope, tree, changes } = rowsNow();
-    const lab = F().scopeLabel(scope);
+    // a copy is named after its chat; the name is read fresh so a renamed chat shows its new name
+    const live = scope && scope.branch ? projectChats().find((c) => c.key === scope.chatKey) : null;
+    const lab = F().scopeLabel(live ? Object.assign({}, scope, { title: live.title }) : scope);
     els.scopeBtn.replaceChildren(el('span', lab.lbl, 'lbl'), el('b', lab.name), el('span', '▾', 'fx-caretdown'));
     els.scopeBtn.title =
       (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No chat open') +

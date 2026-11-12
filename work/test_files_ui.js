@@ -261,11 +261,11 @@ test('scope follows the open chat (its own copy when it has one); the menu lists
   const first = t.calls.find((c) => c.path === '/api/live/files/list');
   assert.deepEqual([first.q.id, first.q.root], ['claude:w1', 'chat'], "the chat's own copy");
   const btn = t.shell.body.querySelector('.fx-scope');
-  assert.equal(btn.textContent, 'Copy\u2387 claude/feat\u25BE');
+  assert.equal(btn.textContent, 'CopyTitle w1\u25BE', 'a copy is named after its chat');
   btn.click();
   const menu = t.shell.body.querySelector('.fx-menu');
   const items = menu.querySelectorAll('.fx-menu-it').map((b) => b.textContent);
-  assert.deepEqual(items, ["\u2713This chat's copyclaude/feat", 'Main folderC:/work/alpha', 'Clean up CSVcodex/importer', '\u2713Follow the open chat']);
+  assert.deepEqual(items, ['\u2713Title w1This chat \u00b7 claude/feat', 'Main folderC:/work/alpha', 'Clean up CSVcodex/importer', '\u2713Follow the open chat']);
   menu.querySelectorAll('.fx-menu-it')[1].click();
   await flush();
   const st = t.FU._state();
@@ -278,6 +278,28 @@ test('scope follows the open chat (its own copy when it has one); the menu lists
   t.shell.body.querySelector('.fx-scope').click();
   t.shell.body.querySelector('.fx-menu').querySelectorAll('.fx-menu-it').pop().click();
   assert.equal(t.FU._state().following, true, 'Follow the open chat ticks again');
+});
+
+test("the scope button names a copy after its chat and follows a rename; a pinned copy too", async () => {
+  const wt = conv('w1', 'C:/work/alpha/.claude/worktrees/feat', { projectRoot: ROOT, worktree: { branch: 'claude/feat' }, title: 'Steer build' });
+  const csv = conv('a3', ROOT + '/.claude/worktrees/csv', { projectRoot: ROOT, worktree: { branch: 'codex/importer' }, title: 'Clean up CSV' });
+  const t = setup({ list: [wt, conv('a1', ROOT), csv] });
+  t.FU.setMode('files');
+  await flush();
+  const btn = () => t.shell.body.querySelector('.fx-scope');
+  assert.equal(btn().textContent, 'CopySteer build\u25BE');
+  wt.title = 'Steer build, server side';
+  t.FU.sync(wt);
+  await flush();
+  assert.equal(btn().textContent, 'CopySteer build, server side\u25BE', 'a renamed chat shows its new name');
+  btn().click();
+  t.shell.body.querySelector('.fx-menu').querySelectorAll('.fx-menu-it')[2].click();
+  await flush();
+  assert.equal(btn().textContent, 'CopyClean up CSV\u25BE', "another chat's copy is named after that chat");
+  csv.title = 'CSV importer';
+  t.FU.sync(wt);
+  await flush();
+  assert.equal(btn().textContent, 'CopyCSV importer\u25BE', 'a pinned copy follows its chat being renamed');
 });
 
 test('preview tabs: a single click opens an italic preview tab that the next click replaces; double-click keeps it', async () => {
