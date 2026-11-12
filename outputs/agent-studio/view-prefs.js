@@ -6,10 +6,10 @@
        is put into localStorage before any other page script reads it. A key the data folder does not have yet is taken from
        localStorage instead and sent to the server (the one-time move of what an older copy of the app remembered).
      * afterwards: every localStorage.setItem / removeItem of one of these keys is sent to the server at once (the changes of one
-       moment go together; while one request is on its way the next changes wait for it). Nothing waits for the page to close:
-       quitting AIB ends the app process at once, so a change still waiting then would be lost (seen with 0.1.0-beta.8-test4:
-       a project picked half a second before quitting was gone after the restart). Hiding or closing the page still sends
-       anything left, as a last try.
+       moment go together, without waiting for a request still on its way; the server keeps the newest per key). Nothing
+       waits for the page to close: quitting AIB ends the app process at once, so a change still waiting then would be lost
+       (seen with 0.1.0-beta.8-test4: a project picked half a second before quitting was gone after the restart). Hiding or
+       closing the page still sends anything left, as a last try.
      * each key stands alone: one the server refuses (too big, say) is dropped from the queue, the rest are saved; a server that
        cannot write its file just now (503) or cannot be reached gets the same keys again a few seconds later.
    Without the data block (a server without view preferences) nothing is changed. Per-chat drafts, read positions, caches and
@@ -50,8 +50,8 @@
   ]);
   const synced = (k) =>
     typeof k === 'string' && (KEYS.includes(k) || PREFIXES.some((p) => k.startsWith(p) && k.length > p.length));
-  const GAP_MS = 100, // at most one request per GAP_MS while something keeps changing (a width being dragged)
-    RETRY_MS = 5000;
+  // A drag saves once, at its end; a held arrow key is one small request per repeat.
+  const RETRY_MS = 5000;
 
   /* What to do at start. saved: {key: value} from the data folder; local: {key: value} of the synced keys in localStorage.
      Returns {seed: {key: value} to write into localStorage, upload: {key: value} to send to the server}. */
@@ -112,6 +112,10 @@
       }
     } catch (e) {}
     const { seed, upload } = plan(saved, local);
+    /* What the data folder has, key by key. Writing the value it already has sends nothing: the page rewrites the same sidebar
+       state on every list update; each of those was a request a change made right after it had to wait for. */
+    const known = new Map();
+    for (const k of Object.keys(saved)) if (synced(k)) known.set(k, saved[k]);
     for (const k of Object.keys(seed)) {
       try {
         storage.setItem(k, seed[k]); // before the hook: these come from the server
@@ -120,10 +124,13 @@
 
     let pending = { ...upload },
       timer = 0,
-      sending = false,
-      lastSent = -Infinity,
-      token = '';
-    const clock = opts.now || (() => Date.now());
+      token = '',
+      seq = 0;
+    /* Every batch goes out at once, without waiting for the one before it: AIB quits at once, and Studio can take ~30 ms to
+       answer while it lists chats, so a project picked behind another save was lost (remember_ui_e2e_test, about one start in
+       three). The server keeps the newest batch of this page per key (page id + batch number). */
+    const pageId = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    const lastBatch = new Map(); // key -> the number of the newest batch that carried it
     const schedule = (ms) => {
       if (timer) cancel(timer);
       timer = later(() => {
@@ -131,10 +138,9 @@
         return flush(false);
       }, ms);
     };
-    // A change goes out on the next tick (the writes of one click travel together), or GAP_MS after the previous request.
+    // A change goes out on the next tick: the writes of one click travel together.
     const soon = () => {
-      if (timer || sending) return; // already planned, or sent right after the request on its way
-      schedule(Math.max(0, lastSent + GAP_MS - clock()));
+      if (!timer) schedule(0);
     };
     async function getToken(fresh) {
       if (token && !fresh) return token;
@@ -149,35 +155,40 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': t },
         body,
-        keepalive: !!keepalive,
+        // keepalive: a save sent just before the window closes still reaches Studio, which waits for it before AIB exits
+        // (ViewPrefs.settle). The browser allows 64 KB of keepalive bodies on their way; a bigger one goes without.
+        keepalive: !!keepalive || body.length < 32000,
       });
     }
     async function flush(keepalive) {
       if (!doFetch || !Object.keys(pending).length) return false;
-      if (sending && !keepalive) return false; // the request on its way sends what is left when it ends
-      const batch = pending;
+      const batch = pending,
+        n = ++seq;
       pending = {};
-      sending = true;
-      lastSent = clock();
+      for (const k of Object.keys(batch)) {
+        known.set(k, batch[k]); // a failed batch goes back into pending
+        lastBatch.set(k, n);
+      }
       let retry = false;
       try {
-        const body = JSON.stringify({ set: batch });
+        const body = JSON.stringify({ set: batch, page: pageId, seq: n });
         let r = await post(body, keepalive, false);
         if (r.status === 403) r = await post(body, keepalive, true); // Studio restarted: a new token
         if (r.status === 400) return false; // a malformed batch: the same body would fail again
         if (!r.ok) throw new Error('view-prefs ' + r.status); // 503: the file is busy just now
         return true; // keys the server refused (too big) are not sent again: they would be refused again
       } catch (e) {
-        pending = { ...batch, ...pending }; // newer changes win
-        retry = true;
+        // again later, the keys no newer batch or change carries (newer changes win)
+        for (const k of Object.keys(batch))
+          if (lastBatch.get(k) === n && !Object.prototype.hasOwnProperty.call(pending, k)) pending[k] = batch[k];
+        retry = Object.keys(pending).length > 0;
         return false;
       } finally {
-        sending = false;
         if (retry) schedule(RETRY_MS);
-        else if (Object.keys(pending).length && !timer) soon();
       }
     }
     function note(k, v) {
+      if (!Object.prototype.hasOwnProperty.call(pending, k) && known.has(k) && known.get(k) === v) return; // it has it already
       pending[k] = v;
       soon();
     }

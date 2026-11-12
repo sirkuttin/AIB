@@ -49,7 +49,8 @@ function page(saved, local, answers) {
   const fetch = async (url, o) => {
     if (url === '/api/live/bootstrap')
       return { ok: true, status: 200, json: async () => ({ token: 'tok' + posts.length }) };
-    posts.push({ url, headers: o.headers, body: JSON.parse(o.body), keepalive: o.keepalive });
+    const b = JSON.parse(o.body);
+    posts.push({ url, headers: o.headers, body: { set: b.set }, page: b.page, seq: b.seq, keepalive: o.keepalive });
     const status = queue.length ? queue.shift() : 200;
     return { ok: status === 200, status, json: async () => ({}) };
   };
@@ -174,6 +175,7 @@ test('changes are sent at once (next tick), removals as null; other keys and ses
   );
   await p.runTimers();
   assert.equal(p.posts.length, 1);
+  assert.equal(p.posts[0].keepalive, true, 'keepalive: it still arrives if the window closes right after');
   assert.deepEqual(p.posts[0].body, {
     set: { 'studio-textsize-v1:<1800': '{"chat":120}', 'studio-side-hidden': null },
   });
@@ -193,12 +195,10 @@ test('a failed save is retried later with the newest values; a stale token is re
   assert.notEqual(last.headers['X-Studio-Token'], p.posts[p.posts.length - 2].headers['X-Studio-Token']);
 });
 
-test('a change made while a save is on its way goes out right after it; a busy stream of changes is one request per 100 ms', async () => {
+test('a change made while a save is on its way goes out at once, numbered after it; a late failure of the older one resends nothing newer', async () => {
   let release;
   const gate = new Promise((r) => (release = r));
   const p = page({}, {});
-  let t = 1000;
-  // swap in a slow first answer and a clock
   p.ctl.stop();
   const S = storageClass();
   const storage = new S();
@@ -207,38 +207,43 @@ test('a change made while a save is on its way goes out right after it; a busy s
   const fetch = async (url, o) => {
     if (url === '/api/live/bootstrap') return { ok: true, status: 200, json: async () => ({ token: 't' }) };
     posts.push(JSON.parse(o.body));
-    if (posts.length === 1) await gate;
+    if (posts.length === 1) {
+      await gate; // the first answer is slow (Studio busy listing chats) and then fails
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
     return { ok: true, status: 200, json: async () => ({}) };
   };
   const doc = { getElementById: () => ({ textContent: '{"prefs":{}}' }), addEventListener() {} };
-  const ctl = V.init(
+  V.init(
     { document: doc, addEventListener() {} },
     {
       storage,
       proto: S.prototype,
       fetch,
-      now: () => t,
       setTimeout: (fn, ms) => (timers.push({ fn, ms }), timers.length),
       clearTimeout: () => {},
     },
   );
   storage.setItem('studio-workspace-v1', '{"active":"a"}');
+  storage.setItem('aib-file-tabs-v1', '{"x":1}');
   const first = timers.shift().fn(); // on its way, not answered yet
   await new Promise((r) => setImmediate(r));
-  storage.setItem('studio-workspace-v1', '{"active":"b"}');
-  storage.setItem('aib-file-tabs-v1', '{}');
-  assert.equal(timers.length, 0, 'waits for the request on its way');
-  t += 30;
-  release();
-  await first;
-  assert.equal(timers.length, 1, 'sent again as soon as the first one ended');
-  assert.equal(timers[0].ms, 70, 'no sooner than 100 ms after the previous request');
+  storage.setItem('studio-workspace-v1', '{"active":"b"}'); // the pick, just before quitting
+  assert.deepEqual(
+    timers.map((t) => t.ms),
+    [0],
+    'sent on the next tick, not after the request on its way (AIB can quit 50 ms after a pick)',
+  );
   await timers.shift().fn();
-  assert.deepEqual(posts, [
-    { set: { 'studio-workspace-v1': '{"active":"a"}' } },
-    { set: { 'studio-workspace-v1': '{"active":"b"}', 'aib-file-tabs-v1': '{}' } },
-  ]);
-  assert.deepEqual(ctl.pending(), {});
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].set, { 'studio-workspace-v1': '{"active":"b"}' });
+  assert.equal(posts[0].page, posts[1].page, 'one page id');
+  assert.ok(posts[1].seq > posts[0].seq, 'the newer batch has the higher number (the server keeps it if the older one comes late)');
+  release();
+  await first; // the older batch failed
+  assert.equal(timers[timers.length - 1].ms, 5000, 'retried later');
+  await timers.pop().fn();
+  assert.deepEqual(posts[2].set, { 'aib-file-tabs-v1': '{"x":1}' }, 'only the key no newer batch carried: "a" does not come back');
 });
 
 test('a malformed batch (400) is not sent again; keys the server refused are not either', async () => {
@@ -288,4 +293,24 @@ test('chat.html loads view-prefs.js before every other deferred page script (the
   const first = html.match(/<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)" defer/);
   assert.equal(first[1], 'view-prefs.js');
   assert.ok(V.KEYS.includes('aib-theme'), 'the theme choice is kept in the data folder');
+});
+
+test('writing the value the data folder already has sends nothing (the sidebar rewrites its state on every list update)', async () => {
+  const ws = '{"v":1,"active":"w:c:/a"}';
+  const p = page({ 'studio-workspace-v1': ws }, {});
+  await p.runTimers();
+  p.posts.length = 0;
+  p.storage.setItem('studio-workspace-v1', ws);
+  await p.runTimers();
+  assert.deepEqual(p.posts, [], 'the same value again: no request (a pick right after it would wait behind it)');
+  p.storage.setItem('studio-workspace-v1', '{"v":1,"active":"w:c:/b"}');
+  await p.runTimers();
+  assert.equal(p.posts.length, 1, 'a real change is sent');
+  p.storage.setItem('studio-workspace-v1', '{"v":1,"active":"w:c:/b"}');
+  await p.runTimers();
+  assert.equal(p.posts.length, 1, 'and is then known');
+  p.storage.setItem('studio-workspace-v1', ws);
+  await p.runTimers();
+  assert.equal(p.posts.length, 2, 'going back to the first value is a change too');
+  assert.deepEqual(p.posts[1].body, { set: { 'studio-workspace-v1': ws } });
 });

@@ -84,8 +84,40 @@ export class ViewPrefs extends JsonFileStore {
     this.seen = this.stamp();
   }
 
+  /** Per key, the page and batch number of the last value saved: a page sends without waiting for its previous request, so an
+   * older batch of the same page that arrives late must not overwrite a newer one. */
+  #order = new Map<string, { page: string; seq: number }>();
+
+  /* Saves on their way (POST /api/live/view-prefs): quitting waits for them (settle), so a project picked just before the window
+     closed is on disk before AIB exits. The page sends with keepalive, so a request already sent outlives the closed page while
+     the process lives. */
+  #inFlight = 0;
+  #lastSeen = 0;
+  /** The route calls begin() when a save arrives and end() when it is answered. */
+  begin(): void {
+    this.#inFlight++;
+    this.#lastSeen = Date.now();
+  }
+  end(): void {
+    this.#inFlight = Math.max(0, this.#inFlight - 1);
+    this.#lastSeen = Date.now();
+  }
   /**
-   * Apply {set: {key: string | null}} key by key: a key with a bad name or value, or one that would push the file past MAX_TOTAL,
+   * Resolves once no save is on its way and none arrived for quietMs (counted from the call at the earliest: a save the page sent
+   * just before its window closed may still be on its way to this process), or after maxMs. True when it settled in time.
+   */
+  async settle(maxMs = 1500, quietMs = 250): Promise<boolean> {
+    const start = Date.now();
+    for (;;) {
+      const t = Date.now();
+      if (this.#inFlight === 0 && t - Math.max(start, this.#lastSeen) >= quietMs) return true;
+      if (t - start >= maxMs) return false;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  /**
+   * Apply {set: {key: string | null}, page?, seq?} key by key (a key an older batch of the same page brings is skipped): a key with a bad name or value, or one that would push the file past MAX_TOTAL,
    * is refused on its own and the others are still saved (one oversized value must never cost the open project and tabs).
    * Returns {changed, refused: [key]}. A malformed body is a ValueError; a file that cannot be read or written just now is a
    * ViewPrefsBusy (the route answers 503 and the page sends the same keys again a little later).
@@ -94,9 +126,13 @@ export class ViewPrefs extends JsonFileStore {
     if (!isDict(body) || !isDict(body.set)) return Promise.reject(new ValueError('Invalid request'));
     const changes = entriesOf(body.set);
     if (changes.length > ViewPrefs.MAX_KEYS) return Promise.reject(new ValueError('Too many view preferences at once'));
+    const page = typeof body.page === 'string' ? body.page.slice(0, 64) : '';
+    const seq = typeof body.seq === 'number' && Number.isFinite(body.seq) ? body.seq : null;
     const refused: string[] = [];
     const valid: [string, string | null][] = [];
     for (const [key, value] of changes) {
+      const last = this.#order.get(key);
+      if (page && seq !== null && last && last.page === page && last.seq > seq) continue; // a newer batch of this page saved it
       const ok = ViewPrefs.key(key) && (value === null || (typeof value === 'string' && value.length <= ViewPrefs.MAX_VALUE));
       if (ok) valid.push([key, value as string | null]);
       else refused.push(String(key).slice(0, 120));
@@ -116,6 +152,9 @@ export class ViewPrefs extends JsonFileStore {
           else next[key] = had;
           refused.push(key);
         }
+      }
+      if (page && seq !== null) {
+        for (const [key] of valid) if (!refused.includes(key)) this.#order.set(key, { page, seq });
       }
       if (sameJson(next, before)) return { changed: false, refused };
       this.prefs = next;
