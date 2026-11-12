@@ -34,6 +34,7 @@ export const SLOW: Record<string, number> = {
   'agent_host_test.ts': 45,
   'worktree_merge_test.ts': 38,
   'worktrees_test.ts': 33,
+  'worktree_from_main_test.ts': 15,
   'artifact_mcp_test.ts': 17,
   'monitor_golden_test.ts': 16,
   'host_proxy_test.ts': 16,

@@ -4,8 +4,12 @@
  *
  *     <state dir>/worktrees/<repo-hash>/<chat-slug>        branch studio/<chat-slug>, started from a snapshot commit S
  *
- * S is the project's HEAD plus the user's uncommitted work (tracked edits and untracked, non-ignored files), built with a temporary
- * index so the user's own index and files are never touched. `.env*` files (usually ignored) are copied over afterwards. A project
+ * The chat starts from the project's main branch (main, else master, else the branch the folder has checked out; mainBranch), whatever
+ * branch the project folder is on. When the folder is on that branch, S is its HEAD plus the user's uncommitted work (tracked edits and
+ * untracked, non-ignored files), built with a temporary index so the user's own index and files are never touched. When the folder is
+ * on another branch, S is main's tip: the folder's uncommitted edits belong to that other branch and are not copied (Plan.note says
+ * so in the chat), and live sync only copies the user's edits into the chat while the folder has the chat's base checked out
+ * (record.editsFrom). `.env*` files (usually ignored) are copied over afterwards. A project
  * that cannot safely get a worktree is used in place, and the reason is logged. Every worktree Studio makes is recorded in
  * <state dir>/studio-worktrees.json (chat key -> path, branch, base branch, snapshot commit) and only those are ever cleaned up.
  *
@@ -665,10 +669,43 @@ export class ProjectResolver {
 export class Plan {
   readonly project: string;
   readonly path: string;
-  constructor(project: string, readonly base: string, readonly key: string, readonly slug: string, readonly branch: string, path: string) {
+  /** The branch the project folder has checked out (the chat starts from `base`, the project's main branch). */
+  declare readonly folderBranch: string;
+  /** The line for the chat's start note ('' when there is nothing to say); create() may set it. */
+  declare note: string;
+  constructor(
+    project: string,
+    readonly base: string,
+    readonly key: string,
+    readonly slug: string,
+    readonly branch: string,
+    path: string,
+    folderBranch = '',
+    note = '',
+  ) {
     this.project = String(project);
     this.path = String(path);
+    // Not enumerable: a Plan spreads to the six fields Python's Plan has (the parity tests compare them).
+    Object.defineProperty(this, 'folderBranch', { value: folderBranch || base, enumerable: false });
+    Object.defineProperty(this, 'note', { value: note, enumerable: false, writable: true });
   }
+}
+
+/** The project's main branch: main, else master, else `fallback`. A new chat starts from it and Merge lands on it (merge.ts). */
+export async function mainBranch(project: string, fallback: string): Promise<string> {
+  for (const name of ['main', 'master']) {
+    if (!project) break;
+    const done = await git(['rev-parse', '--verify', '-q', `refs/heads/${name}^{commit}`], project, { check: false });
+    if (done.returncode === 0) return name;
+  }
+  return fallback;
+}
+
+/** The start note of a chat that works in place because of `reason` ('' when that is not worth a note in the chat). */
+export function inPlaceNote(reason: string): string {
+  return reason === 'the repository has no commits yet'
+    ? 'This chat works in the project folder itself, not in its own copy: the repository has no commits yet, so there is no main branch to start from.'
+    : '';
 }
 
 /** hashlib.sha1(normcase(realpath(project))).hexdigest()[:10] */
@@ -728,6 +765,11 @@ export async function snapshotSize(project: string): Promise<[number, number]> {
 }
 
 // ---- making one --------------------------------------------------------------------------------------------------
+/** True when the folder has uncommitted work: tracked edits (staged or not) or untracked, non-ignored files. */
+export async function hasUncommitted(project: string): Promise<boolean> {
+  return !!pyStrip((await git(['status', '--porcelain', '-uall'], project)).stdout);
+}
+
 /** The commit S: HEAD plus the working tree, built in a temporary index. The project's own index and files are not touched. */
 export async function snapshotCommit(project: string, scratch: string): Promise<string> {
   const env = { GIT_INDEX_FILE: pathOf(scratch, 'snapshot-index') };
@@ -972,6 +1014,11 @@ export class Manager {
 
   /** A Plan for a new chat in `project`, or null (the chat works in place; the reason is logged). */
   async plan(projectIn: string, key?: string | null): Promise<Plan | null> {
+    return (await this.planWithReason(projectIn, key)).plan;
+  }
+
+  /** plan() plus, when the chat works in place, why ('' when it gets a worktree). */
+  async planWithReason(projectIn: string, key?: string | null): Promise<{ plan: Plan | null; reason: string }> {
     const project = pathStr(String(projectIn));
     let reason: string;
     try {
@@ -981,10 +1028,14 @@ export class Manager {
     }
     if (reason) {
       say(`Worktree: ${project} works in place: ${reason}`);
-      return null;
+      return { plan: null, reason };
     }
     key = key || crypto.randomUUID().replaceAll('-', '');
-    const base = pyStrip((await git(['symbolic-ref', '--short', 'HEAD'], project)).stdout);
+    const folderBranch = pyStrip((await git(['symbolic-ref', '--short', 'HEAD'], project)).stdout);
+    const base = await mainBranch(project, folderBranch);
+    const note = base === folderBranch && !['main', 'master'].includes(base)
+      ? `Started from ${base}: this project has no main or master branch.`
+      : '';
     const folder = pathOf(this.registry.root, repoHash(project));
     for (let number = 0;; number++) {
       const slug = `chat-${key.slice(0, 8)}` + (number ? `-${number}` : '');
@@ -992,7 +1043,7 @@ export class Manager {
       const taken = (await git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], project, { check: false })).returncode === 0 ||
         lexists(pathOf(folder, slug));
       if (!taken) {
-        return new Plan(project, base, key, slug, branch, pathOf(folder, slug));
+        return { plan: new Plan(project, base, key, slug, branch, pathOf(folder, slug), folderBranch, note), reason: '' };
       }
     }
   }
@@ -1011,22 +1062,31 @@ export class Manager {
       status: 'creating',
       pid: Deno.pid,
       created: nowSeconds(),
+      editsFrom: plan.base, // live sync copies the folder's edits only while the folder has this branch checked out
     };
     ACTIVE.add(plan.key);
     try {
       await this.registry.put(plan.key, record);
       try {
-        const [untracked, size] = await snapshotSize(plan.project);
-        if (untracked > limits.MAX_UNTRACKED_FILES || size > limits.MAX_SNAPSHOT_BYTES) {
-          throw new Fallback(`too much uncommitted work to copy (${untracked} untracked files, ${Math.floor(size / (1024 * 1024))} MB)`);
-        }
-        Deno.mkdirSync(this.registry.root, { recursive: true });
-        const scratch = Deno.makeTempDirSync({ prefix: '.snapshot-', dir: this.registry.root });
         let snapshot: string;
-        try {
-          snapshot = await snapshotCommit(plan.project, scratch);
-        } finally {
-          removeQuietly(scratch);
+        if (plan.folderBranch === plan.base) { // the folder is on main: its uncommitted edits come along, in S
+          const [untracked, size] = await snapshotSize(plan.project);
+          if (untracked > limits.MAX_UNTRACKED_FILES || size > limits.MAX_SNAPSHOT_BYTES) {
+            throw new Fallback(`too much uncommitted work to copy (${untracked} untracked files, ${Math.floor(size / (1024 * 1024))} MB)`);
+          }
+          Deno.mkdirSync(this.registry.root, { recursive: true });
+          const scratch = Deno.makeTempDirSync({ prefix: '.snapshot-', dir: this.registry.root });
+          try {
+            snapshot = await snapshotCommit(plan.project, scratch);
+          } finally {
+            removeQuietly(scratch);
+          }
+        } else { // the folder is on another branch: S is main's tip; the folder's edits belong to that branch and stay out
+          snapshot = pyStrip((await git(['rev-parse', '--verify', `refs/heads/${plan.base}^{commit}`], plan.project)).stdout);
+          if (await hasUncommitted(plan.project)) {
+            plan.note = `Started from ${plan.base}. Your uncommitted edits in the project folder are on another branch ` +
+              `(${plan.folderBranch}), so they're not in this chat's copy.`;
+          }
         }
         record.snapshot = snapshot;
         const head = pyStrip((await git(['rev-parse', 'HEAD'], plan.project)).stdout);

@@ -75,18 +75,18 @@ Deno.test('the button only queues the merge message; the agent then merges with 
   assertEquals(show(ctx, 'main:later.txt'), 'edited after the click\n');
 });
 
-Deno.test('a chat started from another branch merges into main, not into that branch', async () => {
+Deno.test('a chat made while the folder is on another branch starts from main and merges into main, not into that branch', async () => {
   using box = new Sandbox();
   runGit(box.project, 'switch', '-q', '-c', 'claude/pensive-ritchie');
   commit(box.project, 'side.txt', 'side branch work\n', 'side branch commit');
   const ctx = await chat(box);
-  assertEquals(record(ctx).base, 'claude/pensive-ritchie');
+  assertEquals(record(ctx).base, 'main'); // chats start from main (worktree_from_main_test.ts covers the chats made before)
   commit(ctx.wt, 'work.txt', 'chat work\n', 'agent work');
   const sideBefore = runGit(box.project, 'rev-parse', 'claude/pensive-ritchie').trim();
   const state = await m.status(ctx.studio, ctx.id);
   assertEquals([state.base, state.label], ['main', 'Merge into main']);
   const result = await m.mergeFromTool(ctx.studio, ctx.id);
-  assertEquals([result.state, result.target, result.started, result.base], ['merged', 'main', 'claude/pensive-ritchie', 'main']);
+  assertEquals([result.state, result.target, result.started, result.base], ['merged', 'main', 'main', 'main']);
   assertEquals(show(ctx, 'main:work.txt'), 'chat work\n');
   assertEquals(runGit(box.project, 'ls-tree', '--name-only', 'main').split('\n').includes('side.txt'), false, "only the chat's own work");
   assertEquals(runGit(box.project, 'rev-parse', 'claude/pensive-ritchie').trim(), sideBefore, 'the start branch is untouched');

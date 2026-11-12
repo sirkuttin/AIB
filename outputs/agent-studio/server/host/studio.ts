@@ -792,8 +792,11 @@ export class Studio {
       }
     }
     let plan: wt.Plan | null = null;
+    let startNote = ''; // a new chat's start note: where it started when that is not the obvious, or why it works in place
     if (resume === null && this.worktrees && this.settings.worktreePerChat()) {
-      plan = await this.worktrees.plan(workspace); // null: this project works in place (the reason is logged)
+      const planned = await this.worktrees.planWithReason(workspace); // no plan: this project works in place (the reason is logged)
+      plan = planned.plan;
+      startNote = wt.inPlaceNote(planned.reason);
     }
     const lease = resume ? await new SessionLease(this.stateDir, provider, resume).acquire() : null;
     let connection: Connection | null = null;
@@ -833,6 +836,8 @@ export class Studio {
           if (plan) await this.#makeWorktree(c, plan, workspace);
           await c.setup(resume || null);
           if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
+          const note = plan && c.worktree ? plan.note : startNote;
+          if (note) c.recordedEvent('studio_note', { message: note, sessionId: c.sessionId });
           if (!lease) {
             const newLease = await new SessionLease(this.stateDir, provider, c.sessionId!).acquire();
             if (c.closed) {
