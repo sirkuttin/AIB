@@ -47,6 +47,11 @@
   aside and put back. Helpers working in their own worktrees no longer hold a merge. The Changes tab's Merge button still
   works: it sends the chat the merge request (a collapsed "Merge requested" chip). It is off, with the reason, for closed,
   archived, read-only and Elsewhere chats.
+- New chats start from main: a chat's own copy branches from the project's main branch (main, else master) at its latest
+  commit, whatever branch the project folder has checked out, so merging it into main carries exactly the chat's work. Your
+  uncommitted edits in the project folder come along only when the folder is on main; on another branch they stay there,
+  the chat's first note says so, and edits you save are copied into the chat again once the folder is back on main. Chats
+  started before keep working from their branch.
 - Beta agents: every card can install its agent. OpenCode installs with npm (@opencode/cli). Cursor CLI, Goose and Mistral
   Vibe run the vendor's documented installer in the card's terminal panel, with the command shown first. Cards check what
   the agent needs first (Node.js 22 or the package's minimum, uv for Mistral Vibe on Windows) and offer "Install Node.js 26

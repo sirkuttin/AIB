@@ -393,11 +393,8 @@ export class Chat {
 }
 
 /** The branch a chat's work merges into: the project's main branch (main, else master), else the branch it started from. */
-export async function targetBranch(project: string, startBase: string): Promise<string> {
-  for (const name of ['main', 'master']) {
-    if (project && await rev(project, `refs/heads/${name}`)) return name;
-  }
-  return startBase;
+export function targetBranch(project: string, startBase: string): Promise<string> {
+  return wt.mainBranch(project, startBase); // the same rule picks where a new chat starts (worktrees.ts)
 }
 
 // ---- the pieces --------------------------------------------------------------------------------------------------

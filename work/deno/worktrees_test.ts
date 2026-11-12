@@ -742,13 +742,14 @@ Deno.test('parity: create, snapshot commit, user base and removal give the same 
     const manager = new wt.Manager(denoSide.state);
     await manager.create((await manager.plan(denoSide.project, key))!);
     const strip = (r: Record<string, unknown>) => {
-      const { path: _p, project: _q, pid: _i, created: _c, ...rest } = r;
+      const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, ...rest } = r;
       return rest;
     };
     const pyRecord = (await py.call('worktrees_shim', 'registry', [pySide.state, 'get', [key]])) as Record<string, unknown>;
     const denoRecord = manager.registry.get(key)!;
+    assertEquals(denoRecord.editsFrom, 'main', 'Deno only (chats start from main): live sync copies the folder edits of main only');
     assertEquals(strip(denoRecord), strip(pyRecord));
-    assertEquals(Object.keys(denoRecord), Object.keys(pyRecord), 'same key order in the file');
+    assertEquals(Object.keys(denoRecord).filter((k) => k !== 'editsFrom'), Object.keys(pyRecord), 'same key order in the file');
     assertEquals(read(denoRecord.path as string, '.env'), read(pyRecord.path as string, '.env'));
     for (const side of [pySide, denoSide]) {
       write(side.project, 'f.txt', 'user\n');

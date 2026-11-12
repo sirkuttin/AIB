@@ -289,7 +289,7 @@ Deno.test('parity: the same user and chat edits give the same worktrees, commits
       return out;
     };
     const strip = (r: Record<string, unknown>) => {
-      const { path: _p, project: _q, pid: _i, created: _c, ...rest } = r;
+      const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, ...rest } = r; // editsFrom: Deno only
       return rest;
     };
     const pauseOf = (info: Record<string, unknown> | null) => (info ? { paused: info.paused, count: info.count } : null);
