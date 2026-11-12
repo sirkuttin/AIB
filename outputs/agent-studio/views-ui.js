@@ -420,7 +420,7 @@
     const top = box.getBoundingClientRect().top;
     for (const el of box.children)
       if (el.dataset && el.dataset.pk === anchor.pk) {
-        box.scrollTop += el.getBoundingClientRect().top - top - anchor.off;
+        box.scrollTop += el.getBoundingClientRect().top - top - anchor.off; // old main-list scroll code (aib-scroll-v2 = '0')
         return true;
       }
     return false;

@@ -48,13 +48,9 @@ export const KNOWN_FAILING = new Set<string>([]);
 /** Bugs the scroll design found by reading (outputs/scroll-architecture, 1.3: B1-B9) and the owner's calls on it (Q6: a chat,
  *  subagent or pane opens back where you were reading; Q7: that place survives a restart). Each fails today for the reason in its
  *  comment. They are kept apart from KNOWN_FAILING so the AIB_SCROLL_ALL=1 gate stays the passing set; each step of the scroll
- *  controller that fixes one takes its name out of this list in the same commit, and from then on it runs in every gate. */
+ *  controller that fixes one takes its name out of this list in the same commit, and from then on it runs in every gate.
+ *  Empty since the controller landed (steps 3-5). */
 export const PENDING = new Set<string>([
-  "B2 split view: clicking into the other pane keeps both panes' places",
-  'B3 split side pane read 30 px above the bottom: the next update does not pull it down',
-  'B8 subagent view and split panes: no browser scroll anchoring, the row you read stays still on every frame',
-  'T1 split view: Show thinking toggled while you read a side pane keeps your place there',
-  'Q7 reading midway, AIB restarts (a fresh browser profile): the chat opens at the row you were reading',
 ]);
 
 function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {

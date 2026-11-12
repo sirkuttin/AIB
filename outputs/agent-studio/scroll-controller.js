@@ -34,7 +34,8 @@
      ctl.reattached()               the list was moved in the page (split panes): its position was reset by the browser, not you
      ctl.apply() / ctl.detach()
      ScrollController.store         Map 'role:key' -> state, shared by the main list and side panes (the same chat keeps one place)
-     ScrollController.configure({storage, storageKey, max})   keep the main lists' places across restarts (newest `max` chats) */
+     ScrollController.configure({storage, storageKey, max})   keep the main lists' places across restarts (newest `max` chats)
+     ScrollController.reattachAll() a list moved in the page (split view): each goes back to its place */
 (function (root) {
   const ROLE_PREFIX = { main: 'main', mirror: 'main', sub: 'sub', command: 'command' };
   const FOLLOW = Object.freeze({ mode: 'follow' });
@@ -257,9 +258,7 @@
     function onScroll() {
       if (detached || lostLayout) return;
       if (Math.abs(box.scrollTop - settled) <= 1) return; // ours, or the browser re-stating ours after rounding
-      /* A layout the page forced before this frame's observers ran (a zoom, a list that got shorter) sends its scroll event
-         first: the same rule as in apply, and the state is put back at once. */
-      if (!takePending(true)) apply();
+      userScrolled();
     }
     /* Early signals: follow stops before the list moves (a smooth scroll moves it over the next frames). */
     const scrollable = () => box.scrollHeight - box.clientHeight > 1;
@@ -450,7 +449,11 @@
     return ctl;
   }
 
-  const api = { attach, store, configure, saveNow, orderOf, kindOf, FOLLOW, live };
+  /* Every attached list that is in the page: put back at its place (split-ui.js moved lists around; the browser reset them). */
+  function reattachAll() {
+    for (const c of Array.from(live)) if (c.box.isConnected !== false) c.reattached();
+  }
+  const api = { attach, store, configure, saveNow, orderOf, kindOf, FOLLOW, live, reattachAll };
   root.ScrollController = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

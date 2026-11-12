@@ -13,7 +13,7 @@
      * each key stands alone: one the server refuses (too big, say) is dropped from the queue, the rest are saved; a server that
        cannot write its file just now (503) or cannot be reached gets the same keys again a few seconds later.
    Without the data block (a server without view preferences) nothing is changed. Per-chat drafts, read positions, caches and
-   other transient state stay in this browser only. */
+   other transient state stay in this browser only (the place you were reading in each chat does move: studio-scroll-v1). */
 (function (root) {
   /* The keys that move, exact names first, then the ones remembered per window-width bucket (a ':<bucket>' suffix). */
   const KEYS = Object.freeze([
@@ -43,6 +43,7 @@
     'aib-files-open-v1', // folders open in the Files tree, per project and tree (files-ui.js)
     'studio-sidebar-epoch', // when this copy of AIB first ran: older finished chats do not show as unread (sidebar-ui.js)
     'studio-new-chat-agent', // the agent last picked for a new chat, the fallback when Settings names none (agent-choice.js)
+    'studio-scroll-v1', // where you were reading in each chat, the newest 200 (scroll-controller.js)
   ]);
   const PREFIXES = Object.freeze([
     'studio-textsize-v1:', // chat text and interface size, code font, line spacing

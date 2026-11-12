@@ -43,7 +43,6 @@ export const KNOWN_FAILING = new Set<string>([
   'L2m a window resize across a layout bucket (1600 -> 1300 -> 1600) gives the composer and the list back their heights',
   'L4c composer handle: drags between 56 px and a height that leaves the chat list 120 px, the height survives a reload',
   'L6d Settings: each section opens at its top, no double scrollbars, no sideways scroll',
-  'L7a split view: the side pane at the bottom stays at the bottom when the window narrows, and keeps following',
   'L2p with the viewer open (chat column ~440 px), the empty message box has no scrollbar of its own',
 ]);
 

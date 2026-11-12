@@ -222,7 +222,7 @@
       }
     }
     if (!best) return false;
-    box.scrollTop += best.getBoundingClientRect().top - box.getBoundingClientRect().top - a.off;
+    box.scrollTop += best.getBoundingClientRect().top - box.getBoundingClientRect().top - a.off; // old main-list scroll code (aib-scroll-v2 = '0')
     return true;
   }
   let viewSwitching = false; // a view switch repaints even while text is selected
@@ -283,6 +283,9 @@
     return box._scrollCtl;
   }
   const mainCtl = () => managed($('messages'));
+  /* Your place in each chat survives a restart and a new build folder (the owner's Q7): kept under a localStorage key that
+     view-prefs.js copies to AIB's data folder (studio-view.json). The newest 200 chats. */
+  window.ScrollController?.configure({ storage: localStorage, storageKey: 'studio-scroll-v1', max: 200 });
   /* Reading the main list (not following): the controller's state; on the old path its paused flag. */
   const mainReading = () => {
     const c = mainCtl();
@@ -451,7 +454,7 @@
         UNREAD.jumped = false;
       }
       box.dataset.paused = '1';
-      box.scrollTop += target.getBoundingClientRect().top - box.getBoundingClientRect().top - 8;
+      box.scrollTop += target.getBoundingClientRect().top - box.getBoundingClientRect().top - 8; // old main-list scroll code (aib-scroll-v2 = '0')
       resumeIfAtEnd(box);
     }
   }
@@ -997,7 +1000,7 @@
       box.replaceChildren(...rows.map(makeRow));
       if (!rows.length) box.append(text('p', emptyText, 'note'));
     }
-    box.scrollTop = top;
+    box.scrollTop = top; // not a managed list: the sidebar chat list
     window.AgentSidebarUI?.watchTitles?.(box); // each title gets the room its card has (age moves down when it would cut it)
   }
   function makeRow(c) {
@@ -1417,7 +1420,7 @@
         if (move === null || Math.abs(d) < Math.abs(move)) move = d;
       }
     if (move === null) return false;
-    box.scrollTop += move;
+    box.scrollTop += move; // old main-list scroll code (aib-scroll-v2 = '0')
     return true;
   }
   function holdAnchor(box, anchor, held, after) {
@@ -1515,7 +1518,7 @@
         if (signatureKey === 'main') mainSignature = '';
         else subSignature = '';
         showRows(box, rows, signatureKey, extra);
-        if (!ctl) box.scrollTop = box.scrollHeight - h + y;
+        if (!ctl) box.scrollTop = box.scrollHeight - h + y; // old main-list scroll code (aib-scroll-v2 = '0')
       };
       fragment.append(
         proj
@@ -1572,15 +1575,15 @@
         }
         if (!ctl.following) box.dataset.unseen = '1'; // drawn again while you read: the jump button offers the latest
       }
-    } else if (followBox(box)) box.scrollTop = box.scrollHeight;
+    } else if (followBox(box)) box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
     else if (UNREAD.scrollLine && box.id === 'messages') {
       UNREAD.scrollLine = false;
       const l = box.querySelector(':scope > .new-line');
-      box.scrollTop = l
+      box.scrollTop = l // old main-list scroll code (aib-scroll-v2 = '0')
         ? box.scrollTop + l.getBoundingClientRect().top - box.getBoundingClientRect().top - 12
         : box.scrollHeight;
     } else {
-      box.scrollTop = top;
+      box.scrollTop = top; // old main-list scroll code (aib-scroll-v2 = '0')
       if (restoreAnchor(box, anchor)) holdAnchor(box, anchor);
     }
     if (signatureKey === 'main' && pendingSwitch) {
@@ -1589,7 +1592,7 @@
       pendingSwitch = null;
       if (s.bottom) {
         delete box.dataset.paused;
-        box.scrollTop = box.scrollHeight;
+        box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
         viewAnchor = null;
       } else {
         const key = curKey(),
@@ -3970,7 +3973,7 @@
         syncLoadEarlier(box, key, w, 'sub');
       }
       if (ctl) ctl.afterRedraw();
-      else box.scrollTop = box.scrollHeight - oldHeight + oldTop;
+      else box.scrollTop = box.scrollHeight - oldHeight + oldTop; // old main-list scroll code (aib-scroll-v2 = '0')
     } catch (error) {
       fail(error);
     }
@@ -4247,8 +4250,15 @@
   /* Side panes draw a window of the rows (80, growing by 80) and grow it as you scroll back. State lives on the box (_mirrorWin).
    Live chats go back as far as liveRows keeps rows; saved chats also fetch older transcript pages (fetchEarlier). */
   const MIRROR_NEAR = 200;
-  function mirrorBottom(box) {
-    return box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+  /* A side pane's scroll position is the scroll controller's, under the same key as the main list's for that chat (role 'mirror'
+     shares the main store): click into the pane and the chat opens where you read it there, and the pane you leave keeps yours. */
+  function mirrorCtl(box) {
+    if (!window.ScrollController) return null;
+    if (!box._scrollCtl) {
+      box._scrollCtl = window.ScrollController.attach(box, { role: 'mirror', nearTop: { px: MIRROR_NEAR, fn: () => growMirror(box) } });
+      box._scrollCtl.switchTo(box.dataset.mirror || '', () => window.ScrollController.FOLLOW);
+    }
+    return box._scrollCtl;
   }
   /* Is a split pane's chat working, and what is it doing: an attached chat reads its live events, a saved one (running in another app) the saved transcript. */
   function mirrorWorking(key, m) {
@@ -4284,18 +4294,12 @@
         key,
         loading: false,
         grow: false,
-        lastSet: -1,
       };
-      box._painted = false;
       box._sig = '';
     }
+    const ctl = mirrorCtl(box);
     if (!box._mirrorBound) {
       box._mirrorBound = true;
-      box.addEventListener('scroll', () => {
-        const s = box._mirrorWin;
-        if (!s || Math.abs(box.scrollTop - s.lastSet) <= 2) return;
-        if (box.scrollTop < MIRROR_NEAR) growMirror(box);
-      });
       box.addEventListener(
         'wheel',
         (e) => {
@@ -4309,13 +4313,21 @@
       if (Number.isInteger(st.winStart)) st.winStart += rows.length - st.total;
       st.histStart = hist.start;
     }
-    const atEnd = !box._painted || mirrorBottom(box);
+    const atEnd = ctl ? ctl.following : true;
     let f = SU.freezeWindow(rows.length, st.extra, st.winStart, atEnd);
     st.extra = f.extra;
     if (st.grow) {
       st.grow = false;
       st.extra = f.win.nextExtra;
       f = SU.freezeWindow(rows.length, st.extra, st.winStart, atEnd);
+    }
+    /* the row you read in this pane is always drawn (a pane opened again, the window reset by a Thinking or view change) */
+    if (ctl && !atEnd && f.win.start > 0) {
+      const at = ctl.anchorIndex(rows.map((r) => r.rid || ''));
+      if (at >= 0 && at < f.win.start) {
+        st.extra += f.win.start - at;
+        f = SU.freezeWindow(rows.length, st.extra, st.winStart, atEnd);
+      }
     }
     const win = f.win,
       drawn = win.start ? rows.slice(win.start) : rows;
@@ -4346,10 +4358,8 @@
       const chat = conversations.find((x) => aliasKey(x) === key);
       announceTurns(box, key, rows, chat ? titleOf(chat) : '');
     }
-    const top = box.scrollTop,
-      anchor = atEnd ? null : scrollAnchor(box),
-      opens = [...box.querySelectorAll('details')].map((d, i) => (d.open ? i : -1)).filter((i) => i >= 0),
-      fragment = document.createDocumentFragment();
+    if (ctl) ctl.beforeRedraw();
+    const fragment = document.createDocumentFragment();
     if (condensed) {
       const proj = window.ChatViews.project(drawn, view, {
           earlier: win.start > 0 || !!(hist && hist.start > 0),
@@ -4365,25 +4375,11 @@
     } else if (!drawn.length) fragment.append(text('p', 'No messages yet.', 'empty-state'));
     else if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, tagged(bubble)));
     else for (const row of drawn) fragment.append(tagged(bubble)(row));
-    box.replaceChildren(fragment);
+    /* rows drawn the same are kept (opened steps stay open) */
+    if (SU.patchChildren) SU.patchChildren(box, fragment);
+    else box.replaceChildren(fragment);
     markRepeatedTimes(box);
-    if (!condensed)
-      for (const i of opens) if (box.querySelectorAll('details')[i]) box.querySelectorAll('details')[i].open = true;
-    box._painted = true;
-    if (atEnd) box.scrollTop = box.scrollHeight;
-    else {
-      box.scrollTop = top;
-      if (restoreAnchor(box, anchor))
-        holdAnchor(
-          box,
-          anchor,
-          () => !mirrorBottom(box),
-          () => {
-            st.lastSet = box.scrollTop;
-          },
-        );
-    }
-    st.lastSet = box.scrollTop;
+    if (ctl) ctl.afterRedraw();
     fillMirror(box);
   }
   /* One step back: widen the window; at the start of the loaded rows fetch an older saved page (one at a time). */
@@ -4486,6 +4482,10 @@
         if (key && lastMainRows.length) mirrorEntry(key).rows = lastMainRows;
       },
       wake: () => setTimeout(tickMirrors, 60),
+      release: (box) => {
+        box?._scrollCtl?.detach();
+        if (box) box._scrollCtl = null;
+      },
     },
   });
   /* The chat's own terminal (terminal-ui.js), keyed by aliasKey like split panes' data-mirror. Its cwd is the chat's working folder
@@ -4965,7 +4965,7 @@
          (0.18 s) and the browser clamps scrollTop as the history shrinks, so this scroll is the resize, not you. Following stays
          at the bottom, reading stays paused (the watcher puts your row back). */
       if (Date.now() - (box._widthAt || 0) < 400) {
-        if (!box.dataset.paused && gap > 1) box.scrollTop = box.scrollHeight;
+        if (!box.dataset.paused && gap > 1) box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
         if (id === 'messages') syncJump();
         return;
       }
@@ -4995,7 +4995,7 @@
     new ResizeObserver(() => {
       const h = box.clientHeight;
       if (h < lastHeight && !box.dataset.paused && box.scrollHeight - box.scrollTop - box.clientHeight > 1)
-        box.scrollTop = box.scrollHeight;
+        box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
       lastHeight = h;
     }).observe(box);
   }
@@ -5036,7 +5036,7 @@
       if (!was || box.offsetParent === null) return;
       box._widthAt = Date.now();
       if (!box.dataset.paused) {
-        if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight;
+        if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
         return;
       }
       const a = reading || null;
@@ -5047,7 +5047,7 @@
       const top = box.getBoundingClientRect().top,
         r = el.getBoundingClientRect(),
         off = a.off < 0 && a.h > 0 ? (a.off * r.height) / a.h : a.off;
-      box.scrollTop += r.top - top - off;
+      box.scrollTop += r.top - top - off; // old main-list scroll code (aib-scroll-v2 = '0')
     }).observe(box);
   }
   /* Content that grows after a redraw (a "Show all" toggle added a moment later, a picture loading, a running step's output
@@ -5062,7 +5062,7 @@
     box.addEventListener('keydown', touched, true);
     const stick = () => {
       if (box.dataset.paused || Date.now() - touchedAt < 600) return;
-      if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight;
+      if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
     };
     new MutationObserver(stick).observe(box, { childList: true, subtree: true, characterData: true });
     box.addEventListener('load', stick, true); // pictures: load does not bubble, so listen while it travels down
@@ -5119,7 +5119,7 @@
     UNREAD.mark = null;
     UNREAD.jumped = false;
     box._userUp = false;
-    box.scrollTop = box.scrollHeight;
+    box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0')
     syncJump();
   }
   $('jumpNew').onclick = () => {
@@ -5128,7 +5128,7 @@
     if (!UNREAD.jumped && line && unreadCount() > 0) {
       UNREAD.jumped = true;
       if (mainCtl()) mainCtl().anchorTo(line, 12, 'line'); // the end, following, when what is new fits
-      else box.scrollTop += line.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+      else box.scrollTop += line.getBoundingClientRect().top - box.getBoundingClientRect().top - 12; // old main-list scroll code (aib-scroll-v2 = '0')
       syncJump();
       return;
     }
