@@ -29,6 +29,7 @@ const native = (url: URL) => decodeURIComponent(url.pathname).replace(/^\/([A-Za
  */
 export const SLOW: Record<string, number> = {
   'scroll_e2e_test.ts': 250, // 31 chat scrolling scenarios, each a Studio + headless Chrome; known-failing ones ignored
+  'layout_e2e_test.ts': 200, // layout audit: scroll containers and resizable panes against size changes, each a Studio + headless Chrome
   'perf_e2e_test.ts': 230, // a long chat streaming for 3 min in headless Chrome: memory, DOM nodes, listeners, CPU, typing
   'worktree_sync_interop_test.ts': 103,
   'worktree_sync_test.ts': 86,
