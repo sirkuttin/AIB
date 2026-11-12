@@ -146,8 +146,16 @@ test('card DOM: marks, counts, spinner only while active, raw details', () => {
         children: [],
         className: '',
         textContent: '',
+        attrs: {},
+        listeners: {},
         append(...c) {
           this.children.push(...c);
+        },
+        setAttribute(k, v) {
+          this.attrs[k] = v;
+        },
+        addEventListener(t, f) {
+          this.listeners[t] = f;
         },
       };
       made.push(n);
@@ -174,14 +182,14 @@ test('card DOM: marks, counts, spinner only while active, raw details', () => {
   walk(card);
   const cls = (c) => all.filter((n) => (n.className || '').split(' ').includes(c));
   assert.equal(card.className, 'bubble plan');
-  assert.equal(cls('plan-item').length, 3);
+  assert.equal(cls('plan-item').length, 3); // the done step is drawn inside the folded line
   assert.equal(cls('plan-count')[0].textContent, '1/3 done');
   assert.equal(cls('plan-spin').length, 1);
   assert.equal(cls('plan-raw').length, 0); // no raw details toggle
   assert.deepEqual(
     cls('plan-mark').map((n) => n.textContent),
-    ['✓', '', ''],
-  ); // current and to-do marks are drawn by CSS (circled dots, dashed circle)
+    ['', '', '✓', '✓'],
+  ); // the done line's own ✓ comes last; current and to-do marks are drawn by CSS (circled dots, dashed circle)
   row.active = false;
   assert.equal(P.card(row).children.length, 2); // header and checklist only
   delete global.document;
@@ -464,4 +472,117 @@ test('the next-step card sits after the turn’s closing message, like the deskt
     out.map((r) => r.role),
     ['user', 'assistant', 'nextstep', 'user'],
   );
+});
+
+/* ---- order and fold of the plan card ---- */
+function fakeDoc() {
+  const mk = (tag) => ({
+    tag,
+    children: [],
+    className: '',
+    textContent: '',
+    hidden: false,
+    attrs: {},
+    listeners: {},
+    append(...c) {
+      this.children.push(...c);
+    },
+    setAttribute(k, v) {
+      this.attrs[k] = v;
+    },
+    addEventListener(t, f) {
+      this.listeners[t] = f;
+    },
+    click() {
+      this.listeners.click && this.listeners.click({});
+    },
+  });
+  global.document = { createElement: mk };
+}
+const nodes = (n, out = []) => {
+  out.push(n);
+  (n.children || []).forEach((c) => typeof c === 'object' && nodes(c, out));
+  return out;
+};
+const byCls = (n, c) => nodes(n).filter((x) => (x.className || '').split(' ').includes(c));
+const textsOf = (n) => byCls(n, 'plan-text').map((x) => x.textContent);
+const mkRow = (statuses, time) => ({
+  role: 'plan',
+  turn: 1,
+  time,
+  entries: statuses.map((s, i) => ({ content: 's' + (i + 1), status: s })),
+  value: P.checklist(statuses.map((s, i) => ({ content: 's' + (i + 1), status: s }))),
+});
+const C = 'completed',
+  I = 'in_progress',
+  W = 'pending';
+
+test('card order: in progress, then to do, then one "N done" line (agent order inside each group)', () => {
+  fakeDoc();
+  const card = P.card(mkRow([C, W, I, C, W, I], 'ord'));
+  const list = byCls(card, 'plan-list')[0];
+  const top = list.children.map((li) => li.className);
+  assert.deepEqual(top, [
+    'plan-item plan-in_progress',
+    'plan-item plan-in_progress',
+    'plan-item plan-pending',
+    'plan-item plan-pending',
+    'plan-done-fold',
+  ]);
+  assert.deepEqual(
+    list.children.slice(0, 4).map((li) => li.children[2].textContent),
+    ['s3', 's6', 's2', 's5'],
+  );
+  assert.equal(byCls(card, 'plan-done-text')[0].textContent, '2 done');
+  assert.equal(byCls(card, 'plan-count')[0].textContent, '2/6 done');
+  delete global.document;
+});
+
+test('the done line is collapsed by default, opens on click (a button, so Enter/Space too) and stays open across a redraw', () => {
+  fakeDoc();
+  const row = mkRow([C, C, W], 'fold1');
+  let card = P.card(row);
+  let btn = byCls(card, 'plan-done-toggle')[0];
+  assert.equal(btn.tag, 'button');
+  assert.equal(btn.type, 'button');
+  assert.equal(btn.attrs['aria-expanded'], 'false');
+  assert.equal(byCls(card, 'plan-done-list')[0].hidden, true);
+  assert.equal(byCls(card, 'plan-done-arrow')[0].textContent, '▸');
+  btn.click();
+  assert.equal(btn.attrs['aria-expanded'], 'true');
+  assert.equal(byCls(card, 'plan-done-list')[0].hidden, false);
+  assert.equal(byCls(card, 'plan-done-arrow')[0].textContent, '▾');
+  /* redraw (new card object, same plan): still open; another plan is unaffected */
+  card = P.card({ ...row, entries: row.entries.map((e) => ({ ...e })) });
+  btn = byCls(card, 'plan-done-toggle')[0];
+  assert.equal(btn.attrs['aria-expanded'], 'true');
+  assert.equal(byCls(P.card(mkRow([C, W], 'fold2')), 'plan-done-toggle')[0].attrs['aria-expanded'], 'false');
+  btn.click();
+  assert.equal(byCls(P.card(row), 'plan-done-toggle')[0].attrs['aria-expanded'], 'false');
+  delete global.document;
+});
+
+test('an all-done card shows only the header and the "N done" line; no done line when nothing is done', () => {
+  fakeDoc();
+  const card = P.card(mkRow([C, C, C, C], 'alldone'));
+  const list = byCls(card, 'plan-list')[0];
+  assert.equal(list.children.length, 1);
+  assert.equal(list.children[0].className, 'plan-done-fold');
+  assert.equal(byCls(card, 'plan-done-text')[0].textContent, '4 done');
+  assert.equal(byCls(card, 'plan-count')[0].textContent, '4/4 done');
+  assert.equal(byCls(P.card(mkRow([W, I], 'nodone')), 'plan-done-fold').length, 0);
+  delete global.document;
+});
+
+test("Copy still copies every step in the agent's original order", () => {
+  const row = P.fold([
+    user('x'),
+    live([
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'pending' },
+      { content: 'c', status: 'in_progress' },
+      { content: 'd', status: 'completed' },
+    ]),
+  ])[1];
+  assert.equal(row.value, '- [x] a\n- [ ] b\n- [ ] c (in progress)\n- [x] d');
 });
