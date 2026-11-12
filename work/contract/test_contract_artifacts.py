@@ -183,7 +183,15 @@ class ArtifactContract(unittest.TestCase):
             self.assertEqual(a.status, b.status, path)
             self.assertEqual(a.body.replace(str(self.subject.port).encode(), b'<studio>'), b.body.replace(str(self.reference.port).encode(), b'<studio>'), path)
             for name in ('content-type', 'content-security-policy', 'cache-control', 'x-content-type-options', 'cross-origin-resource-policy'):
-                self.assertEqual((a.headers.get(name) or '').replace(str(self.subject.port), '<studio>'),
+                mine = a.headers.get(name) or ''
+                if name == 'content-security-policy' and mine and self.subject.effective_kind() in ('deno', 'deno-split'):
+                    # Deno-only (commit 5980b2b, CHANGELOG "Artifacts: Mermaid, Chart.js and Vega / Vega-Lite load from AIB itself"):
+                    # script-src also allows this origin's /_lib/ (the vendored libraries) and nothing else of it. Require exactly
+                    # that addition, then compare the rest with the reference's policy.
+                    libs = f'https://unpkg.com http://127.0.0.1:{pa}/_lib/ http://localhost:{pa}/_lib/;'
+                    self.assertIn(libs, mine, f'{path}: script-src gains this origin /_lib/')
+                    mine = mine.replace(libs, 'https://unpkg.com;')
+                self.assertEqual(mine.replace(str(self.subject.port), '<studio>'),
                                  (b.headers.get(name) or '').replace(str(self.reference.port), '<studio>'), f'{path} {name}')
             self.assertEqual(pa, self.subject.port + 1, 'the artifact origin is on the Studio port + 1')
 

@@ -1315,6 +1315,36 @@ scrollTest('Q7 reading midway, AIB restarts (a fresh browser profile): the chat 
 
 const places = (page: Page) => page.eval<Record<string, Record<string, unknown>>>(`JSON.parse(localStorage.getItem('studio-scroll-v1') || '{}')`);
 
+/** Put a saved place for the next page load: `edit` is a JS function body over `p` (the saved places) and `k` (this chat's key).
+ *  A place has two copies: the page's localStorage and the data folder's (view-prefs.js; chat.html seeds localStorage from it, and
+ *  the data folder's copy wins). Editing localStorage alone raced the page: the place it had just restored is written 1.5 s later
+ *  (scroll-controller saveSoon) and uploaded, and when that timer fired after the edit the data folder kept the old place and the
+ *  next load opened there. So: stop the page's lists (no more writes from them), write what it still had, make the edit in the
+ *  page's own store too (its pagehide save then writes the same), and wait until the data folder serves the edit. */
+async function putPlace(page: Page, key: string, edit: string) {
+  const want = await page.eval<string>(`(() => {
+    const sc = window.ScrollController;
+    for (const c of Array.from(sc.live)) c.detach();
+    sc.saveNow();
+    const p = JSON.parse(localStorage.getItem('studio-scroll-v1') || '{}');
+    const k = 'main:' + ${JSON.stringify(key)};
+    ${edit};
+    sc.store.set(k, p[k]);
+    sc.saveNow();
+    sessionStorage.clear();
+    return localStorage.getItem('studio-scroll-v1');
+  })()`);
+  assert(want.includes(JSON.stringify('main:' + key)), `the edited place is saved: ${want}`);
+  await page.waitFor(
+    `fetch('/chat.html', { cache: 'no-store' }).then((r) => r.text()).then((t) => {
+      const block = new DOMParser().parseFromString(t, 'text/html').getElementById('aibViewPrefs');
+      return ((JSON.parse(block.textContent).prefs || {})['studio-scroll-v1'] || '') === ${JSON.stringify(want)};
+    })`,
+    15000,
+    'the data folder has the edited place',
+  );
+}
+
 // S2: a restart without the keeper numbers the chat's events again; a saved place keeps a fingerprint of its row (role and the
 // start of its text), so it opens on the same text even when its id now names another row; with neither, the opening rule.
 scrollTest('R1 a saved place whose ids were given again opens on the same text; one with no such row opens at the end', async (lab) => {
@@ -1323,11 +1353,13 @@ scrollTest('R1 a saved place whose ids were given again opens on the same text; 
   for (let i = 0; i < 6; i++) await wheel(page, -150);
   await settle(2000);
   const before = await anchor(page);
+  // the page writes the place 1.5 s after the last change: wait for it rather than guess (under load the timer runs late)
+  await page.waitFor(`!!(JSON.parse(localStorage.getItem('studio-scroll-v1') || '{}')[${JSON.stringify('main:' + chat.key)}] || {}).fp`, 15000, 'the place is saved');
   const saved = (await places(page))['main:' + chat.key] as { rid: string; fp?: string };
   assert(saved && saved.rid && saved.fp, `a place with a fingerprint was saved: ${JSON.stringify(saved)}`);
   // the same place under an id that now names another row (events numbered again from 1)
   const n = Number(saved.rid.slice(2));
-  await page.eval(`(() => { const p = JSON.parse(localStorage.getItem('studio-scroll-v1')); p['main:' + ${JSON.stringify(chat.key)}].rid = 'L:' + ${n - 6}; localStorage.setItem('studio-scroll-v1', JSON.stringify(p)); sessionStorage.clear(); })()`);
+  await putPlace(page, chat.key, `p[k].rid = 'L:' + ${n - 6}`);
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
@@ -1336,7 +1368,7 @@ scrollTest('R1 a saved place whose ids were given again opens on the same text; 
   const now = await whereIs(page, before!.text);
   assert(now !== null && Math.abs(now - before!.off) <= 2, `opened on the same text: at ${now}, was ${before!.off}`);
   // a place that matches no row at all: the opening rule (nothing unread: the end, following)
-  await page.eval(`(() => { const p = JSON.parse(localStorage.getItem('studio-scroll-v1')); p['main:' + ${JSON.stringify(chat.key)}] = { mode: 'anchor', rid: 'L:3', fp: 'assistant:nothing', off: 0, h: 50, w: 900 }; localStorage.setItem('studio-scroll-v1', JSON.stringify(p)); sessionStorage.clear(); })()`);
+  await putPlace(page, chat.key, `p[k] = { mode: 'anchor', rid: 'L:3', fp: 'assistant:nothing', off: 0, h: 50, w: 900 }`);
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
@@ -1355,7 +1387,7 @@ scrollTest('R2 a saved place near the top of a long chat: the list draws a cappe
   await lab.select(chat);
   await shown(page, 'LONGEND');
   await settle();
-  await page.eval(`(() => { const p = JSON.parse(localStorage.getItem('studio-scroll-v1') || '{}'); p['main:' + ${JSON.stringify(chat.key)}] = { mode: 'anchor', rid: 'L:4', off: 0, h: 50, w: 900 }; localStorage.setItem('studio-scroll-v1', JSON.stringify(p)); sessionStorage.clear(); })()`);
+  await putPlace(page, chat.key, `p[k] = { mode: 'anchor', rid: 'L:4', off: 0, h: 50, w: 900 }`);
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);

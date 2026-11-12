@@ -43,9 +43,12 @@ function page(saved, local, answers) {
   const doc = {
     getElementById: (id) =>
       id === 'aibViewPrefs' && saved !== undefined ? { textContent: JSON.stringify({ prefs: saved }) } : null,
-    addEventListener() {},
+    visibilityState: 'visible',
+    addEventListener: (t, fn) => (listeners['doc:' + t] = listeners['doc:' + t] || []).push(fn),
   };
-  const win = { document: doc, addEventListener() {} };
+  const listeners = {};
+  const win = { document: doc, addEventListener: (t, fn) => (listeners[t] = listeners[t] || []).push(fn) };
+  const fire = (t) => (listeners[t] || []).forEach((fn) => fn());
   const fetch = async (url, o) => {
     if (url === '/api/live/bootstrap')
       return { ok: true, status: 200, json: async () => ({ token: 'tok' + posts.length }) };
@@ -67,7 +70,7 @@ function page(saved, local, answers) {
       await new Promise((r) => setImmediate(r));
     }
   };
-  return { ctl, storage, other, posts, timers, runTimers };
+  return { ctl, storage, other, posts, timers, runTimers, fire, doc };
 }
 test.afterEach(() => {
   // init() keeps one live instance per page; each test makes a new page
@@ -313,4 +316,24 @@ test('writing the value the data folder already has sends nothing (the sidebar r
   await p.runTimers();
   assert.equal(p.posts.length, 2, 'going back to the first value is a change too');
   assert.deepEqual(p.posts[1].body, { set: { 'studio-workspace-v1': ws } });
+});
+
+test("a write made while the page is leaving (another script's pagehide save, after this one's) goes out at once, with keepalive", async () => {
+  const p = page({}, {});
+  p.fire('pagehide'); // view-prefs.js leaves first: nothing pending
+  assert.equal(p.posts.length, 0);
+  p.storage.setItem('studio-scroll-v1', '{"main:c":{"mode":"anchor","rid":"L:9"}}'); // scroll-controller.js saveNow, in its pagehide
+  assert.deepEqual(p.timers, [], 'not left to a next tick that never comes');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(p.posts.length, 1);
+  assert.equal(p.posts[0].keepalive, true);
+  assert.deepEqual(p.posts[0].body, { set: { 'studio-scroll-v1': '{"main:c":{"mode":"anchor","rid":"L:9"}}' } });
+  p.fire('pageshow'); // back from the back/forward cache: changes batch on the next tick again
+  p.storage.setItem('studio-side-hidden', '1');
+  assert.deepEqual(p.timers.map((t) => t.ms), [0]);
+  p.doc.visibilityState = 'hidden';
+  p.fire('doc:visibilitychange');
+  p.storage.setItem('studio-side-hidden', '0');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(p.posts[p.posts.length - 1].body, { set: { 'studio-side-hidden': '0' } }, 'hidden counts as leaving too');
 });

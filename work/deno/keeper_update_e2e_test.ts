@@ -1,16 +1,19 @@
 /**
  * Keeper step 2 with real binaries, end to end (slow: two `deno desktop` builds; AIB_SLOW_TESTS=1, Windows only): Install now while a
  * chat streams, with the keeper on (the default: no setting, no AIB_KEEPER; one AIB process). Everything runs on an invisible desktop (_hidden_desktop.ts) with
- * a temp data folder, temp APPDATA/LOCALAPPDATA and a page port the OS picked; only processes this test started are killed.
+ * a temp data folder, temp APPDATA/LOCALAPPDATA, a page port the OS picked and WebView2's DevTools on a port it picked itself
+ * (--remote-debugging-port=0, read back from DevToolsActivePort); only processes this test started are killed. This file took over
+ * app_update_e2e_test.ts, the same update from the separate-agent-host era: its localStorage and update-helper tray checks are here.
  *
  *   1. Build AIB at APP_VERSION (A) and at NEXT_VERSION (B), each with its keeper; install A from its zip into a temp folder.
  *   2. Start A (no --port: it reuses desktop-port.json). One process, no agent host (hostMode 'keeper'). A chat with the fake agent
  *      (work/keeper-fixture/agent.py) streams 40 chunks, 150 ms apart, and asks a question after chunk 19.
  *   3. Check for updates against a local fake GitHub releases API serving B (zip, SHA256SUMS, release.json) and click Install now
- *      mid-turn: A leaves the chat in the keeper and quits, the update helper stays connected to the keeper while it swaps the files,
- *      starts B and waits for B's start confirmation.
+ *      mid-turn: A leaves the chat in the keeper and quits, the update helper (with its tray presence) stays connected to the keeper
+ *      while it swaps the files, starts B and waits for B's start confirmation.
  *   4. B takes the chat over from the keeper's record under the same connection id: every chunk once and in order, the question once,
- *      the answer reaches the agent once, the prompt reached it once, the same agent process, the same keeper process.
+ *      the answer reaches the agent once, the prompt reached it once, the same agent process, the same keeper process. B is on A's
+ *      port, so a localStorage key A's page wrote (through the WebView2 DevTools port) is still there.
  *   5. The agent's artifact tool is the keeper's MCP forwarder (`AIB-keeper mcp-forward`, run from the data folder's keeper-bin),
  *      never A's AIB.exe, so B removes the update's .old-* files at its start while the chat still runs.
  *   6. B is killed hard mid-turn: the keeper starts AIB again with --start-in-tray (rule V1): no window, only the tray icon (Open AIB,
@@ -22,7 +25,7 @@ import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { WORK } from './_parity.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { ownerPort, pickPort } from './_ports.ts';
+import { devToolsPortNow, ownerPort, pickPort } from './_ports.ts';
 import { builtDist, NEXT_VERSION } from './_build_cache.ts';
 import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 import { KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
@@ -35,6 +38,31 @@ const CHUNKS = 40;
 type Json = Record<string, unknown>;
 const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
 const DEC = new TextDecoder();
+/** The app folder: WebView2 keeps its profile next to the exe (AIB.exe.WebView2); its DevToolsActivePort names the CDP port, new
+ * after every restart. */
+let cdpRoot = '';
+
+/** Run `expression` in AIB's page (the window's WebView2, through its DevTools port). */
+async function cdpEval(expression: string): Promise<unknown> {
+  const cdp = devToolsPortNow(cdpRoot);
+  if (!cdp) throw new Error('no DevToolsActivePort yet');
+  const targets = await (await fetch(`http://127.0.0.1:${cdp}/json/list`)).json() as Json[];
+  const page = targets.find((t) => t.type === 'page' && String(t.url).startsWith(`http://127.0.0.1:${PORT}`));
+  if (!page) throw new Error('no page target yet');
+  const ws = new WebSocket(String(page.webSocketDebuggerUrl));
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+  try {
+    const answer = new Promise<Json>((resolve) => (ws.onmessage = (e) => resolve(JSON.parse(e.data))));
+    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
+    const reply = await answer;
+    return ((reply.result as Json)?.result as Json)?.value;
+  } finally {
+    ws.close();
+  }
+}
 
 
 /** Every process whose program is under `folder` (Win32_Process), as [pid, path]. */
@@ -139,9 +167,11 @@ Deno.test({
       FAKE_ACP_LOG: agentLog,
       FAKE_ACP_MCP_PIDS: mcpPids, // the fake agent starts its stdio MCP servers like a real agent
       AIB_TEST_TRAY_STATE: trays,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0',
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+    cdpRoot = app;
     PORT = pickPort(true);
     Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT }));
     const pids = new Set<number>();
@@ -167,6 +197,7 @@ Deno.test({
       const tokenA = String(bootA.token);
       assertEquals(bootA.hostMode, 'keeper', 'one AIB process; agents in the keeper');
       assertEquals(await readInfo(fx.state), null, 'no separate agent host');
+      await until(() => cdpEval(`localStorage.setItem('aib-e2e-draft', 'kept across the update'), 'ok'`), 'localStorage write', 60);
       const post = (token: string, name: string, body: unknown) => httpJson('POST', PORT, '/api/live/' + name, token, body);
       const [cs, conn] = await post(tokenA, 'connect', { provider: 'claude', cwd: fx.workspace, background: true });
       assertEquals(cs, 200, JSON.stringify(conn));
@@ -254,6 +285,8 @@ Deno.test({
       const installLog = Deno.readTextFileSync(`${fx.state}\\updates\\install.log`);
       assert(installLog.includes('staying connected to the keeper'), installLog);
       assert(installLog.includes('the new version is running (it confirmed its start)'), installLog);
+      assert([...Deno.readDirSync(trays)].some((e) => e.name.startsWith('helper-')), 'the update helper showed a tray icon');
+      assertEquals(await until(() => cdpEval(`localStorage.getItem('aib-e2e-draft')`), 'localStorage read on B', 60), 'kept across the update');
       const studioLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
       assert(studioLog.includes('closing (installing an update); leaving the chats in the keeper'), studioLog.slice(-3000));
       assert(studioLog.includes('released 1 chat(s) to the keeper'), studioLog.slice(-3000));

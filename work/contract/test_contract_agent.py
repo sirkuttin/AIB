@@ -86,6 +86,11 @@ class AgentContract(unittest.TestCase):
         """Same state, same events. The agent's notifications and Studio's own events race (even Python against Python), so the
         events are compared as a sorted list without their sequence numbers."""
         a, b = (masked(s, server) for s, server in zip(states, self.servers))
+        if self.servers[0].effective_kind() in ('deno', 'deno-split'):
+            # Deno-only (commit 63e00d6, CHANGELOG "Limits chip after Ctx"): the state carries the account's usage limits. The
+            # fixture never sends a rate limit, so it must be there and empty; the reference has no such key.
+            self.assertIn('limits', a, f'{what}: limits')
+            self.assertIsNone(a.pop('limits'), f'{what}: the fixture sends no usage limits')
         self.assertEqual(sorted(self.kinds(a)), sorted(self.kinds(b)), f'{what}: event kinds')
         for state in (a, b):
             state['events'] = sorted((json.dumps({k: v for k, v in e.items() if k != 'seq'}, sort_keys=True) for e in state['events']))

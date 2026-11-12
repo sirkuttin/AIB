@@ -54,7 +54,7 @@ npm test              # page tests (node --test work/test_*.js, ~2 s)
 ```text
 cd outputs/agent-studio
 deno task test        # every Deno test file (~2.5 min, ~1,000 tests)
-deno task test:update-e2e   # the real-binary update test (two deno desktop builds, Windows only, ~1 min)
+deno task test:update-e2e   # the real-binary update test with the keeper (keeper_update_e2e_test.ts: two deno desktop builds, Windows only, ~2 min)
 cd ../..
 python work/run_parallel.py contract   # HTTP contract tests (~15 s)
 python work/run_parallel.py e2e        # worktree end-to-end suite (~45 s)

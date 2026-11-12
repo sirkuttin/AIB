@@ -499,6 +499,10 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'elicitations' },
       { op: 'cancel' },
       { op: 'elicit', action: 'accept', content: {}, withdrawn: true },
+      // The cancel answered the form with `cancel`; the agent ends that turn when the answer reaches it. Wait for that, so the
+      // next prompt starts a turn of its own (which session/cancel must end with `cancelled`). Without the wait the prompt raced
+      // the agent's reply on both sides: usually refused as busy, under load accepted on one side only.
+      { op: 'wait', for: 'idle' },
       { op: 'prompt', text: 'wait' },
       { op: 'cancel' },
       { op: 'wait', for: 'idle' },
