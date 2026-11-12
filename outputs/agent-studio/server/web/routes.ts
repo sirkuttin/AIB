@@ -62,6 +62,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/desktop/notify', 'write', 'body'],
   ['POST', '/api/live/project-remove', 'write', 'body'],
   ['POST', '/api/live/project-add', 'write', 'body'],
+  ['GET', '/api/live/folders/gone', 'read', 'get'], // folders that no longer exist (folder_presence.ts)
   ['GET', '/api/live/files/list', 'read', 'get'],
   ['GET', '/api/live/files/search', 'read', 'get'],
   ['GET', '/api/live/files/read', 'read', 'get'],

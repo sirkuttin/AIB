@@ -8,6 +8,7 @@ import { isDict, ValueError } from '../core/py.ts';
 import { conversationAction, settingsView, type StudioContext } from './shared.ts';
 import { EditorError, knownRoots, Launcher } from '../desktop/editors.ts';
 import * as folders from '../desktop/folders.ts';
+import { presence } from '../desktop/folder_presence.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
 import { changesResponse, type ChatStudio, repoBranch } from '../worktrees/chat_folders.ts';
@@ -156,6 +157,16 @@ export function studioRoutes(): Map<string, StudioHandler> {
       if (Array.isArray(extra)) wanted.push(...extra);
     } catch { /* ignored, as Python's ValueError */ }
     return Promise.resolve([200, { kinds: folders.folderKinds(wanted, one(args, 'parents') === '1') }]);
+  });
+  // Project folders that no longer exist (cached on the server, read-only): the page leaves their projects out of the list.
+  routes.set('GET /api/live/folders/gone', (_ctx, url) => {
+    const args = argsOf(url);
+    const wanted: unknown[] = [...(args.path ?? [])];
+    try {
+      const extra = JSON.parse(one(args, 'paths', '[]'));
+      if (Array.isArray(extra)) wanted.push(...extra);
+    } catch { /* not JSON: nothing asked */ }
+    return Promise.resolve([200, { gone: presence.gone(wanted) }]);
   });
   routes.set('GET /api/live/folders/start', (ctx) => Promise.resolve([200, folders.startFolder(ctx.folderMemory)]));
   routes.set('POST /api/live/folders/create', async (ctx, _url, body) => {

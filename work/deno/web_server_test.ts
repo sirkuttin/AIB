@@ -21,6 +21,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/desktop/notify',
     'POST /api/live/project-remove',
     'POST /api/live/project-add',
+    'GET /api/live/folders/gone',
     'GET /api/live/files/list',
     'GET /api/live/files/search',
     'GET /api/live/files/read',
