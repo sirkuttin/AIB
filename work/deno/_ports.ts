@@ -113,6 +113,41 @@ export function heldPort(): { port: number; close(): void; [Symbol.dispose](): v
 }
 
 /**
+ * An OS-chosen port number for a child whose command line or saved settings must name its port because it comes back on the same one
+ * (the keeper restarts AIB with its original command line; an update reopens the window on the port it used last, where WebView2 keeps
+ * the page's localStorage). `pair`: port + 1 (the artifact origin) was free too. The number comes from the OS's ephemeral range, so it
+ * never meets a fixed port or the live AIB; a test that can read the port back instead (port 0) should.
+ */
+export function pickPort(pair = false): number {
+  for (let i = 0; i < 50; i++) {
+    const listener = Deno.listen({ hostname: '127.0.0.1', port: 0 });
+    const port = (listener.addr as Deno.NetAddr).port;
+    try {
+      if (!pair) return port;
+      if (port + 1 > 65535) continue;
+      try {
+        Deno.listen({ hostname: '127.0.0.1', port: port + 1 }).close();
+        return port;
+      } catch { /* port + 1 is taken: another one */ }
+    } finally {
+      listener.close();
+    }
+  }
+  throw new Error('no free port pair in 50 tries');
+}
+
+/** The DevTools port in a DevToolsActivePort file under `root` right now (0: none yet). A restarted WebView2 writes a new one. */
+export function devToolsPortNow(root: string): number {
+  const file = findDevToolsFile(root);
+  if (!file) return 0;
+  try {
+    return parseInt(Deno.readTextFileSync(file), 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * A port nothing listens on, for "connection refused" cases only. It was free a moment ago; never pass it to something that binds it
  * (that is the guess-and-hope this file exists to avoid).
  */

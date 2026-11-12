@@ -5,7 +5,7 @@
  * keeper starts AIB again (its orphan command, rule V1), and the new AIB rebuilds the chat from the keeper's record under the same
  * id: it is still streaming, the question shows once, answering it works, and the keeper's record shows nothing was sent twice.
  * Then killing the keeper ends the agent; the chat says Interrupted, comes back by session/load, and nothing is resent. Temp state
- * folder, random high ports, only PIDs this test started (and the AIB its keeper started) are killed.
+ * folder, OS-picked ports, only PIDs this test started (and the AIB its keeper started) are killed.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, nativePath, openConversation, SEP, sleep, TEST_OPTIONS, until, type Web } from './_host_fixture.ts';
@@ -98,7 +98,8 @@ Deno.test({
       fixture.keeperBin = await keeperBinary();
       // An old saved switch (the setting is gone): ignored, the keeper is on anyway.
       Deno.writeTextFileSync(fixture.state + SEP + 'studio-settings.json', JSON.stringify({ version: 1, server: { keeper: false } }));
-      const web: Web = await fixture.startWeb([], { port: 8825 }); // the page on 8825, its artifact origin on 8826
+      // The keeper restarts AIB with its command line, so that names the port: one the OS picked (pinPort).
+      const web: Web = await fixture.startWeb([], { pinPort: true });
       assertEquals(web.boot.hostMode, 'keeper', 'one AIB process with the keeper');
       assertEquals(await readInfo(fixture.state), null, 'no separate agent host');
       const id = await openConversation(web, fixture);

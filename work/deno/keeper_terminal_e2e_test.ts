@@ -1,6 +1,6 @@
 /**
  * K9 with real processes (slow: AIB_SLOW_TESTS=1, Windows): a chat terminal through an AIB crash. AIB (`serve`, one process with the
- * keeper, ports 8941/8942) runs a PowerShell terminal in the keeper with a loop printing a numbered line every 100 ms. AIB is killed
+ * keeper, on a port the OS picked) runs a PowerShell terminal in the keeper with a loop printing a numbered line every 100 ms. AIB is killed
  * hard (TerminateProcess); the keeper keeps the shell and its loop, and with no client for 5 s starts AIB again (rule V1). The new AIB
  * takes the shell over: the terminal list shows the same shell pid, the page reconnects with resume=1 and gets the recorded output
  * replayed, and every line number is there once the loop goes on: no gap. Ctrl+C stops the loop and typing still works ($PID is the
@@ -13,7 +13,6 @@ import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8941;
 const KEY = 'claude:k9-e2e';
 const SEP = '\\';
 // deno-lint-ignore no-control-regex
@@ -101,7 +100,8 @@ Deno.test({
     const aibPids: number[] = [];
     try {
       fixture.keeperBin = await keeperBinary();
-      const web = await fixture.startWeb([], { port: PORT });
+      const web = await fixture.startWeb([], { pinPort: true }); // the keeper restarts AIB on the port its command line names
+      const PORT = web.port;
       aibPids.push(web.process.pid);
       const cwd = fixture.workspace;
       const page1 = terminal(PORT, web.token, cwd);

@@ -1,6 +1,7 @@
 /**
  * Real binaries, end to end (slow: two `deno desktop` builds; run with AIB_SLOW_TESTS=1, Windows only). Everything runs on an
- * invisible desktop (_hidden_desktop.ts) with a temp data folder, temp APPDATA/LOCALAPPDATA and ports 8912/8913 (CDP 8931).
+ * invisible desktop (_hidden_desktop.ts) with a temp data folder, temp APPDATA/LOCALAPPDATA, a page port the OS picked and
+ * WebView2's DevTools on a port it picked itself (--remote-debugging-port=0, read back from DevToolsActivePort).
  *
  *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.99 (B); install A from its zip into a temp folder.
  *   2. Start A (the desktop app, no --port: it reuses the port saved in desktop-port.json). Write a localStorage key through the
@@ -16,12 +17,17 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, httpJson, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
+import { devToolsPortNow, ownerPort, pickPort } from './_ports.ts';
 import { HostClient, pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8912;
-const CDP = 8931;
+/** OS-chosen (after the builds), with port + 1 free: the update must bring B back on this same port (desktop-port.json), where
+ * localStorage lives. */
+let PORT = 0;
+/** The app folder: WebView2 keeps its profile next to the exe (AIB.exe.WebView2); its DevToolsActivePort names the CDP port, new
+ * after every restart. */
+let cdpRoot = '';
 const NEXT = '0.1.0-beta.99';
 type Json = Record<string, unknown>;
 
@@ -33,7 +39,9 @@ async function build(out: string, version?: string): Promise<void> {
 }
 
 async function cdpEval(expression: string): Promise<unknown> {
-  const targets = await (await fetch(`http://127.0.0.1:${CDP}/json/list`)).json() as Json[];
+  const cdp = devToolsPortNow(cdpRoot);
+  if (!cdp) throw new Error('no DevToolsActivePort yet');
+  const targets = await (await fetch(`http://127.0.0.1:${cdp}/json/list`)).json() as Json[];
   const page = targets.find((t) => t.type === 'page' && String(t.url).startsWith(`http://127.0.0.1:${PORT}`));
   if (!page) throw new Error('no page target yet');
   const ws = new WebSocket(String(page.webSocketDebuggerUrl));
@@ -114,11 +122,13 @@ Deno.test({
       AIB_UPDATE_API_BASE: `http://127.0.0.1:${releases.addr.port}`,
       AIB_UPDATE_REPO: 'acme/aib',
       AIB_TEST_TRAY_STATE: trays,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}`,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0',
       // The built app cannot see work/ (its code is embedded), so its test guard is told the agent is the fake one (fake_acp.py).
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1',
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+    cdpRoot = app;
+    PORT = pickPort(true);
     Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT })); // "the port used last time"
     const pids = new Set<number>();
     try {
@@ -250,22 +260,23 @@ Deno.test({
     try {
       for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
       const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
-      const aPid = desk.spawn([`${app}/AIB.exe`, '--port', String(PORT + 4), ...flags], app);
+      const aPid = desk.spawn([`${app}/AIB.exe`, '--port', '0', ...flags], app); // the OS picks; aib-owner.json says which
       pids.add(aPid);
       for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
+      const port = await ownerPort(fx.state, 60); // a fresh data folder: its owner is this app
       const boot = await until(async () => {
-        const [s, b] = await httpJson('GET', PORT + 4, '/api/live/bootstrap', null, undefined, 3000);
+        const [s, b] = await httpJson('GET', port, '/api/live/bootstrap', null, undefined, 3000);
         return s === 200 ? b : null;
       }, 'app up', 60);
       const token = String(boot.token);
       const host = (await readInfo(fx.state))!;
       pids.add(host.pid!);
-      const post = (name: string, body: unknown) => httpJson('POST', PORT + 4, '/api/live/' + name, token, body);
+      const post = (name: string, body: unknown) => httpJson('POST', port, '/api/live/' + name, token, body);
       const [, conn] = await post('connect', { provider: 'claude', cwd: fx.workspace, background: true });
       const cid = String(conn.id);
-      await until(async () => (await httpJson('GET', PORT + 4, `/api/live/state?id=${cid}`, token))[1].ready, 'chat ready', 60);
+      await until(async () => (await httpJson('GET', port, `/api/live/state?id=${cid}`, token))[1].ready, 'chat ready', 60);
       await post('prompt', { id: cid, text: 'wait', clientMessageId: 'crash-1' });
-      await until(async () => (await httpJson('GET', PORT + 4, `/api/live/state?id=${cid}`, token))[1].busy, 'working');
+      await until(async () => (await httpJson('GET', port, `/api/live/state?id=${cid}`, token))[1].busy, 'working');
       Deno.kill(aPid, 'SIGKILL'); // the app crashes: no detach
       const started = Date.now();
       const trayFile = `${trays}/host-${host.pid}.json`;

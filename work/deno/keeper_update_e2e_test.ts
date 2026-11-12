@@ -1,7 +1,7 @@
 /**
  * Keeper step 2 with real binaries, end to end (slow: two `deno desktop` builds; AIB_SLOW_TESTS=1, Windows only): Install now while a
  * chat streams, with the keeper on (the default: no setting, no AIB_KEEPER; one AIB process). Everything runs on an invisible desktop (_hidden_desktop.ts) with
- * a temp data folder, temp APPDATA/LOCALAPPDATA and ports 8821/8822; only processes this test started are killed.
+ * a temp data folder, temp APPDATA/LOCALAPPDATA and a page port the OS picked; only processes this test started are killed.
  *
  *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.98 (B), each with its keeper; install A from its zip into a temp folder.
  *   2. Start A (no --port: it reuses desktop-port.json). One process, no agent host (hostMode 'keeper'). A chat with the fake agent
@@ -22,11 +22,13 @@ import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { WORK } from './_parity.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { pickPort } from './_ports.ts';
 import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
 import { KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8821;
+/** OS-chosen (after the builds), port + 1 free: B comes back on the port A used (desktop-port.json). */
+let PORT = 0;
 const NEXT = '0.1.0-beta.98';
 const CHUNKS = 40;
 type Json = Record<string, unknown>;
@@ -145,6 +147,7 @@ Deno.test({
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+    PORT = pickPort(true);
     Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT }));
     const pids = new Set<number>();
     let keeperPid = 0;

@@ -3,7 +3,7 @@
  * end to end (slow: two `deno desktop` builds; AIB_SLOW_TESTS=1, Windows only). Owner's decision 2026-11-11: quitting AIB while chats
  * work does exactly what Install now does; AIB.exe exits, the keeper holds the chats, and the next AIB.exe started (the same build or
  * a new one unzipped elsewhere) takes them over. Everything runs on an invisible desktop (_hidden_desktop.ts) with a temp data folder,
- * temp APPDATA/LOCALAPPDATA and port 8823; only processes this test started are killed.
+ * temp APPDATA/LOCALAPPDATA and a page port the OS picked; only processes this test started are killed.
  *
  *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.97 (B), each with its keeper; unzip A into one folder and B into another.
  *   2. Start A. A chat with the fake agent (work/keeper-fixture/agent.py) streams 40 chunks, 300 ms apart, and asks a question
@@ -18,6 +18,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
+import { pickPort, refusedPort } from './_ports.ts';
 import { WORK } from './_parity.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
@@ -25,7 +26,8 @@ import { KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/a
 
 const SLOW = Deno.build.os === 'windows' &&
   Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8823;
+/** OS-chosen (after the builds), port + 1 free: B opens on the port A used last (desktop-port.json). */
+let PORT = 0;
 const NEXT = '0.1.0-beta.97';
 const CHUNKS = 40;
 const WM_CLOSE = 0x0010;
@@ -140,13 +142,14 @@ Deno.test({
       AGENT_STUDIO_STATE_DIR: fx.state,
       APPDATA: `${fx.root}\\appdata`,
       LOCALAPPDATA: `${fx.root}\\localappdata`,
-      AIB_UPDATE_API_BASE: 'http://127.0.0.1:9', // no update check reaches anything
+      AIB_UPDATE_API_BASE: `http://127.0.0.1:${refusedPort()}`, // no update check reaches anything
       FAKE_ACP_LOG: agentLog,
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) {
       Deno.mkdirSync(d, { recursive: true });
     }
+    PORT = pickPort(true);
     Deno.writeTextFileSync(
       `${fx.state}\\desktop-port.json`,
       JSON.stringify({ port: PORT }),
