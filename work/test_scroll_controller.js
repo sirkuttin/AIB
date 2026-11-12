@@ -393,3 +393,13 @@ test('S5: Ctrl+wheel (text size, pinch) and a wheel a scrolling box inside the l
   globalThis.getComputedStyle = saved;
   assert.equal(ctl.following, true);
 });
+
+test('a scroll event for a clamp the browser made before the observers ran (the list got shorter under you) is layout', () => {
+  const { box, ctl } = setup(rows(20));
+  box.userScroll(1400); // reading near the end
+  const at = ctl.state.rid;
+  box.children.forEach((r) => (r.h = 50)); // the column widened: every row half as tall, the list shorter than the position
+  box.layout(); // clamped to the end, and its scroll event comes first
+  box.fire('scroll');
+  assert.equal(ctl.state.rid, at, 'still the same row');
+});

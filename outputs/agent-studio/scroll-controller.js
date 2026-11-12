@@ -302,6 +302,10 @@
     function onScroll() {
       if (detached || lostLayout) return;
       if (Math.abs(box.scrollTop - settled) <= 1) return; // ours, or the browser re-stating ours after rounding
+      /* The list got shorter than the place it was at and the browser clamped it to the end (a column widening back, in a layout
+         the page forced before the observers ran): layout, not you. Put the place back at once. */
+      const max = box.scrollHeight - box.clientHeight;
+      if (settled > max + 1 && box.scrollTop >= max - 1) return apply();
       userScrolled();
     }
     /* Early signals: follow stops before the list moves (a smooth scroll moves it over the next frames). */
