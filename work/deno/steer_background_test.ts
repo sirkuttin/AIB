@@ -137,6 +137,41 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: 'C2: a Claude helper a steer moved to the background is marked running without Stop (no process of its own), done when it ends',
+  ...T,
+  async fn() {
+    await using lab = new SteerLab();
+    const { c, p } = await lab.chat('claude');
+    await c.prompt('go', 'm1');
+    const prompt = await p.take('session/prompt');
+    await p.update({ sessionUpdate: 'subagent_update', sessionId: 'h1', title: 'general-purpose', state: { state: 'running' } });
+    const reply = (from: string, text: string, id = 'toolu_agent') => ({
+      sessionUpdate: 'session_message',
+      messageId: `${id}:reply`,
+      senderSessionId: from,
+      recipientSessionId: 's1',
+      content: [{ type: 'text', text }],
+    });
+    const launched = 'Async agent launched successfully. (This tool result is internal metadata.)\nagentId: h1';
+    await p.update(reply('h1', 'Here is what I found.', 'toolu_other')); // a helper's ordinary answer
+    await p.update(reply('nobody', launched, 'toolu_ghost')); // not a helper AIB knows
+    await p.update(reply('h1', launched));
+    await until(() => bg(c).toolu_agent !== undefined, 'the helper marked');
+    assertEquals(bg(c), { toolu_agent: { state: 'running', stoppable: false, helper: 'h1' } });
+    const marks = c.events.filter((e) => e.kind === 'update' && ((e.data as Json).update as Json).background);
+    assertEquals(((marks.at(-1)!.data as Json).update as Json).background, { state: 'running', stoppable: false, helper: 'h1' }, 'the page is told');
+    let refused: unknown = null;
+    await c.stopBackgroundTool('toolu_agent').catch((e) => (refused = e));
+    assert(refused instanceof NotStoppable, 'a helper is not a process AIB can verify and kill');
+    await p.update({ sessionUpdate: 'subagent_update', sessionId: 'h1', state: { state: 'idle', stopReason: 'end_turn' } });
+    await until(() => bg(c).toolu_agent?.state === 'done', 'done when the helper ended');
+    assertEquals(bg(c).toolu_agent, { state: 'done', stoppable: false, helper: 'h1' });
+    await p.reply(prompt.id, { stopReason: 'end_turn' });
+    await until(() => !c.busy, 'done');
+  },
+});
+
 Deno.test('T20 (B5): killVerified kills only verified processes: a wrong start time (a reused pid) or a non-descendant is left alone', async () => {
   // root 100 -> 200 (the command) -> 300 -> 400; 500 is another child of the agent; 900 is no descendant at all.
   const rows = [[100, 1, 900], [200, 100, 1000], [300, 200, 1001], [400, 300, 1002], [500, 100, 1003], [900, 1, 1]];

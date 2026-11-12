@@ -688,7 +688,16 @@ interface BackgroundTool {
   since: number;
   at: number;
   endedAt: number | null;
+  /**
+   * A Claude Code helper (its child session id) rather than a command: marked from the adapter's own "Async agent launched" reply,
+   * done when its subagent_update leaves running. Never stoppable: it runs inside the agent's own process, so there is no process
+   * of its own (pid and start time) AIB could verify and kill.
+   */
+  helper?: string;
 }
+
+/** The adapter's reply when a helper went on in the background (claude-agent-acp 0.97, recording C2: `<toolUseId>:reply`). */
+const HELPER_BACKGROUND_TEXT = /^\s*Async agent launched successfully/;
 
 /** Stop on a background row was refused (HTTP 409): not stoppable, not running, or the processes cannot be verified. */
 export class NotStoppable extends Error {
@@ -1936,6 +1945,7 @@ export class Connection {
       (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') &&
       !(isDict(claude) && get(claude, 'parentToolUseId'))
     ) this.#mainOutput();
+    if (kind === 'session_message' || kind === 'subagent_update') return this.#watchHelper(update, kind, main);
     if (kind !== 'tool_call' && kind !== 'tool_call_update') return;
     const id = get(update, 'toolCallId');
     if (!isStr(id) || !id) return;
@@ -2015,6 +2025,48 @@ export class Connection {
   }
 
   /**
+   * Claude Code helpers (recording C2): a steer moves a foreground helper to the background, and the adapter says so in the main
+   * session with a session_message `<toolUseId>:reply` from the helper's session, "Async agent launched successfully". Its row (the
+   * Agent tool call, and the helper's card in the Activity pane) is marked running in the background, without Stop; it is done once
+   * the helper's subagent_update leaves running.
+   */
+  #watchHelper(update: Json, kind: unknown, main: boolean): void {
+    if (kind === 'subagent_update') {
+      const child = get(update, 'sessionId');
+      let state = get(update, 'state');
+      state = isDict(state) ? get(state, 'state') : state;
+      if (!isStr(child) || !isStr(state) || state === 'running' || state === 'requires_action') return;
+      for (const [id, t] of this.#bgTools) {
+        if (t.helper === child && t.state === 'running') this.#backgroundEnded(id, t, 'done');
+      }
+      return;
+    }
+    if (!main) return;
+    const messageId = get(update, 'messageId');
+    const sender = get(update, 'senderSessionId');
+    if (!isStr(messageId) || !messageId.endsWith(':reply') || !isStr(sender) || sender === this.sessionId) return;
+    const content = get(update, 'content');
+    const text = rawOutputText({ content: Array.isArray(content) ? content : [] });
+    if (!HELPER_BACKGROUND_TEXT.test(text)) return;
+    const id = messageId.slice(0, -':reply'.length);
+    if (!id || this.#bgTools.has(id) || !this.#liveHelpers.has(sender)) return;
+    const at = this.#now();
+    this.#bgTools.set(id, {
+      task: `helper:${sender}`,
+      state: 'running',
+      procs: null,
+      stoppable: false,
+      since: this.#tools.get(id)?.since ?? at,
+      at,
+      endedAt: null,
+      helper: sender,
+    });
+    this.#trimBackground();
+    this.#announceBackground(id);
+    log.info('chat %s: helper %s (%s) went on in the background', this.id, sender, id);
+  }
+
+  /**
    * The page reads a tool row's background state from the row's updates (`update.background = {state, stoppable}`): each change is
    * a tool_call_update of AIB's own for that row. A recorded event (keeper note), so a rebuild has it in the same place; never made
    * while replaying (the note brings it back).
@@ -2027,7 +2079,11 @@ export class Connection {
       update: {
         sessionUpdate: 'tool_call_update',
         toolCallId: id,
-        background: { state: t.state, stoppable: t.state === 'running' && t.stoppable && !this.closed },
+        background: {
+          state: t.state,
+          stoppable: t.state === 'running' && t.stoppable && !this.closed,
+          ...(t.helper ? { helper: t.helper } : {}),
+        },
       },
     });
   }
@@ -2058,13 +2114,16 @@ export class Connection {
   }
 
   /** The background tools as the page sees them (snapshot `toolBackground`): {toolCallId: {state, stoppable}}. */
-  toolBackground(): Record<string, { state: string; stoppable: boolean }> {
+  toolBackground(): Record<string, { state: string; stoppable: boolean; helper?: string }> {
     if (!this.#bgTools.size) return {};
     this.backgroundShellsRunning(); // drops shells whose processes ended
-    const out: Record<string, { state: string; stoppable: boolean }> = {};
+    const out: Record<string, { state: string; stoppable: boolean; helper?: string }> = {};
     for (const [id, t] of this.#bgTools) {
-      if (t.state === 'running' && !this.#bgShells.has(t.task)) this.#backgroundEnded(id, t, 'done');
-      out[id] = { state: t.state, stoppable: t.state === 'running' && t.stoppable && !this.closed };
+      if (t.helper) {
+        // a helper ends with its subagent_update; one AIB no longer counts as live (an agent restart) is over too
+        if (t.state === 'running' && (this.closed || !this.#liveHelpers.has(t.helper))) this.#backgroundEnded(id, t, 'done');
+      } else if (t.state === 'running' && !this.#bgShells.has(t.task)) this.#backgroundEnded(id, t, 'done');
+      out[id] = { state: t.state, stoppable: t.state === 'running' && t.stoppable && !this.closed, ...(t.helper ? { helper: t.helper } : {}) };
     }
     return out;
   }
@@ -2080,6 +2139,9 @@ export class Connection {
     const background = isStr(toolCallId) ? this.#bgTools.get(toolCallId) : undefined;
     if (!background) throw new NotStoppable('That tool is not running in the background.');
     this.toolBackground();
+    if (background.helper) {
+      throw new NotStoppable("AIB can't stop a helper by itself: it runs inside the agent's own process. Ask the agent to stop it.");
+    }
     if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
     if (!background.stoppable || !background.procs?.length) {
       throw new NotStoppable('AIB cannot tell which processes belong to this command, so it cannot stop it.');
