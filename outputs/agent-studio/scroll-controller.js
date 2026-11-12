@@ -357,6 +357,26 @@
       anchorTo(row, null, 'open');
     }
 
+    /* Selecting text while a reply streams: the text must not run away under the mouse. A press on the list's text (not on a
+       button, link or toggle, not on its scrollbar) holds the place; on release, with text selected inside the list, you stay
+       there (you are about to copy it); with nothing selected (a plain click) the list follows again. */
+    function onPointerDown(e) {
+      if (state.mode !== 'follow' || e.button !== 0 || e.target === box || !scrollable()) return;
+      const t = e.target;
+      if (t && t.closest && t.closest('button, a, summary, input, textarea, select, [role="button"], [aria-expanded], img')) return;
+      set(anchorAtTop(), 'select');
+      const doc = box.ownerDocument || root.document;
+      const up = () => {
+        doc.removeEventListener('pointerup', up, true);
+        doc.removeEventListener('pointercancel', up, true);
+        const sel = root.getSelection ? root.getSelection() : null;
+        const kept = sel && !sel.isCollapsed && sel.anchorNode && box.contains(sel.anchorNode);
+        if (!kept && state.mode === 'anchor') follow('select');
+      };
+      doc.addEventListener('pointerup', up, true);
+      doc.addEventListener('pointercancel', up, true);
+    }
+
     function anchorTo(el, off, cause) {
       if (!el) return follow(cause);
       if (lostLayout || !box.clientHeight) {
@@ -447,6 +467,7 @@
     listen('touchstart', onTouchStart, { passive: true });
     listen('touchmove', onTouchMove, { passive: true });
     listen('click', onClickCapture, true);
+    listen('pointerdown', onPointerDown);
     if (box.classList) box.classList.add('scroll-list');
 
     const ctl = {
@@ -509,6 +530,7 @@
         off('touchstart', onTouchStart, { passive: true });
         off('touchmove', onTouchMove, { passive: true });
         off('click', onClickCapture, true);
+        off('pointerdown', onPointerDown);
       },
       _set: set, // tests
     };

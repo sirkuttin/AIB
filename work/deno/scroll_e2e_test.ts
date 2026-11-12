@@ -1494,3 +1494,75 @@ scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest
   await settle(800);
   await assertFollowing(page, 'after ↓ Latest');
 });
+
+// ---- G. gaps the prior-art comparison found (outputs/scroll-architecture/scroll-prior-art.md, section 2a) ---------------------------
+
+// G1: selecting text while a reply streams: the text must not move under the mouse (use-stick-to-bottom holds while you select).
+scrollTest('G1 selecting text in a following chat while a reply streams: the text stays under the mouse, and the list stays put after', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  const stop = pump(chat, 'SELPUMP');
+  await settle(600);
+  await assertFollowing(page, 'streaming at the bottom');
+  // press on the text of a message a little above the end, and drag up 40 px (a selection)
+  const at = await page.eval<{ x: number; y: number; text: string } | null>(`(() => {
+    const b = document.getElementById('messages'), r = b.getBoundingClientRect();
+    const msgs = [...b.children].filter((e) => e.matches('.bubble.assistant') && e.getBoundingClientRect().top > r.top + 60);
+    const e = msgs[msgs.length - 2] || msgs[msgs.length - 1];
+    const md = e && e.querySelector('.markdown');
+    if (!md) return null;
+    const q = md.getBoundingClientRect();
+    return { x: q.left + 30, y: q.top + 8, text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80) };
+  })()`);
+  assert(at, 'a message to select in');
+  const before = await page.eval<number>(`(() => { const b = document.getElementById('messages');
+    const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === ${JSON.stringify(at!.text)});
+    return Math.round(e.getBoundingClientRect().top - b.getBoundingClientRect().top); })()`);
+  await startRowFrames(page, at!.text);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at!.x, y: at!.y });
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at!.x, y: at!.y, button: 'left', clickCount: 1, buttons: 1 });
+  for (let i = 1; i <= 4; i++) {
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at!.x + 60 * i, y: at!.y - 10 * i, button: 'left', buttons: 1 });
+    await sleep(300);
+  }
+  await settle(800);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at!.x + 240, y: at!.y - 40, button: 'left', clickCount: 1 });
+  await settle(1200);
+  const frames = await stopRowFrames(page);
+  await stop();
+  const selected = await page.eval<string>(`String(getSelection())`);
+  const drawn = rowFramesProblems(frames, { off: before }, 1);
+  assert(selected.length > 0, 'some text was selected');
+  assert(!drawn, `the text moved under the mouse while you selected: ${drawn}`);
+  assert((await m(page)).paused, 'with text selected the list stays put (not following)');
+});
+
+// G2: scrolling down to a fast stream: a smooth scroll picks its end when it starts, rows arrive meanwhile, and it stops a little
+// short of the new end. You meant the end: following must come back.
+scrollTest('G2 a smooth scroll down to the end of a fast stream follows again, though rows arrived while it moved', async (lab) => {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -800);
+  await settle(400);
+  assert((await m(page)).paused, 'reading above');
+  const stop = pump(chat, 'CATCHUP');
+  await settle(500);
+  await page.eval(`(() => {
+    const box = document.getElementById('messages');
+    box.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true }));
+    const end = box.scrollHeight - box.clientHeight; // a smooth scroll's target is fixed when it starts
+    return new Promise((done) => {
+      const step = () => {
+        const next = Math.min(end, box.scrollTop + 70);
+        box.scrollTop = next;
+        if (next < end) requestAnimationFrame(step);
+        else done(true);
+      };
+      requestAnimationFrame(step);
+    });
+  })()`);
+  await settle(1500);
+  await stop();
+  await settle(800);
+  await assertFollowing(page, 'after scrolling down to the end of the stream');
+});
