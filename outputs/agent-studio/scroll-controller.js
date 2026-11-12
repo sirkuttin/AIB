@@ -30,7 +30,7 @@
      ctl.anchorTo(el, off, cause)   the New line, a find hit (off: px from the top; null keeps it where it is); follows when that
                                     place is past the end
      ctl.anchorTop(cause)           the row at the top now ("Show earlier", "Load earlier", before the redraw)
-     ctl.switchTo(key, fallback)    save the state under the current key, load key's (or fallback()), apply
+     ctl.switchTo(key, fallback)    save the state under the current key, load key's (or fallback()); the next draw applies it
      ctl.reattached()               the list was moved in the page (split panes): its position was reset by the browser, not you
      ctl.apply() / ctl.detach()
      ScrollController.store         Map 'role:key' -> state, shared by the main list and side panes (the same chat keeps one place)
@@ -197,7 +197,9 @@
       if (detached) return;
       if (box.isConnected === false) return;
       if (!box.clientHeight) {
-        lostLayout = true; // hidden: kept, applied when it shows (the observer fires)
+        // hidden: kept, applied when it shows (the observer fires). Without an observer (node tests) nothing would re-apply it.
+        lostLayout = !!ro;
+        if (!ro) markSettled();
         return;
       }
       if (lostLayout) {
@@ -335,7 +337,7 @@
       lostLayout = true; // the list is redrawn for another chat: its position now is not something you did
       set(s, 'switch');
       if (saving && persisted(prefix + ':' + key)) saveNow();
-      apply();
+      /* applied by the drawer's afterRedraw once the new rows are drawn (the rows still in the list belong to the last key) */
     }
 
     /* ---- the watcher ---- */

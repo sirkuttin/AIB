@@ -395,13 +395,19 @@ test('a hidden list keeps its state; shown again (the browser reset its position
 test('switchTo keeps one place per key and loads the fallback for a key it never saw', () => {
   const { box, ctl } = setup(rows(20), { role: 'sub' });
   ctl.switchTo('child-1');
+  ctl.afterRedraw(); // the drawer applies a switch once it drew the new rows
   box.userScroll(700);
   const first = ctl.state;
+  assert.equal(first.rid, 'L:8');
   ctl.switchTo('child-2', () => SC.FOLLOW);
+  ctl.afterRedraw();
   assert.equal(ctl.following, true, 'another subagent opens following');
+  assert.equal(box.gap, 0);
   assert.equal(box.dataset.paused, undefined);
   ctl.switchTo('child-1');
+  ctl.afterRedraw();
   assert.deepEqual(ctl.state, first, 'back where you were');
+  assert.equal(box.scrollTop, 700);
   assert.equal(SC.store.get('sub:child-1'), first);
 });
 
@@ -448,6 +454,7 @@ test('the main lists persist their places (newest 200) through a storage key; a 
   SC.configure({ storage, storageKey: 'studio-scroll-v1', max: 3 });
   const { box, ctl } = setup(rows(20), { role: 'main' });
   for (const k of ['a', 'b', 'c', 'd']) ctl.switchTo('claude:' + k);
+  ctl.afterRedraw();
   box.userScroll(900);
   SC.saveNow();
   const saved = JSON.parse(data.get('studio-scroll-v1'));

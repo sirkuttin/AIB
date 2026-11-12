@@ -243,6 +243,15 @@
     window.ChatViewsUI?.sync();
     repaintMain();
   }
+  /* ---- Scroll positions: scroll-controller.js owns them for the lists it manages (the subagent view and command output here; the
+     main list and split panes come next). A list's controller is attached the first time something is drawn into it. */
+  const SCROLL_ROLES = { submessages: 'sub', commandDetails: 'command' };
+  function managed(box) {
+    if (!box || !window.ScrollController || !SCROLL_ROLES[box.id]) return null;
+    if (!box._scrollCtl)
+      box._scrollCtl = window.ScrollController.attach(box, { role: SCROLL_ROLES[box.id], clamp: box.id === 'submessages' });
+    return box._scrollCtl;
+  }
   /* Draws the main list again from what is already loaded (no request). */
   function repaintMain() {
     if (current && snapshot)
@@ -1411,11 +1420,15 @@
     if (signatureKey === 'sub' && subSignature === signature) return;
     if (signatureKey === 'main') mainSignature = signature;
     else subSignature = signature;
+    const ctl = managed(box);
+    if (ctl) ctl.beforeRedraw(); // a scroll you made that the browser has not reported yet counts before anything is redrawn
     const top = box.scrollTop,
-      anchor = box.dataset.paused ? scrollAnchor(box) : null;
-    const opens = condensed
-      ? []
-      : [...box.querySelectorAll('details')].map((d, i) => (d.open ? i : -1)).filter((i) => i >= 0);
+      anchor = !ctl && box.dataset.paused ? scrollAnchor(box) : null;
+    /* (kept rows keep their own open state: only the old path opens <details> again by index) */
+    const opens =
+      condensed || ctl
+        ? []
+        : [...box.querySelectorAll('details')].map((d, i) => (d.open ? i : -1)).filter((i) => i >= 0);
     const fragment = document.createDocumentFragment();
     if (!rows.length && view !== 'prompts') fragment.append(text('p', 'No messages saved yet.', 'empty-state'));
     const proj = condensed
@@ -1431,13 +1444,22 @@
       windowOf = (n, more) =>
         proj ? window.StreamUI.windowRows(n, more, GROUP_WINDOW, GROUP_WINDOW) : window.StreamUI.windowRows(n, more);
     let win = window.StreamUI ? windowOf(total, rowExtra[signatureKey] || 0) : { start: 0, hidden: 0 };
+    const reading = ctl ? !ctl.following : !!box.dataset.paused;
     /* while you read older messages, the visible window does not slide forward under you */ if (
-      box.dataset.paused &&
+      reading &&
       Number.isInteger(box._winStart) &&
       win.start > box._winStart
     ) {
       rowExtra[signatureKey] = (rowExtra[signatureKey] || 0) + win.start - box._winStart;
       win = windowOf(total, rowExtra[signatureKey]);
+    }
+    /* and the row you read is always drawn (a chat or subagent opened again where you left it) */
+    if (ctl && reading && win.start > 0) {
+      const at = ctl.anchorIndex(proj ? proj.units.map((u) => unitRid(u)) : rows.map((r) => r.rid || ''));
+      if (at >= 0 && at < win.start) {
+        rowExtra[signatureKey] = (rowExtra[signatureKey] || 0) + win.start - at;
+        win = windowOf(total, rowExtra[signatureKey]);
+      }
     }
     box._winStart = win.start;
     const shown = !proj && win.start ? rows.slice(win.start) : rows;
@@ -1445,11 +1467,12 @@
       const more = () => {
         const h = box.scrollHeight,
           y = box.scrollTop;
+        if (ctl) ctl.anchorTop('earlier'); // the row under the button stays put while older rows are drawn above it
         rowExtra[signatureKey] = win.nextExtra;
         if (signatureKey === 'main') mainSignature = '';
         else subSignature = '';
         showRows(box, rows, signatureKey, extra);
-        box.scrollTop = box.scrollHeight - h + y;
+        if (!ctl) box.scrollTop = box.scrollHeight - h + y;
       };
       fragment.append(
         proj
@@ -1493,7 +1516,8 @@
     else box.replaceChildren(fragment);
     for (const i of opens) if (box.querySelectorAll('details')[i]) box.querySelectorAll('details')[i].open = true;
     placeNewLine(box, flat, rows);
-    if (followBox(box)) box.scrollTop = box.scrollHeight;
+    if (ctl) ctl.afterRedraw();
+    else if (followBox(box)) box.scrollTop = box.scrollHeight;
     else if (UNREAD.scrollLine && box.id === 'messages') {
       UNREAD.scrollLine = false;
       const l = box.querySelector(':scope > .new-line');
@@ -1532,7 +1556,7 @@
       }
     }
     markRepeatedTimes(box);
-    resumeIfAtEnd(box);
+    if (!ctl) resumeIfAtEnd(box);
     if (box.id === 'messages') {
       syncJump();
       updatePlanDock(rows);
@@ -1546,6 +1570,8 @@
     return el;
   }
   const tagged = (render) => (row) => tagRow(row, render(row));
+  /* The id a condensed view's unit (a prompt and what follows) answers to: its prompt's, else its first row's. */
+  const unitRid = (u) => (u.prompt && u.prompt.rid) || ((u.rows || [])[0] || {}).rid || '';
   /* Several link/file rows in a row with the same time: the time shows on the first one only. */
   function markRepeatedTimes(box) {
     let prev = null;
@@ -2103,6 +2129,7 @@
     $('inspectorEyebrow').textContent = 'SUBAGENT HISTORY';
     $('inspectorNote').textContent = 'Read-only history. Messages are sent through the main agent.';
     subSelection = agent;
+    managed($('submessages'))?.switchTo(agent.key, () => window.ScrollController.FOLLOW); // each subagent keeps its own place
     rowExtra.sub = 0;
     subSignature = '';
     subLinksSignature = '';
@@ -2252,6 +2279,7 @@
     if (subSelection?.key === target) {
       showRows($('submessages'), normalized({ events: w.events, context: w.context, start: w.start }, target), 'sub');
       syncLoadEarlier($('submessages'), target, w, 'sub');
+      managed($('submessages'))?.afterRedraw(); // the "Load earlier" button came in after the draw
     }
   }
   let readMigrated = false;
@@ -3568,6 +3596,7 @@
     else subTrail = [];
     selectedCommand = task;
     subSelection = null;
+    managed($('commandDetails'))?.switchTo(task.id, () => window.ScrollController.FOLLOW);
     commandSignature = '';
     $('subchatPane').hidden = false;
     document.body.classList.add('subchat-open');
@@ -3598,8 +3627,9 @@
       if (signature === commandSignature) return;
       commandSignature = signature;
       const box = $('commandDetails'),
-        top = box.scrollTop,
+        ctl = managed(box),
         fragment = document.createDocumentFragment();
+      if (ctl) ctl.beforeRedraw();
       const metadata = text('div', '', 'command-summary');
       metadata.append(
         text('p', (task.agent === 'Main conversation' ? 'Main agent' : task.agent) + ' · ' + task.tool),
@@ -3614,7 +3644,7 @@
         text('pre', task.output || 'No output saved yet.', 'command-code'),
       );
       box.replaceChildren(fragment);
-      box.scrollTop = followBox(box) ? box.scrollHeight : top;
+      ctl?.afterRedraw(); // follows while the output grows, or keeps the place you scrolled to
     } catch (error) {
       if (selectedCommand?.id === id) $('subchatStatus').textContent = 'Could not update command: ' + error.message;
     }
@@ -3869,8 +3899,10 @@
     const w = historyWindows.get(key);
     if (!w || w.busy || w.start <= 0) return;
     const box = $(which === 'main' ? 'messages' : 'submessages'),
+      ctl = managed(box),
       oldHeight = box.scrollHeight,
       oldTop = box.scrollTop;
+    if (ctl) ctl.anchorTop('earlier'); // the rows you see stay put while the older page is drawn above them
     try {
       if (!(await fetchEarlier(w, key))) return;
       if (which === 'main') {
@@ -3881,7 +3913,8 @@
         showRows(box, normalized({ events: w.events, context: w.context, start: w.start }, key), 'sub');
         syncLoadEarlier(box, key, w, 'sub');
       }
-      box.scrollTop = box.scrollHeight - oldHeight + oldTop;
+      if (ctl) ctl.afterRedraw();
+      else box.scrollTop = box.scrollHeight - oldHeight + oldTop;
     } catch (error) {
       fail(error);
     }
@@ -4794,7 +4827,7 @@
     button.hidden = !show;
     button.textContent = !UNREAD.jumped && n > 0 ? (n === 1 ? '1 new message ↓' : n + ' new messages ↓') : '↓ Latest';
   }
-  for (const id of ['messages', 'submessages', 'commandDetails']) {
+  for (const id of ['messages']) {
     const box = $(id);
     const pause = () => {
       if (!box.dataset.paused && id === 'messages') {
@@ -4887,7 +4920,7 @@
      thousands of px, and that never scrolls by itself (overflow-anchor: none). A list that follows goes back to its newest
      row; a list you are reading puts the row that was at the top of the view back at the same place, at the same point of
      that row (a long message that wraps taller keeps the line you were on, not the pixel offset). */
-  for (const id of ['messages', 'submessages']) {
+  for (const id of ['messages']) {
     const box = $(id);
     if (!box || typeof ResizeObserver !== 'function') continue;
     let width = box.clientWidth,
@@ -4936,7 +4969,7 @@
   /* Content that grows after a redraw (a "Show all" toggle added a moment later, a picture loading, a running step's output
      filling in) never scrolls either, so a list that follows was left a few rows short of its newest one. While a list follows,
      any growth keeps it at the bottom; growth right after your own click or key in it (opening a step) is left where it is. */
-  for (const id of ['messages', 'submessages']) {
+  for (const id of ['messages']) {
     const box = $(id);
     if (!box || typeof MutationObserver !== 'function') continue;
     let touchedAt = 0;

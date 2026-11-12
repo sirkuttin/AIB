@@ -206,7 +206,7 @@ test('6. a message list that follows the newest row keeps following when a pinne
 
 test('6b. a message list that follows keeps following when its content grows after a redraw; not right after your own click', () => {
   const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const start = src.indexOf("  for (const id of ['messages', 'submessages']) {", src.indexOf('  /* Content that grows after a redraw'));
+  const start = src.indexOf("  for (const id of ['messages']) {", src.indexOf('  /* Content that grows after a redraw'));
   assert.ok(start > 0, 'the content-growth watcher exists');
   const block = src.slice(start, src.indexOf('function fadeNewLine'));
   const boxes = {},
@@ -254,7 +254,7 @@ test('6b. a message list that follows keeps following when its content grows aft
   // a picture finished loading while following
   m.fire('load');
   assert.equal(m.scrollTop, 70, 'still inside the click grace');
-  assert.ok(observers.some((o) => o.target === boxes.submessages), 'the subagent view follows too');
+  // (the subagent view follows through scroll-controller.js now: work/test_scroll_controller.js)
 });
 
 // ---- 7. sidebar titles get the card's room --------------------------------------------------------------------------------------
@@ -292,7 +292,7 @@ test('7. a title the age would cut gets line 1 to itself, the age moves to the e
 
 test('6c. one wheel notch up stops following at once; following resumes only at the very bottom', () => {
   const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const start = src.indexOf("  for (const id of ['messages', 'submessages', 'commandDetails']) {");
+  const start = src.indexOf("  for (const id of ['messages']) {");
   const end = src.indexOf('  /* The message list gets shorter when something is pinned under it');
   assert.ok(start > 0 && end > start, 'the scroll handler block exists');
   const block = src.slice(start, end);
@@ -339,9 +339,9 @@ test('6c. one wheel notch up stops following at once; following resumes only at 
   m.fire('keydown', { key: 'ArrowUp', target: { closest: () => ({}) } });
   assert.equal(m.dataset.paused, undefined);
   // a list with nothing to scroll is never paused by the wheel
-  const s = boxes.submessages;
-  s.scrollHeight = 400;
-  s.scrollTop = 0;
-  s.fire('wheel', { deltaY: -100 });
-  assert.equal(s.dataset.paused, undefined);
+  m.scrollHeight = 400;
+  m.scrollTop = 0;
+  m.fire('scroll');
+  m.fire('wheel', { deltaY: -100 });
+  assert.equal(m.dataset.paused, undefined);
 });
