@@ -257,7 +257,15 @@ test('the Merge button\'s message is a compact "Merge requested" chip, live and 
 
 // ---- patchChildren: a redraw keeps the rows that would be drawn the same --------------------------------------------------
 function fakeNode(html, tag = 'DIV') {
-  return { nodeType: 1, nodeName: tag, outerHTML: html, parent: null, remove() { this.parent?.drop(this); } };
+  return {
+    nodeType: 1,
+    nodeName: tag,
+    outerHTML: html,
+    parent: null,
+    remove() {
+      this.parent?.drop(this);
+    },
+  };
 }
 function fakeBox() {
   const box = {
@@ -285,11 +293,14 @@ const frag = (...nodes) => ({ childNodes: nodes });
 
 test('patchChildren keeps unchanged rows, swaps changed ones, follows a sliding window', () => {
   const box = fakeBox();
-  const a = fakeNode('<p>a</p>'), b = fakeNode('<p>b</p>'), c = fakeNode('<p>c</p>');
+  const a = fakeNode('<p>a</p>'),
+    b = fakeNode('<p>b</p>'),
+    c = fakeNode('<p>c</p>');
   assert.equal(S.patchChildren(box, frag(a, b, c)), 0);
   assert.deepEqual(box.childNodes, [a, b, c]);
   // the window slides: a drops off, c changes, d arrives; b is kept as the same node
-  const c2 = fakeNode('<p>c!</p>'), d = fakeNode('<p>d</p>');
+  const c2 = fakeNode('<p>c!</p>'),
+    d = fakeNode('<p>d</p>');
   assert.equal(S.patchChildren(box, frag(fakeNode('<p>b</p>'), c2, d)), 1);
   assert.deepEqual(box.childNodes, [b, c2, d]);
   assert.equal(a.parent, null, 'the dropped row left the list');
@@ -297,7 +308,8 @@ test('patchChildren keeps unchanged rows, swaps changed ones, follows a sliding 
 
 test('patchChildren always replaces top-level buttons (their handlers hold the old rows)', () => {
   const box = fakeBox();
-  const more = fakeNode('<button>Show earlier</button>', 'BUTTON'), row = fakeNode('<p>r</p>');
+  const more = fakeNode('<button>Show earlier</button>', 'BUTTON'),
+    row = fakeNode('<p>r</p>');
   S.patchChildren(box, frag(more, row));
   const more2 = fakeNode('<button>Show earlier</button>', 'BUTTON');
   assert.equal(S.patchChildren(box, frag(more2, fakeNode('<p>r</p>'))), 1);

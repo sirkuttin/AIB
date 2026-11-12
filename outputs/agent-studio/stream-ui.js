@@ -392,7 +392,10 @@
   const printOf = (n) => (n.nodeType === 1 ? n.outerHTML : '#' + n.nodeType + ':' + n.textContent);
   function patchChildren(box, fragment) {
     const fresh = Array.from(fragment.childNodes || []);
-    if (!box.childNodes || fresh.some((n) => !(n.nodeType === 3 || (n.nodeType === 1 && typeof n.outerHTML === 'string')))) {
+    if (
+      !box.childNodes ||
+      fresh.some((n) => !(n.nodeType === 3 || (n.nodeType === 1 && typeof n.outerHTML === 'string')))
+    ) {
       box.replaceChildren(fragment); // a page without markup to compare (the test pages): draw it all
       return 0;
     }
