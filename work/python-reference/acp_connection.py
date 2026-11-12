@@ -272,9 +272,10 @@ class Connection:
                             self.known_sessions.add(subagent['sessionId'])
                         if self.session_id is None or sid in (None, self.session_id):
                             breadth.apply_update(self.breadth, update, time.time())
-                        if update.get('sessionUpdate') == 'config_option_update':
+                        own = self.session_id is None or sid in (None, self.session_id)  # a subagent's config is its own
+                        if own and update.get('sessionUpdate') == 'config_option_update':
                             self.settings['configOptions'] = update.get('configOptions', [])
-                        if update.get('sessionUpdate') == 'current_mode_update':
+                        if own and update.get('sessionUpdate') == 'current_mode_update':
                             self.settings.setdefault('modes', {})['currentModeId'] = update.get('currentModeId')
                     self.writes.observe(params)
                     self.event('update', params)

@@ -122,34 +122,35 @@ test('header: "Your turn" as soon as the turn ends, not after the next list refr
   assert.equal(page.hook.headerYourTurn(), true);
 });
 
-test('Interrupt: a subagent not heard from since shows Interrupted, not still working; one that goes on stays working', () => {
+test('Interrupt: a helper silent since stays working (Interrupt stops only the reply); one the agent stopped shows Stopped', () => {
   const page = makePage({ scripts: ['subagents-ui.js'] });
   const sub = (id, state, time) =>
-    ev(
-      'update',
-      { update: { sessionUpdate: 'subagent_update', sessionId: id, title: 'Review ' + id, state: { state } } },
-      time,
-    );
+    ev('update', { update: { sessionUpdate: 'subagent_update', sessionId: id, title: 'Review ' + id, state } }, time);
   page.run("snapshot={sessionId:'s',busy:false}");
   page.hook.state.events = [
     say('delegate', 1),
-    sub('child-1', 'running', 2),
-    sub('child-2', 'running', 3),
+    sub('child-1', { state: 'running' }, 2),
+    sub('child-2', { state: 'running' }, 3),
+    sub('child-3', { state: 'running' }, 3),
     ev('turn_end', { stopReason: 'cancelled' }, 4),
     {
       kind: 'update',
       time: 5,
       data: { sessionId: 'child-2', update: { sessionUpdate: 'agent_message_chunk', content: { text: 'still here' } } },
     },
+    sub('child-3', { state: 'idle', stopReason: 'cancelled' }, 6),
   ];
   page.hook.collectChildren();
   const SU = page.context.window.SubagentsUI;
-  assert.equal(SU.classify(page.hook.children.get('child-1')).label, 'Interrupted');
-  assert.equal(SU.classify(page.hook.children.get('child-1')).group, 'finished');
-  assert.equal(SU.classify(page.hook.children.get('child-2')).group, 'working', 'it spoke after the interrupt');
+  const label = (id) => SU.classify(page.hook.children.get(id));
+  assert.equal(label('child-1').group, 'working', 'silent (a long command) is not stopped');
+  assert.equal(label('child-1').label, 'Working');
+  assert.equal(label('child-2').group, 'working');
+  assert.equal(label('child-3').label, 'Stopped', 'the agent reported it stopped');
+  assert.equal(label('child-3').group, 'finished');
   /* the same events again (the next poll) give the same answer */
   page.hook.collectChildren();
-  assert.equal(SU.classify(page.hook.children.get('child-1')).label, 'Interrupted');
+  assert.equal(label('child-1').group, 'working');
 });
 
 test('an unfinished plan moves down with the chat after you send another message, and is drawn once', () => {

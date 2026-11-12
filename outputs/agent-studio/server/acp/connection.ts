@@ -1942,11 +1942,14 @@ export class Connection {
       if (this.sessionId === null || sid === null || sid === this.sessionId) {
         applyUpdate(this.breadth, update, this.#now());
       }
-      if (get(update, 'sessionUpdate') === 'config_option_update') {
+      // The chat's own settings only: a subagent's session reports its own config (claude-agent-acp: the helper's model, mode,
+      // effort and agent type), which must not replace the chat's.
+      const own = this.sessionId === null || sid === null || sid === this.sessionId;
+      if (own && get(update, 'sessionUpdate') === 'config_option_update') {
         this.settings.configOptions = get(update, 'configOptions', []);
         withModelsOption(this.settings); // an agent's models list stays offered as the model option
       }
-      if (get(update, 'sessionUpdate') === 'current_mode_update') {
+      if (own && get(update, 'sessionUpdate') === 'current_mode_update') {
         this.#modes().currentModeId = get(update, 'currentModeId');
       }
       this.writes.observe(params);

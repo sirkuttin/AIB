@@ -1834,10 +1834,7 @@
     }
   }
   function collectChildren() {
-    const heard = new Map(); // child id -> index of its last event
-    let interrupted = -1; // index of the last turn you interrupted
-    events.forEach((e, i) => {
-      if (e.kind === 'turn_end' && e.data?.stopReason === 'cancelled') interrupted = i;
+    events.forEach((e) => {
       if (e.kind !== 'update') return;
       const u = e.data.update || {};
       if (u.sessionUpdate === 'subagent_update') {
@@ -1857,7 +1854,6 @@
           };
           window.SubagentsUI?.enrich(next, old, child, e.time);
           children.set(id, next);
-          heard.set(id, i);
         }
       }
       const sid = e.data.sessionId;
@@ -1870,7 +1866,6 @@
           state: 'Live stream',
         });
       if (sid && sid !== snapshot.sessionId) {
-        heard.set(sid, i);
         window.SubagentsUI?.noteEvent(children.get(sid), e);
       }
     });
@@ -1888,12 +1883,10 @@
           agentType: c.agentType || d.agentType || '',
         });
       }
-    /* You pressed Interrupt and the turn ended cancelled: a subagent the agent last reported as running, and has not been heard
-       from since, is shown as Interrupted rather than still working. Anything it sends later puts it back. */
-    if (interrupted < 0) return;
-    for (const [id, a] of children)
-      if ((heard.get(id) ?? -1) < interrupted && window.SubagentsUI?.classify(a).group === 'working')
-        children.set(id, { ...a, state: 'interrupted' });
+    /* Interrupt stops the main reply, not the helpers: a subagent keeps the state the agent last reported. claude-agent-acp
+       (subagents form, which AIB declares) lets background helpers run on after session/cancel and reports every child it does
+       stop as {state: 'idle', stopReason: 'cancelled'} (shown as Stopped). A helper silent since the interrupt is usually busy in a
+       long command, so it is never guessed Interrupted. */
   }
   function agentIsActive(a) {
     if (!a.live) return !!a.active;

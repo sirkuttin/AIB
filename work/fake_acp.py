@@ -400,6 +400,12 @@ def held_turn(key, text):
     update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1000})   # usage during the turn: no origin
     update({'sessionUpdate': 'tool_call', 'toolCallId': 'agent-1', 'title': 'Agent', 'kind': 'think', 'status': 'pending', '_meta': {'claudeCode': {'toolName': 'Agent'}}})
     update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'title': 'Background helper', 'capabilities': {'cancel': {}}, 'state': {'state': 'running'}})
+    # The helper's own config, on its session (claude-agent-acp's subagent form: the Agent input's model, its mode and type).
+    emit({'method': 'session/update', 'params': {'sessionId': child, 'update': {'sessionUpdate': 'config_option_update', 'configOptions': [
+        {'id': 'mode', 'name': 'Mode', 'category': 'mode', 'type': 'select', 'currentValue': 'bypassPermissions', 'options': [{'value': 'bypassPermissions', 'name': 'Bypass permissions'}]},
+        {'id': 'model', 'name': 'Model', 'category': 'model', 'type': 'select', 'currentValue': 'sonnet', 'options': [{'value': 'sonnet', 'name': 'Sonnet 5.5'}]},
+        {'id': 'agent', 'name': 'Agent', 'type': 'select', 'currentValue': 'general-purpose', 'options': [{'value': 'general-purpose', 'name': 'general-purpose'}]}],
+        '_meta': {'claudeCode': {'parentToolUseId': 'agent-1'}}}}})
     update({'sessionUpdate': 'tool_call_update', 'toolCallId': 'agent-1', 'status': 'completed'})
     update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Started a helper.'}})
     update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 1500})

@@ -1,0 +1,541 @@
+{
+ "_note": "Recorded claude-agent-acp 0.97.0 stream (subagents RFD form, which AIB declares) from a real lead chat, trimmed: two background helpers started with the Agent input model \"sonnet\"; the parent Agent tool call is replaced by session_message, so the model only reaches the client as the child session's config_option_update. The owner pressed Interrupt at 05:50:18 (session/cancel; turn_end cancelled); both helpers were in long commands, whose results came after the cancel; they ended on their own (subagent_update idle/end_turn) at 05:52:02 and 05:52:22. Prompts, tool input and output trimmed; times are the transcripts' (UTC epoch seconds).",
+ "mainSessionId": "00000000-0000-4000-8000-000000000001",
+ "events": [
+  {
+   "kind": "user",
+   "time": 1794462227.934,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "text": "(owner prompt; trimmed)"
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462240.242,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "update": {
+     "sessionUpdate": "subagent_update",
+     "sessionId": "a4ea6b53148419096",
+     "title": "general-purpose",
+     "description": "Widen right column for docs and artifacts",
+     "capabilities": {
+      "cancel": {}
+     },
+     "state": {
+      "state": "running"
+     }
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462240.25,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "update": {
+     "sessionUpdate": "session_message",
+     "messageId": "toolu_01HNmzRciii2kZ8TvX6bYHFv",
+     "senderSessionId": "00000000-0000-4000-8000-000000000001",
+     "recipientSessionId": "a4ea6b53148419096",
+     "content": [
+      {
+       "type": "text",
+       "text": "(the Agent prompt; trimmed)"
+      }
+     ],
+     "recipientMessageId": "toolu_01HNmzRciii2kZ8TvX6bYHFv"
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462240.26,
+   "data": {
+    "sessionId": "a4ea6b53148419096",
+    "update": {
+     "sessionUpdate": "config_option_update",
+     "configOptions": [
+      {
+       "id": "agent",
+       "name": "Agent",
+       "description": "Subagent type",
+       "type": "select",
+       "currentValue": "general-purpose",
+       "options": [
+        {
+         "value": "general-purpose",
+         "name": "general-purpose"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462240.27,
+   "data": {
+    "sessionId": "a4ea6b53148419096",
+    "update": {
+     "sessionUpdate": "config_option_update",
+     "configOptions": [
+      {
+       "id": "model",
+       "name": "Model",
+       "category": "model",
+       "type": "select",
+       "currentValue": "sonnet",
+       "options": [
+        {
+         "value": "sonnet",
+         "name": "Sonnet 5.5"
+        }
+       ]
+      },
+      {
+       "id": "agent",
+       "name": "Agent",
+       "description": "Subagent type",
+       "type": "select",
+       "currentValue": "general-purpose",
+       "options": [
+        {
+         "value": "general-purpose",
+         "name": "general-purpose"
+        }
+       ]
+      }
+     ],
+     "_meta": {
+      "claudeCode": {
+       "parentToolUseId": "toolu_01HNmzRciii2kZ8TvX6bYHFv"
+      }
+     }
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462240.28,
+   "data": {
+    "sessionId": "a4ea6b53148419096",
+    "update": {
+     "sessionUpdate": "config_option_update",
+     "configOptions": [
+      {
+       "id": "mode",
+       "name": "Mode",
+       "description": "Session permission mode",
+       "category": "mode",
+       "type": "select",
+       "currentValue": "bypassPermissions",
+       "options": [
+        {
+         "value": "bypassPermissions",
+         "name": "Bypass permissions",
+         "description": "Accepts all permissions"
+        }
+       ]
+      },
+      {
+       "id": "model",
+       "name": "Model",
+       "category": "model",
+       "type": "select",
+       "currentValue": "sonnet",
+       "options": [
+        {
+         "value": "sonnet",
+         "name": "Sonnet 5.5"
+        }
+       ]
+      },
+      {
+       "id": "effort",
+       "name": "Effort",
+       "description": "Current reasoning effort",
+       "category": "thought_level",
+       "type": "select",
+       "currentValue": "medium",
+       "options": [
+        {
+         "value": "medium",
+         "name": "Medium"
+        }
+       ]
+      },
+      {
+       "id": "agent",
+       "name": "Agent",
+       "description": "Subagent type",
+       "type": "select",
+       "currentValue": "general-purpose",
+       "options": [
+        {
+         "value": "general-purpose",
+         "name": "general-purpose"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462252.283,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "update": {
+     "sessionUpdate": "subagent_update",
+     "sessionId": "a3771e24db1406b8d",
+     "title": "studio-qa",
+     "description": "QA look at the usage chip",
+     "capabilities": {
+      "cancel": {}
+     },
+     "state": {
+      "state": "running"
+     }
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462252.3,
+   "data": {
+    "sessionId": "a3771e24db1406b8d",
+    "update": {
+     "sessionUpdate": "config_option_update",
+     "configOptions": [
+      {
+       "id": "model",
+       "name": "Model",
+       "category": "model",
+       "type": "select",
+       "currentValue": "sonnet",
+       "options": [
+        {
+         "value": "sonnet",
+         "name": "Sonnet 5.5"
+        }
+       ]
+      },
+      {
+       "id": "agent",
+       "name": "Agent",
+       "description": "Subagent type",
+       "type": "select",
+       "currentValue": "studio-qa",
+       "options": [
+        {
+         "value": "studio-qa",
+         "name": "studio-qa",
+         "description": "QA for Agent Studio changes. Give it the branch or worktree, what changed, and a checklist; it drives a throwaway demo Studio in the browser, compares with the live Studio, and reports what is broken with screenshots. Never touches the live server."
+        }
+       ]
+      }
+     ],
+     "_meta": {
+      "claudeCode": {
+       "parentToolUseId": "toolu_01PhjFxX3TFQawL5gtsTSUeh"
+      }
+     }
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462252.31,
+   "data": {
+    "sessionId": "a3771e24db1406b8d",
+    "update": {
+     "sessionUpdate": "config_option_update",
+     "configOptions": [
+      {
+       "id": "mode",
+       "name": "Mode",
+       "description": "Session permission mode",
+       "category": "mode",
+       "type": "select",
+       "currentValue": "bypassPermissions",
+       "options": [
+        {
+         "value": "bypassPermissions",
+         "name": "Bypass permissions",
+         "description": "Accepts all permissions"
+        }
+       ]
+      },
+      {
+       "id": "model",
+       "name": "Model",
+       "category": "model",
+       "type": "select",
+       "currentValue": "sonnet",
+       "options": [
+        {
+         "value": "sonnet",
+         "name": "Sonnet 5.5"
+        }
+       ]
+      },
+      {
+       "id": "effort",
+       "name": "Effort",
+       "description": "Current reasoning effort",
+       "category": "thought_level",
+       "type": "select",
+       "currentValue": "medium",
+       "options": [
+        {
+         "value": "medium",
+         "name": "Medium"
+        }
+       ]
+      },
+      {
+       "id": "agent",
+       "name": "Agent",
+       "description": "Subagent type",
+       "type": "select",
+       "currentValue": "studio-qa",
+       "options": [
+        {
+         "value": "studio-qa",
+         "name": "studio-qa",
+         "description": "QA for Agent Studio changes. Give it the branch or worktree, what changed, and a checklist; it drives a throwaway demo Studio in the browser, compares with the live Studio, and reports what is broken with screenshots. Never touches the live server."
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462326.412,
+   "data": {
+    "sessionId": "a4ea6b53148419096",
+    "update": {
+     "_meta": {
+      "claudeCode": {
+       "toolName": "Bash",
+       "parentToolUseId": "toolu_01HNmzRciii2kZ8TvX6bYHFv"
+      }
+     },
+     "toolCallId": "toolu_fixture_qa_helper_0001",
+     "sessionUpdate": "tool_call",
+     "name": "Bash",
+     "rawInput": {
+      "command": "deno test (long e2e run; trimmed)"
+     },
+     "status": "pending",
+     "title": "deno test (long e2e run; trimmed)",
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462474.183,
+   "data": {
+    "sessionId": "a3771e24db1406b8d",
+    "update": {
+     "_meta": {
+      "claudeCode": {
+       "toolName": "Bash",
+       "parentToolUseId": "toolu_01PhjFxX3TFQawL5gtsTSUeh"
+      }
+     },
+     "toolCallId": "toolu_fixture_widen_helper_02",
+     "sessionUpdate": "tool_call",
+     "name": "Bash",
+     "rawInput": {
+      "command": "deno test (long e2e run; trimmed)"
+     },
+     "status": "pending",
+     "title": "deno test (long e2e run; trimmed)",
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "kind": "turn_end",
+   "time": 1794462556.5,
+   "data": {
+    "stopReason": "end_turn",
+    "usage": {
+     "inputTokens": 10,
+     "outputTokens": 2949,
+     "cachedReadTokens": 2258098,
+     "cachedWriteTokens": 3735,
+     "totalTokens": 2264792
+    },
+    "_meta": {
+     "quota": {
+      "token_count": {
+       "totalTokens": 2264792,
+       "inputTokens": 10,
+       "cachedInputTokens": 2258098,
+       "cachedWriteTokens": 3735,
+       "outputTokens": 2949,
+       "reasoningOutputTokens": 0
+      },
+      "model_usage": [
+       {
+        "model": "claude-opus-5-5",
+        "token_count": {
+         "totalTokens": 2264792,
+         "inputTokens": 10,
+         "cachedInputTokens": 2258098,
+         "cachedWriteTokens": 3735,
+         "outputTokens": 2949,
+         "reasoningOutputTokens": 0
+        }
+       },
+       {
+        "model": "claude-sonnet-5-5",
+        "token_count": {
+         "totalTokens": 299081,
+         "inputTokens": 16,
+         "cachedInputTokens": 223699,
+         "cachedWriteTokens": 73582,
+         "outputTokens": 1784,
+         "reasoningOutputTokens": 0
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "kind": "user",
+   "time": 1794462556.532,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "text": "(owner prompt; trimmed)"
+   }
+  },
+  {
+   "kind": "turn_end",
+   "time": 1794462618.574,
+   "data": {
+    "stopReason": "cancelled",
+    "usage": {
+     "inputTokens": 24,
+     "outputTokens": 3559,
+     "cachedReadTokens": 6307613,
+     "cachedWriteTokens": 10309,
+     "totalTokens": 6321505
+    },
+    "_meta": {
+     "quota": {
+      "token_count": {
+       "totalTokens": 6321505,
+       "inputTokens": 24,
+       "cachedInputTokens": 6307613,
+       "cachedWriteTokens": 10309,
+       "outputTokens": 3559,
+       "reasoningOutputTokens": 0
+      },
+      "model_usage": [
+       {
+        "model": "claude-opus-5-5",
+        "token_count": {
+         "totalTokens": 6889181,
+         "inputTokens": 530,
+         "cachedInputTokens": 6874435,
+         "cachedWriteTokens": 10648,
+         "outputTokens": 3568,
+         "reasoningOutputTokens": 0
+        }
+       },
+       {
+        "model": "claude-sonnet-5-5",
+        "token_count": {
+         "totalTokens": 2214948,
+         "inputTokens": 70,
+         "cachedInputTokens": 2130109,
+         "cachedWriteTokens": 64834,
+         "outputTokens": 19935,
+         "reasoningOutputTokens": 0
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462706.454,
+   "data": {
+    "sessionId": "a3771e24db1406b8d",
+    "update": {
+     "_meta": {
+      "claudeCode": {
+       "toolName": "Bash",
+       "parentToolUseId": "toolu_01PhjFxX3TFQawL5gtsTSUeh"
+      }
+     },
+     "toolCallId": "toolu_fixture_widen_helper_02",
+     "sessionUpdate": "tool_call_update",
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462713.863,
+   "data": {
+    "sessionId": "a4ea6b53148419096",
+    "update": {
+     "_meta": {
+      "claudeCode": {
+       "toolName": "Bash",
+       "parentToolUseId": "toolu_01HNmzRciii2kZ8TvX6bYHFv"
+      }
+     },
+     "toolCallId": "toolu_fixture_qa_helper_0001",
+     "sessionUpdate": "tool_call_update",
+     "status": "completed"
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462722.884,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "update": {
+     "sessionUpdate": "subagent_update",
+     "sessionId": "a4ea6b53148419096",
+     "state": {
+      "state": "idle",
+      "stopReason": "end_turn"
+     }
+    }
+   }
+  },
+  {
+   "kind": "update",
+   "time": 1794462742.591,
+   "data": {
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "update": {
+     "sessionUpdate": "subagent_update",
+     "sessionId": "a3771e24db1406b8d",
+     "state": {
+      "state": "idle",
+      "stopReason": "end_turn"
+     }
+    }
+   }
+  }
+ ]
+}
