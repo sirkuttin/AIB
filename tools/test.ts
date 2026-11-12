@@ -28,6 +28,7 @@ const native = (url: URL) => decodeURIComponent(url.pathname).replace(/^\/([A-Za
  * 3 min alone (seconds measured on Windows, serial). The fast tier is everything else; together they are the full suite.
  */
 export const SLOW: Record<string, number> = {
+  'scroll_e2e_test.ts': 250, // 31 chat scrolling scenarios, each a Studio + headless Chrome; known-failing ones ignored
   'worktree_sync_interop_test.ts': 103,
   'worktree_sync_test.ts': 86,
   'worktree_merge_clash_test.ts': 52,
