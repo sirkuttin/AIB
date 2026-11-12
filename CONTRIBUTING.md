@@ -67,6 +67,10 @@ python work/run_parallel.py e2e        # worktree end-to-end suite (~45 s)
 - Every run of `tools/test.ts` (all, fast, slow, filtered, affected) writes `.test-logs/<YYYYMMDD-HHMMSS>-<suite>.log` in your
   worktree: the first line is `commit <HEAD hash> clean=<yes|no>`, then the whole output (every file's own output too), and a
   one-line summary last. Add `.test-logs/` to `.git/info/exclude`. `--no-log` turns it off.
+- `SHARDS` in `tools/test.ts` runs the longest files whose tests are independent (scroll and layout e2e, the worktree sync and clash
+  files) as several processes, each with every N-th test (`--no-shard` runs whole files). A browser e2e file starts one headless
+  Chrome per process and gives each scenario its own tab and its own Studio (`AIB_LAB_FRESH_BROWSER=1`: one Chrome per scenario).
+- `--jobs 12` is faster on an idle 24-core machine, but browser e2e tests then miss deadlines; the default (8) passes.
 - Ports: a test never names a port. Everything it starts binds port 0 and the test reads the port back (`work/deno/_ports.ts`);
   `port_guard_test.ts` fails on a fixed or guessed port. Each test gets its own temp data folder.
 - When a file fails while others run, the runner runs it once more on its own afterwards. If it passes alone, the summary lists it as `timing-sensitive`. That means a real race that only shows under load, so look into it. A file that fails alone too fails the run. `--no-rerun` turns the second try off.

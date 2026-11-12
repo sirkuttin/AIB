@@ -3,6 +3,8 @@
  * AIB_TEST_SHARD=k/N), and each registers only every N-th of the file's tests, counted in the order the file declares them (k is
  * 1-based). Together the N processes run every test exactly once; the file itself is unchanged. Only for files whose tests do not
  * depend on each other (each makes its own fixture): SHARDS in tools/test.ts lists them.
+ * Deno records where Deno.test was called, so a failing test in a shard is reported at this file's line, not the test file's; the test
+ * name and the runner's "file [k/N]" line say which one it is.
  */
 const spec = Deno.env.get('AIB_TEST_SHARD');
 if (spec) {
