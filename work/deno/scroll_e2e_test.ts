@@ -1473,6 +1473,7 @@ scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest
   await shown(page, 'EARLIERSTREAM');
   await settle();
   const stop = pump(chat, 'EARLYPUMP');
+  try {
   await settle(600);
   await assertFollowing(page, 'streaming at the bottom');
   await page.eval(`document.querySelector('#messages .show-earlier').click()`); // a keyboard user: Tab to it, Enter
@@ -1490,7 +1491,9 @@ scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest
     await clickHere(page, '#jumpNew'); // the first click may take you to the New line
     await settle(600);
   }
-  await stop();
+  } finally {
+    await stop(); // a failed check must not leave updates going into the next test
+  }
   await settle(800);
   await assertFollowing(page, 'after ↓ Latest');
 });
@@ -1502,6 +1505,9 @@ scrollTest('G1 selecting text in a following chat while a reply streams: the tex
   const page = lab.page;
   const chat = await openSeeded(lab);
   const stop = pump(chat, 'SELPUMP');
+  let frames: ({ off: number; h: number } | null)[] = [],
+    before = 0;
+  try {
   await settle(600);
   await assertFollowing(page, 'streaming at the bottom');
   // press on the text of a message a little above the end, and drag up 40 px (a selection)
@@ -1515,7 +1521,7 @@ scrollTest('G1 selecting text in a following chat while a reply streams: the tex
     return { x: q.left + 30, y: q.top + 8, text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80) };
   })()`);
   assert(at, 'a message to select in');
-  const before = await page.eval<number>(`(() => { const b = document.getElementById('messages');
+  before = await page.eval<number>(`(() => { const b = document.getElementById('messages');
     const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === ${JSON.stringify(at!.text)});
     return Math.round(e.getBoundingClientRect().top - b.getBoundingClientRect().top); })()`);
   await startRowFrames(page, at!.text);
@@ -1528,8 +1534,10 @@ scrollTest('G1 selecting text in a following chat while a reply streams: the tex
   await settle(800);
   await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at!.x + 240, y: at!.y - 40, button: 'left', clickCount: 1 });
   await settle(1200);
-  const frames = await stopRowFrames(page);
-  await stop();
+  frames = await stopRowFrames(page);
+  } finally {
+    await stop();
+  }
   const selected = await page.eval<string>(`String(getSelection())`);
   const drawn = rowFramesProblems(frames, { off: before }, 1);
   assert(selected.length > 0, 'some text was selected');
