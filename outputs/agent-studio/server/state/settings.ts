@@ -13,7 +13,7 @@
  *   {"version":1,
  *    "agents":   {"builtin": {"omp": true, "claude": true, "codex": true}, "custom": [{id,name,command,args,env,enabled}]},
  *    "defaults": {"agent": "", "byAgent": {id: {model, mode}}, "projects": {projectKey: {agent, model, mode}}, "migrated": false},
- *    "server":   {"autoReconnect": true, "worktreePerChat": true, "autoUpdateCheck": true},
+ *    "server":   {"autoReconnect": true, "worktreePerChat": true, "autoUpdateCheck": true, "keepAwake": false},
  *    "editors":  {"default": "" | "code" | "cursor" | "windsurf" | "devin"},
  *    "appearance": {"defaultView": "full" | "chat"},
  *    "launchers": {"claude": "", "codex": ""}}
@@ -74,7 +74,7 @@ export interface Settings {
     betaUrls?: Record<string, string>;
   };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
-  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean };
+  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean };
   editors: { default: string };
   appearance: { defaultView: string };
   launchers: Record<string, string>;
@@ -175,7 +175,7 @@ export class SettingsStore extends JsonFileStore {
       defaults: { agent: '', byAgent: {}, projects: {}, migrated: false },
       // worktreePerChat: on by default; hidden, never shown by public(). The keeper has no setting (it is always on): an old saved
       // `server.keeper` is dropped on read.
-      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true },
+      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false },
       editors: { default: '' },
       appearance: { defaultView: 'full' },
       launchers: { claude: '', codex: '' },
@@ -256,6 +256,7 @@ export class SettingsStore extends JsonFileStore {
     if (typeof server.autoReconnect === 'boolean') doc.server.autoReconnect = server.autoReconnect;
     if (typeof server.worktreePerChat === 'boolean') doc.server.worktreePerChat = server.worktreePerChat;
     if (typeof server.autoUpdateCheck === 'boolean') doc.server.autoUpdateCheck = server.autoUpdateCheck;
+    if (typeof server.keepAwake === 'boolean') doc.server.keepAwake = server.keepAwake;
     const editor = isDict(raw.editors) ? raw.editors : {};
     doc.editors.default = isStr(editor.default) && EDITOR_IDS.includes(editor.default) ? editor.default : '';
     const appearance = isDict(raw.appearance) ? raw.appearance : {};
@@ -424,6 +425,11 @@ export class SettingsStore extends JsonFileStore {
   /** Settings > About > Automatically check for updates (on by default: the owner chose automatic updates). */
   autoUpdateCheck(): boolean {
     return this.snapshot().server.autoUpdateCheck;
+  }
+
+  /** Settings > Keep this PC awake while AIB runs (off by default: the PC sleeps as usual). */
+  keepAwake(): boolean {
+    return this.snapshot().server.keepAwake;
   }
 
   /** Hidden flag (on by default): a new chat in a git project gets its own git worktree. No page control sets it. */
@@ -660,7 +666,7 @@ export class SettingsStore extends JsonFileStore {
 
   #applyServer(work: Settings, value: unknown): void {
     const patch = section(value, 'server');
-    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck'])) throw new ValueError('Unknown server setting');
+    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake'])) throw new ValueError('Unknown server setting');
     if ('worktreePerChat' in patch) {
       if (typeof patch.worktreePerChat !== 'boolean') throw new ValueError('worktreePerChat must be true or false');
       work.server.worktreePerChat = patch.worktreePerChat;
@@ -668,6 +674,10 @@ export class SettingsStore extends JsonFileStore {
     if ('autoUpdateCheck' in patch) {
       if (typeof patch.autoUpdateCheck !== 'boolean') throw new ValueError('autoUpdateCheck must be true or false');
       work.server.autoUpdateCheck = patch.autoUpdateCheck;
+    }
+    if ('keepAwake' in patch) {
+      if (typeof patch.keepAwake !== 'boolean') throw new ValueError('keepAwake must be true or false');
+      work.server.keepAwake = patch.keepAwake;
     }
     if ('autoReconnect' in patch) {
       if (typeof patch.autoReconnect !== 'boolean') throw new ValueError('autoReconnect must be true or false');

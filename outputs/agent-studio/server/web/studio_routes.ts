@@ -124,10 +124,14 @@ async function refreshList(ctx: WebContext): Promise<void> {
 export function studioRoutes(): Map<string, StudioHandler> {
   const routes = new Map<string, StudioHandler>();
   // ---- settings and conversation marks ----
-  routes.set('GET /api/live/settings', async (ctx, url) => [200, await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1')]);
+  routes.set('GET /api/live/settings', async (ctx, url) => [200, {
+    ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1')),
+    keepAwake: ctx.keepAwake.status(),
+  }]);
   routes.set('POST /api/live/settings', async (ctx, _url, body) => {
     await ctx.settings.update(body);
-    return [200, { ...(await settingsView(studioOf(ctx))), ok: true }];
+    ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
+    return [200, { ...(await settingsView(studioOf(ctx))), keepAwake: ctx.keepAwake.status(), ok: true }];
   });
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);
