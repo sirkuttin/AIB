@@ -705,7 +705,6 @@ async function desktop(stageDir: string, included: string[], target: Target, out
     'desktop',
     '-A',
     '--no-check',
-    '--no-npm',
     '--config',
     `${stageDir}/deno.json`,
     '--target',
