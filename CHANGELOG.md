@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.0-beta.8 (beta)
+
+- Local docs: a Docs tab (Chats | Docs | Files) lists the project's docs. A doc is a folder in `aib-docs/` holding
+  `doc.aibdoc` (the full doc) and a Markdown copy of each page, so the docs travel with the project and its git history. A
+  Files row opens each doc, "New doc" creates one, and `/doc` and Ctrl+K open or make one from a chat.
+- Docs co-editing: you and the agents type in the same doc at once. An agent's edit never overwrites text you wrote or are
+  typing; a note that would collide is refused and the agent is told. Live presence shows who is in the doc and where, and
+  each agent's edit is claimed to its chat so Undo only removes that chat's own changes.
+- Docs pages: a doc has pages, picked in the header and listed beside the text; add, rename, reorder and delete them.
+- Docs comments: select words and comment; threads stay anchored to those words, agents can read and reply, and a thread can
+  be sent to the chat.
+- Docs History: every version from the last 30 days plus the first is kept (it no longer shares the artifact's 30-version
+  cap). Compare any two versions, and Restore the whole doc or one page exactly as it was. History names who created each
+  version, or just "Created".
+- Docs rich blocks: callouts, columns, toggles, text colour and highlight, alignment, merged table cells, Underline (U
+  button, Ctrl+U) and Excalidraw drawings, which agents can also draw. Charts are blocks that own their numbers; "Make chart"
+  turns a table into one. Underline and the rich blocks are kept in `doc.aibdoc`; the Markdown copy marks what it cannot
+  hold.
+- Docs export: the doc's ⋯ menu exports one page or all pages as Markdown to Downloads (colours drop out, columns stack,
+  charts become a table). Duplicate doc and Move doc to trash are in the same menu.
+- Artifacts and docs: a chat shows a doc as a solid-edged doc card (Open doc) and an artifact as a dashed card with a window
+  icon (View). The artifact picker lists this chat's artifacts, then "Docs this chat wrote" (rows end in an arrow and open
+  beside the chat).
+- Built from: a page built from a doc shows "Built from <doc>" with Open doc; when the doc has changed since, it says so and
+  offers "Rebuild from the doc", which sends the chat a normal message. The doc header shows "Shown in N artifacts".
+- Markdown artifacts have an Edit button (it replaces "Make it a doc"). Request a change puts the artifact into the message
+  box as a link and focuses the box, so you type what to change and the chat does it.
+- File view: "Source | Page" is now "Source | Preview".
+
 ## 0.1.0-beta.7 (beta)
 
 - Installing or signing in to a Beta agent turns it On, and a Ready Beta agent shows in New chat unless you turned it off.
