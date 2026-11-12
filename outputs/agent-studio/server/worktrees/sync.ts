@@ -17,6 +17,8 @@
  * and a Deno process never write into the same worktree at once): a changed file the chat has not touched is written through a temp
  * file plus rename, then U moves (worktrees.advanceUserBase). A file the chat has touched goes to pendingSync and is merged with
  * `git merge-file` at a turn boundary (stage G3). `.env*` files are only copied into a chat that has not changed them, never merged.
+ * A chat whose record names `editsFrom` (every chat made since chats start from main) takes nothing while the project folder has
+ * another branch checked out: those edits belong to that branch. It waits as stale and catches up once the folder is back on it.
  *
  * Python's threads are async tasks here: the per-project RLock is an async mutex (the scan's own catch-ups pass it as `held`, which is
  * what re-entrancy gave Python), the turn hooks share one mutex that stopAll waits for, and registry read-modify-writes go through
@@ -928,6 +930,17 @@ export interface SyncStudio {
 }
 
 export type Outcome = 'ok' | 'busy' | 'blocked' | 'paused' | 'gone' | 'off';
+
+/**
+ * True when the chat takes the folder's edits only from one branch (record.editsFrom) and the project folder has another one checked
+ * out now. Records from before (no editsFrom) are never held back.
+ */
+export async function folderOffBranch(record: WorktreeRecord): Promise<boolean> {
+  const wanted = str(record.editsFrom);
+  if (!wanted) return false;
+  const done = await wt.git(['symbolic-ref', '-q', '--short', 'HEAD'], str(record.project), { check: false });
+  return done.returncode !== 0 || pyStrip(done.stdout) !== wanted;
+}
 export type Items = Map<string, Sig | null>;
 
 export class LiveSync {
@@ -1137,6 +1150,7 @@ export class LiveSync {
     const record = this.registry.find(connection.cwd);
     if (!record) return 'gone';
     if (!(await this.chatIdle(connection, atTurnBoundary))) return 'busy';
+    if (await folderOffBranch(record)) return 'blocked'; // the folder's version is another branch's: the pending files wait
     return await this.withWorktree(record.key, async (rec) => {
       await settleConflicts(this.registry, rec);
       const fresh: WorktreeRecord & { key: string } = { ...(this.registry.get(rec.key) ?? rec), key: rec.key };
@@ -1412,6 +1426,7 @@ export class LiveSync {
     if (!found || found.status !== 'ready') return 'gone';
     let record: WorktreeRecord & { key: string } = { ...found, key };
     const project = str(record.project), folder = str(record.path);
+    if (await folderOffBranch(record)) return 'blocked'; // edits on another branch are not this chat's; caught up when the folder is back
     const lock = wt.worktreeLock(this.stateDir, record, settings.WORKTREE_WAIT);
     try {
       await lock.acquire();
@@ -1566,6 +1581,10 @@ export class LiveSync {
     if (!found || found.status !== 'ready') return 'gone';
     const project = str(found.project);
     if ((await wt.syncPaused(this.stateDir, project)) || pauseInfo(this.stateDir, project)) return 'paused';
+    if (await folderOffBranch(found)) { // the folder is on another branch: retried each scan, caught up once it is back
+      this.stale.add(key);
+      return 'blocked';
+    }
     return await this.underProjectLock(project, async () => {
       try {
         const [items, envs] = await this.diffAgainstUser({ ...found, key });
