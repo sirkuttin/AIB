@@ -949,8 +949,10 @@ class Connection:
                        'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link.')
 
     WORKTREE_PROMPT = ('In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). '
-                       'When you finish a piece of work, ask the user whether to merge it into the project. Merge only after they say yes, '
-                       'by calling the merge_into_project tool. Never merge on your own.')
+                       'Helpers you start work in their own copies: when one finishes, merge its branch into yours with `git merge <branch>`. '
+                       "When your work is done and tested (for example before a release), merge it into the project's main branch yourself with the "
+                       "merge_into_project tool; you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any "
+                       'conflicts there, commit, and call it again.')
 
     def _artifact_prompt(self, servers):
         """{'systemPrompt': ...} that tells the agent about Studio's artifact tool, or {} when this chat has no such tool or the

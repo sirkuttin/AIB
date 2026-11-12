@@ -556,8 +556,10 @@ export const ARTIFACT_PROMPT =
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
-  'When you finish a piece of work, tell the user they can merge it into {base} with the Merge button in the Changes tab. ' +
-  'Call the merge_into_project tool only when AIB asks you to after they pressed it; it refuses otherwise. Never merge on your own.';
+  'Helpers you start work in their own copies: when one finishes, merge its branch into yours with `git merge <branch>`. ' +
+  "When your work is done and tested (for example before a release), merge it into the project's main branch yourself with the " +
+  "merge_into_project tool; you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
+  'conflicts there, commit, and call it again.';
 
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
