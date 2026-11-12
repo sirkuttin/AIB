@@ -176,85 +176,43 @@ test('5. the terminal takes the active theme when made, when shown, and on every
 });
 
 // ---- 6. the pinned question card and the plan ---------------------------------------------------------------------------------
+// The main list's scroll position is owned by scroll-controller.js (its own tests: test_scroll_controller.js). These keep the
+// three screenshot fixes in its terms, on the same small fake layout.
+const { setup: scrollList, rows: scrollRows } = require('./scroll_fake.js');
+
 test('6. a message list that follows the newest row keeps following when a pinned card or the terminal shrinks it', () => {
-  const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const block = src.slice(src.indexOf('  if (typeof ResizeObserver'), src.indexOf('  /* The list gets narrower or wider'));
-  assert.match(block, /const box = \$\('messages'\)/);
-  assert.match(block, /h < lastHeight && !box\.dataset\.paused/);
-  assert.match(block, /box\.scrollTop = box\.scrollHeight/);
-  // Run it: a following list that got shorter scrolls to its end; a list scrolled up (paused) is left alone.
-  let cb = null;
-  const box = { clientHeight: 465, scrollHeight: 465, scrollTop: 0, dataset: {} };
-  const run = new Function('ResizeObserver', '$', block.replace(/^\s*\/\*[\s\S]*?\*\//, ''));
-  run(
-    function (fn) {
-      cb = fn;
-      this.observe = () => {};
-    },
-    () => box,
-  );
-  box.clientHeight = 157;
-  box.scrollHeight = 366;
-  cb();
-  assert.equal(box.scrollTop, 366);
-  box.dataset.paused = '1';
-  box.scrollTop = 40;
+  const { box, ctl, ro } = scrollList(scrollRows(10, 60), { clientHeight: 465 });
+  ctl.afterRedraw();
+  assert.equal(box.gap, 0);
+  box.clientHeight = 157; // the question card / the terminal dock takes the room
+  ro.fire();
+  assert.equal(box.gap, 0, 'following: back at the newest row before paint');
+  assert.equal(ctl.following, true);
+  box.userScroll(40); // scrolled up to read
   box.clientHeight = 120;
-  cb();
-  assert.equal(box.scrollTop, 40);
+  ro.fire();
+  assert.equal(box.scrollTop, 40, 'reading: left where you are');
 });
 
-test('6b. a message list that follows keeps following when its content grows after a redraw; not right after your own click', () => {
-  const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const start = src.indexOf("  for (const id of ['messages']) {", src.indexOf('  /* Content that grows after a redraw'));
-  assert.ok(start > 0, 'the content-growth watcher exists');
-  const block = src.slice(start, src.indexOf('function fadeNewLine'));
-  const boxes = {},
-    observers = [];
-  const mk = (id) => {
-    const listeners = {};
-    return (boxes[id] = {
-      id,
-      clientHeight: 400,
-      scrollHeight: 400,
-      scrollTop: 0,
-      dataset: {},
-      addEventListener: (t, fn) => (listeners[t] = fn),
-      fire: (t) => listeners[t](),
-    });
-  };
-  mk('messages');
-  mk('submessages');
-  const run = new Function('MutationObserver', '$', block.replace(/\/\*[\s\S]*?\*\/\s*$/, ''));
-  run(
-    function (fn) {
-      this.observe = (target) => observers.push({ target, fn });
-    },
-    (id) => boxes[id],
-  );
-  const m = boxes.messages,
-    grow = () => observers.find((o) => o.target === m).fn();
-  // following, the content grew by a toggle row: back at the bottom
-  m.scrollHeight = 430;
-  grow();
-  assert.equal(m.scrollTop, 430);
-  // scrolled up to read: left alone
-  m.dataset.paused = '1';
-  m.scrollTop = 50;
-  m.scrollHeight = 470;
-  grow();
-  assert.equal(m.scrollTop, 50);
-  // following, but you just clicked inside (opened a step): left alone
-  delete m.dataset.paused;
-  m.scrollTop = 70;
-  m.fire('pointerdown');
-  m.scrollHeight = 600;
-  grow();
-  assert.equal(m.scrollTop, 70);
-  // a picture finished loading while following
-  m.fire('load');
-  assert.equal(m.scrollTop, 70, 'still inside the click grace');
-  // (the subagent view follows through scroll-controller.js now: work/test_scroll_controller.js)
+test('6b. a message list that follows keeps following when its content grows after a redraw; not what you just opened', () => {
+  const { box, ctl, ro } = scrollList(scrollRows(10, 60), { clientHeight: 400 });
+  ctl.afterRedraw();
+  box.children[9].h = 90; // a "Show all" toggle came in, a picture loaded: the last row grew
+  ro.fire();
+  assert.equal(box.gap, 0);
+  box.userScroll(50);
+  box.children[9].h = 200;
+  ro.fire();
+  assert.equal(box.scrollTop, 50, 'scrolled up to read: left alone');
+  box.userScroll(box.scrollHeight); // back at the end
+  const row = box.children[8],
+    at = row.getBoundingClientRect().top;
+  const toggle = { tagName: 'BUTTON', parentElement: row, getAttribute: (k) => (k === 'aria-expanded' ? 'false' : null) };
+  toggle.closest = () => toggle;
+  box.fire('click', { target: toggle }); // you opened a step near the end
+  row.h = 500;
+  ro.fire();
+  assert.equal(row.getBoundingClientRect().top, at, 'what you opened stays where you clicked it');
 });
 
 // ---- 7. sidebar titles get the card's room --------------------------------------------------------------------------------------
@@ -291,57 +249,25 @@ test('7. a title the age would cut gets line 1 to itself, the age moves to the e
 });
 
 test('6c. one wheel notch up stops following at once; following resumes only at the very bottom', () => {
-  const src = fs.readFileSync(path.join(APP, 'chat.js'), 'utf8');
-  const start = src.indexOf("  for (const id of ['messages']) {");
-  const end = src.indexOf('  /* The message list gets shorter when something is pinned under it');
-  assert.ok(start > 0 && end > start, 'the scroll handler block exists');
-  const block = src.slice(start, end);
-  const boxes = {};
-  const mk = (id) => {
-    const on = {};
-    return (boxes[id] = {
-      id,
-      clientHeight: 400,
-      scrollHeight: 2000,
-      scrollTop: 1600,
-      dataset: {},
-      addEventListener: (t, fn) => (on[t] = fn),
-      fire: (t, e) => on[t](e || {}),
-    });
-  };
-  ['messages', 'submessages', 'commandDetails'].forEach(mk);
-  const UNREAD = { holdUntil: 0 };
-  const run = new Function('$', 'UNREAD', 'markNow', 'syncJump', 'fadeNewLine', 'markSeen', block);
-  run((id) => boxes[id], UNREAD, () => ({ key: 'k' }), () => {}, () => {}, () => {});
-  const m = boxes.messages;
-  // one notch up that ends 30 px from the bottom: paused right away, and the scroll event that follows keeps it paused
-  m.fire('wheel', { deltaY: -100 });
-  assert.equal(m.dataset.paused, '1');
-  m.scrollTop = 1570;
-  m.fire('scroll');
-  assert.equal(m.dataset.paused, '1', 'still paused 30 px from the bottom after your own scroll up');
-  // scrolling down but not all the way: still paused
-  m.scrollTop = 1595;
-  m.fire('scroll');
-  assert.equal(m.dataset.paused, '1');
-  // at the very bottom: following again
-  m.scrollTop = 1600;
-  m.fire('scroll');
-  assert.equal(m.dataset.paused, undefined);
-  // a wheel down never pauses
-  m.fire('wheel', { deltaY: 100 });
-  assert.equal(m.dataset.paused, undefined);
-  // PageUp in the list pauses; typing in a box inside it does not
-  m.fire('keydown', { key: 'PageUp', target: { closest: () => null } });
-  assert.equal(m.dataset.paused, '1');
-  m.scrollTop = 1600;
-  m.fire('scroll');
-  m.fire('keydown', { key: 'ArrowUp', target: { closest: () => ({}) } });
-  assert.equal(m.dataset.paused, undefined);
-  // a list with nothing to scroll is never paused by the wheel
-  m.scrollHeight = 400;
-  m.scrollTop = 0;
-  m.fire('scroll');
-  m.fire('wheel', { deltaY: -100 });
-  assert.equal(m.dataset.paused, undefined);
+  const { box, ctl } = scrollList(scrollRows(20, 100), { clientHeight: 400 });
+  ctl.afterRedraw();
+  box.fire('wheel', { deltaY: -100 }); // one notch up: following stops before the list moves
+  assert.equal(box.dataset.paused, '1');
+  box.userScroll(box.scrollTop - 30); // the notch ends 30 px from the bottom
+  assert.equal(box.dataset.paused, '1', 'still paused 30 px from the bottom after your own scroll up');
+  box.userScroll(box.scrollTop + 5);
+  assert.equal(box.dataset.paused, '1', 'down, but not all the way: still paused');
+  box.userScroll(box.scrollHeight);
+  assert.equal(box.dataset.paused, undefined, 'at the very bottom: following again');
+  box.fire('wheel', { deltaY: 100 });
+  assert.equal(box.dataset.paused, undefined, 'a wheel down never pauses');
+  box.fire('keydown', { key: 'PageUp', target: { closest: () => null } });
+  assert.equal(box.dataset.paused, '1', 'PageUp in the list pauses');
+  box.userScroll(box.scrollTop - 360); // the page it moved
+  box.userScroll(box.scrollHeight);
+  box.fire('keydown', { key: 'ArrowUp', target: { closest: () => ({}) } });
+  assert.equal(box.dataset.paused, undefined, 'typing in a box inside it does not');
+  const short = scrollList(scrollRows(2, 100), { clientHeight: 400 });
+  short.box.fire('wheel', { deltaY: -100 });
+  assert.equal(short.box.dataset.paused, undefined, 'a list with nothing to scroll is never paused by the wheel');
 });

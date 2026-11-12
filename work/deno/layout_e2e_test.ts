@@ -40,17 +40,11 @@ const ALL = Deno.env.get('AIB_LAYOUT_ALL') === '1';
 
 /** Tests that fail today: each is a finding in the layout audit (the comment in the test gives the cause and the fix). */
 export const KNOWN_FAILING = new Set<string>([
-  'L2g following, chat text size and interface size change: the chat stays at the bottom, following',
   'L2m a window resize across a layout bucket (1600 -> 1300 -> 1600) gives the composer and the list back their heights',
   'L4c composer handle: drags between 56 px and a height that leaves the chat list 120 px, the height survives a reload',
   'L6d Settings: each section opens at its top, no double scrollbars, no sideways scroll',
   'L7a split view: the side pane at the bottom stays at the bottom when the window narrows, and keeps following',
   'L2p with the viewer open (chat column ~440 px), the empty message box has no scrollbar of its own',
-  // Found when these two started checking every frame (scroll design R6): the old width watcher puts the row back only after the
-  // frame that shows it re-wrapped (it reads the anchor on scroll, a redraw replaces the element), so for a frame or more the row is
-  // hundreds of px off (L1c: at 439 / 461 instead of -4 in 5 of 73 frames; L2a: at 428 instead of -17). The scroll controller fixes it.
-  'L1c reading midway, open a doc from the Artifacts tab: the row you were reading stays at the top of the view',
-  'L2a reading midway, the window gets narrower then wider: the row you were reading stays at the top',
 ]);
 
 function layoutTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {

@@ -4,6 +4,8 @@
  * Chrome or Edge (no window) on chat.html. A test appends one line per step to a chat's script file and the agent sends it at
  * once, so what arrives and when is decided by the test, not a timer.
  *
+ * AIB_SCROLL_V2=0 runs every test against the old main-list scroll code (the one-release switch, localStorage aib-scroll-v2).
+ *
  * Measuring: `m(page, box)` reads the list's scrollTop / scrollHeight / clientHeight, its distance from the bottom (gap), whether
  * it is paused, and the newest row's box against the list's box. `frames(page, box, ms)` records the same every animation frame.
  */
@@ -63,6 +65,12 @@ export class Lab {
       lab.browser = await Browser.launch();
       lab.page = await lab.browser.open(`http://127.0.0.1:${lab.web.port}/chat.html`, width, height);
       await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+      if (Deno.env.get('AIB_SCROLL_V2') === '0') {
+        // the one-release switch back to the old main-list scroll code (chat.js SCROLL_V2): the same tests against it
+        await lab.page.eval(`localStorage.setItem('aib-scroll-v2', '0')`);
+        await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+        await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+      }
     } catch (error) {
       await lab.close();
       throw error;
@@ -217,18 +225,32 @@ export function m(page: Page, box = 'messages'): Promise<M> {
   return page.eval<M>(`(${PROBE})(${JSON.stringify(box)})`);
 }
 
-/** Record a measurement every animation frame for `ms` (starts now; resolves with the list). */
+/** Run `sample` once per animation frame, AFTER the frame: requestAnimationFrame callbacks run before that frame's layout and
+ *  ResizeObservers, so a measurement taken there can show a state that is never painted (the observers correct it before paint);
+ *  a task queued from the frame runs once the frame is done, so it reads what was drawn. One exception: another task between the
+ *  frame and the sample may change the layout (a column width set from a timer); the sample would then read a layout no frame
+ *  painted yet. `size()` (the list's size) is read in the frame and in the sample: when they differ the sample is skipped. */
+export const AFTER_EACH_FRAME = `((sample, on, size) => {
+  const tick = () => {
+    if (!on()) return;
+    const at = size ? size() : '';
+    setTimeout(() => { if (!on()) return; if (!size || size() === at) sample(); requestAnimationFrame(tick); }, 0);
+  };
+  requestAnimationFrame(tick);
+})`;
+const SIZE = (box: string) => `() => { const b = ${BOX}(${JSON.stringify(box)}); return b ? b.clientWidth + 'x' + b.clientHeight : ''; }`;
+
+/** Record a measurement every animation frame (as drawn) until stopFrames. */
 export async function startFrames(page: Page, box = 'messages'): Promise<void> {
   await page.eval(`(() => {
     const probe = ${PROBE};
     window.__frames = [];
-    window.__framesOn = true;
-    const tick = () => { if (!window.__framesOn) return; window.__frames.push(probe(${JSON.stringify(box)})); requestAnimationFrame(tick); };
-    requestAnimationFrame(tick);
+    const gen = (window.__framesGen = (window.__framesGen || 0) + 1); // one recording at a time: an older loop stops for good
+    ${AFTER_EACH_FRAME}(() => window.__frames.push(probe(${JSON.stringify(box)})), () => window.__framesGen === gen, ${SIZE(box)});
   })()`);
 }
 export function stopFrames(page: Page): Promise<M[]> {
-  return page.eval<M[]>(`(() => { window.__framesOn = false; return window.__frames; })()`);
+  return page.eval<M[]>(`(() => { window.__framesGen = (window.__framesGen || 0) + 1; return window.__frames; })()`);
 }
 
 /** Wait until the list's text contains `text` (the step reached the page). */
@@ -241,26 +263,23 @@ export function shown(page: Page, text: string, box = 'messages', ms = 15000): P
 }
 
 /** Record, every animation frame, where the row whose text starts with `text` (as anchor() read it) is against the list's
- *  top, and its height: {off, h} per frame, null in frames where the row is not drawn. A test that measures only once after a
+ *  top, and its height: {off, h} per frame as drawn, null in frames where the row is not drawn. A test that measures only once after a
  *  second sees the end state; this sees the frames the owner sees, so a jump that a timer puts right later still fails. */
 export async function startRowFrames(page: Page, text: string, box = 'messages'): Promise<void> {
   await page.eval(`(() => {
     const b = ${BOX}(${JSON.stringify(box)}), want = ${JSON.stringify(text)};
-    window.__rows = [];
-    window.__rowsOn = true;
-    const tick = () => {
-      if (!window.__rowsOn) return;
+    const rows = (window.__rows = []);
+    const gen = (window.__rowsGen = (window.__rowsGen || 0) + 1);
+    ${AFTER_EACH_FRAME}(() => {
       const top = b.getBoundingClientRect().top;
       const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === want);
       const r = e ? e.getBoundingClientRect() : null;
-      window.__rows.push(r && r.height ? { off: Math.round(r.top - top), h: Math.round(r.height), st: Math.round(b.scrollTop) } : null);
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
+      rows.push(r && r.height ? { off: Math.round(r.top - top), h: Math.round(r.height), st: Math.round(b.scrollTop) } : null);
+    }, () => window.__rowsGen === gen, ${SIZE(box)});
   })()`);
 }
 export function stopRowFrames(page: Page): Promise<({ off: number; h: number; st: number } | null)[]> {
-  return page.eval(`(() => { window.__rowsOn = false; return window.__rows; })()`);
+  return page.eval(`(() => { window.__rowsGen = (window.__rowsGen || 0) + 1; return window.__rows; })()`);
 }
 /** Frames in which the row was drawn somewhere other than `off` (more than `tol` px; a row that re-wrapped keeps the same
  *  point of itself: a negative offset scales with its height). '' when every drawn frame had it in place. */

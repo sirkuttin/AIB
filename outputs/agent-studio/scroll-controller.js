@@ -257,7 +257,9 @@
     function onScroll() {
       if (detached || lostLayout) return;
       if (Math.abs(box.scrollTop - settled) <= 1) return; // ours, or the browser re-stating ours after rounding
-      userScrolled();
+      /* A layout the page forced before this frame's observers ran (a zoom, a list that got shorter) sends its scroll event
+         first: the same rule as in apply, and the state is put back at once. */
+      if (!takePending(true)) apply();
     }
     /* Early signals: follow stops before the list moves (a smooth scroll moves it over the next frames). */
     const scrollable = () => box.scrollHeight - box.clientHeight > 1;

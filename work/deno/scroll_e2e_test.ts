@@ -52,15 +52,8 @@ export const KNOWN_FAILING = new Set<string>([]);
 export const PENDING = new Set<string>([
   "B2 split view: clicking into the other pane keeps both panes' places",
   'B3 split side pane read 30 px above the bottom: the next update does not pull it down',
-  'B4a "Show earlier" over long code blocks: the row under the button never moves, not even for a frame',
-  'B5 pictures in steps above you load as you scroll up: the row you read never moves',
-  'B6 saved chat with "Load earlier": a redraw while you read never dips the text, not even for a frame',
-  'B7 an opened "Thoughts" stays the only one open when the window slides',
   'B8 subagent view and split panes: no browser scroll anchoring, the row you read stays still on every frame',
-  'B9a a scroll right after a view switch counts: following stops and stays off',
-  'B9b a scroll while the right column slides open counts: following stops and stays off',
   'T1 split view: Show thinking toggled while you read a side pane keeps your place there',
-  'Q6 back to a chat you were reading: it opens where you were, with the New line and the count for what came in',
   'Q7 reading midway, AIB restarts (a fresh browser profile): the chat opens at the row you were reading',
 ]);
 
@@ -1096,8 +1089,9 @@ scrollTest('B4b scrolled up over long code blocks, Full -> Chat: the row you rea
   assert(!drawn, drawn);
 });
 
-// B5 (tool-views.js ~1180 loading = 'lazy'; chat.js holdAnchor ~1375): step pictures load as you near them, above you, and grow
-// from 0 to 130 px; nothing puts the row you read back (the load listener skips once you scrolled, the growth watcher only follows).
+// B5 (tool-views.js ~1180 loading = 'lazy'): step pictures load as you near them, above you, and grow from 0 to 130 px. Measured
+// frame by frame the old code passes too (the design expected a jump; it did not show), so this is a regular test: the controller
+// must keep it passing (a picture loading is a row resize, put back before paint).
 scrollTest('B5 pictures in steps above you load as you scroll up: the row you read never moves', async (lab) => {
   const page = lab.page;
   const chat = await lab.chat();

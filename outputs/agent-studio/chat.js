@@ -225,10 +225,26 @@
     box.scrollTop += best.getBoundingClientRect().top - box.getBoundingClientRect().top - a.off;
     return true;
   }
+  let viewSwitching = false; // a view switch repaints even while text is selected
   function setView(view) {
     const key = curKey(),
       box = $('messages');
     if (!viewStore || !key || viewOf() === view) return;
+    if (mainCtl()) {
+      /* the scroll state is not touched: the redraw puts the row you read (or the fold that holds it now) back in place */
+      viewStore.set(key, view);
+      rowExtra.main = 0;
+      mainSignature = '';
+      window.ChatViewsUI?.sync();
+      viewSwitching = true;
+      try {
+        repaintMain();
+      } finally {
+        viewSwitching = false;
+      }
+      return;
+    }
+    /* old main-list scroll code (aib-scroll-v2 = '0') */
     /* the row you were reading; switching back before you scroll again goes back to that same row, not to the one the other
        view had to show in its place */
     const again = viewAnchor && viewAnchor.key === key && Math.abs(box.scrollTop - viewAnchor.top) <= 2;
@@ -245,13 +261,33 @@
   }
   /* ---- Scroll positions: scroll-controller.js owns them for the lists it manages (the subagent view and command output here; the
      main list and split panes come next). A list's controller is attached the first time something is drawn into it. */
-  const SCROLL_ROLES = { submessages: 'sub', commandDetails: 'command' };
+  /* The main list too, unless localStorage['aib-scroll-v2'] is '0': a one-release switch back to the old main-list code (the
+     blocks marked "old main-list scroll code" below), kept until the next beta has shipped with the controller. */
+  const SCROLL_V2 = (() => {
+    if (!window.ScrollController) return false;
+    try {
+      return localStorage.getItem('aib-scroll-v2') !== '0';
+    } catch {
+      return true;
+    }
+  })();
+  const SCROLL_ROLES = { submessages: 'sub', commandDetails: 'command', ...(SCROLL_V2 ? { messages: 'main' } : {}) };
   function managed(box) {
     if (!box || !window.ScrollController || !SCROLL_ROLES[box.id]) return null;
     if (!box._scrollCtl)
-      box._scrollCtl = window.ScrollController.attach(box, { role: SCROLL_ROLES[box.id], clamp: box.id === 'submessages' });
+      box._scrollCtl = window.ScrollController.attach(box, {
+        role: SCROLL_ROLES[box.id],
+        clamp: box.id === 'submessages' || box.id === 'messages',
+        ...(box.id === 'messages' ? { onChange: mainScrollChanged, onLost: () => box._scrollCtl.follow('lost') } : {}),
+      });
     return box._scrollCtl;
   }
+  const mainCtl = () => managed($('messages'));
+  /* Reading the main list (not following): the controller's state; on the old path its paused flag. */
+  const mainReading = () => {
+    const c = mainCtl();
+    return c ? !c.following : !!$('messages').dataset.paused;
+  };
   /* Draws the main list again from what is already loaded (no request). */
   function repaintMain() {
     if (current && snapshot)
@@ -407,8 +443,9 @@
     renderMainHistory(w, key);
     const box = $('messages'),
       target = unit && [...box.children].find((el) => el.dataset && el.dataset.pk === unit.key);
-    if (target) {
-      /* the opened prompt is where you read now: the next update must not pull it away (follows again if it is at the end) */
+    if (target && mainCtl()) mainCtl().anchorTo(target, 8, 'find');
+    else if (target) {
+      /* old main-list scroll code: the opened prompt is where you read now (follows again if it is at the end) */
       if (!box.dataset.paused) {
         UNREAD.mark = markNow();
         UNREAD.jumped = false;
@@ -1005,9 +1042,15 @@
     lastMainRows = [];
     document.body.classList.remove('new-chat');
     $('newChatBar').hidden = true;
-    delete $('messages').dataset.paused;
-    delete $('messages').dataset.unseen;
-    $('messages')._userUp = false;
+    if (mainCtl()) {
+      /* the chat you open comes back where you left it (the owner's Q6); one never read here follows (or opens at its New line) */
+      $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
+      mainCtl().switchTo(aliasKey(c), () => window.ScrollController.FOLLOW);
+    } else {
+      delete $('messages').dataset.paused; // old main-list scroll code
+      delete $('messages').dataset.unseen;
+      $('messages')._userUp = false;
+    }
     syncJump();
     selected = c;
     renderAttachments();
@@ -1411,7 +1454,7 @@
     if (signatureKey === 'main' && condensed && extra?.live) window.ChatViewsUI.refreshLive(box, extra.live);
     if (
       window.CopyUI?.holdRender(box) &&
-      !(signatureKey === 'main' && pendingSwitch) /* a view switch repaints even while text is selected */ &&
+      !(signatureKey === 'main' && (pendingSwitch || viewSwitching)) /* a view switch repaints even while text is selected */ &&
       ((signatureKey === 'main' && mainSignature !== signature) ||
         (signatureKey === 'sub' && subSignature !== signature))
     )
@@ -1516,8 +1559,20 @@
     else box.replaceChildren(fragment);
     for (const i of opens) if (box.querySelectorAll('details')[i]) box.querySelectorAll('details')[i].open = true;
     placeNewLine(box, flat, rows);
-    if (ctl) ctl.afterRedraw();
-    else if (followBox(box)) box.scrollTop = box.scrollHeight;
+    if (ctl) {
+      markRepeatedTimes(box);
+      ctl.afterRedraw();
+      if (box.id === 'messages') {
+        if (UNREAD.scrollLine) {
+          /* opening a chat with unread messages: the New line near the top (the end, following, when what is new fits) */
+          UNREAD.scrollLine = false;
+          const l = box.querySelector(':scope > .new-line');
+          if (l) ctl.anchorTo(l, 12, 'line');
+          else ctl.follow('line');
+        }
+        if (!ctl.following) box.dataset.unseen = '1'; // drawn again while you read: the jump button offers the latest
+      }
+    } else if (followBox(box)) box.scrollTop = box.scrollHeight;
     else if (UNREAD.scrollLine && box.id === 'messages') {
       UNREAD.scrollLine = false;
       const l = box.querySelector(':scope > .new-line');
@@ -3864,6 +3919,7 @@
       find: findState(w),
     });
     syncLoadEarlier(box, key, w, 'main');
+    mainCtl()?.afterRedraw(); // the "Load earlier" button came in after the draw: put the list back before paint
   }
   function syncLoadEarlier(box, key, w, which) {
     const existing = box.querySelector('.load-history');
@@ -4081,7 +4137,7 @@
   window.AgentSidebarUI?.init({
     aliasKey,
     /* scrolled up in the open chat, or the chat is still opening (its "New" line is not placed yet): not "viewed" up to now */
-    holdSeen: (c) => !!$('messages')?.dataset.paused || UNREAD.opening || (!!c && aliasKey(c) !== UNREAD.chat),
+    holdSeen: (c) => mainReading() || UNREAD.opening || (!!c && aliasKey(c) !== UNREAD.chat),
     getSelected: () => selected,
     ownershipOf: (c) => ownershipHints[c.provider + ':' + c.id],
     issueFor: (c) => !!(connectionIssue && selected && aliasKey(selected) === aliasKey(c)),
@@ -4785,16 +4841,23 @@
       if (first >= 0) {
         UNREAD.mark =
           first > 0 ? { key: UNREAD.all[first - 1].key, time: UNREAD.all[first - 1].time } : { key: '', time: 0 };
-        UNREAD.jumped = true;
-        UNREAD.scrollLine = true;
-        box.dataset.paused = '1';
+        const ctl = mainCtl();
+        if (ctl && !ctl.following) {
+          /* back in a chat you were reading (Q6): you stay where you were; the line and the count show what came in */
+          UNREAD.jumped = false;
+        } else {
+          UNREAD.jumped = true;
+          UNREAD.scrollLine = true;
+          if (!ctl) box.dataset.paused = '1'; // old main-list scroll code
+        }
       }
     }
-    if (!box.dataset.paused && !UNREAD.opening) markSeen(chat, UNREAD.newest);
+    const reading = mainReading() || UNREAD.scrollLine;
+    if (!reading && !UNREAD.opening) markSeen(chat, UNREAD.newest);
     box.querySelector(':scope > .new-line')?.remove();
     const fading = UNREAD.lineAt != null && Date.now() < UNREAD.lineUntil;
     let at = null;
-    if (box.dataset.paused && unreadCount() > 0) {
+    if (reading && unreadCount() > 0) {
       /* the first unread row's place in this view: if the view hides it, the next visible message */
       const drawn = (shown || []).filter(isUnreadRow),
         bubbles = msgBubbles(box);
@@ -4809,7 +4872,7 @@
     const target = msgBubbles(box)[at];
     if (!target) return;
     const line = document.createElement('div');
-    line.className = 'new-line' + (box.dataset.paused ? '' : ' fading');
+    line.className = 'new-line' + (reading ? '' : ' fading');
     line.setAttribute('role', 'separator');
     line.setAttribute('aria-label', 'Unread messages start here');
     const label = document.createElement('span');
@@ -4818,16 +4881,37 @@
     box.insertBefore(line, target);
     UNREAD.lineAt = at;
   }
+  /* The main list's controller changed follow <-> anchor. Reading starts: what you had read is marked (the New line and the count
+     start after it). Following again: everything is seen and the New line fades. A chat switch changes neither (the opening
+     rule in placeNewLine does). */
+  function mainScrollChanged(next, prev, cause) {
+    if (cause !== 'switch') {
+      if (next.mode === 'anchor') {
+        if (cause !== 'line') {
+          UNREAD.mark = markNow();
+          UNREAD.jumped = false;
+        }
+      } else {
+        fadeNewLine($('messages'));
+        markSeen(UNREAD.chat, UNREAD.newest);
+        UNREAD.mark = null;
+        UNREAD.jumped = false;
+      }
+    }
+    syncJump();
+  }
   function syncJump() {
     const button = $('jumpNew'),
       box = $('messages');
     if (!button) return;
     const n = unreadCount(),
-      show = !!box.dataset.paused && (!!box.dataset.unseen || UNREAD.jumped || n > 0);
+      show = mainReading() && (!!box.dataset.unseen || UNREAD.jumped || n > 0);
     button.hidden = !show;
     button.textContent = !UNREAD.jumped && n > 0 ? (n === 1 ? '1 new message ↓' : n + ' new messages ↓') : '↓ Latest';
   }
-  for (const id of ['messages']) {
+  /* old main-list scroll code (aib-scroll-v2 = '0'), from here to fadeNewLine: the scroll handlers and the shrink, width and
+     growth watchers. With the controller none of them is attached. */
+  for (const id of SCROLL_V2 ? [] : ['messages']) {
     const box = $(id);
     const pause = () => {
       if (!box.dataset.paused && id === 'messages') {
@@ -4905,7 +4989,7 @@
   /* The message list gets shorter when something is pinned under it (a question or approval card, the terminal dock, the queue).
      Shrinking never scrolls, so a list that was following the newest message was left showing older rows while its last card
      (a plan) sat hidden under the pinned card. A list that follows keeps following: it stays at its newest row. */
-  if (typeof ResizeObserver === 'function') {
+  if (typeof ResizeObserver === 'function' && !SCROLL_V2) {
     const box = $('messages');
     let lastHeight = box.clientHeight;
     new ResizeObserver(() => {
@@ -4920,7 +5004,7 @@
      thousands of px, and that never scrolls by itself (overflow-anchor: none). A list that follows goes back to its newest
      row; a list you are reading puts the row that was at the top of the view back at the same place, at the same point of
      that row (a long message that wraps taller keeps the line you were on, not the pixel offset). */
-  for (const id of ['messages']) {
+  for (const id of SCROLL_V2 ? [] : ['messages']) {
     const box = $(id);
     if (!box || typeof ResizeObserver !== 'function') continue;
     let width = box.clientWidth,
@@ -4969,7 +5053,7 @@
   /* Content that grows after a redraw (a "Show all" toggle added a moment later, a picture loading, a running step's output
      filling in) never scrolls either, so a list that follows was left a few rows short of its newest one. While a list follows,
      any growth keeps it at the bottom; growth right after your own click or key in it (opening a step) is left where it is. */
-  for (const id of ['messages']) {
+  for (const id of SCROLL_V2 ? [] : ['messages']) {
     const box = $(id);
     if (!box || typeof MutationObserver !== 'function') continue;
     let touchedAt = 0;
@@ -5016,12 +5100,20 @@
   }
   /* You sent a message: show it and follow the reply. */
   function followSent() {
-    if ($('messages').dataset.paused) jumpLatest();
+    if (mainReading()) jumpLatest();
   }
   function jumpLatest() {
-    const box = $('messages');
+    const box = $('messages'),
+      ctl = mainCtl();
     fadeNewLine(box);
     markSeen(UNREAD.chat, UNREAD.newest);
+    if (ctl) {
+      UNREAD.mark = null;
+      UNREAD.jumped = false;
+      ctl.follow('jump');
+      syncJump();
+      return;
+    }
     delete box.dataset.paused;
     delete box.dataset.unseen;
     UNREAD.mark = null;
@@ -5035,7 +5127,8 @@
       line = box.querySelector(':scope > .new-line');
     if (!UNREAD.jumped && line && unreadCount() > 0) {
       UNREAD.jumped = true;
-      box.scrollTop += line.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+      if (mainCtl()) mainCtl().anchorTo(line, 12, 'line'); // the end, following, when what is new fits
+      else box.scrollTop += line.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
       syncJump();
       return;
     }
@@ -5135,6 +5228,7 @@
     liveExtra,
     savedExtra,
     UNREAD,
+    mainCtl,
     unreadCount,
     readIndex,
     promptsSeenUpTo,
