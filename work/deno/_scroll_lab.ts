@@ -77,8 +77,24 @@ export interface Saved {
   tool(name: string, input: Record<string, unknown>, output: string): void;
 }
 
+/**
+ * One headless Chrome per test process, a new tab per Lab (Chrome starts once, not once per test). Each Lab's Studio is on its own
+ * OS-picked port, so its page is its own origin; the OS may hand a later Lab the same port, so a Lab clears its origin's storage
+ * when it closes and the next one starts clean, as with a fresh browser. AIB_LAB_FRESH_BROWSER=1: a new Chrome per Lab, as before.
+ */
+let shared: Promise<Browser> | null = null;
+const FRESH = Deno.env.get('AIB_LAB_FRESH_BROWSER') === '1';
+function sharedBrowser(): Promise<Browser> {
+  if (!shared) {
+    shared = Browser.launch();
+    shared.then((b) => globalThis.addEventListener('unload', () => b.killNow())).catch(() => (shared = null));
+  }
+  return shared;
+}
+
 export class Lab {
   fx = new ScrollFixture();
+  #ownBrowser = false;
   web!: Web;
   browser!: Browser;
   page!: Page;
@@ -88,7 +104,8 @@ export class Lab {
     const lab = new Lab();
     try {
       lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements']);
-      lab.browser = await Browser.launch();
+      lab.#ownBrowser = FRESH;
+      lab.browser = FRESH ? await Browser.launch() : await sharedBrowser();
       lab.page = await lab.browser.open('about:blank', width, height);
       await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: OWNER_GUARD });
       await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
@@ -197,12 +214,19 @@ export class Lab {
   }
 
   async close(): Promise<void> {
+    if (this.page && this.web?.port) {
+      try { // a later Lab may get this port (the same origin): leave it nothing (localStorage, IndexedDB, cache, service workers)
+        await this.page.send('Storage.clearDataForOrigin', { origin: `http://127.0.0.1:${this.web.port}`, storageTypes: 'all' });
+      } catch { /* the tab is gone */ }
+    }
     try {
       await this.page?.close();
     } catch { /* gone */ }
-    try {
-      await this.browser?.close();
-    } catch { /* gone */ }
+    if (this.#ownBrowser) {
+      try {
+        await this.browser?.close();
+      } catch { /* gone */ }
+    }
     await this.fx.cleanup();
   }
 }

@@ -169,15 +169,7 @@ Deno.test('the web server: chat.html has the saved values, POST /api/live/view-p
     shutdown: () => {},
   });
   const server = new WebServer(ctx);
-  let port = 0;
-  for (let p = 8871; p <= 8889 && !port; p++) {
-    try {
-      port = await server.listen(p);
-    } catch {
-      /* in use: try the next one */
-    }
-  }
-  assert(port, 'no free port in 8871-8889');
+  const port = await server.listen(0); // the OS picks a free port
   const origin = `http://127.0.0.1:${port}`;
   const post = (
     body: unknown,

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -58,19 +57,6 @@ type keeperProc struct {
 	exited chan struct{}
 }
 
-// freePort is a free loopback port in 8950-8999 (the range these tests may use).
-func freePort(t *testing.T) int {
-	for p := 8950; p <= 8999; p++ {
-		l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p))
-		if err == nil {
-			l.Close()
-			return p
-		}
-	}
-	t.Fatal("no free port in 8950-8999")
-	return 0
-}
-
 func startKeeper(t *testing.T, data string, extra ...string) *keeperProc {
 	t.Helper()
 	return startKeeperWith(t, data, nil, extra...)
@@ -79,7 +65,8 @@ func startKeeper(t *testing.T, data string, extra ...string) *keeperProc {
 // startKeeperWith starts a keeper; tweak (if any) changes how it is started (creation flags) after hideWindow.
 func startKeeperWith(t *testing.T, data string, tweak func(*exec.Cmd), extra ...string) *keeperProc {
 	t.Helper()
-	args := append([]string{"serve", "--data", data, "--port", strconv.Itoa(freePort(t))}, extra...)
+	// --port 0: the OS picks the port and keeper.json says which (the client reads it there). Never a fixed or guessed port.
+	args := append([]string{"serve", "--data", data, "--port", "0"}, extra...)
 	cmd := exec.Command(keeperBin, args...)
 	hideWindow(cmd)
 	if tweak != nil {

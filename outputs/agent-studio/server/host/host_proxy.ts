@@ -80,6 +80,16 @@ export class HostProxy implements LiveBackend {
     return String(this.hostInfo.hostId || 'host-unavailable');
   }
 
+  /**
+   * The web server is listening: tell the host the port it got. With `--port 0` the port given on the command line is 0, and the host
+   * builds the artifact tool's URL for agents from the attached app's port, so it must hear the real one now, not at the next heartbeat.
+   */
+  async listening(port: number): Promise<void> {
+    if (this.options.port === port) return;
+    this.options.port = port;
+    if (this.client) await this.#attach();
+  }
+
   #attachArgs() {
     const args: Record<string, unknown> = { pid: Deno.pid, webInstanceId: this.options.webInstanceId, port: this.options.port };
     if (this.options.launch?.length) args.launch = this.options.launch;

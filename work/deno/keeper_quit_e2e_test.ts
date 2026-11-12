@@ -3,9 +3,9 @@
  * end to end (slow: two `deno desktop` builds; AIB_SLOW_TESTS=1, Windows only). Owner's decision 2026-11-11: quitting AIB while chats
  * work does exactly what Install now does; AIB.exe exits, the keeper holds the chats, and the next AIB.exe started (the same build or
  * a new one unzipped elsewhere) takes them over. Everything runs on an invisible desktop (_hidden_desktop.ts) with a temp data folder,
- * temp APPDATA/LOCALAPPDATA and port 8823; only processes this test started are killed.
+ * temp APPDATA/LOCALAPPDATA and a page port the OS picked; only processes this test started are killed.
  *
- *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.97 (B), each with its keeper; unzip A into one folder and B into another.
+ *   1. Build AIB at APP_VERSION (A) and at NEXT_VERSION (B), each with its keeper; unzip A into one folder and B into another.
  *   2. Start A. A chat with the fake agent (work/keeper-fixture/agent.py) streams 40 chunks, 300 ms apart, and asks a question
  *      halfway.
  *   3. Close A's window mid-turn (WM_CLOSE: the person's close button): A leaves the chat in the keeper and exits. AIB.exe is gone;
@@ -18,40 +18,24 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
+import { builtDist, NEXT_VERSION } from './_build_cache.ts';
+import { ownerPort, pickPort, refusedPort } from './_ports.ts';
 import { WORK } from './_parity.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 import { KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 
 const SLOW = Deno.build.os === 'windows' &&
   Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8823;
-const NEXT = '0.1.0-beta.97';
+/** OS-chosen (after the builds), port + 1 free: B opens on the port A used last (desktop-port.json). */
+let PORT = 0;
+const NEXT = NEXT_VERSION; // one B for every update test: one cached build
 const CHUNKS = 40;
 const WM_CLOSE = 0x0010;
 type Json = Record<string, unknown>;
 const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
 const DEC = new TextDecoder();
 
-async function build(out: string, version?: string): Promise<void> {
-  const args = [
-    'run',
-    '-A',
-    `${REPO_ROOT}\\tools\\build.ts`,
-    '--targets',
-    'windows-x64',
-    '--out',
-    out,
-    '--no-smoke',
-  ];
-  if (version) args.push('--version', version);
-  const r = await new Deno.Command(Deno.execPath(), {
-    args,
-    stdout: 'piped',
-    stderr: 'piped',
-  }).output();
-  if (!r.success) throw new Error(`build failed: ${DEC.decode(r.stderr)}`);
-}
 
 async function unzip(zip: string, into: string): Promise<void> {
   Deno.mkdirSync(into, { recursive: true });
@@ -125,11 +109,10 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     await using fx = new Fixture();
-    const distA = `${fx.root}\\distA`, distB = `${fx.root}\\distB`;
     const installA = `${fx.root}\\installA`, installB = `${fx.root}\\installB`;
     const agentLog = `${fx.root}\\agent-received.log`;
     const started = Date.now();
-    await Promise.all([build(distA), build(distB, NEXT)]);
+    const [distA, distB] = await Promise.all([builtDist(), builtDist(NEXT)]); // built once per source, shared (_build_cache.ts)
     console.log(`builds: ${((Date.now() - started) / 1000).toFixed(0)} s`);
     await unzip(`${distA}\\AIB-${APP_VERSION}-windows-x64.zip`, installA);
     await unzip(`${distB}\\AIB-${NEXT}-windows-x64.zip`, installB);
@@ -140,13 +123,14 @@ Deno.test({
       AGENT_STUDIO_STATE_DIR: fx.state,
       APPDATA: `${fx.root}\\appdata`,
       LOCALAPPDATA: `${fx.root}\\localappdata`,
-      AIB_UPDATE_API_BASE: 'http://127.0.0.1:9', // no update check reaches anything
+      AIB_UPDATE_API_BASE: `http://127.0.0.1:${refusedPort()}`, // no update check reaches anything
       FAKE_ACP_LOG: agentLog,
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) {
       Deno.mkdirSync(d, { recursive: true });
     }
+    PORT = pickPort(true);
     Deno.writeTextFileSync(
       `${fx.state}\\desktop-port.json`,
       JSON.stringify({ port: PORT }),
@@ -168,6 +152,7 @@ Deno.test({
     try {
       // ---- A: a chat streams
       const aPid = spawn(`${appA}\\AIB.exe`, appA);
+      PORT = await ownerPort(fx.state, 90); // the port A really bound: if another process took the saved one first, A picked and saved another, and B must come back on that
       pids.add(aPid);
       const bootA = await until(
         async () => {

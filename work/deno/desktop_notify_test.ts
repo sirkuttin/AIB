@@ -323,13 +323,7 @@ Deno.test("notify route: shows through the app, page token required, 409 outside
     shutdown: () => {},
   });
   const server = new WebServer(ctx);
-  let port = 0;
-  for (let p = 8851; p <= 8869 && !port; p++) {
-    try {
-      port = await server.listen(p);
-    } catch { /* in use: try the next one */ }
-  }
-  assert(port, "no free port in 8851-8869");
+  const port = await server.listen(0); // the OS picks a free port
   const origin = `http://127.0.0.1:${port}`;
   const post = (
     body: unknown,

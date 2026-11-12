@@ -1,7 +1,7 @@
 /** server/host/host_proxy.ts against the real Python agent host (work/python-reference): attach, list, a clean stop (host_stopped), and a crash (restart). */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { PY_REF_DIR, python } from './_parity.ts';
-import { attachHost } from '../../outputs/agent-studio/server/host/host_proxy.ts';
+import { attachHost, HostProxy } from '../../outputs/agent-studio/server/host/host_proxy.ts';
 import { HostUnavailable, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
 
@@ -67,3 +67,14 @@ async function fetchOk(port: number): Promise<boolean> {
     return false;
   }
 }
+
+Deno.test('a web server started with --port 0 tells the host the port it got as soon as it listens', async () => {
+  // The host builds the artifact tool's URL for agents from the attached app's port: 0 there left agents without a working URL.
+  const calls: [string, unknown][] = [];
+  const client = { call: (op: string, args: unknown) => (calls.push([op, structuredClone(args)]), Promise.resolve({})) };
+  const proxy = new HostProxy({ stateDir: '.', command: [], port: 0, webInstanceId: 'w', heartbeatSeconds: 3600 } as never, client as never);
+  await proxy.listening(51234);
+  assertEquals(calls.map(([op, a]) => [op, (a as { port: number }).port]), [['attach', 51234]], 'attached again at once, with the real port');
+  await proxy.listening(51234);
+  assertEquals(calls.length, 1, 'the same port: nothing to tell');
+});

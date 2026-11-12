@@ -80,7 +80,7 @@ Deno.test('CLI flags parse like studio.py', () => {
   assertEquals(parseOptions([]).port, 8767);
   assertThrows(() => parseOptions(['--nope']), UsageError);
   assertThrows(() => parseOptions(['--port', 'x']), UsageError);
-  assertThrows(() => parseOptions(['--port', '70000']), UsageError);
+  assertThrows(() => parseOptions(['--port', '70000']), UsageError); // port-guard: not bound (argv parsing)
   assertThrows(() => parseOptions(['--enable-client-fs', 'write']), UsageError);
   assertThrows(() => parseOptions(['--state-dir']), UsageError);
 });

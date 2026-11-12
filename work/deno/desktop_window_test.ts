@@ -62,6 +62,15 @@ import { pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/
 import { DENO, FAKE_HOST, Fixture, TEST_OPTIONS, until } from './_host_fixture.ts';
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+/** Until `ready()` holds (10 s at most). For steps that do real I/O first: a new window reads its saved geometry from disk, which a
+ * busy machine can take longer than one tick() for. */
+async function waitFor(ready: () => boolean, what: string, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!ready()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await tick(10);
+  }
+}
 
 Deno.test('port pair: the first P from 8777 with P and P+1 free', () => {
   const busy = new Set([8777, 8780]);
@@ -85,9 +94,9 @@ Deno.test('portFree sees a real listener; portGiven reads --port', () => {
   l.close();
   assertEquals(portFree(port), true);
   assertEquals(portGiven([]), false);
-  assertEquals(portGiven(['--port', '8890']), true);
-  assertEquals(portGiven(['--port=8890']), true);
-  assertEquals(portGiven(['--host-port', '1']), false);
+  assertEquals(portGiven(['--port', '8890']), true); // port-guard: not bound (argv parsing)
+  assertEquals(portGiven(['--port=8890']), true); // port-guard: not bound (argv parsing)
+  assertEquals(portGiven(['--host-port', '1']), false); // port-guard: not bound (argv parsing)
 });
 
 Deno.test('close decision: only a known zero quits; anything working, or unknown, keeps AIB in the tray', () => {
@@ -324,11 +333,12 @@ Deno.test('closing with chats working: no question, nothing stopped; AIB stays i
     assertEquals(s.trayRemoved, 0, 'the tray icon stays while they work');
     assert(app.background, 'quits by itself once nothing works');
     s.tray!.onClick();
-    await tick();
+    await waitFor(() => s.windows.length > 1 && s.windows[1].urls.length > 0, 'the new window on the page');
     assertEquals(s.windows.length, 2, 'the closed window is gone: a new one');
     assertEquals(s.windows[1].urls, ['http://127.0.0.1:8890/']);
     assert(!app.background, 'the person is back');
     s.tray!.onMenu('open'); // already open: show and focus, no third window
+    await waitFor(() => s.windows[1].log.slice(-2).join() === 'show,focus', 'show and focus');
     await tick();
     assertEquals(s.windows.length, 2);
     assertEquals(s.windows[1].log.slice(-2), ['show', 'focus']);
@@ -370,7 +380,7 @@ Deno.test('tray: icon, menu Open AIB / status / Quit AIB / Stop all chats and qu
     await tick();
     assertEquals(a.s.windows[0].closed, true);
     a.s.tray!.onClick();
-    await tick();
+    await waitFor(() => a.s.windows.length > 1 && a.s.windows[1].urls.length > 0, 'the new window on the page');
     assertEquals(a.s.windows.length, 2, 'a left click makes a new window');
     a.s.windows[1].emit('close');
     await tick(20);
@@ -1128,14 +1138,14 @@ Deno.test('tray-only start: quits by itself once nothing has worked for a while,
 });
 Deno.test('tray-only start: the orphan command adds --start-in-tray for the desktop app only; an update drops it again', () => {
   assertEquals(orphanCommand([], true).args!.slice(-1), ['--start-in-tray']);
-  assertEquals(orphanCommand(['--port', '8821'], true).args!.slice(-3), ['--port', '8821', '--start-in-tray']);
+  assertEquals(orphanCommand(['--port', '8821'], true).args!.slice(-3), ['--port', '8821', '--start-in-tray']); // port-guard: not bound (argv only)
   assertEquals(orphanCommand(['--start-in-tray'], true).args!.filter((a) => a === '--start-in-tray').length, 1);
-  assert(!orphanCommand(['serve', '--port', '8821'], true).args!.includes('--start-in-tray'), 'serve has no window to keep away');
+  assert(!orphanCommand(['serve', '--port', '8821'], true).args!.includes('--start-in-tray'), 'serve has no window to keep away'); // port-guard: not bound (argv only)
   assert(!orphanCommand([], false).args!.includes('--start-in-tray'), 'a source run has no window either');
   const dir = Deno.makeTempDirSync();
   try {
-    const service = new UpdateService(dir, { appArgs: ['--port', '8821', '--start-in-tray'], autoCheck: () => false });
-    assertEquals(service.appArgs, ['--port', '8821'], 'the new version opens its window again');
+    const service = new UpdateService(dir, { appArgs: ['--port', '8821', '--start-in-tray'], autoCheck: () => false }); // port-guard: not bound (argv only, never launched)
+    assertEquals(service.appArgs, ['--port', '8821'], 'the new version opens its window again'); // port-guard: not bound (argv only)
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }

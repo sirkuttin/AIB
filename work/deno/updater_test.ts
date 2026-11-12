@@ -841,10 +841,10 @@ Deno.test("with the agent host (chatsKeepRunning) Install now goes ahead while c
   using env = new Env();
   await using fake = await FakeGitHub.start({ info: JSON.stringify({ version: "0.1.0-beta.2", protocol: PROTOCOL_VERSION }) });
   env.base(fake.base);
-  const { svc, launched, quit } = await ready(env, 2, { chatsKeepRunning: true, appArgs: ["serve", "--port", "8901"] });
+  const { svc, launched, quit } = await ready(env, 2, { chatsKeepRunning: true, appArgs: ["serve", "--port", "8901"] }); // port-guard: not bound (a fake launcher records it)
   assertEquals(await svc.install(), { state: "installing", chats: 2 });
   assertEquals([launched.length, quit], [1, [1]]);
-  assertEquals(launched[0].args, ["serve", "--port", "8901"]);
+  assertEquals(launched[0].args, ["serve", "--port", "8901"]); // port-guard: not bound (a fake launcher records it)
   {
     // "Install when chats finish" still waits when asked for.
     const { svc: s2, launched: l2 } = await ready(env, 1, { chatsKeepRunning: true });
@@ -1225,8 +1225,8 @@ Deno.test("helper: the new app starts with the old app's arguments (serve --port
   const c = await windowsCase();
   try {
     const { deps: d } = deps(c);
-    assertEquals(await runHelper({ ...c.args, args: ["serve", "--port", "8901", 7 as unknown as string] }, d), 0);
-    assertEquals(c.started, [[c.args.exe, "serve", "--port", "8901"]], "only string arguments are passed on");
+    assertEquals(await runHelper({ ...c.args, args: ["serve", "--port", "8901", 7 as unknown as string] }, d), 0); // port-guard: not bound (the helper runs a fake exe)
+    assertEquals(c.started, [[c.args.exe, "serve", "--port", "8901"]], "only string arguments are passed on"); // port-guard: not bound (the helper runs a fake exe)
   } finally {
     Deno.removeSync(c.dir, { recursive: true });
   }

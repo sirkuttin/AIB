@@ -9,9 +9,8 @@ import http.server
 import json
 import os
 import pathlib
-import random
+import re
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -27,20 +26,14 @@ FAKE_LAUNCHER = _isolation.TESTS / 'combined-fixture/agent.py'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
-def free_port():
-    """A free port for a web server, with port + 1 free too (its artifact origin). Picked at random below the OS's ephemeral range
-    (Windows and Linux hand those out to every `port 0` socket, almost in sequence), so a server or agent host another test process
-    starts at the same moment cannot take it between this probe and the server binding it. Never 8767/8768/8777/8778."""
-    for _ in range(200):
-        port = random.randrange(20000, 40000, 2)
-        try:
-            with socket.socket() as probe, socket.socket() as origin:
-                probe.bind(('127.0.0.1', port))
-                origin.bind(('127.0.0.1', port + 1))
-            return port
-        except OSError:
-            continue
-    raise AssertionError('no free port pair in 20000-39999')
+LISTENED = re.compile(r'AIB: http://127\.0\.0\.1:(\d+)')
+
+
+def listened_port(text):
+    """The port a web server started with `--port 0` reports ("AIB: http://127.0.0.1:N"), 0 until it does. The OS picks every port:
+    a test never names one and never guesses a free one (port_guard_test.ts)."""
+    match = LISTENED.search(text)
+    return int(match.group(1)) if match else 0
 
 
 def http_json(method, port, path, token=None, body=None, timeout=30):
@@ -124,7 +117,7 @@ class Fixture:
 
 class Web:
     def __init__(self, process, port, log_name):
-        self.process, self.port, self.log_name = process, port, log_name
+        self.process, self.port, self.log_name = process, port, log_name   # port 0: read back from the log (`--port 0`)
         self.token = self.instance = self.web_instance = None
 
     def wait_ready(self, fixture, seconds=60):
@@ -132,6 +125,11 @@ class Web:
         while time.time() < deadline:
             if self.process.poll() is not None:
                 raise AssertionError(f'web server exited: {pathlib.Path(self.log_name).read_text(errors="replace")}')
+            if not self.port:
+                self.port = listened_port(pathlib.Path(self.log_name).read_text(errors='replace'))
+                if not self.port:
+                    time.sleep(0.05)
+                    continue
             try:
                 status, boot = http_json('GET', self.port, '/api/live/bootstrap', timeout=5)
             except (OSError, ValueError):

@@ -22,7 +22,7 @@ import './state/migrate.ts'; // registers the data move with paths.ts
 import { leaveSplitHost, pidAlive, readInfo, SOURCE_COMMAND, stopHost } from './host/host_client.ts';
 import { decideKeeper, KeeperLink } from './keeper/link.ts';
 import { keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
-import { attachHost } from './host/host_proxy.ts';
+import { attachHost, HostProxy } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
 import { holdKeeper, orphanCommand, Studio } from './host/studio.ts';
 import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
@@ -295,6 +295,7 @@ export async function main(argv: string[]): Promise<void> {
   await ctx.terminals.adoptKeeper(); // shells an earlier AIB left in the keeper: taken over before the page can ask for them
   const server = new WebServer(ctx);
   const port = await server.listen(options.port);
+  if (host instanceof HostProxy) await host.listening(port); // --port 0: the agent host learns the port the OS gave us
   const url = `http://127.0.0.1:${port}`;
   await folderLock?.setPort(port);
   if (desktop) saveLastPort(stateDir, port);

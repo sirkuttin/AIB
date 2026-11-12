@@ -17,9 +17,27 @@ The page is plain classic scripts. There is no bundler or transpiler for it. See
 
 You need Deno 2.9.8, Node.js 20+ and Python 3.10+ (Python only for the tests: the parity bridge, the contract runner and the fake agents).
 
-There are two tiers. Times are for a 24-core Windows machine.
+There are three levels. Times are for a 24-core Windows machine.
 
-**Fast: while you work (about 1 minute in all).**
+**Affected: while you work. Run this, not a guess at which files matter.**
+
+```text
+cd outputs/agent-studio
+deno task test:affected            # only the tests that cover what you changed since your base branch, in every suite
+deno task test:affected --list     # what would run, and which changed file pulls each test in
+deno task test:affected --why server/web/server.ts   # the chain of imports and mentions from each test to that file
+deno task test:affected stream-ui.js server/x.ts      # these files instead of the git diff
+```
+
+It reads the changes since your base branch (committed, staged, unstaged and untracked; the base is `main` or the
+`integration/*` branch you have the fewest commits since, or `--base REF`) and runs the Deno files, node page tests, keeper Go
+tests and Python contract/end-to-end runs that cover them. The map is built from the code every time (`tools/affected.ts`):
+imports and requires, files a test names (page files, fixtures, parity modules), the scripts an HTML page loads, and two broad
+rules: a test that starts the whole server covers all of `server/`, a browser test covers every page file. A slow file that only
+a broad rule reaches is listed, not run (`--all-slow` runs it). A change to `deno.json`, `deno.lock`, `package-lock.json` or
+`go.mod` runs everything. `deno run -A tools/test.ts --help` has every option.
+
+**Fast: before you hand a branch over (about 1 minute in all).**
 
 ```text
 cd outputs/agent-studio
@@ -46,6 +64,15 @@ python work/run_parallel.py e2e        # worktree end-to-end suite (~45 s)
 
 - Run some files only: `deno task test worktree host_` (names containing either). Pass options to `deno test` after `--`: `deno task test -- --filter "parity"`.
 - `--jobs N` sets how many files run at once. `--junit DIR` writes a JUnit file per test file. `deno task test:serial` is the old run: one process, every file in turn (~11 min).
+- Every run of `tools/test.ts` (all, fast, slow, filtered, affected) writes `.test-logs/<YYYYMMDD-HHMMSS>-<suite>.log` in your
+  worktree: the first line is `commit <HEAD hash> clean=<yes|no>`, then the whole output (every file's own output too), and a
+  one-line summary last. Add `.test-logs/` to `.git/info/exclude`. `--no-log` turns it off.
+- `SHARDS` in `tools/test.ts` runs the longest files whose tests are independent (scroll and layout e2e, the worktree sync and clash
+  files) as several processes, each with every N-th test (`--no-shard` runs whole files). A browser e2e file starts one headless
+  Chrome per process and gives each scenario its own tab and its own Studio (`AIB_LAB_FRESH_BROWSER=1`: one Chrome per scenario).
+- `--jobs 12` is faster on an idle 24-core machine, but browser e2e tests then miss deadlines; the default (8) passes.
+- Ports: a test never names a port. Everything it starts binds port 0 and the test reads the port back (`work/deno/_ports.ts`);
+  `port_guard_test.ts` fails on a fixed or guessed port. Each test gets its own temp data folder.
 - When a file fails while others run, the runner runs it once more on its own afterwards. If it passes alone, the summary lists it as `timing-sensitive`. That means a real race that only shows under load, so look into it. A file that fails alone too fails the run. `--no-rerun` turns the second try off.
 - `run_parallel.py` runs one `python -m unittest` process per contract file or per end-to-end test class, each with its own temp state folder and servers. `test_contract_artifacts` runs after the others because it checks that the artifact origin is on the Studio port + 1. `--serial` is the plain unittest run (contract ~40 s, end-to-end ~2 min). The plain `python -m unittest discover -s work/contract` and `cd work && python -m unittest test_worktree_e2e` still work.
 

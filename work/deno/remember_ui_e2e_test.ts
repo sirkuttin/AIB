@@ -5,8 +5,9 @@
  * the project, its tabs and the open chat must come from the data folder (studio-view.json, view-prefs.js).
  *
  *   1. Build AIB once, unzip it into two folders A and B. Fake saved chats in three projects (Alpha, Beta, Delta).
- *   2. Start A on an invisible desktop (_hidden_desktop.ts) with a temp data folder, temp APPDATA/LOCALAPPDATA and port 8826, CDP 8946
- *      (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS). Open Beta's chat, then pick Delta (no tabs there, so Beta's chat stays in the middle)
+ *   2. Start A on an invisible desktop (_hidden_desktop.ts) with a temp data folder, temp APPDATA/LOCALAPPDATA, a page port the
+ *      OS picked and WebView2's DevTools on a port it picked (--remote-debugging-port=0 in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+ *      read back from the DevToolsActivePort file in the running copy's profile). Open Beta's chat, then pick Delta (no tabs there, so Beta's chat stays in the middle)
  *      and close the window AT ONCE (WM_CLOSE 50 ms later): with the old 500 ms debounce that pick never reached the data folder.
  *   3. Start B from its own folder on the same data folder: its localStorage had nothing, yet Delta is the project and Beta's chat
  *      is open in the middle, as in A (before the fix, reopening that chat moved the sidebar to Beta). Both seen with beta.8-test4.
@@ -17,21 +18,20 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
-import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { builtDist } from './_build_cache.ts';
+import { devToolsPortNow, ownerPort, pickPort, refusedPort } from './_ports.ts';
+import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8826;
-const CDP = 8946;
+/** OS-chosen (after the build), port + 1 free: B must open on the port A used last (desktop-port.json). */
+let PORT = 0;
+/** The running copy's folder: WebView2 keeps its profile next to the exe; its DevToolsActivePort names the CDP port. */
+let cdpRoot = '';
 const WM_CLOSE = 0x0010;
 const DEC = new TextDecoder();
 type Json = Record<string, unknown>;
 
-async function build(out: string): Promise<void> {
-  const args = ['run', '-A', `${REPO_ROOT}\\tools\\build.ts`, '--targets', 'windows-x64', '--out', out, '--no-smoke'];
-  const r = await new Deno.Command(Deno.execPath(), { args, stdout: 'piped', stderr: 'piped' }).output();
-  if (!r.success) throw new Error(`build failed: ${DEC.decode(r.stderr)}`);
-}
 
 async function unzip(zip: string, into: string): Promise<void> {
   Deno.mkdirSync(into, { recursive: true });
@@ -40,7 +40,9 @@ async function unzip(zip: string, into: string): Promise<void> {
 }
 
 async function cdpEval(expression: string): Promise<unknown> {
-  const targets = await (await fetch(`http://127.0.0.1:${CDP}/json/list`)).json() as Json[];
+  const cdp = devToolsPortNow(cdpRoot);
+  if (!cdp) throw new Error('no DevToolsActivePort yet');
+  const targets = await (await fetch(`http://127.0.0.1:${cdp}/json/list`)).json() as Json[];
   const page = targets.find((t) => t.type === 'page' && String(t.url).startsWith(`http://127.0.0.1:${PORT}`));
   if (!page) throw new Error('no page target yet');
   const ws = new WebSocket(String(page.webSocketDebuggerUrl));
@@ -121,9 +123,8 @@ Deno.test({
 });
 
 async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, string>): Promise<void> {
-  const dist = `${fx.root}\\dist`;
   const started = Date.now();
-  await build(dist);
+  const dist = await builtDist(); // built once per source, shared (_build_cache.ts)
   console.log(`build: ${((Date.now() - started) / 1000).toFixed(0)} s`);
   const appA = `${fx.root}\\install\\A`, appB = `${fx.root}\\install\\B`;
   await unzip(`${dist}\\AIB-${APP_VERSION}-windows-x64.zip`, appA);
@@ -138,10 +139,11 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
     AGENT_STUDIO_STATE_DIR: fx.state,
     APPDATA: `${fx.root}\\appdata`,
     LOCALAPPDATA: `${fx.root}\\localappdata`,
-    AIB_UPDATE_API_BASE: 'http://127.0.0.1:9', // no update check reaches anything
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}`,
+    AIB_UPDATE_API_BASE: `http://127.0.0.1:${refusedPort()}`, // no update check reaches anything
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0',
   };
   for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+  PORT = pickPort(true);
   Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT }));
   const flags = [
     '--state-dir',
@@ -157,6 +159,7 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
     const all = { ...env, ...extra };
     try {
       for (const [k, v] of Object.entries(all)) Deno.env.set(k, v);
+      cdpRoot = dir; // the running copy's WebView2 profile (AIB\AIB.exe.WebView2) is in here
       return desk.spawn([`${dir}\\AIB\\AIB.exe`, ...flags], `${dir}\\AIB`);
     } finally {
       for (const k of Object.keys(all)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
@@ -168,6 +171,7 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
 
   // ---- A: the first copy. Open Beta's chat, then pick Delta (no tabs there: Beta's chat stays in the middle) and close at once.
   const aPid = spawn(appA);
+  PORT = await ownerPort(fx.state, 90); // the port A really bound: if another process took the saved one first, A picked and saved another, and B must come back on that
   await until(ready, "A's page with the three projects", 120);
   assertEquals(await active(), 'alpha', 'a fresh data folder starts on the first project');
   const key = (name: string) => cdpEval(`AgentWorkspaceUI.paletteProjects().find((p) => p.name === '${name}').key`).then(String);

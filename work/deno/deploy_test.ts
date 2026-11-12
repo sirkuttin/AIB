@@ -1,18 +1,17 @@
 /**
  * `aib deploy` (test_deploy.py): idle detection, the restart plan and the worktree guard, compared with deploy.py where it is a pure
- * function; and real restarts of a Deno server on a random port with a temp state folder (web-only, then --host), with the
- * deploy logs in work/deploy-fixture (gitignored). Never port 8767/8768 and never the real data folder.
+ * function; and real restarts of a Deno server on a port the OS picked with a temp state folder (web-only, then --host), with
+ * the deploy logs in that test's own temp folder. Never port 8767/8768 and never the real data folder.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PyParity } from './_parity.ts';
-import { DENO, Fixture, freePort, MAIN, SEP, until } from './_host_fixture.ts';
+import { DENO, Fixture, MAIN, SEP, until } from './_host_fixture.ts';
+import { refusedPort } from './_ports.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as deploy from '../../outputs/agent-studio/server/host/deploy.ts';
 import { packageContext } from '../../outputs/agent-studio/server/state/paths.ts';
 
 const WIN = Deno.build.os === 'windows';
-const LOGS = `${TESTS_DIR}${SEP}deploy-fixture`;
 
 function conn(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { provider: 'claude', cwd: 'C:\\p', closed: false, busy: false, ready: true, ...extra };
@@ -65,7 +64,7 @@ Deno.test('busy reasons and the restart plan match deploy.py', async () => {
       }
     }
   }
-  const args = ['deno run -A main.ts serve --port 8790', 'C:\\w\\out.log', 'C:\\w\\err.log', "C:\\it's\\run.cmd", 'C:\\app'];
+  const args = ['deno run -A main.ts serve --port 8790', 'C:\\w\\out.log', 'C:\\w\\err.log', "C:\\it's\\run.cmd", 'C:\\app']; // port-guard: not bound (a command line deploy only parses)
   assertEquals(
     deploy.launcherTexts(...(args as [string, string, string, string, string])),
     await py.call('deploy', 'launcher_texts', args),
@@ -114,7 +113,7 @@ Deno.test('deploy refuses in a worktree but not in the main checkout', async () 
     assertEquals(deploy.worktreeRefusal(main), null);
     assertEquals(deploy.worktreeRefusal(wt), 'aib deploy must run from the main checkout, not a worktree');
     const c = capture();
-    assertEquals(await deploy.main(['--port', '1'], { ...c.hooks, root: wt }), 1);
+    assertEquals(await deploy.main(['--port', '1'], { ...c.hooks, root: wt }), 1); // port-guard: not bound (port 1: deploy finds nothing there)
     assert(c.err.join('\n').includes('not a worktree'));
     assertEquals(c.out, []);
   } finally {
@@ -124,7 +123,7 @@ Deno.test('deploy refuses in a worktree but not in the main checkout', async () 
 
 Deno.test('deploy flags: argparse errors, help, prefixes', async () => {
   assertEquals(deploy.parseArgs([]), { port: 8767, settle: 15, timeout: 0, host: false, wait: false, dry_run: false });
-  assertEquals(deploy.parseArgs(['--port=8790', '--settle', '3', '--dry', '--host', '--wa', '--timeout', '60']), {
+  assertEquals(deploy.parseArgs(['--port=8790', '--settle', '3', '--dry', '--host', '--wa', '--timeout', '60']), { // port-guard: not bound (argv parsing)
     port: 8790,
     settle: 3,
     timeout: 60,
@@ -165,7 +164,7 @@ Deno.test({
     const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, () => Response.json({ token: 't' }));
     try {
       let c = capture();
-      assertEquals(await deploy.main(['--port', String(freePort()), '--dry-run'], { ...c.hooks, root: main }), 1);
+      assertEquals(await deploy.main(['--port', String(refusedPort()), '--dry-run'], { ...c.hooks, root: main }), 1);
       assert(/^Not restarted: <urlopen error \[WinError 10061\] /.test(c.err[0]), c.err[0]);
       c = capture();
       assertEquals(await deploy.main(['--port', String(server.addr.port), '--dry-run'], { ...c.hooks, root: main }), 1);
@@ -196,11 +195,13 @@ Deno.test({
     const keeperEnv = Deno.env.get('AIB_KEEPER');
     Deno.env.set('AIB_KEEPER', '0');
     try {
-      const web = await fixture.startWeb();
+      const web = await fixture.startWeb([], { pinPort: true }); // deploy finds the server by the `--port N` on its command line
       const port = web.port;
       assert(port !== 8767 && port !== 8768);
       const host = (await readInfo(fixture.state))!;
       assert(host && pidAlive(host.pid as number), 'the web server started an agent host');
+      const LOGS = `${tmp}${SEP}deploy-logs`; // this test's own folder: a parallel run never shares or reads another's log
+      Deno.mkdirSync(LOGS);
       const hooks = { root: main, logs: LOGS, packageContext: () => null };
 
       // the command line deploy reads is the one the fixture started

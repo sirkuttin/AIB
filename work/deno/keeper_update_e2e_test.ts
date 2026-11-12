@@ -1,9 +1,9 @@
 /**
  * Keeper step 2 with real binaries, end to end (slow: two `deno desktop` builds; AIB_SLOW_TESTS=1, Windows only): Install now while a
  * chat streams, with the keeper on (the default: no setting, no AIB_KEEPER; one AIB process). Everything runs on an invisible desktop (_hidden_desktop.ts) with
- * a temp data folder, temp APPDATA/LOCALAPPDATA and ports 8821/8822; only processes this test started are killed.
+ * a temp data folder, temp APPDATA/LOCALAPPDATA and a page port the OS picked; only processes this test started are killed.
  *
- *   1. Build AIB at APP_VERSION (A) and at 0.1.0-beta.98 (B), each with its keeper; install A from its zip into a temp folder.
+ *   1. Build AIB at APP_VERSION (A) and at NEXT_VERSION (B), each with its keeper; install A from its zip into a temp folder.
  *   2. Start A (no --port: it reuses desktop-port.json). One process, no agent host (hostMode 'keeper'). A chat with the fake agent
  *      (work/keeper-fixture/agent.py) streams 40 chunks, 150 ms apart, and asks a question after chunk 19.
  *   3. Check for updates against a local fake GitHub releases API serving B (zip, SHA256SUMS, release.json) and click Install now
@@ -22,23 +22,20 @@ import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { WORK } from './_parity.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_VERSION, REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { ownerPort, pickPort } from './_ports.ts';
+import { builtDist, NEXT_VERSION } from './_build_cache.ts';
+import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
 import { KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
-const PORT = 8821;
-const NEXT = '0.1.0-beta.98';
+/** OS-chosen (after the builds), port + 1 free: B comes back on the port A used (desktop-port.json). */
+let PORT = 0;
+const NEXT = NEXT_VERSION; // one B for every update test: one cached build
 const CHUNKS = 40;
 type Json = Record<string, unknown>;
 const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
 const DEC = new TextDecoder();
 
-async function build(out: string, version?: string): Promise<void> {
-  const args = ['run', '-A', `${REPO_ROOT}\\tools\\build.ts`, '--targets', 'windows-x64', '--out', out, '--no-smoke'];
-  if (version) args.push('--version', version);
-  const r = await new Deno.Command(Deno.execPath(), { args, stdout: 'piped', stderr: 'piped' }).output();
-  if (!r.success) throw new Error(`build failed: ${DEC.decode(r.stderr)}`);
-}
 
 /** Every process whose program is under `folder` (Win32_Process), as [pid, path]. */
 async function processesUnder(folder: string): Promise<[number, string][]> {
@@ -112,13 +109,13 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     await using fx = new Fixture();
-    const distA = `${fx.root}\\distA`, distB = `${fx.root}\\distB`, install = `${fx.root}\\install`;
+    const install = `${fx.root}\\install`;
     const agentLog = `${fx.root}\\agent-received.log`;
     const mcpPids = `${fx.root}\\mcp-pids.txt`;
     const trays = `${fx.root}\\trays`;
     Deno.mkdirSync(trays);
     const started = Date.now();
-    await Promise.all([build(distA), build(distB, NEXT)]);
+    const [distA, distB] = await Promise.all([builtDist(), builtDist(NEXT)]); // built once per source, shared (_build_cache.ts)
     console.log(`builds: ${((Date.now() - started) / 1000).toFixed(0)} s`);
     Deno.mkdirSync(install);
     const tar = await new Deno.Command('C:\\Windows\\System32\\tar.exe', {
@@ -145,6 +142,7 @@ Deno.test({
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
+    PORT = pickPort(true);
     Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: PORT }));
     const pids = new Set<number>();
     let keeperPid = 0;
@@ -153,6 +151,7 @@ Deno.test({
       const flags = fx.agentFlags().filter((_, i, a) => a[i] !== '--state-dir' && a[i - 1] !== '--state-dir');
       flags[flags.indexOf('--claude-launcher') + 1] = KEEPER_AGENT;
       const aPid = desk.spawn([exe, ...flags], app);
+      PORT = await ownerPort(fx.state, 90); // the port A really bound: if another process took the saved one first, A picked and saved another, and B must come back on that
       pids.add(aPid);
       for (const k of Object.keys(env)) saved[k] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[k]);
 

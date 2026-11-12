@@ -82,26 +82,26 @@ t('one AIB per data folder: a second serve on the same folder exits 2 with one l
   // Several web servers on one folder each took the host over and restarted it every few seconds (desktop/single_instance.ts).
   await using fx = new Fixture();
   await using other = new Fixture();
-  const first = await fx.startWeb(['--host-port', '8946'], { port: 8942 });
+  const first = await fx.startWeb(); // every port here (pages, agent hosts) is picked by the OS
   const owner = JSON.parse(fx.read(`${fx.state}/aib-owner.json`));
-  assertEquals([owner.pid, owner.mode, owner.port], [first.process.pid, 'server', 8942]);
-  const second = await fx.startWeb(['--host-port', '8946'], { port: 8944, wait: false });
+  assertEquals([owner.pid, owner.mode, owner.port], [first.process.pid, 'server', first.port]);
+  const second = await fx.startWeb([], { wait: false });
   const status = await Promise.race([second.process.status, sleep(60_000).then(() => null)]);
   assert(status, 'the second serve exits by itself');
   assertEquals(status.code, 2);
   const lines = fx.read(second.logPath).trim().split(/\r?\n/).filter((l) => !l.startsWith('WARNING: '));
   assertEquals(lines, [
-    `AIB is already running for this data folder (${fx.state}, pid ${first.process.pid}, server on port 8942). ` +
+    `AIB is already running for this data folder (${fx.state}, pid ${first.process.pid}, server on port ${first.port}). ` +
     'Quit it first, or use --state-dir for a separate copy.',
   ]);
   assertEquals((await first.listing()).connections, [], 'the first one is untouched');
   assertEquals((await fx.hostInfo())!.pid, first.boot.hostPid, 'and so is its host');
   // Another data folder is another lock (tests and demo copies run side by side).
-  const third = await other.startWeb(['--host-port', '8947'], { port: 8944 });
+  const third = await other.startWeb();
   assert(third.boot.hostPid !== first.boot.hostPid);
   // A crash (no clean shutdown) leaves the owner file behind but frees the folder.
   await first.kill();
-  const again = await fx.startWeb(['--host-port', '8946'], { port: 8942 });
+  const again = await fx.startWeb();
   assertEquals(JSON.parse(fx.read(`${fx.state}/aib-owner.json`)).pid, again.process.pid);
 });
 
