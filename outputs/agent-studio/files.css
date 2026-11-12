@@ -179,9 +179,10 @@ body:not(.sf-docs-mode) #docsPane {
 .dt-empty {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  text-align: center;
   gap: 6px;
-  padding: 14px 10px;
+  padding: 16px 10px 4px;
   color: var(--text-3);
   font-size: 12px;
   line-height: 1.5;
@@ -189,6 +190,11 @@ body:not(.sf-docs-mode) #docsPane {
 .dt-empty b {
   color: var(--text);
   font-size: 13px;
+}
+.dt-empty code {
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text);
 }
 .dt-empty-ic {
   width: 28px;
@@ -513,6 +519,11 @@ body:not(.sf-docs-mode) #docsPane {
 .sf-ftab .sf-fico {
   flex: none;
   color: var(--link);
+}
+.sf-ftab .ws-tab-main .sf-docico {
+  flex: none;
+  width: 14px;
+  height: 14px;
 }
 .sf-ftab.preview .ws-tab-title {
   font-style: italic;

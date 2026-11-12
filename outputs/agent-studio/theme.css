@@ -1665,3 +1665,12 @@
   --scrollbar-colors: #889088 #fdf6e3;
   --accent-ink: #ffffff;
 }
+
+/* the doc page's info callout: on a light page the 9% blue mix reads grey, so the light themes tint it a little stronger */
+[data-theme='teal-light'],
+[data-theme='hc-light'],
+[data-theme='github-light'],
+[data-theme='solarized-light'] {
+  --co-info-bg: color-mix(in srgb, var(--info) 14%, var(--bg));
+  --co-info-line: color-mix(in srgb, var(--info) 38%, var(--bg));
+}

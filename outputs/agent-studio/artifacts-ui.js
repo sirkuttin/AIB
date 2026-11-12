@@ -141,7 +141,7 @@
       badge: kindInfo(a.kind).badge,
       title: a.title || 'Untitled',
       meta: a.becameDoc
-        ? '\u2192 doc'
+        ? 'now a doc'
         : 'v' + (num(a.version) || 1) + (relTime(a.updatedAt, nowMs) ? ' · ' + relTime(a.updatedAt, nowMs) : ''),
       pinned: !!a.pinned,
       on: a.id === selectedId,
@@ -1191,7 +1191,8 @@
       if (M && M.render) M.render(box, st.markdown || '');
       else box.append(el('pre', 'ar-src', st.markdown || ''));
     }
-    box.append(el('p', 'ar-live-note', 'v1\u2013v' + (num(a.version) || 1) + ' stay here as read-only history'));
+    const nv = num(a.version) || 1;
+    box.append(el('p', 'ar-live-note', nv > 1 ? 'Versions 1\u2013' + nv + ' stay here as read-only history' : 'Version 1 stays here as read-only history'));
     setStage(box);
     if (liveTimer) win.clearTimeout(liveTimer);
     liveTimer = win.setTimeout(() => {
@@ -1834,6 +1835,7 @@
     return writtenVersion(item && item.versions, at, same.indexOf(card) + 1, latest);
   }
   function paintCard(card) {
+    if (card.classList && card.classList.contains('doc-card')) return; // doc-links.js paints doc cards; this one has no data-src or data-op
     const d = card.dataset;
     let m = null;
     if (d.src) m = outputsCardModel(d.src, S.list, undefined, cardVersion(card));
@@ -2092,7 +2094,10 @@
     const becameSep = el('span', 'ar-built-t', ' \u00b7 ');
     const undoBtn = el('button', 'ar-switch ar-undo', 'Undo');
     undoBtn.type = 'button';
-    became.append(becameText, becameOpen, becameSep, undoBtn);
+    // the buttons travel together: when the line is too narrow they go to a second line as a group
+    const becameActs = el('span', 'ar-became-acts');
+    becameActs.append(becameOpen, becameSep, undoBtn);
+    became.append(becameText, becameActs);
     const noteEl = el('p', 'ar-note');
     noteEl.hidden = true;
     noteEl.setAttribute('role', 'status');

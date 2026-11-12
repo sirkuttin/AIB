@@ -16,6 +16,7 @@
 .ar-bar {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap; /* at the narrow default column the word buttons drop to a second row; the picker keeps its width */
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -49,7 +50,8 @@
   min-width: 0;
 }
 .ar-pick {
-  flex: 1 1 auto;
+  flex: 1 1 140px;
+  min-width: 140px;
   max-width: 260px;
   font-weight: 600;
 }
@@ -178,6 +180,14 @@
 }
 .ar-built-t {
   min-width: 0;
+}
+.ar-became-acts {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.ar-became .ar-built-t {
+  margin-right: 2px;
 }
 .ar-fresh-t {
   min-width: 0;
@@ -489,12 +499,11 @@
 }
 .art-btn.art-btn-acc {
   border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
+  background: transparent;
+  color: var(--accent);
 }
 .art-btn.art-btn-acc:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.08);
+  background: var(--accent-wash-3);
 }
 .art-card-body {
   flex: 1 1 auto;

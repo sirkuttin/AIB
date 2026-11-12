@@ -117,7 +117,7 @@ export function docsRoutes(): Map<string, Route> {
     if (typeof root !== 'string') return root;
     try {
       const create = typeof body?.create === 'string' ? body.create : undefined;
-      const doc = await ctx.docs.open(root, body?.name, create);
+      const doc = await ctx.docs.open(root, body?.name, create, 'user');
       // a new doc is linked to the chat it was made from; opening one never moves its link (the link route is the user's pick)
       if (create !== undefined) ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.id ?? '')), true);
       return [200, { ok: true, ...(await ctx.docs.infoWithOwned(doc)) }];
@@ -148,7 +148,7 @@ export function docsRoutes(): Map<string, Route> {
     try {
       let name = base;
       for (let k = 2; await ctx.docs.exists(root, name) || await folderTaken(ctx, root, name); k++) name = `${base} (${k})`;
-      const doc = await ctx.docs.open(root, name, markdown);
+      const doc = await ctx.docs.open(root, name, markdown, 'user');
       ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.id ?? '')), true);
       await ctx.docs.flush(doc);
       store.setBecameDoc(m.id, doc.name, doc.live.rev);

@@ -91,6 +91,11 @@
       ['rect', { ...S, x: '1.5', y: '2.5', width: '5.5', height: '11', rx: '1.2' }],
       ['rect', { ...S, x: '9', y: '2.5', width: '5.5', height: '11', rx: '1.2' }],
     ],
+    columns3: [
+      ['rect', { ...S, x: '1.2', y: '2.5', width: '3.6', height: '11', rx: '1' }],
+      ['rect', { ...S, x: '6.2', y: '2.5', width: '3.6', height: '11', rx: '1' }],
+      ['rect', { ...S, x: '11.2', y: '2.5', width: '3.6', height: '11', rx: '1' }],
+    ],
     toggle: [
       ['path', { ...F, d: 'M2 3.5l3.5 2.5L2 8.5z' }],
       ['path', { ...S, d: 'M7.5 6h7M4 11h10.5M4 13.8h7' }],

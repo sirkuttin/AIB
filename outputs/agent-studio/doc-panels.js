@@ -89,6 +89,22 @@
     h.append(el('span', 'sp'));
     return h;
   }
+  /** The "This page ▾" / "All pages ▾" button: AIB's own menu in place of the browser's select. */
+  function scopePicker(label, options, current, onPick) {
+    const b = btn('scope', null, null, label);
+    const name = (options.find(([v]) => v === current) || options[0])[1];
+    b.append(el('span', 'scope-t', name), el('span', 'caret-s', '▾'));
+    b.setAttribute('aria-label', label + ': ' + name);
+    b.setAttribute('aria-haspopup', 'menu');
+    b.addEventListener('click', () =>
+      D.menu(
+        b,
+        options.map(([v, text]) => ({ label: text, on: v === current, run: () => onPick(v) })),
+        { cls: 'scope-menu' },
+      ),
+    );
+    return b;
+  }
   function closeBtn() {
     const x = btn('rail-x', '✕', () => setPanel(null), 'Close');
     x.setAttribute('aria-label', 'Close');
@@ -106,22 +122,20 @@
     const rail = $('rail');
     rail.replaceChildren();
     const open = D.threads.filter((t) => !t.resolved);
-    const here = open.filter((t) => t.page === D.page);
-    const sel = el('select', 'scope');
-    sel.setAttribute('aria-label', 'Which comments');
-    for (const [v, label] of [
-      ['page', 'This page'],
-      ['all', 'All pages'],
-    ]) {
-      const o = el('option', '', label);
-      o.value = v;
-      o.selected = scope === v;
-      sel.append(o);
-    }
-    sel.addEventListener('change', () => {
-      scope = sel.value;
-      renderComments();
-    });
+    // this page's threads and the whole-doc notes (they belong to every page): the header count, the list and the empty line agree
+    const here = open.filter((t) => t.page === D.page || !t.anchor);
+    const sel = scopePicker(
+      'Which comments',
+      [
+        ['page', 'This page'],
+        ['all', 'All pages'],
+      ],
+      scope,
+      (v) => {
+        scope = v;
+        renderComments();
+      },
+    );
     const head = railHead('Comments', [
       el('span', 'f', scope === 'page' ? `· ${here.length} open here` : `· ${open.length} open`),
     ]);
@@ -140,8 +154,6 @@
       if (gone.length) rail.append(el('div', 'grp', 'Text removed'), ...gone.map(card));
     } else {
       for (const t of list) rail.append(card(t));
-      const docNotes = open.filter((t) => !t.anchor);
-      for (const t of docNotes) rail.append(card(t));
     }
     if (!list.length && !composing)
       rail.append(
@@ -153,7 +165,7 @@
             : 'No open comments.',
         ),
       );
-    const elsewhere = open.length - here.length - open.filter((t) => !t.anchor).length;
+    const elsewhere = open.length - here.length;
     if (scope === 'page' && elsewhere > 0) {
       const line = el('div', 'resolved');
       line.append(
@@ -464,21 +476,16 @@
   async function renderHistory() {
     const rail = $('rail');
     rail.replaceChildren();
-    const sel = el('select', 'scope');
-    sel.setAttribute('aria-label', 'Which pages');
-    const all = el('option', '', 'All pages');
-    all.value = 'all';
-    sel.append(all);
-    for (const p of D.pages) {
-      const o = el('option', '', p.title);
-      o.value = p.id;
-      o.selected = historyPage === p.id;
-      sel.append(o);
-    }
-    sel.addEventListener('change', () => {
-      historyPage = sel.value;
-      renderHistoryList();
-    });
+    if (historyPage !== 'all' && !D.pages.some((p) => p.id === historyPage)) historyPage = 'all';
+    const sel = scopePicker(
+      'Which pages',
+      [['all', 'All pages'], ...D.pages.map((p) => [p.id, p.title])],
+      historyPage,
+      (v) => {
+        historyPage = v;
+        renderHistory();
+      },
+    );
     const head = railHead('History');
     head.append(sel, closeBtn());
     const list = el('div', 'hlist');
@@ -488,6 +495,24 @@
     await loadHistory();
     renderHistoryList();
   }
+
+  /** "Created by Claude Code" / "Created by you" for the first version, "Edited by …" for the others (the server records who made the doc; with no record: just "Created"). */
+  function versionWords(v) {
+    const extra = String(v.note || '').replace(/^rev \d+;?\s*/, '').trim();
+    const real = (v.authors || []).filter((n) => n && n !== 'AIB');
+    const created = extra === 'created';
+    // a doc with no recorded creator says just "Created": never a guess
+    if (created && !real.length) return [document.createTextNode('Created')];
+    const names = real.length ? real : ['AIB'];
+    const out = [document.createTextNode(created ? 'Created by ' : 'Edited by ')];
+    names.forEach((n, i) => {
+      if (i) out.push(document.createTextNode(', '));
+      out.push(n === 'You' ? document.createTextNode('you') : el('b', '', n));
+    });
+    if (extra && !created) out.push(document.createTextNode(' · ' + extra));
+    return out;
+  }
+  D.versionWords = versionWords;
 
   function renderHistoryList() {
     const list = $('historyList');
@@ -510,12 +535,7 @@
       row.dataset.version = String(v.n);
       row.append(el('span', 'v', `v${v.n}`));
       const w = el('span', 'w');
-      const names = v.authors && v.authors.length ? v.authors : ['AIB'];
-      names.forEach((n, i) => {
-        if (i) w.append(document.createTextNode(', '));
-        w.append(el('b', n === 'You' ? '' : 'ag', n));
-      });
-      if (v.note) w.append(document.createTextNode(': ' + v.note));
+      w.append(...versionWords(v));
       row.append(w);
       const pages = (v.pages || []).map(
         (p) => p.title + (p.change === 'deleted' ? ' (deleted)' : p.change === 'added' ? ' (added)' : ''),

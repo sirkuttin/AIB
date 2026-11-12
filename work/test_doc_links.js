@@ -456,6 +456,12 @@ test('the Docs tab: the live line while an agent writes; empty state; the mode i
   assert.match(box.querySelector('b').textContent, /^No docs in .+ yet$/);
   assert.match(box.textContent, /saved in aib-docs\/ and committed with the project/);
   assert.match(box.textContent, /Press \+ New doc, or type \/doc release plan in a chat\./);
+  assert.deepEqual(box.querySelectorAll('code').map((c) => c.textContent), ['aib-docs/', '/doc release plan'], 'folder and command as code');
+  assert.deepEqual(box.querySelectorAll('i').map((c) => c.textContent), ['+ New doc'], 'the button name in italics');
+  // the name is the selected project's, not the open chat's project
+  e.W.currentProjectName = () => 'beta';
+  e.FU.paint();
+  assert.equal(e.shell.body.querySelector('.dt-empty').querySelector('b').textContent, 'No docs in beta yet');
   assert.equal(e.shell.body.querySelector('.dt-foot-link').hidden, true, 'no other files: no link');
 });
 
@@ -701,4 +707,30 @@ test('doc frames talk by the contract: pin keeps the preview, title names the ta
   await flush();
   assert.equal(t.FU._state().tabs.tabs.length, 0);
   assert.equal(frames(t).length, 0);
+});
+
+test('the "+ New doc" name field survives a repaint: still there, same words, focused', async () => {
+  const t = setup({});
+  await openDocsTab(t);
+  t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc').click();
+  await flush();
+  const first = t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in');
+  assert.ok(first);
+  first.focus();
+  first.value = 'Launch notes';
+  first.dispatch('input');
+  t.FU.paint(); // a repaint builds a new field
+  await flush();
+  t.shell.window.runTimers(); // the focus goes to the new field on the next tick (nothing else repaints in between)
+  const again = t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in');
+  assert.ok(again, 'the field is still there');
+  assert.notEqual(again, first, 'a new node: the old one was replaced');
+  assert.equal(again.value, 'Launch notes');
+  assert.equal(t.shell.document.activeElement, again, 'and it has the focus');
+  assert.ok(t.FU._state().newDoc, 'the editing state is kept');
+  first.dispatch('blur'); // the replaced field's blur handler must not cancel the editing
+  t.shell.window.runTimers();
+  await flush();
+  assert.ok(t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in'), 'not cancelled');
+  assert.ok(t.FU._state().newDoc);
 });
