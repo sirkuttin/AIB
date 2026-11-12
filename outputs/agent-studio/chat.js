@@ -4793,8 +4793,11 @@
       (e) => {
         if (box.dataset.paused || !e.target?.closest?.('button, summary, [aria-expanded]')) return;
         const gapOf = () => box.scrollHeight - box.scrollTop - box.clientHeight,
-          before = Math.max(1, gapOf());
-        const check = () => !box.dataset.paused && gapOf() > before && scrolledUp();
+          before = Math.max(1, gapOf()),
+          width = box.clientWidth;
+        /* What you clicked may resize the list instead (Open doc widens the right column, so every row wraps taller): that
+           growth is not something you opened, the width watcher below keeps the list at the bottom. */
+        const check = () => !box.dataset.paused && box.clientWidth === width && gapOf() > before && scrolledUp();
         requestAnimationFrame(check);
         for (const ms of [250, 600]) setTimeout(check, ms);
       },
@@ -4806,6 +4809,14 @@
         return;
       }
       const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+      /* the list just changed width (the width watcher below): rows are still re-wrapping while the right column slides open
+         (0.18 s) and the browser clamps scrollTop as the history shrinks, so this scroll is the resize, not you. Following stays
+         at the bottom, reading stays paused (the watcher puts your row back). */
+      if (Date.now() - (box._widthAt || 0) < 400) {
+        if (!box.dataset.paused && gap > 1) box.scrollTop = box.scrollHeight;
+        if (id === 'messages') syncJump();
+        return;
+      }
       if (gap > 48 || (box._userUp && gap > 1)) pause();
       else {
         box._userUp = false;
@@ -4834,6 +4845,57 @@
       if (h < lastHeight && !box.dataset.paused && box.scrollHeight - box.scrollTop - box.clientHeight > 1)
         box.scrollTop = box.scrollHeight;
       lastHeight = h;
+    }).observe(box);
+  }
+  /* The list gets narrower or wider (a doc or artifact opening in the right column widens it to 920 px, the chat list or the
+     right column dragged, a pane beside the chat, the window): every row wraps again and the history grows or shrinks by
+     thousands of px, and that never scrolls by itself (overflow-anchor: none). A list that follows goes back to its newest
+     row; a list you are reading puts the row that was at the top of the view back at the same place, at the same point of
+     that row (a long message that wraps taller keeps the line you were on, not the pixel offset). */
+  for (const id of ['messages', 'submessages']) {
+    const box = $(id);
+    if (!box || typeof ResizeObserver !== 'function') continue;
+    let width = box.clientWidth,
+      reading = null,
+      queued = false;
+    const readAnchor = () => {
+      const top = box.getBoundingClientRect().top;
+      for (const el of box.children) {
+        const r = el.getBoundingClientRect();
+        if (r.height && r.bottom > top + 1) return { el, print: rowPrint(el), off: r.top - top, h: r.height };
+      }
+      return null;
+    };
+    /* the row at the top while you read, refreshed after each scroll at the current width (a scroll the resize itself causes
+       arrives after the resize and must not replace the anchor taken before it) */
+    box.addEventListener('scroll', () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        if (box.clientWidth === width && Date.now() - (box._widthAt || 0) >= 400) reading = box.dataset.paused ? readAnchor() : null;
+      });
+    });
+    new ResizeObserver(() => {
+      const w = box.clientWidth;
+      if (w === width || !w) return;
+      const was = width;
+      width = w;
+      if (!was || box.offsetParent === null) return;
+      box._widthAt = Date.now();
+      if (!box.dataset.paused) {
+        if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight;
+        return;
+      }
+      const a = reading || null;
+      if (!a) return;
+      let el = a.el && a.el.isConnected ? a.el : null;
+      if (!el) for (const c of box.children) if (rowPrint(c) === a.print) el = c;
+      if (!el) return;
+      const top = box.getBoundingClientRect().top,
+        r = el.getBoundingClientRect(),
+        off = a.off < 0 && a.h > 0 ? (a.off * r.height) / a.h : a.off;
+      box.scrollTop += r.top - top - off;
     }).observe(box);
   }
   /* Content that grows after a redraw (a "Show all" toggle added a moment later, a picture loading, a running step's output
