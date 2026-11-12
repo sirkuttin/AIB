@@ -74,6 +74,16 @@ for (const mode of ['default', 'attach']) {
             }
           }, 'probe report', 60);
         } finally {
+          // The probe writes its report, then still has to exit; its folder is its working directory and its log is open until
+          // it has. Removing the folder before that fails with "being used by another process" (seen under load).
+          try {
+            await until(() => child.exitCode() !== null, 'probe exit', 30);
+          } catch {
+            try {
+              Deno.kill(child.pid, 'SIGKILL');
+            } catch { /* gone */ }
+            await until(() => child.exitCode() !== null, 'probe killed', 10).catch(() => {});
+          }
           child.close();
         }
         const r = JSON.parse(Deno.readTextFileSync(out));
