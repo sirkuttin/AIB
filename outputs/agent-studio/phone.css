@@ -492,7 +492,7 @@ button.ph-card {
   position: fixed;
   inset: 0;
   z-index: 10;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--shadow-med);
 }
 .ph-sheet {
   position: fixed;
@@ -511,7 +511,7 @@ button.ph-card {
   border-radius: 18px 18px 0 0;
   border-top: 1px solid var(--line);
   background: var(--bg);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 -8px 24px var(--shadow-soft);
   overflow-wrap: anywhere;
 }
 .ph-grab {
