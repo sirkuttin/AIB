@@ -28,6 +28,10 @@
 - Markdown artifacts have an Edit button (it replaces "Make it a doc"). Request a change puts the artifact into the message
   box as a link and focuses the box, so you type what to change and the chat does it.
 - File view: "Source | Page" is now "Source | Preview".
+- Docs in worktree chats: a chat working in a git worktree reads and writes docs in the main project's `aib-docs/`, never in
+  its own worktree folder, so every chat sees the same docs.
+- Docs show their title, not the folder name, in the Docs tab, the Files row, pickers and chat cards.
+- Hovering the `aib-docs` row in Files lists the titles of the docs inside.
 
 ## 0.1.0-beta.7 (beta)
 
