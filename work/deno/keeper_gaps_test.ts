@@ -18,7 +18,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { Connection, MAX_EVENTS, MAX_SNAPSHOT_BYTES } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import {
   decideKeeper,
@@ -443,5 +443,161 @@ Deno.test({
     assertEquals((await b.liveCall('permission', { id: r.id, key: [...r.permissions.keys()][0], option: 'yes' }))[0], 200);
     await until(() => !r.busy, 'turn end', 15);
     assertEquals(answers(lab.received(), 'stream-ask').length, 1);
+  },
+});
+
+// ---- 6. a chat of any length: the snapshot stays small, the journal keeps only what the history needs ------------------------
+
+/** The bytes of a channel's journal on disk (every segment). */
+function journalBytes(state: string, id: string): number {
+  const find = (dir: string): string | null => {
+    for (const entry of Deno.readDirSync(dir)) {
+      if (!entry.isDirectory) continue;
+      const path = dir + SEP + entry.name;
+      if (entry.name === `chat-${id}`) return path;
+      const inner = find(path);
+      if (inner) return inner;
+    }
+    return null;
+  };
+  const dir = find(state);
+  if (!dir) return 0;
+  let sum = 0;
+  for (const entry of Deno.readDirSync(dir)) if (entry.isFile) sum += Deno.statSync(dir + SEP + entry.name).size;
+  return sum;
+}
+
+const jsonBytes = (value: unknown) => ENC.encode(JSON.stringify(value)).length;
+
+Deno.test({
+  name: 'snapshots: a chat with 50 MB of history writes small snapshots; a take-over has every event, the question once and the queue',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    const a = lab.studio();
+    const c = await a.connect('omp', lab.work);
+    // 1000 tool outputs of 50 KiB: far beyond the 12 MiB a snapshot note may hold (beta.8 then stopped writing snapshots).
+    assertEquals((await a.liveCall('prompt', { id: c.id, text: 'bulk:1000:50', clientMessageId: 'm0' }))[0], 200);
+    await until(() => !c.busy && c.snapshots >= 1, 'the bulk turn ended and a snapshot was written', 180);
+    const history = jsonBytes(c.events);
+    assert(history > 50_000_000, `50 MB of history (${history})`);
+    assert(c.snapshotBytes <= MAX_SNAPSHOT_BYTES, `the snapshot note fits (${c.snapshotBytes})`);
+    assert(c.snapshotChunkBytes > 40 * 1024 * 1024, `the history went into chunk notes once (${c.snapshotChunkBytes})`);
+
+    await turn(a, c, 4, 'm1');
+    await until(() => c.snapshots >= 2, 'a snapshot at the turn end', 10);
+    assert(c.snapshotBytes < 256 * 1024, `the next snapshot holds only what is new (${c.snapshotBytes})`);
+    assertEquals(c.snapshotChunkBytes, 0, 'no history written again');
+
+    // Mid-turn with a question open, and a message queued behind it.
+    assertEquals((await a.liveCall('prompt', { id: c.id, text: 'stream:6:20', clientMessageId: 'm2' }))[0], 200);
+    await until(() => c.permissions.size === 1, 'the question of m2', 10);
+    assertEquals((await a.liveCall('queue', { id: c.id, text: 'sleep:0', clientMessageId: 'q1' }))[0], 200);
+    await pause(300); // the queue and the question reach the store and the record
+    // The open question is asked again by the replay, under a new key (as before this change); everything else is identical.
+    const unkeyed = (events: Json[]) => shape(events.map((e) => e.kind === 'permission' ? { ...e, data: { ...e.data as Json, key: '' } } : e));
+    const before = unkeyed(c.events);
+    const cursor = c.sequence;
+    lab.crash(a);
+
+    const b = lab.studio();
+    const started = performance.now();
+    assertEquals(await b.adoptKeeper(), 1);
+    const took = performance.now() - started;
+    const r = b.connections.get(c.id)!;
+    assertEquals(r.rebuildError, '');
+    assert(r.replayedFrom > 0, 'started at a snapshot');
+    assert(r.replayedRecords < 40, `only the open turn was replayed (${r.replayedRecords})`);
+    assert(took < 60000, `taken over in ${Math.round(took)} ms`);
+    assertEquals(unkeyed(r.events), before, 'every event of the page, with the same numbers');
+    assertEquals(r.sequence, cursor);
+    assertEquals([r.public(cursor).events, r.public(cursor).reset], [[], false], 'an open page goes on from its cursor');
+    assertEquals(r.busy, true, 'the turn still runs');
+    assertEquals(r.permissions.size, 1, 'the open question, once');
+    assertEquals(((r.queue.public() as Json).items as Json[]).map((i) => i.text), ['sleep:0'], 'the queue');
+
+    assertEquals((await b.liveCall('permission', { id: r.id, key: [...r.permissions.keys()][0], option: 'yes' }))[0], 200);
+    await until(() => prompts(lab.received()).length === 4 && !r.busy, 'm2 ended and the queued message ran', 20);
+    assertEquals(answers(lab.received(), 'stream-ask').length, 2, 'each question answered once');
+    assertEquals(new Set(prompts(lab.received()).map((m) => m.id)).size, 4, 'no request id reused');
+  },
+});
+
+Deno.test({
+  name: 'snapshots: once old events leave the history, the journal segments holding them go; the take-over still has the whole history',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab(['--segment-bytes', String(1 << 20)]);
+    const a = lab.studio();
+    const c = await a.connect('omp', lab.work);
+    // 3 x 4000 events of 2 KiB: twice what the history keeps (MAX_EVENTS), ~25 MB through the record.
+    let peak = 0;
+    for (let i = 1; i <= 3; i++) {
+      assertEquals((await a.liveCall('prompt', { id: c.id, text: 'bulk:4000:2', clientMessageId: `b${i}` }))[0], 200);
+      await until(() => !c.busy && c.snapshots >= i, `bulk turn ${i} and its snapshot`, 120);
+      await pause(300); // the truncate reaches the keeper
+      peak = Math.max(peak, journalBytes(lab.state, c.id));
+    }
+    assertEquals(c.events.length, MAX_EVENTS);
+    const window = jsonBytes(c.events);
+    const kept = journalBytes(lab.state, c.id);
+    // The kept record: the chunks of the history plus the raw records since its first event, and a segment of slack.
+    assert(peak < 2 * window + 4 * (1 << 20), `journal at most ${peak} bytes (now ${kept}) for a ${window}-byte history`);
+    const client = (await a.keeper!.client(false))!;
+    const first = (await client.list()).find((ch) => ch.channel === `chat-${c.id}`)!.first as number;
+    assert(first > 1, `old segments gone (first ${first})`);
+    assert(c.snapshotBytes <= MAX_SNAPSHOT_BYTES);
+
+    const before = shape(c.events);
+    lab.crash(a);
+    const b = lab.studio();
+    assertEquals(await b.adoptKeeper(), 1, 'found by the snapshot\'s copy of the chat note');
+    const r = b.connections.get(c.id)!;
+    assertEquals(r.rebuildError, '');
+    assertEquals(shape(r.events), before, 'the whole history, from chunks of several snapshots');
+    await turn(b, r, 2, 'm1');
+    assertEquals(prompts(lab.received()).length, 4);
+  },
+});
+
+Deno.test({
+  name: 'snapshots: a record whose newest snapshot is beta.8\'s whole-history note is restored, and the next snapshot stores the history in chunks',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    const a = lab.studio();
+    const c = await a.connect('omp', lab.work);
+    await turn(a, c, 4, 'm1');
+    await until(() => c.snapshots >= 1, 'a snapshot', 10);
+    // What beta.8 wrote: sv 1, the whole event list inside the state.
+    const note = c.snapshotNote()!;
+    delete note.events;
+    const old = { ...note, sv: 1, state: { ...note.state as Json, events: c.events } };
+    delete (old.state as Json).eventsFrom;
+    assert(await c.channel!.snapshot(old), 'stored');
+    await pause(300);
+    const before = shape(c.events);
+    lab.crash(a);
+
+    const b = lab.studio();
+    assertEquals(await b.adoptKeeper(), 1);
+    const r = b.connections.get(c.id)!;
+    assertEquals(r.rebuildError, '');
+    assert(r.replayedFrom > 0, 'started at the sv 1 snapshot');
+    assertEquals(shape(r.events), before);
+    await turn(b, r, 2, 'm2');
+    await until(() => r.snapshots >= 1, 'a new snapshot', 10);
+    const after = shape(r.events);
+    lab.crash(b);
+
+    const d = lab.studio();
+    assertEquals(await d.adoptKeeper(), 1);
+    const s = d.connections.get(c.id)!;
+    assertEquals(s.rebuildError, '');
+    assertEquals(shape(s.events), after, 'the history beta.8 kept, now from chunks');
+    assertEquals(prompts(lab.received()).length, 2);
   },
 });

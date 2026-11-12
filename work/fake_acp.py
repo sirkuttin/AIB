@@ -680,6 +680,13 @@ for line in sys.stdin:
             update({'sessionUpdate': 'usage_update', 'size': 200000, 'used': 900})
             update({'sessionUpdate': 'current_mode_update', 'currentModeId': 'code'})
             result(key, {'stopReason': 'end_turn'})
+        elif prompt_text.startswith('bulk:'):   # 'bulk:<n>:<kb>': n tool call updates of <kb> KiB of output each, then the turn ends
+            count, _, kb = prompt_text[5:].partition(':')
+            pad = 'x' * (int(kb or 1) * 1024)
+            for i in range(int(count)):
+                update({'sessionUpdate': 'tool_call_update', 'toolCallId': 'bulk-%d' % i, 'status': 'completed',
+                        'rawOutput': '%d:%s' % (i, pad)})
+            result(key, {'stopReason': 'end_turn'})
         elif prompt_text.startswith('stream:'):   # 'stream:<n>:<ms>': n chunks, one every ms; halfway it asks a permission and waits
             count, _, gap = prompt_text[7:].partition(':')
             def stream(turn_key=key, count=int(count), gap=float(gap or 100) / 1000):

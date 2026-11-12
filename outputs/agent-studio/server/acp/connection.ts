@@ -401,6 +401,15 @@ export interface PendingChange {
   queuedAt: number;
 }
 
+/** What one snapshot writes: chunk notes of the events since the last one, then the snapshot note (holding the last chunk). */
+interface SnapshotPlan {
+  chunks: Json[];
+  note: Json;
+  bytes: number;
+  chunkBytes: number;
+  last: number;
+}
+
 type Hook = (connection: Connection) => unknown;
 
 export interface ConnectionOptions {
@@ -419,10 +428,17 @@ export interface ConnectionOptions {
   rebuild?: ChannelInfo | null;
 }
 
-/** The format of a keeper `snapshot` note this code writes and can restore (its `sv`). */
-export const SNAPSHOT_VERSION = 1;
-/** A snapshot larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
+/**
+ * The format of a keeper `snapshot` note this code writes (its `sv`). 1: the whole event history inside the note (beta.8 and before;
+ * still restored). 2: the note holds the chat's state without its history; each snapshot also stores only the events made since the
+ * one before (in the note itself, or in `t: 'event'` chunk notes just before it when they do not fit), so a note stays small however
+ * long the chat is, and the journal keeps the chunks the history still needs (truncate stops at the oldest of them).
+ */
+export const SNAPSHOT_VERSION = 2;
+/** A snapshot note larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
 export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+/** Events per chunk note, in UTF-8 bytes (several chunks when a snapshot has more new events, e.g. after a session/load). */
+export const EVENT_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Why a keeper-run agent ended without being asked to: the keeper itself went away. */
 export const KEEPER_LOST =
@@ -761,8 +777,17 @@ export class Connection {
   /** The keeper sent `live`: records from here on are handled as they come. */
   #replayLive = false;
   #snapshotQueued = false;
+  /** The newest event seq already stored in the journal by a snapshot (in its note or a chunk note before it). */
+  #eventsSaved = 0;
+  /** The journal notes that hold stored events: [record seq, last event seq], oldest first (truncate keeps what the history needs). */
+  #eventChunks: [number, number][] = [];
+  /** While replaying: the stored event chunks met, by record seq. */
+  #replayChunks = new Map<number, Json[]>();
   /** Snapshots written and journal truncations asked for (tests). */
   snapshots = 0;
+  /** The size in bytes of the last snapshot note written, and of the chunk notes written with it (tests, logs). */
+  snapshotBytes = 0;
+  snapshotChunkBytes = 0;
   /** A rebuild: the seq of the snapshot it started from (0: the start of the record) and how many records it replayed after it. */
   replayedFrom = 0;
   replayedRecords = 0;
@@ -928,6 +953,7 @@ export class Connection {
           this.#replayGapNext = next;
           this.#replayBuffer = [];
           this.#replaySnapshot = null;
+          this.#replayChunks.clear();
           return;
         }
         this.#enqueue(() => {
@@ -1313,10 +1339,23 @@ export class Connection {
   #bufferReplay(record: KeeperRecord): void {
     if (record.kind === 'note') {
       const note = parseNote(record.body);
-      if (note?.t === 'snapshot' && note.sv === SNAPSHOT_VERSION && isDict(note.state) && isInt(note.upTo)) {
+      if (note?.t === 'event' && note.chunk === 1 && Array.isArray(note.events)) { // stored history (written before a snapshot)
+        this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
+        return;
+      }
+      if (note?.t === 'snapshot' && (note.sv === 1 || note.sv === 2) && isDict(note.state) && isInt(note.upTo)) {
+        if (note.sv === 2 && Array.isArray(note.events) && note.events.length) {
+          this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
+        }
+        delete note.events; // kept once, in the chunks
         this.#replaySnapshot = { note, seq: record.seq };
         const upTo = note.upTo;
         this.#replayBuffer = this.#replayBuffer.filter((r) => r.seq > upTo);
+        // Chunks wholly before the history this snapshot keeps are no longer needed.
+        const from = note.sv === 2 && isInt(note.state.eventsFrom) ? note.state.eventsFrom : Infinity;
+        for (const [seq, events] of this.#replayChunks) {
+          if (!events.length || (events.at(-1)!.seq as number) < from) this.#replayChunks.delete(seq);
+        }
         return;
       }
     }
@@ -1327,12 +1366,14 @@ export class Connection {
   async #replayFromSnapshot(): Promise<void> {
     const snapshot = this.#replaySnapshot;
     const records = this.#replayBuffer;
+    const chunks = this.#replayChunks;
     this.#replayBuffer = [];
     this.#replaySnapshot = null;
+    this.#replayChunks = new Map();
     if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
       throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
     }
-    if (snapshot) this.#restoreSnapshot(snapshot.note);
+    if (snapshot) this.#restoreSnapshot(snapshot.note, chunks);
     this.replayedFrom = snapshot ? snapshot.seq : 0;
     for (const record of records) {
       if (this.rebuildError || this.#ended) return;
@@ -1344,7 +1385,7 @@ export class Connection {
   }
 
   /** The state a snapshot note carries, put back exactly (what the replay of everything before `upTo` would have rebuilt). */
-  #restoreSnapshot(note: Json): void {
+  #restoreSnapshot(note: Json, chunks: Map<number, Json[]>): void {
     const s = note.state as Json;
     const entries = (value: unknown) => (Array.isArray(value) ? value.filter((e) => Array.isArray(e) && e.length === 2) : []);
     this.initial = s.initial ?? {};
@@ -1359,8 +1400,17 @@ export class Connection {
     this.changeSeq = isInt(s.changeSeq) ? s.changeSeq : 0;
     this.changeFailures = Array.isArray(s.changeFailures) ? s.changeFailures.filter(isDict) as Json[] : [];
     this.turnEndedAt = typeof s.turnEndedAt === 'number' ? s.turnEndedAt : null;
-    this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
     this.sequence = isInt(s.sequence) ? s.sequence : 0;
+    if (note.sv === 1) { // beta.8 and before: the whole history inside the note; the next snapshot stores it in chunks
+      this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
+      this.#eventsSaved = 0;
+      this.#eventChunks = [];
+    } else {
+      this.events = this.#chunkEvents(chunks, isInt(s.eventsFrom) ? s.eventsFrom : this.sequence + 1);
+      this.#eventsSaved = this.sequence;
+      this.#eventChunks = [...chunks].filter(([, e]) => e.length).map(([seq, e]) => [seq, e.at(-1)!.seq as number] as [number, number])
+        .sort((a, b) => a[0] - b[0]);
+    }
     this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
     this.subagents = new Map(entries(s.subagents) as [string, Json][]);
     this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
@@ -1387,6 +1437,30 @@ export class Connection {
     this.#lastSeq = note.upTo as number;
   }
 
+  /**
+   * The history a version-2 snapshot keeps: the stored events from `from` to `sequence`, each once, in order. A chunk that is gone
+   * (the keeper's size cap dropped an old segment) leaves the history starting after the hole, never with one in it.
+   */
+  #chunkEvents(chunks: Map<number, Json[]>, from: number): Json[] {
+    const bySeq = new Map<number, Json>();
+    for (const events of chunks.values()) {
+      for (const e of events) {
+        const seq = e.seq;
+        if (isInt(seq) && seq >= from && seq <= this.sequence) bySeq.set(seq, e);
+      }
+    }
+    const out: Json[] = [];
+    for (let seq = this.sequence; seq >= from; seq--) {
+      const e = bySeq.get(seq);
+      if (!e) {
+        log.warning('keeper: %s: events %s..%s are no longer stored; the history starts after them', this.id, from, seq);
+        break;
+      }
+      out.push(e);
+    }
+    return out.reverse();
+  }
+
   /** Take a snapshot once the record queue has handled what it holds now (so `upTo` is exact). */
   #scheduleSnapshot(): void {
     if (!this.channel || this.#replaying || this.#snapshotQueued) return;
@@ -1404,9 +1478,9 @@ export class Connection {
       !this.#held.length && this.#outLines.idle && this.#errLines.idle;
   }
 
-  /** The state as a snapshot note, or null when it is too large to store. */
-  snapshotNote(): Json | null {
-    const state: Json = {
+  /** The chat's state for a snapshot note, without its event history (that goes in chunks: see #snapshotPlan). */
+  #snapshotState(): Json {
+    return {
       initial: this.initial,
       sessionId: this.sessionId,
       ready: this.ready,
@@ -1418,7 +1492,8 @@ export class Connection {
       changeSeq: this.changeSeq,
       changeFailures: this.changeFailures,
       turnEndedAt: this.turnEndedAt,
-      events: this.events,
+      // The history kept: events from eventsFrom to sequence, stored in this note and the chunk notes before it (and earlier ones).
+      eventsFrom: this.events.length ? this.events[0].seq : this.sequence + 1,
       sequence: this.sequence,
       subagents: [...this.subagents],
       liveHelpers: [...this.#liveHelpers],
@@ -1431,32 +1506,89 @@ export class Connection {
       stderr: this.stderr,
       eventsId: this.eventsId,
     };
-    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state };
-    return JSON.stringify(note).length > MAX_SNAPSHOT_BYTES ? null : note;
+  }
+
+  /**
+   * What a snapshot writes now: the events made since the last one, cut into chunks of at most EVENT_CHUNK_BYTES (the last one goes
+   * inside the snapshot note when it fits), and the snapshot note. null when the state alone is too large to store.
+   */
+  #snapshotPlan(): SnapshotPlan | null {
+    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state: this.#snapshotState() };
+    const stateBytes = ENCODER.encode(JSON.stringify(note)).length;
+    if (stateBytes > MAX_SNAPSHOT_BYTES - 1024) return null;
+    const groups: { events: Json[]; bytes: number }[] = [];
+    let group: { events: Json[]; bytes: number } = { events: [], bytes: 0 };
+    for (const event of this.events) {
+      if ((event.seq as number) <= this.#eventsSaved) continue;
+      let stored = event;
+      let bytes = ENCODER.encode(JSON.stringify(event)).length + 1;
+      if (bytes > MAX_SNAPSHOT_BYTES - 1024) { // one agent message larger than a note: its place in the history says so after a restart
+        stored = {
+          seq: event.seq,
+          kind: 'studio_note',
+          time: event.time,
+          data: { message: 'An agent message too large to keep across a restart was left out here.' },
+        };
+        bytes = ENCODER.encode(JSON.stringify(stored)).length + 1;
+      }
+      if (group.events.length && group.bytes + bytes > EVENT_CHUNK_BYTES) {
+        groups.push(group);
+        group = { events: [], bytes: 0 };
+      }
+      group.events.push(stored);
+      group.bytes += bytes;
+    }
+    if (group.events.length) groups.push(group);
+    const inline = groups.length && stateBytes + groups.at(-1)!.bytes <= MAX_SNAPSHOT_BYTES - 1024 ? groups.pop()! : null;
+    note.events = inline ? inline.events : [];
+    return {
+      chunks: groups.map((g) => ({ t: 'event', chunk: 1, events: g.events })),
+      note,
+      bytes: stateBytes + (inline ? inline.bytes : 0),
+      chunkBytes: groups.reduce((sum, g) => sum + g.bytes, 0),
+      last: this.sequence,
+    };
+  }
+
+  /** The snapshot note a snapshot now would write (with the events since the last one), or null when it is too large to store. */
+  snapshotNote(): Json | null {
+    return this.#snapshotPlan()?.note ?? null;
   }
 
   /**
    * Write a snapshot note when the chat is quiet (a turn just ended), then let the keeper drop the journal segments before it
-   * (truncate), so a rebuild reads and replays only what came after. Never throws.
+   * (truncate), so a rebuild reads and replays only what came after, plus the chunks the kept history is in. Never throws.
    */
   async #writeSnapshot(): Promise<void> {
     const channel = this.channel;
     if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
-    let note: Json | null;
+    let plan: SnapshotPlan | null;
     try {
-      note = this.snapshotNote();
+      plan = this.#snapshotPlan();
     } catch (error) {
       log.exception(error, 'keeper: making a snapshot failed');
       return;
     }
-    if (!note) {
+    if (!plan) {
       log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
       return;
     }
-    const seq = await channel.snapshot(note);
-    if (seq === null) return;
+    // All sent at once, in order, before anything AIB writes after this moment (a write after the note is replayed; one before is not).
+    const stored = await Promise.all([...plan.chunks, plan.note].map((n) => channel.snapshot(n)));
+    const seq = stored.at(-1);
+    if (!seq || stored.some((s) => s === null)) return; // tried again at the next quiet moment (a stored chunk is then just repeated)
+    const lastOf = (events: unknown) => (events as Json[]).at(-1)!.seq as number;
+    plan.chunks.forEach((chunk, i) => this.#eventChunks.push([stored[i]!, lastOf(chunk.events)]));
+    if ((plan.note.events as Json[]).length) this.#eventChunks.push([seq, lastOf(plan.note.events)]);
+    this.#eventsSaved = plan.last;
+    const first = this.events.length ? this.events[0].seq as number : Infinity;
+    this.#eventChunks = this.#eventChunks.filter(([, last]) => last >= first);
     this.snapshots += 1;
-    await channel.truncate((note.upTo as number) + 1); // records after upTo are still needed (they may come before the note)
+    this.snapshotBytes = plan.bytes;
+    this.snapshotChunkBytes = plan.chunkBytes;
+    // Records after upTo are still needed (they may come before the note), and so are the chunks the kept history is in.
+    const after = (plan.note.upTo as number) + 1;
+    await channel.truncate(this.#eventChunks.length ? Math.min(this.#eventChunks[0][0], after) : after);
   }
 
   /** The record cannot be rebuilt by this code: keep showing the chat, never write to it. */
