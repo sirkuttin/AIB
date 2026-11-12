@@ -1334,16 +1334,37 @@
     }
   }
 
+  /* The text's height, measured on a hidden copy of the composer outside the page flow. Measuring the composer itself (height 'auto',
+     read, set back) made it 2 lines tall for a moment: the chat history above grew, the browser pulled its scroll position up to
+     the shorter end, and the scroll controller, which sees no size change once the composer is back, took that for you scrolling
+     up (follow off, "↓ Latest" while at the bottom). It also laid the whole page out twice per key. */
+  let measurer = null;
+  function textHeight(box) {
+    const d = box.ownerDocument || doc();
+    if (!measurer || measurer.ownerDocument !== d || !measurer.isConnected) {
+      measurer = d.createElement('textarea');
+      measurer.setAttribute('aria-hidden', 'true');
+      measurer.tabIndex = -1;
+      d.body.append(measurer);
+    }
+    const cs = root.getComputedStyle(box);
+    measurer.style.cssText =
+      'position:absolute;top:0;left:-10000px;visibility:hidden;pointer-events:none;overflow:hidden;height:auto;min-height:0;max-height:none;' +
+      'box-sizing:' + cs.boxSizing + ';width:' + box.getBoundingClientRect().width + 'px;';
+    for (const p of ['font', 'letterSpacing', 'wordSpacing', 'lineHeight', 'textTransform', 'textIndent', 'tabSize', 'whiteSpace', 'overflowWrap', 'wordBreak', 'padding', 'borderWidth', 'borderStyle'])
+      measurer.style[p] = cs[p];
+    measurer.rows = box.rows || 2;
+    measurer.value = box.value;
+    return measurer.scrollHeight;
+  }
   function autosize() {
     const box = doc().getElementById('prompt');
     if (!box || !box.style) return;
-    /* A one-line composer whose text still fits stays as it is. Resetting to 'auto' to measure laid the whole page out twice on
-       every key press (the chat history above shrinks and grows with the composer), which made typing stutter in a long chat. */
+    /* A one-line composer whose text still fits stays as it is (no layout read at all). */
     if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
-    box.style.height = 'auto';
     const cap = root.ResizeUI && root.ResizeUI.composerCap ? root.ResizeUI.composerCap(root) : 200;
-    const h = Math.min(cap, Math.max(56, box.scrollHeight || 0));
-    box.style.height = h + 'px';
+    const h = Math.min(cap, Math.max(56, (root.getComputedStyle ? textHeight(box) : box.scrollHeight) || 0));
+    if (box.style.height !== h + 'px') box.style.height = h + 'px';
   }
 
   // ---- project preferences (shared via the server) --------------------------------------------

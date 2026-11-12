@@ -278,6 +278,66 @@ scrollTest('2e window resized (shorter, then narrower, then back): a following l
   assert(!p, p);
 });
 
+scrollTest('2f a 5-line draft in the composer while the agent works on a plan: keys and plan updates keep the list following, no "↓ Latest"', async (lab) => {
+  // Was (owner's screenshot, beta.9): at the bottom, following, the agent working through a plan card at the end, and "↓ Latest" showing.
+  // The composer's autosize (workspace-ui.js) set the box to height 'auto' and read it back to measure the text, on every key press and
+  // every sidebar refresh. For that moment the composer was 2 lines tall, the list taller, and Chrome clamped its scrollTop to the
+  // shorter end; then the composer went back to its height. The list's sizes ended where they were, so no ResizeObserver ran, and the
+  // scroll event that followed was the only trace: the controller took it for you scrolling up (follow off, gap 71 px), and the
+  // next update at the end lit "↓ Latest".
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  const plan = (texts: string[], done: number) => ({
+    u: {
+      sessionUpdate: 'plan',
+      entries: texts.map((content, i) => ({ content, status: i < done ? 'completed' : i === done ? 'in_progress' : 'pending', priority: 'medium' })),
+    },
+  });
+  const tasks = ['Read the steer design', 'Build the steer server side', 'Add the steer button', 'Test it end to end'];
+  chat.tool('pl-0', 'Read the design PLANSTEP0', 'completed');
+  chat.step(plan(tasks, 0));
+  await page.waitFor(`[...document.querySelectorAll('#messages .plan')].some((e) => e.textContent.includes('0/4 done'))`, 15000, 'plan card');
+  await settle(600);
+  await page.eval('document.getElementById("prompt").focus()');
+  await page.type(['Steer note one', 'line two', 'line three', 'line four', 'line five'].join('\n'));
+  await settle(600);
+  const tall = await page.eval<number>('document.getElementById("prompt").getBoundingClientRect().height');
+  assert(tall > 100, `the draft makes the composer taller than its 2 lines (${tall} px)`);
+  await assertFollowing(page, '5-line draft typed');
+  const checks: string[] = [];
+  const check = async (what: string) => {
+    const x = await m(page);
+    const bad = [following(x), x.jump !== null && `"${x.jump}" shows`].filter(Boolean).join(', ');
+    if (bad) checks.push(`${what}: ${bad} (gap ${x.gap})`);
+  };
+  // keys that do not change the composer's height (each ran the autosize)
+  for (const k of ['a', 'b', 'c']) {
+    await page.type(k);
+    await settle(250);
+    await check(`typed "${k}" on the last line`);
+  }
+  // the plan card at the end updates in place: it shrinks (steps fold into "N done") and grows (a step's text wraps), tool rows before it
+  const grown = tasks.map((t, i) => (i === 2 ? t + ', with the long active form that wraps onto a second line in the card '.repeat(3) : t));
+  for (const [n, [texts, done]] of ([[tasks, 1], [grown, 2], [tasks, 3], [grown, 2]] as [string[], number][]).entries()) {
+    chat.tool(`pl-${n + 1}`, `Step ${n + 1}`, 'completed');
+    chat.step(plan(texts.map((t, i) => (i === done ? `${t} PLANSTEP${n + 1}` : t)), done)); // the step in progress carries the marker
+    await shown(page, `PLANSTEP${n + 1}`);
+    await settle(300);
+    await page.type('d');
+    await settle(300);
+    await check(`plan update ${n + 1} and a key`);
+  }
+  assert(!checks.length, checks.join('; '));
+  // you really scroll up: follow stops and the next update lights the button
+  await wheel(page, -400);
+  await settle(300);
+  chat.say('\n\nWhile you read AFTERDRAFT');
+  await shown(page, 'AFTERDRAFT');
+  await settle(500);
+  const x = await m(page);
+  assert(x.paused && x.jump !== null, `scrolled up: paused ${x.paused}, button ${JSON.stringify(x.jump)}`);
+});
+
 // ---- 3. scrolled up, reading: nothing moves; the jump button counts and takes you back ----------------------------------------
 
 scrollTest('3a scrolled up: updates do not move what you read, the jump button counts them and takes you back to following', async (lab) => {
