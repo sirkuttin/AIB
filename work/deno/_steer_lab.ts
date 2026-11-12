@@ -27,7 +27,7 @@ const WIN = Deno.build.os === 'windows';
  *  background stop is POST /api/live/tool/<toolCallId>/stop {id}. Change here only. */
 export const ROUTES = {
   steer: () => '/api/live/steer',
-  stopTool: (toolCallId: string) => `/api/live/tool/${encodeURIComponent(toolCallId)}/stop`,
+  stopTool: () => '/api/live/tool-stop',
 };
 
 export interface LabOptions {
@@ -163,7 +163,7 @@ export class SteerLab extends Fixture {
       steer: (text, messageId = next()) => httpJson('POST', web.port, ROUTES.steer(), web.token, { id, text, clientMessageId: messageId }),
       queue: (text, messageId = next()) => web.post('queue', { id, text, clientMessageId: messageId }),
       cancel: () => web.post('cancel', { id }),
-      stopTool: (toolCallId) => httpJson('POST', web.port, ROUTES.stopTool(toolCallId), web.token, { id }),
+      stopTool: (toolCallId) => httpJson('POST', web.port, ROUTES.stopTool(), web.token, { id, toolCallId }),
       state: () => web.state(id),
       events: async (kind) => ((await web.state(id)).events as Json[]).filter((e) => kind === undefined || e.kind === kind),
       agentText: async () =>

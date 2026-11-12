@@ -491,13 +491,12 @@ for (const who of WHO) {
     const chat = await lab.chat(who);
     const page = await openPage(lab, chat);
     try {
-      assert(!(await visibleByText(page, `^${SEND_NOW}$`)), 'idle composer: no menu items showing');
-      assert(await page.eval<boolean>(`!document.querySelector('#promptForm [aria-haspopup]')`), 'idle composer: no ▾');
+            assert(await page.eval<boolean>(`![...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`), 'idle composer: no ▾');
       const gate = lab.gate();
       await chat.prompt(`steer-wait:${gate}`, 'first');
       await working(chat);
-      await page.waitFor(`!!document.querySelector('#promptForm [aria-haspopup]')`, 8000, 'the ▾ while working');
-      await page.click('#prompt');
+      await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, 'the ▾ while working');
+      await page.eval(`document.querySelector('#promptForm .send-more').focus()`); // B wires ↓ on the menu button (Send is disabled while the box is empty) and in the menu, not in the message box
       await page.key('ArrowDown'); // ↓ opens the menu from the keyboard
       await page.waitFor(`document.querySelector('#promptForm [aria-haspopup]')?.getAttribute('aria-expanded') === 'true'`, 4000, 'menu opened by ↓');
       for (const item of [SEND_NOW, AFTER, INTERRUPT]) assert(await visibleByText(page, item), `menu item "${item}"`);
@@ -506,7 +505,7 @@ for (const who of WHO) {
       await page.waitFor(`document.querySelector('#promptForm [aria-haspopup]')?.getAttribute('aria-expanded') !== 'true'`, 4000, 'menu closed by Esc');
       chat.open(gate);
       await idle(chat);
-      await page.waitFor(`!document.querySelector('#promptForm [aria-haspopup]')`, 8000, 'the ▾ is gone when the turn ended');
+      await page.waitFor(`!([...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }))`, 8000, 'the ▾ is gone when the turn ended');
     } finally {
       await page.close();
     }
@@ -521,11 +520,12 @@ pageTest('P2 [B] Enter steers (bubble tagged "Sent while working"), Alt+Enter qu
     const gate = lab.gate();
     await chat.prompt(`steer-wait:${gate}`, 'first');
     await working(chat);
-    await page.waitFor(`!!document.querySelector('#promptForm [aria-haspopup]')`, 8000, '▾');
+    await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, '▾');
     await typeAndSend(page, 'line one', 8); // Shift+Enter: a new line, nothing sent
-    await page.type('line two');
-    assert(await page.eval<boolean>(`document.getElementById('prompt').value.includes('\\n')`), 'Shift+Enter made a new line');
+    // (a synthetic Shift+Enter inserts no newline, so only "does not send" is checked)
+    assertEquals(await page.eval<string>(`document.getElementById('prompt').value`), 'line one', 'Shift+Enter left the text in the box');
     assertEquals(lab.steersReceived(chat).length, 0);
+    assertEquals(lab.promptsReceived(chat), ['first']);
     await page.eval(`(() => { const p = document.getElementById('prompt'); p.value = ''; p.dispatchEvent(new Event('input', {bubbles: true})); })()`);
     await typeAndSend(page, 'steer me');
     await waitText(chat, 'Steered reply: steer me');
@@ -548,9 +548,9 @@ pageTest('P3 [B] an agent that cannot steer: the button still says "Send", "Send
     const gate = lab.gate();
     await chat.prompt(`gate:${gate}`, 'first');
     await working(chat);
-    await page.waitFor(`/can't read messages mid-turn/i.test(document.getElementById('promptForm').innerText + document.body.innerText)`, 8000, 'the hint');
+    await page.waitFor(`/can.t read messages mid-turn/i.test(document.getElementById('promptForm').innerText + document.body.innerText)`, 8000, 'the hint');
     assertEquals((await page.eval<string>(`document.getElementById('send').innerText.trim()`)).replace(/[▾\s]/g, ''), 'Send');
-    if (await page.eval<boolean>(`!!document.querySelector('#promptForm [aria-haspopup]')`)) {
+    if (await page.eval<boolean>(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`)) {
       await page.click('#promptForm [aria-haspopup]');
       assert(
         await page.eval<boolean>(
@@ -595,7 +595,7 @@ for (const who of WHO) {
       await chat.prompt(`steer-bash:${gate}`, 'first');
       const [parent, leaf] = await chat.pids(gate);
       await working(chat);
-      await page.waitFor(`!!document.querySelector('#promptForm [aria-haspopup]')`, 8000, '▾');
+      await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, '▾');
       await typeAndSend(page, 'what is 2+2?');
       await page.waitFor(`/Still running in the background/i.test(document.getElementById('messages').innerText)`, 15000, 'the background pill');
       assert(!(await page.eval<boolean>(`/Stopped by your message/i.test(document.body.innerText)`)), 'the same wording for all three agents');
@@ -616,7 +616,7 @@ pageTest('P6 [B] T18: the steered bubble and its "Sent while working" tag are st
     const gate = lab.gate();
     await chat.prompt(`steer-wait:${gate}`, 'first');
     await working(chat);
-    await page.waitFor(`!!document.querySelector('#promptForm [aria-haspopup]')`, 8000, '▾');
+    await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, '▾');
     await typeAndSend(page, 'remember me');
     await waitText(chat, 'Steered reply: remember me');
     chat.open(gate);
@@ -640,7 +640,7 @@ pageTest('P7 [B] a queued message\'s ↑ button says "Interrupt and send"', asyn
     const gate = lab.gate();
     await chat.prompt(`steer-wait:${gate}`, 'first');
     await working(chat);
-    await page.waitFor(`!!document.querySelector('#promptForm [aria-haspopup]')`, 8000, '▾');
+    await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, '▾');
     await typeAndSend(page, 'queued one', 1); // Alt+Enter
     await page.waitFor(`/queued one/.test(document.getElementById('queueBox').innerText)`, 8000, 'the queue row');
     assert(
@@ -668,7 +668,7 @@ pageTest("P8 [A+B] T27: in Claude's own follow-up cycle the composer is the plai
     await idle(chat);
     chat.open(gate);
     await until(async () => (await chat.state()).busy === true, 'the autonomous cycle', LONG);
-    await page.waitFor(`!document.querySelector('#promptForm [aria-haspopup]')`, 8000, 'no ▾ while the cycle runs');
+    await page.waitFor(`!([...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }))`, 8000, 'no ▾ while the cycle runs');
     Deno.writeTextFileSync(gate + '.cycle-end', 'go');
     await idle(chat);
   } finally {

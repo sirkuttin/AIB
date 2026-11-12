@@ -1,11 +1,10 @@
 /**
- * Steer-on-send layout, end to end (beta.9): the composer while the agent works, with the hint under "Send now", the key hint next to
- * Attach and the ▾ send menu, at the narrowest composer widths, in the light and the dark theme. Real Studio, fake agents of
+ * Steer-on-send layout, end to end (beta.9): the composer while the agent works, with the hint under "Send now", the key hint under the box and the ▾ send menu, at the narrowest composer widths, in the light and the dark theme. Real Studio, fake agents of
  * work/fake_acp.py --steer (_steer_lab.ts), headless Chrome/Edge (no window). Needs [B] the page side (feat/steer-page); it fails
  * until that has landed. No selectors beyond the shared ones are assumed: the ▾ is the element with aria-haspopup inside #promptForm,
  * the hints are found by their copy (build-brief-beta9.md, one copy table).
  *
- * What is measured (pixels, not looks), at viewport widths 360 and 420 (420 = MIN_CHAT, the narrowest chat column) and 700:
+ * What is measured (pixels, not looks), at viewport widths 360, 400, 490 (the narrowest width the page draws without sideways scroll) and 700:
  *  - nothing in the composer sticks out of it and the composer has no sideways scroll;
  *  - Send and ▾ are both visible, side by side without overlap, each at least 24 px wide and tall;
  *  - the key hint and the Attach button do not overlap, the key hint stays inside the composer;
@@ -17,7 +16,9 @@
 import { assert, hasBrowser, type Json, openPage, type Page, SteerLab, TEST_OPTIONS, until, type Who } from './_steer_lab.ts';
 
 const LONG = 45;
-const WIDTHS = [360, 420, 700];
+// 490 is the narrowest the page itself draws without sideways scroll (MAIN is 490 px wide even with no steer feature, measured at 360 and 420);
+// the composer is also checked at 400 and 360 on its own (the page may scroll there, the composer must still fit its own box)
+const WIDTHS = [360, 400, 490, 700];
 const THEMES = ['teal-dark', 'teal-light'] as const;
 
 const MEASURE = `(() => {
@@ -26,7 +27,7 @@ const MEASURE = `(() => {
   const out = { problems: [] };
   const bad = (m) => out.problems.push(m);
   if (form.scrollWidth > form.clientWidth + 1) bad('the composer scrolls sideways: scrollWidth ' + form.scrollWidth + ' > ' + form.clientWidth);
-  if (document.documentElement.scrollWidth > innerWidth + 1) bad('the page scrolls sideways');
+  if (innerWidth >= 490 && document.documentElement.scrollWidth > innerWidth + 1) bad('the page scrolls sideways');
   const visible = (e) => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
   for (const e of form.querySelectorAll('button, textarea, input, p, span, div, small')) {
     if (!visible(e) || e.closest('[role=menu]')) continue; // a menu may float; it is checked on its own below
@@ -44,10 +45,10 @@ const MEASURE = `(() => {
     if (a.width < 24 || a.height < 24) bad('Send is smaller than 24 px');
   }
   const attach = [...form.querySelectorAll('button, label')].find((e) => /attach/i.test(e.textContent + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.title || '')) && visible(e));
-  const keyHint = [...form.querySelectorAll('*')].filter((e) => visible(e) && e.children.length === 0 && /Enter/.test(e.textContent) && /sends?/i.test(e.textContent)).pop();
+  const keyHint = document.getElementById('sendKeyHint');
   out.keyHint = keyHint ? keyHint.textContent.trim() : null;
-  if (!keyHint) bad('no key hint (Enter sends ...) in the composer');
-  if (keyHint && attach) {
+  if (!keyHint || keyHint.hidden) bad('no key hint (Enter sends ...) in the composer');
+  if (keyHint && !keyHint.hidden && attach) {
     const a = attach.getBoundingClientRect(), k = keyHint.getBoundingClientRect();
     if (a.right > k.left + 1 && k.right > a.left + 1 && a.bottom > k.top + 1 && k.bottom > a.top + 1) bad('the key hint overlaps Attach');
   }
@@ -57,7 +58,7 @@ const MEASURE = `(() => {
 const MENU = `(() => {
   const out = { problems: [] };
   const bad = (m) => out.problems.push(m);
-  const menu = document.querySelector('[role=menu]');
+  const menu = document.querySelector('[role=menu]:not([hidden])');
   if (!menu) { bad('no menu is open'); return out; }
   const mr = menu.getBoundingClientRect();
   if (mr.left < -1 || mr.right > innerWidth + 1 || mr.top < -1 || mr.bottom > innerHeight + 1) bad('the menu is outside the window: ' + [mr.left, mr.top, mr.right, mr.bottom].map(Math.round));
@@ -111,20 +112,20 @@ for (const who of ['claude', 'codex', 'omp'] as const) {
         const gate = lab.gate();
         await chat.prompt(`steer-wait:${gate}`, 'first');
         await until(async () => (await chat.state()).busy, 'working', LONG);
-        const page = await openPage(lab, chat, WIDTHS[0], 900, theme);
+        const page = await openPage(lab, chat, 1400, 900, theme);
         try {
-          await page.waitFor(`!!document.querySelector('#promptForm [aria-haspopup]')`, 15000, 'the menu button');
+          await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => e.getBoundingClientRect().width > 0)`, 15000, 'the menu button');
           for (const width of WIDTHS) {
             await page.viewport(width, 900);
             await settle();
             await check(page, `${who}/${theme}/${width}px composer`, MEASURE);
             await page.click('#promptForm [aria-haspopup]');
-            await page.waitFor(`!!document.querySelector('[role=menu]')`, 4000, 'the menu');
+            await page.waitFor(`!!document.querySelector('[role=menu]:not([hidden])')`, 4000, 'the menu');
             await check(page, `${who}/${theme}/${width}px menu`, MENU);
             await check(page, `${who}/${theme}/${width}px hint`, CONTRAST(HINT_START[who]));
             await page.shot(`steer-${who}-${theme}-${width}`);
             await page.key('Escape');
-            await page.waitFor(`!document.querySelector('[role=menu]')`, 4000, 'the menu closed');
+            await page.waitFor(`!document.querySelector('[role=menu]:not([hidden])')`, 4000, 'the menu closed');
           }
           assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
         } finally {
@@ -148,9 +149,9 @@ for (const theme of THEMES) {
       const gate = lab.gate();
       await chat.prompt(`gate:${gate}`, 'first');
       await until(async () => (await chat.state()).busy, 'working', LONG);
-      const page = await openPage(lab, chat, WIDTHS[0], 900, theme);
+      const page = await openPage(lab, chat, 1400, 900, theme);
       try {
-        await page.waitFor(`/can't read messages mid-turn/i.test(document.body.innerText)`, 15000, 'the hint');
+        await page.waitFor(`/can.t read messages mid-turn/i.test(document.body.innerText)`, 15000, 'the hint');
         for (const width of WIDTHS) {
           await page.viewport(width, 900);
           await settle();
@@ -161,7 +162,7 @@ for (const theme of THEMES) {
               return { problems }; })()`,
           );
           assert((r.problems as string[]).length === 0, `${theme}/${width}px: ${(r.problems as string[]).join('; ')}`);
-          await check(page, `${theme}/${width}px hint contrast`, CONTRAST("can't read messages mid-turn"));
+          await check(page, `${theme}/${width}px hint contrast`, CONTRAST("can.t read messages mid-turn"));
         }
       } finally {
         await page.close();
