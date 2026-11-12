@@ -62,7 +62,7 @@ const CHANGES = [
 
 function setup(o) {
   const opts = o || {};
-  const shell = D.page({ ids: ['wsProjectBtn', 'wsRenameProj', 'wsNewProject', 'new', 'connections', 'promptForm'], width: opts.width || 1400 });
+  const shell = D.page({ ids: ['wsProjectBtn', 'wsRenameProj', 'wsNewProject', 'new', 'connections', 'promptForm'], width: opts.width || 1400, store: opts.store || {} });
   shell.make('b', 'wsListName', shell.byId.wsProjectBtn);
   const find = shell.make('button', 'findChat');
   shell.body.insertBefore(find, shell.byId.connections);
@@ -153,18 +153,15 @@ const rows = (t) => t.shell.body.querySelectorAll('.fx-row').filter((r) => r.dat
 const rowOf = (t, p) => rows(t).find((r) => r.dataset.path === p);
 const frames = (t, where) => Array.from(t.FU._state().frames.values()).filter((r) => !where || r.where === where);
 const query = (src) => Object.fromEntries(new URLSearchParams(String(src).split('?')[1] || ''));
+// Files, with the aib-docs folder opened by a click like any folder
 async function openDocsFolder(t) {
   t.FU.setMode('files');
   await flush();
-  rowOf(t, 'docs').click();
+  const row = rowOf(t, 'aib-docs');
+  if (row.getAttribute('aria-expanded') !== 'true') row.click();
   await flush();
 }
-async function openDocsTab(t) {
-  t.FU.setMode('docs');
-  await flush();
-}
-const docsRows = (t) => t.shell.body.querySelectorAll('.dt-row');
-const docsRowOf = (t, name) => docsRows(t).find((r) => r.dataset.doc === name);
+const docRowOf = (t, name) => rowOf(t, 'aib-docs/' + name);
 
 // ---- pure ----------------------------------------------------------------------------------------------------------------------
 test('/doc parses as <name>[ > page][: brief]; names and pages match loosely; Tab completes', () => {
@@ -258,14 +255,15 @@ test('doc tool rows read DOC: "Created Release plan · 2 pages", "Wrote Risks in
   assert.equal(L.toolText(live, docs), 'Wrote Overview in Release plan');
 });
 
-test('files-state: aib-docs is one row "N docs ›"; the docs/ folder is plain files; opened, aib-docs lists only what is no doc', () => {
+test('files-state: aib-docs is a folder like any other; inside it one row per doc, its other files, then "+ New doc"', () => {
   const idx = FS.docIndex([plan()]);
   const cache = { '': LISTING[''], docs: LISTING.docs, 'aib-docs': LISTING['aib-docs'] };
-  const rowsOut = FS.treeRows(cache, new Set(['docs']), { docs: idx, changes: FS.changesMap(CHANGES, '') });
+  // closed: a plain folder row with a caret
+  const shut = FS.treeRows(cache, new Set(['docs']), { docs: idx, changes: FS.changesMap(CHANGES, ''), newDoc: true });
   assert.deepEqual(
-    rowsOut.map((r) => [r.kind, r.path]),
+    shut.map((r) => [r.kind, r.path]),
     [
-      ['docsfolder', 'aib-docs'],
+      ['dir', 'aib-docs'],
       ['dir', 'docs'],
       ['file', 'docs/README.md'],
       ['dir', 'docs/notes'],
@@ -273,18 +271,42 @@ test('files-state: aib-docs is one row "N docs ›"; the docs/ folder is plain f
       ['file', 'README.md'],
     ],
   );
-  const f = rowsOut[0];
-  assert.equal(f.count, 1);
-  assert.equal(f.canOpen, false, 'no caret: it switches to the Docs tab');
-  // opened (Show in Files from the Docs tab footer): the files there that are no doc
-  const opened = FS.treeRows(cache, new Set(['aib-docs']), { docs: idx });
-  assert.deepEqual(opened.slice(0, 3).map((r) => [r.kind, r.path]), [
-    ['docsfolder', 'aib-docs'],
-    ['file', 'aib-docs/README.md'],
-    ['file', 'aib-docs/stray.txt'],
+  assert.equal(shut[0].canOpen, true, 'it expands like any folder');
+  assert.equal(shut[0].changed, 2, 'the doc\'s changed files count on the folder');
+  // open: the doc as ONE row (title, pages, badge), never its files; the other files; "+ New doc" last
+  const opened = FS.treeRows(cache, new Set(['aib-docs']), { docs: idx, changes: FS.changesMap(CHANGES, ''), newDoc: true });
+  assert.deepEqual(opened.slice(0, 5).map((r) => [r.kind, r.path, r.depth]), [
+    ['dir', 'aib-docs', 0],
+    ['file', 'aib-docs/README.md', 1],
+    ['doc', 'aib-docs/release-plan', 1],
+    ['file', 'aib-docs/stray.txt', 1],
+    ['newdoc', FS.NEW_DOC, 1],
   ]);
-  // without the docs feature nothing changes
+  const d = opened[2];
+  assert.deepEqual([d.name, d.pages, d.canOpen, d.badge.text], ['Release plan', 2, false, 'M']);
+  assert.ok(!opened.some((r) => PLAN_OWNED.includes(r.path)), 'doc.aibdoc and the page copies are never rows');
+  // without the docs feature (newDoc off) there is no "+ New doc"
+  assert.ok(!FS.treeRows(cache, new Set(['aib-docs']), { docs: idx }).some((r) => r.kind === 'newdoc'));
   assert.deepEqual(FS.treeRows({ '': [entry('README.md')] }, new Set(), {}).map((r) => r.kind), ['file']);
+  // no aib-docs on disk yet: an empty aib-docs folder in its place among the folders, holding only "+ New doc"
+  const bare = { '': [entry('docs', { dir: true }), entry('src', { dir: true }), entry('README.md')] };
+  const none = FS.treeRows(bare, new Set(), { docs: FS.docIndex([]), newDoc: true });
+  assert.deepEqual(none.map((r) => [r.kind, r.path]), [
+    ['dir', 'aib-docs'],
+    ['dir', 'docs'],
+    ['dir', 'src'],
+    ['file', 'README.md'],
+  ]);
+  assert.equal(none[0].virtual, true);
+  const noneOpen = FS.treeRows(bare, new Set(['aib-docs']), { docs: FS.docIndex([]), newDoc: true });
+  assert.deepEqual(noneOpen.slice(0, 2).map((r) => [r.kind, r.path, r.depth]), [
+    ['dir', 'aib-docs', 0],
+    ['newdoc', FS.NEW_DOC, 1],
+  ]);
+  assert.ok(!FS.treeRows(bare, new Set(), {}).some((r) => r.path === 'aib-docs'), 'no docs feature: no folder');
+  // a project with only files, or folders after "aib-docs" in order: the folder still sits first among the folders
+  assert.deepEqual(FS.treeRows({ '': [entry('a.txt')] }, new Set(), { newDoc: true }).map((r) => r.path), ['aib-docs', 'a.txt']);
+  assert.deepEqual(FS.treeRows({ '': [entry('.git', { dir: true }), entry('zeta', { dir: true })] }, new Set(), { newDoc: true }).map((r) => r.path), ['.git', 'aib-docs', 'zeta']);
   // the Changed list: the doc's files are one doc row
   const flat = FS.flatRows(['docs/README.md', 'aib-docs/release-plan/02-risks.md', 'aib-docs/release-plan/doc.aibdoc', 'src/app.js'], { docs: idx });
   assert.deepEqual(flat.map((r) => [r.kind, r.path]), [
@@ -294,26 +316,6 @@ test('files-state: aib-docs is one row "N docs ›"; the docs/ folder is plain f
   ]);
   // a new doc.aibdoc makes the badge A
   assert.equal(FS.docBadge(plan(), FS.changesMap([{ path: 'aib-docs/release-plan/doc.aibdoc', status: 'U', added: 4 }], '')).text, 'A');
-});
-
-test('files-state: the Docs tab list is flat, most recently edited first, with "this chat", the live line and "edited <when> by <who>"', () => {
-  const T = 1e9,
-    now = T * 1000;
-  const docs = [
-    Object.assign(plan(), { editedAt: T - 3600, editedBy: 'You' }),
-    Object.assign(plan(), { name: 'onboarding', title: 'Onboarding', pages: 3, chat: 'codex:z', editedAt: T - 2 * 86400, editedBy: 'Claude Code', owned: [] }),
-    Object.assign(plan(), { name: 'risks', title: 'Risk log', pages: 1, chat: 'claude:a1', editedAt: T - 10, owned: ['aib-docs/risks/doc.aibdoc'], writing: [{ name: 'Claude Code', section: 'Risks', page: 'Page 1' }] }),
-  ];
-  const changes = FS.changesMap([{ path: 'aib-docs/risks/doc.aibdoc', status: 'U', added: 4 }, { path: 'aib-docs/release-plan/doc.aibdoc', status: 'M', added: 1, removed: 0 }], '');
-  const list = FS.docsList(docs, changes, ['claude:a1'], now);
-  assert.deepEqual(list.map((r) => [r.title, r.mine, r.line, r.badge && r.badge.text]), [
-    ['Risk log', true, 'Claude Code is writing Risks', 'A'],
-    ['Release plan', true, '2 pages \u00b7 edited 1 h ago by you', 'M'],
-    ['Onboarding', false, '3 pages \u00b7 edited 2 days ago by Claude Code', null],
-  ]);
-  // a new doc nobody is writing in: "not committed yet"
-  const fresh = FS.docsList([Object.assign({}, docs[2], { writing: [] })], changes, [], now)[0];
-  assert.equal(fresh.line, '1 page \u00b7 not committed yet');
 });
 
 test('doc tabs: one per doc; a single click is a preview the next one replaces; opening again keeps it', () => {
@@ -355,18 +357,85 @@ test('the Artifacts picker: artifacts, then "Docs this chat wrote" under a divid
 });
 
 // ---- the Files view ---------------------------------------------------------------------------------------------------------------
-test('Files: aib-docs is one row "1 doc ›" that switches to the Docs tab; the project\'s docs/ stays plain files; the filter hides a doc\'s files', async () => {
+test('the sidebar switch is exactly Chats | Files: no Docs tab, no Docs pane', async () => {
   const t = setup();
-  await openDocsFolder(t);
-  const paths = rows(t).map((r) => r.dataset.path);
-  assert.ok(paths.includes('docs/README.md'), "the project's docs/README.md is a file");
-  assert.ok(paths.includes('docs/notes'), 'a folder in docs/ is a folder');
-  assert.ok(!paths.some((p) => PLAN_OWNED.includes(p) || p === 'aib-docs/release-plan'), 'no doc rows in Files');
-  assert.ok(!t.shell.body.querySelector('.fx-newdoc'), 'no New doc in the tree');
-  const row = rowOf(t, 'aib-docs');
-  assert.equal(row.dataset.kind, 'docsfolder');
-  assert.equal(row.querySelector('.fx-docpages').textContent, '1 doc \u203a');
-  assert.equal(row.querySelector('.fx-caret').textContent, '', 'no caret');
+  const sw = t.shell.body.querySelector('.sf-mode');
+  assert.deepEqual(sw.querySelectorAll('button').map((b) => b.querySelector('span').textContent), ['Chats', 'Files']);
+  assert.equal(sw.getAttribute('aria-label'), 'Show chats or files');
+  assert.equal(t.shell.body.querySelector('.sf-mode-docs'), null);
+  assert.equal(t.shell.body.querySelector('#docsPane'), null);
+  assert.equal(t.shell.body.querySelector('.dt-row'), null);
+  t.FU.setMode('docs'); // nothing asks for it any more; were it asked, Files shows
+  assert.equal(t.FU.mode(), 'files');
+  assert.equal(t.shell.body.classList.contains('sf-docs-mode'), false);
+});
+
+test('an old saved "docs" sidebar mode opens Files, never a blank sidebar; a per-project saved mode is ignored', async () => {
+  const t = setup({ store: { 'aib-sidebar-mode': 'docs', ['aib-sidebar-mode|' + 'C:/work/alpha']: 'docs' } });
+  await flush();
+  assert.equal(t.FU.mode(), 'files');
+  assert.ok(t.shell.body.classList.contains('sf-files-mode'));
+  assert.equal(t.shell.body.querySelector('#filesPane').hidden, false);
+  assert.ok(rows(t).length > 0, 'the Files tree shows');
+  assert.equal(t.shell.body.querySelector('.sf-mode-files').getAttribute('aria-pressed'), 'true');
+  t.FU.setMode('chats');
+  assert.equal(t.shell.window.localStorage.getItem('aib-sidebar-mode'), 'chats');
+  // anything else unknown: Chats
+  const u = setup({ store: { 'aib-sidebar-mode': 'outputs' } });
+  assert.equal(u.FU.mode(), 'chats');
+  assert.equal(u.shell.body.classList.contains('sf-files-mode'), false);
+  assert.equal(u.shell.body.querySelector('#filesPane').hidden, true);
+  assert.equal(u.shell.body.querySelector('.sf-mode-chats').getAttribute('aria-pressed'), 'true');
+});
+
+test('Files: aib-docs expands to one row per doc (title, page count, badge, no caret) and "+ New doc" last; the project\'s docs/ stays plain files', async () => {
+  const docs = [plan(), Object.assign(plan(), { name: 'onboarding', title: 'Onboarding', dir: 'aib-docs/onboarding', owned: ['aib-docs/onboarding/doc.aibdoc', 'aib-docs/onboarding/01-start.md'], pages: 1, chat: 'codex:z' })];
+  // as the server sorts it: folders first, then files
+  const listing = Object.assign({}, LISTING, {
+    'aib-docs': [entry('aib-docs/onboarding', { dir: true }), entry('aib-docs/release-plan', { dir: true, changed: 1 }), entry('aib-docs/README.md'), entry('aib-docs/stray.txt')],
+  });
+  const t = setup({ docs, listing });
+  t.FU.setMode('files');
+  await flush();
+  const folder = rowOf(t, 'aib-docs');
+  assert.equal(folder.dataset.kind, 'dir');
+  assert.equal(folder.querySelector('.fx-caret').textContent, '\u25b8', 'a closed folder caret');
+  assert.ok(!rows(t).some((r) => r.dataset.path.startsWith('aib-docs/')), 'closed: nothing inside shows');
+  folder.click();
+  await flush();
+  assert.equal(rowOf(t, 'aib-docs').getAttribute('aria-expanded'), 'true');
+  const inside = rows(t).filter((r) => r.dataset.path.startsWith('aib-docs/'));
+  assert.deepEqual(inside.map((r) => [r.dataset.kind, r.dataset.path]), [
+    ['doc', 'aib-docs/onboarding'],
+    ['doc', 'aib-docs/release-plan'],
+    ['file', 'aib-docs/README.md'],
+    ['file', 'aib-docs/stray.txt'],
+    ['newdoc', 'aib-docs/+new-doc'],
+  ]);
+  const rp = docRowOf(t, 'release-plan');
+  assert.equal(rp.querySelector('.fx-name').textContent, 'Release plan', 'the title, not the folder name');
+  assert.equal(rp.querySelector('.fx-docpages').textContent, '2 pages');
+  assert.equal(rp.querySelector('.fx-caret').textContent, '', 'no caret');
+  assert.ok(rp.querySelector('.fx-docico'), 'the page icon');
+  assert.equal(rp.querySelector('.fx-chg').textContent, 'M');
+  assert.equal(docRowOf(t, 'onboarding').querySelector('.fx-docpages').textContent, '1 page');
+  const nd = rowOf(t, 'aib-docs/+new-doc');
+  assert.equal(nd.querySelector('.fx-name').textContent, 'New doc');
+  assert.equal(nd.querySelector('.fx-newdoc-plus').textContent, '+');
+  assert.ok(!rows(t).some((r) => PLAN_OWNED.includes(r.dataset.path) || r.dataset.path === 'aib-docs/onboarding/doc.aibdoc'), 'storage files are never rows');
+  // a click on a doc row never expands it
+  rp.click();
+  await flush();
+  assert.ok(!rows(t).some((r) => r.dataset.path.startsWith('aib-docs/release-plan/')));
+  // collapses like any folder
+  rowOf(t, 'aib-docs').click();
+  await flush();
+  assert.ok(!rows(t).some((r) => r.dataset.path.startsWith('aib-docs/')));
+  // the project's docs/ is ordinary files
+  rowOf(t, 'docs').click();
+  await flush();
+  assert.ok(rowOf(t, 'docs/README.md'), "the project's docs/README.md is a file");
+  assert.equal(rowOf(t, 'docs/notes').dataset.kind, 'dir');
   // the filter never lists a doc's files, and finds the doc by its title
   const filter = t.shell.body.querySelector('.fx-search');
   filter.value = 'risks';
@@ -381,33 +450,12 @@ test('Files: aib-docs is one row "1 doc ›" that switches to the Docs tab; the 
   assert.equal(rows(t)[0].dataset.kind, 'doc');
   const s = await t.FU.search('md');
   assert.deepEqual(s.matches.map((m) => m.path), ['docs/README.md']);
-  filter.value = '';
-  filter.dispatch('input');
-  await flush();
-  rowOf(t, 'aib-docs').click();
-  await flush();
-  assert.equal(t.FU.mode(), 'docs');
-  assert.ok(t.shell.body.classList.contains('sf-docs-mode'));
 });
 
-test('the Docs tab: + New doc first, one row per doc (title, "this chat", line, badge); a click opens a preview tab, a double-click keeps it', async () => {
+test('Files: a doc row opens a preview tab on one click and keeps it on a double-click; Enter keeps it', async () => {
   const t = setup();
-  await openDocsTab(t);
-  const pane = t.shell.body.querySelector('#docsPane');
-  assert.equal(pane.hidden, false);
-  assert.equal(t.shell.body.querySelector('#filesPane').hidden, true);
-  assert.equal(t.shell.body.querySelector('.sf-mode-docs').getAttribute('aria-pressed'), 'true');
-  assert.equal(t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc').querySelector('.fx-name').textContent, 'New doc');
-  const row = docsRowOf(t, 'release-plan');
-  assert.equal(row.querySelector('.dt-title').textContent, 'Release plan');
-  assert.equal(row.querySelector('.dt-tag').textContent, 'this chat');
-  assert.match(row.querySelector('.dt-line-t').textContent, /^2 pages \u00b7 edited .* by you$/);
-  assert.equal(row.querySelector('.fx-chg').textContent, 'M');
-  assert.equal(t.shell.body.querySelector('.dt-foot-t').textContent, 'Saved in aib-docs/, committed with the project');
-  const others = t.shell.body.querySelector('.dt-foot-link');
-  assert.equal(others.hidden, false);
-  assert.equal(others.textContent, '1 other file \u00b7 Show in Files');
-  row.click();
+  await openDocsFolder(t);
+  docRowOf(t, 'release-plan').click();
   await flush();
   let tab = t.FU._state().tabs.tabs[0];
   assert.equal(tab.kind, 'doc');
@@ -416,11 +464,15 @@ test('the Docs tab: + New doc first, one row per doc (title, "this chat", line, 
   const q = query(rec.frame.src);
   assert.ok(rec.frame.src.startsWith('/doc.html?'));
   assert.deepEqual([q.chat, q.name, q.preview, q.where], ['claude:a1', 'release-plan', '1', 'tab']);
-  docsRowOf(t, 'release-plan').dispatch('dblclick');
+  docRowOf(t, 'release-plan').dispatch('dblclick');
   await flush();
   tab = t.FU._state().tabs.tabs[0];
   assert.equal(tab.preview, false);
   assert.equal(frames(t, 'main').length, 1, 'the same frame: no reload');
+  // a file click after it does not replace the kept doc
+  rowOf(t, 'aib-docs/stray.txt').click();
+  await flush();
+  assert.ok(t.FU._state().tabs.tabs.some((x) => x.kind === 'doc' && !x.preview));
   // open in chat B: the frame names chat B for the project, and nothing links the doc to it
   t.W.sync(t.list, t.list[1]);
   t.FU.sync(t.list[1]);
@@ -429,46 +481,59 @@ test('the Docs tab: + New doc first, one row per doc (title, "this chat", line, 
   const b = frames(t, 'main').find((r) => r.tab.doc.name === 'onboarding');
   assert.equal(query(b.frame.src).chat, 'claude:a2');
   assert.equal(t.posts.filter(([p]) => p === 'docs/link').length, 0, 'opening never links');
-  // "1 other file · Show in Files": Files, aib-docs opened on the stray file
-  t.W.sync(t.list, t.list[0]);
-  t.FU.sync(t.list[0]);
-  await openDocsTab(t);
-  t.shell.body.querySelector('.dt-foot-link').click();
-  await flush();
-  assert.equal(t.FU.mode(), 'files');
-  assert.ok(rows(t).some((r) => r.dataset.path === 'aib-docs/stray.txt'));
-  assert.ok(!rows(t).some((r) => r.dataset.path === 'aib-docs/release-plan'), 'the doc is still no row in Files');
 });
 
-test('the Docs tab: the live line while an agent writes; empty state; the mode is remembered per project', async () => {
+test('Files: a doc an agent is writing shows a live dot on its row (what it writes in the tooltip); the change badge stays', async () => {
   const docs = [Object.assign(plan(), { writing: [{ chat: 'claude:a1', name: 'Claude Code', page: 'Overview', section: 'Risks' }] })];
   const t = setup({ docs });
-  await openDocsTab(t);
-  const row = docsRowOf(t, 'release-plan');
-  assert.ok(row.classList.contains('live'));
-  assert.ok(row.querySelector('.dt-dot'), 'the pulsing dot');
-  assert.equal(row.querySelector('.dt-line-t').textContent, 'Claude Code is writing Risks');
-  assert.equal(t.shell.window.localStorage.getItem('aib-sidebar-mode|' + t.W.currentProject()), 'docs');
-  const e = setup({ docs: [], others: [] });
-  await openDocsTab(e);
-  const box = e.shell.body.querySelector('.dt-empty');
-  assert.ok(box);
-  assert.match(box.querySelector('b').textContent, /^No docs in .+ yet$/);
-  assert.match(box.textContent, /saved in aib-docs\/ and committed with the project/);
-  assert.match(box.textContent, /Press \+ New doc, or type \/doc release plan in a chat\./);
-  assert.deepEqual(box.querySelectorAll('code').map((c) => c.textContent), ['aib-docs/', '/doc release plan'], 'folder and command as code');
-  assert.deepEqual(box.querySelectorAll('i').map((c) => c.textContent), ['+ New doc'], 'the button name in italics');
-  // the name is the selected project's, not the open chat's project
-  e.W.currentProjectName = () => 'beta';
-  e.FU.paint();
-  assert.equal(e.shell.body.querySelector('.dt-empty').querySelector('b').textContent, 'No docs in beta yet');
-  assert.equal(e.shell.body.querySelector('.dt-foot-link').hidden, true, 'no other files: no link');
+  await openDocsFolder(t);
+  const row = docRowOf(t, 'release-plan');
+  const dot = row.querySelector('.fx-docdot');
+  assert.ok(dot, 'the pulsing dot');
+  assert.equal(dot.getAttribute('aria-label'), 'Claude Code is writing Risks');
+  assert.match(row.title, /Claude Code is writing Risks/);
+  assert.equal(row.querySelector('.fx-chg').textContent, 'M');
+  // nobody writing: no dot
+  const q = setup();
+  await openDocsFolder(q);
+  assert.equal(docRowOf(q, 'release-plan').querySelector('.fx-docdot'), null);
 });
 
-test('the Docs tab: "+ New doc" turns into a name field reading "Untitled doc"; Enter makes the doc and opens it; a taken name says so', async () => {
+test('Files with no doc yet: aib-docs shows as an empty folder holding only "+ New doc"; it is never listed from disk; the first doc makes it real', async () => {
+  const listing = { '': [entry('docs', { dir: true }), entry('src', { dir: true }), entry('README.md')], docs: LISTING.docs, src: LISTING.src };
+  const t = setup({ docs: [], listing });
+  t.FU.setMode('files');
+  await flush();
+  const folder = rowOf(t, 'aib-docs');
+  assert.ok(folder, 'the empty aib-docs folder row');
+  assert.equal(folder.dataset.kind, 'dir');
+  assert.deepEqual(rows(t).map((r) => r.dataset.path).slice(0, 3), ['aib-docs', 'docs', 'src']);
+  folder.click();
+  await flush();
+  assert.ok(!t.calls.some((c) => c.path === '/api/live/files/list' && c.q.dir === 'aib-docs'), 'not on disk: never listed');
+  assert.ok(!t.shell.body.querySelector('.fx-note-row'), 'no Loading or error row');
+  assert.deepEqual(rows(t).filter((r) => r.dataset.path.startsWith('aib-docs/')).map((r) => r.dataset.kind), ['newdoc']);
+  rowOf(t, 'aib-docs/+new-doc').click();
+  await flush();
+  const input = t.shell.body.querySelector('.fx-newdoc-in');
+  assert.ok(input);
+  // the first doc: aib-docs appears on disk
+  listing[''] = [entry('aib-docs', { dir: true })].concat(listing['']);
+  listing['aib-docs'] = [entry('aib-docs/README.md'), entry('aib-docs/launch-notes', { dir: true })];
+  input.value = 'Launch notes';
+  input.dispatch('input');
+  input.dispatch('keydown', { key: 'Enter' });
+  await flush();
+  await flush();
+  assert.equal(rowOf(t, 'aib-docs/launch-notes').dataset.kind, 'doc', 'the new doc is a row inside aib-docs');
+  assert.equal(rows(t).filter((r) => r.dataset.path === 'aib-docs').length, 1, 'one aib-docs folder');
+  assert.equal(rows(t).filter((r) => r.dataset.path.startsWith('aib-docs/')).pop().dataset.kind, 'newdoc', '"+ New doc" stays last');
+});
+
+test('Files: "+ New doc" turns into a name field reading "Untitled doc"; Enter makes the doc and opens it; a taken name says so', async () => {
   const t = setup({ taken: 'Release plan' });
-  await openDocsTab(t);
-  t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc').click();
+  await openDocsFolder(t);
+  rowOf(t, 'aib-docs/+new-doc').click();
   await flush();
   let input = t.shell.body.querySelector('.fx-newdoc-in');
   assert.ok(input);
@@ -489,15 +554,25 @@ test('the Docs tab: "+ New doc" turns into a name field reading "Untitled doc"; 
   assert.equal(tab.doc.name, 'launch-notes');
   assert.equal(tab.preview, false);
   assert.equal(t.FU._state().newDoc, null);
-  assert.ok(docsRowOf(t, 'launch-notes'), 'the new doc is listed');
-  // right-click on a folder in Files offers New doc: the Docs tab shows the name field
-  await openDocsFolder(t);
+  // right-click on a folder in Files offers New doc: aib-docs opens with the name field as its last row
+  rowOf(t, 'aib-docs').click(); // close it
+  await flush();
+  assert.ok(!rowOf(t, 'aib-docs/+new-doc'));
   rowOf(t, 'docs').dispatch('contextmenu', { clientX: 10, clientY: 10 });
   const item = t.shell.body.querySelectorAll('.fx-menu-it').find((b) => b.textContent === 'New doc');
   assert.ok(item);
   item.click();
   await flush();
-  assert.equal(t.FU.mode(), 'docs');
+  assert.equal(t.FU.mode(), 'files');
+  const field = t.shell.body.querySelector('.fx-newdoc-in');
+  assert.ok(field);
+  assert.equal(field.parentNode.dataset.path, 'aib-docs/+new-doc');
+  // Ctrl+K's New doc (the same entry point) from Chats: Files shows with the field
+  field.dispatch('keydown', { key: 'Escape' });
+  t.FU.setMode('chats');
+  await t.FU.startNewDoc();
+  await flush();
+  assert.equal(t.FU.mode(), 'files');
   assert.ok(t.shell.body.querySelector('.fx-newdoc-in'));
 });
 
@@ -550,7 +625,7 @@ test('doc_create adds a doc-created card whose Open opens the doc; an already op
   assert.notEqual(out, line, 'wrapped with a card');
   const card = out.querySelector('.doc-card');
   assert.equal(card.querySelector('.art-card-title').textContent, 'Release plan');
-  assert.equal(card.querySelector('.art-card-sub').textContent, 'Doc \u00b7 2 pages \u00b7 in the Docs tab, you and agents edit it');
+  assert.equal(card.querySelector('.art-card-sub').textContent, 'Doc \u00b7 2 pages \u00b7 in Files under aib-docs, you and agents edit it');
   assert.equal(card.querySelector('.art-btn').textContent, 'Open doc');
   assert.ok(card.querySelector('.doc-card-ic'), 'the solid square doc icon');
   card.querySelector('.art-btn').click();
@@ -622,7 +697,7 @@ test('/doc with a page: an existing page opens; an unknown page is made; a new d
   assert.deepEqual(JSON.parse(JSON.stringify(await t.DL.runCommand('/doc', chat))), { error: 'Name the doc: /doc release plan' });
 });
 
-test('doc frames: show-in-files selects the doc in the Docs tab, open from beside moves it to a tab, duplicate and trash list the docs again', async () => {
+test('doc frames: show-in-files selects the doc row in Files, open from beside moves it to a tab, duplicate and trash list the docs again', async () => {
   const t = setup();
   await openDocsFolder(t);
   t.FU.openDoc(t.FU.currentScope(), { name: 'release-plan', title: 'Release plan', where: 'beside' });
@@ -631,11 +706,15 @@ test('doc frames: show-in-files selects the doc in the Docs tab, open from besid
   assert.ok(rec, 'a doc beside the chat');
   rec.frame.contentWindow = { postMessage() {} };
   const send = (data) => t.FU.onFrameMessage({ origin: 'http://127.0.0.1:9', source: rec.frame.contentWindow, data });
+  rowOf(t, 'aib-docs').click(); // closed
+  t.FU.setMode('chats');
+  await flush();
   send({ type: 'aib-doc:show-in-files', dir: 'aib-docs/release-plan' });
   await flush();
-  assert.equal(t.FU.mode(), 'docs', 'the Docs tab shows');
+  t.shell.window.runTimers();
+  assert.equal(t.FU.mode(), 'files', 'Files shows');
   assert.equal(t.FU._state().sel, 'aib-docs/release-plan');
-  assert.ok(docsRowOf(t, 'release-plan').classList.contains('sel'), 'the doc row is selected');
+  assert.ok(docRowOf(t, 'release-plan').classList.contains('sel'), 'aib-docs opened, the doc row selected');
   const before = t.calls.filter((c) => c.path === '/api/live/docs/list').length;
   send({ type: 'aib-doc:docs-changed' });
   await flush();
@@ -682,8 +761,8 @@ test('/doc in the composer: the doc list, then after ">" its pages; Tab complete
 
 test('doc frames talk by the contract: pin keeps the preview, title names the tab, closed closes it, pick-chat answers', async () => {
   const t = setup();
-  await openDocsTab(t);
-  docsRowOf(t, 'release-plan').click();
+  await openDocsFolder(t);
+  docRowOf(t, 'release-plan').click();
   await flush();
   const [rec] = frames(t, 'main');
   const got = [];
@@ -711,10 +790,10 @@ test('doc frames talk by the contract: pin keeps the preview, title names the ta
 
 test('the "+ New doc" name field survives a repaint: still there, same words, focused', async () => {
   const t = setup({});
-  await openDocsTab(t);
-  t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc').click();
+  await openDocsFolder(t);
+  rowOf(t, 'aib-docs/+new-doc').click();
   await flush();
-  const first = t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in');
+  const first = t.shell.body.querySelector('.fx-newdoc-in');
   assert.ok(first);
   first.focus();
   first.value = 'Launch notes';
@@ -722,7 +801,7 @@ test('the "+ New doc" name field survives a repaint: still there, same words, fo
   t.FU.paint(); // a repaint builds a new field
   await flush();
   t.shell.window.runTimers(); // the focus goes to the new field on the next tick (nothing else repaints in between)
-  const again = t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in');
+  const again = t.shell.body.querySelector('.fx-newdoc-in');
   assert.ok(again, 'the field is still there');
   assert.notEqual(again, first, 'a new node: the old one was replaced');
   assert.equal(again.value, 'Launch notes');
@@ -731,17 +810,17 @@ test('the "+ New doc" name field survives a repaint: still there, same words, fo
   first.dispatch('blur'); // the replaced field's blur handler must not cancel the editing
   t.shell.window.runTimers();
   await flush();
-  assert.ok(t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in'), 'not cancelled');
+  assert.ok(t.shell.body.querySelector('.fx-newdoc-in'), 'not cancelled');
   assert.ok(t.FU._state().newDoc);
 });
 
 test('a doc named by its slug shows its title everywhere, the slug only when there is no title', () => {
   const slugDoc = Object.assign(plan(), { name: 'checkout-rounding-release', title: 'Checkout rounding fix: release plan', dir: 'aib-docs/checkout-rounding-release' });
-  const list = FS.docsList([slugDoc, Object.assign(plan(), { name: 'old-notes', title: '', dir: 'aib-docs/old-notes' })], null, [], 1e12);
-  assert.deepEqual(list.map((r) => r.title).sort(), ['Checkout rounding fix: release plan', 'old-notes']);
+  const oldNotes = Object.assign(plan(), { name: 'old-notes', title: '', dir: 'aib-docs/old-notes', owned: [] });
+  const cache = { '': [entry('aib-docs', { dir: true })], 'aib-docs': [entry('aib-docs/checkout-rounding-release', { dir: true }), entry('aib-docs/old-notes', { dir: true })] };
+  const docRows = FS.treeRows(cache, new Set(['aib-docs']), { docs: FS.docIndex([slugDoc, oldNotes]) }).filter((r) => r.kind === 'doc');
+  assert.deepEqual(docRows.map((r) => r.name), ['Checkout rounding fix: release plan', 'old-notes'], 'the Files row shows the title');
   assert.equal(FS.docIndex([slugDoc]).byDir.size, 1);
-  const fld = FS.treeRows({ '': [entry('aib-docs', { dir: true })] }, new Set(), { docs: FS.docIndex([slugDoc]) })[0];
-  assert.deepEqual(fld.titles, ['Checkout rounding fix: release plan'], 'the count tooltip lists titles');
   // a doc tool row whose doc is not in the list yet: the title the tool result carries, not the capitalised slug
   const create = { tool: 'doc_create', doc: 'checkout-rounding-release', input: {}, result: { docTitle: 'Checkout rounding fix: release plan', pages: [{ id: 'p1', title: 'Overview' }] } };
   assert.equal(L.toolText(create, []), 'Created Checkout rounding fix: release plan · 1 page');

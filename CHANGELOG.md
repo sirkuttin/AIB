@@ -2,9 +2,10 @@
 
 ## 0.1.0-beta.8 (beta)
 
-- Local docs: a Docs tab (Chats | Docs | Files) lists the project's docs. A doc is a folder in `aib-docs/` holding
-  `doc.aibdoc` (the full doc) and a Markdown copy of each page, so the docs travel with the project and its git history. A
-  Files row opens each doc, "New doc" creates one, and `/doc` and Ctrl+K open or make one from a chat.
+- Local docs: the project's docs live in the `aib-docs/` folder, shown in Files. Open the folder: each doc is one row with
+  its page count, and "+ New doc" is the last row. A doc is a folder in `aib-docs/` holding `doc.aibdoc` (the full doc) and
+  a Markdown copy of each page, so the docs travel with the project and its git history; Files shows the doc, not those
+  files. `/doc` and Ctrl+K open or make one from a chat.
 - Docs co-editing: you and the agents type in the same doc at once. An agent's edit never overwrites text you wrote or are
   typing; a note that would collide is refused and the agent is told. Live presence shows who is in the doc and where, and
   each agent's edit is claimed to its chat so Undo only removes that chat's own changes.
@@ -30,8 +31,7 @@
 - File view: "Source | Page" is now "Source | Preview".
 - Docs in worktree chats: a chat working in a git worktree reads and writes docs in the main project's `aib-docs/`, never in
   its own worktree folder, so every chat sees the same docs.
-- Docs show their title, not the folder name, in the Docs tab, the Files row, pickers and chat cards.
-- Hovering the `aib-docs` row in Files lists the titles of the docs inside.
+- Docs show their title, not the folder name, in Files, pickers and chat cards.
 
 ## 0.1.0-beta.7 (beta)
 

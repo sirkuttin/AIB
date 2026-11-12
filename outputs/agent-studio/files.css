@@ -2,7 +2,7 @@
    tab strip, the read-only file view in the middle and beside the chat, and file links in replies. Theme tokens only; text 12 px
    or more, rows 28 px or more, nothing that only shows on hover. */
 
-/* ---- the Chats | Docs | Files switch, under Find ---- */
+/* ---- the Chats | Files switch, under Find ---- */
 .sf-mode {
   flex: none;
   display: flex;
@@ -51,182 +51,6 @@ body.sf-files-mode #discoverBox {
 }
 body:not(.sf-files-mode) #filesPane {
   display: none;
-}
-/* Docs mode hides the chat list too, and shows the Docs pane instead. */
-body.sf-docs-mode #connections,
-body.sf-docs-mode #archivedBox,
-body.sf-docs-mode #discoverBox {
-  display: none;
-}
-body:not(.sf-docs-mode) #docsPane {
-  display: none;
-}
-/* the three words fit the narrowest sidebar: smaller gaps, no wrapping */
-.sf-mode button {
-  min-width: 0;
-  white-space: nowrap;
-}
-
-/* ---- the Docs tab: + New doc, one flat list (most recently edited first), the empty text, the footer ---- */
-.sf-docs {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.sf-docs[hidden] {
-  display: none;
-}
-.dt-newbox {
-  flex: none;
-}
-.dt-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.dt-row {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-height: 40px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  cursor: default;
-}
-.dt-row:hover {
-  background: var(--bg-card-hover);
-}
-.dt-row.sel {
-  background: var(--accent-wash);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.dt-row:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
-}
-.dt-top {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.dt-ic {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-}
-.dt-title {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.dt-tag {
-  flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--accent-line);
-  border-radius: 8px;
-  color: var(--text-3);
-  font-size: 11px;
-  line-height: 16px;
-}
-.dt-top .fx-chg {
-  margin-left: auto;
-}
-.dt-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-left: 20px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.dt-line-t {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dt-row.live .dt-line {
-  color: var(--link);
-}
-.dt-dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: dtpulse 1.4s ease-in-out infinite;
-}
-@keyframes dtpulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dt-dot {
-    animation: none;
-  }
-}
-.dt-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 6px;
-  padding: 16px 10px 4px;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.dt-empty b {
-  color: var(--text);
-  font-size: 13px;
-}
-.dt-empty code {
-  font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 11.5px;
-  color: var(--text);
-}
-.dt-empty-ic {
-  width: 28px;
-  height: 28px;
-  color: var(--link);
-}
-.dt-foot {
-  flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  padding: 6px 8px 2px;
-  border-top: 1px solid var(--line-card);
-  color: var(--muted);
-  font-size: 11px;
-}
-.dt-foot-link {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--link);
-  font-size: 11px;
-}
-.dt-foot-link[hidden] {
-  display: none;
-}
-.fx-docsfolder .fx-docico {
-  color: var(--accent);
-}
-.fx-docsfolder .fx-docpages {
-  margin-left: auto;
 }
 
 /* ---- the Files pane ---- */
@@ -834,6 +658,26 @@ a.fx-path code {
   flex: none;
   color: var(--muted);
   font-size: 11px;
+}
+/* an agent writing the doc right now */
+.fx-docdot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 6px 0 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: fxdocpulse 1.4s ease-in-out infinite;
+}
+@keyframes fxdocpulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-docdot {
+    animation: none;
+  }
 }
 .fx-newdoc {
   color: var(--link);
