@@ -295,6 +295,7 @@ Deno.test('a "doc" means an AIB doc: the MCP instructions, doc_create and publis
 
 Deno.test('the ACP system prompt says the same about docs as the MCP instructions', () => {
   assert(ARTIFACT_PROMPT.includes(DOCS_RULE));
+  assert(ARTIFACT_PROMPT.includes('mcp__studio_artifact__doc_create'), 'names the full tool, for agents whose tools load late');
   assert(!ARTIFACT_PROMPT.includes('Markdown document'), 'a Markdown document is a doc now, not something to publish');
 });
 
@@ -738,6 +739,18 @@ Deno.test("artifact prompt: sent when Studio's own tool is given and the agent a
   assertEquals((out.systemPrompt as Json).mode, 'append');
   assertEquals(((out.systemPrompt as Json).content as Json[])[0].text, ARTIFACT_PROMPT);
   assert(ARTIFACT_PROMPT.includes('studio_artifact'));
+});
+
+Deno.test('artifact prompt: an empty systemPrompt capability counts (codex-acp advertises `systemPrompt: {}`)', () => {
+  const own = [{ name: 'studio_artifact', ...artifactToolCommand() }];
+  const codex = { agentCapabilities: { sessionCapabilities: { resume: {}, systemPrompt: {} } } };
+  const out = connection(codex).artifactPrompt(own) as Json;
+  assertEquals((out.systemPrompt as Json).mode, 'append');
+  assertEquals(((out.systemPrompt as Json).content as Json[])[0].text, ARTIFACT_PROMPT);
+  for (const absent of [null, false, true, 'yes']) { // not a capability object
+    const caps = { agentCapabilities: { sessionCapabilities: { systemPrompt: absent } } };
+    assertEquals(connection(caps).artifactPrompt(own), {}, JSON.stringify(absent));
+  }
 });
 
 Deno.test('artifact prompt: not sent otherwise', () => {
