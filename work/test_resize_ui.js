@@ -80,11 +80,12 @@ test('layout defaults, user widths, and a hidden panel', () => {
     activity: 220,
   });
 });
-test('a doc or artifact showing widens the column to 600, or to your viewer width; the chat keeps 420', () => {
+test('a doc or artifact showing widens the column to 920 (or your viewer width), never narrower than it was; the chat keeps 420', () => {
   const v = (o) => R.computeLayout({ vw: 1920, activity: 280, side: 240, sideOn: true, actOn: true, ...o }).activity;
-  assert.equal(v({ viewer: true }), 600);
+  assert.equal(v({ viewer: true }), 920);
   assert.equal(v({ viewer: true, viewerW: 700 }), 700);
-  assert.equal(v({ viewer: true, activity: 400 }), 600, 'the normal width is kept apart');
+  assert.equal(v({ viewer: true, activity: 400 }), 920, 'the normal width is kept apart');
+  assert.equal(v({ viewer: true, activity: 1100 }), 1100, 'never narrower than the column you already had');
   assert.equal(v({ viewer: false, viewerW: 700 }), 280, 'back to the normal width when the viewer closes');
   const narrow = R.computeLayout({ vw: 1100, activity: 280, side: 240, sideOn: true, actOn: true, viewer: true });
   assert.ok(1100 - narrow.side - narrow.activity >= 420, JSON.stringify(narrow));

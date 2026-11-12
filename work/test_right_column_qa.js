@@ -311,7 +311,7 @@ test('Edit helpers: which word button, and the block at a scroll fraction', () =
   assert.equal(A.blockAt([], 0.4), '');
 });
 
-/* Right column: 600 px while a doc or artifact shows (beta.8). */
+/* Right column: 920 px (or wider if it already was) while a doc or artifact shows (beta.8). */
 const RZ = require(path.join(APP, 'resize-ui.js'));
 function column(width) {
   const shell = page({ width });
@@ -337,31 +337,31 @@ function column(width) {
   };
   return { shell, w, act, viewing, props, handle: () => shell.body.querySelector('.rs-activity') };
 }
-test('right column: 600 px on doc or artifact open, back to your width on close or tab switch', () => {
-  const c = column(1600);
+test('right column: 920 px on doc or artifact open, back to your width on close or tab switch', () => {
+  const c = column(1920);
   assert.equal(c.act(), 280);
   c.viewing(true);
-  assert.equal(c.act(), 600);
+  assert.equal(c.act(), 920);
   c.viewing(false);
   assert.equal(c.act(), 280);
 });
 test('right column: a keyboard resize while viewing is remembered as the viewer width, normal width stays apart', () => {
-  const c = column(1600);
+  const c = column(1920);
   c.viewing(true);
   const h = c.handle();
   for (const f of h.listeners.keydown || []) f({ key: 'ArrowLeft', shiftKey: true, preventDefault() {} });
-  assert.equal(c.act(), 664);
+  assert.equal(c.act(), 984);
   c.viewing(false);
   assert.equal(c.act(), 280, 'the normal width is untouched');
   c.viewing(true);
-  assert.equal(c.act(), 664, 'the viewer width is remembered');
-  assert.equal(JSON.parse(c.w.localStorage.getItem('studio-layout-v1:>=1400'.replace('>=1400', '<1800'))).viewer, 664);
+  assert.equal(c.act(), 984, 'the viewer width is remembered');
+  assert.equal(JSON.parse(c.w.localStorage.getItem('studio-layout-v1:>=1800')).viewer, 984);
 });
 test('right column: on a narrow window the chat keeps its 420 px minimum', () => {
   const c = column(1150);
   c.viewing(true);
   assert.ok(1150 - 200 - c.act() >= 420 || 1150 - parseInt(c.props['--side-w'], 10) - c.act() >= 420, String(c.act()));
-  assert.ok(c.act() >= 220 && c.act() < 600);
+  assert.ok(c.act() >= 220 && c.act() < 920);
 });
 test('artifacts viewer sets body.ar-viewing only while it is visible and showing something', () => {
   const { UI, shell } = viewer();

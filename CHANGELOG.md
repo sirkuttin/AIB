@@ -92,7 +92,7 @@
 - Subagent cards show the helper's own model (e.g. Sonnet 5.5) and its real run time. A helper is no longer marked
   "Interrupted" when you interrupt the main reply (Claude Code keeps background helpers running); one the agent really
   stopped says "Stopped", one that failed says "Failed". A helper's settings no longer change the chat's model and mode chips.
-- The right column widens to 600 px while a doc or artifact shows in the Artifacts tab and goes back to your width when it
+- The right column widens to 920 px (where a doc shows its page list), never narrower than it already was, while a doc or artifact shows in the Artifacts tab, and goes back to your width when it
   closes or you switch tabs; a drag while viewing is remembered as the viewer width.
 - Limits chip after Ctx: subscription usage per agent account, percent used ("5h 42% · wk 18%", "wk 26%"), with reset times
   and freshness on hover, the warning colour from 85% and red when blocked. Claude Code from the limits it already sends,

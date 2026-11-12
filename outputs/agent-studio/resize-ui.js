@@ -4,7 +4,7 @@
    or Enter resets, arrow keys / Home / End on focused handles, Ctrl+B (chat list) and Ctrl+Alt+B (Activity). Sizes are kept in
    localStorage per window-width bucket. The pure helpers at the top have node tests; the DOM part starts at init(). */
 (function (root) {
-  const DEF = { side: 240, activity: 280, viewer: 600 },
+  const DEF = { side: 240, activity: 280, viewer: 920 },
     SIDE = { min: 200, max: 480 }, // a wider chat list only takes room from the chat (QA m13)
     ACT = { min: 220, max: Infinity },
     COMPOSER_MIN = 56,
@@ -68,10 +68,10 @@
       aMin = sc(ACT.min, k),
       aMax = sc(ACT.max, k);
     let side = sideOn ? clamp(num(o.side) ? o.side : sc(DEF.side, k), sMin, sMax) : 0;
-    /* A doc or artifact showing in the right column: its own width (default 600), kept apart from the normal one. */
-    const user = o.viewer
-      ? clamp(num(o.viewerW) ? o.viewerW : sc(DEF.viewer, k), aMin, aMax)
-      : clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax);
+    /* A doc or artifact showing in the right column: its own width (default 920, where a doc shows its page list), kept apart
+       from the normal one, and never narrower than the column you already had. */
+    const normal = clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax),
+      user = o.viewer ? Math.max(normal, clamp(num(o.viewerW) ? o.viewerW : sc(DEF.viewer, k), aMin, aMax)) : normal;
     let act = actOn ? user : 0;
     const over = side + act + minChat - vw;
     if (over > 0) {
