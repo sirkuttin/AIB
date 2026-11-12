@@ -333,6 +333,9 @@
     return box;
   }
   const counts = (entries) => ({ done: entries.filter((e) => e.status === 'completed').length, total: entries.length });
+  /* Folds the user opened stay open for the page session, across redraws: keyed by the plan's turn and first appearance. */
+  const OPEN = new Set();
+  const foldKey = (row) => String(row.turn ?? '') + '|' + String(row.time ?? '') + '|' + (row.ctx ? 'c' : '');
   function card(row) {
     const make = (tag, value, cls) => {
       const n = document.createElement(tag);
@@ -346,7 +349,8 @@
     const head = make('div', '', 'bubble-head');
     head.append(make('strong', 'Plan'), make('span', c.done + '/' + c.total + ' done', 'plan-count'));
     const list = make('ul', '', 'plan-list');
-    for (const e of entries) {
+    const firstActive = entries.find((x) => x.status === 'in_progress');
+    const item = (e) => {
       const li = make('li', '', 'plan-item plan-' + e.status),
         mark = make('span', '', 'plan-mark');
       if (e.status === 'completed') mark.textContent = '✓';
@@ -354,9 +358,38 @@
       else mark.className = 'plan-mark plan-pend';
       const label = { completed: 'done', in_progress: 'in progress', pending: 'pending' }[e.status];
       li.append(mark, make('span', label, 'sr-only'), make('span', e.content, 'plan-text'));
-      if (row.running && e.status === 'in_progress' && e === entries.find((x) => x.status === 'in_progress'))
+      if (row.running && e === firstActive)
         li.append(make('span', row.running + (row.running === 1 ? ' running task' : ' running tasks'), 'plan-note'));
-      list.append(li);
+      return li;
+    };
+    /* In progress first, then still to do (the agent's order inside each group), then one folded "N done" line. */
+    for (const e of entries.filter((x) => x.status === 'in_progress')) list.append(item(e));
+    for (const e of entries.filter((x) => x.status === 'pending')) list.append(item(e));
+    const finished = entries.filter((x) => x.status === 'completed');
+    if (finished.length) {
+      const key = foldKey(row),
+        fold = make('li', '', 'plan-done-fold'),
+        btn = make('button', '', 'plan-done-toggle'),
+        sub = make('ul', '', 'plan-done-list');
+      btn.type = 'button';
+      const arrow = make('span', '', 'plan-done-arrow');
+      btn.append(make('span', '✓', 'plan-mark'), make('span', finished.length + ' done', 'plan-done-text'), arrow);
+      for (const e of finished) sub.append(item(e));
+      const sync = () => {
+        const open = OPEN.has(key);
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        arrow.textContent = open ? '▾' : '▸';
+        sub.hidden = !open;
+      };
+      /* A real button: Enter and Space click it. */
+      btn.addEventListener('click', () => {
+        if (OPEN.has(key)) OPEN.delete(key);
+        else OPEN.add(key);
+        sync();
+      });
+      sync();
+      fold.append(btn, sub);
+      list.append(fold);
     }
     /* Like Claude's app: just the checklist, no raw tool-call details. */
     box.append(head, list);
