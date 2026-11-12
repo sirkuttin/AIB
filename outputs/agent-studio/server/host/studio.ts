@@ -23,6 +23,8 @@ import { betaAgent, isBeta } from '../agents/beta_catalog.ts';
 import { resolveBeta } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
+import { UsageLimitsStore } from '../state/usage_limits.ts';
+import { LimitsFeed } from './usage_limits_feed.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
@@ -262,6 +264,8 @@ export class Studio {
   readonly ready: Promise<void>;
   /** The model / mode / effort lists each agent reported (state/agent_options.ts). */
   readonly agentOptions: AgentOptionsCache;
+  /** Subscription usage limits per agent account, for the Limits chip (host/usage_limits_feed.ts). */
+  limits: LimitsFeed;
   /** Running quiet probes by agent|folder, and when each last failed (seconds). */
   readonly #probes = new Map<string, Promise<void>>();
   readonly #probeFailed = new Map<string, number>();
@@ -307,6 +311,7 @@ export class Studio {
     this.readState = stores.readState ?? new ReadState(dir);
     this.settings = stores.settings ?? new SettingsStore(dir);
     this.agentOptions = new AgentOptionsCache(dir);
+    this.limits = new LimitsFeed(new UsageLimitsStore(dir));
     const manager = this.hasStateDir ? new wt.Manager(this.stateDir) : null; // worktree per chat (hidden flag)
     this.worktrees = manager;
     this.ready = (async () => {
@@ -353,6 +358,7 @@ export class Studio {
       }
     }
     if (connection.provider && connection.sessionId) await this.#mark('your_turn', connection);
+    void this.limits.refresh(connection); // Codex / Vibe: at most once a minute per account
   }
 
   async #mark(action: string, connection: Connection): Promise<void> {
@@ -848,6 +854,7 @@ export class Studio {
           }
           if (c.closed) throw new Error('The agent disconnected while opening the conversation');
           this.rememberOptions(c);
+          void this.limits.refresh(c); // chat opened: Codex / Vibe limits (at most once a minute per account)
           if (this.recovery) this.recovery.connectionReady(c);
           this.announce(c, 'ready');
           if (this.liveSync) {
@@ -893,6 +900,7 @@ export class Studio {
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
+    c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     if (this.liveSync) {
       const sync = this.liveSync;
       c.onTurnStart = (conn) => sync.turnStarted(conn);
@@ -1227,7 +1235,8 @@ export class Studio {
     }
     const cursor = Math.trunc(Number(after));
     if (Number.isNaN(cursor)) return Promise.reject(new ValueError(`invalid literal for int() with base 10: ${pyRepr(after)}`));
-    return Promise.resolve(connection.public(cursor));
+    if (cursor === 0) void this.limits.refresh(connection); // a page opened this chat (at most once a minute per account)
+    return Promise.resolve({ ...connection.public(cursor), limits: this.limits.view(connection) });
   }
 
   /** Artifact created / new version: push {"type":"artifact",...} to the page as a normal conversation event (kind 'artifact'). */

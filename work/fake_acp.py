@@ -40,6 +40,7 @@ parser.add_argument('--terminal-env', action='store_true', help="With --beta-aut
 parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; any other prompt gets 'Fixture reply: <text>'")
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
+parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
 args = parser.parse_args()
 if args.fixture_login:
     if args.auth_file:
@@ -548,6 +549,17 @@ for line in sys.stdin:
     elif method == 'session/prompt' and args.subagent and any(b.get('text') == 'delegate' for b in params['prompt']):
         emit({'method': 'session/update', 'params': {'sessionId': SID(), 'update': {'sessionUpdate': 'subagent_update', 'sessionId': 'child-1', 'title': 'Review the fixture', 'description': 'Reads the fixture and reports', 'capabilities': {'cancel': {}}, 'state': {'state': 'running'}}}})
         waiting['turn'] = key
+    elif method == '_account/read' and args.limits:
+        result(key, {'status': 'ready', 'plan': {'kind': 'mistral_code', 'name': 'pro', 'title': 'Pro'},
+                     'budget': {'usagePercentage': 37.5, 'resetAt': '2099-12-01T00:00:00Z', 'paygEnabled': False}})
+    elif method == 'session/prompt' and args.limits and any(b.get('type') == 'text' and b.get('text', '').startswith(('ratelimit:', 'quota:')) for b in params['prompt']):
+        said = next(b['text'] for b in params['prompt'] if b.get('type') == 'text' and b.get('text', '').startswith(('ratelimit:', 'quota:')))
+        if said.startswith('quota:'):
+            emit({'id': key, 'error': {'code': -32603, 'message': 'Weekly credits used up', 'data': {'details': 'quota', 'subscriptionQuota': {'memberType': 'plus', 'resetAt': int(said[6:])}}}})
+        else:
+            update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Limits sent'}})
+            update({'sessionUpdate': 'usage_update', 'used': 1000, 'size': 200000, '_meta': {'_claude/rateLimit': json.loads(said[10:]), '_claude/model': 'claude-opus-5-5'}})
+            result(key, {'stopReason': 'end_turn'})
     elif method == 'session/prompt' and args.held_turn:
         held_turn(key, next((b.get('text', '') for b in params['prompt'] if b.get('type') == 'text' and not b.get('text', '').startswith('<studio-context>')), ''))
     elif key == 'helper-perm' and 'helper-perm' in held:

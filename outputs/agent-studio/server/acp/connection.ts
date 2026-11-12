@@ -665,6 +665,11 @@ export class Connection {
   sessionLease: SessionLease | null = null;
   /** Studio hook: the agent finished a turn, so it is the user's turn. */
   onTurnEnd: Hook | null = null;
+  /**
+   * Studio hook: the agent sent subscription limit data on its own (server/host/usage_limits_feed.ts). kind 'claude-rate-limit'
+   * (usage_update._meta._claude/rateLimit) or 'qwen-quota' (a prompt error's data.subscriptionQuota); at = when, in seconds.
+   */
+  onLimits: ((connection: Connection, kind: string, raw: unknown, at: number) => void) | null = null;
   /** Number of the latest prompt() accepted. */
   promptSeq = 0;
   /** cancel() cancels every prompt up to this number (one still before its send is dropped; later ones go through). */
@@ -1701,11 +1706,14 @@ export class Connection {
   static #result(result: Json): unknown {
     if (Object.hasOwn(result, 'error')) {
       const error = result.error;
-      throw new RuntimeError(
+      const failure = new RuntimeError(
         pyStr(
           isDict(error) && Object.hasOwn(error, 'message') ? error.message : error,
         ),
       );
+      // The agent's code and data ride along (Qwen's subscriptionQuota, a -32601 for an unknown request); the message is unchanged.
+      if (isDict(error)) Object.assign(failure, { code: error.code ?? null, data: error.data ?? null });
+      throw failure;
     }
     return Object.hasOwn(result, 'result') ? result.result : {};
   }
@@ -1930,6 +1938,10 @@ export class Connection {
       }
       if (this.sessionId === null || sid === null || sid === this.sessionId) {
         applyUpdate(this.breadth, update, this.#now());
+        const meta = get(update, 'sessionUpdate') === 'usage_update' ? get(update, '_meta') : null;
+        if (isDict(meta) && isDict(meta['_claude/rateLimit'])) {
+          this.onLimits?.(this, 'claude-rate-limit', meta['_claude/rateLimit'], this.#now());
+        }
       }
       if (get(update, 'sessionUpdate') === 'config_option_update') {
         this.settings.configOptions = get(update, 'configOptions', []);
@@ -2647,6 +2659,10 @@ export class Connection {
       }
     } catch (error) {
       log.exception(error, 'Prompt turn failed');
+      const data = isDict(error) || error instanceof Error ? (error as { data?: unknown }).data : null;
+      if (isDict(data) && isDict(data.subscriptionQuota)) {
+        this.onLimits?.(this, 'qwen-quota', data.subscriptionQuota, this.#now()); // Qwen: the cap is reached
+      }
       this.error = errorText(error);
       this.#queueNoteOutcome(null, true);
       this.event('error', { message: errorText(error) });

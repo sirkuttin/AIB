@@ -1143,6 +1143,7 @@
         failures: connected ? snapshot.changeFailures : null,
         commands: snapshot?.breadth?.commands,
         usage: connected ? snapshot.breadth?.usage : null,
+        limits: connected ? snapshot.limits : null,
         branch: gone ? '' : window.AgentHeaderUI?.branchOf(selected.cwd, renderHeader) || '',
         cwd: selected.cwd,
         agent: nameOf(selected.provider),
