@@ -104,13 +104,18 @@ export function folderKinds(paths: unknown, parents = false): Record<string, Fol
   return out;
 }
 
-/** [main checkout, branch] of a worktree folder (any app's), or null. */
+/** A Claude Code worktree folder (<repo>/.claude/worktrees/<name>[/...]) names its repository, even once the folder is gone. */
+const CLAUDE_WORKTREE = /^(.+?)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+(?:[\\/].*)?$/i;
+
+/** [main checkout, branch] of a worktree folder (any app's), or null. Network and device paths (UNC, \wsl$) are never read. */
 export function worktreeParent(path: string): [string, string] | null {
+  if (!isStr(path) || isNetworkPath(path)) return null;
   try {
     const found = projectOfWorktree(path);
     if (found && found.project && !isNetworkPath(found.project)) return [found.project, found.branch];
   } catch { /* unreadable: no parent */ }
-  return null;
+  const named = path.match(CLAUDE_WORKTREE); // gone, or not a git worktree any more: its place still names the repository
+  return named ? [named[1], ''] : null;
 }
 
 /** Hook for a future allow-list of places projects may be created in. Throw FolderError to refuse. Allows all today. */

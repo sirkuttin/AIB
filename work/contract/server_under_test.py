@@ -112,6 +112,39 @@ def pid_alive(pid):
         return False
 
 
+def project_key(path):
+    """server/desktop/project_delete.ts projectKey (sidebar-ui.js pathKey)."""
+    p = str(path).strip()
+    raw = p
+    p = re.sub(r'^\\\\\?\\', '', p).replace('\\', '/')
+    unc = p.startswith('//')
+    p = re.sub(r'/{2,}', '/', p)
+    segments = [s for s in p.split('/') if s]
+    if not segments:
+        return ''
+    windows = bool(re.match(r'^[a-zA-Z]:', p)) or unc or '\\' in raw
+    joined = '/'.join(segments)
+    return 'w:' + joined.lower() if windows else 'p:' + joined
+
+
+def write_added_projects(state_dir, roots):
+    """studio-added-projects.json naming every folder (cwd / projectRoot) the transcripts under `roots` mention."""
+    folders = set()
+    for root in roots:
+        for file in pathlib.Path(root).rglob('*.jsonl'):
+            for line in file.read_text(encoding='utf-8', errors='replace').splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict):
+                    for name in ('cwd', 'projectRoot'):
+                        if isinstance(row.get(name), str) and row[name]:
+                            folders.add(row[name])
+    added = {project_key(f): {'path': f, 'at': 1} for f in sorted(folders) if project_key(f)}
+    (pathlib.Path(state_dir) / 'studio-added-projects.json').write_text(json.dumps({'version': 1, 'savedAt': 1, 'added': added}), encoding='utf-8')
+
+
 class Server:
     """Start with `with Server() as s:`; s.get('/api/...') and s.post(...) send page-like requests with the token."""
 
@@ -134,6 +167,10 @@ class Server:
             folder.mkdir()
         self.omp_dir = pathlib.Path(self.omp_override or self.omp_dir)
         self.claude_dir = pathlib.Path(self.claude_override or self.claude_dir)
+        if self.omp_override or self.claude_override:
+            # Fixture history: every folder the fixtures' chats name is an added project, so the Deno server lists them (it lists
+            # saved agent chats only for projects the user added).
+            write_added_projects(self.state_dir, [self.omp_dir, self.claude_dir])
         command = self.command() + ['--port', '0', '--state-dir', str(self.state_dir), '--omp-sessions', str(self.omp_dir),
                                     '--claude-projects', str(self.claude_dir), '--no-auto-reconnect', '--no-owner-announcements',
                                     *self.extra_args]

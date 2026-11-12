@@ -19,6 +19,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/agent-options              the model / mode / effort lists a new chat can offer (state/agent_options.ts)
  *   POST /api/live/desktop/notify             the desktop app shows a notification natively (desktop/notify.ts)
  *   POST /api/live/project-remove             "Delete project…": remove a project from AIB, optionally its folder (project_routes.ts)
+ *   POST /api/live/project-add                add projects to AIB (the New project dialog; project_routes.ts)
  *   GET  /api/live/files/list                 the Files view: one folder of a chat's folder (files_routes.ts)
  *   GET  /api/live/files/search               the Files view: file names matching a filter
  *   GET  /api/live/files/read                 the Files view: one file, read only
@@ -60,6 +61,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/agent-options', 'write', 'body'],
   ['POST', '/api/live/desktop/notify', 'write', 'body'],
   ['POST', '/api/live/project-remove', 'write', 'body'],
+  ['POST', '/api/live/project-add', 'write', 'body'],
+  ['GET', '/api/live/folders/gone', 'read', 'get'], // folders that no longer exist (folder_presence.ts)
   ['GET', '/api/live/files/list', 'read', 'get'],
   ['GET', '/api/live/files/search', 'read', 'get'],
   ['GET', '/api/live/files/read', 'read', 'get'],
@@ -93,9 +96,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['GET', '/', 'static', 'monitor'],
-  ['GET', '/api/activity', 'read', 'monitor'],
   ['GET', '/api/agents', 'read', 'monitor'],
-  ['GET', '/api/bootstrap', 'bootstrap', 'monitor'],
   ['GET', '/api/command', 'read', 'monitor'],
   ['GET', '/api/commands', 'read', 'monitor'],
   ['GET', '/api/live/agents/install', 'write', 'get'],
@@ -126,12 +127,6 @@ export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/sessions', 'read', 'monitor'],
   ['GET', '/api/transcript', 'read', 'monitor'],
   ['GET', '/api/transcript/image', 'image', 'monitor'],
-  ['GET', '/app.js', 'static', 'monitor'],
-  ['GET', '/conversation.html', 'static', 'monitor'],
-  ['GET', '/index.html', 'static', 'monitor'],
-  ['GET', '/sidebar.css', 'static', 'monitor'],
-  ['GET', '/sidebar.js', 'static', 'monitor'],
-  ['GET', '/style.css', 'static', 'monitor'],
   ['POST', '/api/live/agents/install', 'write', 'body'],
   ['POST', '/api/live/agents/install/cancel', 'write', 'body'],
   ['POST', '/api/live/agents/signin', 'write', 'body'],

@@ -330,6 +330,13 @@ export async function main(argv: string[]): Promise<void> {
     // hold (Quit AIB with work running): the keeper restarts no AIB in the tray and keeps every chat and terminal shell until the next
     // AIB takes them over. Told through each link before it closes (terminal shells alone may be what works); Studio.release repeats
     // it last.
+    // The page's last view-preference saves (a project picked just before the window closed) are on disk before AIB exits: the
+    // page sends them with keepalive, so they still arrive after its window is gone, as long as this process waits for them.
+    if (desktop) {
+      const t0 = Date.now();
+      const settled = await ctx.viewPrefs.settle(1500, 250).catch(() => false);
+      log.announce('studio', 'closing: view preferences %s after %s ms', settled ? 'saved' : 'still on their way', Date.now() - t0);
+    }
     for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
     await ctx.artifacts.stop().catch(() => {});

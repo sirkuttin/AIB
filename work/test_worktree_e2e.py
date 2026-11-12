@@ -599,21 +599,15 @@ class MergeTests(Shared):
         self.assertRegex(said, r'^TOOL 40[13] ', said)
         self.assertEqual(git(project, 'rev-parse', 'main').strip(), main_before, 'nothing merged')
         self.assertEqual(mine.worktree_status()['state'], 'ready', 'the other chat is untouched')
-        # no permission yet (the user has not pressed "Merge into main"): the tool refuses and merges nothing
-        said = mine.send('call-tool:merge')
-        self.assertTrue(said.startswith('TOOL 409 '), said)
-        self.assertIn('not_asked', said)
-        self.assertEqual(git(project, 'rev-parse', 'main').strip(), main_before, 'nothing merged without the permission')
-        self.assertEqual(mine.worktree_status()['state'], 'ready')
-        # the press of the Merge button records the one-shot permission (and asks the chat to merge)
+        # the Changes tab's Merge button still works (it asks the chat to merge); the merge tool no longer needs that press first
+        # (CHANGELOG, "Merge from the chat": the agent merges into main on its own, no button needed)
         code, asked = env.web.post('worktree/merge-request', {'id': mine.id})
         self.assertEqual(code, 200, asked)
-        # another chat's key is still refused, now that this chat has the permission
+        # another chat's key is still refused
         said = other.send(f'call-tool:merge:{mine.id}')
         self.assertRegex(said, r'^TOOL 40[13] ', said)
         self.assertEqual(git(project, 'rev-parse', 'main').strip(), main_before, 'nothing merged')
-        # its own key merges its own chat, even while its own turn runs (the turn the button's message starts: a message id the
-        # permission survives; a message the user types themselves would end it)
+        # its own key merges its own chat, even while its own turn runs (the turn the button's message starts)
         said = mine.send('call-tool:merge', message_id='merge-request-e2e')
         self.assertTrue(said.startswith('TOOL 200 '), said)
         reply = json.loads(said[len('TOOL 200 '):])

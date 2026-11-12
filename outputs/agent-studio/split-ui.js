@@ -155,7 +155,21 @@
     panes.set(id, p);
     return p;
   }
+  /* Moving a list in the page (the chat into another pane, the panes into a new stage) resets its scroll position: the scroll
+     controller (scroll-controller.js) puts each list back at its own place, which it keeps per chat (not in pixels here). */
+  function moved() {
+    if (root.ScrollController && root.ScrollController.reattachAll) root.ScrollController.reattachAll();
+  }
+  /* old main-list scroll code (localStorage aib-scroll-v2 = '0', one release): the lists' pixel positions kept across a move */
+  const oldScroll = () => {
+    try {
+      return root.localStorage && root.localStorage.getItem('aib-scroll-v2') === '0';
+    } catch (e) {
+      return false;
+    }
+  };
   function saveScroll() {
+    if (!oldScroll()) return [];
     const out = [],
       m = doc().getElementById('messages');
     if (m) out.push([m, m.scrollTop]);
@@ -163,7 +177,12 @@
     return out;
   }
   function restoreScroll(list) {
-    for (const [n, top] of list) if (n.isConnected && n.scrollTop !== top) n.scrollTop = top;
+    for (const [n, top] of list) if (n.isConnected && n.scrollTop !== top) n.scrollTop = top; // old main-list scroll code
+  }
+  function dropMirror(p) {
+    if (!p.mirror) return;
+    if (host.mirror && host.mirror.release) host.mirror.release(p.mirror.msgs);
+    p.mirror.root.remove();
   }
   const flexOf = (n) => (Number(n.f) > 0 ? n.f : 1) + ' 1 0';
 
@@ -223,6 +242,7 @@
     stage.replaceChildren(buildNode(L.tree));
     shapeSig = T().shape(L).split('@')[0];
     restoreScroll(keep);
+    moved();
   }
   function applySizes() {
     if (!stage || !L) return;
@@ -241,6 +261,7 @@
   function teardown() {
     if (!stage) return;
     const keep = saveScroll();
+    for (const p of panes.values()) dropMirror(p);
     main.append(...liveNodes);
     stage.remove();
     stage = null;
@@ -249,6 +270,7 @@
     strip0.hidden = false;
     doc().body.classList.remove('split-on');
     restoreScroll(keep);
+    moved();
   }
   function render() {
     if (!host || !main) return;
@@ -266,6 +288,7 @@
   }
   function update() {
     const keep = saveScroll();
+    let move = false;
     order = T().groups(L.tree);
     order.forEach((g, i) => {
       const p = getPane(g.id);
@@ -276,21 +299,25 @@
       p.el.dataset.n = String(i + 1);
       if (foc) {
         if (p.mirror) {
-          p.mirror.root.remove();
+          dropMirror(p);
           p.mirror = null;
           p.mirrorKey = null;
         }
-        if (liveNodes[0].parentNode !== p.body) p.body.append(...liveNodes);
+        if (liveNodes[0].parentNode !== p.body) {
+          p.body.append(...liveNodes);
+          move = true;
+        }
       } else drawMirror(p, g);
     });
     restoreScroll(keep);
+    if (move) moved();
   }
 
   // ---- mirrors: the live copy of a chat in a pane that is not focused ---------------------------------------------------
   function drawMirror(p, g) {
     const key = g.active && g.active !== T().DRAFT ? g.active : '';
     if (!p.mirror || p.mirrorKey !== key) {
-      if (p.mirror) p.mirror.root.remove();
+      dropMirror(p);
       // Same markup and classes as the real header, so it looks the same (header.css styles the <header> element).
       const rootEl = el('div', 'mirror'),
         head = el('header', 'mirror-head'),

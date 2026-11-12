@@ -2,6 +2,21 @@
 
 ## 0.1.0-beta.8 (beta)
 
+- Removed the separate agents & command monitor page; the sidebar, Activity and terminal cover it.
+- Projects are only the ones you add. A new AIB starts with no projects, even if you used Claude Code or OMP before: add one
+  with New project (+ above the chat list), or start a chat in a folder. Saved chats of folders you did not add stay out of
+  the project list, the chat list, Ctrl+K and the inbox, and so does "Find more chats via agent"; nothing on disk changes.
+  A project you add stays listed until you remove it with Delete project, even when it has no chats yet, and its old chats
+  do not bring it back; while its folder is gone it is not listed. Chats in a git worktree belong to the project of the main
+  folder.
+- Scrolling in a chat has one owner now, and only you move the list. While you read, new replies, steps finishing, pictures
+  loading, long blocks folding, text size, window and pane size changes and view switches no longer move the row you are on,
+  not even for a frame. At the bottom it follows every update. Any scroll of yours counts, including the scrollbar, the
+  keyboard, Tab and dragging a text selection. Every chat, subagent and split pane remembers where you were reading. When you
+  go back, it opens there with the "New" line and the count for anything that came in, and the place survives restarting AIB.
+  Clicking into the other split pane keeps both panes' places. Clicking "Show earlier" while a reply is coming in stops
+  following, because you are reading older messages now; "↓ Latest" takes you back. For this release the old scrolling can
+  be switched back on (the view preference `aib-scroll-v2` set to `0`), in case the new one misbehaves.
 - New app icon: a solid black top hat with a thin teal rim and the two agent squares on it, with no teal tile behind it. The
   hat is about a third bigger, so it is easier to spot on the taskbar, in the tray and in Alt+Tab. The black shows on light
   taskbars and the teal rim on dark ones. The 16 to 32 px versions are drawn pixel by pixel, so they are sharp instead of
@@ -115,6 +130,7 @@
 - The Activity tab shows how many subagents are working right now, like the counts on Changes and Artifacts.
 - The chat keeps your place when its width changes: opening a doc or artifact, a file beside the chat, or a narrower
   window. At the bottom it stays at the newest message; while reading, the same row stays where it was.
+- The chat no longer shows raw "Delegation" blocks for messages an agent sends its helpers; the tool row and the helper's own view already show them.
 - Full view: steps still in progress stay listed one by one; they fold into "N steps" once they are done and something
   arrives after them.
 - Files remembers which folders are open, per project and per tree. Rows show a hover highlight in light themes too.

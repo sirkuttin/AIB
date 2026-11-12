@@ -1,5 +1,5 @@
 'use strict';
-/* The view switch and Chat in the main pane: chat.js showRows with a view, the switch's keyboard use, and the scroll anchor. */
+/* The view switch and Chat in the main pane: chat.js showRows with a view, the switch's keyboard use, and the place you read. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -7,7 +7,7 @@ const test = require('node:test');
 const { makePage, byClass, flat } = require('./chat_harness.js');
 const fakeDom = require('./fake_dom.js');
 
-const SCRIPTS = ['stream-ui.js', 'tool-views.js', 'plan-ui.js', 'views.js', 'views-ui.js'];
+const SCRIPTS = ['stream-ui.js', 'tool-views.js', 'plan-ui.js', 'views.js', 'views-ui.js', 'scroll-controller.js'];
 const user = (value, time) => ({ role: 'user', label: 'You', value, time });
 const asst = (value, time) => ({ role: 'assistant', label: 'Assistant', value, time });
 const tool = (name, time) => ({ role: 'tool', label: name, value: '{}', time, call: { name, input: {} } });
@@ -147,42 +147,48 @@ test('a switch repaints even while text is selected; ordinary updates still wait
 test('a switch stays at the bottom if you were there', () => {
   const page = chatPage();
   const box = page.element('messages');
+  box.clientHeight = 500; // a list on screen (a hidden one is applied when it shows)
   page.hook.showRows(box, history(3), 'main');
   box.scrollHeight = 5000;
-  box.scrollTop = 4000;
+  page.hook.mainCtl().apply(); // laid out (its ResizeObserver): a following list goes to its end
   page.run("current='c1';snapshot={sessionId:'s',busy:false,unknownReceipts:[]};events=[]");
   page.hook.setView('chat');
   page.hook.showRows(box, history(3), 'main');
-  assert.equal(box.scrollTop, 5000);
+  assert.equal(page.hook.mainCtl().following, true);
+  assert.ok(box.scrollTop >= box.scrollHeight - box.clientHeight, 'at the end: ' + box.scrollTop);
 });
 
-/* ---- the scroll anchor ---- */
-const { anchorOf, restoreAnchor } = (() => {
-  const shell = fakeDom.page();
-  const context = fakeDom.load(shell, SCRIPTS);
-  return context.ChatViewsUI;
-})();
-const el = (pk, top, bottom) => ({ dataset: pk ? { pk } : {}, getBoundingClientRect: () => ({ top, bottom }) });
-const boxOf = (...children) => ({ scrollTop: 100, children, getBoundingClientRect: () => ({ top: 0, bottom: 600 }) });
-
-test('scroll anchor: the topmost visible group is found by its prompt and put back where it was', () => {
-  /* the prompt of group A is above the view; its steps link is the first thing visible */
-  const before = boxOf(el('p:A', -90, -40), el('', -40, 20), el('', 20, 90), el('p:B', 90, 140));
-  const a = anchorOf(before);
-  assert.deepEqual({ ...a }, { pk: 'p:A', off: 0 }, 'a prompt that is scrolled off anchors at the top of the view');
-  /* the other view has a different layout: A's prompt is now 400px down */
-  const after = boxOf(el('p:Z', 0, 300), el('p:A', 400, 450), el('', 450, 500));
-  assert.equal(restoreAnchor(after, a), true);
-  assert.equal(after.scrollTop, 100 + 400, "scrollTop moved so that A's prompt sits at the top");
-  /* the prompt itself is the first thing visible, 30px below the top */
-  const visible = anchorOf(boxOf(el('p:A', 30, 80), el('', 80, 120)));
-  assert.deepEqual({ ...visible }, { pk: 'p:A', off: 30 });
-  const moved = boxOf(el('p:A', 230, 280));
-  restoreAnchor(moved, visible);
-  assert.equal(moved.scrollTop, 100 + 200);
-  /* nothing to anchor to */
-  assert.equal(anchorOf(boxOf(el('', 0, 50))), null);
-  assert.equal(restoreAnchor(boxOf(el('p:Q', 0, 50)), a), false);
+/* ---- the place you read across a view switch (scroll-controller.js): the switch never touches the scroll state; the row you
+   read is found again by its id, or the fold that holds it now (work/test_scroll_controller.js measures the positions) ---- */
+test('a view switch leaves the scroll state alone; a row a view folds away is covered by its fold', () => {
+  const page = chatPage();
+  const box = page.element('messages');
+  box.clientHeight = 500;
+  box.replaceChildren = function (...items) {
+    this.children = items.flatMap((i) => (i.id === 'fragment' ? i.children : [i])); // a fragment's rows land in the list
+  };
+  const rows = history(3).map((r, i) => ({ ...r, rid: 'T:' + i }));
+  page.hook.showRows(box, rows, 'main');
+  box.scrollHeight = 5000;
+  box.scrollTop = 1200;
+  box.listeners.scroll(); // you scrolled up
+  const ctl = page.hook.mainCtl();
+  assert.equal(ctl.state.mode, 'anchor');
+  ctl._set({ mode: 'anchor', rid: 'T:6', off: -20, h: 80, w: 0 }, 'test'); // reading the Bash step of turn 1
+  const before = JSON.stringify(ctl.state);
+  for (const view of ['chat', 'prompts', 'full']) {
+    page.hook.setView(view);
+    page.hook.showRows(box, rows, 'main');
+    assert.equal(JSON.stringify(ctl.state), before, view + ': the state is untouched');
+    const holder = box.children.find(
+      (c) =>
+        c.dataset &&
+        (c.dataset.rid === 'T:6' ||
+          (c.dataset.ridFrom && +c.dataset.ridFrom.slice(2) <= 6 && +(c.dataset.ridTo || '').slice(2) >= 6)),
+    );
+    assert.ok(holder, view + ': the step, or the fold that hides it, is drawn with its ids');
+  }
+  assert.equal(box.dataset.paused, '1', 'still reading (data-paused is the output CSS and the tests read)');
 });
 
 /* ---- the switch ---- */

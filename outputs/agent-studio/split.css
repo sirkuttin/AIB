@@ -239,6 +239,7 @@ body.split-resizing-y {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none; /* the scroll controller keeps its place (scroll-controller.js); Chrome's anchoring would move it too */
   padding: 8px 16px 16px;
   scrollbar-width: thin;
 }

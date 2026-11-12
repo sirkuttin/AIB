@@ -1,5 +1,5 @@
 /**
- * Golden parity for server/transcripts/monitor.ts: every GET the viewer answers (sessions, agents, commands, command, activity,
+ * Golden parity for server/transcripts/monitor.ts: every GET the viewer answers (sessions, agents, commands, command,
  * transcript pages with before/after/limit/kind/q/thinking, plan context, meta, revision, images, errors) is asked of the Python
  * handler (work/parity/monitor_shim.py) and of the port over the same fixture folders, in the same order (so both caches see
  * the same history), and the JSON must be identical. Fixtures: work/subagents-fixture and work/design-fixture (generated in temp
@@ -73,7 +73,7 @@ async function same(r: Root, path: string, query = ''): Promise<unknown> {
   const reply = await py.raw('monitor_shim', 'handle', [r.omp, r.claude, path, query]);
   let ts: unknown;
   try {
-    const got = await handleGet(r.source, path, query, { token: () => 'tok' });
+    const got = await handleGet(r.source, path, query);
     const body = got.body instanceof Uint8Array
       ? { __bytes__: b64(got.body), mime: got.contentType }
       : JSON.parse(JSON.stringify(got.body));
@@ -140,7 +140,6 @@ async function sweep(r: Root, deep = true): Promise<void> {
     const agents = await same(r, '/api/agents', q) as { agents: { key: string }[] } | null;
     const commands = await same(r, '/api/commands', q) as { commands: { id: string }[] } | null;
     await same(r, '/api/commands', q + '&running=1');
-    await same(r, '/api/activity', q);
     for (const command of commands?.commands ?? []) await same(r, '/api/command', `${q}&id=${encodeURIComponent(command.id)}`);
     await same(r, '/api/command', `${q}&id=nope`);
     for (const agent of agents?.agents ?? []) {
@@ -186,10 +185,8 @@ async function refusals(r: Root, provider: string): Promise<void> {
     await same(r, '/api/transcript', 'key=' + encodeURIComponent(key));
     await same(r, '/api/agents', 'session=' + encodeURIComponent(key));
     await same(r, '/api/commands', 'session=' + encodeURIComponent(key));
-    await same(r, '/api/activity', 'session=' + encodeURIComponent(key));
   }
   await same(r, '/api/nope');
-  await same(r, '/api/bootstrap');
 }
 
 Deno.test('golden: the generated work/*-fixture folders (subagents, design)', async () => {

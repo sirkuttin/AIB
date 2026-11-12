@@ -4,6 +4,8 @@
  * Chrome or Edge (no window) on chat.html. A test appends one line per step to a chat's script file and the agent sends it at
  * once, so what arrives and when is decided by the test, not a timer.
  *
+ * AIB_SCROLL_V2=0 runs every test against the old main-list scroll code (the one-release switch, localStorage aib-scroll-v2).
+ *
  * Measuring: `m(page, box)` reads the list's scrollTop / scrollHeight / clientHeight, its distance from the bottom (gap), whether
  * it is paused, and the newest row's box against the list's box. `frames(page, box, ms)` records the same every animation frame.
  */
@@ -23,6 +25,32 @@ export class ScrollFixture extends Fixture {
     flags[flags.indexOf('--claude-launcher') + 1] = SCROLL_AGENT;
     return flags;
   }
+}
+
+/** One owner of the chat lists' scroll position, checked while the tests run: every page wraps the scrollTop setter, and a
+ *  write to a list the scroll controller manages (class scroll-list) that does not come from scroll-controller.js is recorded
+ *  (page code only: a test's own script, which has no URL, moves the list the way you would). `ownerProblems` reads them. */
+export const OWNER_GUARD = `(() => {
+  const d = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+  if (!d || !d.set) return;
+  window.__badWrites = [];
+  Object.defineProperty(Element.prototype, 'scrollTop', {
+    configurable: true,
+    get: d.get,
+    set(v) {
+      if (this.classList && this.classList.contains('scroll-list')) {
+        const st = String(new Error().stack || '');
+        if (!st.includes('scroll-controller.js') && st.includes('http://'))
+          window.__badWrites.push((this.id || this.className) + ' <- ' + st.split(String.fromCharCode(10)).slice(2, 4).map((l) => l.trim()).join(' | '));
+      }
+      d.set.call(this, v);
+    },
+  });
+})()`;
+export async function ownerProblems(page: Page): Promise<string> {
+  if (Deno.env.get('AIB_SCROLL_V2') === '0') return ''; // the old code writes from everywhere: that is what it is
+  const bad = await page.eval<string[]>('window.__badWrites || []').catch(() => []);
+  return bad.length ? `scrollTop set on a managed list outside scroll-controller.js: ${[...new Set(bad)].slice(0, 4).join(' ;; ')}` : '';
 }
 
 export interface Chat {
@@ -61,8 +89,16 @@ export class Lab {
     try {
       lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements']);
       lab.browser = await Browser.launch();
-      lab.page = await lab.browser.open(`http://127.0.0.1:${lab.web.port}/chat.html`, width, height);
+      lab.page = await lab.browser.open('about:blank', width, height);
+      await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: OWNER_GUARD });
+      await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
       await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+      if (Deno.env.get('AIB_SCROLL_V2') === '0') {
+        // the one-release switch back to the old main-list scroll code (chat.js SCROLL_V2): the same tests against it
+        await lab.page.eval(`localStorage.setItem('aib-scroll-v2', '0')`);
+        await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+        await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+      }
     } catch (error) {
       await lab.close();
       throw error;
@@ -188,8 +224,11 @@ export interface M {
   tall: number;
 }
 
+/** A list by id ('messages') or by CSS selector ('.pane:not(.foc) .mirror-msgs'): the same code in every probe below. */
+export const BOX = `((b) => (/^[A-Za-z][\\w-]*$/.test(b) ? document.getElementById(b) : document.querySelector(b)))`;
+
 export const PROBE = `(id) => {
-  const box = document.getElementById(id);
+  const box = ${BOX}(id);
   const kids = [...box.children].filter((e) => e.offsetParent !== null && !e.classList.contains('new-line'));
   const last = kids[kids.length - 1];
   const b = box.getBoundingClientRect();
@@ -214,27 +253,70 @@ export function m(page: Page, box = 'messages'): Promise<M> {
   return page.eval<M>(`(${PROBE})(${JSON.stringify(box)})`);
 }
 
-/** Record a measurement every animation frame for `ms` (starts now; resolves with the list). */
+/** Run `sample` once per animation frame, AFTER the frame: requestAnimationFrame callbacks run before that frame's layout and
+ *  ResizeObservers, so a measurement taken there can show a state that is never painted (the observers correct it before paint);
+ *  a task queued from the frame runs once the frame is done, so it reads what was drawn. One exception: another task between the
+ *  frame and the sample may change the layout (a column width set from a timer); the sample would then read a layout no frame
+ *  painted yet. `size()` (the list's size) is read in the frame and in the sample: when they differ the sample is skipped. */
+export const AFTER_EACH_FRAME = `((sample, on, size) => {
+  const tick = () => {
+    if (!on()) return;
+    const at = size ? size() : '';
+    setTimeout(() => { if (!on()) return; if (!size || size() === at) sample(); requestAnimationFrame(tick); }, 0);
+  };
+  requestAnimationFrame(tick);
+})`;
+const SIZE = (box: string) => `() => { const b = ${BOX}(${JSON.stringify(box)}); return b ? b.clientWidth + 'x' + b.clientHeight : ''; }`;
+
+/** Record a measurement every animation frame (as drawn) until stopFrames. */
 export async function startFrames(page: Page, box = 'messages'): Promise<void> {
   await page.eval(`(() => {
     const probe = ${PROBE};
     window.__frames = [];
-    window.__framesOn = true;
-    const tick = () => { if (!window.__framesOn) return; window.__frames.push(probe(${JSON.stringify(box)})); requestAnimationFrame(tick); };
-    requestAnimationFrame(tick);
+    const gen = (window.__framesGen = (window.__framesGen || 0) + 1); // one recording at a time: an older loop stops for good
+    ${AFTER_EACH_FRAME}(() => window.__frames.push(probe(${JSON.stringify(box)})), () => window.__framesGen === gen, ${SIZE(box)});
   })()`);
 }
 export function stopFrames(page: Page): Promise<M[]> {
-  return page.eval<M[]>(`(() => { window.__framesOn = false; return window.__frames; })()`);
+  return page.eval<M[]>(`(() => { window.__framesGen = (window.__framesGen || 0) + 1; return window.__frames; })()`);
 }
 
 /** Wait until the list's text contains `text` (the step reached the page). */
 export function shown(page: Page, text: string, box = 'messages', ms = 15000): Promise<unknown> {
   return page.waitFor(
-    `document.getElementById(${JSON.stringify(box)}).textContent.includes(${JSON.stringify(text)})`,
+    `${BOX}(${JSON.stringify(box)}).textContent.includes(${JSON.stringify(text)})`,
     ms,
-    `"${text}" in #${box}`,
+    `"${text}" in ${box}`,
   );
+}
+
+/** Record, every animation frame, where the row whose text starts with `text` (as anchor() read it) is against the list's
+ *  top, and its height: {off, h} per frame as drawn, null in frames where the row is not drawn. A test that measures only once after a
+ *  second sees the end state; this sees the frames the owner sees, so a jump that a timer puts right later still fails. */
+export async function startRowFrames(page: Page, text: string, box = 'messages'): Promise<void> {
+  await page.eval(`(() => {
+    const b = ${BOX}(${JSON.stringify(box)}), want = ${JSON.stringify(text)};
+    const rows = (window.__rows = []);
+    const gen = (window.__rowsGen = (window.__rowsGen || 0) + 1);
+    ${AFTER_EACH_FRAME}(() => {
+      const top = b.getBoundingClientRect().top;
+      const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === want);
+      const r = e ? e.getBoundingClientRect() : null;
+      rows.push(r && r.height ? { off: Math.round(r.top - top), h: Math.round(r.height), st: Math.round(b.scrollTop) } : null);
+    }, () => window.__rowsGen === gen, ${SIZE(box)});
+  })()`);
+}
+export function stopRowFrames(page: Page): Promise<({ off: number; h: number; st: number } | null)[]> {
+  return page.eval(`(() => { window.__rowsGen = (window.__rowsGen || 0) + 1; return window.__rows; })()`);
+}
+/** Frames in which the row was drawn somewhere other than `off` (more than `tol` px; a row that re-wrapped keeps the same
+ *  point of itself: a negative offset scales with its height). '' when every drawn frame had it in place. */
+export function rowFramesProblems(frames: ({ off: number; h: number } | null)[], before: { off: number; h?: number }, tol = 1): string {
+  const drawn = frames.filter((f): f is { off: number; h: number } => !!f);
+  const want = (f: { h: number }) => (before.off < 0 && before.h ? Math.round((before.off * f.h) / before.h) : before.off);
+  const bad = drawn.filter((f) => Math.abs(f.off - want(f)) > tol);
+  if (!drawn.length) return `the row was not drawn in any of ${frames.length} frames`;
+  return bad.length ? `the row was off its place in ${bad.length}/${drawn.length} frames: at ${[...new Set(bad.map((f) => f.off))].slice(0, 8).join(', ')} instead of ${before.off}` : '';
 }
 
 /** Let pending timers (holdAnchor 60/250/800 ms, the 600 ms touch window) and a poll or two run out. */
@@ -243,7 +325,7 @@ export const settle = (ms = 1000) => sleep(ms);
 /** Scroll the list by a wheel gesture at its centre (a real input event, so the page sees you reading). */
 export async function wheel(page: Page, dy: number, box = 'messages'): Promise<void> {
   const [x, y] = await page.eval<[number, number]>(
-    `(() => { const r = document.getElementById(${JSON.stringify(box)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`,
+    `(() => { const r = ${BOX}(${JSON.stringify(box)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`,
   );
   await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy });
   await sleep(150);
@@ -254,7 +336,7 @@ export const PYTHON = PY;
 /** The first row at the top of the list's view: its text and its offset from the list's top (what must not move while you read). */
 export function anchor(page: Page, box = 'messages'): Promise<{ text: string; off: number } | null> {
   return page.eval(`(() => {
-    const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
+    const b = ${BOX}(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
     for (const e of b.children) {
       const r = e.getBoundingClientRect();
       if (r.height && r.bottom > top + 1) return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(r.top - top) };
@@ -266,7 +348,7 @@ export function anchor(page: Page, box = 'messages'): Promise<{ text: string; of
 /** Where the row with this exact text (as anchor() read it) is now, against the list's top; null when it is gone. */
 export function whereIs(page: Page, text: string, box = 'messages'): Promise<number | null> {
   return page.eval(`(() => {
-    const b = document.getElementById(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
+    const b = ${BOX}(${JSON.stringify(box)}), top = b.getBoundingClientRect().top;
     const e = [...b.children].find((x) => x.textContent.replace(/\\s+/g, ' ').slice(0, 80) === ${JSON.stringify(text)});
     return e ? Math.round(e.getBoundingClientRect().top - top) : null;
   })()`);
@@ -276,7 +358,7 @@ export function whereIs(page: Page, text: string, box = 'messages'): Promise<num
 export function topOf(page: Page, selector: string, box = 'messages'): Promise<number | null> {
   return page.eval(`(() => {
     const all = document.querySelectorAll(${JSON.stringify(selector)}), e = all[all.length - 1];
-    return e ? Math.round(e.getBoundingClientRect().top - document.getElementById(${JSON.stringify(box)}).getBoundingClientRect().top) : null;
+    return e ? Math.round(e.getBoundingClientRect().top - ${BOX}(${JSON.stringify(box)}).getBoundingClientRect().top) : null;
   })()`);
 }
 

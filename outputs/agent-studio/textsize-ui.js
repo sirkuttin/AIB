@@ -207,8 +207,9 @@
       return available;
     }
 
+    /* (a list scroll-controller.js manages keeps its own place: its rows' resize is put back before paint) */
     function messagesBoxes() {
-      return [doc.getElementById('messages'), doc.getElementById('submessages')].filter(Boolean);
+      return [doc.getElementById('messages'), doc.getElementById('submessages')].filter((b) => b && !b._scrollCtl);
     }
     /* Keep the message being read where it is while sizes change: remember the first message that is visible and how far below the
     top it sits, change the size, then scroll so it is back at the same spot. At the bottom, stay at the bottom. */
@@ -233,14 +234,14 @@
       for (const a of list) {
         const { box } = a;
         if (a.atEnd) {
-          box.scrollTop = box.scrollHeight;
+          box.scrollTop = box.scrollHeight; // old main-list scroll code (aib-scroll-v2 = '0'): managed lists are skipped
           continue;
         }
         if (!a.el || !a.el.isConnected) continue;
         const z = parseFloat(win.getComputedStyle(box).zoom) || 1;
         const bt = box.getBoundingClientRect().top,
           delta = a.el.getBoundingClientRect().top - bt - a.off;
-        if (Math.abs(delta) > 0.5) box.scrollTop += delta / z;
+        if (Math.abs(delta) > 0.5) box.scrollTop += delta / z; // old main-list scroll code (aib-scroll-v2 = '0')
       }
     }
 

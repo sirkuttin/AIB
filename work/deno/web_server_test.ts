@@ -20,6 +20,8 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/agent-options',
     'POST /api/live/desktop/notify',
     'POST /api/live/project-remove',
+    'POST /api/live/project-add',
+    'GET /api/live/folders/gone',
     'GET /api/live/files/list',
     'GET /api/live/files/search',
     'GET /api/live/files/read',
@@ -51,7 +53,15 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/docs/reveal',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
-  assertEquals(ROUTE_LIST.filter(([m, p]) => !denoOnly.has(`${m} ${p}`)).map(([m, p, s]) => [m, p, s]), routes);
+  // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen Python
+  // reference still has them.
+  const removed = new Set(['/', '/index.html', '/conversation.html', '/app.js', '/style.css', '/sidebar.js', '/sidebar.css']
+    .filter((p) => p !== '/').concat(['/api/bootstrap', '/api/activity']).map((p) => `GET ${p}`));
+  assertEquals(ROUTE_LIST.filter(([m, p]) => removed.has(`${m} ${p}`)), [], 'the monitor page routes are gone');
+  assertEquals(
+    ROUTE_LIST.filter(([m, p]) => !denoOnly.has(`${m} ${p}`)).map(([m, p, s]) => [m, p, s]),
+    routes.filter(([m, p]) => !removed.has(`${m} ${p}`)),
+  );
   const kinds = new Map((await py.call('shims', 'studio_route_kinds') as [string, string, string][]).map(([m, p, k]) => [`${m} ${p}`, k]));
   for (const [m, p, , kind] of ROUTE_LIST) if (!denoOnly.has(`${m} ${p}`)) assertEquals(kind, kinds.get(`${m} ${p}`) ?? 'monitor', `${m} ${p}`);
 });

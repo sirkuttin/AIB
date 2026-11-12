@@ -404,6 +404,4 @@ where the theme pins it). The designer's themes pin many of these; theme.css has
 ## Colours that stay out of the tokens
 
 - `clamp.css` and the tab strip fade use `#000` in `mask-image`: a mask only uses its alpha, so the colour is never seen.
-- The old monitor pages (`style.css`, `sidebar.css`, index.html and conversation.html) are a separate tool with their own
-  palette and are not themed.
 - `--artifact-frame-bg` is white in every theme on purpose: an artifact page or image expects a white page behind it.

@@ -94,3 +94,18 @@ test("in-progress steps spin while the chat's helpers still work after the reply
   assert.equal(!!planOf({ sessionId: 's1', busy: true, subagents: {} }).active, true, 'the agent is replying');
   assert.equal(!!planOf({ sessionId: 's1', busy: false, subagents: { h1: { state: 'completed' } } }).active, false, 'nothing works');
 });
+
+test('a message the agent sends a helper draws no "Delegation" row: its tool row and the helper view already show it', () => {
+  context.__events = [
+    { kind: 'user', time: 1, data: { sessionId: 's1', text: 'go', attachments: [] } },
+    {
+      kind: 'update',
+      time: 2,
+      data: { sessionId: 's1', update: { sessionUpdate: 'session_message', content: [{ type: 'text', text: 'brief for a helper' }] } },
+    },
+  ];
+  chat.run("snapshot={sessionId:'s1'};events=globalThis.__events");
+  const rows = chat.run("liveRows('s1')");
+  assert.equal(rows.filter((r) => r.label === 'Delegation').length, 0);
+  assert.ok(!JSON.stringify(rows).includes('brief for a helper'));
+});
