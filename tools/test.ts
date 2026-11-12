@@ -239,6 +239,28 @@ async function runFile(file: string, extra: string[], junit: string): Promise<Re
 async function runDeno(files: string[], options: Options, log: RunLog, label: string): Promise<{ ok: boolean; line: string }> {
   const started = performance.now();
   log.say(`${files.length} test files (${label}), ${options.jobs} at a time`);
+  // Type-check every file once, in one process, then run each with --no-check: after an edit, the first files in the pool used to
+  // check the same server modules side by side (up to 5 s each). Same checks, done once. If it fails, each file checks itself as
+  // before, so only the files with the type error fail.
+  let extra = options.extra;
+  if (!extra.some((a) => /^--(?:no-)?check\b/.test(a))) {
+    const t = performance.now();
+    const check = await new Deno.Command(Deno.execPath(), {
+      args: ['check', ...files.map((f) => native(new URL(f, TESTS)))],
+      cwd: native(APP),
+      stdin: 'null',
+      stdout: 'piped',
+      stderr: 'piped',
+      env: { NO_COLOR: '1' },
+    }).output();
+    const seconds = ((performance.now() - t) / 1000).toFixed(1);
+    if (check.success) {
+      extra = ['--no-check', ...extra];
+      log.say(`type check: ok in ${seconds} s (each file then runs with --no-check)`);
+    } else {
+      log.say(`type check failed in ${seconds} s; each file checks itself:\n${new TextDecoder().decode(check.stderr)}`);
+    }
+  }
   const results: Result[] = [];
   const queue = [...files];
   const report = (r: Result, alone = '') => {
@@ -248,7 +270,7 @@ async function runDeno(files: string[], options: Options, log: RunLog, label: st
   };
   const worker = async () => {
     for (let file = queue.shift(); file; file = queue.shift()) {
-      const result = await runFile(file, options.extra, options.junit);
+      const result = await runFile(file, extra, options.junit);
       results.push(result);
       report(result);
     }
@@ -258,7 +280,7 @@ async function runDeno(files: string[], options: Options, log: RunLog, label: st
   if (options.rerun) {
     for (const first of results.filter((r) => !r.ok)) {
       log.say(`rerunning ${first.file} on its own`);
-      const again = await runFile(first.file, options.extra, options.junit);
+      const again = await runFile(first.file, extra, options.junit);
       report(again, ' (alone)');
       if (again.ok) sensitive.push(first.file);
       results[results.indexOf(first)] = again;
