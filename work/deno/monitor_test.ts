@@ -1244,34 +1244,18 @@ Deno.test("studio context is hidden in history and titles", () => {
 
 // ---- routes ----
 
-Deno.test("ROUTES: the viewer routes and scopes", async () => {
+Deno.test("ROUTES: the transcript routes and scopes (the monitor page, /api/bootstrap and /api/activity are gone)", async () => {
   const entries = [...m.ROUTES.scopes].sort();
   const expected = [
-    ["GET /api/bootstrap", "bootstrap"],
     ["GET /api/transcript/image", "image"],
-    ...[
-      "/api/sessions",
-      "/api/agents",
-      "/api/commands",
-      "/api/command",
-      "/api/transcript",
-      "/api/activity",
-    ].map((
-      p,
-    ) => [`GET ${p}`, "read"]),
-    ...m.STATIC_PATHS.map((p) => [`GET ${p}`, "static"]),
+    ...["/api/sessions", "/api/agents", "/api/commands", "/api/command", "/api/transcript"].map((p) => [`GET ${p}`, "read"]),
   ].sort();
   assertEquals(entries, expected);
   assertEquals(m.ROUTES.scopeFor("GET", "/api/unknown"), null);
-  const page = await m.handleGet(
-    await m.Store.open(tmp("static")),
-    "/app.js",
-    "",
-  );
-  assertEquals([page.status, page.contentType], [
-    200,
-    "application/javascript; charset=utf-8",
-  ]);
+  for (const path of ["/app.js", "/index.html", "/api/activity", "/api/bootstrap"]) {
+    const page = await m.handleGet(await m.Store.open(tmp("static")), path, "");
+    assertEquals(page.status, 404, path);
+  }
 });
 
 // ---- parity of the pure functions over a corpus ----

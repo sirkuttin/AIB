@@ -16,7 +16,7 @@
  *   icons/128x128.png, 128x128@2x.png  icon.svg at 128 and 256 (.icns ic07, ic08)
  *   icons/icon.png                     icon.svg at 512 (.icns ic09; the Linux AppImage/.deb icon, .DirIcon)
  *   server/desktop/tray_icon_data.ts   the tray PNGs: the 16 20 24 32 px grids (the colour icon on every taskbar)
- *   chat.html, index.html              <link rel="icon">: icon.svg as a data: URL
+ *   chat.html                          <link rel="icon">: icon.svg as a data: URL
  *
  * The vector renderer is resvg compiled to WebAssembly (npm:@resvg/resvg-wasm, the exact version below), fetched by deno: no global
  * install, no native tool. The masters have no text, so no fonts are loaded.
@@ -54,7 +54,7 @@ export const PNGS: [string, string, number][] = [
 /** The tray images in tray_icon_data.ts: [key, master, size], one per grid so Windows never scales the 1 px rim away. */
 export const TRAY: [string, string, number][] = GRID_SIZES.map((size) => [`color-${size}`, `icon-${size}.txt`, size]);
 /** The pages that get the favicon. */
-export const FAVICON_PAGES = ['chat.html', 'index.html'];
+export const FAVICON_PAGES = ['chat.html'];
 
 /** The favicon <link>: the SVG as a data: URL (the page's CSP allows data: images; no extra file to serve or stage). */
 export function faviconLink(svg: string): string {

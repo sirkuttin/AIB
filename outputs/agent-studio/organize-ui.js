@@ -931,6 +931,16 @@
     wrap.append(tog, body);
     return { node: wrap, toggleId: tog.id };
   }
+  // A new user has no project: the list says how to add one, with the New project dialog (the same as + above the list).
+  function addProjectNote(W) {
+    const box = el('div', null, 'add-project-note');
+    box.append(el('p', 'Add a project folder to start.', 'note'));
+    const b = el('button', 'New project', 'add-project-btn');
+    b.type = 'button';
+    b.addEventListener('click', () => W.openNewProject(b));
+    box.append(b);
+    return box;
+  }
   // box = #connections. view = partition(rows). ctx = {buildRow, all, provider, query, emptyText}
   function render(box, view, ctx) {
     const active = doc().activeElement,
@@ -984,7 +994,19 @@
         frag.append(wrap);
       }
     }
-    if (!view.pinned.length && !view.hold.length && !view.main.length)
+    const W = root.AgentWorkspaceUI;
+    const noProject =
+      !view.pinned.length &&
+      !view.hold.length &&
+      !view.main.length &&
+      !view.archived.length &&
+      !ctx.query &&
+      W &&
+      W.noProjects &&
+      W.noProjects() &&
+      W.openNewProject;
+    if (noProject) frag.append(addProjectNote(W));
+    else if (!view.pinned.length && !view.hold.length && !view.main.length)
       frag.append(
         el('p', view.archived.length && !ctx.query ? 'Everything in this list is archived.' : ctx.emptyText, 'note'),
       );

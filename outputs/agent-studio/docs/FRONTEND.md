@@ -9,7 +9,6 @@ The page (`chat.html`) is plain JavaScript and CSS served as they are. There is 
 - Pure logic (no DOM, no storage, no clock) is kept apart from drawing, and ends with `if (typeof module === 'object' && module.exports) module.exports = api;` so Node tests can `require` it.
 - **`chat.js` is last.** It is the page itself: conversation list, the open chat, polling, sending, history windows, the New chat form, split-view side panes. It wires every other script together and exports only `window.AgentStudioGet` (an authenticated GET other scripts use), `window.AgentChatView` (`setThinking`, `getThinking`, `startHandoff`, `renameChat`, `notices`) and `window.StudioChat`, a **test hook** the page never reads (see "Tests").
 - `elicitation-ui.js` is not in `chat.html`: `chat.js` loads it on demand when the server says it supports questions (`window.AgentElicitationUI`).
-- The monitor dashboard (`index.html`, `conversation.html`, `app.js`, `sidebar.js`, `style.css`, `sidebar.css`) is a separate page with its own scripts. It shares no code with `chat.html`.
 
 ## Load order and globals
 
@@ -100,7 +99,7 @@ These were relaxed so today's code passes with no behaviour change. Each is a cl
 
 | Rule | State | Where it fires today |
 |---|---|---|
-| `no-unused-vars` | warning, ignoring unused function arguments and caught errors | 14 variables in `changes-ui.js`, `chat.js`, `composer-chips.js`, `new-project-ui.js`, `sidebar.js`, `workspace-ui.js` and others |
+| `no-unused-vars` | warning, ignoring unused function arguments and caught errors | 14 variables in `changes-ui.js`, `chat.js`, `composer-chips.js`, `new-project-ui.js`, `workspace-ui.js` and others |
 | `no-empty` | error, except an empty `catch` (allowed on purpose: storage may be blocked) | none left; 43 empty `catch {}` blocks are allowed |
 | `no-useless-escape` | off | 10: `artifacts-ui.js`, `attachments-ui.js`, `commands-registry.js`, `plan-ui.js` |
 | `no-useless-assignment` | off | 8: `commands-registry.js`, `settings-ui.js`, `split-ui.js`, `textsize-ui.js`, `tool-views.js`, `workspace-state.js` |

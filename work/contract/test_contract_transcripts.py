@@ -86,7 +86,6 @@ class TranscriptContract(unittest.TestCase):
             agents = self.same(f'/api/agents?session={sid}').json().get('agents', [])
             self.same(f'/api/commands?session={sid}')
             self.same(f'/api/commands?session={sid}&running=1')
-            self.same(f'/api/activity?session={sid}')
             for agent in agents:
                 key = agent['key']
                 for query in ('', '&limit=2', '&before=3&limit=2', '&after=1&limit=3', '&kind=tools', '&kind=messages', '&kind=errors',

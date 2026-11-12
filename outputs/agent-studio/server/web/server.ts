@@ -31,7 +31,9 @@ import { TerminalSessions } from '../terminal/sessions.ts';
 import type { KeeperLink } from '../keeper/link.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 import { RemovedProjects } from '../desktop/project_delete.ts';
-import { projectRemove } from './project_routes.ts';
+import { filterSessions, folderOfSession, projectAdd, projectRemove } from './project_routes.ts';
+import { FolderPresence, presence } from '../desktop/folder_presence.ts';
+import { AddedProjects } from '../desktop/added_projects.ts';
 import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
@@ -41,7 +43,6 @@ import { ArtifactHistory } from '../docs/history.ts';
 const WEB_STARTED = Date.now() / 1000;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
-const MONITOR_ASSETS = new Set(['app.js', 'style.css', 'sidebar.js', 'sidebar.css']);
 const MAX_BODY = 1_000_000;
 
 /** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
@@ -78,7 +79,7 @@ export function studioAsset(path: string): string | null {
     }
   }
   const match = path.match(ASSET_NAME);
-  if (!match || MONITOR_ASSETS.has(match[1])) return null;
+  if (!match) return null;
   try {
     return Deno.statSync(APP_ROOT + sep + match[1]).isFile ? match[1] : null;
   } catch {
@@ -114,12 +115,32 @@ export function withThemePref(html: string, pref: string | undefined, symbols?: 
   return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + attrs);
 }
 
-/** The project preferences plus the removed projects, under one revision (the list route reports the same one). */
+/** Added projects whose folder is gone from the disk (folder_presence.ts, cached): the page leaves them out until it is back. */
+function goneAdded(c: WebContext): string[] {
+  const out: string[] = [];
+  for (const [key, item] of Object.entries(c.addedProjects.public().added)) if (c.folderPresence.isGone(item.path)) out.push(key);
+  return out.sort();
+}
+/** A short stable signature of a list of keys (FNV-1a), so the revision changes when an added folder goes or comes back. */
+function signatureOf(keys: string[]): string {
+  let h = 2166136261;
+  for (const ch of keys.join(String.fromCharCode(10))) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return `${keys.length}.${h.toString(36)}`;
+}
+
+/** The project preferences plus the removed and the added projects, under one revision (the list route reports the same one). */
 function projectsRevision(c: WebContext): string {
-  return `${c.projectPrefs.revision()}+${c.removedProjects.revision()}`;
+  const parts = [c.projectPrefs.revision(), c.removedProjects.revision(), c.addedProjects.revision(), signatureOf(goneAdded(c))];
+  return parts.join('+');
 }
 function projectsView(c: WebContext): Record<string, unknown> {
-  return { ...c.projectPrefs.public(), removed: c.removedProjects.public().removed, revision: projectsRevision(c) };
+  const gone = new Set(goneAdded(c));
+  const added: Record<string, { path: string; at: number; gone?: true }> = {};
+  for (const [key, item] of Object.entries(c.addedProjects.public().added)) added[key] = gone.has(key) ? { ...item, gone: true } : item;
+  return { ...c.projectPrefs.public(), removed: c.removedProjects.public().removed, added, revision: projectsRevision(c) };
 }
 
 function contentType(name: string): string {
@@ -140,6 +161,11 @@ export interface WebContext {
   projectPrefs: ProjectPrefs;
   /** Projects removed from AIB ("Delete project…"): served with the project preferences. */
   removedProjects: RemovedProjects;
+  /** The projects the user added (desktop/added_projects.ts): served with the project preferences; saved chats of other folders
+   * are not listed. */
+  addedProjects: AddedProjects;
+  /** Which folders are gone from the disk (cached); added projects whose folder is gone are left out of the page's list. */
+  folderPresence: FolderPresence;
   readState: ReadState;
   settings: SettingsStore;
   /** The transcript viewer's data (monitor.py): OMP sessions and Claude Code projects. */
@@ -180,8 +206,15 @@ export class WebServer {
   constructor(readonly ctx: WebContext) {
     this.native.set('GET /api/live/list', async (c) => {
       const listing = await c.host.liveList();
+      // Recovered chats (open before a restart) of folders that are not added projects are not listed either.
+      const recovered = Array.isArray(listing.recovered)
+        ? (listing.recovered as unknown[]).filter((r) =>
+          !r || typeof r !== 'object' || c.addedProjects.shows(folderOfSession(r))
+        )
+        : listing.recovered;
       return this.json(200, {
         ...listing,
+        ...(recovered === undefined ? {} : { recovered }),
         conversationRevision: c.conversations.revision(),
         projectsRevision: projectsRevision(c),
         readStateRevision: c.readState.revision(),
@@ -216,6 +249,10 @@ export class WebServer {
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
       await c.projectPrefs.update(body);
+      return this.json(200, { ...projectsView(c), ok: true });
+    });
+    this.native.set('POST /api/live/project-add', async (c, _url, body) => {
+      await projectAdd(c.addedProjects, body, c.removedProjects);
       return this.json(200, { ...projectsView(c), ok: true });
     });
     this.native.set('POST /api/live/project-remove', async (c, _url, body) => {
@@ -391,10 +428,12 @@ export class WebServer {
         }
         if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
         if (routeKind('GET', path) === 'monitor') {
-          const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), {
-            token: () => this.ctx.token,
-            appRoot: APP_ROOT,
-          });
+          const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1));
+          // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
+          if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
+            const listed = reply.body as { sessions?: unknown };
+            if (Array.isArray(listed.sessions)) listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+          }
           if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
           return new Response(JSON.stringify(reply.body), {
             status: reply.status,
@@ -500,6 +539,8 @@ export function makeContext(
     conversations: options.stores?.conversations ?? new ConversationState(options.stateDir),
     projectPrefs: options.stores?.projectPrefs ?? new ProjectPrefs(options.stateDir),
     removedProjects: new RemovedProjects(options.stateDir),
+    addedProjects: new AddedProjects(options.stateDir),
+    folderPresence: presence,
     readState: options.stores?.readState ?? new ReadState(options.stateDir),
     settings: options.stores?.settings ?? new SettingsStore(options.stateDir),
     transcripts: options.transcripts,

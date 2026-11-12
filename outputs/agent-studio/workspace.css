@@ -222,6 +222,17 @@ aside .project-group {
 .discover-box {
   padding: 4px 0 0;
 }
+/* A new user's empty chat list: how to add a project, with the New project button. */
+.add-project-note {
+  padding: 8px 2px 0;
+}
+.add-project-note .note {
+  margin: 0 0 8px;
+}
+.add-project-note .add-project-btn {
+  width: 100%;
+  margin: 0;
+}
 details.side-more {
   flex: none;
   margin: 0;
@@ -240,10 +251,6 @@ details.side-more > summary {
 }
 details.side-more[open] {
   padding-bottom: 8px;
-}
-details.side-more .monitor {
-  margin: 4px 12px;
-  font-size: 12px;
 }
 details.side-more .note {
   margin: 4px 12px;

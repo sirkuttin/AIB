@@ -10,6 +10,7 @@
  *
  * Throwaway data folder, temp HOME/APPDATA/LOCALAPPDATA, free ports, no agent runs (--no-auto-reconnect). Gives up after 15 minutes.
  */
+import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 import { assert, assertEquals } from "./_assert.ts";
 import { Fixture, SEP, TEST_OPTIONS, until } from "./_host_fixture.ts";
 import { Browser, browserPath } from "./_doc_browser.ts";
@@ -98,6 +99,10 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
   transcript(claude, "s-main", aibWt, 1, "Work on main");
   transcript(claude, "s-art", art, 2, "Artifact test");
   transcript(claude, "s-zeta", zeta, 3, "Work on zeta");
+  // The user added these three projects (AIB lists saved agent chats of added projects only).
+  const added: Record<string, { path: string; at: number }> = {};
+  for (const path of [main, art, zeta]) added[projectKey(path)] = { path, at: 1 };
+  Deno.writeTextFileSync(`${fx.state}${SEP}studio-added-projects.json`, JSON.stringify({ version: 1, savedAt: 1, added }));
   // studio-worktrees.json: the AIB worktree's project is the Claude worktree (what the server files the chat under).
   Deno.writeTextFileSync(
     `${fx.state}${SEP}studio-worktrees.json`,

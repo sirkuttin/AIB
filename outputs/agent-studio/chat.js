@@ -726,6 +726,50 @@
   let clashUi = null;
   let ownershipHints = {},
     ownershipCertainty = 'checked';
+  // A project whose folder no longer exists (a deleted temp folder, an unplugged drive) is not listed, and neither are its chats.
+  // Nothing is hidden or removed: the next poll lists it again once the folder is back. The server answers from a cache; the page
+  // asks about a folder it has not seen yet (waiting for the answer) and re-asks the ones it knows every GONE_RECHECK ms.
+  // The chat on screen stays until you switch away, and a chat that is waiting on you keeps its place.
+  const GONE_RECHECK = 45000,
+    folderGone = new Map(); // root -> {gone, at}
+  async function dropGoneProjects(list) {
+    const S = window.AgentSidebarUI;
+    if (!S || !S.rootOf) return list;
+    const rootOf = (c) => {
+      try {
+        return S.rootOf(c) || '';
+      } catch {
+        return '';
+      }
+    };
+    const now = Date.now(),
+      roots = [...new Set(list.map(rootOf).filter(Boolean))],
+      unknown = roots.filter((r) => !folderGone.has(r)),
+      stale = roots.filter((r) => folderGone.has(r) && now - folderGone.get(r).at >= GONE_RECHECK);
+    const ask = async (paths) => {
+      for (let i = 0; i < paths.length; i += 60) {
+        const chunk = paths.slice(i, i + 60);
+        try {
+          const r = await get('/api/live/folders/gone', { paths: JSON.stringify(chunk) });
+          const gone = new Set((r && r.gone) || []);
+          for (const p of chunk) folderGone.set(p, { gone: gone.has(p), at: Date.now() });
+        } catch {
+          /* cannot ask: keep what was known, list everything else */
+        }
+      }
+    };
+    if (unknown.length) await ask(unknown);
+    if (stale.length) ask(stale).catch(() => {});
+    const open = selected ? aliasKey(selected) : '';
+    return list.filter((c) => {
+      const r = rootOf(c);
+      const f = r ? folderGone.get(r) : null;
+      if (!f || !f.gone) return true;
+      if (open && aliasKey(c) === open) return true;
+      const lv = c.live && !c.live.closed ? c.live : null;
+      return !!(lv && ((lv.elicitations && lv.elicitations.length) || lv.auth));
+    });
+  }
   async function listConversations() {
     listedAt = Date.now();
     const [live, saved, ownership] = await Promise.all([
@@ -851,6 +895,11 @@
             : { ...d.row, discarded: true, live: undefined, key: 'discarded:' + key },
         );
       }
+    }
+    {
+      const built = conversations,
+        kept = await dropGoneProjects(built);
+      if (conversations === built) conversations = kept;
     }
     annotateElsewhere();
     if (selected) {
@@ -2782,7 +2831,7 @@
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
     $('ncFolder').textContent = f.cwd
       ? f.cwd + (newBranch.cwd === f.cwd && newBranch.branch ? ' · ' + newBranch.branch : '')
-      : 'No project folder yet. Type one below, or add a project with + above the chat list.';
+      : 'Add a project folder to start: type one below, or use New project (+ above the chat list).';
     const typing = f.source === 'none' || f.source === 'input';
     $('ncFolderInput').hidden = !typing;
     $('ncFolderInput').disabled = startingNew;
@@ -5087,6 +5136,7 @@
     unreadCount,
     readIndex,
     promptsSeenUpTo,
+    folderGone,
     seenAtOf,
     mirrorWorking,
     mirrorState,

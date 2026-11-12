@@ -1368,3 +1368,22 @@ test('the row menu closes on a click anywhere else and on Escape wherever the fo
   assert.deepEqual(esc, { stopped: true, prevented: true }, 'and Settings never sees that Escape');
   assert.deepEqual(fire('keydown', t.document.body, { key: 'Escape' }), { stopped: false, prevented: false }, 'no menu: left alone');
 });
+
+test('a new user with no project: the chat list says how to add one, and its button opens New project', async () => {
+  const t = build({ conversations: [] });
+  const opened = [];
+  let none = true;
+  t.window.AgentWorkspaceUI = { noProjects: () => none, openNewProject: (from) => opened.push(from) };
+  t.draw();
+  const box = t.byId.connections;
+  assert.match(box.textContent, /Add a project folder to start\./);
+  const b = box.button('New project');
+  assert.ok(b, 'the New project button is drawn');
+  b.fire('click');
+  assert.deepEqual(opened, [b], 'it opens the New project dialog, focus returning to it');
+  // once a project exists the usual empty text is back
+  none = false;
+  t.draw();
+  assert.equal(box.button('New project'), undefined);
+  assert.match(box.textContent, /No saved conversations yet\./);
+});
