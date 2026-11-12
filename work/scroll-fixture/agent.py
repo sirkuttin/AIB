@@ -1,6 +1,6 @@
 """Scripted ACP agent for the scroll e2e tests (work/deno/scroll_e2e_test.ts). Standard library only, no model calls.
 
-A prompt `script:<path>` starts a turn that follows the JSON-lines file <path>: the test appends one line per step and the agent
+A prompt whose first line is `script:<path>` starts a turn that follows the JSON-lines file <path>: the test appends one line per step and the agent
 sends it at once, so the test decides exactly what arrives and when. Lines:
 
   {"u": {...}}                    a session/update for this chat (any ACP update body: agent_message_chunk, tool_call, ...)
@@ -98,9 +98,9 @@ for raw in sys.stdin:
     elif method == 'session/prompt':
         text = next((b.get('text', '') for b in params.get('prompt', []) if b.get('type') == 'text'
                      and not b.get('text', '').startswith('<studio-context>')), '').strip()
-        if text.startswith('script:'):
+        if text.startswith('script:'):   # only the first line names the script: the rest is what a person typed under it
             turn['key'] = key
-            threading.Thread(target=follow, args=(key, text[7:]), daemon=True).start()
+            threading.Thread(target=follow, args=(key, text.splitlines()[0][7:].strip()), daemon=True).start()
         else:
             update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'ok: ' + text[:200]}})
             emit({'id': key, 'result': {'stopReason': 'end_turn'}})

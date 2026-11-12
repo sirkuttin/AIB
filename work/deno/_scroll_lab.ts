@@ -31,6 +31,8 @@ export interface Chat {
   key: string;
   /** Start a scripted turn (the next lines of a fresh script file). */
   start(): Promise<void>;
+  /** The first line of a prompt you type yourself in the composer: sending it starts a scripted turn (a fresh script file). */
+  nextPrompt(): string;
   /** Append steps to the open turn's script. */
   step(...lines: unknown[]): void;
   /** Shorthands. */
@@ -38,6 +40,13 @@ export interface Chat {
   tool(id: string, title: string, status?: string, extra?: Record<string, unknown>): void;
   toolDone(id: string, output?: string): void;
   end(): void;
+}
+
+export interface Saved {
+  key: string;
+  user(text: string): void;
+  say(text: string): void;
+  tool(name: string, input: Record<string, unknown>, output: string): void;
 }
 
 export class Lab {
@@ -86,6 +95,11 @@ export class Lab {
         const [s, body] = await lab.web.post('prompt', { id, text: `script:${file}`, clientMessageId: `t${lab.#scripts}` });
         if (s !== 200) throw new Error(`prompt: ${s} ${JSON.stringify(body)}`);
       },
+      nextPrompt() {
+        file = `${lab.fx.root}\\script-${++lab.#scripts}.jsonl`;
+        Deno.writeTextFileSync(file, '');
+        return `script:${file}`;
+      },
       step: (...lines) => lines.forEach(append),
       say: (text) => append({ u: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } }),
       tool: (tid, title, status = 'in_progress', extra = {}) =>
@@ -104,8 +118,39 @@ export class Lab {
     return chat;
   }
 
+  /** A saved Claude Code transcript (no live connection: the page reads it through /api/transcript every 1.5 s, the way it
+   *  watches a chat another program is writing). `add*` append rows to the file at once. */
+  savedChat(session: string): Saved {
+    const cwd = this.fx.workspace;
+    const folder = `${this.fx.root}\\claude\\${cwd.replace(/[^A-Za-z0-9]/g, '-')}`;
+    Deno.mkdirSync(folder, { recursive: true });
+    const file = `${folder}\\${session}.jsonl`;
+    let n = 0;
+    let clock = Date.now() - 3600_000;
+    const row = (type: string, message: Record<string, unknown>) => {
+      clock += 1000;
+      n++;
+      Deno.writeTextFileSync(
+        file,
+        JSON.stringify({ type, sessionId: session, cwd, timestamp: new Date(clock).toISOString(), uuid: `${session}-${n}`, message }) + '\n',
+        { append: true },
+      );
+    };
+    const saved: Saved = {
+      key: `claude:${session}`,
+      user: (text) => row('user', { role: 'user', content: text }),
+      say: (text) => row('assistant', { role: 'assistant', model: 'scroll-model', content: [{ type: 'text', text }] }),
+      tool: (name, input, output) => {
+        const id = `toolu_${session}_${n + 1}`;
+        row('assistant', { role: 'assistant', model: 'scroll-model', content: [{ type: 'tool_use', id, name, input }] });
+        row('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] });
+      },
+    };
+    return saved;
+  }
+
   /** Select a chat in the sidebar (a real click) and wait for its list to be drawn. */
-  async select(chat: Chat): Promise<void> {
+  async select(chat: { key: string }): Promise<void> {
     const sel = `button.connection[data-key="${chat.key}"]`;
     await this.page.waitFor(`!!document.querySelector(${JSON.stringify(sel)})`, 20000, `sidebar row ${chat.key}`);
     await this.page.click(sel);
