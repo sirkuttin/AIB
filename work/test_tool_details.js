@@ -356,3 +356,23 @@ test('more than 3 consecutive tool rows group into "N steps"; text between break
   gbtn.click();
   assert.equal(TV.groupRows([t(1), t(2), msg, t(3), t(4)], render).length, 5);
 });
+
+test('steps still in progress stay listed one by one until they are done and something arrives after them', () => {
+  const t = (i, status) => {
+      const r = callRow('Read', { file_path: '/a/f' + i + '.py' }, null, 'p' + i);
+      if (status) r.call.running = true; // the chat marks a call still being worked on
+      return r;
+    },
+    msg = { role: 'assistant', value: 'hi' };
+  const render = (r) => {
+    const n = new Node('div');
+    n.rowRole = r.role;
+    return n;
+  };
+  // the latest run, nothing after it yet: not folded
+  assert.equal(TV.groupRows([msg, t(1), t(2), t(3), t(4), t(5)], render).length, 6);
+  // a step still running: not folded, even with a message after it
+  assert.equal(TV.groupRows([msg, t(1), t(2), t(3), t(4, 'in_progress'), msg], render).length, 6);
+  // done and followed by a message: folded
+  assert.equal(TV.groupRows([msg, t(1), t(2), t(3), t(4), msg], render).length, 3);
+});

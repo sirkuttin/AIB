@@ -1218,7 +1218,9 @@
     return box;
   }
   const isToolRow = (r) => r && r.role === 'tool' && (r.raw || r.call);
-  /* Turns rows into DOM nodes; runs of more than 3 consecutive tool rows become one "N steps" group. */
+  /* Turns rows into DOM nodes; runs of more than 3 consecutive tool rows become one "N steps" group, but only once the run is
+     finished: none of its steps still running and a message (or other activity) has arrived after it. Until then the steps stay
+     listed one by one, so the work in progress is never folded away. */
   function groupRows(rows, renderRow) {
     const out = [];
     let i = 0;
@@ -1231,7 +1233,8 @@
       let j = i;
       while (j < rows.length && isToolRow(rows[j])) j++;
       const run = rows.slice(i, j);
-      if (run.length > 3) {
+      const settled = j < rows.length && !run.some((r) => summarize(r).status === 'running');
+      if (run.length > 3 && settled) {
         const key = 'group:' + rowKey(run[0]),
           box = make('div', '', 'tool-group'),
           btn = make('button', '', 'tool-toggle tool-group-toggle');
