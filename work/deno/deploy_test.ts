@@ -1,19 +1,17 @@
 /**
  * `aib deploy` (test_deploy.py): idle detection, the restart plan and the worktree guard, compared with deploy.py where it is a pure
- * function; and real restarts of a Deno server on a random port with a temp state folder (web-only, then --host), with the
- * deploy logs in work/deploy-fixture (gitignored). Never port 8767/8768 and never the real data folder.
+ * function; and real restarts of a Deno server on a port the OS picked with a temp state folder (web-only, then --host), with
+ * the deploy logs in that test's own temp folder. Never port 8767/8768 and never the real data folder.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PyParity } from './_parity.ts';
 import { DENO, Fixture, MAIN, SEP, until } from './_host_fixture.ts';
 import { refusedPort } from './_ports.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as deploy from '../../outputs/agent-studio/server/host/deploy.ts';
 import { packageContext } from '../../outputs/agent-studio/server/state/paths.ts';
 
 const WIN = Deno.build.os === 'windows';
-const LOGS = `${TESTS_DIR}${SEP}deploy-fixture`;
 
 function conn(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { provider: 'claude', cwd: 'C:\\p', closed: false, busy: false, ready: true, ...extra };
@@ -202,6 +200,8 @@ Deno.test({
       assert(port !== 8767 && port !== 8768);
       const host = (await readInfo(fixture.state))!;
       assert(host && pidAlive(host.pid as number), 'the web server started an agent host');
+      const LOGS = `${tmp}${SEP}deploy-logs`; // this test's own folder: a parallel run never shares or reads another's log
+      Deno.mkdirSync(LOGS);
       const hooks = { root: main, logs: LOGS, packageContext: () => null };
 
       // the command line deploy reads is the one the fixture started
