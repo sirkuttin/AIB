@@ -5,9 +5,13 @@
   'use strict';
   const T = {
     edit: 'Edit - pauses the queue while you edit',
-    sendNow: 'Send now - interrupts the agent',
+    sendNow: 'Interrupt and send',
     remove: 'Remove from queue',
     resume: 'Resume sending the queued messages',
+    held: 'Waits for your answer above · then goes in at once',
+    fallback: 'Couldn’t send now: sends when this turn ends',
+    sending: 'Sending',
+    laneHead: 'Waiting to go in',
   };
   const RENEW_MS = 30000;
 
@@ -134,9 +138,20 @@
     area.focus();
   }
 
-  // ctx: {box, connection, busy, post(path, body), refresh(), fail(error)}; call it with the snapshot's queue on every render.
-  function render(ctx, queue) {
+  // Messages sent while the agent works that have not gone in yet (the snapshot's steerLane): held for an open approval card,
+  // being sent, or fallen back to after the turn. Injected ones are done (the bubble in the chat shows them) and are not listed.
+  const HELD = { held: 1, sending: 1, fallback: 1 };
+  function laneItems(lane) {
+    return (Array.isArray(lane) ? lane : []).filter((i) => i && HELD[i.state]);
+  }
+
+  // ctx: {box, connection, busy, post(path, body), refresh(), fail(error)}; call it with the snapshot's queue on every render,
+  // and its steerLane as the third argument.
+  function render(ctx, queue, lane) {
     const box = ctx.box;
+    const held = laneItems(lane),
+      C = root.AgentSendMenu && root.AgentSendMenu.COPY,
+      W = C ? { held: C.held, fallback: C.fallbackNote, sending: C.sendingHead, laneHead: C.heldHead } : T; // the words live in send-menu-ui.js
     if (!box) return summary(queue, ctx.busy);
     if (ui.conn !== ctx.connection) {
       // another conversation: the open editor belongs to the old one
@@ -159,18 +174,34 @@
       queue && queue.reason,
       queue && queue.message,
       items.map((i) => [i.id, i.text, i.sending, i.note, i.attachments.length]),
+      held.map((i) => [i.id, i.text, i.state, i.heldReason]),
       ui.editor && ui.editor.id,
     ]);
     if (sig === ui.sig) return s;
     ui.sig = sig;
     const doc = box.ownerDocument;
-    box.hidden = !s.show;
-    if (!s.show) {
+    box.hidden = !s.show && !held.length;
+    if (!s.show && !held.length) {
       box.replaceChildren();
       return s;
     }
+    const laneRows = held.map((item) => {
+      const row = el(doc, 'li', 'q-row q-lane q-lane-' + item.state);
+      row.append(
+        el(doc, 'span', 'q-num', item.state === 'sending' ? '…' : '↓'),
+        el(doc, 'span', 'q-text', String(item.text || '').replace(/\s+/g, ' ').trim()),
+        el(
+          doc,
+          'span',
+          'q-lane-note',
+          item.state === 'held' ? W.held : item.state === 'fallback' ? W.fallback : W.sending,
+        ),
+      );
+      row.title = String(item.text || '');
+      return row;
+    });
     const head = el(doc, 'div', 'q-head' + (s.tone ? ' q-paused' : ''));
-    head.append(el(doc, 'span', '', s.head));
+    head.append(el(doc, 'span', '', s.show ? s.head : W.laneHead));
     if (s.resume) {
       const resume = el(doc, 'button', 'q-text-btn', 'Resume');
       resume.type = 'button';
@@ -188,6 +219,7 @@
       head.append(resume);
     }
     const list = el(doc, 'ul', 'q-list');
+    list.append(...laneRows);
     items.forEach((item, index) => {
       if (ui.editor && ui.editor.id === item.id) {
         list.append(ui.editor.row);
@@ -229,7 +261,7 @@
     return s;
   }
 
-  const api = { summary, render, TEXT: T, state: ui };
+  const api = { summary, render, laneItems, TEXT: T, state: ui };
   root.AgentQueueUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
