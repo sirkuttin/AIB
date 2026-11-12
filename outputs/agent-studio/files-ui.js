@@ -721,7 +721,8 @@
     caret.setAttribute('aria-hidden', 'true');
     n.append(caret, docIcon('fx-ico fx-docico'), el('span', r.name, 'fx-name'));
     n.append(el('span', r.count + (r.count === 1 ? ' doc' : ' docs') + ' \u203a', 'fx-docpages'));
-    n.title = "AIB's docs, committed with the project. Click: show them in the Docs tab";
+    n.title = "AIB's docs, committed with the project. Click: show them in the Docs tab" +
+      (r.titles && r.titles.length ? '\n' + r.titles.slice(0, 8).join('\n') + (r.titles.length > 8 ? '\n…' : '') : '');
     n.addEventListener('click', () => {
       sel = r.path;
       setMode('docs');

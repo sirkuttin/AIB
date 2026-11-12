@@ -734,3 +734,18 @@ test('the "+ New doc" name field survives a repaint: still there, same words, fo
   assert.ok(t.shell.body.querySelector('.dt-newbox').querySelector('.fx-newdoc-in'), 'not cancelled');
   assert.ok(t.FU._state().newDoc);
 });
+
+test('a doc named by its slug shows its title everywhere, the slug only when there is no title', () => {
+  const slugDoc = Object.assign(plan(), { name: 'checkout-rounding-release', title: 'Checkout rounding fix: release plan', dir: 'aib-docs/checkout-rounding-release' });
+  const list = FS.docsList([slugDoc, Object.assign(plan(), { name: 'old-notes', title: '', dir: 'aib-docs/old-notes' })], null, [], 1e12);
+  assert.deepEqual(list.map((r) => r.title).sort(), ['Checkout rounding fix: release plan', 'old-notes']);
+  assert.equal(FS.docIndex([slugDoc]).byDir.size, 1);
+  const fld = FS.treeRows({ '': [entry('aib-docs', { dir: true })] }, new Set(), { docs: FS.docIndex([slugDoc]) })[0];
+  assert.deepEqual(fld.titles, ['Checkout rounding fix: release plan'], 'the count tooltip lists titles');
+  // a doc tool row whose doc is not in the list yet: the title the tool result carries, not the capitalised slug
+  const create = { tool: 'doc_create', doc: 'checkout-rounding-release', input: {}, result: { docTitle: 'Checkout rounding fix: release plan', pages: [{ id: 'p1', title: 'Overview' }] } };
+  assert.equal(L.toolText(create, []), 'Created Checkout rounding fix: release plan · 1 page');
+  assert.equal(L.toolText(Object.assign({}, create, { tool: 'doc_read' }), []), 'Read Checkout rounding fix: release plan');
+  assert.equal(L.toolText(create, [slugDoc]), 'Created Checkout rounding fix: release plan · 1 page');
+  assert.equal(L.toolText({ tool: 'doc_read', doc: 'old-notes', result: {} }, []), 'Read old-notes');
+});

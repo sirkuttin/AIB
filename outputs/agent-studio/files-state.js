@@ -200,6 +200,7 @@
             path: e.path,
             name: e.name,
             count: docs ? docs.byDir.size : 0,
+            titles: docs ? [...docs.byDir.values()].map((d) => d.title || d.name) : [],
             depth,
             ignored: !!e.ignored,
             open: isOpen,

@@ -73,3 +73,45 @@ Deno.test('a worktree chat\'s doc tools and routes use the main checkout\'s aib-
     await Deno.remove(root, { recursive: true }).catch(() => {});
   }
 });
+
+Deno.test('doc_create: docTitle, else the first # heading of a slug-named doc, else the name, is the title the Docs tab lists', async () => {
+  const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-doctitle-' })).replace(/^\\\\\?\\/, '');
+  const state = `${root}${sep}state`, project = `${root}${sep}project`;
+  await Deno.mkdir(state);
+  await Deno.mkdir(project);
+  const host = {
+    liveList: () => Promise.resolve({ connections: [] }), liveState: () => Promise.resolve({}), liveWrites: () => Promise.resolve({}),
+    liveCall: () => Promise.resolve([200, {}]), emitArtifact: () => Promise.resolve(true),
+  } as unknown as LiveBackend;
+  const ctx = makeContext({
+    stateDir: state, host, updates: {} as UpdateService, webInstanceId: 'test', cliPort: 0,
+    transcripts: { sessionCwd: () => Promise.resolve(project) } as unknown as Source,
+    claudeProjects: state, ompSessions: state, shutdown: () => {},
+  });
+  try {
+    const tool = async (name: string, args: Json) => {
+      const [, reply] = await docsTool(ctx, { conversationId: 'claude:a', tool: name, args });
+      return (reply as { ok: boolean; result: Json }).result;
+    };
+    const a = await tool('doc_create', { doc: 'checkout-rounding-release', docTitle: 'Checkout rounding fix: release plan', markdown: '# Summary\n\nx\n' });
+    assertEquals(a.docTitle, 'Checkout rounding fix: release plan');
+    const b = await tool('doc_create', { doc: 'launch-notes', markdown: '# Launch notes for May\n\nx\n' });
+    assertEquals(b.docTitle, 'Launch notes for May');
+    const c = await tool('doc_create', { doc: 'bare-doc', markdown: 'no heading\n' });
+    assertEquals(c.docTitle, 'bare-doc');
+    const d = await tool('doc_create', { doc: 'Release plan', markdown: '# Something else\n' });
+    assertEquals(d.docTitle, 'Release plan', 'a doc named with a real title keeps it');
+    assertEquals((await tool('doc_read', { doc: 'checkout-rounding-release' })).docTitle, 'Checkout rounding fix: release plan');
+    const listed = (await tool('doc_list', {})).docs as Json[];
+    assertEquals(listed.map((x) => [x.name, x.title]).sort(), [
+      ['bare-doc', 'bare-doc'], ['checkout-rounding-release', 'Checkout rounding fix: release plan'],
+      ['launch-notes', 'Launch notes for May'], ['release-plan', 'Release plan'],
+    ]);
+    // the title is saved with the doc: a fresh store reads it back
+    const text = await Deno.readTextFile(`${project}${sep}aib-docs${sep}checkout-rounding-release${sep}doc.aibdoc`);
+    assert(text.includes('Checkout rounding fix: release plan'), text.slice(0, 300));
+  } finally {
+    await ctx.docs.close();
+    await Deno.remove(root, { recursive: true }).catch(() => {});
+  }
+});
