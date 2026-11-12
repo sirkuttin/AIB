@@ -35,15 +35,8 @@ import {
 
 const ALL = Deno.env.get('AIB_SCROLL_ALL') === '1';
 
-/** Tests that fail on integration/beta8 today (each is a scrolling bug; see the comment in the test for the cause). */
-export const KNOWN_FAILING = new Set<string>([
-  '2b approval card pinned under a following list: it stays at the bottom and keeps following',
-  '2d terminal dock opened and resized under a following list: it stays at the bottom and keeps following',
-  '4a opening a big step at the bottom: it stays where you clicked, also when the next update arrives',
-  '4c "Show all" on a long block at the bottom: the block stays where it was, also when the next update arrives',
-  '6a opening a chat with unread messages lands on the "New" line',
-  '6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the row you were reading',
-]);
+/** Tests that fail today (each a scrolling bug; the comment in the test gives the cause). Empty since beta.8's scroll fixes. */
+export const KNOWN_FAILING = new Set<string>([]);
 
 function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number, number] = [1600, 900]) {
   Deno.test({
@@ -204,7 +197,7 @@ scrollTest('2a composer grows to 4 lines: a following list stays at the bottom a
 });
 
 scrollTest('2b approval card pinned under a following list: it stays at the bottom and keeps following', async (lab) => {
-  // Today (after you typed in the composer and cleared it, as when sending): the card takes 185 px from the list, which is left
+  // Was, before beta.8 (after you typed in the composer and cleared it, as when sending): the card takes 185 px from the list, which is left
   // 138 px above the bottom with follow switched OFF (data-paused), so later replies only light the jump button. Measured order:
   // the list shrinks, Chrome's scroll anchoring moves scrollTop (+47 px, the earlier composer change) and fires a scroll event; the
   // scroll handler (chat.js ~4642, the 48 px rule) takes it for you scrolling up and pauses; the ResizeObserver (chat.js ~4685)
@@ -238,7 +231,7 @@ scrollTest('2c two queued messages: the queue box appears and a following list s
 });
 
 scrollTest('2d terminal dock opened and resized under a following list: it stays at the bottom and keeps following', async (lab) => {
-  // Today (after typing in and clearing the composer): opening the dock leaves the list above the bottom and paused; the next reply
+  // Was, before beta.8 (after typing in and clearing the composer): opening the dock leaves the list above the bottom and paused; the next reply
   // is not followed ("1 new message ↓"). Same cause as 2b: the list shrinks, a scroll event pauses it before the ResizeObserver acts.
   const page = lab.page;
   const chat = await openSeeded(lab);
@@ -386,13 +379,13 @@ async function openStep(lab: Lab, big: boolean) {
 }
 
 scrollTest('4a opening a big step at the bottom: it stays where you clicked, also when the next update arrives', (lab) => openStep(lab, true));
-// 4a today: the click is followed (600 ms touch window, chat.js ~4700), but the list stays "following" (no scroll event fired, so
+// 4a before beta.8: the click is followed (600 ms touch window, chat.js ~4700), but the list stays "following" (no scroll event fired, so
 // data-paused is not set) with the opened detail below the view; the next update scrolls to the end (showRows followBox, chat.js
 // ~1424) and the step you opened is pushed off the top of the list.
 
 scrollTest('4b opening a small step at the bottom: it stays where you clicked, also when the next update arrives', (lab) => openStep(lab, false));
 
-// 4c today: same cause as 4a. "Show all" opens the block in place (its top stays at 369 px), but the list keeps following with
+// 4c before beta.8: same cause as 4a. "Show all" opens the block in place (its top stays at 369 px), but the list keeps following with
 // 1117 px below the view; the next update scrolls to the end and the block's start is 786 px above the list's top.
 scrollTest('4c "Show all" on a long block at the bottom: the block stays where it was, also when the next update arrives', async (lab) => {
   const page = lab.page;
@@ -489,7 +482,7 @@ scrollTest('5 "Show earlier" adds older rows above without moving the row you ar
 // ---- 6. switching chats and views, unread, reload -------------------------------------------------------------------------------
 
 scrollTest('6a opening a chat with unread messages lands on the "New" line', async (lab) => {
-  // Today: no "New" line, the chat opens at the bottom. openConversation (chat.js ~1001) calls renderConversations() before the
+  // Was: no "New" line, the chat opened at the bottom. openConversation (chat.js ~1001) calls renderConversations() before the
   // first draw; AgentSidebarUI.sync -> markViewed (sidebar-ui.js ~252/283) marks the chat seen up to Date.now() because holdSeen
   // reads the box's paused flag, which the new chat has not set yet. placeNewLine (chat.js ~4600) then finds nothing unread.
   const page = lab.page;
@@ -503,6 +496,8 @@ scrollTest('6a opening a chat with unread messages lands on the "New" line', asy
   a.tool('away1', 'Step while away', 'completed');
   a.say('Unread one UNREAD1 ' + 'words '.repeat(60));
   a.tool('away2', 'Second step while away', 'completed');
+  // more unread than the list can show, so the line can reach the top (a short unread part ends at the bottom, following: 8f)
+  for (let i = 0; i < 4; i++) a.say(`Unread more ${i} ` + 'words '.repeat(400));
   a.say('Unread two UNREAD2');
   await settle(3500); // two polls of the conversation list
   await lab.select(a);
@@ -547,7 +542,7 @@ scrollTest('6c switching Full / Chat / Prompts at the bottom stays at the bottom
   assert(!p, p);
 });
 
-// 6d today: scrolled 900 px up from the end of a 60-step turn ("Read seed file 42" at the top), Full -> Chat lands on the turn's
+// 6d before beta.8: scrolled 900 px up from the end of a 60-step turn ("Read seed file 42" at the top), Full -> Chat lands on the turn's
 // prompt at scrollTop 22 (4800 px from the end) and Chat -> Full stays there. views-ui.js anchorOf (~395) keeps only the prompt that
 // owns the top row (offset 0 unless the prompt itself is the top row) and restoreAnchor (~408) puts that prompt at the top.
 scrollTest('6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the row you were reading', async (lab) => {

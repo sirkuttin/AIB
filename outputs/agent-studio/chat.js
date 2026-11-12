@@ -196,11 +196,46 @@
     : null;
   const viewOf = () => (viewStore ? viewStore.get(curKey()) : 'full');
   let pendingSwitch = null; // {anchor, bottom}: a view change waiting for its repaint
+  let viewAnchor = null; // {key, anchor, top}: where the last view change put you (top: the scroll position it left)
+  /* Rows drawn in #messages carry data-ri, their index in the chat's rows, the same in every view. */
+  function rowAnchor(box) {
+    const top = box.getBoundingClientRect().top;
+    for (const el of box.querySelectorAll('[data-ri]')) {
+      const r = el.getBoundingClientRect();
+      if (r.height && r.bottom > top + 1) return { ri: +el.dataset.ri, off: r.top - top };
+    }
+    return null;
+  }
+  /* Put that row back where it was; a row this view does not show gives way to the nearest one it does (earlier first). */
+  function restoreRowAnchor(box, a) {
+    if (!a) return false;
+    let best = null,
+      bestD = Infinity;
+    for (const el of box.querySelectorAll('[data-ri]')) {
+      if (!el.getClientRects().length) continue;
+      const ri = +el.dataset.ri,
+        d = Math.abs(ri - a.ri) + (ri > a.ri ? 0.5 : 0);
+      if (d < bestD) {
+        best = el;
+        bestD = d;
+        if (!d) break;
+      }
+    }
+    if (!best) return false;
+    box.scrollTop += best.getBoundingClientRect().top - box.getBoundingClientRect().top - a.off;
+    return true;
+  }
   function setView(view) {
     const key = curKey(),
       box = $('messages');
     if (!viewStore || !key || viewOf() === view) return;
-    pendingSwitch = { anchor: window.ChatViewsUI?.anchorOf(box) || null, bottom: followBox(box) };
+    /* the row you were reading; switching back before you scroll again goes back to that same row, not to the one the other
+       view had to show in its place */
+    const again = viewAnchor && viewAnchor.key === key && Math.abs(box.scrollTop - viewAnchor.top) <= 2;
+    pendingSwitch = {
+      anchor: again ? viewAnchor.anchor : { row: rowAnchor(box), pk: window.ChatViewsUI?.anchorOf(box) || null },
+      bottom: followBox(box),
+    };
     UNREAD.holdUntil = Date.now() + 600; // the repaint moves the scroll position by itself; the read state must not change with it
     viewStore.set(key, view);
     rowExtra.main = 0;
@@ -1318,15 +1353,19 @@
     }
     return null;
   }
+  /* Several rows can print the same ("Show steps (1 tool call)"): the one nearest its old place is the one you were reading. */
   function restoreAnchor(box, anchor) {
     if (!anchor) return false;
     const top = box.getBoundingClientRect().top;
+    let move = null;
     for (const el of box.children)
       if (rowPrint(el) === anchor.print) {
-        box.scrollTop += el.getBoundingClientRect().top - top - anchor.off;
-        return true;
+        const d = el.getBoundingClientRect().top - top - anchor.off;
+        if (move === null || Math.abs(d) < Math.abs(move)) move = d;
       }
-    return false;
+    if (move === null) return false;
+    box.scrollTop += move;
+    return true;
   }
   function holdAnchor(box, anchor, held, after) {
     if (!anchor) return;
@@ -1418,9 +1457,19 @@
       );
     }
     let flat = shown;
+    /* main list: every drawn row carries its index in rows (data-ri), so a view change can find the same row again */
+    const index = signatureKey === 'main' ? new Map(rows.map((r, i) => [r, i])) : null,
+      tag = (render) =>
+        index
+          ? (row) => {
+              const el = render(row);
+              if (el && el.dataset && index.has(row)) el.dataset.ri = index.get(row);
+              return el;
+            }
+          : render;
     if (proj) {
       const ctx = {
-        bubble: viewBubble,
+        bubble: tag(viewBubble),
         groupRows: (list, render) => window.ToolViews?.groupRows?.(list, render) || list.map(render),
       };
       if (view === 'prompts')
@@ -1438,7 +1487,7 @@
     } else {
       const docked = box.id === 'messages' ? dockedPlan(rows) : null,
         drawn = docked ? planLast(shown, rows, docked) : shown;
-      const draw = box.id === 'messages' && window.ChatViews ? viewBubble : bubble;
+      const draw = tag(box.id === 'messages' && window.ChatViews ? viewBubble : bubble);
       if (window.ToolViews?.groupRows) fragment.append(...window.ToolViews.groupRows(drawn, draw));
       else for (const row of drawn) fragment.append(draw(row));
     }
@@ -1463,7 +1512,25 @@
       if (s.bottom) {
         delete box.dataset.paused;
         box.scrollTop = box.scrollHeight;
-      } else window.ChatViewsUI.restoreAnchor(box, s.anchor);
+        viewAnchor = null;
+      } else {
+        const key = curKey(),
+          put = () => {
+            if (!restoreRowAnchor(box, s.anchor?.row)) window.ChatViewsUI.restoreAnchor(box, s.anchor?.pk);
+            viewAnchor = { key, anchor: s.anchor, top: box.scrollTop };
+          };
+        put();
+        /* clamping and pictures settle after the repaint: put the row back while nothing else moved the list */
+        for (const ms of [60, 250])
+          setTimeout(() => {
+            if (
+              viewAnchor?.anchor === s.anchor &&
+              viewAnchor.key === curKey() &&
+              Math.abs(box.scrollTop - viewAnchor.top) <= 2
+            )
+              put();
+          }, ms);
+      }
     }
     markRepeatedTimes(box);
     resumeIfAtEnd(box);
@@ -3913,7 +3980,8 @@
   window.AgentReadState?.init({ get, post });
   window.AgentSidebarUI?.init({
     aliasKey,
-    holdSeen: () => !!$('messages')?.dataset.paused, // scrolled up in the open chat: it is not "viewed" up to now
+    /* scrolled up in the open chat, or the chat is still opening (its "New" line is not placed yet): not "viewed" up to now */
+    holdSeen: (c) => !!$('messages')?.dataset.paused || UNREAD.opening || (!!c && aliasKey(c) !== UNREAD.chat),
     getSelected: () => selected,
     ownershipOf: (c) => ownershipHints[c.provider + ':' + c.id],
     issueFor: (c) => !!(connectionIssue && selected && aliasKey(selected) === aliasKey(c)),
@@ -4680,6 +4748,21 @@
       )
         scrolledUp();
     });
+    /* Opening something you clicked near the bottom (a step, "Show all", a fold): it stays where it is (the growth watcher
+       below leaves it), and while what you opened reaches below the view following pauses, so the next update does not pull
+       it off the top. Following comes back when you reach the very bottom yourself. */
+    box.addEventListener(
+      'click',
+      (e) => {
+        if (box.dataset.paused || !e.target?.closest?.('button, summary, [aria-expanded]')) return;
+        const gapOf = () => box.scrollHeight - box.scrollTop - box.clientHeight,
+          before = Math.max(1, gapOf());
+        const check = () => !box.dataset.paused && gapOf() > before && scrolledUp();
+        requestAnimationFrame(check);
+        for (const ms of [250, 600]) setTimeout(check, ms);
+      },
+      true,
+    );
     box.addEventListener('scroll', () => {
       if (id === 'messages' && Date.now() < UNREAD.holdUntil) {
         syncJump(); // a view switch moved the scroll position: that is not you reading

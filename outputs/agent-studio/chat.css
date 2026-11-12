@@ -257,6 +257,8 @@ input[type='checkbox'] {
 #messages {
   flex: 1;
   overflow: auto;
+  /* AIB keeps the scroll position itself (follow, paused anchor); Chrome's own anchoring moved it and read as you scrolling */
+  overflow-anchor: none;
   padding: 10px 30px 20px;
   scrollbar-width: thin;
 }
