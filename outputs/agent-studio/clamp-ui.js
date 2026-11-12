@@ -70,12 +70,9 @@
       queued = false;
       apply(box);
     };
-    new MutationObserver(() => {
-      if (!queued) {
-        queued = true;
-        setTimeout(run, 30);
-      }
-    }).observe(box, { childList: true, subtree: true });
+    // Clamp rebuilt rows in the observer itself: it runs before the next paint, so a long block is never drawn at full
+    // height for a frame (a timer here made the whole history flash open and jump on every update).
+    new MutationObserver(() => apply(box)).observe(box, { childList: true, subtree: true });
     box.addEventListener(
       'toggle',
       () => {
@@ -96,6 +93,6 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
     else start();
   }
-  if (typeof module !== 'undefined') module.exports = { lineCount, blockKey, LINES };
+  if (typeof module !== 'undefined') module.exports = { lineCount, blockKey, LINES, watch };
   if (typeof window !== 'undefined') window.ClampUI = { apply, lineCount, LINES };
 })();
