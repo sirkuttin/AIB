@@ -1,12 +1,12 @@
 {
  "_note": "Recorded claude-agent-acp 0.97.0 stream (subagents RFD form, which AIB declares) from a real lead chat, trimmed: two background helpers started with the Agent input model \"sonnet\"; the parent Agent tool call is replaced by session_message, so the model only reaches the client as the child session's config_option_update. The owner pressed Interrupt at 05:50:18 (session/cancel; turn_end cancelled); both helpers were in long commands, whose results came after the cancel; they ended on their own (subagent_update idle/end_turn) at 05:52:02 and 05:52:22. Prompts, tool input and output trimmed; times are the transcripts' (UTC epoch seconds).",
- "mainSessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+ "mainSessionId": "00000000-0000-4000-8000-000000000001",
  "events": [
   {
    "kind": "user",
    "time": 1794462227.934,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "text": "(owner prompt; trimmed)"
    }
   },
@@ -14,7 +14,7 @@
    "kind": "update",
    "time": 1794462240.242,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "update": {
      "sessionUpdate": "subagent_update",
      "sessionId": "a4ea6b53148419096",
@@ -33,11 +33,11 @@
    "kind": "update",
    "time": 1794462240.25,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "update": {
      "sessionUpdate": "session_message",
      "messageId": "toolu_01HNmzRciii2kZ8TvX6bYHFv",
-     "senderSessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+     "senderSessionId": "00000000-0000-4000-8000-000000000001",
      "recipientSessionId": "a4ea6b53148419096",
      "content": [
       {
@@ -188,7 +188,7 @@
    "kind": "update",
    "time": 1794462252.283,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "update": {
      "sessionUpdate": "subagent_update",
      "sessionId": "a3771e24db1406b8d",
@@ -327,7 +327,7 @@
        "parentToolUseId": "toolu_01HNmzRciii2kZ8TvX6bYHFv"
       }
      },
-     "toolCallId": "toolu_013bqitHKPBvoVHC8xRCb99p",
+     "toolCallId": "toolu_fixture_qa_helper_0001",
      "sessionUpdate": "tool_call",
      "name": "Bash",
      "rawInput": {
@@ -351,7 +351,7 @@
        "parentToolUseId": "toolu_01PhjFxX3TFQawL5gtsTSUeh"
       }
      },
-     "toolCallId": "toolu_01VxJMYJFtzzfR8EYumFj216",
+     "toolCallId": "toolu_fixture_widen_helper_02",
      "sessionUpdate": "tool_call",
      "name": "Bash",
      "rawInput": {
@@ -417,7 +417,7 @@
    "kind": "user",
    "time": 1794462556.532,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "text": "(owner prompt; trimmed)"
    }
   },
@@ -483,7 +483,7 @@
        "parentToolUseId": "toolu_01PhjFxX3TFQawL5gtsTSUeh"
       }
      },
-     "toolCallId": "toolu_01VxJMYJFtzzfR8EYumFj216",
+     "toolCallId": "toolu_fixture_widen_helper_02",
      "sessionUpdate": "tool_call_update",
      "status": "completed"
     }
@@ -501,7 +501,7 @@
        "parentToolUseId": "toolu_01HNmzRciii2kZ8TvX6bYHFv"
       }
      },
-     "toolCallId": "toolu_013bqitHKPBvoVHC8xRCb99p",
+     "toolCallId": "toolu_fixture_qa_helper_0001",
      "sessionUpdate": "tool_call_update",
      "status": "completed"
     }
@@ -511,7 +511,7 @@
    "kind": "update",
    "time": 1794462722.884,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "update": {
      "sessionUpdate": "subagent_update",
      "sessionId": "a4ea6b53148419096",
@@ -526,7 +526,7 @@
    "kind": "update",
    "time": 1794462742.591,
    "data": {
-    "sessionId": "3d3562ee-14a0-46d9-bce8-528bb9938f34",
+    "sessionId": "00000000-0000-4000-8000-000000000001",
     "update": {
      "sessionUpdate": "subagent_update",
      "sessionId": "a3771e24db1406b8d",
