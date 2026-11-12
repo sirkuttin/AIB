@@ -35,7 +35,11 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   const id = one(args, 'id');
   let cwd: string | null;
   try {
-    cwd = await changesFolder(chatStudioOf(ctx, await savedFolders(ctx, id)), id);
+    // A lasting 'provider:session' id (the doc tools name the chat that way) is looked up by the live connection behind it: only that
+    // knows a chat that works in its own worktree (its transcript may not be filed yet).
+    const live = ctx.artifacts?.connectionOf?.(id) || id;
+    cwd = await changesFolder(chatStudioOf(ctx, await savedFolders(ctx, id)), live);
+    if (!cwd && live !== id) cwd = await changesFolder(chatStudioOf(ctx, await savedFolders(ctx, id)), id);
   } catch {
     return [400, { error: 'Choose a chat', code: 'bad_chat' }];
   }

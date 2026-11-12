@@ -259,12 +259,14 @@
     const hit = pages.find((p) => p && p.id === ref) || pages.find((p) => p && norm(p.title) === norm(ref));
     return hit ? hit.title : /^[a-z0-9]{6,}$/i.test(ref) && pages.length ? '' : ref;
   };
+  // The doc's title from a tool call that is not in the doc list (yet): the title the tool result names, else the typed name.
+  const resultTitle = (call) => (call && call.result && typeof call.result.docTitle === 'string' ? call.result.docTitle : '');
   // The row's words: "Created Release plan · 4 pages", "Wrote Risks in Release plan", "Added page Metrics to Release plan"…
   function toolText(call, docs) {
     if (!call) return '';
     const doc = docOf(docs, call.doc),
       res = call.result || {},
-      title = (doc && doc.title) || (typeof res.title === 'string' && call.tool === 'doc_create' ? res.title : '') || call.doc || 'a doc',
+      title = (doc && doc.title) || resultTitle(call) || (typeof res.title === 'string' && call.tool === 'doc_create' ? res.title : '') || call.doc || 'a doc',
       page = pageTitle(doc, call.page, res),
       inp = call.input || {};
     const inDoc = (verb) => verb + (page ? ' ' + page + ' in ' : ' ') + title;
@@ -273,7 +275,7 @@
         return 'Listed the docs';
       case 'doc_create': {
         const n = Array.isArray(res.pages) ? res.pages.length : doc ? doc.pages : 1;
-        return 'Created ' + (doc ? doc.title : titleFromTyped(call.doc) || 'a doc') + ' · ' + pagesText(n);
+        return 'Created ' + (doc ? doc.title : resultTitle(call) || titleFromTyped(call.doc) || 'a doc') + ' · ' + pagesText(n);
       }
       case 'doc_read':
       case 'doc_changes':
@@ -489,7 +491,7 @@
   function paintCard(card, call, docs) {
     const d = docOf(docs, call.doc);
     const res = call.result || {};
-    const title = (d && d.title) || titleFromTyped(call.doc) || 'Doc';
+    const title = (d && d.title) || resultTitle(call) || titleFromTyped(call.doc) || 'Doc';
     const n = d ? d.pages : Array.isArray(res.pages) ? res.pages.length : 1;
     card.replaceChildren();
     const body = el('div', null, 'art-card-body');
@@ -535,13 +537,14 @@
         ev.stopPropagation();
         const cc = chatOf(box) || openChat();
         const ds = cc && cc.id ? cached(cc.id, 'main') : null;
-        openDoc({ name: call.doc, page: toolPage(call, ds), chat: cc, from: 'chat' });
+        const dd = docOf(ds, call.doc);
+        openDoc({ name: call.doc, title: (dd && dd.title) || resultTitle(call), page: toolPage(call, ds), chat: cc, from: 'chat' });
       });
       acts.append(open);
       const setTip = (ds) => {
         const d = docOf(ds, call.doc),
           p = pageTitle(d, call.page, call.result);
-        open.title = 'Open ' + ((d && d.title) || call.doc) + (p ? ' › ' + p : '');
+        open.title = 'Open ' + ((d && d.title) || resultTitle(call) || call.doc) + (p ? ' › ' + p : '');
         open.setAttribute('aria-label', open.title);
       };
       setTip(docs);

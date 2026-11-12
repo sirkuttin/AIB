@@ -37,8 +37,18 @@ export async function runDocTool(
       const created = await store.open(projectRoot, args.doc, markdown, chat || undefined);
       if (chat) store.link(created, chat, false);
       if (args.title !== undefined) created.live.renamePage(created.live.firstPage, args.title, created.live.system);
+      // The doc's own title (shown in the Docs tab, chips, cards): `docTitle`, else the first page's # heading when the agent named the
+      // doc by its folder name ("checkout-rounding-release"), so the slug is shown only when there is no title at all.
+      const docTitle = typeof args.docTitle === 'string' && args.docTitle.trim()
+        ? args.docTitle.trim()
+        : created.title === created.name ? /^#[ \t]+(.+?)[ \t#]*$/m.exec(markdown)?.[1]?.trim() ?? '' : '';
+      if (docTitle && docTitle !== created.title) {
+        created.title = docTitle.slice(0, 100);
+        created.dirty = true;
+        await store.flush(created);
+      }
       created.agents.seen.set(who, created.live.rev);
-      return [true, { doc: created.name, file: created.file, created: true, ...created.live.read(), pages: created.live.pages() }];
+      return [true, { doc: created.name, docTitle: created.title, file: created.file, created: true, ...created.live.read(), pages: created.live.pages() }];
     }
     doc = await store.open(projectRoot, args.doc);
     if (chat) store.link(doc, chat, false);
@@ -65,7 +75,7 @@ async function run(store: DocStore, doc: OpenDoc, who: string, agent: string, to
   const origin = live.originFor('agent', who);
   const seen = () => doc.agents.seen.set(who, live.rev);
   if (DRAWING_TOOL_NAMES.has(tool)) return await runDrawingTool(doc, who, tool, args);
-  const head = { doc: doc.name, file: doc.file };
+  const head = { doc: doc.name, docTitle: doc.title, file: doc.file };
   const skipped = doc.skipped.length ? { fileEditsSkipped: doc.skipped.slice(-10) } : {};
   const working = () => {
     const s = doc.agents.state() as { claims: unknown[]; requests: unknown[] };
