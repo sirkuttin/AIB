@@ -188,11 +188,13 @@ For the target the machine runs, the build starts the app headless (`AIB serve -
 Icons come from `icons/` (`icon.ico` for Windows, an `.icns` made from the PNGs for macOS, `icon.png` for Linux). Tests:
 `work/deno/build_test.ts`.
 
-The icon art is the SVG masters in `icons/src/` (`icon.svg` from 40 px up, `icon-small.svg` for 16-32 px). `deno task icons`
-(`tools/make_icons.ts`, resvg as WebAssembly, nothing to install) renders them into `icon.ico`, the PNGs,
+The icon is a solid black top hat with a 1 px teal rim and the two agent squares on the crown, with no background tile. Its
+masters are in `icons/src/`: `icon-16.txt` to `icon-32.txt` are hand-drawn pixel grids for 16, 20, 24 and 32 px (one character per
+pixel), and `icon.svg` is the vector for 40 px up. `deno task icons` (`tools/make_icons.ts`, resvg as WebAssembly, nothing to
+install) turns them into `icon.ico` (32-bit RGBA PNG images, see-through outside the hat), the PNGs,
 `server/desktop/tray_icon_data.ts` and the pages' favicon; commit what it writes. Every tray (the app's, the agent host's, the update
-helper's) shows the colour icon from `icon-small.svg` on light and dark taskbars alike; on Windows 16 or 32 px by SM_CXSMICON (the
-tray worker makes the icon at the system's small icon size), elsewhere 32 px. The host's "a chat needs you" image is that icon with
+helper's) shows the colour icon from the grids on light and dark taskbars alike; on Windows the grid that matches SM_CXSMICON (16, 20,
+24 or 32 px; the tray worker makes the icon at the system's small icon size, so the rim is never scaled away), elsewhere 32 px. The host's "a chat needs you" image is that icon with
 an amber dot (`png_badge.ts`).
 
 Windows window icon: the desktop runtime registers its window class (`LaufeyWebView2`) without an icon, so on its own every AIB

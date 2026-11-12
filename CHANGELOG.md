@@ -2,6 +2,10 @@
 
 ## 0.1.0-beta.8 (beta)
 
+- New app icon: a solid black top hat with a thin teal rim and the two agent squares on it, with no teal tile behind it. The
+  hat is about a third bigger, so it is easier to spot on the taskbar, in the tray and in Alt+Tab. The black shows on light
+  taskbars and the teal rim on dark ones. The 16 to 32 px versions are drawn pixel by pixel, so they are sharp instead of
+  blurry. The tray, the window, the installer and the browser tab all use it.
 - Quitting AIB no longer kills a command Claude started in the background (Bash with run_in_background, such as a long test
   run) after its reply ended. The chat counts as working for Quit AIB, updates and the tray until the command ends, so the
   keeper holds it and the next AIB takes it over. It does not show as Working in the chat or hold your queued messages.

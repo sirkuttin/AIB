@@ -38,7 +38,21 @@ import {
   writeZip,
   zipFolder,
 } from "../../tools/build.ts";
-import { FAVICON_PAGES, faviconLink, hasColour, ICO_SIZES, icoMaster, ICON_SRC, PNGS, TRAY } from "../../tools/make_icons.ts";
+import {
+  encodePng,
+  FAVICON_PAGES,
+  faviconLink,
+  GRID_SIZES,
+  HAT,
+  hasColour,
+  ICO_SIZES,
+  icoMaster,
+  ICON_SRC,
+  parseGrid,
+  PNGS,
+  RIM,
+  TRAY,
+} from "../../tools/make_icons.ts";
 import { TRAY_PNG_BASE64 } from "../../outputs/agent-studio/server/desktop/tray_icon_data.ts";
 import {
   checksumFor,
@@ -212,47 +226,83 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
 });
 
 const ICONS_DIR = new URL("../../outputs/agent-studio/icons/", import.meta.url);
-const TILE: [number, number, number] = [0x13, 0x86, 0x7a];
+const AMBER: [number, number, number] = [0xff, 0xc2, 0x47];
+const CORAL: [number, number, number] = [0xff, 0x7a, 0x59];
 
 Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, colour tray PNGs, favicon", async () => {
-  for (const name of ["icon.svg", "icon-small.svg"]) {
-    assert((await Deno.readTextFile(`${ICON_SRC}/${name}`)).includes('viewBox="0 0 100 100"'), name);
-  }
+  assert((await Deno.readTextFile(`${ICON_SRC}/icon.svg`)).includes('viewBox="0 0 100 100"'), "icon.svg");
   const ico = parseIco(await Deno.readFile(new URL("icon.ico", ICONS_DIR)));
   assertEquals(ico.map((i) => [i.width, i.height, i.bitCount]), ICO_SIZES.map((s) => [s & 0xff, s & 0xff, 32]));
   for (const [n, img] of ico.entries()) assertEquals(pngSize(img.data), { width: ICO_SIZES[n], height: ICO_SIZES[n] });
-  assertEquals(ICO_SIZES.map(icoMaster), [...Array(4).fill("icon-small.svg"), ...Array(5).fill("icon.svg")]);
-  // The 16 px image is not blank and carries the tile colour; so do the big ones.
-  const small = await decodePng(ico[0].data);
-  assert(Array.from({ length: 256 }, (_, i) => small.rgba[i * 4 + 3]).filter((a) => a > 200).length > 150, "16 px mostly opaque");
-  for (const img of [ico[0], ico[3], ico[8]]) assert(await hasColour(img.data, TILE), `${img.width} px has #13867A`);
-  // The 32 px .ico image is the same art as 32x32.png (same master, same size).
-  assertEquals([...(await Deno.readFile(new URL("32x32.png", ICONS_DIR)))], [...ico[3].data]);
+  assertEquals(ICO_SIZES.map(icoMaster), [...GRID_SIZES.map((s) => `icon-${s}.txt`), ...Array(5).fill("icon.svg")]);
+  // The small images are the hand-drawn grids, pixel for pixel; every image has the black hat, the teal rim and both agents.
+  for (const [n, size] of GRID_SIZES.entries()) {
+    const grid = parseGrid(await Deno.readTextFile(`${ICON_SRC}/icon-${size}.txt`), size);
+    assertEquals([...(await decodePng(ico[n].data)).rgba], [...grid], `${size} px .ico image = icon-${size}.txt`);
+  }
+  for (const img of ico) {
+    for (const rgb of [HAT, RIM, AMBER, CORAL]) assert(await hasColour(img.data, rgb), `${img.width || 256} px has ${rgb}`);
+  }
+  assertEquals([...(await Deno.readFile(new URL("32x32.png", ICONS_DIR)))], [...ico[3].data], "32x32.png is the .ico's 32 px image");
   for (const [file, , size] of PNGS) {
     const png = await Deno.readFile(new URL(file, ICONS_DIR));
     assertEquals(pngSize(png), { width: size, height: size }, file);
-    assert(await hasColour(png, TILE), `${file} has #13867A`);
+    assert(await hasColour(png, HAT) && await hasColour(png, RIM), `${file}: black hat, teal rim`);
   }
-  // Tray: the colour small icon at 16 and 32 (every taskbar theme); the 32 px one is 32x32.png.
-  assertEquals(Object.keys(TRAY_PNG_BASE64).sort(), ["color-16", "color-32"]);
-  assertEquals(TRAY.map((t) => t[1]), ["icon-small.svg", "icon-small.svg"]);
+  // Tray: the 16 20 24 32 px grids (the colour icon on every taskbar theme), the .ico's images byte for byte.
+  assertEquals(Object.keys(TRAY_PNG_BASE64).sort(), ["color-16", "color-20", "color-24", "color-32"]);
+  assertEquals(TRAY.map((t) => t[1]), GRID_SIZES.map((s) => `icon-${s}.txt`));
   const tray = (key: string) => Uint8Array.from(atob(TRAY_PNG_BASE64[key]), (c) => c.charCodeAt(0));
-  for (const [key, , size] of TRAY) {
-    assertEquals(pngSize(tray(key)), { width: size, height: size }, key);
-    assert(await hasColour(tray(key), TILE), `${key} has #13867A`);
-  }
-  assertEquals([...tray("color-16")], [...ico[0].data], "the 16 px tray image is the .ico's 16 px image");
-  assertEquals([...tray("color-32")], [...(await Deno.readFile(new URL("32x32.png", ICONS_DIR)))]);
-  // The favicon: icon-small.svg as a data: URL in each page.
-  const link = faviconLink(await Deno.readTextFile(`${ICON_SRC}/icon-small.svg`));
+  for (const [key, , size] of TRAY) assertEquals(pngSize(tray(key)), { width: size, height: size }, key);
+  for (const [n, size] of GRID_SIZES.entries()) assertEquals([...tray(`color-${size}`)], [...ico[n].data], `${size} px tray = .ico image`);
+  // The favicon: icon.svg as a data: URL in each page; the old tile icon is gone.
+  const link = faviconLink(await Deno.readTextFile(`${ICON_SRC}/icon.svg`));
   for (const page of FAVICON_PAGES) {
     const html = await Deno.readTextFile(new URL(`../../outputs/agent-studio/${page}`, import.meta.url));
     assertEquals(html.split('<link rel="icon"').length, 2, page);
     assert(html.includes(link), page);
+    assert(!html.includes("rx='22' fill='%2313867A'"), `${page}: no old tile favicon`);
   }
   // makeIco writes what parseIco reads.
   const again = parseIco(makeIco(ico.map((i) => i.data)));
   assertEquals(again.map((i) => i.data.length), ico.map((i) => i.data.length));
+});
+
+Deno.test("icon.ico: every size 16-256, each a 32-bit RGBA PNG with real alpha and no light fringe on its see-through edge", async () => {
+  const ico = parseIco(await Deno.readFile(new URL("icon.ico", ICONS_DIR)));
+  assertEquals(ico.map((i) => i.width || 256), [16, 20, 24, 32, 40, 48, 64, 128, 256]);
+  for (const img of ico) {
+    const size = img.width || 256;
+    assertEquals(img.bitCount, 32, `${size}: 32 bits per pixel`);
+    assertEquals([...img.data.subarray(1, 4)], [0x50, 0x4e, 0x47], `${size}: a PNG image`);
+    assertEquals([img.data[24], img.data[25]], [8, 6], `${size}: 8-bit RGBA`);
+    const { rgba } = await decodePng(img.data);
+    const alpha = (x: number, y: number) => rgba[(y * size + x) * 4 + 3];
+    // No tile: the corners and the top middle above the crown are see-through; the middle of the crown is opaque.
+    for (const [x, y] of [[0, 0], [size - 1, 0], [0, size - 1], [size - 1, size - 1], [size >> 1, 0]]) {
+      assertEquals(alpha(x, y), 0, `${size}: see-through at ${x},${y}`);
+    }
+    assertEquals(alpha(size >> 1, Math.round(size * 0.45)), 255, `${size}: opaque inside the hat`);
+    // Anti-aliased edges keep their own colour (no white or light grey matte): every part-transparent pixel is dark or teal.
+    let partial = 0;
+    for (let i = 0; i < rgba.length; i += 4) {
+      const a = rgba[i + 3];
+      if (a === 0 || a === 255) continue;
+      partial++;
+      assert(!(rgba[i] > 160 && rgba[i + 1] > 160 && rgba[i + 2] > 160), `${size}: light fringe pixel ${rgba.subarray(i, i + 4)}`);
+    }
+    if (GRID_SIZES.includes(size)) assertEquals(partial, 0, `${size}: the hand-drawn image has no half pixels`);
+  }
+});
+
+Deno.test("parseGrid and encodePng: a grid becomes the PNG decodePng reads back", async () => {
+  const rgba = parseGrid("TK\n.A\n", 2);
+  assertEquals([...rgba], [0x2b, 0xb3, 0xa3, 255, 0x16, 0x15, 0x1b, 255, 0, 0, 0, 0, 0xff, 0xc2, 0x47, 255]);
+  const png = await encodePng(2, 2, rgba);
+  assertEquals(pngSize(png), { width: 2, height: 2 });
+  assertEquals([...(await decodePng(png)).rgba], [...rgba]);
+  assertThrows(() => parseGrid("TK\nA\n", 2));
+  assertThrows(() => parseGrid("TX\nAA\n", 2));
 });
 
 /** A tiny .ico: one 16x16 PNG-style entry (planes/bit count left 0, read from IHDR) and one 32x32 BMP entry. */
