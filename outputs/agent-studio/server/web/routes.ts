@@ -50,6 +50,11 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
  *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
  *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
+ *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
+ *   POST /api/live/artifacts/delete           Delete: to Recently deleted, the source file into the artifact's bin (page only)
+ *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)
+ *   POST /api/live/artifacts/purge            "Delete now": remove a deleted artifact for good (page only)
+ *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
@@ -92,6 +97,11 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/docs/duplicate', 'write', 'body'],
   ['POST', '/api/live/docs/trash', 'write', 'body'],
   ['POST', '/api/live/docs/reveal', 'write', 'body'],
+  ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],
+  ['POST', '/api/live/artifacts/delete', 'artifacts.write', 'own-gate'],
+  ['POST', '/api/live/artifacts/undelete', 'artifacts.write', 'own-gate'],
+  ['POST', '/api/live/artifacts/purge', 'artifacts.write', 'own-gate'],
+  ['GET', '/api/live/artifacts/states', 'artifacts.read', 'get'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

@@ -432,6 +432,62 @@ Deno.test('Edit on a Markdown artifact: a doc named after it (" (2)" when taken)
   }
 });
 
+Deno.test('artifact Delete through the real routes: the owner chat\'s folder, page only; doc routes refuse a deleted artifact; "Shown in" leaves it out', async () => {
+  const s = await studio();
+  configureKeys(s.state);
+  s.ctx.gate = new Gate(9, () => s.ctx.token);
+  try {
+    s.chat('c1', 'claude', 'a', null, true);
+    // the chat runs in the project: its folder is what Delete may touch
+    (s.ctx.host as unknown as { liveState: () => Promise<Json> }).liveState = () => Promise.resolve({ cwd: s.project });
+    await s.ctx.artifacts.refresh();
+    await s.tool('c1', 'doc_create', { doc: 'Release plan', markdown: '# Overview\n\nShip it.\n' });
+    const doc = s.ctx.docs.get(await docId(s.project, 'release-plan'))!;
+    const send = async (route: string, body: Json, as: 'agent' | 'page'): Promise<[number, Json]> => {
+      const text = JSON.stringify(body);
+      const auth: Record<string, string> = as === 'agent'
+        ? { 'X-Studio-Artifact-Key': issue('c1')! }
+        : { 'X-Studio-Token': s.ctx.token, Origin: 'http://127.0.0.1:9', 'Sec-Fetch-Site': 'same-origin' };
+      const request = new Request('http://127.0.0.1/api/live/artifacts/' + route, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': String(new TextEncoder().encode(text).length), Host: '127.0.0.1:9', ...auth },
+        body: text,
+      });
+      const [status, payload] = await ownGatePost(s.ctx, request, new URL(request.url));
+      return [status, payload as Json];
+    };
+    const file = `${s.project}${sep}outputs${sep}notes.md`;
+    await Deno.mkdir(`${s.project}${sep}outputs`, { recursive: true });
+    await Deno.writeTextFile(file, '# Notes\n');
+    const [st, made] = await send('publish', { conversationId: 'c1', title: 'Notes', path: file, fromDoc: { doc: 'release-plan' } }, 'agent');
+    assertEquals(st, 200, JSON.stringify(made));
+    const id = String(made.id);
+    // the agent may archive its own artifact, never delete it (the gate refuses its key on delete)
+    assertEquals((await send('archive', { conversationId: 'c1', ids: [id] }, 'agent'))[0], 200);
+    assertEquals((await send('archive', { conversationId: 'c1', ids: [id], archived: false }, 'agent'))[0], 200);
+    const [refused, why] = await send('delete', { id }, 'agent');
+    assertEquals([refused, why.error], [403, 'Invalid artifact key']);
+    assert(await exists(file));
+    // the page deletes: the route resolved the owner chat's folder, so the file went into the bin
+    const [ds, deleted] = await send('delete', { id }, 'page');
+    assertEquals(ds, 200, JSON.stringify(deleted));
+    assertEquals(deleted.file, { path: 'outputs/notes.md', action: 'moved' });
+    assertEquals(await exists(file), false);
+    // the doc routes refuse it; the doc's "Shown in" list leaves it out
+    assertEquals((await s.call('POST /api/live/docs/from-artifact', { id: 'claude:a', artifact: id }))[1].code, 'deleted');
+    assertEquals((await s.call('GET /api/live/docs/built', null, `id=claude:a&artifact=${id}`))[1].code, 'deleted');
+    assertEquals((await s.call('GET /api/live/docs/shown', null, `doc=${doc.id}`))[1].artifacts, []);
+    // Restore puts the file back
+    const [rs, restored] = await send('undelete', { id }, 'page');
+    assertEquals([rs, (restored.file as Json).action], [200, 'restored']);
+    assertEquals(await Deno.readTextFile(file), '# Notes\n');
+    assertEquals(((await s.call('GET /api/live/docs/shown', null, `doc=${doc.id}`))[1].artifacts as Json[]).map((a) => a.id), [id]);
+  } finally {
+    configureKeys(null);
+    await s.done();
+  }
+});
+
 Deno.test('the turn signal: a turn under 2 s and a cancelled turn both leave the refused note; one made good leaves none; presence and claims go', async () => {
   const s = await studio();
   try {

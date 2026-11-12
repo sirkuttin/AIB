@@ -13,7 +13,8 @@
  *   GET  /api/live/docs/built?id=<chat>&artifact=   an artifact built from a doc page (its manifest's fromDoc): {built: {doc, title,
  *                                                   page, pageTitle, rev, builtRev, changed, edits} | {gone: 'doc'|'page'} | null}.
  *   GET  /api/live/docs/shown?doc=<doc>             the doc header's "Shown in N artifacts": {artifacts: [{id, title, kind,
- *                                                   conversationId, page, pageTitle}]} (this project's artifacts built from it).
+ *                                                   conversationId, page, pageTitle}]} (this project's artifacts built from it;
+ *                                                   deleted ones are left out, archived ones count).
  *   POST /api/live/docs/from-artifact {id, artifact}  Edit on a Markdown artifact: a new doc named after its title (" (2)" when
  *                                                   taken) from its latest Markdown, linked to chat `id`; the artifact's manifest
  *                                                   gets becameDoc. -> {name, title, dir, doc, blocks: [first page's ids]}.
@@ -79,6 +80,7 @@ import { osTrash, type TrashLayer } from '../desktop/project_delete.ts';
 import { parseDoc } from '../docs/markdown.ts';
 import { TOKEN_PROTOCOL_PREFIX } from './terminal_routes.ts';
 import type { WebContext } from './server.ts';
+import { isDeleted } from '../artifacts/artifacts.ts';
 
 export const DOCS_SOCKET = '/api/live/docs/socket';
 export const DOCS_PROTOCOL = 'aib-docs';
@@ -89,6 +91,8 @@ type Reply = [number, unknown];
 type Route = (ctx: WebContext, url: URL, body: Json | null) => Promise<Reply>;
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
+/** A doc route asked about an artifact in Recently deleted (Edit as doc, its Undo, became, built): refused until restored. */
+const DELETED: Reply = [409, { error: 'This artifact is in Recently deleted. Restore it first.', code: 'deleted' }];
 const NOT_OPEN: Reply = [404, { error: 'Open the doc first', code: 'doc_not_open' }];
 
 function refused(error: unknown): Reply {
@@ -141,6 +145,7 @@ export function docsRoutes(): Map<string, Route> {
     } catch {
       return [404, { error: 'No such artifact', code: 'no_artifact' }];
     }
+    if (isDeleted(m)) return DELETED;
     if (m.kind !== 'md') return [400, { error: 'Only a Markdown artifact can be edited as a doc', code: 'not_markdown' }];
     if (typeof m.becameDoc === 'string' && m.becameDoc) return [409, { error: `It is the doc "${m.becameDoc}" already`, code: 'became_doc', name: m.becameDoc }];
     const markdown = store.source(m.id).text;
@@ -168,6 +173,7 @@ export function docsRoutes(): Map<string, Route> {
     } catch {
       return [404, { error: 'No such artifact', code: 'no_artifact' }];
     }
+    if (isDeleted(m)) return DELETED;
     if (typeof m.becameDoc !== 'string' || !m.becameDoc) return [200, { ok: true, undone: false }];
     try {
       const doc = await ctx.docs.open(root, m.becameDoc);
@@ -191,6 +197,7 @@ export function docsRoutes(): Map<string, Route> {
     } catch {
       return [404, { error: 'No such artifact', code: 'no_artifact' }];
     }
+    if (isDeleted(m)) return DELETED;
     if (typeof m.becameDoc !== 'string' || !m.becameDoc) return [200, { ok: true, became: null }];
     try {
       const doc = await ctx.docs.open(root, m.becameDoc);
@@ -211,6 +218,7 @@ export function docsRoutes(): Map<string, Route> {
     let from: Json | null = null;
     try {
       const m = ctx.artifacts.service.store.get(artifact);
+      if (isDeleted(m)) return DELETED;
       from = m.fromDoc && typeof m.fromDoc === 'object' ? m.fromDoc as Json : null;
     } catch {
       return [404, { error: 'No such artifact', code: 'no_artifact' }];
