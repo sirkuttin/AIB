@@ -2222,6 +2222,10 @@ export class Connection {
         // A background task ended: one shell whose processes could not be listed stops counting (the others are read from the OS).
         const unknown = [...this.#bgShells].find(([, pids]) => pids === null);
         if (unknown) this.#bgShells.delete(unknown[0]);
+        // ...and a row marked running in the background whose processes are gone is done now, not at the next snapshot (the process
+        // list is cached for a second): Claude Code sends nothing else for the command (recording C1)
+        refreshDescendants();
+        this.toolBackground();
       }
       if (this.autonomous) return this.#endAutonomous('end_turn');
       const early = this.#endEarly;
@@ -4710,6 +4714,8 @@ export class Connection {
       // Steer-on-send: the composer keys on `steerable` alone; steerAgent picks the page's hint copy; the lane of messages sent
       // while the agent works; background tool rows ({toolCallId: {state, stoppable}}).
       steerable: this.steerable(),
+      // Claude Code's own follow-up cycle (busy, but no turn of ours): the composer stays the plain Send, as before steer-on-send (T27)
+      autonomous: this.busy && this.autonomous,
       steerAgent: STEER_AGENTS.has(this.provider) ? this.provider : null,
       steerLane: this.queue.steerPublic(light),
       toolBackground: this.toolBackground(),

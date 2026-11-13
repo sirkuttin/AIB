@@ -238,6 +238,7 @@ const DROP = new Set([
   'leaseExpiresAt',
   // Steer-on-send's snapshot keys: Deno only (the Python reference never had them); work/deno/steer_*_test.ts covers them.
   'steerable',
+  'autonomous',
   'steerAgent',
   'steerLane',
   'toolBackground',
