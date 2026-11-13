@@ -360,7 +360,7 @@ def main(argv=None):
             return 2
     demo_root.mkdir(parents=True)
     generate(demo_root)
-    env = dict(os.environ, SHOWCASE_GATES=str(demo_root / 'gates'), SHOWCASE_TRANSCRIPTS=str(demo_root / 'claude'))
+    env = dict(demo.demo_env(demo_root), SHOWCASE_GATES=str(demo_root / 'gates'), SHOWCASE_TRANSCRIPTS=str(demo_root / 'claude'))
     env['PATH'] = str(demo_root / 'bin') + os.pathsep + env.get('PATH', '')
     log = open(demo_root / 'studio.log', 'ab')
     flags = 0

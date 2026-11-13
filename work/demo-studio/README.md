@@ -1,7 +1,9 @@
 # Demo Studio
 
 A throwaway Agent Studio with fake chats, for testing by hand or with a QA agent. No model calls, no real agents,
-and nothing from your real Studio state (`work/agent-studio-state`) or real `~/.claude` transcripts.
+and nothing from your real Studio state (`work/agent-studio-state`) or your real agent folders (`~/.claude`, `~/.codex` ...):
+the demo server's home folder and agent folders (`HOME`, `USERPROFILE`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `VIBE_HOME`, `XDG_*`)
+point at empty folders in `<demo folder>/home`, so the usage-limits chip shows no real limits.
 
 ## Start and stop
 

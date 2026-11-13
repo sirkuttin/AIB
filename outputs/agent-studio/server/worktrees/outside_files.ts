@@ -88,6 +88,22 @@ export function spellings(path: string): string[] {
   return [...out].map((s) => (osp.WIN ? s.toLowerCase() : s));
 }
 
+/**
+ * True when the text after a found path ends it: not a longer name (`a.md` in `a.md.bak`, `a.mdx`, `a.md-old`). Sentence
+ * punctuation ends it, a full stop too (`... wrote C:\x\a.md. Next`, `a.md...`), and so does a JSON escape after the full stop
+ * (`a.md.\n` in a record); a folder separator after the dots does not (`a.md./b`, JSON's `a.md.\\b`).
+ */
+export function endsPath(after: string): boolean {
+  let i = 0;
+  while (after.charAt(i) === '.') i++;
+  const c = after.charAt(i);
+  if (/[\w\-]/.test(c)) return false;
+  if (i === 0) return true;
+  if (c === '/') return false;
+  if (c === '\\') return /^\\[nrtu"]/.test(after.slice(i)); // a JSON escape, never an escaped backslash (a folder separator)
+  return true;
+}
+
 /** True when one of `texts` names `path` as a whole path (not as the start of a longer name). */
 export function mentions(texts: Iterable<string>, path: string): boolean {
   const wanted = spellings(path);
@@ -96,8 +112,7 @@ export function mentions(texts: Iterable<string>, path: string): boolean {
     for (const w of wanted) {
       let at = t.indexOf(w);
       while (at >= 0) {
-        const next = t.charAt(at + w.length);
-        if (!/[\w.\-]/.test(next)) return true;
+        if (endsPath(t.slice(at + w.length, at + w.length + 16))) return true;
         at = t.indexOf(w, at + 1);
       }
     }
@@ -129,6 +144,40 @@ function* jsonlBelow(folder: string, budget: { files: number }): Generator<strin
   }
 }
 
+const CHUNK_KINDS = new Set(['agent_message_chunk', 'agent_thought_chunk']);
+/**
+ * The agent's own messages (and thoughts) in a live chat's events, each assembled from its streamed chunks. Only the agent's
+ * 'update' events count: the user's prompts and anything else a page can send are left out (they are in the record, but never as
+ * an assembled reply). A message ends at any other agent update (a tool call, a plan) or a user turn.
+ */
+export function agentReplies(events: unknown): string[] {
+  const out: string[] = [];
+  if (!Array.isArray(events)) return out;
+  const open = new Map<string, string>();
+  const flush = () => {
+    for (const t of open.values()) if (t) out.push(t);
+    open.clear();
+  };
+  for (const raw of events) {
+    const e = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+    if (e.kind !== 'update') {
+      if (e.kind === 'user') flush();
+      continue;
+    }
+    const data = e.data && typeof e.data === 'object' ? e.data as Record<string, unknown> : {};
+    const u = data.update && typeof data.update === 'object' ? data.update as Record<string, unknown> : {};
+    const kind = typeof u.sessionUpdate === 'string' ? u.sessionUpdate : '';
+    if (!CHUNK_KINDS.has(kind)) {
+      flush();
+      continue;
+    }
+    const content = u.content && typeof u.content === 'object' ? u.content as Record<string, unknown> : {};
+    if (typeof content.text === 'string') open.set(kind, (open.get(kind) ?? '') + content.text);
+  }
+  flush();
+  return out;
+}
+
 export async function chatTexts(source: ChatRecordSource, id: string): Promise<string[]> {
   const out: string[] = [];
   let provider = '', sessionId = '';
@@ -138,6 +187,7 @@ export async function chatTexts(source: ChatRecordSource, id: string): Promise<s
       if (state && typeof state === 'object') {
         out.push(JSON.stringify(state));
         const s = state as Record<string, unknown>;
+        out.push(...agentReplies(s.events)); // a path streamed in pieces is whole only in the assembled reply
         if (typeof s.provider === 'string' && typeof s.sessionId === 'string') [provider, sessionId] = [s.provider, s.sessionId];
       }
     } catch { /* not a live chat */ }

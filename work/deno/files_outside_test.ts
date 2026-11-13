@@ -187,3 +187,53 @@ Deno.test('mentions: whole paths only, either slash, JSON-escaped', () => {
   assert(!outside.mentions(['nothing'], p));
   if (WIN) assert(outside.mentions(['C:/w/x/A.ts'], p), 'case and slash on Windows');
 });
+
+Deno.test('mentions: sentence punctuation after a path ends it (a full stop too); a longer name or a folder never does', () => {
+  const p = WIN ? 'C:\\w\\x\\a.md' : '/w/x/a.md';
+  for (const tail of ['. Two more…', '.', '...', ', and', ';', ': x', ')', '!', '?', '"', '”', '’.', '.)', '.\n']) {
+    assert(outside.mentions(['wrote ' + p + tail], p), JSON.stringify(tail));
+  }
+  assert(outside.mentions([JSON.stringify({ text: 'wrote ' + p + '.\nnext' })], p), 'a full stop then a JSON newline');
+  assert(outside.mentions([JSON.stringify({ text: 'see "' + p + '."' })], p), 'a full stop then a JSON quote');
+  for (const tail of ['.bak', 'x', '-old', '..bak', './b', '_2']) {
+    assert(!outside.mentions(['wrote ' + p + tail], p), JSON.stringify(tail));
+  }
+  assert(!outside.mentions([JSON.stringify({ text: p + '.' + (WIN ? '\\' : '/') + 'b.ts' })], p), 'a folder named a.md. in JSON');
+});
+
+Deno.test('agentReplies: streamed chunks assembled per message; user prompts and other events never count', () => {
+  const chunk = (text: string, kind = 'agent_message_chunk') => ({
+    kind: 'update',
+    data: { update: { sessionUpdate: kind, content: { type: 'text', text } } },
+  });
+  const events = [
+    { kind: 'user', data: { text: 'C:\\injected\\by-a-page.md' } },
+    chunk('Wrote C:\\w\\x\\split-'),
+    chunk('in-two.md. Done'),
+    { kind: 'update', data: { update: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Read' } } },
+    chunk('thinking about C:\\w\\', 'agent_thought_chunk'),
+    chunk('y.md', 'agent_thought_chunk'),
+    chunk('second message'),
+  ];
+  const replies = outside.agentReplies(events);
+  assertEquals(replies, ['Wrote C:\\w\\x\\split-in-two.md. Done', 'thinking about C:\\w\\y.md', 'second message']);
+  assert(!replies.some((r) => r.includes('injected')), 'a user prompt is not an agent reply');
+  assertEquals(outside.agentReplies(null), []);
+  if (WIN) {
+    const p = 'C:\\w\\x\\split-in-two.md';
+    assert(!outside.mentions([JSON.stringify({ events })], p), 'the raw record holds the path only in pieces');
+    assert(outside.mentions(replies, p), 'the assembled reply names it');
+  }
+});
+
+Deno.test('chatTexts: a live chat contributes its assembled agent replies', async () => {
+  const state = {
+    provider: 'claude',
+    events: [
+      { kind: 'update', data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'see /tmp/a' } } } },
+      { kind: 'update', data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'b/c.md.' } } } },
+    ],
+  };
+  const texts = await outside.chatTexts({ liveState: () => Promise.resolve(state) }, 'conn-1');
+  assert(texts.includes('see /tmp/ab/c.md.'), JSON.stringify(texts));
+});

@@ -86,6 +86,9 @@
         const r = await call('GET', '/api/live/worktree?id=' + encodeURIComponent(id));
         if (mine !== seq) return;
         status = r.ok ? r.data : null;
+        /* The click's answer ("Merge requested. The chat is merging") holds only while the chat can still merge: once the server
+           says anything else (merged, so nothing to merge; merging; conflicts; unavailable) the line follows the server. */
+        if (status && status.state && status.state !== 'ready') result = '';
       } catch (e) {
         if (mine !== seq) return;
         status = null;
