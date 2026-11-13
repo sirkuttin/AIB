@@ -131,6 +131,29 @@ export const TOOLS: Json[] = [
       'List the artifacts published in this conversation (id, title, kind, version, link). Use it to find an id to `update`, or to check what the user already has.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'archive',
+    title: 'Archive artifacts',
+    description:
+      "Archive (or unarchive) artifacts published in this conversation. Archive only when the user asks. An archived artifact leaves the " +
+      "Artifacts picker's main list for its Archived group; it stays whole (links, versions and downloads keep working) and the user " +
+      'unarchives it in one click. Pass the ids from `list` (which marks archived ones). You cannot delete artifacts: only the user can.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ids: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 100,
+          description: 'The artifact ids to archive or unarchive (from `publish` or `list`).',
+        },
+        archived: { type: 'boolean', description: 'true to archive (the default), false to unarchive.' },
+      },
+      required: ['ids'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const WORKTREE_TOOLS: Json[] = [
@@ -524,8 +547,37 @@ function iterate(value: unknown): unknown[] {
 
 async function toolList(ctx: ToolContext, _args: Json): Promise<Json> {
   const reply = await http(ctx, 'GET', '/api/live/artifacts', { conversationId: ctx.conversation });
-  const items = iterate(pyGet(reply, 'artifacts')).filter(isDict).map((a) => pick(a, ['id', 'title', 'kind', 'version', 'link']));
+  // archived ones carry archived: true (Deno only; the key stays out otherwise, so the reply matches Python's)
+  const items = iterate(pyGet(reply, 'artifacts')).filter(isDict).map((a) => ({
+    ...pick(a, ['id', 'title', 'kind', 'version', 'link']),
+    ...(a.archivedAt !== undefined && a.archivedAt !== null ? { archived: true } : {}),
+  }));
   return textResult(items.length ? `${items.length} artifact(s) in this conversation.` : 'No artifacts in this conversation yet.', items);
+}
+
+/** Deno only: archive or unarchive this chat's artifacts (the server refuses another chat's, and deleted ones). */
+async function toolArchive(ctx: ToolContext, args: Json): Promise<Json> {
+  const ids = Object.hasOwn(args, 'ids') ? args.ids : null;
+  if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== 'string' || !id)) {
+    throw new ToolError('`ids` must be a list of artifact ids (from `list`)');
+  }
+  if (ids.length > 100) throw new ToolError('At most 100 ids at a time');
+  const archived = Object.hasOwn(args, 'archived') && args.archived !== null ? args.archived : true;
+  if (typeof archived !== 'boolean') throw new ToolError('`archived` must be true or false');
+  const reply = await http(ctx, 'POST', '/api/live/artifacts/archive', null, { conversationId: ctx.conversation, ids, archived }, true);
+  const done = isDict(reply) && Array.isArray(reply.artifacts) ? reply.artifacts.filter(isDict) : [];
+  const refused = isDict(reply) && Array.isArray(reply.refused) ? reply.refused.filter(isDict) : [];
+  const verb = archived ? 'Archived' : 'Unarchived';
+  const out = { [archived ? 'archived' : 'unarchived']: done.map((a) => pick(a, ['id', 'title', 'link'])), refused };
+  if (!done.length) {
+    const why = refused.length ? refused.map((r) => `${pyStr(r.id)}: ${pyStr(r.error)}`).join('; ') : pyStr(pyGet(reply, 'error'));
+    return { content: [{ type: 'text', text: `Nothing ${verb.toLowerCase()}: ${why}` }], isError: true };
+  }
+  let sentence = `${verb} ${done.length} artifact(s).`;
+  const unpinned = isDict(reply) && Array.isArray(reply.unpinned) ? reply.unpinned.length : 0;
+  if (unpinned) sentence += ` ${unpinned} of them were pinned and are unpinned now.`;
+  if (refused.length) sentence += ` Not ${verb.toLowerCase()}: ${refused.length} (see refused).`;
+  return textResult(sentence, out);
 }
 
 /** Plain text for the agent: what happened, or the exact reason nothing did. */
@@ -569,7 +621,7 @@ function toolResolveClash(ctx: ToolContext, args: Json): Promise<Json> {
 }
 
 type Handler = (ctx: ToolContext, args: Json) => Promise<Json>;
-const HANDLERS: Record<string, Handler> = { publish: toolPublish, update: toolUpdate, list: toolList };
+const HANDLERS: Record<string, Handler> = { publish: toolPublish, update: toolUpdate, list: toolList, archive: toolArchive };
 const WORKTREE_HANDLERS: Record<string, Handler> = {
   merge_into_project: (ctx) => worktreeCall(ctx, 'merge'),
   resolve_edit_clash: toolResolveClash,

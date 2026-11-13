@@ -64,6 +64,11 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/scopes             Settings > Devices: a paired phone's switches (Answer, Send, Approve once, Push)
  *   GET  /api/live/devices/activity           Settings > Devices: Phone activity
  *   POST /api/live/presence                   the page: its window has focus or not, time since the last input (attention/presence.ts)
+ *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
+ *   POST /api/live/artifacts/delete           Delete: to Recently deleted, the source file into the artifact's bin (page only)
+ *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)
+ *   POST /api/live/artifacts/purge            "Delete now": remove a deleted artifact for good (page only)
+ *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
@@ -121,6 +126,11 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/devices/scopes', 'write', 'body'],
   ['GET', '/api/live/devices/activity', 'read', 'get'],
   ['POST', '/api/live/presence', 'write', 'body'],
+  ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],
+  ['POST', '/api/live/artifacts/delete', 'artifacts.write', 'own-gate'],
+  ['POST', '/api/live/artifacts/undelete', 'artifacts.write', 'own-gate'],
+  ['POST', '/api/live/artifacts/purge', 'artifacts.write', 'own-gate'],
+  ['GET', '/api/live/artifacts/states', 'artifacts.read', 'get'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

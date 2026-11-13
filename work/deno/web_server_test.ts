@@ -66,6 +66,11 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/devices/scopes',
     'GET /api/live/devices/activity',
     'POST /api/live/presence',
+    'POST /api/live/artifacts/archive',
+    'POST /api/live/artifacts/delete',
+    'POST /api/live/artifacts/undelete',
+    'POST /api/live/artifacts/purge',
+    'GET /api/live/artifacts/states',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
   // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen Python

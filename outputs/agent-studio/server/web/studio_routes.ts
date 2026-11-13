@@ -246,7 +246,14 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('GET /api/live/update/notes', (ctx) => Promise.resolve(getUpdateNotes(ctx.updates)));
   routes.set('POST /api/live/update/notes', (ctx, _url, body) => Promise.resolve(postUpdateNotes(ctx.updates, body ?? {})));
   // ---- artifacts (GET; the gate already ran, with the agent key for the list) ----
-  for (const path of ['/api/live/artifacts', '/api/live/artifacts/item', '/api/live/artifacts/source', '/api/live/artifacts/diff']) {
+  const artifactGets = [
+    '/api/live/artifacts',
+    '/api/live/artifacts/item',
+    '/api/live/artifacts/source',
+    '/api/live/artifacts/diff',
+    '/api/live/artifacts/states',
+  ];
+  for (const path of artifactGets) {
     routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
       const args = argsOf(url);
       await ctx.artifacts.prepare(path === '/api/live/artifacts', null);
@@ -344,7 +351,15 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
   }
   const publishing = path === '/api/live/artifacts/publish' || path === '/api/live/artifacts/preview';
-  await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : null);
+  // Delete and Restore move the source file: they need the OWNER chat's folder (an artifact opened from another chat's link too),
+  // resolved from the manifest, never the requesting chat's and never manifest.project (the main checkout of a worktree chat).
+  let owner: unknown = null;
+  if (path === '/api/live/artifacts/delete' || path === '/api/live/artifacts/undelete') {
+    try {
+      owner = ctx.artifacts.service.store.get(body.id).conversationId ?? null;
+    } catch { /* the route says what is wrong */ }
+  }
+  await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : owner);
   delete body[FROM_DOC_RESOLVED];
   if (path === '/api/live/artifacts/publish') {
     // "Built from <doc › page>": the tool's fromDoc, or (an update without one) the link the artifact has, at the page's rev now

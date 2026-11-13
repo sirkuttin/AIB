@@ -1243,6 +1243,25 @@ Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) surv
   assertEquals([after.becameDoc, after.becameDocRev, store.summary(after).becameDoc], ['timeline', 3, 'timeline'], 'Edit made it a doc: kept too');
 });
 
+Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive Python rewriting the manifest', async () => {
+  using tmp = temp();
+  const root = join(tmp.dir, 'artifacts');
+  const clock = new Clock(1000.0);
+  const store = new ArtifactStore(root, clock.now);
+  store.origin = 'http://127.0.0.1:1';
+  const m = store.create('c1', 'Report', 'html', 'r.html', enc('<p>one</p>'), { project: 'P', sourcePath: 'P/r.html' });
+  store.setArchived(m.id, true);
+  const deletedSource = { path: 'P/r.html', rel: 'r.html', bin: 'deleted-source/r.html', hash: 'ab', size: 10, mtime: 1700000000000 };
+  store.save({ ...store.get(m.id), deletedAt: 1003.0, deletedSource });
+  assert(/"archivedAt": 1000\.0/.test(Deno.readTextFileSync(join(root, m.id, 'manifest.json'))), 'times are Python floats');
+  await py.call('artifacts_shim', 'store_run', [root, [{ call: 'set_pinned', args: [m.id, true] }], 1006.0]);
+  const after = store.get(m.id);
+  assertEquals(after.pinned, true, 'Python did write it');
+  assertEquals([after.archivedAt, after.deletedAt, after.deletedSource], [1000.0, 1003.0, deletedSource]);
+  const s = store.summary(after);
+  assertEquals([s.archivedAt, s.deletedAt, s.deletedFile], [1000.0, 1003.0, { path: 'r.html' }]);
+});
+
 Deno.test('parity teardown', async () => {
   await py.close();
 });
