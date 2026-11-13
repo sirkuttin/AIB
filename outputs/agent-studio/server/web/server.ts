@@ -261,6 +261,22 @@ export class WebServer {
       const view = c.viewPrefs.public();
       return this.json(200, { revision: view.revision, warning: view.warning, refused: result.refused, ok: true });
     });
+    // Rename on the PC: one chat's name, under the view preferences' lock (ViewPrefs.setChatName), never the whole names value,
+    // so a rename on a phone the page has not read yet is kept. {key, name} -> {ok, chatNamesRevision, chatNames}.
+    this.native.set('POST /api/live/chat-name', async (c, _url, body) => {
+      const key = body && typeof body.key === 'string' ? body.key : '';
+      const name = body && typeof body.name === 'string' ? body.name : null;
+      if (!/^[a-z0-9][a-z0-9_-]*:.{1,500}$/.test(key) || name === null || name.length > 200) {
+        return this.json(400, { error: 'Invalid request' });
+      }
+      try {
+        await c.viewPrefs.setChatName(key, name);
+      } catch (error) {
+        if (error instanceof ViewPrefsBusy) return this.json(503, { error: error.message, code: 'busy' });
+        throw error;
+      }
+      return this.json(200, { ok: true, chatNamesRevision: c.viewPrefs.chatNamesRevision(), chatNames: c.viewPrefs.chatNames() });
+    });
     // The desktop app shows a notification itself: the Settings test (the AttentionWatcher shows the others from the server, never
     // the page). {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
     this.native.set('POST /api/live/desktop/notify', async (c, _url, body) => {

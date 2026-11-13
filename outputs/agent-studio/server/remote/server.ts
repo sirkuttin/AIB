@@ -34,7 +34,8 @@ import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChat
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
 import type { Manifest } from '../artifacts/artifacts.ts';
 import { bindWithRetry } from './port.ts';
-import { folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
+import { agentsNow, folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
+import { reasonWords } from '../agents/eligibility.ts';
 import { conversationAction } from '../web/shared.ts';
 import { studioOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
@@ -147,6 +148,13 @@ const PHONE_AUDIT: Readonly<Record<string, string>> = {
 };
 /** How long a phone's Undo can bring back a chat it archived or deleted. */
 const UNDO_MS = 10 * 60 * 1000;
+/** What a phone archived or deleted lately: the op, when, and the chat's archivedAt|deletedAt right after it (its Undo needs both
+ * unchanged: a chat the PC restored, archived or deleted since is the PC's). */
+interface Undoable {
+  op: 'archive' | 'delete';
+  at: number;
+  stamp: string;
+}
 const ROUTE_AUTH = new Map(REMOTE_ROUTES.map(([m, p, a]) => [`${m} ${p}`, a]));
 /** The scope each device route needs (every REMOTE_ROUTES entry that is not a page file, the bootstrap or pairing has one:
  * remote_server_test sweeps them). */
@@ -306,10 +314,14 @@ async function drain(request: Request): Promise<void> {
 export class RemoteServer {
   readonly gate: RemoteGate;
   #server: HttpServer | null = null;
-  /** Chats started from a phone (remote/newchat.ts). */
-  readonly newChats = new NewChats();
-  /** device id -> chat keys it archived or deleted lately (its Undo may bring them back although they left its lists) */
-  #undoable = new Map<string, Map<string, number>>();
+  /** Chats started from a phone (remote/newchat.ts). Kept in memory only: after AIB restarts the phone finds its first message in
+   * the chat's own events by its clientMessageId, or puts it back in its box (phone.js checkNewJob). */
+  newChats = new NewChats();
+  /** device id -> chat key -> what this phone archived or deleted lately, when, and the mark it left (archivedAt / deletedAt):
+   * its Undo is only the exact inverse, and only while that mark is still the one it left */
+  #undoable = new Map<string, Map<string, Undoable>>();
+  /** How long a delete of a running chat waits for its session to end on the agent host. */
+  static END_WAIT_MS = 10_000;
   /** device id + chat key -> when its read position was last written / last logged */
   #readAt = new Map<string, number>();
   #readLogged = new Map<string, number>();
@@ -561,7 +573,7 @@ export class RemoteServer {
     const device = this.#device(request, ROUTE_SCOPE[`GET ${path}`]);
     if (device instanceof Response) return device;
     if (path === '/api/remote/artifact') return this.#artifact(url, device);
-    if (path === '/api/remote/artifacts') return await this.#artifacts(url);
+    if (path === '/api/remote/artifacts') return await this.#artifacts(url, device);
     if (path === '/api/remote/new/options') return await this.#newOptions(url);
     if (path === '/api/remote/new') {
       const status = this.newChats.status(device.id, url.searchParams.get('id') ?? '');
@@ -726,12 +738,18 @@ export class RemoteServer {
     return this.json(200, out);
   }
 
-  /** A chat's artifacts for its Artifacts page (phone shape: no links, no paths). `key` provider:sessionId; `id` its live id. */
-  async #artifacts(url: URL): Promise<Response> {
+  /** A chat's artifacts for its Artifacts page (phone shape: no links, no paths). `key` provider:sessionId; `id` its live id (only
+   * that: an artifact filed under another chat's live id is never listed here). */
+  async #artifacts(url: URL, device: Device): Promise<Response> {
     const key = url.searchParams.get('key') ?? '';
     const id = url.searchParams.get('id') ?? '';
     if (!SAVED_KEY.test(key) || id.length > 100) return this.json(400, { error: 'Invalid request', code: 'invalid' });
-    if (!(await this.#listed(key))) return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
+    const found = await this.#listed(key);
+    if (!found) return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
+    if (id && id !== String(found.live?.id ?? '')) {
+      this.host.audit.write({ device: device.id, name: device.name, action: 'artifacts', chat: key, result: 'refused: not this chat' });
+      return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    }
     const store = this.host.ctx.artifacts?.store;
     const items = store ? store.list(key, id ? [id] : []) : [];
     const artifacts = items.map((a) => ({
@@ -756,6 +774,15 @@ export class RemoteServer {
       const agent = url.searchParams.get('agent') ?? '';
       if (!folder) return this.json(404, { error: 'This project is no longer in AIB on your PC.', code: 'not_found' });
       if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(agent)) return this.json(400, { error: 'Invalid request', code: 'invalid' });
+      // only an agent that can start a chat now: asking a turned-off or missing agent for its lists could start it (a probe)
+      const can = (await agentsNow(this.host.ctx)).find((a) => a.id === agent);
+      if (!can) return this.json(400, { error: 'Invalid request', code: 'invalid' });
+      if (!can.ok) {
+        return this.json(403, {
+          error: `${can.name} cannot start a chat now: ${reasonWords(can.reason) || can.reason}`,
+          code: 'agent_unavailable',
+        });
+      }
       return this.json(200, { project: projectId, agent, ...(await pickLists(this.host.ctx, folder, agent)) });
     }
     const listing = await this.host.ctx.host.liveList() as Record<string, unknown>;
@@ -815,10 +842,12 @@ export class RemoteServer {
     }
     try {
       if (path === '/api/remote/new') {
-        const started = await this.newChats.start(this.host.ctx, device.id, body);
+        // the first message goes only while this phone still has Start new chats (and so Send) when the chat is ready
+        const allowed = () => !!this.host.devices.byId(device.id)?.scopes.includes('phone.start');
+        const started = await this.newChats.start(this.host.ctx, device.id, body, allowed);
         this.host.saved.invalidate();
-        log(started.id, `started on the PC with ${started.agent}`);
-        return this.json(200, { ok: true, id: started.id });
+        log(started.id, started.existing ? 'sent again: the chat it already started' : `started on the PC with ${started.agent}`);
+        return this.json(200, { ok: true, id: started.id, ...(started.existing ? { existing: true } : {}) });
       }
       if (path === '/api/remote/new/first') {
         const job = this.newChats.job(device.id, typeof body.id === 'string' ? body.id : '');
@@ -847,15 +876,31 @@ export class RemoteServer {
     const ctx = this.host.ctx;
     const key = typeof body.key === 'string' ? body.key : '';
     if (!SAVED_KEY.test(key)) throw new Refusal(400, 'invalid', 'Invalid request');
-    const undo = this.#undoable.get(device.id) ?? new Map<string, number>();
+    const undo = this.#undoable.get(device.id) ?? new Map<string, Undoable>();
     const op = path === '/api/remote/chat-op' ? String(body.op ?? '') : path === '/api/remote/rename' ? 'rename' : 'mark';
     if (!['rename', 'mark', 'handled', 'archive', 'delete', 'unarchive', 'restore'].includes(op)) {
       throw new Refusal(400, 'invalid', 'Invalid request');
     }
     const isUndo = op === 'unarchive' || op === 'restore';
     const found = isUndo ? null : await this.#listed(key);
+    const markOf = () => (ctx.conversations.public().entries as unknown as Record<string, Record<string, unknown>>)[key] ?? {};
+    const stampOf = () => `${Number(markOf().archivedAt) || 0}|${Number(markOf().deletedAt) || 0}`;
     if (isUndo) {
-      if (Date.now() - (undo.get(key) ?? 0) > UNDO_MS) throw new Refusal(404, 'not_found', 'This can only be undone on your PC now.');
+      // only the exact inverse of what this phone did lately, and only while the chat is still as this phone left it (archived or
+      // deleted then, by this phone): a chat the PC changed since (restored, archived or deleted again) is the PC's now
+      const did = undo.get(key);
+      if (!did || Date.now() - did.at > UNDO_MS) throw new Refusal(404, 'not_found', 'This can only be undone on your PC now.');
+      if ((did.op === 'archive' ? 'unarchive' : 'restore') !== op) {
+        throw new Refusal(
+          409,
+          'not_undo',
+          `This phone ${did.op === 'archive' ? 'archived' : 'deleted'} that chat; Undo can only bring it back from that.`,
+        );
+      }
+      if (stampOf() !== did.stamp) {
+        undo.delete(key);
+        throw new Refusal(409, 'changed', 'This chat was changed on your PC since. Undo it there if you still want to.');
+      }
     } else if (!found) throw new Refusal(404, 'not_found', 'This chat is no longer in the list on your PC.');
     const sendOn = device.scopes.includes('phone.prompt');
     const [provider, ...rest] = key.split(':');
@@ -890,7 +935,14 @@ export class RemoteServer {
         if (!found?.live) throw new Refusal(409, 'not_live', 'Only a running chat can be marked handled.');
         const [status, answer] = await mark('handled');
         log(liveId, status === 200 ? 'marked handled' : `failed (${status})`);
-        return status === 200 ? this.json(200, { ok: true }) : this.json(status, answer);
+        if (status !== 200) {
+          console.error(
+            `Mark handled from a phone was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`,
+          );
+        }
+        return status === 200
+          ? this.json(200, { ok: true })
+          : this.json(status, { error: 'It could not be marked handled. Try again, or do it on your PC.', code: 'failed' });
       }
       case 'archive':
       case 'delete': {
@@ -910,19 +962,44 @@ export class RemoteServer {
         if (live && end) {
           const [status, answer] = await ctx.host.liveCall('disconnect', { id: liveId });
           if (status !== 200) {
-            log(liveId, `failed to end the session (${status})`);
             const a = answer && typeof answer === 'object' ? answer as Record<string, unknown> : {};
-            return this.json(status, { error: typeof a.error === 'string' ? a.error : 'The session could not be ended.', code: 'failed' });
+            console.error(`A phone could not end a chat's session (${status}): ${String(a.error ?? '').slice(0, 400)}`);
+            log(liveId, `failed to end the session (${status})`);
+            return this.json(status >= 400 && status < 600 ? status : 500, {
+              error: 'The session could not be ended. Look at AIB on your PC.',
+              code: 'failed',
+            });
           }
-          // the agent host lists it as closed now (the delete below refuses a chat that is still live)
-          for (let i = 0; i < 30 && (await this.#liveByKey(key)); i++) await new Promise((r) => setTimeout(r, 100));
+          // wait until the agent host no longer has it (a delete of a chat that is still live is refused); a session slower to end
+          // than that is said: it has ended or is ending, and Delete again goes through
+          const until = Date.now() + RemoteServer.END_WAIT_MS;
+          const stillLive = async () =>
+            !!(await this.#liveByKey(key)) || (op === 'delete' && await ctx.host.studioOwns(provider, sessionId).catch(() => false));
+          while ((await stillLive()) && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+          if (op === 'delete' && (await stillLive())) {
+            this.host.saved.invalidate();
+            log(liveId, 'session ending, not deleted yet');
+            return this.json(409, {
+              error: 'Its session is ending on your PC. It was not deleted yet: delete it again in a moment.',
+              code: 'ending',
+            });
+          }
         }
         const [status, answer] = await mark(op);
         if (status !== 200) {
-          log(liveId || key, `refused: ${String((answer as Record<string, unknown>).code ?? status)}`);
-          return this.json(status, answer);
+          const a = answer as Record<string, unknown>;
+          console.error(`A phone's ${op} was refused (${status}): ${String(a.error ?? '').slice(0, 400)}`);
+          log(liveId || key, `refused: ${String(a.code ?? status)}`);
+          return this.json(status, {
+            error: live && end
+              ? `Its session has ended, but the chat could not be ${
+                op === 'delete' ? 'deleted' : 'archived'
+              }. Try again, or do it on your PC.`
+              : `The chat could not be ${op === 'delete' ? 'deleted' : 'archived'}. Try again, or do it on your PC.`,
+            code: String(a.code ?? 'failed'),
+          });
         }
-        undo.set(key, Date.now());
+        undo.set(key, { op: op as 'archive' | 'delete', at: Date.now(), stamp: stampOf() });
         this.#undoable.set(device.id, undo);
         this.host.saved.invalidate();
         const result = op === 'delete'
@@ -939,7 +1016,10 @@ export class RemoteServer {
         // unarchive / restore: the Undo of this phone's own archive or delete
         const folders = op === 'restore' ? restoreFolders(ctx.conversations, { action: 'restore', provider, sessionId }) : [];
         const [status, answer] = await conversationAction(studioOf(ctx), { action: op, provider, sessionId });
-        if (status !== 200) return this.json(status, answer);
+        if (status !== 200) {
+          console.error(`A phone's Undo was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`);
+          return this.json(status, { error: 'It could not be undone from here. Do it on your PC.', code: 'failed' });
+        }
         if (folders.length) await bringBack(ctx.removedProjects, folders, ctx.addedProjects);
         undo.delete(key);
         this.host.saved.invalidate();

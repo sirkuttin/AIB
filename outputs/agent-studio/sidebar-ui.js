@@ -238,11 +238,24 @@
 
   // ---- last viewed --------------------------------------------------------------------------
   // The server keeps it (AgentReadState); the in-chat unread line reads the same stored value for the same chat key.
-  function markViewed(c, when) {
+  /* When you last really looked at this page: it got focus or came into view, or you clicked or typed in it. A phone's "Mark as
+     unread" is undone only by that (after the mark) or by a new message in the chat, never by the open chat being marked seen on
+     every list update while the window merely counts as visible (the desktop app's window does while another window covers it). */
+  let lookedAt = 0;
+  function heldUnread(c, key) {
+    const marked = root.AgentReadState && root.AgentReadState.markedUnread ? root.AgentReadState.markedUnread(key) : 0;
+    if (!marked || lookedAt > marked) return false;
+    const a = attentionOf(c);
+    const ended = Math.max((a && a.endedAt) || 0, derivedEnded.get(key) || 0);
+    return !(ended > marked);
+  }
+  /* periodic: the open chat marked seen because the list was drawn (not because you looked): a phone's mark stays (heldUnread). */
+  function markViewed(c, when, periodic) {
     if (!c) return;
     if (!when && host && host.holdSeen && host.holdSeen(c)) return;
     const key = keyOf(c),
       at = when || Date.now();
+    if (periodic && heldUnread(c, key)) return;
     if (root.AgentReadState) root.AgentReadState.mark(key, at);
     else viewed[key] = at;
   }
@@ -272,7 +285,7 @@
         else if (!busySince.has(key)) busySince.set(key, Date.now());
       } else busySince.delete(key);
     }
-    if (selected && looking()) markViewed(selected);
+    if (selected && looking()) markViewed(selected, 0, true);
     updateTitle(all);
   }
   // The page owns the base tab title (the open conversation's name); this adds the "(n) " prefix.
@@ -645,6 +658,7 @@
     if (d) {
       baseTitle = String(d.title || 'AIB').replace(/^\(\d+\)\s*/, '') || 'AIB';
       const seen = () => {
+        if (looking()) lookedAt = Date.now();
         if (host && looking()) {
           const s = host.getSelected && host.getSelected();
           if (s) {
@@ -655,6 +669,9 @@
       };
       d.addEventListener('visibilitychange', seen);
       if (root.addEventListener) root.addEventListener('focus', seen);
+      const touched = () => (lookedAt = Date.now());
+      d.addEventListener('pointerdown', touched, true);
+      d.addEventListener('keydown', touched, true);
     }
   }
 

@@ -16,7 +16,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { LOGIN, NAME, pairPhone, pc, type Raw, raw, type RemoteStudio } from './_remote_fixture.ts';
-import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
+import { NewChats, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -26,8 +26,9 @@ const NO_SIDEWAYS =
   `(() => { const d = document.documentElement; return d.scrollWidth <= d.clientWidth && document.body.scrollWidth <= d.clientWidth; })()`;
 const WIDTHS = `(() => { const d = document.documentElement; return [d.scrollWidth, d.clientWidth]; })()`;
 
-/** This test is Tailscale Serve: every request to https://<name>/ goes to the phone port with the headers Serve adds. */
-async function serveFor(page: Page, s: RemoteStudio): Promise<void> {
+/** This test is Tailscale Serve: every request to https://<name>/ goes to the phone port with the headers Serve adds. `drop`: a
+ * request it says yes to reaches AIB, but its answer is lost on the way back (the phone sees no answer: the network dropped). */
+async function serveFor(page: Page, s: RemoteStudio, drop: (method: string, path: string) => boolean = () => false): Promise<void> {
   await page.send('Network.enable');
   await page.send('Fetch.enable', { patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: 'Request' }] });
   page.listeners.set('Fetch.requestPaused', (p) => {
@@ -53,6 +54,10 @@ async function serveFor(page: Page, s: RemoteStudio): Promise<void> {
       try {
         answer = await raw(s.phonePort(), method, url.pathname + url.search, headers, request.postData as string | undefined);
       } catch { /* Serve answers 502 */ }
+      if (answer && drop(method, url.pathname)) {
+        await page.send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'ConnectionReset' });
+        return;
+      }
       if (!answer) {
         await page.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: 502, responseHeaders: [], body: '' });
         return;
@@ -68,11 +73,17 @@ async function serveFor(page: Page, s: RemoteStudio): Promise<void> {
   });
 }
 
-async function phonePage(browser: Browser, s: RemoteStudio, phone: { token: string; id: string }, ua?: string): Promise<Page> {
+async function phonePage(
+  browser: Browser,
+  s: RemoteStudio,
+  phone: { token: string; id: string },
+  ua?: string,
+  drop?: (method: string, path: string) => boolean,
+): Promise<Page> {
   const page = await browser.open('about:blank', 375, 812);
   await page.send('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
   if (ua) await page.send('Emulation.setUserAgentOverride', { userAgent: ua });
-  await serveFor(page, s);
+  await serveFor(page, s, drop);
   await page.goto(`https://${NAME}/phone.html`);
   await page.waitFor('!!document.getElementById("app").dataset.screen', 15000, 'the phone page');
   await page.eval(`new Promise((resolve, reject) => {
@@ -99,6 +110,16 @@ async function tap(page: Page, selector: string): Promise<void> {
     throw new Error(`${error}: the page shows ${await page.eval('document.getElementById("app").innerText.slice(0, 600)')}`);
   }
   await page.eval(`document.querySelector(${JSON.stringify(selector)}).click()`);
+}
+
+/** A real tap (a mouse click at the element's centre, so what is on top there gets it) once the element is there. */
+async function press(page: Page, selector: string): Promise<void> {
+  try {
+    await page.waitFor(`!!document.querySelector(${JSON.stringify(selector)})`, 8000, selector);
+  } catch (error) {
+    throw new Error(`${error}: the page shows ${await page.eval('document.getElementById("app").innerText.slice(0, 600)')}`);
+  }
+  await page.click(selector);
 }
 
 async function noSideways(page: Page, where: string): Promise<void> {
@@ -141,8 +162,8 @@ Deno.test({
         'no install banner on the list',
       );
 
-      // the card menu from ⋯
-      await tap(page, '[data-menu-for="l:c1"]');
+      // the card menu from ⋯ (real taps from here on: what is on top at the tap's spot gets it)
+      await press(page, '[data-menu-for="l:c1"]');
       await page.waitFor('!!document.getElementById("phMenu")', 5000, 'the card menu');
       assertEquals(await page.eval('[...document.querySelectorAll("#phMenu .ph-mi")].map((b) => b.dataset.mi)'), [
         'arts',
@@ -153,13 +174,15 @@ Deno.test({
         'cancel',
       ]);
       await noSideways(page, 'card menu');
-      // Rename
+      // Rename, typed: select what is there, delete it, type the new name, Enter
       await page.click('#phMenu [data-mi="rename"]');
       await page.waitFor('!!document.getElementById("phRename")', 5000, 'rename box');
-      await page.eval(
-        '(() => { const i = document.getElementById("phRename"); i.value = "Checkout redesign"; i.dispatchEvent(new Event("input")); })()',
-      );
-      await page.click('#phMenu .ph-mbtns .ph-btn:not(.quiet)');
+      await page.click('#phRename');
+      await page.key('a', 2);
+      await page.key('Backspace');
+      await page.type('Checkout redesign');
+      assertEquals(await page.eval('document.getElementById("phRename").value'), 'Checkout redesign');
+      await page.key('Enter');
       await page.waitFor('!document.getElementById("phMenu")', 5000, 'menu closed');
       await page.waitFor(
         '[...document.querySelectorAll(".ph-title")].some((t) => t.textContent === "Checkout redesign")',
@@ -179,7 +202,7 @@ Deno.test({
       await page.waitFor('!!document.querySelector(\'[data-chat="c1"] .ph-unread\')', 15000, 'the unread dot');
 
       // Archive a running chat: Keep running / End its session; Keep running, then Undo
-      await tap(page, '[data-menu-for="l:c1"]');
+      await press(page, '[data-menu-for="l:c1"]');
       await page.click('#phMenu [data-mi="archive"]');
       await page.waitFor('!!document.querySelector(\'#phMenu [data-how="end"]\')', 5000, 'the two choices');
       await noSideways(page, 'archive choices');
@@ -198,12 +221,12 @@ Deno.test({
         ),
       );
       assert(!(await page.eval('!!document.getElementById("phNewChat")')), 'no + New chat');
-      await tap(page, '[data-menu-for="l:c1"]');
+      await press(page, '[data-menu-for="l:c1"]');
       await page.click('#phMenu [data-mi="archive"]');
       await page.waitFor('!!document.querySelector(\'#phMenu [data-how="keep"]\')', 5000, 'keep only');
       assert(!(await page.eval('!!document.querySelector(\'#phMenu [data-how="end"]\')')), 'no End without Send');
       await page.eval('document.querySelector("#phMenu .ph-shade").click()');
-      await tap(page, '[data-menu-for="l:c1"]');
+      await press(page, '[data-menu-for="l:c1"]');
       await page.click('#phMenu [data-mi="delete"]');
       await page.waitFor('!!document.getElementById("phDeleteText")', 5000, 'delete text');
       assert(!(await page.eval('!!document.getElementById("phDeleteGo")')), 'refused until it stops');
@@ -215,7 +238,7 @@ Deno.test({
         scopes: ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'phone.push'],
       });
       await page.waitFor('!!document.getElementById("phNewChat")', 15000, 'Start back');
-      await tap(page, '[data-menu-for="l:c2"]');
+      await press(page, '[data-menu-for="l:c2"]');
       await page.click('#phMenu [data-mi="delete"]');
       await page.waitFor('!!document.getElementById("phDeleteGo")', 5000, 'Delete');
       const text = String(await page.eval('document.getElementById("phDeleteText").textContent'));
@@ -465,6 +488,75 @@ Deno.test({
       await page.waitFor('!!document.getElementById("phArtsEmpty")', 15000, 'the empty page');
       assert(String(await page.eval('document.getElementById("phArtsEmpty").textContent')).includes('No artifacts yet'));
       await noSideways(page, 'empty artifacts page');
+    } finally {
+      setAgentRows(null);
+      await browser.close().catch(() => {});
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name:
+    'phone page at 375 px (review 1, 2): the network drops during Start: no second chat; AIB restarts while it opens: the message comes back in the box and goes once',
+  ignore: !browserPath,
+  async fn() {
+    const s = await v2Studio();
+    const browser = await Browser.launch();
+    try {
+      s.chats.push(liveChat('c1', s.project));
+      const phone = await pairPhone(s);
+      let dropStart = true;
+      const page = await phonePage(browser, s, phone, undefined, (method, path) => {
+        if (method !== 'POST' || path !== '/api/remote/new' || !dropStart) return false;
+        dropStart = false;
+        return true;
+      });
+      s.pick.ready = false; // the chat takes its time to open
+
+      await press(page, '#phNewChat');
+      await press(page, `.ph-pick[data-project="${s.projectId}"]`);
+      await page.waitFor('!!document.querySelector(".ph-pill[data-mode]")', 15000, 'lists');
+      await page.click('#phNewPrompt');
+      await page.type('Write the changelog');
+      await page.click('#phNewStart');
+      // the answer was lost: the phone says the chat may have started; Start again opens that one, not a second
+      await page.waitFor(
+        '!!document.getElementById("phNewError") && document.getElementById("phNewError").textContent.includes("may have started")',
+        15000,
+        'may have started',
+      );
+      assertEquals(s.liveCalls.filter(([n]) => n === 'connect').length, 1, 'it did start');
+      await page.click('#phNewStart');
+      await page.waitFor('document.getElementById("app").dataset.screen === "chat"', 15000, 'the chat it started');
+      assertEquals(s.liveCalls.filter(([n]) => n === 'connect').length, 1, 'no second chat');
+      const id = String(await page.eval('window.__aibPhone.chatId'));
+      assertEquals(id, s.chats.at(-1)!.id);
+      const job = s.ctx.phone.server!.newChats.job(phone.id, id)!;
+      assert(job, 'the server knows this start');
+      const cmid = job.clientMessageId;
+
+      // AIB restarts on the PC while the chat opens: the phone puts the message back in the box and says why
+      s.ctx.phone.server!.newChats = new NewChats();
+      await page.waitFor('window.__aibPhone.newJob && window.__aibPhone.newJob.state === "gone"', 20000, 'the start is forgotten');
+      s.chats.find((c) => c.id === id)!.ready = true;
+      await page.waitFor(
+        '!!document.getElementById("phPrompt") && document.getElementById("phPrompt").value === "Write the changelog" && ' +
+          'document.getElementById("phActError").textContent.includes("AIB restarted")',
+        20000,
+        'back in the box, with why',
+      );
+      await page.click('#phSend');
+      const until = Date.now() + 10000;
+      while (!s.liveCalls.some(([n, b]) => n === 'prompt' && b.id === id) && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const sent = s.liveCalls.filter(([n, b]) => n === 'prompt' && b.id === id);
+      assertEquals(sent.length, 1, 'sent once, as a normal message');
+      assertEquals(sent[0][1].clientMessageId, cmid, 'with the same id (a repeat would be dropped)');
+      assertEquals(s.chats.find((c) => c.id === id)!.events.filter((e) => e.kind === 'user').length, 1);
+      await noSideways(page, 'restarted new chat');
     } finally {
       setAgentRows(null);
       await browser.close().catch(() => {});

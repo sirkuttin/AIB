@@ -11,12 +11,17 @@
  *            project's default agent set to the one used (as the PC does after a new chat; which clears the old agent's model and
  *            mode, settings.ts). The picks are for this chat only: no other default changes. Refused before anything starts: an
  *            agent that cannot start a chat, an unknown project, a message a phone may not send (the same checks as a phone
- *            message: text only, no "/" commands, at most MAX_TEXT).
+ *            message: text only, no "/" commands, at most MAX_TEXT), and a model or mode that is not on the agent's list. One
+ *            start per phone and clientMessageId: the phone keeps the id across retries, and a Start sent again (its answer was
+ *            lost) gets the chat the first one started. A list's `default` is a saved default only ('' = none: the phone sends no
+ *            pick, and the chat starts with the agent's own setting, `current`). Errors to the phone are fixed words: the agent
+ *            host's own (which can name folders) are logged on the PC.
  *   first    a waiter sends the first message once the chat is ready (at most OPEN_MS), with the phone's clientMessageId (the agent
  *            host drops a repeat). If the picked MODE could not be applied the message is held: the phone shows why and keeps the
  *            text (owner decision C); a model that could not be applied is said, and the message goes (as on the PC). A sign-in or a
- *            question while it opens, or the agent closing, holds it too ("Finish on your PC"). POST /api/remote/new/first sends a
- *            held message again (the phone's Send in that chat).
+ *            question while it opens, or the agent closing, holds it too ("Finish on your PC"); so does this phone's Start new
+ *            chats switch turned off meanwhile. POST /api/remote/new/first sends a held message again (the phone's Send in that
+ *            chat). Jobs live in memory: after AIB restarts the phone looks for its message in the chat by its clientMessageId.
  */
 import type { WebContext } from '../web/server.ts';
 import { afterConnect } from '../web/project_routes.ts';
@@ -56,8 +61,11 @@ export interface OptionChoice {
 }
 export interface PickList {
   choices: OptionChoice[];
-  /** the value a new chat starts with when nothing is picked ('' = the agent's own setting) */
+  /** your saved default for this agent in this project ('' = none saved: the chat starts with the agent's own setting and the
+   * phone sends no pick) */
   default: string;
+  /** what the agent itself uses now (marked "default" when nothing is saved; never sent as a pick) */
+  current: string;
 }
 
 /** Settings' agent rows (what Settings shows: found, signed in, on). Tests in this process swap it (setAgentRows). */
@@ -154,8 +162,9 @@ function listOf(option: unknown, fallbackDefault: string): PickList | null {
     .map((c) => ({ value: str(c.value), name: str(c.name, 80) || str(c.value) }))
     .slice(0, 200);
   if (!choices.length) return null;
-  const want = fallbackDefault && choices.some((c) => c.value === fallbackDefault) ? fallbackDefault : str(o.current);
-  return { choices, default: want };
+  const saved = fallbackDefault && choices.some((c) => c.value === fallbackDefault) ? fallbackDefault : '';
+  const current = choices.some((c) => c.value === str(o.current)) ? str(o.current) : '';
+  return { choices, default: saved, current };
 }
 
 /**
@@ -188,6 +197,8 @@ export type JobState = 'opening' | 'sent' | 'held' | 'failed' | 'pc';
 interface Job {
   id: string;
   device: string;
+  /** this phone may still send the first message (Start new chats and Send; read again right before it goes) */
+  allowed: () => boolean;
   text: string;
   clientMessageId: string;
   state: JobState;
@@ -212,8 +223,14 @@ export function firstText(body: Json): { text: string; clientMessageId: string }
   return { text: value, clientMessageId: mid };
 }
 
+/** What a phone sees when a chat could not be started (the agent host's own words, which can name folders on the PC, are logged
+ * on the PC instead). */
+export const START_FAILED = 'The chat could not be started on your PC. Look at AIB on your PC for why, then try again.';
+
 export class NewChats {
   readonly #jobs = new Map<string, Job>();
+  /** device + clientMessageId -> a Start still on its way (the same Start sent again waits for it instead of starting another) */
+  readonly #starting = new Map<string, Promise<{ id: string; agent: string; existing: boolean }>>();
 
   constructor(readonly clock: () => number = Date.now, readonly openMs = OPEN_MS) {}
 
@@ -235,10 +252,47 @@ export class NewChats {
     return j && j.device === device ? j : null;
   }
 
-  /** Start a chat from a phone. Returns [status, answer]. Refusals are thrown (Refusal). */
-  async start(ctx: WebContext, device: string, body: Json): Promise<{ id: string; agent: string }> {
+  /** The chat this phone started with this clientMessageId, if it is still remembered. */
+  #byMessage(device: string, clientMessageId: string): Job | null {
+    for (const j of this.#jobs.values()) if (j.device === device && j.clientMessageId === clientMessageId) return j;
+    return null;
+  }
+
+  /**
+   * Start a chat from a phone. Idempotent per phone and clientMessageId (the phone keeps the id across its retries): a Start sent
+   * again after the network dropped answers with the chat the first one started (`existing`), never a second chat. Refusals are
+   * thrown (Refusal). `allowed`: whether this phone may still send the first message (read again right before it goes).
+   */
+  async start(
+    ctx: WebContext,
+    device: string,
+    body: Json,
+    allowed: () => boolean = () => true,
+  ): Promise<{ id: string; agent: string; existing: boolean }> {
     if (Object.keys(body).some((k) => !NEW_FIELDS.has(k))) throw REFUSALS.bad();
     const first = firstText(body);
+    this.#prune();
+    const known = this.#byMessage(device, first.clientMessageId);
+    if (known) return { id: known.id, agent: '', existing: true };
+    const key = `${device}|${first.clientMessageId}`;
+    const running = this.#starting.get(key);
+    if (running) return { ...(await running), existing: true };
+    const started = this.#start(ctx, device, body, first, allowed);
+    this.#starting.set(key, started);
+    try {
+      return await started;
+    } finally {
+      this.#starting.delete(key);
+    }
+  }
+
+  async #start(
+    ctx: WebContext,
+    device: string,
+    body: Json,
+    first: { text: string; clientMessageId: string },
+    allowed: () => boolean,
+  ): Promise<{ id: string; agent: string; existing: boolean }> {
     const folder = folderOfProject(ctx, body.project);
     if (!folder) throw new Refusal(404, 'not_found', 'This project is no longer in AIB on your PC. Pick another one.');
     const agents = await agentsNow(ctx);
@@ -254,12 +308,18 @@ export class NewChats {
       if (typeof v !== 'string' || v.length > 300) throw REFUSALS.bad();
       picks[kind] = v;
     }
-    // the picked names, for the words if one cannot be applied
+    // a pick must be on the agent's list (what the phone was shown); the names, for the words if one cannot be applied
     const names: Record<string, string> = {};
+    let lists: { model: PickList | null; mode: PickList | null } = { model: null, mode: null };
     try {
-      const lists = await pickLists(ctx, folder, agent.id, this.clock);
+      lists = await pickLists(ctx, folder, agent.id, this.clock);
       for (const l of [lists.model, lists.mode]) for (const c of l?.choices ?? []) names[c.value] = c.name;
-    } catch { /* the values themselves */ }
+    } catch { /* no lists: a pick is refused below */ }
+    for (const kind of ['model', 'mode'] as const) {
+      if (kind in picks && !(lists[kind]?.choices ?? []).some((c) => c.value === picks[kind])) {
+        throw new Refusal(400, 'invalid', `${agent.name} does not offer that ${kind} now. Go back and pick the ${kind} again.`);
+      }
+    }
     const connect: Json = {
       provider: agent.id,
       cwd: folder,
@@ -270,12 +330,8 @@ export class NewChats {
     const [status, payload] = await ctx.host.liveCall('connect', connect);
     const answer = obj(payload);
     if (status !== 200 || typeof answer.id !== 'string') {
-      const why = str(answer.error, 600);
-      throw new Refusal(
-        status >= 400 && status < 600 ? status : 500,
-        'failed',
-        `The chat could not be started on your PC${why ? ': ' + why : '.'}`,
-      );
+      console.error(`A phone's new chat could not be started (${status}): ${str(answer.error, 600)}`);
+      throw new Refusal(status >= 400 && status < 600 ? status : 500, 'failed', START_FAILED);
     }
     await afterConnect(ctx.removedProjects, connect, status, ctx.addedProjects, payload).catch(() => {});
     // the project's default agent becomes the one used (as on the PC); its model and mode stay for this chat only
@@ -292,6 +348,7 @@ export class NewChats {
     const job: Job = {
       id: answer.id,
       device,
+      allowed,
       text: first.text,
       clientMessageId: first.clientMessageId,
       state: 'opening',
@@ -306,7 +363,7 @@ export class NewChats {
       job.error = 'The first message could not be sent. It is in the box below: try again.';
       console.error('A phone new chat failed', error);
     });
-    return { id: job.id, agent: agent.name };
+    return { id: job.id, agent: agent.name, existing: false };
   }
 
   /** Wait for the chat to open, then send the first message (or hold it, saying why). */
@@ -319,9 +376,9 @@ export class NewChats {
         ? obj(await ctx.host.liveState(job.id, Math.max(1, Math.trunc(Number(entry.cursor) || 0))))
         : null;
       if (!state || state.closed) {
+        if (str(state?.error, 400)) console.error(`A phone's new chat closed while it was opening: ${str(state?.error, 400)}`);
         job.state = 'failed';
-        job.error = `The chat closed while it was opening${str(state?.error, 400) ? ': ' + str(state?.error, 400) : '.'} ` +
-          'Your message was not sent.';
+        job.error = 'The chat closed while it was opening. Your message was not sent. Look at AIB on your PC for why.';
         return;
       }
       if ((Array.isArray(state.elicitations) && state.elicitations.length) || state.auth) {
@@ -344,6 +401,12 @@ export class NewChats {
           job.warning = `Could not apply ${others.map((r) => `${r.kind === 'model' ? 'the model' : r.kind} ${said(r)}`).join(' · ')}. ` +
             'The chat started with the agent default.';
         }
+        if (!job.allowed()) {
+          job.state = 'failed';
+          job.error = 'Starting chats from this phone was turned off on your PC while this one opened. Your message was not sent; ' +
+            'the chat is open on your PC.';
+          return;
+        }
         await this.send(ctx, job);
         return;
       }
@@ -365,7 +428,8 @@ export class NewChats {
       job.state = 'failed';
       job.text = text;
       job.clientMessageId = clientMessageId;
-      job.error = `Your first message was not sent${str(answer.error, 400) ? ': ' + str(answer.error, 400) : '.'} It is in the box below.`;
+      if (str(answer.error, 400)) console.error(`A phone's first message was not sent (${status}): ${str(answer.error, 400)}`);
+      job.error = 'Your first message was not sent. It is in the box below: send it again.';
     }
     return [status, answer];
   }
