@@ -1337,19 +1337,21 @@
   function autosize() {
     const box = doc().getElementById('prompt');
     if (!box || !box.style) return;
-    /* An empty box keeps its own height: Chrome counts a wrapping placeholder in scrollHeight, so a longer placeholder (the one while
-       the agent works) made the composer taller in a narrow window (owner, 2026-11-12: its height stays put while the agent works). */
-    if (!box.value) {
-      if (box.style.height) box.style.height = '';
-      return;
+    /* The box fits its text, never its placeholder: Chrome counts a wrapping placeholder in scrollHeight, so the longer one while the
+       agent works made an empty composer taller in a narrow window (owner, 2026-11-12: its height stays put while the agent works). */
+    const placeholder = !box.value && box.placeholder;
+    if (placeholder) box.placeholder = '';
+    try {
+      /* A one-line composer whose text still fits stays as it is. Resetting to 'auto' to measure laid the whole page out twice on
+         every key press (the chat history above shrinks and grows with the composer), which made typing stutter in a long chat. */
+      if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
+      box.style.height = 'auto';
+      const cap = root.ResizeUI && root.ResizeUI.composerCap ? root.ResizeUI.composerCap(root) : 200;
+      const h = Math.min(cap, Math.max(56, box.scrollHeight || 0));
+      box.style.height = h + 'px';
+    } finally {
+      if (placeholder) box.placeholder = placeholder;
     }
-    /* A one-line composer whose text still fits stays as it is. Resetting to 'auto' to measure laid the whole page out twice on
-       every key press (the chat history above shrinks and grows with the composer), which made typing stutter in a long chat. */
-    if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
-    box.style.height = 'auto';
-    const cap = root.ResizeUI && root.ResizeUI.composerCap ? root.ResizeUI.composerCap(root) : 200;
-    const h = Math.min(cap, Math.max(56, box.scrollHeight || 0));
-    box.style.height = h + 'px';
   }
 
   // ---- project preferences (shared via the server) --------------------------------------------
