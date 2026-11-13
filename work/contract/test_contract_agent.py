@@ -82,6 +82,16 @@ class AgentContract(unittest.TestCase):
         return [(e['kind'], (e.get('data') or {}).get('update', {}).get('sessionUpdate') if isinstance(e.get('data'), dict) else None)
                 for e in state['events']]
 
+    # Deno-only (beta.9 steer-on-send): the snapshot's steer keys (work/deno/steer_*_test.ts cover them); the reference has none.
+    STEER_KEYS = ('steerable', 'autonomous', 'steerAgent', 'steerLane', 'toolBackground')
+
+    def drop_steer_keys(self, state, what):
+        if self.servers[0].effective_kind() not in ('deno', 'deno-split'):
+            return
+        for key in self.STEER_KEYS:
+            self.assertIn(key, state, f'{what}: {key}')
+            state.pop(key)
+
     def compare_states(self, states, what):
         """Same state, same events. The agent's notifications and Studio's own events race (even Python against Python), so the
         events are compared as a sorted list without their sequence numbers."""
@@ -91,6 +101,7 @@ class AgentContract(unittest.TestCase):
             # fixture never sends a rate limit, so it must be there and empty; the reference has no such key.
             self.assertIn('limits', a, f'{what}: limits')
             self.assertIsNone(a.pop('limits'), f'{what}: the fixture sends no usage limits')
+            self.drop_steer_keys(a, what)
         self.assertEqual(sorted(self.kinds(a)), sorted(self.kinds(b)), f'{what}: event kinds')
         for state in (a, b):
             state['events'] = sorted((json.dumps({k: v for k, v in e.items() if k != 'seq'}, sort_keys=True) for e in state['events']))
@@ -104,6 +115,7 @@ class AgentContract(unittest.TestCase):
             reply = server.post('/api/live/connect', dict(body, cwd=str(server.workspace)))
             self.assertEqual(reply.status, 200, reply.text)
             connected.append(reply.json())
+        self.drop_steer_keys(connected[0], 'connect payload')
         self.assertEqual(sorted(connected[0]), sorted(connected[1]), 'connect payload keys')
         ids = [c['id'] for c in connected]
         states = self.wait(ids, lambda s: s['ready'], 'ready')
