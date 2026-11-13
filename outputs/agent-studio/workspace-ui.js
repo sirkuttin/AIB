@@ -182,6 +182,31 @@
     if (!blockedSince.has(key)) blockedSince.set(key, Date.now() / 1000);
     return blockedSince.get(key);
   }
+  // The inbox's phase of a chat (inbox-rules.js, the same rules as the server, the phone and the trays): from the agent host's
+  // attention facts and the chat's marks. A chat with no agent running is never blocked and never Finished in the inbox.
+  function inboxFacts(lv, e, s) {
+    const IR = root.AgentInboxRules;
+    // the agent host's facts; a listing without them (an older host) reads the sidebar's state
+    const a = lv && lv.attention && typeof lv.attention.state === 'string' ? lv.attention : { state: s.state === 'unread' ? 'idle' : s.state };
+    const phase = !lv ? 'idle' : IR ? IR.phaseOf(a, e, Date.now() / 1000) : s.state === 'needs_you' ? 'needs_you' : 'idle';
+    const since = IR ? IR.waitingSince(phase, a, 0) : 0;
+    return {
+      phase,
+      since,
+      helpers: Number(a.helpers) || 0,
+      question: typeof a.question === 'string' ? a.question : '',
+      error: typeof a.error === 'string' ? a.error : '',
+      failKind: typeof a.failKind === 'string' ? a.failKind : '',
+    };
+  }
+  const agentNameOf = (provider) => {
+    const A = root.AgentChoice;
+    try {
+      return (A && A.nameOf && A.nameOf(provider)) || provider || '';
+    } catch (e) {
+      return provider || '';
+    }
+  };
   function normalize(c) {
     const S = root.AgentSidebarUI,
       O = root.AgentOrganizeUI;
@@ -190,6 +215,8 @@
       e = O && O.entryOf ? O.entryOf(c) || {} : {};
     const lv = c.live && !c.live.closed ? c.live : null;
     return {
+      ...inboxFacts(lv, Object.assign({}, e, { yourTurnAt: Number(c.yourTurnAt) || 0 }), s), // the page's own your-turn reading
+      agent: agentNameOf(c.provider),
       key: keyOf(c),
       title: host.titleOf(c),
       projectKey: projectKeyOf(c),
@@ -536,33 +563,40 @@
       .inbox(items)
       .filter((r) => {
         // The open chat stays when it is blocked on you (it still needs you, and the badge counts it like the cards do);
-        // a "your turn" you are looking at is seen (seenTurns below).
-        // The chat you have open never counts as "your turn", even while AIB is in the background: it is the chat you're on.
-        if (r.key === selectedKey && r.kind !== 'needs') return false;
-        if (r.kind === 'yourTurn') {
+        // a Finished chat you are looking at is seen (seenTurns below).
+        // The chat you have open is never Finished, even while AIB is in the background: it is the chat you're on.
+        if (r.section === 'finished') {
+          if (r.key === selectedKey) return false;
           const it = itemOf(r.key);
           if (it && (seenTurns[r.key] || 0) >= it.yourTurnAt) return false;
         }
         return true;
       });
   }
+  // The one number: chats blocked on you in every project (inbox-rules.js countOf). The badge, the window title, the trays and
+  // the phone all show it; Finished chats never count (the envelope gets a small teal dot for them).
+  const blockedOf = (rows) => rows.filter((r) => r.section === 'needs').length;
   function inboxButton() {
-    const inbox = inboxView();
+    const inbox = inboxView(),
+      n = blockedOf(inbox),
+      finished = inbox.length - n;
     const env = btn(
       null,
-      'ws-inbox-btn' + (inbox.length ? ' has' : ''),
-      inbox.length
-        ? 'Inbox: ' + inbox.length + ' chat' + (inbox.length === 1 ? '' : 's') + ' waiting on you (all projects)'
-        : 'Inbox: nothing is waiting on you',
+      'ws-inbox-btn' + (n ? ' has' : '') + (finished && !n ? ' done' : ''),
+      n
+        ? 'Inbox: ' + n + ' chat' + (n === 1 ? '' : 's') + ' need you (all projects)' + (finished ? ', ' + finished + ' finished' : '')
+        : finished
+          ? 'Inbox: nothing needs you; ' + finished + ' finished'
+          : 'Inbox: nothing needs you',
     );
     env.setAttribute('aria-haspopup', 'dialog');
     env.setAttribute('aria-expanded', String(inboxOpen));
     env.append(svgIcon(ENVELOPE));
-    if (inbox.length) {
-      const n = el('span', inbox.length > 99 ? '99+' : inbox.length, 'ws-badge');
-      n.setAttribute('aria-hidden', 'true');
-      env.append(n);
-    }
+    if (n) {
+      const b = el('span', n > 99 ? '99+' : n, 'ws-badge');
+      b.setAttribute('aria-hidden', 'true');
+      env.append(b);
+    } else if (finished) env.append(el('span', null, 'ws-inbox-dot'));
     env.onclick = () => toggleInbox();
     return env;
   }
@@ -1152,7 +1186,22 @@
   }
 
   const actBtn = (label, cls, title) => btn(label, 'ws-qa ' + (cls || ''), title);
-  // One flat list: approvals, questions, sign-ins and "your turn" chats at the same level, newest first.
+  // "Working: 5 chats in 3 projects · 4 helpers": what still runs, at the foot of the inbox (working chats are not rows).
+  function workingLine() {
+    const busy = items.filter((i) => i.phase === 'working' && !i.archived && !i.deleted);
+    if (!busy.length) return '';
+    const projects = new Set(busy.map((i) => i.projectKey)).size,
+      helpers = busy.reduce((n, i) => n + (Number(i.helpers) || 0), 0);
+    const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+    return (
+      'Working: ' +
+      plural(busy.length, 'chat') +
+      (projects > 1 ? ' in ' + projects + ' projects' : '') +
+      (helpers ? ' · ' + plural(helpers, 'helper') : '')
+    );
+  }
+  // Two sections, most urgent first (inbox-rules.js): Needs you (approvals, questions, sign-ins, failed turns and questions in a
+  // reply; the longest wait first) and Finished (newest first; not counted).
   function drawInbox() {
     if (!inboxPop) return;
     const Rp = RP();
@@ -1168,38 +1217,76 @@
         }
       : null;
     const rows = inboxView(),
-      frag = doc().createDocumentFragment();
+      frag = doc().createDocumentFragment(),
+      IR = root.AgentInboxRules,
+      blockedN = blockedOf(rows),
+      working = workingLine();
     for (const k of Array.from(quick.keys())) if (!rows.some((r) => r.key === k)) quick.delete(k);
-    const head = el('div', 'Needs you across projects', 'ws-pop-head');
-    head.append(el('span', rows.length, 'n'));
+    const head = el('div', 'Inbox', 'ws-pop-head');
+    head.append(el('span', blockedN ? blockedN + ' need you' : 'nothing needs you', 'n'));
     frag.append(head);
-    if (!rows.length) frag.append(el('p', 'Nothing needs you.', 'ws-pop-empty'));
+    if (!blockedN) {
+      const empty = el('div', null, 'ws-pop-empty');
+      empty.append(el('p', 'Nothing needs you.', 'ws-empty-title'));
+      empty.append(el('p', working ? "They're still working. You'll be told when one needs you." : 'Four score and zero waiting.'));
+      frag.append(empty);
+    }
+    let section = '';
+    const nowS = Date.now() / 1000;
     for (const r of rows) {
       const item = itemOf(r.key),
         turn = r.kind === 'yourTurn',
         s = qs(r.key);
+      if (r.section !== section) {
+        section = r.section;
+        const sh = el('div', null, 'ws-inbox-section');
+        if (section === 'needs') sh.append(el('span', 'Needs you'), el('span', blockedN, 'n'), el('span', 'oldest first', 'ws-sec-note'));
+        else sh.append(el('span', 'Finished'), el('span', rows.length - blockedN, 'n'), el('span', 'not counted', 'ws-sec-note'));
+        frag.append(sh);
+      }
       if (item) wantDetail(item, r);
       const act = Rp
         ? Rp.rowActions(r, detailFor(item))
         : { reply: false, buttons: [], handled: !!r.handled, open: true, loading: false, openOnly: false, more: 0 };
-      const wrap = el('div', null, 'ws-inbox-item' + (turn ? ' turn' : '') + (s.replying ? ' replying' : ''));
+      const wrap = el(
+        'div',
+        null,
+        'ws-inbox-item' + (turn ? ' turn' : '') + ' ' + r.section + ' ' + r.reason + (s.replying ? ' replying' : ''),
+      );
       wrap.dataset.key = r.key;
+      wrap.dataset.reason = r.reason;
       const b = btn(null, 'ws-inbox-row');
       b.dataset.key = r.key;
       const text = el('span', null, 'ws-inbox-text');
       const top = el('span', null, 'ws-inbox-top');
-      top.append(el('span', r.title, 'ws-inbox-title'), el('span', ageOf(r.at), 'ws-inbox-age'));
+      // Line 1: the reason word, the chat, how long it has waited on you (orange after 15 min) or when it finished.
+      const wait = r.section === 'needs' && IR ? IR.waitText(r.since, nowS) : null;
+      const age = el('span', wait ? 'waited ' + wait.text : ageOf(r.at), 'ws-inbox-age' + (wait && wait.long ? ' long' : ''));
+      top.append(el('span', IR ? IR.reasonWord(r.reason) : r.summary, 'ws-inbox-reason'), el('span', r.title, 'ws-inbox-title'), age);
+      // Line 2: the project (a label: rows are grouped by urgency, not by project), the agent, what its helpers do.
       const meta = el('span', null, 'ws-inbox-meta');
       meta.append(el('span', r.projectName, 'ws-inbox-proj'));
+      if (r.agent) meta.append(el('span', r.agent, 'ws-inbox-agent'));
+      const helpersLine = IR ? IR.helpersLine(r.helpers) : '';
+      if (helpersLine) meta.append(el('span', helpersLine, 'ws-inbox-helpers'));
       // Context: the agent's last message (or its question), three lines; "more" opens it in place.
       // An approval says what it would do ("Run npm install stripe@18.0.0"), as its card does, once its body is fetched.
       const perms = !turn && !r.ask && Rp ? detailFor(item).permissions : null,
         permLine = perms && perms.length && Rp.permissionTitle ? Rp.permissionTitle(perms[0]) : '';
-      const full = turn ? (item && item.lastText) || r.snippet : r.ask || permLine || r.summary;
+      const full =
+        r.reason === 'failed' || r.reason === 'asks'
+          ? r.ask || (item && item.lastText) || ''
+          : turn
+            ? (item && item.lastText) || r.snippet
+            : r.ask || permLine || r.summary;
       const ctxLine = Rp
-        ? turn
-          ? 'Your turn' + (full ? ': “' + full + '”' : '')
-          : 'Needs you: ' + (full || r.summary)
+        ? r.reason === 'failed'
+          ? full || 'The last turn ended with an error.'
+          : r.reason === 'asks'
+            ? full
+            : turn
+              ? 'Your turn' + (full ? ': “' + full + '”' : '')
+              : 'Needs you: ' + (full || r.summary)
         : r.line;
       const long = Rp ? Rp.isLong(ctxLine, Rp.CLAMP_LINES, Rp.PER_LINE) : false;
       const sub = el('span', ctxLine, 'ws-inbox-sub' + (Rp ? ' ctx' : '') + (long && !s.expanded ? ' clamp' : ''));
@@ -1304,6 +1391,7 @@
       wrap.append(acts);
       frag.append(wrap);
     }
+    if (working) frag.append(el('div', working, 'ws-inbox-working'));
     // Notification settings (desktop notifications, sounds, muted projects) live in Settings now; this is the way in.
     if (root.AgentSettingsUI && root.AgentSettingsUI.open) {
       const notes = el('button', 'Notification settings…', 'ws-notify-link');
@@ -1618,7 +1706,8 @@
   }
   // "Need you" counts follow the inbox: the chat you're looking at and "Your turn" chats you've already seen don't count.
   function waitingFor(pk) {
-    const keys = new Set(inboxView().map((r) => r.key));
+    // the one number (inbox-rules.js): chats blocked on you; finished chats never count
+    const keys = new Set(inboxView().filter((r) => r.section === 'needs').map((r) => r.key));
     return items.filter((i) => keys.has(i.key) && (pk == null || i.projectKey === pk)).length;
   }
   function counts(p) {
@@ -2137,6 +2226,8 @@
           key: i.key,
           title: i.title,
           state: i.state,
+          phase: i.phase,
+          since: i.since,
           needs: i.needs,
           yourTurn: i.yourTurn,
           yourTurnAt: i.yourTurnAt,
@@ -2233,7 +2324,9 @@
       '|' +
       prefsVer +
       '|' +
-      items.map((i) => i.yourTurnAt || 0).join(',');
+      items.map((i) => (i.yourTurnAt || 0) + i.phase + (i.helpers || 0) + (i.since || 0)).join(',') +
+      '|' +
+      (inboxOpen ? Math.floor(Date.now() / 60000) : ''); // the inbox's phases, helpers and waits ("waited 12m" moves each minute)
     if (sig === lastSig) return;
     if (drag && drag.on) return; // do not rebuild the dropdown under a drag; the next sync redraws
     lastSig = sig;

@@ -92,6 +92,7 @@ function setup({ stored = {}, hidden = false } = {}) {
   const sandbox = { window, Object, Array, String, Number, Promise, Error, Map, Set, Date, JSON, Math, isNaN, RegExp };
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'ownership-ui.js'), 'utf8'), sandbox);
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'status-words.js'), 'utf8'), sandbox);
+  vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'inbox-rules.js'), 'utf8'), sandbox);
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'notify-rules.js'), 'utf8'), sandbox);
   vm.runInNewContext(fs.readFileSync(path.join(APP_DIR, 'sidebar-ui.js'), 'utf8'), sandbox);
   return { ui: window.AgentSidebarUI, document, store, window };
@@ -252,12 +253,18 @@ test('last viewed and collapse state survive a reload; broken storage is tolerat
   assert.equal(bad.ui.isCollapsed('x'), false);
 });
 
-test('tab title shows how many things need you', () => {
+test('tab title shows how many chats need you (the inbox number: chats, not requests; never finished chats)', () => {
   const ctx = setup();
   init(ctx);
   const needs = (n) => conv('n' + n, 'C:\\x', { live: live({ attention: { state: 'needs_you', needs: n } }) });
+  const at = new Date(Date.now() - 60000).toISOString();
+  const failed = conv('f', 'C:\\x', { live: live({ attention: { state: 'idle', failedAt: at } }) });
+  const asks = conv('q', 'C:\\x', { live: live({ attention: { state: 'idle', asksAt: at } }) });
+  const done = conv('d', 'C:\\x', { yourTurn: true, yourTurnAt: 5, live: live({ attention: { state: 'idle' } }) });
   ctx.ui.sync([needs(2), needs(1), conv('s', 'C:\\y')], null);
-  assert.equal(ctx.document.title, '(3) Agent Studio');
+  assert.equal(ctx.document.title, '(2) Agent Studio', 'two chats, three requests');
+  ctx.ui.sync([needs(2), failed, asks, done], null);
+  assert.equal(ctx.document.title, '(3) Agent Studio', 'a failed turn and a question in the reply count; a finished chat does not');
   ctx.ui.sync([conv('s', 'C:\\y')], null);
   assert.equal(ctx.document.title, 'Agent Studio');
   ctx.ui.setBase('Plan · Agent Studio');

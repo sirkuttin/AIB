@@ -365,6 +365,8 @@ function load(shell, scripts) {
   sandbox.document = shell.document;
   sandbox.localStorage = shell.localStorage;
   const context = vm.createContext(sandbox);
+  // The inbox rules (inbox-rules.js) come before every page module, as in chat.html: the inbox, badge, title and toasts read them.
+  if (!scripts.includes('inbox-rules.js')) scripts = ['inbox-rules.js', ...scripts];
   for (const name of scripts)
     vm.runInContext(fs.readFileSync(path.join(APP, name), 'utf8'), context, { filename: name });
   return context;

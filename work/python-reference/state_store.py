@@ -431,7 +431,7 @@ class ConversationState(JsonFileStore):
             return None
         entry = {'pinnedAt': cls._stamp(item.get('pinnedAt')), 'archivedAt': cls._stamp(item.get('archivedAt')),
                  'deletedAt': cls._stamp(item.get('deletedAt')), 'holdAt': cls._stamp(item.get('holdAt')),
-                 'yourTurnAt': cls._stamp(item.get('yourTurnAt'))}
+                 'yourTurnAt': cls._stamp(item.get('yourTurnAt')), 'handledAt': cls._stamp(item.get('handledAt'))}
         if not any(entry.values()):
             return None
         entry['holdNote'] = _text(item.get('holdNote'), cls.MAX_NOTE).strip() if entry['holdAt'] else ''
@@ -503,7 +503,7 @@ class ConversationState(JsonFileStore):
         def rank(item):
             entry = item[1]
             kind = 0 if entry['agentDeleted'] else 1 if entry['deletedAt'] else 2 if entry['archivedAt'] else 3
-            return (kind, max(entry['pinnedAt'], entry['archivedAt'], entry['deletedAt'], entry['holdAt'], entry['yourTurnAt']))
+            return (kind, max(entry['pinnedAt'], entry['archivedAt'], entry['deletedAt'], entry['holdAt'], entry['yourTurnAt'], entry['handledAt']))
         for key, _ in sorted(self.entries.items(), key=rank)[:len(self.entries) - self.MAX_ENTRIES]:
             del self.entries[key]
 
@@ -540,7 +540,7 @@ class ConversationState(JsonFileStore):
         with self.lock, self._lock_for_update():
             self._sync()
             before = {k: dict(v) for k, v in self.entries.items()}
-            entry = dict(self.entries.get(key) or {'pinnedAt': 0.0, 'archivedAt': 0.0, 'deletedAt': 0.0, 'holdAt': 0.0, 'holdNote': '', 'agentDeleted': False, 'title': '', 'cwd': '', 'projectRoot': '', 'yourTurnAt': 0.0})
+            entry = dict(self.entries.get(key) or {'pinnedAt': 0.0, 'archivedAt': 0.0, 'deletedAt': 0.0, 'holdAt': 0.0, 'holdNote': '', 'agentDeleted': False, 'title': '', 'cwd': '', 'projectRoot': '', 'yourTurnAt': 0.0, 'handledAt': 0.0})
             if action in ('pin', 'archive', 'hold') and entry['deletedAt']:
                 raise ValueError('Restore this conversation first')
             if action == 'pin':
@@ -587,6 +587,7 @@ class ConversationState(JsonFileStore):
                 entry['yourTurnAt'] = now
             elif action == 'handled':
                 entry['yourTurnAt'] = 0.0          # the user acted: replied, or clicked Mark handled
+                entry['handledAt'] = now           # (AIB inbox, 2026-11-13: a failure or question reported before it is handled)
             cleaned = self._clean(key, entry)
             if cleaned:
                 self.entries[key] = cleaned

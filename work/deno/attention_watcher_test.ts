@@ -11,7 +11,7 @@
  * The same decisions through the real agent hosts (in-process, keeper, split) are in attention_modes_test.ts.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AttentionWatcher, type Fire, Notifier } from '../../outputs/agent-studio/server/attention/watcher.ts';
+import { AttentionWatcher, type Fire, Notifier, SETTLE_MS } from '../../outputs/agent-studio/server/attention/watcher.ts';
 import { Presence } from '../../outputs/agent-studio/server/attention/presence.ts';
 import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
 
@@ -29,6 +29,8 @@ interface Chat {
   elicitations?: string[];
   queue?: { items: unknown[]; paused: boolean };
   busy?: 'helpers' | 'background';
+  /** More attention facts (the inbox's: helpers, shells, followUntil, failedAt, asksAt ...). */
+  facts?: Json;
 }
 
 function lab(options: { marks?: Json; prefs?: Json; view?: Record<string, string> } = {}) {
@@ -47,7 +49,7 @@ function lab(options: { marks?: Json; prefs?: Json; view?: Record<string, string
           projectRoot: c.cwd,
           closed: false,
           cursor: 3,
-          attention: { state: c.state, needs: c.needs ?? 0, turnEndedAt: c.turnEndedAt ?? null, busySince: null },
+          attention: { state: c.state, needs: c.needs ?? 0, turnEndedAt: c.turnEndedAt ?? null, busySince: null, ...c.facts },
           elicitations: (c.elicitations ?? []).map((key) => ({ key, params: { message: 'Q' } })),
           queue: c.queue ?? { items: [], paused: false },
           breadth: { sessionInfo: { title: 'Chat ' + c.id } },
@@ -127,6 +129,102 @@ Deno.test('watcher: one "needs you" per request; a restart announces nothing aga
     await w3.poll();
     assertEquals(t.flat(), ['needs claude:s1', 'needs claude:s1', 'needs claude:s1']);
     await w3.stop();
+  } finally {
+    t.close();
+  }
+});
+
+Deno.test('watcher (inbox): a failed turn is news once, like a request; Mark handled before it does not hide it, after it does', async () => {
+  const t = lab({ marks: { 'claude:s2': { handledAt: Date.parse('2026-11-12T10:00:30Z') / 1000 } } });
+  try {
+    const w = t.make();
+    t.chats.push({ id: 'c1', sessionId: 's1', cwd: 'C:\\code\\shop', state: 'working' });
+    t.chats.push({ id: 'c2', sessionId: 's2', cwd: 'C:\\code\\shop', state: 'working' });
+    await w.poll();
+    t.tick(5000);
+    const failedAt = new Date(t.now).toISOString();
+    Object.assign(t.chats[0], { state: 'idle', facts: { failedAt, error: 'You have hit your session limit', failKind: 'limit' } });
+    // c2 failed before its Mark handled (30 s in): already handled, no news
+    Object.assign(t.chats[1], { state: 'idle', facts: { failedAt } });
+    await w.poll();
+    await w.poll();
+    assertEquals(t.flat(), ['needs claude:s1'], 'at once (no settle), once');
+    assertEquals(t.fired[0][0].reason, 'failed');
+    // a restart: not again
+    await w.stop();
+    const w2 = t.make();
+    await w2.poll();
+    assertEquals(t.fired.length, 1);
+    await w2.stop();
+  } finally {
+    t.close();
+  }
+});
+
+Deno.test('watcher (inbox): a reply that asks you something is "needs you" once it stayed open; its turn is never "finished"', async () => {
+  const t = lab();
+  try {
+    const w = t.make();
+    t.chats.push({ id: 'c1', sessionId: 's1', cwd: 'C:\\code\\shop', state: 'working' });
+    await w.poll();
+    t.tick(3000);
+    const asksAt = new Date(t.now).toISOString();
+    Object.assign(t.chats[0], { state: 'idle', turnEndedAt: t.iso(), facts: { asksAt, question: 'Should I start?' } });
+    await w.poll();
+    assertEquals(t.flat(), [], 'not before it stayed open (settle)');
+    t.tick(1000);
+    await w.poll();
+    assertEquals(t.flat(), ['needs claude:s1']);
+    assertEquals(t.fired[0][0].reason, 'asks');
+    // Mark handled clears the question: the chat is your turn now, but its turn's news already went out as the question
+    w.sources.conversations.public = () => ({
+      revision: '',
+      warning: '',
+      entries: { 'claude:s1': { handledAt: t.now / 1000 + 1 } as never },
+    });
+    t.tick(2000);
+    await w.poll();
+    t.tick(2000);
+    await w.poll();
+    assertEquals(t.flat(), ['needs claude:s1'], 'no "finished" for the same turn');
+    await w.stop();
+  } finally {
+    t.close();
+  }
+});
+
+Deno.test('watcher (inbox): helpers, shells and the follow-up window keep a chat working; "finished" only after them', async () => {
+  const t = lab();
+  try {
+    const w = t.make();
+    assertEquals(SETTLE_MS, 20_000, "the settle covers the agent's own follow-up (usage study: 100% within 20 s in AIB)");
+    t.chats.push({ id: 'c1', sessionId: 's1', cwd: 'C:\\code\\shop', state: 'working' });
+    await w.poll();
+    Object.assign(t.chats[0], { state: 'idle', turnEndedAt: t.iso(), facts: { helpers: 2, shells: false, followUntil: null } });
+    for (let i = 0; i < 3; i++) {
+      t.tick(2000);
+      await w.poll();
+    }
+    assertEquals(t.flat(), [], 'two helpers running');
+    Object.assign(t.chats[0], { facts: { helpers: 0, shells: true, followUntil: null } });
+    t.tick(2000);
+    await w.poll();
+    t.tick(2000);
+    await w.poll();
+    assertEquals(t.flat(), [], 'a background shell running');
+    Object.assign(t.chats[0], { facts: { helpers: 0, shells: false, followUntil: new Date(t.now + 10_000).toISOString() } });
+    t.tick(2000);
+    await w.poll();
+    t.tick(2000);
+    await w.poll();
+    assertEquals(t.flat(), [], 'the follow-up window is open');
+    t.tick(10_000);
+    await w.poll();
+    t.tick(2000);
+    await w.poll();
+    assertEquals(t.flat(), ['turn claude:s1']);
+    assertEquals(t.fired[0][0].reason, 'finished');
+    await w.stop();
   } finally {
     t.close();
   }

@@ -56,6 +56,7 @@ import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
+import { blockedCount } from '../attention/inbox_rules.ts';
 
 const log = getLogger('studio');
 
@@ -1372,6 +1373,16 @@ export class Studio {
 
   busyConnections(): Promise<Json[]> {
     return Promise.resolve(this.busyList());
+  }
+
+  /**
+   * How many chats are blocked on the person (an open request, a failed turn, a question in the last reply): the one number of
+   * the inbox (inbox-rules.js), which both tray icons show. A running sign-in job is not a chat and does not count.
+   */
+  blockedChats(): number {
+    const open = [...this.connections.values()].filter((c) => !c.closed);
+    const chats = open.map((c) => ({ provider: c.provider, sessionId: c.sessionId, attention: c.attention() }));
+    return blockedCount(chats, this.conversations.public().entries as unknown as Record<string, unknown>);
   }
 
   studioOwns(provider: unknown, sessionId: unknown): Promise<boolean> {

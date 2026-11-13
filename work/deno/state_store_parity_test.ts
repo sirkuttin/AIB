@@ -38,7 +38,7 @@ type Kind = 'conversations' | 'projects' | 'read' | 'settings' | 'recovery';
 type Step = { call?: string; args?: unknown[]; kwargs?: Record<string, unknown>; reopen?: boolean };
 type Store = ConversationState | ProjectPrefs | ReadState | SettingsStore | StateStore;
 
-const STAMPS = new Set(['pinnedAt', 'archivedAt', 'deletedAt', 'holdAt', 'yourTurnAt', 'at', 'openedAt', 'lastSeen']);
+const STAMPS = new Set(['pinnedAt', 'archivedAt', 'deletedAt', 'holdAt', 'yourTurnAt', 'handledAt', 'at', 'openedAt', 'lastSeen']);
 
 /** Times differ between runs: a stamp becomes 'T' (set) or 0; a revision keeps only its counter (the nonce is random). */
 function norm(value: unknown, key = ''): unknown {

@@ -135,7 +135,8 @@ test('no All chats: a stored All moves to the first project, the switcher shows 
 });
 
 test('the dropdown footer counts the chats that need you in all projects', () => {
-  const waiting = (c) => Object.assign(c, { yourTurn: true, yourTurnAt: 200 });
+  const waiting = (c) =>
+    Object.assign(c, { live: { id: 'L-' + c.id, closed: false, busy: false, state: 'ready', attention: { state: 'needs_you', needs: 1 } } });
   const l2 = [waiting(conv('a1', 'C:/work/alpha')), conv('a2', 'C:/work/alpha'), waiting(conv('b1', 'C:/work/beta'))];
   const t = setup(l2);
   t.W.openProjectMenu();

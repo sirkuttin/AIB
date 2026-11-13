@@ -75,7 +75,7 @@ test('QA m4: an archived chat you open gets a tab marked Archived; it goes when 
   );
 });
 
-test('QA m14: the open chat stays in the inbox while it needs you; stable order; R only where a reply works', () => {
+test('QA m14: the open chat stays in the inbox while it needs you; stable order (longest wait first); R only where a reply works', () => {
   const zeta = asking('a1', 'C:/w/zeta', 100),
     beta = asking('b1', 'C:/w/beta', 100),
     idle = conv('c1', 'C:/w/gamma');
@@ -90,14 +90,14 @@ test('QA m14: the open chat stays in the inbox while it needs you; stable order;
   t.W.toggleInbox(true);
   const pop = t.shell.body.querySelector('#wsInbox');
   const order = () => pop.querySelectorAll('.ws-inbox-item').map((n) => n.dataset.key);
-  assert.deepEqual(order(), ['claude:a1', 'claude:b1'], 'newest wait first, the open chat included');
+  assert.deepEqual(order(), ['claude:b1', 'claude:a1'], 'the longest wait first, the open chat included');
   const keys = pop.querySelector('.ws-inbox-keys').textContent;
   assert.doesNotMatch(keys, /R reply/, 'questions cannot be answered with R');
   // Polls and re-openings keep the order (a blocked chat's activity is "now" on every poll).
   t.W.toggleInbox(false);
   for (let i = 0; i < 3; i++) t.sync(list.slice(), i % 2 ? beta : idle);
   t.W.toggleInbox(true);
-  assert.deepEqual(order(), ['claude:a1', 'claude:b1']);
+  assert.deepEqual(order(), ['claude:b1', 'claude:a1']);
 });
 
 test('QA m12: overflowing tabs get scroll arrows and a fade on the hidden side', () => {

@@ -29,39 +29,55 @@ const item = (key, projectKey, extra = {}) =>
     extra,
   );
 
-// ---- inbox: one flat list --------------------------------------------------------------------------------
-test('inbox is one flat list: needs-you and your-turn chats at the same level, newest first, one row per chat', () => {
+// ---- inbox: two sections by urgency (inbox-rules.js) ------------------------------------------------------
+test('inbox: Needs you first, the longest wait first; then Finished, newest first; one row per chat; only Needs you counts', () => {
   const items = [
-    item('a1', 'a', { state: 'needs_you', needs: 1, activity: 500, ask: 'approve running build.cmd' }),
+    item('a1', 'a', { state: 'needs_you', needs: 1, activity: 500, needsAt: 500, ask: 'approve running build.cmd' }),
     item('a2', 'a', { state: 'idle', yourTurn: true, yourTurnAt: 800, snippet: 'Should I start a batch to fix them?' }),
     item('b1', 'b', { state: 'unread', unread: true, yourTurn: true, yourTurnAt: 600, snippet: '' }),
-    item('b2', 'b', { state: 'needs_you', needs: 1, yourTurn: true, yourTurnAt: 100, activity: 700, auth: true }),
+    item('b2', 'b', { state: 'needs_you', needs: 1, yourTurn: true, yourTurnAt: 100, activity: 700, needsAt: 700, auth: true }),
     item('c1', 'c', { state: 'idle', yourTurn: false }),
     item('c2', 'c', { state: 'idle', yourTurn: true, yourTurnAt: 900, archived: true }),
     item('c3', 'c', { state: 'working', yourTurn: false, activity: 999 }),
+    // the inbox's phases from the agent host (workspace-ui normalize): a failed turn, a question in the reply, helpers running
+    item('d1', 'd', { state: 'idle', phase: 'failed', since: 300, error: 'Usage limit reached. Resets at 16:00.', yourTurn: true }),
+    item('d2', 'd', { state: 'idle', phase: 'asks', since: 650, question: 'Should I start the review now?', yourTurn: true }),
+    item('d3', 'd', { state: 'idle', phase: 'working', helpers: 2, yourTurn: true, yourTurnAt: 950 }),
   ];
   const rows = W.inbox(items);
   assert.deepEqual(
     rows.map((r) => r.key),
-    ['a2', 'b2', 'b1', 'a1'],
-    'newest first; archived and working chats left out; a blocked your-turn chat is one row',
+    ['d1', 'a1', 'd2', 'b2', 'a2', 'b1'],
+    'oldest wait first, then finished newest first; archived and working chats (helpers too) left out; one row per chat',
+  );
+  assert.deepEqual(
+    rows.map((r) => r.section),
+    ['needs', 'needs', 'needs', 'needs', 'finished', 'finished'],
+  );
+  assert.deepEqual(
+    rows.map((r) => r.reason),
+    ['failed', 'approval', 'asks', 'signin', 'finished', 'finished'],
   );
   assert.deepEqual(
     rows.map((r) => r.kind),
-    ['yourTurn', 'needs', 'yourTurn', 'needs'],
+    ['yourTurn', 'needs', 'yourTurn', 'needs', 'yourTurn', 'yourTurn'],
+    'a failure or a question is answered by a reply',
   );
-  assert.equal(rows[0].line, 'Your turn: \u201CShould I start a batch to fix them?\u201D');
-  assert.equal(rows[2].line, 'Your turn', 'no snippet, no quotes');
-  assert.equal(rows[3].line, 'Needs you: approve running build.cmd');
-  assert.equal(rows[1].line, 'Needs you: Sign-in');
+  const quoted = (s) => 'Your turn: ' + String.fromCharCode(0x201c) + s + String.fromCharCode(0x201d);
+  assert.equal(rows[0].line, 'Failed: Usage limit reached. Resets at 16:00.');
+  assert.equal(rows[2].line, 'Asks: Should I start the review now?');
+  assert.equal(rows[4].line, quoted('Should I start a batch to fix them?'));
+  assert.equal(rows[5].line, 'Your turn', 'no snippet, no quotes');
+  assert.equal(rows[1].line, 'Needs you: approve running build.cmd');
+  assert.equal(rows[3].line, 'Needs you: Sign-in');
   assert.deepEqual(
     rows.map((r) => r.handled),
-    [true, true, true, false],
-    'Mark handled only where it is your turn',
+    [true, false, true, true, true, true],
+    'Mark handled where a reply would do',
   );
-  assert.equal(rows[0].projectName, 'P-a');
-  assert.equal(W.counts(items).waiting, 4, 'the badge counts every row');
-  assert.equal(W.counts(items).yourTurn, 2, 'your-turn chats that are not also blocked');
+  assert.equal(rows[0].projectName, 'P-d');
+  const IR = require(path.join(APP_DIR, 'inbox-rules.js'));
+  assert.equal(IR.countOf(rows), 4, 'the badge counts the chats blocked on you, never finished ones');
 });
 
 test('inbox ignores looking: only the yourTurn flag decides, unread alone is not enough', () => {

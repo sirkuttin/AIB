@@ -28,6 +28,9 @@ import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
 import { DENO, Fixture, MAIN, nativePath } from './_host_fixture.ts';
 import { WORK } from './_parity.ts';
 
+// The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs keep the old 3 s (watcher.ts).
+Deno.env.set('AIB_TEST_SETTLE_MS', '3000');
+
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';

@@ -50,6 +50,7 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
 import { descendants, refreshDescendants } from '../platform/descendants.ts';
+import { INBOX } from '../attention/inbox_rules.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
@@ -772,6 +773,24 @@ export class Connection {
   turnEndedAt: number | null = null;
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
+  /**
+   * The last turn ended in an error the agent reported (its session/prompt answered with an error: a usage limit, a prompt too
+   * long, a refused connection): when, and the agent's words. Never for a Stop, a closed chat or AIB's own reconnecting. Cleared
+   * when the next turn starts. The inbox's Failed (inbox-rules.js).
+   */
+  turnFailedAt: number | null = null;
+  turnError = '';
+  /** The last reply asks you something in plain text (inbox-rules.js asksOf, rule R6): when it ended, and the question. */
+  #asks: { at: number; question: string } | null = null;
+  /** When each live helper was first seen running, and each background shell started (seconds): the inbox's caps. */
+  #helperSince = new Map<string, number>();
+  #shellSince = new Map<string, number>();
+  /** When the chat's last helper or background shell ended (seconds): the agent's own follow-up usually starts within 20 s. */
+  #workEndedAt: number | null = null;
+  /** Helpers or shells counted as work at the last look (a shell's end is read from the OS, so it is noticed by looking). */
+  #hadWork = false;
+  /** The background-shell answer of the last look, at most 2 s old (a process listing per call is too slow for every list). */
+  #shellsSeen: { at: number; running: boolean } | null = null;
   /**
    * True while `busy` stands for a model cycle Claude Code started on its own (a background helper finished and it answers the
    * task notification), not for a prompt of ours. Ends at that cycle's result (see #watchHeldTurn).
@@ -1604,6 +1623,15 @@ export class Connection {
     this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
     this.subagents = new Map(entries(s.subagents) as [string, Json][]);
     this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
+    const times = (value: unknown) => new Map(entries(value).filter((e) => isStr(e[0]) && typeof e[1] === 'number') as [string, number][]);
+    this.#helperSince = times(s.helperSince);
+    for (const child of this.#liveHelpers) if (!this.#helperSince.has(child)) this.#helperSince.set(child, this.#now()); // an older note
+    this.#shellSince = times(s.shellSince);
+    this.turnFailedAt = typeof s.turnFailedAt === 'number' ? s.turnFailedAt : null;
+    this.turnError = isStr(s.turnError) ? s.turnError : '';
+    const asks = isDict(s.asks) ? s.asks : null;
+    this.#asks = asks && typeof asks.at === 'number' && isStr(asks.question) ? { at: asks.at, question: asks.question } : null;
+    this.#workEndedAt = typeof s.workEndedAt === 'number' ? s.workEndedAt : null;
     this.#bgShells = new Map(
       (Array.isArray(s.bgShells) ? s.bgShells : []).filter((e): e is [string, number[] | null] =>
         Array.isArray(e) && isStr(e[0]) && (e[1] === null || (Array.isArray(e[1]) && e[1].every(isInt)))
@@ -1690,7 +1718,13 @@ export class Connection {
       sequence: this.sequence,
       subagents: [...this.subagents],
       liveHelpers: [...this.#liveHelpers],
+      helperSince: [...this.#helperSince],
       bgShells: [...this.#bgShells],
+      shellSince: [...this.#shellSince],
+      turnFailedAt: this.turnFailedAt,
+      turnError: this.turnError,
+      asks: this.#asks,
+      workEndedAt: this.#workEndedAt,
       bgTools: [...this.#bgTools],
       breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
       writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
@@ -2019,6 +2053,8 @@ export class Connection {
       return;
     }
     this.#bgShells.set(task, pids ? pids.map((d) => d.pid) : null);
+    this.#shellSince.set(task, at);
+    this.#shellsSeen = null;
     while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
     const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
     const others = [...this.#tools].some(([other, t]) =>
@@ -2226,8 +2262,15 @@ export class Connection {
       if (isStr(child) && live && this.busy && !this.autonomous) {
         this.#turnHelpers.add(child);
       }
-      if (isStr(child) && live) this.#liveHelpers.add(child);
-      else if (isStr(child) && isStr(state)) this.#liveHelpers.delete(child);
+      if (isStr(child) && live) {
+        this.#liveHelpers.add(child);
+        if (!this.#helperSince.has(child)) this.#helperSince.set(child, this.#now());
+      } else if (isStr(child) && isStr(state)) {
+        const had = this.#liveHelpers.size;
+        this.#liveHelpers.delete(child);
+        this.#helperSince.delete(child);
+        if (had && !this.#liveHelpers.size) this.#workEndedAt = this.#now(); // the follow-up window starts (inbox-rules.js)
+      }
       return;
     }
     if (get(params, 'sessionId') !== this.sessionId) return; // a subagent's own updates
@@ -2280,6 +2323,7 @@ export class Connection {
   #endAutonomous(stopReason: string): Promise<void> {
     this.autonomous = false;
     this.turnEndedAt = this.#now();
+    if (stopReason !== 'cancelled') this.#noteAsks();
     const result = { stopReason };
     this.#queueNoteOutcome(result, false);
     this.event('turn_end', result);
@@ -3262,6 +3306,9 @@ export class Connection {
     this.#noteTurnProcesses();
     this.turnStartedAt = now();
     this.error = '';
+    this.turnFailedAt = null; // sending is acting on a failure or a question
+    this.turnError = '';
+    this.#asks = null;
     this.promptSeq += 1;
     const seq = this.promptSeq;
     if (clientMessageId) {
@@ -3321,6 +3368,7 @@ export class Connection {
       }
       this.#clearSettle();
       this.turnEndedAt = this.#now();
+      if (!(isDict(result) && result.stopReason === 'cancelled')) this.#noteAsks();
       this.#backgroundOpenTools(seq);
       if (!(isDict(result) && result.stopReason === 'cancelled')) this.#steerUnread();
       this.#queueNoteOutcome(result, false);
@@ -3346,6 +3394,11 @@ export class Connection {
         this.onLimits?.(this, 'qwen-quota', data.subscriptionQuota, this.#now()); // Qwen: the cap is reached
       }
       this.error = errorText(error);
+      // Failed (the inbox): only the agent's own answer to this prompt, never a Stop or a chat that closed under it.
+      if (errorName(error) === 'RuntimeError' && !this.closed && this.cancelSeq < seq) {
+        this.turnFailedAt = this.#now();
+        this.turnError = errorText(error).replace(/\s+/g, ' ').trim().slice(0, 300);
+      }
       this.#queueNoteOutcome(null, true);
       this.event('error', { message: errorText(error) });
       if (clientMessageId) {
@@ -4725,19 +4778,93 @@ export class Connection {
     }
   }
 
-  /** Cheap summary for the sidebar, status line and notifications. needs_you wins over working. */
+  /**
+   * Cheap summary for the sidebar, status line, notifications and the inbox. needs_you wins over working. `state` keeps its old
+   * meaning (quit, idle exit and the keeper's lifecycle read it); `phase` and the facts after it are the inbox's (inbox-rules.js):
+   * helpers (Claude Code's helpers still running, each for at most an hour), shells (a background shell started in the last 30
+   * minutes still runs), followUntil (the follow-up window after the last of them ended), failedAt / error / failKind (the agent
+   * reported an error for the last turn), asksAt / question (the last reply asks you something in plain text).
+   */
   attention(): Json {
     const needs = this.permissions.size + this.elicitations.size +
       (this.auth ? 1 : 0); // includes subagent requests
     const state = this.closed ? 'closed' : needs ? 'needs_you' : !this.ready ? 'opening' : this.busy ? 'working' : 'idle';
     const iso = (t: number | null) => t ? new Date(Math.floor(t) * 1000).toISOString().slice(0, 19) + 'Z' : null;
+    const exact = (t: number | null) => t ? new Date(Math.round(t * 1000)).toISOString() : null; // compared with mark times
     const started = this.busy && !this.closed ? this.turnStartedAt : null;
+    const at = this.#now();
+    const helpers = this.closed
+      ? 0
+      : [...this.#liveHelpers].filter((h) => at - (this.#helperSince.get(h) ?? at) < INBOX.HELPER_CAP_SECONDS).length;
+    const shells = !this.closed && this.#shellsRunning(at);
+    const work = helpers > 0 || shells;
+    if (this.#hadWork && !work && !this.#workEndedAt) this.#workEndedAt = at; // a shell's end is seen by looking
+    if (work) this.#workEndedAt = null;
+    this.#hadWork = work;
+    const ended = this.#workEndedAt;
+    const followUntil = ended && ended >= (this.turnEndedAt ?? 0) ? ended + INBOX.FOLLOW_UP_SECONDS : null;
+    const facts = {
+      helpers,
+      shells,
+      followUntil: exact(followUntil),
+      failedAt: exact(this.turnFailedAt),
+      error: this.turnFailedAt ? this.turnError : '',
+      failKind: this.turnFailedAt ? INBOX.classifyError(this.turnError) : '',
+      asksAt: exact(this.#asks?.at ?? null),
+      question: this.#asks?.question ?? '',
+    };
     return {
       state,
       needs: state === 'closed' ? 0 : needs,
       turnEndedAt: iso(this.turnEndedAt),
       busySince: iso(started),
+      phase: INBOX.basePhase({ closed: this.closed, ready: this.ready, busy: this.busy, needs, ...facts }, at),
+      ...facts,
     };
+  }
+
+  /** A background shell started within the inbox's cap still runs (the OS is asked at most every 2 s). */
+  #shellsRunning(at: number): boolean {
+    if (!this.#bgShells.size) return false;
+    const seen = this.#shellsSeen;
+    if (!seen || at - seen.at >= 2 || at < seen.at) {
+      const running = this.backgroundShellsRunning();
+      for (const task of [...this.#shellSince.keys()]) if (!this.#bgShells.has(task)) this.#shellSince.delete(task);
+      const capped = running && [...this.#bgShells.keys()].some((t) => at - (this.#shellSince.get(t) ?? at) < INBOX.SHELL_CAP_SECONDS);
+      this.#shellsSeen = { at, running: capped };
+    }
+    return this.#shellsSeen!.running;
+  }
+
+  /**
+   * The turn just ended: does its last reply ask you something (inbox-rules.js asksOf)? The reply is the main session's message
+   * after its last tool call. The same on a rebuild from the keeper's record, which replays the same events.
+   */
+  #noteAsks(): void {
+    const parts: string[] = [];
+    let size = 0;
+    for (let i = this.events.length - 1; i >= 0 && size < 16384; i--) {
+      const e = this.events[i];
+      if (e.kind === 'user' || e.kind === 'turn_end') break;
+      if (e.kind !== 'update' || !isDict(e.data) || get(e.data, 'sessionId') !== this.sessionId) continue;
+      const update = get(e.data, 'update');
+      if (!isDict(update)) continue;
+      const kind = get(update, 'sessionUpdate');
+      if (kind === 'tool_call') {
+        const meta = get(update, '_meta');
+        const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
+        if (!(isDict(claude) && get(claude as Json, 'parentToolUseId'))) break;
+      }
+      if (kind !== 'agent_message_chunk') continue;
+      const content = get(update, 'content');
+      const text = isDict(content) ? get(content, 'text') : null;
+      if (isStr(text)) {
+        parts.push(text);
+        size += text.length;
+      }
+    }
+    const found = INBOX.asksOf(parts.reverse().join(''));
+    this.#asks = found.asks ? { at: this.#now(), question: found.question } : null;
   }
 
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */

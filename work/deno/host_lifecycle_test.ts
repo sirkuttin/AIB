@@ -60,6 +60,7 @@ function makeHost(o: { exit?: number; busy?: number } = {}) {
   host.studio.workingList = () =>
     Array.from({ length: state.busy }, (_, i) => ({ id: `c${i}`, provider: 'claude', cwd: dir, state: i < state.needs ? 'needs_you' : 'working' }));
   host.studio.busyList = host.studio.workingList;
+  host.studio.blockedChats = () => Math.min(state.needs, state.busy); // the inbox's one number (inbox-rules.js)
   host.dataNote = () => '';
   return {
     host,

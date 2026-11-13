@@ -208,17 +208,85 @@ test('a shown chat the list no longer has keeps its tab: never "No open chats" o
   assert.equal(tabLabels(t.shell).length, 0);
 });
 
-test('the chat you have open never shows in the inbox count as "your turn", even while AIB is in the background', () => {
-  const open = conv('o', 'C:/p', { yourTurn: true, yourTurnAt: 50, live: liveChat() }),
-    other = conv('x', 'C:/p', { yourTurn: true, yourTurnAt: 60 });
+test('the chat you have open is never Finished, even while AIB is in the background; Finished chats get a dot, never a count', () => {
+  const open = conv('o', 'C:/p', { yourTurn: true, yourTurnAt: 50, live: liveChat({ attention: { state: 'idle' } }) }),
+    other = conv('x', 'C:/p', { yourTurn: true, yourTurnAt: 60, live: liveChat({ id: 'L2', attention: { state: 'idle' } }) }),
+    asks = conv('q', 'C:/p', { live: liveChat({ id: 'L3', attention: { state: 'idle', asksAt: '2026-11-13T10:00:00.000Z' } }) });
   const t = setup({ conversations: [open], selected: open });
   t.shell.document.visibilityState = 'hidden'; // AIB in the background: before the fix the open chat counted here
   t.sync([open], open);
   const env = () => t.shell.byId.chatTabs.querySelector('.ws-inbox-btn');
   const counted = () => /(^| )has( |$)/.test(env().className);
+  const dotted = () => /(^| )done( |$)/.test(env().className);
   assert.equal(counted(), false, 'no count for the chat you are on');
-  // another chat's turn still counts
+  assert.equal(dotted(), false, 'and it is not Finished either');
+  // another chat finished: listed under Finished, a small dot, no number
   t.sync([open, other], open);
+  assert.equal(counted(), false);
+  assert.equal(dotted(), true);
+  assert.equal(env().querySelector('.ws-badge'), null);
+  // a chat whose reply asks you something counts
+  t.sync([open, other, asks], open);
   assert.equal(counted(), true);
-  assert.match(env().textContent, /1/);
+  assert.equal(env().querySelector('.ws-badge').textContent, '1');
+});
+
+test('the inbox: Needs you then Finished; reason words, the project and agent on each row, helpers, the wait orange after 15 min', () => {
+  const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
+  const live = (id, attention) => liveChat({ id, attention });
+  const failed = conv('f1', 'C:/work/alpha', {
+    live: live('L1', { state: 'idle', failedAt: ago(20), error: 'Usage limit reached. Resets at 16:00.', failKind: 'limit' }),
+  });
+  const asks = conv('q1', 'C:/work/beta', {
+    live: live('L2', { state: 'idle', asksAt: ago(2), question: 'Should I start the review now?', helpers: 2 }),
+  });
+  const done = conv('d1', 'C:/work/beta', { yourTurn: true, yourTurnAt: Date.now() / 1000 - 60, live: live('L3', { state: 'idle' }) });
+  const helping = conv('h1', 'C:/work/gamma', {
+    yourTurn: true,
+    yourTurnAt: Date.now() / 1000 - 30,
+    live: live('L4', { state: 'idle', helpers: 3 }),
+  });
+  const here = conv('o', 'C:/work/gamma', { live: live('L5', { state: 'idle' }) });
+  const list = [failed, asks, done, helping, here];
+  const t = setup({ conversations: list, selected: here });
+  t.sync(list, here);
+  const env = t.shell.byId.chatTabs.querySelector('.ws-inbox-btn');
+  assert.equal(env.querySelector('.ws-badge').textContent, '2', 'the failed chat and the question; never the finished one');
+  t.W.toggleInbox(true);
+  const pop = inbox(t.shell);
+  const heads = pop.querySelectorAll('.ws-inbox-section').map((h) => h.textContent);
+  assert.deepEqual(heads, ['Needs you2oldest first', 'Finished1not counted']);
+  const rows = pop.querySelectorAll('.ws-inbox-item');
+  assert.deepEqual(
+    rows.map((r) => r.dataset.key),
+    ['claude:f1', 'claude:q1', 'claude:d1'],
+    'the longest wait first; the chat with helpers still running is working, not listed',
+  );
+  assert.deepEqual(
+    rows.map((r) => r.querySelector('.ws-inbox-reason').textContent),
+    ['Failed', 'Asks', 'Finished'],
+  );
+  assert.match(rows[0].querySelector('.ws-inbox-sub').textContent, /Usage limit reached\. Resets at 16:00\.$/);
+  assert.match(rows[1].querySelector('.ws-inbox-sub').textContent, /Should I start the review now\?$/);
+  assert.equal(rows[0].querySelector('.ws-inbox-proj').textContent, 'alpha', 'the project is a label on the row');
+  assert.ok(rows[0].querySelector('.ws-inbox-agent'), 'the agent is named on the row');
+  assert.equal(rows[1].querySelector('.ws-inbox-helpers').textContent, '2 helpers running');
+  const age = (r) => r.querySelector('.ws-inbox-age');
+  assert.equal(age(rows[0]).textContent, 'waited 20m');
+  assert.ok(age(rows[0]).classList.contains('long'), 'orange after 15 minutes');
+  assert.equal(age(rows[1]).textContent, 'waited 2m');
+  assert.ok(!age(rows[1]).classList.contains('long'));
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 3 helpers');
+});
+
+test('the inbox with nothing blocked says so, and what still works', () => {
+  const helping = conv('h1', 'C:/work/gamma', { live: liveChat({ id: 'L4', attention: { state: 'idle', helpers: 1 } }) });
+  const t = setup({ conversations: [helping] });
+  t.sync([helping], null);
+  t.W.toggleInbox(true);
+  const pop = inbox(t.shell);
+  assert.match(pop.querySelector('.ws-pop-empty').textContent, /Nothing needs you/);
+  assert.match(pop.querySelector('.ws-pop-empty').textContent, /still working/);
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 1 helper');
+  assert.equal(t.shell.byId.chatTabs.querySelector('.ws-inbox-btn .ws-badge'), null);
 });

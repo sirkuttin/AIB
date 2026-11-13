@@ -143,8 +143,10 @@ const rows = (t) => t.shell.body.querySelectorAll('.fx-row').filter((r) => r.dat
 const rowOf = (t, p) => rows(t).find((r) => r.dataset.path === p);
 
 test('the Chats | Files switch sits under Find, Find says "chat or file", and the Chats half counts this project\'s chats that need you', () => {
-  const waiting = conv('a2', ROOT, { yourTurn: true, yourTurnAt: 300 });
-  const t = setup({ list: [conv('a1', ROOT), waiting, conv('b1', 'C:/work/beta', { yourTurn: true, yourTurnAt: 300 })] });
+  // a chat whose last reply asks you something is blocked on you (the inbox's one number); a finished chat would not count
+  const asks = (id) => ({ id: 'L-' + id, closed: false, busy: false, state: 'ready', attention: { state: 'idle', asksAt: '2026-11-13T10:00:00.000Z' } });
+  const waiting = conv('a2', ROOT, { live: asks('a2') });
+  const t = setup({ list: [conv('a1', ROOT, { yourTurn: true, yourTurnAt: 300 }), waiting, conv('b1', 'C:/work/beta', { live: asks('b1') })] });
   const sw = t.shell.body.querySelector('.sf-mode');
   assert.ok(sw, 'the switch exists');
   const kids = t.shell.body.children;

@@ -55,10 +55,14 @@ import {
 } from "./_remote_fixture.ts";
 import { OwnerRegistry } from "../../outputs/agent-studio/server/ownership/probe.ts";
 import { startAttention } from "../../outputs/agent-studio/server/attention/watcher.ts";
+
 import {
   readRemoteArtifactPort,
   readRemotePort,
 } from "../../outputs/agent-studio/server/remote/port.ts";
+
+// The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs keep the old 3 s (watcher.ts).
+Deno.env.set('AIB_TEST_SETTLE_MS', '3000');
 import {
   COOKIE_NAME,
   DEVICE_HEADER,

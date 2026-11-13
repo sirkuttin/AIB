@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 import { type PhoneProject, projectsFor } from './projects.ts';
+import { INBOX } from '../attention/inbox_rules.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -52,6 +53,8 @@ export interface HomeChat {
   /** The project the chat belongs to (remote/projects.ts): a short id, the PC's name for it and its colour. */
   project: PhoneProject;
   state: string;
+  /** The inbox's phase (inbox-rules.js phaseOf): needs_you, failed, asks, working, your_turn, idle, opening. */
+  phase: string;
   needs: number;
   busySince: string | null;
   turnEndedAt: string | null;
@@ -67,6 +70,8 @@ export interface HomeChat {
 export interface Home {
   revision: string;
   pcName: string;
+  /** Chats blocked on you (needs you, failed, asks): the same one number as the PC's badge and the trays. */
+  waiting: number;
   /** Newest change of state first. */
   chats: HomeChat[];
 }
@@ -351,6 +356,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
       folder,
       project: project(str(c.projectRoot, 2000) || str(c.cwd, 2000)),
       state: str(attention.state, 20) || 'idle',
+      phase: INBOX.phaseOf(attention, mark, Date.now() / 1000),
       needs,
       busySince: (attention.busySince as string | null) ?? null,
       turnEndedAt: (attention.turnEndedAt as string | null) ?? null,
@@ -366,7 +372,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   for (const c of chats) c.line = titles.lines.get(c.id)?.[1] ?? c.line;
   chats.sort((a, b) => b.at - a.at || a.title.localeCompare(b.title));
   const list: HomeChat[] = chats.map(({ at: _at, ...c }) => c);
-  const body = { pcName, chats: list };
+  const body = { pcName, waiting: list.filter((c) => INBOX.blocked(c.phase)).length, chats: list };
   fitBudget(list, () => new TextEncoder().encode(JSON.stringify(body)).byteLength);
   return { revision: revisionOf(body), ...body };
 }
