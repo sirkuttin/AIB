@@ -320,8 +320,9 @@ test('notify-ui: no desktop notification about anything while AIB is in front (t
 });
 
 test('notify-ui defaults: the app starts on for Needs you only; a browser starts off for both', () => {
-  assert.deepEqual(N.cleanPrefs({}, true), { desktop: true, sound: 'needs', notifyFor: 'needs' });
-  assert.deepEqual(N.cleanPrefs(null, true), { desktop: true, sound: 'needs', notifyFor: 'needs' });
+  assert.deepEqual(N.cleanPrefs({}, true), { desktop: true, sound: 'needs', notifyFor: 'both' });
+  assert.deepEqual(N.cleanPrefs(null, true), { desktop: true, sound: 'needs', notifyFor: 'both' });
+  assert.equal(N.cleanPrefs({ notifyFor: 'needs' }, true).notifyFor, 'needs', 'a saved Needs you only stays');
   assert.deepEqual(N.cleanPrefs({ desktop: false, notifyFor: 'both' }, true), { desktop: false, sound: 'needs', notifyFor: 'both' });
   assert.deepEqual(N.cleanPrefs({}), { desktop: false, sound: 'needs', notifyFor: 'both' });
 });
@@ -336,7 +337,7 @@ test('notify-ui: the app keeps its choices under its own key (synced to the data
     globalThis.AibDesktop = B;
     mockInvoke();
     N.init({});
-    assert.deepEqual(S.prefs, { desktop: true, sound: 'needs', notifyFor: 'needs' }, "the browser's old choice is not the app's");
+    assert.deepEqual(S.prefs, { desktop: true, sound: 'needs', notifyFor: 'both' }, "the browser's old choice is not the app's");
     S.prefs.notifyFor = 'both';
     N.enableDesktop();
     assert.deepEqual(JSON.parse(store.map.get('studio-notifications-app')), { desktop: true, sound: 'needs', notifyFor: 'both' });

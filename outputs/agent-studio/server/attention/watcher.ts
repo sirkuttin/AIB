@@ -26,7 +26,7 @@ import type { ProjectPrefs } from '../state/projects.ts';
 import { chatNamesOf, type ViewPrefs } from '../state/view_prefs.ts';
 import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
-import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, RULES } from './rules.ts';
+import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, type Reason, RULES } from './rules.ts';
 import { INBOX } from './inbox_rules.ts';
 import type { Presence } from './presence.ts';
 
@@ -47,8 +47,8 @@ export const SETTLE_MS = 20_000;
 export const TURN_FRESH_SECONDS = 6 * 3600;
 const KIND_CACHE_MS = 60_000;
 
-/** What a piece of news is about (the inbox's reason words, inbox-rules.js reasonOf). */
-export type Reason = 'approval' | 'question' | 'signin' | 'failed' | 'asks' | 'finished';
+/** What a piece of news is about (the inbox's reason words, inbox-rules.js reasonOf; notify-rules.js REASONS). */
+export type { Reason } from './rules.ts';
 
 /** One piece of news: the page's chat key, the live chat's id, the kind, the chat's title and why. */
 export interface Fire {
@@ -327,7 +327,7 @@ export class AttentionWatcher {
 
 /** A desktop notification (server/desktop/notify.ts DesktopNotifications.show). */
 export type DesktopShow = (
-  req: { title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' }; test: boolean },
+  req: { title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' }; test: boolean; silent?: boolean },
 ) => Promise<{ shown: boolean; reason?: string }>;
 
 export interface NotifierOptions {
@@ -409,7 +409,8 @@ export class Notifier {
 
   async #send(desktopFires: Fire[], pushFires: Fire[], fires: Fire[]): Promise<void> {
     const now = this.clock();
-    const entries = (list: Fire[]): GroupEntry[] => list.map((f) => ({ key: f.key, title: f.title, kind: f.kind, chat: f.chat }));
+    const entries = (list: Fire[]): GroupEntry[] =>
+      list.map((f) => ({ key: f.key, title: f.title, kind: f.kind, ...(f.reason ? { reason: f.reason } : {}), chat: f.chat }));
     const prefs = RULES.appPrefs(this.options.viewPrefs.public().prefs['studio-notifications-app']);
     const show = this.options.desktop();
     if (this.options.presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
@@ -418,7 +419,7 @@ export class Notifier {
       if (wanted.length) {
         this.#desktop = RULES.addToGroup(this.#desktop, wanted, now).group;
         const d = RULES.describe(this.#desktop);
-        const text = { title: d.title, body: d.body, target: d.target, test: false };
+        const text = { title: d.title, body: d.body, target: d.target, test: false, silent: d.silent };
         this.options.record?.({ to: 'desktop', text, fires });
         try {
           await show(text);

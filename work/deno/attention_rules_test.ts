@@ -147,34 +147,46 @@ Deno.test('notification rules: the page and the server read the same chats the s
 
 Deno.test('notification rules: the desktop app choices, the 60 s groups and the push text', () => {
   const app = RULES.appPrefs(undefined);
-  assertEquals(app, { desktop: true, sound: 'needs', notifyFor: 'needs' }, 'the app starts on, Needs you only');
-  assertEquals([RULES.desktopWants('needs', app), RULES.desktopWants('turn', app)], [true, false]);
+  assertEquals(app, { desktop: true, sound: 'needs', notifyFor: 'both' }, 'the app starts on, Needs you + Finished');
+  assertEquals([RULES.desktopWants('needs', app), RULES.desktopWants('turn', app)], [true, true]);
+  const saved = RULES.appPrefs(JSON.stringify({ desktop: true, sound: 'needs', notifyFor: 'needs' }));
+  assertEquals(RULES.desktopWants('turn', saved), false, 'a saved "Needs you only" keeps Finished off');
   const both = RULES.appPrefs(JSON.stringify({ notifyFor: 'both' }));
   assertEquals([RULES.desktopWants('needs', both), RULES.desktopWants('turn', both)], [true, true]);
   assertEquals(RULES.desktopWants('needs', RULES.appPrefs('{"desktop":false}')), false);
-  assertEquals(RULES.appPrefs('not json').notifyFor, 'needs');
+  assertEquals(RULES.appPrefs('not json').notifyFor, 'both');
 
   let g1 = RULES.addToGroup(null, [{ key: 'claude:a', title: 'Blog', kind: 'needs', chat: 'c1' }], 1000).group;
   assertEquals(RULES.describe(g1), {
     tag: 'studio-attention',
     title: 'Blog',
-    body: 'Needs you',
+    body: 'Needs your approval',
     target: { type: 'chat', key: 'claude:a' },
+    silent: false,
   });
-  assertEquals(RULES.pushText(g1), { title: 'A chat needs you', body: 'Blog', tag: 'aib-attention', chat: 'c1', sheet: true });
+  assertEquals(RULES.pushText(g1), {
+    title: 'A chat needs you',
+    body: 'Blog',
+    tag: 'aib-attention',
+    chat: 'c1',
+    sheet: true,
+    silent: false,
+  });
   g1 = RULES.addToGroup(g1, [{ key: 'claude:b', title: 'Shop', kind: 'turn', chat: 'c2' }], 30_000).group;
-  assertEquals(RULES.describe(g1).title, '2 agents are waiting for you');
+  assertEquals(RULES.describe(g1).title, '1 needs you \u00b7 1 finished');
+  assertEquals(RULES.describe(g1).silent, false);
   assertEquals(RULES.pushText(g1), {
     title: '2 chats are waiting for you',
     body: 'Blog\nShop',
     tag: 'aib-attention',
     chat: 'c1',
     sheet: true,
+    silent: false,
   });
   const later = RULES.addToGroup(g1, [{ key: 'claude:c', title: 'Docs', kind: 'turn', chat: 'c3' }], 30_000 + 61_000).group;
   assertEquals(
     RULES.pushText(later),
-    { title: 'Chat finished', body: 'Docs', tag: 'aib-attention', chat: 'c3', sheet: false },
+    { title: 'Chat finished', body: 'Docs', tag: 'aib-attention', chat: 'c3', sheet: false, silent: true },
     'a new group after 60 s',
   );
 });
@@ -198,4 +210,25 @@ Deno.test('notification rules: where news goes by where the owner is looking (ro
   const page = (globalThis as unknown as { AgentNotifyRules: typeof RULES }).AgentNotifyRules;
   const view = { pcFocused: false, pcActive: false, phones: ['x'] };
   assertEquals(page.route('turn', 'x', view), RULES.route('turn', 'x', view));
+});
+
+Deno.test('notification rules: grouped toasts name the kinds, Finished alone is silent (phase 1b)', () => {
+  let g = RULES.addToGroup(null, [{ key: 'k:a', title: 'A', kind: 'needs', reason: 'question' }], 0).group;
+  assertEquals(RULES.describe(g).body, 'Has a question for you');
+  g = RULES.addToGroup(g, [{ key: 'k:b', title: 'B', kind: 'needs', reason: 'approval' }], 1000).group;
+  g = RULES.addToGroup(g, [{ key: 'k:c', title: 'C', kind: 'turn', reason: 'finished' }], 2000).group;
+  g = RULES.addToGroup(g, [{ key: 'k:d', title: 'D', kind: 'needs', reason: 'failed' }], 3000).group;
+  const d = RULES.describe(g);
+  assertEquals(d.title, '2 need you \u00b7 1 failed \u00b7 1 finished', 'finished and blocked are never one "waiting" count');
+  assertEquals(d.silent, false);
+  // a finish of a chat already listed as needing you does not hide its reason
+  g = RULES.addToGroup(g, [{ key: 'k:a', title: 'A', kind: 'turn', reason: 'finished' }], 4000).group;
+  assertEquals(g.entries[0], { key: 'k:a', title: 'A', kind: 'needs', reason: 'question' });
+  // Finished only: silent on the desktop and on the phone
+  const f = RULES.addToGroup(null, [{ key: 'k:x', title: 'X', kind: 'turn', reason: 'finished' }, { key: 'k:y', title: 'Y', kind: 'turn' }], 0)
+    .group;
+  assertEquals([RULES.describe(f).title, RULES.describe(f).silent, RULES.pushText(f).silent], ['2 finished', true, true]);
+  assertEquals(RULES.describe({ startedAt: 0, entries: [f.entries[0]], sounded: null }).body, 'Finished');
+  // an older caller with no reason: approval for needs, finished for a turn
+  assertEquals([RULES.reasonFor({ kind: 'needs' }), RULES.reasonFor({ kind: 'turn' })], ['approval', 'finished']);
 });

@@ -352,9 +352,16 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
   const turn = (k: string): Fire => ({ key: 'claude:' + k, chat: 'c-' + k, kind: 'turn', title: 'Chat ' + k });
 
   await n.fire([needs('a')]);
-  assertEquals(desktop, [{ title: 'Chat a', body: 'Needs you', target: { type: 'chat', key: 'claude:a' }, test: false }]);
-  assertEquals(pushes, [{ title: 'A chat needs you', body: 'Chat a', tag: 'aib-attention', chat: 'c-a', sheet: true }]);
-  // the app's default is Needs you only: a finished turn is no desktop notification, but it is a push (same group)
+  assertEquals(desktop, [{
+    title: 'Chat a',
+    body: 'Needs your approval',
+    target: { type: 'chat', key: 'claude:a' },
+    test: false,
+    silent: false,
+  }]);
+  assertEquals(pushes, [{ title: 'A chat needs you', body: 'Chat a', tag: 'aib-attention', chat: 'c-a', sheet: true, silent: false }]);
+  // a saved "Needs you only": a finished turn is no desktop notification, but it is a push (same group)
+  view['studio-notifications-app'] = JSON.stringify({ desktop: true, sound: 'needs', notifyFor: 'needs' });
   now += 10_000;
   await n.fire([turn('b')]);
   assertEquals(desktop.length, 1);
@@ -364,12 +371,13 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
     tag: 'aib-attention',
     chat: 'c-a',
     sheet: true,
+    silent: false,
   });
-  // Needs you + Your turn: both kinds, grouped into one replacing notification
+  // Needs you + Finished: both kinds, grouped into one replacing notification
   view['studio-notifications-app'] = JSON.stringify({ notifyFor: 'both' });
   now += 10_000;
   await n.fire([turn('c')]);
-  assertEquals(desktop.at(-1)!.title, '2 agents are waiting for you');
+  assertEquals(desktop.at(-1)!.title, '1 needs you \u00b7 1 finished', 'the kinds are named, never one waiting count');
   // an AIB window has focus: no desktop notification; still a push (not typing for 2 minutes)
   now += 70_000;
   presence.report(true, 300_000);
@@ -473,7 +481,7 @@ Deno.test('notifier + presence: a chat on a phone screen gets no desktop notific
   assertEquals(ended.length, 1);
   assertEquals(ended[0].why, 'expired');
   assertEquals((ended[0].held as Json[]).map((h) => h.chat), ['c-x', 'c-x', 'c-y', 'c-z']);
-  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false }]);
+  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false, silent: true }]);
   assertEquals(desktop.length, 2, 'the desktop already showed z');
   // nobody looking now: as before
   now += 70_000;

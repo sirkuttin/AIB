@@ -29,10 +29,14 @@ export interface AppPrefs {
 
 export type Kind = 'needs' | 'turn';
 
+/** What a piece of news is about; `kind` stays binary (routing, sound rank, push words), the reason names it. */
+export type Reason = 'approval' | 'question' | 'signin' | 'asks' | 'failed' | 'wake' | 'finished';
+
 export interface GroupEntry {
   key: string;
   title: string;
   kind: Kind;
+  reason?: Reason;
   chat?: string;
 }
 
@@ -56,9 +60,18 @@ export interface Rules {
   cleanPrefs(value: unknown, app: boolean): AppPrefs;
   appPrefs(text: unknown): AppPrefs;
   desktopWants(kind: Kind, prefs: AppPrefs): boolean;
+  REASONS: Reason[];
+  reasonFor(item: { kind?: string; reason?: string }): Reason | '';
+  tally(list: { kind?: string; reason?: string }[]): string;
   addToGroup(group: Group | null, items: GroupEntry[], now: number, windowMs?: number): { group: Group; sound: string | null };
-  describe(group: Group): { tag: string; title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' } };
-  pushText(group: Group): { title: string; body: string; tag: string; chat: string; sheet: boolean };
+  describe(group: Group): {
+    tag: string;
+    title: string;
+    body: string;
+    target: { type: 'chat'; key: string } | { type: 'inbox' };
+    silent: boolean;
+  };
+  pushText(group: Group): { title: string; body: string; tag: string; chat: string; sheet: boolean; silent: boolean };
   route(
     kind: Kind,
     chat: string,
