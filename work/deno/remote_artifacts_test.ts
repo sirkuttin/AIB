@@ -159,6 +159,8 @@ Deno.test('Tailscale: the 8443 entry of serve status, and Funnel on 8443 counts 
     artifactServing: true,
     artifactServingOther: '',
     funnel: false,
+    funnelPorts: [],
+    otherNames: [],
   });
   const other = readServe(serveStatus(5001, false, 6000), NAME, 5001, 5002);
   assertEquals([other.artifactServing, other.artifactServingOther], [false, 'http://127.0.0.1:6000']);

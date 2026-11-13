@@ -1789,7 +1789,7 @@ Deno.test({
         "settings open",
       );
       await page.eval(
-        `[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'Devices').click()`,
+        `[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'Remote control').click()`,
       );
       const row = `.dv-device[data-device="${phone.id}"]`;
       await page.waitFor(

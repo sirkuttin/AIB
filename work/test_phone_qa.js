@@ -16,7 +16,8 @@ const VIEW = {
   listening: true,
   port: 8779,
   serveCommand: 'tailscale serve --bg --https=443 http://127.0.0.1:8779',
-  tailscale: { signedIn: true, machine: 'pc', tailnet: 't.ts.net', name: 'pc.t.ts.net', https: false, serving: false },
+  tailscale: { installed: true, signedIn: true, machine: 'pc', tailnet: 't.ts.net', name: 'pc.t.ts.net', https: false, serving: false },
+  setup: { os: 'windows', installMode: 'winget', changes: [], links: { adminMachines: 'https://login.tailscale.com/admin/machines' } },
   phones: [],
   pairing: null,
   activity: [],
@@ -38,26 +39,26 @@ async function devices() {
   return { UI, host, make, shell };
 }
 
-test('Settings > Devices draws again when the box is attached again (another section, then back)', async () => {
+test('Settings > Remote control draws again when the box is attached again (another section, then back)', async () => {
   const { UI, host, make } = await devices();
   const first = make();
   UI.render('access', first.box, host);
   await flush();
-  assert.ok(first.box.textContent.includes('Tailscale is installed'), 'drawn the first time');
+  assert.ok(first.box.textContent.includes('Tailscale on this PC'), 'drawn the first time');
   // leave the section, come back: a new box that is not attached yet when render() runs; the data has not changed
   first.set(false);
   const second = make();
   second.set(false);
   UI.render('access', second.box, host);
   await flush();
-  assert.equal(second.box.textContent.includes('Tailscale is installed'), false, 'nothing is drawn into a detached box');
+  assert.equal(second.box.textContent.includes('Tailscale on this PC'), false, 'nothing is drawn into a detached box');
   second.set(true);
   await UI.refresh(); // what the 2 s poll runs: the data is the same, the box was never drawn
-  assert.ok(second.box.textContent.includes('Tailscale is installed'), 'drawn once attached');
+  assert.ok(second.box.textContent.includes('Tailscale on this PC'), 'drawn once attached');
 }
 );
 
-test('Devices copy: the switch is not the card heading, the note names the Phones card, HTTPS step links to the Tailscale admin', async () => {
+test('Remote control copy: the switch is not the card heading; the HTTPS step has Turn on HTTPS and the rename link', async () => {
   const { UI, host, make } = await devices();
   const m = make();
   UI.render('access', m.box, host);
@@ -65,16 +66,16 @@ test('Devices copy: the switch is not the card heading, the note names the Phone
   const spans = m.box.querySelectorAll('span').map((n) => n.textContent);
   assert.ok(spans.includes('Let paired phones reach AIB'), spans.join('|'));
   assert.ok(!spans.includes('Phone access'));
+  const buttons = m.box.querySelectorAll('button').map((b) => b.textContent);
+  assert.ok(buttons.includes('Turn on HTTPS'), buttons.join('|'));
   const links = m.box.querySelectorAll('a');
-  const open = links.find((a) => a.textContent === 'Open');
-  assert.ok(open, 'an Open link on the HTTPS step');
-  assert.equal(open.href, 'https://login.tailscale.com/admin/dns');
-  assert.equal(open.target, '_blank', 'opens in the system browser like other external links');
-  assert.match(open.rel, /noopener/);
-  const steps = UI.checklist(VIEW);
-  assert.equal(steps[1].link.text + ' ' + steps[1].link.href, 'Open https://login.tailscale.com/admin/dns');
-  assert.equal(UI.checklist({ ...VIEW, tailscale: { ...VIEW.tailscale, https: true } })[1].link, null, 'no link once HTTPS is on');
+  const rename = links.find((a) => a.textContent === 'Rename this PC in Tailscale');
+  assert.ok(rename, 'a rename link on the HTTPS step');
+  assert.equal(rename.href, 'https://login.tailscale.com/admin/machines');
+  assert.equal(rename.target, '_blank', 'opens in the system browser like other external links');
+  assert.match(rename.rel, /noopener/);
   assert.ok(!fs.readFileSync(path.join(APP, 'devices-ui.js'), 'utf8').includes('Paired phones'));
+  assert.ok(!fs.readFileSync(path.join(APP, 'devices-ui.js'), 'utf8').includes('never changes your Tailscale setup'), 'the old rule is gone');
 });
 
 test('Devices: one line under the switch says closing the window keeps AIB in the tray while phone access is on', async () => {

@@ -858,7 +858,7 @@ html[data-ui-scaled] .st-page {
   margin: 4px 8px 6px;
 }
 
-/* Settings > Devices (devices-ui.js): phone access, the Tailscale checklist, pairing and the paired phones. */
+/* Settings > Remote control (devices-ui.js): phone access, the four setup steps, pairing and the paired phones. */
 .dv-sub {
   margin: 14px 0 6px;
   font-size: 13px;
@@ -981,4 +981,75 @@ html[data-ui-scaled] .st-page {
 }
 .dv-checks .dv-open:hover {
   border-color: var(--accent);
+}
+
+/* Remote control's setup steps: a number (a check when done, ! on an error), the step's notes, progress, confirm and buttons
+   indented under its title; a step that comes later shows its title only, dimmed. */
+.dv-steps li.later > .dv-check-head {
+  opacity: 0.6;
+}
+.dv-steps li.err .dv-mark {
+  color: var(--st-note-bad-text);
+}
+.dv-steps li.now .dv-mark,
+.dv-steps li.wait .dv-mark {
+  color: var(--accent);
+}
+.dv-checks li > .dv-progress,
+.dv-checks li > .dv-confirm,
+.dv-checks li > .dv-details,
+.dv-checks li > .dv-term {
+  margin-left: 22px;
+}
+.dv-progress {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv-checks .dv-progress li {
+  margin: 0 0 4px;
+}
+.dv-progress li.now {
+  color: var(--text);
+}
+.dv-confirm {
+  padding: 8px 10px;
+  border: 1px solid var(--st-status-warn-line);
+  border-radius: 6px;
+  color: var(--text);
+}
+.dv-details {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.dv-steps .dv-open {
+  align-self: center;
+  font-size: 12px;
+}
+.dv-good {
+  color: var(--st-status-ok-text);
+}
+.dv-changes {
+  margin: 12px 0 0;
+}
+.dv-changes summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv-changes .st-command {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.dv-remind {
+  margin: 4px 0 8px;
+}
+.dv-remind .st-toggle {
+  margin: 0;
 }

@@ -279,7 +279,7 @@ export class RemoteServer {
       const what = SCOPE_WORDS[scope];
       return this.json(403, {
         error: what
-          ? `This phone may not ${what}. Turn it on for this phone in AIB on your PC: Settings → Devices.`
+          ? `This phone may not ${what}. Turn it on for this phone in AIB on your PC: Settings → Remote control.`
           : 'This phone may not do that.',
         code: 'scope',
       }, { 'X-AIB-Refused': 'scope' });

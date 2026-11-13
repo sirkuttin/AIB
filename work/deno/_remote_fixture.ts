@@ -13,6 +13,9 @@ import type { AccessOptions } from '../../outputs/agent-studio/server/remote/acc
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
 import { pickPort } from './_ports.ts';
 
+// test mode: the Tailscale and setup fakes are read, and no real Tailscale, winget, msiexec or browser can be reached
+Deno.env.set('AGENT_STUDIO_TEST', '1');
+
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
