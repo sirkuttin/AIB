@@ -618,7 +618,8 @@ def steer_wait_turn(key, gate, verb):
         return
     if not turn['open']:   # steer-late: the turn already ended
         return
-    steer_say('Finished. ')
+    if not drop:   # drop: the turn ends with no output after the steer (codex-acp v1 turn/completed), so AIB cannot tell it was read
+        steer_say('Finished. ')
     steer_usage(HUMAN)
     steer_end(turn)
 
@@ -777,6 +778,8 @@ def steer_perm(key):
         if state == 'cancel':
             steer_end(turn, 'cancelled')
             return
+        if state == 'steer' and answers['steer-perm:event'].is_set():
+            state = 'go'   # answered first, then the steer (what AIB does when it held the message), both within one poll: no withdrawal
         if state == 'steer':   # the card is withdrawn, the model asks again
             asked = turn['steers'][:]
             emit({'method': '$/cancel_request', 'params': {'requestId': 'steer-perm'}})
