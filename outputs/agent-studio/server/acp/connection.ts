@@ -4863,7 +4863,7 @@ export class Connection {
         size += text.length;
       }
     }
-    const found = INBOX.asksOf(parts.reverse().join(''));
+    const found = INBOX.asksOf(parts.reverse().join('').slice(-16384)); // the reply's end: one chunk may be megabytes
     this.#asks = found.asks ? { at: this.#now(), question: found.question } : null;
   }
 

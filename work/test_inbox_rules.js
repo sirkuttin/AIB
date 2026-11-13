@@ -277,3 +277,10 @@ test('words: reasons, helpers, the wait and when it turns orange', () => {
   assert.equal(R.waitingSince('failed', { failedAt: iso(NOW) }, 0), NOW);
   assert.equal(R.waitingSince('needs_you', {}, 42), 42);
 });
+
+test('R6 reads a 3 MB line without a "?" in linear time (the sentence regex was quadratic and hung the server)', () => {
+  const started = Date.now();
+  assert.deepEqual(R.asksOf('x'.repeat(3 * 1024 * 1024)), { asks: false, question: '' });
+  assert.equal(R.asksOf('x'.repeat(200) + '. Should I merge it now? ').question, 'Should I merge it now?');
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});

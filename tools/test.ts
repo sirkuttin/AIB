@@ -57,6 +57,9 @@ Logs:
  * The slow tier: git-heavy worktree files, real agent hosts and web servers, and the Python interop runs. Each takes 10 s to
  * 3 min alone (seconds measured on Windows, serial). The fast tier is everything else; together they are the full suite.
  */
+/** A test file still running after this long (or 5x its SLOW seconds) is killed and fails: a hang never stalls a run. */
+const FILE_DEADLINE_SECONDS = 600;
+
 export const SLOW: Record<string, number> = {
   'scroll_e2e_test.ts': 250, // 31 chat scrolling scenarios, each a Studio + headless Chrome; known-failing ones ignored
   'layout_e2e_test.ts': 200, // layout audit: scroll containers and resizable panes against size changes, each a Studio + headless Chrome
@@ -257,10 +260,27 @@ async function runFile(entry: Entry, extra: string[], junit: string): Promise<Re
   if (junit) args.push(`--junit-path=${junit}/${file.replace(/\.ts$/, shard ? `.${shard[0]}of${shard[1]}.xml` : '.xml')}`);
   args.push(native(new URL(file, TESTS)));
   const child = new Deno.Command(Deno.execPath(), { args, cwd: native(APP), stdin: 'null', stdout: 'piped', stderr: 'piped', env }).spawn();
-  const [status, out, err] = await Promise.all([child.status, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  const output = out + err;
-  const summary = output.match(/^(?:ok|FAILED) \| .*$/m)?.[0] ?? `exit code ${status.code}`;
-  return { file: label(entry), ok: status.success, seconds: (performance.now() - started) / 1000, summary, output, entry };
+  // A file fails, never hangs: one stuck past its deadline (a blocked event loop no timer inside can catch) is killed, with its
+  // whole process tree (the Python, Go or agent processes it started).
+  const limit = Math.max(FILE_DEADLINE_SECONDS, 5 * (SLOW[file] ?? 0));
+  let timedOut = false;
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    if (Deno.build.os === 'windows') {
+      new Deno.Command('taskkill', { args: ['/PID', String(child.pid), '/T', '/F'], stdout: 'null', stderr: 'null' }).output().catch(() => {});
+    } else {
+      try {
+        child.kill('SIGKILL');
+      } catch { /* already gone */ }
+    }
+  }, limit * 1000);
+  const [status, out, err] = await Promise.all([child.status, new Response(child.stdout).text(), new Response(child.stderr).text()])
+    .finally(() => clearTimeout(deadline));
+  const output = out + err + (timedOut ? `
+KILLED: still running after ${limit} s (tools/test.ts FILE_DEADLINE_SECONDS)
+` : '');
+  const summary = timedOut ? `killed after ${limit} s (hung)` : output.match(/^(?:ok|FAILED) \| .*$/m)?.[0] ?? `exit code ${status.code}`;
+  return { file: label(entry), ok: status.success && !timedOut, seconds: (performance.now() - started) / 1000, summary, output, entry };
 }
 
 /** The Deno pool. Returns the summary line and whether every file passed. */

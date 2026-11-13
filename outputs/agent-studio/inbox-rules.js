@@ -74,8 +74,22 @@
   }
   // The question sentences of a stretch of prose (each ends with "?").
   // (a full stop inside a word, as in "beta.3", does not end a sentence)
-  const questionsIn = (s) =>
-    (String(s).match(/(?:[^.!?\n]|[.!](?=\S))*\?/g) || []).map((q) => q.trim()).filter((q) => q.length > 1);
+  // One pass, in linear time: the regex /(?:[^.!?\n]|[.!](?=\S))*\?/g said the same but retried from every character of a line
+  // without a "?" (quadratic: a 3 MB reply line held the server for minutes).
+  function questionsIn(s) {
+    const text = String(s);
+    const out = [];
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '?') {
+        const q = text.slice(start, i + 1).trim();
+        if (q.length > 1) out.push(q);
+        start = i + 1;
+      } else if (ch === '\n' || ((ch === '.' || ch === '!') && !/\S/.test(text[i + 1] ?? ''))) start = i + 1;
+    }
+    return out;
+  }
   function aimedAtYou(q, line, heading) {
     if (REPORTED.test(line)) return false;
     if (OWNER_WORDS.test(q)) return true;
