@@ -2317,7 +2317,9 @@
     if (splitReady()) S().noteOpened(key, ws.active);
     if (FU() && FU().showChat) FU().showChat();
     lastSig = '';
-    setListOpen(false);
+    // The narrow drawer closes when you go to another chat. The page also starts the chat it already shows again (its live
+    // connection came up, a reconnect): that is not navigation, and it must not take the drawer away from a Files action in it.
+    if (!(prev && keyOf(prev) === key)) setListOpen(false);
   }
   // Called when the new-chat view opens (prev = the chat we were on, if any). "+" keeps every tab and adds a temporary
   // "New chat" tab; the new chat starts in the project of the tab we were on.

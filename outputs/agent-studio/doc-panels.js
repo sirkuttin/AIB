@@ -893,7 +893,7 @@
 
   async function duplicateDoc() {
     try {
-      const r = await D.post('/api/live/docs/duplicate', { id: D.params.get('chat') || '' });
+      const r = await D.post('/api/live/docs/duplicate', { id: (D.chatIdNow && D.chatIdNow()) || D.params.get('chat') || '' });
       D.tell({ type: 'aib-doc:docs-changed' });
       D.toast(
         `Made ${r.title}.`,

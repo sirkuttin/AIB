@@ -2059,6 +2059,13 @@
     const anchor = opts.anchor && opts.anchor.isConnected !== false ? opts.anchor : !ui.bar.hidden ? ui.pick : emptyLink();
     if (!anchor) return;
     if (anchor === ui.pick && (S.doc ? ui.pick.disabled : pickerIsPlain(S.list, docs, chatKeys()))) return;
+    // A foot group that was emptied while open (the last archived artifact left it) says "Nothing archived." only until the picker
+    // closes: opened again, it is gone, like any group with nothing in it.
+    if (!opts.keep) {
+      const l = Array.isArray(S.list) ? S.list : [];
+      if (!l.some(isArchived)) S.foot.archived = false;
+      if (!l.some(isDeleted)) S.foot.deleted = false;
+    }
     if (opts.group) S.foot[opts.group] = true;
     ui.popFor = 'pick';
     ui.popAnchor = anchor;

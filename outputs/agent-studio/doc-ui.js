@@ -332,9 +332,23 @@
     $('docApp').setAttribute('aria-busy', 'false');
   };
 
+  // The id the page asks the server with: the chat in the address; when that chat is gone (a restored doc tab, a chat that lost its
+  // transcript) and the address names the project, 'project:<folder>': docs belong to the project, not the chat.
+  const idOf = () => D.chatId || params.get('chat') || '';
+  D.chatIdNow = idOf;
   async function openDoc(create) {
-    const body = { id: params.get('chat') || '', name: params.get('name') || '' };
+    const body = { id: idOf(), name: params.get('name') || '' };
     if (create) body.create = '';
+    try {
+      return await openDocAs(body);
+    } catch (e) {
+      const folder = params.get('project') || '';
+      if (!e || e.code !== 'unknown_folder' || !folder || D.chatId) throw e;
+      D.chatId = 'project:' + folder;
+      return openDocAs(Object.assign({}, body, { id: D.chatId }));
+    }
+  }
+  async function openDocAs(body) {
     const r = await fetch('/api/live/docs/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Studio-Token': D.token },
@@ -719,7 +733,7 @@
     if (!rel || !D.info) return Promise.resolve(null);
     const path = (D.info.dir ? D.info.dir.replace(/\\/g, '/') + '/' : '') + String(rel).replace(/^\.\//, '');
     if (fileUrls.has(path)) return fileUrls.get(path);
-    const q = new URLSearchParams({ id: params.get('chat') || '', root: 'main', path });
+    const q = new URLSearchParams({ id: idOf(), root: 'main', path });
     const p = api('GET', '/api/live/files/read?' + q.toString())
       .then((r) => {
         if (r.viewUrl) return r.viewUrl;

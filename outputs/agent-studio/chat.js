@@ -1090,7 +1090,10 @@
     const termIcon = window.AibTerminal?.rowIcon(aliasKey(c));
     if (termIcon) button.querySelector('.connection-title')?.append(termIcon);
     button.title = c.cwd + '\n' + c.id;
-    button.onclick = () => openConversation(c);
+    button.onclick = () => {
+      window.AgentWorkspaceUI?.closeDrawer?.(); // choosing the chat that is already open still closes the narrow drawer
+      openConversation(c);
+    };
     button.addEventListener('pointerdown', (e) => window.AgentSplitUI?.startCardDrag(e, aliasKey(c)));
     let more = window.AgentOrganizeUI?.menuButton(c);
     if (!more) {

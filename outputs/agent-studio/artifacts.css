@@ -730,6 +730,11 @@ a.artifact-link code {
   color: var(--primary-danger-text);
   font-size: 11.5px;
 }
+/* "Delete for good? This can't be undone." on its own line, then "Delete for good" and "Keep" side by side on the next one (in the ~324 px
+   confirm box "Keep" used to wrap alone). */
+.ar-confirm-t {
+  flex: 1 0 100%;
+}
 .ar-confirm {
   display: flex;
   flex-wrap: wrap;

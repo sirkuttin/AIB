@@ -38,6 +38,9 @@ type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => P
 
 const one = (args: Record<string, string[]>, name: string, fallback = '') => (Object.hasOwn(args, name) ? args[name][0] : fallback);
 
+/** Files.js's id for a project with no chat: 'project:<folder>' (files-state.js projectScope). */
+const PROJECT_ID = 'project:';
+
 /** The folder a Files request works in, or a reply that refuses. */
 export async function rootFor(ctx: WebContext, args: Record<string, string[]>): Promise<string | Reply> {
   // `root=project&project=<folder>`: a project with no chat open. Only a folder the user added to AIB (exactly, by its key) is
@@ -51,6 +54,10 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
     return known;
   }
   const id = one(args, 'id');
+  // A doc tab whose chat is gone names its project instead ('project:<folder>', doc-ui.js): the same rules as root=project.
+  if (id.startsWith(PROJECT_ID) && one(args, 'root') !== 'project') {
+    return rootFor(ctx, { root: ['project'], project: [id.slice(PROJECT_ID.length)] });
+  }
   let cwd: string | null;
   try {
     // A lasting 'provider:session' id (the doc tools name the chat that way) is looked up by the live connection behind it: only that

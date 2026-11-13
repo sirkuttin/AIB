@@ -734,9 +734,9 @@ body > main {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px; /* tight: the name gets the room (a 13-letter name such as "Empty Project" fits the 240 px sidebar) */
   height: 32px;
-  padding: 0 8px;
+  padding: 0 6px 0 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
