@@ -100,8 +100,8 @@ Some Beta agents need their own paid plan or API key; Settings says which.
    - **macOS:** `AIB-<version>-macos-arm64.zip` (or `-x64`). Move `AIB.app` to Applications; right-click, **Open** the
      first time.
    - **Linux:** the AppImage (`chmod +x`, run) or the `.deb` (`sudo apt install ./AIB-…deb`).
-2. Install **Node.js 22 or newer**. The agent adapters are Node programs.
-3. Open AIB. The setup page installs or links your agents, runs their sign-in, and asks for a project folder.
+2. Open AIB. The setup page installs or links your agents, runs their sign-in, and asks for a project folder. Agents that
+   need Node.js show **Install Node.js 26 (LTS)** on their card; AIB installs it for you.
 
 ## How it works
 
