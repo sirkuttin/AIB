@@ -49,7 +49,11 @@ export class RemoteGate {
     } else if (site !== null && site !== 'none' && site !== 'same-origin') {
       // Opening the phone page from a link elsewhere (the camera's QR result, a chat app, a bookmark page) is a top-level GET
       // navigation with Sec-Fetch-Site cross-site. Static pages carry no secrets and every API call stays strict, so allow it.
-      const topLevel = method === 'GET' && headers.get('Sec-Fetch-Mode') === 'navigate' && headers.get('Sec-Fetch-Dest') === 'document';
+      // When the phone page's service worker handles that navigation, it forwards it with fetch(): Mode stays navigate but Dest
+      // reads "empty" (seen on an Android home-screen launch). Any navigation counts, except one that frames the page elsewhere.
+      const dest = headers.get('Sec-Fetch-Dest');
+      const framed = dest === 'iframe' || dest === 'frame' || dest === 'embed' || dest === 'object' || dest === 'fencedframe';
+      const topLevel = method === 'GET' && headers.get('Sec-Fetch-Mode') === 'navigate' && !framed;
       if (!topLevel) return 'bad_origin';
     }
     return null;

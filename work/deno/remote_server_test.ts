@@ -146,6 +146,12 @@ Deno.test({
       const nav = { 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
       assertEquals((await page({ ...nav, 'Sec-Fetch-Site': 'cross-site' })).status, 200, 'page opened from another app');
       assertEquals((await page({ ...nav, 'Sec-Fetch-Site': 'same-site' })).status, 200, 'page opened from the artifact origin');
+      // the service worker forwarding that navigation (home-screen icon, QR link): Mode navigate, Dest empty — seen on a real phone
+      assertEquals(
+        (await page({ 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'empty' })).status,
+        200,
+        'navigation forwarded by the service worker',
+      );
       assertEquals((await page({ 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'script' })).status, 403);
       assertEquals((await page({ ...nav, 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' })).status, 403, 'framed elsewhere');
       // X-Forwarded-* is never read: a forged one changes nothing
