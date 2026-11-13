@@ -1256,7 +1256,10 @@
     const opening = continuingKey === aliasKey(selected),
       sending = sendingKey === aliasKey(selected),
       gone = isDiscarded(selected);
-    $('prompt').disabled = opening || sending || gone;
+    // While a message is on its way the box takes no typing (read-only), but it keeps the focus: a disabled box lost it, and after
+    // Enter you had to click back into it to type the next message.
+    $('prompt').disabled = opening || gone;
+    $('prompt').readOnly = sending;
     $('prompt').placeholder = gone ? DISCARDED_NOTE : 'Message ' + nameOf(selected.provider) + '… Enter to send';
     $('prompt').title = gone ? DISCARDED_NOTE : '';
     const busy = !!(connected && snapshot.busy);
@@ -3687,8 +3690,18 @@
     } finally {
       sendingKey = '';
       renderHeader();
+      // Sent (or kept after an error): the box is where you type the next one. From the Send button or its ▾ menu as well.
+      if (selected && aliasKey(selected) === key) composerFocusBack();
     }
   };
+  /* After a send: the focus goes (back) to the message box unless you put it somewhere else meanwhile. */
+  function composerFocusBack() {
+    const a = document.activeElement,
+      box = $('prompt');
+    if (!box || box.disabled || a === box) return;
+    const ours = !a || a === document.body || a === $('send') || !!a.closest?.('.send-split, .send-menu');
+    if (ours) box.focus({ preventScroll: true });
+  }
   $('prompt').onkeydown = (e) => {
     if (window.AgentDocLinks?.handleKey(e)) return;
     if (window.AgentBreadth?.handleKey(e)) return;
@@ -3771,7 +3784,12 @@
       window.AttachmentsUI.addFiles([...$('imageFiles').files], imagePickerKey, attachHost);
     imagePickerKey = '';
     $('imageFiles').value = '';
+    window.AgentFocusReturn?.back(); // the file picker closed: back in the box you were typing in, not on + Attach
   };
+  $('imageFiles').addEventListener('cancel', () => {
+    imagePickerKey = '';
+    window.AgentFocusReturn?.back();
+  });
   $('prompt').addEventListener('paste', (event) => {
     if (!attachAvailable()) return;
     const key = curKey(),

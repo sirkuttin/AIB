@@ -367,7 +367,11 @@
     node.remove();
     view.open = null;
     if (trigger && trigger.setAttribute) trigger.setAttribute('aria-expanded', 'false');
-    if (focusBack && trigger && trigger.focus && trigger.isConnected !== false) trigger.focus();
+    if (!focusBack) return;
+    // back in the box you were typing in (focus-return.js); on the chip when you came to it with the keyboard or there is none
+    const FR = root.AgentFocusReturn;
+    if (FR && FR.back()) return;
+    if (trigger && trigger.focus && trigger.isConnected !== false) trigger.focus();
   }
   const closePop = () => closeMenu(false);
 
