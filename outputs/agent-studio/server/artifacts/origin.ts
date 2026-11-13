@@ -361,6 +361,57 @@ export function markdownPage(source: string, title: string): Uint8Array {
   );
 }
 
+/** CSV text -> rows (quoted fields, doubled quotes, CRLF), at most `maxRows` rows of `maxCols` fields. */
+export function csvRows(source: string, maxRows = 2000, maxCols = 60): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  const text = source.replace(/^\uFEFF/, '');
+  const end = () => {
+    if (row.length < maxCols) row.push(field);
+    field = '';
+  };
+  for (let i = 0; i < text.length && rows.length < maxRows; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"' && field === '') quoted = true;
+    else if (ch === ',') end();
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      end();
+      rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  if ((field !== '' || row.length) && rows.length < maxRows) {
+    end();
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** A CSV artifact as a table page (the phone's viewer, ?view=1): the first row is the header. Every cell is escaped text. */
+export function csvPage(source: string, title: string): Uint8Array {
+  const rows = csvRows(source);
+  const cells = (r: string[], tag: string) => r.map((c) => `<${tag}>${htmlEscape(c)}</${tag}>`).join('');
+  const head = rows.length ? `<thead><tr>${cells(rows[0], 'th')}</tr></thead>` : '';
+  const body = rows.slice(1).map((r) => `<tr>${cells(r, 'td')}</tr>`).join('');
+  const css = 'table{border-collapse:collapse;font-size:14px}th,td{border:1px solid #8884;padding:6px 8px;text-align:left;' +
+    'vertical-align:top}th{position:sticky;top:0;background:Canvas}.wrap{overflow-x:auto}';
+  return new TextEncoder().encode(
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${
+      htmlEscape(title)
+    }</title><style>${VIEWER_CSS}${css}</style></head><body><div class="wrap"><table>${head}<tbody>${body}</tbody></table></div>` +
+      `${SCROLL_SCRIPT}</body></html>`,
+  );
+}
+
 // ---- the server -----------------------------------------------------------------------------------------
 
 const REFUSED = new Set(['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
@@ -480,6 +531,10 @@ export function artifactAnswer(base: string, target: string, send: Send, tickets
   } else if ((ext === '.md' || ext === '.markdown') && one('view') === '1') {
     data = markdownPage(decodeReplace(data), pureStem(resolved));
     mime = 'text/html; charset=utf-8';
+  } else if (ext === '.csv' && one('view') === '1') {
+    data = csvPage(decodeReplace(data), pureStem(resolved));
+    mime = 'text/html; charset=utf-8';
+    return send(200, data, mime, extra, true);
   } else if (ext === '.html' || ext === '.htm') {
     data = injectScroll(rewriteLibBytes(data));
   }

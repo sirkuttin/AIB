@@ -296,7 +296,14 @@ Deno.test({
         frameHeaders({ 'Sec-Fetch-Dest': 'image', 'Sec-Fetch-Mode': 'no-cors' }),
       );
       assertEquals([bytes.status, bytes.headers.get('content-type')], [200, 'image/png']);
-      assertEquals((await mint(s, phone.token, csv.id)).json.view, 'text');
+      // a CSV is a table page (the artifact origin draws it with ?view=1), every cell escaped text
+      const table = await mint(s, phone.token, csv.id);
+      assertEquals(table.json.view, 'page');
+      assert(String(table.json.url).endsWith('?view=1'), String(table.json.url));
+      const drawn = await raw(s.artifactPort(), 'GET', pathOf(table.json.url as string), frameHeaders());
+      assertEquals([drawn.status, drawn.headers.get('content-type')], [200, 'text/html; charset=utf-8']);
+      assert(drawn.text.includes('<thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody>'), drawn.text);
+      assert(drawn.headers.get('content-security-policy'), 'the page CSP');
       const paper = await mint(s, phone.token, pdf.id);
       assertEquals([paper.json.view, paper.json.url, paper.json.why], ['pc', undefined, 'PDFs open on your PC.']);
       assertEquals((await mint(s, phone.token, 'ffffffffffffffff')).status, 404);
@@ -628,7 +635,7 @@ Deno.test({
       await page.waitFor('document.querySelectorAll(".ph-art").length === 3', 15000, 'three artifact cards');
       assertEquals(
         await page.eval(
-          '[...document.querySelectorAll(".ph-art")].map((c) => c.querySelector("button") ? "Open" : c.querySelector(".ph-note").textContent)',
+          '[...document.querySelectorAll(".ph-art")].map((c) => c.matches("button[data-open-artifact]") ? "Open" : c.querySelector(".ph-art-kind").textContent.endsWith("open on your PC") ? "Open on your PC" : "?")',
         ),
         ['Open', 'Open', 'Open on your PC'],
       );
@@ -751,7 +758,7 @@ Deno.test({
 
 Deno.test({
   ...OPTS,
-  name: 'phone page at 375 px: helpers box padded, Live chip green dot, helper state dots, inline artifact link 44 px to tap',
+  name: 'phone page at 375 px: Subagents card padded, Live chip green dot, subagent state dots, inline artifact link 44 px to tap',
   ignore: !browserPath,
   async fn() {
     const s = await artifactsOn();
@@ -793,21 +800,19 @@ Deno.test({
       assertEquals(chip.text, chip.muted, 'Live chip text is muted');
       assertEquals(chip.dot, chip.ok, 'Live chip dot is the good colour');
       assert(chip.dot !== chip.need);
-      // home: a dot per helper row, by state
-      await page.waitFor('document.querySelectorAll(".ph-helpers li .ph-dot").length === 4', 15000, 'home helpers');
-      const dots = await page.eval<string[]>(`[...document.querySelectorAll('.ph-helpers li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
+      // the chat: the Subagents card (title and state only), a dot per subagent by state
       const expected = [chip.accent, chip.ok, chip.need, chip.muted];
-      assertEquals(dots, expected, 'working = accent, done = good, needs you = warning, idle = muted');
       await page.click('.ph-card');
-      await page.waitFor('document.querySelector(".ph-helpers.ph-card") && document.querySelector(".ph-msg a")', 15000, 'the chat');
-      // chat header: the text is well inside the box on both sides
+      await page.waitFor('document.getElementById("phSubsGo") && document.querySelector(".ph-msg a")', 15000, 'the chat');
+      await page.eval('document.getElementById("phSubsGo").click(), true');
+      await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 4', 15000, 'the Subagents card');
       const box = await page.eval<number[]>(`(() => {
-        const ul = document.querySelector('.ph-helpers.ph-card'); const b = ul.getBoundingClientRect(); const li = ul.querySelector('li');
+        const card = document.getElementById('phSubs'); const b = card.getBoundingClientRect(); const li = card.querySelector('li .ph-sub');
         const first = li.firstElementChild.getBoundingClientRect(); const last = li.lastElementChild.getBoundingClientRect();
         return [first.left - b.left, b.right - last.right]; })()`);
-      assert(box[0] >= 12 && box[1] >= 12, `helpers box inner padding ${box}`);
-      const chatDots = await page.eval<string[]>(`[...document.querySelectorAll('.ph-helpers li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
-      assertEquals(chatDots, expected);
+      assert(box[0] >= 12 && box[1] >= 12, `Subagents card inner padding ${box}`);
+      const chatDots = await page.eval<string[]>(`[...document.querySelectorAll('#phSubs li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
+      assertEquals(chatDots, expected, 'working = accent, done = good, needs you = warning, idle = muted');
       // the inline link: at least 44 px tall, the paragraph has not grown
       const link = await page.eval<number[]>(`(() => { const a = document.querySelector('.ph-msg a'); const r = a.getBoundingClientRect();
         const p = a.parentElement.getBoundingClientRect(); return [r.height, p.height]; })()`);

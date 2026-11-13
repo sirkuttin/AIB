@@ -17,6 +17,12 @@
  *   icons/icon.png                     icon.svg at 512 (.icns ic09; the Linux AppImage/.deb icon, .DirIcon)
  *   server/desktop/tray_icon_data.ts   the tray PNGs: the 16 20 24 32 px grids (the colour icon on every taskbar)
  *   chat.html                          <link rel="icon">: icon.svg as a data: URL
+ *   icons/phone-*.png                  the phone page's install icons (PHONE below, served on the phone port only): 192 px plain,
+ *                                      maskable 192 and 512 (the mark inside the 80 % safe zone on the brand teal, so Android's
+ *                                      circle or squircle crop never cuts it), the 180 px Home Screen icon for iPhone (opaque), and
+ *                                      the 96 px notification badge (a white silhouette on see-through: Android draws only its alpha)
+ *
+ *   deno run -A --node-modules-dir=none --no-lock tools/make_icons.ts --phone   writes only the phone icons
  *
  * The vector renderer is resvg compiled to WebAssembly (npm:@resvg/resvg-wasm, the exact version below), fetched by deno: no global
  * install, no native tool. The masters have no text, so no fonts are loaded.
@@ -128,6 +134,48 @@ export async function encodePng(width: number, height: number, rgba: Uint8Array)
   return png;
 }
 
+/** The phone icons' tile colour: the rim's teal (the black hat and both agent squares read on it). */
+export const PHONE_TILE = '#2BB3A3';
+/** The vector's drawing, without its <svg> wrapper. */
+export const svgInner = (svg: string): string => svg.slice(svg.indexOf('>', svg.indexOf('<svg')) + 1, svg.lastIndexOf('</svg>'));
+/** The mark at `scale` of the tile, centred, on an opaque tile (maskable and iPhone icons). At 0.6 the mark's corners stay inside
+ * the maskable safe zone (a circle of 80 % of the size). */
+export function tileSvg(svg: string, scale: number, tile = PHONE_TILE): string {
+  const at = ((100 - 100 * scale) / 2).toFixed(2);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><rect width="100" height="100" fill="${tile}"/>` +
+    `<g transform="translate(${at} ${at}) scale(${scale})">${svgInner(svg)}</g></svg>`;
+}
+/** The notification badge: the hat (crown, brim and rim) in white, the two agent squares and the line between them cut out. Drawn
+ * from icon.svg's shapes (update it with the art). */
+export function badgeSvg(): string {
+  const place = 'translate(9 9) scale(0.82) translate(3.5 3.5) scale(0.93)';
+  const hat = 'M22 76 L24.5 11 Q50 3 75.5 11 L78 76 Z';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><defs>` +
+    `<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><rect width="100" height="100" fill="#fff"/>` +
+    `<g transform="${place}"><path d="M40.5 28 L59.5 53" stroke="#000" stroke-width="5" stroke-linecap="round"/>` +
+    `<rect x="31" y="19" width="18" height="18" rx="1.5" fill="#000"/><rect x="51" y="44" width="18" height="18" rx="1.5" fill="#000"/></g>` +
+    `</mask></defs><g mask="url(#cut)"><g transform="${place}" fill="#fff" stroke="#fff" stroke-width="7.527" stroke-linejoin="round">` +
+    `<path d="${hat}"/><rect x="0" y="72" width="100" height="20" rx="10"/></g></g></svg>`;
+}
+/** The phone page's icons: [file in icons/, size, which art]. */
+export const PHONE: [string, number, 'plain' | 'maskable' | 'apple' | 'badge'][] = [
+  ['phone-192.png', 192, 'plain'],
+  ['phone-maskable-192.png', 192, 'maskable'],
+  ['phone-maskable-512.png', 512, 'maskable'],
+  ['phone-apple-180.png', 180, 'apple'],
+  ['phone-badge-96.png', 96, 'badge'],
+];
+export function phoneSvg(vector: string, kind: 'plain' | 'maskable' | 'apple' | 'badge'): string {
+  if (kind === 'maskable') return tileSvg(vector, 0.6);
+  if (kind === 'apple') return tileSvg(vector, 0.74);
+  if (kind === 'badge') return badgeSvg();
+  return vector;
+}
+
+async function writePhoneIcons(render: (svg: string, size: number) => Uint8Array, vector: string): Promise<void> {
+  for (const [file, size, kind] of PHONE) await Deno.writeFile(`${APP}/icons/${file}`, render(phoneSvg(vector, kind), size));
+}
+
 async function renderer(): Promise<(svg: string, size: number) => Uint8Array> {
   const { initWasm, Resvg } = await import(RESVG);
   await initWasm(await Deno.readFile(new URL(import.meta.resolve(`${RESVG}/index_bg.wasm`))));
@@ -151,6 +199,11 @@ export async function hasColour(png: Uint8Array, rgb: [number, number, number]):
 async function main() {
   const render = await renderer();
   const vector = await Deno.readTextFile(`${ICON_SRC}/icon.svg`);
+  await writePhoneIcons(render, vector);
+  if (Deno.args.includes('--phone')) {
+    console.log(`phone icons written: ${PHONE.map((p) => p[0]).join(', ')}`);
+    return;
+  }
   const grids: Record<string, Uint8Array> = {};
   for (const size of GRID_SIZES) {
     grids[`icon-${size}.txt`] = await encodePng(size, size, parseGrid(await Deno.readTextFile(`${ICON_SRC}/icon-${size}.txt`), size));

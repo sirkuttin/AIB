@@ -328,10 +328,22 @@ Deno.test({
       assertEquals(m.status, 200);
       assertEquals(m.headers.get('content-type'), 'application/manifest+json; charset=utf-8');
       assertEquals([m.json.display, m.json.start_url, m.json.scope, m.json.short_name], ['standalone', '/phone.html', '/', 'AIB']);
-      for (const icon of m.json.icons as Json[]) {
+      // installable: 192 and 512 for any use, and maskable 192 and 512 (Android's circle or squircle)
+      const icons = m.json.icons as Json[];
+      for (const want of ['192x192 any', '512x512 any', '192x192 maskable', '512x512 maskable']) {
+        assert(icons.some((i) => `${i.sizes} ${i.purpose}` === want), want);
+      }
+      assert(m.json.background_color && m.json.theme_color && m.json.id === '/phone.html', 'colours and id');
+      const sizeOf = (b: Uint8Array) => {
+        const v = new DataView(b.buffer, b.byteOffset);
+        return `${v.getUint32(16)}x${v.getUint32(20)}`;
+      };
+      const extra = [{ src: '/icons/apple-touch-180.png', sizes: '180x180' }, { src: '/icons/badge-96.png', sizes: '96x96' }];
+      for (const icon of [...icons, ...extra]) {
         const r = await get(String(icon.src), { 'Sec-Fetch-Dest': 'image' });
         assertEquals([r.status, r.headers.get('content-type')], [200, 'image/png'], String(icon.src));
         assertEquals([...r.bytes.slice(1, 4)].map((c) => String.fromCharCode(c)).join(''), 'PNG');
+        assertEquals(sizeOf(r.bytes), String(icon.sizes), `${icon.src}: the size it says`);
       }
       const sw = await get('/sw.js', { 'Sec-Fetch-Dest': 'serviceworker', 'Service-Worker': 'script' });
       assertEquals(sw.status, 200);
@@ -340,10 +352,12 @@ Deno.test({
       assert(sw.text.includes("addEventListener('push'"), 'the service worker itself');
       const html = await get('/phone.html', { 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'none' });
       assert(html.text.includes('<link rel="manifest" href="/manifest.webmanifest">'));
+      assert(html.text.includes('<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-180.png">'), 'iPhone icon 180');
+      assert(sw.text.includes("badge: '/icons/badge-96.png'"), 'the worker gives notifications a badge');
       // a wrong Host (not through Serve) is refused for these too
       assertEquals((await get('/sw.js', { Host: `127.0.0.1:${s.phonePort()}` })).status, 403);
       // the page port: none of them
-      for (const path of ['/sw.js', '/manifest.webmanifest', '/icons/icon-256.png', '/pwa/sw.js']) {
+      for (const path of ['/sw.js', '/manifest.webmanifest', '/pwa/sw.js', ...icons.map((i) => String(i.src)), ...extra.map((i) => i.src)]) {
         const r = await fetch(`http://127.0.0.1:${s.port}${path}`);
         await r.body?.cancel();
         assertEquals(r.status, 404, path);

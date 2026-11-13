@@ -8,7 +8,7 @@
      and says "Reconnecting…", then that AIB is closed on the PC or the PC cannot be reached, with Try again (phone.js).
    Pure helpers are exported for node tests (work/test_phone_sw.js). */
 (function (self) {
-  const SHELL = 'aib-shell-v1';
+  const SHELL = 'aib-shell-v2';
   const SHELL_FILES = [
     '/phone.html',
     '/phone.js',
@@ -19,6 +19,11 @@
     '/theme.css',
     '/manifest.webmanifest',
     '/icons/icon-256.png',
+    '/icons/icon-192.png',
+    '/icons/maskable-192.png',
+    '/icons/maskable-512.png',
+    '/icons/apple-touch-180.png',
+    '/icons/badge-96.png',
   ];
   const TAG = 'aib-attention';
 
@@ -46,6 +51,7 @@
         tag: TAG,
         renotify: true,
         icon: '/icons/icon-256.png',
+        badge: '/icons/badge-96.png', // the status bar's small icon (Android draws its alpha only; without it a grey square)
         data: { chat: text(d.chat, 100), sheet: d.sheet === true },
       },
     };
