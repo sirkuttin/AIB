@@ -600,12 +600,12 @@ export class SettingsStore extends JsonFileStore {
     if (Object.keys(projects).length > 50) throw new ValueError('Too many project defaults at once');
     for (const [key, choice] of entriesOf(projects)) {
       if (ProjectPrefs.key(key) === null || !(choice === null || isDict(choice))) throw new ValueError('Invalid project default');
-      this.#mergeChoice(target.projects, key, choice, true);
+      this.#mergeChoice(target.projects, key, choice, true, target.agent);
     }
     if (Object.keys(target.projects).length > this.#cls().MAX_PROJECTS) throw new ValueError('Too many projects with saved defaults');
   }
 
-  #mergeChoice(store: Record<string, Choice>, key: string, value: Dict | null, withAgent: boolean): void {
+  #mergeChoice(store: Record<string, Choice>, key: string, value: Dict | null, withAgent: boolean, defaultAgent = ''): void {
     const has = Object.prototype.hasOwnProperty.call(store, key);
     if (value === null) {
       if (has) delete store[key];
@@ -613,8 +613,10 @@ export class SettingsStore extends JsonFileStore {
     }
     const current: Dict = { ...(has ? store[key] : {}) };
     // A project's default agent changes (a new chat there with another agent, on the PC or the phone): the old agent's model and
-    // mode go with it, unless this change names them too (owner decision D). They belonged to the old agent.
-    if (withAgent && 'agent' in value && isStr(current.agent) && current.agent && value.agent !== current.agent) {
+    // mode go with it, unless this change names them too (owner decision D). They belonged to the old agent: the one saved, or,
+    // for a saved model and mode with no agent, the agent a new chat there used then (the global default agent).
+    const was = isStr(current.agent) && current.agent ? current.agent : defaultAgent;
+    if (withAgent && 'agent' in value && value.agent !== was) {
       if (!('model' in value)) delete current.model;
       if (!('mode' in value)) delete current.mode;
     }

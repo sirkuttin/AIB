@@ -2777,39 +2777,72 @@
     $('renameInput').select();
   }
   /* Chat names can change from a phone (server: ViewPrefs.setChatName). The list answer carries their revision, and the names when
-     the one this page sent is old: they replace this page's copy, so a rename here never puts back a name the phone changed. */
-  let namesRevision = '';
-  function syncNames(live) {
-    const rev = typeof live.chatNamesRevision === 'string' ? live.chatNamesRevision : '';
-    if (live.chatNames && typeof live.chatNames === 'object' && !Array.isArray(live.chatNames)) {
-      const next = live.chatNames;
-      if (JSON.stringify(next) !== JSON.stringify(aliases)) {
-        for (const k of Object.keys(aliases)) delete aliases[k];
-        for (const k of Object.keys(next)) if (typeof next[k] === 'string') aliases[k] = next[k];
-        try {
-          localStorage.setItem('studio-conversation-names', JSON.stringify(aliases));
-        } catch (e) {
-          /* this browser's copy stays old; the data folder has them */
-        }
-        sidebarSignature = '';
-        if (selected) renderHeader();
-      }
+     the one this page sent is old: they replace this page's copy. A rename here saves only that one chat's name (POST
+     /api/live/chat-name), never this page's whole copy (view-prefs.js does not send this key after start), so it never puts back
+     a name a phone changed. The first list call already sends the revision of the names this page started with (namesRevisionOf,
+     the server's own hash of the saved value), so a phone rename between the page loading and its first list call is not missed. */
+  function namesRevisionOf(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
     }
+    return text.length + '.' + h.toString(36);
+  }
+  let namesRevision = (() => {
+    try {
+      return namesRevisionOf(localStorage.getItem('studio-conversation-names') || '');
+    } catch (e) {
+      return 'boot';
+    }
+  })();
+  let renamesOnTheirWay = 0;
+  function takeNames(next, render) {
+    if (JSON.stringify(next) === JSON.stringify(aliases)) return;
+    for (const k of Object.keys(aliases)) delete aliases[k];
+    for (const k of Object.keys(next)) if (typeof next[k] === 'string') aliases[k] = next[k];
+    try {
+      localStorage.setItem('studio-conversation-names', JSON.stringify(aliases)); // this browser's copy only (never sent back)
+    } catch (e) {
+      /* this browser's copy stays old; the data folder has them */
+    }
+    sidebarSignature = '';
+    if (render) renderConversations(); // the list call draws the list itself after syncNames
+    if (selected) renderHeader();
+  }
+  function syncNames(live) {
+    // a rename of this page still on its way: the next list answer brings the names with it
+    if (renamesOnTheirWay) return;
+    const rev = typeof live.chatNamesRevision === 'string' ? live.chatNamesRevision : '';
+    if (live.chatNames && typeof live.chatNames === 'object' && !Array.isArray(live.chatNames)) takeNames(live.chatNames);
     if (rev) namesRevision = rev;
   }
   function renameChat(c, value) {
     const v = String(value || '').trim();
-    if (v) aliases[aliasKey(c)] = v;
-    else delete aliases[aliasKey(c)];
+    const key = aliasKey(c);
+    if (v) aliases[key] = v;
+    else delete aliases[key];
     try {
       localStorage.setItem('studio-conversation-names', JSON.stringify(aliases));
     } catch (e) {
-      fail(Error('Could not save the display name in this browser.'));
-      return false;
+      /* this browser's copy; the data folder gets the name below */
     }
     sidebarSignature = '';
     renderConversations();
     if (selected) renderHeader();
+    renamesOnTheirWay++;
+    post('chat-name', { key, name: v })
+      .then((out) => {
+        renamesOnTheirWay--;
+        if (renamesOnTheirWay || !out || typeof out.chatNames !== 'object' || !out.chatNames) return;
+        takeNames(out.chatNames, true);
+        if (typeof out.chatNamesRevision === 'string') namesRevision = out.chatNamesRevision;
+      })
+      .catch((e) => {
+        renamesOnTheirWay--;
+        namesRevision = 'retry'; // the next list answer brings AIB's names back
+        fail(Error('The name could not be saved in AIB: ' + (e && e.message ? e.message : 'try again')));
+      });
     return true;
   }
   async function handoffFor(c) {

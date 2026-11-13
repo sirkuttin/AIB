@@ -76,8 +76,14 @@ export const HOME_BUDGET = 64 * 1024;
 export const LINE_MAX = 140;
 /** How long a home answer waits for the card lines that changed (a slow agent host never holds the list up longer). */
 export const LINE_WAIT_MS = 800;
-/** Chats that finished before this AIB started and were never read count as read (the PC page does the same from its start). */
+/** Chats that finished before AIB first ran and were never read count as read: the PC page's own start (studio-sidebar-epoch,
+ * kept in the view preferences, sidebar-ui.js), so the phone and the PC show the same unread dots; this process's start only
+ * when the PC page never ran. */
 const STARTED = Date.now();
+export function unreadEpoch(ctx: WebContext): number {
+  const pc = Number(ctx.viewPrefs.public().prefs['studio-sidebar-epoch']);
+  return Number.isFinite(pc) && pc > 0 ? pc : STARTED;
+}
 
 type Phase = 'needs_you' | 'working' | 'opening' | 'idle';
 const phaseOf = (attention: Json): Phase => {
@@ -313,6 +319,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   const marks = ctx.conversations.public().entries;
   const read = ctx.readState.public().chats;
   const names = ctx.viewPrefs.chatNames(); // Rename, on the PC or a phone
+  const epoch = unreadEpoch(ctx);
   const raws = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed && str(c.id, 100));
   const project = projectsFor(ctx, raws.map((c) => str(c.projectRoot, 2000) || str(c.cwd, 2000)));
   const chats: (HomeChat & { at: number })[] = [];
@@ -348,7 +355,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
       busySince: (attention.busySince as string | null) ?? null,
       turnEndedAt: (attention.turnEndedAt as string | null) ?? null,
       yourTurn: Number(mark.yourTurnAt) > 0 && !mark.holdAt,
-      unread: (phaseOf(attention) === 'idle' && ended > (seen || STARTED)) || marked > seen,
+      unread: (phaseOf(attention) === 'idle' && ended > (seen || epoch)) || marked > seen,
       changedAt: at ? new Date(at).toISOString() : '',
       line: titles.line(ctx, id, `${Number(c.cursor) || 0}|${needs}|${asks}|${c.busy ? 1 : 0}`, Number(c.cursor) || 0),
       at,

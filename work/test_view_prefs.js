@@ -337,3 +337,20 @@ test("a write made while the page is leaving (another script's pagehide save, af
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(p.posts[p.posts.length - 1].body, { set: { 'studio-side-hidden': '0' } }, 'hidden counts as leaving too');
 });
+
+test('review 3: chat names are seeded and moved once, but a later change is never sent whole (chat.js saves one name at a time)', async () => {
+  // the data folder has none yet: this browser's names move there once
+  const p = page({}, { 'studio-conversation-names': '{"claude:a":"A"}' });
+  await p.runTimers();
+  assert.deepEqual(p.posts.map((x) => x.body), [{ set: { 'studio-conversation-names': '{"claude:a":"A"}' } }]);
+  // afterwards a rename on this page (the whole value in localStorage) is not sent: it would overwrite a phone's rename
+  p.storage.setItem('studio-conversation-names', '{"claude:a":"A","claude:b":"B"}');
+  p.storage.removeItem('studio-conversation-names');
+  await p.runTimers();
+  assert.equal(p.posts.length, 1);
+  assert.deepEqual([...V.SEED_ONLY], ['studio-conversation-names']);
+  p.ctl.stop();
+  // seeded from the data folder at start, as before
+  const q = page({ 'studio-conversation-names': '{"claude:z":"Z"}' }, {});
+  assert.equal(q.storage.getItem('studio-conversation-names'), '{"claude:z":"Z"}');
+});

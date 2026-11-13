@@ -50,6 +50,10 @@
     'studio-textsize-v1:', // chat text and interface size, code font, line spacing
     'studio-layout-v1:', // chat list and Activity column widths
   ]);
+  /* Keys seeded from the data folder at start (and moved there once from an older copy's localStorage) whose later changes this
+     file does NOT send: their page script saves each change itself, per item, so a change made elsewhere (a phone) is not
+     overwritten by this page's whole, older value. studio-conversation-names: chat.js renameChat -> POST /api/live/chat-name. */
+  const SEED_ONLY = Object.freeze(['studio-conversation-names']);
   const synced = (k) =>
     typeof k === 'string' && (KEYS.includes(k) || PREFIXES.some((p) => k.startsWith(p) && k.length > p.length));
   // A drag saves once, at its end; a held arrow key is one small request per repeat.
@@ -216,13 +220,13 @@
     proto.setItem = function (k, v) {
       const r = origSet.apply(this, arguments);
       k = String(k);
-      if (isOurs(this) && synced(k)) note(k, String(v));
+      if (isOurs(this) && synced(k) && !SEED_ONLY.includes(k)) note(k, String(v));
       return r;
     };
     proto.removeItem = function (k) {
       const r = origRemove.apply(this, arguments);
       k = String(k);
-      if (isOurs(this) && synced(k)) note(k, null);
+      if (isOurs(this) && synced(k) && !SEED_ONLY.includes(k)) note(k, null);
       return r;
     };
     const unload = () => {
@@ -258,7 +262,7 @@
     return live;
   }
 
-  const api = { KEYS, PREFIXES, synced, plan, readBlock, init };
+  const api = { KEYS, PREFIXES, SEED_ONLY, synced, plan, readBlock, init };
   root.AibViewPrefs = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
   /* Runs as soon as it is loaded: it is the first deferred script, so every other script (and DOMContentLoaded) comes after. */

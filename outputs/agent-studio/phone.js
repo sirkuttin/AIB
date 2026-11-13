@@ -692,8 +692,37 @@
     if (t.length > 8000) return 'A message from a phone can be at most 8000 characters.';
     return '';
   }
+  /* The first message of a chat this phone started, when AIB on the PC no longer knows that start (it restarted, or forgot it):
+     'sent' when the chat's own events have a message with its clientMessageId; else 'restore' (it goes back in the box). */
+  function firstMessageFate(job, events) {
+    const cmid = str(obj(job).cmid);
+    const list = Array.isArray(events) ? events : [];
+    return cmid && list.some((e) => obj(e).kind === 'user' && obj(obj(e).data).clientMessageId === cmid) ? 'sent' : 'restore';
+  }
+  /* How the composer's Send goes in a chat this phone just started. Its first message held by the PC (held, failed, needs the PC):
+     POST new/first. AIB forgot the start ('gone'): a normal message with the same clientMessageId (the agent host drops it if it
+     did arrive). Else a normal message with a new id. -> {first, cmid} (cmid '' = a new one). */
+  function firstSend(job, chatId) {
+    const j = obj(job);
+    if (!j.id || j.id !== chatId) return { first: false, cmid: '' };
+    if (j.state === 'held' || j.state === 'failed' || j.state === 'pc') return { first: true, cmid: str(j.cmid) };
+    if (j.state === 'gone') return { first: false, cmid: str(j.cmid) };
+    return { first: false, cmid: '' };
+  }
+  /* The model or mode New chat sends: one on the list that you picked, or your saved default; never the agent's own current
+     setting shown as "default" when nothing is saved (the chat starts with it anyway). '' = no pick. */
+  function pickToSend(list, picked) {
+    const l = obj(list);
+    const v = str(picked);
+    if (!v || !(Array.isArray(l.choices) ? l.choices : []).some((c) => c && c.value === v)) return '';
+    if (!str(l.default) && v === str(l.current)) return '';
+    return v;
+  }
 
   const api = {
+    firstMessageFate,
+    firstSend,
+    pickToSend,
     isFirefoxAndroid,
     installKind,
     installText,
@@ -1573,8 +1602,10 @@
     const first = !nc.lists || (!nc.lists.model && !nc.lists.mode);
     nc.lists = { model: r.data.model || null, mode: r.data.mode || null, loading: !!r.data.loading };
     if (first) {
-      nc.model = nc.lists.model ? nc.lists.model.default || '' : '';
-      nc.mode = nc.lists.mode ? nc.lists.mode.default || '' : '';
+      // what the chat starts with: your saved default, else the agent's own (shown picked; sent only when you pick another)
+      const shown = (l) => (l ? l.default || l.current || '' : '');
+      nc.model = shown(nc.lists.model);
+      nc.mode = shown(nc.lists.mode);
     }
     draw();
     if (nc.lists.loading && !nc.lists.model && !nc.lists.mode && (nc.tries = (nc.tries || 0) + 1) < 20)
@@ -1589,7 +1620,7 @@
       b.dataset[kind] = c.value;
       b.setAttribute('aria-pressed', picked === c.value ? 'true' : 'false');
       b.append(doc.createTextNode(c.name));
-      if (c.value === list.default) b.append(el('small', '', 'default'));
+      if (c.value === (list.default || list.current)) b.append(el('small', '', 'default'));
       box.append(b);
     }
     return box;
@@ -1716,10 +1747,13 @@
     nc.starting = true;
     nc.error = '';
     draw();
-    const cmid = newMessageId();
+    // one id for this Start and every retry of it: the PC answers a repeat with the chat the first one started (never a second)
+    const cmid = nc.cmid || (nc.cmid = newMessageId());
     const body = { project: nc.project, agent: nc.agent, text, clientMessageId: cmid };
-    if (nc.model) body.model = nc.model;
-    if (nc.mode) body.mode = nc.mode;
+    const model = pickToSend(nc.lists && nc.lists.model, nc.model);
+    const mode = pickToSend(nc.lists && nc.lists.mode, nc.mode);
+    if (model) body.model = model;
+    if (mode) body.mode = mode;
     let r = null;
     try {
       r = await call('POST', '/api/remote/new', body);
@@ -1730,7 +1764,11 @@
     nc.starting = false;
     if (r && r.status === 401) return removed();
     if (!r || r.status !== 200 || !r.data.id) {
-      nc.error = r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was started.';
+      // refused or failed on the PC: nothing started, the next Start is a new one; no answer: it may have started (same id again)
+      if (r) nc.cmid = '';
+      nc.error = r
+        ? r.data.error || 'That did not work. Try again.'
+        : "Can't reach " + S.pcName + '. The chat may have started there: check your chats, or try again (it will not start twice).';
       return draw();
     }
     const project = nc.projects.find((p) => p.id === nc.project) || {};
@@ -1763,7 +1801,18 @@
     }
     if (S.newJob !== j) return;
     if (r.status === 404) {
-      j.state = 'gone';
+      // AIB on the PC no longer knows this start (it restarted): the chat's own events say whether the message went
+      if (firstMessageFate(j, S.chatEvents) === 'sent') {
+        j.state = 'sent';
+        j.error = '';
+      } else {
+        j.state = 'gone';
+        j.error = 'AIB restarted on ' + S.pcName + ' before your first message went. It is in the box below: send it.';
+        S.draft = j.text;
+        S.actError = j.error;
+        S.actKey = '';
+      }
+      draw();
       return;
     }
     if (r.status !== 200) return;
@@ -3214,6 +3263,7 @@
       r = null;
     }
     S.sending = false;
+    S.actStatus = r ? r.status : 0;
     if (r && r.status === 401) {
       removed();
       return null;
@@ -3238,10 +3288,19 @@
     const text = S.draft;
     const c = S.chat;
     if (!c || !text.trim() || S.sending) return;
-    const job = S.newJob && S.newJob.id === c.id && S.newJob.state !== 'sent' && S.newJob.state !== 'opening' ? S.newJob : null;
-    const op = job ? 'new/first' : c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt';
-    const done = await act(op, { id: c.id, text, clientMessageId: job ? job.cmid : newMessageId() });
-    if (done && job) job.state = 'sent';
+    const job = S.newJob && S.newJob.id === c.id ? S.newJob : null;
+    const how = firstSend(job, c.id);
+    const op = how.first ? 'new/first' : c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt';
+    // the first message keeps its id (a repeat is dropped by the agent host); after a restart, a changed text is a new message
+    const cmid = how.cmid && (how.first || text === job.text) ? how.cmid : newMessageId();
+    const done = await act(op, { id: c.id, text, clientMessageId: cmid });
+    if (done && job && (how.first || how.cmid)) job.state = 'sent';
+    if (!done && how.first && S.actStatus === 404) {
+      // AIB restarted and forgot this start: the next Send is a normal message with the same id
+      job.state = 'gone';
+      S.actError = 'AIB restarted on ' + S.pcName + '. Your message was not sent: send it again.';
+      draw();
+    }
     if (done) {
       S.draft = '';
       const ta = doc.getElementById('phPrompt');

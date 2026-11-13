@@ -78,6 +78,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
  *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
  *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
+ *   POST /api/live/chat-name                  rename one chat (or clear its name): per key, so a phone's rename of another chat stays
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
@@ -149,6 +150,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/artifacts/states', 'artifacts.read', 'get'],
   ['POST', '/api/live/steer', 'write', 'body'],
   ['POST', '/api/live/tool-stop', 'write', 'body'],
+  ['POST', '/api/live/chat-name', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
