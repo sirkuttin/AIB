@@ -309,12 +309,51 @@
     const c = mainCtl();
     return c ? !c.following : !!$('messages').dataset.paused;
   };
+  /* A live chat keeps its newest 6000 events and its newest 500 rows (Full view): older ones are dropped as new ones come. Never
+     the row you are reading, though: a list anchored on a live row ('L:<event number>') keeps every event and row from that row
+     on, up to a hard cap. Dropping it made the list jump to its top while you read in a busy chat (helpers' events count too):
+     the controller found no row of that place any more and fell back to the first row drawn, at your old offset. */
+  const EVENTS_KEEP = 6000,
+    EVENTS_HOLD = 30000,
+    ROWS_KEEP = 500,
+    ROWS_HOLD = 3000,
+    UNITS_HOLD = 3000; // a condensed view's cap (views.js CAP, 500) while you read
+  /* While a list's reader is anchored on a live row: the event number of the first live row drawn in it (the rows above your place
+     stay as well, so neither the text nor the scrollbar moves), else of your row; 0 when following, on the old scroll path, or on
+     another kind of row (a saved transcript's). */
+  function readingSeq(ctl) {
+    const s = ctl && ctl.state;
+    if (!s || s.mode !== 'anchor' || typeof s.rid !== 'string' || !s.rid.startsWith('L:')) return 0;
+    let n = Number(s.rid.slice(2));
+    for (const el of ctl.box.children) {
+      const r = el.dataset && (el.dataset.rid || el.dataset.ridFrom);
+      if (!r) continue;
+      if (r.startsWith('L:') && Number(r.slice(2)) > 0) n = Math.min(n, Number(r.slice(2)));
+      break;
+    }
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  const seqOfRow = (r) => (r && typeof r.rid === 'string' && r.rid.startsWith('L:') ? Number(r.rid.slice(2)) : NaN);
+  /* How many of the oldest items to drop to keep `keep`, but none from the first one at or after `from` (an event number; 0: no
+     reader), and never fewer than leaves `hold`. seqOf reads an item's event number. */
+  function trimCut(list, keep, hold, from, seqOf) {
+    let cut = Math.max(0, list.length - keep);
+    if (!cut || !(from > 0)) return cut;
+    let i = 0;
+    while (i < cut && !(seqOf(list[i]) >= from)) i++;
+    return Math.max(i, list.length - hold);
+  }
+  function trimEvents(list, ...readers) {
+    const from = Math.min(...readers.map(readingSeq).filter((n) => n > 0));
+    const cut = trimCut(list, EVENTS_KEEP, EVENTS_HOLD, Number.isFinite(from) ? from : 0, (e) => e && e.seq);
+    return cut ? list.slice(cut) : list;
+  }
   /* Draws the main list again from what is already loaded (no request). */
   function repaintMain() {
     if (current && snapshot)
       showRows(
         $('messages'),
-        withUnknownSends(liveRows(snapshot.sessionId, events, snapshot, viewOf() !== 'full'), snapshot.unknownReceipts),
+        withUnknownSends(liveRows(snapshot.sessionId, events, snapshot, viewOf() !== 'full', readingSeq(mainCtl())), snapshot.unknownReceipts),
         'main',
         liveExtra(),
       );
@@ -1600,6 +1639,7 @@
           earlier: !!extra?.earlier,
           working: !!extra?.working,
           live: extra?.live || null,
+          ...(ctl && !ctl.following ? { cap: UNITS_HOLD } : {}), // while you read, the oldest groups stay (your place among them)
         })
       : null;
     if (proj && find) proj.units = proj.units.filter((u) => window.ChatViews.promptMatches(u.prompt, find.q));
@@ -1864,7 +1904,7 @@
       (c.elsewhere && c.elsewhere.working)
     );
   }
-  function liveRows(session, evs = events, snap = snapshot, uncapped = false) {
+  function liveRows(session, evs = events, snap = snapshot, uncapped = false, keepFrom = 0) {
     const rows = [],
       tools = new Map(), // toolCallId -> {row, turn}
       uses = new Map(), // toolCallId -> how many calls used it
@@ -2009,7 +2049,9 @@
     /* In-progress steps spin while work is going on for this chat: its own reply, or helpers still running after the reply ended. */
     const helpersWorking = Object.values(snapshot?.subagents || {}).some((a) => a && agentIsActive({ ...a, live: true }));
     const folded = window.PlanUI ? window.PlanUI.fold(rows, { live: true, working: !!snapshot?.busy || helpersWorking }) : rows;
-    return uncapped ? folded : folded.slice(-500); // a condensed view caps after it has projected (views.js), so the latest prompt is never cut off
+    if (uncapped) return folded; // a condensed view caps after it has projected (views.js), so the latest prompt is never cut off
+    const cut = trimCut(folded, ROWS_KEEP, ROWS_HOLD, keepFrom, seqOfRow); // never the row you read (keepFrom: readingSeq)
+    return cut ? folded.slice(cut) : folded;
   }
   /* What you chose on an approval or a question card, by request key (this page only; another window's answer reads "Answered"). */
   const answerChoice = new Map();
@@ -2471,7 +2513,7 @@
     renderSubagentControls();
     renderSubHead();
     if (subSelection.live) {
-      showRows($('submessages'), liveRows(target), 'sub');
+      showRows($('submessages'), liveRows(target, events, snapshot, false, readingSeq(managed($('submessages')))), 'sub');
       return;
     }
     const working = window.SubagentsUI?.classify(subSelection).group === 'working';
@@ -2525,7 +2567,7 @@
         snapshot = next;
         if (next.reset) events = [];
         events.push(...next.events);
-        events = events.slice(-6000);
+        events = trimEvents(events, mainCtl(), managed($('submessages'))); // never from the row you read in the chat or a helper's view
         cursor = next.cursor;
         window.AgentArtifactsUI?.onEvents(next.events, current);
         collectChildren();
@@ -2536,7 +2578,7 @@
         liveHistoryNote(next);
         showRows(
           $('messages'),
-          withUnknownSends(liveRows(next.sessionId, events, snapshot, viewOf() !== 'full'), next.unknownReceipts),
+          withUnknownSends(liveRows(next.sessionId, events, snapshot, viewOf() !== 'full', readingSeq(mainCtl())), next.unknownReceipts),
           'main',
           liveExtra(),
         );
@@ -4508,10 +4550,13 @@
       m.histKey = '';
       if (next.reset) m.events = [];
       m.events.push(...next.events);
-      m.events = m.events.slice(-6000);
+      // a side pane you read keeps its place's events and rows too (trimEvents)
+      const pane = [...document.querySelectorAll('.mirror-msgs')].find((b) => b.dataset.mirror === key),
+        paneCtl = pane ? pane._scrollCtl : null;
+      m.events = trimEvents(m.events, paneCtl);
       m.cursor = next.cursor;
       m.sid = next.sessionId;
-      m.rows = liveRows(next.sessionId, m.events, next);
+      m.rows = liveRows(next.sessionId, m.events, next, false, readingSeq(paneCtl));
     } else if (isPseudoKey(c.key)) {
       m.histKey = '';
       m.rows = [{ role: 'notice', label: 'Not running', value: pseudoNote(c) }];

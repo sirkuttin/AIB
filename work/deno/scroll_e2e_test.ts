@@ -1666,3 +1666,53 @@ scrollTest('G2 a smooth scroll down to the end of a fast stream follows again, t
   await settle(800);
   await assertFollowing(page, 'after scrolling down to the end of the stream');
 });
+
+// ---- J. a long busy chat: the oldest rows and events are dropped, never the ones you read ---------------------------------------
+
+/** Read a little above the end, then let `burst` add a lot (each call a batch); every frame and after each batch, the row you read
+ *  stays at its offset and the list never shows its top. Was (owner, beta.9 test build, a lead chat with many steps and helpers): a
+ *  live chat keeps its newest 500 rows (chat.js liveRows) and 6000 events (refreshOnce); once the row you read was older than
+ *  that it was dropped, the controller found no row of the place (rowFor falls back to the first row drawn) and put the list at
+ *  scrollTop 0. */
+async function readThroughTrim(lab: Lab, burst: (chat: Chat, b: number) => void, batches: number) {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -600);
+  await settle(600);
+  const before = await anchor(page);
+  const x0 = await m(page);
+  assert(before && x0.paused && x0.top > 1000, `reading above the end: ${JSON.stringify(x0)}`);
+  const problems: string[] = [];
+  for (let b = 0; b < batches; b++) {
+    await startRowFrames(page, before!.text);
+    await startFrames(page);
+    burst(chat, b);
+    chat.say(`\n\nBatch ${b} done BATCH${b}`);
+    await shown(page, `BATCH${b}`, 'messages', 30000);
+    await settle(1200);
+    const rows = rowFramesProblems(await stopRowFrames(page), before!, 2);
+    const low = (await stopFrames(page)).filter((f) => f.top < x0.top - 50);
+    const x = await m(page);
+    if (rows) problems.push(`batch ${b}: ${rows}`);
+    if (low.length) problems.push(`batch ${b}: ${low.length} frames with the list moved up to scrollTop ${Math.min(...low.map((f) => f.top))} (was ${x0.top})`);
+    if (!x.paused) problems.push(`batch ${b}: following again`);
+    if (problems.length) break;
+  }
+  assert(!problems.length, problems.join('\n'));
+  chat.end();
+}
+
+scrollTest('J1 reading while 500 more steps arrive (past the 500 rows a chat keeps): the row you read and the scrollbar stay put', (lab) =>
+  readThroughTrim(lab, (chat, b) => {
+    for (let i = 0; i < 100; i++) chat.tool(`j1-${b}-${i}`, `Busy step ${b}.${i}`, 'completed');
+  }, 6));
+
+scrollTest('J2 reading while a helper streams 7000 events (past the 6000 a chat keeps): the row you read stays put', (lab) =>
+  readThroughTrim(lab, (chat, b) => {
+    if (b === 0) {
+      chat.step({ u: { sessionUpdate: 'tool_call', toolCallId: 'agent-1', title: 'Agent', kind: 'think', status: 'pending', _meta: { claudeCode: { toolName: 'Agent' } } } });
+      chat.step({ u: { sessionUpdate: 'subagent_update', sessionId: 'child-1', title: 'Review the code', capabilities: { cancel: {} }, state: { state: 'running' } } });
+    }
+    for (let i = 0; i < 1000; i++)
+      chat.step({ sid: 'child-1', u: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'w ' }, _meta: { claudeCode: { parentToolUseId: 'agent-1' } } } });
+  }, 7));
