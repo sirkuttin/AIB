@@ -41,6 +41,7 @@ parser.add_argument('--held-turn', action='store_true', help="Claude Code's held
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
+parser.add_argument('--extra-dirs', action='store_true', help='Advertise sessionCapabilities.additionalDirectories and systemPrompt (as claude-agent-acp and codex-acp do): local-only folders are granted and told; FAKE_ACP_LOG shows the params')
 parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read), 'steer-late:<gate>' (X3: a steer is answered promptRequired just before the turn ends). After a steer-bash command ends, Claude's own cycle is held while <gate>.cycle-hold exists, until <gate>.cycle-end exists. Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
 args = parser.parse_args()
 if args.fixture_login:
@@ -856,6 +857,8 @@ for line in sys.stdin:
             capabilities['mcpCapabilities'] = {'http': args.mcp_http, 'sse': False}
         if args.list_sessions:
             capabilities.setdefault('sessionCapabilities', {})['list'] = {}
+        if args.extra_dirs:
+            capabilities.setdefault('sessionCapabilities', {}).update({'additionalDirectories': {}, 'systemPrompt': {}})
         if args.held_turn and not args.not_claude:
             capabilities['_meta'] = {'claudeCode': {'promptQueueing': True}}
         if args.steer == 'claude':

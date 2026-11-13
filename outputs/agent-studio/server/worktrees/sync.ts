@@ -38,6 +38,7 @@ import { entriesOf, put, readJsonFile, saveJson } from '../state/json.ts';
 import { isDict, pyStr, pyStrip, pyTruthy } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { FileLock, LockTimeout } from '../platform/lock.ts';
+import { localOnlyOf } from './local_only.ts';
 
 const log = getLogger('worktree_sync');
 
@@ -219,8 +220,14 @@ function sameSig(a: Sig | null | undefined, b: Sig | null | undefined): boolean 
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 
-/** Relative names of the .env* files in the project (a small walk; node_modules, .git and symlinked folders are not entered). */
-export function envFiles(project: string): string[] {
+/**
+ * Relative names of the .env* files in the project (a small walk; node_modules, .git, symlinked folders and the project's
+ * local-only entries `localOnly` are not entered: local-only files are read from the main folder in every chat, never copied).
+ */
+export function envFiles(project: string, localOnly: string[] = []): string[] {
+  const fold = (p: string) => (WIN ? p.toLowerCase() : p);
+  const skip = localOnly.map(fold);
+  const local = (rel: string) => skip.some((e) => fold(rel) === e || fold(rel).startsWith(e + '/'));
   const found: string[] = [];
   let seen = 0;
   let stop = false;
@@ -237,12 +244,14 @@ export function envFiles(project: string): string[] {
       const full = join(folder, entry.name);
       const isDir = entry.isDirectory || (entry.isSymlink && isdir(full));
       if (isDir) {
-        if (!wt.SKIP_DIRS.has(entry.name) && !entry.isSymlink) dirs.push([full, rel ? `${rel}/${entry.name}` : entry.name]);
+        const sub = rel ? `${rel}/${entry.name}` : entry.name;
+        if (!wt.SKIP_DIRS.has(entry.name) && !entry.isSymlink && !local(sub)) dirs.push([full, sub]);
       } else files.push(entry.name);
     }
     seen += files.length;
     for (const name of files) {
-      if (name.startsWith('.env') && !isTemp(name)) found.push(rel ? `${rel}/${name}` : name);
+      const path = rel ? `${rel}/${name}` : name;
+      if (name.startsWith('.env') && !isTemp(name) && !local(path)) found.push(path);
     }
     if (seen > settings.ENV_WALK_LIMIT) {
       stop = true;
@@ -255,6 +264,15 @@ export function envFiles(project: string): string[] {
   };
   walk(pathStr(String(project)), '');
   return found;
+}
+
+/** The project's local-only entries (project-relative), [] when it has none or they cannot be read. */
+async function localEntries(project: string): Promise<string[]> {
+  try {
+    return (await localOnlyOf(project))?.entries ?? [];
+  } catch {
+    return [];
+  }
 }
 
 function readTextReplace(full: string): string | null {
@@ -819,7 +837,7 @@ export class ProjectSync {
     for (const path of statuses.keys()) found.set(path, sigOf(this.project, path));
     const now = nowMono();
     if (this.envDirty || now >= this.envNext) {
-      this.envPaths = envFiles(this.project);
+      this.envPaths = envFiles(this.project, await localEntries(this.project));
       this.envNext = now + settings.ENV_WALK_EVERY;
       this.envDirty = false;
     }
@@ -1571,7 +1589,7 @@ export class LiveSync {
       const sig = sigOf(project, name);
       if (judge(project, name, sig, UNMERGED.has(statuses.get(name) ?? '')) === 'ok') items.set(name, null);
     }
-    return [items, envFiles(project)];
+    return [items, envFiles(project, await localEntries(project))];
   }
 
   /** The one restart function (chat opened, host start, turn start, Resume): sync what differs between the project folder and U. */

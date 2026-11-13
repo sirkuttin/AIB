@@ -54,6 +54,8 @@ import { builtinLaunch } from '../web/shared.ts';
 import { isNetworkPath } from '../web/security.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
+import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { defaultsAllowed } from '../worktrees/local_strays.ts';
 
 const log = getLogger('studio');
 
@@ -854,7 +856,10 @@ export class Studio {
       if (resume) this.announce(c, 'opening'); // claim before session/load so other clients can see it
       const finishSetup = async () => {
         try {
+          // before the snapshot: the default /private exclude is in force, so a new copy never takes the main folder's private/
+          const local = await this.#localOnlyDefault(c.worktree ? c.projectRoot : workspace);
           if (plan) await this.#makeWorktree(c, plan, workspace);
+          c.localOnly = this.#localOnlyFor(c, local);
           await c.setup(resume || null);
           if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
           const note = plan && c.worktree ? plan.note : startNote;
@@ -1167,6 +1172,44 @@ export class Studio {
    * Make the chat's worktree, then start its agent there. If the project cannot have one after all (too much uncommitted work, LFS
    * pointers, ...) the chat works in the project folder: it has not begun, so nothing is filed under another folder.
    */
+  /**
+   * The project's local-only lookup after setting up the default `/private` exclude (local_only.ensureDefault: idempotent, never
+   * throws). null: not git, or a test Studio and a project outside the temp folder (local_strays.defaultsAllowed).
+   */
+  async #localOnlyDefault(project: string): Promise<LocalOnly | null> {
+    if (!project || !defaultsAllowed(this.hasStateDir ? this.stateDir : '', project)) return null;
+    try {
+      return await ensureDefault(project);
+    } catch (error) {
+      log.exception(error, 'Setting up the local-only default of %s failed', project);
+      return null;
+    }
+  }
+
+  /**
+   * What a chat is told about local-only files (Connection.localOnly). private/ only when git really ignores it (state 'on'); a
+   * worktree chat gets the main folder's local-only paths, and the main folder's private/ is made (empty) so it can be granted as an
+   * extra writable folder from the first message (owner Q4 a).
+   */
+  #localOnlyFor(c: Connection, lo: LocalOnly | null): Connection['localOnly'] {
+    if (!lo) return null;
+    const main = c.worktree ? c.projectRoot : c.cwd;
+    if (realpath(main) !== realpath(lo.project)) return null; // the chat fell back to another folder
+    const on = lo.defaultState === 'on';
+    const told = lo.entries.filter((e) => on || e.toLowerCase() !== DEFAULT_ENTRY);
+    const abs = (e: string) => join(lo.project, ...e.split('/'));
+    const privateDir = on ? abs(lo.entries.find((e) => e.toLowerCase() === DEFAULT_ENTRY) ?? DEFAULT_ENTRY) : '';
+    if (c.worktree && privateDir && !isdir(privateDir)) {
+      try {
+        Deno.mkdirSync(privateDir, { recursive: true });
+      } catch (error) {
+        log.warning('Could not make %s: %s', privateDir, errorText(error));
+      }
+    }
+    if (!told.length && !privateDir) return null;
+    return { entries: told.map(abs), dirs: told.map(abs).filter((p) => isdir(p)), private: privateDir };
+  }
+
   async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<void> {
     try {
       await this.worktrees!.create(plan);
