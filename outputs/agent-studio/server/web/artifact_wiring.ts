@@ -12,6 +12,9 @@ import { OriginServer } from '../artifacts/origin.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import type { LiveBackend } from '../host/backend.ts';
 import { artifactFolder, type ChatStudio } from '../worktrees/chat_folders.ts';
+import { localRootsSync } from '../worktrees/local_only.ts';
+import { recordForPath } from '../worktrees/worktrees.ts';
+import { isdir } from '../platform/ospath.ts';
 
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -45,6 +48,12 @@ export class Artifacts {
       emit: (chat, data) => this.emitToChat(chat, data),
       chatOf: (ident) => this.chatOf(ident),
       rootFor: (ident) => this.projectRootOf(ident),
+      // a worktree chat publishes from its main folder's local-only paths too (owner decision 8a)
+      localRoots: (_ident, cwd) => {
+        const record = recordForPath(stateDir, cwd);
+        const project = record && typeof record.project === 'string' && isdir(record.project) ? record.project : cwd;
+        return { main: project, roots: localRootsSync(project) };
+      },
     });
     this.watcher = new Watcher(this.service, () => this.conversations());
   }

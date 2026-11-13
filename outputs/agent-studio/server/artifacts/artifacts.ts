@@ -998,6 +998,11 @@ export interface ServiceOptions {
   chatOf?: ((ident: string) => unknown) | null;
   /** the chat's projectRoot, which artifacts are tagged with; today the cwd */
   rootFor?: ((conversationId: string) => string | null | undefined) | null;
+  /**
+   * The chat's main folder and the absolute paths of its local-only entries (worktrees/local_only.ts): files there may be published
+   * from any chat of the project, a chat's own copy included (owner decision 8a). Checked on the resolved path, like the cwd.
+   */
+  localRoots?: ((conversationId: string, cwd: string) => { main: string; roots: string[] }) | null;
 }
 
 /**
@@ -1019,7 +1024,9 @@ export class Service {
     this.emit = options.emit ?? null;
     this.rootFor = options.rootFor ?? cwdFor;
     this.chatOf = options.chatOf ?? ((ident) => ident);
+    this.localRoots = options.localRoots ?? null;
   }
+  readonly localRoots: ((conversationId: string, cwd: string) => { main: string; roots: string[] }) | null;
 
   projectRootFor(conversationId: string): string | null {
     return (this.rootFor(conversationId) || this.cwdFor(conversationId)) ?? null;
@@ -1068,8 +1075,32 @@ export class Service {
     if (!cwd) throw new ArtifactError('This chat has no known project folder.', 404, 'unknown_folder');
     if (typeof raw !== 'string' || !raw || raw.includes('\0') || pyLen(raw) > 2000) throw new ArtifactError('Choose a file');
     let candidate = pathOf(raw);
-    if (!pathIsAbsolute(candidate)) candidate = pathOf(cwd, candidate);
-    if (!inside(candidate, cwd)) throw new ArtifactError("That file is outside the chat's project folder.", 403, 'outside_project');
+    // the project's local-only folders in the main folder (8a); asked only when the path is not plainly in the chat's folder
+    let local: { main: string; roots: string[] } | null = null;
+    const localOf = () => {
+      if (!local) {
+        try {
+          local = this.localRoots?.(conversationId, cwd) ?? { main: cwd, roots: [] };
+        } catch (error) {
+          log.exception(error, 'Reading the local-only folders failed');
+          local = { main: cwd, roots: [] };
+        }
+      }
+      return local;
+    };
+    if (!pathIsAbsolute(candidate)) {
+      const relative = candidate;
+      candidate = pathOf(cwd, relative);
+      // a relative private/... the chat's copy does not have: the main folder's local-only file of that name
+      if (!isFile(candidate)) {
+        const { main, roots } = localOf();
+        const there = pathOf(main, relative);
+        if (roots.some((r) => inside(there, r)) && isFile(there)) candidate = there;
+      }
+    }
+    if (!inside(candidate, cwd) && !localOf().roots.some((r) => inside(candidate, r))) {
+      throw new ArtifactError("That file is outside the chat's project folder.", 403, 'outside_project');
+    }
     const real = pathOf(realpath(candidate));
     if (!isFile(real)) throw new ArtifactError('That file does not exist.', 404, 'not_found');
     if (kindFor(pureName(real)) === null) throw new ArtifactError('That kind of file cannot be previewed.', 400, 'unsupported_kind');

@@ -197,7 +197,10 @@ export function withLine(bytes: Uint8Array, line: string): Uint8Array | null {
   const add = [lineBytes(p, BLOCK_START), lineBytes(p, line), lineBytes(p, BLOCK_END)];
   const last = p.lines.length - 1;
   if (p.lines[last].length === 0) p.lines.splice(last, 1, ...add, new Uint8Array());
-  else p.lines.push(...add, new Uint8Array()); // the old last line had no newline: it gets one
+  else {
+    if (p.crlf) p.lines[last] = enc.encode(p.texts[last] + '\r'); // the old last line had no newline: it gets one
+    p.lines.push(...add, new Uint8Array());
+  }
   return join(p);
 }
 
@@ -326,7 +329,7 @@ function readBytes(file: string): Uint8Array | null {
 
 async function stateOf(project: string, entries: string[]): Promise<DefaultState> {
   if (await isTracked(project, DEFAULT_ENTRY)) return 'tracked';
-  const pattern = await ignorePattern(project, DEFAULT_ENTRY + '/aib-probe');
+  const pattern = await ignorePattern(project, DEFAULT_ENTRY);
   const listed = entries.some((e) => fold(e) === DEFAULT_ENTRY);
   if (pattern.startsWith('!')) return 'negated';
   if (!listed) return 'off';
@@ -356,6 +359,47 @@ export async function localOnlyOf(project: string): Promise<LocalOnly | null> {
   }
   const existing = hit.entries.map((e) => osp.join(project, ...e.split('/'))).filter((p) => osp.exists(p));
   return { project, excludeFile: base.excludeFile, prefix: base.prefix, entries: [...hit.entries], existing, defaultState: hit.state };
+}
+
+/**
+ * The absolute paths of the project's local-only entries (whether they exist or not), without waiting: for callers that can't await
+ * (artifact publishing). Uses localOnlyOf's cache while it is fresh, else asks git synchronously (a few ms). [] outside git.
+ */
+export function localRootsSync(project: string): string[] {
+  try {
+    const key = osp.normcase(osp.normpath(project));
+    let base: Base | null;
+    const hit = cache.get(key);
+    if (hit && hit.stamp === stampOf(hit.base.excludeFile) && Date.now() - hit.at <= CACHE_MS) base = hit.base;
+    else {
+      const known = baseCache.get(key);
+      if (known && Date.now() - known.at < CACHE_MS * 3) base = known.base;
+      else {
+        const bin = gitPath();
+        if (!bin || !osp.isdir(project)) return [];
+        const r = new Deno.Command(bin, {
+          args: ['--no-pager', 'rev-parse', '--show-prefix', '--git-path', 'info/exclude'],
+          cwd: project,
+          stdin: 'null',
+          stdout: 'piped',
+          stderr: 'null',
+          env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' },
+        }).outputSync();
+        const lines = dec.decode(r.stdout).split(/\r?\n/);
+        base = r.code === 0 && lines.length >= 2 && lines[1].trim()
+          ? { prefix: lines[0].trim(), excludeFile: osp.normpath(osp.isabs(lines[1].trim()) ? lines[1].trim() : osp.join(project, lines[1].trim())) }
+          : null;
+        if (baseCache.size > 200) baseCache.clear();
+        baseCache.set(key, { at: Date.now(), base });
+      }
+    }
+    if (!base) return [];
+    const bytes = readBytes(base.excludeFile);
+    const entries = bytes ? entriesOf(blockLines(bytes), base.prefix) : [];
+    return entries.map((e) => osp.join(project, ...e.split('/')));
+  } catch {
+    return [];
+  }
 }
 
 // ---- writing --------------------------------------------------------------------------------------------------------------
@@ -416,7 +460,7 @@ export async function ensureDefault(project: string): Promise<LocalOnly | null> 
     const known = readBytes(base.excludeFile);
     if (!known || !parse(known).blocks.length) {
       const tracked = await isTracked(project, DEFAULT_ENTRY);
-      const negated = !tracked && (await ignorePattern(project, DEFAULT_ENTRY + '/aib-probe')).startsWith('!');
+      const negated = !tracked && (await ignorePattern(project, DEFAULT_ENTRY)).startsWith('!');
       if (!tracked && !negated) {
         const line = escapeLine(base.prefix, DEFAULT_ENTRY);
         await rewrite(base.excludeFile, (bytes) => (parse(bytes).blocks.length ? null : { bytes: withLine(bytes, line)!, value: true }));

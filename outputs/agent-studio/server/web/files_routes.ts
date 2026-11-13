@@ -11,6 +11,11 @@
  *                                             calls or messages name it (worktrees/outside_files.ts); same answer as read plus
  *                                             `outside: {kind, branch, repo, folder, text}`; peek=1 leaves out the text
  * With no chat open, `root=project&project=<folder>` (no `id`) shows the folder of a project the user added, nothing else.
+ *
+ * Local-only paths (worktrees/local_only.ts) always come from the main folder, in every scope: list, read and search lay them over
+ * a chat's copy (files.listLocal), and every list and search reply carries `localOnly: {main, entries, defaultState, sig}`.
+ *   POST /api/live/files/exclude {id|project, root, path, action: 'add'|'undo', undo?}   "Git exclude" on a row, and its Undo
+ *   POST /api/live/files/strays/move {id, root}   moves what a chat's copy holds under local-only paths into the main folder
  * Needs the Studio token, like the Changes routes.
  */
 import { isStr } from '../core/py.ts';
@@ -18,6 +23,7 @@ import { parseQs } from '../artifacts/origin.ts';
 import { projectKey } from '../desktop/project_delete.ts';
 import { changesFolder } from '../worktrees/chat_folders.ts';
 import * as files from '../worktrees/files.ts';
+import * as local from '../worktrees/local_only.ts';
 import { mainCheckoutOf, recordForPath } from '../worktrees/worktrees.ts';
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath, tokenMatches } from './security.ts';
@@ -68,6 +74,25 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   return cwd;
 }
 
+/** The folder a Files request works in and the main folder its local-only paths come from, or a reply that refuses. */
+export async function scopeFor(ctx: WebContext, args: Record<string, string[]>): Promise<{ root: string; main: string } | Reply> {
+  const root = await rootFor(ctx, args);
+  if (typeof root !== 'string') return root;
+  if (one(args, 'root', 'chat') !== 'chat') return { root, main: root };
+  // A chat's own copy: the main folder is the project its worktree record names (never mainFolderOf: for a project that is itself a
+  // user-made worktree that would be the user's other checkout). No record: the chat works in its folder itself.
+  const record = recordForPath(ctx.stateDir ?? null, root);
+  const project = record && isStr(record.project) ? record.project : '';
+  return { root, main: project && osp.isdir(project) && !isNetworkPath(project) ? project : root };
+}
+
+const samePath = (a: string, b: string) => osp.normcase(osp.normpath(a)) === osp.normcase(osp.normpath(b));
+
+/** The localOnly part of a list / search reply. */
+function localPart(main: string, lo: local.LocalOnly | null, sig = '') {
+  return { main, entries: lo ? lo.entries : [], defaultState: lo ? lo.defaultState : 'no-git', sig };
+}
+
 /** How many files the agents working in `root` have written so far: the search index is rebuilt when this changes. */
 function writesSig(ctx: WebContext, root: string): string {
   try {
@@ -92,32 +117,102 @@ async function guarded(work: () => Promise<unknown> | unknown): Promise<Reply> {
 
 export function filesRoutes(): Map<string, Handler> {
   const routes = new Map<string, Handler>();
-  const route = (path: string, work: (ctx: WebContext, root: string, args: Record<string, string[]>) => Promise<unknown> | unknown) => {
+  type Work = (ctx: WebContext, root: string, args: Record<string, string[]>, main: string) => Promise<unknown> | unknown;
+  const route = (path: string, work: Work) => {
     routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
       if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
       const args = parseQs(url.search.slice(1));
-      const root = await rootFor(ctx, args);
-      if (typeof root !== 'string') return root;
-      return guarded(() => work(ctx, root, args));
+      const scope = await scopeFor(ctx, args);
+      if (Array.isArray(scope)) return scope;
+      return guarded(() => work(ctx, scope.root, args, scope.main));
     });
   };
-  route('/api/live/files/list', async (_ctx, root, args) => {
+  const post = (path: string, work: (ctx: WebContext, body: Record<string, unknown>) => Promise<Reply>) => {
+    routes.set(`POST ${path}`, async (ctx, _url, body, request) => {
+      if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return [400, { error: 'Invalid request' }];
+      try {
+        return await work(ctx, body as Record<string, unknown>);
+      } catch (error) {
+        if (error instanceof files.FilesError) return [error.status, { error: error.message, code: error.code }];
+        throw error;
+      }
+    });
+  };
+  const bodyArgs = (body: Record<string, unknown>) => {
+    const args: Record<string, string[]> = {};
+    for (const k of ['id', 'root', 'project']) if (typeof body[k] === 'string') args[k] = [body[k] as string];
+    return args;
+  };
+  route('/api/live/files/list', async (_ctx, root, args, main) => {
     const base = files.realRoot(root);
-    return { root: base, ...(await files.listDir(base, one(args, 'dir'))) };
+    const lo = await local.localOnlyOf(main);
+    const same = samePath(base, files.realRoot(main));
+    const strays = lo && !same ? await local.findStrays(base, lo) : [];
+    const listing = await files.listLocal(base, main, lo, one(args, 'dir'), strays);
+    await files.excludeHints(main, lo, listing, same);
+    const { sig, ...rest } = listing;
+    return { root: base, ...rest, localOnly: localPart(main, lo, sig) };
   });
-  route('/api/live/files/search', async (ctx, root, args) => {
+  route('/api/live/files/search', async (ctx, root, args, main) => {
     const base = files.realRoot(root);
-    return { root: base, ...(await files.search(base, one(args, 'q'), writesSig(ctx, base))) };
+    const lo = await local.localOnlyOf(main);
+    // rebuilt when an agent working in the folder, or in the main folder (where the local-only files are), wrote files
+    const sig = writesSig(ctx, base) + (samePath(base, main) ? '' : '|' + writesSig(ctx, main));
+    const found = await files.search(base, one(args, 'q'), sig, files.localFiles(main, lo));
+    return { root: base, ...found, localOnly: localPart(main, lo) };
   });
-  route('/api/live/files/read', (ctx, root, args) => {
+  route('/api/live/files/read', async (ctx, root, args, main) => {
     const base = files.realRoot(root);
-    const read = files.readFile(base, one(args, 'path'));
+    const path = one(args, 'path');
+    const lo = await local.localOnlyOf(main);
+    const isLocal = !!lo && local.isLocalPath(lo, String(path));
+    let read: files.FileRead & { local?: true; from?: 'main' };
+    if (isLocal && !samePath(base, files.realRoot(main))) {
+      // a local-only file is the main folder's own (a copy's stray shows only while main has none)
+      try {
+        read = { ...files.readFile(main, path), local: true, from: 'main' };
+      } catch (error) {
+        if (!(error instanceof files.FilesError) || error.status !== 404) throw error;
+        read = files.readFile(base, path);
+      }
+    } else {
+      read = files.readFile(base, path);
+      if (isLocal) read.local = true;
+    }
     const origin = ctx.artifacts?.store.origin ?? '';
     const viewable = (read.image && !read.tooBig) || (read.page && !read.binary && !read.tooBig);
     const viewUrl = viewable && origin
       ? origin + '/f/' + issue(read.abs) + '/' + encodeURIComponent(read.name) + (/\.(md|markdown)$/i.test(read.name) ? '?view=1' : '')
       : '';
     return { root: base, ...read, viewUrl };
+  });
+  // "Git exclude" on a row (owner decision 3), and its Undo. In a chat's copy, what is there moves into the main folder first (owner
+  // Q3); local_only.addEntry does the refusals, the lock and the move.
+  post('/api/live/files/exclude', async (ctx, body) => {
+    const scope = await scopeFor(ctx, bodyArgs(body));
+    if (Array.isArray(scope)) return scope;
+    const action = body.action === 'undo' ? 'undo' : body.action === 'add' ? 'add' : '';
+    if (!action) return [400, { error: 'Unknown action', code: 'bad_action' }];
+    if (action === 'undo') {
+      const done = await local.undoEntry(scope.main, String(body.undo ?? ''));
+      return [200, { ok: done, localOnly: localPart(scope.main, await local.localOnlyOf(scope.main)) }];
+    }
+    const path = local.cleanRel(body.path);
+    if (path === null) return [400, { error: 'Invalid path', code: 'bad_path' }];
+    if (path) files.safeParts(path); // the same path rules as every Files request
+    const chatRoot = samePath(scope.root, scope.main) ? undefined : scope.root;
+    const result = await local.addEntry(scope.main, path, chatRoot);
+    const localOnly = localPart(scope.main, await local.localOnlyOf(scope.main));
+    return result.ok ? [200, { ...result, path, localOnly }] : [409, { ...result, localOnly }];
+  });
+  // The stray warning row's "Move to the shared folder": this chat copy's files under local-only paths go to the main folder now.
+  post('/api/live/files/strays/move', async (ctx, body) => {
+    const scope = await scopeFor(ctx, bodyArgs(body));
+    if (Array.isArray(scope)) return scope;
+    const lo = samePath(scope.root, scope.main) ? null : await local.localOnlyOf(scope.main);
+    if (!lo) return [200, { moved: [], failed: [] }];
+    return [200, await local.moveStrays(scope.root, lo, local.slugOf(scope.root))];
   });
   routes.set('GET /api/live/files/outside', (ctx, url, _body, request) => {
     if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) {
