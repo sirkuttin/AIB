@@ -202,6 +202,24 @@ export function pageDecision(href: string, appOrigin: string): PageDecision {
 /** The page-state probe the window runs: where it is (an error page reports chrome-error://chromewebdata/). */
 export const PAGE_PROBE = `JSON.stringify({ href: String(location.href), title: String(document.title || '') })`;
 
+/**
+ * What the page holds to prove it is the page (page-auth.js): the launch key kept for this tab and the page session this origin
+ * keeps. Read through the window's private evaluate channel only, and checked in this process (DesktopOptions.pageConnected).
+ */
+export const PAGE_AUTH_PROBE = `(() => { const r = (a, n) => { try { return String(window[a].getItem(n) || ''); } catch { return ''; } };
+  return JSON.stringify({ key: r('sessionStorage', 'aib-page-key'), session: r('localStorage', 'aib-page-session') }); })()`;
+
+/** The auth probe's answer, or null when it couldn't be read. */
+export function parseAuthProbe(value: unknown): { key: string; session: string } | null {
+  if (typeof value !== 'string' || !value.startsWith('{')) return null;
+  try {
+    const o = JSON.parse(value);
+    return { key: typeof o?.key === 'string' ? o.key : '', session: typeof o?.session === 'string' ? o.session : '' };
+  } catch {
+    return null;
+  }
+}
+
 /** The probe's answer, or null when it couldn't be read (the page is loading, or the call failed). */
 export function parseProbe(value: unknown): { href: string; title: string } | null {
   if (typeof value !== 'string' || !value) return null;
@@ -345,6 +363,12 @@ export interface DesktopOptions {
   /** The window loaded our page (the update helper's health marker is written then). */
   onPageLoaded?: () => void;
   /**
+   * True when what our page holds (PAGE_AUTH_PROBE) gets it the token: the launch key, or a page session the server knows. Our page
+   * without either (the runtime's startup navigation to its own serve port lands there through a key-less redirect, which may
+   * overwrite the keyed one) is sent to `url` again, which carries the key. Not given: not checked (tests of other things).
+   */
+  pageConnected?: (held: { key: string; session: string }) => boolean;
+  /**
    * The normal close path (the web server). stopAgents: Stop all chats and quit. leave: Quit AIB with work running; the chats stay in
    * the keeper, which holds them until an AIB is started again (no restart in the tray). Never returns in the real app (Deno.exit).
    */
@@ -403,6 +427,8 @@ export class DesktopApp {
   readonly notifications: DesktopNotifications;
   /** Sending the window back to our page: at most 4 times in 30 s, so a page that fails at once can't make a navigation loop. */
   readonly backAllowed = rateLimiter(4, 30_000);
+  /** Opening our page again with the key because it was not connected: at most 3 times in 60 s (no loop if it never connects). */
+  readonly keyAllowed = rateLimiter(3, 60_000);
   keeper: WindowHandle | null = null;
   #watchdog: ReturnType<typeof setInterval> | undefined;
   #trayTimer: ReturnType<typeof setInterval> | undefined;
@@ -752,6 +778,7 @@ export class DesktopApp {
           this.options.onPageLoaded?.();
         } catch { /* not fatal */ }
       }
+      await this.#ensureConnected(win, page.href, why);
       return decision;
     }
     if (win !== this.window || win.isClosed() || this.#quitting) return decision;
@@ -766,6 +793,29 @@ export class DesktopApp {
     log.warning('window: on %s (%s, %s); sending it back to %s', page.href, decision, why, this.options.url);
     win.navigate(this.options.url);
     return decision;
+  }
+
+  /**
+   * Our page, but holding neither the launch key nor a known page session ("This browser is not connected to AIB yet"): the
+   * runtime sent the window to its serve port after our keyed navigation, and that redirect carries no key (it is open to every
+   * local process, so it never may). The key reaches the page only here, through this window's own navigate. Rate-limited.
+   */
+  async #ensureConnected(win: WindowHandle, href: string, why: string): Promise<void> {
+    const check = this.options.pageConnected;
+    if (!check || win !== this.window || win.isClosed() || this.#quitting) return;
+    const held = parseAuthProbe(await win.evaluate(PAGE_AUTH_PROBE));
+    if (!held) return; // can't read it now: the next load or watchdog tick looks again
+    let connected = true;
+    try {
+      connected = check(held);
+    } catch { /* unknown: leave the page alone */ }
+    if (connected) return;
+    if (!this.keyAllowed()) {
+      log.warning('window: our page (%s) is not connected; not opened again: too many tries in a row', why);
+      return;
+    }
+    log.warning('window: our page %s holds no launch key or known page session (%s); opening it again with the key', href, why);
+    win.navigate(this.options.url);
   }
 
   async busy(): Promise<number | null> {

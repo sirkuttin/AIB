@@ -16,6 +16,7 @@ import {
   isExternal,
   KEEPER_URL,
   loadGeometry,
+  PAGE_AUTH_PROBE,
   PAGE_PROBE,
   pageDecision,
   parseProbe,
@@ -33,6 +34,7 @@ import {
   type WindowHandle,
 } from '../../outputs/agent-studio/server/desktop/window.ts';
 import { orphanCommand } from '../../outputs/agent-studio/server/host/studio.ts';
+import { PageAccess } from '../../outputs/agent-studio/server/web/page_access.ts';
 import { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
 import {
   alreadyRunning,
@@ -161,9 +163,13 @@ class FakeWindow implements WindowHandle {
   constructor(readonly options: { title: string; width: number; height: number }) {
     this.size = [options.width, options.height];
   }
+  /** What the page holds (page-auth.js storage): a navigation to /#aib-key=K leaves the key in sessionStorage, like the page. */
+  held = { key: '', session: '' };
   navigate(url: string) {
     this.urls.push(url);
     this.href = url;
+    const key = /#aib-key=([A-Za-z0-9_-]+)/.exec(url)?.[1];
+    if (key) this.held = { ...this.held, key };
   }
   show() {
     this.visible = true;
@@ -209,6 +215,7 @@ class FakeWindow implements WindowHandle {
   }
   evaluate(code: string) {
     if (code === PAGE_PROBE) return Promise.resolve(this.href ? JSON.stringify({ href: this.href, title: this.title }) : undefined);
+    if (code === PAGE_AUTH_PROBE) return Promise.resolve(JSON.stringify(this.held));
     return Promise.resolve(code === 'location.href' ? this.href : undefined);
   }
 }
@@ -911,6 +918,54 @@ Deno.test('a load on another local port or an error page goes back to our page a
     await tick();
     assertEquals(a.s.external, ['https://example.com/x']);
     assertEquals(w.href, 'http://127.0.0.1:8890/');
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('the runtime key-less redirect lands after the keyed navigation: the window opens the page again with the key', async () => {
+  const access = new PageAccess(null, 'L'.repeat(43));
+  const base = 'http://127.0.0.1:8890';
+  const keyed = access.pageUrl(base);
+  const a = await makeApp(() => Promise.resolve(0), null, { url: keyed, pageConnected: (held) => access.holds(held) });
+  try {
+    const w = a.s.windows[0];
+    assertEquals(w.urls, [keyed], 'the window opens on the keyed page');
+    // Fresh profile: the runtime's startup navigation to its serve port wins; the 302 to `${url}/` carries no key.
+    w.href = `${base}/`;
+    w.held = { key: '', session: '' };
+    w.emit('load');
+    await tick();
+    assertEquals(w.urls, [keyed, keyed], 'not connected: sent to the keyed page once more');
+    assert(access.holds(w.held), 'the page now holds the launch key: bootstrap gives it the token');
+    w.href = `${base}/`; // page-auth.js took the key out of the address bar
+    w.emit('load');
+    await a.app.watchdogTick();
+    assertEquals(w.urls.length, 2, 'connected: left alone');
+    // A page session the server knows (the next start, with a new key) is connected too.
+    w.held = { key: '', session: access.pair(access.launchKey)! };
+    w.emit('load');
+    await tick();
+    assertEquals(w.urls.length, 2);
+    // A page that never connects is not navigated in a loop.
+    for (let i = 0; i < 10; i++) {
+      w.held = { key: '', session: 'unknown'.repeat(6) };
+      await a.app.checkPage(w, 'load');
+    }
+    assertEquals(w.urls.length, 2 + 2, 'at most 3 key navigations in 60 s (one used above)');
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('no pageConnected check (other tests): our page is never navigated for the key', async () => {
+  const a = await makeApp(() => Promise.resolve(0));
+  try {
+    const w = a.s.windows[0];
+    w.href = 'http://127.0.0.1:8890/';
+    w.emit('load');
+    await tick();
+    assertEquals(w.urls.length, 1);
   } finally {
     await a.done();
   }
