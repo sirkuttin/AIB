@@ -3,7 +3,7 @@
    Screens: pairing, home (needs you first, the main chat with its helpers folded, other chats), one chat in the condensed view with
    a composer at the bottom (Send; Stop while the agent works), its queued messages (Edit, Remove, Send now), and two sheets: the
    approval sheet (Deny / Allow once; "Allow always" and mode switches stay on the PC) and the question sheet (form questions).
-   Each control shows only when this phone's switch for it is on (Settings → Devices on the PC); the server checks the same switches.
+   Each control shows only when this phone's switch for it is on (Settings → Remote control on the PC); the server checks the same switches.
    While the PC can't be reached, nothing can be sent or answered. The layout is chosen by the server (remote bootstrap says
    layout 'phone'), never by the window width.
    The device token lives in IndexedDB on this origin and goes in the X-AIB-Device header; images load by the HttpOnly cookie.
@@ -365,7 +365,7 @@
       return {
         kind: 'closed',
         title: 'AIB is closed on ' + pc,
-        lines: ['Open AIB on your PC, then tap Try again.', 'If AIB is open, check that phone access is on in Settings → Devices.'],
+        lines: ['Open AIB on your PC, then tap Try again.', 'If AIB is open, check that phone access is on in Settings → Remote control.'],
         checks: [],
         retry: true,
       };
@@ -397,7 +397,7 @@
           : 'Tap the Share button, then Add to Home Screen. Open AIB from there: iPhone sends notifications only to apps on the Home Screen.',
       });
     let notify;
-    if (!o.allowed) notify = { state: 'off', text: 'Notifications are off for this phone. Turn on Push for it in AIB on your PC: Settings → Devices.' };
+    if (!o.allowed) notify = { state: 'off', text: 'Notifications are off for this phone. Turn on Push for it in AIB on your PC: Settings → Remote control.' };
     else if (o.iphone && !o.standalone) notify = { state: 'todo', text: 'After step 1, open AIB from the Home Screen and turn notifications on there.' };
     else if (!o.supported) notify = { state: 'off', text: 'This browser cannot show notifications from AIB.' };
     else if (o.permission === 'denied') notify = { state: 'blocked', text: 'Notifications are blocked for this page. Allow them in the browser’s site settings.' };
@@ -854,7 +854,7 @@
           'ph-note',
           'To continue this chat from this phone, turn on "Send messages, stop turns and continue chats" for this phone in AIB on ' +
             S.pcName +
-            ': Settings → Devices.',
+            ': Settings → Remote control.',
         ),
       );
       return bar;
@@ -1394,7 +1394,7 @@
       code.spellcheck = false;
       code.placeholder = 'six words';
       code.value = p.code || '';
-      form.append(l, code, el('p', 'ph-note', 'On your PC: Settings → Devices → Add a phone shows the six words.'));
+      form.append(l, code, el('p', 'ph-note', 'On your PC: Settings → Remote control → Add a phone shows the six words.'));
     }
     const nl = el('label', '', 'Name this phone');
     nl.htmlFor = 'pairName';
@@ -1429,7 +1429,7 @@
     frag.append(header('AIB', { sub: S.pcName }));
     const body = el('main');
     body.append(el('p', 'ph-error', 'This phone is no longer paired with ' + S.pcName + '.'));
-    body.append(el('p', '', 'To use it again, open Settings → Devices in AIB on the PC and click Add a phone.'));
+    body.append(el('p', '', 'To use it again, open Settings → Remote control in AIB on the PC and click Add a phone.'));
     body.append(
       button('ph-btn', 'Pair again', () => {
         S.screen = 'pair';

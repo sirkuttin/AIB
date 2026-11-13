@@ -150,7 +150,7 @@ test('phone: Finish setup has the Home Screen step on an iPhone only; notificati
   assert.deepEqual(ids({ ...base, iphone: false, permission: 'granted', on: true }), [['notify', 'done']]);
   assert.deepEqual(ids({ ...base, iphone: false, permission: 'denied' }), [['notify', 'blocked']]);
   assert.deepEqual(ids({ ...base, iphone: false, allowed: false }), [['notify', 'off']]);
-  assert.match(P.setupSteps({ ...base, allowed: false })[0].text, /Settings → Devices/);
+  assert.match(P.setupSteps({ ...base, allowed: false })[0].text, /Settings → Remote control/);
   assert.match(P.setupSteps({ ...base, iphone: true })[0].text, /Add to Home Screen/);
 });
 

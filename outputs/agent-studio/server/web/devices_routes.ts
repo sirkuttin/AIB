@@ -1,6 +1,7 @@
 /**
- * Settings > Devices on the PC (routes.ts DENO_ONLY, page token): Phone access on/off, Check again, Add a phone (pairing code, QR,
- * six words), approve or reject a phone that claimed the code, a phone's switches, remove one phone or all, and the phone activity log. These run on
+ * Settings > Remote control on the PC (routes.ts DENO_ONLY, page token): Phone access on/off, Check again, Add a phone (pairing code, QR,
+ * six words), approve or reject a phone that claimed the code, a phone's switches, remove one phone or all, a phone's Silent reminders, the phone activity log, and the Tailscale setup buttons
+ * (/api/live/devices/tailscale/*: refresh, run {action, replace?, confirm?}, job, cancel). These run on
  * the page port only; the phone port (remote/server.ts) never answers them.
  */
 import { ValueError } from '../core/py.ts';
@@ -53,6 +54,24 @@ export function devicesRoutes(): Map<string, Handler> {
   });
   routes.set('POST /api/live/devices/remove-all', async (ctx) => [200, { ok: true, removed: await ctx.phone.removeAll() }]);
   routes.set('GET /api/live/devices/activity', async (ctx) => [200, { entries: await ctx.phone.activity() }]);
+  routes.set('POST /api/live/devices/prefs', async (ctx, _url, body) => {
+    if (typeof body?.remind !== 'boolean') throw new ValueError('remind must be true or false');
+    const device = await ctx.phone.setRemind(body?.id, body.remind);
+    if (!device) return [404, { error: 'That phone is no longer paired.', code: 'no_device' }];
+    return [200, { ok: true, device }];
+  });
+  // Settings > Remote control's setup buttons (remote/setup.ts): a fixed action name and flags, never a command
+  routes.set('POST /api/live/devices/tailscale/refresh', async (ctx, _url, body) => {
+    await ctx.phone.refresh(body?.fresh === true);
+    return [200, { ok: true, ...ctx.phone.view() }];
+  });
+  routes.set('POST /api/live/devices/tailscale/run', async (ctx, _url, body) => {
+    const flags = { replace: body?.replace === true, confirm: body?.confirm === true };
+    const [status, reply] = await ctx.phone.setup.run(body?.action, flags);
+    return [status, { ...reply, ...ctx.phone.view() }];
+  });
+  routes.set('GET /api/live/devices/tailscale/job', (ctx) => [200, { job: ctx.phone.setup.job?.view() ?? null }]);
+  routes.set('POST /api/live/devices/tailscale/cancel', (ctx) => [200, { ok: true, cancelled: ctx.phone.setup.cancel(), ...ctx.phone.view() }]);
   for (const [key, handler] of routes) routes.set(key, wrap(handler));
   return routes;
 }

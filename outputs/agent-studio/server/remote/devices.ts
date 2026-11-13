@@ -35,14 +35,16 @@ export interface Device {
   created: number;
   lastSeen: number;
   push?: PushSub;
+  /** Silent reminders (owner decision: per phone, on by default; missing = on). The sending lands with the phone presence work. */
+  remind?: boolean;
 }
 
 /** What Settings > Devices gets: no hashes and no subscription, only whether the phone has one. */
-export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push'> & { pushOn: boolean };
+export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind'> & { pushOn: boolean; remind: boolean };
 
 const publicOf = (d: Device): PublicDevice => {
-  const { tokenHash: _t, cookieHash: _c, push, ...rest } = d;
-  return { ...rest, scopes: [...rest.scopes], pushOn: !!push };
+  const { tokenHash: _t, cookieHash: _c, push, remind, ...rest } = d;
+  return { ...rest, scopes: [...rest.scopes], pushOn: !!push, remind: remind !== false };
 };
 
 /** A subscription from a phone, checked: an https push service address and the two keys (base64url). Null when it is not one. */
@@ -130,6 +132,7 @@ export class DeviceStore extends JsonFileStore {
         created: Number(d.created) || 0,
         lastSeen,
         ...(push ? { push } : {}),
+        ...(d.remind === false ? { remind: false } : {}),
       });
     }
     this.unreadable = false;
@@ -197,6 +200,21 @@ export class DeviceStore extends JsonFileStore {
       const d = this.devices.get(id);
       if (!d) return null;
       d.scopes = cleanScopes(scopes);
+      this.counter++;
+      this.#save();
+      return publicOf(d);
+    });
+  }
+
+  /** Silent reminders on or off for one phone (Settings > Remote control, the phone's row). */
+  setRemind(id: string, remind: boolean): Promise<PublicDevice | null> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      const d = this.devices.get(id);
+      if (!d) return null;
+      if (remind) delete d.remind;
+      else d.remind = false;
       this.counter++;
       this.#save();
       return publicOf(d);

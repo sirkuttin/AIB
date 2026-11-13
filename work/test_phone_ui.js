@@ -1,6 +1,6 @@
 'use strict';
-/* The phone page's pure parts (phone.js) and Settings > Devices' (devices-ui.js): the condensed chat rows, status words, the live
-   line, and the Tailscale checklist's wording. The pages themselves run in work/deno/remote_phone_e2e_test.ts. */
+/* The phone page's pure parts (phone.js) and Settings > Remote control's (devices-ui.js): the condensed chat rows, status words, the live
+   line, and a few setup words. The pages themselves run in work/deno/remote_phone_e2e_test.ts. */
 const { APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
@@ -56,18 +56,7 @@ test('status words match the PC: Needs you, Working, Your turn, Idle', () => {
   assert.equal(P.helperWord('completed'), 'done');
 });
 
-test('Devices: the Tailscale checklist says what to do next, and shows the serve command until it is done', () => {
-  const view = { serveCommand: 'tailscale serve --bg --https=443 http://127.0.0.1:8779', tailscale: null };
-  let steps = D.checklist(view);
-  assert.deepEqual(steps.map((s) => s.done), [false, false, false, false]);
-  assert.match(steps[0].detail, /tailscale\.com\/download/);
-  const ts = { signedIn: true, machine: 'studio-pc', tailnet: 'tail-a1b2.ts.net', name: 'studio-pc.tail-a1b2.ts.net', login: 'a@b', https: true, serving: false };
-  steps = D.checklist({ ...view, tailscale: ts });
-  assert.equal(steps[0].detail, 'Found as STUDIO-PC on tail-a1b2.ts.net, signed in as a@b.');
-  assert.equal(steps[2].command, view.serveCommand);
-  steps = D.checklist({ ...view, tailscale: { ...ts, serving: true } });
-  assert.deepEqual(steps.map((s) => s.done), [true, true, true, false]);
-  assert.equal(steps[2].command, '');
+test('Remote control: countdown and last seen words', () => {
   assert.equal(D.countdown(1000 + 292, 1000 * 1000), '4:52');
   assert.equal(D.ago(0), 'never');
 });
@@ -130,32 +119,14 @@ test("Devices: a phone's switches keep See chats on; a Phone activity line names
   assert.equal(D.activityLine({ action: 'phone access', result: 'turned on' }, 'T'), 'T · AIB · phone access: turned on');
 });
 
-test('Devices: the second serve command (artifacts on the phone), its check, and a busy artifact port', () => {
-  const view = {
-    serveCommand: 'tailscale serve --bg --https=443 http://127.0.0.1:8779',
-    artifactCommand: 'tailscale serve --bg --https=8443 http://127.0.0.1:8780',
-    artifactProblem: null,
-  };
-  const ts = { signedIn: true, name: 'studio-pc.tail-a1b2.ts.net', https: true, serving: true, artifactServing: false };
-  let step = D.checklist({ ...view, tailscale: ts })[3];
-  assert.equal(step.title, 'Artifacts open on your phone');
-  assert.equal(step.done, false);
-  assert.equal(step.command, view.artifactCommand);
-  assert.match(step.detail, /artifacts open on your PC only/);
-  assert.deepEqual(
-    D.checklist({ ...view, tailscale: ts }).map((s) => s.id),
-    [undefined, undefined, 'dvServeCommand', 'dvArtifactCommand'],
-  );
-  step = D.checklist({ ...view, tailscale: { ...ts, artifactServingOther: 'http://127.0.0.1:9000' } })[3];
-  assert.match(step.detail, /^https:\/\/studio-pc\.tail-a1b2\.ts\.net:8443 is shared to http:\/\/127\.0\.0\.1:9000 now/);
-  step = D.checklist({ ...view, tailscale: { ...ts, artifactServing: true } })[3];
-  assert.deepEqual([step.done, step.command], [true, '']);
-  const busy = {
-    code: 'artifact_port_busy',
-    message: 'Port 8780 is busy: another program uses it, so artifacts open on your PC only.', // port-guard: not bound
-  };
-  step = D.checklist({ ...view, artifactProblem: busy, tailscale: { ...ts, artifactServing: true } })[3];
-  assert.deepEqual([step.done, step.detail, step.command], [false, busy.message, '']);
+test('Remote control: artifacts on the PC only show the reason under a shared step 3; a busy artifact port is named', () => {
+  const ts = { signedIn: true, installed: true, name: 'studio-pc.tail-a1b2.ts.net', https: true, serving: true, artifactServing: false };
+  const busy = { code: 'artifact_port_busy', message: 'Port 8780 is busy: another program uses it, so artifacts open on your PC only.' };
+  let three = D.setupSteps({ on: true, listening: true, tailscale: ts, setup: { artifactNote: '' }, artifactProblem: busy }).steps[2];
+  assert.equal(three.state, 'ok');
+  assert.ok(three.notes.includes('Artifacts open on your PC only. ' + busy.message), three.notes.join('|'));
+  three = D.setupSteps({ on: true, listening: true, tailscale: { ...ts, artifactServing: true }, setup: {} }).steps[2];
+  assert.equal(three.notes[0], 'Tailscale sends https://studio-pc.tail-a1b2.ts.net to AIB, and https://studio-pc.tail-a1b2.ts.net:8443 to AIB’s artifacts.');
 });
 
 test('artifacts in a chat: one card per artifact version, from artifact events and finished studio_artifact calls', () => {

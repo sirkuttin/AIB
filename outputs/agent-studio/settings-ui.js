@@ -16,7 +16,7 @@
     { id: 'agents', label: 'AIB Linking' },
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
-    { id: 'devices', label: 'Devices' },
+    { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
     { id: 'editors', label: 'Editors' },
     { id: 'keyboard', label: 'Keyboard' },
     { id: 'appearance', label: 'Appearance' },
@@ -115,13 +115,45 @@
       id: 'devices-access',
       section: 'devices',
       label: 'Phone access',
-      keywords: ['phone', 'mobile', 'android', 'iphone', 'remote', 'tailscale', 'serve', 'away', 'devices', 'connect'],
+      keywords: [
+        'phone',
+        'mobile',
+        'android',
+        'iphone',
+        'remote',
+        'remote control',
+        'tailscale',
+        'serve',
+        'share',
+        'install',
+        'https',
+        'funnel',
+        'away',
+        'devices',
+        'connect',
+      ],
     },
     {
       id: 'devices-phones',
       section: 'devices',
       label: 'Phones: add, remove, activity',
-      keywords: ['phone', 'pair', 'qr', 'code', 'add a phone', 'remove', 'devices', 'activity', 'lost', 'stolen'],
+      keywords: [
+        'phone',
+        'pair',
+        'qr',
+        'code',
+        'add a phone',
+        'remove',
+        'devices',
+        'remote control',
+        'activity',
+        'lost',
+        'stolen',
+        'silent',
+        'reminder',
+        'reminders',
+        'notification',
+      ],
     },
     {
       id: 'editors',
@@ -1704,7 +1736,7 @@
     box.append(slot);
     if (root.AgentNotifyUI && root.AgentNotifyUI.mountSettings) root.AgentNotifyUI.mountSettings(slot);
   }
-  // Settings > Devices is drawn by devices-ui.js (phone access, Tailscale checks, pairing, paired phones).
+  // Settings > Remote control is drawn by devices-ui.js (phone access, the Tailscale setup steps, pairing, paired phones).
   function renderDevices(kind, box) {
     if (root.AIBDevicesUI && root.AIBDevicesUI.render) root.AIBDevicesUI.render(kind, box, S.host);
     else box.append(note('This part could not be drawn: devices-ui.js is missing.', 'bad'));

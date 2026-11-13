@@ -4762,6 +4762,7 @@
   });
   window.StartPageUI?.init();
   window.AibUpdates?.init({ get: (path, params) => get(path, params), post }); // the Update button at the strip's right end
+  window.AIBDevicesUI?.watch?.({ get: (path, params) => get(path, params), post }); // Remote control's notice: share missing at start
 
   try {
     renderAgents();

@@ -65,6 +65,11 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/remove-all         Settings > Devices: Remove all phones
  *   POST /api/live/devices/scopes             Settings > Devices: a paired phone's switches (Answer, Send, Approve once, Push)
  *   GET  /api/live/devices/activity           Settings > Devices: Phone activity
+ *   POST /api/live/devices/prefs              Settings > Remote control: a phone's Silent reminders {id, remind}
+ *   POST /api/live/devices/tailscale/refresh  Settings > Remote control: re-read Tailscale (3 s while a step waits, 30 s otherwise)
+ *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
+ *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job
+ *   POST /api/live/devices/tailscale/cancel   Settings > Remote control: Cancel on a setup job
  *   POST /api/live/presence                   the page: its window has focus or not, time since the last input (attention/presence.ts)
  *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
  *   POST /api/live/artifacts/delete           Delete: to Recently deleted, the source file into the artifact's bin (page only)
@@ -131,6 +136,11 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/devices/remove-all', 'write', 'body'],
   ['POST', '/api/live/devices/scopes', 'write', 'body'],
   ['GET', '/api/live/devices/activity', 'read', 'get'],
+  ['POST', '/api/live/devices/prefs', 'write', 'body'],
+  ['POST', '/api/live/devices/tailscale/refresh', 'write', 'body'],
+  ['POST', '/api/live/devices/tailscale/run', 'write', 'body'],
+  ['GET', '/api/live/devices/tailscale/job', 'write', 'get'],
+  ['POST', '/api/live/devices/tailscale/cancel', 'write', 'body'],
   ['POST', '/api/live/presence', 'write', 'body'],
   ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],
   ['POST', '/api/live/artifacts/delete', 'artifacts.write', 'own-gate'],

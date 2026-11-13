@@ -1,7 +1,9 @@
 /**
- * Phone access (Settings > Devices): the owner's switch, the connection (Tailscale for now), the Tailscale checks, the phone port's
- * listener and (Phase D) the phone's artifact port next to it, pairing and the paired phones. Off by default (<state>/phone-access.json). While it is on, AIB reads Tailscale when it
- * starts and on Check again, refuses to listen when Funnel is on for this PC's name, and keeps the phone port bound.
+ * Phone access (Settings > Remote control): the owner's switch, the connection (Tailscale for now), the Tailscale checks and setup
+ * buttons (remote/setup.ts), the phone port's listener and (Phase D) the phone's artifact port next to it, pairing and the paired
+ * phones. Off by default (<state>/phone-access.json, which also remembers whether AIB shared itself on Tailscale and whether a share
+ * still has to be removed). While it is on, AIB reads Tailscale when it starts, on Check again and while Remote control is on
+ * screen, refuses to listen when Funnel is on for this PC's name, and keeps the phone port bound.
  */
 import { inDir } from '../state/base.ts';
 import { readJsonFile, saveJson } from '../state/json.ts';
@@ -17,6 +19,7 @@ import { PushSender, VapidKeys } from './push.ts';
 import { qrSvg } from './qr.ts';
 import { RemoteServer } from './server.ts';
 import { artifactServeCommand, readTailscale, type Runner, serveCommand, type TailscaleState } from './tailscale.ts';
+import { defaultEnv, funnelText, type SetupEnv, type SetupHost, TailscaleSetup } from './setup.ts';
 import { hex } from './words.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
@@ -49,10 +52,12 @@ export interface AccessOptions {
   avoid?: () => number[];
   /** Tests: the fetch pushes go out with (a fake push service). */
   pushFetch?: typeof fetch;
+  /** Tests: the setup buttons' programs, downloads and browser (remote/setup.ts SetupEnv), over the real ones. */
+  setupEnv?: Partial<SetupEnv>;
   log?: (message: string) => void;
 }
 
-export class PhoneAccess {
+export class PhoneAccess implements SetupHost {
   readonly devices: DeviceStore;
   readonly pairing = new Pairing();
   readonly audit: Audit;
@@ -74,8 +79,16 @@ export class PhoneAccess {
   artifactProblem: AccessProblem | null = null;
   /** Signed artifact links for paired phones (in memory: a restart ends them). */
   readonly tickets = new ArtifactTickets();
+  /** The setup buttons (Install, Sign in, Turn on HTTPS, Share AIB, Stop sharing, Turn off Funnel). */
+  readonly setup: TailscaleSetup;
+  /** AIB shared itself on Tailscale (Share AIB worked) and the owner has not stopped sharing since. */
+  shared = false;
+  /** Switched off while Tailscale was not running: AIB's shares are removed once it runs again. */
+  pendingUnshare = false;
   #busy: Promise<void> | null = null;
   #closed = false;
+  #reading: Promise<TailscaleState> | null = null;
+  #readAt = 0;
 
   constructor(readonly ctx: WebContext, readonly stateDir: string, readonly options: AccessOptions = {}) {
     this.devices = new DeviceStore(stateDir);
@@ -83,7 +96,73 @@ export class PhoneAccess {
     this.vapid = new VapidKeys(stateDir);
     this.push = new PushSender(this.devices, this.vapid, options.pushFetch);
     const [status, data] = readJsonFile(inDir(stateDir, ACCESS_FILE));
-    if (status === 'ok' && data && typeof data === 'object') this.on = (data as { on?: unknown }).on === true;
+    if (status === 'ok' && data && typeof data === 'object') {
+      const d = data as { on?: unknown; shared?: unknown; pendingUnshare?: unknown };
+      this.on = d.on === true;
+      this.shared = d.shared === true;
+      this.pendingUnshare = d.pendingUnshare === true;
+    }
+    this.setup = new TailscaleSetup(this, stateDir, { ...defaultEnv(), ...options.setupEnv });
+  }
+
+  #saveAccess(): void {
+    saveJson(
+      inDir(this.stateDir, ACCESS_FILE),
+      { version: 1, on: this.on, via: this.via, shared: this.shared, pendingUnshare: this.pendingUnshare },
+      'phone-access-',
+    );
+  }
+
+  // ---- SetupHost (remote/setup.ts) -------------------------------------------------------------------------------------------
+  get listening(): boolean {
+    return !!this.server?.listening;
+  }
+  get artifactListening(): boolean {
+    return !!this.artifactServer?.listening;
+  }
+  get artifactProblemMessage(): string {
+    return this.artifactProblem?.message ?? '';
+  }
+  get portProblemMessage(): string {
+    return this.problem?.code === 'port_busy' ? this.problem.message : '';
+  }
+  markShared(shared: boolean): void {
+    if (this.shared === shared) return;
+    this.shared = shared;
+    this.#saveAccess();
+  }
+  setPendingUnshare(pending: boolean): void {
+    if (this.pendingUnshare === pending) return;
+    this.pendingUnshare = pending;
+    this.#saveAccess();
+  }
+  note(action: string, result: string): void {
+    this.audit.write({ action, result });
+  }
+
+  /** Read Tailscale now (a read already running is joined). */
+  readFresh(): Promise<TailscaleState> {
+    return this.#read(0);
+  }
+  /** Read Tailscale unless a read finished less than 2.5 s ago (the page and a waiting job poll every 3 s; one read serves both). */
+  readCached(): Promise<TailscaleState> {
+    return this.#read(2500);
+  }
+  #read(maxAgeMs: number): Promise<TailscaleState> {
+    if (this.#reading) return this.#reading;
+    if (maxAgeMs && this.tailscale && Date.now() - this.#readAt < maxAgeMs) return Promise.resolve(this.tailscale);
+    const reading = readTailscale(this.port ?? 0, this.options.runner, undefined, this.artifactPort ?? 0).then((ts) => {
+      this.tailscale = ts;
+      this.#readAt = Date.now();
+      return ts;
+    }).finally(() => {
+      this.#reading = null;
+    });
+    this.#reading = reading;
+    return reading.then((ts) => {
+      this.setup.onRead(ts);
+      return ts;
+    });
   }
 
   name(): string {
@@ -115,7 +194,12 @@ export class PhoneAccess {
   /** At AIB start: bring the phone port up when Phone access is on. Runs in the background; never throws. */
   start(): Promise<void> {
     if (!this.on) return Promise.resolve();
-    return this.#serialize(() => this.#bringUp());
+    return this.#serialize(async () => {
+      await this.#bringUp();
+      // owner answer 1: a share that went missing is never added again silently; the PC page shows a notice with Share again
+      const ts = this.tailscale;
+      if (this.shared && ts?.signedIn && ts.https && !ts.serving && !ts.funnel && this.listening) this.setup.missingAtStart = true;
+    });
   }
 
   #serialize(work: () => Promise<void>): Promise<void> {
@@ -127,49 +211,54 @@ export class PhoneAccess {
     return run;
   }
 
-  async #bringUp(): Promise<void> {
+  /** `quick` (the page's 3 s / 30 s refresh): a read up to 2.5 s old is fine (unless `fresh`: a setup terminal just finished) and a
+   * busy port is tried once, without the 20 s wait. */
+  async #bringUp(quick = false, fresh = false): Promise<void> {
     if (this.#closed || !this.on) return;
+    const before = this.problem;
     this.problem = null;
     const isFree = this.options.isFree ?? portFree;
     const port = this.port ?? remotePort(this.stateDir, isFree, this.options.avoid?.() ?? []);
     this.port = port;
     this.artifactPort ??= remoteArtifactPort(this.stateDir, port, isFree, this.options.avoid?.() ?? []);
-    this.tailscale = await readTailscale(port, this.options.runner, undefined, this.artifactPort);
-    const ts = this.tailscale;
+    const ts = quick && !fresh ? await this.readCached() : await this.readFresh();
     if (!ts.signedIn) {
       await this.#down();
       this.problem = {
         code: 'tailscale',
         message: ts.problem === 'not_installed'
-          ? 'Tailscale was not found on this PC. Install it, sign in, then click Check again.'
+          ? "Tailscale isn't installed on this PC."
           : ts.problem === 'signed_out'
-          ? 'Tailscale is not signed in on this PC. Sign in to Tailscale, then click Check again.'
-          : 'Tailscale is not running on this PC. Start it, then click Check again.',
+          ? "Tailscale isn't signed in on this PC."
+          : ts.problem === 'stopped'
+          ? 'Tailscale is switched off on this PC.'
+          : ts.problem === 'needs_machine_auth'
+          ? 'Your tailnet admin needs to approve this PC in Tailscale.'
+          : ts.problem === 'starting'
+          ? 'Tailscale is starting.'
+          : "Tailscale isn't running on this PC.",
       };
       return;
     }
     if (ts.funnel) {
       await this.#down();
-      this.problem = {
-        code: 'funnel',
-        message: `Tailscale Funnel is on for ${ts.name}, which puts it on the public internet. Phone access stays off until Funnel ` +
-          `is off for this name (tailscale funnel reset), then click Check again.`,
-      };
-      this.audit.write({ action: 'phone port', result: 'refused to start: Funnel is on' });
+      this.problem = { code: 'funnel', message: funnelText(ts) };
+      if (before?.code !== 'funnel') this.audit.write({ action: 'phone port', result: 'refused to start: Funnel is on' });
       return;
     }
     if (!this.server?.listening) {
       const server = new RemoteServer(this);
       try {
-        await server.listen(port, this.#retryMs());
+        if (quick && !(this.options.isFree ?? portFree)(port)) throw new PortBusy(port);
+        await server.listen(port, quick ? 0 : this.#retryMs());
       } catch (error) {
         if (!(error instanceof PortBusy)) throw error;
         this.problem = {
           code: 'port_busy',
-          message: `Port ${port} is busy: another program uses it, so phones cannot reach AIB. Close that program, then click ` +
-            `Check again.`,
+          message: `Port ${port} is busy. Another program on this PC uses it, so phones can't reach AIB. AIB keeps this port so ` +
+            `your setup doesn't change. Close that program, and AIB opens the port by itself.`,
         };
-        this.#log(this.problem.message);
+        if (before?.code !== 'port_busy') this.#log(this.problem.message);
         return;
       }
       if (this.#closed || !this.on) {
@@ -179,7 +268,7 @@ export class PhoneAccess {
       this.server = server;
       this.#log(`phone port listening on 127.0.0.1:${port} for ${ts.name}`);
     }
-    await this.#artifactsUp();
+    await this.#artifactsUp(quick);
   }
 
   #retryMs(): number {
@@ -187,13 +276,14 @@ export class PhoneAccess {
   }
 
   /** The artifact port, on its own fixed port: busy is reported (artifacts stay "Open on your PC"), never another port. */
-  async #artifactsUp(): Promise<void> {
+  async #artifactsUp(quick = false): Promise<void> {
     this.artifactProblem = null;
     if (this.artifactServer?.listening || this.artifactPort === null) return;
     const port = this.artifactPort;
     const server = new RemoteArtifactServer(this);
     try {
-      await server.listen(port, this.#retryMs());
+      if (quick && !(this.options.isFree ?? portFree)(port)) throw new PortBusy(port);
+      await server.listen(port, quick ? 0 : this.#retryMs());
     } catch (error) {
       if (!(error instanceof PortBusy)) throw error;
       this.artifactProblem = {
@@ -223,23 +313,39 @@ export class PhoneAccess {
 
   async setOn(on: boolean): Promise<void> {
     this.on = on;
-    saveJson(inDir(this.stateDir, ACCESS_FILE), { version: 1, on, via: this.via }, 'phone-access-');
+    this.#saveAccess();
     this.audit.write({ action: 'phone access', result: on ? 'turned on' : 'turned off' });
-    if (on) await this.#serialize(() => this.#bringUp());
-    else {
+    if (on) {
+      await this.#serialize(() => this.#bringUp());
+      // decision 5: switching on shares again with no extra click when AIB was shared before (a click on the switch)
+      const ts = this.tailscale;
+      if (this.shared && ts?.signedIn && ts.https && !ts.serving && !ts.funnel && this.listening) await this.setup.run('share', {});
+    } else {
       await this.#serialize(async () => {
         this.pairing.cancel();
         this.problem = null;
         await this.#down();
       });
+      // decision 5: switching off also stops sharing (after the port closed; runs in the background)
+      this.setup.afterOff();
     }
+  }
+
+  settle(): Promise<void> {
+    return this.refresh(true);
+  }
+
+  /** The page's re-check (every 3 s while a setup step waits, every 30 s otherwise): a cached read, no 20 s bind wait. */
+  refresh(fresh = false): Promise<void> {
+    if (!this.on) return (fresh ? this.readFresh() : this.readCached()).then(() => {});
+    return this.#serialize(() => this.#bringUp(true, fresh));
   }
 
   /** Check again: read Tailscale once more; start the phone port if it can now, stop it if Funnel came on. */
   check(): Promise<void> {
     if (!this.on) {
       return this.#serialize(async () => {
-        this.tailscale = await readTailscale(this.port ?? 0, this.options.runner, undefined, this.artifactPort ?? 0);
+        await this.readFresh();
       });
     }
     return this.#serialize(() => this.#bringUp());
@@ -247,6 +353,7 @@ export class PhoneAccess {
 
   async close(): Promise<void> {
     this.#closed = true;
+    await this.setup.close();
     await (this.#busy ?? Promise.resolve()).catch(() => {});
     await this.devices.flush();
     await this.#down();
@@ -308,6 +415,13 @@ export class PhoneAccess {
     return device;
   }
 
+  async setRemind(id: unknown, remind: unknown): Promise<PublicDevice | null> {
+    if (typeof id !== 'string' || typeof remind !== 'boolean') return null;
+    const device = await this.devices.setRemind(id, remind);
+    if (device) this.audit.write({ device: id, name: device.name, action: 'silent reminders', result: remind ? 'on' : 'off' });
+    return device;
+  }
+
   /** Every phone goes, and the push keys are made new: a subscription that survived anywhere can no longer be sent to. */
   async removeAll(): Promise<number> {
     const count = await this.devices.removeAll();
@@ -360,10 +474,14 @@ export class PhoneAccess {
           artifactServing: ts.artifactServing,
           artifactServingOther: ts.artifactServingOther,
           funnel: ts.funnel,
+          funnelPorts: ts.funnelPorts,
+          otherNames: ts.otherNames,
+          backend: ts.backend,
           problem: ts.problem,
           checkedAt: ts.checkedAt,
         }
         : null,
+      setup: this.setup.view(ts),
       devices: this.devices.list(),
       devicesWarning: this.devices.warning,
       pairing: {

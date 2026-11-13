@@ -1,17 +1,25 @@
 /**
- * Reading Tailscale (owner decision 1a): AIB only runs `tailscale status --json` and `tailscale serve status --json`, when phone
- * access starts and when the owner clicks Check again. It never changes the Tailscale setup; it shows the `tailscale serve` command
- * for the owner to run. AIB's own console has no window (main.ts ensureHiddenConsole), so the CLI opens none either.
+ * Reading Tailscale: `tailscale status --json --peers=false` and `tailscale serve status --json`, when phone access starts, on
+ * Check again, and while Settings > Remote control is on screen (every 3 s while a setup step waits, every 30 s otherwise;
+ * remote/setup.ts). The rule "AIB never changes your Tailscale setup" was replaced on 2026-11-12 (owner: "remote control setup is
+ * perfect"): AIB changes Tailscale only when the owner clicks a button that says so (remote/setup.ts), lists every command it ran in
+ * "What AIB changed on this PC", never turns Funnel on, and never runs serve reset, down, logout or an uninstaller.
+ * AIB's own console has no window (main.ts ensureHiddenConsole), so the CLI opens none either.
  *
  * Tests point AIB_TAILSCALE_CLI at a fake CLI (a JSON array: the command and its first arguments); it is read only when
- * AGENT_STUDIO_TEST=1.
+ * AGENT_STUDIO_TEST=1. With AGENT_STUDIO_TEST=1 and no fake, Tailscale reads as not installed: a test never reads the real one.
  */
+import { candidates, hookArgv, testMode } from './setup_cli.ts';
 
 export interface TailscaleState {
   /** The CLI was found and ran. */
   installed: boolean;
   /** Tailscale runs and is signed in on this PC. */
   signedIn: boolean;
+  /** Tailscale's BackendState: NoState, NeedsLogin, NeedsMachineAuth, Stopped, Starting, Running ('' when it could not be read). */
+  backend: string;
+  /** This PC's stable node ID (Self.ID), '' when unknown. */
+  nodeId: string;
   /** This PC's name on the tailnet, without the trailing dot ("studio-pc.tail-a1b2.ts.net"), or ''. */
   name: string;
   /** The machine name alone ("studio-pc") and the tailnet ("tail-a1b2.ts.net"). */
@@ -31,6 +39,10 @@ export interface TailscaleState {
   artifactServingOther: string;
   /** Funnel (public internet) is on for this name: phone access refuses to start. */
   funnel: boolean;
+  /** The ports Funnel makes public for this name, and what each one goes to ("443 → http://127.0.0.1:3000"). */
+  funnelPorts: { port: number; to: string }[];
+  /** Shares under another name (the PC's old name): shown, never touched. */
+  otherNames: string[];
   /** Why something could not be read, for the Devices page ('' when all went well). */
   problem: string;
   checkedAt: number;
@@ -38,33 +50,10 @@ export interface TailscaleState {
 
 export type Runner = (args: string[]) => Promise<{ code: number; stdout: string } | null>;
 
-const WIN = Deno.build.os === 'windows';
-const CANDIDATES = WIN
-  ? ['tailscale', 'C:\\Program Files\\Tailscale\\tailscale.exe', 'C:\\Program Files (x86)\\Tailscale\\tailscale.exe']
-  : [
-    'tailscale',
-    '/usr/bin/tailscale',
-    '/usr/local/bin/tailscale',
-    '/opt/homebrew/bin/tailscale',
-    '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
-  ];
-
-/** The command line that runs the CLI: the test fake, or the first candidate that starts. */
-function fakeCli(): string[] | null {
-  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1') return null;
-  const raw = Deno.env.get('AIB_TAILSCALE_CLI');
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length && parsed.every((p) => typeof p === 'string') ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 export const defaultRunner: Runner = async (args) => {
-  const fake = fakeCli();
-  const commands = fake ? [fake] : CANDIDATES.map((c) => [c]);
+  const fake = hookArgv('AIB_TAILSCALE_CLI');
+  if (!fake && testMode()) return null; // a test without a fake never reads the real Tailscale
+  const commands = fake ? [fake] : candidates('tailscale').map((c) => [c]);
   for (const command of commands) {
     try {
       const child = new Deno.Command(command[0], {
@@ -103,40 +92,80 @@ function jsonPart(text: string): string {
 }
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
 
-/** What `tailscale serve status --json` says about https://<name>:443/ (the phone port), https://<name>:8443/ (the artifact port)
- * and Funnel (on for any port of this name: phone access refuses to start). */
-export function readServe(
-  serve: Json,
-  name: string,
-  port: number,
-  artifactPort = 0,
-): { serving: boolean; servingOther: string; artifactServing: boolean; artifactServingOther: string; funnel: boolean } {
-  let funnel = false;
-  for (const [key, on] of Object.entries(obj(serve.AllowFunnel))) {
-    if (on && cleanName(key.replace(/:\d+$/, '')) === name) funnel = true;
-  }
-  const web = obj(serve.Web);
-  const at = (httpsPort: string, want: number): [boolean, string] => {
-    let serving = false;
-    let other = '';
-    for (const [key, value] of Object.entries(web)) {
-      const host = cleanName(key.replace(/:\d+$/, ''));
-      const hostPort = key.match(/:(\d+)$/)?.[1] ?? '443';
-      if (host !== name || hostPort !== httpsPort) continue;
-      const root = obj(obj(obj(value).Handlers)['/']);
-      const proxy = typeof root.Proxy === 'string' ? root.Proxy : '';
-      const m = proxy.match(/^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost):(\d+)\/?$/i) ?? proxy.match(/^(\d+)$/);
-      if (m && want && Number(m[1]) === want) serving = true;
-      else other = proxy || 'something else';
-    }
-    return [serving, serving ? '' : other];
-  };
-  const [serving, servingOther] = at('443', port);
-  const [artifactServing, artifactServingOther] = at('8443', artifactPort);
-  return { serving, servingOther, artifactServing, artifactServingOther, funnel };
+/** One serve config's Web and TCP maps, plus every Foreground session's (`tailscale serve` without --bg puts its config there). */
+function serveConfigs(serve: Json): Json[] {
+  const out = [serve];
+  for (const session of Object.values(obj(serve.Foreground))) out.push(obj(session));
+  return out;
 }
 
-/** Read Tailscale's state. Never throws: what could not be read is in `problem`. */
+export interface ServeRead {
+  serving: boolean;
+  servingOther: string;
+  artifactServing: boolean;
+  artifactServingOther: string;
+  funnel: boolean;
+  funnelPorts: { port: number; to: string }[];
+  otherNames: string[];
+}
+
+/** What `tailscale serve status --json` says about https://<name>:443/ (the phone port), https://<name>:8443/ (the artifact port)
+ * and Funnel (on for any port of this name: phone access refuses to start). A raw TCP forward (`serve --tcp`) or a Foreground
+ * share on 443 / 8443 counts as "something else" there. Shares under another name are listed in otherNames and never touched. */
+export function readServe(serve: Json, name: string, port: number, artifactPort = 0): ServeRead {
+  const configs = serveConfigs(serve);
+  const otherNames = new Set<string>();
+  const target = (httpsPort: string): string => {
+    for (const config of configs) {
+      for (const [key, value] of Object.entries(obj(config.Web))) {
+        const host = cleanName(key.replace(/:\d+$/, ''));
+        const hostPort = key.match(/:(\d+)$/)?.[1] ?? '443';
+        if (host !== name) {
+          if (host) otherNames.add(host);
+          continue;
+        }
+        if (hostPort !== httpsPort) continue;
+        const handlers = obj(obj(value).Handlers);
+        const root = obj(handlers['/']);
+        if (typeof root.Proxy === 'string' && root.Proxy) return root.Proxy;
+        if (typeof root.Path === 'string' && root.Path) return root.Path;
+        if (typeof root.Text === 'string') return 'a text page';
+        if (Object.keys(handlers).length) return 'something else';
+      }
+      const tcp = obj(obj(config.TCP)[httpsPort]);
+      if (typeof tcp.TCPForward === 'string' && tcp.TCPForward) return `tcp://${tcp.TCPForward}`;
+    }
+    return '';
+  };
+  const ours = (to: string, want: number): boolean => {
+    const m = to.match(/^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost):(\d+)\/?$/i) ?? to.match(/^(\d+)$/);
+    return !!m && !!want && Number(m[1]) === want;
+  };
+  const phone = target('443');
+  const artifacts = target('8443');
+  const funnelPorts: { port: number; to: string }[] = [];
+  for (const config of configs) {
+    for (const [key, on] of Object.entries(obj(config.AllowFunnel))) {
+      if (!on || cleanName(key.replace(/:\d+$/, '')) !== name) continue;
+      const p = Number(key.match(/:(\d+)$/)?.[1] ?? '443');
+      if (!funnelPorts.some((f) => f.port === p)) funnelPorts.push({ port: p, to: target(String(p)) || 'nothing yet' });
+    }
+  }
+  const serving = ours(phone, port);
+  const artifactServing = ours(artifacts, artifactPort);
+  return {
+    serving,
+    servingOther: serving ? '' : phone,
+    artifactServing,
+    artifactServingOther: artifactServing ? '' : artifacts,
+    funnel: funnelPorts.length > 0,
+    funnelPorts,
+    otherNames: [...otherNames].sort(),
+  };
+}
+
+/** Read Tailscale's state. Never throws: what could not be read is in `problem` (not_installed, not_running, signed_out,
+ * needs_machine_auth, stopped, starting). */
 export async function readTailscale(
   port: number,
   run: Runner = defaultRunner,
@@ -146,6 +175,8 @@ export async function readTailscale(
   const state: TailscaleState = {
     installed: false,
     signedIn: false,
+    backend: '',
+    nodeId: '',
     name: '',
     machine: '',
     tailnet: '',
@@ -156,10 +187,12 @@ export async function readTailscale(
     artifactServing: false,
     artifactServingOther: '',
     funnel: false,
+    funnelPorts: [],
+    otherNames: [],
     problem: '',
     checkedAt: clock(),
   };
-  const status = await run(['status', '--json']);
+  const status = await run(['status', '--json', '--peers=false']);
   if (status === null) {
     state.problem = 'not_installed';
     return state;
@@ -173,9 +206,19 @@ export async function readTailscale(
     return state;
   }
   const self = obj(data.Self);
-  state.signedIn = data.BackendState === 'Running' && !!self.DNSName;
+  state.backend = typeof data.BackendState === 'string' ? data.BackendState : '';
+  state.nodeId = typeof self.ID === 'string' ? self.ID : '';
+  state.signedIn = state.backend === 'Running' && !!self.DNSName;
   if (!state.signedIn) {
-    state.problem = data.BackendState === 'NeedsLogin' ? 'signed_out' : 'not_running';
+    state.problem = state.backend === 'NeedsLogin'
+      ? 'signed_out'
+      : state.backend === 'NeedsMachineAuth'
+      ? 'needs_machine_auth'
+      : state.backend === 'Stopped'
+      ? 'stopped'
+      : state.backend === 'Starting'
+      ? 'starting'
+      : 'not_running';
     return state;
   }
   state.name = cleanName(self.DNSName);
@@ -198,12 +241,12 @@ export async function readTailscale(
   return state;
 }
 
-/** The command the owner runs once (Devices shows it with a Copy button). */
+/** The phone share command (AIB runs it on Share AIB; the page shows it with a Copy button when a step fails). */
 export function serveCommand(port: number): string {
   return `tailscale serve --bg --https=443 http://127.0.0.1:${port}`;
 }
 
-/** Phase D: the second command, for artifacts on the phone (https 8443 to the artifact port). */
+/** The artifact share command (https 8443 to the artifact port). */
 export function artifactServeCommand(port: number): string {
   return `tailscale serve --bg --https=8443 http://127.0.0.1:${port}`;
 }

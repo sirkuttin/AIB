@@ -332,7 +332,7 @@ Deno.test("Tailscale: name without the trailing dot, login, HTTPS, serve target 
     true,
     false,
   ]);
-  assertEquals(fake.calls, [["status", "--json"], [
+  assertEquals(fake.calls, [["status", "--json", "--peers=false"], [
     "serve",
     "status",
     "--json",
@@ -344,6 +344,8 @@ Deno.test("Tailscale: name without the trailing dot, login, HTTPS, serve target 
     artifactServing: false,
     artifactServingOther: "",
     funnel: false,
+    funnelPorts: [],
+    otherNames: [],
   });
   assertEquals(
     (await readTailscale(1, fakeTailscale({ status: null }).runner)).problem,

@@ -381,7 +381,7 @@ Deno.test({
       for (const [path, body] of tries) {
         const r = await post(s, phone.token, path, body);
         assertEquals([r.status, r.json.code], [403, 'scope'], path);
-        assert(String(r.json.error).includes('Settings → Devices'), path);
+        assert(String(r.json.error).includes('Settings → Remote control'), path);
       }
       assertEquals(s.liveCalls.length, 0);
       const home = await raw(s.phonePort(), 'GET', '/api/remote/home', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
