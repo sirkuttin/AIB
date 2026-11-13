@@ -5,6 +5,7 @@
  * Content Security Policy violation.
  */
 import { assert } from './_assert.ts';
+import { PAGE_KEY, withPageKey } from './_page_key.ts';
 import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import { docsTool } from '../../outputs/agent-studio/server/web/docs_routes.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
@@ -74,6 +75,7 @@ export async function studio(root?: string, port = 0) {
     claudeProjects: state,
     ompSessions: state,
     shutdown: () => {},
+    pageKey: PAGE_KEY, // the browser's link carries it (Page.goto)
   });
   const web = new WebServer(ctx);
   const bound = await web.listen(port);
@@ -302,7 +304,7 @@ export class Page {
     });
   }
   async goto(url: string): Promise<void> {
-    await this.send('Page.navigate', { url });
+    await this.send('Page.navigate', { url: withPageKey(url) }); // the launch key, as the app's window has it
     await this.waitFor('document.readyState === "complete"', 10000);
   }
   async viewport(width: number, height = 900): Promise<void> {

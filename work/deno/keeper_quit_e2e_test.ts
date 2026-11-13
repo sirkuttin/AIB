@@ -16,7 +16,7 @@
  *      agent process, the same keeper process.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { Fixture, httpJson, nativePath, until } from './_host_fixture.ts';
+import { Fixture, httpJson, nativePath, PAGE_KEY, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { builtDist, NEXT_VERSION } from './_build_cache.ts';
 import { ownerPort, pickPort, refusedPort } from './_ports.ts';
@@ -121,6 +121,7 @@ Deno.test({
     const saved = Deno.env.toObject();
     const env: Record<string, string> = {
       AGENT_STUDIO_STATE_DIR: fx.state,
+      AIB_PAGE_KEY: PAGE_KEY, // bootstrap gives the token only with the launch key (web/page_access.ts)
       APPDATA: `${fx.root}\\appdata`,
       LOCALAPPDATA: `${fx.root}\\localappdata`,
       AIB_UPDATE_API_BASE: `http://127.0.0.1:${refusedPort()}`, // no update check reaches anything

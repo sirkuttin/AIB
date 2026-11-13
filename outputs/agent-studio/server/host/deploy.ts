@@ -66,7 +66,7 @@ async function fetchJson(port: number, path: string, headers: Record<string, str
   return JSON.parse(new TextDecoder().decode(response.body));
 }
 
-/** GET a Studio route as JSON; every route but bootstrap needs the page token, which bootstrap hands out. */
+/** GET a Studio route as JSON with the token bootstrap hands out (an older server's; a current one gives it only to the page). */
 export async function get(port: number, path: string, timeout = 5): Promise<Json> {
   const headers: Record<string, string> = {};
   if (path !== '/api/live/bootstrap') {
@@ -76,6 +76,20 @@ export async function get(port: number, path: string, timeout = 5): Promise<Json
   }
   const reply = await fetchJson(port, path, headers, timeout);
   return isDict(reply) ? reply : {};
+}
+
+/**
+ * Which chats are working, for the idle wait: GET /api/live/idle, which needs no token (the page token is only for the page:
+ * web/page_access.ts). A server older than that route (404) still hands its token to bootstrap: its /api/live/list then.
+ */
+export async function idleListing(port: number, timeout = 5): Promise<Json> {
+  try {
+    const reply = await fetchJson(port, '/api/live/idle', {}, timeout);
+    return isDict(reply) ? reply : {};
+  } catch (error) {
+    if (error instanceof UrlError && /^HTTP Error 404:/.test(error.message)) return await get(port, '/api/live/list', timeout);
+    throw error;
+  }
 }
 
 /** Why the server is not safe to restart, as human-readable strings (empty list = idle). */
@@ -137,7 +151,7 @@ export async function waitUntilIdle(
   while (true) {
     let reasons: string[];
     try {
-      reasons = busyReasons(await get(port, '/api/live/list'));
+      reasons = busyReasons(await idleListing(port));
     } catch (error) {
       if (error instanceof UrlError) throw new Error(`AIB on port ${port} stopped answering: ${error.message}`);
       throw error;
@@ -244,7 +258,7 @@ export async function restart(
     for (let i = 0; i < 60; i++) {
       try {
         const boot = await get(port, '/api/live/bootstrap', 2);
-        const listing = await get(port, '/api/live/list', 5);
+        const listing = await idleListing(port, 5);
         return [process ? process.pid : (isInt(boot.pid) ? boot.pid : null), boot, listing];
       } catch (error) {
         if (!(error instanceof UrlError)) throw error;
@@ -418,7 +432,7 @@ export async function main(argv: string[], hooks: Hooks & { root?: string } = {}
       `AIB on port ${args.port}: process ${pid} (${truthy(boot.hostMode) ? pyStr(boot.hostMode) : 'no agent host'})\n  ${commandLine}`,
     );
     if (args.dry_run) {
-      const reasons = busyReasons(await get(args.port, '/api/live/list'));
+      const reasons = busyReasons(await idleListing(args.port));
       const steps = [
         ...(plan.wait ? ['wait until idle'] : []),
         ...(plan.stop_host ? ['stop the agent host'] : []),
@@ -437,11 +451,13 @@ export async function main(argv: string[], hooks: Hooks & { root?: string } = {}
       describe(c as Json)
     );
     out(`Restarted: process ${pyStr(newPid)}, instance ${pyStr(newBoot.instanceId ?? null)}`);
-    let inside: unknown = null;
-    try {
-      inside = (await get(args.port, '/api/live/settings')).packageContext ?? null;
-    } catch {
-      inside = null;
+    let inside: unknown = newBoot.packageContext ?? null; // bootstrap says it (a current server gives the token only to the page)
+    if (!truthy(inside) && !Object.hasOwn(newBoot, 'packageContext')) {
+      try {
+        inside = (await get(args.port, '/api/live/settings')).packageContext ?? null;
+      } catch {
+        inside = null;
+      }
     }
     if (truthy(inside)) {
       out(`WARNING: the new AIB still runs inside ${pyStr(inside)}'s sandbox, so its data is in that app's private folder.`);

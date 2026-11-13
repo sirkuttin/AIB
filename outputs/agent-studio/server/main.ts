@@ -42,6 +42,7 @@ import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
+import { takeLaunchKeyFromEnv } from './web/page_access.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -122,6 +123,9 @@ export async function main(argv: string[]): Promise<void> {
   // binds its own ports in every mode (the page and the artifact origin on port + 1, the agent host's port), so drop it first. Its
   // port is kept: in window mode it redirects to our page (desktop/serve_address.ts). In a desktop binary the listeners are not
   // Deno.serve (platform/http_serve.ts), and every mode without the app window keeps the runtime's startup window hidden.
+  // The page's launch key (web/page_access.ts) a launcher may choose (tests): taken out of the environment before anything starts,
+  // so no agent, terminal, keeper or agent host this process starts can read it.
+  const launchKey = takeLaunchKeyFromEnv();
   let runtimePort: number | null = null;
   try {
     runtimePort = servePort(Deno.env.get('DENO_SERVE_ADDRESS'));
@@ -261,6 +265,7 @@ export async function main(argv: string[]): Promise<void> {
     stores: studio
       ? { conversations: studio.conversations, projectPrefs: studio.projectPrefs, readState: studio.readState, settings: studio.settings }
       : undefined,
+    pageKey: launchKey,
   });
   // A known project folder inside a repo wins for chats in any worktree; saved worktree chats map back to their project.
   worktrees.known.projects = () => [...ctx.projectPrefs.projects.keys()].filter((k) => k.startsWith('w:')).map((k) => k.slice(2));
@@ -388,7 +393,7 @@ export async function main(argv: string[]): Promise<void> {
   if (desktop) {
     const { nativeShell } = await import('./desktop/native.ts');
     const app = desktopApp = new DesktopApp(nativeShell(), {
-      url: `${url}/`,
+      url: ctx.pageAccess.pageUrl(url), // `${url}/#aib-key=...`: the window is the page that gets the token (web/page_access.ts)
       stateDir,
       trayIcon: trayIconPng(),
       busyCount: async () => (await host.busyConnections()).length,
@@ -435,12 +440,20 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
   writeStartedMarker(stateDir); // `serve`: up once it listens
+  // The link with the launch key (web/page_access.ts): a browser that opens it once is given the page token from then on. Printed
+  // only to a console a person sees, never into a redirected log file another program could read.
+  const pageLink = ctx.pageAccess.pageUrl(url);
+  let onConsole = false;
+  try {
+    onConsole = Deno.stdout.isTerminal();
+  } catch { /* no stdout */ }
+  if (onConsole) console.log(`Open AIB in a browser with this link (it connects that browser to this AIB): ${pageLink}`);
   if (options.open) {
     const opener = Deno.build.os === 'windows'
-      ? ['cmd', '/c', 'start', '', url]
+      ? ['cmd', '/c', 'start', '', pageLink]
       : Deno.build.os === 'darwin'
-      ? ['open', url]
-      : ['xdg-open', url];
+      ? ['open', pageLink]
+      : ['xdg-open', pageLink];
     new Deno.Command(opener[0], { args: opener.slice(1), stdout: 'null', stderr: 'null' }).spawn();
   }
 }

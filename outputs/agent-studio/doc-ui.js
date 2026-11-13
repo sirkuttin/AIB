@@ -556,7 +556,7 @@
     if (checking) return;
     checking = true;
     try {
-      const b = await (await fetch('/api/live/bootstrap', { cache: 'no-store' })).json();
+      const b = await (await fetch('/api/live/bootstrap', window.AIBPageAuth ? window.AIBPageAuth.init({ cache: 'no-store' }) : { cache: 'no-store' })).json();
       if (b && b.token && b.token !== D.token && D.session) {
         D.token = b.token;
         failures = 0;
@@ -1343,7 +1343,7 @@
     layout();
     for (const h of document.querySelectorAll('[data-icon]')) h.replaceChildren(icon(h.dataset.icon));
     try {
-      const b = await (await fetch('/api/live/bootstrap', { cache: 'no-store' })).json();
+      const b = await (await fetch('/api/live/bootstrap', window.AIBPageAuth ? window.AIBPageAuth.init({ cache: 'no-store' }) : { cache: 'no-store' })).json();
       D.token = b.token;
       D.emit('boot');
       await open(params.get('new') === '1');

@@ -415,11 +415,32 @@ def deno_cache(base):
     return str(pathlib.Path(base.get('XDG_CACHE_HOME') or home / '.cache') / 'deno')
 
 
+def page_key(demo):
+    """The demo Studio's page launch key (<demo>/page-key.txt, made once): AIB gives the page token to bootstrap only with it
+    (server/web/page_access.ts). A browser opens the demo with it in the link (#aib-key=...), the scripts send it as a header."""
+    path = pathlib.Path(demo) / 'page-key.txt'
+    try:
+        key = path.read_text(encoding='utf-8').strip()
+    except OSError:
+        key = ''
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', key):
+        key = 'demo-page-key-' + os.urandom(16).hex()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(key, encoding='utf-8')
+    return key
+
+
+def page_link(port, demo):
+    """The demo's page with its launch key: open this in a browser."""
+    return f'http://127.0.0.1:{port}/chat.html#aib-key={page_key(demo)}'
+
+
 def demo_env(demo, base=None):
-    """The demo Studio's environment: `base` (default os.environ) with the home folder and every agent folder in <demo>/home."""
+    """The demo Studio's environment: `base` (default os.environ) with the home folder and every agent folder in <demo>/home, and
+    the page's launch key (page_key)."""
     base = dict(os.environ if base is None else base)
     home = pathlib.Path(demo) / 'home'
-    env = dict(base, DENO_DIR=deno_cache(base), HOME=str(home), USERPROFILE=str(home))
+    env = dict(base, DENO_DIR=deno_cache(base), HOME=str(home), USERPROFILE=str(home), AIB_PAGE_KEY=page_key(demo))
     if os.name == 'nt':
         env['HOMEDRIVE'], env['HOMEPATH'] = os.path.splitdrive(str(home))
     for name, sub in AGENT_HOME_VARS.items():
@@ -467,10 +488,10 @@ def wait_ready(port, process, timeout):
     return False
 
 
-def publish_artifact(port, session):
+def publish_artifact(port, session, demo):
     """One artifact in chat A1, made through Studio's own API (the same call the artifact tool makes)."""
     base = f'http://127.0.0.1:{port}'
-    token = json.loads(http(base + '/api/live/bootstrap')[1])['token']
+    token = json.loads(http(base + '/api/live/bootstrap', headers={'X-AIB-Page-Key': page_key(demo)})[1])['token']
     page = ('<!doctype html><meta charset="utf-8"><title>Rate limits</title><body style="font:16px system-ui;margin:2rem">'
             '<h1>Rate limits</h1><table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>Route</th><th>Limit</th></tr>'
             '<tr><td>/login</td><td>5 / minute</td></tr><tr><td>/search</td><td>30 / minute</td></tr><tr><td>/export</td><td>2 / minute</td></tr></table></body>')
@@ -528,11 +549,11 @@ def start(options):
     if fresh:
         try:
             chats = json.loads((demo / 'chats.json').read_text(encoding='utf-8'))
-            if not publish_artifact(options.port, chats['a1']):
+            if not publish_artifact(options.port, chats['a1'], demo):
                 note = ' (the demo artifact could not be published)'
         except (urllib.error.URLError, OSError, ValueError, KeyError) as error:
             note = f' (the demo artifact could not be published: {error})'
-    print(f'Demo Studio: http://127.0.0.1:{options.port}/chat.html{note}')
+    print(f'Demo Studio: {page_link(options.port, demo)}{note}')
     print(f'PID: {process.pid}')
     print(f'Data: {demo}')
     where = f' --dir "{options.dir}"' if options.dir else ''

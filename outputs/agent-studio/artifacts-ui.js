@@ -904,7 +904,7 @@
 
   async function getToken(force) {
     if (S.token && !force) return S.token;
-    const r = await win.fetch('/api/live/bootstrap');
+    const r = await win.fetch('/api/live/bootstrap', win.AIBPageAuth ? win.AIBPageAuth.init() : undefined);
     if (!r.ok) throw new Error('AIB is not reachable');
     const b = await r.json();
     S.token = b.token || '';

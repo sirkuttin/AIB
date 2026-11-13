@@ -38,6 +38,7 @@ PY_REF = WORK / 'python-reference'   # the Python reference server
 READY = re.compile(r'AIB: http://127\.0\.0\.1:(\d+)')
 FORBIDDEN_PORTS = {8767, 8768}
 TOKEN_HEADER = 'X-Studio-Token'
+PAGE_KEY_HEADER = 'X-AIB-Page-Key'
 
 
 def deno_executable():
@@ -174,8 +175,11 @@ class Server:
         command = self.command() + ['--port', '0', '--state-dir', str(self.state_dir), '--omp-sessions', str(self.omp_dir),
                                     '--claude-projects', str(self.claude_dir), '--no-auto-reconnect', '--no-owner-announcements',
                                     *self.extra_args]
+        # The page's launch key: the Deno server hands the page token to bootstrap only with it (server/web/page_access.ts); the
+        # Python reference ignores it.
+        self.page_key = 'contract-page-key-' + os.urandom(16).hex()
         env = dict(os.environ, AGENT_STUDIO_TEST='1', AGENT_STUDIO_STATE_DIR=str(self.state_dir), PYTHONDONTWRITEBYTECODE='1',
-                   **self.env_extra)
+                   AIB_PAGE_KEY=self.page_key, **self.env_extra)
         if self.effective_kind() == 'deno-split':
             env.setdefault('AIB_KEEPER', '0')   # split mode exists only as the fallback for a keeper that cannot run
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -277,8 +281,12 @@ class Server:
         finally:
             connection.close()
 
-    def bootstrap(self):
-        return self.request('GET', '/api/live/bootstrap', {'Host': f'127.0.0.1:{self.port}', 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors'})
+    def bootstrap(self, page_key=True):
+        """GET bootstrap as the page does: with its launch key (page_key=False: as any other local program)."""
+        headers = {'Host': f'127.0.0.1:{self.port}', 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors'}
+        if page_key:
+            headers[PAGE_KEY_HEADER] = self.page_key
+        return self.request('GET', '/api/live/bootstrap', headers)
 
     def get(self, path, **headers):
         return self.request('GET', path, self.page_headers(**headers))

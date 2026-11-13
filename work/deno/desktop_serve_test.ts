@@ -6,7 +6,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { implementation, serve } from '../../outputs/agent-studio/server/platform/http_serve.ts';
 import { redirectTarget, servePort, startBlank, startRedirect } from '../../outputs/agent-studio/server/desktop/serve_address.ts';
-import { DENO, Fixture, MAIN, TEST_OPTIONS, until } from './_host_fixture.ts';
+import { DENO, Fixture, MAIN, PAGE_KEY, TEST_OPTIONS, until } from './_host_fixture.ts';
 import { waitListenedPort } from './_ports.ts';
 
 function withImpl<T>(impl: 'node' | 'deno', fn: () => Promise<T>): Promise<T> {
@@ -176,7 +176,7 @@ Deno.test({
     const port = await waitListenedPort(() => fx.read(log), 'serve', 60, () => exited); // the OS picked it
     const origin = `http://127.0.0.1:${port}`;
     const boot = await until(async () => {
-      const r = await fetch(`${origin}/api/live/bootstrap`);
+      const r = await fetch(`${origin}/api/live/bootstrap`, { headers: { 'X-AIB-Page-Key': PAGE_KEY } });
       return r.status === 200 ? await r.json() : (await r.body?.cancel(), null);
     }, 'bootstrap', 60);
     const token = String(boot.token);
