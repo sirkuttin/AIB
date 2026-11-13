@@ -26,7 +26,7 @@ def masked(value, server):
             text = text.replace(json.dumps(spelling)[1:-1], '<tmp>')
     value = json.loads(text)
     if server.effective_kind() in ('deno', 'deno-split'):
-        value = drop_steer(value)
+        value = drop_inbox(drop_steer(value))
         if isinstance(value, dict):
             # Deno-only (phone UI v2): the chat names' revision in the list answer (phone renames reach the PC page); the reference has none
             value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames')}
@@ -44,6 +44,21 @@ def drop_steer(value):
         return {k: drop_steer(v) for k, v in value.items() if not (snapshot and k in STEER_KEYS)}
     if isinstance(value, list):
         return [drop_steer(v) for v in value]
+    return value
+
+
+# Deno-only (beta.10 inbox phase 1): the inbox's facts in a connection's attention block; the reference keeps the old attention
+# ({state, needs, turnEndedAt, busySince}). inbox-rules.js decides them (work/test_inbox_rules.js, work/deno/inbox_facts_test.ts).
+INBOX_FACTS = ('phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question')
+
+
+def drop_inbox(value):
+    """The value without the inbox facts of every attention block in it (a dict with needs, state and phase)."""
+    if isinstance(value, dict):
+        attention = 'needs' in value and 'state' in value and 'phase' in value
+        return {k: drop_inbox(v) for k, v in value.items() if not (attention and k in INBOX_FACTS)}
+    if isinstance(value, list):
+        return [drop_inbox(v) for v in value]
     return value
 
 

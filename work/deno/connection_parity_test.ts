@@ -248,6 +248,14 @@ const DROP = new Set([
   'toolBackground',
 ]);
 
+/**
+ * The inbox's facts in attention() (feat/inbox-phase1): Deno only. The Python reference keeps the old attention ({state, needs,
+ * turnEndedAt, busySince}); the rules behind these live in one file (inbox-rules.js), covered by work/test_inbox_rules.js and
+ * work/deno/inbox_facts_test.ts. Dropped only from attention objects ('error' is also a snapshot key).
+ */
+const INBOX_FACTS = new Set(['phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question']);
+const isAttention = (o: Json) => 'needs' in o && 'state' in o && 'phase' in o;
+
 /** Same shape with times dropped, random keys and terminal ids numbered in order of appearance, the temp folder replaced, the connection id gone. */
 function scrub(run: Json): Json {
   const cwd = run.cwd as string;
@@ -266,8 +274,9 @@ function scrub(run: Json): Json {
     if (Array.isArray(value)) return value.map(walk);
     if (value === null || typeof value !== 'object') return value;
     const out: Json = {};
+    const attention = isAttention(value as Json);
     for (const [k, v] of Object.entries(value)) {
-      if (DROP.has(k)) continue;
+      if (DROP.has(k) || (attention && INBOX_FACTS.has(k))) continue;
       if (
         (k === 'key' || k === 'leaseId') && typeof v === 'string' &&
         /^[A-Za-z0-9_-]{24}$/.test(v)
