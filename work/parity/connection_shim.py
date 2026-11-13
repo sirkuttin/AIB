@@ -48,6 +48,8 @@ def condition(c, spec, state=None):
         return lambda: c.ready
     if name == 'closed':
         return lambda: c.closed and not c.busy
+    if name == 'error_text':   # error_text:<substring>: an error event says it
+        return lambda: any(e['kind'] == 'error' and arg in str((e['data'] or {}).get('message', '')) for e in list(c.events))
     if name == 'wrote':    # wrote:<method>: the request went to the agent
         return lambda: any(isinstance(w, dict) and w.get('method') == arg for w in list(state['writes']))
     if name == 'events':   # events:<kind>:<count>

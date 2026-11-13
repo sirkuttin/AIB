@@ -39,6 +39,8 @@ function condition(c: Connection, spec: string, state: Json): () => boolean {
       return () => c.ready;
     case 'closed':
       return () => c.closed && !c.busy;
+    case 'error_text': // error_text:<substring>: an error event says it
+      return () => c.events.some((e) => e.kind === 'error' && String((e.data as Json).message ?? '').includes(arg));
     case 'wrote': // wrote:<method>: the request went to the agent
       return () => (state.writes as Json[]).some((w) => w.method === arg);
     case 'events': {
@@ -704,6 +706,8 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'idle' },
       { op: 'prompt', text: 'die' },
       { op: 'wait', for: 'closed' },
+      // closed comes first in Python (its reader thread, at the agent's exit); the turn's own failure follows from the turn's thread
+      { op: 'wait', for: 'error_text:ACP connection closed' },
       { op: 'cancel' },
       { op: 'public' },
     ],
@@ -845,6 +849,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'permissions' },
       { op: 'kill' },
       { op: 'wait', for: 'closed' },
+      { op: 'wait', for: 'error_text:ACP connection closed' }, // the turn's failure, after closed in Python (see above)
       { op: 'public' },
       { op: 'close' },
     ],
