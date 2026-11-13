@@ -7,7 +7,8 @@
  *   permission   only an option whose kind is allow_once or reject_once, whose id is not a permission mode (Claude's plan exit offers
  *                acceptEdits / bypassPermissions / default: each switches the chat's mode) and whose id or label does not say
  *                "always" / "don't ask again" / "session". AIB's own merge tools are PC only. Anything unclear is refused.
- *   prompt/steer/queue plain text only: no attachments, nothing that starts with "/" (an agent or AIB command such as /doc).
+ *   prompt/steer/queue text, and pictures and files as bytes (phoneAttachments: never a path; the PC composer's types and limits;
+ *                what this chat's agent can take), nothing that starts with "/" (an agent or AIB command such as /doc).
  *   queue-*      only messages that are queued in that chat right now (not one being sent); queue-resume only while the chat has
  *                queued messages (a Stop or a failed turn paused them).
  *   authenticate never from a phone.
@@ -16,6 +17,14 @@
  * POST /api/remote/continue, remote/saved.ts; an action never starts a chat by itself).
  */
 import type { WebContext } from '../web/server.ts';
+import {
+  MAX_FILES,
+  MAX_IMAGES,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  validateFileAttachments,
+  validateImageAttachments,
+} from '../acp/attachments.ts';
+import { ValueError } from '../core/py.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -53,9 +62,20 @@ export const REFUSALS = {
   option: () => new Refusal(403, 'pc_only', 'That choice is on your PC only. From a phone you can allow or deny once.'),
   merge: () => new Refusal(403, 'pc_only', "AIB's merge requests are approved on your PC only."),
   signIn: () => new Refusal(403, 'pc_only', 'Signing an agent in is done on your PC only.'),
-  attachments: () => new Refusal(403, 'text_only', 'From a phone you can send text only. Add files in AIB on your PC.'),
+  /** A path, a link or any field but a file's name, type and bytes: a phone sends the file itself. */
+  bytesOnly: () => new Refusal(400, 'bytes_only', 'Attach the file itself. A phone cannot send a path or a link to a file.'),
+  tooMany: () => new Refusal(413, 'too_many', `Attach up to ${MAX_IMAGES} pictures and ${MAX_FILES} files to one message.`),
+  tooBig: (why: string) => new Refusal(413, 'too_big', why),
+  wrongType: (why: string) => new Refusal(415, 'wrong_type', why),
+  noPictures: (agent: string) => new Refusal(403, 'no_pictures', `${agent} can't take pictures. Remove the picture and send again.`),
+  noBinary: (agent: string, names: string[]) =>
+    new Refusal(
+      403,
+      'text_files_only',
+      `${agent} can take text files only, not ${names.join(', ')}. Remove ${names.length === 1 ? 'it' : 'them'} and send again.`,
+    ),
   command: () => new Refusal(403, 'text_only', 'Messages that start with / are commands. Type them in AIB on your PC.'),
-  empty: () => new Refusal(400, 'empty', 'Type a message first.'),
+  empty: () => new Refusal(400, 'empty', 'Type a message or attach something first.'),
   tooLong: () => new Refusal(400, 'too_long', `A message from a phone can be at most ${MAX_TEXT} characters.`),
   notQueued: () => new Refusal(409, 'not_queued', 'That message is no longer waiting in this chat (it may already have been sent).'),
   bad: () => new Refusal(400, 'invalid', 'Invalid request'),
@@ -137,19 +157,108 @@ async function liveNow(ctx: WebContext, id: string): Promise<Json> {
   return state;
 }
 
-function text(body: Json): string {
-  const value = body.text;
+function text(body: Json, attached = false): string {
+  const value = body.text ?? (attached ? '' : undefined);
   if (!isStr(value)) throw REFUSALS.empty();
-  if (!value.trim()) throw REFUSALS.empty();
+  if (!value.trim() && !attached) throw REFUSALS.empty();
   if (value.length > MAX_TEXT) throw REFUSALS.tooLong();
   if (value.trimStart().startsWith('/')) throw REFUSALS.command();
   return value;
 }
 
-function noFiles(body: Json): void {
-  const a = body.attachments;
-  if (a !== undefined && a !== null && !(Array.isArray(a) && a.length === 0)) throw REFUSALS.attachments();
-  for (const k of ['files', 'images', 'file']) if (body[k] !== undefined && body[k] !== null) throw REFUSALS.attachments();
+/** Fields of a message body that would name a file instead of carrying it, or the old ways of sending one. */
+const NOT_BYTES = ['files', 'images', 'file', 'path', 'paths', 'uri', 'url', 'filePath'];
+const IMAGE_KEYS = new Set(['type', 'mimeType', 'data']);
+const FILE_KEYS = new Set(['type', 'name', 'mimeType', 'data']);
+const PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** What a chat's agent can take (its promptCapabilities). */
+export interface Takes {
+  pictures: boolean;
+  binary: boolean;
+  audio: boolean;
+}
+export function takesOf(state: Json): Takes {
+  const caps = obj(state.promptCapabilities);
+  return { pictures: caps.image === true, binary: caps.embeddedContext === true, audio: caps.audio === true };
+}
+
+const AGENT_LABELS: Record<string, string> = { claude: 'Claude Code', omp: 'OMP', codex: 'Codex', gemini: 'Gemini' };
+export const agentLabel = (provider: unknown): string =>
+  (isStr(provider) && provider && (AGENT_LABELS[provider] ?? provider.slice(0, 40))) || 'This agent';
+
+/**
+ * The pictures and files of a phone message: bytes only (base64 `data`, a display name and a type; never a path, a link or any
+ * other field), the PC composer's types and limits (acp/attachments.ts: 4 pictures of PNG, JPEG, GIF or WebP up to 5 MiB, 15 MiB
+ * of pictures; 8 files, text up to 2 MiB, others up to 10 MiB; 20 MiB in all), and, when `takes` is known (null: a New chat that
+ * is still opening), only what this chat's agent can take: pictures need image input, PDFs and other binary files need embedded
+ * context, text files always go (as the PC composer). Returns fresh objects with exactly those fields (the agent host checks them
+ * again), or [] for none. Throws a Refusal in phone words.
+ */
+export function phoneAttachments(body: Json, takes: Takes | null, agent = 'This agent'): Json[] {
+  for (const k of NOT_BYTES) if (body[k] !== undefined && body[k] !== null) throw REFUSALS.bytesOnly();
+  const list = body.attachments;
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list)) throw REFUSALS.bad();
+  if (!list.length) return [];
+  if (list.length > MAX_IMAGES + MAX_FILES) throw REFUSALS.tooMany();
+  const out: Json[] = [];
+  for (const raw of list) {
+    const item = obj(raw);
+    const kind = item.type ?? 'image';
+    const keys = kind === 'file' ? FILE_KEYS : IMAGE_KEYS;
+    if (!Object.keys(item).length || Object.keys(item).some((k) => !keys.has(k))) throw REFUSALS.bytesOnly();
+    if (kind !== 'image' && kind !== 'file') throw REFUSALS.bad();
+    if (!isStr(item.data)) throw REFUSALS.bytesOnly();
+    if (!item.data) throw new Refusal(400, 'empty_file', `${isStr(item.name) && item.name ? item.name : 'A file'} is empty.`);
+    if (kind === 'image' && !PICTURE_TYPES.has(String(item.mimeType))) {
+      throw REFUSALS.wrongType('Pictures must be PNG, JPEG, GIF or WebP.');
+    }
+    out.push(
+      kind === 'file'
+        ? { type: 'file', name: item.name, mimeType: item.mimeType ?? '', data: item.data }
+        : { type: 'image', mimeType: item.mimeType, data: item.data },
+    );
+  }
+  const images = out.filter((i) => i.type === 'image');
+  const files = out.filter((i) => i.type === 'file');
+  if (images.length > MAX_IMAGES || files.length > MAX_FILES) throw REFUSALS.tooMany();
+  let total = 0;
+  let binary: string[] = [];
+  try {
+    if (images.length) total += validateImageAttachments(images)[1];
+    if (files.length) {
+      const [records, bytes] = validateFileAttachments(files);
+      total += bytes;
+      binary = records.filter((r) => r.kind !== 'text' && !(r.kind === 'audio' && takes?.audio)).map((r) => r.name);
+    }
+  } catch (error) {
+    if (!(error instanceof ValueError)) throw error;
+    const why = error.message.endsWith('.') ? error.message : error.message + '.';
+    if (/limit|exceed/i.test(why)) throw REFUSALS.tooBig(why);
+    if (/Images must be|as images, not as files|does not match|not a valid MIME/i.test(why)) throw REFUSALS.wrongType(why);
+    throw new Refusal(400, 'bad_file', why);
+  }
+  if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+    throw REFUSALS.tooBig(`Attachments can be at most ${MAX_TOTAL_ATTACHMENT_BYTES / 1048576} MiB in all.`);
+  }
+  if (takes) {
+    if (images.length && !takes.pictures) throw REFUSALS.noPictures(agent);
+    if (binary.length && !takes.binary) throw REFUSALS.noBinary(agent, binary);
+  }
+  return out;
+}
+
+/** "with 1 picture and 2 files" for the activity log (never names or bytes), or ''. */
+export function attachedWords(list: unknown): string {
+  const items = Array.isArray(list) ? list.map(obj) : [];
+  const pictures = items.filter((i) => i.type !== 'file').length;
+  const files = items.length - pictures;
+  const words = [
+    pictures ? `${pictures} picture${pictures === 1 ? '' : 's'}` : '',
+    files ? `${files} file${files === 1 ? '' : 's'}` : '',
+  ].filter(Boolean);
+  return words.length ? 'with ' + words.join(' and ') : '';
 }
 
 function messageId(body: Json, field = 'clientMessageId'): string {
@@ -207,10 +316,10 @@ export async function checkAction(ctx: WebContext, op: string, body: Json): Prom
     case 'prompt':
     case 'steer': // same checks as a prompt; the agent host decides (steer now, hold while a card is open, or an ordinary prompt when idle)
     case 'queue': {
-      noFiles(body);
-      const value = text(body);
+      const attachments = phoneAttachments(body, takesOf(state), agentLabel(state.provider));
+      const value = text(body, attachments.length > 0);
       canTakeMessages(state);
-      return { id, text: value, clientMessageId: messageId(body) };
+      return { id, text: value, clientMessageId: messageId(body), ...(attachments.length ? { attachments } : {}) };
     }
     case 'cancel':
       return { id };

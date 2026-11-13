@@ -440,6 +440,9 @@ export interface ChatPayload {
   busy: boolean;
   /** Working and the agent can read a message during the turn (the phone's Send then goes in at once). */
   steerable: boolean;
+  /** What this chat's agent can take with a message (its promptCapabilities): pictures (image input), binary files such as PDFs
+   * (embedded context); text files always go. The phone's attach button follows it; the server checks it again. */
+  takes: { pictures: boolean; binary: boolean };
   busySince: string | null;
   cursor: number;
   reset: boolean;
@@ -558,6 +561,7 @@ export async function chatPayload(
     needs: Number(attention.needs) || 0,
     busy: !!state.busy,
     steerable: !!state.busy && state.steerable === true,
+    takes: { pictures: obj(state.promptCapabilities).image === true, binary: obj(state.promptCapabilities).embeddedContext === true },
     busySince: (attention.busySince as string | null) ?? null,
     cursor: Number(state.cursor) || 0,
     reset: !!state.reset,

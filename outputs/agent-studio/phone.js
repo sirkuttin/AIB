@@ -46,6 +46,10 @@
    viewer (v3 ▾, "vN is available · Switch"). Theme: the PC's theme in this phone's light or dark (themes.js phoneTheme), or this
    phone's own pick (⋯ at the top of the list → Theme, localStorage). Install AIB: our button from beforeinstallprompt (Finish
    setup and the ⋯ menu; never a banner), the Share steps on an iPhone, Firefox's menu steps, hidden once installed.
+   Attachments: 📎 left of the message box (a chat and New chat) opens Take photo / Choose photos / Choose files; the picks show as
+   chips (a thumbnail for pictures, ×), and go with the message by the same routes (prompt, steer, queue, New chat's first
+   message). The PC composer's limits; a photo over 2000 px on its long edge is scaled and sent as JPEG; the chat says what its
+   agent takes (no pictures without image input, text files only without embedded context), and the server checks it all again.
    Pure helpers (rowsFrom, stateWords, orderHome, reqOpen, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom,
    artifactRef...) are exported for node tests. */
 (function (root) {
@@ -53,6 +57,7 @@
   const CHAT_MS = 3000;
   const PAIR_POLL_MS = 2000;
   const TIMEOUT_MS = 10000;
+  const UPLOAD_MS = 180000; // a message with attachments: up to 20 MB on mobile data
   const TAIL = 300;
   const DB = 'aib-phone';
   const READ_MS = 5000; // a chat's read position goes to the PC at most this often
@@ -237,7 +242,14 @@
       const key = 'e' + (e.seq || rows.length);
       const last = rows[rows.length - 1];
       if (e.kind === 'user') {
-        rows.push({ kind: 'you', key, text: str(data.text), images: imagesOf(data.attachments), steered: data.steered === true });
+        rows.push({
+          kind: 'you',
+          key,
+          text: str(data.text),
+          images: imagesOf(data.attachments),
+          files: (Array.isArray(data.files) ? data.files : []).map((f) => str(obj(f).name)).filter(Boolean),
+          steered: data.steered === true,
+        });
       } else if (e.kind === 'update') {
         const u = obj(data.update);
         const kind = u.sessionUpdate;
@@ -678,16 +690,17 @@
     if (x.latest) parts.push('latest');
     return parts.join(' · ');
   }
-  /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed. */
-  function newChatReady(nc, text) {
+  /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed (or something is
+     attached: `attached`, how many). */
+  function newChatReady(nc, text, attached) {
     const n = obj(nc);
     const a = (Array.isArray(n.agents) ? n.agents : []).find((x) => x && x.id === n.agent);
-    return !!(n.project && a && a.ok && String(text || '').trim());
+    return !!(n.project && a && a.ok && (String(text || '').trim() || attached > 0));
   }
   /* The first message's own checks before anything starts (the server checks the same). '' = fine. */
-  function firstMessageProblem(text) {
+  function firstMessageProblem(text, attached) {
     const t = String(text || '');
-    if (!t.trim()) return 'Type your first message.';
+    if (!t.trim() && !(attached > 0)) return 'Type your first message.';
     if (t.trimStart().startsWith('/')) return 'Messages that start with / are commands. Type them in AIB on your PC.';
     if (t.length > 8000) return 'A message from a phone can be at most 8000 characters.';
     return '';
@@ -719,7 +732,106 @@
     return v;
   }
 
+  // ---- attachments: the PC composer's types and limits (attachments-ui.js; the server checks the same, acp/attachments.ts) ----
+  const MiB = 1048576;
+  const ATTACH = {
+    images: 4,
+    files: 8,
+    imageBytes: 5 * MiB,
+    imageTotal: 15 * MiB,
+    textBytes: 2 * MiB,
+    binaryBytes: 10 * MiB,
+    total: 20 * MiB,
+    nameChars: 200,
+    longEdge: 2000, // a phone photo bigger than this is scaled down (long edge) and sent as JPEG: less mobile data, less context
+    jpegQuality: 0.85,
+  };
+  const PICTURE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const TEXT_TYPES = new Set([
+    'application/json', 'application/xml', 'application/javascript', 'application/x-javascript', 'application/typescript',
+    'application/yaml', 'application/x-yaml', 'application/toml', 'application/sql', 'application/x-sh', 'application/x-ndjson',
+    'application/csv', 'application/xhtml+xml', 'image/svg+xml',
+  ]);
+  const TEXT_EXTS = new Set(('txt text log md markdown json jsonl ndjson csv tsv py js mjs cjs ts tsx jsx yaml yml toml xml html htm css ' +
+    'sql sh ini cfg conf env rs go java c h cpp hpp cs rb php swift kt ps1 bat svg diff patch tex rst').split(' '));
+  /* A file name the PC accepts as a label (no path signs, control or invisible characters, at most 200 characters). Phones name
+     files themselves ("IMG_2041.jpg", "1000012345.jpg", or a document's title): odd signs become "_", never a refusal. */
+  function cleanFileName(name) {
+    let n = String(name || '')
+      .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '')
+      .replace(/[\/\\:<>"|?*]/g, '_')
+      .trim()
+      .replace(/^\.+/, '')
+      .replace(/\.+$/, '');
+    if (n.length > ATTACH.nameChars) {
+      const dot = n.lastIndexOf('.');
+      const ext = dot > 0 && n.length - dot <= 10 ? n.slice(dot) : '';
+      n = n.slice(0, ATTACH.nameChars - ext.length).trim() + ext;
+    }
+    return n || 'file';
+  }
+  const extOf = (name) => {
+    const i = String(name).lastIndexOf('.');
+    return i > 0 ? String(name).slice(i + 1).toLowerCase() : '';
+  };
+  /* Could be a text file by its type or name (the bytes decide: valid UTF-8 without NUL). */
+  function looksText(name, mime) {
+    const m = String(mime || '').toLowerCase();
+    return m.startsWith('text/') || TEXT_TYPES.has(m) || m.endsWith('+json') || m.endsWith('+xml') || TEXT_EXTS.has(extOf(name));
+  }
+  /* The size of a picture that fits inside `max` on its long edge (never larger than it is). */
+  function fitInside(width, height, max) {
+    const w = Math.max(1, Math.round(width) || 1);
+    const h = Math.max(1, Math.round(height) || 1);
+    const s = Math.min(1, max / Math.max(w, h));
+    return { width: Math.max(1, Math.round(w * s)), height: Math.max(1, Math.round(h * s)), scaled: s < 1 };
+  }
+  function sizeWords(n) {
+    const v = Number(n) || 0;
+    if (v < 1024) return v + ' B';
+    if (v < MiB) return Math.round(v / 1024) + ' KB';
+    return (v / MiB).toFixed(1).replace(/\.0$/, '') + ' MB';
+  }
+  /* Why `item` ({kind: 'image' | 'file', name, size, text}) can't join `items` (the chips already there), or ''. `takes`: what the
+     chat's agent can take ({pictures, binary}; null while unknown, in New chat: the PC says once the chat opens). */
+  function attachProblem(items, item, takes, agent) {
+    const list = Array.isArray(items) ? items : [];
+    const it = obj(item);
+    const who = str(agent) || 'This agent';
+    const name = str(it.name) || 'This file';
+    if (!(Number(it.size) > 0)) return name + ': the file is empty.';
+    if (it.kind === 'image') {
+      if (takes && !takes.pictures) return who + ' can’t take pictures.';
+      if (list.filter((x) => x.kind === 'image').length >= ATTACH.images) return 'Up to ' + ATTACH.images + ' pictures per message.';
+      if (it.size > ATTACH.imageBytes) return name + ': pictures can be at most 5 MB.';
+      const pics = list.filter((x) => x.kind === 'image').reduce((n, x) => n + x.size, 0);
+      if (pics + it.size > ATTACH.imageTotal) return 'Pictures can be at most 15 MB in all.';
+    } else {
+      if (takes && !takes.binary && !it.text) return who + ' can take text files only, not ' + name + '.';
+      if (list.filter((x) => x.kind !== 'image').length >= ATTACH.files) return 'Up to ' + ATTACH.files + ' files per message.';
+      if (it.text && it.size > ATTACH.textBytes) return name + ': text files can be at most 2 MB.';
+      if (it.size > ATTACH.binaryBytes) return name + ': files can be at most 10 MB.';
+    }
+    if (list.reduce((n, x) => n + x.size, 0) + it.size > ATTACH.total) return 'Attachments can be at most 20 MB in all.';
+    return '';
+  }
+  /* What goes to the PC: bytes only (base64), a picture's type, a file's name and type; never a path. */
+  function attachBody(items) {
+    return (Array.isArray(items) ? items : []).map((x) =>
+      x.kind === 'image'
+        ? { type: 'image', mimeType: x.mime, data: x.data }
+        : { type: 'file', name: x.name, mimeType: x.mime || '', data: x.data },
+    );
+  }
+
   const api = {
+    ATTACH,
+    cleanFileName,
+    looksText,
+    fitInside,
+    sizeWords,
+    attachProblem,
+    attachBody,
     firstMessageFate,
     firstSend,
     pickToSend,
@@ -813,6 +925,9 @@
     qopen: false, // the waiting-to-send list is open
     answers: {}, // question key -> {field: value}
     draft: '', // the composer's text
+    attach: { chat: [], new: [] }, // the chosen pictures and files of the chat's box and New chat's: {id, kind, name, mime, size, data, thumb}
+    attachNote: { chat: '', new: '' }, // why a picked file was not added
+    attachBusy: { chat: 0, new: 0 }, // picks still being read (and scaled)
     sending: false,
     actError: '', // the last refused or failed action, shown on the card it came from or above the composer
     actKey: '', // the waiting card the error belongs to ('' = the composer)
@@ -883,9 +998,9 @@
 
   // ---- network ----
   class Offline extends Error {}
-  async function call(method, path, body) {
+  async function call(method, path, body, timeoutMs) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => ctl.abort(), timeoutMs || TIMEOUT_MS);
     const headers = {};
     if (S.token) headers['X-AIB-Device'] = S.token;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -1229,6 +1344,7 @@
     sheet.setAttribute('role', 'menu');
     sheet.append(el('div', 'ph-grab'));
     if (m.kind === 'phone') phoneMenu(sheet, m);
+    else if (m.kind === 'attach') attachMenu(sheet, m);
     else cardMenu(sheet, m);
     layer.append(shade, sheet);
     if (menuEl) menuEl.replaceWith(layer);
@@ -1724,9 +1840,14 @@
     ta.addEventListener('input', () => {
       S.ncText = ta.value;
       const go = doc.getElementById('phNewStart');
-      if (go) go.disabled = !newChatReady(S.nc, S.ncText) || S.nc.starting || S.offline;
+      if (go) go.disabled = !newChatReady(S.nc, S.ncText, S.attach.new.length) || S.nc.starting || S.offline || S.attachBusy.new > 0;
     });
-    bottom.append(ta);
+    bottom.append(chipsEl('new'));
+    const nrow = el('div', 'ph-composer-row');
+    const clip = attachButton('new');
+    clip.disabled = !ready || nc.starting;
+    nrow.append(clip, ta);
+    bottom.append(nrow);
     if (nc.error) {
       const err = el('p', 'ph-error', nc.error);
       err.id = 'phNewError';
@@ -1736,7 +1857,7 @@
     const go = el('button', 'ph-btn', nc.starting ? 'Starting…' : 'Start chat');
     go.type = 'submit';
     go.id = 'phNewStart';
-    go.disabled = !newChatReady(nc, S.ncText) || nc.starting || S.offline;
+    go.disabled = !newChatReady(nc, S.ncText, S.attach.new.length) || nc.starting || S.offline || S.attachBusy.new > 0;
     bottom.append(go);
     bottom.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -1749,25 +1870,27 @@
     const nc = S.nc;
     if (!nc || nc.starting) return;
     const text = S.ncText || '';
-    const problem = firstMessageProblem(text);
+    const items = S.attach.new;
+    const problem = firstMessageProblem(text, items.length);
     if (problem) {
       nc.error = problem;
       return draw();
     }
-    if (!newChatReady(nc, text)) return;
+    if (!newChatReady(nc, text, items.length) || S.attachBusy.new) return;
     nc.starting = true;
     nc.error = '';
     draw();
     // one id for this Start and every retry of it: the PC answers a repeat with the chat the first one started (never a second)
     const cmid = nc.cmid || (nc.cmid = newMessageId());
     const body = { project: nc.project, agent: nc.agent, text, clientMessageId: cmid };
+    if (items.length) body.attachments = attachBody(items);
     const model = pickToSend(nc.lists && nc.lists.model, nc.model);
     const mode = pickToSend(nc.lists && nc.lists.mode, nc.mode);
     if (model) body.model = model;
     if (mode) body.mode = mode;
     let r = null;
     try {
-      r = await call('POST', '/api/remote/new', body);
+      r = await call('POST', '/api/remote/new', body, items.length ? UPLOAD_MS : TIMEOUT_MS);
     } catch {
       r = null;
     }
@@ -1788,11 +1911,15 @@
     const picks = [agent.name, name(nc.lists && nc.lists.model, nc.model), name(nc.lists && nc.lists.mode, nc.mode)].filter(Boolean);
     S.ncText = '';
     S.nc = null;
+    S.attach.new = [];
+    S.attachNote.new = '';
     const id = r.data.id;
-    openChat(id, text.length > 60 ? text.slice(0, 58) + '…' : text, false, { project, agent: agent.name });
+    const title = text.trim() || (items[0] && items[0].name) || 'New chat';
+    openChat(id, title.length > 60 ? title.slice(0, 58) + '…' : title, false, { project, agent: agent.name });
     S.newJob = {
       id,
       text,
+      items, // the first message's pictures and files, back in the box if the PC holds the message
       cmid,
       state: 'opening',
       error: '',
@@ -1820,6 +1947,7 @@
         j.state = 'gone';
         j.error = 'AIB restarted on ' + S.pcName + ' before your first message went. It is in the box below: send it.';
         S.draft = j.text;
+        S.attach.chat = j.items || [];
         S.actError = j.error;
         S.actKey = '';
       }
@@ -1837,6 +1965,7 @@
     } else {
       j.error = str(r.data.error) || 'Your first message was not sent.';
       S.draft = j.text;
+      S.attach.chat = j.items || [];
       S.actError = j.error;
       S.actKey = '';
     }
@@ -2348,6 +2477,12 @@
         img.src = url;
         imgBox.append(img);
       }
+      if ((r.files || []).length) {
+        const files = el('ul', 'ph-sent-files');
+        files.setAttribute('aria-label', 'Attached files');
+        for (const name of r.files) files.append(el('li', '', name));
+        imgBox.append(files);
+      }
       box.append(m);
     });
     if (subsAt >= rows.length) box.append(subsCard(c));
@@ -2811,10 +2946,12 @@
       send.type = 'submit';
       send.id = 'phSend';
       send.setAttribute('aria-label', 'Send');
-      row.append(ta, stop, send);
+      row.append(attachButton('chat'), ta, stop, send);
       const hint = el('p', 'ph-hint');
       hint.id = 'phHint';
-      bar.append(extra, err, row, hint);
+      const chips = el('div', 'ph-chips-slot');
+      chips.id = 'phChipsSlot';
+      bar.append(extra, err, chips, row, hint);
       bar.addEventListener('submit', (event) => {
         event.preventDefault();
         sendDraft();
@@ -2826,18 +2963,266 @@
     const ta = bar.querySelector('#phPrompt');
     if (ta.value !== S.draft) ta.value = S.draft;
     ta.placeholder = 'Message ' + (c.agent || 'the agent');
-    bar.querySelector('#phSend').disabled = S.sending;
+    bar.querySelector('#phSend').disabled = S.sending || S.attachBusy.chat > 0;
+    bar.querySelector('#phChipsSlot').replaceChildren(chipsEl('chat'));
     bar.querySelector('#phStop').hidden = !c.busy;
     bar.querySelector('#phBottomExtra').replaceChildren(bottomExtra(c, abilities(S.scopes)));
     const err = bar.querySelector('#phActError');
     err.textContent = S.actKey ? '' : S.actError;
     err.hidden = !err.textContent;
     const hint = bar.querySelector('#phHint');
-    hint.textContent = c.busy
+    hint.textContent = S.sending && S.attach.chat.length
+      ? 'Sending ' + sizeWords(S.attach.chat.reduce((n, x) => n + x.size, 0)) + '…'
+      : c.busy
       ? (c.agent || 'The agent') + ' is working. Send ' + (c.steerable ? 'gives it your message now' : 'adds your message to the queue') + '; ■ stops the turn.'
       : '';
     hint.hidden = !hint.textContent || !!err.textContent;
     return bar;
+  }
+
+  // ---- attachments: 📎 in the message box (a chat and New chat) -> Take photo / Choose photos / Choose files; chips; sent with
+  // the message (prompt, steer or queue; New chat's first message). Bytes only, the PC composer's limits (ATTACH); a big photo is
+  // scaled to ATTACH.longEdge and sent as JPEG (which also drops its EXIF data, such as where it was taken). ----
+  const SVG = 'http://www.w3.org/2000/svg';
+  function clipIcon() {
+    const svg = doc.createElementNS(SVG, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '22');
+    svg.setAttribute('height', '22');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = doc.createElementNS(SVG, 'path');
+    path.setAttribute('d', 'M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.9-8.9a3.7 3.7 0 0 1 5.2 5.2l-8.9 8.9a1.8 1.8 0 0 1-2.6-2.6l8.2-8.2');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.append(path);
+    return svg;
+  }
+  function attachButton(target) {
+    const b = button('ph-attach', '', () => openAttach(target));
+    b.id = target === 'new' ? 'phNewAttach' : 'phAttach';
+    b.setAttribute('aria-label', 'Attach photos or files');
+    b.append(clipIcon());
+    return b;
+  }
+  /* What the agent of `target` can take ({pictures, binary}), or null while unknown (New chat), and its name. */
+  function attachTakes(target) {
+    if (target === 'chat') {
+      const c = S.chat || {};
+      return { takes: c.takes && typeof c.takes === 'object' ? c.takes : null, agent: c.agent || 'This agent' };
+    }
+    const nc = S.nc || {};
+    const a = (nc.agents || []).find((x) => x.id === nc.agent);
+    return { takes: null, agent: (a && a.name) || 'This agent' };
+  }
+  /* The three file inputs, outside #app (a poll's draw never takes them). Camera: one photo; photos: several; files: anything. */
+  let pickEls = null;
+  function pickers() {
+    if (pickEls) return pickEls;
+    const make = (id, accept, multiple, capture) => {
+      const input = el('input', 'ph-pickfile');
+      input.type = 'file';
+      input.id = id;
+      if (accept) input.accept = accept;
+      if (multiple) input.multiple = true;
+      if (capture) input.setAttribute('capture', 'environment');
+      input.tabIndex = -1;
+      input.setAttribute('aria-hidden', 'true');
+      input.addEventListener('change', () => {
+        const files = [...(input.files || [])];
+        const target = input.dataset.target === 'new' ? 'new' : 'chat';
+        input.value = '';
+        if (files.length) addPicked(files, target);
+      });
+      doc.body.append(input);
+      return input;
+    };
+    pickEls = {
+      camera: make('phPickCamera', 'image/*', false, true),
+      photos: make('phPickPhotos', 'image/*', true, false),
+      files: make('phPickFiles', '', true, false),
+    };
+    return pickEls;
+  }
+  function openAttach(target) {
+    pickers();
+    S.menu = { kind: 'attach', target };
+    drawMenu();
+  }
+  function attachMenu(sheet, m) {
+    sheet.setAttribute('aria-label', 'Attach');
+    const { takes, agent } = attachTakes(m.target);
+    const noPics = takes && !takes.pictures;
+    const head = el('div', 'ph-mh');
+    head.append(el('b', '', 'Attach'), el('span', '', 'Up to ' + ATTACH.images + ' photos and ' + ATTACH.files + ' files, 20 MB in all'));
+    sheet.append(head);
+    const pick = (which) => () => {
+      const target = m.target;
+      const input = pickers()[which];
+      input.dataset.target = target;
+      S.menu = null;
+      drawMenu();
+      input.click(); // still inside the tap: the phone opens its camera or picker
+    };
+    const camera = menuItem('camera', '◉', 'Take photo', pick('camera'), noPics ? agent + ' can’t take pictures' : '');
+    const photos = menuItem('photos', '▣', 'Choose photos', pick('photos'), noPics ? agent + ' can’t take pictures' : '');
+    camera.disabled = photos.disabled = !!noPics;
+    const files = menuItem('files', '▤', 'Choose files', pick('files'), takes && !takes.binary ? 'Text files only' : '');
+    sheet.append(camera, photos, files, menuItem('cancel', '', 'Cancel', closeMenu));
+  }
+  function base64Of(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return root.btoa(bin);
+  }
+  const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+  const blobOf = (canvas, type, quality) => new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, quality));
+  function canvasOf(bitmap, width, height) {
+    const canvas = doc.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#fff'; // a see-through PNG sent as JPEG gets white, not black
+    g.fillRect(0, 0, width, height);
+    g.drawImage(bitmap, 0, 0, width, height);
+    return canvas;
+  }
+  function thumbOf(bitmap) {
+    try {
+      const t = fitInside(bitmap.width, bitmap.height, 112);
+      return canvasOf(bitmap, t.width, t.height).toDataURL('image/jpeg', 0.7);
+    } catch {
+      return '';
+    }
+  }
+  const pickId = () => 'att-' + randomHex(6);
+  /* A picked picture as it will be sent: a PNG, JPEG, GIF or WebP that fits (long edge ATTACH.longEdge, 5 MB) goes as it is; a
+     bigger one, or another type the phone can read (HEIC), is scaled and sent as JPEG (a PNG screenshot stays PNG while that fits).
+     GIFs go as they are (scaling would stop them moving). */
+  async function preparePicture(file, name, mime) {
+    let bitmap = null;
+    try {
+      bitmap = await root.createImageBitmap(file);
+    } catch {
+      bitmap = null;
+    }
+    const known = PICTURE_TYPES.includes(mime);
+    if (!bitmap) {
+      if (!known) throw Error(name + ': this picture type can’t be sent. Pick a JPEG or PNG.');
+      const bytes = await bytesOf(file);
+      return { id: pickId(), kind: 'image', name, mime, size: bytes.length, data: base64Of(bytes), thumb: '' };
+    }
+    try {
+      const fit = fitInside(bitmap.width, bitmap.height, ATTACH.longEdge);
+      const thumb = thumbOf(bitmap);
+      if (known && (mime === 'image/gif' || (!fit.scaled && file.size <= ATTACH.imageBytes))) {
+        const bytes = await bytesOf(file);
+        return { id: pickId(), kind: 'image', name, mime, size: bytes.length, data: base64Of(bytes), thumb };
+      }
+      const canvas = canvasOf(bitmap, fit.width, fit.height);
+      let type = 'image/jpeg';
+      let blob = null;
+      if (mime === 'image/png') {
+        const png = await blobOf(canvas, 'image/png');
+        if (png && png.size <= ATTACH.imageBytes) {
+          blob = png;
+          type = 'image/png';
+        }
+      }
+      if (!blob) blob = await blobOf(canvas, 'image/jpeg', ATTACH.jpegQuality);
+      if (!blob) throw Error(name + ': this picture could not be read.');
+      const bytes = await bytesOf(blob);
+      const shown = type === 'image/jpeg' ? name.replace(/\.[^.]{1,8}$/, '') + '.jpg' : name;
+      return { id: pickId(), kind: 'image', name: shown, mime: type, size: bytes.length, data: base64Of(bytes), thumb, scaled: fit.scaled };
+    } finally {
+      bitmap.close();
+    }
+  }
+  function decodesAsText(bytes) {
+    if (bytes.includes(0)) return false;
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function prepareFile(file) {
+    const name = cleanFileName(file.name);
+    const mime = String(file.type || '').toLowerCase().split(';')[0].trim();
+    if (!file.size) throw Error(name + ': the file is empty.');
+    if (PICTURE_TYPES.includes(mime) || /^image\/(heic|heif|avif|bmp)$/.test(mime)) return preparePicture(file, name, mime);
+    if (file.size > ATTACH.binaryBytes) throw Error(name + ': files can be at most 10 MB.');
+    const bytes = await bytesOf(file);
+    const text = looksText(name, mime) && decodesAsText(bytes);
+    return { id: pickId(), kind: 'file', name, mime, size: bytes.length, text, data: base64Of(bytes) };
+  }
+  async function addPicked(files, target) {
+    const { takes, agent } = attachTakes(target);
+    const notes = [];
+    S.attachNote[target] = '';
+    S.attachBusy[target]++;
+    draw();
+    for (const file of files) {
+      let item = null;
+      try {
+        item = await prepareFile(file);
+      } catch (error) {
+        notes.push(String((error && error.message) || 'This file could not be read.'));
+        continue;
+      }
+      const why = attachProblem(S.attach[target], item, takes, agent);
+      if (why) notes.push(why);
+      else S.attach[target] = [...S.attach[target], item];
+    }
+    S.attachBusy[target]--;
+    S.attachNote[target] = [...new Set(notes)].join(' · ');
+    draw();
+  }
+  function removeChip(target, id) {
+    S.attach[target] = S.attach[target].filter((x) => x.id !== id);
+    S.attachNote[target] = '';
+    draw();
+  }
+  /* The chosen pictures and files above the message box: a thumbnail (pictures) or the file's type, the name, the size, ×. */
+  function chipsEl(target) {
+    const items = S.attach[target];
+    const box = el('div', 'ph-chips');
+    box.id = target === 'new' ? 'phNewChips' : 'phChips';
+    if (items.length) {
+      const list = el('ul', 'ph-chip-list');
+      list.setAttribute('aria-label', 'Attached');
+      for (const item of items) {
+        const chip = el('li', 'ph-chip ' + (item.kind === 'image' ? 'pic' : 'file'));
+        chip.dataset.chip = item.id;
+        if (item.kind === 'image' && item.thumb) {
+          const img = el('img', 'ph-chip-thumb');
+          img.src = item.thumb;
+          img.alt = '';
+          chip.append(img);
+        } else chip.append(el('span', 'ph-chip-ext', (extOf(item.name) || (item.kind === 'image' ? 'img' : 'file')).slice(0, 4).toUpperCase()));
+        const t = el('span', 'ph-chip-t');
+        t.append(el('span', 'ph-chip-name', item.name), el('small', '', sizeWords(item.size)));
+        chip.append(t);
+        const x = button('ph-chip-x', '×', () => removeChip(target, item.id));
+        x.setAttribute('aria-label', 'Remove ' + item.name);
+        x.dataset.remove = item.id;
+        chip.append(x);
+        list.append(chip);
+      }
+      box.append(list);
+    }
+    if (S.attachBusy[target]) box.append(el('p', 'ph-note ph-chip-busy', 'Adding…'));
+    if (S.attachNote[target]) {
+      const note = el('p', 'ph-error ph-attach-note', S.attachNote[target]);
+      note.id = target === 'new' ? 'phNewAttachNote' : 'phAttachNote';
+      note.setAttribute('role', 'alert');
+      box.append(note);
+    }
+    box.hidden = !box.childNodes.length;
+    return box;
   }
 
   /* The bottom bar when this phone can't send here (its switch is off, or the chat can't take messages): what waits, and why. */
@@ -3258,6 +3643,8 @@
     S.land = land ? 'first' : '';
     S.answers = {};
     S.draft = '';
+    S.attach.chat = [];
+    S.attachNote.chat = '';
     S.editing = null;
     draw();
     root.scrollTo(0, 0);
@@ -3283,7 +3670,7 @@
     draw();
     let r = null;
     try {
-      r = await call('POST', '/api/remote/' + op, body);
+      r = await call('POST', '/api/remote/' + op, body, body && body.attachments ? UPLOAD_MS : TIMEOUT_MS);
     } catch {
       r = null;
     }
@@ -3312,13 +3699,16 @@
   async function sendDraft() {
     const text = S.draft;
     const c = S.chat;
-    if (!c || !text.trim() || S.sending) return;
+    const items = S.attach.chat;
+    if (!c || (!text.trim() && !items.length) || S.sending || S.attachBusy.chat) return;
     const job = S.newJob && S.newJob.id === c.id ? S.newJob : null;
     const how = firstSend(job, c.id);
     const op = how.first ? 'new/first' : c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt';
     // the first message keeps its id (a repeat is dropped by the agent host); after a restart, a changed text is a new message
     const cmid = how.cmid && (how.first || text === job.text) ? how.cmid : newMessageId();
-    const done = await act(op, { id: c.id, text, clientMessageId: cmid });
+    const body = { id: c.id, text, clientMessageId: cmid };
+    if (items.length) body.attachments = attachBody(items);
+    const done = await act(op, body);
     if (done && job && (how.first || how.cmid)) job.state = 'sent';
     if (!done && how.first && S.actStatus === 404) {
       // AIB restarted and forgot this start: the next Send is a normal message with the same id
@@ -3328,6 +3718,8 @@
     }
     if (done) {
       S.draft = '';
+      S.attach.chat = S.attach.chat.filter((x) => !items.includes(x));
+      S.attachNote.chat = '';
       const ta = doc.getElementById('phPrompt');
       if (ta) {
         ta.value = '';

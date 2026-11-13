@@ -49,6 +49,7 @@ const WEB_STARTED = Date.now() / 1000;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
 const MAX_BODY = 1_000_000;
+const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live/queue']);
 
 /** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
 const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
@@ -501,7 +502,8 @@ export class WebServer {
       }
       if (method === 'POST') {
         const handler = this.native.get(`POST ${path}`);
-        const raw = await readBody(request, path === '/api/live/prompt' ? MAX_PROMPT_BODY_BYTES : MAX_BODY);
+        // a message with attachments goes by prompt, steer (while the agent works) or queue (after the turn): the same 30 MB each
+        const raw = await readBody(request, PROMPT_ROUTES.has(path) ? MAX_PROMPT_BODY_BYTES : MAX_BODY);
         if (raw === null || raw.byteLength === 0) return this.json(400, { error: 'Invalid request size' });
         let body: unknown;
         try {

@@ -58,6 +58,8 @@ export interface FakeNext {
   endMs?: number;
   connectError?: string;
   promptError?: string;
+  /** the new chat's agent's promptCapabilities (what it can take with a message) */
+  caps?: Json;
 }
 
 /** Phone access on, an added project with saved transcripts, the fake agent host answering connect / prompt / disconnect /
@@ -83,6 +85,7 @@ export async function v2Studio(): Promise<RemoteStudio & { pick: FakeNext; proje
           sessionId: `s-new-${n}`,
           events: [],
           pickResults: pick.results,
+          ...(pick.caps ? { promptCapabilities: pick.caps } : {}),
           ...(pick.ready === false ? { ready: false } : {}),
         }),
       );
