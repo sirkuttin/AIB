@@ -8,7 +8,7 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
 
 **[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64).
 
-> **Beta: 0.1.0-beta.8.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
+> **Beta: 0.1.0-beta.9.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
 
 **_Codex and Claude Code working side by side in the same project_**
@@ -134,6 +134,20 @@ Honest Abe would list these first.
 - Saved conversations from outside AIB are read for Claude Code and OMP only.
 - Quitting AIB ends chat terminals; restarts, updates and crashes don't.
 - The `.deb` and source runs don't update in place.
+
+## Known issues
+
+Bugs we know about and are fixing. Report new ones in [issues](https://github.com/sirkuttin/AIB/issues).
+
+- **Chat scroll:** the chat can jump to the top while an agent works. Scroll back down or click **↓ Latest**; a fix is in
+  progress.
+- **Send ▾ while working:** when a turn starts from the phone, the queue or an approval card, **Interrupt** and **Send ▾**
+  can take up to 1.5 seconds to appear. Messages you send in that moment still go the right way.
+- **Background commands after a steer:** Codex isn't told when a command it moved to the background finishes. OMP stops
+  a background command after 2 minutes in total. Use **Stop** on the row to end one sooner.
+- **Phone remote control:** tested on Android only. iPhone, and the Tailscale install on macOS and Linux, are untested.
+- **Artifact link labels:** a link to another chat's artifact shows **· archived** or **· deleted** only after you switch
+  chats.
 
 ## Run from source
 
