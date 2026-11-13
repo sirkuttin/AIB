@@ -3101,6 +3101,17 @@
     });
     // The page reports its scroll position so a reload can put it back. A sandboxed page has an opaque origin, so the sender is
     // identified by its window, not by event.origin.
+    // Ctrl + wheel zooms the artifact: the page frame reports it (origin.ts SCROLL_SCRIPT), anything else on the stage directly.
+    win.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || d.type !== 'studio-artifact-zoom' || !ui.frame || e.source !== ui.frame.contentWindow) return;
+      stepZoom(Number(d.d) > 0 ? 1 : -1);
+    });
+    ui.stage.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      stepZoom(e.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
     win.addEventListener('message', (e) => {
       const d = e.data;
       if (!d || d.type !== 'studio-artifact-scroll' || !ui.frame || e.source !== ui.frame.contentWindow) return;
