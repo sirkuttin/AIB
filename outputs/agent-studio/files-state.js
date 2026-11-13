@@ -498,6 +498,25 @@
     }
     return out;
   }
+  // Absolute paths a reply names (C:\x\y.png, C:/x/y.png, \\server\share\y.png, /home/x/y.png), with an extension, optionally with
+  // :line. The caller keeps the ones outside the chat's folder. Never inside a URL, a relative path (./a/b.c, ~/a.c) or a longer word.
+  const ABS_RE =
+    /(?:[A-Za-z]:[\\/]|\\\\[^\s\\/:*?"<>|`'()[\]{},;]+[\\/]|\/)(?:[^\s\\/:*?"<>|`'()[\]{},;]+[\\/])*[^\s\\/:*?"<>|`'()[\]{},;]+\.[A-Za-z0-9]{1,12}(?::(\d{1,7})(?::\d{1,5})?)?(?![\w\-\\/])/g;
+  function absCandidates(text) {
+    const s = String(text == null ? '' : text),
+      out = [];
+    ABS_RE.lastIndex = 0;
+    let m;
+    while ((m = ABS_RE.exec(s))) {
+      const at = m.index,
+        before = s.slice(Math.max(0, at - 200), at);
+      if (/[a-z][a-z0-9+.-]*:\/*\S*$/i.test(before) || /[\w@.~:$/\\-]$/.test(before)) continue;
+      const v = m[0],
+        lineAt = v.search(/:\d+(?::\d+)?$/);
+      out.push({ at, len: v.length, text: v, path: lineAt > 2 ? v.slice(0, lineAt) : v, line: lineAt > 2 ? Number(m[1]) || 0 : 0 });
+    }
+    return out;
+  }
   // The same file named twice in one paragraph is linked once: keep the first of each (case-insensitive on Windows paths).
   // `lo` (optional): the scope's localOnly, so a full path into the main folder's local-only paths links too.
   function dedupe(cands, rootDir, lo) {
@@ -555,6 +574,7 @@
     keepTab,
     closeTab,
     pathCandidates,
+    absCandidates,
     dedupe,
     opensBeside,
     isLocalRel,
