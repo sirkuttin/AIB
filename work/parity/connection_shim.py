@@ -29,7 +29,7 @@ def _until(condition, what, seconds=20):
     raise TimeoutError('timed out waiting for ' + what)
 
 
-def condition(c, spec):
+def condition(c, spec, state=None):
     """Named waits shared with the Deno side."""
     name, _, arg = spec.partition(':')
     if name == 'permissions':
@@ -48,6 +48,8 @@ def condition(c, spec):
         return lambda: c.ready
     if name == 'closed':
         return lambda: c.closed and not c.busy
+    if name == 'wrote':    # wrote:<method>: the request went to the agent
+        return lambda: any(isinstance(w, dict) and w.get('method') == arg for w in list(state['writes']))
     if name == 'events':   # events:<kind>:<count>
         kind, _, count = arg.partition(':')
         return lambda: sum(e['kind'] == kind for e in list(c.events)) >= int(count)
@@ -89,7 +91,7 @@ def step(c, s, state):
     if op == 'queue':
         return getattr(c, 'queue_' + s['action'])(*s.get('args', []))
     if op == 'wait':
-        _until(condition(c, s['for']), s['for'])
+        _until(condition(c, s['for'], state), s['for'])
         return None
     if op == 'sleep':
         time.sleep(s['ms'] / 1000)
@@ -143,6 +145,7 @@ def run_script(agent, flags, steps, provider='omp', options=None):
     c = acp_connection.Connection([sys.executable, str(AGENTS[agent]), *flags], pathlib.Path(folder), provider,
                                   enable_terminal=options.get('terminal', False), enable_fs=options.get('fs'))
     state['folder'] = folder
+    state['writes'] = writes
     original = c.write
     c.write = lambda message: (writes.append(json.loads(json.dumps(message))), original(message))[1]
     c.caps.write_response = c.write   # client capability replies too (ClientCaps kept the unwrapped method)

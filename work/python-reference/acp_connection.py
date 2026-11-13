@@ -367,10 +367,14 @@ class Connection:
         """Fail connection setup now (e.g. the person declined a setup question)."""
         with self.lock:
             self.setup_abort = self.setup_abort or message
-            for entry in list(self.pending.values()):
+            for key, entry in list(self.pending.items()):
                 if not entry['done'].is_set():
                     entry['response'] = {'error': {'message': message, 'code': None}}
                     entry['done'].set()
+                    # Forgotten now, not when the waiting setup thread wakes: the agent's late answer is then always a "Response to
+                    # unknown request id", never a "Duplicate response" when that thread is slow (the Deno port's waiting call
+                    # drops it at once, before any later message can be read).
+                    del self.pending[key]
             self.auth_response = ('cancel', None)
             self.auth_event.set()
 

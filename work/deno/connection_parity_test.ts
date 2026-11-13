@@ -18,7 +18,7 @@ import { Connection, errorName } from '../../outputs/agent-studio/server/acp/con
 type Step = Json & { op: string };
 const AGENTS: Record<string, string> = { fake: FAKE, stream: STREAM_AGENT };
 
-function condition(c: Connection, spec: string): () => boolean {
+function condition(c: Connection, spec: string, state: Json): () => boolean {
   const [name, ...rest] = spec.split(':');
   const arg = rest.join(':');
   const updates = () => c.events.filter((e) => e.kind === 'update');
@@ -39,6 +39,8 @@ function condition(c: Connection, spec: string): () => boolean {
       return () => c.ready;
     case 'closed':
       return () => c.closed && !c.busy;
+    case 'wrote': // wrote:<method>: the request went to the agent
+      return () => (state.writes as Json[]).some((w) => w.method === arg);
     case 'events': {
       const [kind, count] = arg.split(':');
       return () => c.events.filter((e) => e.kind === kind).length >= Number(count);
@@ -109,7 +111,7 @@ async function step(c: Connection, s: Step, state: Json): Promise<unknown> {
       );
     }
     case 'wait':
-      await until(condition(c, s.for as string), s.for as string, 20);
+      await until(condition(c, s.for as string, state), s.for as string, 20);
       return null;
     case 'sleep':
       await new Promise((resolve) => setTimeout(resolve, s.ms as number));
@@ -185,7 +187,7 @@ async function runPort(
   );
   const writes: unknown[] = [];
   const results: Json[] = [];
-  const state: Json = { folder };
+  const state: Json = { folder, writes };
   const c = new Connection(
     [PYTHON, AGENTS[agent], ...flags],
     folder,
@@ -754,6 +756,9 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg', resume: 'resumed-id' },
       { op: 'wait', for: 'elicitations' },
+      // the question comes with the initialize answer: answered before setup sent session/load, the load is never sent (Python's
+      // setup thread can lag that far behind), and the messages to the agent go in another order
+      { op: 'wait', for: 'wrote:session/load' },
       { op: 'public' },
       { op: 'elicit', action: 'decline' },
       { op: 'join_setup' },
@@ -766,6 +771,7 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg' },
       { op: 'wait', for: 'elicitations' },
+      { op: 'wait', for: 'wrote:session/new' }, // as above: the answer goes after session/new on both sides
       { op: 'elicit', action: 'accept', content: { label: 'x' } },
       { op: 'join_setup' },
       { op: 'close' },

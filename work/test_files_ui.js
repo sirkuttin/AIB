@@ -82,6 +82,7 @@ function setup(o) {
   const getJson = async (path, q) => {
     calls.push({ path, q: Object.assign({}, q) });
     if (path === '/api/live/files/list') {
+      if (opts.hold) await opts.hold; // a slow listing
       const l = (opts.listing || LISTING)[q.dir];
       if (!l) throw Object.assign(new Error('Not found'), { status: 404 });
       const own = q.root === 'chat' ? list.find((c) => 'claude:' + c.id === q.id) : null;
@@ -141,6 +142,34 @@ function setup(o) {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const rows = (t) => t.shell.body.querySelectorAll('.fx-row').filter((r) => r.dataset.path);
 const rowOf = (t, p) => rows(t).find((r) => r.dataset.path === p);
+
+test('Files: a folder listed again keeps its rows (no "Loading…" blink) while the new listing comes; a call meanwhile lists it once more', async () => {
+  const o = {};
+  const t = setup(o);
+  t.FU.setMode('files');
+  await flush();
+  assert.ok(rowOf(t, 'README.md'), 'listed');
+  let release;
+  o.hold = new Promise((r) => (release = r));
+  const before = t.calls.filter((c) => c.path === '/api/live/files/list' && c.q.dir === '').length;
+  // an agent wrote a file: the Changes data moves on and the open folders are listed again
+  o.changes = CHANGES.concat([{ path: 'new.txt', status: 'U', added: 1, removed: 0, binary: false }]);
+  t.FU.sync(t.list[0]);
+  await flush();
+  assert.equal(t.calls.filter((c) => c.path === '/api/live/files/list' && c.q.dir === '').length, before + 1, 'listed again');
+  assert.ok(rowOf(t, 'README.md'), 'the rows stay while it is listed again');
+  assert.ok(!t.shell.body.querySelectorAll('.fx-row').some((r) => r.textContent === 'Loading…'), 'no Loading row');
+  // changed again while that listing runs: one more listing once it is back, so the newest state shows
+  o.changes = o.changes.concat([{ path: 'other.txt', status: 'U', added: 1, removed: 0, binary: false }]);
+  t.FU.sync(t.list[0]);
+  await flush();
+  assert.equal(t.calls.filter((c) => c.path === '/api/live/files/list' && c.q.dir === '').length, before + 1, 'not twice at once');
+  o.hold = null;
+  release();
+  for (let i = 0; i < 5; i++) await flush();
+  assert.equal(t.calls.filter((c) => c.path === '/api/live/files/list' && c.q.dir === '').length, before + 2, 'once more afterwards');
+  assert.ok(rowOf(t, 'README.md'));
+});
 
 test('the Chats | Files switch sits under Find, Find says "chat or file", and the Chats half counts this project\'s chats that need you', () => {
   const waiting = conv('a2', ROOT, { yourTurn: true, yourTurnAt: 300 });
