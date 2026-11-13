@@ -135,7 +135,121 @@
     const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean);
     return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat && keys.includes(d.chat));
   };
-  function pickerGroups(list, selectedId, nowMs, docs, chatKeys, freshId) {
+  /* ---- archive and Recently deleted (owner decisions 2026-11-12) ------------------------------------------------------
+     An archived artifact (archivedAt) is out of the picker's main groups but whole; a deleted one (deletedAt) waits in Recently
+     deleted until purgeAt (30 days), and its source file waits in the artifact's bin (deletedFile says which file went, or why it was
+     kept). Both stay in the panel's list; everything that counts or picks artifacts uses only the live ones. Times are in seconds. */
+  const isDeleted = (a) => !!a && Number(a.deletedAt) > 0;
+  const isArchived = (a) => !!a && Number(a.archivedAt) > 0 && !isDeleted(a);
+  const isLive = (a) => !!a && !!a.id && !isDocHistory(a) && !isArchived(a) && !isDeleted(a);
+  const liveOf = (list) => (Array.isArray(list) ? list : []).filter(isLive);
+  /* 'live' | 'archived' | 'deleted' | 'gone' (no such artifact any more). */
+  const artState = (a) => (!a ? 'gone' : isDeleted(a) ? 'deleted' : isArchived(a) ? 'archived' : 'live');
+  /* The word a chat-message link or a tool card adds after the title: "· archived", "· deleted" (a purged one reads deleted too). */
+  const stateWord = (state) => (state === 'archived' ? 'archived' : state === 'deleted' || state === 'gone' ? 'deleted' : '');
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /* "12 Dec" (with the year when it is not this year's). */
+  function dayText(at, nowMs) {
+    const t = Number(at);
+    if (!(t > 0)) return '';
+    const d = new Date(t * 1000),
+      now = new Date(nowMs == null ? Date.now() : nowMs);
+    return d.getDate() + ' ' + MONTHS[d.getMonth()] + (d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '');
+  }
+  /* "12 Nov, 14:02" */
+  function whenText(at, nowMs) {
+    const t = Number(at);
+    if (!(t > 0)) return '';
+    const d = new Date(t * 1000),
+      two = (n) => (n < 10 ? '0' : '') + n;
+    return dayText(t, nowMs) + ', ' + two(d.getHours()) + ':' + two(d.getMinutes());
+  }
+  /* Why a file stayed, in AIB's words per code (the server's own text when the code is new to the page). */
+  const KEPT_WHY = {
+    folder_unknown: "AIB can't find this chat's folder",
+    link: 'it is a link, not a file',
+    not_file: 'it is not a regular file',
+    outside: "it is outside this chat's folder",
+    git: 'it is inside .git',
+    docs: 'it belongs to an AIB doc',
+    shared: 'another artifact uses it',
+    folder_gone: "this chat's folder is gone",
+    copy_gone: 'the saved copy of the file is gone',
+  };
+  const keptWhy = (code, reason) => String(KEPT_WHY[code] || reason || 'AIB left it in place').replace(/\.$/, '');
+  /* What happened to a deleted artifact's source file, from its deletedFile {path, kept?, code?}. */
+  function fileSentence(df) {
+    if (!df || !df.path || df.code === 'no_file') return '';
+    if (!df.kept) return df.path + ' went too; Restore puts it back.';
+    if (df.code === 'gone') return df.path + ' was already gone from disk.';
+    return 'Kept ' + df.path + ': ' + keptWhy(df.code, df.kept) + '.';
+  }
+  /* A Recently deleted row's line: "Deleted 12 Nov, 14:02. Removed for good on 12 Dec. outputs/report.html went too; …" */
+  function deletedLine(a, nowMs) {
+    if (!isDeleted(a)) return '';
+    const purge = Number(a.purgeAt) > 0 ? Number(a.purgeAt) : Number(a.deletedAt) + 30 * 86400;
+    return ['Deleted ' + whenText(a.deletedAt, nowMs) + '.', 'Removed for good on ' + dayText(purge, nowMs) + '.', fileSentence(a.deletedFile)]
+      .filter(Boolean)
+      .join(' ');
+  }
+  /* The viewer on a deleted artifact (opened from a link or the group): a message, not the page. */
+  function deletedStage(a, nowMs) {
+    if (!isDeleted(a)) return '';
+    const purge = Number(a.purgeAt) > 0 ? Number(a.purgeAt) : Number(a.deletedAt) + 30 * 86400;
+    return '"' + (a.title || 'Untitled') + '" is in Recently deleted until ' + dayText(purge, nowMs) + '.';
+  }
+  /* The strip over an archived artifact in the viewer. */
+  const archivedStrip = (a, nowMs) =>
+    isArchived(a) ? 'Archived ' + (relTime(a.archivedAt, nowMs) || 'just now') + ". Hidden from this chat's list." : '';
+  const quoted = (title) => '"' + (title || 'Untitled') + '"';
+  /* The note line after Archive / Unarchive (archiving a pinned artifact unpins it, decision 6a). */
+  const archiveNote = (title, archived, unpinned) =>
+    archived ? (unpinned ? 'Unpinned and archived ' : 'Archived ') + quoted(title) + '.' : 'Unarchived ' + quoted(title) + '.';
+  /* The note line after Delete: which file went with it, or why it stayed. `file` is the delete route's {path, action, code, reason}. */
+  function deleteNote(title, file) {
+    const head = 'Deleted ' + quoted(title) + '.';
+    let mid = '';
+    if (file && file.path) {
+      if (file.action === 'moved') mid = ' ' + file.path + ' went too.';
+      else if (file.code === 'gone') mid = ' ' + file.path + ' was already gone from disk.';
+      else if (file.code !== 'no_file') mid = ' Kept ' + file.path + ': ' + keptWhy(file.code, file.reason) + '.';
+    }
+    return head + mid + ' In Recently deleted for 30 days.';
+  }
+  /* The note line after Restore. `file` is the undelete route's {path, action, as, code, reason}. */
+  function restoreNote(title, file) {
+    const head = 'Restored ' + quoted(title);
+    if (!file || !file.path) return head + '.';
+    if (file.action === 'restored') return head + '. ' + file.path + ' is back.';
+    if (file.action === 'restored_as')
+      return head + '. A new file sits at ' + file.path + ', so the old one is back as ' + (file.as || 'a copy') + '.';
+    if (file.action === 'kept' && /^(folder_gone|outside|copy_gone)$/.test(String(file.code || '')))
+      return head + ' without its file: ' + (file.code === 'outside' ? "its old place is outside this chat's folder" : keptWhy(file.code, file.reason)) + '.';
+    return head + '.';
+  }
+  /* A row's ⋯ menu (and right-click): the same words and order as a chat's menu. Docs and deleted rows have none. */
+  const BECAME_HINT = 'The doc stays. Delete removes its artifact versions and the Undo back to an artifact.';
+  function rowMenuItems(a) {
+    if (!a || !a.id || isDeleted(a) || isDocHistory(a)) return [];
+    const out = [{ id: 'open', label: 'Open' }];
+    if (!isArchived(a)) out.push({ id: 'pin', label: a.pinned ? 'Unpin' : 'Pin', kb: a.pinned ? '★' : '☆' });
+    out.push({ sep: true });
+    out.push(isArchived(a) ? { id: 'unarchive', label: 'Unarchive' } : { id: 'archive', label: 'Archive' });
+    out.push({ id: 'delete', label: 'Delete', danger: true });
+    if (a.becameDoc) out.push({ hint: BECAME_HINT });
+    return out;
+  }
+  /* The empty viewer when nothing live is left: "Nothing showing. Archived 18 · Recently deleted 4" (null when there is neither). */
+  function hiddenCounts(list) {
+    const l = (Array.isArray(list) ? list : []).filter((a) => a && a.id && !isDocHistory(a));
+    const archived = l.filter(isArchived).length,
+      deleted = l.filter(isDeleted).length;
+    return archived || deleted ? { archived, deleted } : null;
+  }
+
+  /* `foot` {archived: open?, deleted: open?}: the two groups at the picker's foot ("Archived N", "Recently deleted N"), closed until
+     opened; they show only while they hold something (or are open: "Nothing archived."). */
+  function pickerGroups(list, selectedId, nowMs, docs, chatKeys, freshId, foot) {
     const row = (a) => ({
       id: a.id,
       badge: kindInfo(a.kind).badge,
@@ -147,7 +261,8 @@
       on: a.id === selectedId,
       fresh: !!freshId && a.id === freshId,
     });
-    const ordered = orderArtifacts((Array.isArray(list) ? list : []).filter((a) => !isDocHistory(a))),
+    const all = orderArtifacts((Array.isArray(list) ? list : []).filter((a) => !isDocHistory(a))),
+      ordered = all.filter(isLive),
       pinned = ordered.filter((a) => a.pinned).map(row),
       rest = ordered.filter((a) => !a.pinned).map(row);
     const mine = linkedDocs(docs, chatKeys)
@@ -158,11 +273,34 @@
     if (rest.length) groups.push({ key: 'chat', label: 'This chat', items: rest });
     if (mine.length)
       groups.push({ key: 'docs', label: 'Docs this chat wrote', note: DOCS_NOTE, divider: !!(pinned.length || rest.length), items: mine });
+    foot = foot || {};
+    const archived = all.filter(isArchived).sort((a, b) => num(b.archivedAt) - num(a.archivedAt)),
+      deleted = all.filter(isDeleted).sort((a, b) => num(b.deletedAt) - num(a.deletedAt));
+    const before = groups.length > 0;
+    const footGroup = (key, label, items, empty, mapRow) => {
+      if (!items.length && !foot[key]) return;
+      groups.push({
+        key,
+        label,
+        foot: true,
+        count: items.length,
+        open: !!foot[key],
+        empty: items.length ? '' : empty,
+        divider: before && !groups.some((g) => g.foot),
+        items: foot[key] ? items.map(mapRow) : [],
+      });
+    };
+    footGroup('archived', 'Archived', archived, 'Nothing archived.', (a) =>
+      Object.assign(row(a), { archived: true, meta: 'Archived ' + (relTime(a.archivedAt, nowMs) || 'just now') }),
+    );
+    footGroup('deleted', 'Recently deleted', deleted, 'Nothing deleted recently.', (a) =>
+      Object.assign(row(a), { deleted: true, line: deletedLine(a, nowMs) }),
+    );
     return groups;
   }
-  /* One artifact and no doc this chat wrote: plain text, no caret. Several, or a linked doc: a dropdown. */
+  /* One live artifact, no doc this chat wrote and nothing archived or deleted: plain text, no caret. Otherwise a dropdown. */
   const pickerIsPlain = (list, docs, chatKeys) =>
-    (Array.isArray(list) ? list.filter((a) => !isDocHistory(a)).length : 0) <= 1 && !linkedDocs(docs, chatKeys).length;
+    liveOf(list).length <= 1 && !linkedDocs(docs, chatKeys).length && !hiddenCounts(list);
   /* The version shown: the user's pick, or the latest when following. */
   const shownVersion = (latest, picked) =>
     picked != null && picked >= 1 && picked <= num(latest) ? Math.floor(picked) : Math.max(1, num(latest) || 1);
@@ -212,16 +350,23 @@
       latest = num(o.latest) || shown,
       mode = o.mode || 'page',
       out = [];
+    // A deleted artifact shows no page: its menu only brings it back.
+    if (o.deleted) return [{ id: 'undelete', label: 'Restore' }];
     if (hasSource(kind) && viewMode(kind) === 'page')
       out.push({ id: 'source', label: mode === 'source' ? 'View page' : 'View source' });
     if (shown >= 2 && hasSource(kind))
       out.push({ id: 'compare', label: mode === 'compare' ? 'Close comparison' : 'Compare with v' + (shown - 1) });
     if (shown < latest) out.push({ id: 'restore', label: 'Restore this version' });
     out.push({ sep: true });
-    out.push({ id: 'pin', label: o.pinned ? 'Unpin' : 'Pin', kb: o.pinned ? '★' : '☆' });
+    if (!o.archived) out.push({ id: 'pin', label: o.pinned ? 'Unpin' : 'Pin', kb: o.pinned ? '★' : '☆' }); // as chats: no Pin when archived
     if (o.sourcePath && o.canEditor) out.push({ id: 'editor', label: 'Open source file in editor' });
     if (o.sourcePath) out.push({ id: 'copy', label: 'Copy path' });
+    if (o.sourceCopy) out.push({ id: 'copycopy', label: 'Copy path of the saved file' }); // its chat's folder is gone; AIB kept the file
     out.push({ id: 'download', label: 'Download' });
+    // the last group, in the chat menu's order: Archive (Unarchive) then Delete in red
+    out.push({ sep: true });
+    out.push(o.archived ? { id: 'unarchive', label: 'Unarchive' } : { id: 'archive', label: 'Archive' });
+    out.push({ id: 'delete', label: 'Delete', danger: true });
     return out.filter((it, i, a) => !(it.sep && (i === 0 || a[i - 1].sep || i === a.length - 1)));
   }
 
@@ -451,6 +596,7 @@
       diffFrom: id && version >= 2 ? version - 1 : null,
       canOpen: !!id && !failed,
       builtFrom: art && art.fromDoc ? docPageName(art.fromDoc) : '',
+      state: art ? stateWord(artState(art)) : '', // "· archived" / "· deleted" after the title (decision 8a)
     };
   }
   /* "Built from <doc › page>" for an artifact (its fromDoc), and the banner the viewer shows: `state` is GET /api/live/docs/built's
@@ -459,7 +605,7 @@
     'nothing is committed until you commit.';
   /* The title bar's word button: Markdown artifacts get Edit (it becomes a doc), every other kind Request a change; none once it
      became a doc. */
-  const barAction = (a) => (!a ? '' : a.becameDoc ? '' : a.kind === 'md' ? 'edit' : 'request');
+  const barAction = (a) => (!a ? '' : a.becameDoc || isDeleted(a) ? '' : a.kind === 'md' ? 'edit' : 'request');
   /* Edit's cursor: the block nearest the viewer's scroll position, from how far down the page the viewer is. */
   function blockAt(ids, fraction) {
     const list = Array.isArray(ids) ? ids : [];
@@ -511,8 +657,13 @@
   }
   /* A file written by a tool row inside the project's outputs/ folder: the artifact the watcher made for it (if it exists yet).
      `version` is the version that write made (an old card keeps showing it), else the latest. */
+  /* The artifact of a file: a live or archived one before a deleted one (a rewrite after a Delete is a new artifact). */
+  const bySource = (artifacts, path) => {
+    const hits = (artifacts || []).filter((a) => a && sameFile(a.sourcePath, path));
+    return hits.find((a) => !isDeleted(a)) || hits[0] || null;
+  };
   function outputsCardModel(path, artifacts, nowMs, version) {
-    const art = (artifacts || []).find((a) => sameFile(a.sourcePath, path));
+    const art = bySource(artifacts, path);
     if (!art) return null;
     const info = kindInfo(art.kind),
       latest = num(art.version) || 1,
@@ -528,6 +679,7 @@
       sub: [info.name, 'v' + v, t ? 'updated ' + t : v < latest ? 'now v' + latest : ''].filter(Boolean).join(' · '),
       diffFrom: v >= 2 ? v - 1 : null,
       canOpen: true,
+      state: stateWord(artState(art)),
     };
   }
   /* The file a Write / Edit row wrote (not Read), or null. Needs tool-views.js. */
@@ -642,6 +794,25 @@
     orderArtifacts,
     relTime,
     isDocHistory,
+    isDeleted,
+    isArchived,
+    isLive,
+    liveOf,
+    artState,
+    stateWord,
+    dayText,
+    whenText,
+    fileSentence,
+    keptWhy,
+    deletedLine,
+    deletedStage,
+    archivedStrip,
+    archiveNote,
+    deleteNote,
+    restoreNote,
+    rowMenuItems,
+    hiddenCounts,
+    bySource,
     pickerGroups,
     pickerIsPlain,
     shownVersion,
@@ -709,6 +880,8 @@
     fresh: '',
     doc: null, // the doc shown in the viewer: {name, title, page, block, thread}
     docExtras: [], // docs this chat opened or made that the doc list does not link to it (yet)
+    foot: { archived: false, deleted: false }, // the picker's foot groups you opened
+    confirmPurge: '', // the Recently deleted row showing "Delete for good? … Delete for good · Keep"
   };
   let ui = null;
   const el = (tag, cls, txt) => {
@@ -721,7 +894,7 @@
     Object.entries(o)
       .map(([k, v]) => k + '=' + encodeURIComponent(v))
       .join('&');
-  const ordered = () => orderArtifacts(S.list);
+  const pickable = (a) => !isArchived(a) && !isDeleted(a);
   const known = (id) => S.list.find((a) => a.id === id) || S.extras[id] || null;
   const current = () => known(S.selId);
   const editors = () => {
@@ -768,9 +941,11 @@
   function setList(next) {
     const before = new Set(S.list.map((a) => a.id));
     S.list = orderArtifacts(next);
-    const first = (S.list[0] && S.list[0].id) || '';
+    const first = (S.list.find(pickable) || {}).id || ''; // the viewer's own pick is never an archived or deleted artifact
     const added = before.size ? S.list.filter((a) => !before.has(a.id)) : [];
-    if (!known(S.selId) || (following() && S.selId !== first && !S.extras[S.selId])) {
+    // the viewer's own pick (not yours) leaves an artifact archived or deleted elsewhere; yours shows its strip or Restore message
+    const ownPickHidden = !S.userPicked && !S.extras[S.selId] && !!known(S.selId) && !pickable(known(S.selId));
+    if (!known(S.selId) || ownPickHidden || (following() && S.selId !== first && !S.extras[S.selId])) {
       if (S.selId !== first) {
         S.selId = first;
         S.picked = null;
@@ -789,11 +964,16 @@
     paintAll();
     if (S.dirty) paintStage('auto');
   }
+  /* The summary is the truth for these: a field it leaves out is unset (a replayed Archive then Unarchive ends live, break 5). */
+  const FLAGS = ['archivedAt', 'deletedAt', 'purgeAt', 'deletedFile', 'sourceMissing', 'sourceCopy', 'becameDoc'];
   function upsert(summary) {
     if (!summary || !summary.id) return;
+    if (summary.purged) return dropPurged(summary.id);
     const inList = S.list.findIndex((a) => a.id === summary.id),
       old = inList < 0 ? S.extras[summary.id] : S.list[inList];
     const next = Object.assign({}, old, summary);
+    for (const k of FLAGS) if (!(k in summary)) delete next[k];
+    setLinkState(summary.id, artState(next));
     const versionChanged = !!old && num(old.version) !== num(next.version);
     if (versionChanged) delete S.items[summary.id];
     if (versionChanged) holdCompare(summary.id);
@@ -810,6 +990,16 @@
     setList(list);
     if (summary.id === S.selId && versionChanged && S.picked == null) paintStage('update');
   }
+  /* "Delete now" or the 30-day purge removed it for good: out of the list, its links read deleted. */
+  function dropPurged(id) {
+    setLinkState(id, 'gone');
+    delete S.extras[id];
+    delete S.items[id];
+    if (S.confirmPurge === id) S.confirmPurge = '';
+    if (S.list.some((a) => a.id === id)) setList(S.list.filter((a) => a.id !== id));
+    else paintAll();
+    repaintPicker();
+  }
   /* A comparison that was open stays on its two versions when a newer one arrives: "vN is available · Switch" offers the new one. */
   function holdCompare(id) {
     if (id !== S.selId || S.mode !== 'compare' || !S.cmp || S.picked != null) return;
@@ -821,18 +1011,22 @@
       id = S.chat.id;
     S.loading = true;
     try {
-      const d = await api('/api/live/artifacts?' + q({ conversationId: id }));
+      // deleted=1: Recently deleted too (the picker's foot group); only this panel asks for them
+      const d = await api('/api/live/artifacts?' + q({ conversationId: id, deleted: 1 }));
       if (mine !== S.listSeq || id !== S.chat.id) return;
-      const prior = S.list.map((a) => a.id + ':' + a.version + ':' + (a.pinned ? 1 : 0) + ':' + a.title).join('|');
+      const sig = (a) => [a.id, a.version, a.pinned ? 1 : 0, a.title, a.archivedAt || 0, a.deletedAt || 0].join(':');
+      const prior = S.list.map(sig).join('|');
       const next = Array.isArray(d.artifacts) ? d.artifacts : [];
+      for (const a of next) setLinkState(a.id, artState(a));
       const sel = current();
       const cur = sel && next.find((a) => a.id === sel.id);
-      if (next.map((a) => a.id + ':' + a.version + ':' + (a.pinned ? 1 : 0) + ':' + a.title).join('|') !== prior) {
+      if (next.map(sig).join('|') !== prior) {
         const versionChanged = !!cur && num(cur.version) !== num(sel.version);
         if (versionChanged) delete S.items[cur.id];
         if (versionChanged) holdCompare(cur.id);
         setList(next);
         if (versionChanged && S.picked == null) paintStage('update');
+        repaintPicker();
       }
       schedule();
     } catch (e) {
@@ -903,6 +1097,8 @@
       S.fresh = '';
       S.doc = null;
       S.docExtras = [];
+      S.foot = { archived: false, deleted: false };
+      S.confirmPurge = '';
       dropDoc();
       closePop();
       paintCount();
@@ -951,7 +1147,8 @@
       try {
         const it = await api('/api/live/artifacts/item?' + q({ id })),
           vs = Array.isArray(it.versions) ? it.versions : [];
-        S.extras[id] = {
+        // the fields summary() gives, the archive and Recently deleted ones too (break 8)
+        const ex = {
           id,
           title: it.title,
           kind: it.kind,
@@ -964,9 +1161,13 @@
           url: it.url,
           fromDoc: it.fromDoc || null,
         };
+        for (const k of FLAGS) if (it[k] != null) ex[k] = it[k];
+        S.extras[id] = ex;
         S.items[id] = it;
+        setLinkState(id, artState(ex));
       } catch (e) {
-        note('That artifact could not be found.');
+        if (e.status === 404) setLinkState(id, 'gone');
+        note(e.status === 404 ? 'That artifact is no longer in AIB.' : 'That artifact could not be opened: ' + e.message);
         return false;
       }
     }
@@ -1017,16 +1218,52 @@
   }
 
   /* -- note line -- */
-  let noteTimer = 0;
-  function note(msg) {
-    if (!ui) return;
-    ui.note.textContent = msg || '';
-    ui.note.hidden = !msg;
+  /* One message; with `undo` (a function) it carries an Undo button, stays 10 s instead of 5, and never hides while the pointer is on
+     it (the time left starts again when the pointer leaves, at least 1.5 s). */
+  let noteTimer = 0,
+    noteLeft = 0,
+    noteFrom = 0,
+    noteHover = false;
+  const NOTE_MS = 5000,
+    UNDO_MS = 10000;
+  function noteArm(ms) {
     if (noteTimer) win.clearTimeout(noteTimer);
-    if (msg)
-      noteTimer = win.setTimeout(() => {
-        ui.note.hidden = true;
-      }, 5000);
+    noteTimer = 0;
+    noteLeft = ms;
+    noteFrom = Date.now();
+    if (noteHover) return;
+    noteTimer = win.setTimeout(() => {
+      noteTimer = 0;
+      ui.note.hidden = true;
+      ui.noteUndo.hidden = true;
+      ui.noteUndo.onclick = null;
+    }, ms);
+  }
+  function note(msg, undo) {
+    if (!ui) return;
+    ui.noteText.textContent = msg || '';
+    ui.note.hidden = !msg;
+    ui.noteUndo.hidden = !(msg && typeof undo === 'function');
+    ui.noteUndo.disabled = false;
+    ui.noteUndo.onclick = ui.noteUndo.hidden
+      ? null
+      : () => {
+          ui.noteUndo.disabled = true;
+          ui.noteUndo.onclick = null;
+          undo();
+        };
+    if (noteTimer) win.clearTimeout(noteTimer);
+    noteTimer = 0;
+    if (msg) noteArm(ui.noteUndo.hidden ? NOTE_MS : UNDO_MS);
+  }
+  function noteHold(on) {
+    noteHover = on;
+    if (ui.note.hidden) return;
+    if (on) {
+      if (noteTimer) win.clearTimeout(noteTimer);
+      noteTimer = 0;
+      noteLeft = Math.max(0, noteLeft - (Date.now() - noteFrom));
+    } else noteArm(Math.max(1500, noteLeft));
   }
 
   /* -- local docs: doc-links.js keeps the project's doc list. A doc from this chat (its card, a link, /doc, the picker's "Docs this
@@ -1189,8 +1426,8 @@
     ui.empty.hidden = true;
     ui.foot.hidden = true;
     for (const n of [ui.avail, ui.built, ui.stale, ui.became, ui.ver, ui.ext, ui.more, ui.edit, ui.request]) n.hidden = true;
-    const others = S.list.filter((x) => !isDocHistory(x)).length + myDocs().filter((o) => o.name !== d.name).length;
-    const plain = others === 0;
+    const others = liveOf(S.list).length + myDocs().filter((o) => o.name !== d.name).length;
+    const plain = others === 0 && !hiddenCounts(S.list);
     ui.pick.replaceChildren(el('span', 'ar-k', 'doc'), el('span', 'ar-pick-title', d.title || d.name));
     if (!plain) ui.pick.append(el('span', 'ar-caret', '▾'));
     ui.pick.disabled = plain;
@@ -1240,7 +1477,7 @@
   /* -- painting: tab badge, toolbar, banner -- */
   function paintCount() {
     if (!ui) return;
-    const a = S.list.filter((x) => !isDocHistory(x)).length,
+    const a = liveOf(S.list).length, // archived and deleted ones are not counted
       dn = myDocs().length,
       n = a + dn;
     ui.badge.textContent = n > 99 ? '99+' : String(n);
@@ -1262,18 +1499,21 @@
   }
   function paintBar2() {
     if (S.doc) return paintDocBar();
-    ui.ver.hidden = false;
-    ui.ext.hidden = false;
-    ui.more.hidden = false;
     const a = current(),
-      none = !a;
+      none = !a,
+      gone = isDeleted(a); // in Recently deleted: no versions, no page to open
+    ui.ver.hidden = gone;
+    ui.ext.hidden = gone;
+    ui.more.hidden = false;
     ui.bar.hidden = none;
-    ui.foot.hidden = none || S.mode !== 'page' || viewMode(a.kind) !== 'page'; // the sandbox line is about the page view (QA c6)
+    ui.foot.hidden = none || gone || S.mode !== 'page' || viewMode(a.kind) !== 'page'; // the sandbox line is about the page view (QA c6)
     ui.stage.hidden = none; // the empty text starts at the top, no blank band above it (QA c3)
     ui.empty.hidden = !none;
+    paintArchivedStrip(a);
     if (none) {
       ui.avail.hidden = true;
       ui.fresh.hidden = true;
+      paintEmptyHidden();
       paintEmptyDocs();
       return;
     }
@@ -1304,6 +1544,40 @@
     ui.more.setAttribute('aria-label', 'More');
     paintBuilt(a);
     paintBecame(a);
+  }
+  /* "Archived 2 d ago. Hidden from this chat's list. · Unarchive" over an archived artifact; the page shows as usual. */
+  function paintArchivedStrip(a) {
+    if (!ui) return;
+    const on = !S.doc && isArchived(a);
+    ui.archived.hidden = !on;
+    if (on) ui.archivedText.textContent = archivedStrip(a) + ' · ';
+  }
+  /* Nothing live left: "Nothing showing." and "Archived 18 · Recently deleted 4", each opening the picker on its group (break 7). */
+  function paintEmptyHidden() {
+    const c = hiddenCounts(S.list);
+    ui.emptyTitle.textContent = c ? 'Nothing showing.' : 'No artifacts in this chat yet';
+    ui.emptyHint.hidden = !!c;
+    ui.emptyHidden.hidden = !c;
+    const sig = c ? c.archived + ':' + c.deleted : '';
+    if (!c || ui.emptyHidden.dataset.sig === sig) return; // drawn again only when the counts change (the open picker hangs from it)
+    ui.emptyHidden.dataset.sig = sig;
+    const parts = [];
+    const link = (group, label, n) => {
+      const b = el('button', 'ar-switch ar-hidden-open', label + ' ' + n);
+      b.type = 'button';
+      b.dataset.group = group;
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openPicker(null, { anchor: b, group });
+      });
+      return b;
+    };
+    if (c.archived) parts.push(link('archived', 'Archived', c.archived));
+    if (c.deleted) {
+      if (parts.length) parts.push(doc.createTextNode(' · '));
+      parts.push(link('deleted', 'Recently deleted', c.deleted));
+    }
+    ui.emptyHidden.replaceChildren(...parts);
   }
   /* -- Edit: a Markdown artifact becomes a doc; the viewer then shows the doc's text as it is now -- */
   const becameStates = new Map(); // artifact id -> {at, state, loading}
@@ -1562,6 +1836,17 @@
     ui.stage.append(f);
     f.src = target;
   }
+  /* The viewer on a deleted artifact: '"Report" is in Recently deleted until 12 Dec. outputs/report.html went too; … Restore' */
+  function deletedView(a) {
+    const box = el('div', 'ar-deleted');
+    const p = el('p', 'ar-msg', deletedStage(a) + (fileSentence(a.deletedFile) ? ' ' + fileSentence(a.deletedFile) : '') + ' ');
+    const b = el('button', 'ar-switch ar-restore', 'Restore');
+    b.type = 'button';
+    b.addEventListener('click', () => doUndelete(a.id));
+    p.append(b);
+    box.append(p);
+    return box;
+  }
   function stageMessage(text) {
     const p = el('p', 'ar-msg', text);
     setStage(p);
@@ -1667,6 +1952,10 @@
     S.stageKey = key;
     if (!sameArtifact) S.scroll = null;
     S.scrollFor = a.id;
+    if (isDeleted(a)) {
+      setStage(deletedView(a)); // a message and Restore, not the page
+      return;
+    }
     if (livePreview(a) && ver === latest) {
       paintLive(a);
       return;
@@ -1721,6 +2010,7 @@
   /* -- popovers: picker, versions, menu -- */
   function closePop() {
     if (!ui || !ui.pop) return;
+    closeRowMenu();
     ui.pop.hidden = true;
     ui.pop.replaceChildren();
     for (const b of [ui.pick, ui.ver, ui.more]) b.setAttribute('aria-expanded', 'false');
@@ -1750,56 +2040,213 @@
     b.setAttribute('role', 'menuitem');
     return b;
   }
-  async function openPicker() {
-    if (ui.popFor === 'pick') {
+  /* opts: {anchor: the element it hangs from (the empty state's "Archived 18"), group: open that foot group, keep: draw it again in
+     place (after an action), keeping its scroll and the focused control}. */
+  async function openPicker(ev, opts) {
+    opts = opts || {};
+    if (ui.popFor === 'pick' && !opts.keep && !opts.group) {
       closePop();
       return;
     }
+    const was = opts.keep ? { top: ui.pop.scrollTop, key: focusKey() } : null;
     closePop();
     const a = current(),
-      docs = myDocs();
-    if (!a && !S.doc) return;
-    if (S.doc ? ui.pick.disabled : pickerIsPlain(S.list, docs, chatKeys())) return;
+      docs = myDocs(),
+      hidden = hiddenCounts(S.list);
+    if (!a && !S.doc && !hidden) return;
+    const emptyLink = () =>
+      ui.emptyHidden.hidden ? null : ui.emptyHidden.querySelector('[data-group="' + ((opts.anchor && opts.anchor.dataset.group) || '') + '"]') || ui.emptyHidden.querySelector('.ar-hidden-open');
+    const anchor = opts.anchor && opts.anchor.isConnected !== false ? opts.anchor : !ui.bar.hidden ? ui.pick : emptyLink();
+    if (!anchor) return;
+    if (anchor === ui.pick && (S.doc ? ui.pick.disabled : pickerIsPlain(S.list, docs, chatKeys()))) return;
+    if (opts.group) S.foot[opts.group] = true;
     ui.popFor = 'pick';
-    ui.pick.setAttribute('aria-expanded', 'true');
-    const groups = pickerGroups(S.list, S.doc ? 'doc:' + S.doc.name : a.id, undefined, docs, chatKeys(), S.fresh);
+    ui.popAnchor = anchor;
+    if (anchor === ui.pick) ui.pick.setAttribute('aria-expanded', 'true');
+    const sel = S.doc ? 'doc:' + S.doc.name : a ? a.id : '';
+    const groups = pickerGroups(S.list, sel, undefined, docs, chatKeys(), S.fresh, S.foot);
     const frag = doc.createDocumentFragment();
     for (const g of groups) {
-      frag.append(...groupHead(g));
+      if (g.foot) {
+        if (g.divider) frag.append(el('div', 'ar-sep'));
+        frag.append(footHead(g));
+        if (g.open && g.empty) frag.append(el('div', 'ar-gnote ar-foot-empty', g.empty));
+      } else frag.append(...groupHead(g));
       for (const it of g.items) {
-        if (it.doc) {
-          frag.append(docButton(it));
-          continue;
-        }
-        const row = popItem((it.on ? 'on' : '') + (it.fresh ? ' ar-new' : ''));
-        row.dataset.id = it.id;
-        const star = el('span', 'ar-star' + (it.pinned ? ' on' : ''), it.pinned ? '★' : '☆');
-        star.setAttribute('role', 'button');
-        star.setAttribute('aria-label', it.pinned ? 'Unpin ' + it.title : 'Pin ' + it.title);
-        star.title = it.pinned ? 'Unpin' : 'Pin';
-        star.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          ev.preventDefault();
-          togglePin(it.id);
-        });
-        row.append(
-          el('span', 'ar-k', it.badge),
-          el('span', 'ar-it-title', it.title),
-          el('span', 'ar-it-meta', it.meta),
-          star,
-        );
-        if (it.fresh) row.insertBefore(newDot(), star);
-        row.addEventListener('click', () => {
-          closePop();
-          selectArtifact(it.id);
-        });
-        frag.append(row);
+        if (it.doc) frag.append(docButton(it));
+        else if (it.deleted) frag.append(deletedRow(it));
+        else frag.append(artifactRow(it));
       }
     }
     ui.pop.replaceChildren(frag);
     ui.pop.setAttribute('aria-label', 'Artifacts and docs in this chat');
-    placePop(ui.pick, false);
-    focusFirst();
+    placePop(anchor, false);
+    if (was) ui.pop.scrollTop = was.top;
+    const back = was && was.key ? ui.pop.querySelector('[data-key="' + was.key + '"]') : null;
+    const target = opts.group ? ui.pop.querySelector('[data-key="foot:' + opts.group + '"]') : null;
+    if (back || target) (back || target).focus({ preventScroll: !!back });
+    else focusFirst();
+  }
+  /* Draw the open picker again after its list changed (an action, an event, the poll). */
+  function repaintPicker() {
+    if (ui && ui.popFor === 'pick') openPicker(null, { keep: true, anchor: ui.popAnchor });
+  }
+  const focusKey = () => {
+    const f = doc.activeElement;
+    return f && ui.pop.contains(f) && f.getAttribute ? f.getAttribute('data-key') || '' : '';
+  };
+  /* "▸ Archived 18": a closed group at the foot; a click opens or closes it. */
+  function footHead(g) {
+    const b = el('button', 'ar-it ar-foothead' + (g.open ? ' open' : ''));
+    b.type = 'button';
+    b.setAttribute('data-key', 'foot:' + g.key);
+    b.setAttribute('aria-expanded', g.open ? 'true' : 'false');
+    b.append(el('span', 'ar-foot-caret', g.open ? '▾' : '▸'), el('span', 'ar-it-title', g.label), el('span', 'ar-foot-n', String(g.count)));
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      S.foot[g.key] = !S.foot[g.key];
+      repaintPicker();
+    });
+    return b;
+  }
+  /* A live or archived artifact's row: badge, title, meta, ⋯ (shown on hover and focus) and, live only, the pin star. Right-click
+     (or the keyboard's menu key) opens the same menu as ⋯. */
+  function artifactRow(it) {
+    const row = popItem((it.on ? 'on' : '') + (it.fresh ? ' ar-new' : '') + (it.archived ? ' ar-archived-row' : ''));
+    row.dataset.id = it.id;
+    row.setAttribute('data-key', 'row:' + it.id);
+    const dots = el('span', 'ar-dots', '⋯');
+    dots.setAttribute('role', 'button');
+    dots.setAttribute('aria-label', 'More for ' + it.title);
+    dots.setAttribute('aria-haspopup', 'menu');
+    dots.title = 'More';
+    dots.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      openRowMenu(it.id, dots, row);
+    });
+    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta), dots);
+    if (!it.archived) {
+      const star = el('span', 'ar-star' + (it.pinned ? ' on' : ''), it.pinned ? '★' : '☆');
+      star.setAttribute('role', 'button');
+      star.setAttribute('aria-label', it.pinned ? 'Unpin ' + it.title : 'Pin ' + it.title);
+      star.title = it.pinned ? 'Unpin' : 'Pin';
+      star.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        togglePin(it.id);
+      });
+      row.append(star);
+    }
+    if (it.fresh) row.insertBefore(newDot(), dots);
+    row.addEventListener('click', () => {
+      closePop();
+      selectArtifact(it.id);
+    });
+    row.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openRowMenu(it.id, row, row, ev);
+    });
+    return row;
+  }
+  /* A Recently deleted row: title, "Deleted 12 Nov, 14:02. Removed for good on 12 Dec. <the file>", Restore and Delete now. Delete now
+     turns into "Delete for good? This can't be undone. Delete for good · Keep" in the row itself (no pop-up). */
+  function deletedRow(it) {
+    const box = el('div', 'ar-del');
+    box.dataset.id = it.id;
+    const head = el('div', 'ar-del-head');
+    head.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title));
+    box.append(head, el('div', 'ar-del-line', it.line));
+    const btn = (cls, label, key, fn) => {
+      const b = el('button', 'ar-nav ' + cls, label);
+      b.type = 'button';
+      b.setAttribute('data-key', key + ':' + it.id);
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        fn();
+      });
+      return b;
+    };
+    if (S.confirmPurge === it.id) {
+      const c = el('div', 'ar-confirm');
+      c.setAttribute('role', 'group');
+      c.append(
+        el('span', 'ar-confirm-t', "Delete for good? This can't be undone."),
+        btn('ar-btn-danger', 'Delete for good', 'forgood', () => doPurge(it.id)),
+        btn('ar-btn-plain', 'Keep', 'keep', () => {
+          S.confirmPurge = '';
+          repaintPicker();
+        }),
+      );
+      box.append(c);
+    } else {
+      const acts = el('div', 'ar-del-acts');
+      acts.append(
+        btn('ar-btn-plain', 'Restore', 'restore', () => doUndelete(it.id)),
+        btn('ar-btn-plain ar-btn-dng', 'Delete now', 'purge', () => {
+          S.confirmPurge = it.id;
+          repaintPicker();
+          const k = ui.pop.querySelector('[data-key="keep:' + it.id + '"]');
+          if (k) k.focus({ preventScroll: true });
+        }),
+      );
+      box.append(acts);
+    }
+    return box;
+  }
+  /* -- a row's ⋯ menu (and right-click) -- */
+  function closeRowMenu() {
+    if (!ui || !ui.rowPop || ui.rowPop.hidden) return;
+    ui.rowPop.hidden = true;
+    ui.rowPop.replaceChildren();
+    ui.rowFor = null;
+  }
+  function openRowMenu(id, anchor, row, ev) {
+    const a = known(id);
+    closeRowMenu();
+    const items = rowMenuItems(a);
+    if (!items.length) return;
+    ui.rowFor = { id, row };
+    const frag = doc.createDocumentFragment();
+    for (const it of items) {
+      if (it.sep) frag.append(el('div', 'ar-sep'));
+      else if (it.hint) frag.append(el('p', 'ar-rowhint', it.hint));
+      else {
+        const b = popItem(it.danger ? 'ar-danger' : '');
+        b.dataset.id = it.id;
+        b.append(el('span', 'ar-it-title', it.label));
+        if (it.kb) b.append(el('span', 'ar-kb', it.kb));
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeRowMenu();
+          runRow(id, it.id);
+        });
+        frag.append(b);
+      }
+    }
+    ui.rowPop.replaceChildren(frag);
+    ui.rowPop.setAttribute('aria-label', 'More for ' + (a.title || 'Untitled'));
+    ui.rowPop.hidden = false;
+    const v = ui.view,
+      vr = v.getBoundingClientRect(),
+      k = vr.width && v.offsetWidth ? vr.width / v.offsetWidth : 1,
+      ar = anchor.getBoundingClientRect();
+    const x = ev && ev.clientX != null ? ev.clientX : ar.right - ui.rowPop.offsetWidth * k,
+      y = ev && ev.clientY != null ? ev.clientY : ar.bottom + 2;
+    const top = Math.max(4, Math.min((y - vr.top) / k, v.offsetHeight - ui.rowPop.offsetHeight - 4));
+    ui.rowPop.style.top = top + 'px';
+    ui.rowPop.style.left = placeLeft((x - vr.left) / k, ui.rowPop.offsetWidth, v.offsetWidth) + 'px';
+    const first = ui.rowPop.querySelector('.ar-it');
+    if (first) first.focus({ preventScroll: true });
+  }
+  function runRow(id, act) {
+    if (act === 'open') {
+      closePop();
+      selectArtifact(id);
+    } else if (act === 'pin') togglePin(id);
+    else if (act === 'archive' || act === 'unarchive') doArchive(id, act === 'archive');
+    else if (act === 'delete') doDelete(id);
   }
   async function openVersions() {
     if (ui.popFor === 'ver') {
@@ -1857,6 +2304,9 @@
       pinned: !!a.pinned,
       sourcePath: a.sourcePath,
       canEditor: !!ed,
+      archived: isArchived(a),
+      deleted: isDeleted(a),
+      sourceCopy: a.sourceMissing && a.sourceCopy ? a.sourceCopy : '',
     });
     ui.popFor = 'menu';
     ui.more.setAttribute('aria-expanded', 'true');
@@ -1866,7 +2316,7 @@
         frag.append(el('div', 'ar-sep'));
         continue;
       }
-      const b = popItem();
+      const b = popItem(it.danger ? 'ar-danger' : '');
       b.dataset.id = it.id;
       b.append(el('span', 'ar-it-title', it.label));
       if (it.kb) b.append(el('span', 'ar-kb', it.kb));
@@ -1885,17 +2335,15 @@
     const b = ui.pop.querySelector('.ar-it.on') || ui.pop.querySelector('.ar-it');
     if (b) b.focus({ preventScroll: true });
   }
-  async function togglePin(id) {
+  async function togglePin(id, pinned) {
     const a = known(id);
     if (!a) return;
+    const want = pinned === undefined ? !a.pinned : !!pinned;
     try {
-      const s = await api('/api/live/artifacts/pin', { id, pinned: !a.pinned });
+      const s = await api('/api/live/artifacts/pin', { id, pinned: want });
       S.userPicked = true;
-      upsert(s && s.id ? s : Object.assign({}, a, { pinned: !a.pinned }));
-      if (ui && ui.popFor === 'pick') {
-        ui.popFor = '';
-        openPicker();
-      }
+      upsert(s && s.id ? s : Object.assign({}, a, { pinned: want }));
+      repaintPicker();
     } catch (e) {
       note('Could not change the pin: ' + e.message);
     }
@@ -1949,6 +2397,104 @@
       copyText(a.sourcePath);
     } else if (id === 'download') {
       download(frameUrlFor(a, ver));
+    } else if (id === 'copycopy') copyText(a.sourceCopy);
+    else if (id === 'archive' || id === 'unarchive') doArchive(a.id, id === 'archive');
+    else if (id === 'delete') doDelete(a.id);
+    else if (id === 'undelete') doUndelete(a.id);
+  }
+  /* -- Archive, Delete, Restore, Delete now: one click, no dialog; Undo in the note line (only Delete now asks, inline) -- */
+  /* The viewer leaves an artifact you archived or deleted for the next live one ("Nothing showing" when none is left). */
+  /* An action's answer is newer than a list read already on its way: that read is dropped (the next poll reads again). */
+  function staleList() {
+    S.listSeq++;
+    S.loading = false;
+  }
+  function moveOff(id) {
+    if (S.doc || S.selId !== id) return;
+    const next = S.list.find((x) => x.id !== id && pickable(x));
+    S.selId = next ? next.id : '';
+    S.picked = null;
+    S.mode = 'page';
+    S.cmp = null;
+    S.dirty = true;
+    S.stageKey = '';
+    paintAll();
+    paintStage('open');
+  }
+  function reselect(id) {
+    if (known(id) && S.selId !== id && !S.doc) selectArtifact(id);
+  }
+  async function doArchive(id, archived, quiet) {
+    const a = known(id);
+    if (!a) return false;
+    try {
+      const r = await api('/api/live/artifacts/archive', { conversationId: S.chat.id || a.conversationId, ids: [id], archived });
+      const s = ((r && r.artifacts) || []).find((x) => x && x.id === id);
+      const unpinned = ((r && r.unpinned) || []).includes(id);
+      staleList();
+      if (s) upsert(s);
+      if (archived) moveOff(id);
+      repaintPicker();
+      if (!quiet)
+        note(archiveNote(a.title, archived, unpinned), async () => {
+          if (!(await doArchive(id, !archived, true))) return;
+          if (unpinned) await togglePin(id, true);
+          if (archived) reselect(id);
+          note(archived ? 'Unarchived ' + quoted(a.title) + (unpinned ? ' and pinned again.' : '.') : archiveNote(a.title, true, false));
+        });
+      return true;
+    } catch (e) {
+      note(e.message);
+      return false;
+    }
+  }
+  async function doDelete(id) {
+    const a = known(id);
+    if (!a) return;
+    try {
+      const r = await api('/api/live/artifacts/delete', { id });
+      staleList();
+      if (r && r.artifact) upsert(r.artifact);
+      moveOff(id);
+      repaintPicker();
+      note(deleteNote(a.title, r && r.file), () => doUndelete(id, true));
+    } catch (e) {
+      note(e.message); // "Close report.pdf in the other program, then try again." and the like: nothing was changed
+    }
+  }
+  async function doUndelete(id, back) {
+    const a = known(id);
+    if (!a) return;
+    try {
+      const r = await api('/api/live/artifacts/undelete', { id });
+      staleList();
+      delete S.items[id];
+      if (r && r.artifact) upsert(r.artifact);
+      if (S.selId === id) {
+        S.stageKey = '';
+        S.dirty = true;
+        paintAll();
+        paintStage('refresh');
+      } else if (back) reselect(id);
+      repaintPicker();
+      note(restoreNote(a.title, r && r.file));
+    } catch (e) {
+      note(e.message);
+    }
+  }
+  async function doPurge(id) {
+    const a = known(id);
+    if (!a) return;
+    try {
+      await api('/api/live/artifacts/purge', { id });
+      staleList();
+      S.confirmPurge = '';
+      dropPurged(id);
+      note(quoted(a.title) + ' is deleted for good.');
+    } catch (e) {
+      S.confirmPurge = '';
+      repaintPicker();
+      note(e.message);
     }
   }
   async function copyText(text) {
@@ -1989,11 +2535,11 @@
   }
 
   /* -- cards in the chat stream -- */
-  const cardSig = (m) => (m ? [m.id, m.title, m.version, m.sub, m.canOpen, m.builtFrom || ''].join('|') : '');
+  const cardSig = (m) => (m ? [m.id, m.title, m.version, m.sub, m.canOpen, m.builtFrom || '', m.state || ''].join('|') : '');
   /* QA m3: an old card shows the version its turn wrote, not the newest. Needs the version times (one item read per artifact). */
   const itemAsked = new Set();
   function cardVersion(card) {
-    const art = S.list.find((a) => sameFile(a.sourcePath, card.dataset.src));
+    const art = bySource(S.list, card.dataset.src);
     if (!art) return 0;
     const latest = num(art.version) || 1;
     if (latest <= 1) return 1;
@@ -2042,7 +2588,9 @@
       body = el('div', 'art-card-body');
     ic.setAttribute('aria-hidden', 'true');
     ic.append(cardIcon(m.badge));
-    body.append(el('div', 'art-card-title', m.title), el('div', 'art-card-sub', cardLine(m)));
+    const title = el('div', 'art-card-title', m.title);
+    if (m.state) title.append(el('span', 'artifact-state', ' · ' + m.state)); // decision 8a: the card stays and says so
+    body.append(title, el('div', 'art-card-sub', cardLine(m)));
     const acts = el('div', 'art-card-actions');
     const openBtn = el('button', 'art-btn', 'View');
     openBtn.type = 'button';
@@ -2189,11 +2737,73 @@
     if (!doc || !container) return;
     const FU = win && win.AgentFilesUI;
     if (FU && FU.linkPaths) FU.linkPaths(container);
+    decorateLinks(container);
+  }
+  /* -- link labels: "⧉ Title · archived" / "· deleted" in chat messages (decision 8a). markdown.js stays pure: every render ends in
+     linkify() above, which labels the links from what the page knows and asks for the rest in ONE request per draw (break 9). -- */
+  const linkStates = new Map(); // artifact id -> 'live' | 'archived' | 'deleted' | 'gone'
+  let statesWanted = new Set(),
+    statesTimer = 0;
+  const statesFlying = new Set();
+  function setLinkState(id, st) {
+    if (!id || !st) return;
+    const was = linkStates.get(id);
+    linkStates.set(id, st);
+    if (was !== st) paintLinks(id);
+  }
+  function paintLink(link, st) {
+    const w = stateWord(st);
+    link.classList.toggle('artifact-link-archived', st === 'archived');
+    link.classList.toggle('artifact-link-deleted', st === 'deleted' || st === 'gone');
+    let tag = link.querySelector('.artifact-state');
+    if (!w) {
+      if (tag) tag.remove();
+      return;
+    }
+    if (!tag) {
+      tag = el('span', 'artifact-state');
+      link.append(tag);
+    }
+    tag.textContent = ' · ' + w;
+  }
+  function paintLinks(id) {
+    if (!doc || !doc.querySelectorAll) return;
+    for (const l of doc.querySelectorAll('a.artifact-link')) if (l.dataset.artifactId === id) paintLink(l, linkStates.get(id));
+  }
+  function decorateLinks(container) {
+    if (!S.mounted || !container.querySelectorAll) return;
+    for (const l of container.querySelectorAll('a.artifact-link')) {
+      const id = l.dataset.artifactId;
+      if (!id) continue;
+      const k = known(id),
+        st = linkStates.get(id) || (k ? artState(k) : '');
+      if (st) paintLink(l, st);
+      else if (!statesFlying.has(id)) statesWanted.add(id);
+    }
+    if (statesWanted.size && !statesTimer) statesTimer = win.setTimeout(askStates, 0);
+  }
+  async function askStates() {
+    statesTimer = 0;
+    const ids = [...statesWanted].filter((id) => !linkStates.has(id) && !statesFlying.has(id));
+    statesWanted = new Set();
+    for (let i = 0; i < ids.length; i += 200) {
+      const part = ids.slice(i, i + 200);
+      part.forEach((id) => statesFlying.add(id));
+      try {
+        const r = await api('/api/live/artifacts/states?' + q({ ids: part.join(',') }));
+        const st = (r && r.states) || {};
+        for (const id of part) setLinkState(id, st[id] || 'gone');
+      } catch (e) {
+        /* an older AIB without the route: links stay as they are */
+      } finally {
+        part.forEach((id) => statesFlying.delete(id));
+      }
+    }
   }
   let linkSig = '';
   function relinkAll() {
     if (!doc) return;
-    const sig = S.list.map((a) => a.id + '|' + (a.sourcePath || '')).join(';') + '#' + S.chat.cwd;
+    const sig = S.list.filter((a) => !isDeleted(a)).map((a) => a.id + '|' + (a.sourcePath || '')).join(';') + '#' + S.chat.cwd;
     if (sig === linkSig) return;
     linkSig = sig;
     for (const m of doc.querySelectorAll('#messages .markdown')) linkify(m);
@@ -2275,20 +2885,38 @@
     const becameActs = el('span', 'ar-became-acts');
     becameActs.append(becameOpen, becameSep, undoBtn);
     became.append(becameText, becameActs);
-    const noteEl = el('p', 'ar-note');
+    // "Archived 2 d ago. Hidden from this chat's list. · Unarchive"
+    const archived = el('div', 'ar-built ar-archived');
+    archived.hidden = true;
+    archived.setAttribute('role', 'status');
+    const archivedText = el('span', 'ar-built-t', '');
+    const unarchiveBtn = el('button', 'ar-switch ar-unarchive', 'Unarchive');
+    unarchiveBtn.type = 'button';
+    archived.append(archivedText, unarchiveBtn);
+    // the note line: one message, with Undo after Archive and Delete
+    const noteEl = el('div', 'ar-note');
     noteEl.hidden = true;
     noteEl.setAttribute('role', 'status');
+    const noteText = el('span', 'ar-note-t', '');
+    const noteUndo = el('button', 'ar-switch ar-note-undo', 'Undo');
+    noteUndo.type = 'button';
+    noteUndo.hidden = true;
+    noteEl.append(noteText, noteUndo);
     const stage = el('div', 'ar-stage');
     const empty = el('div', 'ar-empty');
-    empty.append(
-      el('p', 'ar-empty-t', 'No artifacts in this chat yet'),
-      el('p', '', 'When the agent publishes a page, diagram or report, or saves a file in outputs/, it shows up here.'),
-    );
+    const emptyTitle = el('p', 'ar-empty-t', 'No artifacts in this chat yet'),
+      emptyHint = el('p', '', 'When the agent publishes a page, diagram or report, or saves a file in outputs/, it shows up here.'),
+      emptyHidden = el('p', 'ar-empty-hidden');
+    emptyHidden.hidden = true;
+    empty.append(emptyTitle, emptyHint, emptyHidden);
     const foot = el('div', 'ar-foot', FOOTER);
     const pop = el('div', 'ar-pop');
     pop.hidden = true;
     pop.setAttribute('role', 'menu');
-    view.append(bar, avail, fresh, built, stale, became, noteEl, stage, empty, foot, pop);
+    const rowPop = el('div', 'ar-pop ar-rowmenu');
+    rowPop.hidden = true;
+    rowPop.setAttribute('role', 'menu');
+    view.append(bar, avail, fresh, built, stale, became, archived, noteEl, stage, empty, foot, pop, rowPop);
     ui = {
       view,
       bar,
@@ -2312,10 +2940,20 @@
       stale,
       staleText,
       note: noteEl,
+      noteText,
+      noteUndo,
+      archived,
+      archivedText,
       stage,
       empty,
+      emptyTitle,
+      emptyHint,
+      emptyHidden,
       foot,
       pop,
+      rowPop,
+      rowFor: null,
+      popAnchor: null,
       badge: o.badge,
       tab: o.tab,
       reveal: o.reveal || (() => {}),
@@ -2340,6 +2978,12 @@
       paintStage('open');
       ver.focus({ preventScroll: true }); // QA m10: the Switch button goes away; the version chip takes the focus
     });
+    unarchiveBtn.addEventListener('click', () => {
+      const a = current();
+      if (a) doArchive(a.id, false);
+    });
+    noteEl.addEventListener('pointerenter', () => noteHold(true));
+    noteEl.addEventListener('pointerleave', () => noteHold(false));
     builtOpen.addEventListener('click', () => openBuiltDoc());
     edit.addEventListener('click', () => editAsDoc());
     request.addEventListener('click', () => requestChange());
@@ -2358,17 +3002,36 @@
     doc.addEventListener(
       'keydown',
       (e) => {
+        if (!ui.rowPop.hidden) {
+          // the row menu first: Escape back to its row, arrows through its items
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            const r = ui.rowFor && ui.rowFor.row;
+            closeRowMenu();
+            if (r && r.focus) r.focus({ preventScroll: true });
+            return;
+          }
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const items = [...ui.rowPop.querySelectorAll('.ar-it')];
+            const at = items.indexOf(doc.activeElement),
+              next = e.key === 'ArrowDown' ? (at + 1) % items.length : at <= 0 ? items.length - 1 : at - 1;
+            e.preventDefault();
+            if (items[next]) items[next].focus({ preventScroll: true });
+          }
+          return;
+        }
         if (ui.pop.hidden) return;
         if (e.key === 'Escape') {
           e.preventDefault();
           e.stopPropagation();
-          const f = ui.popFor === 'menu' ? more : ui.popFor === 'ver' ? ver : pick;
+          const f = ui.popFor === 'menu' ? more : ui.popFor === 'ver' ? ver : ui.popAnchor && ui.popAnchor !== pick && ui.popAnchor.isConnected ? ui.popAnchor : pick;
           closePop();
-          f.focus({ preventScroll: true });
+          if (f && f.focus) f.focus({ preventScroll: true });
           return;
         }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          const items = [...ui.pop.querySelectorAll('.ar-it')];
+          const items = [...ui.pop.querySelectorAll('.ar-it, .ar-nav')];
           if (!items.length) return;
           const at = items.indexOf(doc.activeElement),
             next = e.key === 'ArrowDown' ? (at + 1) % items.length : at <= 0 ? items.length - 1 : at - 1;
@@ -2385,7 +3048,12 @@
         open(link.dataset.artifactId);
         return;
       }
-      if (!ui.pop.hidden && !ui.pop.contains(e.target) && !bar.contains(e.target)) closePop();
+      if (!ui.rowPop.hidden && !ui.rowPop.contains(e.target)) {
+        closeRowMenu();
+        if (ui.pop.contains(e.target)) return; // a click elsewhere in the picker only closes the row menu
+      }
+      if (!ui.pop.hidden && !ui.pop.contains(e.target) && !bar.contains(e.target) && !(ui.popAnchor && ui.popAnchor.contains && ui.popAnchor.contains(e.target)))
+        closePop();
     });
     // The page reports its scroll position so a reload can put it back. A sandboxed page has an opaque origin, so the sender is
     // identified by its window, not by event.origin.
@@ -2428,6 +3096,7 @@
     open,
     openDoc,
     upsert,
+    note,
     state: () => ({ chat: S.chat, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh, doc: S.doc }),
     _S: S,
   });
