@@ -17,6 +17,8 @@ export interface Marks {
   deletedAt: number;
   holdAt: number;
   yourTurnAt: number;
+  /** When you last acted on the chat (sent, or Mark handled): a failure or a question the agent reported before it is handled. */
+  handledAt: number;
   holdNote: string;
   agentDeleted: boolean;
   title: string;
@@ -78,7 +80,8 @@ export class ConversationState extends JsonFileStore {
     const deletedAt = stamp(item.deletedAt);
     const holdAt = stamp(item.holdAt);
     const yourTurnAt = stamp(item.yourTurnAt);
-    if (!pinnedAt && !archivedAt && !deletedAt && !holdAt && !yourTurnAt) return null;
+    const handledAt = stamp(item.handledAt);
+    if (!pinnedAt && !archivedAt && !deletedAt && !holdAt && !yourTurnAt && !handledAt) return null;
     const cwd = text(item.cwd, 1024);
     return {
       pinnedAt,
@@ -86,6 +89,7 @@ export class ConversationState extends JsonFileStore {
       deletedAt,
       holdAt,
       yourTurnAt,
+      handledAt,
       holdNote: holdAt ? pyStrip(text(item.holdNote, this.MAX_NOTE)) : '',
       agentDeleted: pyTruthy(item.agentDeleted) && !!deletedAt,
       title: text(item.title, 200),
@@ -140,7 +144,7 @@ export class ConversationState extends JsonFileStore {
     if (this.entries.size <= max) return;
     const rank = (entry: Marks): [number, number] => [
       entry.agentDeleted ? 0 : entry.deletedAt ? 1 : entry.archivedAt ? 2 : 3,
-      Math.max(entry.pinnedAt, entry.archivedAt, entry.deletedAt, entry.holdAt, entry.yourTurnAt),
+      Math.max(entry.pinnedAt, entry.archivedAt, entry.deletedAt, entry.holdAt, entry.yourTurnAt, entry.handledAt),
     ];
     const sorted = [...this.entries].sort((a, b) => {
       const [x, y] = [rank(a[1]), rank(b[1])];
@@ -189,6 +193,7 @@ export class ConversationState extends JsonFileStore {
           cwd: '',
           projectRoot: '',
           yourTurnAt: 0,
+          handledAt: 0,
         }),
       };
       if ((action === 'pin' || action === 'archive' || action === 'hold') && entry.deletedAt) {
@@ -235,6 +240,9 @@ export class ConversationState extends JsonFileStore {
         entry.yourTurnAt = time;
       } else if (action === 'handled') {
         entry.yourTurnAt = 0; // the user acted: replied, or clicked Mark handled
+        // ...which also handles a failure or a question the agent reported until now (inbox-rules.js phaseOf). Only a chat
+        // that carries another mark, or has one of those to clear, keeps the entry: nothing else needs remembering.
+        entry.handledAt = time;
       }
       const cleaned = this.#cls().clean(key, entry);
       if (cleaned) this.entries.set(key, cleaned);

@@ -22,20 +22,34 @@
   const GROUP_MS = R.GROUP_MS;
 
   // ---- pure logic ---------------------------------------------------------------------------------------------
-  // entries: [{key, title, state, needs, yourTurn, yourTurnAt, eligible, muted, selected}]; prev: the last result's `next`, or null.
-  // The first observation only sets the baseline. Returns {next, events:[{key, kind: "needs"|"turn", needs?}]}.
+  // entries: [{key, title, state, phase, since, needs, yourTurn, yourTurnAt, eligible, muted, selected}]; prev: the last result's
+  // `next`, or null. phase is the inbox's (inbox-rules.js): a failed turn and a question in the reply are "needs" news like a
+  // request; a finished turn is news only once the chat is really done (not while its helpers, a background shell or their
+  // follow-up still run: the phase says working until then). The first observation only sets the baseline.
+  // Returns {next, events:[{key, kind: "needs"|"turn", needs?}]}.
   function detect(prev, entries) {
     const next = { conns: {} },
       events = [];
     for (const e of entries || []) {
       if (!e || typeof e.key !== 'string') continue;
-      const needs = e.state === 'needs_you' ? Math.max(1, Number(e.needs) || 1) : 0;
-      const turnAt = e.yourTurn ? Number(e.yourTurnAt) || 1 : 0;
-      next.conns[e.key] = { needs, turnAt };
+      const phase =
+        typeof e.phase === 'string' && e.phase
+          ? e.phase
+          : e.state === 'needs_you'
+            ? 'needs_you'
+            : e.yourTurn
+              ? 'your_turn'
+              : 'idle';
+      const was = prev ? prev.conns[e.key] : null;
+      const needs = phase === 'needs_you' ? Math.max(1, Number(e.needs) || 1) : 0;
+      const asked = phase === 'failed' || phase === 'asks' ? phase + ':' + (Number(e.since) || 1) : '';
+      // the last finished turn seen as finished: kept while the chat works again, so its end is news once
+      const turnAt = phase === 'your_turn' ? Number(e.yourTurnAt) || 1 : was ? was.turnAt : 0;
+      next.conns[e.key] = { needs, asked, turnAt };
       if (!prev || !e.eligible || e.muted || e.state === 'closed') continue; // state still tracked: un-hiding or unmuting later does not replay old news
-      const was = prev.conns[e.key];
       if (needs > (was ? was.needs : 0)) events.push({ key: e.key, kind: 'needs', needs });
-      else if (!needs && turnAt && was && turnAt !== was.turnAt) events.push({ key: e.key, kind: 'turn' });
+      else if (asked && was && asked !== was.asked) events.push({ key: e.key, kind: 'needs', needs: 1 });
+      else if (phase === 'your_turn' && was && turnAt !== was.turnAt) events.push({ key: e.key, kind: 'turn' });
     }
     return { next, events };
   }

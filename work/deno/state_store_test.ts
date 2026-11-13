@@ -353,8 +353,12 @@ Deno.test('conversations: your turn is set by the agent and cleared only by acti
   assertEquals((await state.apply('handled', 'claude', 's1'))!.yourTurnAt, 0);
   await state.apply('your_turn', 'claude', 's1');
   await state.apply('unpin', 'claude', 's1');
-  await state.apply('handled', 'claude', 's1');
-  assertEquals(state.public().entries, {});
+  const handled = (await state.apply('handled', 'claude', 's1'))!;
+  // Mark handled is remembered (the inbox: a failure or a question the agent reported before it stays handled)
+  assertEquals(handled.yourTurnAt, 0);
+  assert(handled.handledAt > 0);
+  assertEquals(Object.keys(state.public().entries), ['claude:s1']);
+  assertEquals(ConversationState.clean('claude:s1', { handledAt: 5 })?.handledAt, 5); // an entry with only that mark is kept
   for (const action of ['hold', 'archive', 'delete']) {
     await state.apply('your_turn', 'claude', 's1');
     assertEquals((await state.apply(action, 'claude', 's1'))!.yourTurnAt, 0, action);
@@ -378,7 +382,8 @@ Deno.test('conversations: parked chats do not become your turn; shared through t
   await a.apply('your_turn', 'omp', 's9');
   assert(b.public().entries['omp:s9'].yourTurnAt > 0);
   await b.apply('handled', 'omp', 's9');
-  assert(!('omp:s9' in a.public().entries));
+  assertEquals(a.public().entries['omp:s9'].yourTurnAt, 0);
+  assert(a.public().entries['omp:s9'].handledAt > 0);
 });
 
 Deno.test('conversations: old entries without projectRoot load as cwd (test_project_root)', async () => {

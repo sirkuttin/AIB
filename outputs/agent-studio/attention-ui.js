@@ -132,9 +132,11 @@
       );
     }
     const yourTurn = typeof m.yourTurn === 'boolean' ? m.yourTurn : W.yourTurnFromEvents(m.events, m.handledAt);
+    // the inbox's facts (attention.helpers / shells): helpers or a background command still run, so the chat is still working
+    const a = snap.attention || {};
     return done(
       { kind: 'idle', short: yourTurn ? 'Your turn' : 'Idle', text: yourTurn ? 'Your turn' : 'Idle' },
-      { yourTurn },
+      { yourTurn, helpers: Number(a.helpers) || 0, background: !!a.shells },
     );
   }
 

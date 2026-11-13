@@ -428,8 +428,8 @@ export async function main(argv: string[]): Promise<void> {
       mergesRunning, // Quit AIB lets a running merge finish before AIB exits
       trayCounts: studio
         ? () => {
-          const working = studio!.workingList();
-          return Promise.resolve({ working: working.length, needsYou: working.filter((w) => w.state === 'needs_you').length });
+          // needs you: the inbox's one number (inbox-rules.js), the same as the page's badge and the phone's
+          return Promise.resolve({ working: studio!.workingList().length, needsYou: studio!.blockedChats() });
         }
         : undefined,
     });

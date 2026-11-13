@@ -7,9 +7,12 @@
  *
  *   needs you  once per question, approval or sign-in of a chat (the chat + the request's key). A request that came while AIB was
  *              down is announced once when AIB is back; one announced before a restart or a keeper take-over is not announced again.
+ *              Also once per failed turn (the agent reported an error) and once per reply that asks you something in plain text
+ *              (the inbox's Failed and Asks, inbox-rules.js); a question only once it stayed open for SETTLE_MS, like a finish.
  *   finished   once per finished turn (the chat + its turnEndedAt), only when the chat is really done: not while the queue is about
  *              to send its next message (that turn is not the end), and not while the chat's helpers or background shells still
- *              run. A turn that ended before this AIB first watched (older than the fired file, or more than 6 hours ago) is not news.
+ *              run (the inbox's phase: inbox-rules.js phaseOf, with the caps and the follow-up window). A turn that ended before
+ *              this AIB first watched (older than the fired file, or more than 6 hours ago) is not news.
  *
  * Which chats may notify, the desktop app's choices and the 60 s grouping are the page's own rules (notify-rules.js, through
  * rules.ts). News about a chat that may not notify (muted, hidden, archived...) is still remembered, so unmuting it later does not
@@ -24,6 +27,7 @@ import { chatNamesOf, type ViewPrefs } from '../state/view_prefs.ts';
 import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, RULES } from './rules.ts';
+import { INBOX } from './inbox_rules.ts';
 import type { Presence } from './presence.ts';
 
 const log = getLogger('attention');
@@ -34,20 +38,25 @@ const str = (v: unknown, max = 400): string => (typeof v === 'string' ? v.replac
 
 export const POLL_MS = 2000;
 /**
- * A finished turn is announced once the chat has stayed done this long: when a helper ends, Claude Code runs a short follow-up of
- * its own (idle for a moment between the two), and the queue picks its next message up a moment after a turn ends.
+ * A finished turn (or a question in a reply) is announced once the chat has stayed done this long: when a helper ends, Claude Code
+ * runs a follow-up of its own (idle for a moment between the two: in AIB within 10 s 94% of the time and within 20 s always, usage
+ * study 2026-11-13), and the queue picks its next message up a moment after a turn ends.
  */
-export const SETTLE_MS = 3000;
+export const SETTLE_MS = 20_000;
 /** A finished turn older than this when first seen is not announced (a chat AIB brought back after a long time away). */
 export const TURN_FRESH_SECONDS = 6 * 3600;
 const KIND_CACHE_MS = 60_000;
 
-/** One piece of news: the page's chat key, the live chat's id, the kind and the chat's title. */
+/** What a piece of news is about (the inbox's reason words, inbox-rules.js reasonOf). */
+export type Reason = 'approval' | 'question' | 'signin' | 'failed' | 'asks' | 'finished';
+
+/** One piece of news: the page's chat key, the live chat's id, the kind, the chat's title and why. */
 export interface Fire {
   key: string;
   chat: string;
   kind: Kind;
   title: string;
+  reason?: Reason;
 }
 
 /** What the watcher reads besides the agent host (the web context's stores). */
@@ -95,6 +104,9 @@ export class AttentionWatcher {
 
   constructor(readonly sources: WatchSources, readonly options: WatcherOptions) {
     this.clock = options.clock ?? Date.now;
+    // Tests of whole AIBs (AGENT_STUDIO_TEST=1) may shorten the settle: AIB_TEST_SETTLE_MS (the real one is 20 s)
+    const testSettle = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_SETTLE_MS')) : NaN;
+    if (options.settleMs === undefined && Number.isFinite(testSettle) && testSettle >= 0) options.settleMs = testSettle;
     this.fired = new FiredStore(options.stateDir, () => this.clock() / 1000);
   }
 
@@ -223,6 +235,13 @@ export class AttentionWatcher {
     const quiet: string[] = [];
     const seen = new Set<string>();
     const done = new Set<string>(); // turn keys seen done in this look
+    // A chat stayed done (or asking) since when: announced once that lasted SETTLE_MS (checked again next time).
+    const settled = (fk: string) => {
+      done.add(fk);
+      const since = this.#settling.get(fk);
+      if (since === undefined) this.#settling.set(fk, this.clock());
+      return since !== undefined && this.clock() - since >= (this.options.settleMs ?? SETTLE_MS);
+    };
     for (const c of connections) {
       const id = str(c.id, 100);
       if (!id || c.closed) continue;
@@ -230,23 +249,43 @@ export class AttentionWatcher {
       const attention = obj(c.attention);
       const state = str(attention.state, 20);
       const key = chatKey(c);
+      const mark = marks[`${str(c.provider, 60)}:${str(c.sessionId, 300)}`];
+      const phase = INBOX.phaseOf(attention, mark, nowSeconds);
       const flags = RULES.flags(this.facts(c, marks), prefs);
       const title = () => this.title(c, names, marks);
       if (state === 'needs_you') {
         const needs = Math.max(1, Number(attention.needs) || 1);
+        const reason: Reason = c.auth ? 'signin' : Array.isArray(c.elicitations) && c.elicitations.length ? 'question' : 'approval';
         for (const request of await this.#requestKeys(c, needs)) {
           const fk = `needs|${key}|${request}`;
           if (this.fired.has(fk) || news.some((n) => n.fk === fk)) continue;
-          if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), fk, flags });
+          if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason, fk, flags });
           else quiet.push(fk);
         }
         continue;
       }
       const ended = attention.turnEndedAt;
-      if (state !== 'idle' || typeof ended !== 'string' || !ended) continue;
-      const fk = `turn|${key}|${ended}`;
+      const turnKey = typeof ended === 'string' && ended ? `turn|${key}|${ended}` : '';
+      if (phase === 'failed' || phase === 'asks') {
+        // The agent reported a failure, or its reply asks you something: news like a request (and its turn is not "finished")
+        const at = str(phase === 'failed' ? attention.failedAt : attention.asksAt, 40);
+        const fk = `${phase}|${key}|${at}`;
+        if (this.fired.has(fk)) continue;
+        const reported = INBOX.secondsOf(at);
+        if (!(reported >= Math.floor(this.fired.since) - 1) || nowSeconds - reported > TURN_FRESH_SECONDS) {
+          quiet.push(fk, ...(turnKey ? [turnKey] : [])); // old news, as for a finished turn below
+          continue;
+        }
+        if (phase === 'asks' && !settled(fk)) continue;
+        if (turnKey) quiet.push(turnKey);
+        if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags });
+        else quiet.push(fk);
+        continue;
+      }
+      if (state !== 'idle' || !turnKey) continue;
+      const fk = turnKey;
       if (this.fired.has(fk)) continue;
-      const at = Date.parse(ended) / 1000;
+      const at = Date.parse(String(ended)) / 1000;
       if (!(at >= Math.floor(this.fired.since) - 1) || nowSeconds - at > TURN_FRESH_SECONDS) {
         quiet.push(fk); // old news: a turn that ended before this AIB watched
         continue;
@@ -254,18 +293,21 @@ export class AttentionWatcher {
       // The queue sends its next message now: this turn is not the end of the work.
       const queue = obj(c.queue);
       if (Array.isArray(queue.items) && queue.items.length && !queue.paused) continue;
-      // Helpers or a background shell of this chat still run: finished only once they are done (checked again next time).
-      still ??= new Set(
-        ((await this.sources.host.busyConnections()) as unknown[]).map(obj).filter((b) => b.state === 'helpers' || b.state === 'background')
-          .map((b) => str(b.id, 100)),
-      );
-      if (still.has(id)) continue;
+      // Helpers or a background shell of this chat still run, or their follow-up window is open: finished only once they are done
+      // (checked again next time). An agent host older than the inbox says so only through its busy list.
+      if (phase === 'working') continue;
+      if (attention.helpers === undefined) {
+        still ??= new Set(
+          ((await this.sources.host.busyConnections()) as unknown[]).map(obj).filter((b) =>
+            b.state === 'helpers' || b.state === 'background'
+          )
+            .map((b) => str(b.id, 100)),
+        );
+        if (still.has(id)) continue;
+      }
       // done now: announced once it stayed done a moment (a helper's follow-up or the queue's next message comes right after)
-      done.add(fk);
-      const since = this.#settling.get(fk);
-      if (since === undefined) this.#settling.set(fk, this.clock());
-      if (since === undefined || this.clock() - since < (this.options.settleMs ?? SETTLE_MS)) continue;
-      if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), fk, flags });
+      if (!settled(fk)) continue;
+      if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags });
       else quiet.push(fk);
     }
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);
@@ -273,7 +315,7 @@ export class AttentionWatcher {
     if (quiet.length) this.fired.add(quiet);
     if (!news.length) return;
     const fresh = new Set(this.fired.add(news.map((n) => n.fk)));
-    const fires = news.filter((n) => fresh.has(n.fk)).map(({ key, chat, kind, title }) => ({ key, chat, kind, title }));
+    const fires = news.filter((n) => fresh.has(n.fk)).map(({ key, chat, kind, title, reason }) => ({ key, chat, kind, title, reason }));
     // One fire per chat and kind in one look (several requests of one chat at once are one piece of news).
     const once = new Map<string, Fire>();
     for (const f of fires) once.set(`${f.kind}|${f.key}`, f);
@@ -303,7 +345,7 @@ export interface NotifierOptions {
   record?: (what: { to: 'desktop' | 'push' | 'banner' | 'read'; text: unknown; fires: Fire[] }) => void;
 }
 
-const bare = ({ key, chat, kind, title }: Fire): Fire => ({ key, chat, kind, title });
+const bare = ({ key, chat, kind, title, reason }: Fire): Fire => ({ key, chat, kind, title, ...(reason ? { reason } : {}) });
 
 /**
  * The 60 s groups and where news goes, by where the owner is looking (notify-rules.js route, attention/presence.ts):

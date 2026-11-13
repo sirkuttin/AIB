@@ -85,12 +85,16 @@
   function stateWords(c, now) {
     if (c && c.notRunning) return { text: 'Not running', tone: 'nr' };
     if (c.needs > 0 || c.state === 'needs_you') return { text: 'Needs you', tone: 'need' };
-    if (c.state === 'working') {
-      const e = ago(c.busySince, now);
+    // the inbox's phase (inbox-rules.js, from the server): a failed turn and a question in the reply need you too; helpers or a
+    // background shell still running keep the chat working
+    if (c.phase === 'failed') return { text: 'Failed', tone: 'need' };
+    if (c.phase === 'asks') return { text: 'Needs you', tone: 'need' };
+    if (c.state === 'working' || c.phase === 'working') {
+      const e = c.state === 'working' ? ago(c.busySince, now) : '';
       return { text: 'Working' + (e && e !== 'now' ? ' · ' + e : ''), tone: 'work' };
     }
     if (c.state === 'opening') return { text: 'Starting…', tone: 'idle' };
-    if (c.yourTurn) return { text: 'Your turn', tone: 'turn' };
+    if (c.phase ? c.phase === 'your_turn' : c.yourTurn) return { text: 'Your turn', tone: 'turn' };
     return { text: 'Idle', tone: 'idle' };
   }
 
