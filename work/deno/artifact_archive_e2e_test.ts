@@ -655,6 +655,14 @@ e2e(
       `deleted: ${labels[2]}`,
     );
     assert(labels[3] === "⧉ Gone · deleted", `gone: ${labels[3]}`);
+    const colors = await page.eval<string[]>(
+      `[...document.querySelectorAll('#messages a.artifact-link')].map((l) => getComputedStyle(l).color)`,
+    );
+    assert(
+      colors[0] === colors[1] && colors[2] !== colors[0] &&
+        colors[3] === colors[2],
+      `a deleted link is muted: ${colors.join(" | ")}`,
+    );
     await settle(800);
     const asks = await page.eval<string[]>(`window.__states`);
     assert(asks.length <= 1, `at most one states request: ${asks.join(" ; ")}`);
