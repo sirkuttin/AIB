@@ -911,7 +911,9 @@ class Connection:
                     if failure[0]:
                         q.hold = failure[0]
             self._queue_changed()
-            if failure or not (result or {}).get('duplicate') or self.busy:
+            # A turn that already ended (not busy) goes on to the next message here: its own end ran _queue_pump while this
+            # message was still inflight, so that call sent nothing (a slow thread here left the rest of the queue unsent).
+            if failure or self.busy:
                 return
 
     def _stale_error(self, key, what):
