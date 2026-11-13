@@ -797,24 +797,24 @@ Deno.test({
         const c = document.querySelector('.ph-chip.live'); const cs = getComputedStyle(c); const d = getComputedStyle(c, '::before');
         const probe = document.createElement('i'); document.body.append(probe);
         const rgb = (name) => { probe.style.color = getComputedStyle(document.documentElement).getPropertyValue(name); return getComputedStyle(probe).color; };
-        const out = { text: cs.color, dot: d.backgroundColor, muted: rgb('--muted'), ok: rgb('--ok'), need: rgb('--hd-need'), accent: rgb('--accent') };
+        const out = { text: cs.color, dot: d.backgroundColor, muted: rgb('--muted'), ok: rgb('--ok'), need: rgb('--hd-need'), accent: rgb('--accent'), work: rgb('--hd-work') };
         probe.remove(); return out; })()`);
       assertEquals(chip.text, chip.muted, 'Live chip text is muted');
       assertEquals(chip.dot, chip.ok, 'Live chip dot is the good colour');
       assert(chip.dot !== chip.need);
       // the chat: the Subagents card (title and state only), a dot per subagent by state
-      const expected = [chip.accent, chip.ok, chip.need, chip.muted];
+      const expected = [chip.work, chip.ok, chip.need, chip.muted];
       await page.click('.ph-card');
       await page.waitFor('document.getElementById("phSubsGo") && document.querySelector(".ph-msg a")', 15000, 'the chat');
       await page.eval('document.getElementById("phSubsGo").click(), true');
       await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 4', 15000, 'the Subagents card');
       const box = await page.eval<number[]>(`(() => {
-        const card = document.getElementById('phSubs'); const b = card.getBoundingClientRect(); const li = card.querySelector('li .ph-sub');
+        const card = document.getElementById('phSubs'); const b = card.getBoundingClientRect(); const li = card.querySelector('li .ph-subrow');
         const first = li.firstElementChild.getBoundingClientRect(); const last = li.lastElementChild.getBoundingClientRect();
         return [first.left - b.left, b.right - last.right]; })()`);
       assert(box[0] >= 12 && box[1] >= 12, `Subagents card inner padding ${box}`);
       const chatDots = await page.eval<string[]>(`[...document.querySelectorAll('#phSubs li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
-      assertEquals(chatDots, expected, 'working = accent, done = good, needs you = warning, idle = muted');
+      assertEquals(chatDots, expected, 'working = amber, done = good, needs you = warning, idle = muted');
       // the inline link: at least 44 px tall, the paragraph has not grown
       const link = await page.eval<number[]>(`(() => { const a = document.querySelector('.ph-msg a'); const r = a.getBoundingClientRect();
         const p = a.parentElement.getBoundingClientRect(); return [r.height, p.height]; })()`);

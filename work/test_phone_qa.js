@@ -99,7 +99,7 @@ test('Devices: one line under the switch says closing the window keeps AIB in th
   }
 });
 
-test('subagent state dots: needs you = warning, working = accent, done = good, idle = muted', () => {
+test('subagent state dots: needs you = warning, working = amber, done = good, idle = muted', () => {
   assert.equal(P.helperTone('needs_you'), 'need');
   assert.equal(P.helperTone('running'), 'work');
   assert.equal(P.helperTone('completed'), 'turn');
@@ -108,7 +108,7 @@ test('subagent state dots: needs you = warning, working = accent, done = good, i
   const rules = cssRules(fs.readFileSync(path.join(APP, 'phone.css'), 'utf8'));
   const bg = (sel) => (rules.find((r) => r.selector === sel) || { declarations: {} }).declarations.background;
   assert.equal(bg('.ph-dot.need'), 'var(--hd-need)');
-  assert.equal(bg('.ph-dot.work'), 'var(--accent)');
+  assert.equal(bg('.ph-dot.work'), 'var(--hd-work)');
   assert.equal(bg('.ph-dot.turn'), 'var(--ok)');
   assert.equal(bg('.ph-dot.idle'), 'var(--muted)');
 });
@@ -121,4 +121,62 @@ test('phone.css: Live chip is a green dot with muted text; the Subagents card an
   assert.match(d('.ph-fold').padding, /^\d+(px)? (1[2-9]|[2-9]\d)px$/, 'inner horizontal padding');
   const pad = d('.ph-msg a').padding.split(' ');
   assert.ok(parseInt(pad[0], 10) * 2 + 21 >= 44, 'a link line (about 21 px) plus padding reaches 44 px');
+});
+
+// Looks round 2 (prototype round 4): the values that were wrong in the QA. Real layout is measured in
+// work/deno/remote_phone_looks_e2e_test.ts in a headless browser; these pin the stylesheet.
+test('phone.css: surfaces are the raised colour, folds grey, the subagent row has its own class, working is amber', () => {
+  const css = fs.readFileSync(path.join(APP, 'phone.css'), 'utf8');
+  const rules = cssRules(css);
+  const d = (sel) => Object.assign({}, ...rules.filter((r) => r.selector === sel).map((r) => r.declarations));
+  assert.ok(!/--card-bg|--bg-inset/.test(css), 'cards, fields and folds use --panel-2 / --hover, not the page-beige tokens');
+  assert.equal(d('.ph-card').background, 'var(--panel-2)');
+  assert.equal(d('.ph-btn.deny').background, 'var(--panel-2)');
+  assert.equal(d('.ph-subs').background, 'var(--hover)');
+  assert.equal(d('.ph-steps-fold').background, 'var(--hover)');
+  assert.ok(d('.ph-subrow').display, 'the Subagents card row is .ph-subrow (.ph-sub is the header subtitle)');
+  assert.equal(d('.ph-sub').padding, undefined, 'the header subtitle has no padding');
+  assert.equal(d('.ph-sub')['font-size'], '13px');
+  assert.equal(d('.ph-spin')['border'], '2px solid var(--hd-work)');
+  assert.equal(d('.ph-live').color, 'var(--hd-work)');
+  assert.equal(d('.ph-dot.work').background, 'var(--hd-work)');
+});
+
+test('phone.css: sheets, the toast, + New chat, New chat pills and the version rows follow the prototype', () => {
+  const rules = cssRules(fs.readFileSync(path.join(APP, 'phone.css'), 'utf8'));
+  const d = (sel) => Object.assign({}, ...rules.filter((r) => r.selector === sel).map((r) => r.declarations));
+  assert.equal(d('.ph-menu').background, 'var(--panel)');
+  assert.equal(d('.ph-menu')['border-radius'], '22px 22px 0 0');
+  assert.match(d('.ph-menu')['box-shadow'], /var\(--shadow-ink\)/);
+  assert.equal(d('.ph-grab').width, '36px');
+  assert.equal(d('.ph-grab').height, '5px');
+  assert.equal(d('.ph-mi')['min-height'], '52px');
+  assert.equal(d('.ph-mi')['border-radius'], '12px');
+  assert.match(d('.ph-shade').background, /var\(--shadow-ink\) 50%/);
+  assert.equal(d('.ph-fab').position, 'fixed', 'pinned, also on a short or empty list');
+  assert.equal(d('.ph-fab')['min-height'], '56px');
+  assert.equal(d('.ph-fab')['border-radius'], '18px');
+  assert.equal(d('.ph-fab')['font-weight'], '700');
+  assert.match(d('.ph-fab').bottom, /^calc\(16px \+ env\(safe-area-inset-bottom\)\)$/);
+  assert.match(d('.ph-toast').bottom, /^calc\(100px \+/, 'the toast sits above + New chat');
+  assert.equal(d('.ph-toast-undo')['min-height'], '44px');
+  assert.equal(d('.ph-vswitch')['min-height'], '44px');
+  assert.equal(d('.ph-pills').gap, '6px');
+  assert.equal(d('.ph-pill')['border-radius'], '12px');
+  assert.equal(d('.ph-pill').background, 'var(--panel-2)');
+  assert.equal(d(".ph-pill[aria-pressed='true']").background, 'var(--accent-wash)');
+  assert.equal(d(".ph-pill[aria-pressed='true']")['font-weight'], '650');
+  assert.equal(d(".ph-pick[aria-pressed='true']").background, 'var(--accent-wash)');
+  assert.equal(d('.ph-pill small').opacity, undefined, 'the "default" caption is not faded');
+  assert.equal(d('.ph-cnt').background, 'var(--hover)');
+  assert.equal(d('.ph-cnt').height, '18px');
+  assert.equal(d('.ph-vopt')['min-height'], '56px');
+  assert.match(d('.ph-filter')['border-bottom'], /var\(--line\)/);
+});
+
+test('phone.js: a theme row is data-pick, not data-theme (that attribute would paint the row in that theme); the project line is one run', () => {
+  const js = fs.readFileSync(path.join(APP, 'phone.js'), 'utf8');
+  assert.ok(!/b\.dataset\.theme\s*=/.test(js), 'no data-theme on a row');
+  assert.ok(/b\.dataset\.pick\s*=\s*v/.test(js));
+  assert.ok(!/ph-sub'/.test(js.replace(/el\('span', 'ph-sub'\)/, '')), 'the subagent row is not .ph-sub');
 });

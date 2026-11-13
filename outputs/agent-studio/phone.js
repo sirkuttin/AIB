@@ -1028,13 +1028,24 @@
     openChat(b.chat, b.title, b.kind === 'needs');
   }
 
+  /* The banner's second line: the other chat's title, and for "needs you" what it asks (the home card's line), after it. */
+  function bannerLine(b) {
+    let ask = '';
+    if (b.kind === 'needs') {
+      const chats = S.home && Array.isArray(S.home.chats) ? S.home.chats : [];
+      const c = chats.find((x) => x && x.id === b.chat);
+      ask = c ? str(c.line) : '';
+    }
+    return ask ? b.title + ' · ' + ask : b.title;
+  }
+
   function bannerEl() {
     const b = S.banner;
     const box = el('div', 'ph-banner ' + (b.kind === 'needs' ? 'need' : 'turn'));
     box.setAttribute('role', 'status');
     box.append(el('span', 'ph-dot ' + (b.kind === 'needs' ? 'need' : 'turn')));
     const open = button('ph-banner-open', '', openBanner);
-    open.append(el('strong', '', b.text), el('span', '', b.title));
+    open.append(el('strong', '', b.text), el('span', '', bannerLine(b)));
     const close = button('ph-banner-close', '×', () => {
       S.banner = null;
       draw();
@@ -1273,7 +1284,7 @@
       const b = button('ph-mi', '', () => setThemePick(v));
       b.setAttribute('role', 'menuitemradio');
       b.setAttribute('aria-checked', pick === v ? 'true' : 'false');
-      b.dataset.theme = v;
+      b.dataset.pick = v; // not data-theme: that attribute would paint the row in that theme's colours
       const text = el('span', 'ph-mlabel', label);
       if (sub) text.append(el('span', 'ph-msub', sub));
       b.append(el('span', 'ph-mic', pick === v ? '✓' : ''), text);
@@ -1980,7 +1991,19 @@
     dot.style.background = projectColor(p.color);
     dot.setAttribute('aria-hidden', 'true');
     frag.append(dot, el('span', 'ph-pname', str(p.name) || 'No folder'));
-    for (const r of rest) if (r) frag.append(doc.createTextNode(' · '), typeof r === 'string' ? doc.createTextNode(r) : r);
+    // words between the marks are one run (the line is a flex row: a gap goes round each run, not round every " · "); on a narrow
+    // screen the run is cut short (…) before the project name is
+    let words = '';
+    for (const r of rest) {
+      if (!r) continue;
+      words += ' · ';
+      if (typeof r === 'string') words += r;
+      else {
+        frag.append(el('span', 'ph-pw', words), r);
+        words = '';
+      }
+    }
+    if (words) frag.append(el('span', 'ph-pw', words));
     return frag;
   }
 
@@ -2045,7 +2068,7 @@
     const r2 = el('span', 'ph-r2');
     r2.append(projectLine(item.project, [str(item.agent), el('span', 'ph-state ' + w.tone, w.text)]));
     card.append(r1, r2);
-    const line = live ? str(c.line) : '';
+    const line = str(c.line); // a chat that is not running has one once the PC sends it
     if (line) card.append(el('span', 'ph-r3', line));
     // ⋯ (and a long press on the card) opens its menu
     const key = (live ? 'l:' : 's:') + (live ? c.id : c.key);
@@ -2349,7 +2372,7 @@
         const li = el('li');
         li.dataset.sub = h.id;
         const open = S.subOpen.has(h.id);
-        const b = button('ph-sub', '', () => {
+        const b = button('ph-subrow', '', () => {
           if (S.subOpen.has(h.id)) S.subOpen.delete(h.id);
           else S.subOpen.add(h.id);
           draw();
@@ -2508,8 +2531,10 @@
       body.append(frame);
     } else {
       const note = el('div', 'ph-viewer-note');
-      note.append(el('p', '', v.state === 'pc' ? 'Open this on your PC: AIB → Artifacts.' : v.why));
-      if (v.state === 'pc' && v.why) note.append(el('p', 'ph-note', v.why));
+      if (v.state === 'pc') {
+        note.className = 'ph-pcmsg';
+        note.append(el('b', '', 'Open this on your PC'), doc.createTextNode((v.why ? v.why + ' ' : '') + 'In AIB on ' + S.pcName + ': Artifacts → ' + v.title + '.'));
+      } else note.append(el('p', '', v.why));
       body.append(note);
     }
     box.append(body);
