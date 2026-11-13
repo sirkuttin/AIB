@@ -84,7 +84,7 @@ Deno.test({
         'the page saw the chat need you',
       );
       await sleep(3000);
-      assertEquals(shown, [['Invoice parser', 'Needs you']], 'one desktop notification');
+      assertEquals(shown, [['Invoice parser', 'Needs your approval']], 'one desktop notification (the reason since inbox 1b)');
       assertEquals(pagePosts, 0, 'the page posted no notification of its own');
       assert(presence.some((p) => p.focused === false), `the page reports AIB is not in front: ${JSON.stringify(presence)}`);
       assertEquals(page.errors, [], 'console errors');

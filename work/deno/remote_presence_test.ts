@@ -248,6 +248,7 @@ Deno.test({
         tag: "aib-attention",
         chat: "c1",
         sheet: false,
+        silent: true, // a finished chat pushes silently (inbox 1b)
       });
       assertEquals(
         t.desktop.length,
