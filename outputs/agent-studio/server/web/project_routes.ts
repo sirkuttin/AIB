@@ -28,6 +28,7 @@ import {
 import type { ConversationState } from '../state/store.ts';
 import type { AddedProjects } from '../desktop/added_projects.ts';
 import { ensureDefault } from '../worktrees/local_only.ts';
+import { defaultsAllowed } from '../worktrees/local_strays.ts';
 
 type Json = Record<string, unknown>;
 
@@ -114,15 +115,21 @@ async function addQuietly(added: AddedProjects, folders: unknown[]): Promise<voi
 }
 
 /** POST /api/live/project-add: {path} or {paths}. */
-export async function projectAdd(added: AddedProjects, body: unknown, removed: RemovedProjects | null = null): Promise<void> {
+export async function projectAdd(
+  added: AddedProjects,
+  body: unknown,
+  removed: RemovedProjects | null = null,
+  stateDir = '',
+): Promise<void> {
   if (!isDict(body)) throw new ValueError('Invalid request');
   const paths = Array.isArray(body.paths) ? body.paths.slice(0, 100) : [body.path];
   if (!paths.length || !paths.every((p) => isStr(p) && p.trim() && p.length <= 1024 && projectKey(p))) {
     throw new ValueError('Choose a project folder');
   }
   await added.add(...paths);
-  // the default local-only /private (idempotent, never throws; not a git folder: nothing)
-  await Promise.all(paths.map((p) => ensureDefault(String(p))));
+  // the default local-only /private (idempotent, never throws; not a git folder: nothing). A test Studio (temp or no state folder)
+  // writes it only for projects in the temp folder, never into a real repo's .git/info/exclude (local_strays.defaultsAllowed).
+  await Promise.all(paths.filter((p) => defaultsAllowed(stateDir, String(p))).map((p) => ensureDefault(String(p))));
   if (removed) await bringBack(removed, paths); // adding a removed project again brings its chats back too
 }
 

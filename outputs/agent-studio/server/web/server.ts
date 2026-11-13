@@ -277,7 +277,7 @@ export class WebServer {
       return this.json(200, { ...projectsView(c), ok: true });
     });
     this.native.set('POST /api/live/project-add', async (c, _url, body) => {
-      await projectAdd(c.addedProjects, body, c.removedProjects);
+      await projectAdd(c.addedProjects, body, c.removedProjects, pathStr(c.stateDir));
       return this.json(200, { ...projectsView(c), ok: true });
     });
     this.native.set('POST /api/live/project-remove', async (c, _url, body) => {
