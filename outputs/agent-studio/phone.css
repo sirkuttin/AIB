@@ -769,3 +769,9 @@ html.ph-viewing body {
   padding: 16px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
   overflow-wrap: anywhere;
 }
+.ph-steered {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}

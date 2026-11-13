@@ -81,6 +81,7 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/elicitation', 'action'],
   ['POST', '/api/remote/permission', 'action'],
   ['POST', '/api/remote/prompt', 'action'],
+  ['POST', '/api/remote/steer', 'action'],
   ['POST', '/api/remote/queue', 'action'],
   ['POST', '/api/remote/cancel', 'action'],
   ['POST', '/api/remote/queue-send-now', 'action'],
@@ -106,6 +107,7 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
   'POST /api/remote/elicitation': 'phone.answer',
   'POST /api/remote/permission': 'phone.approve',
   'POST /api/remote/prompt': 'phone.prompt',
+  'POST /api/remote/steer': 'phone.prompt',
   'POST /api/remote/queue': 'phone.prompt',
   'POST /api/remote/cancel': 'phone.prompt',
   'POST /api/remote/queue-send-now': 'phone.prompt',
@@ -574,7 +576,7 @@ export class RemoteServer {
     }
     // Only what the phone needs back (never a full queue or state of another chat).
     const out: Record<string, unknown> = { ok: true };
-    for (const k of ['accepted', 'duplicate', 'turnState', 'leaseId', 'text', 'queued', 'clientMessageId']) {
+    for (const k of ['accepted', 'duplicate', 'turnState', 'state', 'leaseId', 'text', 'queued', 'clientMessageId']) {
       if (k in answer) out[k] = answer[k];
     }
     return this.json(200, out);

@@ -214,6 +214,8 @@ export interface ChatPayload {
   state: string;
   needs: number;
   busy: boolean;
+  /** Working and the agent can read a message during the turn (the phone's Send then goes in at once). */
+  steerable: boolean;
   busySince: string | null;
   cursor: number;
   reset: boolean;
@@ -328,6 +330,7 @@ export async function chatPayload(
     state: str(attention.state, 20) || 'idle',
     needs: Number(attention.needs) || 0,
     busy: !!state.busy,
+    steerable: !!state.busy && state.steerable === true,
     busySince: (attention.busySince as string | null) ?? null,
     cursor: Number(state.cursor) || 0,
     reset: !!state.reset,

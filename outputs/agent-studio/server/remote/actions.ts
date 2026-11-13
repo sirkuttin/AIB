@@ -7,7 +7,7 @@
  *   permission   only an option whose kind is allow_once or reject_once, whose id is not a permission mode (Claude's plan exit offers
  *                acceptEdits / bypassPermissions / default: each switches the chat's mode) and whose id or label does not say
  *                "always" / "don't ask again" / "session". AIB's own merge tools are PC only. Anything unclear is refused.
- *   prompt/queue plain text only: no attachments, nothing that starts with "/" (an agent or AIB command such as /doc).
+ *   prompt/steer/queue plain text only: no attachments, nothing that starts with "/" (an agent or AIB command such as /doc).
  *   queue-*      only messages that are queued in that chat right now (not one being sent); queue-resume only while the chat has
  *                queued messages (a Stop or a failed turn paused them).
  *   authenticate never from a phone.
@@ -28,6 +28,7 @@ export const ACTION_OPS: Readonly<Record<string, { op: string; audit: string }>>
   '/api/remote/elicitation': { op: 'elicitation', audit: 'answer' },
   '/api/remote/permission': { op: 'permission', audit: 'approve' },
   '/api/remote/prompt': { op: 'prompt', audit: 'send' },
+  '/api/remote/steer': { op: 'steer', audit: 'send' }, // a typed message while the chat works: sent now when the agent can read it
   '/api/remote/queue': { op: 'queue', audit: 'queue' },
   '/api/remote/cancel': { op: 'cancel', audit: 'stop' },
   '/api/remote/queue-send-now': { op: 'queue-send-now', audit: 'queue: send now' },
@@ -204,6 +205,7 @@ export async function checkAction(ctx: WebContext, op: string, body: Json): Prom
       return { id, key, option };
     }
     case 'prompt':
+    case 'steer': // same checks as a prompt; the agent host decides (steer now, hold while a card is open, or an ordinary prompt when idle)
     case 'queue': {
       noFiles(body);
       const value = text(body);

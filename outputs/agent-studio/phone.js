@@ -197,7 +197,7 @@
       const key = 'e' + (e.seq || rows.length);
       const last = rows[rows.length - 1];
       if (e.kind === 'user') {
-        rows.push({ kind: 'you', key, text: str(data.text), images: imagesOf(data.attachments) });
+        rows.push({ kind: 'you', key, text: str(data.text), images: imagesOf(data.attachments), steered: data.steered === true });
       } else if (e.kind === 'update') {
         const u = obj(data.update);
         const kind = u.sessionUpdate;
@@ -671,7 +671,7 @@
     const c = r.data;
     if (!after || c.reset) S.chatEvents = c.events;
     else if (c.events.length) S.chatEvents = S.chatEvents.concat(c.events).slice(-TAIL * 2);
-    const sig = (x) => JSON.stringify([x.state, x.needs, x.busy, x.ready, x.waiting, x.queue, x.unknown, x.scopes]);
+    const sig = (x) => JSON.stringify([x.state, x.needs, x.busy, x.steerable, x.ready, x.waiting, x.queue, x.unknown, x.scopes]);
     const changed = !S.chat || !after || c.events.length || sig(c) !== sig(S.chat);
     S.chat = { ...c, truncated: after ? S.chat.truncated : c.truncated };
     if (Array.isArray(c.scopes)) S.scopes = c.scopes;
@@ -922,6 +922,7 @@
       const m = el('div', 'ph-msg ' + r.kind);
       if (r.kind === 'agent' && root.AgentMarkdown) root.AgentMarkdown.render(m, r.text);
       else if (r.text) m.textContent = r.text;
+      if (r.steered) m.append(el('span', 'ph-steered', 'Sent while working'));
       for (const url of r.images || []) {
         const img = el('img', 'ph-img');
         img.loading = 'lazy';
@@ -1162,7 +1163,7 @@
     const c = S.chat || {};
     const ta = bar.querySelector('#phPrompt');
     if (ta.value !== S.draft) ta.value = S.draft;
-    ta.placeholder = c.busy ? 'Queue a message' : 'Message';
+    ta.placeholder = c.busy && !c.steerable ? 'Queue a message' : 'Message';
     bar.querySelector('#phSend').disabled = S.sending;
     bar.querySelector('#phStop').hidden = !c.busy;
     const err = bar.querySelector('#phActError');
@@ -1625,7 +1626,7 @@
     const text = S.draft;
     const c = S.chat;
     if (!c || !text.trim() || S.sending) return;
-    const done = await act(c.busy ? 'queue' : 'prompt', { id: c.id, text, clientMessageId: newMessageId() });
+    const done = await act(c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt', { id: c.id, text, clientMessageId: newMessageId() });
     if (done) {
       S.draft = '';
       const ta = doc.getElementById('phPrompt');

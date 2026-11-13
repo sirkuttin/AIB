@@ -86,6 +86,7 @@ Deno.test({
       'POST /api/remote/queue-remove',
       'POST /api/remote/queue-resume',
       'POST /api/remote/queue-send-now',
+      'POST /api/remote/steer',
     ]);
     const s = await phoneOn();
     try {
@@ -243,11 +244,18 @@ Deno.test({
       }]);
       const q = await send({ id: 'c1', text: 'then run lint', clientMessageId: 'm6' }, '/api/remote/queue');
       assertEquals(q.status, 200);
+      // steer: the same checks as a prompt; the agent host gets exactly {id, text, clientMessageId} and decides (steer now / hold / prompt)
+      assertEquals((await send({ id: 'c1', text: '/doc x', clientMessageId: 'm6s' }, '/api/remote/steer')).json.code, 'text_only');
+      assertEquals((await send({ id: 'c1', text: 'hi', clientMessageId: 'm6s', files: [{}] }, '/api/remote/steer')).json.code, 'text_only');
+      assertEquals((await send({ id: 'shut', text: 'hi', clientMessageId: 'm6s' }, '/api/remote/steer')).json.code, 'not_live');
+      const st = await send({ id: 'c1', text: 'while you work', clientMessageId: 'm6s', toolCallId: 'x' }, '/api/remote/steer');
+      assertEquals(st.status, 200);
       const stop = await post(s, phone.token, '/api/remote/cancel', { id: 'c1', subagentSessionId: 'x' });
       assertEquals(stop.status, 200);
       assertEquals(s.liveCalls, [
         ['prompt', { id: 'c1', text: 'Fix the failing test, please', clientMessageId: 'm5' }],
         ['queue', { id: 'c1', text: 'then run lint', clientMessageId: 'm6' }],
+        ['steer', { id: 'c1', text: 'while you work', clientMessageId: 'm6s' }],
         ['cancel', { id: 'c1' }],
       ]);
       // an agent host refusal comes back with its own words
@@ -368,6 +376,7 @@ Deno.test({
         ['/api/remote/prompt', { id: 'c1', text: 'hi', clientMessageId: 'm1' }],
         ['/api/remote/cancel', { id: 'c1' }],
         ['/api/remote/queue', { id: 'c1', text: 'hi', clientMessageId: 'm2' }],
+        ['/api/remote/steer', { id: 'c1', text: 'hi', clientMessageId: 'm3' }],
       ];
       for (const [path, body] of tries) {
         const r = await post(s, phone.token, path, body);
