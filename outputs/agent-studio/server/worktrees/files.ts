@@ -8,10 +8,15 @@
  * Git rules: .git is never listed; in a git work tree `git check-ignore` marks ignored entries, `git status` gives the change letter
  * of each file (and a changed count per folder), and the search index is `git ls-files --cached --others --exclude-standard`.
  * Outside git, a plain directory walk is used. node_modules is always treated as ignored and never searched.
+ *
+ * Local-only paths (local_only.ts: AIB's block in .git/info/exclude) always come from the MAIN folder: listLocal lays the main
+ * folder's entries over a chat copy's listing (nothing is put on disk in the copy), marks them `local` (not `ignored`, at any depth)
+ * and lists a folder inside one from the main folder; localFiles adds them to the search index.
  */
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath } from '../web/security.ts';
 import { gitPath, locate, parseStatus, runGit, statusLetter } from './changes.ts';
+import { isLocalPath, type LocalOnly } from './local_only.ts';
 
 export const LIMITS = {
   readBytes: 1024 * 1024, // the file view shows text files up to 1 MB
@@ -163,7 +168,13 @@ export interface Entry {
   changed: number; // changed files below a folder
   size: number;
   link: boolean;
+  local?: true; // a local-only path: shown in normal colour, opens without "Show ignored"
+  from?: 'main'; // laid over a chat copy's listing from the main folder
+  strays?: number; // files under this local-only entry that sit in the chat's own copy instead (local_strays.ts)
+  localWarn?: 'not-ignored'; // in AIB's block, but git does not ignore it (a later negation wins)
+  noExclude?: ExcludeRefusal; // why "Git exclude" can't apply to this row (the menu greys the item)
 }
+export type ExcludeRefusal = 'tracked' | 'docs' | 'reserved' | 'no_git' | 'already';
 export interface Listing {
   dir: string;
   git: boolean;
@@ -228,6 +239,167 @@ export async function listDir(root: string, rel: unknown): Promise<Listing> {
   }
   entries.sort(byKind);
   return { dir, git: !!git, entries, truncated };
+}
+
+// ---- local-only overlay ------------------------------------------------------------------------------------------------------
+const sameDir = (a: string, b: string) => norm(osp.normpath(a)) === norm(osp.normpath(b));
+
+/** Marks the local-only entries of a listing: local (and not ignored) when git ignores them, else localWarn. */
+function markLocal(entries: Entry[], lo: LocalOnly): void {
+  for (const e of entries) {
+    if (ALWAYS_IGNORED.has(e.name) || !isLocalPath(lo, e.path)) continue;
+    if (e.ignored) {
+      e.local = true;
+      e.ignored = false;
+    } else e.localWarn = 'not-ignored';
+  }
+}
+
+/** An Entry for `rel` read from the main folder (null when main has no such file or folder). */
+function mainEntry(main: string, rel: string): Entry | null {
+  let abs: string;
+  try {
+    [abs] = resolveInside(main, rel);
+  } catch {
+    return null;
+  }
+  let st: Deno.FileInfo;
+  try {
+    st = Deno.statSync(abs);
+  } catch {
+    return null;
+  }
+  if (!st.isDirectory && !st.isFile) return null;
+  const name = rel.slice(rel.lastIndexOf('/') + 1);
+  return { name, path: rel, dir: st.isDirectory, ignored: false, status: '', changed: 0, size: st.isFile ? st.size : 0, link: false, from: 'main' };
+}
+
+/** `${count}:${newest mtime}` of the local rows in a listing (read from main): the page lists again when it changes. */
+function localSig(main: string, entries: Entry[]): string {
+  let n = 0, newest = 0;
+  for (const e of entries) {
+    if (!e.local) continue;
+    n++;
+    try {
+      newest = Math.max(newest, Deno.statSync(osp.join(main, ...e.path.split('/'))).mtime?.getTime() ?? 0);
+    } catch { /* gone meanwhile */ }
+  }
+  return `${n}:${newest}`;
+}
+
+/**
+ * One folder of `root` with the local-only paths of `main` laid over it. root === main (the main folder, or a chat working in it):
+ * the plain listing with local rows marked. A chat's copy: a folder inside a local-only entry is listed from main; above one, each
+ * entry that exists in main replaces the copy's same-name row (`strays` counts the copy's own files under it), and folders that
+ * lead to a deeper entry are shown even when the copy lacks them.
+ */
+export async function listLocal(
+  root: string,
+  main: string,
+  lo: LocalOnly | null,
+  rel: unknown,
+  strays: string[] = [],
+): Promise<Listing & { sig: string }> {
+  const dir = safeParts(rel).join('/');
+  if (!lo) return { ...(await listDir(root, dir)), sig: '' };
+  const same = sameDir(realRoot(root), realRoot(main));
+  if (!same && isLocalPath(lo, dir)) {
+    const listing = await listDir(main, dir);
+    for (const e of listing.entries) e.from = 'main';
+    markLocal(listing.entries, lo);
+    return { ...listing, sig: localSig(main, listing.entries) };
+  }
+  const leadsTo = (e: string) => (dir ? norm(e).startsWith(norm(dir) + '/') : true);
+  let listing: Listing;
+  try {
+    listing = await listDir(root, dir);
+  } catch (error) {
+    // a folder the copy does not have, on the way to a local-only entry of main
+    if (!same && error instanceof FilesError && error.code === 'not_found' && lo.entries.some(leadsTo) && mainEntry(main, dir)?.dir) {
+      listing = { dir, git: !!(await gitInfo(realRoot(root))), entries: [], truncated: false };
+    } else throw error;
+  }
+  if (same) markLocal(listing.entries, lo);
+  else {
+    const at = (name: string) => listing.entries.findIndex((e) => norm(e.name) === norm(name));
+    for (const entry of lo.entries) {
+      if (!leadsTo(entry)) continue;
+      const deeper = entry.slice(dir ? dir.length + 1 : 0);
+      const child = deeper.split('/')[0];
+      const i = at(child);
+      if (child === deeper) {
+        const own = strays.filter((s) => norm(s) === norm(entry) || norm(s).startsWith(norm(entry) + '/')).length;
+        const fromMain = mainEntry(main, entry);
+        if (fromMain) {
+          fromMain.local = true;
+          if (own) fromMain.strays = own;
+          if (i >= 0) listing.entries[i] = fromMain;
+          else listing.entries.push(fromMain);
+        } else if (i >= 0 && own) listing.entries[i].strays = own; // only the copy has it: a stray
+      } else if (i < 0) {
+        const pass = mainEntry(main, dir ? dir + '/' + child : child);
+        if (pass?.dir) listing.entries.push(pass);
+      }
+    }
+    listing.entries.sort(byKind);
+  }
+  return { ...listing, sig: localSig(main, listing.entries) };
+}
+
+/** Child names of `dir` (main-relative) that git tracks in main's HEAD (a folder counts when it holds a tracked file). */
+export async function trackedNames(main: string, dir: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  const [raw, , code] = await runGit(['ls-tree', '-z', '--name-only', 'HEAD', '--', dir ? dir + '/' : '.'], main, 15, 8 * 1024 * 1024);
+  if (code !== 0) return out;
+  for (const p of dec.decode(raw).split('\0')) if (p) out.add(norm(p.slice(p.lastIndexOf('/') + 1)));
+  return out;
+}
+
+/** Fills `noExclude` on every entry: why "Git exclude" can't apply (the same rules as local_only.refusalOf). */
+export async function excludeHints(main: string, lo: LocalOnly | null, listing: Listing, same: boolean): Promise<void> {
+  if (!lo) {
+    for (const e of listing.entries) e.noExclude = 'no_git';
+    return;
+  }
+  const tracked = await trackedNames(main, listing.dir);
+  for (const e of listing.entries) {
+    const parts = e.path.split('/');
+    if (e.local || isLocalPath(lo, e.path)) e.noExclude = 'already';
+    else if (parts[0].toLowerCase() === 'aib-docs') e.noExclude = 'docs';
+    else if (parts.includes('node_modules')) e.noExclude = 'reserved';
+    else if (tracked.has(norm(e.name)) || (same && e.status && e.status !== 'U')) e.noExclude = 'tracked';
+  }
+}
+
+/** Project-relative files under main's existing local-only entries (no node_modules, .git or links), at most `cap`. */
+export function localFiles(main: string, lo: LocalOnly | null, cap = 5000): string[] {
+  const out: string[] = [];
+  if (!lo) return out;
+  const stack: string[] = [];
+  for (const entry of lo.entries) {
+    try {
+      const [abs] = resolveInside(main, entry);
+      const st = Deno.statSync(abs);
+      if (st.isFile) out.push(entry);
+      else if (st.isDirectory) stack.push(entry);
+    } catch { /* not in main */ }
+  }
+  while (stack.length && out.length < cap) {
+    const dir = stack.pop()!;
+    let list: Deno.DirEntry[];
+    try {
+      list = [...Deno.readDirSync(osp.join(main, ...dir.split('/')))];
+    } catch {
+      continue;
+    }
+    for (const e of list) {
+      if (ALWAYS_IGNORED.has(e.name) || NEVER_LISTED.has(e.name.toLowerCase()) || e.isSymlink) continue;
+      const rel = dir + '/' + e.name;
+      if (e.isDirectory) stack.push(rel);
+      else if (e.isFile && out.length < cap) out.push(rel);
+    }
+  }
+  return out;
 }
 
 // ---- search index -----------------------------------------------------------------------------------------------------------
@@ -321,12 +493,18 @@ export interface Match {
   name: string;
   dir: string;
 }
-export async function search(root: string, q: unknown, sig = ''): Promise<{ matches: Match[]; total: number; truncated: boolean }> {
+export async function search(
+  root: string,
+  q: unknown,
+  sig = '',
+  extra: string[] = [],
+): Promise<{ matches: Match[]; total: number; truncated: boolean }> {
   const query = typeof q === 'string' ? q.slice(0, 200) : '';
   if (!query.trim()) return { matches: [], total: 0, truncated: false };
   const index = await indexOf(root, sig);
   const scored: [number, string][] = [];
-  for (const f of index.files) {
+  const all = extra.length ? [...new Set([...index.files, ...extra])] : index.files;
+  for (const f of all) {
     const s = score(f, query);
     if (s >= 0) scored.push([s, f]);
   }

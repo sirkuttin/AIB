@@ -85,7 +85,7 @@ function setup(o) {
       const l = (opts.listing || LISTING)[q.dir];
       if (!l) throw Object.assign(new Error('Not found'), { status: 404 });
       const own = q.root === 'chat' ? list.find((c) => 'claude:' + c.id === q.id) : null;
-      return { root: own ? own.cwd : ROOT, dir: q.dir, git: true, entries: l };
+      return Object.assign({ root: own ? own.cwd : ROOT, dir: q.dir, git: true, entries: l }, opts.localOnly ? { localOnly: opts.localOnly } : {});
     }
     if (path === '/api/live/files/search')
       return { root: ROOT, matches: [{ path: 'outputs/bar-charts.html', name: 'bar-charts.html', dir: 'outputs' }], total: 1 };
@@ -128,10 +128,15 @@ function setup(o) {
     e.textContent = m;
     e.hidden = false;
   };
-  FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, notice, conversations: () => list, open: async () => {} });
+  const posts = [];
+  const post = async (path, body) => {
+    posts.push({ path, body: Object.assign({}, body) });
+    return opts.post ? opts.post(path, body) : {};
+  };
+  FU.init({ aliasKey: (c) => c.provider + ':' + c.id, titleOf: (c) => c.title || c.id, getJson, post, notice, conversations: () => list, open: async () => {} });
   W.sync(list, list[0]);
   FU.sync(list[0]);
-  return { shell, ctx, W, FU, calls, list, focused, opened, registered, registeredIn };
+  return { shell, ctx, W, FU, calls, list, focused, opened, registered, registeredIn, posts };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const rows = (t) => t.shell.body.querySelectorAll('.fx-row').filter((r) => r.dataset.path);
@@ -895,4 +900,185 @@ test('⧉ stays on an archived artifact and goes from a deleted one (Recently de
   rowOf(a, 'outputs').click();
   await flush();
   assert.ok(rowOf(a, 'outputs/bar-charts.html').querySelector('.fx-art'), 'archived: still an artifact');
+});
+
+// ---- local-only folders (owner decisions 1a, 3, 4a) ---------------------------------------------------------------------------
+const LOCAL = { main: 'C:\\work\\alpha', entries: ['private'], defaultState: 'on', sig: '1:1' };
+const LOCAL_LISTING = Object.assign({}, LISTING, {
+  '': LISTING[''].concat([entry('private', { dir: true, local: true, from: 'main', noExclude: 'already' })]).concat([
+    entry('notes.md', { status: 'U' }),
+    entry('README2.md', { noExclude: 'tracked' }),
+  ]),
+  private: [entry('private/designs', { dir: true, local: true, from: 'main' }), entry('private/TASKS.md', { local: true, from: 'main' })],
+  'private/designs': [entry('private/designs/x.html', { local: true, from: 'main' })],
+});
+
+test('files-state: local rows are never dim and open without Show ignored, at any depth; the stray and tracked notes; flat rows', () => {
+  const cache = {
+    '': [entry('node_modules', { dir: true, ignored: true }), entry('private', { dir: true, local: true, strays: 2 })],
+    private: [entry('private/designs', { dir: true, local: true })],
+  };
+  const out = FS.treeRows(cache, new Set(['private', 'node_modules', 'private/designs']), { showIgnored: false, localNote: 'note' });
+  const by = Object.fromEntries(out.map((r) => [r.path, r]));
+  assert.equal(out[0].kind, 'localnote');
+  assert.equal(out[0].text, 'note');
+  assert.equal(by['node_modules'].canOpen, false, 'ignored stays closed');
+  assert.equal(by['node_modules'].ignored, true);
+  assert.equal(by['private'].canOpen, true);
+  assert.equal(by['private'].open, true);
+  assert.equal(by['private'].ignored, false);
+  assert.equal(by['private'].local, true);
+  assert.equal(by['private/!stray'].kind, 'stray');
+  assert.equal(by['private/!stray'].count, 2);
+  assert.equal(by['private/designs'].canOpen, true, 'a sub-folder opens too');
+  const flat = FS.flatRows(['private/TASKS.md', 'README.md'], { localOnly: LOCAL });
+  assert.deepEqual(flat.map((r) => r.local), [true, false]);
+  assert.equal(FS.isLocalRel(LOCAL, 'Private/x.md'), true, 'Windows paths compare case-insensitively');
+  assert.equal(FS.isLocalRel({ main: '/home/u/p', entries: ['private'] }, 'Private/x.md'), false);
+  assert.equal(FS.localNote({ defaultState: 'tracked' }), "private/ is committed in this project, so AIB doesn't keep it local only.");
+  assert.equal(FS.localNote(LOCAL), '');
+});
+
+test('files-state: the tooltip names the real path; Git exclude is greyed with its reason; full paths into private/ link from a copy', () => {
+  assert.equal(
+    FS.localTip({ name: 'private', path: 'private', kind: 'dir' }, LOCAL),
+    'private\nLocal only: never committed (listed in .git/info/exclude).\nThe same folder in every chat: C:\\work\\alpha\\private',
+  );
+  assert.ok(FS.localTip({ name: 'TASKS.md', path: 'private/TASKS.md', kind: 'file' }, LOCAL).endsWith('file in every chat: C:\\work\\alpha\\private\\TASKS.md'));
+  const copy = { root: 'chat', branch: 'studio/chat-1' };
+  assert.deepEqual(FS.excludeItem({ path: 'notes.md', kind: 'file' }, { root: 'main' }), {
+    text: 'Git exclude',
+    disabled: false,
+    sub: 'Never committed; shown in every chat',
+  });
+  assert.equal(FS.excludeItem({ path: 'notes.md', kind: 'file' }, copy).sub, 'Moves it to the main folder, never committed');
+  assert.equal(FS.excludeItem({ path: 'README.md', noExclude: 'tracked' }).sub, "Git tracks this, so it can't be excluded");
+  assert.equal(FS.excludeItem({ path: 'private', local: true }).sub, 'Already local only');
+  assert.equal(FS.excludeItem({ path: 'aib-docs', docsFolder: true }).sub, 'Docs are committed');
+  assert.equal(FS.excludeItem({ path: 'x', noExclude: 'no_git' }).sub, 'Not a git project');
+  assert.equal(FS.excludeItem({ path: 'README.md', noExclude: 'tracked' }).disabled, true);
+  assert.equal(FS.localRel('C:\\work\\alpha\\private\\TASKS.md', LOCAL), 'private/TASKS.md');
+  assert.equal(FS.localRel('C:\\work\\alpha\\README.md', LOCAL), null, 'only local-only paths of main');
+  const d = FS.dedupe([{ path: 'C:\\work\\alpha\\private\\TASKS.md', at: 0, len: 10 }], 'C:/wt/chat-1', LOCAL);
+  assert.deepEqual(d.map((x) => x.rel), ['private/TASKS.md']);
+});
+
+test('Files: a local-only folder has the blue dot, the "local only" pill and the real-path tooltip; it opens without Show ignored', async () => {
+  const t = setup({ listing: LOCAL_LISTING, localOnly: LOCAL });
+  t.FU.setMode('files');
+  await flush();
+  const p = rowOf(t, 'private');
+  assert.ok(p.classList.contains('local'));
+  assert.ok(!p.classList.contains('ignored'));
+  assert.ok(p.querySelector('.fx-localdot'), 'the dot on the folder icon');
+  assert.equal(p.querySelector('.fx-local').textContent, 'local only');
+  assert.ok(p.title.includes('The same folder in every chat: C:\\work\\alpha\\private'), p.title);
+  p.click();
+  await flush();
+  assert.ok(t.calls.some((c) => c.path === '/api/live/files/list' && c.q.dir === 'private'), 'listed without Show ignored');
+  const tasks = rowOf(t, 'private/TASKS.md');
+  assert.ok(tasks.classList.contains('local'));
+  assert.equal(tasks.querySelector('.fx-local'), null, 'the pill only on the entry itself');
+});
+
+test('Files: right-click a file or folder -> Git exclude (greyed with its reason when it cannot); applied at once with a 10 s Undo in the foot', async () => {
+  const t = setup({ listing: LOCAL_LISTING, localOnly: LOCAL, post: async (path, body) => (body.action === 'add' ? { ok: true, undo: 'tok1', path: body.path } : { ok: true }) });
+  t.FU.setMode('files');
+  await flush();
+  const menuOf = (path) => {
+    t.shell.document.body.querySelectorAll('.fx-menu').forEach((m) => m.remove());
+    rowOf(t, path).dispatch('contextmenu', { clientX: 10, clientY: 20 });
+    return t.shell.body.querySelector('.fx-menu');
+  };
+  // a tracked file: the item is there, greyed, with the reason
+  let m = menuOf('README2.md');
+  let it = m.querySelector('.fx-menu-excl');
+  assert.equal(it.disabled, true);
+  assert.equal(it.querySelector('.sub').textContent, "Git tracks this, so it can't be excluded");
+  // a folder: New doc and Git exclude
+  m = menuOf('outputs');
+  assert.deepEqual(m.querySelectorAll('button').map((b) => b.querySelector('.fx-menu-t') ? b.querySelector('.fx-menu-t').textContent : b.textContent), ['New doc', 'Git exclude']);
+  // the local folder itself: already local only
+  assert.equal(menuOf('private').querySelector('.fx-menu-excl').querySelector('.sub').textContent, 'Already local only');
+  // a file: applied at once
+  m = menuOf('notes.md');
+  it = m.querySelector('.fx-menu-excl');
+  assert.equal(it.disabled, false);
+  it.click();
+  await flush();
+  await flush();
+  assert.deepEqual(t.posts[0], { path: 'files/exclude', body: { id: 'claude:a1', root: 'main', path: 'notes.md', action: 'add' } });
+  const foot = t.shell.body.querySelector('.fx-foot-t');
+  assert.equal(foot.textContent, 'Excluded notes.md');
+  const undo = t.shell.body.querySelector('.fx-foot-undo');
+  assert.equal(undo.hidden, false);
+  assert.equal(undo.textContent, 'Undo');
+  assert.ok(t.calls.filter((c) => c.path === '/api/live/files/list' && c.q.dir === '').length >= 2, 'the folder is listed again');
+  undo.click();
+  await flush();
+  assert.deepEqual(t.posts[1], { path: 'files/exclude', body: { id: 'claude:a1', root: 'main', action: 'undo', undo: 'tok1' } });
+  assert.equal(t.shell.body.querySelector('.fx-foot-undo').hidden, true);
+  // the Undo goes after 10 s
+  it = menuOf('notes.md').querySelector('.fx-menu-excl');
+  it.click();
+  await flush();
+  await flush();
+  assert.equal(t.shell.body.querySelector('.fx-foot-undo').hidden, false);
+  t.ctx.runTimers();
+  assert.equal(t.shell.body.querySelector('.fx-foot-undo').hidden, true);
+  assert.notEqual(t.shell.body.querySelector('.fx-foot-t').textContent, 'Excluded notes.md');
+});
+
+test('Files: a refusal from the server is said in the foot, no Undo', async () => {
+  const t = setup({
+    listing: LOCAL_LISTING,
+    localOnly: LOCAL,
+    post: async () => {
+      throw Object.assign(new Error("Git tracks this, so it can't be excluded"), { code: 'tracked' });
+    },
+  });
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'notes.md').dispatch('contextmenu', { clientX: 1, clientY: 1 });
+  t.shell.body.querySelector('.fx-menu-excl').click();
+  await flush();
+  await flush();
+  assert.equal(t.shell.body.querySelector('.fx-foot-t').textContent, "Git tracks this, so it can't be excluded");
+  assert.ok(t.shell.body.querySelector('.fx-foot-t').classList.contains('fx-foot-err'));
+  assert.equal(t.shell.body.querySelector('.fx-foot-undo').hidden, true);
+});
+
+test('Files: a stray row warns about files in the copy and moves them on request; a tracked private/ gets the note', async () => {
+  const listing = Object.assign({}, LOCAL_LISTING, { '': [entry('private', { dir: true, local: true, strays: 1 })] });
+  const t = setup({ listing, localOnly: LOCAL, post: async () => ({ moved: [['private/x.md', 'private/x (from chat-1).md']], failed: [] }) });
+  t.FU.setMode('files');
+  await flush();
+  const stray = t.shell.body.querySelector('.fx-stray');
+  assert.ok(stray, 'the warning row');
+  assert.ok(stray.textContent.includes("1 file in this chat's copy, not in the shared folder"));
+  stray.querySelector('.fx-stray-btn').click();
+  await flush();
+  await flush();
+  assert.equal(t.posts[0].path, 'files/strays/move');
+  assert.equal(t.shell.body.querySelector('.fx-foot-t').textContent, 'Moved 1 file to the main folder');
+  const t2 = setup({ listing: LISTING, localOnly: { main: 'C:\\work\\alpha', entries: [], defaultState: 'tracked' } });
+  t2.FU.setMode('files');
+  await flush();
+  assert.equal(t2.shell.body.querySelector('.fx-localnote').textContent, "private/ is committed in this project, so AIB doesn't keep it local only.");
+});
+
+test('Files: on window focus the local-only folders are listed again (another chat wrote there)', async () => {
+  const listing = JSON.parse(JSON.stringify(LOCAL_LISTING));
+  const t = setup({ listing, localOnly: LOCAL });
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'private').click();
+  await flush();
+  assert.equal(rowOf(t, 'private/new.md'), undefined);
+  listing.private = listing.private.concat([entry('private/new.md', { local: true, from: 'main' })]); // a fresh reply
+  for (const f of t.ctx.listeners.focus || []) f({});
+  await flush();
+  await flush();
+  await flush();
+  assert.ok(rowOf(t, 'private/new.md'), 'the new file shows with no click');
 });

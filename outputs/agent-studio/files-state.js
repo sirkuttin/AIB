@@ -190,31 +190,40 @@
           out.push(docRow(d, depth, changes, e));
           continue;
         }
-        const isOpen = !!e.dir && open.has(e.path) && (!e.ignored || o.showIgnored);
+        // a local-only path (the main folder's, in every scope) is never dim and opens without "Show ignored"
+        const local = !!e.local;
+        const isOpen = !!e.dir && open.has(e.path) && (local || !e.ignored || o.showIgnored);
         const row = {
           kind: e.dir ? 'dir' : 'file',
           path: e.path,
           name: e.name,
           depth,
-          ignored: !!e.ignored,
+          ignored: !!e.ignored && !local,
           open: isOpen,
-          canOpen: !!e.dir && (!e.ignored || !!o.showIgnored),
+          canOpen: !!e.dir && (local || !e.ignored || !!o.showIgnored),
           badge: null,
           changed: 0,
           artifact: false,
+          local,
+          localWarn: e.localWarn || '',
+          noExclude: e.noExclude || '',
         };
-        if (e.dir) row.changed = changes ? changedBelow(changes, e.path) : Number(e.changed) || 0;
+        if (e.dir && !local) row.changed = changes ? changedBelow(changes, e.path) : Number(e.changed) || 0;
         if (isDocsDir(e)) Object.assign(row, { docsFolder: true, docCount: docs ? docsIn(docs) : 0 });
         else {
-          row.badge = changes ? badgeOf(changes.get(e.path)) : letterBadge(e.status);
+          row.badge = local ? null : changes ? badgeOf(changes.get(e.path)) : letterBadge(e.status); // git never tracks a local-only file
           row.artifact = !!(arts && arts.has(e.path));
         }
         out.push(row);
+        // files a chat's copy holds under a local-only path (they are not the shared ones): a warning row right below
+        if (Number(e.strays) > 0) out.push({ kind: 'stray', path: e.path + '/!stray', entry: e.path, count: Number(e.strays), depth: depth + 1 });
         if (isOpen) walk(e.path, depth + 1);
       }
       // the last row inside aib-docs
       if (dir === DOCS_FOLDER && o.newDoc) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
     };
+    // the project commits private/, so AIB does not keep it local only: one note at the top
+    if (o.localNote) out.unshift({ kind: 'localnote', path: '!localnote', text: o.localNote, depth: 0 });
     walk('', 0);
     return out;
   }
@@ -251,8 +260,64 @@
         badge: changes ? badgeOf(changes.get(path)) : null,
         changed: 0,
         artifact: !!(arts && arts.has(path)),
+        local: isLocalRel(o.localOnly, path),
       };
     }
+  }
+
+  // ---- local-only paths ---------------------------------------------------------------------------------------------------
+  // `lo`: a list reply's localOnly ({main, entries, defaultState}). Paths compare case-insensitively when main is a Windows path.
+  function isLocalRel(lo, rel) {
+    if (!lo || !Array.isArray(lo.entries) || !lo.entries.length) return false;
+    const win = isWinPath(lo.main),
+      p = lowerIf(slash(rel).replace(/^\/+|\/+$/g, ''), win);
+    if (!p) return false;
+    return lo.entries.some((e) => {
+      const x = lowerIf(slash(e), win);
+      return p === x || p.startsWith(x + '/');
+    });
+  }
+  // The real file on disk for a local-only row: the main folder's (C:\…\main\private\TASKS.md).
+  function localAbs(lo, rel) {
+    const m = String((lo && lo.main) || '').replace(/[\\/]+$/, '');
+    if (!m) return '';
+    return isWinPath(m) ? m + '\\' + slash(rel).replace(/\//g, '\\') : m + '/' + slash(rel);
+  }
+  const LOCAL_LINE = 'Local only: never committed (listed in .git/info/exclude).';
+  // The tooltip of a local-only row (owner decision 4a): its name, what local only means, and the real path it shows.
+  function localTip(row, lo) {
+    const abs = localAbs(lo, row.path);
+    return (
+      row.name + '\n' + LOCAL_LINE + (abs ? '\nThe same ' + (row.kind === 'dir' ? 'folder' : 'file') + ' in every chat: ' + abs : '')
+    );
+  }
+  const LOCAL_NOTE_TRACKED = "private/ is committed in this project, so AIB doesn't keep it local only.";
+  const localNote = (lo) => (lo && lo.defaultState === 'tracked' ? LOCAL_NOTE_TRACKED : '');
+  // "Git exclude" in a row's right-click menu: greyed with the reason when it can't apply (the server's refusals, by row).
+  const EXCLUDE_WHY = {
+    tracked: "Git tracks this, so it can't be excluded",
+    already: 'Already local only',
+    no_git: 'Not a git project',
+    docs: 'Docs are committed',
+    reserved: 'Git always ignores this',
+  };
+  function excludeItem(row, scope) {
+    const docsRow = !!row && (row.docsFolder || /^aib-docs(\/|$)/i.test(slash(row.path)));
+    const why = row && row.local ? 'already' : docsRow ? 'docs' : (row && row.noExclude) || '';
+    if (why) return { text: 'Git exclude', disabled: true, sub: EXCLUDE_WHY[why] || 'Not available here' };
+    const copy = !!(scope && scope.root === 'chat' && scope.branch);
+    return {
+      text: 'Git exclude',
+      disabled: false,
+      sub: copy ? 'Moves it to the main folder, never committed' : 'Never committed; shown in every chat',
+    };
+  }
+  // A path a reply names inside the main folder's local-only paths -> its relative path, for a chat working in its own copy
+  // (Files shows those paths in the copy's scope too). null otherwise.
+  function localRel(path, lo) {
+    if (!lo || !lo.main) return null;
+    const rel = relTo(path, lo.main);
+    return rel !== null && isLocalRel(lo, rel) ? rel : null;
   }
   const changedPaths = (map) => Array.from((map || new Map()).keys()).sort((a, b) => a.localeCompare(b));
   // Where a query matches inside a name, for <mark>: [before, hit, after] or null.
@@ -434,11 +499,13 @@
     return out;
   }
   // The same file named twice in one paragraph is linked once: keep the first of each (case-insensitive on Windows paths).
-  function dedupe(cands, rootDir) {
+  // `lo` (optional): the scope's localOnly, so a full path into the main folder's local-only paths links too.
+  function dedupe(cands, rootDir, lo) {
     const seen = new Set(),
       out = [];
     for (const c of cands || []) {
-      const rel = relTo(c.path, rootDir);
+      let rel = relTo(c.path, rootDir);
+      if (rel === null && lo) rel = localRel(c.path, lo);
       const k = rel === null ? null : isWinPath(rootDir) ? rel.toLowerCase() : rel;
       if (k === null || seen.has(k)) continue;
       seen.add(k);
@@ -490,6 +557,14 @@
     pathCandidates,
     dedupe,
     opensBeside,
+    isLocalRel,
+    localAbs,
+    localTip,
+    localNote,
+    localRel,
+    excludeItem,
+    EXCLUDE_WHY,
+    LOCAL_LINE,
   };
   root.AgentFilesState = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

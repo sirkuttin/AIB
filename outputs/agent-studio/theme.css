@@ -108,6 +108,8 @@
   --badge-agent-bg: color-mix(in srgb, var(--info) 9%, var(--bg-field)); /* .badge-agent {background} */
   --badge-agent-text: color-mix(in srgb, var(--info) 63%, var(--text)); /* .badge-agent {color}; aside .connection .row-status.tone-info .row-phrase {color} */
   --badge-agent-line: color-mix(in srgb, var(--info) 40%, var(--panel-2)); /* .badge-agent {border-color} */
+  --local: color-mix(in srgb, var(--info) 78%, var(--text)); /* .fx-local {color}; .fx-localdot {background}: local-only paths in Files */
+  --local-bg: color-mix(in srgb, var(--info) 13%, var(--bg-field)); /* .fx-local {background} */
   --stop-subagent-line: color-mix(in srgb, var(--danger) 52%, var(--code-bg)); /* #stopSubagent {border-color} */
   --file-badge-ext-text: color-mix(in srgb, var(--accent) 20%, var(--text)); /* .file-badge-ext {color} */
   --file-badge-size-text: var(--muted); /* .file-badge-size {color}; .attachment-card > span {color}; .file-card-meta {color} */

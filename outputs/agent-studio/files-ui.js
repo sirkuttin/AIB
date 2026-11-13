@@ -278,6 +278,7 @@
       t.cache[dir] = (r && r.entries) || [];
       t.root = (r && r.root) || t.root;
       t.git = !!(r && r.git);
+      noteLocal(scope, r);
       t.restored.delete(dir);
       if (dir === '')
         for (const p of t.open) if (t.restored.has(p) && t.cache[p] === undefined) listDir(scope, p);
@@ -290,6 +291,166 @@
       } else t.cache[dir] = { error: (e && e.message) || 'Could not list this folder' };
     }
     paint();
+  }
+  // ---- local-only paths (the main folder's, shown in every scope) -----------------------------------------------------------
+  // scope id -> the last list reply's localOnly {main, entries, defaultState, sig}
+  const localOf = new Map();
+  function noteLocal(scope, r) {
+    if (r && r.localOnly && typeof r.localOnly === 'object') {
+      localOf.set(F().scopeId(scope), r.localOnly);
+      treeOf(scope).lo = r.localOnly;
+    }
+  }
+  const loOf = (scope) => (scope ? localOf.get(F().scopeId(scope)) || null : null);
+  // The folders of a tree that show local-only content: the top (when it holds an entry), folders on the way to an entry, and
+  // folders inside one. These are listed again on focus and every 10 s while Files shows, so an agent's write in another chat
+  // shows up without a click (local-only files never reach Changes, so nothing else would refresh them).
+  function localDirs(t) {
+    const lo = t.lo;
+    if (!lo || !Array.isArray(lo.entries) || !lo.entries.length) return [];
+    const out = [];
+    for (const dir of Object.keys(t.cache)) {
+      if (!Array.isArray(t.cache[dir])) continue;
+      const pre = dir ? dir + '/' : '';
+      if (F().isLocalRel(lo, dir) || lo.entries.some((e) => !pre || F().slash(e).toLowerCase().startsWith(pre.toLowerCase()))) out.push(dir);
+    }
+    return out;
+  }
+  const LOCAL_POLL_MS = 10000;
+  let localTimer = null,
+    localBusy = false;
+  async function refreshLocal() {
+    if (!host || mode !== 'files' || localBusy || doc().hidden) return;
+    const scope = currentScope();
+    if (!scope) return;
+    const t = treeOf(scope);
+    localBusy = true;
+    try {
+      let changed = false;
+      for (const dir of localDirs(t)) {
+        if (t.open.size && dir && !t.open.has(dir)) continue; // closed folders are listed again when opened
+        try {
+          const r = await host.getJson('/api/live/files/list', Object.assign(F().scopeArgs(scope), { dir }));
+          const next = (r && r.entries) || [];
+          if (JSON.stringify(next) !== JSON.stringify(t.cache[dir])) {
+            t.cache[dir] = next;
+            changed = true;
+          }
+          noteLocal(scope, r);
+        } catch (e) {
+          /* the folder went: the next full listing says so */
+        }
+      }
+      if (changed) {
+        exists.clear();
+        paint();
+      }
+      await reloadLocalTabs();
+    } finally {
+      localBusy = false;
+    }
+  }
+  // An open tab of a local-only file reloads when the file changed on disk (its mtime).
+  async function reloadLocalTabs() {
+    const tabs = tabsHere().tabs.concat(beside.tabs);
+    let redraw = false;
+    for (const tab of tabs) {
+      const r = reads.get(tab.id);
+      if (!r || !r.data || !r.data.local || r.loading || (tab.scope && tab.scope.root === 'outside')) continue;
+      try {
+        const d = await host.getJson('/api/live/files/read', Object.assign(F().scopeArgs(tab.scope), { path: tab.path }));
+        if (d && d.mtime !== r.data.mtime) {
+          r.data = d;
+          redraw = true;
+        }
+      } catch (e) {
+        /* gone: kept as last read */
+      }
+    }
+    if (redraw) {
+      if (view === 'file') drawMain();
+      if (beside.active) drawBeside();
+    }
+  }
+  function pollLocal() {
+    if (localTimer || !host) return;
+    const tick = () => {
+      localTimer = null;
+      if (!host || mode !== 'files') return;
+      refreshLocal();
+      localTimer = (root.setTimeout || setTimeout)(tick, LOCAL_POLL_MS);
+      if (localTimer && localTimer.unref) localTimer.unref(); // never keeps a test process alive
+    };
+    localTimer = (root.setTimeout || setTimeout)(tick, LOCAL_POLL_MS);
+    if (localTimer && localTimer.unref) localTimer.unref();
+  }
+  // "Git exclude" (owner decision 3): applied at once; the foot offers Undo for 10 s. A refusal is said in the foot too.
+  const UNDO_MS = 10000;
+  let footNote = null; // {text, undo: {token, scope} | null, until}
+  function setFootNote(note) {
+    footNote = note;
+    paint();
+    if (note)
+      (root.setTimeout || setTimeout)(() => {
+        if (footNote === note) {
+          footNote = null;
+          paint();
+        }
+      }, Math.max(0, note.until - Date.now()));
+  }
+  function relistAround(scope, path) {
+    const t = treeOf(scope),
+      parent = F().dirOf(path);
+    exists.clear();
+    for (const dir of ['', parent, path]) if (t.cache[dir] !== undefined && t.cache[dir] !== 'loading') delete t.cache[dir];
+    listDir(scope, '');
+    if (parent) listDir(scope, parent);
+    if (t.open.has(path)) listDir(scope, path);
+  }
+  async function gitExclude(scope, path) {
+    if (!host || !scope) return;
+    try {
+      const r = await host.post('files/exclude', Object.assign(F().scopeArgs(scope), { path, action: 'add' }));
+      const moved = (r && r.moved && r.moved.length) || 0,
+        failed = (r && r.failed && r.failed.length) || 0;
+      // the foot is narrow: the short line, and the whole story in its tooltip
+      const tip =
+        'Excluded ' + path + ' (never committed; shown in every chat)' + (moved ? '\nMoved from this copy into the main folder' : '') +
+        (failed ? '\n' + failed + ' could not move: AIB moves them before this copy is removed' : '');
+      setFootNote({ text: 'Excluded ' + path, tip, undo: r && r.undo ? { token: r.undo, scope, path } : null, until: Date.now() + UNDO_MS });
+    } catch (e) {
+      setFootNote({ text: (e && e.message) || 'Could not exclude it', undo: null, until: Date.now() + 6000, error: true });
+    }
+    relistAround(scope, path);
+  }
+  async function undoExclude() {
+    const u = footNote && footNote.undo;
+    if (!u || !host) return;
+    footNote = null;
+    try {
+      await host.post('files/exclude', Object.assign(F().scopeArgs(u.scope), { action: 'undo', undo: u.token }));
+    } catch (e) {
+      setFootNote({ text: (e && e.message) || 'Could not undo', undo: null, until: Date.now() + 6000, error: true });
+    }
+    relistAround(u.scope, u.path);
+  }
+  // The stray warning row's button: this copy's own files under a local-only path go to the shared (main) folder now.
+  async function moveStrays(scope, entry) {
+    if (!host || !scope) return;
+    try {
+      const r = await host.post('files/strays/move', F().scopeArgs(scope));
+      const moved = (r && r.moved && r.moved.length) || 0,
+        failed = (r && r.failed && r.failed.length) || 0;
+      setFootNote({
+        text: moved ? 'Moved ' + moved + (moved === 1 ? ' file' : ' files') + ' to the main folder' + (failed ? ' · ' + failed + ' could not move' : '') : failed ? failed + ' could not move' : 'Nothing to move',
+        undo: null,
+        until: Date.now() + 6000,
+        error: !!failed,
+      });
+    } catch (e) {
+      setFootNote({ text: (e && e.message) || 'Could not move them', undo: null, until: Date.now() + 6000, error: true });
+    }
+    relistAround(scope, entry);
   }
   // The scope's folder is the open chat's own folder: then the Changes tab's data is the source of the badges.
   function changesFor(scope) {
@@ -398,7 +559,7 @@
       if (mine !== searchSeq) return;
       const all = (r && r.matches) || [],
         matches = withoutDocFiles(scope, all);
-      results = { q, matches, total: Math.max(0, ((r && r.total) || 0) - (all.length - matches.length)) };
+      results = { q, matches, total: Math.max(0, ((r && r.total) || 0) - (all.length - matches.length)), localOnly: (r && r.localOnly) || null };
     } catch (e) {
       if (mine !== searchSeq) return;
       results = { q, matches: [], total: 0, error: (e && e.message) || 'Search failed' };
@@ -432,6 +593,7 @@
     if (mode === 'files') {
       ensureRoot();
       pollDocs();
+      pollLocal();
     }
   }
   function setMode(next, focus) {
@@ -548,10 +710,13 @@
       showIgnored = !showIgnored;
       paint();
     };
-    foot.append(footText, ignoredBtn);
+    const undoBtn = btn('Undo', 'fx-foot-undo', 'Undo the Git exclude');
+    undoBtn.hidden = true;
+    undoBtn.onclick = () => undoExclude();
+    foot.append(footText, undoBtn, ignoredBtn);
     pane.append(scopeRow, filterRow, tree, foot);
     list.after(pane);
-    els = { sw, chatsBtn, chatsN, filesBtn, pane, scopeBtn, filter, changed, tree, footText, ignoredBtn };
+    els = { sw, chatsBtn, chatsN, filesBtn, pane, scopeBtn, filter, changed, tree, footText, ignoredBtn, undoBtn };
     const span = find.querySelector('span');
     if (span) span.textContent = 'Find chat or file…';
     find.setAttribute('aria-label', 'Find chat or file, Ctrl+K');
@@ -568,14 +733,22 @@
     const changes = ch ? ch.map : null;
     let rows;
     if (query.trim() && results) {
-      rows = F().flatRows(results.matches.map((m) => m.path), { changes, artifacts: arts, docs });
+      rows = F().flatRows(results.matches.map((m) => m.path), { changes, artifacts: arts, docs, localOnly: results.localOnly || t.lo });
       const hits = docHits(scope, query.trim())
         .map((d) => F().flatRows([F().slash(d.dir) + '/doc.aibdoc'], { changes, docs })[0])
         .filter((r) => r && r.kind === 'doc');
       rows = hits.concat(rows.filter((r) => !hits.some((h) => h.path === r.path)));
     } else if (changedOnly)
-      rows = F().flatRows(changes ? F().changedPaths(changes) : changedFromListing(t), { changes, artifacts: arts, docs });
-    else rows = F().treeRows(t.cache, t.open, { changes, artifacts: arts, showIgnored, docs, newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project' });
+      rows = F().flatRows(changes ? F().changedPaths(changes) : changedFromListing(t), { changes, artifacts: arts, docs, localOnly: t.lo });
+    else
+      rows = F().treeRows(t.cache, t.open, {
+        changes,
+        artifacts: arts,
+        showIgnored,
+        docs,
+        newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project',
+        localNote: F().localNote(t.lo),
+      });
     return { rows, scope, tree: t, changes };
   }
   // Without the Changes data (another chat's copy), the Changed list comes from what the listings already showed.
@@ -616,7 +789,7 @@
     els.changed.textContent = 'Changed ' + nChanged;
     els.changed.setAttribute('aria-pressed', String(changedOnly));
     els.ignoredBtn.textContent = showIgnored ? 'Hide ignored' : 'Show ignored';
-    els.ignoredBtn.hidden = !!query.trim() || changedOnly;
+    els.ignoredBtn.hidden = !!query.trim() || changedOnly || !!footNote; // a foot note (Excluded … · Undo) takes the room for 10 s
     const frag = doc().createDocumentFragment();
     if (!scope) frag.append(el('p', 'This project has no folder to show.', 'fx-empty'));
     else if (query.trim() && !results) frag.append(el('p', 'Searching…', 'fx-empty'));
@@ -629,10 +802,15 @@
     const hadFocus = doc().activeElement && els.tree.contains(doc().activeElement);
     if (hadFocus) focusRow(sel);
     const items = rows.filter((r) => r.kind === 'file' || r.kind === 'dir' || r.kind === 'doc').length;
-    els.footText.textContent =
-      query.trim() && results
+    els.footText.textContent = footNote
+      ? footNote.text
+      : query.trim() && results
         ? results.total + (results.total === 1 ? ' match' : ' matches') + ' · Enter opens'
         : items + (items === 1 ? ' item' : ' items');
+    els.footText.classList.toggle('fx-foot-note', !!footNote);
+    els.footText.classList.toggle('fx-foot-err', !!(footNote && footNote.error));
+    els.footText.title = footNote ? footNote.tip || footNote.text : '';
+    els.undoBtn.hidden = !(footNote && footNote.undo);
   }
   function rowNode(r, scope) {
     if (r.kind === 'doc') return docRowNode(r, scope);
@@ -642,7 +820,18 @@
       n.style.setProperty('--d', String(r.depth));
       return n;
     }
-    const n = el('div', null, 'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.docsFolder ? ' fx-docsdir' : '') + (r.ignored ? ' ignored' : '') + (r.path === sel ? ' sel' : ''));
+    if (r.kind === 'localnote') {
+      const n = el('div', r.text, 'fx-row fx-note-row fx-localnote');
+      n.style.setProperty('--d', '0');
+      return n;
+    }
+    if (r.kind === 'stray') return strayNode(r, scope);
+    const n = el(
+      'div',
+      null,
+      'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.docsFolder ? ' fx-docsdir' : '') + (r.ignored ? ' ignored' : '') + (r.local ? ' local' : '') +
+        (r.path === sel ? ' sel' : ''),
+    );
     n.dataset.path = r.path;
     n.dataset.kind = r.kind;
     n.setAttribute('role', 'treeitem');
@@ -653,14 +842,27 @@
     caret.setAttribute('aria-hidden', 'true');
     // aib-docs: the docs' own accent icon instead of the folder outline
     n.append(caret, r.docsFolder ? docIcon('fx-ico fx-docico') : r.kind === 'dir' ? icon(DIR_D, 'fx-ico') : fileIcon(r.name));
+    // local only: a small blue dot on the folder icon (owner decision 4a)
+    if (r.local && r.kind === 'dir') {
+      const dot = el('span', '', 'fx-localdot');
+      dot.setAttribute('aria-hidden', 'true');
+      n.append(dot);
+    }
     const name = el('span', null, 'fx-name');
     const hit = query.trim() && results ? F().markHit(r.name, query) : null;
     if (hit) name.append(doc().createTextNode(hit[0]), el('mark', hit[1]), doc().createTextNode(hit[2]));
     else name.textContent = r.name;
     n.append(name);
     if (r.folder) n.append(el('span', r.folder, 'fx-dirpath'));
-    n.title = r.path + (r.ignored ? '\nIgnored by git' : '');
+    const lo = loOf(scope);
+    n.title = r.local
+      ? F().localTip(r, lo)
+      : r.path + (r.ignored ? '\nIgnored by git' : '') +
+        (r.localWarn ? "\nIn AIB's local-only list, but a .gitignore rule turns it back on, so git can commit it." : '');
     if (r.ignored) n.append(el('span', 'ignored', 'fx-tag'));
+    // the pill only on the entry itself (a folder or file marked local only), not on every file inside it
+    if (r.local && !F().isLocalRel(lo, F().dirOf(r.path))) n.append(el('span', 'local only', 'fx-local'));
+    if (r.localWarn) n.append(el('span', 'not ignored', 'fx-tag fx-tag-warn'));
     if (r.docsFolder && (r.docCount || r.changed)) {
       // "3 docs · 1 changed": the doc count muted, the changed part in the usual colour
       const c = el('span', null, 'fx-docscount');
@@ -701,11 +903,30 @@
     n.addEventListener('dblclick', () => {
       if (r.kind === 'file') activateRow(r.path, { keep: true });
     });
-    if (r.kind === 'dir')
-      n.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        folderMenu(n, e.clientX, e.clientY);
-      });
+    n.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      sel = r.path;
+      rowMenu(n, r, scope, e.clientX, e.clientY);
+    });
+    return n;
+  }
+  // "1 file in this chat's copy, not in the shared folder": files an agent wrote under a local-only path inside the copy.
+  function strayNode(r, scope) {
+    const n = el('div', null, 'fx-row fx-stray');
+    n.style.setProperty('--d', String(r.depth));
+    const text = el(
+      'span',
+      r.count + (r.count === 1 ? ' file' : ' files') + " in this chat's copy, not in the shared folder. AIB moves " +
+        (r.count === 1 ? 'it' : 'them') + ' there before the copy is removed.',
+      'fx-stray-t',
+    );
+    const b = btn('Move to the shared folder', 'fx-stray-btn', 'Move ' + (r.count === 1 ? 'it' : 'them') + ' into the main folder now (a name clash gets "(from chat-…)")');
+    b.onclick = (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      moveStrays(scope, r.entry);
+    };
+    n.append(text, b);
     return n;
   }
   const pagesText = (n) => n + (n === 1 ? ' page' : ' pages');
@@ -895,20 +1116,47 @@
     }
   }
   function folderMenu(anchor, x, y) {
+    rowMenu(anchor, null, null, x, y);
+  }
+  // Right-click on a row: "New doc" on folders, and "Git exclude" on every file and folder (greyed with the reason when it can't
+  // apply). row: a treeRows row (null for a doc row: New doc only).
+  function rowMenu(anchor, row, scope, x, y) {
     if (menu) closeMenu(false);
-    const m = menuShell('Folder', anchor);
-    const b = btn('New doc', 'ws-menu-item fx-menu-it');
-    b.setAttribute('role', 'menuitem');
-    b.onclick = () => {
-      closeMenu(false);
-      startNewDoc();
-    };
-    m.append(b);
+    const isFile = !!row && row.kind === 'file';
+    const m = menuShell(isFile ? 'File' : 'Folder', anchor);
+    const items = [];
+    if (!isFile) {
+      const b = btn('New doc', 'ws-menu-item fx-menu-it');
+      b.setAttribute('role', 'menuitem');
+      b.onclick = () => {
+        closeMenu(false);
+        startNewDoc();
+      };
+      items.push(b);
+    }
+    if (row && scope && (row.kind === 'file' || row.kind === 'dir')) {
+      const it = F().excludeItem(row, scope);
+      const b = btn(null, 'ws-menu-item fx-menu-it fx-menu-excl');
+      b.setAttribute('role', 'menuitem');
+      b.append(el('span', it.text, 'fx-menu-t'), el('span', it.sub, 'sub'));
+      b.title = it.sub;
+      if (it.disabled) {
+        b.disabled = true;
+        b.setAttribute('aria-disabled', 'true');
+      } else
+        b.onclick = () => {
+          closeMenu(false);
+          gitExclude(scope, row.path);
+        };
+      items.push(b);
+    }
+    m.append(...items);
     doc().body.append(m);
     menu = m;
     m.style.left = Math.max(8, Math.round(x)) + 'px';
     m.style.top = Math.max(8, Math.round(y)) + 'px';
-    if (b.focus) b.focus();
+    const first = items.find((b) => !b.disabled);
+    if (first && first.focus) first.focus();
   }
   function focusRow(path) {
     if (!els) return;
@@ -1528,6 +1776,13 @@
       chip.title = outsideText(where) + "\nRead-only. This file is not in the chat's folder; the chat named it.";
       return chip;
     }
+    // a local-only file is the main folder's own, whichever scope opened it
+    if (d && d.local) {
+      const chip = el('span', null, 'sf-fv-from sf-fv-local');
+      chip.append(el('span', 'Local only', 'fx-local'));
+      chip.title = F().LOCAL_LINE + (d.abs ? '\nThe same file in every chat: ' + d.abs : '');
+      return chip;
+    }
     const
       c = projectChats().find((x) => x.key === s.chatKey);
     const chip = el('span', null, 'sf-fv-from');
@@ -1932,6 +2187,7 @@
       (r) => {
         const names = new Map();
         for (const e of (r && r.entries) || []) names.set(e.name.toLowerCase(), e);
+        noteLocal(scope, r);
         return { names, root: (r && r.root) || '' };
       },
       () => ({ names: new Map(), root: '' }),
@@ -1955,12 +2211,14 @@
     }
     return out;
   }
-  function linkPaths(container, ctx) {
+  function linkPaths(container, ctx, asked) {
     const c = ctx || chat;
     if (!container || !c || !c.id || !host) return Promise.resolve(0);
     const scope = F().followScope(c, c.projectPath),
       folder = c.cwd || c.projectPath;
     if (!scope || !folder) return Promise.resolve(0);
+    // a chat's own copy: its top listing first tells where the main folder's local-only paths are (full paths into them link too)
+    if (scope.root === 'chat' && !asked && !loOf(scope)) return dirNames(scope, '').then(() => linkPaths(container, ctx, true));
     const nodes = textNodes(container);
     const seenIn = new Map(); // paragraph -> Set of rel paths already linked
     const jobs = [];
@@ -1969,7 +2227,7 @@
       if (!seenIn.has(block)) seenIn.set(block, new Set());
       const seen = seenIn.get(block);
       const cands = F()
-        .dedupe(F().pathCandidates(t.nodeValue), folder)
+        .dedupe(F().pathCandidates(t.nodeValue), folder, loOf(scope))
         .filter((x) => !seen.has(x.rel.toLowerCase()));
       for (const x of cands) seen.add(x.rel.toLowerCase());
       if (!cands.length) continue;
@@ -2100,7 +2358,7 @@
   function toolFileInfo(c, path) {
     const scope = F().followScope(c, c.projectPath),
       folder = c.cwd || c.projectPath,
-      rel = scope && folder ? F().relTo(path, folder) : null;
+      rel = scope && folder ? F().relTo(path, folder) ?? F().localRel(path, loOf(scope)) : null;
     if (rel !== null) {
       return dirNames(scope, F().dirOf(rel)).then((d) => {
         const e = d.names.get(F().nameOf(rel).toLowerCase());
@@ -2307,6 +2565,7 @@
       linkMenu(a, e.clientX, e.clientY);
     });
     if (root.addEventListener) root.addEventListener('message', onFrameMessage);
+    if (root.addEventListener) root.addEventListener('focus', () => refreshLocal());
     paint();
   }
   // The search Ctrl+K uses: a doc's files are never hits.
@@ -2353,6 +2612,8 @@
       exists.clear();
       outsideSeen.clear();
       frames.clear();
+      localOf.clear();
+      footNote = null;
       newDoc = null;
       docViewEl = null;
       tabsByProject = {};
