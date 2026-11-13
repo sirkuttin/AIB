@@ -33,15 +33,26 @@ test('idle: no menu, no key hint, plain Send and Enter', () => {
   assert.equal(SM.route({ ...base, busy: false, hasQueue: true }, 'default'), 'queue');
 });
 
+/* ---- Claude Code's own follow-up cycle (T27): the plain Send of before, Enter waits for the cycle ---- */
+test("the agent's own cycle (autonomous): no menu, no key hint, Enter waits for it to end as before", () => {
+  const ctx = { ...base, autonomous: true, steerable: false };
+  const v = SM.view(ctx);
+  assert.equal(v.more, false);
+  assert.equal(v.keyHint, '', 'no Send tooltip');
+  assert.deepEqual(v.items, []);
+  assert.equal(v.placeholder, C.placeholderQueue('Claude Code'));
+  assert.equal(SM.route(ctx, 'default'), 'queue');
+});
+
 /* ---- working and steerable ---- */
-test('working + steerable: Enter steers, Alt+Enter queues after the turn, the key hint says so', () => {
+test('working + steerable: Enter steers, Alt+Enter queues after the turn, the Send tooltip says so', () => {
   assert.equal(SM.route(base, 'default'), 'steer');
   assert.equal(SM.route(base, 'now'), 'steer');
   assert.equal(SM.route(base, 'after'), 'queue');
   assert.equal(SM.route(base, 'interrupt'), 'interrupt');
   const v = SM.view(base);
   assert.equal(v.more, true);
-  assert.equal(v.keyHint, 'Enter send now · Alt+Enter after this turn');
+  assert.equal(v.keyHint, 'Enter sends now · Alt+Enter after this turn · Shift+Enter for a new line');
   assert.equal(v.placeholder, 'Message Claude Code… Enter sends now');
   assert.deepEqual(
     v.items.map((i) => [i.id, i.label, i.disabled]),

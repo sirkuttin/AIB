@@ -1223,6 +1223,7 @@
       composer = SM
         ? SM.view({
             busy,
+            autonomous: !!(connected && snapshot.autonomous),
             hasQueue: false,
             steerable: !!(connected && snapshot.steerable),
             agentId: (connected && snapshot.steerAgent) || selected.provider,
@@ -1233,12 +1234,8 @@
         : { working: false, more: false, items: [], keyHint: '' };
     sendMenu ||= SM && SM.init({ doc: document, root: document, send: $('send'), onPick: (id) => sendWith(id) });
     sendMenu?.update(composer);
-    if (SM) {
-      const hintNode = SM.keyHintNode(document, $('promptForm'));
-      hintNode.textContent = composer.keyHint;
-      hintNode.title = composer.keyHint; // the full words when a narrow window cuts the line
-      hintNode.hidden = !composer.working || !composer.keyHint;
-    }
+    // The shortcuts while the agent works: the Send button's tooltip and the ▾ menu (no hint row under the box: its height stays put)
+    $('send').title = composer.working && composer.keyHint ? composer.keyHint : '';
     $('send').textContent = opening ? 'Opening…' : 'Send';
     $('send').hidden = false;
     $('send').disabled =

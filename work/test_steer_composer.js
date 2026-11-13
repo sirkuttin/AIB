@@ -105,16 +105,22 @@ test('menu pick "Send after this turn" queues; "Interrupt and send" queues then 
   void submit;
 });
 
-test('the composer words while working: button Send, placeholder, key hint (idle shows none)', async () => {
+test('the composer words while working: button Send, placeholder, the shortcuts in the Send tooltip, no hint row (idle: no tooltip)', async () => {
   const { page } = setup();
   page.run('renderHeader()');
   assert.equal(page.element('send').textContent, 'Send');
   assert.equal(page.element('prompt').placeholder, 'Message Claude Code\u2026 Enter sends now');
-  assert.equal(page.element('sendKeyHint').hidden, false);
-  assert.match(page.element('sendKeyHint').textContent, /Alt\+Enter after this turn/);
+  assert.equal(page.element('send').title, 'Enter sends now \u00b7 Alt+Enter after this turn \u00b7 Shift+Enter for a new line');
+  assert.equal(page.run('typeof window.AgentSendMenu.keyHintNode'), 'undefined', 'owner, 2026-11-12: no key hint row under the box');
+  page.element('prompt').value = '/doc plan';
+  page.run('renderHeader()');
+  assert.equal(page.element('send').title, 'Commands run after this turn');
+  page.element('prompt').value = '';
+  page.run('snapshot = { ...snapshot, busy: true, steerable: false }; renderHeader()');
+  assert.equal(page.element('send').title, 'Claude Code can\u2019t read messages mid-turn \u00b7 Enter sends when it ends');
   page.run('snapshot = { ...snapshot, busy: false, steerable: false }; renderHeader()');
   assert.equal(page.element('send').textContent, 'Send');
-  assert.equal(page.element('sendKeyHint').hidden, true);
+  assert.equal(page.element('send').title, '');
 });
 
 test('a steered message shows the "Sent while working" tag on its bubble; a normal one does not', () => {

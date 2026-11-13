@@ -1337,6 +1337,12 @@
   function autosize() {
     const box = doc().getElementById('prompt');
     if (!box || !box.style) return;
+    /* An empty box keeps its own height: Chrome counts a wrapping placeholder in scrollHeight, so a longer placeholder (the one while
+       the agent works) made the composer taller in a narrow window (owner, 2026-11-12: its height stays put while the agent works). */
+    if (!box.value) {
+      if (box.style.height) box.style.height = '';
+      return;
+    }
     /* A one-line composer whose text still fits stays as it is. Resetting to 'auto' to measure laid the whole page out twice on
        every key press (the chat history above shrinks and grows with the composer), which made typing stutter in a long chat. */
     if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
@@ -2739,6 +2745,13 @@
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,
+    // Tests (steer_e2e_test.ts P9): a typed quick reply to the chat with this key, through the inbox row's own send (sendQuick).
+    _sendQuick: async (key, text) => {
+      qs(key).text = String(text || '');
+      await sendQuick(key);
+      const s = quick.get(key);
+      return s ? { error: s.error, queued: !!s.queued } : { error: '', queued: false };
+    },
   };
   root.AgentWorkspaceUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -17,7 +17,9 @@
     cantSteerMenu: (agent) =>
       agent + ' can’t read messages during a turn. Use "Send after this turn" or "Interrupt and send".',
     cantSteerKey: (agent) => agent + ' can’t read messages mid-turn · Enter sends when it ends',
-    keyHintSteer: 'Enter send now · Alt+Enter after this turn',
+    // The Send button's tooltip while the agent works (owner, 2026-11-12: no key hint row under the box, so the composer keeps its
+    // height): steerable, a slash command typed, or the agent cannot steer (cantSteerKey).
+    keyHintSteer: 'Enter sends now · Alt+Enter after this turn · Shift+Enter for a new line',
     keyHintCommand: 'Commands run after this turn',
     now: 'Send now',
     after: 'Send after this turn',
@@ -59,7 +61,9 @@
     );
   }
 
-  // ctx: {busy, hasQueue, steerable, agentId, agent, text, commands}. What the composer shows.
+  // ctx: {busy, autonomous, hasQueue, steerable, agentId, agent, text, commands}. What the composer shows.
+  // autonomous: the agent runs a cycle of its own (Claude Code after a background command ended), no turn of the user's: the
+  // composer stays the plain Send of before (Enter waits for the cycle to end), with no menu and no key hint (T27).
   function view(ctx) {
     const agent = ctx.agent || 'the agent',
       working = !!ctx.busy,
@@ -68,6 +72,13 @@
       steerNow = steer && !slash;
     const out = { working, steerable: steer, slash, more: working, keyHint: '', placeholder: '', note: '', items: [] };
     if (!working) return out;
+    if (ctx.autonomous) {
+      out.more = false;
+      out.placeholder = COPY.placeholderQueue(agent);
+      out.note = COPY.noteQueue;
+      return out;
+    }
+    // keyHint: the Send button's tooltip while working (there is no hint row under the box)
     if (slash) out.keyHint = COPY.keyHintCommand;
     else if (steer) out.keyHint = COPY.keyHintSteer;
     else out.keyHint = COPY.cantSteerKey(agent);
@@ -248,19 +259,6 @@
     return api;
   }
 
-  // ---- the key hint under the message box ------------------------------------------------------------------
-  // host: the composer form. The hint is a row of its own (chat.css), shown only while the agent works.
-  function keyHintNode(doc, host) {
-    let node = doc.getElementById ? doc.getElementById('sendKeyHint') : null;
-    if (node) return node;
-    node = doc.createElement('p');
-    node.id = 'sendKeyHint';
-    node.className = 'send-key-hint';
-    node.hidden = true;
-    if (host && host.append) host.append(node);
-    return node;
-  }
-
   // ---- background pill on a tool row ---------------------------------------------------------------------------
   // bg: tool.background = {state: 'running'|'done'|'stopped', stoppable}. onStop(): called when Stop is clicked.
   function backgroundOf(raw) {
@@ -294,7 +292,7 @@
     return pill;
   }
 
-  const api = { COPY, isSlashCommand, view, route, keyIntent, init, keyHintNode, backgroundOf, backgroundPill };
+  const api = { COPY, isSlashCommand, view, route, keyIntent, init, backgroundOf, backgroundPill };
   root.AgentSendMenu = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

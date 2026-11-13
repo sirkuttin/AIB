@@ -1,5 +1,5 @@
 /**
- * Steer-on-send layout, end to end (beta.9): the composer while the agent works, with the hint under "Send now", the key hint under the box and the ▾ send menu, at the narrowest composer widths, in the light and the dark theme. Real Studio, fake agents of
+ * Steer-on-send layout, end to end (beta.9): the composer while the agent works, with the hint under "Send now" and the ▾ send menu, at the narrowest composer widths, in the light and the dark theme. Real Studio, fake agents of
  * work/fake_acp.py --steer (_steer_lab.ts), headless Chrome/Edge (no window). Needs [B] the page side (feat/steer-page); it fails
  * until that has landed. No selectors beyond the shared ones are assumed: the ▾ is the element with aria-haspopup inside #promptForm,
  * the hints are found by their copy (build-brief-beta9.md, one copy table).
@@ -7,13 +7,14 @@
  * What is measured (pixels, not looks), at viewport widths 360, 400, 490 (the narrowest width the page draws without sideways scroll) and 700:
  *  - nothing in the composer sticks out of it and the composer has no sideways scroll;
  *  - Send and ▾ are both visible, side by side without overlap, each at least 24 px wide and tall;
- *  - the key hint and the Attach button do not overlap, the key hint stays inside the composer;
+ *  - no key hint row under the box (owner, 2026-11-12): the composer is exactly as tall working as idle, and the shortcuts are in the
+ *    Send button's tooltip (steerable, a slash command typed, an agent that cannot steer);
  *  - with the menu open: every item is inside the viewport, its text is not cut off, and it lists the three sends;
  *  - the hint text keeps a contrast of at least 4.5:1 against what is behind it (light and dark).
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/steer_layout_e2e_test.ts
  */
-import { assert, hasBrowser, type Json, openPage, type Page, SteerLab, TEST_OPTIONS, until, type Who } from './_steer_lab.ts';
+import { assert, assertEquals, hasBrowser, type Json, openPage, type Page, SteerLab, TEST_OPTIONS, until, type Who } from './_steer_lab.ts';
 
 const LONG = 45;
 // 490 is the narrowest the page itself draws without sideways scroll (MAIN is 490 px wide even with no steer feature, measured at 360 and 420);
@@ -44,14 +45,7 @@ const MEASURE = `(() => {
     if (b.width < 24 || b.height < 24) bad('the caret is smaller than 24 px: ' + Math.round(b.width) + 'x' + Math.round(b.height));
     if (a.width < 24 || a.height < 24) bad('Send is smaller than 24 px');
   }
-  const attach = [...form.querySelectorAll('button, label')].find((e) => /attach/i.test(e.textContent + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.title || '')) && visible(e));
-  const keyHint = document.getElementById('sendKeyHint');
-  out.keyHint = keyHint ? keyHint.textContent.trim() : null;
-  if (!keyHint || keyHint.hidden) bad('no key hint (Enter sends ...) in the composer');
-  if (keyHint && !keyHint.hidden && attach) {
-    const a = attach.getBoundingClientRect(), k = keyHint.getBoundingClientRect();
-    if (a.right > k.left + 1 && k.right > a.left + 1 && a.bottom > k.top + 1 && k.bottom > a.top + 1) bad('the key hint overlaps Attach');
-  }
+  if (document.getElementById('sendKeyHint') || form.querySelector('.send-key-hint')) bad('a key hint row under the box (the owner removed it)');
   return out;
 })()`;
 
@@ -99,10 +93,34 @@ async function check(page: Page, what: string, expression: string): Promise<void
 
 const settle = () => new Promise((r) => setTimeout(r, 400));
 
+/** The composer's height (px) at each width. */
+async function heights(page: Page): Promise<number[]> {
+  const out: number[] = [];
+  for (const width of WIDTHS) {
+    await page.viewport(width, 900);
+    await settle();
+    out.push(await page.eval<number>(`Math.round(document.getElementById('promptForm').getBoundingClientRect().height)`));
+  }
+  return out;
+}
+
+const STEER_TIP = 'Enter sends now · Alt+Enter after this turn · Shift+Enter for a new line';
+const sendTip = (page: Page) => page.eval<string>(`document.getElementById('send').title`);
+
+/** The Send tooltip with a slash command typed: commands always wait for the turn end. */
+async function slashTip(page: Page): Promise<string> {
+  await page.eval(`(() => { const p = document.getElementById('prompt'); p.value = '/doc plan'; p.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await settle();
+  const tip = await sendTip(page);
+  await page.eval(`(() => { const p = document.getElementById('prompt'); p.value = ''; p.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await settle();
+  return tip;
+}
+
 for (const who of ['claude', 'codex', 'omp'] as const) {
   for (const theme of THEMES) {
     Deno.test({
-      name: `LY1 [B] ${who}, ${theme}: the working composer (hint, key hint, Send and its menu button, open menu) fits at ${WIDTHS.join(', ')} px`,
+      name: `LY1 [B] ${who}, ${theme}: the working composer (Send and its menu button, open menu, the Send tooltip) fits and keeps its idle height at ${WIDTHS.join(', ')} px`,
       ignore: !hasBrowser,
       ...TEST_OPTIONS,
       async fn() {
@@ -110,11 +128,17 @@ for (const who of ['claude', 'codex', 'omp'] as const) {
         await lab.start();
         const chat = await lab.chat(who);
         const gate = lab.gate();
-        await chat.prompt(`steer-wait:${gate}`, 'first');
-        await until(async () => (await chat.state()).busy, 'working', LONG);
         const page = await openPage(lab, chat, 1400, 900, theme);
         try {
+          const idle = await heights(page);
+          assertEquals(await sendTip(page), '', 'idle: no Send tooltip');
+          await page.viewport(1400, 900);
+          await chat.prompt(`steer-wait:${gate}`, 'first');
+          await until(async () => (await chat.state()).busy, 'working', LONG);
           await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => e.getBoundingClientRect().width > 0)`, 15000, 'the menu button');
+          assertEquals(await heights(page), idle, 'the composer is as tall working as idle, at every width');
+          assertEquals(await sendTip(page), STEER_TIP, 'the shortcuts are in the Send tooltip');
+          assertEquals(await slashTip(page), 'Commands run after this turn');
           for (const width of WIDTHS) {
             await page.viewport(width, 900);
             await settle();
@@ -139,7 +163,7 @@ for (const who of ['claude', 'codex', 'omp'] as const) {
 
 for (const theme of THEMES) {
   Deno.test({
-    name: `LY2 [B] ${theme}: an agent that cannot steer: the "can't read messages mid-turn" hint and the key hint fit at ${WIDTHS.join(', ')} px`,
+    name: `LY2 [B] ${theme}: an agent that cannot steer: its Send tooltip, the menu's "can't read messages" hint fits, same height as idle, at ${WIDTHS.join(', ')} px`,
     ignore: !hasBrowser,
     ...TEST_OPTIONS,
     async fn() {
@@ -147,22 +171,32 @@ for (const theme of THEMES) {
       await lab.start();
       const chat = await lab.chat('claude');
       const gate = lab.gate();
-      await chat.prompt(`gate:${gate}`, 'first');
-      await until(async () => (await chat.state()).busy, 'working', LONG);
       const page = await openPage(lab, chat, 1400, 900, theme);
       try {
-        await page.waitFor(`/can.t read messages mid-turn/i.test(document.body.innerText)`, 15000, 'the hint');
+        const idle = await heights(page);
+        await page.viewport(1400, 900);
+        await chat.prompt(`gate:${gate}`, 'first');
+        await until(async () => (await chat.state()).busy, 'working', LONG);
+        await page.waitFor(`/can.t read messages mid-turn/i.test(document.getElementById('send').title)`, 15000, 'the Send tooltip');
+        assertEquals(await sendTip(page), 'Claude Code can’t read messages mid-turn · Enter sends when it ends');
+        assertEquals(await heights(page), idle, 'the composer is as tall working as idle, at every width');
         for (const width of WIDTHS) {
           await page.viewport(width, 900);
           await settle();
           const r = await page.eval<Json>(
             `(() => { const form = document.getElementById('promptForm'); const fr = form.getBoundingClientRect(); const problems = [];
               if (form.scrollWidth > form.clientWidth + 1) problems.push('the composer scrolls sideways');
-              for (const e of form.querySelectorAll('*')) { const r = e.getBoundingClientRect(); if (r.width && (r.left < fr.left - 1 || r.right > fr.right + 1)) problems.push((e.id || e.className || e.tagName) + ' sticks out'); }
+              for (const e of form.querySelectorAll('*')) { if (e.closest('[role=menu]')) continue; const r = e.getBoundingClientRect(); if (r.width && (r.left < fr.left - 1 || r.right > fr.right + 1)) problems.push((e.id || e.className || e.tagName) + ' sticks out'); }
               return { problems }; })()`,
           );
           assert((r.problems as string[]).length === 0, `${theme}/${width}px: ${(r.problems as string[]).join('; ')}`);
-          await check(page, `${theme}/${width}px hint contrast`, CONTRAST("can.t read messages mid-turn"));
+          // the menu's greyed "Send now" carries the longer words
+          await page.click('#promptForm [aria-haspopup]');
+          await page.waitFor(`!!document.querySelector('[role=menu]:not([hidden])')`, 4000, 'the menu');
+          await check(page, `${theme}/${width}px menu`, MENU);
+          await check(page, `${theme}/${width}px hint contrast`, CONTRAST('can.t read messages during a turn'));
+          await page.key('Escape');
+          await page.waitFor(`!document.querySelector('[role=menu]:not([hidden])')`, 4000, 'the menu closed');
         }
       } finally {
         await page.close();
