@@ -221,6 +221,103 @@ body:not(.sf-files-mode) #filesPane {
   font-size: 12px;
   color: var(--text-faint);
 }
+.fx-tag.fx-tag-warn {
+  color: var(--warn);
+}
+/* local only (the main folder's, shown in every chat): normal colour, a blue dot on the folder icon, a blue "local only" pill */
+.fx-row.local,
+.sf-fv-local {
+  --local: color-mix(in srgb, var(--info) 78%, var(--text));
+  --local-bg: color-mix(in srgb, var(--info) 13%, var(--bg-field));
+}
+.fx-localdot {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  margin: -9px 0 0 -11px; /* on the folder icon's top right corner */
+  border-radius: 50%;
+  background: var(--local);
+  box-shadow: 0 0 0 1.5px var(--panel);
+}
+.fx-local {
+  flex: none;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--local-bg);
+  color: var(--local);
+  font-size: 11.5px;
+  line-height: 18px;
+}
+.fx-localnote {
+  white-space: normal;
+  padding: 6px 10px;
+  line-height: 1.4;
+}
+.fx-stray {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 2px 8px 4px calc(8px + var(--d, 0) * 14px);
+  padding: 6px 9px;
+  border: 1px solid var(--warn);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-field));
+  color: var(--text);
+  font-size: 12px;
+  white-space: normal;
+  line-height: 1.4;
+}
+.fx-stray:hover {
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-field));
+}
+.fx-stray-btn {
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: var(--bg-field);
+  color: var(--text);
+  font-size: 12px;
+}
+.fx-foot-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.fx-foot-note.fx-foot-err {
+  color: var(--danger);
+}
+.fx-foot-undo {
+  flex: none;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--link-underline);
+}
+.fx-menu-it.fx-menu-excl {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  height: auto;
+  min-height: 44px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  line-height: 1.3;
+}
+.fx-menu-it.fx-menu-excl:disabled {
+  opacity: 1;
+  color: var(--text-faint);
+}
+.fx-menu-it.fx-menu-excl .sub {
+  white-space: normal;
+}
 .fx-chg {
   flex: none;
   display: inline-flex;
@@ -288,6 +385,8 @@ body:not(.sf-files-mode) #filesPane {
   color: var(--muted);
 }
 .fx-foot-link {
+  flex: none;
+  white-space: nowrap;
   margin-left: auto;
   min-height: 28px;
   padding: 0;
