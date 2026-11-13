@@ -1499,7 +1499,7 @@ export class DocStore {
    * it (an agent's first tool call on it).
    */
   link(doc: OpenDoc, chat: string, replace: boolean): void {
-    if (!chat || doc.chat === chat || (doc.chat && !replace)) return;
+    if (!chat || chat.startsWith('project:') || doc.chat === chat || (doc.chat && !replace)) return; // 'project:<folder>' names no chat
     doc.chat = chat;
     doc.dirty = true;
     this.#touchSave(doc);

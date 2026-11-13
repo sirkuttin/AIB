@@ -251,15 +251,21 @@
       loadDocs(Object.assign({}, scope, { root: 'main' }), false);
       return now;
     }
-    return now.map((d) => {
-      const m = main.find((x) => x.name === d.name);
-      return m ? Object.assign({}, d, { title: m.title, pages: m.pages, pageList: m.pageList, chat: m.chat }) : d;
+    // Docs belong to the project: every doc of the main folder is listed (a doc made after the copy was, is only there), then the
+    // copy's own docs the main folder does not have.
+    const copyOf = (name) => now.find((x) => x.name === name);
+    const merged = main.map((m) => {
+      const d = copyOf(m.name);
+      return d ? Object.assign({}, d, { title: m.title, pages: m.pages, pageList: m.pageList, chat: m.chat }) : m;
     });
+    return merged.concat(now.filter((d) => !main.some((m) => m.name === d.name)));
   }
   function loadDocs(scope, force) {
     const D = DL();
     if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return Promise.resolve([]);
-    return D.listFor(scope.id, scope.root, force).then((docs) => {
+    // A chat's copy lists the project's docs, which are in the main folder: asked again together (docsOf merges them).
+    const both = scope.root === 'chat' ? D.listFor(scope.id, 'main', force) : Promise.resolve();
+    return Promise.all([D.listFor(scope.id, scope.root, force), both]).then(([docs]) => {
       paint();
       return docs;
     });
@@ -1325,6 +1331,8 @@
   const frames = new Map(); // 'main|' or 'artifacts|' + tab id -> {frame, tab, where, hooks}
   function openDoc(scope, d) {
     if (!scope || !d || !d.name) return;
+    // The tab remembers the project folder: if its chat is gone after a restart, the doc still opens from the project.
+    if (!scope.path && projectPathNow()) scope = Object.assign({}, scope, { path: projectPathNow() });
     setTabsHere(F().openDocTab(tabsHere(), scope, d, { keep: !d.preview }));
     gotoIfOpen('main', d);
     showFile();
@@ -1382,7 +1390,7 @@
       const f = el('iframe', null, 'sf-docframe');
       f.title = 'Doc: ' + tab.name;
       f.src = DL()
-        ? DL().docUrl({ chat: tab.scope.id, name: tab.doc.name, page: tab.doc.page, preview: !!tab.preview, where: 'tab' })
+        ? DL().docUrl({ chat: tab.scope.id, project: tab.scope.path || projectPathNow(), name: tab.doc.name, page: tab.doc.page, preview: !!tab.preview, where: 'tab' })
         : 'about:blank';
       rec = { frame: f, tab, where };
       frames.set(key, rec);

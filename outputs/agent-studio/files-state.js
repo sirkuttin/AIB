@@ -145,8 +145,23 @@
       changes = o.changes || null,
       arts = o.artifacts || null,
       docs = o.docs || null; // docIndex()
+    // Docs belong to the project: a chat's own copy (a worktree) has only the docs that were committed when it was made, a new doc is
+    // in the main folder. So aib-docs always lists every doc the docs index knows, whether or not the copy's folder has it.
+    const docDirs = docs ? Array.from(docs.byDir.keys()).filter((d) => d.indexOf(DOCS_FOLDER + '/') === 0 && d.indexOf('/', DOCS_FOLDER.length + 1) < 0) : [];
+    const withDocs = (dir, list) => {
+      if (!docDirs.length || !Array.isArray(list)) return list;
+      if (dir === '') return list.some((e) => e.dir && e.path === DOCS_FOLDER) ? list : list.concat([{ name: DOCS_FOLDER, path: DOCS_FOLDER, dir: true }]);
+      if (dir !== DOCS_FOLDER) return list;
+      const have = new Set(list.map((e) => slash(e.path)));
+      const extra = docDirs.filter((d) => !have.has(d)).map((d) => ({ name: d.slice(DOCS_FOLDER.length + 1), path: d, dir: true }));
+      if (!extra.length) return list;
+      return list.concat(extra).sort((a, b) => !!b.dir - !!a.dir || String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase()));
+    };
     const walk = (dir, depth) => {
-      const list = cache[dir];
+      let list = cache[dir];
+      // the copy has no aib-docs folder yet ("Not found"): its docs are the project's
+      if (dir === DOCS_FOLDER && docDirs.length && list && list.error) list = [];
+      list = withDocs(dir, list);
       if (list === 'loading' || list === undefined) {
         if (depth > 0 || list === 'loading') out.push({ kind: 'loading', path: dir + '/…', depth });
         return;

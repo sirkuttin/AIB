@@ -318,6 +318,28 @@ e2e(
       8000,
       "unarchived",
     );
+    // QA polish 5: the group you had open says "Nothing archived." while it stays open; closed and opened again it is gone
+    assert(
+      /Nothing archived\./.test(
+        await page.eval<string>(`${pop}.textContent`),
+      ),
+      "the emptied group says Nothing archived. while open",
+    );
+    await page.key("Escape");
+    await page.key("Escape");
+    await page.waitFor(
+      `!${pop} || ${pop}.hidden`,
+      5000,
+      "the picker closes",
+    );
+    await openPicker(page);
+    assert(
+      !(await page.eval<boolean>(
+        `!!${pop}.querySelector('.ar-foothead[data-key="foot:archived"]')`,
+      )) &&
+        !/Nothing archived/.test(await page.eval<string>(`${pop}.textContent`)),
+      "an emptied Archived group is gone when the picker opens again",
+    );
     await page.key("Escape");
     // a pinned artifact: archive from the viewer's ⋯ unpins it and says so; Unarchive (viewer ⋯) does not pin it again
     const [ps] = await lab.web.post("artifacts/pin", {
@@ -558,6 +580,17 @@ e2e(
     assert(
       c === "Delete for good? This can't be undone.Delete for goodKeep",
       `confirm: ${c}`,
+    );
+    // QA polish 4: the question on its own line, "Delete for good" and "Keep" side by side under it, inside the box
+    const lay = await page.eval<Record<string, number>>(
+      `(() => { const c = ${pop}.querySelector('.ar-confirm').getBoundingClientRect(), t = ${pop}.querySelector('.ar-confirm-t').getBoundingClientRect(),
+        g = ${pop}.querySelector('[data-key="forgood:${a.id}"]').getBoundingClientRect(), k = ${pop}.querySelector('[data-key="keep:${a.id}"]').getBoundingClientRect();
+        return { cR: c.right, cB: c.bottom, tB: t.bottom, gT: g.top, kT: k.top, gR: g.right, kL: k.left, kR: k.right, kB: k.bottom, kH: k.height }; })()`,
+    );
+    assert(
+      lay.gT === lay.kT && lay.kL > lay.gR && lay.kR <= lay.cR &&
+        lay.gT >= lay.tB && lay.kB <= lay.cB && lay.kH < 30,
+      `confirm layout: ${JSON.stringify(lay)}`,
     );
     await shots(page, "5-delete-now-confirm");
     await page.click(`#artifactsPane .ar-confirm [data-key="keep:${a.id}"]`);
