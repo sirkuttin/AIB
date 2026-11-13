@@ -612,6 +612,35 @@ pageTest('P4 [B] owner decision 5: a message typed while a card is open shows a 
   }
 });
 
+// QA beta.9: the page chose its route from its last poll (up to 1.5 s old). Typed right after a turn began (here: the approval card's
+// turn, started without the page), it saw the chat idle, posted a prompt and the server refused it ("Wait for the current turn...",
+// the draft kept, no held row): 6 of 8 tries before the fix. Each try types 0-300 ms after the card opened, before the page polls.
+for (const [who, tries] of [['claude', 20], ['omp', 10]] as const) {
+  pageTest(`P4b [B] ${who}: typed right after an approval card opened (the page has not polled since), the message is held every time (${tries} tries)`, async () => {
+    await using lab = await started();
+    const chat = await lab.chat(who);
+    const page = await openPage(lab, chat);
+    try {
+      for (let i = 0; i < tries; i++) {
+        await chat.prompt('steer-perm', `card-${i}`);
+        await until(async () => ((await chat.state()).permissions as Json[]).length === 1, 'the approval card', LONG);
+        await new Promise((r) => setTimeout(r, (i % 4) * 100));
+        await typeAndSend(page, `held ${i}`);
+        await until(async () => lane(await chat.state()).some((l) => l.text === `held ${i}` && l.state === 'held'), `try ${i}: "held ${i}" is held`, 15);
+        await page.waitFor(`/until you answer/i.test(document.body.innerText)`, 8000, `try ${i}: the held row`);
+        assert(!(await page.eval<boolean>(`!document.getElementById('error').hidden && /Wait for the current turn/.test(document.getElementById('error').textContent)`)), `try ${i}: no refusal`);
+        await page.waitFor(`document.getElementById('prompt').value === ''`, 8000, `try ${i}: the box is cleared`);
+        await answerCard(lab, chat);
+        await waitText(chat, `held ${i}`);
+        await idle(chat);
+      }
+      assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
+    } finally {
+      await page.close();
+    }
+  });
+}
+
 for (const who of WHO) {
   pageTest(`P5 [B] ${who}: after a steer the command row says "Still running in the background" with a Stop button; Stop kills it`, async () => {
     await using lab = await started();

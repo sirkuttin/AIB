@@ -4,22 +4,27 @@
  * until that has landed. No selectors beyond the shared ones are assumed: the ▾ is the element with aria-haspopup inside #promptForm,
  * the hints are found by their copy (build-brief-beta9.md, one copy table).
  *
- * What is measured (pixels, not looks), at viewport widths 360, 400, 490 (the narrowest width the page draws without sideways scroll) and 700:
+ * What is measured (pixels, not looks), at viewport widths 360, 400, 490 (the narrowest width the page draws without sideways scroll), 700, 860
+ * and 1600:
  *  - nothing in the composer sticks out of it and the composer has no sideways scroll;
  *  - Send and ▾ are both visible, side by side without overlap, each at least 24 px wide and tall;
  *  - no key hint row under the box (owner, 2026-11-12): the composer is exactly as tall working as idle, and the shortcuts are in the
  *    Send button's tooltip (steerable, a slash command typed, an agent that cannot steer);
  *  - with the menu open: every item is inside the viewport, its text is not cut off, and it lists the three sends;
+ *  - and every item can really be seen and clicked: document.elementFromPoint at five points of each item finds that item (QA beta.9:
+ *    the menu sat inside the composer, which clips what sticks out of it, so only its last ~19 px showed although its rectangle was
+ *    inside the window); LY3 clicks "Send now" and "Interrupt and send" with the mouse at such a point;
  *  - the hint text keeps a contrast of at least 4.5:1 against what is behind it (light and dark).
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/steer_layout_e2e_test.ts
  */
 import { assert, assertEquals, hasBrowser, type Json, openPage, type Page, SteerLab, TEST_OPTIONS, until, type Who } from './_steer_lab.ts';
+import type { SteerChat } from './_steer_lab.ts';
 
 const LONG = 45;
 // 490 is the narrowest the page itself draws without sideways scroll (MAIN is 490 px wide even with no steer feature, measured at 360 and 420);
 // the composer is also checked at 400 and 360 on its own (the page may scroll there, the composer must still fit its own box)
-const WIDTHS = [360, 400, 490, 700];
+const WIDTHS = [360, 400, 490, 700, 860, 1600];
 const THEMES = ['teal-dark', 'teal-light'] as const;
 
 const MEASURE = `(() => {
@@ -64,8 +69,35 @@ const MENU = `(() => {
   }
   const text = menu.innerText;
   for (const item of ['Send now', 'Send after this turn', 'Interrupt and send']) if (!text.includes(item)) bad('the menu lacks "' + item + '"');
+  // seen and clickable: what is on top at five points of each item is that item (not the composer, not something clipping it)
+  const items = [...menu.querySelectorAll('[role=menuitem]')];
+  if (items.length !== 3) bad('the menu has ' + items.length + ' items, not 3');
+  for (const item of items) {
+    const r = item.getBoundingClientRect();
+    const name = (item.querySelector('b') || item).textContent.trim();
+    if (r.top < 0 || r.bottom > innerHeight || r.left < 0 || r.right > innerWidth) bad('"' + name + '" is not wholly inside the window');
+    const cy = r.top + r.height / 2, cx = r.left + r.width / 2;
+    for (const [x, y] of [[cx, cy], [r.left + 6, cy], [r.right - 6, cy], [cx, r.top + 3], [cx, r.bottom - 3]]) {
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || !item.contains(hit)) bad('"' + name + '" is covered at ' + Math.round(x) + ',' + Math.round(y) + ' by ' + (hit ? (hit.id || hit.className || hit.tagName) : 'nothing'));
+    }
+  }
   return out;
 })()`;
+
+/** A real mouse click on a menu item, at its centre, after checking that the item is what is on top there. */
+async function clickMenuItem(page: Page, label: string): Promise<void> {
+  const at = await page.eval<[number, number] | string>(
+    `(() => { const b = [...document.querySelectorAll('[role=menu]:not([hidden]) [role=menuitem]')].find((e) => e.textContent.includes(${JSON.stringify(label)}));
+      if (!b) return 'no item'; const r = b.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const hit = document.elementFromPoint(x, y);
+      return hit && b.contains(hit) ? [x, y] : 'covered by ' + (hit ? hit.id || hit.className || hit.tagName : 'nothing'); })()`,
+  );
+  assert(Array.isArray(at), `"${label}" cannot be clicked: ${at}`);
+  const [x, y] = at as [number, number];
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
 
 const CONTRAST = (pattern: string) =>
   `((re) => {
@@ -198,6 +230,59 @@ for (const theme of THEMES) {
           await page.key('Escape');
           await page.waitFor(`!document.querySelector('[role=menu]:not([hidden])')`, 4000, 'the menu closed');
         }
+      } finally {
+        await page.close();
+        chat.open(gate);
+      }
+    },
+  });
+}
+
+// LY3: the menu's sends work with the mouse (QA beta.9: only the keyboard reached them), at the widest and a narrow width.
+const steersOf = (chat: SteerChat) =>
+  chat.received().filter((m) => m.method === '_session/steering').map((m) => JSON.stringify(m.params));
+
+for (const who of ['claude', 'codex', 'omp'] as const) {
+  Deno.test({
+    name: `LY3 [B] ${who}: "Send now" (1600 px, dark) and "Interrupt and send" (860 px, light) clicked with the mouse in the open menu`,
+    ignore: !hasBrowser,
+    ...TEST_OPTIONS,
+    async fn() {
+      await using lab = new SteerLab();
+      await lab.start();
+      const chat = await lab.chat(who);
+      const gate = lab.gate();
+      const page = await openPage(lab, chat, 1600, 900, 'teal-dark');
+      const typeOnly = async (text: string) => {
+        await page.click('#prompt');
+        await page.type(text);
+      };
+      const openMenu = async () => {
+        await page.click('#promptForm [aria-haspopup]');
+        await page.waitFor(`!!document.querySelector('[role=menu]:not([hidden])')`, 4000, 'the menu');
+      };
+      try {
+        await chat.prompt(`steer-wait:${gate}`, 'first');
+        await until(async () => (await chat.state()).busy, 'working', LONG);
+        await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => e.getBoundingClientRect().width > 0)`, 15000, 'the menu button');
+        await typeOnly('clicked send now');
+        await openMenu();
+        await check(page, `${who}/1600 menu`, MENU);
+        await clickMenuItem(page, 'Send now');
+        await until(() => steersOf(chat).some((p) => p.includes('clicked send now')), '"Send now" reached the agent as a steer', LONG);
+        await page.waitFor(`document.getElementById('prompt').value === ''`, 8000, 'the box is cleared');
+        assert((await chat.state()).busy, 'the turn goes on after "Send now"');
+
+        await page.eval(`localStorage.setItem('aib-theme', 'teal-light'); document.documentElement.dataset.theme = 'teal-light'`);
+        await page.viewport(860, 900);
+        await settle();
+        await typeOnly('clicked interrupt');
+        await openMenu();
+        await check(page, `${who}/860 menu`, MENU);
+        await clickMenuItem(page, 'Interrupt and send');
+        await until(() => lab.promptsReceived(chat).includes('clicked interrupt'), '"Interrupt and send" stopped the turn and sent the message', LONG);
+        assert(chat.received().some((m) => m.method === 'session/cancel'), 'the turn was cancelled');
+        assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
       } finally {
         await page.close();
         chat.open(gate);

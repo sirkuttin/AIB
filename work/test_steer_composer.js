@@ -153,3 +153,113 @@ test('a backgrounded tool row shows "Still running in the background" and its St
   assert.deepEqual(names(posts), ['tool-stop']);
   assert.deepEqual(posts[0][1], { id: 'c1', toolCallId: 'tc1' });
 });
+
+/* ---- a stale page (QA beta.9): the page knows the chat from its last poll, up to 1.5 s old ---- */
+function staleSetup({ refuse = 'Wait for the current turn, or interrupt it before sending another prompt', live = {} } = {}) {
+  const posts = [];
+  const states = [];
+  const page = makePage({
+    scripts: ['send-menu-ui.js', 'queue-ui.js', 'inbox-reply.js'],
+    routes: {
+      // the server already runs a turn (an approval card is open): it refuses a prompt, as Connection.prompt() does
+      '/api/live/prompt': (_q, body) => {
+        posts.push(['prompt', body]);
+        return { status: 400, body: { error: refuse } };
+      },
+      '/api/live/steer': (_q, body) => {
+        posts.push(['steer', body]);
+        return { body: { ok: true, accepted: true, state: 'held', queue: { items: [] } } };
+      },
+      '/api/live/queue': (_q, body) => {
+        posts.push(['queue', body]);
+        return { body: { ok: true, accepted: true, queue: { items: [] } } };
+      },
+      '/api/live/state': (q) => {
+        states.push(q);
+        return {
+          body: {
+            id: 'c1',
+            ready: true,
+            closed: false,
+            busy: true,
+            steerable: true,
+            permissions: [{ key: 'k1', params: { sessionId: 's1' } }],
+            queue: { items: [] },
+            events: [],
+            cursor: 3,
+            ...live,
+          },
+        };
+      },
+      '/api/live/list': () => ({ body: { connections: [], recovered: [], instanceId: 'A' } }),
+    },
+  });
+  // the page's last poll still saw the chat idle
+  page.run(
+    "selected = { provider: 'claude', id: 's1', cwd: 'C:/p', key: 'claude:s1' }; current = 'c1'; snapshot = " +
+      JSON.stringify({ id: 'c1', ready: true, closed: false, busy: false, steerable: false, queue: { items: [] } }),
+  );
+  page.element('prompt').value = 'message during card';
+  page.element('promptForm').requestSubmit = () => page.element('promptForm').onsubmit({ preventDefault() {} });
+  const key = (over) => page.element('prompt').onkeydown(Object.assign({ key: 'Enter', preventDefault() {} }, over));
+  const settle = async () => {
+    for (let i = 0; i < 12; i++) await page.tick();
+  };
+  return { page, posts, states, key, settle };
+}
+
+test('a turn the page has not polled yet (an approval card is open): the refused prompt is read again and goes to the steer route, no error', async () => {
+  const { page, posts, states, key, settle } = staleSetup();
+  key();
+  await settle();
+  assert.deepEqual(names(posts), ['prompt', 'steer'], 'refused as a prompt, then sent the way the chat is now');
+  assert.equal(posts[1][1].clientMessageId, posts[0][1].clientMessageId, 'the same message id: the agent never took the first one');
+  assert.equal(posts[1][1].text, 'message during card');
+  assert.ok(states.length >= 1, 'the chat was read afresh');
+  assert.equal(page.element('error').hidden, true, 'no error banner');
+  assert.equal(page.element('prompt').value, '', 'the box is cleared: the message is held, not lost');
+});
+
+test('a turn the page has not polled yet on an agent that cannot steer: the refused prompt waits in the queue', async () => {
+  const { posts, key, settle, page } = staleSetup({ live: { steerable: false, permissions: [] } });
+  key();
+  await settle();
+  assert.deepEqual(names(posts), ['prompt', 'queue']);
+  assert.equal(page.element('error').hidden, true);
+});
+
+test('a prompt refused for any other reason is not sent again: the error shows and the draft stays', async () => {
+  const { posts, key, settle, page } = staleSetup({ refuse: 'This connection is not ready' });
+  key();
+  await settle();
+  assert.deepEqual(names(posts), ['prompt']);
+  assert.equal(page.element('error').hidden, false);
+  assert.match(page.element('error').textContent, /not ready\. Your draft has been kept\./);
+  assert.equal(page.element('prompt').value, 'message during card');
+});
+
+test('a refresh asked for while a poll runs reads the chat once more after it (the working composer shows without waiting a poll)', async () => {
+  let release;
+  let reads = 0;
+  const page = makePage({
+    scripts: ['send-menu-ui.js', 'queue-ui.js', 'inbox-reply.js'],
+    routes: {
+      '/api/live/state': async () => {
+        reads += 1;
+        if (reads === 1) await new Promise((r) => (release = r)); // the poll in flight left before the turn began
+        return { body: { id: 'c1', ready: true, closed: false, busy: reads > 1, steerable: reads > 1, queue: { items: [] }, events: [], cursor: reads } };
+      },
+      '/api/live/list': () => ({ body: { connections: [], recovered: [], instanceId: 'A' } }),
+    },
+  });
+  page.run("selected = { provider: 'claude', id: 's1', cwd: 'C:/p', key: 'claude:s1' }; current = 'c1'; snapshot = null");
+  page.run('void refresh({ poll: true })');
+  await page.tick();
+  page.run('void refresh({ poll: true })'); // the next poll beat while one runs: skipped
+  page.run('window.__after = refresh()'); // after a send: one more read once the running one is done
+  release();
+  await page.run('window.__after');
+  for (let i = 0; i < 6; i++) await page.tick();
+  assert.equal(reads, 2, 'one poll, then exactly one more read');
+  assert.equal(page.run('snapshot.busy'), true, 'the page sees the turn that began during the poll');
+});

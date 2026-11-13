@@ -117,7 +117,7 @@
   }
 
   // ---- the menu -------------------------------------------------------------------------------------------
-  // init({send, doc, root, onPick(id)}) puts a ▾ and its menu next to the Send button, inside one wrapper.
+  // init({send, doc, root, onPick(id)}) puts a ▾ next to the Send button, inside one wrapper; its menu floats at the page's top level.
   function init(opts) {
     const doc = opts.doc,
       send = opts.send,
@@ -138,8 +138,40 @@
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
     if (parent && typeof parent.insertBefore === 'function') parent.insertBefore(wrap, send);
-    wrap.append(send, more, menu);
+    wrap.append(send, more);
+    // The menu floats at the page's top level (position: fixed, placed by place()): the composer clips what sticks out of it
+    // (#promptForm has overflow: hidden), so a menu inside it showed only its last ~19 px (QA beta.9).
+    const top = doc.body && typeof doc.body.append === 'function' ? doc.body : wrap;
+    top.append(menu);
     const self = { wrap, more, menu, send, open: false, index: 0, items: [], buttons: [] };
+    const view = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+    // Above the Send split, its right edge on the split's right edge; below it when there is more room there; kept inside the
+    // window (8 px from its edges), scrolling inside when even the larger side is too short.
+    function place() {
+      if (!self.open || typeof wrap.getBoundingClientRect !== 'function') return;
+      const GAP = 6,
+        EDGE = 8,
+        r = wrap.getBoundingClientRect(),
+        vw = (view && view.innerWidth) || 0,
+        vh = (view && view.innerHeight) || 0;
+      if (!vw || !vh) return;
+      const above = Math.max(0, r.top - GAP - EDGE),
+        below = Math.max(0, vh - r.bottom - GAP - EDGE);
+      menu.style.maxHeight = '';
+      const width = menu.offsetWidth || 0,
+        height = menu.offsetHeight || 0,
+        up = height <= above || above >= below,
+        room = up ? above : below,
+        h = Math.min(height, room);
+      if (height > room) menu.style.maxHeight = room + 'px';
+      menu.style.left = Math.round(Math.max(EDGE, Math.min(r.right - width, vw - width - EDGE))) + 'px';
+      menu.style.top = Math.round(up ? r.top - GAP - h : r.bottom + GAP) + 'px';
+      menu.classList.toggle('below', !up);
+    }
+    if (view && typeof view.addEventListener === 'function') {
+      view.addEventListener('resize', place);
+      view.addEventListener('scroll', place, true); // a scrolled pane moves the split: the menu follows it
+    }
 
     const enabled = () => self.items.map((it, i) => (it.disabled ? -1 : i)).filter((i) => i >= 0);
     function focusIndex(i) {
@@ -197,6 +229,7 @@
         else if (self.open) {
           const at = self.index;
           build();
+          place();
           focusIndex(at);
         }
       },
@@ -205,6 +238,7 @@
         self.open = true;
         build();
         menu.hidden = false;
+        place();
         more.setAttribute('aria-expanded', 'true');
         const ok = enabled();
         focusIndex(ok.length ? ok[0] : 0);
@@ -254,7 +288,7 @@
     for (const node of [send, more, menu]) node.addEventListener('keydown', (e) => api.onKey(e));
     if (opts.root && opts.root.addEventListener)
       opts.root.addEventListener('mousedown', (e) => {
-        if (self.open && !(wrap.contains && wrap.contains(e.target))) api.close(false);
+        if (self.open && !(wrap.contains && wrap.contains(e.target)) && !(menu.contains && menu.contains(e.target))) api.close(false);
       });
     return api;
   }
