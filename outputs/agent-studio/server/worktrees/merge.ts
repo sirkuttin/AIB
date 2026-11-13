@@ -14,7 +14,10 @@
  *   4. under one lock per repository: re-read base's tip (moved: back to 3), refuse on index.lock or a merge/rebase in the folder
  *      that has base checked out; the user's uncommitted edits there are stashed (by SHA, never popped) and re-applied after
  *   5. land only the chat's changes: while U is still S the chat's commits are replayed; once live sync moved U past S,
- *      `git merge-tree --merge-base=U <base tip> <chat HEAD>` lands exactly what the chat changed since U. Then fast-forward base
+ *      `git merge-tree --merge-base=U <base tip> <chat HEAD>` lands exactly what the chat changed since U. Local-only paths (AIB's
+ *      block of .git/info/exclude) are taken out of what lands (one commit then), and the chat's versions are saved in the main
+ *      folder beside the originals as "<name> (from chat-...)<ext>", never overwriting them, with a note in the chat. Then
+ *      fast-forward base
  *   6. the worktree is reset to a new U: the new tip plus whatever the user has unsaved in the project folder; the chat goes on
  *   The project's "sync paused" flag is held from stash to unstash (and the reset), the chat's worktree lock for the whole merge.
  *
@@ -32,6 +35,7 @@ import { clip, isDict, PY_SPACE, pyStr, pyStrip, pyTruthy } from '../core/py.ts'
 import { getLogger } from '../core/log.ts';
 import { clashLine, openClashes, pausedStatus, settleConflicts } from './sync.ts';
 import * as mr from './merge_request.ts';
+import { clashName, isLocalPath, type LocalOnly, localOnlyOf, slugOf } from './local_only.ts';
 
 const log = getLogger('worktree_merge');
 
@@ -810,6 +814,140 @@ async function treeLanding(chat: Chat, tip: string, head: string, title: unknown
   return ['landed', sha, Math.max(1, own.length)];
 }
 
+// ---- local-only paths never land (owner Q2 a) ---------------------------------------------------------------------
+/**
+ * `landed` without the project's local-only paths: [commit to land ('' when nothing else is left), repo-relative paths left out,
+ * the project's local-only lookup]. A chat made before a path was excluded has its files in its snapshot, so its changes to them
+ * would be committed and would overwrite the main folder's ignored file at the fast-forward. When any commit between tip and landed
+ * touches one, everything lands as one commit on tip, with tip's version (or none) of each local-only path.
+ */
+async function keepLocalOut(chat: Chat, tip: string, landed: string): Promise<[string, string[], LocalOnly | null]> {
+  let lo: LocalOnly | null = null;
+  try {
+    lo = await localOnlyOf(chat.project);
+  } catch (error) {
+    log.exception(error, 'Reading the local-only folders of %s failed', chat.project);
+  }
+  if (!lo || !lo.entries.length) return [landed, [], lo];
+  const fold = (p: string) => (Deno.build.os === 'windows' ? p.toLowerCase() : p);
+  const names = new Set([
+    ...nul((await git(['diff', '--name-only', '-z', '--no-renames', tip, landed, '--'], chat.wt)).stdout),
+    ...(await git(['log', '--format=', '--name-only', '-z', '--no-renames', `${tip}..${landed}`], chat.wt)).stdout.split(/[\0\n]/)
+      .filter((n) => n),
+  ]);
+  const prefix = fold(lo.prefix);
+  const local = [...names].filter((n) => fold(n).startsWith(prefix) && isLocalPath(lo!, n.slice(lo!.prefix.length))).sort();
+  if (!local.length) return [landed, [], lo];
+  const kept = new Map<string, string>(); // path -> "mode sha" in tip
+  const listed = (await git(['ls-tree', '-z', '--full-tree', tip, '--', ...local], chat.wt)).stdout;
+  for (const item of nul(listed)) {
+    const tab = item.indexOf('\t');
+    const [mode, , sha] = item.slice(0, tab).split(' ');
+    kept.set(item.slice(tab + 1), `${mode} ${sha}`);
+  }
+  const scratch = Deno.makeTempDirSync({ prefix: '.studio-merge-', dir: await gitDir(chat.wt) });
+  const env = { GIT_INDEX_FILE: join(scratch, 'index') };
+  let tree: string;
+  try {
+    await git(['read-tree', landed], chat.wt, { env });
+    const lines = local.map((path) => (kept.get(path) ?? '0 ' + '0'.repeat(40)) + '\t' + path + '\n');
+    const done = await wt.rawGit(['update-index', '--index-info'], chat.wt, env, new TextEncoder().encode(lines.join('')));
+    if (done.returncode !== 0) throw new GitError('git update-index failed: ' + pyStrip(done.stderr + done.stdout).slice(-600));
+    tree = strip((await git(['write-tree'], chat.wt, { env })).stdout);
+  } finally {
+    try {
+      Deno.removeSync(scratch, { recursive: true });
+    } catch { /* ignore_errors */ }
+  }
+  if (tree === strip((await git(['rev-parse', tip + '^{tree}'], chat.wt)).stdout)) return ['', local, lo];
+  const subjects = splitlines((await git(['log', '--no-merges', '--reverse', '--format=%s', `${tip}..${landed}`], chat.wt)).stdout);
+  const message = [
+    strip((await git(['log', '-1', '--format=%B', landed], chat.wt)).stdout) || 'AIB: work from chat',
+    ...(subjects.length > 1 ? ['Chat commits:\n' + subjects.slice(0, 30).map((subject) => '- ' + clip(subject, 120)).join('\n')] : []),
+  ];
+  const sha = strip((await gitc(['commit-tree', tree, '-p', tip, ...message.flatMap((m) => ['-m', m])], chat.wt)).stdout);
+  return [sha, local, lo];
+}
+
+function lexistsAt(path: string): boolean {
+  try {
+    Deno.lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sameBytesAt(path: string, bytes: Uint8Array): boolean {
+  try {
+    const st = Deno.statSync(path);
+    if (!st.isFile || st.size !== bytes.length) return false;
+    return wt.sameBytes(Deno.readFileSync(path), bytes);
+  } catch {
+    return false;
+  }
+}
+
+const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
+const dirName = (p: string) => p.slice(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')));
+
+/** The "(from <slug>)" names that exist next to `dest`. */
+function savedAs(dest: string, slug: string): string[] {
+  const dir = dirName(dest), name = baseName(dest);
+  const dot = name.lastIndexOf('.');
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  const out: string[] = [];
+  for (let n = 1;; n++) {
+    const candidate = join(dir, `${stem} (from ${slug})${n > 1 ? ' ' + n : ''}${ext}`);
+    if (!lexistsAt(candidate)) return out;
+    out.push(candidate);
+  }
+}
+
+/**
+ * Saves the chat's version (in commit `version`) of each local-only path left out of a merge into the main folder, never over a
+ * file: at its own name when the main folder has none, else beside it as "<name> (from chat-...)<ext>" (not again when those bytes
+ * are already there). Returns one line for the chat.
+ */
+async function saveLocalVersions(chat: Chat, lo: LocalOnly, version: string, paths: string[]): Promise<string> {
+  const slug = slugOf(chat.wt);
+  const parts: string[] = [];
+  for (const path of paths) {
+    const rel = path.slice(lo.prefix.length);
+    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+    const got = await git(['cat-file', '--filters', `${version}:${path}`], chat.wt, { check: false, binary: true });
+    if (got.returncode !== 0) { // the chat deleted it: the main folder's file stays as it is
+      parts.push(`${rel} (left as it is in the main folder)`);
+      continue;
+    }
+    const dest = join(chat.project, ...rel.split('/'));
+    try {
+      if (!lexistsAt(dest)) {
+        Deno.mkdirSync(dirName(dest), { recursive: true });
+        Deno.writeFileSync(dest, got.out, { createNew: true });
+        parts.push(`${rel} (your version is saved there)`);
+        continue;
+      }
+      if (sameBytesAt(dest, got.out)) {
+        parts.push(`${rel} (the main folder already has your version)`);
+        continue;
+      }
+      const saved = savedAs(dest, slug).find((p) => sameBytesAt(p, got.out));
+      if (saved) {
+        parts.push(`${rel} (your version is already saved beside it as ${dir}${baseName(saved)})`);
+        continue;
+      }
+      const target = clashName(dest, slug);
+      Deno.writeFileSync(target, got.out, { createNew: true });
+      parts.push(`${rel} (your version is saved beside it as ${dir}${baseName(target)})`);
+    } catch (error) {
+      log.exception(error, 'Could not save the chat version of %s', rel);
+      parts.push(`${rel} (your version could not be saved; it is in commit ${version.slice(0, 12)})`);
+    }
+  }
+  return `Local-only files are never merged, so these were left out and the main folder's copies were kept: ${parts.join('; ')}`;
+}
+
 async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResult> {
   const folder = await baseCheckout(chat.project, chat.base);
   if (folder) {
@@ -857,11 +995,18 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
   }
   let stash: StashRef | null = null;
   let clash: string[] = [];
+  let leftOut: string[] = [], lo: LocalOnly | null = null, chatVersion = '';
   try {
     stash = folder ? await stashUserWork(chat, folder) : null;
     try {
       if (!byTree) {
         [landed, count] = await prepareLanding(chat, tip, head, files!, title);
+      }
+      chatVersion = landed;
+      [landed, leftOut, lo] = await keepLocalOut(chat, tip, landed);
+      if (!landed) { // the chat changed local-only files only
+        const line = await saveLocalVersions(chat, lo!, chatVersion, leftOut);
+        throw new Refused(`Nothing to merge into ${chat.base}. ${line}`, 'empty');
       }
       await hook('before_ff');
       await fastForward(chat, folder, tip, landed);
@@ -888,6 +1033,14 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
     stash: clash.length ? stash!.name : '',
   };
   const notes: Record<string, unknown>[] = [{ message }];
+  if (leftOut.length && lo) {
+    try {
+      notes.push({ message: await saveLocalVersions(chat, lo, chatVersion, leftOut) });
+      out.localOnly = leftOut.map((p) => p.slice(lo!.prefix.length));
+    } catch (error) {
+      log.exception(error, 'Could not save the local-only files left out of the merge');
+    }
+  }
   if (clash.length) {
     const canEdit = canEditProject(chat.state);
     recordClash(chat, folder!, clash, stash!);

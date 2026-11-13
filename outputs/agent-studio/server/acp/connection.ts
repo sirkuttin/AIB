@@ -579,6 +579,17 @@ export const WORKTREE_PROMPT =
   "merge_into_project tool; you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
   'conflicts there, commit, and call it again.';
 
+/**
+ * Local-only files (AIB's block of .git/info/exclude; host/studio.ts fills Connection.localOnly). A chat in its own copy is told
+ * where the main folder's local-only folders are ({paths}) and, when private/ is local only, that it may use it ({private}).
+ */
+export const LOCAL_ONLY_WORKTREE_PROMPT = 'Local-only files (git never commits them) are kept in the main project folder, not in this ' +
+  'copy: {paths}. Read and write them there by their full path. Never create those paths in this copy: ' +
+  'files there are not shared with other chats.';
+export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for local-only notes.';
+/** The same for a chat that works in the project folder itself. */
+export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of this project for local-only notes: git never commits it.';
+
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 
@@ -735,6 +746,12 @@ export class Connection {
   worktree: Record<string, string> | null = null;
   /** The project this chat belongs to; a worktree chat's cwd differs from it. */
   projectRoot: string;
+  /**
+   * Local-only files this chat is told about (host/studio.ts, before setup): absolute `entries` (the main folder's), the existing
+   * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's private/ when git
+   * really ignores it (`private`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
+   */
+  localOnly: { entries: string[]; dirs: string[]; private: string } | null = null;
   sessionId: string | null = null;
   events: Json[] = [];
   eventImageBytes = 0;
@@ -2890,6 +2907,7 @@ export class Connection {
           cwd: this.cwd,
           mcpServers,
           ...this.artifactPrompt(mcpServers),
+          ...this.extraFolders(),
         },
       );
     } else {
@@ -2897,6 +2915,7 @@ export class Connection {
         cwd: this.cwd,
         mcpServers,
         ...this.artifactPrompt(mcpServers),
+        ...this.extraFolders(),
       });
     }
     this.#takeSession(result, resume);
@@ -4286,24 +4305,53 @@ export class Connection {
    * not advertise client system prompts (ACP unstable `systemPrompt`; appended after the agent's own).
    */
   artifactPrompt(servers: unknown[] | null): Json {
-    if (!(servers ?? []).some(isOwnArtifactEntry)) return {};
+    const own = (servers ?? []).some(isOwnArtifactEntry);
+    const local = this.localOnlyText();
+    if (!own && !local) return {};
     const out: Json = {};
-    const caps = isDict(this.initial) ? get(pyTruthy(this.initial) ? this.initial : {}, 'agentCapabilities') : null;
-    const sessionCaps = isDict(caps) ? get(caps, 'sessionCapabilities') : null;
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
-    if (isDict(sessionCaps) && isDict(get(sessionCaps, 'systemPrompt'))) {
-      const content: Json[] = [{ type: 'text', text: ARTIFACT_PROMPT }];
+    if (isDict(this.#sessionCaps()?.systemPrompt)) {
+      const content: Json[] = own ? [{ type: 'text', text: ARTIFACT_PROMPT }] : [];
       const worktree = this.worktree;
-      if (worktree) { // only a chat that works in its own worktree (the merge tool comes with it)
+      if (own && worktree) { // only a chat that works in its own worktree (the merge tool comes with it)
         content.push({
           type: 'text',
           text: WORKTREE_PROMPT.replace('{branch}', worktree.branch ?? '')
             .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
+      if (local) content.push({ type: 'text', text: local });
       out.systemPrompt = { mode: 'append', content };
     }
     return out;
+  }
+
+  /** The agent's `sessionCapabilities` from initialize, or null. */
+  #sessionCaps(): Json | null {
+    const caps = isDict(this.initial) ? get(pyTruthy(this.initial) ? this.initial : {}, 'agentCapabilities') : null;
+    const sessionCaps = isDict(caps) ? get(caps, 'sessionCapabilities') : null;
+    return isDict(sessionCaps) ? sessionCaps as Json : null;
+  }
+
+  /** What this chat is told about local-only files ('' when nothing). */
+  localOnlyText(): string {
+    const lo = this.localOnly;
+    if (!lo) return '';
+    if (!this.worktree) return lo.private ? LOCAL_ONLY_PROMPT : '';
+    if (!lo.entries.length) return '';
+    const text = LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', lo.entries.join(', '));
+    return lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
+  }
+
+  /**
+   * {additionalDirectories: [...]} for a worktree chat whose project has local-only folders, when the agent advertises the ACP
+   * session capability (Claude Code's and Codex's adapters do): those folders of the main folder become writable for it. Never the
+   * main folder itself. {} otherwise.
+   */
+  extraFolders(): Json {
+    const dirs = this.worktree ? this.localOnly?.dirs ?? [] : [];
+    if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
+    return { additionalDirectories: [...dirs] };
   }
 
   /** True when a permission request is for Studio's studio_artifact tool on a chat Studio gave that tool to. */

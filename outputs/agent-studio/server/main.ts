@@ -34,6 +34,7 @@ import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
 import { mergesRunning } from './worktrees/merge.ts';
+import { startLocalBackups } from './worktrees/local_backup.ts';
 import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
@@ -316,6 +317,15 @@ export async function main(argv: string[]): Promise<void> {
   const attention = startAttention(ctx);
   ctx.keepAwake.apply(ctx.settings.keepAwake()); // the saved value (off by default); the request dies with this process
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
+  // The daily zip of each project's local-only folders (never committed, so git keeps no copy): the added projects and the
+  // projects AIB keeps chat copies of.
+  const backups = startLocalBackups({
+    stateDir,
+    projects: () => [
+      ...Object.values(ctx.addedProjects.public().added).map((a) => String((a as { path?: unknown }).path ?? '')),
+      ...Object.values(new worktrees.Registry(stateDir).all()).map((r) => String(r.project ?? '')),
+    ].filter(Boolean),
+  });
   if (studio) {
     await studio.adoptKeeper(); // the take-over started above: chats whose agents still run in the keeper go on where they are
     studio.startAutoReconnect();
@@ -353,6 +363,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
+    backups.stop();
     await ctx.artifacts.stop().catch(() => {});
     await attention.stop().catch(() => {});
     ctx.keepAwake.release();
