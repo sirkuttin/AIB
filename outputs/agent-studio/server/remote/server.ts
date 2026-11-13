@@ -412,7 +412,15 @@ export class RemoteServer {
     if (refused) {
       await drain(request);
       const [status, message] = REMOTE_REASONS[refused];
-      return this.json(status, { error: message, code: refused });
+      // What the phone sent, so a refusal can be diagnosed from the phone's screen (never a token, login or cookie value).
+      const h = request.headers;
+      const seen = (v: string | null) => (v === null ? '(none)' : v.slice(0, 40));
+      const origin = h.get('Origin');
+      const detail = `${method} ${path} · Host ${seen(h.get('Host'))} · Site ${seen(h.get('Sec-Fetch-Site'))} · Mode ${
+        seen(h.get('Sec-Fetch-Mode'))
+      } · Dest ${seen(h.get('Sec-Fetch-Dest'))} · Origin ${origin === null ? '(none)' : seen(origin)}`;
+      console.warn(`phone request refused (${refused}): ${detail}`);
+      return this.json(status, { error: `${message} (${detail})`, code: refused, detail });
     }
     try {
       switch (auth) {
