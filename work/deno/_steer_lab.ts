@@ -228,10 +228,13 @@ export function deepFind(value: unknown, test: (o: Json) => boolean): Json | nul
   return null;
 }
 
-/** The tool row's `background` of the contract ({state, stoppable}) as the snapshot carries it, or null. */
+/**
+ * The tool row's `background` of the contract ({state, stoppable}) as the snapshot carries it now (`toolBackground[toolCallId]`), or
+ * null. (Not the first tool_call_update that carries one: the server announces every change, so the first is always "running".)
+ */
 export async function backgroundOf(chat: SteerChat, toolCallId: string): Promise<{ state: string; stoppable: boolean } | null> {
-  const found = deepFind(await chat.state(), (o) => (o.toolCallId === toolCallId || o.id === toolCallId) && !!o.background && typeof o.background === 'object');
-  return found ? found.background as { state: string; stoppable: boolean } : null;
+  const map = (await chat.state()).toolBackground as Record<string, { state: string; stoppable: boolean }> | undefined;
+  return map?.[toolCallId] ?? null;
 }
 
 // ---- the page --------------------------------------------------------------------------------------------------------------------

@@ -11,8 +11,8 @@
  * Owner decisions: 1 keep "Send after this turn" (S2, P2, P7); 2 Stop on a backgrounded command kills its processes (S6-S8, P5);
  * 3 OMP is steered too (S1, S8); 4 an agent that cannot steer: "Send" + hint (S2, P3); 5 held while a card is open, no
  * "Deny and send" (S9-S11, P4). Architect tests: T15 S5, T16/T17 S4, T18 P6, T19/T20 S6/S7/S5, T22 S12, T23 S10, T24 S11/S3, T26 S3,
- * T27 S13/P8. Not end to end here (unit tests of A): T21 (the background texts), T25 (merge.ts / docs_routes.ts sends), T28 (the
- * <studio-context> note: needs a worktree sync).
+ * T27 S13/P8, T25 S14 (with the unit tests of merge.ts / docs_routes.ts). Not end to end here: T21 (steer_background_test.ts,
+ * steer_transcript_test.ts), T28 (the <studio-context> note: needs a worktree sync; steer_lane_test.ts).
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/steer_e2e_test.ts   (--filter "S6" for one)
  */
@@ -82,7 +82,7 @@ for (const who of WHO) {
       const sent = lab.steersReceived(chat);
       assertEquals(sent.map((s) => s.text), ['what is 2+2?']);
       assertEquals(((sent[0].meta?.steering ?? {}) as Json).idleBehavior, 'promptRequired', 'idleBehavior is mandatory for Claude and harmless for the rest');
-      assertEquals(lab.promptsReceived(chat), ['first'], 'the steer went through _session/steering, not as a prompt');
+      assertEquals(lab.promptsReceived(chat), [`steer-wait:${gate}`], 'the steer went through _session/steering, not as a prompt');
       const bubbles = await userEvents(chat, 'what is 2+2?');
       assertEquals(bubbles.length, 1, 'AIB shows the bubble itself (no adapter echoes it), once');
       assertEquals((bubbles[0].data as Json).steered, true);
@@ -176,7 +176,7 @@ Deno.test({
     await waitText(chat, 'Fixture reply: one more thing');
     assertEquals(lab.promptsReceived(chat).filter((t) => t === 'one more thing').length, 1);
     const st = await chat.state();
-    assertEquals(st.error ?? null, null, 'no "Wait for the current turn" error');
+    assertEquals(st.error || null, null, 'no "Wait for the current turn" error');
     assertEquals((await userEvents(chat, 'one more thing')).length, 1, 'one bubble');
     await idle(chat);
     assertEquals(lane(await chat.state()), [], 'nothing left in the steer lane');
@@ -200,7 +200,7 @@ Deno.test({
     await chat.queue('after everything', 'h-q');
     // the steered reply has ended (its human usage_update) but session/prompt is held until the helper finishes
     await none(2000, 'the turn ended early (its reply ended while the helper still runs)', async () => !(await chat.state()).busy || (await turnEnds(chat)) > 0);
-    assertEquals(lab.promptsReceived(chat), ['first'], 'the queue did not pump');
+    assertEquals(lab.promptsReceived(chat), [`steer-helper:${gate}`], 'the queue did not pump');
     const [status] = await chat.stopTool('toolu_steer_agent'); // a helper (Agent) row is not a shell call
     assertEquals(status, 409, 'only shell calls can be stopped');
     assert(pidAlive(parent) && pidAlive(leaf), 'the helper work was left alone');
@@ -312,19 +312,34 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'S7c [A] Codex v1 drop: a steer the adapter said "injected" but never read gets a "may not have read this" mark and can be sent again',
+  name: 'S7c [A] Codex v1 drop: a steer the adapter said "injected" but never read comes back paused with a "may not have read this" note; Resume sends it once',
   ...TEST_OPTIONS,
   async fn() {
+    // As built (connection.ts #steerUnread): the message leaves the steer lane (it was injected) and goes back to the after-turn
+    // queue, paused, with CODEX_UNREAD_NOTE and a new id, so the page shows the queue row with the note and Resume really sends it.
     await using lab = await started();
     const chat = await lab.chat('codex');
     const gate = lab.gate();
     await chat.prompt(`steer-drop:${gate}`, 'first');
     await working(chat);
     await chat.steer('did you read this?', 'd-1');
+    await until(() => lab.steersReceived(chat).length === 1, 'the steer reached Codex', LONG);
     chat.open(gate); // the turn ends with no output after the injection
     await idle(chat);
-    await until(async () => lane(await chat.state()).some((l) => l.text === 'did you read this?' && l.state === 'fallback'), 'the steer is marked "fallback" (may not have been read)', LONG);
+    const queue = await until(async () => {
+      const q = (await chat.state()).queue as Json;
+      return (q.items as Json[]).some((i) => i.text === 'did you read this?') ? q : null;
+    }, 'the steer is back in the queue', LONG);
+    const item = (queue.items as Json[]).find((i) => i.text === 'did you read this?')!;
+    assert(/may not have read this/.test(String(item.note)), `the note: ${JSON.stringify(item)}`);
+    assertEquals(queue.paused, true, 'paused: never resent by itself');
+    assertEquals(lane(await chat.state()), []);
     assert(!(await chat.agentText()).includes('Steered reply'), 'the agent never answered it');
+    await none(800, 'it was sent again by itself', () => lab.promptsReceived(chat).includes('did you read this?'));
+    const [status] = await lab.web.post('queue-resume', { id: chat.id });
+    assertEquals(status, 200);
+    await waitText(chat, 'Fixture reply: did you read this?');
+    assertEquals(lab.promptsReceived(chat).filter((t) => t === 'did you read this?').length, 1, 'sent once more, as a prompt');
   },
 });
 
@@ -437,13 +452,24 @@ Deno.test({
   name: "S12 [A] T22: Interrupt withdraws the main agent's cards only; a background helper's approval card stays",
   ...TEST_OPTIONS,
   async fn() {
-    await using lab = await started();
+    // A background helper is one that runs on after the turn that started it (the --held-turn replay of claude-agent-acp: the reply
+    // ends, the helper goes on, then asks). A child session asking inside the running turn is part of that turn and goes with it.
+    await using lab = await started({ extra: { claude: ['--held-turn'] } });
     const chat = await lab.chat('claude');
-    await chat.prompt('child-ask', 'first'); // the fake's helper session asks for a permission
-    await until(async () => ((await chat.state()).permissions as Json[]).length === 1, "the helper's approval card", LONG);
+    const gate = lab.gate();
+    await chat.prompt(`helper-ask:${gate}`, 'first');
+    await waitText(chat, 'Started a helper.');
+    await idle(chat); // the reply ended; the helper runs on in the background
+    chat.open(gate); // the helper asks
+    await until(async () => ((await chat.state()).permissions as Json[]).length === 1, "the background helper's approval card", LONG);
+    await chat.prompt('steer-perm', 'second'); // a new turn, which asks too
+    await until(async () => ((await chat.state()).permissions as Json[]).length === 2, "the main agent's approval card", LONG);
     await chat.cancel();
-    await new Promise((r) => setTimeout(r, 1500));
-    assertEquals(((await chat.state()).permissions as Json[]).length, 1, "the helper's card survived Interrupt");
+    await idle(chat);
+    await new Promise((r) => setTimeout(r, 1000));
+    const left = (await chat.state()).permissions as Json[];
+    assertEquals(left.length, 1, "only the main agent's card was withdrawn");
+    assertEquals((left[0].params as Json).sessionId, 'helper-1', "the helper's card survived Interrupt");
   },
 });
 
@@ -525,7 +551,7 @@ pageTest('P2 [B] Enter steers (bubble tagged "Sent while working"), Alt+Enter qu
     // (a synthetic Shift+Enter inserts no newline, so only "does not send" is checked)
     assertEquals(await page.eval<string>(`document.getElementById('prompt').value`), 'line one', 'Shift+Enter left the text in the box');
     assertEquals(lab.steersReceived(chat).length, 0);
-    assertEquals(lab.promptsReceived(chat), ['first']);
+    assertEquals(lab.promptsReceived(chat), [`steer-wait:${gate}`]);
     await page.eval(`(() => { const p = document.getElementById('prompt'); p.value = ''; p.dispatchEvent(new Event('input', {bubbles: true})); })()`);
     await typeAndSend(page, 'steer me');
     await waitText(chat, 'Steered reply: steer me');
@@ -548,7 +574,7 @@ pageTest('P3 [B] an agent that cannot steer: the button still says "Send", "Send
     const gate = lab.gate();
     await chat.prompt(`gate:${gate}`, 'first');
     await working(chat);
-    await page.waitFor(`/can.t read messages mid-turn/i.test(document.getElementById('promptForm').innerText + document.body.innerText)`, 8000, 'the hint');
+    await page.waitFor(`/can.t read messages mid-turn/i.test(document.getElementById('send').title)`, 8000, 'the Send tooltip');
     assertEquals((await page.eval<string>(`document.getElementById('send').innerText.trim()`)).replace(/[▾\s]/g, ''), 'Send');
     if (await page.eval<boolean>(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`)) {
       await page.click('#promptForm [aria-haspopup]');
@@ -559,7 +585,8 @@ pageTest('P3 [B] an agent that cannot steer: the button still says "Send", "Send
         '"Send now" is disabled',
       );
     }
-    assert(/Enter sends when it ends/i.test(await page.eval<string>('document.body.innerText')), 'the key hint');
+    assert(/Enter sends when it ends/i.test(await page.eval<string>(`document.getElementById('send').title`)), 'the shortcuts in the Send tooltip');
+    assert(!(await page.eval<boolean>(`!!document.getElementById('sendKeyHint')`)), 'no key hint row (owner, 2026-11-12)');
     chat.open(gate);
   } finally {
     await page.close();
@@ -624,9 +651,12 @@ pageTest('P6 [B] T18: the steered bubble and its "Sent while working" tag are st
     await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
     await page.click(`button.connection[data-key="claude:${chat.sessionId}"]`);
     await page.waitFor(`document.getElementById('messages').innerText.includes('remember me')`, 15000, 'the bubble after a reload');
-    const text = await page.eval<string>(`document.getElementById('messages').innerText`);
-    assertEquals(text.split('remember me').length - 1, 1, 'once');
-    assert(/Sent while working/.test(text), 'the tag survives');
+    // (the agent's "Steered reply: remember me" names it too: count the user's own bubbles)
+    const mine = await page.eval<string[]>(
+      `[...document.querySelectorAll('#messages .bubble.user')].map((b) => b.innerText).filter((t) => t.includes('remember me'))`,
+    );
+    assertEquals(mine.length, 1, `once: ${JSON.stringify(mine)}`);
+    assert(/Sent while working/.test(mine[0]), 'the tag survives');
   } finally {
     await page.close();
   }
@@ -676,7 +706,64 @@ pageTest("P8 [A+B] T27: in Claude's own follow-up cycle the composer is the plai
   }
 });
 
-// Owner decision: the inbox and phone quick replies steer when the user types (AIB's own merge and doc sends do not). The inbox popover
-// (workspace-ui.js / inbox-reply.js) has no selectors in the contract yet; this stays ignored until B names them. The server half
-// (the steer route is what they call) is S1/S3; T25 (merge.ts and docs_routes.ts stay after-turn) is A's unit test.
-Deno.test({ name: 'P9 [B] inbox quick reply: a typed message steers a working chat (needs the popover selectors)', ignore: true, fn() {} });
+// Owner decision: the inbox and phone quick replies the user types steer a working chat, like the composer's Enter (AIB's own merge and
+// doc sends do not: S14). The inbox row's send is driven through its own code path (workspace-ui.js sendQuick → chat.js quickPrompt →
+// inbox-reply.js sendRoute) by the test hook AgentWorkspaceUI._sendQuick: a working chat has no "your turn" row to type into.
+pageTest('P9 [B] owner decision: a quick reply typed in the inbox steers a working chat (shown once, "Sent while working"); idle, it is a prompt', async () => {
+  await using lab = await started();
+  const open = await lab.chat('codex'); // another chat is open on the page (the fake's sessions share one id: another provider)
+  const target = await lab.chat('claude');
+  const page = await openPage(lab, open);
+  try {
+    const gate = lab.gate();
+    await target.prompt(`steer-wait:${gate}`, 'first');
+    await working(target);
+    const key = `claude:${target.sessionId}`;
+    await page.waitFor(`!!window.AgentWorkspaceUI?._sendQuick`, 8000, 'the inbox');
+    const sent = await page.eval<Json>(`window.AgentWorkspaceUI._sendQuick(${JSON.stringify(key)}, 'from the inbox')`);
+    assertEquals(sent.error, '', JSON.stringify(sent));
+    assertEquals(sent.queued, false, 'not put in the after-turn queue');
+    await waitText(target, 'Steered reply: from the inbox');
+    assertEquals(lab.steersReceived(target).map((m) => m.text), ['from the inbox'], 'it went in during the turn');
+    assertEquals(lab.promptsReceived(target), [`steer-wait:${gate}`]);
+    const bubbles = await userEvents(target, 'from the inbox');
+    assertEquals(bubbles.length, 1);
+    assertEquals((bubbles[0].data as Json).steered, true);
+    target.open(gate);
+    await idle(target);
+    await page.eval(`window.AgentWorkspaceUI._sendQuick(${JSON.stringify(key)}, 'and now idle')`);
+    await waitText(target, 'Fixture reply: and now idle');
+    assertEquals(lab.steersReceived(target).length, 1, 'idle: an ordinary prompt');
+  } finally {
+    await page.close();
+  }
+});
+
+// ---- S14: T25, AIB's own sends wait for the turn end ----------------------------------------------------------------------------------
+
+Deno.test({
+  name: "S14 [A] T25: AIB's own sends (the Merge button's message, a doc comment sent to the chat) wait for the turn to end on a chat that can steer",
+  ...TEST_OPTIONS,
+  async fn() {
+    // merge.ts requestMerge and docs_routes.ts sendComment call the live op `queue` (their unit tests, worktree_merge_request_test.ts
+    // and docs_comments_test.ts, pin that op); here: that op, with their message ids, never steers a working, steerable chat.
+    await using lab = await started();
+    const chat = await lab.chat('claude');
+    const gate = lab.gate();
+    await chat.prompt(`steer-wait:${gate}`, 'first');
+    await working(chat);
+    assertEquals((await chat.state()).steerable, true);
+    for (const [text, clientMessageId] of [['please merge', 'merge-request-t25'], ['a doc comment', 'doc-comment-d1-t1-0']]) {
+      const [status, body] = await chat.queue(text, clientMessageId);
+      assertEquals(status, 200, JSON.stringify(body));
+    }
+    await none(1500, 'an AIB send went in during the turn', () => lab.steersReceived(chat).length > 0 || lab.promptsReceived(chat).length > 1);
+    assertEquals(lane(await chat.state()), []);
+    chat.open(gate);
+    await until(() => ['please merge', 'a doc comment'].every((t) => lab.promptsReceived(chat).includes(t)), 'both sent after the turn', LONG);
+    assertEquals(lab.steersReceived(chat).length, 0);
+    for (const text of ['please merge', 'a doc comment']) {
+      assertEquals((await userEvents(chat, text)).filter((e) => (e.data as Json).steered).length, 0, `${text}: not tagged as steered`);
+    }
+  },
+});
