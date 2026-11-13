@@ -262,7 +262,7 @@ function memoryStorage(init = {}) {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), map: m };
 }
 
-test('notify-ui shows through the server in the desktop app and through the web API otherwise', async () => {
+test('notify-ui: a browser shows through the web API; in the desktop app the server notifies, so the page never posts one', async () => {
   const S = N._state;
   const web = [];
   class FakeNotification {
@@ -291,11 +291,11 @@ test('notify-ui shows through the server in the desktop app and through the web 
     run(N.cleanPrefs({}, true)); // the app's defaults: on, Needs you only
     await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(web, [], 'desktop: the web API is not used');
-    const sent = posts(calls).map((c) => JSON.parse(c.init.body));
-    assert.deepEqual(sent, [{ title: 'Chat b', body: 'Needs you', target: { type: 'chat', key: 'b' }, test: false }]);
-    run(N.cleanPrefs({ desktop: false }, true)); // turned off in the app: nothing
+    // The server's AttentionWatcher shows it (server/attention/watcher.ts): a post from the page too would show it twice.
+    assert.deepEqual(posts(calls), [], 'desktop: no POST /api/live/desktop/notify from the page');
+    run(N.cleanPrefs({ desktop: false }, true));
     await new Promise((r) => setTimeout(r, 0));
-    assert.equal(posts(calls).length, 1);
+    assert.equal(posts(calls).length, 0);
   });
 });
 

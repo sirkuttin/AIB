@@ -1,12 +1,18 @@
 """Contract: the auth gate, page files and bootstrap, over HTTP only (runs against either server; see server_under_test.py)."""
+import base64
+import http.client
+import json
 import os
 import pathlib
 import re
+import shutil
+import socket
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from server_under_test import APP, Server, server_kind, shape  # noqa: E402
+from server_under_test import APP, Server, deno_executable, server_kind, shape  # noqa: E402
 
 
 class GateContract(unittest.TestCase):
@@ -161,6 +167,145 @@ class GateContract(unittest.TestCase):
         self.assertEqual((again['seenAt'], again['seenIndex']), (1000, 7))
         for bad in ({}, {'set': []}, {'set': {key: {'seenAt': 'x'}}}):
             self.assertEqual(self.server.post('/api/live/read-state', bad).status, 400, bad)
+
+
+# ---- the phone port (Deno only: the Python reference has no phone access) -------------------------------------------------------
+TAILNET_NAME = 'studio-pc.tail-a1b2.ts.net'
+TAILNET_LOGIN = 'owner@example.com'
+
+
+def pick_port():
+    """An OS-chosen port number for remote-port.json (the phone port is saved, never 0), like _ports.ts pickPort."""
+    probe = socket.socket()
+    try:
+        probe.bind(('127.0.0.1', 0))   # port-guard: not bound (port 0: the OS picks)
+        return probe.getsockname()[1]
+    finally:
+        probe.close()
+
+
+@unittest.skipIf(server_kind() == 'python', 'phone access is Deno only')
+class PhonePortContract(unittest.TestCase):
+    """Phone access on with a fake Tailscale CLI; a phone paired through the routes: no answer on the phone port, for any page
+    route or phone route, carries the page token, the agent host's token, the keeper's token or the artifact key secret."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.mkdtemp(prefix='aib-contract-phone-')
+        cls.answers = pathlib.Path(cls.temp) / 'tailscale.json'
+        status = {'BackendState': 'Running', 'Self': {'DNSName': TAILNET_NAME + '.', 'UserID': 7}, 'User': {'7': {'LoginName': TAILNET_LOGIN}},
+                  'CertDomains': [TAILNET_NAME], 'CurrentTailnet': {'MagicDNSSuffix': 'tail-a1b2.ts.net'}}
+        cls.answers.write_text(json.dumps({'status': status, 'serve': {}}), encoding='utf-8')
+        fake = APP.parent.parent / 'work' / 'deno' / '_fake_tailscale.ts'
+        cli = json.dumps([deno_executable(), 'run', '-A', '--quiet', str(fake), str(cls.answers)])
+        cls.server = Server(env={'AIB_TAILSCALE_CLI': cli}).__enter__()
+        cls.phone_port = pick_port()
+        cls.artifact_port = pick_port()
+        (pathlib.Path(cls.server.state_dir) / 'remote-port.json').write_text(
+            json.dumps({'version': 1, 'port': cls.phone_port, 'artifactPort': cls.artifact_port}), encoding='utf-8')
+        reply = cls.server.post('/api/live/devices/access', {'on': True})
+        assert reply.status == 200 and reply.json()['listening'], reply.text()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.__exit__(None, None, None)
+        shutil.rmtree(cls.temp, ignore_errors=True)
+
+    def phone(self, method, path, body=None, _artifacts=False, **extra):
+        """A request as Tailscale Serve sends it: to the phone port, or (`_artifacts`, Phase D) to the artifact port (https 8443)."""
+        host = TAILNET_NAME + ':8443' if _artifacts else TAILNET_NAME
+        headers = {'Host': host, 'Tailscale-User-Login': TAILNET_LOGIN, 'Sec-Fetch-Site': 'same-site' if _artifacts else 'same-origin',
+                   'Sec-Fetch-Mode': 'navigate' if _artifacts else 'cors'}
+        if method == 'POST':
+            headers['Origin'] = 'https://' + TAILNET_NAME
+        headers.update({k.replace('_', '-'): v for k, v in extra.items()})
+        connection = http.client.HTTPConnection('127.0.0.1', self.artifact_port if _artifacts else self.phone_port, timeout=30)
+        try:
+            data = None if body is None else json.dumps(body).encode('utf-8')
+            connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+            for name, value in headers.items():
+                connection.putheader(name, value)
+            if data is not None:
+                connection.putheader('Content-Type', 'application/json')
+                connection.putheader('Content-Length', str(len(data)))
+            connection.endheaders(data)
+            reply = connection.getresponse()
+            return reply.status, {k.lower(): v for k, v in reply.getheaders()}, reply.read()
+        finally:
+            connection.close()
+
+    def secrets(self):
+        state = pathlib.Path(self.server.state_dir)
+        found = [self.server.token]
+        for name in ('agent-host.json', 'keeper/keeper.json'):
+            try:
+                found.append(json.loads((state / name).read_text(encoding='utf-8')).get('token', ''))
+            except (OSError, ValueError):
+                pass
+        try:
+            raw = (state / 'artifact-key-secret').read_bytes()
+            found += [raw.hex(), base64.b64encode(raw).decode()]
+        except OSError:
+            pass
+        try:  # the phone push keys' private half (sealed or in the file); the public key is the phone's to have
+            private = json.loads((state / 'push-keys.json').read_text(encoding='utf-8')).get('privateKey', '')
+            found += [private, private.split(':')[-1]]
+        except (OSError, ValueError):
+            pass
+        return [s for s in found if isinstance(s, str) and len(s) >= 16]
+
+    def test_no_phone_port_answer_carries_a_page_or_host_secret(self):
+        code = self.server.post('/api/live/devices/pair', {}).json()
+        status, _, body = self.phone('POST', '/api/remote/pair/claim', {'code': ' '.join(code['words']), 'name': 'Pixel', 'nonce': '0' * 32})
+        self.assertEqual(status, 200, body)
+        claim = json.loads(body)
+        pending = self.server.get('/api/live/devices').json()['pairing']['pending'][0]
+        self.assertEqual(self.server.post('/api/live/devices/approve', {'claim': pending['id']}).status, 200)
+        status, headers, body = self.phone('POST', '/api/remote/pair/status', {'claim': claim['claim'], 'claimSecret': claim['claimSecret']})
+        token = json.loads(body)['token']
+        cookie = re.search(r'__Host-aib-phone=([^;]+)', headers['set-cookie']).group(1)
+        answers = [body]
+        routes = re.findall(r"\['(GET|POST)', '(/[^']*)'", (APP / 'server' / 'web' / 'routes.ts').read_text(encoding='utf-8'))
+        routes += [('GET', p) for p in ('/phone.html', '/chat.html', '/api/remote/bootstrap', '/api/remote/home', '/api/remote/chat?id=x', '/api/remote/image?id=x&seq=1&n=0')]
+        # the phone's actions (answer, approve once, send, stop, queue; authenticate is always refused)
+        actions = re.findall(r"\['POST', '(/api/remote/[^']*)', 'action'\]", (APP / 'server' / 'remote' / 'server.ts').read_text(encoding='utf-8'))
+        self.assertGreaterEqual(len(actions), 11)
+        routes += [('POST', p) for p in actions]
+        # phase C: the phone's notification subscription, the service worker, the manifest and the icons
+        push = re.findall(r"\['POST', '(/api/remote/[^']*)', 'push'\]", (APP / 'server' / 'remote' / 'server.ts').read_text(encoding='utf-8'))
+        self.assertEqual(sorted(push), ['/api/remote/push/subscribe', '/api/remote/push/unsubscribe'])
+        routes += [('POST', p) for p in push]
+        routes += [('GET', p) for p in ('/manifest.webmanifest', '/sw.js', '/icons/icon-256.png')]
+        # phase D: a signed artifact link (no such artifact here)
+        routes += [('GET', '/api/remote/artifact?id=0123456789abcdef'), ('GET', '/api/remote/artifact?id=x')]
+        # chats that are not running: read only, Continue this chat, marked read on the PC
+        routes += [('GET', '/api/remote/saved?key=claude:x'), ('POST', '/api/remote/continue'), ('POST', '/api/remote/read')]
+        self.assertGreater(len(routes), 100)
+        for method, path in routes:
+            status, _, body = self.phone(method, path, {} if method == 'POST' else None, X_AIB_Device=token, Cookie='__Host-aib-phone=' + cookie)
+            answers.append(body)
+            if not path.startswith(('/api/remote/', '/phone', '/manifest.webmanifest', '/sw.js', '/icons/')):
+                self.assertIn(status, (403, 404), f'{method} {path}')
+        # phase D: the artifact port (https 8443) answers no page or phone route, and refuses links it did not sign
+        artifact_paths = [(m, p) for m, p in routes if not p.startswith('/api/remote/artifact')]
+        artifact_paths += [('GET', '/_lib/mermaid.min.js'), ('GET', '/r/x.0123456789abcdef.9999999999.' + 'A' * 43 + '/a/0123456789abcdef/v1/a.html'),
+                           ('GET', '/a/0123456789abcdef/v1/a.html')]
+        lib_ok = False
+        for method, path in artifact_paths:
+            status, headers, body = self.phone(method, path, {} if method == 'POST' else None, _artifacts=True,
+                                               Cookie='__Host-aib-phone=' + cookie)
+            answers.append(body)
+            if path == '/_lib/mermaid.min.js':
+                lib_ok = status == 200
+            else:
+                self.assertIn(status, (403, 404, 405), f'artifact port: {method} {path}')
+            self.assertIn('frame-ancestors https://' + TAILNET_NAME, headers.get('content-security-policy', ''), path)
+        self.assertTrue(lib_ok, 'the artifact port answers (its libraries)')
+        secrets = self.secrets()
+        self.assertGreaterEqual(len(secrets), 2, 'the page token and at least one host secret to look for')
+        for secret in secrets:
+            for answer in answers:
+                self.assertNotIn(secret.encode(), answer)
 
 
 if __name__ == '__main__':

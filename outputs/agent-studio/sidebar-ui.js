@@ -56,17 +56,11 @@
     host && host.aliasKey ? host.aliasKey(c) : String(c.provider) + ':' + (c.sessionId || c.id || c.key);
 
   // ---- projects -----------------------------------------------------------------------------
-  // "C:\Repos\App\", "c:/repos/app" and "C:\\Repos\\\\App" are the same folder on Windows; POSIX paths keep their case.
-  function splitPath(cwd) {
-    let p = String(cwd == null ? '' : cwd).trim();
-    const raw = p;
-    p = p.replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
-    const unc = p.startsWith('//');
-    p = p.replace(/\/{2,}/g, '/');
-    const segments = p.split('/').filter(Boolean);
-    const windows = /^[a-zA-Z]:/.test(p) || unc || raw.indexOf('\\') >= 0;
-    return { segments, windows };
-  }
+  // Folder keys come from the rules shared with the server's notifications (notify-rules.js): a project's preferences (hidden,
+  // muted) are saved under this key, and the server must find them the same way.
+  const rules = () =>
+    root.AgentNotifyRules || (typeof module === 'object' && typeof require === 'function' ? require('./notify-rules.js') : null);
+  const splitPath = (cwd) => rules().splitPath(cwd);
   // The folder a chat belongs to for grouping, naming and filtering: its projectRoot. A worktree chat's cwd differs from it;
   // records that carry no projectRoot (older ones, saved transcripts, agent-listed sessions) fall back to cwd.
   function rootOf(c) {
@@ -90,12 +84,7 @@
     const parent = worktreeHook && base ? worktreeHook(base) : null;
     return parent && parent.of ? String(parent.branch || 'worktree') : '';
   }
-  function pathKey(cwd) {
-    const { segments, windows } = splitPath(cwd);
-    if (!segments.length) return '';
-    const joined = segments.join('/');
-    return windows ? 'w:' + joined.toLowerCase() : 'p:' + joined;
-  }
+  const pathKey = (cwd) => rules().pathKey(cwd);
   // cwds: array of folder strings. Returns Map(key -> {key, name, path}). Equal last segments get parent segments added.
   function projectNames(cwds) {
     const seen = new Map();

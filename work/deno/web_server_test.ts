@@ -5,6 +5,7 @@ import { DENO_ONLY, ROUTE_LIST } from '../../outputs/agent-studio/server/web/rou
 import { studioAsset } from '../../outputs/agent-studio/server/web/server.ts';
 import { parseOptions, UsageError } from '../../outputs/agent-studio/server/core/options.ts';
 import { LIVE_POST_OPS } from '../../outputs/agent-studio/server/web/live_routes.ts';
+import { REMOTE_ROUTES, REMOTE_STATIC } from '../../outputs/agent-studio/server/remote/server.ts';
 
 Deno.test('the route table is exactly the Python web server\'s (paths, scopes and kinds)', async () => {
   await using py = new PyParity();
@@ -53,6 +54,18 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/docs/duplicate',
     'POST /api/live/docs/trash',
     'POST /api/live/docs/reveal',
+    'GET /api/live/devices',
+    'POST /api/live/devices/access',
+    'POST /api/live/devices/check',
+    'POST /api/live/devices/pair',
+    'POST /api/live/devices/pair/cancel',
+    'POST /api/live/devices/approve',
+    'POST /api/live/devices/reject',
+    'POST /api/live/devices/remove',
+    'POST /api/live/devices/remove-all',
+    'POST /api/live/devices/scopes',
+    'GET /api/live/devices/activity',
+    'POST /api/live/presence',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
   // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen Python
@@ -90,4 +103,17 @@ Deno.test('CLI flags parse like studio.py', () => {
 Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
   await using py = new PyParity();
   assertEquals([...LIVE_POST_OPS].sort(), await py.call('shims', 'live_post_ops'));
+});
+
+Deno.test('the phone port routes are not page routes, and the page port does not serve them', () => {
+  const page = new Set(ROUTE_LIST.map(([m, p]) => `${m} ${p}`));
+  for (const [m, p] of REMOTE_ROUTES) assertEquals(page.has(`${m} ${p}`), false, `${m} ${p}`);
+  for (const [m, p] of REMOTE_ROUTES) if (p.startsWith('/api/')) assertEquals(p.startsWith('/api/remote/'), true, p);
+  // the phone page's scripts and styles are plain page files the page port also has (no secrets in them); phone.html and the
+  // phone API are only on the phone port
+  // The service worker and the app icons are on the phone port only (pwa/ and icons/ are not page files).
+  const phoneOnly = (path: string) => path === '/phone.html' || path === '/sw.js' || path.startsWith('/icons/');
+  for (const path of Object.keys(REMOTE_STATIC)) assertEquals(studioAsset(path), phoneOnly(path) ? null : path.slice(1), path);
+  assertEquals(studioAsset('/manifest.webmanifest'), null);
+  for (const path of ['/', '/chat.html']) assertEquals(Object.keys(REMOTE_STATIC).includes(path), false, path);
 });

@@ -401,11 +401,20 @@ function respond(
   return new Response(bytes as Uint8Array<ArrayBuffer>, { status, headers });
 }
 
+/** How an artifact origin answers: status, body, type, extra headers, and whether the page CSP goes on (the kinds in CSP_KINDS). */
+export type Send = (
+  status: number,
+  body: Uint8Array | string,
+  mime?: string,
+  extra?: Record<string, string>,
+  withCsp?: boolean,
+) => Response;
+
 /** The request handler for an origin serving `root` (the artifact store folder), framed by Studio on `studioPort`. */
 export function makeHandler(root: string, studioPort: number, ownPort: () => number): (request: Request) => Response {
   const base = pathOf(String(root));
   const text = 'text/plain; charset=utf-8';
-  const send = (status: number, body: Uint8Array | string, mime = text, extra: Record<string, string> = {}, withCsp = false) =>
+  const send: Send = (status, body, mime = text, extra = {}, withCsp = false) =>
     respond(status, body, mime, studioPort, extra, withCsp, ownPort());
   return (request: Request): Response => {
     if (request.method !== 'GET') {
@@ -418,62 +427,67 @@ export function makeHandler(root: string, studioPort: number, ownPort: () => num
     // Deno builds request.url as 'http://' + Host + the raw request target (no normalization), so the target is what follows.
     const prefix = `http://${host}`;
     const target = request.url.startsWith(prefix) ? request.url.slice(prefix.length) : request.url;
-    const [rawPath, rawQuery] = splitTarget(target);
-    const query = parseQs(rawQuery);
-    const unquoted = pyUnquote(rawPath);
-    // Deno only: the vendored page libraries (libs.ts). Public files, so any page may load them, also as a module (a CORS fetch
-    // from the sandbox's opaque origin): hence Access-Control-Allow-Origin here and nowhere else on this origin.
-    if (rawPath.startsWith(LIB_PREFIX)) {
-      const name = rawPath.slice(LIB_PREFIX.length);
-      const asset = /^[a-z0-9][a-z0-9.-]*$/.test(name) ? libAsset(name) : null;
-      if (!asset) return send(404, 'Not found');
-      return send(200, asset, 'text/javascript; charset=utf-8', { 'Access-Control-Allow-Origin': '*' });
-    }
-    // Deno only: a project file the Files view shows (Page view, images), by a ticket the Studio route issued (web/file_tickets.ts).
-    const ticket = !rawPath.includes('%00') && !unquoted.includes('\\') ? TICKET_PATH.exec(unquoted) : null;
-    if (ticket) return serveTicket(ticket[1], query, send);
-    const match = !rawPath.includes('%00') && !unquoted.includes('\\') ? PATH_RE.exec(unquoted) : null;
-    if (!match) return send(404, 'Not found');
-    const [, artifactId, numberText, rest] = match;
-    const folder = pathOf(base, artifactId, `v${Number(numberText)}`);
-    let resolved: string;
-    try {
-      resolved = strictReal(pathOf(folder, rest));
-      if (!relativeTo(resolved, strictReal(folder)) || !Deno.statSync(resolved).isFile) throw new Error('outside');
-    } catch {
-      return send(404, 'Not found');
-    }
-    if (rest.split('/').slice(0, -1).some((part) => part === '' || part === '.' || part === '..') || rest.endsWith('/')) {
-      return send(404, 'Not found');
-    }
-    const ext = pureSuffix(resolved).toLowerCase();
-    let mime = (Object.hasOwn(MIME, ext) ? MIME[ext] : guessType(pureName(resolved))) || 'application/octet-stream';
-    let data: Uint8Array;
-    try {
-      data = Deno.readFileSync(resolved);
-    } catch {
-      return send(404, 'Not found');
-    }
-    const extra: Record<string, string> = {};
-    const one = (name: string) => Object.hasOwn(query, name) && query[name].length === 1 ? query[name][0] : null;
-    if (one('download') === '1') {
-      extra['Content-Disposition'] = `attachment; filename="${pureName(resolved).replace(DISPOSITION_UNSAFE, '_')}"`;
-    } else if ((ext === '.md' || ext === '.markdown') && one('view') === '1') {
-      data = markdownPage(decodeReplace(data), pureStem(resolved));
-      mime = 'text/html; charset=utf-8';
-    } else if (ext === '.html' || ext === '.htm') {
-      data = injectScroll(rewriteLibBytes(data));
-    }
-    return send(200, data, mime, extra, CSP_KINDS.includes(ext));
+    return artifactAnswer(base, target, send, true);
   };
 }
 
+/**
+ * The answer for one request target (raw path and query) once the origin's own checks passed: a /_lib/ library, a ticketed project
+ * file (`tickets`: the PC origin only), or an artifact snapshot. Shared by the PC origin above and the phone's artifact port
+ * (remote/artifact_server.ts), which builds its own headers in `send`.
+ */
+export function artifactAnswer(base: string, target: string, send: Send, tickets: boolean): Response {
+  const [rawPath, rawQuery] = splitTarget(target);
+  const query = parseQs(rawQuery);
+  const unquoted = pyUnquote(rawPath);
+  // Deno only: the vendored page libraries (libs.ts). Public files, so any page may load them, also as a module (a CORS fetch
+  // from the sandbox's opaque origin): hence Access-Control-Allow-Origin here and nowhere else on this origin.
+  if (rawPath.startsWith(LIB_PREFIX)) {
+    const name = rawPath.slice(LIB_PREFIX.length);
+    const asset = /^[a-z0-9][a-z0-9.-]*$/.test(name) ? libAsset(name) : null;
+    if (!asset) return send(404, 'Not found');
+    return send(200, asset, 'text/javascript; charset=utf-8', { 'Access-Control-Allow-Origin': '*' });
+  }
+  // Deno only: a project file the Files view shows (Page view, images), by a ticket the Studio route issued (web/file_tickets.ts).
+  const ticket = tickets && !rawPath.includes('%00') && !unquoted.includes('\\') ? TICKET_PATH.exec(unquoted) : null;
+  if (ticket) return serveTicket(ticket[1], query, send);
+  const match = !rawPath.includes('%00') && !unquoted.includes('\\') ? PATH_RE.exec(unquoted) : null;
+  if (!match) return send(404, 'Not found');
+  const [, artifactId, numberText, rest] = match;
+  const folder = pathOf(base, artifactId, `v${Number(numberText)}`);
+  let resolved: string;
+  try {
+    resolved = strictReal(pathOf(folder, rest));
+    if (!relativeTo(resolved, strictReal(folder)) || !Deno.statSync(resolved).isFile) throw new Error('outside');
+  } catch {
+    return send(404, 'Not found');
+  }
+  if (rest.split('/').slice(0, -1).some((part) => part === '' || part === '.' || part === '..') || rest.endsWith('/')) {
+    return send(404, 'Not found');
+  }
+  const ext = pureSuffix(resolved).toLowerCase();
+  let mime = (Object.hasOwn(MIME, ext) ? MIME[ext] : guessType(pureName(resolved))) || 'application/octet-stream';
+  let data: Uint8Array;
+  try {
+    data = Deno.readFileSync(resolved);
+  } catch {
+    return send(404, 'Not found');
+  }
+  const extra: Record<string, string> = {};
+  const one = (name: string) => Object.hasOwn(query, name) && query[name].length === 1 ? query[name][0] : null;
+  if (one('download') === '1') {
+    extra['Content-Disposition'] = `attachment; filename="${pureName(resolved).replace(DISPOSITION_UNSAFE, '_')}"`;
+  } else if ((ext === '.md' || ext === '.markdown') && one('view') === '1') {
+    data = markdownPage(decodeReplace(data), pureStem(resolved));
+    mime = 'text/html; charset=utf-8';
+  } else if (ext === '.html' || ext === '.htm') {
+    data = injectScroll(rewriteLibBytes(data));
+  }
+  return send(200, data, mime, extra, CSP_KINDS.includes(ext));
+}
+
 /** A ticketed project file: read only, the artifact CSP for pages, markdown rendered with ?view=1. */
-function serveTicket(
-  id: string,
-  query: Record<string, string[]>,
-  send: (status: number, body: Uint8Array | string, mime?: string, extra?: Record<string, string>, withCsp?: boolean) => Response,
-): Response {
+function serveTicket(id: string, query: Record<string, string[]>, send: Send): Response {
   const path = ticketFile(id);
   if (!path) return send(404, 'Not found');
   let data: Uint8Array;

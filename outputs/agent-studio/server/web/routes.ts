@@ -52,6 +52,19 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
  *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
  *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
+ *   GET  /api/live/devices                    Settings > Devices: phone access, Tailscale checks, paired phones, pairing (devices_routes.ts)
+ *   POST /api/live/devices/access             Settings > Devices: the Phone access switch
+ *   POST /api/live/devices/check              Settings > Devices: Check again (reads Tailscale once more)
+ *   POST /api/live/devices/pair               Settings > Devices: Add a phone (a one-time code, QR and six words)
+ *   POST /api/live/devices/pair/cancel        Settings > Devices: Cancel on the pairing code
+ *   POST /api/live/devices/approve            Settings > Devices: Approve a phone that claimed the code
+ *   POST /api/live/devices/reject             Settings > Devices: Reject it
+ *   POST /api/live/devices/remove             Settings > Devices: Remove one phone
+ *   POST /api/live/devices/remove-all         Settings > Devices: Remove all phones
+ *   POST /api/live/devices/scopes             Settings > Devices: a paired phone's switches (Answer, Send, Approve once, Push)
+ *   GET  /api/live/devices/activity           Settings > Devices: Phone activity
+ *   POST /api/live/presence                   the page: its window has focus or not, time since the last input (attention/presence.ts)
+ * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
@@ -96,6 +109,18 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/docs/duplicate', 'write', 'body'],
   ['POST', '/api/live/docs/trash', 'write', 'body'],
   ['POST', '/api/live/docs/reveal', 'write', 'body'],
+  ['GET', '/api/live/devices', 'read', 'get'],
+  ['POST', '/api/live/devices/access', 'write', 'body'],
+  ['POST', '/api/live/devices/check', 'write', 'body'],
+  ['POST', '/api/live/devices/pair', 'write', 'body'],
+  ['POST', '/api/live/devices/pair/cancel', 'write', 'body'],
+  ['POST', '/api/live/devices/approve', 'write', 'body'],
+  ['POST', '/api/live/devices/reject', 'write', 'body'],
+  ['POST', '/api/live/devices/remove', 'write', 'body'],
+  ['POST', '/api/live/devices/remove-all', 'write', 'body'],
+  ['POST', '/api/live/devices/scopes', 'write', 'body'],
+  ['GET', '/api/live/devices/activity', 'read', 'get'],
+  ['POST', '/api/live/presence', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

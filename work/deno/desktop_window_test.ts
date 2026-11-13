@@ -23,6 +23,7 @@ import {
   portGiven,
   rateLimiter,
   saveGeometry,
+  PHONE_ON_TOOLTIP,
   type Shell,
   STOP_CONFIRM_MS,
   STOP_INDEX,
@@ -1173,6 +1174,187 @@ Deno.test('tray-only start: a data folder already taken exits quietly (no window
     assertEquals(await takeSignal(dir), false, 'the running app is not asked to show its window');
   } finally {
     if (other.primary) other.release();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ---------- phone access on: closing the window keeps AIB in the tray (owner's decision 2026-11-12, "Yes, keep in tray") ----------
+
+Deno.test('close decision with phone access on: the tray whatever works; off: the same results as before', () => {
+  for (const work of [0, 1, 5, null]) assertEquals(closeDecision(work, true), 'tray', `phone on, ${work} working`);
+  assertEquals([closeDecision(0, false), closeDecision(1, false), closeDecision(null, false)], ['quit', 'tray', 'tray']);
+});
+
+Deno.test('phone access on: closing the window with nothing working keeps AIB in the tray, no idle quit; Open AIB brings it back', async () => {
+  const a = await makeApp(() => Promise.resolve(0), null, { phoneOn: () => true, trayIdleQuitMs: 5000 });
+  try {
+    a.s.windows[0].emit('close');
+    await tick(20);
+    assertEquals(a.quits, [], 'AIB does not quit');
+    assertEquals(a.s.trayRemoved, 0, 'the tray icon stays');
+    assert(a.app.background, 'no window, in the tray');
+    const t0 = Date.now();
+    for (const at of [0, 6_000, 60_000, 3_600_000]) await a.app.trayTick(t0 + at);
+    assertEquals(a.quits, [], 'no idle self-quit while phone access is on (an hour of nothing working)');
+    a.s.tray!.onClick();
+    await waitFor(() => a.s.windows.length === 2, 'a new window');
+    assertEquals(a.s.windows[1].urls, ['http://127.0.0.1:8890/']);
+    assert(!a.app.background);
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('phone access on: closing with work the keeper could hold, or with a separate agent host, still keeps AIB in the tray', async () => {
+  const leave = await makeApp(() => Promise.resolve(2), null, { phoneOn: () => true, canLeave: () => Promise.resolve('') });
+  try {
+    leave.s.windows[0].emit('close');
+    await tick(20);
+    assertEquals([leave.quits, leave.leaves], [[], []], 'AIB does not exit: the phone keeps reaching it');
+    assert(leave.app.background);
+  } finally {
+    await leave.done();
+  }
+  const split = await makeApp(() => Promise.resolve(0), () => Promise.resolve({ stopped: true }), { phoneOn: () => true });
+  try {
+    split.s.windows[0].emit('close');
+    await tick(20);
+    assertEquals(split.order, [], 'the agent host is not asked to stop, AIB does not quit');
+    assert(split.app.background);
+  } finally {
+    await split.done();
+  }
+});
+
+Deno.test('phone access on: Quit AIB quits exactly as before (nothing working: quit; work the keeper holds: left to the keeper)', async () => {
+  const idle = await makeApp(() => Promise.resolve(0), null, { phoneOn: () => true });
+  try {
+    idle.s.windows[0].emit('close'); // first into the tray, then Quit from its menu
+    await tick(20);
+    assertEquals(idle.quits, []);
+    idle.s.tray!.onMenu('quit');
+    await tick(20);
+    assertEquals([idle.quits, idle.leaves], [[false], [false]], 'quit, nothing stopped');
+    assertEquals(idle.s.trayRemoved, 1);
+  } finally {
+    await idle.done();
+  }
+  const busy = await makeApp(() => Promise.resolve(2), null, { phoneOn: () => true, canLeave: () => Promise.resolve('') });
+  try {
+    busy.s.tray!.onMenu('quit');
+    await tick(20);
+    assertEquals([busy.quits, busy.leaves], [[false], [true]], 'the chats are left to the keeper, never stopped');
+  } finally {
+    await busy.done();
+  }
+});
+
+Deno.test('phone access off: closing the window does what it did before (quit when idle, leave to the keeper when it can hold)', async () => {
+  const idle = await makeApp(() => Promise.resolve(0), null, { phoneOn: () => false });
+  try {
+    idle.s.windows[0].emit('close');
+    await tick(20);
+    assertEquals(idle.quits, [false]);
+  } finally {
+    await idle.done();
+  }
+  const busy = await makeApp(() => Promise.resolve(2), null, { phoneOn: () => false, canLeave: () => Promise.resolve('') });
+  try {
+    busy.s.windows[0].emit('close');
+    await tick(20);
+    assertEquals([busy.quits, busy.leaves], [[false], [true]]);
+  } finally {
+    await busy.done();
+  }
+  const broken = await makeApp(() => Promise.resolve(0), null, {
+    phoneOn: () => {
+      throw new Error('boom');
+    },
+  });
+  try {
+    broken.s.windows[0].emit('close');
+    await tick(20);
+    assertEquals(broken.quits, [false], 'a phoneOn that throws counts as off');
+  } finally {
+    await broken.done();
+  }
+});
+
+Deno.test('phone access turned off while AIB sits in the tray: the idle rule again (quits once nothing has worked for a while)', async () => {
+  const phone = { on: true };
+  let working = 1;
+  const a = await makeApp(() => Promise.resolve(working), null, { phoneOn: () => phone.on, trayIdleQuitMs: 5000 });
+  try {
+    a.s.windows[0].emit('close');
+    await tick(20);
+    assert(a.app.background);
+    const t0 = Date.now();
+    phone.on = false;
+    await a.app.trayTick(t0);
+    await a.app.trayTick(t0 + 30_000);
+    assertEquals(a.quits, [], 'a chat still works: AIB stays until it finishes (nothing is cut off)');
+    working = 0;
+    await a.app.trayTick(t0 + 31_000);
+    await a.app.trayTick(t0 + 35_500);
+    assertEquals(a.quits, [], 'idle 4.5 s: not yet');
+    await a.app.trayTick(t0 + 36_100);
+    assertEquals(a.quits, [false], 'idle 5.1 s: quit');
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('tray tooltip: "AIB · Phone access on" with the counts while phone access is on; it follows the switch', async () => {
+  assertEquals(PHONE_ON_TOOLTIP, 'Phone access on');
+  assertEquals(trayOnlyView(2, 0, true), { status: '2 chats running', tooltip: 'AIB · Phone access on · 2 chats running' });
+  assertEquals(trayOnlyView(0, 0, true).tooltip, 'AIB · Phone access on · No chat is working');
+  assertEquals(trayOnlyView(2, 1, true).tooltip, 'AIB · Phone access on · 1 chat needs you, 1 running');
+  assertEquals(trayOnlyView(2, 0).tooltip, 'AIB · 2 chats running', 'off: as before');
+  const phone = { on: true };
+  const a = await makeApp(() => Promise.resolve(2), null, { phoneOn: () => phone.on });
+  try {
+    assertEquals(a.updates.at(-1), ['AIB · Phone access on · 2 chats running', 1, '2 chats running']);
+    phone.on = false;
+    await a.app.trayTick();
+    assertEquals(a.updates.at(-1), ['AIB · 2 chats running', 1, '2 chats running'], 'same counts, the tooltip still changes');
+    phone.on = true;
+    await a.app.trayTick();
+    assertEquals(a.updates.at(-1)?.[0], 'AIB · Phone access on · 2 chats running');
+  } finally {
+    await a.done();
+  }
+});
+
+Deno.test('tray-only start (--start-in-tray) with phone access on: no idle quit; turned off: it quits once idle', async () => {
+  const dir = await Deno.makeTempDir();
+  const { shell } = fakeShell();
+  const quits: boolean[] = [];
+  const phone = { on: true };
+  const app = new DesktopApp(shell, {
+    url: 'http://127.0.0.1:8890/',
+    stateDir: dir,
+    trayIcon: trayIconPng(),
+    busyCount: () => Promise.resolve(0),
+    quit: (stop) => (quits.push(stop), Promise.resolve()),
+    saveDelayMs: 0,
+    watchdogMs: 0,
+    startInTray: true,
+    trayPollMs: 0,
+    trayIdleQuitMs: 5000,
+    phoneOn: () => phone.on,
+  });
+  try {
+    await app.start();
+    const t0 = Date.now();
+    await app.trayTick(t0);
+    await app.trayTick(t0 + 600_000);
+    assertEquals(quits, [], 'the phones keep reaching AIB after the keeper restarted it');
+    phone.on = false;
+    await app.trayTick(t0 + 600_100);
+    await app.trayTick(t0 + 606_000);
+    assertEquals(quits, [false]);
+  } finally {
+    app.stop();
     await Deno.remove(dir, { recursive: true });
   }
 });

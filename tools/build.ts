@@ -343,10 +343,11 @@ export async function buildKeeper(t: Target, output: string): Promise<number> {
 
 /**
  * The top-level names of outputs/agent-studio that go into the app: code, page files, vendored page libraries (vendor/: xterm.js and
- * its licenses), the agent allow-list and its lockfiles.
+ * its licenses), the agent allow-list and its lockfiles, the phone page's service worker (pwa/) and the app icons the phone page's
+ * manifest names (icons/, served on the phone port only).
  */
 export function stagedName(name: string, isDir: boolean): boolean {
-  if (isDir) return ['server', 'agent_locks', 'vendor'].includes(name);
+  if (isDir) return ['server', 'agent_locks', 'vendor', 'pwa', 'icons'].includes(name);
   return /\.(js|css|html)$/.test(name) || name === 'agent_versions.json';
 }
 

@@ -155,7 +155,9 @@ export class Browser {
     this.profile = profile;
     this.port = port;
   }
-  static async launch(): Promise<Browser> {
+  /** `extra`: more Chrome switches (a test that plays a server for sandboxed frames keeps them in the page's process, where its
+   * request interception sees them: --disable-features=IsolateSandboxedIframes). */
+  static async launch(extra: string[] = []): Promise<Browser> {
     assert(browserPath, 'Chrome or Edge');
     const profile = await temp('aib-docpage-profile-');
     const proc = new Deno.Command(browserPath!, {
@@ -171,6 +173,7 @@ export class Browser {
         `--user-data-dir=${profile}`,
         '--window-size=1280,900',
         '--remote-debugging-port=0',
+        ...extra,
         'about:blank',
       ],
       stdout: 'null',
@@ -242,6 +245,8 @@ export class Page {
   readonly errors: string[] = [];
   readonly csp: string[] = [];
   readonly logs: string[] = [];
+  /** DevTools events a test listens to (method -> handler), e.g. Fetch.requestPaused. */
+  readonly listeners = new Map<string, (params: Json) => void>();
   constructor(url: string, readonly id: string, readonly port: number) {
     this.#ws = new WebSocket(url);
     this.ready = new Promise((r) => (this.#ws.onopen = () => r()));
@@ -255,6 +260,7 @@ export class Page {
         } else w.resolve(msg.result ?? {});
         return;
       }
+      if (msg.method && this.listeners.has(msg.method)) this.listeners.get(msg.method)!(msg.params ?? {});
       if (msg.method === 'Runtime.exceptionThrown') {
         const d = msg.params.exceptionDetails;
         this.errors.push(

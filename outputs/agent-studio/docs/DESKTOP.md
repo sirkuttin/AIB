@@ -54,6 +54,14 @@ notifications through the web API, updates as "open the installer" instructions)
   never reads Windows messages, so its menu and clicks never arrive. AIB's icon lives on a worker thread with a real message loop
   (left click opens the window, right click shows the menu, the web server keeps answering while the menu is open) and is removed
   when AIB quits. Other systems use `Deno.Tray`.
+- **Phone access keeps AIB in the tray** (owner's decision 2026-11-12): while Settings > Devices "Let paired phones reach AIB" is
+  on, closing the window never quits or leaves to the keeper: the window goes and AIB stays in the tray, whatever works, so the
+  web server, the phone and artifact ports, the attention watcher, desktop notifications and pushes keep going; there is no idle
+  quit while it is on, and the tooltip reads "AIB · Phone access on · <status>". Open AIB, a click on the icon or a second launch
+  brings the window back. "Quit AIB" and "Stop all chats and quit" work exactly as above. Turned off while AIB sits in the tray with
+  no window: the usual background rule again (AIB quits once nothing has worked for 10 s; work still running keeps it until then).
+  A keeper restart with `--start-in-tray` starts the phone port like any start, and with phone access on it stays in the tray
+  (`DesktopOptions.phoneOn`; tests: `desktop_window_test.ts`, `work/deno/remote_tray_e2e_test.ts`).
 - **Links:** `window.open` and `target=_blank` links open in the system browser; `desktop-bridge.js` turns plain clicks on links to
   another origin into `window.open`, and the window's load check is the safety net for anything else.
 - **Folder picker:** `deno desktop` has no native folder dialog, so "Browse..." uses the server's picker in the app too

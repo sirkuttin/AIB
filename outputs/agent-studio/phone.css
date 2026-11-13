@@ -1,0 +1,771 @@
+/* The phone page (phone.html). Its own small stylesheet: the desktop chat.html and its CSS are never loaded on the phone.
+   Phone sizes: drawn for 375 px wide, safe-area insets, 44 px tap targets, 16 px inputs (iPhone does not zoom). No sideways scroll:
+   long words and paths wrap; only code blocks scroll inside themselves. */
+/* Colours: theme.css tokens only (the phone page loads themes.js and theme.css; the server marks <html> with the PC's theme). */
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow-x: hidden;
+}
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 0 calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  overflow-wrap: anywhere;
+}
+.ph-loading {
+  padding-top: calc(32px + env(safe-area-inset-top));
+  color: var(--muted);
+}
+/* ---- header ---- */
+.ph-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  margin: 0 -16px;
+  padding: env(safe-area-inset-top) 16px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.ph-head h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-head .ph-sub {
+  color: var(--muted);
+  font-weight: 400;
+}
+.ph-back {
+  min-width: 44px;
+  min-height: 44px;
+  margin-left: -10px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 28px;
+  line-height: 1;
+}
+.ph-chip {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.ph-chip.live {
+  color: var(--muted);
+}
+.ph-chip.live::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.ph-chip.off {
+  color: var(--hd-need);
+  border-color: currentColor;
+}
+/* ---- sections and cards ---- */
+.ph-section {
+  margin: 20px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ph-card {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 12px 14px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.ph-card {
+  cursor: pointer;
+}
+.ph-card.need {
+  border-color: var(--hd-need);
+  background: var(--chip-needs-bg);
+}
+.ph-card.main {
+  padding: 14px 16px;
+}
+.ph-card.main .ph-title {
+  font-size: 18px;
+}
+.ph-title {
+  display: block;
+  font-weight: 600;
+}
+.ph-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+}
+.ph-meta .need,
+.ph-state.need {
+  color: var(--hd-need);
+  font-weight: 600;
+}
+.ph-state.work {
+  color: var(--hd-work);
+}
+.ph-state.turn {
+  color: var(--hd-turn);
+}
+.ph-badge {
+  float: right;
+  min-width: 24px;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--chip-needs-bg);
+  color: var(--hd-need);
+  border: 1px solid var(--hd-need);
+  font-size: 14px;
+  text-align: center;
+}
+.ph-helpers {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+}
+.ph-helpers li {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 14px;
+}
+.ph-helpers li {
+  align-items: center;
+}
+.ph-helpers li span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.ph-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hd-idle);
+}
+.ph-dot.need {
+  background: var(--hd-need);
+}
+.ph-dot.work {
+  background: var(--accent);
+}
+.ph-dot.turn {
+  background: var(--ok);
+}
+.ph-dot.idle {
+  background: var(--muted);
+}
+/* The helpers box in the chat header: a card, so it keeps the card's inner padding (the list's own padding is for inside a card). */
+.ph-helpers.ph-card {
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+}
+/* A link in a reply: at least 44 px to tap, without moving the text (vertical padding on an inline box does not move lines). */
+.ph-msg a {
+  padding: 12px 2px;
+}
+.ph-helpers li span:last-child {
+  flex: none;
+}
+.ph-empty {
+  margin: 24px 0;
+  color: var(--muted);
+}
+/* ---- forms ---- */
+.ph-form label {
+  display: block;
+  margin: 16px 0 6px;
+  font-weight: 600;
+}
+.ph-form input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+.ph-btn {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 16px 0 0;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+}
+.ph-btn.quiet {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--line);
+}
+.ph-btn:disabled {
+  opacity: 0.6;
+}
+.ph-note {
+  color: var(--muted);
+  font-size: 14px;
+}
+.ph-error {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--chip-needs-bg);
+  color: var(--hd-need);
+}
+.ph-words {
+  margin: 8px 0;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.ph-steps {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+.ph-steps li {
+  margin: 4px 0;
+}
+/* ---- chat ---- */
+.ph-wait {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--hd-need);
+  background: var(--chip-needs-bg);
+}
+.ph-wait b {
+  display: block;
+  color: var(--hd-need);
+}
+.ph-earlier {
+  margin: 12px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.ph-msg {
+  margin: 12px 0;
+}
+.ph-msg.you {
+  margin-left: 32px;
+  padding: 10px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--bubble-user-bg);
+  white-space: pre-wrap;
+}
+.ph-msg.agent > :first-child {
+  margin-top: 0;
+}
+.ph-msg.agent > :last-child {
+  margin-bottom: 0;
+}
+.ph-msg.notice {
+  padding: 8px 12px;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+.ph-msg pre,
+.ph-msg code {
+  font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: var(--code-bg);
+  border-radius: 6px;
+}
+.ph-msg pre {
+  max-width: 100%;
+  padding: 10px;
+  overflow-x: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.ph-msg code {
+  padding: 1px 4px;
+}
+.ph-msg pre code {
+  padding: 0;
+}
+.ph-msg table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.ph-msg td,
+.ph-msg th {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+}
+.ph-msg img,
+.ph-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: 8px;
+}
+.ph-fold {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+.ph-fold-list {
+  list-style: none;
+  margin: -4px 0 8px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.ph-fold-list li {
+  padding: 3px 0;
+}
+.ph-live {
+  margin: 12px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 14px;
+}
+.ph-pconly {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+/* ---- offline ---- */
+.ph-offline {
+  margin: 16px 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card-bg);
+}
+.ph-offline h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.ph-stale {
+  opacity: 0.65;
+}
+/* ---- chat screen with a composer (phase B) ---- */
+.app[data-screen='chat'] {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.ph-chat {
+  flex: 1;
+  padding-bottom: 16px;
+}
+.ph-wait-title {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.ph-wait .ph-btn {
+  margin-top: 10px;
+}
+.ph-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ph-row .ph-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+}
+.ph-answer .ph-btn.allow {
+  flex-grow: 2;
+}
+.ph-btn.deny {
+  background: transparent;
+  color: var(--danger-text);
+  border: 1px solid var(--danger-text);
+}
+.ph-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  resize: none;
+}
+/* the composer: always at the bottom of the screen, above the phone's home bar */
+.ph-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: 8px calc(12px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.ph-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ph-composer .ph-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 160px;
+}
+.ph-send,
+.ph-stop {
+  flex: none;
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 22px;
+  font: inherit;
+  font-weight: 600;
+}
+.ph-send {
+  border: 0;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ph-stop {
+  border: 1px solid var(--danger-text);
+  background: transparent;
+  color: var(--danger-text);
+}
+.ph-stop[hidden],
+.ph-act-error[hidden] {
+  display: none;
+}
+.ph-act-error {
+  margin: 0 0 8px;
+}
+.ph-send:disabled {
+  opacity: 0.6;
+}
+/* a chat that is not running: Continue this chat at the bottom, like the composer */
+.app[data-screen='saved'] {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.ph-continue {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: 8px calc(16px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.ph-continue .ph-note {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.ph-continue .ph-btn {
+  margin-top: 10px;
+}
+.ph-continue .ph-error {
+  margin: 4px 0 8px;
+  overflow-wrap: anywhere;
+}
+.ph-card.saved .ph-title {
+  font-weight: 500;
+}
+/* queued messages */
+.ph-queued {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+.ph-queued-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.ph-queued .ph-btn {
+  min-height: 44px;
+  padding: 6px 8px;
+  font-size: 15px;
+}
+/* the sheets: up from the bottom, over a dimmed chat; tall content scrolls inside the sheet */
+.ph-dim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--shadow-med);
+}
+.ph-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 11;
+  max-width: 640px;
+  max-height: 88vh;
+  max-height: 88dvh;
+  margin: 0 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 10px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: 0 -8px 24px var(--shadow-soft);
+  overflow-wrap: anywhere;
+}
+.ph-grab {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 8px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.ph-sheet-title {
+  margin: 4px 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.ph-cmd {
+  margin: 8px 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.ph-field {
+  margin: 12px 0;
+}
+.ph-field-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.ph-opt {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.ph-opt.on {
+  border: 2px solid var(--accent);
+  padding: 9px 13px;
+  font-weight: 600;
+}
+/* ---- phase C: finish setup (notifications, iPhone Home Screen), the setup bar on home, reconnecting ---- */
+.ph-setup-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card-bg);
+  font-size: 14px;
+}
+.ph-setup-bar span {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.ph-setup-bar .ph-btn {
+  width: auto;
+  min-height: 44px;
+  margin: 0;
+}
+.ph-step {
+  margin: 16px 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card-bg);
+}
+.ph-step h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.ph-step .ph-note {
+  margin: 0 0 4px;
+}
+.ph-step.done h2::after {
+  content: ' ✓';
+  color: var(--accent);
+}
+.ph-offline.reconnecting {
+  border-style: dashed;
+}
+/* ---- artifacts (Phase D): a card in the chat, and the full-screen viewer with Close ---- */
+.ph-art {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+}
+.ph-art-text {
+  flex: 1;
+  min-width: 0;
+}
+.ph-art-kind {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-art-title {
+  display: block;
+}
+.ph-art .ph-btn {
+  width: auto;
+  flex: none;
+  margin: 0;
+  min-height: 44px;
+}
+.ph-art .ph-note {
+  flex: none;
+  margin: 0;
+  font-size: 14px;
+}
+html.ph-viewing,
+html.ph-viewing body {
+  overflow: hidden;
+}
+.ph-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.ph-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px
+    calc(16px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+}
+.ph-viewer-name {
+  flex: 1;
+  min-width: 0;
+}
+.ph-viewer-name b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ph-viewer-bar .ph-btn {
+  width: auto;
+  flex: none;
+  margin: 0;
+  min-height: 44px;
+}
+.ph-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.ph-viewer-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--artifact-frame-bg);
+}
+.ph-viewer-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.ph-viewer-note,
+.ph-viewer-body > .ph-empty {
+  padding: 16px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
+  overflow-wrap: anywhere;
+}

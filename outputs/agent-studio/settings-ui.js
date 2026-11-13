@@ -16,6 +16,7 @@
     { id: 'agents', label: 'AIB Linking' },
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
+    { id: 'devices', label: 'Devices' },
     { id: 'editors', label: 'Editors' },
     { id: 'keyboard', label: 'Keyboard' },
     { id: 'appearance', label: 'Appearance' },
@@ -111,6 +112,18 @@
       keywords: ['notify', 'desktop', 'sound', 'chime', 'mute', 'needs you', 'your turn', 'alert', 'inbox'],
     },
     {
+      id: 'devices-access',
+      section: 'devices',
+      label: 'Phone access',
+      keywords: ['phone', 'mobile', 'android', 'iphone', 'remote', 'tailscale', 'serve', 'away', 'devices', 'connect'],
+    },
+    {
+      id: 'devices-phones',
+      section: 'devices',
+      label: 'Phones: add, remove, activity',
+      keywords: ['phone', 'pair', 'qr', 'code', 'add a phone', 'remove', 'devices', 'activity', 'lost', 'stolen'],
+    },
+    {
       id: 'editors',
       section: 'editors',
       label: 'Open a project in VS Code, Explorer or a terminal',
@@ -163,6 +176,12 @@
       section: 'server',
       label: 'Reconnect chats after a restart',
       keywords: ['auto reconnect', 'restart', 'recover', 'open before', 'no-auto-reconnect'],
+    },
+    {
+      id: 'keep-awake',
+      section: 'server',
+      label: 'Keep this PC awake while AIB runs',
+      keywords: ['sleep', 'awake', 'caffeinate', 'power', 'standby', 'idle', 'phone', 'wake lock', 'insomnia'],
     },
     {
       id: 'server-info',
@@ -1685,6 +1704,11 @@
     box.append(slot);
     if (root.AgentNotifyUI && root.AgentNotifyUI.mountSettings) root.AgentNotifyUI.mountSettings(slot);
   }
+  // Settings > Devices is drawn by devices-ui.js (phone access, Tailscale checks, pairing, paired phones).
+  function renderDevices(kind, box) {
+    if (root.AIBDevicesUI && root.AIBDevicesUI.render) root.AIBDevicesUI.render(kind, box, S.host);
+    else box.append(note('This part could not be drawn: devices-ui.js is missing.', 'bad'));
+  }
   function renderEditors(box) {
     const E = root.AgentEditors;
     if (!E || !E.loaded()) {
@@ -1979,6 +2003,22 @@
     if (typeof running === 'boolean')
       box.append(note('The agent host that is running now started with this ' + (running ? 'on' : 'off') + '.'));
   }
+  function renderKeepAwake(box) {
+    const on = !!(S.data && S.data.settings.server && S.data.settings.server.keepAwake);
+    box.append(toggle('Keep this PC awake while AIB runs', on, (v) => saveQuiet({ server: { keepAwake: v } })));
+    box.append(
+      note(
+        'Stops sleep while AIB is open, so agents keep working and your phone can reach AIB. The screen can still turn off. Closing a laptop lid still sleeps the PC.',
+      ),
+    );
+    const st = (S.data && S.data.keepAwake) || {};
+    if (st.on && st.error) {
+      const line = note('The PC may still sleep: ' + st.error, 'bad');
+      line.setAttribute('role', 'alert');
+      line.dataset.keepAwakeError = '1';
+      box.append(line);
+    }
+  }
   function renderUpdates(box) {
     const server = () => (S.data && S.data.settings.server) || {};
     if (!root.AibUpdates) return;
@@ -2057,12 +2097,15 @@
     'default-picks': renderDefaultPicks,
     'default-projects': renderDefaultProjects,
     notifications: renderNotifications,
+    'devices-access': (box) => renderDevices('access', box),
+    'devices-phones': (box) => renderDevices('phones', box),
     editors: renderEditors,
     keyboard: renderKeyboard,
     theme: renderTheme,
     'text-size': renderTextSize,
     'default-view': renderDefaultView,
     'auto-reconnect': renderAutoReconnect,
+    'keep-awake': renderKeepAwake,
     'server-info': renderServerInfo,
     updates: renderUpdates,
     'server-restart': renderServerRestart,
@@ -2075,12 +2118,15 @@
     'default-picks': 'Default model and mode',
     'default-projects': 'Per project',
     notifications: 'Notifications',
+    'devices-access': 'Phone access',
+    'devices-phones': 'Phones',
     editors: 'Editors',
     keyboard: 'Keyboard shortcuts',
     theme: 'Theme',
     'text-size': 'Text size',
     'default-view': 'Default chat view',
     'auto-reconnect': 'Reconnect after a restart',
+    'keep-awake': 'Keep the PC awake',
     'server-info': 'About AIB',
     updates: 'Updates',
     'server-restart': 'Restart the web server',
