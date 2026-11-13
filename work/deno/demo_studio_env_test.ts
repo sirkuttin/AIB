@@ -58,7 +58,19 @@ Deno.test({
       const home = `${parent}${sep}agent-studio-demo-8851${sep}home`;
       const norm = (p: string) => (Deno.build.os === 'windows' ? p.toLowerCase().replaceAll('/', '\\') : p);
       const inside = (p: string) => norm(p) === norm(home) || norm(p).startsWith(norm(home) + sep);
-      for (const name of ['HOME', 'USERPROFILE', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'VIBE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME']) {
+      for (
+        const name of [
+          'HOME',
+          'USERPROFILE',
+          'CODEX_HOME',
+          'CLAUDE_CONFIG_DIR',
+          'VIBE_HOME',
+          'XDG_CONFIG_HOME',
+          'XDG_DATA_HOME',
+          'XDG_STATE_HOME',
+          'XDG_CACHE_HOME',
+        ]
+      ) {
         assert(env[name] && inside(env[name]), `${name} = ${env[name]} is not in ${home}`);
         assert(Deno.statSync(env[name]).isDirectory, `${name} folder exists`);
       }
@@ -68,7 +80,10 @@ Deno.test({
       assert(inside(codex), codex);
       if (ownerHome) {
         for (const real of ['.codex', '.claude', '.vibe']) {
-          assert(!Object.values(env).some((v) => norm(String(v)) === norm(`${ownerHome}${sep}${real}`)), `no variable names the owner's ${real}`);
+          assert(
+            !Object.values(env).some((v) => norm(String(v)) === norm(`${ownerHome}${sep}${real}`)),
+            `no variable names the owner's ${real}`,
+          );
         }
         assert(norm(env.HOME) !== norm(ownerHome) && norm(env.USERPROFILE) !== norm(ownerHome), 'the home folder is the demo one');
       }

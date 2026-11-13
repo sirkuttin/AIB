@@ -48,7 +48,11 @@ Deno.test({
       await shown(page, 'WORKDONE');
 
       await page.eval(`document.getElementById('paneTab-changes').click()`);
-      await page.waitFor(`(() => { const b = document.querySelector('.cg-merge-btn'); return !!b && !b.hidden && !b.disabled; })()`, 20000, 'the Merge button');
+      await page.waitFor(
+        `(() => { const b = document.querySelector('.cg-merge-btn'); return !!b && !b.hidden && !b.disabled; })()`,
+        20000,
+        'the Merge button',
+      );
       await page.eval(`document.querySelector('.cg-merge-btn').click()`);
       await page.waitFor(`/Merge requested/.test(document.querySelector('.cg-merge-line').textContent)`, 20000, 'the requested line');
       const before = await page.eval<string>(`document.querySelector('.cg-merge-line').textContent`);
@@ -65,7 +69,11 @@ Deno.test({
       await shown(page, 'Merged into main', 'messages', 20000);
 
       // the side panel: the requested line goes once the merge is done
-      await page.waitFor(`!/chat is merging/i.test((document.querySelector('.cg-merge-line') || {}).textContent || '')`, 15000, 'the line cleared')
+      await page.waitFor(
+        `!/chat is merging/i.test((document.querySelector('.cg-merge-line') || {}).textContent || '')`,
+        15000,
+        'the line cleared',
+      )
         .catch(() => 0);
       await settle(1500);
       const after = await page.eval<{ line: string; hidden: boolean; seen: string }>(

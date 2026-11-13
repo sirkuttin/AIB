@@ -23,7 +23,17 @@ Deno.test({
     const outDir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-punct-links-' }));
     try {
       const page = lab.page;
-      const names = ['release-checklist.md', 'comma.md', 'semi.txt', 'colon.txt', 'paren.md', 'bang.md', 'ask.md', 'quoted.md', 'split-in-two.md'];
+      const names = [
+        'release-checklist.md',
+        'comma.md',
+        'semi.txt',
+        'colon.txt',
+        'paren.md',
+        'bang.md',
+        'ask.md',
+        'quoted.md',
+        'split-in-two.md',
+      ];
       const out = Object.fromEntries(names.map((n) => [n, `${outDir}\\${n}`]));
       for (const p of Object.values(out)) Deno.writeTextFileSync(p, 'x\n');
       Deno.writeTextFileSync(`${outDir}\\never-named.md`, 'x\n');

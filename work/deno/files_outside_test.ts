@@ -190,17 +190,22 @@ Deno.test('mentions: whole paths only, either slash, JSON-escaped', () => {
 
 Deno.test('mentions: sentence punctuation after a path ends it (a full stop too); a longer name or a folder never does', () => {
   const p = WIN ? 'C:\\w\\x\\a.md' : '/w/x/a.md';
-  for (const tail of ['. Two more…', '.', '...', ', and', ';', ': x', ')', '!', '?', '"', '”', '’.', '.)', '.\n'])
+  for (const tail of ['. Two more…', '.', '...', ', and', ';', ': x', ')', '!', '?', '"', '”', '’.', '.)', '.\n']) {
     assert(outside.mentions(['wrote ' + p + tail], p), JSON.stringify(tail));
+  }
   assert(outside.mentions([JSON.stringify({ text: 'wrote ' + p + '.\nnext' })], p), 'a full stop then a JSON newline');
   assert(outside.mentions([JSON.stringify({ text: 'see "' + p + '."' })], p), 'a full stop then a JSON quote');
-  for (const tail of ['.bak', 'x', '-old', '..bak', './b', '_2'])
+  for (const tail of ['.bak', 'x', '-old', '..bak', './b', '_2']) {
     assert(!outside.mentions(['wrote ' + p + tail], p), JSON.stringify(tail));
+  }
   assert(!outside.mentions([JSON.stringify({ text: p + '.' + (WIN ? '\\' : '/') + 'b.ts' })], p), 'a folder named a.md. in JSON');
 });
 
 Deno.test('agentReplies: streamed chunks assembled per message; user prompts and other events never count', () => {
-  const chunk = (text: string, kind = 'agent_message_chunk') => ({ kind: 'update', data: { update: { sessionUpdate: kind, content: { type: 'text', text } } } });
+  const chunk = (text: string, kind = 'agent_message_chunk') => ({
+    kind: 'update',
+    data: { update: { sessionUpdate: kind, content: { type: 'text', text } } },
+  });
   const events = [
     { kind: 'user', data: { text: 'C:\\injected\\by-a-page.md' } },
     chunk('Wrote C:\\w\\x\\split-'),
