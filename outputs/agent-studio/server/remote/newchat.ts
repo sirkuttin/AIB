@@ -78,15 +78,59 @@ export interface PickList {
 let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(studioOf(ctx))).agents;
 export function setAgentRows(fn: ((ctx: WebContext) => Promise<unknown>) | null): void {
   agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(studioOf(ctx))).agents);
+  agentCache = new WeakMap();
 }
 
-/** The agents a new chat can start with, from Settings' agent list. */
-export async function agentsNow(ctx: WebContext): Promise<Eligible[]> {
-  let rows: unknown = [];
+/**
+ * Settings' agent list is slow to build: it looks for every agent's program in every PATH folder (with every PATHEXT) and reads
+ * prerequisites' versions, mostly with synchronous file checks (1.5-7 s on a PC with a long PATH, longer while the PC is busy).
+ * Built for every New chat options call, it outlasted the phone's request timeout now and then ("loading the projects fails, only
+ * sometimes"). So the phone's agent list is kept AGENTS_MS and built once at a time: options calls get the kept list at once (an
+ * older one too, while a new one is built behind it); a Start waits for one at most AGENTS_MS old. An agent turned on or off in
+ * Settings is never served from the kept list (the agents' settings are part of its key).
+ */
+export const AGENTS_MS = 15_000;
+interface AgentCache {
+  key: string;
+  at: number;
+  agents: Eligible[] | null;
+  busy: Promise<Eligible[]> | null;
+}
+let agentCache = new WeakMap<WebContext, AgentCache>();
+
+function agentSettingsKey(ctx: WebContext): string {
   try {
-    rows = await agentRows(ctx);
-  } catch { /* the built-ins, on */ }
-  return eligibleAgents(rows);
+    return JSON.stringify(ctx.settings.snapshot().agents);
+  } catch {
+    return '';
+  }
+}
+
+/** The agents a new chat can start with, from Settings' agent list. `stale`: an older kept list will do (a new one is built
+ * behind it); else the list is at most AGENTS_MS old. */
+export async function agentsNow(ctx: WebContext, opts: { stale?: boolean; clock?: () => number } = {}): Promise<Eligible[]> {
+  const clock = opts.clock ?? Date.now;
+  const key = agentSettingsKey(ctx);
+  let c = agentCache.get(ctx);
+  if (!c || c.key !== key) agentCache.set(ctx, c = { key, at: 0, agents: null, busy: null });
+  const cache = c;
+  if (cache.agents && clock() - cache.at < AGENTS_MS) return cache.agents;
+  cache.busy ??= (async () => {
+    let rows: unknown = [];
+    try {
+      rows = await agentRows(ctx);
+    } catch { /* the built-ins, on */ }
+    return eligibleAgents(rows);
+  })().then((agents) => {
+    cache.agents = agents;
+    cache.at = clock();
+    return agents;
+  }).finally(() => (cache.busy = null));
+  if (opts.stale && cache.agents) {
+    cache.busy.catch(() => {});
+    return cache.agents;
+  }
+  return await cache.busy;
 }
 
 /** Added projects whose folder is there: [{path, key (projectKey), id}]. */
@@ -139,7 +183,7 @@ export async function newChatOptions(
   ctx: WebContext,
   lists: { folder: string; at: number }[],
 ): Promise<{ projects: PhoneProjectChoice[]; agents: (Eligible & { why: string })[] }> {
-  const agents = await agentsNow(ctx);
+  const agents = await agentsNow(ctx, { stale: true });
   const folders = projectFolders(ctx);
   const project = projectsFor(ctx, [...folders.map((f) => f.path), ...lists.map((l) => l.folder)]);
   const stats = new Map<string, { chats: number; at: number }>();
