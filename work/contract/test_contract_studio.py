@@ -99,6 +99,9 @@ class StudioContract(unittest.TestCase):
         def no_beta(data, server):
             if server is not self.subject:
                 return data
+            # "Keep the PC awake while AIB runs" (phone remote, Settings > AIB server) is Deno-only: the reference has no such key.
+            if isinstance(data, dict):
+                data = {k: v for k, v in data.items() if k != 'keepAwake'}
             def walk(v):
                 if isinstance(v, dict):
                     return {k: walk(x) for k, x in v.items() if not (k == 'setup' and 'id' in v and 'installBlock' in v)}

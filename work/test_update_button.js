@@ -244,7 +244,7 @@ test('a failed install says so in the popover and the tooltip; the next click tr
 });
 
 // ---- "What's new in AIB <version>" ------------------------------------------------------------------------------------------
-const SCRIPTS = ['status-words.js', 'ownership-ui.js', 'sidebar-ui.js', 'workspace-state.js', 'split-tree.js', 'workspace-ui.js', 'tool-views.js', 'markdown.js', 'files-state.js', 'files-ui.js', 'updates-ui.js'];
+const SCRIPTS = ['status-words.js', 'notify-rules.js', 'ownership-ui.js', 'sidebar-ui.js', 'workspace-state.js', 'split-tree.js', 'workspace-ui.js', 'tool-views.js', 'markdown.js', 'files-state.js', 'files-ui.js', 'updates-ui.js'];
 const NOTES = {
   version: '0.1.0-beta.10',
   releases: [
