@@ -4,7 +4,9 @@
   python work/demo-studio/start.py --port 8810 --keep     reuse the data from the last run (chats, pins, artifacts) if it exists
   python work/demo-studio/start.py --stop --port 8810     stops that Studio and deletes its temp folder (add --keep to keep the data)
 
-Never touches work/agent-studio-state or ~/.claude: everything lives in one temp folder, agent-studio-demo-<port>.
+Never touches work/agent-studio-state or the owner's agent folders (~/.claude, ~/.codex ...): everything lives in one temp folder,
+agent-studio-demo-<port>, and the server's home folder and agent folders (HOME, USERPROFILE, CODEX_HOME, CLAUDE_CONFIG_DIR, VIBE_HOME,
+XDG_*) point at empty fixture folders in <port folder>/home.
 Starts the Deno server (deno run -A outputs/agent-studio/server/main.ts serve --in-process ...) with no console window. Deno is
 found as AIB_DENO, else `deno` on PATH. See work/demo-studio/README.md.
 """
@@ -393,6 +395,46 @@ def generate(demo):
     return launcher
 
 
+# ---- the agents' own folders -------------------------------------------------------------------
+# Every agent folder Studio (and an agent it starts) may read: the usage-limits chip reads <CODEX_HOME>/sessions and auth.json,
+# Claude Code reads CLAUDE_CONFIG_DIR, Vibe VIBE_HOME; the rest fall back to the home folder. The demo points them all at empty
+# fixture folders in its own temp folder, so a demo never reads the owner's real ~/.codex, ~/.claude, ~/.gemini ...
+AGENT_HOME_VARS = {'CODEX_HOME': '.codex', 'CLAUDE_CONFIG_DIR': '.claude', 'VIBE_HOME': '.vibe'}   # server/state/usage_limits.ts HOME_VARS
+XDG_VARS = {'XDG_CONFIG_HOME': '.config', 'XDG_DATA_HOME': '.local/share', 'XDG_STATE_HOME': '.local/state', 'XDG_CACHE_HOME': '.cache'}
+
+
+def deno_cache(base):
+    """Deno's cache folder as the owner's environment has it, so moving HOME does not make Deno download its packages again."""
+    if base.get('DENO_DIR'):
+        return base['DENO_DIR']
+    if os.name == 'nt':
+        return str(pathlib.Path(base.get('LOCALAPPDATA') or pathlib.Path.home() / 'AppData' / 'Local') / 'deno')
+    home = pathlib.Path(base.get('HOME') or pathlib.Path.home())
+    if sys.platform == 'darwin':
+        return str(home / 'Library' / 'Caches' / 'deno')
+    return str(pathlib.Path(base.get('XDG_CACHE_HOME') or home / '.cache') / 'deno')
+
+
+def demo_env(demo, base=None):
+    """The demo Studio's environment: `base` (default os.environ) with the home folder and every agent folder in <demo>/home."""
+    base = dict(os.environ if base is None else base)
+    home = pathlib.Path(demo) / 'home'
+    env = dict(base, DENO_DIR=deno_cache(base), HOME=str(home), USERPROFILE=str(home))
+    if os.name == 'nt':
+        env['HOMEDRIVE'], env['HOMEPATH'] = os.path.splitdrive(str(home))
+    for name, sub in AGENT_HOME_VARS.items():
+        env[name] = str(home / sub)
+    for name, sub in XDG_VARS.items():
+        env[name] = str(home / sub)
+    for sub in list(AGENT_HOME_VARS.values()) + list(XDG_VARS.values()):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+    # git reads ~/.gitconfig: the demo's own, so merges in the demo commit as Demo (and never with the owner's settings)
+    gitconfig = home / '.gitconfig'
+    if not gitconfig.exists():
+        gitconfig.write_text('[user]\n\tname = Demo\n\temail = demo@example.invalid\n[commit]\n\tgpgsign = false\n', encoding='utf-8')
+    return env
+
+
 # ---- starting ----------------------------------------------------------------------------------
 def deno_executable():
     return os.environ.get('AIB_DENO') or shutil.which('deno')
@@ -474,7 +516,8 @@ def start(options):
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     else:
         kwargs['start_new_session'] = True
-    process = subprocess.Popen(studio_command(options, demo), stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=flags, cwd=str(demo), **kwargs)
+    process = subprocess.Popen(studio_command(options, demo), stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=flags, cwd=str(demo),
+                               env=demo_env(demo), **kwargs)
     (demo / 'studio.pid').write_text(json.dumps({'pid': process.pid, 'port': options.port, 'startedAt': time.time()}), encoding='utf-8')
     if not wait_ready(options.port, process, options.timeout):
         tail = (demo / 'studio.log').read_text(encoding='utf-8', errors='replace')[-1500:]
