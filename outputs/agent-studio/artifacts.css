@@ -760,9 +760,10 @@ a.artifact-link code {
 .artifact-state {
   color: var(--muted);
   font-size: 0.9em;
-  text-decoration: none;
+  text-decoration: none; /* inline-block: the link's underline stops at the title */
   display: inline-block;
+  white-space: pre; /* keeps the space before "·" */
 }
-a.artifact-link-deleted {
+a.artifact-link.artifact-link-deleted {
   color: var(--muted);
 }

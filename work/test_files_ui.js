@@ -878,3 +878,20 @@ test('aib-docs open state is remembered too', async () => {
   assert.ok(rowOf(t2, 'aib-docs/notes') || rowOf(t2, 'aib-docs'), 'row present');
   assert.equal(JSON.parse(t2.shell.localStorage.getItem('aib-files-open-v1')) && Object.values(JSON.parse(t2.shell.localStorage.getItem('aib-files-open-v1')))[0].includes('aib-docs'), true);
 });
+
+test('⧉ stays on an archived artifact and goes from a deleted one (Recently deleted), even when an older list still has it live', async () => {
+  const src = ROOT + '/outputs/bar-charts.html';
+  // the Artifacts panel holds the deleted one; another chat's cached list (read before the Delete) still has it live
+  const t = setup({ ownList: [{ id: 'art1', sourcePath: src, deletedAt: 9 }], arts: { 'claude:a2': [{ id: 'art1', sourcePath: src }] } });
+  t.FU.setMode('files');
+  await flush();
+  rowOf(t, 'outputs').click();
+  await flush();
+  assert.equal(rowOf(t, 'outputs/bar-charts.html').querySelector('.fx-art'), null, 'deleted: no marker');
+  const a = setup({ ownList: [{ id: 'art1', sourcePath: src, archivedAt: 9 }] });
+  a.FU.setMode('files');
+  await flush();
+  rowOf(a, 'outputs').click();
+  await flush();
+  assert.ok(rowOf(a, 'outputs/bar-charts.html').querySelector('.fx-art'), 'archived: still an artifact');
+});

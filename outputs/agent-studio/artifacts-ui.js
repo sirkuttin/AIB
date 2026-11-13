@@ -943,7 +943,9 @@
     S.list = orderArtifacts(next);
     const first = (S.list.find(pickable) || {}).id || ''; // the viewer's own pick is never an archived or deleted artifact
     const added = before.size ? S.list.filter((a) => !before.has(a.id)) : [];
-    if (!known(S.selId) || (following() && S.selId !== first && !S.extras[S.selId])) {
+    // the viewer's own pick (not yours) leaves an artifact archived or deleted elsewhere; yours shows its strip or Restore message
+    const ownPickHidden = !S.userPicked && !S.extras[S.selId] && !!known(S.selId) && !pickable(known(S.selId));
+    if (!known(S.selId) || ownPickHidden || (following() && S.selId !== first && !S.extras[S.selId])) {
       if (S.selId !== first) {
         S.selId = first;
         S.picked = null;
@@ -1556,7 +1558,9 @@
     ui.emptyTitle.textContent = c ? 'Nothing showing.' : 'No artifacts in this chat yet';
     ui.emptyHint.hidden = !!c;
     ui.emptyHidden.hidden = !c;
-    if (!c) return;
+    const sig = c ? c.archived + ':' + c.deleted : '';
+    if (!c || ui.emptyHidden.dataset.sig === sig) return; // drawn again only when the counts change (the open picker hangs from it)
+    ui.emptyHidden.dataset.sig = sig;
     const parts = [];
     const link = (group, label, n) => {
       const b = el('button', 'ar-switch ar-hidden-open', label + ' ' + n);
@@ -2050,7 +2054,9 @@
       docs = myDocs(),
       hidden = hiddenCounts(S.list);
     if (!a && !S.doc && !hidden) return;
-    const anchor = opts.anchor && opts.anchor.isConnected !== false ? opts.anchor : ui.bar.hidden ? null : ui.pick;
+    const emptyLink = () =>
+      ui.emptyHidden.hidden ? null : ui.emptyHidden.querySelector('[data-group="' + ((opts.anchor && opts.anchor.dataset.group) || '') + '"]') || ui.emptyHidden.querySelector('.ar-hidden-open');
+    const anchor = opts.anchor && opts.anchor.isConnected !== false ? opts.anchor : !ui.bar.hidden ? ui.pick : emptyLink();
     if (!anchor) return;
     if (anchor === ui.pick && (S.doc ? ui.pick.disabled : pickerIsPlain(S.list, docs, chatKeys()))) return;
     if (opts.group) S.foot[opts.group] = true;
