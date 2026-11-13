@@ -178,3 +178,24 @@ Deno.test('notification rules: the desktop app choices, the 60 s groups and the 
     'a new group after 60 s',
   );
 });
+
+Deno.test('notification rules: where news goes by where the owner is looking (route, one table for the page file and the server)', () => {
+  const r = (kind: 'needs' | 'turn', chat: string, pcFocused: boolean, pcActive: boolean, phones: (string | null)[]) => {
+    const o = RULES.route(kind, chat, { pcFocused, pcActive, phones });
+    return [o.desktop, o.push, o.banner, o.read].map((b) => (b ? 1 : 0)).join('');
+  };
+  // desktop push banner read
+  assertEquals(r('turn', 'x', false, false, []), '1100', 'nobody looking: as before');
+  assertEquals(r('needs', 'x', false, false, []), '1100');
+  assertEquals(r('turn', 'x', false, false, ['x']), '0011', 'phone shows x: nothing, marked read');
+  assertEquals(r('needs', 'x', false, false, ['x']), '0010', 'phone shows x: its sheet is right there');
+  assertEquals(r('needs', 'x', false, false, [null]), '1010', 'phone on home: banner, no push; the PC follows its own rules');
+  assertEquals(r('turn', 'x', false, false, ['y']), '1010', 'phone on another chat: banner, no push');
+  assertEquals(r('needs', 'x', true, false, []), '0100', 'PC focused, idle: no desktop, still a push');
+  assertEquals(r('needs', 'x', true, true, []), '0000', 'working at the PC: neither');
+  assertEquals(r('turn', 'x', true, true, ['y', 'x']), '0011', 'two phones, one shows x');
+  // the page loads the same file: the same answers from the page's global
+  const page = (globalThis as unknown as { AgentNotifyRules: typeof RULES }).AgentNotifyRules;
+  const view = { pcFocused: false, pcActive: false, phones: ['x'] };
+  assertEquals(page.route('turn', 'x', view), RULES.route('turn', 'x', view));
+});

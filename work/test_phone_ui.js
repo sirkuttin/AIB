@@ -215,3 +215,22 @@ test('artifact links: studio-artifact://, and links to the phone artifact origin
   assert.equal(P.artifactRef(origin + 'x/a/' + id + '/v1/r.html', origin), null);
   assert.equal(P.artifactRef('https://example.com/', origin), null);
 });
+
+test('banner: news about another chat while this phone is in hand; Needs you is not replaced by another chat finishing', () => {
+  assert.equal(P.bannerFrom([], 'c1', null), null);
+  assert.equal(P.bannerFrom([{ chat: 'c1', kind: 'turn', title: 'Here' }], 'c1', null), null, 'the chat on screen shows it itself');
+  assert.deepEqual(P.bannerFrom([{ chat: 'c2', kind: 'turn', title: 'Shop' }], 'c1', null), {
+    chat: 'c2',
+    kind: 'turn',
+    title: 'Shop',
+    text: 'Chat finished',
+  });
+  const need = P.bannerFrom([{ chat: 'c2', kind: 'needs', title: 'Shop' }], '', null);
+  assert.equal(need.text, 'A chat needs you');
+  assert.equal(P.bannerFrom([{ chat: 'c3', kind: 'turn', title: 'Blog' }], '', need), need, 'kept');
+  assert.equal(P.bannerFrom([{ chat: 'c3', kind: 'needs', title: 'Blog' }], '', need).chat, 'c3', 'the newest Needs you');
+  assert.equal(P.bannerFrom(undefined, '', need), need);
+  assert.equal(P.bannerFrom([], 'c2', need), null, 'opened that chat: gone');
+  assert.equal(P.bannerFrom([{ chat: 'c4', kind: 'turn' }], '', null).title, 'A chat');
+  assert.ok(P.BANNER_TURN_MS >= 5000);
+});

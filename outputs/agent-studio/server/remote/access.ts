@@ -295,6 +295,7 @@ export class PhoneAccess {
     const device = this.devices.devices.get(id);
     const removed = await this.devices.remove(id);
     if (removed) this.audit.write({ device: id, name: device?.name ?? '', action: 'remove', result: 'removed on the PC' });
+    if (removed) this.ctx.presence.leavePhone(id, 'removed'); // no longer holds news back as "in hand"
     return removed;
   }
 
@@ -310,7 +311,9 @@ export class PhoneAccess {
 
   /** Every phone goes, and the push keys are made new: a subscription that survived anywhere can no longer be sent to. */
   async removeAll(): Promise<number> {
+    const ids = [...this.devices.devices.keys()];
     const count = await this.devices.removeAll();
+    for (const id of ids) this.ctx.presence.leavePhone(id, 'removed');
     this.pairing.cancel();
     await this.vapid.rotate();
     this.audit.write({ action: 'remove all phones', result: `${count} removed on the PC; new push keys` });

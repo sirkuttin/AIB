@@ -55,7 +55,7 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
 };
 export const MANIFEST_PATH = '/manifest.webmanifest';
 
-export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action' | 'push' | 'continue' | 'read';
+export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action' | 'push' | 'continue' | 'read' | 'left';
 /** A chat's read position is written at most this often for one phone (the phone sends it at most every 5 s anyway). */
 export const READ_GAP_MS = 2000;
 /** At most one "read" line per phone and chat in the activity log in this time. */
@@ -77,6 +77,8 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['GET', '/api/remote/saved', 'device'],
   ['POST', '/api/remote/continue', 'continue'],
   ['POST', '/api/remote/read', 'read'],
+  // The phone page was hidden: it no longer shows AIB (attention/presence.ts; its polls say what it shows while visible).
+  ['POST', '/api/remote/left', 'left'],
   // Phase B: answer, approve once, send, stop, the chat's own queued messages (remote/actions.ts checks every body).
   ['POST', '/api/remote/elicitation', 'action'],
   ['POST', '/api/remote/permission', 'action'],
@@ -336,6 +338,8 @@ export class RemoteServer {
           return await this.#continue(request);
         case 'read':
           return await this.#read(request);
+        case 'left':
+          return await this.#left(request);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -459,39 +463,51 @@ export class RemoteServer {
   async #deviceRoute(request: Request, url: URL, path: string): Promise<Response> {
     const device = this.#device(request, ROUTE_SCOPE[`GET ${path}`]);
     if (device instanceof Response) return device;
+    if (path === '/api/remote/artifact') return this.#artifact(url, device);
+    // The page polls only while it is visible: it shows this chat (or no live chat). News held back because this phone is in hand
+    // goes with the answer (attention/presence.ts); the page shows it as a banner.
+    const presence = this.host.ctx.presence;
+    const seen = (chat: string | null) => {
+      presence.seePhone(device.id, chat);
+      return presence.takeNotices(device.id).map(({ chat, kind, title }) => ({ chat, kind, title }));
+    };
     if (path === '/api/remote/home') {
+      const notices = seen(null);
       const home = await homePayload(this.host.ctx, this.host.pcName(), this.host.titles);
       const saved = (await this.host.saved.list(this.host.ctx)).map(publicSaved);
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
       const scopes = [...device.scopes];
       const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('');
       const known = url.searchParams.get('rev') ?? request.headers.get('If-None-Match')?.replace(/"/g, '');
-      if (known && known === revision) {
+      if (known && known === revision && !notices.length) {
         return new Response(null, { status: 304, headers: { ...securityHeadersRemote(), ETag: `"${revision}"` } });
       }
-      return this.json(200, { ...home, saved, revision, scopes }, { ETag: `"${revision}"` });
+      return this.json(200, { ...home, saved, revision, scopes, notices }, { ETag: `"${revision}"` });
     }
-    if (path === '/api/remote/artifact') return this.#artifact(url, device);
     if (path === '/api/remote/saved') {
+      const notices = seen(null);
       const key = url.searchParams.get('key') ?? '';
       const chat = await this.host.saved.find(this.host.ctx, key);
       if (!chat) {
         // running again (here or on the PC): the phone opens the live chat instead
         const live = await this.#liveByKey(key);
-        if (live) return this.json(200, { key, live, scopes: [...device.scopes] });
+        if (live) return this.json(200, { key, live, scopes: [...device.scopes], notices });
         return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
       }
       const tail = Number(url.searchParams.get('tail') ?? SAVED_TAIL);
       const history = await savedHistory(this.host.ctx, chat, tail, remoteArtifactOrigin(this.host.name()));
-      return this.json(200, { ...history, live: null, scopes: [...device.scopes] });
+      return this.json(200, { ...history, live: null, scopes: [...device.scopes], notices });
     }
     const id = url.searchParams.get('id') ?? '';
     const tail = Number(url.searchParams.get('tail') ?? DEFAULT_TAIL);
     const after = Math.max(0, Math.trunc(Number(url.searchParams.get('after') ?? 0)) || 0);
     const links = remoteArtifactOrigin(this.host.name());
     const chat = id ? await chatPayload(this.host.ctx, id, tail, after, this.host.titles, links) : null;
-    if (!chat) return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found' });
-    return this.json(200, { ...chat, scopes: [...device.scopes] });
+    const notices = seen(chat ? id : null);
+    if (!chat) {
+      return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found', notices });
+    }
+    return this.json(200, { ...chat, scopes: [...device.scopes], notices });
   }
 
   /**
@@ -681,6 +697,15 @@ export class RemoteServer {
       this.host.audit.write({ device: device.id, name: device.name, action: 'read', chat: id, result: 'marked read on the PC' });
     }
     return this.json(200, { ok: true, marked });
+  }
+
+  /** The phone page was hidden (best effort; a phone that stops polling counts as gone after PHONE_TTL_MS anyway). */
+  async #left(request: Request): Promise<Response> {
+    await drain(request);
+    const device = this.#device(request, null);
+    if (device instanceof Response) return device;
+    this.host.ctx.presence.leavePhone(device.id);
+    return this.json(200, { ok: true });
   }
 
   async #image(request: Request, url: URL): Promise<Response> {

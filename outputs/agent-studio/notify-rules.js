@@ -14,6 +14,8 @@
   //   * Notifications within about a minute fold into one (one desktop notification replaces the older; phone pushes share a
   //     tag, so the phone shows only the newest).
   //   * Phone pushes say only "A chat needs you" or "Chat finished" and the chat's title: never the question, a command or code.
+  //   * Where the owner is looking (route): a chat on a phone's screen gets no desktop notification and no push; while a phone is
+  //     in hand at all, news goes to its page as a banner, not as a push; the PC's focus and input rules stay as they were.
   const GROUP_MS = 60000;
   const TAG = 'studio-attention';
   const PUSH_TAG = 'aib-attention';
@@ -181,6 +183,26 @@
     };
   }
 
+  // ---- where news goes (the server's Notifier, attention/watcher.ts) -------------------------------------------------------
+  // kind: 'needs' | 'turn'; chat: the live chat's id; view: {pcFocused, pcActive, phones: [the chat id each visible phone shows,
+  // or null for its home]} (attention/presence.ts). Returns:
+  //   desktop  a desktop notification may go (the app's own choices still apply): no AIB window has focus and no phone shows
+  //            this chat.
+  //   push     a phone push goes: the owner is not working at the PC and no phone is on screen (a phone in hand gets a banner).
+  //   banner   the phones on screen get it in their page (the one showing this chat already sees it there).
+  //   read     the chat is marked read on the PC: its turn ended while a phone showed it.
+  function route(kind, chat, view) {
+    const v = view || {};
+    const phones = Array.isArray(v.phones) ? v.phones : [];
+    const onPhone = !!chat && phones.some((c) => c === chat);
+    return {
+      desktop: !v.pcFocused && !onPhone,
+      push: !v.pcActive && !phones.length,
+      banner: phones.length > 0,
+      read: kind === 'turn' && onPhone,
+    };
+  }
+
   const api = {
     GROUP_MS,
     TAG,
@@ -198,6 +220,7 @@
     addToGroup,
     describe,
     pushText,
+    route,
   };
   root.AgentNotifyRules = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

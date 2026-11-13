@@ -59,6 +59,11 @@ export interface Rules {
   addToGroup(group: Group | null, items: GroupEntry[], now: number, windowMs?: number): { group: Group; sound: string | null };
   describe(group: Group): { tag: string; title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' } };
   pushText(group: Group): { title: string; body: string; tag: string; chat: string; sheet: boolean };
+  route(
+    kind: Kind,
+    chat: string,
+    view: { pcFocused: boolean; pcActive: boolean; phones: (string | null)[] },
+  ): { desktop: boolean; push: boolean; banner: boolean; read: boolean };
 }
 
 export const RULES: Rules = (globalThis as unknown as { AgentNotifyRules: Rules }).AgentNotifyRules;

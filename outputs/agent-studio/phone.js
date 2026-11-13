@@ -22,6 +22,10 @@
    with its saved messages and Continue this chat (only when this phone may send), which starts it again on the PC with its saved
    agent and settings; a chat another app has open is refused with the reason. A chat whose newest messages are on screen (page
    visible, scrolled to the end) is marked read on the PC, at most every READ_MS.
+   Presence (server/attention/presence.ts): the polls tell the PC this phone is in hand and which chat it shows; when the page is
+   hidden it says so (POST /api/remote/left). While it is in hand the PC sends no push: news about the chat on screen just shows
+   there, and news about another chat comes with the next poll's answer (`notices`) and shows as a banner at the top (tap: open
+   that chat, with its sheet up for Needs you; × closes it; a finished turn's banner goes by itself after BANNER_TURN_MS).
    Pure helpers (rowsFrom, stateWords, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom, artifactRef...) are
    exported for node tests. */
 (function (root) {
@@ -33,6 +37,7 @@
   const DB = 'aib-phone';
   const READ_MS = 5000; // a chat's read position goes to the PC at most this often
   const RECONNECT_MS = 20000; // "Reconnecting…" this long before saying AIB is closed (the keeper restarts a crashed AIB in 5 s)
+  const BANNER_TURN_MS = 10000; // a "Chat finished" banner goes by itself after this; a "Needs you" one stays until tapped or closed
 
   // ---- pure helpers ---------------------------------------------------------------------------------------------------------
   const str = (v) => (typeof v === 'string' ? v : '');
@@ -418,6 +423,22 @@
     }
   }
 
+  /* The banner after a poll's `notices` (news held back because this phone is in hand): the newest one about another chat than the
+     one on screen (`current`); a "Needs you" banner is not replaced by another chat's "finished". old: the banner up now, or null.
+     Returns {chat, kind: 'needs' | 'turn', title, text} or null. */
+  function bannerFrom(notices, current, old) {
+    let best = old && old.chat !== current ? old : null;
+    for (const n of Array.isArray(notices) ? notices : []) {
+      const x = obj(n);
+      const chat = str(x.chat).slice(0, 100);
+      if (!chat || chat === current) continue;
+      const kind = x.kind === 'needs' ? 'needs' : 'turn';
+      if (best && best.kind === 'needs' && kind === 'turn' && best.chat !== chat) continue;
+      best = { chat, kind, title: str(x.title).slice(0, 120) || 'A chat', text: kind === 'needs' ? 'A chat needs you' : 'Chat finished' };
+    }
+    return best;
+  }
+
   /* base64url -> bytes (the application server key a phone subscribes with). */
   function keyBytes(b64url) {
     const b64 = String(b64url || '').replace(/-/g, '+').replace(/_/g, '/');
@@ -448,6 +469,8 @@
     setupSteps,
     openTarget,
     keyBytes,
+    bannerFrom,
+    BANNER_TURN_MS,
     artifactFrom,
     artifactRef,
     artifactKind,
@@ -498,6 +521,7 @@
     saved: null, // its saved messages (GET /api/remote/saved), or {gone: true}
     continuing: false, // Continue this chat was tapped and the PC has not answered yet
     readSent: { id: '', seq: 0, at: 0 }, // the read position last sent to the PC
+    banner: null, // {chat, kind, title, text, at}: news about another chat while this phone is in hand (bannerFrom)
   };
 
   function el(tag, cls, text) {
@@ -581,6 +605,10 @@
 
   async function tick() {
     if (doc.visibilityState === 'hidden') return;
+    if (S.banner && S.banner.kind === 'turn' && Date.now() - S.banner.at >= BANNER_TURN_MS) {
+      S.banner = null;
+      draw();
+    }
     try {
       if (S.screen === 'chat') await loadChat(false);
       else if (S.screen === 'saved') await loadSaved();
@@ -619,6 +647,7 @@
     const key = S.savedKey;
     const r = await call('GET', '/api/remote/saved?key=' + encodeURIComponent(key) + '&tail=' + TAIL);
     if (r.status === 401) return removed();
+    if (takeNotices(r.data)) draw();
     if (key !== S.savedKey || S.screen !== 'saved') return;
     if (r.status === 404) {
       S.saved = { gone: true, title: S.saved ? S.saved.title : '' };
@@ -645,10 +674,60 @@
     if (offlineView(S.offlineSince, Date.now(), S.offlineWhy, S.pcName, S.reconnectMs).kind !== S.offlineShown) draw();
   }
 
+  /* News the PC held back because this phone is in hand (attention/presence.ts): a banner for another chat. */
+  function takeNotices(data) {
+    const next = bannerFrom(data && data.notices, S.screen === 'chat' ? S.chatId : '', S.banner);
+    if (next === S.banner) return false;
+    S.banner = next ? { ...next, at: Date.now() } : null;
+    return true;
+  }
+
+  /* The banner tapped: that chat opens (its sheet up for Needs you). */
+  function openBanner() {
+    const b = S.banner;
+    if (!b) return;
+    S.banner = null;
+    openChat(b.chat, b.title, b.kind === 'needs');
+  }
+
+  function bannerEl() {
+    const b = S.banner;
+    const box = el('div', 'ph-banner ' + (b.kind === 'needs' ? 'need' : 'turn'));
+    box.setAttribute('role', 'status');
+    const open = button('ph-banner-open', '', openBanner);
+    open.append(el('strong', '', b.text), el('span', '', b.title));
+    const close = button('ph-banner-close', '×', () => {
+      S.banner = null;
+      draw();
+    });
+    close.setAttribute('aria-label', 'Close');
+    box.append(open, close);
+    return box;
+  }
+
+  /* The page is hidden (another app, the screen off): tell the PC this phone is no longer in hand (best effort). */
+  function left() {
+    if (!S.token || !S.device) return;
+    try {
+      root
+        .fetch('/api/remote/left', {
+          method: 'POST',
+          keepalive: true,
+          headers: { 'X-AIB-Device': S.token },
+          credentials: 'same-origin',
+          cache: 'no-store',
+        })
+        .catch(() => {});
+    } catch {
+      /* the PC finds out when the polls stop */
+    }
+  }
+
   async function loadHome() {
     const r = await call('GET', '/api/remote/home' + (S.homeRev ? '?rev=' + encodeURIComponent(S.homeRev) : ''));
     if (r.status === 401) return removed();
     if (r.status === 304) return;
+    if (takeNotices(r.data) && S.screen !== 'home') draw();
     if (r.status !== 200) throw new Offline('refused');
     S.home = r.data;
     S.homeRev = r.data.revision || '';
@@ -661,6 +740,7 @@
     const after = !fresh && S.chat ? S.chat.cursor : 0;
     const r = await call('GET', '/api/remote/chat?id=' + encodeURIComponent(S.chatId) + '&tail=' + TAIL + (after ? '&after=' + after : ''));
     if (r.status === 401) return removed();
+    const noticed = takeNotices(r.data);
     if (r.status === 404) {
       S.chat = { gone: true, title: S.chat ? S.chat.title : '' };
       S.chatEvents = [];
@@ -685,7 +765,7 @@
     }
     if (S.editing && !((c.queue && c.queue.items) || []).some((i) => i.id === S.editing.messageId)) S.editing = null;
     if (S.editing && Date.now() - S.editing.renewed > 60000) renewEdit();
-    if (S.screen === 'chat' && changed) draw();
+    if (S.screen === 'chat' && (changed || noticed)) draw();
   }
 
   async function removed() {
@@ -1471,7 +1551,9 @@
                 : S.screen === 'offline'
                   ? drawOfflineStart()
                   : el('p', 'ph-loading', 'Connecting…');
-    place(Array.isArray(parts) ? parts : [parts]);
+    const list = Array.isArray(parts) ? parts : [parts];
+    if (S.banner && (S.screen === 'home' || S.screen === 'chat' || S.screen === 'saved')) list.splice(1, 0, bannerEl());
+    place(list);
     if (S.viewer && (S.screen === 'removed' || S.screen === 'pair')) closeArtifact(); // this phone may not see it any more
     app.dataset.screen = S.screen;
     app.dataset.sheet = S.sheet ? S.sheet.kind : '';
@@ -1556,6 +1638,7 @@
   }
 
   function openChat(id, title, withSheet) {
+    if (S.banner && S.banner.chat === id) S.banner = null;
     S.screen = 'chat';
     S.savedKey = '';
     S.saved = null;
@@ -1965,7 +2048,10 @@
   }
 
   doc.addEventListener('visibilitychange', () => {
-    if (doc.visibilityState === 'hidden') clearTimeout(S.timer);
+    if (doc.visibilityState === 'hidden') {
+      clearTimeout(S.timer);
+      left();
+    }
     else if (S.screen === 'home' || S.screen === 'chat' || S.screen === 'saved') {
       clearTimeout(S.timer);
       tick();
@@ -2002,6 +2088,7 @@
   doc.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && S.viewer) closeArtifact();
   });
+  root.addEventListener('pagehide', left);
   root.__aibPhone = S; // tests read the page's state
   start();
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -21,6 +21,7 @@ import { folderKinds } from '../desktop/folders.ts';
 import type { ConversationState } from '../state/conversations.ts';
 import type { ProjectPrefs } from '../state/projects.ts';
 import type { ViewPrefs } from '../state/view_prefs.ts';
+import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, RULES } from './rules.ts';
 import type { Presence } from './presence.ts';
@@ -66,6 +67,8 @@ export interface WatcherOptions {
   clock?: () => number;
   /** How long a chat must stay done before "finished" (SETTLE_MS). */
   settleMs?: number;
+  /** Called after every look (the presence model ends phones that stopped polling then). */
+  afterPoll?: () => void;
   /** The folder kinds (worktree / scratch, a worktree's main checkout); tests pass their own. */
   kinds?: (path: string) => { worktree: boolean; scratch: boolean; worktreeOf?: string };
 }
@@ -99,6 +102,9 @@ export class AttentionWatcher {
     const loop = async () => {
       if (!this.#running) return;
       await this.poll();
+      try {
+        this.options.afterPoll?.();
+      } catch { /* never stops the loop */ }
       if (this.#running) this.#timer = setTimeout(loop, this.options.pollMs ?? POLL_MS);
     };
     this.#timer = setTimeout(loop, 0);
@@ -288,34 +294,83 @@ export interface NotifierOptions {
   presence: Presence;
   /** The saved view preferences (the desktop app's notification choices live there). */
   viewPrefs: Pick<ViewPrefs, 'public'>;
+  /** Marks a chat read on the PC (its page key): its turn ended while a phone showed it. */
+  markRead?: (key: string) => void;
   clock?: () => number;
   /** Tests: everything sent, in order. */
-  record?: (what: { to: 'desktop' | 'push'; text: unknown; fires: Fire[] }) => void;
+  record?: (what: { to: 'desktop' | 'push' | 'banner' | 'read'; text: unknown; fires: Fire[] }) => void;
 }
 
+const bare = ({ key, chat, kind, title }: Fire): Fire => ({ key, chat, kind, title });
+
 /**
- * The 60 s groups and the two places news goes:
- *   desktop  when no AIB window has focus (Presence.focused) and the desktop app's choices want this kind; one notification per
- *            group (a newer one replaces the older), its click opens the chat (one) or the inbox (several).
- *   push     to the paired phones whose Push switch is on, unless the owner is active at the PC (Presence.active).
+ * The 60 s groups and where news goes, by where the owner is looking (notify-rules.js route, attention/presence.ts):
+ *   desktop  when no AIB window has focus (Presence.focused), no phone shows that chat, and the desktop app's choices want this
+ *            kind; one notification per group (a newer one replaces the older), its click opens the chat (one) or the inbox.
+ *   push     to the paired phones whose Push switch is on, unless the owner is active at the PC (Presence.active) or a phone page
+ *            is on screen: then each visible phone's page gets it as a banner instead (the one showing that chat already sees it;
+ *            a finished turn there also marks the chat read on the PC). A banner no phone got (the page was hidden before its next
+ *            poll) goes out the usual way when that phone's time on screen ends.
  */
 export class Notifier {
   #desktop: Group | null = null;
   #push: Group | null = null;
   readonly clock: () => number;
+  #off: () => void;
+  /** Sends for phones whose time on screen ended, in order. */
+  #queue: Promise<void> = Promise.resolve();
 
   constructor(readonly options: NotifierOptions) {
     this.clock = options.clock ?? Date.now;
+    this.#off = options.presence.onPhoneEnded((e) => {
+      if (!e.undelivered.length) return;
+      const fires = e.undelivered.map(bare);
+      const desktop = e.undelivered.filter((u) => u.desktopSkipped).map(bare);
+      this.#queue = this.#queue.then(() => this.#send(desktop, fires, fires)).catch(() => {});
+    });
+  }
+
+  /** Stops listening to the presence model (the watcher stopped). */
+  close(): void {
+    this.#off();
+  }
+
+  /** Everything queued so far has been sent (tests). */
+  settled(): Promise<void> {
+    return this.#queue;
   }
 
   async fire(fires: Fire[]): Promise<void> {
+    const presence = this.options.presence;
+    const view = { pcFocused: presence.focused(), pcActive: presence.active(), phones: presence.phones().map((p) => p.chat) };
+    const desktop: Fire[] = [];
+    const push: Fire[] = [];
+    for (const f of fires) {
+      const r = RULES.route(f.kind, f.chat, view);
+      if (r.desktop) desktop.push(f);
+      if (r.push) push.push(f);
+      if (r.banner) {
+        presence.hold(bare(f), !r.desktop && !view.pcFocused);
+        this.options.record?.({ to: 'banner', text: { kind: f.kind, title: f.title, chat: f.chat }, fires: [f] });
+      }
+      if (r.read) {
+        this.options.record?.({ to: 'read', text: { key: f.key }, fires: [f] });
+        try {
+          this.options.markRead?.(f.key);
+        } catch { /* the read position is a nicety */ }
+      }
+    }
+    await this.#send(desktop, push, fires);
+  }
+
+  async #send(desktopFires: Fire[], pushFires: Fire[], fires: Fire[]): Promise<void> {
     const now = this.clock();
-    const items: GroupEntry[] = fires.map((f) => ({ key: f.key, title: f.title, kind: f.kind, chat: f.chat }));
+    const entries = (list: Fire[]): GroupEntry[] => list.map((f) => ({ key: f.key, title: f.title, kind: f.kind, chat: f.chat }));
     const prefs = RULES.appPrefs(this.options.viewPrefs.public().prefs['studio-notifications-app']);
     const show = this.options.desktop();
     if (this.options.presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
     else if (show) {
-      const wanted = items.filter((i) => RULES.desktopWants(i.kind, prefs));
+      const wanted = entries(desktopFires).filter((i) => RULES.desktopWants(i.kind, prefs));
       if (wanted.length) {
         this.#desktop = RULES.addToGroup(this.#desktop, wanted, now).group;
         const d = RULES.describe(this.#desktop);
@@ -334,7 +389,8 @@ export class Notifier {
       this.#push = null;
       return;
     }
-    this.#push = RULES.addToGroup(this.#push, items, now).group;
+    if (!pushFires.length) return;
+    this.#push = RULES.addToGroup(this.#push, entries(pushFires), now).group;
     const text = RULES.pushText(this.#push);
     this.options.record?.({ to: 'push', text, fires });
     try {
@@ -351,6 +407,7 @@ export class Notifier {
 export interface AttentionContext extends WatchSources {
   stateDir: string;
   presence: Presence;
+  readState: Pick<ReadState, 'update'>;
   desktopNotify: { show: DesktopShow } | null;
   phone: {
     on: boolean;
@@ -371,6 +428,8 @@ export function startAttention(ctx: AttentionContext, options: { pollMs?: number
     push: () => (ctx.phone.on && ctx.phone.push.any() ? (text) => ctx.phone.push.send(text) : null),
     presence: ctx.presence,
     viewPrefs: ctx.viewPrefs,
+    // read now: a phone showed the chat when its turn ended (the PC's unread dot and the watcher agree)
+    markRead: (key) => void ctx.readState.update({ set: { [key]: { seenAt: Date.now() } } }).catch(() => {}),
     record: logFile
       ? (what) => {
         try {
@@ -385,12 +444,18 @@ export function startAttention(ctx: AttentionContext, options: { pollMs?: number
     {
       stateDir: ctx.stateDir,
       pollMs: options.pollMs,
+      afterPoll: () => ctx.presence.sweep(),
       // in order, without holding up the next look (a slow push service never delays a "needs you")
       onFire: (fires) => {
         sending = sending.then(() => notifier.fire(fires)).catch(() => {});
       },
     },
   );
+  const stop = watcher.stop.bind(watcher);
+  watcher.stop = async () => {
+    notifier.close();
+    await stop();
+  };
   watcher.start();
   return watcher;
 }
