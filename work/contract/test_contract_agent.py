@@ -135,7 +135,9 @@ class AgentContract(unittest.TestCase):
         self.drop_steer_keys(connected[0], 'connect payload')
         self.assertEqual(sorted(connected[0]), sorted(connected[1]), 'connect payload keys')
         ids = [c['id'] for c in connected]
-        states = self.wait(ids, lambda s: s['ready'], 'ready')
+        # ready comes first (the session is open), setupDone once the server finished opening the chat (lease, recovery note,
+        # 'ready' announcement, live sync): only then is the state settled on both servers
+        states = self.wait(ids, lambda s: s['ready'] and s['setupDone'], 'ready and setup done')
         self.compare_states(states, 'state after connect')
         self.same('GET', '/api/live/list', what='list with one ready chat')
 

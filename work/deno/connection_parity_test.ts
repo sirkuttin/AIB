@@ -18,7 +18,7 @@ import { Connection, errorName } from '../../outputs/agent-studio/server/acp/con
 type Step = Json & { op: string };
 const AGENTS: Record<string, string> = { fake: FAKE, stream: STREAM_AGENT };
 
-function condition(c: Connection, spec: string): () => boolean {
+function condition(c: Connection, spec: string, state: Json): () => boolean {
   const [name, ...rest] = spec.split(':');
   const arg = rest.join(':');
   const updates = () => c.events.filter((e) => e.kind === 'update');
@@ -39,6 +39,10 @@ function condition(c: Connection, spec: string): () => boolean {
       return () => c.ready;
     case 'closed':
       return () => c.closed && !c.busy;
+    case 'error_text': // error_text:<substring>: an error event says it
+      return () => c.events.some((e) => e.kind === 'error' && String((e.data as Json).message ?? '').includes(arg));
+    case 'wrote': // wrote:<method>: the request went to the agent
+      return () => (state.writes as Json[]).some((w) => w.method === arg);
     case 'events': {
       const [kind, count] = arg.split(':');
       return () => c.events.filter((e) => e.kind === kind).length >= Number(count);
@@ -109,7 +113,7 @@ async function step(c: Connection, s: Step, state: Json): Promise<unknown> {
       );
     }
     case 'wait':
-      await until(condition(c, s.for as string), s.for as string, 20);
+      await until(condition(c, s.for as string, state), s.for as string, 20);
       return null;
     case 'sleep':
       await new Promise((resolve) => setTimeout(resolve, s.ms as number));
@@ -185,7 +189,7 @@ async function runPort(
   );
   const writes: unknown[] = [];
   const results: Json[] = [];
-  const state: Json = { folder };
+  const state: Json = { folder, writes };
   const c = new Connection(
     [PYTHON, AGENTS[agent], ...flags],
     folder,
@@ -525,6 +529,7 @@ const SCRIPTS: Script[] = [
       { op: 'public' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'change', kind: 'config', configId: 'effort', value: 'high' },
       { op: 'change', kind: 'config', configId: 'verbose', value: true },
@@ -558,6 +563,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'events:update:4' }, // the announcements that follow session/new (when they arrive is a race in Python)
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'cancel' },
       { op: 'wait', for: 'idle' },
@@ -573,6 +579,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue_add', text: 'mcp', id: 'c' },
@@ -607,6 +614,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue', action: 'send_now', args: ['b'] },
@@ -702,6 +710,8 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'idle' },
       { op: 'prompt', text: 'die' },
       { op: 'wait', for: 'closed' },
+      // closed comes first in Python (its reader thread, at the agent's exit); the turn's own failure follows from the turn's thread
+      { op: 'wait', for: 'error_text:ACP connection closed' },
       { op: 'cancel' },
       { op: 'public' },
     ],
@@ -754,6 +764,9 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg', resume: 'resumed-id' },
       { op: 'wait', for: 'elicitations' },
+      // the question comes with the initialize answer: answered before setup sent session/load, the load is never sent (Python's
+      // setup thread can lag that far behind), and the messages to the agent go in another order
+      { op: 'wait', for: 'wrote:session/load' },
       { op: 'public' },
       { op: 'elicit', action: 'decline' },
       { op: 'join_setup' },
@@ -766,6 +779,7 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg' },
       { op: 'wait', for: 'elicitations' },
+      { op: 'wait', for: 'wrote:session/new' }, // as above: the answer goes after session/new on both sides
       { op: 'elicit', action: 'accept', content: { label: 'x' } },
       { op: 'join_setup' },
       { op: 'close' },
@@ -839,6 +853,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'permissions' },
       { op: 'kill' },
       { op: 'wait', for: 'closed' },
+      { op: 'wait', for: 'error_text:ACP connection closed' }, // the turn's failure, after closed in Python (see above)
       { op: 'public' },
       { op: 'close' },
     ],

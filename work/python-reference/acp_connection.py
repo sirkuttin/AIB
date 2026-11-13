@@ -367,10 +367,14 @@ class Connection:
         """Fail connection setup now (e.g. the person declined a setup question)."""
         with self.lock:
             self.setup_abort = self.setup_abort or message
-            for entry in list(self.pending.values()):
+            for key, entry in list(self.pending.items()):
                 if not entry['done'].is_set():
                     entry['response'] = {'error': {'message': message, 'code': None}}
                     entry['done'].set()
+                    # Forgotten now, not when the waiting setup thread wakes: the agent's late answer is then always a "Response to
+                    # unknown request id", never a "Duplicate response" when that thread is slow (the Deno port's waiting call
+                    # drops it at once, before any later message can be read).
+                    del self.pending[key]
             self.auth_response = ('cancel', None)
             self.auth_event.set()
 
@@ -885,7 +889,11 @@ class Connection:
         while True:
             with self.lock:
                 q = self.queue
-                if self.closed or not self.ready or self.busy or not self.session_id or q.inflight or not q.items or q.pause_reason():
+                if q.inflight:
+                    # Another call is sending one right now: it sends the next itself once that one is out (see below).
+                    self._pump_missed = True
+                    return
+                if self.closed or not self.ready or self.busy or not self.session_id or not q.items or q.pause_reason():
                     return
                 if self.permissions or self.elicitations or self.auth:
                     return
@@ -901,13 +909,16 @@ class Connection:
                 failure = ('' if 'Wait for the current turn' in str(error) else 'error', str(error)[:300])
             with self.lock:
                 q.inflight = None
+                missed, self._pump_missed = getattr(self, '_pump_missed', False), False
                 if failure:
                     item['note'] = failure[1] if failure[0] else ''
                     q.items.insert(0, item)
                     if failure[0]:
                         q.hold = failure[0]
             self._queue_changed()
-            if failure or not (result or {}).get('duplicate') or self.busy:
+            # A turn that ended while this message was still inflight ran its _queue_pump for nothing (missed): the next message
+            # goes from here, or a slow thread here would leave the rest of the queue unsent.
+            if failure or self.busy or not ((result or {}).get('duplicate') or missed):
                 return
 
     def _stale_error(self, key, what):

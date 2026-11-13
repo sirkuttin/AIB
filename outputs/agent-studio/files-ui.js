@@ -277,7 +277,29 @@
   async function listDir(scope, dir) {
     const t = treeOf(scope);
     if (t.cache[dir] === 'loading') return;
-    t.cache[dir] = 'loading';
+    // A folder already listed keeps its rows while it is listed again (an agent's write, a doc made): the tree does not blink to
+    // "Loading…", and a row or the "New doc" name field the person is using stays. A call while that listing runs lists it once
+    // more afterwards, so the newest state still shows.
+    if (!t.relisting) t.relisting = new Map();
+    if (t.relisting.has(dir)) {
+      t.relisting.set(dir, true);
+      if (!Array.isArray(t.cache[dir])) t.cache[dir] = 'loading'; // dropped on purpose meanwhile: shows as loading till then
+      return;
+    }
+    const again = Array.isArray(t.cache[dir]);
+    if (again) t.relisting.set(dir, false);
+    else t.cache[dir] = 'loading';
+    try {
+      await listOnce(scope, t, dir);
+    } finally {
+      if (again) {
+        const more = t.relisting.get(dir);
+        t.relisting.delete(dir);
+        if (more) listDir(scope, dir);
+      }
+    }
+  }
+  async function listOnce(scope, t, dir) {
     if (dir === '' || dir === F().DOCS_FOLDER) loadDocs(scope, true);
     try {
       const r = await host.getJson('/api/live/files/list', Object.assign(F().scopeArgs(scope), { dir }));

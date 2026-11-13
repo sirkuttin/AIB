@@ -174,7 +174,15 @@ async function run(fx: Fixture, keep: (b: Browser) => void, wt: boolean): Promis
     return { shown: r.width > 0 && r.height > 0, over: t.scrollWidth > t.clientWidth + 1 || Array.from(t.querySelectorAll('.pane-tab-label')).some((l) => l.scrollWidth > l.clientWidth) }; })()`);
   assert(!narrowTabs.over, 'Q3: the tab row overflows at 860 px: ' + JSON.stringify(narrowTabs));
   await page.eval(`AgentFilesUI.setMode('files'); AgentWorkspaceUI.openDrawer()`);
-  await page.waitFor(`document.body.classList.contains('ws-list-open') && !!document.querySelector('.fx-row[data-path="extra.txt"]')`, 10_000, 'the drawer with the tree');
+  // the row is measured for the right-click once it stays put: the drawer has slid in (0.15 s, workspace.css) and no folder above
+  // it is still loading (after the reload aib-docs, remembered open, is listed after the top: its rows then push extra.txt down)
+  await page.waitFor(
+    `document.body.classList.contains('ws-list-open') && !!document.querySelector('.fx-row[data-path="extra.txt"]') &&
+      getComputedStyle(document.querySelector('.aside-main')).transform === 'none' &&
+      !Array.from(document.querySelectorAll('#wsAsideMain .fx-note-row')).some((n) => n.textContent === 'Loading…')`,
+    10_000,
+    'the drawer with the whole tree, slid in',
+  );
   await page.shot('q6-drawer-before');
   const [rx, ry] = await page.eval<number[]>(`(() => { const r = document.querySelector('.fx-row[data-path="extra.txt"]').getBoundingClientRect(); return [r.left + 60, r.top + r.height / 2]; })()`);
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
