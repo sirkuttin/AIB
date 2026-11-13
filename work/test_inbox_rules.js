@@ -245,6 +245,24 @@ test('countBlocked counts chats blocked on you, never finished or working ones',
   assert.equal(R.countBlocked(chats, NOW), 3);
 });
 
+test('open on the PC: the chat in the active tab and split panes, while the window is visible; the desktop count leaves it out', () => {
+  assert.deepEqual(R.openKeys({ selected: 'claude:a', panes: ['claude:b', 'claude:a', '', null] }), ['claude:a', 'claude:b']);
+  assert.deepEqual(R.openKeys({ selected: 'claude:a', visible: true }), ['claude:a'], 'visible but not focused still counts');
+  assert.deepEqual(R.openKeys({ selected: 'claude:a', visible: false }), [], 'minimized or in the tray: nothing is open');
+  assert.deepEqual(R.openKeys({ selected: '' }), []);
+  assert.equal(R.isOpen('claude:a', ['claude:a']), true);
+  assert.equal(R.isOpen('claude:b', ['claude:a']), false);
+  assert.equal(R.isOpen('', ['']), false);
+  assert.equal(R.isOpen('claude:a', undefined), false);
+  const chats = [
+    { key: 'claude:a', attention: { state: 'idle', asksAt: iso(NOW - 5) } },
+    { key: 'claude:b', attention: { state: 'needs_you', needs: 1 } },
+  ];
+  assert.equal(R.countBlocked(chats, NOW), 2, 'the phone counts both');
+  assert.equal(R.countBlocked(chats, NOW, ['claude:a']), 1, 'the desktop: chat a is open in the window');
+  assert.equal(R.countBlocked(chats, NOW, ['claude:b']), 1, 'switched to b: a counts again');
+});
+
 test('rows: Needs you oldest wait first, then Finished newest first; the count is Needs you only', () => {
   const rows = [
     { key: 'f1', section: 'finished', at: 100 },

@@ -42,6 +42,7 @@ import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
+import { INBOX } from './attention/inbox_rules.ts';
 import { swarmOf } from './web/studio_routes.ts';
 import { takeLaunchKeyFromEnv } from './web/page_access.ts';
 
@@ -435,7 +436,13 @@ export async function main(argv: string[]): Promise<void> {
         ? () => {
           // needs you: the inbox's one number (inbox-rules.js), the same as the page's badge and the phone's
           // and the blocked chats themselves for the tray menu's chat slots (the attention watcher's last look, with their titles)
-          return Promise.resolve({ working: studio!.workingList().length, needsYou: studio!.blockedChats(), blocked: attention.blocked() });
+          // The chat open in the AIB window is left out (inbox-rules.js isOpen): it is in front of the owner already.
+          const open = ctx.presence.openOnPc();
+          return Promise.resolve({
+            working: studio!.workingList().length,
+            needsYou: studio!.blockedChats(open),
+            blocked: attention.blocked().filter((b) => !INBOX.isOpen(b.key, open)),
+          });
         }
         : undefined,
     });

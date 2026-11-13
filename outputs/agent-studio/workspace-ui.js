@@ -558,11 +558,35 @@
       /* private window */
     }
   }
+  // The chats open in this window (inbox-rules.js openKeys): the active tab's chat (not while a file tab shows) and the chat of
+  // every split pane, while the window is visible (focused or not). They are in front of you: the inbox, its badge, the window
+  // title, the desktop notifications and (through the presence report, notify-ui.js) the trays and the taskbar dot leave them out.
+  function openChatKeys() {
+    const IR = root.AgentInboxRules,
+      d = doc();
+    if (!IR || !IR.openKeys) return selectedKey ? [selectedKey] : [];
+    const fileShown = !!(FU() && FU().showingFile && FU().showingFile());
+    const panes = splitOn()
+      ? S()
+          .panes()
+          .map((p) => p.group && p.group.active)
+          .filter((k) => k && k !== St().DRAFT && itemOf(k))
+      : [];
+    return IR.openKeys({
+      selected: fileShown && !panes.length ? '' : selectedKey,
+      panes,
+      visible: !d || d.visibilityState !== 'hidden',
+    });
+  }
   function inboxView() {
+    const IR = root.AgentInboxRules,
+      open = openChatKeys();
     return St()
       .inbox(items)
       .filter((r) => {
-        // The open chat stays when it is blocked on you (it still needs you, and the badge counts it like the cards do);
+        // The chat open in the window is in front of you: no row and no count, in Needs you or Finished (inbox-rules.js isOpen).
+        // When you switch to another chat, a chat still waiting comes back.
+        if (IR && IR.isOpen ? IR.isOpen(r.key, open) : open.indexOf(r.key) >= 0) return false;
         // a Finished chat you are looking at is seen (seenTurns below).
         // The chat you have open is never Finished, even while AIB is in the background: it is the chat you're on.
         if (r.section === 'finished') {
@@ -2260,6 +2284,7 @@
     const N = root.AgentNotifyUI;
     if (!N || !N.observeItems || !root.AgentNotifyRules) return;
     const R = root.AgentNotifyRules; // the same rules as the server's notifications (notify-rules.js)
+    const open = openChatKeys();
     N.observeItems(
       items.map((i) => {
         const f = R.flags(
@@ -2284,10 +2309,11 @@
           yourTurnAt: i.yourTurnAt,
           eligible: f.eligible,
           muted: f.muted,
-          selected: i.key === selectedKey,
+          selected: open.indexOf(i.key) >= 0, // open in the window: no toast, desktop notification or sound for it
         };
       }),
     );
+    if (N.reportPresence) N.reportPresence(false); // the open chat changed: the server's trays and notifications follow at once
   }
   // Called by the page every time the conversation list is drawn.
   let lastSyncArgs = null;
@@ -2819,6 +2845,7 @@
             }),
         unmute: (key) => setPrefOf(key, { muted: false }),
         // whether AIB is in front and when you last used it: the server's notifications and phone pushes skip you then
+        openKeys: openChatKeys,
         presence: (body) =>
           host.postJson ? Promise.resolve(host.postJson('presence', body)).then(() => true, () => false) : false,
       });
@@ -2930,6 +2957,8 @@
     openDrawer: () => {
       if (root.matchMedia && root.matchMedia('(max-width:1100px)').matches) setListOpen(true);
     },
+    // The chats open in this window (inbox-rules.js openKeys): the page's presence report and the window title leave them out.
+    openKeys: openChatKeys,
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,

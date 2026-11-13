@@ -379,8 +379,9 @@ const bare = ({ key, chat, kind, title, reason }: Fire): Fire => ({ key, chat, k
 
 /**
  * The 60 s groups and where news goes, by where the owner is looking (notify-rules.js route, attention/presence.ts):
- *   desktop  when no AIB window has focus (Presence.focused), no phone shows that chat, and the desktop app's choices want this
- *            kind; one notification per group (a newer one replaces the older), its click opens the chat (one) or the inbox.
+ *   desktop  when no AIB window has focus (Presence.focused), the chat is not the one open in the AIB window (Presence.openOnPc:
+ *            it is already in front of the owner), no phone shows that chat, and the desktop app's choices want this kind; one
+ *            notification per group (a newer one replaces the older), its click opens the chat (one) or the inbox.
  *   push     to the paired phones whose Push switch is on, unless the owner is active at the PC (Presence.active) or a phone page
  *            is on screen: then each visible phone's page gets it as a banner instead (the one showing that chat already sees it;
  *            a finished turn there also marks the chat read on the PC). A banner no phone got (the page was hidden before its next
@@ -445,7 +446,8 @@ export class Notifier {
     const show = this.options.desktop();
     if (this.options.presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
     else if (show) {
-      const wanted = entries(desktopFires).filter((i) => RULES.desktopWants(i.kind, prefs));
+      const open = this.options.presence.openOnPc(); // the chat open in the window is in front of the owner already
+      const wanted = entries(desktopFires.filter((f) => !INBOX.isOpen(f.key, open))).filter((i) => RULES.desktopWants(i.kind, prefs));
       if (wanted.length) {
         this.#desktop = RULES.addToGroup(this.#desktop, wanted, now).group;
         const d = RULES.describe(this.#desktop);

@@ -61,12 +61,14 @@
     return pref === 'both' ? 'turn' : null;
   }
 
-  // What to do about one event. o: {kind, away, selected, eligible, muted, notifyFor, soundPref, desktopReady}
+  // What to do about one event. o: {kind, away, selected (open in the window), eligible, muted, notifyFor, soundPref, desktopReady}
   function decide(o) {
     const none = { toast: false, desktop: false, sound: null };
     if (!o.eligible || o.muted) return none;
     if (o.kind === 'turn' && o.notifyFor === 'needs') return none;
-    if (!o.away) return { toast: !o.selected, desktop: false, sound: null }; // in front: never a desktop notification or a sound
+    // The chat open in the window (even while it has no focus) is in front of you already (inbox-rules.js isOpen).
+    if (o.selected) return none;
+    if (!o.away) return { toast: true, desktop: false, sound: null }; // in front: never a desktop notification or a sound
     return { toast: false, desktop: !!o.desktopReady, sound: soundFor(o.kind, o.soundPref) };
   }
 
@@ -270,7 +272,7 @@
     const cur = new Map(S.current.map((e) => [e.key, e]));
     for (const [key, t] of [...S.toasts]) {
       const e = cur.get(t.chat);
-      if (!e || e.muted || (e.selected && !away())) dropToast(key);
+      if (!e || e.muted || e.selected) dropToast(key);
       else if (t.kind === 'needs' && e.state !== 'needs_you') dropToast(key);
       else if (t.kind === 'turn' && (!e.yourTurn || e.state === 'needs_you')) dropToast(key);
     }
@@ -508,20 +510,34 @@
   // The server sends no desktop notification while an AIB window has focus, and no phone push while you are working in it (focus
   // and input in the last 2 minutes). This page tells it: at once when focus changes, else every 20 s.
   const PRESENCE_MS = 20000;
-  const P = { lastInput: Date.now(), sent: 0, focused: null };
+  // It also says which chats the window shows (`open`, host.openKeys: inbox-rules.js openKeys): the server leaves them out of the
+  // desktop notifications, the tray count and the taskbar dot (they are in front of you), never out of the phone's pushes. A
+  // change of the open chats is sent at once.
+  const P = { lastInput: Date.now(), sent: 0, focused: null, open: null };
+  function openNow() {
+    try {
+      const k = S.host && typeof S.host.openKeys === 'function' ? S.host.openKeys() : [];
+      return Array.isArray(k) ? k : [];
+    } catch {
+      return [];
+    }
+  }
   function presenceNow() {
-    return { focused: !away(), idleMs: Math.max(0, Date.now() - P.lastInput) };
+    return { focused: !away(), idleMs: Math.max(0, Date.now() - P.lastInput), open: openNow() };
   }
   function reportPresence(force) {
     if (!S.host || typeof S.host.presence !== 'function') return null;
     const now = Date.now(),
-      body = presenceNow();
-    if (!force && body.focused === P.focused && now - P.sent < PRESENCE_MS) return null;
+      body = presenceNow(),
+      open = body.open.join('\n');
+    if (!force && body.focused === P.focused && open === P.open && now - P.sent < PRESENCE_MS) return null;
     P.focused = body.focused;
+    P.open = open;
     P.sent = now;
     const failed = () => {
       P.sent = 0; // not delivered (the page is still starting, the server restarted): the next 5 s tick sends it again
       P.focused = null;
+      P.open = null;
     };
     try {
       Promise.resolve(S.host.presence(body)).then((ok) => ok === false && failed(), failed);
@@ -534,7 +550,7 @@
     P.lastInput = Date.now();
   }
 
-  // host: {openChat(key), openInbox(), mutedProjects() -> [{key, name}], unmute(key), presence?(body)}
+  // host: {openChat(key), openInbox(), mutedProjects() -> [{key, name}], unmute(key), presence?(body), openKeys?() -> [chat keys]}
   function init(host) {
     S.host = host;
     loadPrefs();

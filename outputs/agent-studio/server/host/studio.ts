@@ -1421,12 +1421,13 @@ export class Studio {
 
   /**
    * How many chats are blocked on the person (an open request, a failed turn, a question in the last reply): the one number of
-   * the inbox (inbox-rules.js), which both tray icons show. A running sign-in job is not a chat and does not count.
+   * the inbox (inbox-rules.js), which both tray icons show. A running sign-in job is not a chat and does not count. openOnPc: the
+   * chats open in the AIB window (Presence.openOnPc), left out of the desktop's count.
    */
-  blockedChats(): number {
+  blockedChats(openOnPc: string[] = []): number {
     const open = [...this.connections.values()].filter((c) => !c.closed);
     const chats = open.map((c) => ({ provider: c.provider, sessionId: c.sessionId, attention: c.attention() }));
-    return blockedCount(chats, this.conversations.public().entries as unknown as Record<string, unknown>);
+    return blockedCount(chats, this.conversations.public().entries as unknown as Record<string, unknown>, Date.now() / 1000, openOnPc);
   }
 
   studioOwns(provider: unknown, sessionId: unknown): Promise<boolean> {
