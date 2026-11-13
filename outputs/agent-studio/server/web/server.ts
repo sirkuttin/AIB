@@ -43,6 +43,7 @@ import { type AccessOptions, PhoneAccess } from '../remote/access.ts';
 import { Presence } from '../attention/presence.ts';
 import type { DeviceStore } from '../remote/devices.ts';
 import { devicesRoutes } from './devices_routes.ts';
+import { PageAccess } from './page_access.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -156,6 +157,8 @@ function contentType(name: string): string {
 
 export interface WebContext {
   token: string;
+  /** Who may be given the token: the launch key in the page's link, or a page session made with it (page_access.ts). */
+  pageAccess: PageAccess;
   webInstanceId: string;
   port: number;
   /** The --port flag as given (bootstrap reports it as webPort, like Python: 0 when any free port was asked for). */
@@ -340,7 +343,39 @@ export class WebServer {
         return this.json(status, payload);
       });
     }
-    this.native.set('GET /api/live/bootstrap', async (c) => this.json(200, await this.bootstrap(c)));
+    this.native.set('GET /api/live/bootstrap', async (c, _url, _body, request) => {
+      const boot = await this.bootstrap(c);
+      // The token only for the page: its link's launch key or a page session (page_access.ts). Anyone else (a program on this PC,
+      // an agent's shell command) gets every other field and an empty token, so the keys stay those of the Python reference.
+      if (!c.pageAccess.allows(request.headers)) boot.token = '';
+      return this.json(200, boot);
+    });
+    this.native.set('POST /api/live/page-session', (c, _url, body) => {
+      const session = c.pageAccess.pair(body?.key, body?.session);
+      return session ? this.json(200, { session }) : this.json(403, { error: 'This link is not for this AIB', code: 'bad_page_key' });
+    });
+    // `aib deploy` waits for idle without the token: per chat only its agent, folder and state (no names, no messages), and after a
+    // restart the chats to reconnect (agent and folder).
+    this.native.set('GET /api/live/idle', async (c) => {
+      const listing = await c.host.liveList() as Record<string, unknown>;
+      const rows = (name: string) =>
+        (Array.isArray(listing[name]) ? listing[name] as unknown[] : []).filter((x): x is Record<string, unknown> =>
+          !!x && typeof x === 'object'
+        );
+      const connections = rows('connections').map((x) => ({
+        provider: x.provider ?? null,
+        cwd: x.cwd ?? null,
+        closed: !!x.closed,
+        busy: !!x.busy,
+        ready: x.ready ?? true,
+        attention: {
+          state: (x.attention && typeof x.attention === 'object' ? (x.attention as Record<string, unknown>).state : null) ?? null,
+        },
+      }));
+      // what deploy reports after a restart: the chats it will reconnect (agent and folder only), and whether it does so by itself
+      const recovered = rows('recovered').map((x) => ({ provider: x.provider ?? null, cwd: x.cwd ?? null }));
+      return this.json(200, { connections, recovered, autoReconnect: !!listing.autoReconnect });
+    });
   }
 
   /**
@@ -585,10 +620,13 @@ export function makeContext(
     phone?: AccessOptions;
     /** The OS backend for keep-awake (tests: a recording one, or null); default: the real one for this OS (none in a test run). */
     keepAwakeBackend?: Backend | null;
+    /** The launch key (page_access.ts): main.ts passes AIB_PAGE_KEY when a launcher set it; default: a new random one. */
+    pageKey?: string | null;
   },
 ): WebContext {
   const ctx: WebContext = {
     token: newToken(),
+    pageAccess: new PageAccess(options.stateDir, options.pageKey ?? null),
     webInstanceId: options.webInstanceId,
     port: 0,
     cliPort: options.cliPort,

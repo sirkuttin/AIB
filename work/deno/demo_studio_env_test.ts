@@ -29,7 +29,7 @@ def fake_popen(command, *args, **kwargs):
 start.subprocess.Popen = fake_popen
 start.port_busy = lambda port: False
 start.wait_ready = lambda port, process, timeout: True
-start.publish_artifact = lambda port, session: True
+start.publish_artifact = lambda port, session, demo: True
 start.stop_studio = lambda port, folder: []
 start.deno_executable = lambda: 'deno'
 code = start.start(start.parse_args(['--port', sys.argv[2], '--dir', sys.argv[1]]))

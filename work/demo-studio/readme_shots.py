@@ -238,9 +238,10 @@ def command(port, demo_root):
 
 
 class Api:
-    def __init__(self, port):
+    def __init__(self, port, demo_root):
         self.base = f'http://127.0.0.1:{port}'
-        self.token = json.loads(demo.http(self.base + '/api/live/bootstrap')[1])['token']
+        headers = {'X-AIB-Page-Key': demo.page_key(demo_root)}   # bootstrap gives the token only with the launch key
+        self.token = json.loads(demo.http(self.base + '/api/live/bootstrap', headers=headers)[1])['token']
 
     def post(self, name, body):
         status, data = demo.http(self.base + '/api/live/' + name, body, {'X-Studio-Token': self.token, 'Origin': self.base}, timeout=60)
@@ -296,7 +297,7 @@ REVENUE_V2 = (REVENUE_V1.replace('<b>$1,904</b>', '<b>$2,417</b>').replace('<b>$
 
 
 def stage(port, demo_root):
-    api = Api(port)
+    api = Api(port, demo_root)
     chats = json.loads((demo_root / 'chats.json').read_text(encoding='utf-8'))
     store, billing = demo_root / 'code' / 'storefront', demo_root / 'code' / 'billing-api'
     api.post('settings', {'agents': {'enabled': {'opencode': True, 'omp': False}}})
@@ -375,7 +376,7 @@ def main(argv=None):
         return 1
     if not options.no_stage:
         print(json.dumps(stage(options.port, demo_root)))
-    print(f'Studio: http://127.0.0.1:{options.port}/chat.html')
+    print(f'Studio: {demo.page_link(options.port, demo_root)}')
     print(f'PID: {process.pid}')
     print(f'Data: {demo_root}')
     return 0

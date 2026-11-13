@@ -47,7 +47,7 @@
     async function call(method, path, body) {
       for (let attempt = 0; attempt < 2; attempt++) {
         if (!token || attempt) {
-          const r = await win.fetch('/api/live/bootstrap');
+          const r = await win.fetch('/api/live/bootstrap', win.AIBPageAuth ? win.AIBPageAuth.init() : undefined);
           token = (await r.json()).token || '';
         }
         const r = await win.fetch(path, {

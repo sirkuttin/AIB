@@ -27,6 +27,9 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
 LISTENED = re.compile(r'AIB: http://127\.0\.0\.1:(\d+)')
+# The page's launch key (AIB_PAGE_KEY), inherited by every server the tests start: bootstrap hands out the page token only to a
+# caller with it (server/web/page_access.ts), as it does to the app's own window.
+PAGE_KEY = os.environ.setdefault('AIB_PAGE_KEY', 'test-page-key-' + os.urandom(16).hex())
 
 
 def listened_port(text):
@@ -43,6 +46,8 @@ def http_json(method, port, path, token=None, body=None, timeout=30):
         request.add_header('Content-Type', 'application/json')
     if token:
         request.add_header('X-Studio-Token', token)
+    if path.split('?')[0] == '/api/live/bootstrap':
+        request.add_header('X-AIB-Page-Key', PAGE_KEY)
     if method != 'GET':
         request.add_header('Origin', f'http://127.0.0.1:{port}')   # a page POST must name its Origin
     try:

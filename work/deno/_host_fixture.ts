@@ -4,6 +4,7 @@
  * is stopped in cleanup: hosts are asked to stop, then killed by the exact PID their own host file reported, as a last resort.
  */
 import { python, WORK } from './_parity.ts';
+import { PAGE_KEY } from './_page_key.ts';
 import { HostClient, pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
 import { refusedPort, waitListenedPort } from './_ports.ts';
@@ -28,6 +29,10 @@ export const PY: string = (() => {
 
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 
+/** The page's launch key every server a fixture starts is given (AIB_PAGE_KEY): bootstrap hands out the token only with it
+ * (web/page_access.ts), as it does to the app's own window. */
+export { PAGE_KEY };
+
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type Json = Record<string, unknown>;
@@ -43,6 +48,7 @@ export async function httpJson(
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers['X-Studio-Token'] = token;
+  if (path.split('?')[0] === '/api/live/bootstrap') headers['X-AIB-Page-Key'] = PAGE_KEY;
   if (method !== 'GET') headers['Origin'] = `http://127.0.0.1:${port}`; // a page POST must name its Origin
   const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     method,
@@ -152,7 +158,7 @@ export class Fixture {
 
   /** AIB_KEEPER=0: this fixture tests the split agent host (the fallback when the keeper cannot run); keeper tests drop it. */
   get env(): Record<string, string> {
-    return { AGENT_STUDIO_TEST: '1', AGENT_STUDIO_STATE_DIR: this.state, AIB_KEEPER: '0' };
+    return { AGENT_STUDIO_TEST: '1', AGENT_STUDIO_STATE_DIR: this.state, AIB_KEEPER: '0', AIB_PAGE_KEY: PAGE_KEY };
   }
 
   agentFlags(): string[] {

@@ -150,7 +150,8 @@
     };
     async function getToken(fresh) {
       if (token && !fresh) return token;
-      const r = await doFetch('/api/live/bootstrap', { cache: 'no-store' });
+      const auth = win && win.AIBPageAuth;
+      const r = await doFetch('/api/live/bootstrap', auth ? auth.init({ cache: 'no-store' }) : { cache: 'no-store' });
       if (!r.ok) throw new Error('bootstrap ' + r.status);
       token = (await r.json()).token || '';
       return token;

@@ -79,6 +79,9 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
  *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
  *   POST /api/live/chat-name                  rename one chat (or clear its name): per key, so a phone's rename of another chat stays
+ *   POST /api/live/page-session               the page trades the launch key (its link's #aib-key) for a lasting page session
+ *                                             (page_access.ts); bootstrap gives the token only to the key or a session
+ *   GET  /api/live/idle                       which chats are working, without the token (`aib deploy` waits for idle with it)
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
@@ -151,6 +154,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/steer', 'write', 'body'],
   ['POST', '/api/live/tool-stop', 'write', 'body'],
   ['POST', '/api/live/chat-name', 'write', 'body'],
+  ['POST', '/api/live/page-session', 'pair', 'body'], // the launch key for a page session (page_access.ts)
+  ['GET', '/api/live/idle', 'bootstrap', 'get'], // working / waiting chats for `aib deploy`, no token
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

@@ -708,10 +708,15 @@
     return error;
   }
   // Every /api/ GET except bootstrap carries the page token. A 403 means the token is stale (Studio restarted): fetch a fresh one and retry once; a GET is safe to repeat.
+  // Bootstrap carries the page's own proof instead (page-auth.js: its link's launch key, or the page session made with it); without
+  // it AIB answers with an empty token.
+  const pageAuth = () => (window.AIBPageAuth ? window.AIBPageAuth.headers() : {});
+  const NOT_CONNECTED =
+    'This browser is not connected to AIB yet. Open AIB from its app window, or start it with --open (or use the link it prints in its console) once; after that this browser stays connected.';
   async function get(path, params = {}) {
     const open = path === '/api/live/bootstrap',
       url = path + '?' + new URLSearchParams(params),
-      send = () => request(url, open ? {} : { headers: { 'X-Studio-Token': token } }, 15000);
+      send = () => request(url, { headers: open ? pageAuth() : { 'X-Studio-Token': token } }, 15000);
     if (!open && !token) await refreshToken();
     let response = await send();
     if (response.status === 403 && !open) {
@@ -727,9 +732,10 @@
   }
   window.AgentStudioGet = get;
   async function refreshToken() {
-    const response = await request('/api/live/bootstrap', {}, 15000);
+    const response = await request('/api/live/bootstrap', { headers: pageAuth() }, 15000);
     if (!response.ok) throw responseError(response);
     token = response.body.token;
+    if (!token) throw Error(NOT_CONNECTED);
     if (response.body.instanceId) instanceId = response.body.instanceId;
     showStudioNotice(response.body);
   }
@@ -3808,6 +3814,7 @@
     try {
       const bootstrap = await get('/api/live/bootstrap');
       token = bootstrap.token;
+      if (!token) throw Error(NOT_CONNECTED);
       imageFeatureEnabled = !!bootstrap.features?.imageAttachments;
       window.AttachmentsUI?.setFeatures(bootstrap.features);
       instanceId = bootstrap.instanceId || '';
