@@ -1056,6 +1056,39 @@
       if (ta && ta.focus) ta.focus();
     }
   }
+  // Retry on a Failed row: your last message again (text only), by the quick-reply route; the row goes once it is sent.
+  async function retryQuick(key) {
+    const s = qs(key),
+      c = convOf(key);
+    if (s.busy) return;
+    if (!c || !host.retryLast) {
+      s.error = 'This chat is not available. Use Open chat.';
+      drawInbox();
+      return;
+    }
+    const keys = rowKeys();
+    s.busy = true;
+    s.error = '';
+    drawInbox();
+    try {
+      const res = await host.retryLast(c);
+      if (res && res.attachments && host.notice) host.notice('Sent your last message again, without its attachments.');
+      quick.delete(key);
+      drawInbox();
+      focusNeighbour(keys, key);
+    } catch (e) {
+      s.busy = false;
+      s.error = (e && e.message) || 'The message could not be sent.';
+      drawInbox();
+    }
+  }
+  // Continue with another agent on a Failed row: the chat's hand-over (its own dialog asks before anything is sent).
+  function handoffQuick(key) {
+    const c = convOf(key);
+    if (!c || !host.handoff) return;
+    toggleInbox(false);
+    Promise.resolve(host.handoff(c)).catch(() => {});
+  }
   async function answerQuick(key, item, b) {
     const s = qs(key);
     if (s.busy || !item || !item.liveId || !host.postJson) return;
@@ -1363,6 +1396,24 @@
           startReply(r.key);
         };
         acts.append(rb);
+        if (act.retry) {
+          const rt = actBtn(s.busy ? 'Sending…' : 'Retry', 'ws-qa-retry primary', 'Send your last message again (text only; attachments are not resent)');
+          rt.disabled = s.busy;
+          rt.onclick = (e) => {
+            if (e && e.stopPropagation) e.stopPropagation();
+            retryQuick(r.key);
+          };
+          acts.append(rt);
+          if (host && host.handoff) {
+            const ho = actBtn('Continue with another agent…', 'ws-qa-handoff', 'Hand this chat over to another agent (asks first)');
+            ho.disabled = s.busy;
+            ho.onclick = (e) => {
+              if (e && e.stopPropagation) e.stopPropagation();
+              handoffQuick(r.key);
+            };
+            acts.append(ho);
+          }
+        }
         if (act.handled) acts.append(markBtn('Mark handled'));
       } else if (act.buttons.length) {
         const bx = el('div', null, 'ws-qa-buttons');

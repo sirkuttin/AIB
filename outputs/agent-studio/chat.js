@@ -3605,6 +3605,25 @@
     }
     return { queued: route === 'queue', steered: route === 'steer' };
   }
+  // Retry from the inbox's Failed row: your last message to the chat, sent again as a new message (a new clientMessageId) by the
+  // quick-reply route. Text only: attachments are not sent again (the row says so).
+  async function retryLast(c) {
+    const id = c && c.live && !c.live.closed ? c.live.id : '';
+    if (!id) throw Error('This chat is not running. Use Open chat.');
+    let events = [];
+    try {
+      const top = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
+      const cursor = Math.max(0, Math.trunc(Number(top && top.cursor) || 0));
+      events = (await get('/api/live/state', { id, after: Math.max(1, cursor - 400) }))?.events || [];
+      if (!events.some((e) => e && e.kind === 'user') && cursor > 400) events = (await get('/api/live/state', { id, after: 1 }))?.events || [];
+    } catch {
+      throw Error('Your last message could not be read. Use Open chat.');
+    }
+    const last = window.AgentInboxReply ? window.AgentInboxReply.lastUserText(events, c.live.sessionId) : { text: '' };
+    if (!last.text) throw Error('There is no message of yours to send again. Use Open chat.');
+    const res = await quickPrompt(c, last.text);
+    return { ...res, attachments: !!last.attachments };
+  }
   async function reloadAfterAnswer() {
     try {
       await listConversations();
@@ -4525,6 +4544,8 @@
     getJson: get,
     postJson: post,
     quickPrompt,
+    retryLast,
+    handoff: (c) => handoffFor(c),
     reload: reloadAfterAnswer,
     conversations: () => conversations,
     getSelected: () => selected,
