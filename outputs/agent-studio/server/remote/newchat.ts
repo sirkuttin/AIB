@@ -11,7 +11,9 @@
  *            project's default agent set to the one used (as the PC does after a new chat; which clears the old agent's model and
  *            mode, settings.ts). The picks are for this chat only: no other default changes. Refused before anything starts: an
  *            agent that cannot start a chat, an unknown project, a message a phone may not send (the same checks as a phone
- *            message: text only, no "/" commands, at most MAX_TEXT), and a model or mode that is not on the agent's list. One
+ *            message: no "/" commands, at most MAX_TEXT, pictures and files as bytes within the PC's limits), and a model or mode
+ *            that is not on the agent's list. Whether the agent takes pictures or binary files is known once it opens: else the
+ *            first message is held with the reason (its text and files stay on the phone). One
  *            start per phone and clientMessageId: the phone keeps the id across retries, and a Start sent again (its answer was
  *            lost) gets the chat the first one started. A list's `default` is a saved default only ('' = none: the phone sends no
  *            pick, and the chat starts with the agent's own setting, `current`). Errors to the phone are fixed words: the agent
@@ -31,7 +33,7 @@ import { folderKey } from '../state/agent_options.ts';
 import { type Eligible, eligibleAgents, reasonWords } from '../agents/eligibility.ts';
 import { projectId, projectsFor } from './projects.ts';
 import { projectKey } from '../desktop/project_delete.ts';
-import { MAX_TEXT, Refusal, REFUSALS } from './actions.ts';
+import { agentLabel, MAX_TEXT, phoneAttachments, Refusal, REFUSALS, takesOf } from './actions.ts';
 import { getLogger } from '../core/log.ts';
 
 /** Phone-side failures go to studio.log (console output only reaches stderr, which the desktop app does not keep). */
@@ -205,6 +207,8 @@ interface Job {
   allowed: () => boolean;
   text: string;
   clientMessageId: string;
+  /** the first message's pictures and files (checked bytes; dropped once it is sent) */
+  attachments: Json[];
   state: JobState;
   error: string;
   warning: string;
@@ -214,17 +218,18 @@ interface Job {
 }
 
 /** What the phone sends to start a chat; anything else is refused. */
-export const NEW_FIELDS = new Set(['project', 'agent', 'model', 'mode', 'text', 'clientMessageId']);
+export const NEW_FIELDS = new Set(['project', 'agent', 'model', 'mode', 'text', 'clientMessageId', 'attachments']);
 
-/** The first message's checks (the same as a phone message, remote/actions.ts). */
-export function firstText(body: Json): { text: string; clientMessageId: string } {
-  const value = body.text;
-  if (typeof value !== 'string' || !value.trim()) throw REFUSALS.empty();
+/** The first message's checks (the same as a phone message, remote/actions.ts; what the agent can take is checked once it opens). */
+export function firstText(body: Json): { text: string; clientMessageId: string; attachments: Json[] } {
+  const attachments = phoneAttachments(body, null);
+  const value = body.text ?? (attachments.length ? '' : undefined);
+  if (typeof value !== 'string' || (!value.trim() && !attachments.length)) throw REFUSALS.empty();
   if (value.length > MAX_TEXT) throw REFUSALS.tooLong();
   if (value.trimStart().startsWith('/')) throw REFUSALS.command();
   const mid = body.clientMessageId;
   if (typeof mid !== 'string' || !mid || mid.length > 128) throw REFUSALS.bad();
-  return { text: value, clientMessageId: mid };
+  return { text: value, clientMessageId: mid, attachments };
 }
 
 /** What a phone sees when a chat could not be started (the agent host's own words, which can name folders on the PC, are logged
@@ -294,7 +299,7 @@ export class NewChats {
     ctx: WebContext,
     device: string,
     body: Json,
-    first: { text: string; clientMessageId: string },
+    first: { text: string; clientMessageId: string; attachments: Json[] },
     allowed: () => boolean,
   ): Promise<{ id: string; agent: string; existing: boolean }> {
     const folder = folderOfProject(ctx, body.project);
@@ -355,6 +360,7 @@ export class NewChats {
       allowed,
       text: first.text,
       clientMessageId: first.clientMessageId,
+      attachments: first.attachments,
       state: 'opening',
       error: '',
       warning: '',
@@ -405,6 +411,16 @@ export class NewChats {
           job.warning = `Could not apply ${others.map((r) => `${r.kind === 'model' ? 'the model' : r.kind} ${said(r)}`).join(' · ')}. ` +
             'The chat started with the agent default.';
         }
+        if (job.attachments.length) {
+          try {
+            phoneAttachments({ attachments: job.attachments }, takesOf(state), agentLabel(state.provider));
+          } catch (error) {
+            if (!(error instanceof Refusal)) throw error;
+            job.state = 'held';
+            job.error = `${error.message} Your message was not sent: it is in the box below.`;
+            return;
+          }
+        }
         if (!job.allowed()) {
           job.state = 'failed';
           job.error = 'Starting chats from this phone was turned off on your PC while this one opened. Your message was not sent; ' +
@@ -421,16 +437,29 @@ export class NewChats {
   }
 
   /** Send the job's first message (again). */
-  async send(ctx: WebContext, job: Job, text = job.text, clientMessageId = job.clientMessageId): Promise<[number, Json]> {
-    const [status, payload] = await ctx.host.liveCall('prompt', { id: job.id, text, clientMessageId });
+  async send(
+    ctx: WebContext,
+    job: Job,
+    text = job.text,
+    clientMessageId = job.clientMessageId,
+    attachments = job.attachments,
+  ): Promise<[number, Json]> {
+    const [status, payload] = await ctx.host.liveCall('prompt', {
+      id: job.id,
+      text,
+      clientMessageId,
+      ...(attachments.length ? { attachments } : {}),
+    });
     const answer = obj(payload);
     if (status === 200) {
       job.state = 'sent';
       job.error = '';
       job.text = '';
+      job.attachments = [];
     } else {
       job.state = 'failed';
       job.text = text;
+      job.attachments = attachments;
       job.clientMessageId = clientMessageId;
       if (str(answer.error, 400)) plog.error('%s', `A phone's first message was not sent (${status}): ${str(answer.error, 400)}`);
       job.error = 'Your first message was not sent. It is in the box below: send it again.';
