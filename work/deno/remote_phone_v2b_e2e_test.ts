@@ -238,10 +238,10 @@ Deno.test({
       await page.waitFor('document.documentElement.dataset.theme === "teal-light"', 5000, 'teal light');
       await page.click('#phPhoneMenu');
       await page.click('#phMenu [data-mi="theme"]');
-      await page.waitFor('!!document.querySelector(\'#phMenu [data-theme="nord"]\')', 5000, 'theme list');
-      assertEquals(await page.eval('document.querySelector(\'#phMenu [aria-checked="true"]\').dataset.theme'), 'follow');
+      await page.waitFor('!!document.querySelector(\'#phMenu [data-pick="nord"]\')', 5000, 'theme list');
+      assertEquals(await page.eval('document.querySelector(\'#phMenu [aria-checked="true"]\').dataset.pick'), 'follow');
       await noSideways(page, 'theme list');
-      await page.click('#phMenu [data-theme="nord"]');
+      await page.click('#phMenu [data-pick="nord"]');
       await page.waitFor('document.documentElement.dataset.theme === "nord"', 5000, 'nord');
       assertEquals(await page.eval('localStorage.getItem("aib-phone-theme")'), 'nord');
       // the PC changes theme: a phone that follows the PC shows it on the next poll

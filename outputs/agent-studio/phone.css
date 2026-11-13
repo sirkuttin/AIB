@@ -59,7 +59,7 @@ button {
 .ph-tt {
   flex: 1;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 0 8px;
 }
 .ph-head h1 {
   margin: 0;
@@ -82,11 +82,22 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* the words after the project name ("· Claude Code ·") give way first: they shrink 100 times faster than the name */
+.ph-pname + .ph-pw {
+  margin-left: -2px; /* "shop · Claude Code": a word space, not a flex gap, between the name and its " ·" */
+}
+.ph-pw {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .ph-subs-go {
   display: flex;
   align-items: center;
   min-height: 44px;
-  margin: -10px 0 -10px;
+  margin: -10px 0 -12px;
   padding: 0;
   border: 0;
   background: none;
@@ -169,7 +180,7 @@ button {
   background: var(--hd-need);
 }
 .ph-dot.work {
-  background: var(--accent);
+  background: var(--hd-work);
   animation: ph-pulse 1.4s ease-in-out infinite;
 }
 .ph-dot.turn {
@@ -189,7 +200,7 @@ button {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid var(--accent);
+  border: 2px solid var(--hd-work);
   border-right-color: transparent;
   animation: ph-rot 0.9s linear infinite;
 }
@@ -215,7 +226,10 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 10px 0 2px;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: 6px calc(16px + env(safe-area-inset-right)) 6px calc(16px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
 }
 .ph-fb {
   display: inline-flex;
@@ -226,7 +240,7 @@ button {
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   font-size: 15px;
   font-weight: 600;
 }
@@ -239,7 +253,7 @@ button {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--card-bg);
+  background: var(--panel-2);
 }
 .ph-flist button {
   display: flex;
@@ -275,7 +289,7 @@ button {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   text-align: left;
 }
 .ph-card > span {
@@ -368,7 +382,7 @@ button {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   color: var(--text);
   font-size: 16px;
 }
@@ -423,7 +437,7 @@ button {
   margin: 8px 0;
   padding: 14px;
   border-radius: 12px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   border: 1px solid var(--line);
   font-size: 24px;
   font-weight: 700;
@@ -552,7 +566,7 @@ button {
 .ph-subs {
   margin: 8px 0;
   border-radius: 12px;
-  background: var(--bg-inset);
+  background: var(--hover);
 }
 .ph-fold {
   display: flex;
@@ -592,7 +606,7 @@ button {
   margin: 0;
   padding: 0 8px 8px;
 }
-.ph-sub {
+.ph-subrow {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -630,7 +644,7 @@ button {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   text-align: left;
 }
 .ph-art-icon {
@@ -664,7 +678,7 @@ button {
   align-items: center;
   gap: 10px;
   margin: 12px 0 4px;
-  color: var(--accent);
+  color: var(--hd-work);
   font-size: 14px;
 }
 .ph-pconly {
@@ -687,7 +701,7 @@ button {
   background: var(--chip-needs-bg);
 }
 .ph-req.open {
-  background: var(--card-bg);
+  background: var(--panel-2);
 }
 .ph-req.flash {
   animation: ph-flash 1.2s ease-out 2;
@@ -783,7 +797,7 @@ button {
   margin: 0;
 }
 .ph-btn.deny {
-  background: var(--card-bg);
+  background: var(--panel-2);
   border-color: var(--line);
   color: var(--text);
 }
@@ -803,7 +817,7 @@ button {
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   text-align: left;
 }
 .ph-opt.on {
@@ -818,7 +832,7 @@ button {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   color: var(--text);
   font-size: 16px;
   resize: none;
@@ -867,7 +881,7 @@ button {
   margin-bottom: 8px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--card-bg);
+  background: var(--panel-2);
 }
 .ph-qh {
   display: flex;
@@ -944,7 +958,7 @@ button {
   font-size: 20px;
 }
 .ph-stop {
-  background: var(--bg-inset);
+  background: var(--hover);
   color: var(--text);
   font-size: 14px;
 }
@@ -984,7 +998,7 @@ button {
   padding: 16px;
   border-radius: 16px;
   border: 1px solid var(--hd-need);
-  background: var(--card-bg);
+  background: var(--panel-2);
 }
 .ph-offline h2 {
   margin: 0 0 6px;
@@ -1010,7 +1024,7 @@ button {
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: var(--card-bg);
+  background: var(--panel-2);
   font-size: 14px;
 }
 .ph-setup-bar span {
@@ -1027,7 +1041,7 @@ button {
   padding: 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: var(--card-bg);
+  background: var(--panel-2);
 }
 .ph-step h2 {
   margin: 0 0 4px;
@@ -1207,27 +1221,35 @@ html.ph-viewing body {
   position: absolute;
   top: 4px;
   right: 2px;
-  min-width: 16px;
+  min-width: 18px;
+  height: 18px;
   padding: 0 4px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--on-accent);
+  border-radius: 9px;
+  background: var(--hover);
+  color: var(--muted);
   font-size: 11px;
-  line-height: 16px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
+/* + New chat: pinned to the bottom-right corner of the screen (also on a short or empty list), above the home bar. */
 .ph-fab {
-  position: sticky;
-  bottom: calc(12px + env(safe-area-inset-bottom));
-  display: block;
-  margin: 16px 0 0 auto;
-  min-height: 48px;
+  position: fixed;
+  right: max(calc(16px + env(safe-area-inset-right)), calc((100vw - 640px) / 2 + 16px));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 4;
+  min-height: 56px;
   padding: 0 20px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 18px;
   background: var(--accent);
   color: var(--on-accent);
-  font-weight: 650;
-  box-shadow: 0 4px 16px var(--shadow-med);
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-ink) 30%, transparent);
+}
+.ph-home:has(~ .ph-fab) {
+  padding-bottom: calc(88px + env(safe-area-inset-bottom));
 }
 .ph-startoff {
   margin: 16px 0 0;
@@ -1245,56 +1267,69 @@ html.ph-viewing body {
 .ph-shade {
   position: absolute;
   inset: 0;
+  width: 100%;
+  padding: 0;
   border: 0;
-  background: var(--backdrop);
+  background: color-mix(in srgb, var(--shadow-ink) 50%, transparent);
 }
 .ph-menu {
   position: relative;
   max-height: 85vh;
   overflow: auto;
-  padding: 6px calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
-  border-radius: 18px 18px 0 0;
-  background: var(--bg);
-  border-top: 1px solid var(--line);
+  padding: 6px calc(8px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
+  border-radius: 22px 22px 0 0;
+  background: var(--panel);
+  box-shadow: 0 -8px 30px color-mix(in srgb, var(--shadow-ink) 30%, transparent);
   overflow-wrap: anywhere;
 }
 .ph-grab {
-  width: 40px;
-  height: 4px;
-  margin: 4px auto 8px;
-  border-radius: 2px;
-  background: var(--line);
+  width: 36px;
+  height: 5px;
+  margin: 4px auto 6px;
+  border-radius: 3px;
+  background: var(--line-strong);
 }
 .ph-mh {
-  padding: 4px 4px 10px;
+  margin-bottom: 4px;
+  padding: 4px 12px 10px;
   border-bottom: 1px solid var(--line);
 }
 .ph-mh b {
   display: block;
+  font-size: 16px;
 }
 .ph-mh > span {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
   font-size: 13px;
 }
 .ph-mi {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  min-height: 48px;
-  padding: 8px 4px;
+  min-height: 52px;
+  padding: 0 12px;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-radius: 12px;
   background: none;
+  color: var(--text);
+  font-size: 16px;
   text-align: left;
 }
-.ph-mi.danger {
-  color: var(--danger-text);
+.ph-mi.danger,
+.ph-mi.danger .ph-mic {
+  color: var(--danger-bright);
+}
+.ph-mi:disabled {
+  opacity: 0.45;
 }
 .ph-mic {
   flex: none;
-  width: 24px;
+  width: 22px;
+  color: var(--muted);
   text-align: center;
 }
 .ph-mlabel {
@@ -1302,6 +1337,7 @@ html.ph-viewing body {
   min-width: 0;
 }
 .ph-mi small {
+  margin-left: auto;
   color: var(--muted);
   font-size: 13px;
 }
@@ -1319,7 +1355,9 @@ html.ph-viewing body {
 }
 .ph-mtext {
   display: block;
-  margin: 10px 4px;
+  margin: 0;
+  padding: 4px 12px 8px;
+  font-size: 15px;
 }
 .ph-mbtns .ph-btn {
   margin-top: 8px;
@@ -1336,7 +1374,7 @@ html.ph-viewing body {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   font-size: 16px;
 }
 .ph-btn.danger {
@@ -1347,7 +1385,8 @@ html.ph-viewing body {
 .ph-toast:has(.ph-toast-undo) {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  padding: 2px 6px 2px 16px;
   border-radius: 14px;
 }
 .ph-toast:has(.ph-toast-undo)[hidden] {
@@ -1360,7 +1399,8 @@ html.ph-viewing body {
 }
 .ph-toast-undo {
   flex: none;
-  min-height: 36px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 0 10px;
   border: 0;
   border-radius: 8px;
@@ -1370,10 +1410,12 @@ html.ph-viewing body {
   text-decoration: underline;
 }
 .ph-ncs {
-  margin: 18px 4px 6px;
+  margin: 16px 0 6px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .ph-pick,
 .ph-chosen {
@@ -1382,15 +1424,22 @@ html.ph-viewing body {
   gap: 12px;
   width: 100%;
   min-height: 56px;
-  margin: 6px 0 0;
-  padding: 10px 14px;
+  margin: 0 0 6px;
+  padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   text-align: left;
+}
+.ph-chosen {
+  gap: 10px;
+  min-height: 52px;
+  margin: 0;
+  padding: 4px 4px 4px 14px;
 }
 .ph-pick[aria-pressed='true'] {
   border-color: var(--accent);
+  background: var(--accent-wash);
 }
 .ph-pick:disabled {
   opacity: 0.55;
@@ -1414,45 +1463,60 @@ html.ph-viewing body {
   flex-basis: 12px;
 }
 .ph-tag {
-  margin-left: 6px;
-  padding: 0 6px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--hover);
   color: var(--muted);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
 }
 .ph-mark {
   color: var(--accent);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
   white-space: nowrap;
 }
 .ph-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 .ph-pill {
   min-height: 44px;
-  padding: 6px 14px;
+  padding: 0 14px;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--card-bg);
+  border-radius: 12px;
+  background: var(--panel-2);
+  font-size: 15px;
 }
 .ph-pill[aria-pressed='true'] {
   border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--accent-wash);
+  font-weight: 650;
 }
 .ph-pill small {
-  margin-left: 6px;
-  opacity: 0.75;
-  font-size: 11px;
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
 }
 .ph-defs {
-  margin: 12px 4px 0;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--hover);
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
+}
+.ph-defs b {
+  color: var(--text);
+}
+.ph-newbottom .ph-input {
+  padding: 10px 14px;
+  border-radius: 22px;
+  line-height: 1.4;
 }
 .ph-newbottom .ph-ncs {
   margin: 2px 4px 6px;
@@ -1480,7 +1544,7 @@ html.ph-viewing body {
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--card-bg);
+  background: var(--panel-2);
   font-weight: 600;
 }
 .ph-vchip.plain {
@@ -1489,8 +1553,8 @@ html.ph-viewing body {
   color: var(--muted);
 }
 .ph-vdrop {
-  padding: 4px calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
-  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-strong);
   max-height: 50vh;
   overflow: auto;
 }
@@ -1498,12 +1562,15 @@ html.ph-viewing body {
   display: flex;
   gap: 12px;
   width: 100%;
-  min-height: 48px;
-  padding: 8px 4px;
+  min-height: 56px;
+  padding: 8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
   border: 0;
   border-bottom: 1px solid var(--line);
   background: none;
   text-align: left;
+}
+.ph-vopt[aria-selected='true'] {
+  background: var(--accent-wash);
 }
 .ph-vopt[aria-selected='true'] .ph-vn {
   color: var(--accent);
@@ -1525,12 +1592,29 @@ html.ph-viewing body {
   color: var(--text);
 }
 .ph-vold {
-  padding: 8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px calc(16px + env(safe-area-inset-right)) 2px calc(16px + env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
+  background: var(--chip-working-bg);
   font-size: 14px;
 }
+.ph-pcmsg {
+  padding: 40px 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.ph-pcmsg b {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 18px;
+}
 .ph-vswitch {
-  min-height: 36px;
+  min-width: 44px;
+  min-height: 44px;
   border: 0;
   background: none;
   color: var(--accent);
