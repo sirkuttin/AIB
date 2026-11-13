@@ -678,11 +678,20 @@
   // chat-list button and the inbox sit on the first pane's strip.
   function drawStrip() {
     if (!strip) return;
+    const U = root.AibUpdates;
     if (splitOn()) {
-      for (const pane of S().panes()) if (pane.strip) drawStripInto(pane.strip, pane);
+      const strips = [];
+      for (const pane of S().panes())
+        if (pane.strip) {
+          drawStripInto(pane.strip, pane);
+          strips.push(pane.strip);
+        }
+      // The Update button (updates-ui.js) sits at the right end of the strip at the window's top right.
+      if (U && U.place) U.place(strips);
       return;
     }
     drawStripInto(strip, null);
+    if (U && U.attach) U.attach(strip);
   }
   function drawStripInto(node, pane) {
     const pk = activeProjectKey(),

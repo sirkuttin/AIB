@@ -207,6 +207,50 @@ export function posixNotify(os: string, run: Runner = runHidden): OsNotify | nul
   };
 }
 
+// ---------- the person's setting, read on the server ----------
+
+/** The page's localStorage key for the desktop app's notification choices (notify-ui.js APP_PREF_KEY, synced by view-prefs.js). */
+export const APP_PREF_KEY = 'studio-notifications-app';
+
+/**
+ * The "Desktop notifications" setting as the desktop app's page saved it (the data folder's view preferences): on unless the saved
+ * choices say `desktop: false` (notify-ui.js cleanPrefs: the app's default is on).
+ */
+export function desktopNotificationsOn(prefs: Record<string, unknown>): boolean {
+  const raw = prefs[APP_PREF_KEY];
+  if (typeof raw !== 'string') return true;
+  try {
+    const v = JSON.parse(raw);
+    return !(isDict(v) && v.desktop === false);
+  } catch {
+    return true;
+  }
+}
+
+/** The one notification an update that became ready sends (update ready, per version; updater.ts onReady). */
+export function updateReadyRequest(_version: string): NotifyRequest {
+  return { title: 'AIB update ready', body: 'Click Update in the AIB window to install.', target: null, test: false };
+}
+
+/**
+ * Sends the "AIB update ready" notification when the setting is on. Never throws; resolves true when it was shown. The server sends
+ * it (not the page), so it also comes while the window is closed to the tray.
+ */
+export async function notifyUpdateReady(
+  notifications: Pick<DesktopNotifications, 'show'> | null,
+  prefs: Record<string, unknown>,
+  version: string,
+): Promise<boolean> {
+  if (!notifications || !desktopNotificationsOn(prefs)) return false;
+  try {
+    const result = await notifications.show(updateReadyRequest(version));
+    log.info('notifications: update %s ready: %s', version, result.shown ? 'shown' : `not shown (${result.reason})`);
+    return result.shown;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- what the route talks to ----------
 
 /** The route's side: rate limit, remember what a click opens, show. Clicks call `open` with the last notification's target. */

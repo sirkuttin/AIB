@@ -356,7 +356,7 @@ body:not(.sf-files-mode) #filesPane {
 /* ---- the file view: replaces the chat in the middle while a file tab is on ---- */
 /* The page's error line and notices stay: an error raised while a file shows must not be silent. They sit under the tabs, above
    the file (the file view is moved after them). A doc tab's frame (#docView) shows like the file view. */
-body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#docView):not(#fileBeside):not(#error):not(#updateBanner):not(#studioNotice) {
+body.sf-file-on main > :not(#chatTabs):not(#fileView):not(#docView):not(#fileBeside):not(#error):not(#studioNotice) {
   display: none !important;
 }
 body.sf-file-on main > #fileView {
@@ -512,6 +512,36 @@ body.sf-file-on main > #fileView {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* "What's new in AIB <version>" (files-ui.js renderNotes): release notes, newest first, one section per release. */
+.sf-fv-body.sf-notes {
+  display: block;
+  overflow: auto;
+  padding: 8px 24px 24px;
+}
+.sf-note-rel {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 14px 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+.sf-note-rel:last-child {
+  border-bottom: 0;
+}
+.sf-note-ver {
+  margin: 0;
+  font-size: 18px;
+  line-height: 26px;
+  color: var(--text-bright);
+}
+.sf-note-meta {
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sf-note-body {
+  font-size: 14px;
+  line-height: 1.55;
 }
 .fx-code {
   flex: 1 1 auto;
