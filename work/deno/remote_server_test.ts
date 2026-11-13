@@ -10,6 +10,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
+import { addHandler, removeHandler, rootState, setLevel, WARNING } from '../../outputs/agent-studio/server/core/log.ts';
 import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
 import { HOME_BUDGET, lineOf, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
@@ -598,6 +599,37 @@ Deno.test({
       assertEquals(noToken.status, 403);
       await noToken.body?.cancel();
     } finally {
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'a refused phone request is written to the log (studio.log) with what the phone sent, never a token',
+  async fn() {
+    const lines: string[] = [];
+    const handler = { emit: (line: string) => void lines.push(line), close() {} };
+    const before = rootState().level;
+    addHandler(handler);
+    setLevel(WARNING);
+    const s = await phoneOn();
+    try {
+      const phone = await pairPhone(s);
+      const r = await raw(
+        s.phonePort(),
+        'GET',
+        '/api/remote/home',
+        phoneHeaders({ [DEVICE_HEADER]: phone.token, 'Sec-Fetch-Site': 'cross-site' }),
+      );
+      assertEquals(r.status, 403);
+      const line = lines.find((l) => l.includes('phone request refused'));
+      assert(line, `no refusal line in the log: ${lines.join('\n')}`);
+      assert(line.includes(' WARNING ') && line.includes('GET /api/remote/home') && line.includes('Site cross-site'), line);
+      assert(!line.includes(phone.token), 'the device token is not in the log');
+    } finally {
+      removeHandler(handler);
+      setLevel(before);
       await s.close();
     }
   },
