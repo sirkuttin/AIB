@@ -216,7 +216,7 @@ Deno.test({
       assertEquals(devices.map((d) => [d.name, d.login]), [['Pixel 9', LOGIN]]);
       assertEquals(
         devices[0].scopes,
-        ['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve', 'phone.push'],
+        ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'phone.push'],
         'decision 2c defaults',
       );
       assert(!JSON.stringify(view).includes(phone.token), 'the PC view never shows a token');

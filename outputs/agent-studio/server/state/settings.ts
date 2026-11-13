@@ -612,6 +612,12 @@ export class SettingsStore extends JsonFileStore {
       return;
     }
     const current: Dict = { ...(has ? store[key] : {}) };
+    // A project's default agent changes (a new chat there with another agent, on the PC or the phone): the old agent's model and
+    // mode go with it, unless this change names them too (owner decision D). They belonged to the old agent.
+    if (withAgent && 'agent' in value && isStr(current.agent) && current.agent && value.agent !== current.agent) {
+      if (!('model' in value)) delete current.model;
+      if (!('mode' in value)) delete current.mode;
+    }
     for (const field of withAgent ? ['model', 'mode', 'agent'] : ['model', 'mode']) {
       if (field in value) {
         if (!isStr(value[field])) throw new ValueError(`Invalid ${field}`);
@@ -666,7 +672,9 @@ export class SettingsStore extends JsonFileStore {
 
   #applyServer(work: Settings, value: unknown): void {
     const patch = section(value, 'server');
-    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake'])) throw new ValueError('Unknown server setting');
+    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake'])) {
+      throw new ValueError('Unknown server setting');
+    }
     if ('worktreePerChat' in patch) {
       if (typeof patch.worktreePerChat !== 'boolean') throw new ValueError('worktreePerChat must be true or false');
       work.server.worktreePerChat = patch.worktreePerChat;

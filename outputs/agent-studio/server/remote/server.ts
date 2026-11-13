@@ -13,6 +13,11 @@
  *
  * Phase D: GET /api/remote/artifact mints a short-lived signed link for one artifact and this phone, on the phone's artifact port
  * (remote/artifact_server.ts, https://<name>:8443); the page CSP lets the phone page frame that origin and load its images.
+ *
+ * Part 2 (phone UI v2, prototypes round 4): New chat (remote/newchat.ts; the Start new chats switch, a child of Send), the chat
+ * card menu (rename into the PC's shared chat names, mark read / unread in the PC's read state, Mark handled, archive, delete and
+ * this phone's Undo; every paired phone, except that ending a session needs Send), a chat's artifacts in phone shape and each
+ * artifact's versions, and the PC's theme in bootstrap and home. One activity line per action, never message text or names.
  */
 import { APP_ROOT, APP_VERSION } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
@@ -29,6 +34,12 @@ import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChat
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
 import type { Manifest } from '../artifacts/artifacts.ts';
 import { bindWithRetry } from './port.ts';
+import { folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
+import { conversationAction } from '../web/shared.ts';
+import { studioOf } from '../web/studio_routes.ts';
+import { bringBack, restoreFolders } from '../web/project_routes.ts';
+import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
+import { SAVED_KEY } from './saved.ts';
 import { cleanPushSub } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 
@@ -36,7 +47,8 @@ const sep = Deno.build.os === 'windows' ? '\\' : '/';
 export const DEVICE_HEADER = 'X-AIB-Device';
 export const COOKIE_NAME = '__Host-aib-phone';
 const COOKIE_MAX_AGE = 400 * 24 * 3600; // Chrome's cap; renewed whenever the phone page loads
-const MAX_BODY = 16 * 1024;
+/** The biggest body a phone sends: a message of MAX_TEXT (8000) characters of 4-byte emoji, JSON-escaped, and its fields. */
+export const MAX_BODY = 48 * 1024;
 
 /** The phone page's files (and only these) are served on the phone port. Never chat.html, '/', or the page bootstrap. The service
  * worker (pwa/sw.js, at the root so its scope is the whole phone origin) and the app icons are served here only: the page port
@@ -63,7 +75,18 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
 };
 export const MANIFEST_PATH = '/manifest.webmanifest';
 
-export type RemoteAuth = 'static' | 'bootstrap' | 'pair' | 'device' | 'image' | 'action' | 'push' | 'continue' | 'read' | 'left';
+export type RemoteAuth =
+  | 'static'
+  | 'bootstrap'
+  | 'pair'
+  | 'device'
+  | 'image'
+  | 'action'
+  | 'push'
+  | 'continue'
+  | 'read'
+  | 'left'
+  | 'phone';
 /** A chat's read position is written at most this often for one phone (the phone sends it at most every 5 s anyway). */
 export const READ_GAP_MS = 2000;
 /** At most one "read" line per phone and chat in the activity log in this time. */
@@ -103,10 +126,40 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   // Phase C: this phone's Web Push subscription (the Push switch on the PC decides whether anything is sent to it).
   ['POST', '/api/remote/push/subscribe', 'push'],
   ['POST', '/api/remote/push/unsubscribe', 'push'],
+  // Phone UI v2 part 2 (remote/newchat.ts, phone_ops.ts): New chat (the Start new chats switch), the chat card menu (every paired
+  // phone; ending a session needs Send), a chat's artifacts.
+  ['GET', '/api/remote/new/options', 'device'],
+  ['GET', '/api/remote/new', 'device'],
+  ['POST', '/api/remote/new', 'phone'],
+  ['POST', '/api/remote/new/first', 'phone'],
+  ['POST', '/api/remote/chat-op', 'phone'],
+  ['POST', '/api/remote/rename', 'phone'],
+  ['POST', '/api/remote/mark', 'phone'],
+  ['GET', '/api/remote/artifacts', 'device'],
 ];
+/** The activity log word of each part-2 phone POST. */
+const PHONE_AUDIT: Readonly<Record<string, string>> = {
+  '/api/remote/new': 'new chat',
+  '/api/remote/new/first': 'new chat: first message',
+  '/api/remote/chat-op': 'chat menu',
+  '/api/remote/rename': 'rename',
+  '/api/remote/mark': 'mark',
+};
+/** How long a phone's Undo can bring back a chat it archived or deleted. */
+const UNDO_MS = 10 * 60 * 1000;
 const ROUTE_AUTH = new Map(REMOTE_ROUTES.map(([m, p, a]) => [`${m} ${p}`, a]));
-/** The scope each device route needs. */
-const ROUTE_SCOPE: Record<string, PhoneScope> = {
+/** The scope each device route needs (every REMOTE_ROUTES entry that is not a page file, the bootstrap or pairing has one:
+ * remote_server_test sweeps them). */
+export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
+  'GET /api/remote/new/options': 'phone.start',
+  'GET /api/remote/new': 'phone.start',
+  'POST /api/remote/new': 'phone.start',
+  'POST /api/remote/new/first': 'phone.start',
+  'POST /api/remote/chat-op': 'phone.read',
+  'POST /api/remote/rename': 'phone.read',
+  'POST /api/remote/mark': 'phone.read',
+  'GET /api/remote/artifacts': 'phone.read',
+  'POST /api/remote/left': 'phone.read',
   'GET /api/remote/home': 'phone.read',
   'GET /api/remote/chat': 'phone.read',
   'GET /api/remote/image': 'phone.read',
@@ -129,12 +182,13 @@ const ROUTE_SCOPE: Record<string, PhoneScope> = {
   'POST /api/remote/push/subscribe': 'phone.push',
   'POST /api/remote/push/unsubscribe': 'phone.read',
 };
-/** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Devices on the PC). */
+/** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Remote control on the PC). */
 const SCOPE_WORDS: Record<string, string> = {
   'phone.answer': 'answer questions',
   'phone.approve': 'approve requests',
   'phone.read': 'see chats',
   'phone.prompt': 'send messages, stop turns or continue chats',
+  'phone.start': 'start new chats',
   'phone.push': 'get notifications',
 };
 
@@ -171,6 +225,17 @@ export const PHONE_VIEW: Readonly<Record<string, 'page' | 'image' | 'text' | 'pc
   json: 'text',
   text: 'text',
   pdf: 'pc',
+};
+
+/** What made an artifact version, in the phone's words (artifacts.ts Version.by). */
+export const VERSION_BY: Readonly<Record<string, string>> = {
+  tool: 'Made by the agent',
+  publish: 'Made by the agent',
+  watch: 'File changed',
+  preview: 'Opened from Files',
+  user: 'Edited by you',
+  edit: 'Edited by you',
+  restore: 'Restored',
 };
 
 /** The phone port's headers. `artifacts` (https://<name>:8443, or '') is the only other origin the page may frame or load
@@ -241,6 +306,10 @@ async function drain(request: Request): Promise<void> {
 export class RemoteServer {
   readonly gate: RemoteGate;
   #server: HttpServer | null = null;
+  /** Chats started from a phone (remote/newchat.ts). */
+  readonly newChats = new NewChats();
+  /** device id -> chat keys it archived or deleted lately (its Undo may bring them back although they left its lists) */
+  #undoable = new Map<string, Map<string, number>>();
   /** device id + chat key -> when its read position was last written / last logged */
   #readAt = new Map<string, number>();
   #readLogged = new Map<string, number>();
@@ -355,6 +424,8 @@ export class RemoteServer {
           return await this.#read(request);
         case 'left':
           return await this.#left(request);
+        case 'phone':
+          return await this.#phone(request, path);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -392,6 +463,16 @@ export class RemoteServer {
     return new Response(body, { status: 200, headers });
   }
 
+  /** The PC's colour theme and status symbols switch (the phone follows them unless its own Theme pick says otherwise). */
+  #pcTheme(): { pcTheme: string; pcSymbols: boolean } {
+    const prefs = this.host.ctx.viewPrefs.public().prefs;
+    const theme = prefs['aib-theme'];
+    return {
+      pcTheme: typeof theme === 'string' && /^[a-z0-9-]{1,40}$/.test(theme) ? theme : 'teal-dark',
+      pcSymbols: prefs['aib-status-glyphs'] === 'on',
+    };
+  }
+
   async #bootstrap(request: Request): Promise<Response> {
     const base = { layout: 'phone', pcName: this.host.pcName(), version: APP_VERSION };
     if (!request.headers.has(DEVICE_HEADER)) return this.json(200, { ...base, paired: false });
@@ -411,6 +492,7 @@ export class RemoteServer {
       push: { key: pushKey, on: !!device.push },
       // where this PC's artifacts open on the phone ('' while the artifact port is not up: "Open on your PC")
       artifacts: this.host.artifactOrigin(),
+      ...this.#pcTheme(),
     });
   }
 
@@ -479,6 +561,12 @@ export class RemoteServer {
     const device = this.#device(request, ROUTE_SCOPE[`GET ${path}`]);
     if (device instanceof Response) return device;
     if (path === '/api/remote/artifact') return this.#artifact(url, device);
+    if (path === '/api/remote/artifacts') return await this.#artifacts(url);
+    if (path === '/api/remote/new/options') return await this.#newOptions(url);
+    if (path === '/api/remote/new') {
+      const status = this.newChats.status(device.id, url.searchParams.get('id') ?? '');
+      return status ? this.json(200, status) : this.json(404, { error: 'This new chat is not known here any more.', code: 'not_found' });
+    }
     // The page polls only while it is visible: it shows this chat (or no live chat). News held back because this phone is in hand
     // goes with the answer (attention/presence.ts); the page shows it as a banner.
     const presence = this.host.ctx.presence;
@@ -494,12 +582,14 @@ export class RemoteServer {
       const saved = savedList.map((c) => ({ ...publicSaved(c), project: project(c.cwd) }));
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
       const scopes = [...device.scopes];
-      const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('');
+      const theme = this.#pcTheme();
+      const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('') + '.' +
+        revisionOf(theme).slice(0, 6);
       const known = url.searchParams.get('rev') ?? request.headers.get('If-None-Match')?.replace(/"/g, '');
       if (known && known === revision && !notices.length) {
         return new Response(null, { status: 304, headers: { ...securityHeadersRemote(), ETag: `"${revision}"` } });
       }
-      return this.json(200, { ...home, saved, revision, scopes, notices }, { ETag: `"${revision}"` });
+      return this.json(200, { ...home, saved, revision, scopes, notices, ...theme }, { ETag: `"${revision}"` });
     }
     if (path === '/api/remote/saved') {
       const notices = seen(null);
@@ -543,11 +633,30 @@ export class RemoteServer {
     } catch {
       return this.json(404, { error: 'This artifact is no longer on the PC.', code: 'not_found' });
     }
-    const want = Math.trunc(Number(url.searchParams.get('v') ?? 0));
+    if (isDeleted(manifest) || isDocHistory(manifest) || !manifest.versions?.length) {
+      return this.json(404, { error: 'This artifact is no longer on the PC.', code: 'not_found' });
+    }
+    const asked = url.searchParams.get('v');
+    const want = Math.trunc(Number(asked ?? 0));
     const latest = manifest.versions[manifest.versions.length - 1];
-    const version = manifest.versions.find((v) => v.n === want) ?? latest;
+    const version = asked && want ? manifest.versions.find((v) => v.n === want) : latest;
+    if (!version) return this.json(404, { error: 'That version of this artifact is no longer kept on the PC.', code: 'not_found' });
     const view = PHONE_VIEW[manifest.kind] ?? 'pc';
-    const base = { id, title: manifest.title, kind: manifest.kind, version: version.n, latest: latest.n };
+    const base = {
+      id,
+      title: manifest.title,
+      kind: manifest.kind,
+      version: version.n,
+      latest: latest.n,
+      // the viewer's version menu: newest first, each with its time, what made it and its note (no paths, no links)
+      versions: [...manifest.versions].reverse().map((v) => ({
+        n: v.n,
+        at: Number(v.at) || 0,
+        by: VERSION_BY[String(v.by)] ?? 'Saved',
+        note: typeof v.note === 'string' && !/^rev \d+/.test(v.note) ? v.note.slice(0, 200) : '',
+        latest: v.n === latest.n,
+      })),
+    };
     const origin = this.host.artifactOrigin();
     if (view === 'pc' || !origin) {
       return this.json(200, {
@@ -615,6 +724,229 @@ export class RemoteServer {
       if (k in answer) out[k] = answer[k];
     }
     return this.json(200, out);
+  }
+
+  /** A chat's artifacts for its Artifacts page (phone shape: no links, no paths). `key` provider:sessionId; `id` its live id. */
+  async #artifacts(url: URL): Promise<Response> {
+    const key = url.searchParams.get('key') ?? '';
+    const id = url.searchParams.get('id') ?? '';
+    if (!SAVED_KEY.test(key) || id.length > 100) return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    if (!(await this.#listed(key))) return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
+    const store = this.host.ctx.artifacts?.store;
+    const items = store ? store.list(key, id ? [id] : []) : [];
+    const artifacts = items.map((a) => ({
+      id: String(a.id),
+      title: String(a.title ?? ''),
+      kind: String(a.kind ?? ''),
+      version: Number(a.version) || 1,
+      versions: Number(a.versions) || 1,
+      updatedAt: Number(a.updatedAt) || 0,
+      pinned: !!a.pinned,
+      archived: typeof a.archivedAt === 'number',
+    }));
+    artifacts.sort((a, b) => b.updatedAt - a.updatedAt);
+    return this.json(200, { key, artifacts });
+  }
+
+  /** New chat: the projects and agents (no `project`), or one agent's model and mode lists for one project. */
+  async #newOptions(url: URL): Promise<Response> {
+    const projectId = url.searchParams.get('project');
+    if (projectId !== null) {
+      const folder = folderOfProject(this.host.ctx, projectId);
+      const agent = url.searchParams.get('agent') ?? '';
+      if (!folder) return this.json(404, { error: 'This project is no longer in AIB on your PC.', code: 'not_found' });
+      if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(agent)) return this.json(400, { error: 'Invalid request', code: 'invalid' });
+      return this.json(200, { project: projectId, agent, ...(await pickLists(this.host.ctx, folder, agent)) });
+    }
+    const listing = await this.host.ctx.host.liveList() as Record<string, unknown>;
+    const lists: { folder: string; at: number }[] = [];
+    for (const raw of Array.isArray(listing?.connections) ? listing.connections : []) {
+      const c = raw as Record<string, unknown>;
+      if (!c || c.closed) continue;
+      lists.push({ folder: String(c.projectRoot || c.cwd || ''), at: Date.now() });
+    }
+    for (const c of await this.host.saved.list(this.host.ctx)) lists.push({ folder: c.cwd, at: Date.parse(c.lastActive) || 0 });
+    return this.json(200, await newChatOptions(this.host.ctx, lists));
+  }
+
+  /** Is this chat on a phone's lists (running and not archived or deleted, or listed as not running)? */
+  async #listed(
+    key: string,
+  ): Promise<{ live: Record<string, unknown> | null; cwd: string; title: string; projectRoot: string } | null> {
+    const ctx = this.host.ctx;
+    const mark = (ctx.conversations.public().entries as unknown as Record<string, Record<string, unknown>>)[key] ?? {};
+    const listing = await ctx.host.liveList() as Record<string, unknown>;
+    for (const raw of Array.isArray(listing?.connections) ? listing.connections : []) {
+      const c = raw as Record<string, unknown>;
+      if (!c || c.closed || `${c.provider}:${c.sessionId}` !== key) continue;
+      if (mark.archivedAt || mark.deletedAt) return null;
+      const info = ((c.breadth as Record<string, unknown> | undefined)?.sessionInfo ?? {}) as Record<string, unknown>;
+      const title = ctx.viewPrefs.chatNames()[key] || String(mark.title || '') || String(info.title || '');
+      return { live: c, cwd: String(c.cwd || ''), title, projectRoot: String(c.projectRoot || '') };
+    }
+    const saved = await this.host.saved.find(ctx, key);
+    return saved ? { live: null, cwd: saved.cwd, title: saved.title, projectRoot: '' } : null;
+  }
+
+  /** The phone's own POST routes of part 2: new chat, the card menu. One activity line each (never message text or names). */
+  async #phone(request: Request, path: string): Promise<Response> {
+    const body = await this.#body(request);
+    const audit = PHONE_AUDIT[path];
+    const chatOf = (v: unknown) => (typeof v === 'string' ? v.slice(0, 100) : '');
+    const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
+    if (device instanceof Response) {
+      const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
+      if (known && device.headers.get('X-AIB-Refused') === 'scope') {
+        this.host.audit.write({
+          device: known.id,
+          name: known.name,
+          action: audit,
+          chat: chatOf(body?.key ?? body?.id),
+          result: 'refused: switched off',
+        });
+      }
+      return device;
+    }
+    const log = (chat: unknown, result: string) =>
+      this.host.audit.write({ device: device.id, name: device.name, action: audit, chat: chatOf(chat), result });
+    if (!body) {
+      log('', 'refused: invalid request');
+      return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    }
+    try {
+      if (path === '/api/remote/new') {
+        const started = await this.newChats.start(this.host.ctx, device.id, body);
+        this.host.saved.invalidate();
+        log(started.id, `started on the PC with ${started.agent}`);
+        return this.json(200, { ok: true, id: started.id });
+      }
+      if (path === '/api/remote/new/first') {
+        const job = this.newChats.job(device.id, typeof body.id === 'string' ? body.id : '');
+        if (!job) throw new Refusal(404, 'not_found', 'This new chat is not known here any more. Send your message in the chat.');
+        const checked = await checkAction(this.host.ctx, 'prompt', { id: job.id, text: body.text, clientMessageId: body.clientMessageId });
+        const [status, answer] = await this.newChats.send(this.host.ctx, job, checked.text as string, checked.clientMessageId as string);
+        log(job.id, status === 200 ? 'first message sent' : `failed (${status})`);
+        if (status !== 200) return this.json(status, { error: job.error, code: answer.code ?? 'failed' });
+        return this.json(200, { ok: true, state: job.state });
+      }
+      return await this.#chatOp(path, body, device, log);
+    } catch (error) {
+      if (!(error instanceof Refusal)) throw error;
+      log(body.key ?? body.id, `refused: ${error.code}`);
+      return this.json(error.status, { error: error.message, code: error.code });
+    }
+  }
+
+  /** Rename, mark read / unread, archive, delete, their Undo, and Mark handled, from the card menu. */
+  async #chatOp(
+    path: string,
+    body: Record<string, unknown>,
+    device: Device,
+    log: (chat: unknown, result: string) => void,
+  ): Promise<Response> {
+    const ctx = this.host.ctx;
+    const key = typeof body.key === 'string' ? body.key : '';
+    if (!SAVED_KEY.test(key)) throw new Refusal(400, 'invalid', 'Invalid request');
+    const undo = this.#undoable.get(device.id) ?? new Map<string, number>();
+    const op = path === '/api/remote/chat-op' ? String(body.op ?? '') : path === '/api/remote/rename' ? 'rename' : 'mark';
+    if (!['rename', 'mark', 'handled', 'archive', 'delete', 'unarchive', 'restore'].includes(op)) {
+      throw new Refusal(400, 'invalid', 'Invalid request');
+    }
+    const isUndo = op === 'unarchive' || op === 'restore';
+    const found = isUndo ? null : await this.#listed(key);
+    if (isUndo) {
+      if (Date.now() - (undo.get(key) ?? 0) > UNDO_MS) throw new Refusal(404, 'not_found', 'This can only be undone on your PC now.');
+    } else if (!found) throw new Refusal(404, 'not_found', 'This chat is no longer in the list on your PC.');
+    const sendOn = device.scopes.includes('phone.prompt');
+    const [provider, ...rest] = key.split(':');
+    const sessionId = rest.join(':');
+    const mark = (action: string) =>
+      conversationAction(studioOf(ctx), {
+        action,
+        provider,
+        sessionId,
+        title: found?.title ?? '',
+        cwd: found?.cwd ?? '',
+        projectRoot: found?.projectRoot ?? '',
+      });
+    const liveId = String(found?.live?.id ?? '');
+    switch (op) {
+      case 'rename': {
+        const name = typeof body.name === 'string' ? body.name : '';
+        if (name.length > 200) throw new Refusal(400, 'too_long', 'A chat name can be at most 200 characters.');
+        await ctx.viewPrefs.setChatName(key, name);
+        this.host.saved.invalidate();
+        log(liveId || key, name.trim() ? 'renamed' : 'name cleared');
+        return this.json(200, { ok: true });
+      }
+      case 'mark': {
+        if (!found?.live) throw new Refusal(409, 'not_live', 'Only a running chat can be marked read or unread.');
+        if (body.read !== true && body.read !== false) throw new Refusal(400, 'invalid', 'Invalid request');
+        await ctx.readState.markUnread(key, !body.read);
+        log(liveId, body.read ? 'marked read' : 'marked unread');
+        return this.json(200, { ok: true });
+      }
+      case 'handled': {
+        if (!found?.live) throw new Refusal(409, 'not_live', 'Only a running chat can be marked handled.');
+        const [status, answer] = await mark('handled');
+        log(liveId, status === 200 ? 'marked handled' : `failed (${status})`);
+        return status === 200 ? this.json(200, { ok: true }) : this.json(status, answer);
+      }
+      case 'archive':
+      case 'delete': {
+        const live = !!found?.live;
+        const end = op === 'delete' ? live : body.end === true;
+        if (live && end && !sendOn) {
+          throw new Refusal(
+            403,
+            'scope',
+            op === 'delete'
+              ? 'This chat is running. Deleting it from this phone ends its session first, which needs "Send messages, stop turns and ' +
+                'continue chats" on for this phone (Settings → Remote control on your PC). You can archive it and keep it running.'
+              : 'Ending a chat\'s session from this phone needs "Send messages, stop turns and continue chats" on for this phone ' +
+                '(Settings → Remote control on your PC). You can keep it running and archive it.',
+          );
+        }
+        if (live && end) {
+          const [status, answer] = await ctx.host.liveCall('disconnect', { id: liveId });
+          if (status !== 200) {
+            log(liveId, `failed to end the session (${status})`);
+            const a = answer && typeof answer === 'object' ? answer as Record<string, unknown> : {};
+            return this.json(status, { error: typeof a.error === 'string' ? a.error : 'The session could not be ended.', code: 'failed' });
+          }
+          // the agent host lists it as closed now (the delete below refuses a chat that is still live)
+          for (let i = 0; i < 30 && (await this.#liveByKey(key)); i++) await new Promise((r) => setTimeout(r, 100));
+        }
+        const [status, answer] = await mark(op);
+        if (status !== 200) {
+          log(liveId || key, `refused: ${String((answer as Record<string, unknown>).code ?? status)}`);
+          return this.json(status, answer);
+        }
+        undo.set(key, Date.now());
+        this.#undoable.set(device.id, undo);
+        this.host.saved.invalidate();
+        const result = op === 'delete'
+          ? (live ? 'session ended, deleted' : 'deleted')
+          : !live
+          ? 'archived'
+          : end
+          ? 'session ended, archived'
+          : 'archived, kept running';
+        log(liveId || key, result);
+        return this.json(200, { ok: true });
+      }
+      default: {
+        // unarchive / restore: the Undo of this phone's own archive or delete
+        const folders = op === 'restore' ? restoreFolders(ctx.conversations, { action: 'restore', provider, sessionId }) : [];
+        const [status, answer] = await conversationAction(studioOf(ctx), { action: op, provider, sessionId });
+        if (status !== 200) return this.json(status, answer);
+        if (folders.length) await bringBack(ctx.removedProjects, folders, ctx.addedProjects);
+        undo.delete(key);
+        this.host.saved.invalidate();
+        log(key, op === 'restore' ? 'restored (undo)' : 'unarchived (undo)');
+        return this.json(200, { ok: true });
+      }
+    }
   }
 
   /** The live connection id of a chat by its key (provider:sessionId), when it is running. */

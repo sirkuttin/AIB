@@ -928,6 +928,20 @@ html[data-ui-scaled] .st-page {
   flex-wrap: wrap;
   gap: 6px 18px;
 }
+/* Start new chats: a child of Send, on its own line indented under it (greyed out while Send is off) */
+.dv-child-row {
+  flex-basis: 100%;
+  padding-left: 24px;
+}
+.dv-child-row .st-toggle {
+  margin: 0;
+}
+.dv-child-row .st-toggle:has(input:disabled) {
+  opacity: 0.55;
+}
+.dv-child-note {
+  margin: 2px 0 0;
+}
 .dv-pair-grid {
   display: flex;
   flex-wrap: wrap;

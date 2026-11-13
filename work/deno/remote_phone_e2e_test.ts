@@ -992,7 +992,7 @@ Deno.test({
         "the phone and the PC show the same two words",
       );
       await pc(s, "POST", "/api/live/devices/approve", { claim: pending.id });
-      // Phase C: Finish setup comes first (notifications); not an iPhone, so no Home Screen step
+      // Phase C: Finish setup comes first (Install AIB, notifications); not an iPhone, so no Home Screen step
       await page.waitFor(
         'document.getElementById("app").dataset.screen === "setup"',
         15000,
@@ -1002,7 +1002,7 @@ Deno.test({
         await page.eval(
           '[...document.querySelectorAll(".ph-step")].map((x) => x.dataset.step)',
         ),
-        ["notify"],
+        ["install", "notify"],
       );
       assert(
         await page.eval(NO_SIDEWAYS),
@@ -1887,6 +1887,7 @@ Deno.test({
           ["phone.read", true, true],
           ["phone.answer", true, false],
           ["phone.prompt", false, false],
+          ["phone.start", false, true], // Start new chats: a child of Send, greyed out and off while Send is off
           ["phone.approve", false, false],
           ["phone.push", false, false],
         ],
@@ -1906,6 +1907,17 @@ Deno.test({
         `document.querySelector('${row} input[data-scope="phone.prompt"]').checked`,
         8000,
         "drawn on",
+      );
+      // Send on: Start new chats comes on with it (on by default), indented under Send, and can be turned off on its own
+      await page.waitFor(
+        `(() => { const i = document.querySelector('${row} input[data-scope="phone.start"]'); return i.checked && !i.disabled && !!i.closest('.dv-child-row'); })()`,
+        8000,
+        "Start new chats on under Send",
+      );
+      assert(
+        ((await pc(s, "GET", "/api/live/devices"))[1].devices as Json[])[0].scopes instanceof Array &&
+          (((await pc(s, "GET", "/api/live/devices"))[1].devices as Json[])[0].scopes as string[]).includes("phone.start"),
+        "Start saved on",
       );
       const again = await raw(
         s.phonePort(),
@@ -2092,14 +2104,14 @@ Deno.test({
         15000,
         "finish setup",
       );
-      assertEquals(await page.eval(STEPS), [["notify", "todo"]]);
+      assertEquals(await page.eval(STEPS), [["install", "todo"], ["notify", "todo"]]);
       assert(
         await page.eval(NO_SIDEWAYS),
         `setup: sideways scroll ${await page.eval(WIDTHS)}`,
       );
       await page.click("#pushOn");
       await page.waitFor(
-        'document.querySelector(".ph-step")?.dataset.state === "done"',
+        'document.querySelector(".ph-step[data-step=notify]")?.dataset.state === "done"',
         15000,
         "notifications on",
       );

@@ -98,7 +98,7 @@ Deno.test({
       const page = await raw(s.phonePort(), 'GET', '/api/remote/chat?id=c1', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
       assertEquals((page.json.waiting as Json[]).map((w) => [w.kind, w.pcOnly]), [['sign-in', true]]);
       // the phone's own switches go with each answer
-      assertEquals(page.json.scopes, ['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve', 'phone.push']);
+      assertEquals(page.json.scopes, ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'phone.push']);
     } finally {
       await s.close();
     }

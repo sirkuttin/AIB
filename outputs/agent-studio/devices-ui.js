@@ -27,6 +27,7 @@
     ['phone.read', 'See chats'],
     ['phone.answer', 'Answer questions'],
     ['phone.prompt', 'Send messages, stop turns and continue chats'],
+    ['phone.start', 'Start new chats'], // a child of Send (owner decision E): indented under it, greyed out and off while Send is off
     ['phone.approve', 'Approve requests once'],
     ['phone.push', 'Push notifications'],
   ];
@@ -54,13 +55,33 @@
   };
 
   // ---- pure helpers (node tests) ----
-  /* A phone's scopes after one switch changes (See chats always stays on). */
-  function scopesAfter(have, scope, on) {
+  /* A phone's scopes after one switch changes (See chats always stays on). Start new chats is a child of Send: it goes with Send,
+     and turning Send on brings it back as it was (`start`: the phone's own Start setting, missing = on). */
+  function scopesAfter(have, scope, on, start) {
     const set = new Set(have || []);
     if (on) set.add(scope);
     else set.delete(scope);
     set.add('phone.read');
+    if (scope === 'phone.prompt' && on && start !== false) set.add('phone.start');
+    if (!set.has('phone.prompt')) set.delete('phone.start');
     return SCOPES.map(([s]) => s).filter((s) => set.has(s));
+  }
+  const START_NOTE = 'Lets this phone start a chat in one of your projects, with the agent, model and mode it picks.';
+  /* One switch row; Start new chats is indented under Send, greyed out (and off) while Send is off. */
+  function scopeRow(scope, label, checked, disabled, onChange) {
+    const child = scope === 'phone.start';
+    const l = el('label', null, 'st-toggle' + (child ? ' dv-child' : '')),
+      cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.disabled = disabled;
+    cb.dataset.scope = scope;
+    cb.addEventListener('change', () => onChange(cb.checked));
+    l.append(cb, el('span', label));
+    if (!child) return l;
+    const box = el('div', null, 'dv-child-row');
+    box.append(l, el('p', START_NOTE, 'st-note dv-child-note'));
+    return box;
   }
   /* One Phone activity line: time · phone · action · chat: result. */
   function activityLine(e, when) {
@@ -816,16 +837,18 @@
     const list = el('div', null, 'dv-scopes');
     list.setAttribute('aria-label', 'What ' + d.name + ' may do');
     const have = d.scopes || [];
+    const send = have.includes('phone.prompt');
     for (const [scope, label] of SCOPES) {
-      const l = el('label', null, 'st-toggle'),
-        cb = el('input');
-      cb.type = 'checkbox';
-      cb.checked = have.includes(scope);
-      cb.disabled = scope === 'phone.read' || !!D.busy;
-      cb.dataset.scope = scope;
-      cb.addEventListener('change', () => act('devices/scopes', { id: d.id, scopes: scopesAfter(have, scope, cb.checked) }, 'scopes'));
-      l.append(cb, el('span', label));
-      list.append(l);
+      const child = scope === 'phone.start';
+      list.append(
+        scopeRow(
+          scope,
+          label,
+          have.includes(scope),
+          scope === 'phone.read' || !!D.busy || (child && !send),
+          (on) => act('devices/scopes', { id: d.id, scopes: scopesAfter(have, scope, on, d.start) }, 'scopes'),
+        ),
+      );
     }
     return list;
   }
@@ -843,15 +866,15 @@
     const picked = scopeSet(claim.id);
     const list = el('div', null, 'dv-scopes');
     for (const [scope, label] of SCOPES) {
-      const l = el('label', null, 'st-toggle'),
-        cb = el('input');
-      cb.type = 'checkbox';
-      cb.checked = picked.has(scope);
-      cb.disabled = scope === 'phone.read';
-      cb.dataset.scope = scope;
-      cb.addEventListener('change', () => (cb.checked ? picked.add(scope) : picked.delete(scope)));
-      l.append(cb, el('span', label));
-      list.append(l);
+      const child = scope === 'phone.start';
+      const send = picked.has('phone.prompt');
+      list.append(
+        scopeRow(scope, label, picked.has(scope) && (!child || send), scope === 'phone.read' || (child && !send), (on) => {
+          if (on) picked.add(scope);
+          else picked.delete(scope);
+          if (scope === 'phone.prompt') draw(); // Start new chats follows Send
+        }),
+      );
     }
     box.append(list);
     box.append(el('p', "You can change these later on the phone's row under Phones.", 'st-note'));

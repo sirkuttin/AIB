@@ -842,7 +842,7 @@
   async function listConversations() {
     listedAt = Date.now();
     const [live, saved, ownership] = await Promise.all([
-      get('/api/live/list'),
+      get('/api/live/list', namesRevision ? { names: namesRevision } : {}),
       get('/api/sessions'),
       get('/api/live/ownership').catch(() => null),
     ]);
@@ -878,6 +878,7 @@
       known = new Set(),
       recoveredBy = new Map(recoveredList.map((r) => [r.provider + ':' + r.sessionId, r]));
     conversations = [];
+    syncNames(live);
     window.AgentOrganizeUI?.sync(live.conversationRevision);
     await window.AgentReadState?.sync(live.readStateRevision);
     if (!readMigrated && window.AgentReadState) {
@@ -2774,6 +2775,27 @@
     $('renameInput').value = aliases[aliasKey(c)] || titleOf(c);
     $('renameDialog').showModal();
     $('renameInput').select();
+  }
+  /* Chat names can change from a phone (server: ViewPrefs.setChatName). The list answer carries their revision, and the names when
+     the one this page sent is old: they replace this page's copy, so a rename here never puts back a name the phone changed. */
+  let namesRevision = '';
+  function syncNames(live) {
+    const rev = typeof live.chatNamesRevision === 'string' ? live.chatNamesRevision : '';
+    if (live.chatNames && typeof live.chatNames === 'object' && !Array.isArray(live.chatNames)) {
+      const next = live.chatNames;
+      if (JSON.stringify(next) !== JSON.stringify(aliases)) {
+        for (const k of Object.keys(aliases)) delete aliases[k];
+        for (const k of Object.keys(next)) if (typeof next[k] === 'string') aliases[k] = next[k];
+        try {
+          localStorage.setItem('studio-conversation-names', JSON.stringify(aliases));
+        } catch (e) {
+          /* this browser's copy stays old; the data folder has them */
+        }
+        sidebarSignature = '';
+        if (selected) renderHeader();
+      }
+    }
+    if (rev) namesRevision = rev;
   }
   function renameChat(c, value) {
     const v = String(value || '').trim();

@@ -37,6 +37,15 @@
    there, and news about another chat comes with the next poll's answer (`notices`). Inside a chat it shows as a banner under the
    header ("A chat needs you" / "Chat finished"; tap: open that chat; × closes it; "Chat finished" goes by itself after
    BANNER_TURN_MS). Never on the chat list: each card's state already says it (owner, prototypes round 2).
+   Part 2 (prototypes round 4): "+ New chat" (Start new chats switch, a child of Send): project -> agent (one that cannot start is
+   greyed with its reason) -> model -> mode (every mode, no warning) -> first message; the picks are for that chat only; the first
+   message goes once the chat is ready, and is held (text kept in the box, error shown) when the mode could not be set. A card menu
+   (⋯ or a long press / right-click): View artifacts, Mark as read / unread (running chats), Mark handled (your turn), Rename,
+   Archive (Keep running / End its session: ending needs Send), Delete (confirmation; a running chat needs Send), Undo on the toast.
+   A chat's Artifacts page (▤ in the header with a count, read when the chat opens; never on home polls) and a version menu in the
+   viewer (v3 ▾, "vN is available · Switch"). Theme: the PC's theme in this phone's light or dark (themes.js phoneTheme), or this
+   phone's own pick (⋯ at the top of the list → Theme, localStorage). Install AIB: our button from beforeinstallprompt (Finish
+   setup and the ⋯ menu; never a banner), the Share steps on an iPhone, Firefox's menu steps, hidden once installed.
    Pure helpers (rowsFrom, stateWords, orderHome, reqOpen, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom,
    artifactRef...) are exported for node tests. */
 (function (root) {
@@ -365,10 +374,15 @@
     return out;
   }
 
-  /* What this phone may do, from its switches: {answer, approve, send}. */
+  /* What this phone may do, from its switches: {answer, approve, send, start}. */
   function abilities(scopes) {
     const list = Array.isArray(scopes) ? scopes : [];
-    return { answer: list.includes('phone.answer'), approve: list.includes('phone.approve'), send: list.includes('phone.prompt') };
+    return {
+      answer: list.includes('phone.answer'),
+      approve: list.includes('phone.approve'),
+      send: list.includes('phone.prompt'),
+      start: list.includes('phone.start') && list.includes('phone.prompt'), // Start new chats: a child of Send
+    };
   }
 
   /* Can this waiting item be handled on this phone now? */
@@ -432,18 +446,52 @@
     return /iPhone|iPod|iPad/.test(s) || (/Macintosh/.test(s) && Number(touchPoints) > 1);
   }
 
+  /* Firefox on Android (no install prompt event: it has its own menu item). */
+  function isFirefoxAndroid(ua) {
+    const s = String(ua || '');
+    return /Android/.test(s) && /Firefox\//.test(s);
+  }
+  /* How this phone installs the page as an app (owner: an Install AIB button where the browser offers it):
+     'installed' (running installed, or just installed), 'iphone' (Share → Add to Home Screen, any iPhone browser), 'prompt' (the
+     browser offered beforeinstallprompt: our own button), 'firefox' (its menu), 'other' (the browser menu, neutral words). */
+  function installKind(o) {
+    const x = obj(o);
+    if (x.standalone || x.installed) return 'installed';
+    if (x.iphone) return 'iphone';
+    if (x.prompt) return 'prompt';
+    if (x.firefox) return 'firefox';
+    return 'other';
+  }
+  /* The words of each way (menu labels: Firefox for Android 138+ "Add app to Home screen", older "Add to Home screen", per
+     support.mozilla.org "Use Web Apps with Firefox for Android"; iOS 26 Safari: Share → Add to Home Screen → Open as Web App → Add). */
+  const INSTALL_WORDS = {
+    installed: 'AIB is installed on this phone. Open it from its icon.',
+    iphone:
+      'Tap the Share button (in Safari it can be under ⋯ next to the address), then Add to Home Screen. Leave Open as Web App on and tap Add. ' +
+      'Open AIB from the Home Screen: iPhone sends notifications only to apps on the Home Screen.',
+    prompt: 'Put AIB on this phone as an app: it opens from its own icon, full screen, without the browser bar. Tap Install AIB, then Install.',
+    firefox: 'In Firefox, tap the menu ⋮, then Add app to Home screen (older versions: Add to Home screen), then Add. Open AIB from that icon.',
+    other: 'Open the browser menu and choose Install app or Add to Home screen. Then open AIB from that icon.',
+  };
+  function installText(kind) {
+    return INSTALL_WORDS[kind] || INSTALL_WORDS.other;
+  }
+
   /* The Finish setup steps. o: {iphone, standalone, supported, permission ('default'|'granted'|'denied'), on (subscribed here),
-     allowed (this phone's Push switch on the PC)}. [{id: 'home' | 'notify', state: 'todo' | 'done' | 'blocked' | 'off', text}] */
+     allowed (this phone's Push switch on the PC), installed, prompt, firefox}.
+     [{id: 'home' | 'install' | 'notify', state: 'todo' | 'done' | 'blocked' | 'off', text, kind?}] */
   function setupSteps(o) {
     const steps = [];
     if (o.iphone)
       steps.push({
         id: 'home',
         state: o.standalone ? 'done' : 'todo',
-        text: o.standalone
-          ? 'AIB is on your Home Screen.'
-          : 'Tap the Share button, then Add to Home Screen. Open AIB from there: iPhone sends notifications only to apps on the Home Screen.',
+        text: o.standalone ? 'AIB is on your Home Screen.' : installText('iphone'),
       });
+    else {
+      const kind = installKind(o);
+      steps.push({ id: 'install', kind, state: kind === 'installed' ? 'done' : 'todo', text: installText(kind) });
+    }
     let notify;
     if (!o.allowed) notify = { state: 'off', text: 'Notifications are off for this phone. Turn on Push for it in AIB on your PC: Settings → Remote control.' };
     else if (o.iphone && !o.standalone) notify = { state: 'todo', text: 'After step 1, open AIB from the Home Screen and turn notifications on there.' };
@@ -584,7 +632,78 @@
     };
   }
 
+  // ---- part 2: new chat, the card menu, themes, a chat's artifacts (owner, phone prototypes round 4) ----
+  /* The card menu's items for one home card ({kind, chat}), in order: View artifacts; Mark as read / Mark as unread (running chats
+     only, swapping with the chat's state); Mark handled (only on your turn); Rename, Archive, Delete (every paired phone). Nothing
+     else (owner round 4 decision 2). */
+  function menuItems(item) {
+    const it = obj(item);
+    const c = obj(it.chat);
+    const live = it.kind === 'live';
+    const out = ['arts'];
+    if (live) out.push(c.unread ? 'read' : 'unread');
+    if (live && c.yourTurn && !(c.needs > 0) && c.state !== 'working') out.push('handled');
+    out.push('rename', 'archive', 'delete');
+    return out;
+  }
+  /* Archive of a running chat: the PC's two choices; ending its session needs Send (owner decision B). [] = archive at once. */
+  function archiveChoices(running, can) {
+    if (!running) return [];
+    return obj(can).send ? ['keep', 'end'] : ['keep'];
+  }
+  /* The Delete confirmation (what leaves, where to restore it, what is not touched, and for a running chat what ending it does). */
+  function deleteText(title, running, pcName, can) {
+    const pc = pcName || 'your PC';
+    let t =
+      'Delete “' + title + '”? It leaves AIB’s chat lists on ' + pc + ' and goes to Recently deleted there, where you can restore it. ' +
+      'The agent’s own saved transcript is not touched.';
+    if (running && obj(can).send)
+      t +=
+        ' It is running: AIB ends its session first, which drops its queued messages and stops its helpers and terminals. ' +
+        'If it has its own copy of the project with no changes, that copy is removed.';
+    return t;
+  }
+  /* A running chat this phone may not end (Send off): Delete waits until it stops. */
+  function deleteBlocked(running, can) {
+    return !!running && !obj(can).send;
+  }
+  /* One line of the viewer's version menu: "5m ago · Made by the agent · latest". */
+  function versionMeta(v, now) {
+    const x = obj(v);
+    const at = Number(x.at) || 0;
+    const when = at ? ago(new Date(at > 1e12 ? at : at * 1000).toISOString(), now) : '';
+    const parts = [];
+    if (when) parts.push(when === 'now' ? 'now' : when + ' ago');
+    if (str(x.by)) parts.push(str(x.by));
+    if (x.latest) parts.push('latest');
+    return parts.join(' · ');
+  }
+  /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed. */
+  function newChatReady(nc, text) {
+    const n = obj(nc);
+    const a = (Array.isArray(n.agents) ? n.agents : []).find((x) => x && x.id === n.agent);
+    return !!(n.project && a && a.ok && String(text || '').trim());
+  }
+  /* The first message's own checks before anything starts (the server checks the same). '' = fine. */
+  function firstMessageProblem(text) {
+    const t = String(text || '');
+    if (!t.trim()) return 'Type your first message.';
+    if (t.trimStart().startsWith('/')) return 'Messages that start with / are commands. Type them in AIB on your PC.';
+    if (t.length > 8000) return 'A message from a phone can be at most 8000 characters.';
+    return '';
+  }
+
   const api = {
+    isFirefoxAndroid,
+    installKind,
+    installText,
+    menuItems,
+    archiveChoices,
+    deleteText,
+    deleteBlocked,
+    versionMeta,
+    newChatReady,
+    firstMessageProblem,
     rowsFrom,
     stateWords,
     ago,
@@ -677,6 +796,16 @@
     readSent: { id: '', seq: 0, at: 0 }, // the read position last sent to the PC
     banner: null, // {chat, kind, title, text, at}: news about another chat while this phone is in hand (bannerFrom)
     toast: '', // a short confirmation ("Allowed once"), for TOAST_MS
+    menu: null, // the sheet open over the page: {kind: 'card', item, step, name, error} or {kind: 'phone', step}
+    nc: null, // New chat: {project, agent, model, mode, projects, agents, lists, error, starting}
+    ncText: '', // New chat's first message
+    newJob: null, // the chat this phone just started: {id, text, cmid, state, error, note}
+    arts: null, // a chat's Artifacts page: {key, id, title, agent, from, list, error}
+    artsBack: null, // where its Back goes (a chat), or null (home)
+    artCount: {}, // chat key -> how many artifacts (read when a chat opens or its page loads; never on home polls)
+    pcTheme: '', // the PC's theme (bootstrap, home): the phone follows it unless it picked its own
+    pcSymbols: false,
+    install: { event: null, installed: false, used: false }, // beforeinstallprompt kept for our Install AIB button; appinstalled
   };
   const TOAST_MS = 2200;
   const FILTER_KEY = 'aib-phone-filter';
@@ -889,7 +1018,7 @@
   /* A short confirmation at the bottom of the screen ("Allowed once", "Back online"). Outside #app: a poll's draw never takes it. */
   let toastEl = null;
   let toastTimer = 0;
-  function toast(text) {
+  function toast(text, undo) {
     S.toast = text;
     if (!toastEl) {
       toastEl = el('div', 'ph-toast');
@@ -897,13 +1026,22 @@
       toastEl.setAttribute('role', 'status');
       doc.body.append(toastEl);
     }
-    toastEl.textContent = text;
+    toastEl.replaceChildren(el('span', '', text));
+    if (undo) {
+      // Archive and Delete: Undo brings the chat back (unarchive / restore), for a little longer than a plain toast
+      const b = button('ph-toast-undo', 'Undo', () => {
+        toastEl.hidden = true;
+        undoOp(undo);
+      });
+      b.id = 'phUndo';
+      toastEl.append(b);
+    }
     toastEl.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       S.toast = '';
       toastEl.hidden = true;
-    }, TOAST_MS);
+    }, undo ? TOAST_MS * 3 : TOAST_MS);
   }
 
   /* The page is hidden (another app, the screen off): tell the PC this phone is no longer in hand (best effort). */
@@ -932,6 +1070,7 @@
     if (r.status !== 200) throw new Offline('refused');
     S.home = r.data;
     S.homeRev = r.data.revision || '';
+    takeTheme(r.data);
     if (Array.isArray(r.data.scopes)) S.scopes = r.data.scopes;
     if (r.data.pcName) S.pcName = r.data.pcName;
     if (S.screen === 'home') draw();
@@ -975,6 +1114,8 @@
     if (first && !S.scrollTo) S.scrollTo = 'end';
     if (S.editing && !((c.queue && c.queue.items) || []).some((i) => i.id === S.editing.messageId)) S.editing = null;
     if (S.editing && Date.now() - S.editing.renewed > 60000) renewEdit();
+    if (first && c.savedKey) countArts(c.savedKey, c.id);
+    if (S.newJob && S.newJob.id === S.chatId && S.newJob.state === 'opening') checkNewJob();
     if (S.screen === 'chat' && (changed || noticed)) draw();
   }
 
@@ -986,6 +1127,771 @@
     draw();
   }
 
+
+  // ---- part 2 screens: the card menu, the phone's own menu (Theme), New chat, a chat's Artifacts page ----
+  const THEME = root.AibThemes || null;
+  /* The phone's theme now: the PC's (S.pcTheme) in the phone's light or dark, unless this phone picked one (localStorage). */
+  function paintTheme() {
+    const html = doc.documentElement;
+    if (S.pcTheme) html.setAttribute('data-theme-pref', S.pcTheme);
+    html.setAttribute('data-status-glyphs', S.pcSymbols ? 'on' : 'off');
+    if (THEME && THEME.paintPhone) THEME.paintPhone(S.pcTheme || html.getAttribute('data-theme-pref') || 'teal-dark');
+  }
+  function takeTheme(data) {
+    const d = obj(data);
+    if (typeof d.pcTheme !== 'string') return;
+    const symbols = d.pcSymbols === true;
+    if (d.pcTheme === S.pcTheme && symbols === S.pcSymbols) return;
+    S.pcTheme = d.pcTheme;
+    S.pcSymbols = symbols;
+    paintTheme();
+  }
+  function themePick() {
+    return THEME && THEME.phonePick ? THEME.phonePick() : 'follow';
+  }
+  function setThemePick(v) {
+    try {
+      if (v === 'follow') root.localStorage.removeItem('aib-phone-theme');
+      else root.localStorage.setItem('aib-phone-theme', v);
+    } catch {
+      /* storage blocked: for this visit only */
+    }
+    paintTheme();
+    S.menu = null;
+    drawMenu();
+    toast('Theme saved on this phone');
+  }
+  const themeName = (id) => {
+    if (id === 'system') return 'Match system';
+    if (id === 'follow') return 'Follow PC';
+    const t = THEME && THEME.THEMES.find((x) => x.id === id);
+    return t ? t.label : id;
+  };
+
+  /* A sheet over the page (outside #app, so polls never redraw it away). */
+  let menuEl = null;
+  let menuFocus = null;
+  function drawMenu() {
+    const m = S.menu;
+    if (!m) {
+      if (menuEl) menuEl.remove();
+      menuEl = null;
+      if (menuFocus && menuFocus.isConnected) menuFocus.focus({ preventScroll: true });
+      menuFocus = null;
+      return;
+    }
+    if (!menuEl) menuFocus = doc.activeElement;
+    const layer = el('div', 'ph-layer');
+    layer.id = 'phMenu';
+    const shade = button('ph-shade', '', closeMenu);
+    shade.setAttribute('aria-label', 'Close menu');
+    const sheet = el('div', 'ph-menu');
+    sheet.setAttribute('role', 'menu');
+    sheet.append(el('div', 'ph-grab'));
+    if (m.kind === 'phone') phoneMenu(sheet, m);
+    else cardMenu(sheet, m);
+    layer.append(shade, sheet);
+    if (menuEl) menuEl.replaceWith(layer);
+    else doc.body.append(layer);
+    menuEl = layer;
+    const first = sheet.querySelector('input, .ph-mi, .ph-btn');
+    if (first && !sheet.contains(doc.activeElement)) first.focus({ preventScroll: true });
+  }
+  function closeMenu() {
+    S.menu = null;
+    drawMenu();
+  }
+  function menuItem(id, icon, label, onClick, extra) {
+    const b = button('ph-mi' + (id === 'delete' ? ' danger' : ''), '', onClick);
+    b.setAttribute('role', 'menuitem');
+    b.dataset.mi = id;
+    b.append(el('span', 'ph-mic', icon), el('span', 'ph-mlabel', label));
+    if (extra) b.append(el('small', '', extra));
+    return b;
+  }
+  function phoneMenu(sheet, m) {
+    sheet.setAttribute('aria-label', 'This phone');
+    const pick = themePick();
+    if (m.step === 'install') {
+      const kind = installKind(installFacts());
+      const head = el('div', 'ph-mh');
+      head.append(el('b', '', 'Install AIB'), el('span', '', 'On this phone'));
+      const p = el('p', 'ph-mtext', installText(kind));
+      p.id = 'phInstallText';
+      sheet.append(head, p, menuItem('cancel', '', 'Close', closeMenu));
+      return;
+    }
+    if (m.step !== 'theme') {
+      const head = el('div', 'ph-mh');
+      head.append(el('b', '', 'This phone'), el('span', '', 'Saved on this phone only'));
+      sheet.append(head);
+      sheet.append(
+        menuItem('theme', '◐', 'Theme', () => {
+          S.menu = { kind: 'phone', step: 'theme' };
+          drawMenu();
+        }, themeName(pick) + ' ›'),
+      );
+      // Install AIB: hidden once it runs installed (or was just installed)
+      if (installKind(installFacts()) !== 'installed') sheet.append(menuItem('install', '⤓', 'Install AIB', () => installNow()));
+      sheet.append(menuItem('cancel', '', 'Cancel', closeMenu));
+      return;
+    }
+    const now = THEME ? THEME.phoneTheme(S.pcTheme, pick, matchLight()) : '';
+    const head = el('div', 'ph-mh');
+    head.append(el('b', '', 'Theme on this phone'), el('span', '', 'Now showing: ' + themeName(now)));
+    sheet.append(head);
+    const row = (v, label, sub) => {
+      const b = button('ph-mi', '', () => setThemePick(v));
+      b.setAttribute('role', 'menuitemradio');
+      b.setAttribute('aria-checked', pick === v ? 'true' : 'false');
+      b.dataset.theme = v;
+      const text = el('span', 'ph-mlabel', label);
+      if (sub) text.append(el('span', 'ph-msub', sub));
+      b.append(el('span', 'ph-mic', pick === v ? '✓' : ''), text);
+      return b;
+    };
+    sheet.append(
+      row('follow', 'Follow PC', 'The PC’s theme (' + themeName(S.pcTheme || 'teal-dark') + '), in this phone’s light or dark setting.'),
+      row('system', 'Match system', 'AIB teal, light or dark like this phone.'),
+    );
+    let group = '';
+    for (const t of THEME ? THEME.THEMES : []) {
+      if (t.group !== group) {
+        group = t.group;
+        sheet.append(el('p', 'ph-mgroup', group));
+      }
+      sheet.append(row(t.id, t.label));
+    }
+  }
+  const matchLight = () => {
+    try {
+      return !!(root.matchMedia && root.matchMedia('(prefers-color-scheme: light)').matches);
+    } catch {
+      return false;
+    }
+  };
+
+  /* The card menu of one chat (⋯ or a long press on its card). */
+  function openCardMenu(item) {
+    if (S.menu || !item) return;
+    S.menu = { kind: 'card', item, step: 'list', name: item.title, error: '' };
+    drawMenu();
+  }
+  function cardMenu(sheet, m) {
+    const item = m.item;
+    const c = obj(item.chat);
+    const live = item.kind === 'live';
+    const can = abilities(S.scopes);
+    sheet.setAttribute('aria-label', item.title);
+    const head = el('div', 'ph-mh');
+    const w = live ? stateWords(c) : stateWords({ notRunning: true });
+    const sub = el('span', '');
+    sub.append(projectLine(item.project, [str(item.agent), w.text]));
+    head.append(el('b', '', item.title), sub);
+    sheet.append(head);
+    if (m.error) {
+      const err = el('p', 'ph-error', m.error);
+      err.setAttribute('role', 'alert');
+      sheet.append(err);
+    }
+    const key = live ? c.key : c.key;
+    if (m.step === 'rename') {
+      const label = el('label', 'ph-mtext', 'New name');
+      label.htmlFor = 'phRename';
+      const input = el('input', 'ph-tin');
+      input.id = 'phRename';
+      input.type = 'text';
+      input.maxLength = 200;
+      input.value = m.name;
+      input.addEventListener('input', () => (m.name = input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          chatOp('rename', item, { name: m.name });
+        }
+      });
+      const row = el('div', 'ph-mbtns two');
+      row.append(
+        button('ph-btn quiet', 'Cancel', () => {
+          m.step = 'list';
+          drawMenu();
+        }),
+        button('ph-btn', 'Save', () => chatOp('rename', item, { name: m.name })),
+      );
+      sheet.append(label, input, row);
+      return;
+    }
+    if (m.step === 'archive') {
+      sheet.append(
+        el(
+          'p',
+          'ph-mtext',
+          '“' + item.title + '” is running on ' + S.pcName + '. Archiving moves it out of your lists; it never stops the chat on its own. ' +
+            'Find it again under Archived on your PC.',
+        ),
+      );
+      const row = el('div', 'ph-mbtns');
+      const keep = button('ph-btn', 'Keep running and archive', () => chatOp('archive', item, { end: false }));
+      keep.dataset.how = 'keep';
+      row.append(keep);
+      if (archiveChoices(true, can).includes('end')) {
+        const end = button('ph-btn quiet', 'End its session and archive', () => chatOp('archive', item, { end: true }));
+        end.dataset.how = 'end';
+        row.append(end);
+      } else
+        row.append(
+          el('p', 'ph-note', 'Ending its session from this phone needs “Send messages, stop turns and continue chats” (Settings → Remote control on your PC).'),
+        );
+      row.append(
+        button('ph-btn quiet', 'Cancel', () => {
+          m.step = 'list';
+          drawMenu();
+        }),
+      );
+      sheet.append(row);
+      return;
+    }
+    if (m.step === 'delete') {
+      const blocked = deleteBlocked(live, can);
+      const p = el('p', 'ph-mtext');
+      p.id = 'phDeleteText';
+      p.textContent = blocked
+        ? '“' + item.title + '” is running. Deleting it from this phone ends its session first, which needs “Send messages, stop turns ' +
+          'and continue chats” on for this phone (Settings → Remote control on your PC). You can delete it here once it has stopped, or archive it and keep it running.'
+        : deleteText(item.title, live, S.pcName, can);
+      sheet.append(p);
+      const row = el('div', 'ph-mbtns');
+      if (!blocked) {
+        const del = button('ph-btn danger', 'Delete', () => chatOp('delete', item, {}));
+        del.id = 'phDeleteGo';
+        row.append(del);
+      }
+      row.append(
+        button('ph-btn quiet', blocked ? 'Back' : 'Cancel', () => {
+          m.step = 'list';
+          drawMenu();
+        }),
+      );
+      sheet.append(row);
+      return;
+    }
+    for (const id of menuItems(item)) {
+      if (id === 'arts') {
+        const n = S.artCount[key];
+        sheet.append(menuItem('arts', '▤', 'View artifacts', () => openArts(item, 'home'), n == null ? '' : String(n)));
+      } else if (id === 'read') sheet.append(menuItem('read', '○', 'Mark as read', () => chatOp('mark', item, { read: true })));
+      else if (id === 'unread') sheet.append(menuItem('unread', '●', 'Mark as unread', () => chatOp('mark', item, { read: false })));
+      else if (id === 'handled') sheet.append(menuItem('handled', '✓', 'Mark handled', () => chatOp('handled', item, {})));
+      else if (id === 'rename')
+        sheet.append(
+          menuItem('rename', '✎', 'Rename', () => {
+            m.step = 'rename';
+            m.name = item.title;
+            drawMenu();
+          }),
+        );
+      else if (id === 'archive')
+        sheet.append(
+          menuItem('archive', '⇩', 'Archive', () => {
+            if (live) {
+              m.step = 'archive';
+              drawMenu();
+            } else chatOp('archive', item, { end: false });
+          }),
+        );
+      else if (id === 'delete')
+        sheet.append(
+          menuItem('delete', '🗑', 'Delete…', () => {
+            m.step = 'delete';
+            drawMenu();
+          }),
+        );
+    }
+    sheet.append(menuItem('cancel', '', 'Cancel', closeMenu));
+  }
+
+  /* One card menu action on the PC. op: rename | mark | handled | archive | delete. */
+  async function chatOp(op, item, extra) {
+    const m = S.menu;
+    if (!m || m.busy) return;
+    const key = item.chat.key;
+    const path = op === 'rename' ? 'rename' : op === 'mark' ? 'mark' : 'chat-op';
+    const body = op === 'rename' || op === 'mark' ? { key, ...extra } : { key, op, ...extra };
+    m.busy = true;
+    m.error = '';
+    let r = null;
+    try {
+      r = await call('POST', '/api/remote/' + path, body);
+    } catch {
+      r = null;
+    }
+    m.busy = false;
+    if (r && r.status === 401) {
+      closeMenu();
+      return removed();
+    }
+    if (!r || r.status !== 200) {
+      m.error = r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was changed.';
+      if (S.menu === m) drawMenu();
+      return;
+    }
+    closeMenu();
+    S.homeRev = '';
+    if (op === 'rename') toast('Renamed');
+    else if (op === 'mark') toast(extra.read ? 'Marked as read' : 'Marked as unread');
+    else if (op === 'handled') toast('Marked handled');
+    else if (op === 'archive') toast('Archived “' + item.title + '”', { key, op: 'unarchive' });
+    else if (op === 'delete') toast('Deleted “' + item.title + '”', { key, op: 'restore' });
+    if ((op === 'archive' || op === 'delete') && S.screen !== 'home') goHome();
+    else {
+      clearTimeout(S.timer);
+      tick();
+    }
+  }
+  /* Undo on the toast after Archive or Delete: unarchive / restore (no restart). */
+  async function undoOp(u) {
+    let r = null;
+    try {
+      r = await call('POST', '/api/remote/chat-op', { key: u.key, op: u.op });
+    } catch {
+      r = null;
+    }
+    if (!r || r.status !== 200) toast(r ? r.data.error || 'That did not work.' : "Can't reach " + S.pcName + '.');
+    else toast(u.op === 'restore' ? 'Restored' : 'Back in your chats');
+    S.homeRev = '';
+    clearTimeout(S.timer);
+    tick();
+  }
+
+  /* Long press (and right-click on a PC browser) on a card opens its menu; the press does not also open the chat. */
+  let pressTimer = 0;
+  let pressed = false;
+  app.addEventListener('pointerdown', (e) => {
+    pressed = false;
+    const card = e.target && e.target.closest ? e.target.closest('[data-menu-key]') : null;
+    if (!card) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      pressed = true;
+      openCardMenu(cardItems.get(card.dataset.menuKey));
+    }, 550);
+  });
+  for (const n of ['pointerup', 'pointercancel', 'pointerleave', 'pointermove'])
+    app.addEventListener(n, (e) => {
+      if (n === 'pointermove' && Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0) < 6) return;
+      clearTimeout(pressTimer);
+    });
+  app.addEventListener(
+    'click',
+    (e) => {
+      if (!pressed) return;
+      pressed = false;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    true,
+  );
+  app.addEventListener('contextmenu', (e) => {
+    const card = e.target && e.target.closest ? e.target.closest('[data-menu-key]') : null;
+    if (!card) return;
+    e.preventDefault();
+    clearTimeout(pressTimer);
+    openCardMenu(cardItems.get(card.dataset.menuKey));
+  });
+  /* menu key -> the home item it belongs to (filled as home draws its cards). */
+  const cardItems = new Map();
+
+  // ---- New chat ----
+  function openNew() {
+    if (!abilities(S.scopes).start) return;
+    S.screen = 'new';
+    S.nc = { project: '', agent: '', model: '', mode: '', projects: null, agents: [], lists: null, error: '', starting: false, loadError: '' };
+    S.ncText = S.ncText || '';
+    draw();
+    root.scrollTo(0, 0);
+    clearTimeout(S.timer);
+    loadNewOptions();
+  }
+  async function loadNewOptions() {
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/new/options');
+    } catch {
+      r = null;
+    }
+    const nc = S.nc;
+    if (!nc || S.screen !== 'new') return;
+    if (r && r.status === 401) return removed();
+    if (!r || r.status !== 200) {
+      nc.loadError = r ? r.data.error || 'The projects could not be read.' : "Can't reach " + S.pcName + '.';
+      draw();
+      return;
+    }
+    nc.projects = Array.isArray(r.data.projects) ? r.data.projects : [];
+    nc.agents = Array.isArray(r.data.agents) ? r.data.agents : [];
+    draw();
+  }
+  function pickProject(p) {
+    const nc = S.nc;
+    nc.project = p.id;
+    const def = nc.agents.find((a) => a.id === p.agent && a.ok) || nc.agents.find((a) => a.ok);
+    nc.agent = def ? def.id : '';
+    nc.error = '';
+    loadLists();
+    draw();
+  }
+  function pickAgent(a) {
+    if (!a.ok) return;
+    S.nc.agent = a.id;
+    S.nc.error = '';
+    loadLists();
+    draw();
+  }
+  let listsTimer = 0;
+  async function loadLists(again) {
+    const nc = S.nc;
+    clearTimeout(listsTimer);
+    if (!nc || !nc.project || !nc.agent) return;
+    const want = nc.project + '|' + nc.agent;
+    if (!again) {
+      nc.lists = null;
+      nc.model = '';
+      nc.mode = '';
+    }
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/new/options?project=' + encodeURIComponent(nc.project) + '&agent=' + encodeURIComponent(nc.agent));
+    } catch {
+      r = null;
+    }
+    if (S.nc !== nc || S.screen !== 'new' || nc.project + '|' + nc.agent !== want) return;
+    if (!r || r.status !== 200) {
+      nc.lists = { model: null, mode: null, loading: false };
+      draw();
+      return;
+    }
+    const first = !nc.lists || (!nc.lists.model && !nc.lists.mode);
+    nc.lists = { model: r.data.model || null, mode: r.data.mode || null, loading: !!r.data.loading };
+    if (first) {
+      nc.model = nc.lists.model ? nc.lists.model.default || '' : '';
+      nc.mode = nc.lists.mode ? nc.lists.mode.default || '' : '';
+    }
+    draw();
+    if (nc.lists.loading && !nc.lists.model && !nc.lists.mode && (nc.tries = (nc.tries || 0) + 1) < 20)
+      listsTimer = setTimeout(() => loadLists(true), 2500);
+  }
+  function pills(kind, list, picked, onPick) {
+    const box = el('div', 'ph-pills');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', kind === 'model' ? 'Model' : 'Mode');
+    for (const c of list.choices) {
+      const b = button('ph-pill', '', () => onPick(c.value));
+      b.dataset[kind] = c.value;
+      b.setAttribute('aria-pressed', picked === c.value ? 'true' : 'false');
+      b.append(doc.createTextNode(c.name));
+      if (c.value === list.default) b.append(el('small', '', 'default'));
+      box.append(b);
+    }
+    return box;
+  }
+  function drawNew() {
+    const nc = S.nc || {};
+    const h = header('New chat', { back: goHome, backLabel: 'Chats', sub: 'Runs on ' + S.pcName, chip: liveChip() });
+    const parts = [h];
+    if (S.offline) parts.push(offlineBox());
+    const body = el('main', 'ph-new' + (S.offline ? ' ph-stale' : ''));
+    body.append(el('p', 'ph-ncs', '1 · Project'));
+    const project = (nc.projects || []).find((p) => p.id === nc.project);
+    if (nc.loadError) body.append(el('p', 'ph-error', nc.loadError));
+    else if (!nc.projects) body.append(el('p', 'ph-empty', 'Loading your projects…'));
+    else if (!project) {
+      if (!nc.projects.length) body.append(el('p', 'ph-empty', 'No projects in AIB on ' + S.pcName + ' yet. Add one there first.'));
+      for (const p of nc.projects) {
+        const b = button('ph-pick', '', () => pickProject(p));
+        b.dataset.project = p.id;
+        const dot = el('span', 'ph-pdot big');
+        dot.style.background = projectColor(p.color);
+        const t = el('span', 'ph-pt');
+        t.append(el('b', '', p.name), el('span', '', p.chats + (p.chats === 1 ? ' chat' : ' chats')));
+        b.append(dot, t);
+        body.append(b);
+      }
+      body.append(el('p', 'ph-note', 'New projects (a new folder) are added in AIB on your PC.'));
+    } else {
+      const chosen = el('div', 'ph-chosen');
+      const dot = el('span', 'ph-pdot big');
+      dot.style.background = projectColor(project.color);
+      const t = el('span', 'ph-pt');
+      t.append(el('b', '', project.name), el('span', '', project.chats + (project.chats === 1 ? ' chat' : ' chats')));
+      const change = button('ph-btn sm quiet', 'Change', () => {
+        nc.project = '';
+        nc.agent = '';
+        nc.lists = null;
+        draw();
+      });
+      change.id = 'phNcChange';
+      chosen.append(dot, t, change);
+      body.append(chosen, el('p', 'ph-ncs', '2 · Agent'));
+      for (const a of nc.agents) {
+        const b = button('ph-pick', '', () => pickAgent(a));
+        b.dataset.agent = a.id;
+        b.disabled = !a.ok;
+        b.setAttribute('aria-pressed', nc.agent === a.id ? 'true' : 'false');
+        const tt = el('span', 'ph-pt');
+        const name = el('b', '', a.name);
+        if (a.beta) name.append(el('span', 'ph-tag', 'Beta'));
+        tt.append(name, el('span', '', !a.ok ? a.why || a.reason : a.id === project.agent ? 'Default for ' + project.name : ''));
+        b.append(tt);
+        if (nc.agent === a.id) b.append(el('span', 'ph-mark', '✓ Picked'));
+        body.append(b);
+      }
+      const agent = nc.agents.find((a) => a.id === nc.agent);
+      if (agent && agent.ok) {
+        const lists = nc.lists;
+        body.append(el('p', 'ph-ncs', '3 · Model'));
+        if (!lists) body.append(el('p', 'ph-note', 'Reading ' + agent.name + '’s models…'));
+        else if (lists.model) body.append(pills('model', lists.model, nc.model, (v) => ((nc.model = v), draw())));
+        else body.append(el('p', 'ph-note', lists.loading ? 'Asking ' + agent.name + ' for its models…' : agent.name + ' uses its own model.'));
+        body.append(el('p', 'ph-ncs', '4 · Mode'));
+        if (lists && lists.mode) body.append(pills('mode', lists.mode, nc.mode, (v) => ((nc.mode = v), draw())));
+        else if (lists) body.append(el('p', 'ph-note', lists.loading ? 'Asking ' + agent.name + ' for its modes…' : agent.name + ' uses its own mode.'));
+        const defs = el('div', 'ph-defs');
+        defs.append(
+          doc.createTextNode('“default” marks your defaults for '),
+          el('b', '', agent.name),
+          doc.createTextNode(' in '),
+          el('b', '', project.name),
+          doc.createTextNode('. A change here is for this chat only; your defaults stay as they are.'),
+        );
+        body.append(defs);
+      }
+    }
+    parts.push(body);
+    const ready = !!(project && nc.agents.some((a) => a.id === nc.agent && a.ok));
+    const bottom = el('form', 'ph-bottom ph-newbottom');
+    bottom.id = 'phNewBottom';
+    bottom.noValidate = true;
+    bottom.append(el('p', 'ph-ncs', '5 · First message'));
+    const ta = el('textarea', 'ph-input');
+    ta.id = 'phNewPrompt';
+    ta.rows = 2;
+    ta.disabled = !ready || nc.starting;
+    ta.placeholder = ready ? 'What should ' + (nc.agents.find((a) => a.id === nc.agent) || {}).name + ' do?' : 'Pick a project and an agent first';
+    ta.setAttribute('aria-label', 'First message');
+    ta.value = S.ncText || '';
+    ta.addEventListener('input', () => {
+      S.ncText = ta.value;
+      const go = doc.getElementById('phNewStart');
+      if (go) go.disabled = !newChatReady(S.nc, S.ncText) || S.nc.starting || S.offline;
+    });
+    bottom.append(ta);
+    if (nc.error) {
+      const err = el('p', 'ph-error', nc.error);
+      err.id = 'phNewError';
+      err.setAttribute('role', 'alert');
+      bottom.append(err);
+    }
+    const go = el('button', 'ph-btn', nc.starting ? 'Starting…' : 'Start chat');
+    go.type = 'submit';
+    go.id = 'phNewStart';
+    go.disabled = !newChatReady(nc, S.ncText) || nc.starting || S.offline;
+    bottom.append(go);
+    bottom.addEventListener('submit', (e) => {
+      e.preventDefault();
+      startNew();
+    });
+    parts.push(bottom);
+    return parts;
+  }
+  async function startNew() {
+    const nc = S.nc;
+    if (!nc || nc.starting) return;
+    const text = S.ncText || '';
+    const problem = firstMessageProblem(text);
+    if (problem) {
+      nc.error = problem;
+      return draw();
+    }
+    if (!newChatReady(nc, text)) return;
+    nc.starting = true;
+    nc.error = '';
+    draw();
+    const cmid = newMessageId();
+    const body = { project: nc.project, agent: nc.agent, text, clientMessageId: cmid };
+    if (nc.model) body.model = nc.model;
+    if (nc.mode) body.mode = nc.mode;
+    let r = null;
+    try {
+      r = await call('POST', '/api/remote/new', body);
+    } catch {
+      r = null;
+    }
+    if (S.nc !== nc) return;
+    nc.starting = false;
+    if (r && r.status === 401) return removed();
+    if (!r || r.status !== 200 || !r.data.id) {
+      nc.error = r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was started.';
+      return draw();
+    }
+    const project = nc.projects.find((p) => p.id === nc.project) || {};
+    const agent = nc.agents.find((a) => a.id === nc.agent) || {};
+    const name = (list, v) => ((list && list.choices.find((c) => c.value === v)) || {}).name || '';
+    const picks = [agent.name, name(nc.lists && nc.lists.model, nc.model), name(nc.lists && nc.lists.mode, nc.mode)].filter(Boolean);
+    S.ncText = '';
+    S.nc = null;
+    const id = r.data.id;
+    openChat(id, text.length > 60 ? text.slice(0, 58) + '…' : text, false, { project, agent: agent.name });
+    S.newJob = {
+      id,
+      text,
+      cmid,
+      state: 'opening',
+      error: '',
+      note: 'Started from this phone in ' + (project.name || 'a project') + ' with ' + picks.join(' · ') + '.',
+    };
+    draw();
+  }
+  /* The chat this phone just started: its first message's fate (GET /api/remote/new) while it opens. */
+  async function checkNewJob() {
+    const j = S.newJob;
+    if (!j || j.id !== S.chatId || j.state !== 'opening') return;
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/new?id=' + encodeURIComponent(j.id));
+    } catch {
+      return;
+    }
+    if (S.newJob !== j) return;
+    if (r.status === 404) {
+      j.state = 'gone';
+      return;
+    }
+    if (r.status !== 200) return;
+    const st = str(r.data.state);
+    if (st === 'opening') return;
+    j.state = st;
+    if (r.data.warning) toast(str(r.data.warning).slice(0, 160));
+    if (st === 'sent') {
+      j.error = '';
+      S.scrollTo = 'end';
+    } else {
+      j.error = str(r.data.error) || 'Your first message was not sent.';
+      S.draft = j.text;
+      S.actError = j.error;
+      S.actKey = '';
+    }
+    draw();
+  }
+
+  // ---- a chat's Artifacts page ----
+  function openArts(item, from) {
+    closeMenu();
+    const c = obj(item.chat);
+    S.arts = { key: c.key, id: item.kind === 'live' ? c.id : '', title: item.title, agent: item.agent, from, list: null, error: '' };
+    S.artsBack = from === 'chat' ? { id: S.chatId, title: S.chatTitle, meta: S.chatMeta } : null;
+    S.screen = 'arts';
+    draw();
+    root.scrollTo(0, 0);
+    clearTimeout(S.timer);
+    loadArts();
+  }
+  async function loadArts() {
+    const a = S.arts;
+    if (!a) return;
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/artifacts?key=' + encodeURIComponent(a.key) + (a.id ? '&id=' + encodeURIComponent(a.id) : ''));
+    } catch {
+      r = null;
+    }
+    if (S.arts !== a) return;
+    if (r && r.status === 401) return removed();
+    if (!r || r.status !== 200) {
+      a.error = r ? r.data.error || 'The artifacts could not be read.' : "Can't reach " + S.pcName + '.';
+      a.list = a.list || [];
+    } else {
+      a.list = Array.isArray(r.data.artifacts) ? r.data.artifacts : [];
+      a.error = '';
+      S.artCount[a.key] = a.list.length;
+    }
+    draw();
+  }
+  /* The ▤ count in a chat's header: read once when the chat opens (never on home polls). */
+  async function countArts(key, id) {
+    if (!key) return;
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/artifacts?key=' + encodeURIComponent(key) + (id ? '&id=' + encodeURIComponent(id) : ''));
+    } catch {
+      return;
+    }
+    if (r.status !== 200 || !Array.isArray(r.data.artifacts)) return;
+    const before = S.artCount[key];
+    S.artCount[key] = r.data.artifacts.length;
+    if (before !== S.artCount[key] && S.screen === 'chat') draw();
+  }
+  function artsBack() {
+    const b = S.artsBack;
+    S.arts = null;
+    S.artsBack = null;
+    if (b && b.id) return openChat(b.id, b.title, false, b.meta);
+    goHome();
+  }
+  function drawArts() {
+    const a = S.arts || {};
+    const list = a.list || [];
+    const h = header('Artifacts' + (a.list ? ' · ' + list.length : ''), {
+      back: artsBack,
+      backLabel: a.from === 'chat' ? 'Chat' : 'Chats',
+      sub: a.title || '',
+      chip: liveChip(),
+    });
+    const parts = [h];
+    if (S.offline) parts.push(offlineBox());
+    const body = el('main', 'ph-arts' + (S.offline ? ' ph-stale' : ''));
+    if (a.error) body.append(el('p', 'ph-error', a.error));
+    if (!a.list) body.append(el('p', 'ph-empty', 'Loading…'));
+    else if (!list.length && !a.error) {
+      const empty = el('div', 'ph-empty-box');
+      empty.id = 'phArtsEmpty';
+      empty.append(
+        el('b', '', 'No artifacts yet'),
+        el('span', '', 'When ' + (a.agent || 'the agent') + ' makes a page, picture, table or document in this chat, it shows up here.'),
+      );
+      body.append(empty);
+    } else {
+      const now = Date.now();
+      for (const x of list) {
+        const here = x.kind !== 'pdf' && !!S.artifacts;
+        const card = button('ph-art', '', () => openArtifact(x.id, 0, x));
+        card.dataset.artifact = x.id;
+        const text = el('span', 'ph-art-text');
+        const when = x.updatedAt ? ago(new Date(x.updatedAt * 1000).toISOString(), now) : '';
+        text.append(
+          el('b', 'ph-art-title', x.title),
+          el(
+            'span',
+            'ph-art-kind',
+            [
+              artifactKind(x.kind),
+              'v' + x.version,
+              x.versions > 1 ? x.versions + ' versions' : '',
+              when ? (when === 'now' ? 'now' : when + ' ago') : '',
+              x.archived ? 'archived' : '',
+              here ? '' : 'open on your PC',
+            ]
+              .filter(Boolean)
+              .join(' · '),
+          ),
+        );
+        card.append(el('span', 'ph-art-icon', ART_BADGE[x.kind] || 'FILE'), text);
+        body.append(card);
+      }
+    }
+    parts.push(body);
+    return parts;
+  }
+
   // ---- screens ----
   /* The header: Back (in a chat), the title with a line under it, and a chip on the right. opts: {back, sub (text or node), chip:
      [text, tone], extra (a node under the sub line)} */
@@ -994,8 +1900,10 @@
     const h = el('header', 'ph-head');
     if (o.back) {
       const b = button('ph-back', '', o.back);
-      b.append(el('span', 'ph-chev', '‹'), doc.createTextNode('Chats'));
-      b.setAttribute('aria-label', 'Back to all chats');
+      const label = o.backLabel || 'Chats';
+      b.append(el('span', 'ph-chev', '‹'), doc.createTextNode(label));
+      b.setAttribute('aria-label', label === 'Chats' ? 'Back to all chats' : 'Back to ' + label.toLowerCase());
+      b.id = 'phBack';
       h.append(b);
     }
     const tt = el('div', 'ph-tt');
@@ -1009,7 +1917,9 @@
     }
     if (o.extra) tt.append(o.extra);
     h.append(tt);
+    for (const t of o.tools || []) if (t) h.append(t);
     if (o.chip) h.append(el('span', 'ph-chip ' + o.chip[1], o.chip[0]));
+    for (const t of o.after || []) if (t) h.append(t);
     return h;
   }
 
@@ -1088,7 +1998,21 @@
     card.append(r1, r2);
     const line = live ? str(c.line) : '';
     if (line) card.append(el('span', 'ph-r3', line));
-    return card;
+    // ⋯ (and a long press on the card) opens its menu
+    const key = (live ? 'l:' : 's:') + (live ? c.id : c.key);
+    const opening = live && (c.state === 'opening' || !/:.+/.test(str(c.key))); // still starting: no menu until it is a chat
+    if (!opening) {
+      card.dataset.menuKey = key;
+      cardItems.set(key, item);
+    }
+    const wrap = el('div', 'ph-cw');
+    const more = button('ph-more-btn', '⋯', () => openCardMenu(item));
+    more.disabled = opening;
+    more.setAttribute('aria-label', 'More for ' + item.title);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.dataset.menuFor = key;
+    wrap.append(card, more);
+    return wrap;
   }
 
   function setFilter(id) {
@@ -1111,7 +2035,20 @@
     // a remembered project that has no chats any more: All projects
     const picked = S.filter && projects.find((p) => p.id === S.filter);
     const list = picked ? all.filter((i) => i.project.id === S.filter) : all;
-    parts.push(header('AIB', { sub: S.pcName + (home ? ' · ' + all.length + (all.length === 1 ? ' chat' : ' chats') : ''), chip: liveChip() }));
+    const phoneBtn = button('ph-ic', '⋯', () => {
+      S.menu = { kind: 'phone', step: 'phone' };
+      drawMenu();
+    });
+    phoneBtn.id = 'phPhoneMenu';
+    phoneBtn.setAttribute('aria-label', 'This phone: theme');
+    phoneBtn.setAttribute('aria-haspopup', 'menu');
+    parts.push(
+      header('AIB', {
+        sub: S.pcName + (home ? ' · ' + all.length + (all.length === 1 ? ' chat' : ' chats') : ''),
+        chip: liveChip(),
+        after: [phoneBtn],
+      }),
+    );
     if (S.offline) parts.push(offlineBox());
     else if (S.device && !pushReady()) {
       const bar = el('div', 'ph-setup-bar');
@@ -1164,10 +2101,27 @@
     else {
       const now = Date.now();
       const cards = el('div', 'ph-cards');
+      cardItems.clear();
       for (const item of list) cards.append(chatCard(item, now));
       body.append(cards);
     }
     parts.push(body);
+    if (home && !S.offline) {
+      if (abilities(S.scopes).start) {
+        const fab = button('ph-fab', '+ New chat', openNew);
+        fab.id = 'phNewChat';
+        parts.push(fab);
+      } else {
+        const off = el('p', 'ph-startoff');
+        off.id = 'phStartOff';
+        off.append(
+          doc.createTextNode('Starting new chats from this phone is off. To turn it on: AIB on ' + S.pcName + ' → Settings → Remote control → this phone → '),
+          el('b', '', 'Start new chats'),
+          doc.createTextNode(abilities(S.scopes).send ? '.' : ' (it needs “Send messages, stop turns and continue chats” on first).'),
+        );
+        parts.push(off);
+      }
+    }
     return parts;
   }
 
@@ -1414,6 +2368,11 @@
     } else {
       S.viewer = { ...S.viewer, ...artifactOf(r.data), state: 'open', view: r.data.view, url: r.data.url };
     }
+    if (r && r.status === 200) {
+      S.viewer.latest = Math.max(1, Number(r.data.latest) || S.viewer.version || 1);
+      S.viewer.versions = Array.isArray(r.data.versions) ? r.data.versions : [];
+      S.viewer.drop = false;
+    }
     drawViewer();
   }
   function closeArtifact() {
@@ -1441,8 +2400,49 @@
     );
     const close = button('ph-btn quiet', 'Close', closeArtifact);
     close.id = 'viewerClose';
-    bar.append(name, close);
+    // the version menu (like the PC's version chip): v3 ▾ lists each version with its time, what made it, its note, "latest"
+    const versions = Array.isArray(v.versions) ? v.versions : [];
+    let chip = null;
+    if (versions.length > 1) {
+      chip = button('ph-vchip', 'v' + v.version + ' ▾', () => {
+        v.drop = !v.drop;
+        drawViewer();
+      });
+      chip.id = 'phVersions';
+      chip.setAttribute('aria-haspopup', 'listbox');
+      chip.setAttribute('aria-expanded', v.drop ? 'true' : 'false');
+    } else if (v.version) chip = el('span', 'ph-vchip plain', 'v' + v.version);
+    bar.append(name);
+    if (chip) bar.append(chip);
+    bar.append(close);
     box.append(bar);
+    if (v.drop && versions.length > 1) {
+      const drop = el('div', 'ph-vdrop');
+      drop.id = 'phVersionList';
+      drop.setAttribute('role', 'listbox');
+      drop.setAttribute('aria-label', 'Versions');
+      const now = Date.now();
+      for (const x of versions) {
+        const o = button('ph-vopt', '', () => openArtifact(v.id, x.n, { title: v.title, kind: v.kind }));
+        o.setAttribute('role', 'option');
+        o.setAttribute('aria-selected', x.n === v.version ? 'true' : 'false');
+        o.dataset.v = String(x.n);
+        const meta = el('span', 'ph-vm', versionMeta(x, now));
+        if (str(x.note)) meta.append(el('span', 'ph-vnote', str(x.note)));
+        o.append(el('span', 'ph-vn', (x.n === v.version ? '✓ ' : '') + 'v' + x.n), meta);
+        drop.append(o);
+      }
+      box.append(drop);
+    }
+    if (v.latest && v.version && v.version < v.latest) {
+      const old = el('div', 'ph-vold');
+      old.id = 'phVersionOld';
+      old.append(doc.createTextNode('You are looking at v' + v.version + '. v' + v.latest + ' is available. '));
+      const sw = button('ph-vswitch', 'Switch', () => openArtifact(v.id, v.latest, { title: v.title, kind: v.kind }));
+      sw.id = 'phVersionSwitch';
+      old.append(sw);
+      box.append(old);
+    }
     const body = el('div', 'ph-viewer-body');
     if (v.state === 'loading') body.append(el('p', 'ph-empty', 'Opening…'));
     else if (v.state === 'open' && v.view === 'image') {
@@ -1467,7 +2467,7 @@
     if (viewerEl) viewerEl.replaceWith(box);
     else doc.body.append(box);
     viewerEl = box;
-    close.focus({ preventScroll: true });
+    if (!box.contains(doc.activeElement) || doc.activeElement === box) close.focus({ preventScroll: true });
   }
 
   /* A waiting approval or question as a card in the stream. Closed: one line with Review / Answer. Open: Deny / Allow once (only
@@ -1879,18 +2879,42 @@
       });
       extra.id = 'phSubsGo';
     }
+    let arts = null;
+    if (c && !c.gone && c.savedKey) {
+      const n = S.artCount[c.savedKey];
+      arts = button('ph-ic ph-hdart', '▤', () =>
+        openArts({ kind: 'live', chat: { key: c.savedKey, id: c.id }, title, agent, project }, 'chat'),
+      );
+      arts.id = 'phArtsBtn';
+      arts.setAttribute('aria-label', 'Artifacts' + (n == null ? '' : ' (' + n + ')'));
+      if (n != null) arts.append(el('span', 'ph-cnt', String(n)));
+    }
     const parts = [
       header(title, {
         back: goHome,
         sub: project ? projectLine(project, [agent]) : agent,
         extra,
+        tools: [arts],
         chip: S.offline ? ['Offline', 'off'] : w ? [w.text.split(' · ')[0], w.tone] : null,
       }),
     ];
     if (S.offline) parts.push(offlineBox());
-    parts.push(chatMain());
+    const main = chatMain();
+    const job = S.newJob && S.newJob.id === S.chatId ? S.newJob : null;
+    if (job && job.note) {
+      const note = el('p', 'ph-notice mine', job.note);
+      note.id = 'phNewNote';
+      const list = main.querySelector('.ph-list');
+      if (list) list.prepend(note);
+      else main.prepend(note);
+    }
+    parts.push(main);
     if (!c || c.gone) return parts;
     const can = abilities(S.scopes);
+    if (job && job.state === 'opening' && !c.closed) {
+      parts.push(bottomNote(c, 'Starting this chat on ' + S.pcName + '… Your first message goes as soon as it is ready.'));
+      return parts;
+    }
     if (c.closed) {
       if (c.savedKey) parts.push(continueBar(c.savedKey));
     } else if (!S.offline && can.send && c.ready) parts.push(composer());
@@ -2021,6 +3045,10 @@
           ? drawChat()
           : S.screen === 'saved'
             ? drawSaved()
+            : S.screen === 'new'
+              ? drawNew()
+              : S.screen === 'arts'
+                ? drawArts()
             : S.screen === 'pair'
               ? drawPair()
               : S.screen === 'removed'
@@ -2086,6 +3114,7 @@
     S.subOpen.clear();
     S.qopen = false;
     S.banner = null;
+    S.newJob = null;
   }
 
   function goHome() {
@@ -2209,8 +3238,10 @@
     const text = S.draft;
     const c = S.chat;
     if (!c || !text.trim() || S.sending) return;
-    const op = c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt';
-    const done = await act(op, { id: c.id, text, clientMessageId: newMessageId() });
+    const job = S.newJob && S.newJob.id === c.id && S.newJob.state !== 'sent' && S.newJob.state !== 'opening' ? S.newJob : null;
+    const op = job ? 'new/first' : c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt';
+    const done = await act(op, { id: c.id, text, clientMessageId: job ? job.cmid : newMessageId() });
+    if (done && job) job.state = 'sent';
     if (done) {
       S.draft = '';
       const ta = doc.getElementById('phPrompt');
@@ -2378,6 +3409,55 @@
     root.navigator.standalone === true ||
     !!(root.matchMedia && root.matchMedia('(display-mode: standalone)').matches);
   const iphone = () => isIPhone(root.navigator.userAgent, root.navigator.maxTouchPoints);
+  /* Installing the page as an app: what this phone and browser can do now. */
+  const installFacts = () => ({
+    standalone: standalone(),
+    installed: S.install.installed,
+    prompt: !!S.install.event && !S.install.used,
+    iphone: iphone(),
+    firefox: isFirefoxAndroid(root.navigator.userAgent),
+  });
+  /* Our Install AIB button: the browser's own install dialog (the event kept from beforeinstallprompt; it can be shown once). */
+  async function installNow() {
+    const e = S.install.event;
+    if (!e || S.install.used) {
+      S.menu = { kind: 'phone', step: 'install' };
+      drawMenu();
+      return;
+    }
+    S.install.used = true;
+    let outcome = '';
+    try {
+      e.prompt();
+      const choice = await e.userChoice;
+      outcome = choice && choice.outcome;
+    } catch {
+      outcome = '';
+    }
+    if (outcome === 'accepted') {
+      S.install.installed = true;
+      S.install.event = null;
+      toast('Installing AIB');
+    }
+    if (S.menu && S.menu.kind === 'phone') {
+      S.menu = null;
+      drawMenu();
+    }
+    if (S.screen === 'setup' || S.screen === 'home') draw();
+  }
+  root.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); // no mini-infobar: our own Install AIB button shows it
+    S.install.event = e;
+    S.install.used = false;
+    if (S.screen === 'setup') draw();
+    if (S.menu && S.menu.kind === 'phone') drawMenu();
+  });
+  root.addEventListener('appinstalled', () => {
+    S.install.installed = true;
+    S.install.event = null;
+    if (S.screen === 'setup') draw();
+    if (S.menu && S.menu.kind === 'phone') drawMenu();
+  });
   const pushReady = () => !pushAllowed() || (S.push.on && permissionNow() === 'granted');
 
   function withTimeout(promise, ms) {
@@ -2453,6 +3533,7 @@
       permission: permissionNow(),
       on: S.push.on,
       allowed: pushAllowed(),
+      ...installFacts(),
     });
     let n = 0;
     for (const step of steps) {
@@ -2461,8 +3542,13 @@
       box.dataset.step = step.id;
       box.dataset.state = step.state;
       box.append(el('p', 'ph-note', 'Step ' + n + (step.id === 'home' ? ' · iPhone only' : '')));
-      box.append(el('h2', '', step.id === 'home' ? 'Add to Home Screen' : 'Turn on notifications'));
+      box.append(el('h2', '', step.id === 'home' ? 'Add to Home Screen' : step.id === 'install' ? 'Install AIB' : 'Turn on notifications'));
       box.append(el('p', '', step.text));
+      if (step.id === 'install' && step.kind === 'prompt') {
+        const b = button('ph-btn', 'Install AIB', () => installNow());
+        b.id = 'installAib';
+        box.append(b);
+      }
       if (step.id === 'notify' && step.state === 'todo' && !(iphone() && !standalone())) {
         const b = button('ph-btn', S.push.busy ? 'Turning on…' : 'Turn on notifications', () => turnOnNotifications());
         b.id = 'pushOn';
@@ -2532,6 +3618,7 @@
       return draw();
     }
     if (boot.data.layout !== 'phone') return;
+    takeTheme(boot.data);
     if (boot.data.paired) {
       S.device = boot.data.device;
       S.artifacts = typeof boot.data.artifacts === 'string' ? boot.data.artifacts : '';
@@ -2603,7 +3690,11 @@
   );
   root.addEventListener('resize', () => checkAbove(), { passive: true });
   doc.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && S.viewer) closeArtifact();
+    if (event.key === 'Escape' && S.menu) closeMenu();
+    else if (event.key === 'Escape' && S.viewer && S.viewer.drop) {
+      S.viewer.drop = false;
+      drawViewer();
+    } else if (event.key === 'Escape' && S.viewer) closeArtifact();
   });
   root.addEventListener('pagehide', left);
   root.__aibPhone = S; // tests read the page's state

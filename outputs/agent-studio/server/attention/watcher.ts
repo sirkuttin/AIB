@@ -20,7 +20,7 @@ import type { LiveBackend } from '../host/backend.ts';
 import { folderKinds } from '../desktop/folders.ts';
 import type { ConversationState } from '../state/conversations.ts';
 import type { ProjectPrefs } from '../state/projects.ts';
-import type { ViewPrefs } from '../state/view_prefs.ts';
+import { chatNamesOf, type ViewPrefs } from '../state/view_prefs.ts';
 import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, RULES } from './rules.ts';
@@ -217,10 +217,7 @@ export class AttentionWatcher {
     const marks = this.sources.conversations.public().entries as Record<string, unknown>;
     const prefs = this.sources.projectPrefs.public();
     const viewPrefs = this.sources.viewPrefs.public().prefs;
-    let names: Record<string, unknown> = {};
-    try {
-      names = obj(JSON.parse(viewPrefs['studio-conversation-names'] ?? '{}'));
-    } catch { /* no names */ }
+    const names: Record<string, unknown> = chatNamesOf(viewPrefs); // the chat names (Rename), shared with the phone
     const nowSeconds = this.clock() / 1000;
     const news: (Fire & { fk: string; flags: Flags })[] = [];
     const quiet: string[] = [];

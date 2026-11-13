@@ -308,7 +308,7 @@ export async function main(argv: string[]): Promise<void> {
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
-  // Phone access (Settings > Devices), when it is on: the phone port for Tailscale Serve, on its own fixed port (remote/access.ts).
+  // Phone access (Settings > Remote control), when it is on: the phone port for Tailscale Serve, on its own fixed port (remote/access.ts).
   // In the background: a busy port is retried for ~20 s and then reported in Devices, never swapped for another.
   ctx.phone.options.log = (m) => log.announce('studio', 'phone access: %s', m);
   void ctx.phone.start();
@@ -416,7 +416,7 @@ export async function main(argv: string[]): Promise<void> {
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
-      // Phone access on (Settings > Devices): closing the window keeps AIB in the tray, so the phone port, the attention watcher,
+      // Phone access on (Settings > Remote control): closing the window keeps AIB in the tray, so the phone port, the attention watcher,
       // notifications and pushes keep working; no idle quit in the tray; Quit AIB as always (owner's decision 2026-11-12).
       phoneOn: () => ctx.phone.on,
       terminalsBusy: () => ctx.terminals.busyCount(), // a command running in a terminal is work: left to the keeper, never cut off

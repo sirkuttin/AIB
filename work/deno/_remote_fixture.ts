@@ -298,6 +298,9 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
       return Promise.resolve(liveAnswer(name, body));
     },
     emitArtifact: () => Promise.resolve(true),
+    // conversation marks: a delete is refused while the chat is live (web/shared.ts conversationAction)
+    studioOwns: (provider: unknown, sessionId: unknown) =>
+      Promise.resolve(chats.some((c) => !c.closed && c.provider === provider && c.sessionId === sessionId)),
     busyConnections: () => Promise.resolve([]),
     close: () => Promise.resolve(),
   } as unknown as LiveBackend;

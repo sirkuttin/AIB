@@ -173,7 +173,9 @@
     const ended = Math.max(a.endedAt, derivedEnded.get(key) || 0);
     const stored = root.AgentReadState ? root.AgentReadState.seenAt(key) : viewed[key];
     const seen = stored ? stored : epoch;
-    const unread = ended > seen;
+    // "Mark as unread" from a phone (read-state.js markedUnread) shows the unread dot until the chat is looked at again
+    const marked = root.AgentReadState && root.AgentReadState.markedUnread ? root.AgentReadState.markedUnread(key) : 0;
+    const unread = ended > seen || marked > 0;
     let state = ['needs_you', 'working', 'opening', 'idle'].indexOf(a.state) >= 0 ? a.state : 'idle';
     if (state === 'idle' && unread) state = 'unread';
     const needs = state === 'needs_you' ? Math.max(1, a.needs) : 0;

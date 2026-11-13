@@ -199,7 +199,7 @@ export interface WebContext {
   /** The desktop app's own notifications (desktop/notify.ts), set by main.ts in the app; null in a server run (a browser uses the
    * web Notification API instead). */
   desktopNotify: DesktopNotifications | null;
-  /** Phone access (remote/access.ts): the switch, Tailscale checks, the phone port, pairing. Settings > Devices. */
+  /** Phone access (remote/access.ts): the switch, Tailscale checks, the phone port, pairing. Settings > Remote control. */
   phone: PhoneAccess;
   /** The paired phones (<state>/devices.json; remote/devices.ts), the same store phone.devices holds. */
   devices: DeviceStore;
@@ -218,14 +218,14 @@ export class WebServer {
   readonly native = new Map<string, Handler>();
 
   constructor(readonly ctx: WebContext) {
-    this.native.set('GET /api/live/list', async (c) => {
+    this.native.set('GET /api/live/list', async (c, url) => {
       const listing = await c.host.liveList();
       // Recovered chats (open before a restart) of folders that are not added projects are not listed either.
       const recovered = Array.isArray(listing.recovered)
-        ? (listing.recovered as unknown[]).filter((r) =>
-          !r || typeof r !== 'object' || c.addedProjects.shows(folderOfSession(r))
-        )
+        ? (listing.recovered as unknown[]).filter((r) => !r || typeof r !== 'object' || c.addedProjects.shows(folderOfSession(r)))
         : listing.recovered;
+      const names = c.viewPrefs.chatNamesRevision();
+      const knownNames = url.searchParams.get('names');
       return this.json(200, {
         ...listing,
         ...(recovered === undefined ? {} : { recovered }),
@@ -233,6 +233,9 @@ export class WebServer {
         projectsRevision: projectsRevision(c),
         readStateRevision: c.readState.revision(),
         settingsRevision: c.settings.revision(),
+        // chat names (Rename) can change from a phone: the page sends the revision it has (?names=) and gets the names when it differs
+        chatNamesRevision: names,
+        ...(knownNames && knownNames !== names ? { chatNames: c.viewPrefs.chatNames() } : {}),
         webInstanceId: c.webInstanceId,
       });
     });
@@ -463,7 +466,9 @@ export class WebServer {
           // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
           if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
             const listed = reply.body as { sessions?: unknown };
-            if (Array.isArray(listed.sessions)) listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+            if (Array.isArray(listed.sessions)) {
+              listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+            }
           }
           if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
           return new Response(JSON.stringify(reply.body), {

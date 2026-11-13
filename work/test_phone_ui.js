@@ -100,7 +100,9 @@ test('approval sheet: Deny then Allow once, only for the options the PC sends; w
   ]);
   assert.deepEqual(P.approvalButtons({ options: [] }), []);
   const all = P.abilities(['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve']);
-  assert.deepEqual(all, { answer: true, approve: true, send: true });
+  assert.deepEqual(all, { answer: true, approve: true, send: true, start: false });
+  assert.equal(P.abilities(['phone.prompt', 'phone.start']).start, true);
+  assert.equal(P.abilities(['phone.start']).start, false, 'Start new chats is a child of Send');
   const none = P.abilities(['phone.read']);
   assert.equal(P.actionable(wait, all), true);
   assert.equal(P.actionable(wait, none), false, 'Approve off: no buttons');

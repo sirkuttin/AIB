@@ -44,6 +44,8 @@ export interface Helper {
 
 export interface HomeChat {
   id: string;
+  /** provider:sessionId: the chat's stable key (its card menu acts on it; its artifacts are filed under it). */
+  key: string;
   title: string;
   agent: string;
   folder: string;
@@ -54,7 +56,7 @@ export interface HomeChat {
   busySince: string | null;
   turnEndedAt: string | null;
   yourTurn: boolean;
-  /** Finished and not read yet on the PC (the PC's unread dot). */
+  /** Finished and not read yet on the PC, or marked unread (the PC's unread dot). */
   unread: boolean;
   /** When the chat last changed state (started working, asked, finished; a message you send starts it working). The list's order. */
   changedAt: string;
@@ -310,6 +312,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   const listing = obj(await ctx.host.liveList());
   const marks = ctx.conversations.public().entries;
   const read = ctx.readState.public().chats;
+  const names = ctx.viewPrefs.chatNames(); // Rename, on the PC or a phone
   const raws = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed && str(c.id, 100));
   const project = projectsFor(ctx, raws.map((c) => str(c.projectRoot, 2000) || str(c.cwd, 2000)));
   const chats: (HomeChat & { at: number })[] = [];
@@ -320,7 +323,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
     if (mark.archivedAt || mark.deletedAt) continue;
     const attention = obj(c.attention);
     const sessionTitle = str(obj(obj(c.breadth).sessionInfo).title, 170);
-    let title = str(mark.title, 170) || sessionTitle;
+    let title = str(names[key], 170) || str(mark.title, 170) || sessionTitle;
     if (!title) {
       title = titles.titles.get(id) ?? '';
       if (!titles.titles.has(id)) titles.want(ctx, id);
@@ -332,8 +335,10 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
     const seen = Number(obj(read[key]).seenAt) || 0;
     const needs = Number(attention.needs) || 0;
     const asks = (Array.isArray(c.elicitations) ? c.elicitations : []).map((e) => str(obj(e).key, 100)).join(',');
+    const marked = Number(obj(read[key]).markedUnreadAt) || 0;
     chats.push({
       id,
+      key,
       title: title || `${agent}${folder ? ' in ' + folder : ''}`,
       agent,
       folder,
@@ -343,7 +348,7 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
       busySince: (attention.busySince as string | null) ?? null,
       turnEndedAt: (attention.turnEndedAt as string | null) ?? null,
       yourTurn: Number(mark.yourTurnAt) > 0 && !mark.holdAt,
-      unread: phaseOf(attention) === 'idle' && ended > (seen || STARTED),
+      unread: (phaseOf(attention) === 'idle' && ended > (seen || STARTED)) || marked > seen,
       changedAt: at ? new Date(at).toISOString() : '',
       line: titles.line(ctx, id, `${Number(c.cursor) || 0}|${needs}|${asks}|${c.busy ? 1 : 0}`, Number(c.cursor) || 0),
       at,
@@ -532,7 +537,8 @@ export async function chatPayload(
   const mark = obj(marks[`${str(state.provider, 60)}:${str(state.sessionId, 200)}`]);
   const agent = agentName(state.provider);
   const folder = folderName(state.projectRoot || state.cwd);
-  const title = str(mark.title, 170) || str(obj(obj(state.breadth).sessionInfo).title, 170) || titles.titles.get(id) ||
+  const name = ctx.viewPrefs.chatNames()[`${str(state.provider, 60)}:${str(state.sessionId, 200)}`];
+  const title = str(name, 170) || str(mark.title, 170) || str(obj(obj(state.breadth).sessionInfo).title, 170) || titles.titles.get(id) ||
     `${agent}${folder ? ' in ' + folder : ''}`;
   const root = str(state.projectRoot, 2000) || str(state.cwd, 2000);
   return {
