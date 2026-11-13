@@ -57,6 +57,7 @@
   const CHAT_MS = 3000;
   const PAIR_POLL_MS = 2000;
   const TIMEOUT_MS = 10000;
+  const OPTIONS_MS = 30000; // New chat's projects and agents: the PC looks for every agent's program first (seconds when busy)
   const UPLOAD_MS = 180000; // a message with attachments: up to 20 MB on mobile data
   const TAIL = 300;
   const DB = 'aib-phone';
@@ -1669,17 +1670,26 @@
     loadNewOptions();
   }
   async function loadNewOptions() {
+    const asked = S.nc;
     let r = null;
+    let why = '';
+    const started = Date.now();
     try {
-      r = await call('GET', '/api/remote/new/options');
-    } catch {
-      r = null;
+      r = await call('GET', '/api/remote/new/options', undefined, OPTIONS_MS);
+    } catch (error) {
+      why = error instanceof Offline ? error.message : 'unreachable';
     }
     const nc = S.nc;
-    if (!nc || S.screen !== 'new') return;
+    if (!nc || nc !== asked || S.screen !== 'new') return;
     if (r && r.status === 401) return removed();
     if (!r || r.status !== 200) {
-      nc.loadError = r ? r.data.error || 'The projects could not be read.' : "Can't reach " + S.pcName + '.';
+      nc.loadError = r
+        ? r.data.error || 'The projects could not be read.'
+        : why === 'down'
+        ? 'AIB on ' + S.pcName + ' is not answering right now.'
+        : Date.now() - started >= OPTIONS_MS - 500
+        ? S.pcName + ' took too long to answer.'
+        : "Can't reach " + S.pcName + '.';
       draw();
       return;
     }
@@ -1760,8 +1770,19 @@
     const body = el('main', 'ph-new' + (S.offline ? ' ph-stale' : ''));
     body.append(el('p', 'ph-ncs', '1 · Project'));
     const project = (nc.projects || []).find((p) => p.id === nc.project);
-    if (nc.loadError) body.append(el('p', 'ph-error', nc.loadError));
-    else if (!nc.projects) body.append(el('p', 'ph-empty', 'Loading your projects…'));
+    if (nc.loadError) {
+      const err = el('p', 'ph-error', nc.loadError);
+      err.id = 'phNcLoadError';
+      err.setAttribute('role', 'alert');
+      const again = button('ph-btn sm', 'Try again', () => {
+        nc.loadError = '';
+        nc.projects = null;
+        draw();
+        loadNewOptions();
+      });
+      again.id = 'phNcRetry';
+      body.append(err, again);
+    } else if (!nc.projects) body.append(el('p', 'ph-empty', 'Loading your projects…'));
     else if (!project) {
       if (!nc.projects.length) body.append(el('p', 'ph-empty', 'No projects in AIB on ' + S.pcName + ' yet. Add one there first.'));
       for (const p of nc.projects) {

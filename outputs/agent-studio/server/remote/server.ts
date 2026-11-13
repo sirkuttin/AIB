@@ -840,7 +840,7 @@ export class RemoteServer {
       if (!folder) return this.json(404, { error: 'This project is no longer in AIB on your PC.', code: 'not_found' });
       if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(agent)) return this.json(400, { error: 'Invalid request', code: 'invalid' });
       // only an agent that can start a chat now: asking a turned-off or missing agent for its lists could start it (a probe)
-      const can = (await agentsNow(this.host.ctx)).find((a) => a.id === agent);
+      const can = (await agentsNow(this.host.ctx, { stale: true })).find((a) => a.id === agent);
       if (!can) return this.json(400, { error: 'Invalid request', code: 'invalid' });
       if (!can.ok) {
         return this.json(403, {
