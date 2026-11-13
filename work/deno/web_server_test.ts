@@ -1,5 +1,5 @@
 /** server/web: the route table equals Python's, page-file mapping equals web_handler.studio_asset, CLI parsing matches studio.py. */
-import { assertEquals, assertThrows } from './_assert.ts';
+import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { PyParity } from './_parity.ts';
 import { DENO_ONLY, ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { studioAsset } from '../../outputs/agent-studio/server/web/server.ts';
@@ -71,6 +71,8 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/artifacts/undelete',
     'POST /api/live/artifacts/purge',
     'GET /api/live/artifacts/states',
+    'POST /api/live/steer',
+    'POST /api/live/tool-stop',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
   // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen Python
@@ -107,7 +109,10 @@ Deno.test('CLI flags parse like studio.py', () => {
 
 Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
   await using py = new PyParity();
-  assertEquals([...LIVE_POST_OPS].sort(), await py.call('shims', 'live_post_ops'));
+  // Steer-on-send's two calls are Deno only (routes.ts DENO_ONLY lists their routes); everything else is Python's set.
+  const denoOnly = ['steer', 'tool-stop'];
+  assert(denoOnly.every((op) => (LIVE_POST_OPS as readonly string[]).includes(op)));
+  assertEquals([...LIVE_POST_OPS].filter((op) => !denoOnly.includes(op)).sort(), await py.call('shims', 'live_post_ops'));
 });
 
 Deno.test('the phone port routes are not page routes, and the page port does not serve them', () => {

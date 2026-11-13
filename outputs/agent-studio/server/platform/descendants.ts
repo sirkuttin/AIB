@@ -11,6 +11,9 @@ export interface Descendant {
   pid: number;
   /** Epoch seconds the process started, or null when unknown. */
   started: number | null;
+  /** Its parent (the root, or another descendant), and how far below the root it is (1: a child of the root). */
+  parentPid: number;
+  depth: number;
 }
 
 interface Row {
@@ -91,17 +94,20 @@ export function descendants(root: number): Descendant[] | null {
   }
   const out: Descendant[] = [];
   const seen = new Set<number>([root]);
+  const depthOf = new Map<number, number>([[root, 0]]);
   const walk = [root];
   while (walk.length) {
     const parent = walk.pop()!;
     const parentStarted = startOf(t.get(parent));
+    const depth = depthOf.get(parent)! + 1;
     for (const row of children.get(parent) ?? []) {
       if (seen.has(row.pid)) continue;
       const started = startOf(row);
       // A Windows parent pid can name a process that ended long ago and whose pid was reused: a child older than its parent is not its.
       if (started !== null && parentStarted !== null && started < parentStarted - 1) continue;
       seen.add(row.pid);
-      out.push({ pid: row.pid, started });
+      depthOf.set(row.pid, depth);
+      out.push({ pid: row.pid, started, parentPid: parent, depth });
       walk.push(row.pid);
     }
   }

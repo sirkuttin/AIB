@@ -236,6 +236,12 @@ const DROP = new Set([
   'turnEndedAt',
   'busySince',
   'leaseExpiresAt',
+  // Steer-on-send's snapshot keys: Deno only (the Python reference never had them); work/deno/steer_*_test.ts covers them.
+  'steerable',
+  'autonomous',
+  'steerAgent',
+  'steerLane',
+  'toolBackground',
 ]);
 
 /** Same shape with times dropped, random keys and terminal ids numbered in order of appearance, the temp folder replaced, the connection id gone. */

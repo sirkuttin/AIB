@@ -1369,7 +1369,8 @@
   function autosize() {
     const box = doc().getElementById('prompt');
     if (!box || !box.style) return;
-    /* A one-line composer whose text still fits stays as it is (no layout read at all). */
+    /* A one-line composer whose text still fits stays as it is (no layout read at all). The height comes from textHeight(), a hidden
+       copy that holds the text only, never the placeholder (the longer one while the agent works must not make an empty box taller). */
     if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
     const cap = root.ResizeUI && root.ResizeUI.composerCap ? root.ResizeUI.composerCap(root) : 200;
     const h = Math.min(cap, Math.max(56, (root.getComputedStyle ? textHeight(box) : box.scrollHeight) || 0));
@@ -2786,6 +2787,13 @@
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,
+    // Tests (steer_e2e_test.ts P9): a typed quick reply to the chat with this key, through the inbox row's own send (sendQuick).
+    _sendQuick: async (key, text) => {
+      qs(key).text = String(text || '');
+      await sendQuick(key);
+      const s = quick.get(key);
+      return s ? { error: s.error, queued: !!s.queued } : { error: '', queued: false };
+    },
   };
   root.AgentWorkspaceUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

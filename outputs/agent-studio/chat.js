@@ -747,7 +747,7 @@
     } catch {}
   }
   async function post(path, data) {
-    if (path === 'prompt' || path === 'queue') rememberSend(data);
+    if (path === 'prompt' || path === 'queue' || path === 'steer') rememberSend(data);
     const response = await request(
       '/api/live/' + path,
       {
@@ -772,7 +772,7 @@
       );
     }
     if (!response.ok) {
-      if ((path === 'prompt' || path === 'queue') && response.body?.code === 'prompt_state_unknown')
+      if ((path === 'prompt' || path === 'queue' || path === 'steer') && response.body?.code === 'prompt_state_unknown')
         forgetAttemptById(data.clientMessageId);
       throw responseError(response);
     }
@@ -790,7 +790,9 @@
   function clearError() {
     $('error').hidden = true;
   }
-  let clashUi = null;
+  let clashUi = null,
+    sendMenu = null,
+    sendIntent = 'default';
   let ownershipHints = {},
     ownershipCertainty = 'checked';
   // A project whose folder no longer exists (a deleted temp folder, an unplugged drive) is not listed, and neither are its chats.
@@ -1216,7 +1218,25 @@
     $('prompt').title = gone ? DISCARDED_NOTE : '';
     const busy = !!(connected && snapshot.busy);
     const queueMode = busy || (connected && snapshot?.queue?.items?.length > 0);
-    $('send').textContent = opening ? 'Opening…' : queueMode ? 'Queue' : 'Send';
+    // The button always says Send. While the agent works, Enter sends now (steers) when the agent can read it, else queues.
+    const SM = window.AgentSendMenu,
+      composer = SM
+        ? SM.view({
+            busy,
+            autonomous: !!(connected && snapshot.autonomous),
+            hasQueue: false,
+            steerable: !!(connected && snapshot.steerable),
+            agentId: (connected && snapshot.steerAgent) || selected.provider,
+            agent: nameOf(selected.provider),
+            text: $('prompt').value,
+            commands: snapshot?.breadth?.commands,
+          })
+        : { working: false, more: false, items: [], keyHint: '' };
+    sendMenu ||= SM && SM.init({ doc: document, root: document, send: $('send'), onPick: (id) => sendWith(id) });
+    sendMenu?.update(composer);
+    // The shortcuts while the agent works: the Send button's tooltip and the ▾ menu (no hint row under the box: its height stays put)
+    $('send').title = composer.working && composer.keyHint ? composer.keyHint : '';
+    $('send').textContent = opening ? 'Opening…' : 'Send';
     $('send').hidden = false;
     $('send').disabled =
       gone ||
@@ -1254,8 +1274,10 @@
     window.AgentQueueUI?.render(
       { box: $('queueBox'), connection: current, busy, post, refresh, fail },
       connected ? snapshot.queue : null,
+      connected ? snapshot.steerLane : null,
     );
-    if (queueMode) $('prompt').placeholder = 'Message ' + nameOf(selected.provider) + '… Enter to queue';
+    if (composer.working && composer.placeholder) $('prompt').placeholder = composer.placeholder;
+    else if (queueMode) $('prompt').placeholder = 'Message ' + nameOf(selected.provider) + '… Enter to queue';
     $('markHandled').hidden = !(
       turn?.status?.kind === 'your-turn' && typeof window.AgentWorkspaceUI?.markHandled === 'function'
     );
@@ -1297,7 +1319,9 @@
       },
     );
     $('composerNote').textContent = connected
-      ? queueMode
+      ? composer.working && composer.note
+        ? composer.note
+        : queueMode
         ? 'Enter to queue it for when this turn ends · Shift+Enter for a new line · Interrupt stops the current turn; background work may continue.'
         : 'Enter to send · Shift+Enter for a new line · Interrupt stops the current turn; background work may continue.'
       : 'Enter to continue & send · Shift+Enter for a new line. Drafts are saved in this browser. Continue only after this conversation has stopped in other apps.';
@@ -1358,6 +1382,9 @@
     }
     if (window.ToolViews?.line && row.role === 'tool' && (row.raw || row.call)) {
       const line = window.ToolViews.line(row, () => bubbleFull(row));
+      // a command or helper that went on in the background after a steer: the pill (and Stop) sit on the row itself, under its line
+      const pill = toolBackgroundPill(row);
+      if (pill) line.insertBefore(pill, line.querySelector(':scope > .tool-detail'));
       // a doc tool row: DOC label, "open ↗", the doc-created card (doc-links.js)
       const docRow = window.AgentDocLinks?.decorateToolRow ? window.AgentDocLinks.decorateToolRow(line, row) : line;
       if (docRow !== line || line.classList?.contains('doc-tool')) return docRow;
@@ -1389,6 +1416,15 @@
     box.append(result);
     return box;
   }
+  /* "Still running in the background" (+ Stop when AIB can stop it) for a tool row the server marked (update.background). */
+  function toolBackgroundPill(row) {
+    const bg = row.role === 'tool' && window.AgentSendMenu?.backgroundOf(row.raw);
+    if (!bg) return null;
+    return window.AgentSendMenu.backgroundPill(document, bg, async () => {
+      await post('tool-stop', { id: current, toolCallId: row.raw.toolCallId });
+      await refresh();
+    });
+  }
   function bubbleFull(row) {
     const article = text('article', '', 'bubble ' + row.role);
     /* links or files with no words: a compact row whose time lines up with the box (and repeats only when it changes) */
@@ -1404,6 +1440,7 @@
     const head = text('div', '', 'bubble-head');
     /* the screen-reader name of a message: "You" for yours, live or saved (saved transcripts say "User") */
     head.append(text('strong', row.role === 'user' ? 'You' : row.label || row.role), text('time', date(row.time)));
+    if (row.steered && window.AgentSendMenu) head.append(text('span', window.AgentSendMenu.COPY.tag, 'sent-tag'));
     article.append(head);
     if (row.injectedNote && window.StreamUI?.noteCard)
       article.append(window.StreamUI.noteCard(row.injectedNote, row, resolveAgentName));
@@ -1424,6 +1461,11 @@
     } else if (row.value && row.role === 'notice' && (row.label === 'error' || row.label === 'disconnected'))
       article.append(linkedPre(row.value)); // an agent's error often names a page to open (a plan to upgrade, a sign-in)
     else if (row.value) article.append(text('pre', row.value));
+    if (!window.ToolViews?.line) {
+      // (with tool lines the pill is on the line, not repeated in its opened detail)
+      const pill = toolBackgroundPill(row);
+      if (pill) article.append(pill);
+    }
     if (row.actions?.length) article.append(clashButtons(row.actions));
     for (const [index, image] of (row.attachments || []).entries()) {
       if (image && image.type === 'studio_file') {
@@ -1834,6 +1876,7 @@
         label,
         value,
         actions,
+        steered = false,
         attachments = [];
       const sid = event.data?.sessionId || snap?.sessionId;
       if (sid !== session) continue;
@@ -1842,6 +1885,7 @@
         role = 'user';
         label = 'You';
         value = event.data.text;
+        steered = !!event.data.steered;
         attachments = [...(event.data.attachments || []), ...(window.AttachmentsUI?.eventFiles(event.data) || [])];
       } else if (event.kind === 'update') {
         const u = event.data.update || {},
@@ -1945,6 +1989,7 @@
           attachments,
           rid,
           ...(actions ? { actions } : {}),
+          ...(steered ? { steered } : {}),
         });
     }
     if (asks.size) {
@@ -2029,9 +2074,13 @@
     }
   }
   function collectChildren() {
+    /* helpers AIB marked as going on in the background after a steer (the server's tool_call_update with background.helper) */
+    const inBackground = new Map();
     events.forEach((e) => {
       if (e.kind !== 'update') return;
       const u = e.data.update || {};
+      if (u.sessionUpdate === 'tool_call_update' && u.background && typeof u.background.helper === 'string')
+        inBackground.set(u.background.helper, u.background.state === 'running');
       if (u.sessionUpdate === 'subagent_update') {
         const child = u.subagent || u;
         const id = child.sessionId || child.subagentSessionId;
@@ -2064,6 +2113,7 @@
         window.SubagentsUI?.noteEvent(children.get(sid), e);
       }
     });
+    for (const [id, child] of children) child.background = inBackground.get(id) === true;
     // Model, tokens and what each helper is doing now (subagents-ui.js details); a part not known now keeps what was known before.
     const facts = window.SubagentsUI?.details?.(events, snapshot.sessionId);
     if (facts)
@@ -3385,7 +3435,7 @@
     try {
       snap = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
     } catch {}
-    const route = window.AgentInboxReply ? window.AgentInboxReply.sendRoute(snap) : 'prompt';
+    const route = window.AgentInboxReply ? window.AgentInboxReply.sendRoute(snap, value) : 'prompt';
     await post(route, { id, text: value, clientMessageId, attachments: [] });
     clearAttempt(key, value, '');
     try {
@@ -3396,7 +3446,7 @@
       if (hit && !current) await openConversation(hit);
       else if (current) await refresh();
     }
-    return { queued: route === 'queue' };
+    return { queued: route === 'queue', steered: route === 'steer' };
   }
   async function reloadAfterAnswer() {
     try {
@@ -3414,6 +3464,8 @@
       if (!$('send').disabled) continueConversation();
       return;
     }
+    const intent = sendIntent;
+    sendIntent = 'default';
     const value = $('prompt').value,
       images = selectedAttachments().slice();
     if ((!value.trim() && !images.length) || !current || sendingKey || (!imageCapability() && images.length)) return;
@@ -3441,7 +3493,10 @@
         sendingKey = '';
         renderHeader();
       }
-      if (message) $('promptForm').requestSubmit();
+      if (message) {
+        sendIntent = 'after'; // the brief that follows a /doc command waits for the turn to end
+        $('promptForm').requestSubmit();
+      }
       return;
     }
     const key = aliasKey(selected),
@@ -3454,12 +3509,27 @@
       const fingerprint = await imageFingerprint(images),
         clientMessageId = attemptId(key, value, fingerprint),
         attachments = await imageBlocks(images);
-      await post(snapshot && (snapshot.busy || snapshot.queue?.items?.length) ? 'queue' : 'prompt', {
-        id: connection,
-        text: value,
-        clientMessageId,
-        attachments,
-      });
+      const body = { id: connection, text: value, clientMessageId, attachments },
+        way = window.AgentSendMenu
+          ? window.AgentSendMenu.route(
+              {
+                busy: !!snapshot?.busy,
+                hasQueue: !!snapshot?.queue?.items?.length,
+                steerable: !!snapshot?.steerable,
+                text: value,
+                commands: snapshot?.breadth?.commands,
+              },
+              intent,
+            )
+          : snapshot && (snapshot.busy || snapshot.queue?.items?.length)
+            ? 'queue'
+            : 'prompt';
+      if (way === 'steer') await post('steer', body);
+      else if (way === 'interrupt') {
+        // Interrupt and send: it joins the queue, then jumps to the front and cancels the turn (what the queue row's ↑ does)
+        await post('queue', body);
+        await post('queue-send-now', { id: connection, messageId: clientMessageId });
+      } else await post(way, body);
       followSent(); // you sent it: the view goes to your message and follows the reply, wherever you had scrolled
       clearAttempt(key, value, fingerprint);
       clearSentAttachments(key, images);
@@ -3486,12 +3556,22 @@
   $('prompt').onkeydown = (e) => {
     if (window.AgentDocLinks?.handleKey(e)) return;
     if (window.AgentBreadth?.handleKey(e)) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+    const intent = window.AgentSendMenu
+      ? window.AgentSendMenu.keyIntent(e, { busy: !!snapshot?.busy })
+      : e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing
+        ? 'default'
+        : '';
+    if (intent) {
       e.preventDefault();
       if (!$('prompt').value.trim() && !selectedAttachments().length) return;
-      if (!$('send').disabled) $('promptForm').requestSubmit();
+      if (!$('send').disabled) sendWith(intent);
     }
   };
+  // Send with a chosen intent: 'default' (Enter), 'now', 'after' (Alt+Enter) or 'interrupt' (menu only).
+  function sendWith(intent) {
+    sendIntent = intent;
+    $('promptForm').requestSubmit();
+  }
   $('cancel').onclick = async () => {
     try {
       await post('cancel', { id: current });
@@ -5360,6 +5440,7 @@
     viewStore,
     rowStatus,
     renderHeader,
+    sendWith,
     safeImageBlock,
     showRows,
     sortAgents,

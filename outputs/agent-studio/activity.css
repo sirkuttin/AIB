@@ -339,6 +339,14 @@ body.subchat-open .rs-split {
   text-overflow: ellipsis;
   color: var(--text-dim);
 }
+/* A helper that went on in the background after a steer: the same words and working colour as a command row's pill. */
+.sa-bg {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--queue-paused-text);
+}
 /* A finished subagent stays one 28 px line: outcome (only Failed / Stopped / Interrupted) and short model before the run time. */
 .sa-outcome,
 .sa-model {

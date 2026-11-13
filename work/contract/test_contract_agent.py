@@ -24,7 +24,24 @@ def masked(value, server):
     for folder in (server.workspace, server.temp):
         for spelling in {str(folder), str(folder).replace('\\', '/')}:
             text = text.replace(json.dumps(spelling)[1:-1], '<tmp>')
-    return strip(json.loads(text))
+    value = json.loads(text)
+    if server.effective_kind() in ('deno', 'deno-split'):
+        value = drop_steer(value)
+    return strip(value)
+
+
+# Deno-only (beta.9 steer-on-send): a connection snapshot's steer keys (work/deno/steer_*_test.ts cover them); the reference has none.
+STEER_KEYS = ('steerable', 'autonomous', 'steerAgent', 'steerLane', 'toolBackground')
+
+
+def drop_steer(value):
+    """The value without the steer keys of every connection snapshot in it (a dict that has steerLane)."""
+    if isinstance(value, dict):
+        snapshot = 'steerLane' in value
+        return {k: drop_steer(v) for k, v in value.items() if not (snapshot and k in STEER_KEYS)}
+    if isinstance(value, list):
+        return [drop_steer(v) for v in value]
+    return value
 
 
 def strip(value):
@@ -82,6 +99,14 @@ class AgentContract(unittest.TestCase):
         return [(e['kind'], (e.get('data') or {}).get('update', {}).get('sessionUpdate') if isinstance(e.get('data'), dict) else None)
                 for e in state['events']]
 
+    def drop_steer_keys(self, state, what):
+        """A raw (unmasked) Deno snapshot carries every steer key; they are dropped for the comparison."""
+        if self.servers[0].effective_kind() not in ('deno', 'deno-split'):
+            return
+        for key in STEER_KEYS:
+            self.assertIn(key, state, f'{what}: {key}')
+            state.pop(key)
+
     def compare_states(self, states, what):
         """Same state, same events. The agent's notifications and Studio's own events race (even Python against Python), so the
         events are compared as a sorted list without their sequence numbers."""
@@ -104,6 +129,7 @@ class AgentContract(unittest.TestCase):
             reply = server.post('/api/live/connect', dict(body, cwd=str(server.workspace)))
             self.assertEqual(reply.status, 200, reply.text)
             connected.append(reply.json())
+        self.drop_steer_keys(connected[0], 'connect payload')
         self.assertEqual(sorted(connected[0]), sorted(connected[1]), 'connect payload keys')
         ids = [c['id'] for c in connected]
         states = self.wait(ids, lambda s: s['ready'], 'ready')
