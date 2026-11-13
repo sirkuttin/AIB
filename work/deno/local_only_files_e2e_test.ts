@@ -12,7 +12,7 @@
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT } from './_git_repo.ts';
-import { Fixture, SEP, TEST_OPTIONS } from './_host_fixture.ts';
+import { Fixture, SEP, TEST_OPTIONS, until } from './_host_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 
 const key = (path: string) => 'w:' + path.replaceAll('\\', '/').toLowerCase();
@@ -168,6 +168,8 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
     // Undo removes only that line
     await page.eval(`document.querySelector('.fx-foot-undo').click()`);
     await page.waitFor(`document.querySelector('.fx-foot-undo').hidden`, 10_000, 'Undo done');
+    // the foot drops the Undo as it is clicked, before the server has undone it: wait for the line to leave the file
+    await until(() => !Deno.readTextFileSync(exclude).includes('/scratch.md'), 'the Undo applied to .git/info/exclude', 10);
     assertEquals(Deno.readTextFileSync(exclude), '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/private\r\n# AIB: end\r\n');
     await page.shot('6-files-worktree-private-dark');
     assertEquals(page.errors, [], 'no page errors');
