@@ -592,6 +592,37 @@ export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of 
 
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
+/** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
+export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper'];
+const OWN_TOOL_NAMES = new Set(['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...SWARM_TOOL_NAMES]);
+
+/**
+ * The studio_artifact tool a permission request is for, by the adapter's own shape, or ''. Claude Code names it in
+ * _meta.claudeCode.toolName (mcp__studio_artifact__<tool>); other adapters put the MCP server and tool in rawInput ({server, tool}, as
+ * codex-acp's McpInvocation) or a title "Tool: studio_artifact/<tool>" (codex-acp) / "<tool> (studio_artifact MCP Server)" (Gemini CLI).
+ * An agent-written title alone counts only for an MCP-shaped call: a command (kind execute) titled like the tool is not AIB's tool
+ * (review break 4).
+ */
+export function ownToolName(call: Json): string {
+  const meta = isDict(call._meta) ? call._meta : {};
+  const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
+  const fromClaude = isStr(claude.toolName) ? claude.toolName : isStr(call.name) ? call.name : '';
+  const prefixed = (n: string) => {
+    const m = /^mcp__studio_artifact__([a-z_]+)\n?$/.exec(n);
+    return m && OWN_TOOL_NAMES.has(m[1]) ? m[1] : '';
+  };
+  if (fromClaude) return prefixed(fromClaude);
+  const raw = isDict(call.rawInput) ? call.rawInput : {};
+  const invocation = isDict(raw.invocation) ? raw.invocation : raw;
+  if (invocation.server === 'studio_artifact' && isStr(invocation.tool) && OWN_TOOL_NAMES.has(invocation.tool)) return invocation.tool;
+  if (call.kind === 'execute' || call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') return '';
+  const title = isStr(call.title) ? call.title.trim() : '';
+  const codex = /^Tool: studio_artifact\/([a-z_]+)$/.exec(title);
+  if (codex && OWN_TOOL_NAMES.has(codex[1])) return codex[1];
+  const gemini = /^([a-z_]+) \(studio_artifact MCP Server\)$/.exec(title);
+  if (gemini && OWN_TOOL_NAMES.has(gemini[1])) return gemini[1];
+  return prefixed(title);
+}
 
 /** The `_claude/origin` kinds of a cycle Claude Code started on its own (claude-agent-acp's AUTONOMOUS_RESULT_ORIGINS). */
 const AUTONOMOUS_ORIGINS = new Set(['task-notification', 'peer', 'coordinator', 'observer', 'observer-activity']);
@@ -770,6 +801,8 @@ export class Connection {
   busy = false;
   /** Wall-clock time of the last turn_end event (attention summary). */
   turnEndedAt: number | null = null;
+  /** Swarm: this chat's role, set by the Studio when it is made (a helper's own record says whose); null outside a worktree. */
+  swarm: { role: 'main' | 'helper'; helperId?: string; parent?: string } | null = null;
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
   /**
@@ -4359,13 +4392,7 @@ export class Connection {
     if (!(this.mcpServers ?? []).some(isOwnArtifactEntry)) return false;
     const call = isDict(params) ? get(params, 'toolCall') : null;
     if (!isDict(call)) return false;
-    const meta = isDict(call._meta) ? call._meta : {};
-    const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
-    let name: unknown = get(claude, 'toolName');
-    if (!pyTruthy(name)) name = get(call, 'name');
-    if (!pyTruthy(name)) name = get(call, 'title');
-    if (!pyTruthy(name)) name = '';
-    return isStr(name) && OWN_ARTIFACT_TOOL.test(name);
+    return !!ownToolName(call);
   }
 
   permission(key: unknown, option: unknown): void {
@@ -4808,6 +4835,7 @@ export class Connection {
     if (rebuilding) data.rebuilding = true;
     if (this.channel) data.eventsId = this.eventsId; // a chat in the keeper: its numbering survives a rebuild (chat.js compares it)
     if (this.worktree) data.worktree = { ...this.worktree }; // only a worktree chat has this key; the page does not show it yet
+    if (this.swarm) data.swarm = { ...this.swarm };
     return data;
   }
 

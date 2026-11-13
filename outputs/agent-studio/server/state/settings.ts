@@ -74,7 +74,7 @@ export interface Settings {
     betaUrls?: Record<string, string>;
   };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
-  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean; claudeHelpers: boolean };
+  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean };
   editors: { default: string };
   appearance: { defaultView: string };
   launchers: Record<string, string>;
@@ -91,9 +91,6 @@ function section(value: unknown, name: string): Dict {
 function unknownKeys(value: Dict, allowed: readonly string[]): boolean {
   return Object.keys(value).some((key) => !allowed.includes(key));
 }
-
-/** Swarm: Claude Code as a helper provider, by default (owner decision 2026-11-13: on). The one place to flip it. */
-export const CLAUDE_HELPERS_DEFAULT = true;
 
 export class SettingsStore extends JsonFileStore {
   static FILE = 'studio-settings.json';
@@ -178,7 +175,7 @@ export class SettingsStore extends JsonFileStore {
       defaults: { agent: '', byAgent: {}, projects: {}, migrated: false },
       // worktreePerChat: on by default; hidden, never shown by public(). The keeper has no setting (it is always on): an old saved
       // `server.keeper` is dropped on read.
-      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false, claudeHelpers: CLAUDE_HELPERS_DEFAULT },
+      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false },
       editors: { default: '' },
       appearance: { defaultView: 'full' },
       launchers: { claude: '', codex: '' },
@@ -260,7 +257,6 @@ export class SettingsStore extends JsonFileStore {
     if (typeof server.worktreePerChat === 'boolean') doc.server.worktreePerChat = server.worktreePerChat;
     if (typeof server.autoUpdateCheck === 'boolean') doc.server.autoUpdateCheck = server.autoUpdateCheck;
     if (typeof server.keepAwake === 'boolean') doc.server.keepAwake = server.keepAwake;
-    if (typeof server.claudeHelpers === 'boolean') doc.server.claudeHelpers = server.claudeHelpers;
     const editor = isDict(raw.editors) ? raw.editors : {};
     doc.editors.default = isStr(editor.default) && EDITOR_IDS.includes(editor.default) ? editor.default : '';
     const appearance = isDict(raw.appearance) ? raw.appearance : {};
@@ -377,7 +373,6 @@ export class SettingsStore extends JsonFileStore {
     this.sync();
     const shown = deepCopy(this.data) as unknown as Dict & Settings;
     delete (shown.server as Partial<Settings['server']>).worktreePerChat; // hidden flag: the page sees nothing new
-    delete (shown.server as Partial<Settings['server']>).claudeHelpers; // no Settings control yet (swarm phase 2)
     for (const agent of shown.agents.custom as unknown as Dict[]) agent.env = hiddenEnv(agent.env); // names only
     // Beta agents: the agent list (/api/live/settings agents rows) says which are on and which have a key; never the key itself.
     delete (shown.agents as Partial<Settings['agents']>).beta;
@@ -435,11 +430,6 @@ export class SettingsStore extends JsonFileStore {
   /** Settings > Keep this PC awake while AIB runs (off by default: the PC sleeps as usual). */
   keepAwake(): boolean {
     return this.snapshot().server.keepAwake;
-  }
-
-  /** Swarm: the main agent may start Claude Code helpers (on by default, owner 2026-11-13; swarm/rules.ts skips Claude when off). */
-  claudeHelpers(): boolean {
-    return this.snapshot().server.claudeHelpers;
   }
 
   /** Hidden flag (on by default): a new chat in a git project gets its own git worktree. No page control sets it. */
@@ -684,7 +674,7 @@ export class SettingsStore extends JsonFileStore {
 
   #applyServer(work: Settings, value: unknown): void {
     const patch = section(value, 'server');
-    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake', 'claudeHelpers'])) {
+    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake'])) {
       throw new ValueError('Unknown server setting');
     }
     if ('worktreePerChat' in patch) {
@@ -694,10 +684,6 @@ export class SettingsStore extends JsonFileStore {
     if ('autoUpdateCheck' in patch) {
       if (typeof patch.autoUpdateCheck !== 'boolean') throw new ValueError('autoUpdateCheck must be true or false');
       work.server.autoUpdateCheck = patch.autoUpdateCheck;
-    }
-    if ('claudeHelpers' in patch) {
-      if (typeof patch.claudeHelpers !== 'boolean') throw new ValueError('claudeHelpers must be true or false');
-      work.server.claudeHelpers = patch.claudeHelpers;
     }
     if ('keepAwake' in patch) {
       if (typeof patch.keepAwake !== 'boolean') throw new ValueError('keepAwake must be true or false');

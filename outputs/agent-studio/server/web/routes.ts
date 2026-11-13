@@ -86,6 +86,10 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
+  ['POST', '/api/live/swarm/tool', 'worktree.tool', 'own-gate'], // swarm phase 1: a main chat's helper tools (its key)
+  ['POST', '/api/live/swarm/undo', 'write', 'body'], // the merge line's Undo (page only)
+  ['POST', '/api/live/swarm/merge-again', 'write', 'body'],
+  ['GET', '/api/live/swarm', 'read', 'get'],
   ['POST', '/api/live/agents/install/uninstall', 'write', 'body'],
   ['GET', '/api/live/terminal', 'write', 'get'],
   ['GET', '/api/live/terminal/list', 'read', 'get'],

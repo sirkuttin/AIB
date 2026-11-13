@@ -55,6 +55,7 @@ import { isNetworkPath } from '../web/security.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 
 const log = getLogger('studio');
@@ -65,6 +66,11 @@ export const ARTIFACT_URL_FILE = 'artifact-web.json'; // the web server writes i
 export const CLOSED_GRACE_SECONDS = 10 * 60; // a closed connection stays listed this long so the page can still show "disconnected"
 export const MAX_CLOSED_CONNECTIONS = 20; // ...and never more than this many closed ones are kept (oldest go first)
 export const RECONNECT_TRIES = 3;
+
+/** Swarm lines in a main chat (studio_note kinds) and the buttons they may carry (swarm/service.ts). */
+const SWARM_NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail'];
+const SWARM_NOTE_ACTIONS = ['swarm-undo', 'swarm-merge-again', 'swarm-open'];
+const SWARM_ACTION_LABELS: Record<string, string> = { 'swarm-undo': 'Undo', 'swarm-merge-again': 'Merge again', 'swarm-open': 'Open chat' };
 
 /** Studio.LIVE_POST_OPS: the generic POST /api/live/<name> calls (web/live_routes.ts keeps the same list). */
 export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
@@ -187,6 +193,17 @@ export interface ConnectOptions {
   continueAnyway?: boolean;
   /** The New chat page's picks, applied before the first prompt (Connection.startPicks). New chats only. */
   picks?: Partial<Record<'model' | 'mode' | 'effort', string>> | null;
+  /** Swarm: this new chat is a helper of that main chat (swarm/service.ts). Its role is decided here, before its tools are (review break 1). */
+  helperOf?: { helperId: string; parent: string } | null;
+}
+
+/** Swarm: body.helperOf of a connect request ({helperId, parent}), else null. */
+export function readHelperOf(value: unknown): ConnectOptions['helperOf'] {
+  if (value === undefined || value === null) return null;
+  if (!isDict(value) || !isStr(value.helperId) || !/^h_[0-9a-f]{8}$/.test(value.helperId) || !isStr(value.parent)) {
+    throw new ValueError('helperOf must be {helperId, parent}');
+  }
+  return { helperId: value.helperId, parent: value.parent };
 }
 
 /** A failed or empty probe is not tried again for this long (seconds) for the same agent and folder. */
@@ -630,7 +647,7 @@ export class Studio {
       this.#mcpHttp = new ArtifactMcpHttp({
         conversation: (id) => {
           const c = this.connections.get(id);
-          return c && !c.closed ? { cwd: c.cwd, worktree: !!c.worktree } : null;
+          return c && !c.closed ? { cwd: c.cwd, worktree: !!c.worktree && c.swarm?.role !== 'helper', main: this.#isMain(c) } : null;
         },
         baseUrl: () => this.artifactBaseUrl(),
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
@@ -646,7 +663,7 @@ export class Studio {
    * stdio entry. http: the HTTP entry first and the stdio entry as the fallback, under the same name; the connection gives the
    * agent the first one it supports (selectMcpServers), so agents that advertise mcpCapabilities.http get the HTTP one.
    */
-  artifactMcpServers(conversationId: string, worktree = false, forwarder: string | null = null): McpServer[] {
+  artifactMcpServers(conversationId: string, worktree = false, forwarder: string | null = null, main = false): McpServer[] {
     if (this.options.noArtifactTool || !this.hasStateDir) return [];
     const key = artifactKeys.issue(conversationId);
     if (!key) return [];
@@ -663,7 +680,7 @@ export class Studio {
         log.exception(error, 'Could not start the HTTP artifact tool for the keeper forwarder; the agent gets the usual entries');
       }
     }
-    const stdio = this.#artifactStdioEntry(conversationId, key, worktree);
+    const stdio = this.#artifactStdioEntry(conversationId, key, worktree, main);
     if (this.artifactTransport() !== 'http') return stdio;
     let url: string;
     try {
@@ -675,7 +692,7 @@ export class Studio {
     return [httpEntry(url, key, conversationId) as unknown as McpServer, ...stdio];
   }
 
-  #artifactStdioEntry(conversationId: string, key: string, worktree: boolean): McpServer[] {
+  #artifactStdioEntry(conversationId: string, key: string, worktree: boolean, main = false): McpServer[] {
     const env: Record<string, string> = {
       STUDIO_ARTIFACT_URL: this.artifactBaseUrl(),
       STUDIO_ARTIFACT_URL_FILE: join(this.stateDir, ARTIFACT_URL_FILE),
@@ -683,6 +700,7 @@ export class Studio {
       STUDIO_CONVERSATION_ID: conversationId,
     };
     if (worktree) env.STUDIO_WORKTREE = '1'; // only a worktree chat is offered the merge tools
+    if (main) env.STUDIO_MAIN = '1'; // swarm: only a main chat is offered the helper tools (the route checks again)
     return [{
       name: 'studio_artifact',
       ...artifactToolCommand(), // `<deno> run -A --quiet main.ts mcp-artifact` (or `<binary> mcp-artifact`): artifacts/mcp.ts
@@ -814,10 +832,19 @@ export class Studio {
     }
     let plan: wt.Plan | null = null;
     let startNote = ''; // a new chat's start note: where it started when that is not the obvious, or why it works in place
-    if (resume === null && this.worktrees && this.settings.worktreePerChat()) {
-      const planned = await this.worktrees.planWithReason(workspace); // no plan: this project works in place (the reason is logged)
+    // Swarm: a helper is one from its first moment (helperOf) or because the registry lists it (reopened after a restart, a Continue).
+    const asHelper = options.helperOf ?? null;
+    const known = !asHelper && this.hasStateDir
+      ? helperOf(readHelpers(this.stateDir), { lasting: resume ? `${provider}:${resume}` : null, path: record ? String(record.path) : null })
+      : null;
+    if (asHelper && resume) throw new ValueError('A helper is a new chat');
+    if (asHelper && !this.worktrees) throw new ValueError('Helpers need a worktree: this AIB has no state folder');
+    if (resume === null && this.worktrees && (this.settings.worktreePerChat() || asHelper)) {
+      const planned = await this.worktrees.planWithReason(workspace, null, asHelper ? 'helper' : 'chat'); // no plan: works in place
       plan = planned.plan;
       startNote = wt.inPlaceNote(planned.reason);
+      // a helper never works in the project folder (review break 5)
+      if (asHelper && !plan) throw new ValueError(`This project cannot make a worktree for a helper: ${planned.reason || 'unknown reason'}`);
     }
     const lease = resume ? await new SessionLease(this.stateDir, provider, resume).acquire() : null;
     let connection: Connection | null = null;
@@ -845,8 +872,12 @@ export class Studio {
       }
       this.#wire(c);
       c.sessionLease = lease;
+      if (asHelper) c.swarm = { role: 'helper', helperId: asHelper.helperId, parent: asHelper.parent };
+      else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
+      else if (c.worktree) c.swarm = { role: 'main' };
       const forwarder = c.keeper ? await this.#mcpForwarder() : null;
-      c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree, forwarder)];
+      const helper = c.swarm?.role === 'helper'; // a helper gets neither the merge tools (review break 3) nor the swarm tools
+      c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree && !helper, forwarder, this.#isMain(c))];
       c.sessionId = resume || null;
       if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
@@ -1060,6 +1091,10 @@ export class Studio {
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     this.#wire(c);
+    const helper = this.hasStateDir
+      ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
+      : null;
+    c.swarm = helper ? { role: 'helper', helperId: helper.id, parent: helper.parent.live } : c.worktree ? { role: 'main' } : null;
     c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
     c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;
     c.recovery = this.recovery as never;
@@ -1215,6 +1250,8 @@ export class Studio {
       await this.worktrees!.create(plan);
     } catch (error) {
       if (!(error instanceof wt.Fallback)) throw error;
+      // a helper never falls back to the project folder (review break 5): the chat closes and the swarm marks it Failed
+      if (connection.swarm?.role === 'helper') throw new ValueError(`The helper's worktree could not be made: ${error.message}`);
       connection.retarget(project);
       connection.projectRoot = project;
       connection.worktree = null;
@@ -1224,6 +1261,13 @@ export class Studio {
       throw new Error('The chat was closed while it was starting');
     }
     connection.startProcess();
+  }
+
+  /** Swarm: a main chat is any open chat in its own worktree that the helper registry does not list (review option C). */
+  #isMain(c: Connection): boolean {
+    if (c.swarm?.role !== 'main' || !c.worktree) return false;
+    if (!this.hasStateDir) return true;
+    return !helperOf(readHelpers(this.stateDir), { live: c.id, lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : null, path: c.cwd });
   }
 
   // ---- live-connection operations (the LiveBackend interface) -------------------------------------------------------------
@@ -1542,6 +1586,7 @@ export class Studio {
         background,
         continueAnyway,
         picks: readPicks(body.picks),
+        helperOf: readHelperOf(body.helperOf),
       });
       return [200, connection.public()];
     }
@@ -1554,6 +1599,22 @@ export class Studio {
       const actions = (Array.isArray(body.actions) ? body.actions : [])
         .filter((a) => isDict(a) && (a.id === 'keep-mine' || a.id === 'leave')) // buttons in the note: only Studio's own two
         .map((a) => ({ id: (a as Json).id, label: [...String((a as Json).label || (a as Json).id)].slice(0, 40).join('') }));
+      if (actions.length) data.actions = actions;
+      connection.recordedEvent('studio_note', data);
+      return [200, { ok: true }];
+    }
+    if (name === 'swarm-note') { // internal (swarm/service.ts): a swarm line in the main chat; not in LIVE_POST_OPS, so no page route
+      const connection = this.#connection(body);
+      const kind = String(body.kind ?? '');
+      if (!SWARM_NOTE_KINDS.includes(kind)) throw new ValueError('Unknown swarm note');
+      const data: Json = {
+        message: [...String(need(body, 'message'))].slice(0, 300).join(''),
+        sessionId: connection.sessionId,
+        kind,
+        helper: String(body.helper ?? '').slice(0, 20),
+      };
+      const actions = (Array.isArray(body.actions) ? body.actions : []).filter((a) => isDict(a) && SWARM_NOTE_ACTIONS.includes(String(a.id)))
+        .map((a) => ({ id: (a as Json).id, label: SWARM_ACTION_LABELS[String((a as Json).id)], helper: data.helper }));
       if (actions.length) data.actions = actions;
       connection.recordedEvent('studio_note', data);
       return [200, { ok: true }];
