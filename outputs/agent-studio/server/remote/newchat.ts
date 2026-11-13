@@ -32,6 +32,10 @@ import { type Eligible, eligibleAgents, reasonWords } from '../agents/eligibilit
 import { projectId, projectsFor } from './projects.ts';
 import { projectKey } from '../desktop/project_delete.ts';
 import { MAX_TEXT, Refusal, REFUSALS } from './actions.ts';
+import { getLogger } from '../core/log.ts';
+
+/** Phone-side failures go to studio.log (console output only reaches stderr, which the desktop app does not keep). */
+const plog = getLogger('phone_newchat');
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -330,7 +334,7 @@ export class NewChats {
     const [status, payload] = await ctx.host.liveCall('connect', connect);
     const answer = obj(payload);
     if (status !== 200 || typeof answer.id !== 'string') {
-      console.error(`A phone's new chat could not be started (${status}): ${str(answer.error, 600)}`);
+      plog.error('%s', `A phone's new chat could not be started (${status}): ${str(answer.error, 600)}`);
       throw new Refusal(status >= 400 && status < 600 ? status : 500, 'failed', START_FAILED);
     }
     await afterConnect(ctx.removedProjects, connect, status, ctx.addedProjects, payload).catch(() => {});
@@ -342,7 +346,7 @@ export class NewChats {
         await ctx.settings.update({ defaults: { projects: { [key]: { agent: agent.id } } } });
       }
     } catch (error) {
-      console.error("The project's default agent could not be saved", error);
+      plog.exception(error, "The project's default agent could not be saved");
     }
     this.#prune();
     const job: Job = {
@@ -361,7 +365,7 @@ export class NewChats {
     void this.#wait(ctx, job).catch((error) => {
       job.state = 'failed';
       job.error = 'The first message could not be sent. It is in the box below: try again.';
-      console.error('A phone new chat failed', error);
+      plog.exception(error, 'A phone new chat failed');
     });
     return { id: job.id, agent: agent.name, existing: false };
   }
@@ -376,7 +380,7 @@ export class NewChats {
         ? obj(await ctx.host.liveState(job.id, Math.max(1, Math.trunc(Number(entry.cursor) || 0))))
         : null;
       if (!state || state.closed) {
-        if (str(state?.error, 400)) console.error(`A phone's new chat closed while it was opening: ${str(state?.error, 400)}`);
+        if (str(state?.error, 400)) plog.error('%s', `A phone's new chat closed while it was opening: ${str(state?.error, 400)}`);
         job.state = 'failed';
         job.error = 'The chat closed while it was opening. Your message was not sent. Look at AIB on your PC for why.';
         return;
@@ -428,7 +432,7 @@ export class NewChats {
       job.state = 'failed';
       job.text = text;
       job.clientMessageId = clientMessageId;
-      if (str(answer.error, 400)) console.error(`A phone's first message was not sent (${status}): ${str(answer.error, 400)}`);
+      if (str(answer.error, 400)) plog.error('%s', `A phone's first message was not sent (${status}): ${str(answer.error, 400)}`);
       job.error = 'Your first message was not sent. It is in the box below: send it again.';
     }
     return [status, answer];

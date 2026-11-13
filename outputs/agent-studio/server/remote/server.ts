@@ -43,6 +43,10 @@ import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
 import { cleanPushSub } from './devices.ts';
 import type { VapidKeys } from './push.ts';
+import { getLogger } from '../core/log.ts';
+
+/** Phone-side failures go to studio.log (console output only reaches stderr, which the desktop app does not keep). */
+const plog = getLogger('phone_server');
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 export const DEVICE_HEADER = 'X-AIB-Device';
@@ -419,7 +423,7 @@ export class RemoteServer {
       const detail = `${method} ${path} · Host ${seen(h.get('Host'))} · Site ${seen(h.get('Sec-Fetch-Site'))} · Mode ${
         seen(h.get('Sec-Fetch-Mode'))
       } · Dest ${seen(h.get('Sec-Fetch-Dest'))} · Origin ${origin === null ? '(none)' : seen(origin)}`;
-      console.warn(`phone request refused (${refused}): ${detail}`);
+      plog.warning('%s', `phone request refused (${refused}): ${detail}`);
       return this.json(status, { error: `${message} (${detail})`, code: refused, detail });
     }
     try {
@@ -451,7 +455,7 @@ export class RemoteServer {
       if (error instanceof HostUnavailable) {
         return this.json(503, { error: 'AIB is starting its agents. Try again in a moment.', code: 'busy' });
       }
-      console.error('Phone request failed', path, error);
+      plog.exception(error, 'Phone request failed: %s', path);
       return this.json(500, { error: 'Internal error' });
     }
     return this.json(404, { error: 'Not found' });
@@ -503,7 +507,7 @@ export class RemoteServer {
     try {
       pushKey = await this.host.vapid.publicKey();
     } catch (error) {
-      console.error('Phone push keys could not be read', error);
+      plog.exception(error, 'Phone push keys could not be read');
     }
     return this.json(200, {
       ...base,
@@ -944,7 +948,7 @@ export class RemoteServer {
         const [status, answer] = await mark('handled');
         log(liveId, status === 200 ? 'marked handled' : `failed (${status})`);
         if (status !== 200) {
-          console.error(
+          plog.error('%s', 
             `Mark handled from a phone was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`,
           );
         }
@@ -971,7 +975,7 @@ export class RemoteServer {
           const [status, answer] = await ctx.host.liveCall('disconnect', { id: liveId });
           if (status !== 200) {
             const a = answer && typeof answer === 'object' ? answer as Record<string, unknown> : {};
-            console.error(`A phone could not end a chat's session (${status}): ${String(a.error ?? '').slice(0, 400)}`);
+            plog.error('%s', `A phone could not end a chat's session (${status}): ${String(a.error ?? '').slice(0, 400)}`);
             log(liveId, `failed to end the session (${status})`);
             return this.json(status >= 400 && status < 600 ? status : 500, {
               error: 'The session could not be ended. Look at AIB on your PC.',
@@ -996,7 +1000,7 @@ export class RemoteServer {
         const [status, answer] = await mark(op);
         if (status !== 200) {
           const a = answer as Record<string, unknown>;
-          console.error(`A phone's ${op} was refused (${status}): ${String(a.error ?? '').slice(0, 400)}`);
+          plog.error('%s', `A phone's ${op} was refused (${status}): ${String(a.error ?? '').slice(0, 400)}`);
           log(liveId || key, `refused: ${String(a.code ?? status)}`);
           return this.json(status, {
             error: live && end
@@ -1025,7 +1029,7 @@ export class RemoteServer {
         const folders = op === 'restore' ? restoreFolders(ctx.conversations, { action: 'restore', provider, sessionId }) : [];
         const [status, answer] = await conversationAction(studioOf(ctx), { action: op, provider, sessionId });
         if (status !== 200) {
-          console.error(`A phone's Undo was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`);
+          plog.error('%s', `A phone's Undo was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`);
           return this.json(status, { error: 'It could not be undone from here. Do it on your PC.', code: 'failed' });
         }
         if (folders.length) await bringBack(ctx.removedProjects, folders, ctx.addedProjects);
