@@ -21,6 +21,8 @@ export default defineConfig({
       favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'AIB on GitHub', href: REPO }],
       customCss: ['./src/styles/aib.css'],
+      // The header adds the main links to the top bar (src/components/Header.astro).
+      components: { Header: './src/components/Header.astro' },
       lastUpdated: false,
       // src/content/docs/404.md is the not-found page; it is built by the docs route.
       disable404Route: true,
