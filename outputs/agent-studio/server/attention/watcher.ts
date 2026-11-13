@@ -59,6 +59,14 @@ export interface Fire {
   reason?: Reason;
 }
 
+/** A chat blocked on the person as the last look saw it (the tray menu's chat slots, window.ts trayChatSlots). */
+export interface BlockedChat {
+  key: string;
+  chat: string;
+  title: string;
+  reason: Reason;
+}
+
 /** What the watcher reads besides the agent host (the web context's stores). */
 export interface WatchSources {
   host: Pick<LiveBackend, 'liveList' | 'liveState' | 'busyConnections'>;
@@ -100,6 +108,7 @@ export class AttentionWatcher {
   #kinds = new Map<string, [number, { worktree: boolean; scratch: boolean; worktreeOf?: string }]>();
   /** Finished turns seen done (turn key -> since when, ms): announced once they stayed done for SETTLE_MS. */
   #settling = new Map<string, number>();
+  #blocked: BlockedChat[] = [];
   readonly clock: () => number;
 
   constructor(readonly sources: WatchSources, readonly options: WatcherOptions) {
@@ -129,6 +138,14 @@ export class AttentionWatcher {
     this.#running = false;
     if (this.#timer !== null) clearTimeout(this.#timer);
     await this.#busy?.catch(() => {});
+  }
+
+  /**
+   * The chats blocked on the person at the last look (open request, failed turn, a question in the reply), the longest wait first
+   * as far as the agent host's order allows; archived and deleted chats are not listed (they are not counted either).
+   */
+  blocked(): BlockedChat[] {
+    return this.#blocked.map((b) => ({ ...b }));
   }
 
   /** One look at every chat (the loop calls it; tests call it directly). Never throws. */
@@ -235,6 +252,7 @@ export class AttentionWatcher {
     const quiet: string[] = [];
     const seen = new Set<string>();
     const done = new Set<string>(); // turn keys seen done in this look
+    const blocked: BlockedChat[] = [];
     // A chat stayed done (or asking) since when: announced once that lasted SETTLE_MS (checked again next time).
     const settled = (fk: string) => {
       done.add(fk);
@@ -253,6 +271,17 @@ export class AttentionWatcher {
       const phase = INBOX.phaseOf(attention, mark, nowSeconds);
       const flags = RULES.flags(this.facts(c, marks), prefs);
       const title = () => this.title(c, names, marks);
+      const markObj = obj(mark);
+      if (INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
+        const reason: Reason = phase === 'failed' || phase === 'asks'
+          ? phase
+          : c.auth
+          ? 'signin'
+          : Array.isArray(c.elicitations) && c.elicitations.length
+          ? 'question'
+          : 'approval';
+        blocked.push({ key, chat: id, title: title(), reason });
+      }
       if (state === 'needs_you') {
         const needs = Math.max(1, Number(attention.needs) || 1);
         const reason: Reason = c.auth ? 'signin' : Array.isArray(c.elicitations) && c.elicitations.length ? 'question' : 'approval';
@@ -310,6 +339,7 @@ export class AttentionWatcher {
       if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags });
       else quiet.push(fk);
     }
+    this.#blocked = blocked;
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);
     for (const id of [...this.#needKeys.keys()]) if (!seen.has(id)) this.#needKeys.delete(id);
     if (quiet.length) this.fired.add(quiet);

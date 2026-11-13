@@ -177,6 +177,33 @@ export function applyAppIcon(o: { file?: string | null; cls?: string; pid?: numb
   }
 }
 
+/**
+ * Gives every window of this process with class cls these icons (the attention variant, below). Returns how many windows were
+ * set. Never throws.
+ */
+export function applyIconPair(icons: IconPair, o: { cls?: string; pid?: number } = {}): number {
+  try {
+    const hwnds = windowsOf(topLevelWindows(), o.pid ?? Deno.pid, o.cls ?? LAUFEY_WINDOW_CLASS);
+    let set = 0;
+    for (const hwnd of hwnds) if (setWindowIcons(hwnd, icons)) set++;
+    return set;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The window icon with the attention dot (a chat is blocked on the person): the app icon's PNG with png_badge.withAttentionDot,
+ * made at the system's big and small sizes. Null when it can't be made. Windows has no taskbar number without COM
+ * (ITaskbarList3), so the dot on the window's own icon is what shows on the taskbar button (architect review break 19).
+ */
+export function attentionIconPair(png: { big: Uint8Array; small: Uint8Array }): IconPair | null {
+  const sizes = iconSizes();
+  const big = iconFromPng(png.big, sizes.big, sizes.big);
+  const small = iconFromPng(png.small, sizes.small, sizes.small);
+  return big && small ? { big, small } : null;
+}
+
 /** A window's icons as Windows reports them: WM_GETICON big/small (0 when unset) and the class's GCLP_HICON / GCLP_HICONSM. */
 export function readWindowIcons(hwnd: bigint): { big: bigint; small: bigint; classBig: bigint; classSmall: bigint } | null {
   const l = lib();

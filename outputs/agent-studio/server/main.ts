@@ -434,7 +434,8 @@ export async function main(argv: string[]): Promise<void> {
       trayCounts: studio
         ? () => {
           // needs you: the inbox's one number (inbox-rules.js), the same as the page's badge and the phone's
-          return Promise.resolve({ working: studio!.workingList().length, needsYou: studio!.blockedChats() });
+          // and the blocked chats themselves for the tray menu's chat slots (the attention watcher's last look, with their titles)
+          return Promise.resolve({ working: studio!.workingList().length, needsYou: studio!.blockedChats(), blocked: attention.blocked() });
         }
         : undefined,
     });

@@ -527,3 +527,28 @@ Deno.test('presence: a phone counts while it polls (15 s), ends on "left" or sil
   p.leavePhone('a');
   assertEquals(ended.length, 2, 'unsubscribed');
 });
+
+Deno.test('watcher: blocked() lists the chats blocked on you with title and reason, for the tray menu (inbox 1b)', async () => {
+  const t = lab({ marks: { 'claude:s4': { archivedAt: 5 } } });
+  try {
+    const w = t.make();
+    assertEquals(w.blocked(), [], 'nothing before the first look');
+    t.chats.push({ id: 'c1', sessionId: 's1', cwd: 'C:\code\shop', state: 'needs_you', needs: 1, permissions: ['p1'] });
+    t.chats.push({ id: 'c2', sessionId: 's2', cwd: 'C:\code\shop', state: 'needs_you', needs: 1, elicitations: ['q1'] });
+    t.chats.push({ id: 'c3', sessionId: 's3', cwd: 'C:\code\shop', state: 'idle', facts: { failedAt: t.iso() } });
+    t.chats.push({ id: 'c4', sessionId: 's4', cwd: 'C:\code\shop', state: 'needs_you', needs: 1, permissions: ['p4'] }); // archived
+    t.chats.push({ id: 'c5', sessionId: 's5', cwd: 'C:\code\shop', state: 'working' });
+    await w.poll();
+    assertEquals(w.blocked(), [
+      { key: 'claude:s1', chat: 'c1', title: 'Chat c1', reason: 'approval' },
+      { key: 'claude:s2', chat: 'c2', title: 'Chat c2', reason: 'question' },
+      { key: 'claude:s3', chat: 'c3', title: 'Chat c3', reason: 'failed' },
+    ]);
+    Object.assign(t.chats[0], { state: 'idle', needs: 0, permissions: [] });
+    await w.poll();
+    assertEquals(w.blocked().map((b) => b.key), ['claude:s2', 'claude:s3'], 'answered: off the list at the next look');
+    await w.stop();
+  } finally {
+    t.close();
+  }
+});
