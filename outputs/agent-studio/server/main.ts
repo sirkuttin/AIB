@@ -42,6 +42,7 @@ import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
+import { swarmOf } from './web/studio_routes.ts';
 import { takeLaunchKeyFromEnv } from './web/page_access.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -320,6 +321,7 @@ export async function main(argv: string[]): Promise<void> {
   // "Needs you" and "finished", decided here (not by the page), so desktop notifications and phone pushes come with the window
   // closed; the same in-process, with the keeper and with a split agent host (attention/watcher.ts).
   const attention = startAttention(ctx);
+  const swarm = swarmOf(ctx); // swarm phase 1: helper reports and lines that waited for a restart (swarm/service.ts)
   ctx.keepAwake.apply(ctx.settings.keepAwake()); // the saved value (off by default); the request dies with this process
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
   // The daily zip of each project's local-only folders (never committed, so git keeps no copy): the added projects and the
@@ -371,6 +373,7 @@ export async function main(argv: string[]): Promise<void> {
     backups.stop();
     await ctx.artifacts.stop().catch(() => {});
     await attention.stop().catch(() => {});
+    await swarm.stopWatching().catch(() => {});
     ctx.keepAwake.release();
     await ctx.phone.close().catch(() => {});
     await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running

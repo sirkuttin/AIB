@@ -1449,6 +1449,10 @@
     const box = text('div', '', 'note-actions');
     const result = text('span', '', 'note-actions-result');
     for (const a of actions) {
+      if (a && /^swarm-/.test(a.id)) {
+        box.append(swarmButton(a, box, result));
+        continue;
+      }
       if (!a || !['keep-mine', 'leave'].includes(a.id)) continue;
       const button = text('button', a.label || a.id, 'note-action');
       button.type = 'button';
@@ -1467,6 +1471,30 @@
     }
     box.append(result);
     return box;
+  }
+  /* Swarm phase 1: the buttons on a helper's line in the main chat (Undo / Merge again of its merge, Open chat). */
+  function swarmButton(a, box, result) {
+    const button = text('button', a.label || a.id, 'note-action');
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      if (a.id === 'swarm-open') {
+        const helpers = (await get('/api/live/swarm', { conversationId: current }).catch(() => null))?.helpers || [];
+        const chat = helpers.find((h) => h.id === a.helper)?.chat;
+        const c = chat && conversations.find((x) => x.live?.id === chat);
+        if (c) await openConversation(c);
+        else result.textContent = 'The helper chat is not open';
+        return;
+      }
+      for (const b of box.querySelectorAll('button')) b.disabled = true;
+      try {
+        const done = await post(a.id === 'swarm-undo' ? 'swarm/undo' : 'swarm/merge-again', { helper: a.helper });
+        result.textContent = done?.state === 'cannot_undo' ? "Can't undo cleanly: nothing changed" : '';
+      } catch (error) {
+        result.textContent = error.message || 'Failed';
+        for (const b of box.querySelectorAll('button')) b.disabled = false;
+      }
+    });
+    return button;
   }
   /* "Still running in the background" (+ Stop when AIB can stop it) for a tool row the server marked (update.background). */
   function toolBackgroundPill(row) {

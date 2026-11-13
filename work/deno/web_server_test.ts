@@ -13,6 +13,10 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
   // The one documented exception: routes the Python server does not have (routes.ts DENO_ONLY). Kept to exactly this list.
   assertEquals(DENO_ONLY.map(([m, p]) => `${m} ${p}`), [
     'POST /api/live/worktree/merge-request',
+    'POST /api/live/swarm/tool', // swarm phase 1
+    'POST /api/live/swarm/undo',
+    'POST /api/live/swarm/merge-again',
+    'GET /api/live/swarm',
     'POST /api/live/agents/install/uninstall',
     'GET /api/live/terminal',
     'GET /api/live/terminal/list',

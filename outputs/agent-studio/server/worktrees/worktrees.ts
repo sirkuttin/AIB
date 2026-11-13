@@ -1064,7 +1064,7 @@ export class Manager {
   }
 
   /** plan() plus, when the chat works in place, why ('' when it gets a worktree). */
-  async planWithReason(projectIn: string, key?: string | null): Promise<{ plan: Plan | null; reason: string }> {
+  async planWithReason(projectIn: string, key?: string | null, kind: 'chat' | 'helper' = 'chat'): Promise<{ plan: Plan | null; reason: string }> {
     const project = pathStr(String(projectIn));
     let reason: string;
     try {
@@ -1084,7 +1084,7 @@ export class Manager {
       : '';
     const folder = pathOf(this.registry.root, repoHash(project));
     for (let number = 0;; number++) {
-      const slug = `chat-${key.slice(0, 8)}` + (number ? `-${number}` : '');
+      const slug = `${kind}-${key.slice(0, 8)}` + (number ? `-${number}` : ''); // swarm helpers: studio/helper-… (review 26)
       const branch = `studio/${slug}`;
       const taken = (await git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], project, { check: false })).returncode === 0 ||
         lexists(pathOf(folder, slug));
