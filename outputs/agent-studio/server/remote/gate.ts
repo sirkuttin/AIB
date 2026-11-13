@@ -41,7 +41,10 @@ export class RemoteGate {
     if (origin !== null && origin !== `https://${name}`) return 'bad_origin';
     const site = headers.get('Sec-Fetch-Site');
     if (kind === 'api') {
-      if (site !== 'same-origin' || headers.get('Sec-Fetch-Mode') === 'navigate') return 'bad_origin';
+      // A browser that sends Fetch Metadata must say same-origin. Some in-app browsers (a camera app's QR result view) send none
+      // at all: allowed, since every API call still needs the phone's own key in a custom header (no other site can add it
+      // without a CORS preflight, which this server never answers) and every POST needs this page's exact Origin.
+      if ((site !== null && site !== 'same-origin') || headers.get('Sec-Fetch-Mode') === 'navigate') return 'bad_origin';
       if (method === 'POST' && origin === null) return 'bad_origin';
     } else if (site !== null && site !== 'none' && site !== 'same-origin') {
       // Opening the phone page from a link elsewhere (the camera's QR result, a chat app, a bookmark page) is a top-level GET

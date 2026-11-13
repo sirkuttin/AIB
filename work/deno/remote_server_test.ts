@@ -126,7 +126,9 @@ Deno.test({
         ['other Origin', { Origin: 'https://evil.example' }, 403],
         ['Sec-Fetch-Site same-site', { 'Sec-Fetch-Site': 'same-site' }, 403],
         ['Sec-Fetch-Site cross-site', { 'Sec-Fetch-Site': 'cross-site' }, 403],
-        ['no Sec-Fetch-Site', { 'Sec-Fetch-Site': null }, 403],
+        // no Fetch Metadata at all (some in-app browsers): allowed, the device token still decides
+        ['no Sec-Fetch-Site', { 'Sec-Fetch-Site': null }, 200],
+        ['no Sec-Fetch-Site, no device token', { 'Sec-Fetch-Site': null, [DEVICE_HEADER]: null }, 401],
         ['a navigation', { 'Sec-Fetch-Mode': 'navigate' }, 403],
         ['X-Studio-Token', { 'X-Studio-Token': s.token }, 403],
         ['X-Studio-Artifact-Key', { 'X-Studio-Artifact-Key': 'k' }, 403],
