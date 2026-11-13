@@ -138,6 +138,14 @@ Deno.test({
         ['the cookie value as the token', { [DEVICE_HEADER]: phone.cookie }, 401],
       ];
       for (const [what, h, status] of cases) assertEquals((await home(h)).status, status, what);
+      // the phone page itself, opened from a link in another app (camera QR result, chat app): a top-level cross-site navigation
+      // is allowed for the static page; a cross-site sub-resource or a non-navigation stays refused
+      const page = (h: Record<string, string | null>) => raw(port, 'GET', '/phone.html', phoneHeaders(h));
+      const nav = { 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+      assertEquals((await page({ ...nav, 'Sec-Fetch-Site': 'cross-site' })).status, 200, 'page opened from another app');
+      assertEquals((await page({ ...nav, 'Sec-Fetch-Site': 'same-site' })).status, 200, 'page opened from the artifact origin');
+      assertEquals((await page({ 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'script' })).status, 403);
+      assertEquals((await page({ ...nav, 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' })).status, 403, 'framed elsewhere');
       // X-Forwarded-* is never read: a forged one changes nothing
       assertEquals((await home({ 'X-Forwarded-Host': '127.0.0.1', 'X-Forwarded-For': '127.0.0.1' })).status, 200);
       // a POST without an Origin

@@ -43,7 +43,12 @@ export class RemoteGate {
     if (kind === 'api') {
       if (site !== 'same-origin' || headers.get('Sec-Fetch-Mode') === 'navigate') return 'bad_origin';
       if (method === 'POST' && origin === null) return 'bad_origin';
-    } else if (site !== null && site !== 'none' && site !== 'same-origin') return 'bad_origin';
+    } else if (site !== null && site !== 'none' && site !== 'same-origin') {
+      // Opening the phone page from a link elsewhere (the camera's QR result, a chat app, a bookmark page) is a top-level GET
+      // navigation with Sec-Fetch-Site cross-site. Static pages carry no secrets and every API call stays strict, so allow it.
+      const topLevel = method === 'GET' && headers.get('Sec-Fetch-Mode') === 'navigate' && headers.get('Sec-Fetch-Dest') === 'document';
+      if (!topLevel) return 'bad_origin';
+    }
     return null;
   }
 }
