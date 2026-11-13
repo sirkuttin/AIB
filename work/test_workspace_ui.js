@@ -21,12 +21,12 @@ const conv = (id, cwd, extra = {}) =>
   );
 const liveChat = (extra = {}) => Object.assign({ id: 'L1', closed: false, busy: false, state: 'ready' }, extra);
 
-function setup({ store = {}, conversations = [], selected = null } = {}) {
+function setup({ store = {}, conversations = [], selected = null, scripts = SCRIPTS } = {}) {
   const shell = D.page({
     store,
     ids: ['wsProjectBtn', 'wsRenameProj', 'wsNewProject', 'activityHead', 'composerHelp', 'new'],
   });
-  const ctx = D.load(shell, SCRIPTS);
+  const ctx = D.load(shell, scripts);
   const calls = { rerender: 0, post: [], get: [], opened: [] };
   const host = {
     aliasKey: (c) => c.provider + ':' + c.id,
@@ -270,13 +270,13 @@ test('the inbox: Needs you then Finished; reason words, the project and agent on
   assert.match(rows[1].querySelector('.ws-inbox-sub').textContent, /Should I start the review now\?$/);
   assert.equal(rows[0].querySelector('.ws-inbox-proj').textContent, 'alpha', 'the project is a label on the row');
   assert.ok(rows[0].querySelector('.ws-inbox-agent'), 'the agent is named on the row');
-  assert.equal(rows[1].querySelector('.ws-inbox-helpers').textContent, '2 helpers running');
+  assert.equal(rows[1].querySelector('.ws-inbox-helpers').textContent, '2 subagents running');
   const age = (r) => r.querySelector('.ws-inbox-age');
   assert.equal(age(rows[0]).textContent, 'waited 20m');
   assert.ok(age(rows[0]).classList.contains('long'), 'orange after 15 minutes');
   assert.equal(age(rows[1]).textContent, 'waited 2m');
   assert.ok(!age(rows[1]).classList.contains('long'));
-  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 3 helpers');
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 3 subagents');
 });
 
 test('the inbox with nothing blocked says so, and what still works', () => {
@@ -287,6 +287,45 @@ test('the inbox with nothing blocked says so, and what still works', () => {
   const pop = inbox(t.shell);
   assert.match(pop.querySelector('.ws-pop-empty').textContent, /Nothing needs you/);
   assert.match(pop.querySelector('.ws-pop-empty').textContent, /still working/);
-  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 1 helper');
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 1 subagent');
   assert.equal(t.shell.byId.chatTabs.querySelector('.ws-inbox-btn .ws-badge'), null);
+});
+
+test('a Failed row: Retry sends your last message again; Continue with another agent opens the hand-over (inbox 1b)', async () => {
+  const failed = conv('f1', 'C:/work/alpha', {
+    live: liveChat({ id: 'L1', attention: { state: 'idle', failedAt: new Date().toISOString(), error: 'Usage limit reached.' } }),
+  });
+  const asks = conv('q1', 'C:/work/alpha', {
+    live: liveChat({ id: 'L2', attention: { state: 'idle', asksAt: new Date().toISOString(), question: 'Which one?' } }),
+  });
+  // with the inbox's quick actions (inbox-reply.js), as chat.html loads them
+  const t = setup({ conversations: [failed, asks], scripts: ['inbox-reply.js', ...SCRIPTS] });
+  const retried = [],
+    handed = [],
+    notes = [];
+  t.host.retryLast = async (c) => (retried.push(c.id), { queued: false, attachments: true });
+  t.host.handoff = (c) => handed.push(c.id);
+  t.host.notice = (m) => notes.push(m);
+  t.sync([failed, asks], null);
+  t.W.toggleInbox(true);
+  const row = (key) => inbox(t.shell).querySelectorAll('.ws-inbox-item').find((r) => r.dataset.key === key);
+  const labels = (r) => r.querySelectorAll('.ws-qa').map((b) => b.textContent);
+  assert.deepEqual(labels(row('claude:f1')), ['Reply', 'Retry', 'Continue with another agent…', 'Mark handled']);
+  assert.ok(!labels(row('claude:q1')).includes('Retry'), 'only Failed rows retry');
+  const ev = { stopPropagation() {} };
+  row('claude:f1').querySelector('.ws-qa-retry').onclick(ev);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(retried, ['f1']);
+  assert.deepEqual(notes, ['Sent your last message again, without its attachments.'], 'attachments are not resent, and it says so');
+  row('claude:f1').querySelector('.ws-qa-handoff').onclick(ev);
+  assert.deepEqual(handed, ['f1']);
+  assert.equal(inbox(t.shell).hidden, true, 'the inbox closes for the hand-over dialog');
+  // a failed Retry says why on the row
+  t.host.retryLast = async () => {
+    throw Error('There is no message of yours to send again. Use Open chat.');
+  };
+  t.W.toggleInbox(true);
+  row('claude:f1').querySelector('.ws-qa-retry').onclick(ev);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(row('claude:f1').querySelector('.ws-inbox-err').textContent, /no message of yours/);
 });

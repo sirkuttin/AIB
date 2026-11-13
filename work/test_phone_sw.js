@@ -37,11 +37,16 @@ test('worker: a push shows only its words, with one tag; a tap opens the chat wi
       body: 'Blog site',
       tag: 'aib-attention',
       renotify: true,
+      silent: false,
       icon: '/icons/icon-256.png',
       badge: '/icons/badge-96.png',
       data: { chat: 'c1', sheet: true },
     },
   });
+  // a Finished-only push: no sound or vibration, and no re-alert
+  const quiet = SW.notificationOf({ title: 'Chat finished', body: 'Blog', silent: true }).options;
+  assert.equal(quiet.silent, true);
+  assert.equal(quiet.renotify, false);
   assert.equal(SW.notificationOf(null).title, 'AIB');
   assert.equal(SW.openUrl({ chat: 'c 1', sheet: true }), '/phone.html#chat=c%201&sheet=1');
   assert.equal(SW.openUrl({ chat: 'c1', sheet: false }), '/phone.html#chat=c1');

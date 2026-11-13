@@ -211,8 +211,8 @@
     finished: 'Finished',
   };
   const reasonWord = (r) => REASON_WORDS[r] || 'Needs you';
-  // "2 helpers running" (the chat's helpers still at work), '' for none.
-  const helpersLine = (n) => (Number(n) > 0 ? n + (Number(n) === 1 ? ' helper' : ' helpers') + ' running' : '');
+  // "2 subagents running" (the agent's own subagents still at work; the facts call them helpers), '' for none.
+  const helpersLine = (n) => (Number(n) > 0 ? n + (Number(n) === 1 ? ' subagent' : ' subagents') + ' running' : '');
   // "waited 42m", "waited 1h 05m" (now and since in epoch seconds); long: past LONG_WAIT_SECONDS.
   function waitText(since, now) {
     const s = Math.max(0, Math.floor((Number(now) || 0) - (Number(since) || 0)));

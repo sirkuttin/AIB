@@ -390,7 +390,7 @@
       selectRow(
         'Notify for',
         [
-          ['both', 'Needs you + Your turn'],
+          ['both', 'Needs you + Finished'],
           ['needs', 'Needs you only'],
         ],
         S.prefs.notifyFor,

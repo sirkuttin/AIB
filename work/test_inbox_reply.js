@@ -223,3 +223,20 @@ test('a quick reply to a busy chat (or one with queued messages) goes to the que
   assert.equal(R.sendRoute({ busy: false }), 'prompt');
   assert.equal(R.sendRoute(null), 'prompt');
 });
+
+test('Retry (inbox 1b): a Failed row retries; the last message of yours is what goes again, text only', () => {
+  assert.equal(R.rowActions({ kind: 'yourTurn', reason: 'failed', handled: true }).retry, true);
+  assert.equal(R.rowActions({ kind: 'yourTurn', reason: 'failed' }).reply, true, 'Reply stays');
+  assert.equal(R.rowActions({ kind: 'yourTurn', reason: 'asks' }).retry, false);
+  assert.equal(R.rowActions({ kind: 'needs', reason: 'approval', kinds: [] }).retry, false);
+  const events = [
+    { kind: 'user', data: { sessionId: 's1', text: 'first' } },
+    { kind: 'update', data: {} },
+    { kind: 'user', data: { sessionId: 's1', text: 'fix the build', attachments: [{ name: 'a.png' }] } },
+    { kind: 'user', data: { sessionId: 'other', text: 'not this session' } },
+    { kind: 'user', data: { sessionId: 's1', text: '   ' } },
+  ];
+  assert.deepEqual(R.lastUserText(events, 's1'), { text: 'fix the build', attachments: true });
+  assert.deepEqual(R.lastUserText(events.slice(0, 1), ''), { text: 'first', attachments: false });
+  assert.deepEqual(R.lastUserText(null), { text: '', attachments: false });
+});

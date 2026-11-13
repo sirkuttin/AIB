@@ -30,6 +30,9 @@ import {
   STOP_INDEX,
   stopConfirmLabel,
   TRAY_ITEMS,
+  SLOT_ITEMS,
+  TRAY_SLOTS,
+  trayChatSlots,
   trayOnlyView,
   type WindowHandle,
 } from '../../outputs/agent-studio/server/desktop/window.ts';
@@ -57,6 +60,8 @@ import {
   chosenItem,
   menuCommand,
   notifyIconData,
+  SLOT_SEPARATOR_COMMAND,
+  slotMenuOps,
   NOTIFYICONDATAW_SIZE,
   TRAY_CALLBACK,
   trayEvent,
@@ -308,7 +313,7 @@ Deno.test('start: one window titled AIB on the page, a keeper, a tray, one bindi
     assertEquals([...w.bound.keys()], ['aibDesktop'], 'it only says "the app"; notifications go through the server');
     assertEquals(await w.bound.get('aibDesktop')!(), true);
     assertEquals(s.keepers, 1);
-    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
+    assertEquals(s.tray?.items.filter((i) => !(i as { hidden?: boolean }).hidden).map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
     const png = trayIconPng();
     assertEquals([...png.slice(1, 4)], [0x50, 0x4e, 0x47], 'a PNG');
     assertEquals(s.tray?.icon, png, 'the tray gets the colour icon tray_icon.ts chose (16 or 32 px)');
@@ -376,7 +381,7 @@ Deno.test('tray: icon, menu Open AIB / status / Quit AIB / Stop all chats and qu
   const a = await makeApp(() => Promise.resolve(2));
   try {
     assertEquals(a.s.tray?.tooltip, 'AIB');
-    assertEquals(a.s.tray?.items, TRAY_ITEMS);
+    assertEquals(a.s.tray?.items, [...TRAY_ITEMS, ...SLOT_ITEMS], "the fixed items, then the chat slots (hidden until used)");
     assertEquals(TRAY_ITEMS.map((i) => [i.label, !!i.disabled]), [
       ['Open AIB', false],
       ['', true],
@@ -1131,7 +1136,7 @@ Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu
   try {
     assertEquals(s.windows.length, 0, 'nothing pops up over the person\'s work');
     assertEquals(s.keepers, 1, 'the hidden keeper window keeps the runtime alive');
-    assertEquals(s.tray?.items.map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
+    assertEquals(s.tray?.items.filter((i) => !(i as { hidden?: boolean }).hidden).map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
     assertEquals(updates.at(-1), ['AIB · 1 chat needs you, 1 running', 1, '1 chat needs you, 1 running']);
     counts.needsYou = 0;
     await app.trayTick();
@@ -1411,5 +1416,56 @@ Deno.test('tray-only start (--start-in-tray) with phone access on: no idle quit;
   } finally {
     app.stop();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('tray chat slots: up to 5 blocked chats in the menu, "+N more" past that, a click opens the chat; the window icon gets the attention dot (inbox 1b)', async () => {
+  // the pure rule
+  assertEquals(trayChatSlots([]), []);
+  const chats = Array.from({ length: 7 }, (_, i) => ({ key: `claude:s${i}`, title: `Chat ${i}`, reason: i === 1 ? 'failed' : 'approval' }));
+  assertEquals(trayChatSlots(chats.slice(0, 2)).map((x) => x.label), ['Chat 0 · Approval', 'Chat 1 · Failed']);
+  assertEquals(trayChatSlots(chats.slice(0, 5)).length, TRAY_SLOTS, 'five fit without "+N more"');
+  const many = trayChatSlots(chats);
+  assertEquals(many.length, TRAY_SLOTS);
+  assertEquals(many.at(-1), { label: '+3 more', target: { type: 'inbox' } }, '4 chats and "+3 more", which opens the inbox');
+  assertEquals(trayChatSlots(chats.slice(0, 1), 3).map((x) => x.label), ['Chat 0 · Approval', '+2 more'], 'the count may be ahead of the list');
+  assertEquals(trayChatSlots([{ key: 'k', title: 'x'.repeat(100) }])[0].label.length, 60 + ' · Needs you'.length);
+  // the Windows menu calls: slots and their line removed, then the line and the labels appended in order
+  assertEquals(slotMenuOps(4, 2, ['A']), [
+    { op: 'delete', command: SLOT_SEPARATOR_COMMAND },
+    { op: 'delete', command: 5 },
+    { op: 'delete', command: 6 },
+    { op: 'append', command: SLOT_SEPARATOR_COMMAND, label: '', separator: true },
+    { op: 'append', command: 5, label: 'A' },
+  ]);
+  assertEquals(slotMenuOps(4, 2, []).filter((o) => o.op === 'append'), [], 'no chats: no line, no slots');
+  assertEquals(chosenItem([...TRAY_ITEMS, ...SLOT_ITEMS], SLOT_SEPARATOR_COMMAND), null, 'the line is never chosen');
+  assertEquals(chosenItem([...TRAY_ITEMS, ...SLOT_ITEMS], menuCommand(TRAY_ITEMS.length + 1)), 'chat-1');
+
+  // the app: what the tray tick shows, and what a slot click opens
+  let counts = { working: 3, needsYou: 0, blocked: [] as typeof chats };
+  const slots: string[][] = [];
+  const dots: boolean[] = [];
+  const a = await makeApp(() => Promise.resolve(3), null, { trayCounts: () => Promise.resolve(counts) });
+  try {
+    a.app.shell.updateTraySlots = (labels) => void slots.push(labels);
+    a.app.shell.setWindowAttention = (on) => void dots.push(on);
+    counts = { working: 3, needsYou: 2, blocked: chats.slice(0, 2) };
+    await a.app.trayTick();
+    assertEquals(slots, [['Chat 0 · Approval', 'Chat 1 · Failed']]);
+    assertEquals(dots, [true], 'blocked chats: the dot on the window icon');
+    await a.app.trayTick();
+    assertEquals([slots.length, dots.length], [1, 1], 'nothing changed: no menu or icon calls');
+    const opened: unknown[] = [];
+    a.app.openFromNotification = (t) => (opened.push(t), Promise.resolve(true));
+    await a.app.onTrayMenu('chat-1');
+    await a.app.onTrayMenu('chat-4'); // an empty slot: nothing
+    assertEquals(opened, [{ type: 'chat', key: 'claude:s1' }]);
+    counts = { working: 1, needsYou: 0, blocked: [] };
+    await a.app.trayTick();
+    assertEquals(slots.at(-1), [], 'nothing blocked: the slots leave the menu');
+    assertEquals(dots, [true, false], 'and the dot goes');
+  } finally {
+    await a.done();
   }
 });

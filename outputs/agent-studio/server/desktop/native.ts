@@ -6,7 +6,9 @@ import type { Shell, TrayItem, WindowHandle } from './window.ts';
 import { type OsNotify, posixNotify, windowsNotify } from './notify.ts';
 import { isExternal, keepHidden } from './window.ts';
 import { startWindowsTray, userNotificationState, type WindowsTray } from './tray_win.ts';
-import { applyAppIcon } from './window_icon_win.ts';
+import { applyAppIcon, applyIconPair, attentionIconPair, type IconPair } from './window_icon_win.ts';
+import { withAttentionDot } from './png_badge.ts';
+import { trayIconBytes } from './tray_icon.ts';
 import { bringToFront } from './foreground_win.ts';
 import { writeTrayState } from './host_tray.ts';
 import { getLogger } from '../core/log.ts';
@@ -121,11 +123,15 @@ export function tameStartupWindow(): void {
  * Windows: the runtime's windows have no icon of their own (window_icon_win.ts), so give them AIB.exe's: now, and again shortly
  * after, since the runtime may make the window on its UI thread a moment after BrowserWindow returns. Setting it twice is harmless.
  */
+/** The attention dot on the window icon is on (setWindowAttention), and its icons once made. */
+let windowAttention = false;
+let attentionIcons: IconPair | null = null;
+
 function giveWindowsAppIcon(): void {
   if (Deno.build.os !== 'windows') return;
   let logged = false;
   const apply = () => {
-    const n = applyAppIcon();
+    const n = windowAttention && attentionIcons ? applyIconPair(attentionIcons) : applyAppIcon();
     if (n && !logged) {
       logged = true;
       log.info('window icon: set on %s window(s)', n);
@@ -152,7 +158,8 @@ export function nativeShell(): Shell {
     })
     : null;
   const notifier: OsNotify | null = winNotify ?? posixNotify(Deno.build.os);
-  const menuOf = (items: TrayItem[]) => items.map((i) => ({ item: { label: i.label, id: i.id, enabled: !i.disabled } }));
+  const menuOf = (items: TrayItem[]) =>
+    items.filter((i) => !i.hidden).map((i) => ({ item: { label: i.label, id: i.id, enabled: !i.disabled } }));
   const denoTray = (
     icon: Uint8Array,
     tooltip: string,
@@ -198,9 +205,13 @@ export function nativeShell(): Shell {
             // The first tray tick (status line, "AIB · Phone access on · ...") runs before the worker's icon is up: apply it now.
             if (t) {
               windowsTray = t;
+              const slot = (id: string) => /^chat-\d+$/.test(id);
               trayItems.forEach((item, i) => {
-                if (item.label !== items[i]?.label) t.setItemLabel(i, item.label, !!item.disabled);
+                if (!slot(item.id) && item.label !== items[i]?.label) t.setItemLabel(i, item.label, !!item.disabled);
               });
+              const first = trayItems.findIndex((i) => slot(i.id));
+              const shown = trayItems.filter((i) => slot(i.id) && !i.hidden).map((i) => i.label);
+              if (first >= 0 && shown.length) t.setSlots(first, trayItems.length - first, shown);
               if (trayTooltip !== tooltip) t.setTooltip(trayTooltip);
             } else denoTray(icon, trayTooltip, trayItems, onClick, onMenu);
             writeTrayState('app', { shown: true, tooltip: trayTooltip, icons: t ? t.icons.map(String) : [] });
@@ -221,6 +232,43 @@ export function nativeShell(): Shell {
         tray?.setTooltip(tooltip);
         tray?.setMenu(menuOf(trayItems));
       } catch { /* not fatal */ }
+    },
+    updateTraySlots(labels: string[]) {
+      const first = trayItems.findIndex((i) => /^chat-\d+$/.test(i.id));
+      if (first < 0) return;
+      const count = trayItems.length - first;
+      trayItems.forEach((item, i) => {
+        if (i >= first) {
+          item.label = labels[i - first] ?? '';
+          item.hidden = i - first >= labels.length;
+        }
+      });
+      if (windowsTray) {
+        windowsTray.setSlots(first, count, labels);
+        return;
+      }
+      try {
+        tray?.setMenu(menuOf(trayItems));
+      } catch { /* not fatal */ }
+    },
+    setWindowAttention(on: boolean) {
+      if (Deno.build.os !== 'windows') return;
+      windowAttention = on;
+      void (async () => {
+        try {
+          if (on && !attentionIcons) {
+            attentionIcons = attentionIconPair({
+              big: await withAttentionDot(trayIconBytes(32)),
+              small: await withAttentionDot(trayIconBytes(16)),
+            });
+          }
+          if (windowAttention !== on) return; // changed again meanwhile
+          const n = on && attentionIcons ? applyIconPair(attentionIcons) : applyAppIcon();
+          log.info('window icon: attention dot %s (%s window(s))', on ? 'on' : 'off', n);
+        } catch (error) {
+          log.info('window icon: attention dot failed (%s)', error);
+        }
+      })();
     },
     removeTray() {
       windowsTray?.remove();

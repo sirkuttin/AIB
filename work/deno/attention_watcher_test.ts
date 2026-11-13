@@ -352,9 +352,16 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
   const turn = (k: string): Fire => ({ key: 'claude:' + k, chat: 'c-' + k, kind: 'turn', title: 'Chat ' + k });
 
   await n.fire([needs('a')]);
-  assertEquals(desktop, [{ title: 'Chat a', body: 'Needs you', target: { type: 'chat', key: 'claude:a' }, test: false }]);
-  assertEquals(pushes, [{ title: 'A chat needs you', body: 'Chat a', tag: 'aib-attention', chat: 'c-a', sheet: true }]);
-  // the app's default is Needs you only: a finished turn is no desktop notification, but it is a push (same group)
+  assertEquals(desktop, [{
+    title: 'Chat a',
+    body: 'Needs your approval',
+    target: { type: 'chat', key: 'claude:a' },
+    test: false,
+    silent: false,
+  }]);
+  assertEquals(pushes, [{ title: 'A chat needs you', body: 'Chat a', tag: 'aib-attention', chat: 'c-a', sheet: true, silent: false }]);
+  // a saved "Needs you only": a finished turn is no desktop notification, but it is a push (same group)
+  view['studio-notifications-app'] = JSON.stringify({ desktop: true, sound: 'needs', notifyFor: 'needs' });
   now += 10_000;
   await n.fire([turn('b')]);
   assertEquals(desktop.length, 1);
@@ -364,12 +371,13 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
     tag: 'aib-attention',
     chat: 'c-a',
     sheet: true,
+    silent: false,
   });
-  // Needs you + Your turn: both kinds, grouped into one replacing notification
+  // Needs you + Finished: both kinds, grouped into one replacing notification
   view['studio-notifications-app'] = JSON.stringify({ notifyFor: 'both' });
   now += 10_000;
   await n.fire([turn('c')]);
-  assertEquals(desktop.at(-1)!.title, '2 agents are waiting for you');
+  assertEquals(desktop.at(-1)!.title, '1 needs you \u00b7 1 finished', 'the kinds are named, never one waiting count');
   // an AIB window has focus: no desktop notification; still a push (not typing for 2 minutes)
   now += 70_000;
   presence.report(true, 300_000);
@@ -473,7 +481,7 @@ Deno.test('notifier + presence: a chat on a phone screen gets no desktop notific
   assertEquals(ended.length, 1);
   assertEquals(ended[0].why, 'expired');
   assertEquals((ended[0].held as Json[]).map((h) => h.chat), ['c-x', 'c-x', 'c-y', 'c-z']);
-  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false }]);
+  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false, silent: true }]);
   assertEquals(desktop.length, 2, 'the desktop already showed z');
   // nobody looking now: as before
   now += 70_000;
@@ -518,4 +526,29 @@ Deno.test('presence: a phone counts while it polls (15 s), ends on "left" or sil
   p.seePhone('a', null);
   p.leavePhone('a');
   assertEquals(ended.length, 2, 'unsubscribed');
+});
+
+Deno.test('watcher: blocked() lists the chats blocked on you with title and reason, for the tray menu (inbox 1b)', async () => {
+  const t = lab({ marks: { 'claude:s4': { archivedAt: 5 } } });
+  try {
+    const w = t.make();
+    assertEquals(w.blocked(), [], 'nothing before the first look');
+    t.chats.push({ id: 'c1', sessionId: 's1', cwd: 'C:\code\shop', state: 'needs_you', needs: 1, permissions: ['p1'] });
+    t.chats.push({ id: 'c2', sessionId: 's2', cwd: 'C:\code\shop', state: 'needs_you', needs: 1, elicitations: ['q1'] });
+    t.chats.push({ id: 'c3', sessionId: 's3', cwd: 'C:\code\shop', state: 'idle', facts: { failedAt: t.iso() } });
+    t.chats.push({ id: 'c4', sessionId: 's4', cwd: 'C:\code\shop', state: 'needs_you', needs: 1, permissions: ['p4'] }); // archived
+    t.chats.push({ id: 'c5', sessionId: 's5', cwd: 'C:\code\shop', state: 'working' });
+    await w.poll();
+    assertEquals(w.blocked(), [
+      { key: 'claude:s1', chat: 'c1', title: 'Chat c1', reason: 'approval' },
+      { key: 'claude:s2', chat: 'c2', title: 'Chat c2', reason: 'question' },
+      { key: 'claude:s3', chat: 'c3', title: 'Chat c3', reason: 'failed' },
+    ]);
+    Object.assign(t.chats[0], { state: 'idle', needs: 0, permissions: [] });
+    await w.poll();
+    assertEquals(w.blocked().map((b) => b.key), ['claude:s2', 'claude:s3'], 'answered: off the list at the next look');
+    await w.stop();
+  } finally {
+    t.close();
+  }
 });

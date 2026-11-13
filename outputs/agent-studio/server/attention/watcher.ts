@@ -26,7 +26,7 @@ import type { ProjectPrefs } from '../state/projects.ts';
 import { chatNamesOf, type ViewPrefs } from '../state/view_prefs.ts';
 import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
-import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, RULES } from './rules.ts';
+import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, type Reason, RULES } from './rules.ts';
 import { INBOX } from './inbox_rules.ts';
 import type { Presence } from './presence.ts';
 
@@ -47,8 +47,8 @@ export const SETTLE_MS = 20_000;
 export const TURN_FRESH_SECONDS = 6 * 3600;
 const KIND_CACHE_MS = 60_000;
 
-/** What a piece of news is about (the inbox's reason words, inbox-rules.js reasonOf). */
-export type Reason = 'approval' | 'question' | 'signin' | 'failed' | 'asks' | 'finished';
+/** What a piece of news is about (the inbox's reason words, inbox-rules.js reasonOf; notify-rules.js REASONS). */
+export type { Reason } from './rules.ts';
 
 /** One piece of news: the page's chat key, the live chat's id, the kind, the chat's title and why. */
 export interface Fire {
@@ -57,6 +57,14 @@ export interface Fire {
   kind: Kind;
   title: string;
   reason?: Reason;
+}
+
+/** A chat blocked on the person as the last look saw it (the tray menu's chat slots, window.ts trayChatSlots). */
+export interface BlockedChat {
+  key: string;
+  chat: string;
+  title: string;
+  reason: Reason;
 }
 
 /** What the watcher reads besides the agent host (the web context's stores). */
@@ -100,6 +108,7 @@ export class AttentionWatcher {
   #kinds = new Map<string, [number, { worktree: boolean; scratch: boolean; worktreeOf?: string }]>();
   /** Finished turns seen done (turn key -> since when, ms): announced once they stayed done for SETTLE_MS. */
   #settling = new Map<string, number>();
+  #blocked: BlockedChat[] = [];
   readonly clock: () => number;
 
   constructor(readonly sources: WatchSources, readonly options: WatcherOptions) {
@@ -129,6 +138,14 @@ export class AttentionWatcher {
     this.#running = false;
     if (this.#timer !== null) clearTimeout(this.#timer);
     await this.#busy?.catch(() => {});
+  }
+
+  /**
+   * The chats blocked on the person at the last look (open request, failed turn, a question in the reply), the longest wait first
+   * as far as the agent host's order allows; archived and deleted chats are not listed (they are not counted either).
+   */
+  blocked(): BlockedChat[] {
+    return this.#blocked.map((b) => ({ ...b }));
   }
 
   /** One look at every chat (the loop calls it; tests call it directly). Never throws. */
@@ -235,6 +252,7 @@ export class AttentionWatcher {
     const quiet: string[] = [];
     const seen = new Set<string>();
     const done = new Set<string>(); // turn keys seen done in this look
+    const blocked: BlockedChat[] = [];
     // A chat stayed done (or asking) since when: announced once that lasted SETTLE_MS (checked again next time).
     const settled = (fk: string) => {
       done.add(fk);
@@ -253,6 +271,17 @@ export class AttentionWatcher {
       const phase = INBOX.phaseOf(attention, mark, nowSeconds);
       const flags = RULES.flags(this.facts(c, marks), prefs);
       const title = () => this.title(c, names, marks);
+      const markObj = obj(mark);
+      if (INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
+        const reason: Reason = phase === 'failed' || phase === 'asks'
+          ? phase
+          : c.auth
+          ? 'signin'
+          : Array.isArray(c.elicitations) && c.elicitations.length
+          ? 'question'
+          : 'approval';
+        blocked.push({ key, chat: id, title: title(), reason });
+      }
       if (state === 'needs_you') {
         const needs = Math.max(1, Number(attention.needs) || 1);
         const reason: Reason = c.auth ? 'signin' : Array.isArray(c.elicitations) && c.elicitations.length ? 'question' : 'approval';
@@ -310,6 +339,7 @@ export class AttentionWatcher {
       if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags });
       else quiet.push(fk);
     }
+    this.#blocked = blocked;
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);
     for (const id of [...this.#needKeys.keys()]) if (!seen.has(id)) this.#needKeys.delete(id);
     if (quiet.length) this.fired.add(quiet);
@@ -327,7 +357,7 @@ export class AttentionWatcher {
 
 /** A desktop notification (server/desktop/notify.ts DesktopNotifications.show). */
 export type DesktopShow = (
-  req: { title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' }; test: boolean },
+  req: { title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' }; test: boolean; silent?: boolean },
 ) => Promise<{ shown: boolean; reason?: string }>;
 
 export interface NotifierOptions {
@@ -409,7 +439,8 @@ export class Notifier {
 
   async #send(desktopFires: Fire[], pushFires: Fire[], fires: Fire[]): Promise<void> {
     const now = this.clock();
-    const entries = (list: Fire[]): GroupEntry[] => list.map((f) => ({ key: f.key, title: f.title, kind: f.kind, chat: f.chat }));
+    const entries = (list: Fire[]): GroupEntry[] =>
+      list.map((f) => ({ key: f.key, title: f.title, kind: f.kind, ...(f.reason ? { reason: f.reason } : {}), chat: f.chat }));
     const prefs = RULES.appPrefs(this.options.viewPrefs.public().prefs['studio-notifications-app']);
     const show = this.options.desktop();
     if (this.options.presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
@@ -418,7 +449,7 @@ export class Notifier {
       if (wanted.length) {
         this.#desktop = RULES.addToGroup(this.#desktop, wanted, now).group;
         const d = RULES.describe(this.#desktop);
-        const text = { title: d.title, body: d.body, target: d.target, test: false };
+        const text = { title: d.title, body: d.body, target: d.target, test: false, silent: d.silent };
         this.options.record?.({ to: 'desktop', text, fires });
         try {
           await show(text);

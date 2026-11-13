@@ -77,7 +77,9 @@
   // ---- the desktop app's choices ------------------------------------------------------------------------------------------------
   const SOUND_MODES = ['needs', 'both', 'off'],
     NOTIFY_FOR = ['both', 'needs'];
-  // app: the desktop app's defaults (notifications on, Needs you only); a browser's stay off until allowed, for both kinds.
+  // app: the desktop app's defaults (notifications on, for Needs you + Finished; Finished ones are silent); a browser's stay off
+  // until allowed, for both kinds. Anyone who saved "Needs you only" (notifyFor: 'needs') keeps it: the page writes the whole
+  // object, so a saved value is a choice the owner saw.
   function cleanPrefs(v, app) {
     v = v && typeof v === 'object' ? v : {};
     // The old checkbox ("Play a sound") was a boolean: on becomes "Needs you only", off stays off.
@@ -85,7 +87,7 @@
     return {
       desktop: app ? v.desktop !== false : v.desktop === true,
       sound,
-      notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : app ? 'needs' : 'both',
+      notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : 'both',
     };
   }
   // The saved text of studio-notifications-app (view preferences) as the desktop app's choices.
@@ -112,12 +114,15 @@
     let best = null;
     for (const it of items) {
       const at = g.entries.findIndex((x) => x.key === it.key);
-      // An entry is {key, title, kind} (+ chat: the live chat's id, which the server's pushes open).
+      // An entry is {key, title, kind, reason} (+ chat: the live chat's id, which the server's pushes open). A chat that needs
+      // you stays "needs" (and keeps its reason) when a finish of the same chat joins the group.
       const entry = (old) => {
+        const needs = (old && old.kind === 'needs') || it.kind === 'needs';
         const e = {
           key: it.key,
           title: it.title || (old ? old.title : ''),
-          kind: (old && old.kind === 'needs') || it.kind === 'needs' ? 'needs' : 'turn',
+          kind: needs ? 'needs' : 'turn',
+          reason: reasonFor(it.kind === 'needs' || !old ? it : old) || (needs ? 'approval' : 'finished'),
         };
         const chat = it.chat || (old && old.chat);
         if (chat) e.chat = chat;
@@ -135,23 +140,65 @@
     return { group: g, sound };
   }
 
-  // The desktop notification for a group. One entry names the chat; several say how many are waiting (titles, up to 3).
+  // ---- reasons: what a piece of news is about (inbox-rules.js reasonOf) ---------------------------------------------------------
+  const REASONS = ['approval', 'question', 'signin', 'asks', 'failed', 'wake', 'finished'];
+  // An item's reason; an older caller without one: 'approval' for needs, 'finished' for a turn.
+  function reasonFor(it) {
+    const x = it || {};
+    if (REASONS.indexOf(x.reason) >= 0) return x.reason;
+    return x.kind === 'needs' ? 'approval' : x.kind === 'turn' ? 'finished' : '';
+  }
+  // The one-chat line under its title.
+  const REASON_LINES = {
+    approval: 'Needs your approval',
+    question: 'Has a question for you',
+    signin: 'Needs you to sign in',
+    asks: 'Asks you something',
+    failed: 'Failed',
+    wake: 'Snooze ended',
+    finished: 'Finished',
+  };
+  // The kinds of a group in words, never folded into one "waiting": "2 need you · 1 failed · 1 finished".
+  function tally(list) {
+    let needs = 0,
+      failed = 0,
+      finished = 0;
+    for (const x of list || []) {
+      const r = reasonFor(x);
+      if (r === 'failed') failed++;
+      else if (x.kind === 'turn' || r === 'finished') finished++;
+      else needs++;
+    }
+    const parts = [];
+    if (needs) parts.push(needs + (needs === 1 ? ' needs you' : ' need you'));
+    if (failed) parts.push(failed + ' failed');
+    if (finished) parts.push(finished + ' finished');
+    return parts.join(' \u00b7 ');
+  }
+  // A group with nothing that needs you (Finished only) is silent on every OS.
+  const quietGroup = (list) => list.length > 0 && list.every((x) => x.kind !== 'needs');
+
+  // The desktop notification for a group. One entry names the chat and why; several name the kinds ("2 need you · 1 finished")
+  // and the titles (up to 3). silent: nothing in it needs you, so no OS sound.
   function describe(group) {
     const list = (group && group.entries) || [];
+    const silent = quietGroup(list);
     if (list.length === 1)
       return {
         tag: TAG,
         title: list[0].title || 'AIB',
-        body: list[0].kind === 'needs' ? 'Needs you' : 'Your turn',
+        body: REASON_LINES[reasonFor(list[0])] || 'Needs you',
         target: { type: 'chat', key: list[0].key },
+        silent,
       };
     const names = list.slice(0, 3).map((x) => x.title || 'Conversation');
     if (list.length > 3) names.push('and ' + (list.length - 3) + ' more');
     return {
       tag: TAG,
-      title: list.length + ' agents are waiting for you',
+      title: tally(list),
       body: names.join('\n'),
       target: { type: 'inbox' },
+      silent,
     };
   }
 
@@ -169,6 +216,7 @@
         tag: PUSH_TAG,
         chat: e.chat || '',
         sheet: e.kind === 'needs',
+        silent: e.kind !== 'needs',
       };
     }
     const names = list.slice(0, 3).map(title);
@@ -180,6 +228,7 @@
       tag: PUSH_TAG,
       chat: needs.length === 1 ? first.chat || '' : '',
       sheet: needs.length === 1,
+      silent: !needs.length,
     };
   }
 
@@ -217,6 +266,9 @@
     cleanPrefs,
     appPrefs,
     desktopWants,
+    REASONS,
+    reasonFor,
+    tally,
     addToGroup,
     describe,
     pushText,

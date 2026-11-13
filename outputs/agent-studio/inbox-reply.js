@@ -57,10 +57,21 @@
   //   buttons: one-click answers [{id, label, tone, op: "permission"|"elicitation", reqKey, optionId|value|field}]
   //   handled: Mark handled; open: Open chat (always); openOnly: nothing but Open chat can answer this row
   //   loading: approval buttons are still being fetched; more: how many other requests wait behind this one
+  //   retry:   a Failed row (besides Reply): Retry (your last message again, text only) and Continue with another agent
   function rowActions(row, detail) {
-    const out = { reply: false, buttons: [], handled: false, open: true, openOnly: false, loading: false, more: 0 };
+    const out = {
+      reply: false,
+      buttons: [],
+      handled: false,
+      open: true,
+      openOnly: false,
+      loading: false,
+      more: 0,
+      retry: false,
+    };
     if (!row) return out;
     out.handled = !!row.handled;
+    out.retry = row.reason === 'failed';
     if (row.kind === 'yourTurn') {
       out.reply = true;
       return out;
@@ -130,6 +141,23 @@
       }
     }
     return String((tc && (tc.title || tc.kind)) || (p && p.title) || '').trim();
+  }
+
+  // ---- Retry ------------------------------------------------------------------------------------------------
+  // What Retry sends: the text of the chat's last message from you (events of /api/live/state, oldest first; only those of
+  // sessionId when given). {text, attachments}: attachments says the message had files, which Retry does not send again.
+  function lastUserText(events, sessionId) {
+    const list = Array.isArray(events) ? events : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const e = list[i];
+      if (!e || e.kind !== 'user' || !e.data) continue;
+      if (sessionId && e.data.sessionId && e.data.sessionId !== sessionId) continue;
+      const text = typeof e.data.text === 'string' ? e.data.text : '';
+      if (!text.trim()) continue;
+      const files = (Array.isArray(e.data.attachments) && e.data.attachments.length > 0) || (Array.isArray(e.data.images) && e.data.images.length > 0);
+      return { text, attachments: !!files };
+    }
+    return { text: '', attachments: false };
   }
 
   // ---- send route ----------------------------------------------------------------------------------------
@@ -202,6 +230,7 @@
     isLong,
     choiceOf,
     rowActions,
+    lastUserText,
     permissionTitle,
     sendRoute,
     initial,
