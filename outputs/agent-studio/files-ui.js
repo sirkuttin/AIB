@@ -1790,10 +1790,8 @@
     const tab = { id, kind: 'notes', path: '', name: "What's new in AIB " + notes.version, scope: { id: 'aib-notes', root: 'notes' }, preview: false };
     const h = tabsHere();
     setTabsHere({ tabs: h.tabs.filter((x) => x.id !== id).concat([tab]), active: id });
-    showFile();
-    const body = doc().querySelector && doc().querySelector('#fileView .sf-notes');
-    if (body) body.scrollTop = 0;
-    if (W() && W().closeDrawer) W().closeDrawer();
+    showFile(); // drawn fresh: the list starts at the top, the version just installed first
+        if (W() && W().closeDrawer) W().closeDrawer();
     return true;
   }
   // A date from the release ("2026-11-12T10:00:00Z") as the person's local date; '' when there is none.
