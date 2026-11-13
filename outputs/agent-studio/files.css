@@ -225,11 +225,6 @@ body:not(.sf-files-mode) #filesPane {
   color: var(--warn);
 }
 /* local only (the main folder's, shown in every chat): normal colour, a blue dot on the folder icon, a blue "local only" pill */
-.fx-row.local,
-.sf-fv-local {
-  --local: color-mix(in srgb, var(--info) 78%, var(--text));
-  --local-bg: color-mix(in srgb, var(--info) 13%, var(--bg-field));
-}
 .fx-localdot {
   flex: 0 0 6px;
   width: 6px;
