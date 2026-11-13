@@ -5,21 +5,17 @@ description: Get AIB running on Windows, macOS or Linux, x64 or ARM. No admin ri
 
 import { Tabs, TabItem, LinkButton, Aside } from '@astrojs/starlight/components';
 import Shot from '../../components/Shot.astro';
+import DownloadButton from '../../components/DownloadButton.astro';
 
 Download the file for your system, unzip or install it, and open AIB. No admin rights and no AIB account are needed.
 
-<LinkButton href="https://github.com/sirkuttin/AIB/releases/latest" icon="external">Latest release on GitHub</LinkButton>
+<DownloadButton />
 
-## Download AIB: pick your system
+## Every download
 
-| System | File |
-| --- | --- |
-| Windows, 64-bit Intel or AMD | `AIB-<version>-windows-x64.zip` |
-| Windows on ARM | `AIB-<version>-windows-arm64.zip` |
-| macOS, Apple silicon | `AIB-<version>-macos-arm64.zip` |
-| macOS, Intel | `AIB-<version>-macos-x64.zip` |
-| Linux x64 | `AIB-<version>-linux-x64.AppImage` or `.deb` |
-| Linux ARM64 | `AIB-<version>-linux-arm64.AppImage` or `.deb` |
+The button above picks your system. Every file is listed here with its size. The files are hosted on GitHub; the download starts without leaving this page.
+
+<DownloadButton list />
 
 Every release also has `SHA256SUMS`, the checksum of every file. See [Check your download](#check-your-download).
 

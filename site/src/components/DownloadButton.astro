@@ -1,0 +1,165 @@
+---
+// The Download button: links straight to this system's file in the latest GitHub release, so the download starts at once.
+// The release is read when the site is built (rebuild the site after each release); the visitor's browser makes no API call.
+// The visitor's system and processor are read in the browser; when unsure (e.g. Safari on a Mac) every choice is listed.
+const { list = false } = Astro.props as { list?: boolean };
+const REPO = 'sirkuttin/AIB';
+type Asset = { name: string; url: string; size: number };
+let tag = '';
+let assets: Asset[] = [];
+try {
+	const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+		headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'aib-site-build' },
+	});
+	if (r.ok) {
+		const j = await r.json();
+		tag = j.tag_name ?? '';
+		assets = (j.assets ?? []).map((a: any) => ({ name: a.name, url: a.browser_download_url, size: a.size }));
+	}
+} catch {
+	/* offline build: the button falls back to the release page */
+}
+const pick = (suffix: string) => assets.find((a) => a.name.endsWith(suffix));
+const mb = (n: number) => `${Math.round(n / 1e6)} MB`;
+const fallback = `https://github.com/${REPO}/releases/latest`;
+const choices = [
+	{ id: 'windows-x64', short: 'Windows (x64)', label: 'Windows, 64-bit Intel or AMD', a: pick('-windows-x64.zip') },
+	{ id: 'windows-arm64', short: 'Windows (ARM)', label: 'Windows on ARM', a: pick('-windows-arm64.zip') },
+	{ id: 'macos-arm64', short: 'Mac (Apple silicon)', label: 'macOS, Apple silicon', a: pick('-macos-arm64.zip') },
+	{ id: 'macos-x64', short: 'Mac (Intel)', label: 'macOS, Intel', a: pick('-macos-x64.zip') },
+	{ id: 'linux-x64', short: 'Linux (x64)', label: 'Linux x64, AppImage', a: pick('-linux-x64.AppImage') },
+	{ id: 'linux-x64-deb', short: 'Linux (x64, .deb)', label: 'Linux x64, .deb', a: pick('-linux-x64.deb') },
+	{ id: 'linux-arm64', short: 'Linux (ARM64)', label: 'Linux ARM64, AppImage', a: pick('-linux-arm64.AppImage') },
+	{ id: 'linux-arm64-deb', short: 'Linux (ARM64, .deb)', label: 'Linux ARM64, .deb', a: pick('-linux-arm64.deb') },
+].map((c) => ({ ...c, href: c.a ? c.a.url : fallback, file: c.a ? c.a.name : '', size: c.a ? mb(c.a.size) : '' }));
+const sums = pick('SHA256SUMS');
+const version = tag.replace(/^v/, '');
+---
+
+{!list && (
+	<div class="aib-dl" data-choices={JSON.stringify(choices.map(({ id, short, label, href, file, size }) => ({ id, short, label, href, file, size })))}>
+		<a class="aib-dl-main" href={fallback} data-main>
+			<span class="aib-dl-title" data-title>Download AIB</span>
+			<span class="aib-dl-sub" data-sub>{version ? `Version ${version}` : 'Latest release'}</span>
+		</a>
+		<p class="aib-dl-note" data-note>The download starts right away. Wrong system? Pick yours under "Every download".</p>
+	</div>
+)}
+{list && (
+	<ul class="aib-dl-list" id="aib-dl-pick">
+		{choices.map((c) => (
+			<li>
+				<a href={c.href} data-id={c.id}>{c.label}</a>
+				{c.file && <span class="aib-dl-file"><code>{c.file}</code> · {c.size}</span>}
+			</li>
+		))}
+		{sums && (
+			<li>
+				<a href={sums.url}>Checksums</a>
+				<span class="aib-dl-file"><code>SHA256SUMS</code></span>
+			</li>
+		)}
+	</ul>
+)}
+
+<script>
+	// Pick the visitor's file: Chromium browsers say the platform and processor; others are read from the user agent.
+	async function detect(): Promise<string | null> {
+		const nav = navigator as any;
+		let os = '';
+		let arch = '';
+		if (nav.userAgentData?.getHighEntropyValues) {
+			try {
+				const v = await nav.userAgentData.getHighEntropyValues(['platform', 'architecture', 'bitness']);
+				os = String(v.platform || '').toLowerCase();
+				arch = String(v.architecture || '').toLowerCase();
+			} catch {}
+		}
+		const ua = navigator.userAgent.toLowerCase();
+		if (!os) os = ua.includes('windows') ? 'windows' : ua.includes('mac os') ? 'macos' : ua.includes('linux') && !ua.includes('android') ? 'linux' : '';
+		if (!arch) arch = /arm64|aarch64/.test(ua) ? 'arm' : '';
+		if (os.startsWith('win')) return arch === 'arm' ? 'windows-arm64' : 'windows-x64';
+		if (os.startsWith('mac')) return arch === 'arm' ? 'macos-arm64' : arch === 'x86' ? 'macos-x64' : null; // Safari can't tell: let them pick
+		if (os === 'linux') return arch === 'arm' ? 'linux-arm64' : 'linux-x64';
+		return null;
+	}
+	for (const box of document.querySelectorAll<HTMLElement>('.aib-dl')) {
+		const choices = JSON.parse(box.dataset.choices || '[]');
+		const main = box.querySelector<HTMLAnchorElement>('[data-main]')!;
+		const sub = box.querySelector<HTMLElement>('[data-sub]')!;
+		const title = box.querySelector<HTMLElement>('[data-title]')!;
+		const version = sub.textContent || '';
+		const note = box.querySelector<HTMLElement>('[data-note]')!;
+		detect().then((id) => {
+			const c = choices.find((x: any) => x.id === id);
+			if (c) {
+				main.href = c.href;
+				title.textContent = `Download for ${c.short}`;
+				sub.textContent = [version, c.size].filter(Boolean).join(' · ');
+				document.querySelector(`.aib-dl-list [data-id="${c.id}"]`)?.parentElement?.classList.add('aib-dl-yours');
+			} else {
+				main.href = '#aib-dl-pick';
+				title.textContent = 'Download AIB';
+				sub.textContent = 'Pick your system below';
+				note.textContent = navigator.userAgent.includes('Mac')
+					? 'Your browser doesn’t say which Mac you have. Apple silicon is M1 or newer; older Macs are Intel.'
+					: 'Pick your system below.';
+			}
+		});
+	}
+</script>
+
+<style>
+	.aib-dl-main {
+		display: inline-flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.8rem 1.4rem;
+		border-radius: 999px;
+		background: var(--sl-color-accent);
+		color: var(--sl-color-black);
+		text-decoration: none;
+	}
+	:root[data-theme='dark'] .aib-dl-main {
+		color: var(--sl-color-black);
+	}
+	.aib-dl-main:hover {
+		background: var(--sl-color-accent-high);
+	}
+	.aib-dl-title {
+		font-weight: 700;
+		font-size: var(--sl-text-lg);
+	}
+	.aib-dl-sub {
+		font-size: var(--sl-text-sm);
+	}
+	.aib-dl-note {
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.aib-dl-list {
+		list-style: none;
+		padding: 0;
+		margin-top: 1rem;
+	}
+	.aib-dl-list li {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem 0.75rem;
+		padding: 0.35rem 0;
+		border-bottom: 1px solid var(--sl-color-hairline);
+	}
+	.aib-dl-list li a {
+		min-width: 15rem;
+		font-weight: 600;
+	}
+	.aib-dl-file {
+		color: var(--sl-color-gray-3);
+		font-size: var(--sl-text-sm);
+	}
+	.aib-dl-yours::after {
+		content: 'your system';
+		color: var(--sl-color-gray-3);
+		font-weight: 400;
+	}
+</style>
