@@ -772,3 +772,28 @@ a.artifact-link code {
 a.artifact-link.artifact-link-deleted {
   color: var(--muted);
 }
+
+/* Zoom (artifacts-ui.js): the frame is drawn 1/zoom as large and scaled back up, so the page lays out for the smaller or larger size. */
+.ar-stage.ar-zoomed {
+  overflow: hidden;
+  display: block;
+}
+.ar-stage.ar-zoomed > .ar-frame {
+  width: calc(100% / var(--ar-zoom, 1));
+  height: calc(100% / var(--ar-zoom, 1));
+  transform: scale(var(--ar-zoom, 1));
+  transform-origin: 0 0;
+}
+.ar-zoom-pct {
+  min-width: 3.2em;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ar-zoom-pct:hover {
+  color: var(--text);
+}

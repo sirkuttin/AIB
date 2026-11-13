@@ -2848,7 +2848,43 @@
     request.type = 'button';
     request.title = 'Puts this artifact in the message box, ready for you to say what to change';
     request.hidden = true;
-    bar.append(pick, ver, spacer, edit, request, ext, more);
+    /* Zoom: scales the page frame (−, the percentage resets to 100%, +); kept for every artifact in this browser. */
+    const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+    const zoomOut = el('button', 'ar-ico ar-zoom-btn', '−');
+    zoomOut.type = 'button';
+    zoomOut.title = 'Zoom out';
+    zoomOut.setAttribute('aria-label', 'Zoom out');
+    const zoomLabel = el('button', 'ar-zoom-pct', '100%');
+    zoomLabel.type = 'button';
+    zoomLabel.title = 'Reset zoom';
+    const zoomIn = el('button', 'ar-ico ar-zoom-btn', '+');
+    zoomIn.type = 'button';
+    zoomIn.title = 'Zoom in';
+    zoomIn.setAttribute('aria-label', 'Zoom in');
+    let zoom = 1;
+    try {
+      const saved = Number(win.localStorage.getItem('aib.artifactZoom'));
+      if (ZOOMS.includes(saved)) zoom = saved;
+    } catch { /* no storage: 100% */ }
+    const applyZoom = (z) => {
+      zoom = z;
+      try { win.localStorage.setItem('aib.artifactZoom', String(z)); } catch { /* not kept */ }
+      zoomLabel.textContent = Math.round(z * 100) + '%';
+      zoomOut.disabled = z <= ZOOMS[0];
+      zoomIn.disabled = z >= ZOOMS[ZOOMS.length - 1];
+      const st = ui && ui.stage;
+      if (!st) return;
+      st.classList.toggle('ar-zoomed', z !== 1);
+      st.style.setProperty('--ar-zoom', String(z));
+    };
+    const stepZoom = (d) => {
+      const i = ZOOMS.indexOf(zoom);
+      applyZoom(ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, (i < 0 ? ZOOMS.indexOf(1) : i) + d))]);
+    };
+    zoomOut.addEventListener('click', () => stepZoom(-1));
+    zoomIn.addEventListener('click', () => stepZoom(1));
+    zoomLabel.addEventListener('click', () => applyZoom(1));
+    bar.append(pick, ver, spacer, edit, request, zoomOut, zoomLabel, zoomIn, ext, more);
     const avail = el('div', 'ar-avail');
     avail.hidden = true;
     avail.setAttribute('role', 'status');
@@ -2972,6 +3008,7 @@
     pick.addEventListener('click', openPicker);
     ver.addEventListener('click', openVersions);
     more.addEventListener('click', openMenu);
+    applyZoom(zoom);
     ext.addEventListener('click', openInBrowser);
     switchBtn.addEventListener('click', () => {
       S.picked = null;
