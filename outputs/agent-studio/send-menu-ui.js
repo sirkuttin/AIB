@@ -248,7 +248,11 @@
         self.open = false;
         menu.hidden = true;
         more.setAttribute('aria-expanded', 'false');
-        if (refocus !== false && send.focus) send.focus();
+        // back where you were typing (the message box), not onto Send: it may be disabled with an empty box (focus then fell to the
+        // page); the Send button only when there is no such place
+        if (refocus === false) return;
+        const FR = view && view.AgentFocusReturn;
+        if (!(FR && FR.back()) && send.focus) send.focus();
       },
       // Keys on the Send button, the ▾ and inside the menu. Returns true when it handled the key.
       onKey(e) {
