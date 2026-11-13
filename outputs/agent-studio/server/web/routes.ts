@@ -70,7 +70,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
  *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job
  *   POST /api/live/devices/tailscale/cancel   Settings > Remote control: Cancel on a setup job
- *   POST /api/live/presence                   the page: its window has focus or not, time since the last input (attention/presence.ts)
+ *   POST /api/live/presence                   the page: window focus, time since the last input, open chats (attention/presence.ts)
  *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
  *   POST /api/live/artifacts/delete           Delete: to Recently deleted, the source file into the artifact's bin (page only)
  *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)

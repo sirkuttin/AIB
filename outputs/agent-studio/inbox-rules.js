@@ -16,6 +16,11 @@
   //   your_turn  finished: the agent handed back and nothing runs. Listed under Finished, never counted.
   //   idle / opening / closed
   // Blocked = needs_you, failed or asks: the inbox's "Needs you" section, and the ONE number every badge, title and tray shows.
+  //
+  // Open on the PC (openKeys, isOpen): the chat shown in the AIB window's active tab (and any split pane showing a chat), while
+  // the window is visible, focused or not. It is already in front of you, so the DESKTOP leaves it out: no inbox row, not in
+  // the badge, title, tray count or taskbar dot, no desktop notification or sound. Phones still count it, and pushes still go
+  // by presence (server/attention/presence.ts). Minimized or closed to the tray: nothing is open.
 
   const FOLLOW_UP_SECONDS = 20; // helper or shell ended -> the agent's own follow-up starts within this (AIB: 100% in 20 s)
   const SHELL_CAP_SECONDS = 30 * 60; // a background shell counts as work this long at most (97% end within 30 min)
@@ -232,8 +237,22 @@
   }
   // The one number: chats blocked on you (rows in Needs you). Finished never counts.
   const countOf = (rows) => (rows || []).filter((r) => r && r.section === 'needs').length;
-  // How many of these chats are blocked on you: [{attention, mark}] (the trays and the phone count this way).
-  const countBlocked = (chats, now) => (chats || []).filter((c) => c && blocked(phaseOf(c.attention, c.mark, now))).length;
+  // The chats open on the PC: {selected (the active tab's chat key), panes (the chat keys split panes show), visible (the window
+  // is not minimized or hidden)}. Unique keys, or [] while the window is hidden.
+  function openKeys(o) {
+    const x = o || {};
+    if (x.visible === false) return [];
+    const out = [];
+    for (const k of [x.selected].concat(Array.isArray(x.panes) ? x.panes : []))
+      if (isStr(k) && k.length <= 400 && out.indexOf(k) < 0) out.push(k);
+    return out.slice(0, 20);
+  }
+  // Is this chat (its page key, "provider:sessionId") open on the PC? open: openKeys().
+  const isOpen = (key, open) => isStr(key) && Array.isArray(open) && open.indexOf(key) >= 0;
+  // How many of these chats are blocked on you: [{attention, mark, key?}] (the trays and the phone count this way). open: the
+  // chats open on the PC (the desktop's own count leaves them out; the phone passes none).
+  const countBlocked = (chats, now, open) =>
+    (chats || []).filter((c) => c && !isOpen(c.key, open) && blocked(phaseOf(c.attention, c.mark, now))).length;
 
   const api = {
     FOLLOW_UP_SECONDS,
@@ -255,6 +274,8 @@
     sortRows,
     countOf,
     countBlocked,
+    openKeys,
+    isOpen,
   };
   root.AgentInboxRules = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

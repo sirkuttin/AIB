@@ -552,3 +552,43 @@ Deno.test('watcher: blocked() lists the chats blocked on you with title and reas
     t.close();
   }
 });
+
+Deno.test('notifier + presence: the chat open in the AIB window gets no desktop notification, even unfocused; the phone push still goes', async () => {
+  let now = 5_000_000;
+  const presence = new Presence(() => now);
+  const desktop: Json[] = [];
+  const pushes: Json[] = [];
+  const n = new Notifier({
+    desktop: () => (req) => (desktop.push(req), Promise.resolve({ shown: true })),
+    push: () => (text) => (pushes.push(text), Promise.resolve()),
+    presence,
+    viewPrefs: { public: () => ({ prefs: {} }) } as never,
+    clock: () => now,
+  });
+  const asks = (k: string): Fire => ({ key: 'claude:' + k, chat: 'c-' + k, kind: 'needs', title: 'Chat ' + k, reason: 'asks' });
+  // the window shows chat a but has no focus; the owner last typed 10 minutes ago (away from the PC)
+  presence.report(false, 600_000, ['claude:a']);
+  assertEquals(presence.openOnPc(), ['claude:a']);
+  assert(!presence.focused() && !presence.active());
+  await n.fire([asks('a')]);
+  assertEquals(desktop, [], 'no desktop notification: chat a is open in the window');
+  assertEquals(pushes.length, 1, 'the phone still gets its push (the owner is not at the PC)');
+  assertEquals(pushes[0].body, 'Chat a');
+  // another chat: the desktop notification goes as usual
+  now += 70_000;
+  presence.report(false, 670_000, ['claude:a']);
+  await n.fire([asks('b')]);
+  assertEquals(desktop.map((d) => d.target), [{ type: 'chat', key: 'claude:b' }]);
+  // switched to chat b: chat a is desktop news again
+  now += 70_000;
+  presence.report(false, 740_000, ['claude:b']);
+  await n.fire([asks('a')]);
+  assertEquals(desktop.map((d) => d.target), [{ type: 'chat', key: 'claude:b' }, { type: 'chat', key: 'claude:a' }]);
+  // the window was minimized or closed (the page reports nothing open), or stopped reporting: nothing is open
+  presence.report(false, 0, []);
+  assertEquals(presence.openOnPc(), []);
+  presence.report(false, 0, ['claude:a', 7, '', 'x'.repeat(500)]);
+  assertEquals(presence.openOnPc(), ['claude:a'], 'only page keys');
+  now += 45_000;
+  assertEquals(presence.openOnPc(), [], 'stale after 45 s');
+});

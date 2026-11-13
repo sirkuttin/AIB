@@ -35,22 +35,30 @@ export interface InboxRules {
   reasonOf(phase: string, kinds?: unknown[]): string;
   reasonWord(reason: string): string;
   helpersLine(n: number): string;
-  countBlocked(chats: { attention: unknown; mark?: unknown }[], now: number): number;
+  countBlocked(chats: { attention: unknown; mark?: unknown; key?: string }[], now: number, open?: string[]): number;
+  openKeys(o: { selected?: unknown; panes?: unknown; visible?: boolean }): string[];
+  isOpen(key: unknown, open: unknown): boolean;
 }
 
 export const INBOX: InboxRules = (globalThis as unknown as { AgentInboxRules: InboxRules }).AgentInboxRules;
 
-/** How many of these chats (a liveList's connections, or attention() of each) are blocked on you, with the marks file's entries. */
+/**
+ * How many of these chats (a liveList's connections, or attention() of each) are blocked on you, with the marks file's entries.
+ * open: the chats open in the AIB window (Presence.openOnPc): the desktop's count leaves them out.
+ */
 export function blockedCount(
   chats: { provider?: unknown; sessionId?: unknown; closed?: unknown; attention?: unknown }[],
   marks: Record<string, unknown>,
   now = Date.now() / 1000,
+  open: string[] = [],
 ): number {
   return INBOX.countBlocked(
     chats.filter((c) => !c.closed).map((c) => {
-      const mark = marks[`${c.provider}:${c.sessionId}`] as { archivedAt?: number; deletedAt?: number } | undefined;
-      return { attention: mark?.archivedAt || mark?.deletedAt ? { state: 'closed' } : c.attention, mark };
+      const key = `${c.provider}:${c.sessionId}`;
+      const mark = marks[key] as { archivedAt?: number; deletedAt?: number } | undefined;
+      return { attention: mark?.archivedAt || mark?.deletedAt ? { state: 'closed' } : c.attention, mark, key };
     }),
     now,
+    open,
   );
 }

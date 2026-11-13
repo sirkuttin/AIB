@@ -289,9 +289,9 @@ export class WebServer {
       const result = await n.show(cleanNotifyRequest(body));
       return this.json(200, { ok: true, shown: result.shown, reason: result.reason ?? '', mechanism: n.mechanism });
     });
-    // The page: its window has focus or not, and how long since the last input in it (attention/presence.ts).
+    // The page: its window has focus or not, how long since the last input in it, the chats it shows (attention/presence.ts).
     this.native.set('POST /api/live/presence', (c, _url, body) => {
-      c.presence.report(body?.focused, body?.idleMs);
+      c.presence.report(body?.focused, body?.idleMs, body?.open);
       return this.json(200, { ok: true });
     });
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
