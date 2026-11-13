@@ -36,7 +36,7 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
   listed too, marked "In use elsewhere" when another app has them open.
 
 **4. Agents don't overwrite each other.** *A chat divided against itself cannot stand.*
-- In a git project, each chat works in its own worktree and branch, started from HEAD plus your uncommitted work.
+- In a git project, each chat works in its own worktree and branch, started from main (your uncommitted work comes along when your folder is on main).
 - Your saved edits are synced into the chats' worktrees.
 - **Merge** lands only that chat's changes and puts your unsaved edits back; conflicts go to the chat to resolve.
   **Discard** deletes the branch after one confirmation.
@@ -44,7 +44,7 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
 ![A chat working in its own copy: the Changes tab with Discard and Merge](docs/screenshots/06-worktree-changes-merge.png)
 
 **5. Nothing stops when AIB does.**
-- Chats and chat terminals run in a separate program, the keeper. They keep running when AIB restarts, updates or crashes.
+- Chats and chat terminals run in a separate program, the keeper. They keep running when you quit AIB, and when it restarts, updates or crashes.
 - **Install now** works while chats work. After a crash, AIB comes back in the tray.
 - Updates are verified against `SHA256SUMS` and roll back if the new version doesn't start.
 
@@ -132,7 +132,6 @@ Honest Abe would list these first.
 - The ten Beta agents are untested by us; some of their login commands are unconfirmed.
 - Builds are unsigned, so SmartScreen and Gatekeeper warn on first run.
 - Saved conversations from outside AIB are read for Claude Code and OMP only.
-- Quitting AIB ends chat terminals; restarts, updates and crashes don't.
 - The `.deb` and source runs don't update in place.
 
 ## Known issues
