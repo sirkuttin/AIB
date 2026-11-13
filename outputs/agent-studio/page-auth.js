@@ -73,5 +73,13 @@
       .catch(() => {});
   }
 
+  // The app window sent to /#aib-key=... while already on / (it landed there without the key, server/desktop/window.ts
+  // #ensureConnected): only the fragment changes, so the page is not loaded again by itself. Reload it with the key still in the
+  // address, so the code above takes it and pairs, as on a first load.
+  window.addEventListener('hashchange', () => {
+    const key = new URLSearchParams(String(location.hash || '').replace(/^#/, '')).get('aib-key') || '';
+    if (SHAPE.test(key)) location.reload();
+  });
+
   window.AIBPageAuth = { headers, init };
 })();

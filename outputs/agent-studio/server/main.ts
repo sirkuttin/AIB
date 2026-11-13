@@ -397,6 +397,8 @@ export async function main(argv: string[]): Promise<void> {
     const { nativeShell } = await import('./desktop/native.ts');
     const app = desktopApp = new DesktopApp(nativeShell(), {
       url: ctx.pageAccess.pageUrl(url), // `${url}/#aib-key=...`: the window is the page that gets the token (web/page_access.ts)
+      // Our page holding no key or known session (the runtime's own navigation landed there without the key): opened again with it.
+      pageConnected: (held) => ctx.pageAccess.holds(held),
       stateDir,
       trayIcon: trayIconPng(),
       busyCount: async () => (await host.busyConnections()).length,

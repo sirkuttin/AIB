@@ -99,6 +99,11 @@ export class PageAccess {
     return !!session && this.knows(session);
   }
 
+  /** True when what a page holds (its launch key, its page session; '' for none) gets it the token: the same rule as allows(). */
+  holds(held: { key: string; session: string }): boolean {
+    return (!!held.key && tokenMatches(held.key, this.launchKey)) || (!!held.session && this.knows(held.session));
+  }
+
   /** True for a page session made by pair() (in this or another AIB of the same data folder). */
   knows(session: string): boolean {
     if (!KEY_SHAPE.test(session)) return false;
