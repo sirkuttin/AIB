@@ -2482,9 +2482,29 @@
     }
   }
   let readMigrated = false;
-  async function refresh() {
-    if (!selected || polling) return;
+  // One read of the open chat at a time. The 1.5 s poll skips a beat while one runs ({poll: true}); any other caller (after a send,
+  // an answer, a switch) gets one more read after the running one, which may have left before the change: so the working composer
+  // (Interrupt, Send ▾) shows as soon as the send is answered, not a poll later (QA beta.9).
+  let pollRun = null,
+    pollNext = null;
+  function refresh(opts) {
+    if (!selected) return Promise.resolve();
+    if (pollRun) {
+      if (opts && opts.poll) return pollRun;
+      return (pollNext ||= pollRun.then(() => {
+        pollNext = null;
+        return refresh();
+      }));
+    }
     polling = true;
+    pollRun = refreshOnce().finally(() => {
+      polling = false;
+      pollRun = null;
+    });
+    return pollRun;
+  }
+  async function refreshOnce() {
+    if (!selected) return;
     const key = selected.key;
     try {
       if (current) {
@@ -3510,26 +3530,42 @@
         clientMessageId = attemptId(key, value, fingerprint),
         attachments = await imageBlocks(images);
       const body = { id: connection, text: value, clientMessageId, attachments },
-        way = window.AgentSendMenu
-          ? window.AgentSendMenu.route(
-              {
-                busy: !!snapshot?.busy,
-                hasQueue: !!snapshot?.queue?.items?.length,
-                steerable: !!snapshot?.steerable,
-                text: value,
-                commands: snapshot?.breadth?.commands,
-              },
-              intent,
-            )
-          : snapshot && (snapshot.busy || snapshot.queue?.items?.length)
-            ? 'queue'
-            : 'prompt';
-      if (way === 'steer') await post('steer', body);
-      else if (way === 'interrupt') {
-        // Interrupt and send: it joins the queue, then jumps to the front and cancels the turn (what the queue row's ↑ does)
-        await post('queue', body);
-        await post('queue-send-now', { id: connection, messageId: clientMessageId });
-      } else await post(way, body);
+        wayOf = (s) =>
+          window.AgentSendMenu
+            ? window.AgentSendMenu.route(
+                {
+                  busy: !!s?.busy,
+                  hasQueue: !!s?.queue?.items?.length,
+                  steerable: !!s?.steerable,
+                  text: value,
+                  commands: s?.breadth?.commands,
+                },
+                intent,
+              )
+            : s && (s.busy || s.queue?.items?.length)
+              ? 'queue'
+              : 'prompt',
+        sendBy = async (way) => {
+          if (way === 'steer') await post('steer', body);
+          else if (way === 'interrupt') {
+            // Interrupt and send: it joins the queue, then jumps to the front and cancels the turn (what the queue row's ↑ does)
+            await post('queue', body);
+            await post('queue-send-now', { id: connection, messageId: clientMessageId });
+          } else await post(way, body);
+        };
+      const way = wayOf(snapshot);
+      try {
+        await sendBy(way);
+      } catch (error) {
+        // The page knows the chat from its last poll (up to 1.5 s old): a turn that started since (the phone, the inbox, the queue,
+        // Claude Code's own cycle, an approval card's turn) makes the agent refuse a prompt, which it did not take. Read the chat
+        // now and send it the way that fits: held while a card is open, steered, or after this turn (QA beta.9).
+        if (way !== 'prompt' || !/Wait for the current turn/.test(error.message)) throw error;
+        const now = await get('/api/live/state', { id: connection, after: connection === current ? cursor : 0 });
+        const again = wayOf(now);
+        if (again === 'prompt') throw error;
+        await sendBy(again);
+      }
       followSent(); // you sent it: the view goes to your message and follows the reply, wherever you had scrolled
       clearAttempt(key, value, fingerprint);
       clearSentAttachments(key, images);
@@ -3685,7 +3721,7 @@
   /* A hidden tab pauses only the 1.5 s chat poll and catches up the moment it is shown again. The conversation list keeps its own
    poll (notify-ui.js raises desktop notifications from it while the tab is in the background). */
   setInterval(() => {
-    if (!document.hidden) refresh();
+    if (!document.hidden) refresh({ poll: true });
   }, 1500);
   setInterval(() => listConversations().catch(fail), 5000);
   document.addEventListener?.('visibilitychange', () => {
