@@ -174,7 +174,13 @@ async function run(fx: Fixture, keep: (b: Browser) => void, wt: boolean): Promis
     return { shown: r.width > 0 && r.height > 0, over: t.scrollWidth > t.clientWidth + 1 || Array.from(t.querySelectorAll('.pane-tab-label')).some((l) => l.scrollWidth > l.clientWidth) }; })()`);
   assert(!narrowTabs.over, 'Q3: the tab row overflows at 860 px: ' + JSON.stringify(narrowTabs));
   await page.eval(`AgentFilesUI.setMode('files'); AgentWorkspaceUI.openDrawer()`);
-  await page.waitFor(`document.body.classList.contains('ws-list-open') && !!document.querySelector('.fx-row[data-path="extra.txt"]')`, 10_000, 'the drawer with the tree');
+  // the drawer slides in (0.15 s, workspace.css): the row is measured for the right-click once it is in place
+  await page.waitFor(
+    `document.body.classList.contains('ws-list-open') && !!document.querySelector('.fx-row[data-path="extra.txt"]') &&
+      getComputedStyle(document.querySelector('.aside-main')).transform === 'none'`,
+    10_000,
+    'the drawer with the tree, slid in',
+  );
   await page.shot('q6-drawer-before');
   const [rx, ry] = await page.eval<number[]>(`(() => { const r = document.querySelector('.fx-row[data-path="extra.txt"]').getBoundingClientRect(); return [r.left + 60, r.top + r.height / 2]; })()`);
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
