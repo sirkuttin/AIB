@@ -3,7 +3,7 @@
  *   - a turn the agent answers with an error is Failed (with the agent's words and the kind of failure); a Stop never is; sending
  *     again clears it;
  *   - a reply that asks you something in plain text (rule R6) is Asks, with the question; a short reply never is;
- *   - Claude Code's helpers keep the chat working ("2 helpers running"), and so does the follow-up window after the last one ended;
+ *   - Claude Code's helpers keep the chat working ("2 subagents running"), and so does the follow-up window after the last one ended;
  *     another agent's helpers do not (phase 1 counts Claude Code's only);
  *   - the agent host's tray counts the same chats as the page's badge (Studio.blockedChats).
  */
@@ -75,7 +75,7 @@ Deno.test("inbox facts: Claude Code's helpers keep the chat working, then the fo
   assertEquals(a.state, 'idle', 'the old state is unchanged (quit, idle exit and the keeper read it)');
   assertEquals(a.helpers, 1);
   assertEquals(a.phase, 'working');
-  assertEquals(INBOX.helpersLine(a.helpers as number), '1 helper running');
+  assertEquals(INBOX.helpersLine(a.helpers as number), '1 subagent running');
   assertEquals(INBOX.phaseOf(a, { yourTurnAt: Date.now() / 1000 }, Date.now() / 1000), 'working', 'not Finished while it runs');
   Deno.writeTextFileSync(gate, 'go'); // the helper ends; Claude Code starts its own follow-up a moment later
   await until(() => c.attention().helpers === 0, 'the helper ended', LONG);

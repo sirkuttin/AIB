@@ -268,8 +268,8 @@ test('words: reasons, helpers, the wait and when it turns orange', () => {
   assert.equal(R.reasonOf('your_turn'), 'finished');
   assert.equal(R.reasonWord('signin'), 'Sign-in');
   assert.equal(R.helpersLine(0), '');
-  assert.equal(R.helpersLine(1), '1 helper running');
-  assert.equal(R.helpersLine(2), '2 helpers running');
+  assert.equal(R.helpersLine(1), '1 subagent running');
+  assert.equal(R.helpersLine(2), '2 subagents running');
   assert.deepEqual(R.waitText(NOW - 20, NOW), { text: 'just now', long: false });
   assert.deepEqual(R.waitText(NOW - 14 * 60, NOW), { text: '14m', long: false });
   assert.deepEqual(R.waitText(NOW - 15 * 60, NOW), { text: '15m', long: true });

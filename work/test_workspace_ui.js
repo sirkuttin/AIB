@@ -270,13 +270,13 @@ test('the inbox: Needs you then Finished; reason words, the project and agent on
   assert.match(rows[1].querySelector('.ws-inbox-sub').textContent, /Should I start the review now\?$/);
   assert.equal(rows[0].querySelector('.ws-inbox-proj').textContent, 'alpha', 'the project is a label on the row');
   assert.ok(rows[0].querySelector('.ws-inbox-agent'), 'the agent is named on the row');
-  assert.equal(rows[1].querySelector('.ws-inbox-helpers').textContent, '2 helpers running');
+  assert.equal(rows[1].querySelector('.ws-inbox-helpers').textContent, '2 subagents running');
   const age = (r) => r.querySelector('.ws-inbox-age');
   assert.equal(age(rows[0]).textContent, 'waited 20m');
   assert.ok(age(rows[0]).classList.contains('long'), 'orange after 15 minutes');
   assert.equal(age(rows[1]).textContent, 'waited 2m');
   assert.ok(!age(rows[1]).classList.contains('long'));
-  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 3 helpers');
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 3 subagents');
 });
 
 test('the inbox with nothing blocked says so, and what still works', () => {
@@ -287,6 +287,6 @@ test('the inbox with nothing blocked says so, and what still works', () => {
   const pop = inbox(t.shell);
   assert.match(pop.querySelector('.ws-pop-empty').textContent, /Nothing needs you/);
   assert.match(pop.querySelector('.ws-pop-empty').textContent, /still working/);
-  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 1 helper');
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 1 subagent');
   assert.equal(t.shell.byId.chatTabs.querySelector('.ws-inbox-btn .ws-badge'), null);
 });

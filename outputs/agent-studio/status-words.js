@@ -82,8 +82,8 @@
       if (helpers)
         return make(
           'working',
-          'Working · ' + helpers + (helpers === 1 ? ' helper' : ' helpers'),
-          'The reply is done; its helpers still run. You can send now.',
+          'Working · ' + helpers + (helpers === 1 ? ' subagent' : ' subagents'),
+          'The reply is done; its subagents still run. You can send now.',
         );
       if (f.background) return make('working', 'Working', 'The reply is done; a command it started still runs. You can send now.');
       if (f.yourTurn) return make('your-turn', 'Your turn', 'It finished and is waiting for you. Shows in the inbox.');

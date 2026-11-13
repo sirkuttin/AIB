@@ -1197,7 +1197,7 @@
       'Working: ' +
       plural(busy.length, 'chat') +
       (projects > 1 ? ' in ' + projects + ' projects' : '') +
-      (helpers ? ' · ' + plural(helpers, 'helper') : '')
+      (helpers ? ' · ' + plural(helpers, 'subagent') : '')
     );
   }
   // Two sections, most urgent first (inbox-rules.js): Needs you (approvals, questions, sign-ins, failed turns and questions in a
