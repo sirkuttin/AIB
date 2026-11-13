@@ -529,6 +529,7 @@ const SCRIPTS: Script[] = [
       { op: 'public' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'change', kind: 'config', configId: 'effort', value: 'high' },
       { op: 'change', kind: 'config', configId: 'verbose', value: true },
@@ -562,6 +563,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'events:update:4' }, // the announcements that follow session/new (when they arrive is a race in Python)
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'cancel' },
       { op: 'wait', for: 'idle' },
@@ -577,6 +579,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue_add', text: 'mcp', id: 'c' },
@@ -611,6 +614,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue', action: 'send_now', args: ['b'] },

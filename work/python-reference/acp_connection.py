@@ -889,7 +889,11 @@ class Connection:
         while True:
             with self.lock:
                 q = self.queue
-                if self.closed or not self.ready or self.busy or not self.session_id or q.inflight or not q.items or q.pause_reason():
+                if q.inflight:
+                    # Another call is sending one right now: it sends the next itself once that one is out (see below).
+                    self._pump_missed = True
+                    return
+                if self.closed or not self.ready or self.busy or not self.session_id or not q.items or q.pause_reason():
                     return
                 if self.permissions or self.elicitations or self.auth:
                     return
@@ -905,15 +909,16 @@ class Connection:
                 failure = ('' if 'Wait for the current turn' in str(error) else 'error', str(error)[:300])
             with self.lock:
                 q.inflight = None
+                missed, self._pump_missed = getattr(self, '_pump_missed', False), False
                 if failure:
                     item['note'] = failure[1] if failure[0] else ''
                     q.items.insert(0, item)
                     if failure[0]:
                         q.hold = failure[0]
             self._queue_changed()
-            # A turn that already ended (not busy) goes on to the next message here: its own end ran _queue_pump while this
-            # message was still inflight, so that call sent nothing (a slow thread here left the rest of the queue unsent).
-            if failure or self.busy:
+            # A turn that ended while this message was still inflight ran its _queue_pump for nothing (missed): the next message
+            # goes from here, or a slow thread here would leave the rest of the queue unsent.
+            if failure or self.busy or not ((result or {}).get('duplicate') or missed):
                 return
 
     def _stale_error(self, key, what):
