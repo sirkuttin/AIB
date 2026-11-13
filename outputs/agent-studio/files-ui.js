@@ -2176,7 +2176,8 @@
 
   // ---- paths in replies ----------------------------------------------------------------------------------------------------
   // A path that names an existing file inside the chat's folder becomes a link (file icon, code font) that opens it; anything
-  // missing or outside stays plain text. The same file twice in one paragraph is linked once. Never registers an artifact.
+  // missing stays plain text; outside it links too when the chat named the file (GET /api/live/files/outside, peeked and cached).
+  // The same file twice in one paragraph is linked once. Never registers an artifact.
   const exists = new Map(); // scope id + dir -> {at, names: Set|null, promise}
   function dirNames(scope, dir) {
     const k = F().scopeId(scope) + '|' + dir,
@@ -2222,6 +2223,7 @@
     const nodes = textNodes(container);
     const seenIn = new Map(); // paragraph -> Set of rel paths already linked
     const jobs = [];
+    let outLeft = MAX_OUTSIDE_PEEKS;
     for (const t of nodes) {
       const block = (t.parentElement.closest && t.parentElement.closest(BLOCKS)) || container;
       if (!seenIn.has(block)) seenIn.set(block, new Set());
@@ -2230,11 +2232,25 @@
         .dedupe(F().pathCandidates(t.nodeValue), folder, loOf(scope))
         .filter((x) => !seen.has(x.rel.toLowerCase()));
       for (const x of cands) seen.add(x.rel.toLowerCase());
-      if (!cands.length) continue;
+      // absolute paths outside the folder: asked of the server, once each per paragraph, at most MAX_OUTSIDE_PEEKS per call
+      const outs = [];
+      for (const x of outsideCands(t, folder, scope)) {
+        if (outLeft <= 0) break;
+        const k = 'out|' + x.path.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        outLeft--;
+        outs.push(x);
+      }
+      if (!cands.length && !outs.length) continue;
       jobs.push(
-        Promise.all(cands.map((x) => dirNames(scope, F().dirOf(x.rel)).then((d) => ({ x, e: d.names.get(F().nameOf(x.rel).toLowerCase()), root: d.root })))).then(
+        Promise.all(
+          cands
+            .map((x) => dirNames(scope, F().dirOf(x.rel)).then((d) => ({ x, e: d.names.get(F().nameOf(x.rel).toLowerCase()), root: d.root })))
+            .concat(outs.map((x) => outsidePeek(c, x.path).then((r) => ({ x, out: r ? outsideInfo(c, x.path, r) : null })))),
+        ).then(
           (found) => {
-            const ok = found.filter((f) => f.e && !f.e.dir);
+            const ok = found.filter((f) => (f.out ? true : f.e && !f.e.dir));
             if (!ok.length || !t.parentNode) return 0;
             const frag = doc().createDocumentFragment(),
               s = t.nodeValue;
@@ -2242,7 +2258,7 @@
             for (const f of ok.sort((a, b) => a.x.at - b.x.at)) {
               if (f.x.at < pos) continue;
               if (f.x.at > pos) frag.append(doc().createTextNode(s.slice(pos, f.x.at)));
-              frag.append(pathLink(f.x.text, f.x.rel, f.x.line, scope, f.root, t.parentElement));
+              frag.append(f.out ? outsideLink(f.x, f.out, t.parentElement) : pathLink(f.x.text, f.x.rel, f.x.line, scope, f.root, t.parentElement));
               pos = f.x.at + f.x.len;
             }
             if (pos < s.length) frag.append(doc().createTextNode(s.slice(pos)));
@@ -2264,6 +2280,29 @@
       );
     }
     return Promise.all(jobs).then((n) => n.reduce((a, b) => a + b, 0));
+  }
+  const MAX_OUTSIDE_PEEKS = 12;
+  // Absolute paths in a text node that are not inside the chat's folder (nor its local-only paths). In inline code that is only a
+  // path (it may hold spaces), the whole text counts.
+  function outsideCands(node, folder, scope) {
+    const lo = loOf(scope),
+      s = node.nodeValue,
+      p = node.parentElement,
+      inside = (path) => F().relTo(path, folder) !== null || (lo && F().localRel(path, lo) !== null);
+    let list = F().absCandidates(s);
+    if (!list.length && p && p.tagName === 'CODE' && isAbs(s.trim()) && /\.[A-Za-z0-9]{1,12}$/.test(s.trim()) && !/\n/.test(s.trim()))
+      list = [{ at: s.indexOf(s.trim()), len: s.trim().length, text: s.trim(), path: s.trim(), line: 0 }];
+    return list.filter((x) => !inside(x.path));
+  }
+  function outsideInfo(c, path, r) {
+    const where = (r.outside && r.outside.text) || '';
+    const scope = { id: c.id, root: 'outside', label: 'Outside', branch: '', chatKey: c.key, title: c.title, abs: path, where };
+    return { scope, rel: F().slash(path), root: '', line: 0, abs: path, outside: true, where };
+  }
+  function outsideLink(x, info, parent) {
+    const a = toolLink(x.text, Object.assign({}, info, { line: x.line }), parent);
+    a.title = info.abs + '\n' + outsideText(info.where) + '. Opens read-only.\nCtrl+click: open in your editor. Right-click: more';
+    return a;
   }
   function pathLink(text, rel, line, scope, rootDir, parent) {
     const a = el('a', null, 'fx-path');
@@ -2367,12 +2406,7 @@
       });
     }
     if (!isAbs(path)) return Promise.resolve(null);
-    return outsidePeek(c, path).then((r) => {
-      if (!r) return null;
-      const where = (r.outside && r.outside.text) || '';
-      const scope = { id: c.id, root: 'outside', label: 'Outside', branch: '', chatKey: c.key, title: c.title, abs: path, where };
-      return { scope, rel: F().slash(path), root: '', line: 0, abs: path, outside: true, where };
-    });
+    return outsidePeek(c, path).then((r) => (r ? outsideInfo(c, path, r) : null));
   }
   function toolLink(text, info, parent) {
     const a = pathLink(text, info.rel, info.line, info.scope, info.root, parent);

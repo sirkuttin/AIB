@@ -374,6 +374,80 @@ test('link rule: a path to an existing file in the chat folder links (with :line
   assert.equal(t.FU.mode(), 'chats', 'the sidebar never switches modes on its own');
 });
 
+test('outside links: a reply path outside the folder that the chat named links (tooltip, read-only tab, image); unnamed ones and a repeat stay as they are', async () => {
+  const PNG = 'C:\\Users\\me\\AppData\\Local\\Temp\\shots\\4-deleted.png',
+    TXT = '/tmp/notes/log.txt',
+    UNC = '\\\\srv\\share\\r.md',
+    NOPE = 'C:\\Temp\\secret.png',
+    WHERE = 'C:\\Users\\me\\AppData\\Local\\Temp\\shots';
+  const t = setup({
+    width: 1000,
+    outside: {
+      [PNG]: { image: true, viewUrl: '/api/live/files/view?x=1', outside: { kind: 'folder', text: WHERE } },
+      [TXT]: { outside: { kind: 'folder', text: '/tmp/notes' } },
+      [UNC]: { outside: { kind: 'folder', text: '\\\\srv\\share' } },
+    },
+  });
+  const D2 = t.shell.document;
+  const p = D2.createElement('p');
+  p.append(D2.createTextNode('Shot: ' + PNG + ', log ' + TXT + ', share ' + UNC + ', never named ' + NOPE + ', again ' + TXT + '.'));
+  const box = D2.createElement('div');
+  box.append(p);
+  const n = await t.FU.linkPaths(box);
+  assert.equal(n, 3);
+  const links = box.querySelectorAll('a.fx-path');
+  assert.deepEqual(links.map((a) => a.dataset.abs), [PNG, TXT, UNC]);
+  assert.ok(links[0].querySelector('.fx-pico') && links[0].querySelector('code'), 'same look as inside links');
+  assert.equal(links[0].title.split('\n')[1], 'Outside this project · ' + WHERE + '. Opens read-only.');
+  assert.ok(box.textContent.includes('never named ' + NOPE + ', again ' + TXT + '.'), 'unnamed stays text; the repeat in one paragraph stays text');
+  const asked = t.calls.filter((c) => c.path === '/api/live/files/outside');
+  assert.deepEqual(asked.map((c) => c.q.path).sort(), [PNG, TXT, UNC, NOPE].sort(), 'each path asked once');
+  assert.ok(asked.every((c) => c.q.peek === 1 && c.q.id === 'claude:a1'));
+  // a second pass (a redraw) is answered from the cache
+  const p2 = D2.createElement('p');
+  p2.append(D2.createTextNode('and ' + PNG));
+  await t.FU.linkPaths(p2);
+  assert.equal(t.calls.filter((c) => c.path === '/api/live/files/outside').length, 4, 'cached');
+  assert.equal(p2.querySelectorAll('a.fx-path').length, 1);
+  // click: the read-only outside tab
+  t.shell.document.dispatch('click', { target: links[0], ctrlKey: false });
+  await flush();
+  await flush();
+  const tab = t.FU._state().tabs.tabs[0];
+  assert.equal(tab.scope.root, 'outside');
+  assert.equal(tab.path, FS.slash(PNG));
+  assert.equal(tab.scope.abs, PNG);
+  assert.match(t.shell.body.querySelector('#fileView').querySelector('.sf-fv-from').textContent, /Outside this project/);
+  // right-click: Copy path, no Show in Files
+  t.shell.document.dispatch('contextmenu', { target: links[1], clientX: 1, clientY: 1 });
+  const items = t.shell.body.querySelectorAll('.fx-menu-it').map((x) => x.textContent);
+  assert.ok(items.includes('Copy path') && !items.includes('Show in Files'), items.join(','));
+});
+
+test('outside links: inline code holding only a path (spaces allowed) links; URLs, relative and ~ paths are not asked about; at most 12 asks per reply', async () => {
+  const SP = 'C:\\Users\\me\\My Pictures\\a b.png';
+  const t = setup({ outside: { [SP]: { outside: { kind: 'folder', text: 'C:\\Users\\me\\My Pictures' } } } });
+  const D2 = t.shell.document;
+  const p = D2.createElement('p');
+  const code = D2.createElement('code');
+  code.append(D2.createTextNode(SP));
+  p.append(D2.createTextNode('open '), code, D2.createTextNode(' not https://x.com/a/b.png or ~/a.png or ./z.png or ' + ROOT + '/data/sales-2026.csv'));
+  await t.FU.linkPaths(p);
+  assert.equal(p.querySelector('a.fx-path').dataset.abs, SP);
+  assert.equal(p.querySelectorAll('a.fx-path').length, 2, 'the in-folder file still links');
+  assert.deepEqual(t.calls.filter((c) => c.path === '/api/live/files/outside').map((c) => c.q.path), [SP]);
+  const many = D2.createElement('p');
+  many.append(D2.createTextNode(Array.from({ length: 30 }, (_, i) => '/q/f' + i + '.txt').join(' ')));
+  await t.FU.linkPaths(many);
+  assert.equal(t.calls.filter((c) => c.path === '/api/live/files/outside' && /^\/q\//.test(c.q.path)).length, 12);
+});
+
+test('files-state: absCandidates finds absolute paths only', () => {
+  const g = (s) => FS.absCandidates(s).map((x) => x.text + '|' + x.line);
+  assert.deepEqual(g('see C:\\a\\b.png:7, \\\\s\\h\\c.md and /x/y/z.log.'), ['C:\\a\\b.png:7|7', '\\\\s\\h\\c.md|0', '/x/y/z.log|0']);
+  assert.deepEqual(g('https://h.com/a/b.png ./a/b.png ~/a.png src/a/b.js x/y.txt'), []);
+});
+
 test('below 1280 px a clicked path opens as a tab; Ctrl+click asks the editor', async () => {
   const t = setup({ width: 1000 });
   const edits = [];
