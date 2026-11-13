@@ -121,6 +121,9 @@ Deno.test({
       LOCALAPPDATA: `${fx.root}\\localappdata`,
       AIB_UPDATE_API_BASE: `http://127.0.0.1:${refusedPort()}`, // no update check reaches anything
       AIB_TEST_TRAY_STATE: trays,
+      // The desktop app logs at INFO only when no level is given; a test run started from an AIB chat inherits AGENT_STUDIO_LOG_LEVEL=WARNING
+      // (main.ts passes it on to what it starts), which hides the close line this test reads from studio.log. Say INFO outright.
+      AGENT_STUDIO_LOG_LEVEL: 'INFO',
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
     Deno.writeTextFileSync(`${fx.state}\\desktop-port.json`, JSON.stringify({ port: pickPort(true) }));
