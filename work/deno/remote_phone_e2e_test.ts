@@ -16,6 +16,9 @@
  * refused; each action is one line in the phone activity log. In the headless page at 375 px: a "Needs you" card opens the
  * question sheet, the approval sheet shows Deny / Allow once with the long command wrapped, the composer (16 px, Stop) keeps the
  * text through polls, queued messages have Edit / Remove / Send now, and the switches turned off on the PC hide those controls.
+ *
+ * Presence: the phone page on one chat while another needs you shows a banner (no push); a tap opens that chat with its sheet up;
+ * the page hidden tells the PC at once (POST /api/remote/left).
  */
 import { assert, assertEquals } from "./_assert.ts";
 import {
@@ -51,6 +54,7 @@ import {
   writeSavedChat,
 } from "./_remote_fixture.ts";
 import { OwnerRegistry } from "../../outputs/agent-studio/server/ownership/probe.ts";
+import { startAttention } from "../../outputs/agent-studio/server/attention/watcher.ts";
 import {
   readRemoteArtifactPort,
   readRemotePort,
@@ -2113,6 +2117,119 @@ Deno.test({
       assertEquals(ios.errors, [], "console errors");
       await ios.close();
     } finally {
+      await browser.close();
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name:
+    "phone page at 375 px: another chat needs you while the page is on screen -> a banner, no push; tap opens it with its sheet; hidden -> left",
+  ignore: !browserPath,
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner });
+    const browser = await Browser.launch();
+    const pushes: Json[] = [];
+    const push = s.ctx.phone.push as unknown as {
+      any: () => boolean;
+      send: (m: Json) => Promise<unknown>;
+    };
+    push.any = () => true;
+    push.send = (m) => (pushes.push(m), Promise.resolve([]));
+    const watcher = startAttention(s.ctx, { pollMs: 100 });
+    try {
+      fake.state.serve = serveStatus(readRemotePort(s.state)!);
+      await pc(s, "POST", "/api/live/devices/access", { on: true });
+      const main = longChat();
+      const blog: FakeChat = {
+        id: "blog",
+        provider: "codex",
+        sessionId: "sess-blog",
+        cwd: "C:\code\blog",
+        busy: true,
+        closed: false,
+        attention: {
+          state: "working",
+          needs: 0,
+          turnEndedAt: null,
+          busySince: null,
+        },
+        subagents: {},
+        breadth: { sessionInfo: { title: "Blog site" } },
+        events: [{ seq: 1, kind: "user", data: { text: "Convert the posts" } }],
+        permissions: [],
+        elicitations: [],
+      };
+      s.chats.push(main, blog);
+      const phone = await pairPhone(s);
+      const page = await browser.open("about:blank", 375, 812);
+      await page.send("Emulation.setDeviceMetricsOverride", {
+        width: 375,
+        height: 812,
+        deviceScaleFactor: 2,
+        mobile: true,
+      });
+      await serveFor(page, s, { on: true });
+      await signInPage(page, phone.token, phone.id);
+      // on the main chat (a link opens it, as a push would)
+      await page.eval(`location.hash = "#chat=${main.id}"`);
+      await page.waitFor(
+        `window.__aibPhone.screen === "chat" && window.__aibPhone.chatId === "${main.id}"`,
+        10000,
+        "the main chat",
+      );
+      // the blog chat asks a question
+      blog.busy = false;
+      blog.elicitations = [{
+        key: "q1",
+        params: {
+          mode: "form",
+          message: "Which date format for posts?",
+          requestedSchema: {
+            type: "object",
+            properties: { format: { type: "string", title: "Date format" } },
+            required: ["format"],
+          },
+        },
+      }];
+      blog.attention = { ...blog.attention, state: "needs_you", needs: 1 };
+      await page.waitFor(
+        '!!document.querySelector(".ph-banner.need")',
+        15000,
+        "the banner",
+      );
+      assertEquals(
+        await page.eval<string>(
+          'document.querySelector(".ph-banner-open").textContent',
+        ),
+        "A chat needs youBlog site",
+      );
+      assert(
+        await page.eval(NO_SIDEWAYS),
+        `banner: sideways scroll ${await page.eval(WIDTHS)}`,
+      );
+      assertEquals(pushes, [], "no push while the phone is in hand");
+      // the tap opens that chat with its sheet up; the banner goes
+      await page.click(".ph-banner-open");
+      await page.waitFor(
+        'window.__aibPhone.chatId === "blog" && document.getElementById("app").dataset.sheet === "question"',
+        10000,
+        "the blog chat with its question sheet",
+      );
+      assertEquals(await page.eval('!document.querySelector(".ph-banner")'), true);
+      // the page is hidden: the PC knows at once (no waiting for the 15 s)
+      assertEquals(s.ctx.presence.phones().map((p) => p.chat), ["blog"]);
+      await page.eval(
+        `Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" }); document.dispatchEvent(new Event("visibilitychange")); true`,
+      );
+      const deadline = Date.now() + 5000;
+      while (s.ctx.presence.phones().length && Date.now() < deadline) await sleep(50);
+      assertEquals(s.ctx.presence.phones(), [], "left");
+    } finally {
+      await watcher.stop();
       await browser.close();
       await s.close();
     }

@@ -328,3 +328,96 @@ Deno.test('fired store: kept in the state folder, written 0600 where the OS has 
     t.close();
   }
 });
+
+Deno.test('notifier + presence: a chat on a phone screen gets no desktop notification or push and is marked read; a phone in hand gets banners, not pushes', async () => {
+  let now = 5_000_000;
+  const presence = new Presence(() => now);
+  const desktop: Json[] = [];
+  const pushes: Json[] = [];
+  const read: string[] = [];
+  const n = new Notifier({
+    desktop: () => (req) => (desktop.push(req), Promise.resolve({ shown: true })),
+    push: () => (text) => (pushes.push(text), Promise.resolve()),
+    presence,
+    viewPrefs: { public: () => ({ prefs: { 'studio-notifications-app': JSON.stringify({ notifyFor: 'both' }) } }) } as never,
+    markRead: (key) => void read.push(key),
+    clock: () => now,
+  });
+  const fire = (kind: 'needs' | 'turn', k: string): Fire => ({ key: 'claude:' + k, chat: 'c-' + k, kind, title: 'Chat ' + k });
+  // the phone shows chat x: x finishes -> nothing anywhere, x read on the PC
+  presence.seePhone('ph1', 'c-x');
+  await n.fire([fire('turn', 'x')]);
+  assertEquals([desktop.length, pushes.length, read], [0, 0, ['claude:x']]);
+  // x needs you while on screen: no push, no desktop, not "read"
+  await n.fire([fire('needs', 'x')]);
+  assertEquals([desktop.length, pushes.length, read.length], [0, 0, 1]);
+  // another chat y needs you: a banner on the phone, no push; the PC (not focused) still gets its desktop notification
+  await n.fire([fire('needs', 'y')]);
+  assertEquals([desktop.length, pushes.length], [1, 0]);
+  assertEquals(desktop[0].title, 'Chat y');
+  const notices = presence.takeNotices('ph1');
+  assertEquals(notices.map((a) => `${a.kind} ${a.chat}`), ['turn c-x', 'needs c-x', 'needs c-y']);
+  assertEquals(presence.takeNotices('ph1'), [], 'delivered once');
+  // the record of what was held back while the phone was in hand
+  const record = presence.suppressed('ph1').map((h) => [h.chat, h.onScreen, h.delivered]);
+  assertEquals(record, [['c-x', true, true], ['c-x', true, true], ['c-y', false, true]]);
+  // phone on home: a finished chat -> banner, no push
+  now += 5_000;
+  presence.seePhone('ph1', null);
+  await n.fire([fire('turn', 'z')]);
+  assertEquals([desktop.length, pushes.length], [2, 0]);
+  // the phone is put away before its next poll: the banner it never got goes out as a push when its time on screen ends
+  const ended: Json[] = [];
+  presence.onPhoneEnded((e) => void ended.push(e as unknown as Json));
+  now += 15_000; // no poll for PHONE_TTL_MS
+  presence.sweep();
+  await n.settled();
+  assertEquals(ended.length, 1);
+  assertEquals(ended[0].why, 'expired');
+  assertEquals((ended[0].held as Json[]).map((h) => h.chat), ['c-x', 'c-x', 'c-y', 'c-z']);
+  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false }]);
+  assertEquals(desktop.length, 2, 'the desktop already showed z');
+  // nobody looking now: as before
+  now += 70_000;
+  await n.fire([fire('needs', 'w')]);
+  assertEquals([desktop.length, pushes.length], [3, 2]);
+  // a phone whose page was hidden says so (left): a chat it showed is no longer "on screen"
+  presence.seePhone('ph1', 'c-v');
+  presence.leavePhone('ph1');
+  now += 70_000;
+  await n.fire([fire('turn', 'v')]);
+  assertEquals([desktop.length, pushes.length], [4, 3]);
+  // a desktop notification held back because the phone showed the chat, never delivered: shown when the phone's time ends
+  now += 70_000;
+  presence.seePhone('ph1', 'c-u');
+  await n.fire([fire('needs', 'u')]);
+  assertEquals([desktop.length, pushes.length], [4, 3]);
+  presence.leavePhone('ph1');
+  await n.settled();
+  assertEquals([desktop.length, pushes.length], [5, 4]);
+  assertEquals(desktop.at(-1)!.title, 'Chat u');
+  n.close();
+});
+
+Deno.test('presence: a phone counts while it polls (15 s), ends on "left" or silence, once', () => {
+  let now = 0;
+  const p = new Presence(() => now);
+  const ended: string[] = [];
+  const off = p.onPhoneEnded((e) => void ended.push(`${e.device} ${e.why}`));
+  p.seePhone('a', 'c1');
+  p.seePhone('b', null);
+  assertEquals(p.phones().map((x) => [x.device, x.chat]), [['a', 'c1'], ['b', null]]);
+  assert(p.phoneShows('c1') && !p.phoneShows('c2'));
+  now = 10_000;
+  p.seePhone('a', 'c2'); // polled again, another chat
+  now = 15_000;
+  assertEquals(p.phones().map((x) => [x.device, x.chat]), [['a', 'c2']], 'b stopped polling 15 s ago');
+  p.leavePhone('a');
+  p.leavePhone('a');
+  assertEquals(p.phones(), []);
+  assertEquals(ended, ['b expired', 'a left']);
+  off();
+  p.seePhone('a', null);
+  p.leavePhone('a');
+  assertEquals(ended.length, 2, 'unsubscribed');
+});
