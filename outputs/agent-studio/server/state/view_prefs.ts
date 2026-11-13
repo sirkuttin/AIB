@@ -17,6 +17,21 @@ import { isDict, ValueError } from '../core/py.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from './base.ts';
 import { entriesOf, now, quarantine, readJsonFile, saveJson } from './json.ts';
 
+/** The page's key for chat display names (Rename; view-prefs.js). */
+export const CHAT_NAMES = 'studio-conversation-names';
+
+/** The chat display names in a set of view preferences: {provider:sessionId: name} (bad entries left out). */
+export function chatNamesOf(prefs: Record<string, string>): Record<string, string> {
+  let raw: unknown = {};
+  try {
+    raw = JSON.parse(prefs[CHAT_NAMES] ?? '{}');
+  } catch { /* unreadable: no names */ }
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string' && v.trim()) out[k] = v;
+  return out;
+}
+
 export class ViewPrefs extends JsonFileStore {
   static FILE = 'studio-view.json';
   static MAX_KEYS = 200;
@@ -170,6 +185,57 @@ export class ViewPrefs extends JsonFileStore {
       this.counter++;
       return { changed: true, refused };
     });
+  }
+
+  /** The chat display names (Rename): {provider:sessionId: name}, from the page's studio-conversation-names. */
+  chatNames(): Record<string, string> {
+    return chatNamesOf(this.public().prefs);
+  }
+
+  /**
+   * Rename one chat from a phone (or clear its name with ''): the same studio-conversation-names value the PC page writes, changed
+   * under this store's lock so a rename on the PC and one on the phone never overwrite each other's other names. The page reads it
+   * again when the names' revision in /api/live/list changes (chat.js).
+   */
+  setChatName(key: string, name: string): Promise<boolean> {
+    if (typeof key !== 'string' || !key || key.length > 600) return Promise.reject(new ValueError('Invalid chat'));
+    // deno-lint-ignore no-control-regex -- control characters in a name become spaces
+    const clean = String(name ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return this.locked(() => {
+      this.sync();
+      const names = chatNamesOf(this.prefs);
+      if ((names[key] ?? '') === clean) return false;
+      if (clean) names[key] = clean;
+      else delete names[key];
+      const before = this.prefs;
+      const next = { ...this.prefs, [CHAT_NAMES]: JSON.stringify(names) };
+      if (next[CHAT_NAMES].length > ViewPrefs.MAX_VALUE || ViewPrefs.#total(next) > ViewPrefs.MAX_TOTAL) {
+        throw new ValueError('Too many chat names are saved to add another one.');
+      }
+      this.prefs = next;
+      try {
+        this.#save();
+      } catch (error) {
+        if (!isOSError(error)) throw error;
+        this.prefs = before;
+        this.warning = `AIB could not save view preferences: ${errorText(error)}`;
+        throw new ViewPrefsBusy(this.warning);
+      }
+      this.warning = '';
+      this.counter++;
+      return true;
+    });
+  }
+
+  /** A short signature of the chat names (the page reads them again when it changes). */
+  chatNamesRevision(): string {
+    const text = this.public().prefs[CHAT_NAMES] ?? '';
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return `${text.length}.${h.toString(36)}`;
   }
 }
 

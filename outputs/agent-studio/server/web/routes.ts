@@ -54,17 +54,17 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
  *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
  *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
- *   GET  /api/live/devices                    Settings > Devices: phone access, Tailscale checks, paired phones, pairing (devices_routes.ts)
- *   POST /api/live/devices/access             Settings > Devices: the Phone access switch
- *   POST /api/live/devices/check              Settings > Devices: Check again (reads Tailscale once more)
- *   POST /api/live/devices/pair               Settings > Devices: Add a phone (a one-time code, QR and six words)
- *   POST /api/live/devices/pair/cancel        Settings > Devices: Cancel on the pairing code
- *   POST /api/live/devices/approve            Settings > Devices: Approve a phone that claimed the code
- *   POST /api/live/devices/reject             Settings > Devices: Reject it
- *   POST /api/live/devices/remove             Settings > Devices: Remove one phone
- *   POST /api/live/devices/remove-all         Settings > Devices: Remove all phones
- *   POST /api/live/devices/scopes             Settings > Devices: a paired phone's switches (Answer, Send, Approve once, Push)
- *   GET  /api/live/devices/activity           Settings > Devices: Phone activity
+ *   GET  /api/live/devices                    Settings > Remote control: phone access, Tailscale checks, paired phones, pairing (devices_routes.ts)
+ *   POST /api/live/devices/access             Settings > Remote control: the Phone access switch
+ *   POST /api/live/devices/check              Settings > Remote control: Check again (reads Tailscale once more)
+ *   POST /api/live/devices/pair               Settings > Remote control: Add a phone (a one-time code, QR and six words)
+ *   POST /api/live/devices/pair/cancel        Settings > Remote control: Cancel on the pairing code
+ *   POST /api/live/devices/approve            Settings > Remote control: Approve a phone that claimed the code
+ *   POST /api/live/devices/reject             Settings > Remote control: Reject it
+ *   POST /api/live/devices/remove             Settings > Remote control: Remove one phone
+ *   POST /api/live/devices/remove-all         Settings > Remote control: Remove all phones
+ *   POST /api/live/devices/scopes             Settings > Remote control: a paired phone's switches (Answer, Send, Approve once, Push)
+ *   GET  /api/live/devices/activity           Settings > Remote control: Phone activity
  *   POST /api/live/devices/prefs              Settings > Remote control: a phone's Silent reminders {id, remind}
  *   POST /api/live/devices/tailscale/refresh  Settings > Remote control: re-read Tailscale (3 s while a step waits, 30 s otherwise)
  *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
@@ -78,6 +78,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
  *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
  *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
+ *   POST /api/live/chat-name                  rename one chat (or clear its name): per key, so a phone's rename of another chat stays
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
@@ -149,6 +150,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/artifacts/states', 'artifacts.read', 'get'],
   ['POST', '/api/live/steer', 'write', 'body'],
   ['POST', '/api/live/tool-stop', 'write', 'body'],
+  ['POST', '/api/live/chat-name', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

@@ -38,6 +38,7 @@ test('worker: a push shows only its words, with one tag; a tap opens the chat wi
       tag: 'aib-attention',
       renotify: true,
       icon: '/icons/icon-256.png',
+      badge: '/icons/badge-96.png',
       data: { chat: 'c1', sheet: true },
     },
   });
@@ -144,13 +145,14 @@ test('phone: Finish setup has the Home Screen step on an iPhone only; notificati
   assert.equal(P.isIPhone('Mozilla/5.0 (Linux; Android 15; Pixel 9) Chrome/131.0 Mobile', 5), false);
   const base = { supported: true, permission: 'default', on: false, allowed: true, standalone: false };
   const ids = (o) => P.setupSteps(o).map((s) => [s.id, s.state]);
-  assert.deepEqual(ids({ ...base, iphone: false }), [['notify', 'todo']], 'Android: no Home Screen step');
+  assert.deepEqual(ids({ ...base, iphone: false }), [['install', 'todo'], ['notify', 'todo']], 'Android: Install AIB step');
+  assert.deepEqual(ids({ ...base, iphone: false, standalone: true }), [['install', 'done'], ['notify', 'todo']]);
   assert.deepEqual(ids({ ...base, iphone: true }), [['home', 'todo'], ['notify', 'todo']]);
   assert.deepEqual(ids({ ...base, iphone: true, standalone: true }), [['home', 'done'], ['notify', 'todo']]);
-  assert.deepEqual(ids({ ...base, iphone: false, permission: 'granted', on: true }), [['notify', 'done']]);
-  assert.deepEqual(ids({ ...base, iphone: false, permission: 'denied' }), [['notify', 'blocked']]);
-  assert.deepEqual(ids({ ...base, iphone: false, allowed: false }), [['notify', 'off']]);
-  assert.match(P.setupSteps({ ...base, allowed: false })[0].text, /Settings → Remote control/);
+  assert.deepEqual(ids({ ...base, iphone: false, permission: 'granted', on: true }), [['install', 'todo'], ['notify', 'done']]);
+  assert.deepEqual(ids({ ...base, iphone: false, permission: 'denied' }), [['install', 'todo'], ['notify', 'blocked']]);
+  assert.deepEqual(ids({ ...base, iphone: false, allowed: false }), [['install', 'todo'], ['notify', 'off']]);
+  assert.match(P.setupSteps({ ...base, allowed: false }).at(-1).text, /Settings → Remote control/);
   assert.match(P.setupSteps({ ...base, iphone: true })[0].text, /Add to Home Screen/);
 });
 
@@ -160,4 +162,22 @@ test('phone: a push link opens that chat (with its sheet); anything else is igno
   assert.equal(P.openTarget('#p=0123456789ab'), null);
   assert.equal(P.openTarget('#chat=&sheet=1'), null);
   assert.deepEqual([...P.keyBytes('AQID_-8')], [1, 2, 3, 255, 239]);
+});
+
+test('phone: Install AIB: our button where the browser offers it, the Share steps on an iPhone, Firefox its menu, hidden once installed', () => {
+  assert.equal(P.isFirefoxAndroid('Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0'), true);
+  assert.equal(P.isFirefoxAndroid('Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/131.0 Mobile'), false);
+  assert.equal(P.installKind({ prompt: true }), 'prompt');
+  assert.equal(P.installKind({ prompt: true, standalone: true }), 'installed', 'running installed: nothing to install');
+  assert.equal(P.installKind({ prompt: true, installed: true }), 'installed', 'after appinstalled');
+  assert.equal(P.installKind({ iphone: true }), 'iphone');
+  assert.equal(P.installKind({ firefox: true }), 'firefox');
+  assert.equal(P.installKind({}), 'other');
+  assert.match(P.installText('iphone'), /Share button.*Add to Home Screen.*Open as Web App/);
+  assert.match(P.installText('firefox'), /menu ⋮, then Add app to Home screen/);
+  assert.match(P.installText('prompt'), /Tap Install AIB/);
+  assert.match(P.installText('other'), /browser menu/);
+  const base = { supported: true, permission: 'default', on: false, allowed: true, standalone: false };
+  assert.equal(P.setupSteps({ ...base, prompt: true })[0].kind, 'prompt');
+  assert.equal(P.setupSteps({ ...base, firefox: true })[0].kind, 'firefox');
 });

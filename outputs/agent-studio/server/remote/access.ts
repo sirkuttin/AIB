@@ -23,11 +23,12 @@ import { defaultEnv, funnelText, type SetupEnv, type SetupHost, TailscaleSetup }
 import { hex } from './words.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
-/** A phone's switches as Settings > Devices names them (for the activity log). */
+/** A phone's switches as Settings > Remote control names them (for the activity log). */
 const SCOPE_LABELS: Record<string, string> = {
   'phone.read': 'See chats',
   'phone.answer': 'Answer',
   'phone.prompt': 'Send',
+  'phone.start': 'Start chats',
   'phone.approve': 'Approve once',
   'phone.push': 'Push',
 };
@@ -446,7 +447,7 @@ export class PhoneAccess implements SetupHost {
     return entries.map((e) => ({ ...e, chat: e.chat ?? '', chatTitle: e.chat ? titles.get(e.chat) ?? '' : '' }));
   }
 
-  /** Everything Settings > Devices draws. No tokens, no pairing secret except the open code's own words, URL and QR. */
+  /** Everything Settings > Remote control draws. No tokens, no pairing secret except the open code's own words, URL and QR. */
   view(): Record<string, unknown> {
     const ts = this.tailscale;
     const code = this.pairing.open();

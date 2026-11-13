@@ -102,6 +102,7 @@ export class SavedChats {
       if (!c.closed && typeof c.provider === 'string' && typeof c.sessionId === 'string') running.add(`${c.provider}:${c.sessionId}`);
     }
     const marks = ctx.conversations.public().entries;
+    const names = ctx.viewPrefs.chatNames(); // Rename, on the PC or a phone
     const out = new Map<string, SavedEntry>();
     const add = (provider: string, sessionId: string, cwd: string, title: string, when: unknown, transcript: string) => {
       const key = `${provider}:${sessionId}`;
@@ -116,7 +117,7 @@ export class SavedChats {
         sessionId,
         cwd,
         transcript,
-        title: str(mark.title, 170) || str(title, 170) || `${agent}${folder ? ' in ' + folder : ''}`,
+        title: str(names[key], 170) || str(mark.title, 170) || str(title, 170) || `${agent}${folder ? ' in ' + folder : ''}`,
         agent,
         folder,
         lastActive: isoOf(when),

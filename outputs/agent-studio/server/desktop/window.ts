@@ -50,7 +50,7 @@ export function stopConfirmLabel(working: number): string {
   return `Click again to stop ${what} and quit`;
 }
 
-/** What the tray tooltip says while phone access is on (Settings > Devices "Let paired phones reach AIB"). */
+/** What the tray tooltip says while phone access is on (Settings > Remote control "Let paired phones reach AIB"). */
 export const PHONE_ON_TOOLTIP = 'Phone access on';
 
 /**
@@ -373,7 +373,7 @@ export interface DesktopOptions {
   /** In the background: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
   trayIdleQuitMs?: number;
   /**
-   * Phone access is on (Settings > Devices). Then closing the window keeps AIB in the tray (the web server, the phone port, the
+   * Phone access is on (Settings > Remote control). Then closing the window keeps AIB in the tray (the web server, the phone port, the
    * attention watcher, notifications and pushes go on), the background never quits by itself, and the tooltip says so. Quit AIB
    * is unchanged. Read on every close and tray tick, so turning it off in the tray brings back the idle quit. A throw counts as off.
    */

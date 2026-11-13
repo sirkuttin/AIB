@@ -43,15 +43,16 @@ test('rows: prompts, merged agent messages, one fold per run of steps, notices; 
   assert.equal(P.liveLine({ busy: false }, rows), '');
 });
 
-test('status words match the PC: Needs you, Working, Your turn, Idle', () => {
+test('status words match the PC: Needs you, Working, Your turn, Idle, Not running', () => {
   const now = Date.parse('2026-11-12T12:00:00Z');
   assert.deepEqual(P.stateWords({ needs: 1, state: 'needs_you' }, now), { text: 'Needs you', tone: 'need' });
   assert.deepEqual(P.stateWords({ needs: 0, state: 'working', busySince: '2026-11-12T11:56:00Z' }, now), {
-    text: 'Working · 4 min',
+    text: 'Working · 4m',
     tone: 'work',
   });
-  assert.equal(P.stateWords({ needs: 0, state: 'idle', yourTurn: true, turnEndedAt: '2026-11-12T11:48:00Z' }, now).text, 'Your turn · finished 12 min ago');
+  assert.equal(P.stateWords({ needs: 0, state: 'idle', yourTurn: true, turnEndedAt: '2026-11-12T11:48:00Z' }, now).text, 'Your turn');
   assert.equal(P.stateWords({ needs: 0, state: 'idle', turnEndedAt: null }, now).text, 'Idle');
+  assert.deepEqual(P.stateWords({ notRunning: true }, now), { text: 'Not running', tone: 'nr' });
   assert.equal(P.helperWord('running'), 'working');
   assert.equal(P.helperWord('completed'), 'done');
 });
@@ -99,7 +100,9 @@ test('approval sheet: Deny then Allow once, only for the options the PC sends; w
   ]);
   assert.deepEqual(P.approvalButtons({ options: [] }), []);
   const all = P.abilities(['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve']);
-  assert.deepEqual(all, { answer: true, approve: true, send: true });
+  assert.deepEqual(all, { answer: true, approve: true, send: true, start: false });
+  assert.equal(P.abilities(['phone.prompt', 'phone.start']).start, true);
+  assert.equal(P.abilities(['phone.start']).start, false, 'Start new chats is a child of Send');
   const none = P.abilities(['phone.read']);
   assert.equal(P.actionable(wait, all), true);
   assert.equal(P.actionable(wait, none), false, 'Approve off: no buttons');

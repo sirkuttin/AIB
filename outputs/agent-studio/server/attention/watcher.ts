@@ -20,7 +20,7 @@ import type { LiveBackend } from '../host/backend.ts';
 import { folderKinds } from '../desktop/folders.ts';
 import type { ConversationState } from '../state/conversations.ts';
 import type { ProjectPrefs } from '../state/projects.ts';
-import type { ViewPrefs } from '../state/view_prefs.ts';
+import { chatNamesOf, type ViewPrefs } from '../state/view_prefs.ts';
 import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, RULES } from './rules.ts';
@@ -69,6 +69,8 @@ export interface WatcherOptions {
   settleMs?: number;
   /** Called after every look (the presence model ends phones that stopped polling then). */
   afterPoll?: () => void;
+  /** Every chat list read (the phone's home keeps when each chat last changed state from it: remote/payloads.ts StateTimes). */
+  onList?: (listing: unknown) => void;
   /** The folder kinds (worktree / scratch, a worktree's main checkout); tests pass their own. */
   kinds?: (path: string) => { worktree: boolean; scratch: boolean; worktreeOf?: string };
 }
@@ -208,14 +210,14 @@ export class AttentionWatcher {
     const listing = obj(await this.sources.host.liveList());
     const connections = (Array.isArray(listing.connections) ? listing.connections : []).map(obj);
     if (listing.instanceId === 'host-unavailable') return; // the agent host is starting or gone: nothing to compare
+    try {
+      this.options.onList?.(listing);
+    } catch { /* never stops a look */ }
     let still: Set<string> | null = null; // chats whose helpers or background shells still run
     const marks = this.sources.conversations.public().entries as Record<string, unknown>;
     const prefs = this.sources.projectPrefs.public();
     const viewPrefs = this.sources.viewPrefs.public().prefs;
-    let names: Record<string, unknown> = {};
-    try {
-      names = obj(JSON.parse(viewPrefs['studio-conversation-names'] ?? '{}'));
-    } catch { /* no names */ }
+    const names: Record<string, unknown> = chatNamesOf(viewPrefs); // the chat names (Rename), shared with the phone
     const nowSeconds = this.clock() / 1000;
     const news: (Fire & { fk: string; flags: Flags })[] = [];
     const quiet: string[] = [];
@@ -411,7 +413,7 @@ export interface AttentionContext extends WatchSources {
   desktopNotify: { show: DesktopShow } | null;
   phone: {
     on: boolean;
-    titles: { titles: Map<string, string> };
+    titles: { titles: Map<string, string>; seeList?: (listing: unknown) => void };
     push: { any(): boolean; send(m: ReturnType<typeof RULES.pushText>): Promise<unknown> };
   };
 }
@@ -445,6 +447,7 @@ export function startAttention(ctx: AttentionContext, options: { pollMs?: number
       stateDir: ctx.stateDir,
       pollMs: options.pollMs,
       afterPoll: () => ctx.presence.sweep(),
+      onList: (listing) => ctx.phone.titles.seeList?.(listing),
       // in order, without holding up the next look (a slow push service never delays a "needs you")
       onFire: (fires) => {
         sending = sending.then(() => notifier.fire(fires)).catch(() => {});

@@ -3,7 +3,7 @@
  *  - default deny: every page route (ROUTE_LIST), both WebSockets and the own-gate POSTs answer 403/404 here; REMOTE_ROUTES are not in
  *    the page's table;
  *  - RemoteGate refusals (Host, Origin, Fetch Metadata, page credentials, login header, device token, cookie, removed phone);
- *  - pairing over HTTP (second claim, reject, approve), home and chat payloads (helpers folded, tail, no image bytes, 304),
+ *  - pairing over HTTP (second claim, reject, approve), home (one list by change of state, project, unread, last line, size budget) and chat payloads (tail, no image bytes, 304),
  *    images by cookie only;
  *  - Funnel on: no listener; a busy phone port: reported, the saved port kept, and taken once free;
  *  - no answer here ever carries the page token.
@@ -12,6 +12,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { HOME_BUDGET, lineOf, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
 import {
   type FakeChat,
   fakeTailscale,
@@ -30,9 +31,13 @@ import {
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 
-async function phoneOn(over: Parameters<typeof remoteStudio>[0] = {}): Promise<RemoteStudio & { fake: ReturnType<typeof fakeTailscale> }> {
+async function phoneOn(
+  over: Parameters<typeof remoteStudio>[0] = {},
+  root?: string,
+  extra: { saved?: boolean } = {},
+): Promise<RemoteStudio & { fake: ReturnType<typeof fakeTailscale> }> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner, ...over });
+  const s = await remoteStudio({ runner: fake.runner, ...over }, root, extra);
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
@@ -121,7 +126,9 @@ Deno.test({
         ['other Origin', { Origin: 'https://evil.example' }, 403],
         ['Sec-Fetch-Site same-site', { 'Sec-Fetch-Site': 'same-site' }, 403],
         ['Sec-Fetch-Site cross-site', { 'Sec-Fetch-Site': 'cross-site' }, 403],
-        ['no Sec-Fetch-Site', { 'Sec-Fetch-Site': null }, 403],
+        // no Fetch Metadata at all (some in-app browsers): allowed, the device token still decides
+        ['no Sec-Fetch-Site', { 'Sec-Fetch-Site': null }, 200],
+        ['no Sec-Fetch-Site, no device token', { 'Sec-Fetch-Site': null, [DEVICE_HEADER]: null }, 401],
         ['a navigation', { 'Sec-Fetch-Mode': 'navigate' }, 403],
         ['X-Studio-Token', { 'X-Studio-Token': s.token }, 403],
         ['X-Studio-Artifact-Key', { 'X-Studio-Artifact-Key': 'k' }, 403],
@@ -133,6 +140,20 @@ Deno.test({
         ['the cookie value as the token', { [DEVICE_HEADER]: phone.cookie }, 401],
       ];
       for (const [what, h, status] of cases) assertEquals((await home(h)).status, status, what);
+      // the phone page itself, opened from a link in another app (camera QR result, chat app): a top-level cross-site navigation
+      // is allowed for the static page; a cross-site sub-resource or a non-navigation stays refused
+      const page = (h: Record<string, string | null>) => raw(port, 'GET', '/phone.html', phoneHeaders(h));
+      const nav = { 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+      assertEquals((await page({ ...nav, 'Sec-Fetch-Site': 'cross-site' })).status, 200, 'page opened from another app');
+      assertEquals((await page({ ...nav, 'Sec-Fetch-Site': 'same-site' })).status, 200, 'page opened from the artifact origin');
+      // the service worker forwarding that navigation (home-screen icon, QR link): Mode navigate, Dest empty — seen on a real phone
+      assertEquals(
+        (await page({ 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'empty' })).status,
+        200,
+        'navigation forwarded by the service worker',
+      );
+      assertEquals((await page({ 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'script' })).status, 403);
+      assertEquals((await page({ ...nav, 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' })).status, 403, 'framed elsewhere');
       // X-Forwarded-* is never read: a forged one changes nothing
       assertEquals((await home({ 'X-Forwarded-Host': '127.0.0.1', 'X-Forwarded-For': '127.0.0.1' })).status, 200);
       // a POST without an Origin
@@ -211,7 +232,7 @@ Deno.test({
       assertEquals(devices.map((d) => [d.name, d.login]), [['Pixel 9', LOGIN]]);
       assertEquals(
         devices[0].scopes,
-        ['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve', 'phone.push'],
+        ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'phone.push'],
         'decision 2c defaults',
       );
       assert(!JSON.stringify(view).includes(phone.token), 'the PC view never shows a token');
@@ -227,43 +248,155 @@ Deno.test({
 
 Deno.test({
   ...OPTS,
-  name: "home: needs-you first, helpers folded from each chat's own subagents, archived chats left out, 304 when unchanged",
+  name: 'home: one list, newest change of state first; project (name, colour, no path), unread, last line; archived left out; 304',
   async fn() {
     const s = await phoneOn();
     try {
       const phone = await pairPhone(s);
       const port = s.phonePort();
+      const ended = new Date().toISOString(); // after this AIB started: unread until read on the PC
+      const tool = (seq: number, id: string, title: string, status: string) => ({
+        seq,
+        kind: 'update',
+        time: seq,
+        data: { update: { sessionUpdate: 'tool_call', toolCallId: id, title, status } },
+      });
+      const say = (seq: number, text: string) => ({
+        seq,
+        kind: 'update',
+        time: seq,
+        data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+      });
       s.chats.push(
-        chat('a', { attention: { state: 'idle', needs: 0, turnEndedAt: '2026-11-12T10:00:00Z', busySince: null } }),
+        chat('a', {
+          breadth: { sessionInfo: { title: 'Tidy up' } },
+          attention: { state: 'idle', needs: 0, turnEndedAt: ended, busySince: null },
+          events: [{ seq: 1, kind: 'user', time: 1, data: { text: 'Tidy up' } }, say(2, 'All done.')],
+        }),
         chat('b', {
           busy: true,
-          attention: { state: 'working', needs: 0, turnEndedAt: null, busySince: '2026-11-12T11:00:00Z' },
-          subagents: { s1: { title: 'Codex · tests', state: 'running' }, s2: { description: 'Docs pass', state: 'completed' } },
+          cwd: 'C:\\code\\blog',
+          attention: { state: 'working', needs: 0, turnEndedAt: null, busySince: new Date(Date.now() - 3600_000).toISOString() },
+          subagents: { s1: { title: 'Codex · tests', state: 'running' } },
           breadth: { sessionInfo: { title: 'Main · checkout redesign' } },
+          events: [tool(1, 't1', 'Read a.ts', 'completed'), tool(2, 't2', 'Run tests', 'in_progress')],
         }),
-        chat('c', { attention: { state: 'needs_you', needs: 1, turnEndedAt: null, busySince: '2026-11-12T09:00:00Z' } }),
+        chat('c', {
+          attention: { state: 'needs_you', needs: 1, turnEndedAt: null, busySince: '2026-11-12T09:00:00Z' },
+          elicitations: [{ key: 'q', params: { message: 'Which date format?' } }],
+        }),
         chat('d', { sessionId: 'archived' }),
         chat('e', { closed: true }),
       );
       await s.ctx.conversations.apply('archive', 'claude', 'archived', '', '', true).catch(() => {});
       const get = (rev = '') =>
         raw(port, 'GET', `/api/remote/home${rev ? '?rev=' + rev : ''}`, phoneHeaders({ [DEVICE_HEADER]: phone.token }));
-      const home = (await get()).json;
+      const first = await get();
+      const home = first.json;
       const chats = home.chats as Json[];
-      assertEquals(chats.map((c) => c.id), ['c', 'b', 'a'], 'needs you first, then newest activity; archived and closed left out');
-      assertEquals(home.main, 'b', 'the working chat with helpers is the big card');
-      const b = chats[1];
-      assertEquals(b.title, 'Main · checkout redesign');
-      assertEquals(b.helpers, [{ id: 's1', title: 'Codex · tests', state: 'running' }, {
-        id: 's2',
-        title: 'Docs pass',
-        state: 'completed',
-      }]);
-      assertEquals(chats[0].title, 'Claude Code in shop', 'no title yet: agent and folder');
+      // c asks now (newest change), b started at 11:00 today, a ended just before: by when each last changed state
+      const byTime = [...chats].sort((x, y) => Date.parse(y.changedAt as string) - Date.parse(x.changedAt as string));
+      assertEquals(chats.map((c) => c.id), byTime.map((c) => c.id), 'newest change of state first');
+      assertEquals(chats.map((c) => c.id).sort(), ['a', 'b', 'c'], 'archived and closed left out');
+      assertEquals(chats[0].id, 'c', 'asking is the newest change');
+      assert(!('main' in home), 'no main chat');
+      const of = (id: string) => chats.find((c) => c.id === id)!;
+      assertEquals(of('b').title, 'Main · checkout redesign');
+      assertEquals(of('c').title, 'Claude Code in shop', 'no title yet: agent and folder');
+      const pa = of('a').project as Json, pb = of('b').project as Json;
+      assertEquals([pa.name, pb.name], ['shop', 'blog']);
+      assert(/^[0-9a-f]{12}$/.test(pa.id as string) && pa.id !== pb.id, 'a short project id each');
+      assert(['blue', 'sky', 'teal', 'indigo', 'violet', 'orchid', 'pink', 'slate'].includes(pa.color as string), `colour ${pa.color}`);
+      assert(!first.text.includes('C:'), 'no folder path');
+      assertEquals([of('a').unread, of('b').unread, of('c').unread], [true, false, false]);
+      assertEquals(of('a').line, 'All done.');
+      assertEquals(of('b').line, 'Working on: Run tests');
+      assertEquals(of('c').line, 'Asks: Which date format?');
       assertEquals((await get(home.revision as string)).status, 304);
-      s.chats[0].attention = { state: 'working', needs: 0, turnEndedAt: null, busySince: '2026-11-12T12:00:00Z' };
-      assertEquals((await get(home.revision as string)).status, 200, 'a change gives a new revision');
-      for (const key of ['token', 'events', 'permissions', 'settings']) assert(!(key in chats[0]), key);
+      // a new step is not a change of state: b keeps its time
+      s.chats[1].events.push(tool(3, 't3', 'Edit b.ts', 'in_progress'));
+      const again = (await get()).json;
+      assertEquals((again.chats as Json[]).find((c) => c.id === 'b')!.changedAt, of('b').changedAt);
+      // read on the PC: no unread dot; you send in a: it starts working and goes to the top
+      await s.ctx.readState.update({ set: { 'claude:sess-a': { seenAt: Date.now() + 1000 } } });
+      s.chats[0].attention = { state: 'working', needs: 0, turnEndedAt: ended, busySince: new Date(Date.now() + 5000).toISOString() };
+      const after = await get(home.revision as string);
+      assertEquals(after.status, 200, 'a change gives a new revision');
+      const list = after.json.chats as Json[];
+      assertEquals(list[0].id, 'a');
+      assertEquals(list[0].unread, false);
+      for (const key of ['token', 'events', 'permissions', 'settings', 'cwd', 'projectRoot']) assert(!(key in chats[0]), key);
+    } finally {
+      await s.close();
+    }
+  },
+});
+
+Deno.test('state times: a change of state moves a chat (working from its start, finished at its end, asking when seen); steps do not', () => {
+  let now = Date.parse('2026-11-12T12:00:00Z');
+  const t = new StateTimes(() => now);
+  const list = (attention: Record<string, unknown>) => ({ connections: [{ id: 'a', attention }] });
+  t.see(list({ state: 'idle', turnEndedAt: '2026-11-12T10:00:00Z' }));
+  assertEquals(t.changedAt('a', { state: 'idle', turnEndedAt: '2026-11-12T10:00:00Z' }), Date.parse('2026-11-12T10:00:00Z'));
+  now += 60_000;
+  t.see(list({ state: 'working', busySince: '2026-11-12T12:00:30Z' })); // you send: it starts working
+  assertEquals(t.changedAt('a', { state: 'working', busySince: '2026-11-12T12:00:30Z' }), Date.parse('2026-11-12T12:00:30Z'));
+  now += 60_000;
+  t.see(list({ state: 'working', busySince: '2026-11-12T12:00:30Z' })); // another step: no change
+  assertEquals(t.changedAt('a', { state: 'working', busySince: '2026-11-12T12:00:30Z' }), Date.parse('2026-11-12T12:00:30Z'));
+  t.see(list({ state: 'needs_you', needs: 1 })); // asks: when seen
+  assertEquals(t.changedAt('a', { state: 'needs_you' }), now);
+  now += 60_000;
+  t.see(list({ state: 'idle', turnEndedAt: '2026-11-12T12:02:30Z' })); // finishes
+  assertEquals(t.changedAt('a', { state: 'idle', turnEndedAt: '2026-11-12T12:02:30Z' }), Date.parse('2026-11-12T12:02:30Z'));
+  t.see({ connections: [] }); // gone: forgotten
+  assertEquals(t.changedAt('a', { state: 'needs_you' }), now, 'seen again: from now');
+});
+
+Deno.test('card line: what it asks, the step it works on, else the last message', () => {
+  const say = (seq: number, text: string) => ({ seq, kind: 'update', data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } });
+  assertEquals(lineOf({ permissions: [{ params: { toolCall: { title: 'Run', rawInput: { command: 'npm test' } } } }] }), 'Wants to run: npm test');
+  assertEquals(lineOf({ elicitations: [{ params: { message: 'Which layout?' } }] }), 'Asks: Which layout?');
+  assertEquals(lineOf({ events: [{ seq: 1, kind: 'user', data: { text: 'Do it' } }] }), 'You: Do it');
+  assertEquals(lineOf({ events: [say(1, 'Hel'), say(2, 'lo there')] }), 'Hello there');
+  const running = { seq: 3, kind: 'update', data: { update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'Edit a.ts', status: 'in_progress' } } };
+  assertEquals(lineOf({ busy: true, events: [say(1, 'Ok'), running] }), 'Working on: Edit a.ts');
+  assertEquals(lineOf({ events: [say(1, 'x'.repeat(400))] }).length, 140);
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'home: many chats with long titles and lines stay under the size budget; saved chats carry their project',
+  async fn() {
+    const s = await phoneOn({}, undefined, { saved: true });
+    try {
+      const phone = await pairPhone(s);
+      const port = s.phonePort();
+      s.saveChat({ sessionId: 's-old', prompt: 'Old work', ageSeconds: 7200 });
+      const long = 'word '.repeat(80);
+      for (let i = 0; i < 120; i++) {
+        s.chats.push(chat('c' + i, {
+          cwd: s.project,
+          breadth: { sessionInfo: { title: 'T'.repeat(160) + i } },
+          events: [{
+            seq: 1,
+            kind: 'update',
+            time: 1,
+            data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: long } } },
+          }],
+          attention: { state: 'idle', needs: 0, turnEndedAt: new Date(Date.now() - i * 1000).toISOString(), busySince: null },
+        }));
+      }
+      const r = await raw(port, 'GET', '/api/remote/home', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
+      assertEquals(r.status, 200);
+      assert(r.bytes.byteLength <= HOME_BUDGET + 16 * 1024, `${r.bytes.byteLength} bytes`);
+      const chats = r.json.chats as Json[];
+      assertEquals(chats.length, 120);
+      assert((chats[0].line as string).length <= 140);
+      const saved = r.json.saved as Json[];
+      assertEquals(saved.map((c) => [c.key, (c.project as Json).name]), [['claude:s-old', 'shop']]);
+      assertEquals((saved[0].project as Json).id, (chats[0].project as Json).id, 'the same project id for live and saved chats');
+      assert(!r.text.includes(JSON.stringify(s.project).slice(1, -1)), 'no folder path');
     } finally {
       await s.close();
     }

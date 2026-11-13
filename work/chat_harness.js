@@ -112,8 +112,8 @@ const byClass = (el, cls) => {
 };
 const flat = (el) => (el.textContent || '') + (el.children || []).map(flat).join('');
 
-function storage() {
-  const data = new Map();
+function storage(init = {}) {
+  const data = new Map(Object.entries(init));
   return {
     getItem: (key) => (data.has(key) ? data.get(key) : null),
     setItem: (key, value) => data.set(key, String(value)),
@@ -121,8 +121,9 @@ function storage() {
   };
 }
 
-/* routes: { '/api/path': (query, body) => ({ body, status? }) }. The first bootstrap request (made by the page when it loads) never answers, so a test drives everything itself. */
-function makePage({ routes = {}, window: extraWindow = {}, scripts = [] } = {}) {
+/* routes: { '/api/path': (query, body) => ({ body, status? }) }. The first bootstrap request (made by the page when it loads) never answers, so a test drives everything itself.
+   local: what localStorage holds when the page loads. */
+function makePage({ routes = {}, window: extraWindow = {}, scripts = [], local = {} } = {}) {
   const elements = new Map(),
     calls = [],
     intervals = [],
@@ -164,7 +165,7 @@ function makePage({ routes = {}, window: extraWindow = {}, scripts = [] } = {}) 
   };
   const context = vm.createContext({
     AgentChoice: require(path.join(APP_DIR, 'agent-choice.js')),
-    localStorage: storage(),
+    localStorage: storage(local),
     sessionStorage: storage(),
     document,
     window: { addEventListener() {}, ...extraWindow },

@@ -11,8 +11,9 @@ import { inDir, JsonFileStore, VERSION } from '../state/base.ts';
 import { now, quarantine, readJsonFile, saveJson } from '../state/json.ts';
 import { randomToken, sha256Hex } from './words.ts';
 
-/** What a phone may do: see chats (always), answer questions, send messages and stop turns, approve once, get pushes. */
-export const PHONE_SCOPES = ['phone.read', 'phone.answer', 'phone.prompt', 'phone.approve', 'phone.push'] as const;
+/** What a phone may do: see chats (always), answer questions, send messages and stop turns, start new chats (a child of Send: only
+ * with Send on), approve once, get pushes. */
+export const PHONE_SCOPES = ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'phone.push'] as const;
 export type PhoneScope = typeof PHONE_SCOPES[number];
 /** Owner decision 2c: a new phone may see chats, answer, send and approve once (no passkey), and get pushes. */
 export const DEFAULT_SCOPES: readonly PhoneScope[] = PHONE_SCOPES;
@@ -37,14 +38,22 @@ export interface Device {
   push?: PushSub;
   /** Silent reminders (owner decision: per phone, on by default; missing = on). The sending lands with the phone presence work. */
   remind?: boolean;
+  /** "Start new chats" turned off (owner decision: a child of Send, on by default, also for phones paired before it: missing = on).
+   * `scopes` holds phone.start only while Send is on and this is not set. */
+  startOff?: boolean;
 }
 
-/** What Settings > Devices gets: no hashes and no subscription, only whether the phone has one. */
-export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind'> & { pushOn: boolean; remind: boolean };
+/** What Settings > Remote control gets: no hashes and no subscription, only whether the phone has one. */
+export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind' | 'startOff'> & {
+  pushOn: boolean;
+  remind: boolean;
+  /** The "Start new chats" switch itself (it only counts while Send is on: `scopes` has phone.start then). */
+  start: boolean;
+};
 
 const publicOf = (d: Device): PublicDevice => {
-  const { tokenHash: _t, cookieHash: _c, push, remind, ...rest } = d;
-  return { ...rest, scopes: [...rest.scopes], pushOn: !!push, remind: remind !== false };
+  const { tokenHash: _t, cookieHash: _c, push, remind, startOff, ...rest } = d;
+  return { ...rest, scopes: [...rest.scopes], pushOn: !!push, remind: remind !== false, start: startOff !== true };
 };
 
 /** A subscription from a phone, checked: an https push service address and the two keys (base64url). Null when it is not one. */
@@ -70,8 +79,23 @@ const MAX_DEVICES = 50;
 
 export function cleanScopes(value: unknown): PhoneScope[] {
   const list = Array.isArray(value) ? value : [];
-  const out = PHONE_SCOPES.filter((s) => list.includes(s));
+  // Start new chats only counts while Send is on (owner decision E: a child of Send)
+  const out = PHONE_SCOPES.filter((s) => list.includes(s) && (s !== 'phone.start' || list.includes('phone.prompt')));
   return out.includes('phone.read') ? out : ['phone.read', ...out]; // a paired phone can always see chats
+}
+
+/** A phone's scopes from its saved switches: Start new chats is on while Send is on, unless it was turned off (missing = on). */
+export function effectiveScopes(value: unknown, startOff: boolean): PhoneScope[] {
+  const list = (Array.isArray(value) ? value : []).filter((s) => s !== 'phone.start');
+  if (!startOff && list.includes('phone.prompt')) list.push('phone.start');
+  return cleanScopes(list);
+}
+
+/** The Start new chats switch after the PC sent a whole list of switches: the list says it only while Send is in it (Start is
+ * greyed out and keeps its own setting while Send is off). */
+export function startOffAfter(scopes: unknown, before: boolean): boolean {
+  const list = Array.isArray(scopes) ? scopes : [];
+  return list.includes('phone.prompt') ? !list.includes('phone.start') : before;
 }
 
 export function cleanName(value: unknown): string {
@@ -122,17 +146,19 @@ export class DeviceStore extends JsonFileStore {
       const lastSeen = Math.max(Number(d.lastSeen) || 0, memorySeen.get(d.id) ?? 0);
       const p = d.push && typeof d.push === 'object' ? d.push as Record<string, unknown> : null;
       const push = p ? cleanPushSub({ endpoint: p.endpoint, keys: { p256dh: p.p256dh, auth: p.auth } }, Number(p.at) || 0) : null;
+      const startOff = d.startOff === true;
       this.devices.set(d.id, {
         id: d.id,
         name: cleanName(d.name),
         tokenHash: d.tokenHash,
         cookieHash: d.cookieHash,
-        scopes: cleanScopes(d.scopes),
+        scopes: effectiveScopes(d.scopes, startOff),
         login: typeof d.login === 'string' ? d.login : '',
         created: Number(d.created) || 0,
         lastSeen,
         ...(push ? { push } : {}),
         ...(d.remind === false ? { remind: false } : {}),
+        ...(startOff ? { startOff: true } : {}),
       });
     }
     this.unreadable = false;
@@ -162,15 +188,17 @@ export class DeviceStore extends JsonFileStore {
       const cookie = randomToken();
       const id = randomToken(9);
       const at = this.clock();
+      const startOff = startOffAfter(options.scopes, false);
       const device: Device = {
         id,
         name: cleanName(options.name),
         tokenHash: sha256Hex(token),
         cookieHash: sha256Hex(cookie),
-        scopes: cleanScopes(options.scopes),
+        scopes: effectiveScopes(options.scopes, startOff),
         login: options.login,
         created: at,
         lastSeen: at,
+        ...(startOff ? { startOff: true } : {}),
       };
       this.devices.set(id, device);
       this.counter++;
@@ -199,7 +227,10 @@ export class DeviceStore extends JsonFileStore {
       this.requireReadable();
       const d = this.devices.get(id);
       if (!d) return null;
-      d.scopes = cleanScopes(scopes);
+      const startOff = startOffAfter(scopes, d.startOff === true);
+      if (startOff) d.startOff = true;
+      else delete d.startOff;
+      d.scopes = effectiveScopes(scopes, startOff);
       this.counter++;
       this.#save();
       return publicOf(d);

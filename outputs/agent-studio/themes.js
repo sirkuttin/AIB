@@ -42,6 +42,28 @@
   /* Status symbols in place of the status dots: off by default, always on in a theme with symbols: true. */
   const SYMBOLS_KEY = 'aib-status-glyphs';
 
+  /* The phone (phone.html, owner "1b but override with c"): by default it follows the PC's theme in the phone's own light or dark.
+     A theme with a version in both switches to its pair; any other theme falls back to AIB teal light or dark. */
+  const PAIR = Object.freeze({
+    'teal-dark': 'teal-light',
+    'teal-light': 'teal-dark',
+    'hc-dark': 'hc-light',
+    'hc-light': 'hc-dark',
+  });
+  /* The phone's own Theme pick, kept in the phone's localStorage: 'follow' (default), 'system', or a theme id. */
+  const PHONE_KEY = 'aib-phone-theme';
+  /** The theme the phone paints: its pick, else the PC's (`pcPref`) in the phone's light or dark (`light`). */
+  function phoneTheme(pcPref, pick, light) {
+    const teal = light ? 'teal-light' : 'teal-dark';
+    pick = migrate(pick);
+    if (pick === SYSTEM.id) return teal;
+    if (known(pick)) return pick;
+    const pc = migrate(pcPref);
+    if (!known(pc)) return teal; // 'system', unknown or missing: AIB teal in the phone's own setting
+    const t = THEMES.find((x) => x.id === pc);
+    if (t.scheme === (light ? 'light' : 'dark')) return pc;
+    return PAIR[pc] || teal;
+  }
   const known = (id) => THEMES.some((t) => t.id === id);
   const migrate = (id) => (typeof id === 'string' && Object.hasOwn(RENAMED, id) ? RENAMED[id] : id);
   const valid = (id) => id === SYSTEM.id || known(migrate(id));
@@ -131,8 +153,30 @@
   }
   /** True when the theme shows symbols whatever the switch says (colour-blind safe). */
   const themeShowsSymbols = (id) => !!(THEMES.find((t) => t.id === resolve(id, prefersLight())) || {}).symbols;
+  /** The phone page: its pick from its localStorage ('follow' when none). */
+  function phonePick() {
+    const v = readKey(PHONE_KEY);
+    return v === 'system' || known(migrate(v)) ? migrate(v) : 'follow';
+  }
+  /** Paint the phone's theme for the PC's pref (what the server wrote on <html>) and the phone's pick. Returns the theme id. */
+  function paintPhone(pcPref) {
+    const html = doc() && doc().documentElement;
+    const id = phoneTheme(pcPref, phonePick(), prefersLight());
+    if (html && html.setAttribute) html.setAttribute('data-theme', id);
+    return id;
+  }
   function boot() {
     paintSymbols(symbolsOn());
+    const html = doc() && doc().documentElement;
+    if (html && html.getAttribute && html.getAttribute('data-phone') === '1') {
+      // the phone page: the PC's theme in the phone's light or dark, unless this phone picked one (phone.js repaints on changes)
+      const pc = html.getAttribute('data-theme-pref') || DEFAULT;
+      paintPhone(pc);
+      try {
+        if (media && media.addEventListener) media.addEventListener('change', () => paintPhone(html.getAttribute('data-theme-pref') || DEFAULT));
+      } catch (e) {}
+      return;
+    }
     paint(saved());
     try {
       if (prefersLight() !== null && media && media.addEventListener)
@@ -158,6 +202,11 @@
     symbolsOn,
     setSymbols,
     themeShowsSymbols,
+    PAIR,
+    PHONE_KEY,
+    phoneTheme,
+    phonePick,
+    paintPhone,
     current: () => current || saved(),
   };
   root.AibThemes = api;

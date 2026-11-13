@@ -27,6 +27,9 @@ def masked(value, server):
     value = json.loads(text)
     if server.effective_kind() in ('deno', 'deno-split'):
         value = drop_steer(value)
+        if isinstance(value, dict):
+            # Deno-only (phone UI v2): the chat names' revision in the list answer (phone renames reach the PC page); the reference has none
+            value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames')}
     return strip(value)
 
 
