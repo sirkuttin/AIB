@@ -138,8 +138,6 @@ Honest Abe would list these first.
 
 Bugs we know about and are fixing. Report new ones in [issues](https://github.com/sirkuttin/AIB/issues).
 
-- **Chat scroll:** the chat can jump to the top while an agent works. Scroll back down or click **↓ Latest**; a fix is in
-  progress.
 - **Send ▾ while working:** when a turn starts from the phone, the queue or an approval card, **Interrupt** and **Send ▾**
   can take up to 1.5 seconds to appear. Messages you send in that moment still go the right way.
 - **Background commands after a steer:** Codex isn't told when a command it moved to the background finishes. OMP stops
