@@ -1,0 +1,85 @@
+---
+title: Troubleshooting
+description: Fixes for common problems with installing AIB, setting up agents, running two copies, connecting a phone, phone notifications and pairing, plus where the log is.
+---
+
+Each section names what you see, then what to do.
+
+## Install
+
+**Windows says "Windows protected your PC".** The build isn't code-signed. Click **More info**, then **Run anyway**.
+
+**macOS says AIB can't be opened.** AIB isn't notarized. Right-click `AIB.app` in Applications and choose **Open**.
+
+**Linux: nothing shows for a while after start.** The first start can take close to a minute. Wait for the window.
+
+**Linux: AIB doesn't start without a desktop.** AIB needs a display to start, even for `serve`. Run it in a desktop session.
+
+## Agents
+
+**The agent card says Node.js is missing or too old.** Click **Install Node.js 26 (LTS)** on the card, or install Node.js 22 or
+newer from nodejs.org. Then click **Check again**. On Windows it finds the new program without restarting AIB; if it still
+can't, restart AIB.
+
+**An install failed.** The card keeps the output with "Install failed." Read it, fix the cause, and click **Install** again.
+For Cursor CLI, Goose and Mistral Vibe you can also run the command the card shows yourself.
+
+**The agent needs sign-in.** Click **Sign in** on the chat or on the agent's card in **Settings → AIB Linking**. Agents that
+sign in by typing do it in an AIB terminal panel.
+
+**A saved chat says Elsewhere · Working.** Another app (for example the agent's own CLI) has that conversation open. It's
+read-only in AIB until the other app lets go of it.
+
+## Two AIBs
+
+**Starting AIB brings up the window that's already open.** That's on purpose: one AIB runs per data folder. To run a source
+copy beside the desktop app, give it its own `--state-dir`.
+
+## Phone: can't reach AIB
+
+The phone page says "This page only works through Tailscale on your phone", or doesn't load. Check, in this order:
+
+1. **Tailscale is on, on the phone**, and signed in with the same login as the PC.
+2. **AIB is running on the PC**, and **Settings → Remote control** shows all four steps green.
+3. **Tailscale is on, on the PC.** If step 1 says Tailscale is switched off, click **Turn Tailscale on**.
+4. **The share is there.** If AIB says "Phones can't reach AIB · AIB's share on Tailscale is missing", click **Share again**.
+5. **HTTPS is on for your tailnet.** If step 2 isn't green, click **Turn on HTTPS** and **Enable** on Tailscale's page.
+6. **The PC is awake.** Turn on **Settings → AIB server → Keep this PC awake while AIB runs**.
+
+## Phone: notifications don't arrive
+
+1. **Open AIB from the home-screen icon**, not a browser tab, and tap **Turn on notifications** there.
+2. If the phone says "Notifications are blocked for this page", allow them in the browser's site settings for the AIB address.
+3. If it says "Notifications are off for this phone", turn on **Push notifications** for that phone in AIB on your PC:
+   **Settings → Remote control**, on the phone's row.
+4. Check the phone's battery saver: it can hold back notifications from the browser.
+
+## Phone: pairing failed or expired
+
+- **The code expired.** A code lives 5 minutes and works once. Click **Add a phone** again.
+- **"Nobody approved this phone on the PC in 10 minutes."** Approve within 10 minutes of the phone claiming the code. Start
+  again on the PC.
+- **"Three wrong tries end the code."** Start again with a new code; type the six words with spaces between them.
+- **"Another device tried this code."** If that wasn't your phone, click **Cancel** and start again.
+- **"The check words do not match what the PC sent."** Don't approve. Start again on the PC.
+
+## Phone: port 443 is taken, or Funnel is on
+
+- **Something else is shared at your PC's address.** Step 3 says what, and offers **Replace and share**. That program then stops
+  being reachable over Tailscale.
+- **Tailscale Funnel is on for that port.** Step 3 offers **Turn off Funnel**. AIB runs `tailscale funnel --https=443 off` (and
+  8443 if needed) after you confirm. AIB never turns Funnel on.
+- **AIB's phone port is busy.** Close the program that holds it and click **Check again**.
+
+## Logs: what to attach to an issue
+
+AIB writes `studio.log` in its data folder (with `studio.log.1` and `studio.log.2` for older runs):
+
+| System | Log folder |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\AgentStudio` |
+| macOS | `~/Library/Application Support/AgentStudio` |
+| Linux | `~/.local/state/agent-studio` |
+
+Attach `studio.log` and say what you did and what you saw. **Settings → AIB server → About AIB** shows the versions to include.
+Report problems in [issues](https://github.com/sirkuttin/AIB/issues).

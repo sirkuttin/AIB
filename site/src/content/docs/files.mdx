@@ -1,0 +1,56 @@
+---
+title: 'Files and terminal: browse each chat''s copy and run commands in it'
+description: The Files sidebar follows the chat's own copy of the project, with change badges. File paths in replies open the file. A terminal per chat that survives restarts and updates.
+---
+
+import Shot from '../../components/Shot.astro';
+
+When each chat works in its own copy of the project, you need to see that copy, not your main folder. The Files sidebar
+follows the chat you have open, and every chat has a terminal in its own folder.
+
+## Files sidebar: the tree of the chat's copy, with change badges
+
+Switch the sidebar between **Chats** and **Files** with **Ctrl+Shift+E**. The tree shows the copy of the chat you have open;
+a button at the top pins another chat's copy or the main folder.
+
+- Changed files carry badges like `A +86`. Click one to see its diff. **Changed** shows only changed files.
+- Filter the tree with **Ctrl+Shift+F**.
+- `.gitignore`d files and `node_modules` are hidden. **Show ignored** brings them back; ignored rows say "Ignored by git".
+- Files any chat made into an artifact carry ⧉.
+- `aib-docs` is always the first row. See [Docs](/docs/).
+
+<Shot name="07-files-mode-beside-chat.png" alt="The Files sidebar with change badges, and a file open beside the chat" />
+
+## File view: Source | Preview, and open it elsewhere
+
+A single click opens an italic preview tab that the next click replaces; double-click or **Keep open** keeps it. The file view
+is read-only:
+
+- **Source | Preview** switches between the text and the rendered page.
+- **Open in Artifacts** opens any HTML, SVG or Markdown file in the **Artifacts** tab.
+- **Open in VS Code** and **Show in Explorer** hand the file to your tools.
+
+## File paths in replies open the file
+
+A file path in an agent's reply has a file icon and opens the file: beside the chat on wide windows, as a tab on narrow ones.
+Every write or edit row has an open-file button in its header. Ctrl+click opens your editor.
+
+## Files outside the project open read-only
+
+When an agent mentions a full path to a file outside your project, it's a link. It opens read-only in an
+**Outside this project** tab, and pictures show as pictures. AIB opens such a file only when the chat itself mentioned it.
+
+<Shot name="files-outside-project.png" alt="A file from outside the project open read-only in an Outside this project tab" />
+
+## Terminal: one per chat, in that chat's folder
+
+Open the chat's terminal with `` Ctrl+` `` or **Ctrl+J**. It docks under the message box and runs in that chat's own folder.
+The terminal lives in the keeper: it survives restarts, crashes and updates, with the same shell, its recent output and any
+running command. Ctrl+C works.
+
+<Shot name="10-terminal-dock.png" alt="The chat terminal docked under the message box" />
+
+## Run in terminal: paste the agent's command, you press Enter
+
+Shell commands in an agent's reply get a **Run in terminal** button. It pastes the command into the chat's terminal and never
+presses Enter. You read it, then run it.

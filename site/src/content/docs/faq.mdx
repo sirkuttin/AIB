@@ -1,0 +1,57 @@
+---
+title: FAQ
+description: Quick answers about AIB. Is it free, do I need an account, does my Claude or ChatGPT plan work, where does my code go, do I need Tailscale, does it work on iPhone.
+---
+
+## Is AIB free?
+
+Yes. AIB is free and open source under the GNU AGPL-3.0. Your agents' own plans and API keys still apply.
+
+## Do I need an AIB account?
+
+No. AIB has no account and no cloud service.
+
+## Does my Claude, ChatGPT or Copilot plan work?
+
+Yes. Each agent signs in with its own login, so your plan works as it is. See [Agents](/agents/).
+
+## Which agents are tested?
+
+Claude Code, Codex and OMP. Ten more are in Beta, not tested by us yet: GitHub Copilot CLI, Gemini CLI, Qwen Code, Cursor CLI,
+OpenCode, Goose, Mistral Vibe, Cline, Kimi Code and Kilo Code. Any other ACP agent can be added in Settings.
+
+## Can different agents work on the same project?
+
+Yes. Each chat works in its own copy of the project, so Claude Code and Codex can work on one repository at once without
+overwriting each other. They share the same docs, artifacts and `private/` folder. See [Worktree per chat](/worktrees/).
+
+## Does my code go anywhere?
+
+Only to the providers of the agents you use, as it does without AIB. AIB itself sends nothing about your code anywhere. See
+[Privacy and security](/privacy/).
+
+## Do I need Tailscale?
+
+Only for the phone. Everything else works without it. Tailscale is free for personal use and AIB installs it for you. See the
+[Phone setup guide](/phone/setup/).
+
+## Does the phone remote work on iPhone?
+
+Android tested; iPhone not tested yet, reports welcome. The phone page has iPhone hints built in.
+
+## Why does Windows warn me when I start AIB?
+
+AIB's builds are not code-signed yet, so SmartScreen warns on first run. Click **More info**, then **Run anyway**. macOS asks
+you to right-click and choose **Open** the first time for the same reason.
+
+## Which Node.js do I need?
+
+Node.js 22 or newer. Agent cards offer **Install Node.js 26 (LTS)** when it's missing. See [Download](/download/#install-nodejs-22-or-newer).
+
+## Is AIB made by Anthropic or OpenAI?
+
+No. AIB is not affiliated with Anthropic, OpenAI or any other agent vendor.
+
+## What does AIB stand for?
+
+Agent Integration Bay. Say "Abe".

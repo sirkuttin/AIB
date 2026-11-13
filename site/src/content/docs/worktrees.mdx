@@ -1,0 +1,56 @@
+---
+title: 'Worktree per chat: agents never overwrite each other, and merge their own work'
+description: Each chat works in its own git worktree and branch, started from main. The agent merges its own work into main when it's done and tested, and fixes conflicts in its own copy first.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Two agents in one folder overwrite each other's edits. One runs the tests while the other is halfway through a change. In AIB
+each chat works in its own copy of the project, so any number of agents, from any provider, work on one repository at once.
+
+## Own copy per chat: a git worktree and branch, started from main
+
+In a git project, each new chat gets its own git worktree on its own branch (`studio/<chat-name>`), started from the project's
+main branch. When your project folder is on main, the copy also carries your uncommitted work. Your saved edits keep syncing
+into the chats' copies.
+
+Worktrees live in AIB's data folder, never inside your repository.
+
+## Changes tab: see the chat's diff, Discard or Merge into main
+
+The **Changes** tab in the right column shows every file the chat changed, with its diff. Big change sets come in pages of 300.
+
+- **Merge into main** asks the agent to merge. AIB sends the chat a merge request, shown as a small **Merge requested** card.
+- **Discard** deletes the chat's branch after one confirmation. The chat stays in the list to read, not to continue.
+
+<Shot name="06-worktree-changes-merge.png" alt="A chat working in its own copy: the Changes tab with the changed files, Discard and Merge into main" />
+
+## The agent merges for you
+
+The agent merges its work into main by itself once it's done and tested, or when you click **Merge into main**. Each merge
+posts a **Merged into main** line in the chat.
+
+The button is a shortcut for saying it in the chat: type "merge this into main" and the agent does the same. It merges with
+AIB's own merge tool, the same one for every provider.
+
+<Shot name="worktrees-merged-line.png" alt="A Merge requested card in the chat, followed by the agent's Merged into main line" />
+
+## Conflicts get fixed in the chat's copy
+
+If main has moved, the agent brings main into its own copy and fixes any conflicts there first. Main only ever gets a clean
+merge.
+
+## Helpers merge into their chat's copy first
+
+Subagents and helpers that work in their own copy merge into their chat's copy when they finish. The chat then merges the
+whole result into main.
+
+## Projects: only the folders you add
+
+A new AIB starts with no projects. Add one with **New project**, or start a chat in a folder. Chats from folders you haven't
+added stay out of AIB, and nothing on disk is touched.
+
+- **New project** creates the folder when it doesn't exist: `C:\REPOS\` with the name `spaghetti` makes `C:\REPOS\spaghetti`.
+- **Delete project…** in the project's ⋯ menu removes the project from AIB and moves its chats to Recently deleted. Tick
+  **Delete from disk as well** to also send the folder to the Recycle Bin. AIB refuses for drives, your home folders, AIB's own
+  folders and folders holding other projects.

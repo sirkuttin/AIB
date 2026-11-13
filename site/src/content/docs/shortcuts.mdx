@@ -1,0 +1,26 @@
+---
+title: Keyboard shortcuts
+description: Every keyboard shortcut in AIB, read from the app's own shortcut list, plus the keys for sending, the terminal, Files and split panes.
+---
+
+import Shortcuts from '../../components/Shortcuts.astro';
+
+Press **?** in AIB, or open **Settings → Keyboard**, to see this list in the app. **Ctrl+K** finds any action by name, with its
+key next to it.
+
+## The app's shortcut list
+
+This part is read from AIB's own shortcut list when the site is built, so it matches the app.
+
+<Shortcuts />
+
+## Sending, terminal, Files and panes
+
+| Keys | What it does |
+| --- | --- |
+| <kbd>Enter</kbd> | Send. While the agent works: send now, into the running turn ([Agent steering](/steering/)) |
+| <kbd>Alt+Enter</kbd> | While the agent works: send after this turn |
+| <kbd>Ctrl+`</kbd> / <kbd>Ctrl+J</kbd> | Open the chat's terminal; pressed in the terminal, hide it |
+| <kbd>Ctrl+Shift+E</kbd> | Switch the sidebar between Chats and Files |
+| <kbd>Ctrl+Shift+F</kbd> | Filter files in Files |
+| <kbd>Ctrl+\\</kbd> | Split the current tab into a new pane |

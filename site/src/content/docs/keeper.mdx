@@ -1,0 +1,54 @@
+---
+title: 'Keeper: quit AIB and your chats keep running'
+description: Quit, restart, crash or update AIB and your chats, helpers, background commands and terminals keep going in the keeper. The next AIB picks them up where they were.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Closing or updating an app used to cut off a running turn: the agent stopped mid-edit and the reply was lost. In AIB a small
+program, the keeper, holds your chats. AIB can quit, restart, crash or update, and the agents never notice.
+
+## Quit, restart, crash or update: the work keeps going
+
+Chats, helpers, background commands and terminal commands keep running in the keeper. This works the same for every agent:
+Claude Code, Codex, OMP and the rest.
+
+- **Quit AIB** never stops a chat. With work going on, AIB hands it to the keeper and exits. A merge that is running is let
+  finish first. With nothing working, AIB simply quits.
+- **Install now** and the **Update** button work while chats run. The new version takes them over.
+- **After a crash**, AIB comes back in the tray instead of popping up a window.
+
+## The next AIB picks them up where they were
+
+Start AIB again, even a new build in another folder: it takes each chat over where it was. No lost replies, nothing sent twice.
+It opens on the project and chat you had open.
+
+## Stop everything on purpose: Stop all chats and quit
+
+Right-click the AIB tray icon and choose **Stop all chats and quit**. It asks once more in the menu itself ("Click again to
+stop 2 chats and quit"). This is the only way AIB stops your chats.
+
+<Shot name="keeper-tray-menu.png" alt="The AIB tray menu with Open AIB, the running-chats status line, Quit AIB and Stop all chats and quit" />
+
+## Tray and Task Manager
+
+The tray menu has **Open AIB**, a status line ("2 chats running"), **Quit AIB** and **Stop all chats and quit**. In Task
+Manager you see AIB plus `AIB-keeper.exe`.
+
+While phone access is on, closing the window keeps AIB running in the tray, so your phone keeps working. The tray tooltip then
+says "Phone access on". Use **Quit AIB** in the tray menu to stop it.
+
+## Keep the PC awake while AIB runs
+
+Turn on **Settings → AIB server → Keep this PC awake while AIB runs**. It stops sleep while AIB is open, so agents keep working
+and your phone can reach AIB. The screen can still turn off. Closing a laptop lid still sleeps the PC.
+
+## One AIB per data folder
+
+Starting a second copy brings up the one that's running. The desktop app and a source run share one data folder; run one at a
+time, or give the source run its own `--state-dir`.
+
+## Without the keeper
+
+If the keeper can't run, AIB still works, and **Settings → AIB server → About AIB** says so. A restart or update then
+stops your chats.

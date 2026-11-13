@@ -1,0 +1,51 @@
+---
+// The keyboard shortcut sheet, read at build time from the app's own registry (outputs/agent-studio/commands-registry.js), the
+// same list AIB shows under Keyboard shortcuts. A key changed in the app changes here on the next build.
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const registryPath = path.resolve(process.cwd(), '..', 'outputs', 'agent-studio', 'commands-registry.js');
+const require = createRequire(path.join(here, 'x.js'));
+const registry = require(registryPath) as {
+  sheetModel: (ctx: Record<string, unknown>) => { name: string; rows: { keys: string; label: string }[] }[];
+};
+// ctx as the page has it: every page action is there (ctx.do answers any name), the inbox key is Alt+I (workspace-ui.js), and
+// one project is open so "New chat in <project>" carries its key.
+const ctx = {
+  keys: { inbox: 'Alt+I' },
+  projects: [{ key: 'p', name: 'this project', active: true }],
+  editor: { name: 'VS Code' },
+  chat: null,
+  thinking: false,
+  do: new Proxy({}, { get: () => () => {} }),
+};
+const groups = registry.sheetModel(ctx);
+---
+
+{
+  groups.map((g) => (
+    <>
+      <h3>{g.name}</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Keys</th>
+            <th>What it does</th>
+          </tr>
+        </thead>
+        <tbody>
+          {g.rows.map((r) => (
+            <tr>
+              <td>
+                <kbd>{r.keys}</kbd>
+              </td>
+              <td>{r.label}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  ))
+}

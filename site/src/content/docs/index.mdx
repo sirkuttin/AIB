@@ -1,0 +1,97 @@
+---
+title: Every coding agent in one window, on your own PC
+description: Run Claude Code, Codex, OMP and ten more agents side by side. They share docs, artifacts and notes. Answer them from your phone over your own Tailscale network. No account, no cloud service of ours.
+template: splash
+hero:
+  tagline: Run Claude Code, Codex, OMP and ten more agents side by side. They read and write the same docs, artifacts and notes. Answer them from your phone over your own Tailscale network. No account, no cloud service of ours. Free and open source.
+  actions:
+    - text: Download AIB
+      link: /download/
+      icon: right-arrow
+      variant: primary
+    - text: Get started
+      link: /start/
+      variant: secondary
+    - text: Set up your phone
+      link: /phone/setup/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import Shot from '../../components/Shot.astro';
+
+<p class="aib-agents">Windows, macOS and Linux. Beta: builds are not code-signed.</p>
+
+<Shot
+  name="01-hero-split-agents-dark.png"
+  alt="Codex and Claude Code working side by side in split panes on one project, with the Activity column open and the inbox count at the top"
+/>
+
+<p class="aib-agents">
+  <strong>Tested:</strong> Claude Code · Codex · OMP. <strong>Beta:</strong> GitHub Copilot CLI · Gemini CLI · Qwen Code ·
+  Cursor CLI · OpenCode · Goose · Mistral Vibe · Cline · Kimi Code · Kilo Code. <strong>Any other ACP agent:</strong> add it in
+  Settings.
+</p>
+
+## What you can do
+
+<CardGrid>
+  <Card title="Inbox: every agent that needs you, in one list" icon="list-format">
+    Approve a command, answer a question or reply from the inbox, without opening the chat. Every agent and every project
+    lands in the same list. [Inbox](/inbox/)
+  </Card>
+  <Card title="Docs: one agent writes, another edits" icon="document">
+    Claude Code starts a doc, Codex edits it, OMP comments on it. Docs are files in your project's `aib-docs/` folder.
+    [Docs](/docs/)
+  </Card>
+  <Card title="Remote control: answer your agents from your phone" icon="mobile-android">
+    Get a push when a chat needs you. Approve, reply or start a new chat from the couch. Your phone talks only to your PC.
+    [Remote control](/phone/)
+  </Card>
+  <Card title="Worktree per chat: agents never overwrite each other" icon="code-branch">
+    Each chat works in its own copy of the project and merges its own work into main. An agent pool divided against itself
+    cannot stand. [Worktree per chat](/worktrees/)
+  </Card>
+  <Card title="Agent steering: talk to the agent while it works" icon="comment">
+    Press Enter while the agent works: Claude Code, Codex and OMP read your message mid-turn and answer right away.
+    [Agent steering](/steering/)
+  </Card>
+  <Card title="Keeper: quit AIB and your chats keep running" icon="rocket">
+    Quit, update or crash: chats, helpers and running commands keep going, and the next AIB picks them up.
+    [Keeper](/keeper/)
+  </Card>
+  <Card title="Artifacts: pages your agents publish, beside the chat" icon="laptop">
+    Every agent can publish HTML, SVG, Markdown, images, PDF, CSV and JSON. Up to 30 versions each, with Compare and
+    Restore. [Artifacts](/artifacts/)
+  </Card>
+  <Card title="private/ folder: notes every agent reads, git never commits" icon="padlock">
+    One folder per project for plans and research. Every chat sees it; nothing in it reaches main.
+    [private/ folder](/private-folder/)
+  </Card>
+</CardGrid>
+
+## Same tools for every agent
+
+Every agent in AIB gets the same doc tools, the same artifact tools and the same `private/` folder, whichever provider it
+comes from. All of them land in one inbox and answer to one phone. Pick the agent for the job; the work stays in one place.
+
+## Runs on your PC
+
+- The AIB server listens on `127.0.0.1` only.
+- Docs and private notes are files in your project.
+- Your phone reaches your PC over your own Tailscale network.
+- No AIB account, no telemetry, no cloud service of ours.
+- Free and open source under the GNU AGPL-3.0.
+
+Each agent signs in with its own login, so your Claude, ChatGPT or Copilot plan works as it is. See
+[Privacy and security](/privacy/) for every network call AIB makes.
+
+## Beta
+
+AIB is in beta. Builds are not code-signed. Windows is tested daily; macOS and Linux are lightly tested. See
+[Known limits](/limits-and-status/) for what AIB doesn't do yet.
+
+<CardGrid>
+  <LinkCard title="Download AIB" href="/download/" description="Windows, macOS and Linux, x64 and ARM." />
+  <LinkCard title="Your first chat in five minutes" href="/start/" description="From first launch to your first merge." />
+</CardGrid>

@@ -1,0 +1,53 @@
+---
+title: 'Artifacts: pages and files your agents publish, beside the chat'
+description: Every agent can publish HTML, SVG, Markdown, images, PDF, CSV and JSON beside the chat. Up to 30 versions with Compare and Restore, sandboxed on a local origin, and Archive and Delete to clear out the list.
+---
+
+import Shot from '../../components/Shot.astro';
+
+An agent's mockup or report used to land as a file somewhere in the project, and the version before it was gone. In AIB every
+agent, from every provider, gets an artifact tool: the page opens beside the chat and keeps its versions.
+
+## Every agent can publish
+
+HTML, SVG, Markdown, images, PDF, CSV and JSON open in the **Artifacts** tab beside the chat. A new artifact doesn't pull you
+away from what you're reading: a "New: &lt;title&gt; · Open" bar appears instead. Markdown artifacts have an **Edit** button.
+
+<Shot name="04-artifact-html-page.png" alt="An HTML page an agent published, open in the Artifacts tab beside the chat" />
+
+## Versions: up to 30 per artifact, with Compare and Restore
+
+Each artifact keeps up to 30 versions. **Compare** shows what changed between two versions, and **Restore this version** brings an older one back.
+
+<Shot name="05-artifact-compare-versions.png" alt="Comparing two versions of an artifact side by side" />
+
+## Safe by design: sandboxed, on their own local origin
+
+Pages run sandboxed on a separate local origin, the next port after AIB's own, with no network access. A page can't reach
+AIB's controls or the internet.
+
+## Charts and diagrams work offline
+
+Mermaid, Chart.js and Vega come with AIB. Pages that load them by their usual jsDelivr, unpkg or cdnjs address get AIB's own
+copy instead, so they draw without the internet. Mermaid blocks in Markdown artifacts are drawn too.
+
+## Artifacts: Archive and Delete clear out the list
+
+Long chats pile up drafts, old mockups and dead ends. Clear them out from the **⋯** menu on each artifact in the list (or
+right-click it), or from the viewer's **⋯** menu.
+
+- **Archive** hides an artifact and keeps it whole. **Archived N** at the foot of the list brings it back with **Unarchive**.
+- **Delete** removes the artifact's file too, into **Recently deleted** for 30 days. **Undo** is there for 10 seconds and
+  **Restore** after that. **Delete now** removes it for good.
+- Old links to an archived or deleted artifact say **· archived** or **· deleted** instead of breaking.
+
+<Shot name="artifacts-menu-archive-delete.png" alt="The ⋯ menu on an artifact with Archive and Delete, and Archived 3 at the foot of the list" />
+
+## Delete keeps files that aren't the artifact's alone
+
+Delete won't take a file that is outside the chat's folder, in `aib-docs` or `.git`, or still used by another artifact. Those
+files are kept.
+
+## Agents can archive; only you delete
+
+Ask any agent to archive its chat's artifacts, and it tidies up. Only you can delete.

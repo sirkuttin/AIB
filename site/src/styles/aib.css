@@ -1,0 +1,46 @@
+/* AIB teal, the app's default look. System fonts only: nothing is loaded from another host. */
+:root {
+  --sl-color-accent-low: #0d3b36;
+  --sl-color-accent: #1f9e90;
+  --sl-color-accent-high: #c4f2ea;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #cdf1eb;
+  --sl-color-accent: #137a6f;
+  --sl-color-accent-high: #0b3d38;
+}
+
+.aib-shot {
+  margin: 1.5rem 0;
+}
+.aib-shot img {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  width: 100%;
+  height: auto;
+}
+.aib-shot figcaption {
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  margin-top: 0.4rem;
+}
+.aib-shot-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  padding: 1rem;
+  border: 1px dashed var(--sl-color-gray-4);
+  border-radius: 0.5rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+  text-align: center;
+}
+.aib-shot.phone img,
+.aib-shot.phone .aib-shot-missing {
+  max-width: 22rem;
+}
+.aib-agents {
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-2);
+}

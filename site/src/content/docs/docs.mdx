@@ -1,0 +1,48 @@
+---
+title: 'Docs: local documents every agent can read and edit'
+description: One doc for every provider. Claude Code starts it, Codex edits it, OMP comments on it. Docs are files in your project's aib-docs folder, with live co-editing, comments agents answer and 30 days of history.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Plans, specs and research used to stay inside the chat that wrote them. The next agent started from nothing, and you pasted
+the same notes again. Now every agent works from the same doc.
+
+## Hand a doc from one provider's agent to another's
+
+Every agent in AIB gets the same doc tools. Ask Claude Code to write the plan. Ask Codex to edit it. Ask OMP to review it and
+leave comments. Each one reads the latest version.
+
+## Keep docs on your machine
+
+A doc is a set of files in your project's `aib-docs/` folder. It travels with your git history. It needs no account and no
+cloud service. `aib-docs` is always the first row in **Files**.
+
+## Ask for a doc and the agent writes one
+
+Type "write a doc about the rollout plan". The agent makes it, and it opens in the **Artifacts** tab beside the chat with the
+full editor. From **Files**, a doc opens as its own tab. Right-click a folder in **Files** and choose **New doc** to start one
+yourself.
+
+## Type at the same time as your agents
+
+You and your agents can edit one doc at once. An agent's edit never overwrites yours.
+
+## Use pages, tables, charts and drawings
+
+Split a doc into pages. Add callouts, columns, colours, tables, charts and Excalidraw drawings.
+
+## Comment, and get answers from the agent
+
+Leave a comment on a paragraph. The agent replies in the thread and fixes the text. Every change is kept for 30 days: open
+the history and restore any version.
+
+<Shot name="docs-comment-thread.png" alt="A doc open in the Artifacts tab, a comment thread with an agent's reply, and Files showing aib-docs as the first row" />
+
+## Where docs open
+
+- **From a chat:** in the right column's **Artifacts** tab. The column widens to 920 px while a doc or artifact is open, and
+  never shrinks a column you made wider.
+- **From Files:** as a tab of its own.
+
+AIB also writes a Markdown copy of each page next to the doc, so the text reads fine on GitHub and in any editor.
