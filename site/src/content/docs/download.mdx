@@ -1,0 +1,101 @@
+---
+title: Download and install AIB
+description: Get AIB running on Windows, macOS or Linux, x64 or ARM. No admin rights, no account.
+---
+
+import { Tabs, TabItem, LinkButton, Aside } from '@astrojs/starlight/components';
+import Shot from '../../components/Shot.astro';
+import DownloadButton from '../../components/DownloadButton.astro';
+
+Download the file for your system, unzip or install it, and open AIB. No admin rights and no AIB account are needed.
+
+<DownloadButton />
+
+## Every download
+
+The button above picks your system. Every file is listed here with its size. The files are hosted on GitHub; the download starts without leaving this page.
+
+<DownloadButton list />
+
+Every release also has `SHA256SUMS`, the checksum of every file. See [Check your download](#check-your-download).
+
+## Install AIB
+
+<Tabs syncKey="os">
+<TabItem label="Windows">
+
+1. Unzip the file anywhere. No admin rights needed.
+2. Run `AIB\AIB.exe`.
+3. Windows shows a SmartScreen warning because the app isn't code-signed. Click **More info**, then **Run anyway**.
+
+The first run adds AIB to the Start menu.
+
+
+</TabItem>
+<TabItem label="macOS">
+
+1. Unzip the file and move `AIB.app` to Applications.
+2. The first time, right-click `AIB.app` and choose **Open**. AIB isn't notarized, so a double-click is refused the first time.
+
+
+</TabItem>
+<TabItem label="Linux">
+
+Use the AppImage or the `.deb`:
+
+```sh
+# AppImage
+chmod +x AIB-<version>-linux-x64.AppImage
+./AIB-<version>-linux-x64.AppImage
+
+# .deb
+sudo apt install ./AIB-<version>-linux-x64.deb
+```
+
+AIB opens a window, so it needs a desktop session, even for `serve`. The first start can take close to a minute before the
+window shows the app.
+
+</TabItem>
+</Tabs>
+
+## Node.js: AIB installs it when an agent needs it
+
+You don't install anything else first. Claude Code, Codex and the npm Beta agents run on Node.js 22 or newer. Their card in
+**Settings → AIB Linking** checks for it, and when it's missing or too old the card shows **Install Node.js 26 (LTS)**. Click it:
+AIB installs Node.js with winget on Windows and nvm on macOS and Linux, then installs the agent.
+
+One exception: Kimi Code asks for Node.js 22.19 or newer. Its card checks that for you.
+
+## Check your download
+
+Compare the file's SHA-256 checksum with its line in `SHA256SUMS` from the same release.
+
+<Tabs syncKey="os">
+<TabItem label="Windows">
+
+```powershell
+Get-FileHash .\AIB-<version>-windows-x64.zip -Algorithm SHA256
+```
+
+</TabItem>
+<TabItem label="macOS">
+
+```sh
+shasum -a 256 AIB-<version>-macos-arm64.zip
+```
+
+</TabItem>
+<TabItem label="Linux">
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+</TabItem>
+</Tabs>
+
+<Aside>AIB checks every update against `SHA256SUMS` by itself before it offers it. See [AIB Updates](/updates/).</Aside>
+
+## Next: your first chat
+
+Open AIB. The start page sets up your agents. Then follow [Getting started](/start/).

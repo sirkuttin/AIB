@@ -1,0 +1,41 @@
+---
+title: 'private/ folder: keep notes out of git and in front of every chat'
+description: One folder per git project that git never commits and every chat and agent can read. Nothing local-only reaches main, Git exclude makes any file local-only, and AIB keeps a daily zip backup.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Some files should never be committed: scratch notes, plans, research. Yet every agent should be able to read them, including
+chats that work in their own copy of the project. The `private/` folder is that place. New in 0.1.0-beta.9.
+
+## AIB keeps private/ out of git
+
+The first time a chat opens in a git project, AIB adds `private/` to that project's `.git/info/exclude`. Once a chat works in
+its own copy, AIB creates an empty `private/` folder. That's a visible change: you'll see the folder, and git never commits it.
+
+Projects that already commit a `private/` folder are left alone. **Files** then says
+"private/ is committed in this project, so AIB doesn't keep it local only."
+
+## Every chat and every agent sees it
+
+Every chat sees the same `private/`, including chats that work in their own copy. It shows under **Files** with a blue
+**local only** label. Every agent, whichever provider, is told where the local-only files are and that it may write there.
+
+<Shot name="private-local-only.png" alt="Files showing the private folder with its blue local only label" />
+
+## Nothing local-only reaches main
+
+Files an agent writes into its own copy's local-only folders by mistake move to the shared folder before the copy is removed.
+Merges never carry them into main.
+
+## Git exclude: make any file local-only
+
+Right-click any file or folder in **Files** and choose **Git exclude**. It's applied at once, with **Undo** for 10 seconds. When
+it can't apply, the menu item is greyed out with the reason, for example **Already local only**.
+
+<Shot name="private-git-exclude.png" alt="The right-click menu on a file in Files with Git exclude" />
+
+## A daily zip backup of local-only files
+
+Git holds no copy of local-only files, so AIB does. Once a day, when they changed, AIB zips each project's local-only files
+into one zip in its data folder, under `local-only-backups`. Only the newest zip is kept.

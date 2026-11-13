@@ -1,0 +1,73 @@
+---
+title: 'Agent steering: talk to the agent while it works, instead of waiting for the turn to end'
+description: Press Enter while the agent works and it reads your message mid-turn. Send ▾ picks how hard to cut in. Stop one runaway background command without stopping the agent.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Shot from '../../components/Shot.astro';
+
+You see the agent heading the wrong way. Your correction used to sit in a queue while the agent finished the wrong job. Now
+Claude Code, Codex and OMP read your message mid-turn and answer right away. New in 0.1.0-beta.9.
+
+## Press Enter while the agent works: it answers right away
+
+Type your message and press **Enter** while the agent is working. The message goes into the running turn. A command or helper
+the agent had running keeps going in the background, so no work is thrown away. These messages are tagged
+**Sent while working**.
+
+The message box says what Enter does: "Message Claude Code… Enter sends now".
+
+<Shot name="steering-sent-while-working.png" alt="A message tagged Sent while working in the middle of an agent's turn, with the agent's reply right under it" />
+
+## Send ▾: choose how hard to cut in
+
+While the agent works, **Send ▾** next to the message box offers three ways to send:
+
+| Choice | Key | What happens |
+| --- | --- | --- |
+| **Send now** | Enter | The agent reads it during this turn. |
+| **Send after this turn** | Alt+Enter | It waits above the box until the agent finishes, then sends. |
+| **Interrupt and send** | | Stops the current reply and its running step, then sends. Work already in the background keeps running. |
+
+Under **Send now**, one grey line says what that agent does with the message:
+
+- Claude Code answers right away. A command or helper it is running keeps going in the background.
+- Codex answers right away. A command it is running keeps going in the background, and Codex isn't told when it ends.
+- OMP answers right away. A command it is running moves to the background, and OMP stops it after 2 minutes in total.
+
+Shift+Enter still makes a new line.
+
+<Shot name="steering-send-menu.png" alt="The Send menu open with Send now, Send after this turn and Interrupt and send, each with its grey line" />
+
+## Queue: edit, remove or send a waiting message now
+
+Messages sent with **Send after this turn** wait above the message box. Edit one, remove it, or send it now.
+
+## Stop one runaway command without stopping the agent
+
+A command moved to the background shows **Still running in the background** with **Stop**. **Stop** ends exactly that
+command's processes; the agent keeps working. The row then says **Stopped by you**, or **Finished in the background** when the
+command ended by itself.
+
+After you stop a backgrounded command, Claude Code writes a short reply of its own. Expect that extra message: it is Claude
+Code confirming what it stopped.
+
+<Shot name="steering-background-stop.png" alt="A tool row marked Still running in the background, with its Stop button" />
+
+## Works from everywhere you type
+
+- **The inbox and the phone steer the same way.** A reply from either goes into the running turn.
+- **An open approval card holds your message.** A message typed while an approval or question card is open goes in as soon
+  as you answer the card.
+- **Slash commands and AIB's own messages always wait.** Commands, and AIB messages such as merge requests, go after the
+  turn.
+
+## Which agents steer
+
+| Agent | Enter while it works |
+| --- | --- |
+| Claude Code, Codex, OMP | Goes into the running turn |
+| Any other agent whose adapter says it can take messages mid-turn | Goes into the running turn |
+| Every other agent | Sends when the turn ends; the box says "Enter sends when it ends" |
+
+<Aside>Known issue: when a turn starts from the phone, the queue or an approval card, **Interrupt** and **Send ▾** can take up to 1.5 seconds to appear. Messages you send in that moment still go the right way.</Aside>

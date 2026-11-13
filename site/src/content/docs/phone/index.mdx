@@ -1,0 +1,96 @@
+---
+title: 'Remote control: answer your agents from your mobile phone'
+description: Your phone becomes a remote for every chat in AIB. Push notifications, approvals, answers and new chats, for Claude Code, Codex, OMP and the rest. Over your own Tailscale network; no relay of ours, no account, no app store.
+---
+
+import { Aside, LinkButton } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import diagram from '../../../assets/diagrams/phone-how-it-connects.svg';
+import Shot from '../../../components/Shot.astro';
+
+An agent that stops to ask "may I run this?" used to wait until you were back at your desk. Now the question reaches your
+pocket, and you answer it there. New in 0.1.0-beta.9.
+
+<LinkButton href="/phone/setup/" icon="right-arrow">Set it up in about ten minutes</LinkButton>
+
+## How your phone reaches your PC
+
+<Image src={diagram} alt="Your phone connects over your own Tailscale network straight to AIB on your PC. No AIB server, relay or account in between." />
+
+Your phone talks to AIB on your PC over your own Tailscale network, with HTTPS. AIB answers phones on a port of its own, and
+only devices on your tailnet can reach it, not the internet. There is no relay of ours, no AIB account and no app store. The
+PC page's own security checks are unchanged.
+
+## Push notifications: the moment a chat needs you or finishes
+
+Your phone gets a push when a chat needs you or finishes, even with the AIB window closed. A push says only that, and the
+chat's name. It uses standard Web Push with keys made on your PC: no account, no Firebase project.
+
+**Silent reminders:** when you close or hide AIB on the phone while chats still need you, the phone gets one silent summary
+("2 chats need you"). It is replaced, not stacked.
+
+## Do real work from the phone, not just watch
+
+- Every chat is a card, needs-you first, with the same status words as the PC.
+- Read along, answer questions, **Allow once** or **Decline** a request, send a message, stop a turn.
+- A message sent while the agent works goes into the running turn, the same as Enter on the PC. See
+  [Agent steering](/steering/).
+- Open a chat's artifacts and their versions.
+
+<Shot name="phone-cards.png" alt="The phone page: chat cards with needs-you chats first" phone />
+
+<Shot name="phone-approval.png" alt="An approval card on the phone with Allow once and Decline" phone />
+
+## New chat: start work in any project with any agent
+
+Tap **New chat**, pick a project, an agent, a model and a mode, type the first message and tap **Start chat**. New projects
+are added in AIB on your PC.
+
+<Shot name="phone-new-chat.png" alt="The New chat sheet on the phone with project, agent, model and mode" phone />
+
+## Cross-agent: every agent works the same
+
+Claude Code, Codex, OMP and the other agents all work the same from the phone. One phone, every provider.
+
+## Card menu: mark, rename, archive, delete
+
+Each card's menu offers **Mark as read** or **Mark as unread**, **Mark handled**, rename, **Archive** and **Delete…**. Renames
+and unread dots carry over to the PC.
+
+## Install AIB on the home screen, with a theme per phone
+
+Tap **Install AIB** and AIB opens from its own icon, full screen, without the browser bar. Pick a theme for each phone under
+**Theme on this phone**: **Follow PC**, **Match system** or any of the eleven themes.
+
+## You stay in charge of each phone
+
+You pair each phone on the PC and approve it there. Each phone gets its own switches in **Settings → Remote control**:
+
+- **See chats** (always on)
+- **Answer questions**
+- **Send messages, stop turns and continue chats**
+- **Start new chats** (under Send: off while Send is off)
+- **Approve requests once**
+- **Push notifications**
+- **Silent reminders**
+
+Each change is saved at once and checked on the phone's next request. **Phone activity** lists what each phone did: time,
+phone, action, chat and result. Message text and commands are never kept. **Remove** ends a phone's access; its next request
+fails.
+
+## Never on a phone
+
+The terminal, Settings, custom agents, deleting projects, updates, shutting down AIB and "Allow always" are never available
+from a phone. A phone can allow a request once, never for good.
+
+## Works on Android; iPhone not tested yet
+
+Android tested; iPhone not tested yet, reports welcome. On Android, use Chrome or Firefox. The phone page has iPhone hints
+built in: install it with **Share → Add to Home Screen**, then open AIB from that icon, because iPhone sends notifications only
+to apps on the Home Screen.
+
+<Aside>AIB keeps working for your phone while its window is closed: with phone access on, closing the window keeps AIB in the tray. Turn on **Settings → AIB server → Keep this PC awake while AIB runs** so the PC doesn't sleep on you.</Aside>
+
+## Set it up
+
+<LinkButton href="/phone/setup/" icon="right-arrow">Phone setup guide</LinkButton>

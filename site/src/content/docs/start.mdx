@@ -1,0 +1,70 @@
+---
+title: 'Getting started: your first chat in five minutes'
+description: From first launch to your first merge into main. Set up an agent, add a project, start a chat, answer it, open a second agent beside it and merge the work.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+import Shot from '../../components/Shot.astro';
+
+This page takes you from a fresh AIB to a chat's work merged into main. You need AIB installed ([Download](/download/)) and a
+git project you don't mind an agent working in.
+
+<Steps>
+
+1. **Open AIB and set up an agent.**
+
+   The start page says **Set up an agent to start chatting** and lists Claude Code, Codex and OMP. Click **Install** on an
+   agent's row: AIB installs its pinned ACP adapter. Then click **Sign in**: the agent's own sign-in opens. AIB never asks for
+   your password or API key for these three.
+
+   If the row says Node.js is missing, click its install button first. See [Node.js](/download/#nodejs-aib-installs-it-when-an-agent-needs-it).
+   **See more agents** opens the ten Beta agents in Settings.
+
+2. **Add a project.**
+
+   Click **New project** and pick a folder, or type a new folder name and AIB creates it. A new AIB starts with no projects:
+   only folders you add show up, and nothing on disk is touched.
+
+3. **Start a chat.**
+
+   Pick the agent, and the **Model**, **Mode** and **Effort** under the message box. Type what you want and press Enter. In a
+   git project the chat works in its own copy of the project, so it can't overwrite anything else. See
+   [Worktrees](/worktrees/).
+
+4. **Answer the agent.**
+
+   When the agent asks to run a command or edit a file, an approval card shows the exact command or path. Click **Allow** or
+   **Deny**. The chat also lands in the inbox at the top of the window, so you can answer from there. See [Inbox](/inbox/).
+
+5. **Correct it while it works.**
+
+   Type a message and press Enter while the agent is still working. Claude Code, Codex and OMP read it mid-turn and answer
+   right away. See [Agent steering](/steering/).
+
+6. **Open a second agent beside it.**
+
+   Start another chat in the same project with a different agent, for example Codex beside Claude Code. Drag its tab to the side
+   of the window, or right-click the tab and choose **Split right** (`Ctrl+\`). Each chat has its own copy, so they never clash.
+
+7. **Ask for a doc and an artifact.**
+
+   Ask one agent: "write a doc with the plan for this change". Ask the other to review the doc and comment on it. Ask either
+   for "an HTML page that shows the result". The doc and the page open in the **Artifacts** tab beside the chat. See
+   [Docs](/docs/) and [Artifacts](/artifacts/).
+
+8. **Merge the chat's work into main.**
+
+   Open the **Changes** tab to see what the chat changed. The agent merges into main by itself once it's done and tested, or
+   click **Merge into main** to ask it now. A **Merged into main** line shows in the chat.
+
+</Steps>
+
+<Shot name="03-approval-and-inbox.png" alt="An approval card in the chat with the exact command, and the inbox listing every chat that needs you" />
+
+## Next steps
+
+- [Set up your phone](/phone/setup/) and answer your agents away from your desk.
+- [Keyboard shortcuts](/shortcuts/): Ctrl+K finds chats, projects, files and actions.
+- [Agents](/agents/): turn on the ten Beta agents or add any ACP agent.
+
+<Aside>Stuck? See [Troubleshooting](/troubleshooting/).</Aside>

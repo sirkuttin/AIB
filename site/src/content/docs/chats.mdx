@@ -1,0 +1,91 @@
+---
+title: 'Chats and helpers: run many agents at once and see what each does'
+description: Tabs and split panes for any mix of agents, status words that match everywhere, three views, plan and subagent cards, the Activity tab, and scrolling that only moves when you do.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Several agents in several terminals means switching windows to find out who is done, who is stuck and what each one ran. In
+AIB every chat, from every agent, sits in one window, and every tool call, plan, helper and background process is on screen.
+
+## Chats: one tab per agent, split panes side by side
+
+Each chat is a tab. Run two providers on one repository at once: Claude Code in one pane, Codex in the next. Drag a tab to the
+side of the window, or right-click it and choose **Split right** or **Split down** (`Ctrl+\`). Drag the divider to resize;
+double-click it to even out.
+
+## Status words: Working, Needs you, Your turn
+
+Every chat card and tab says where it stands, in the same words on cards, tabs, the inbox and the phone:
+
+- **Working · 4m**: the agent is on it.
+- **Needs you**: an approval, a question or a sign-in waits for you.
+- **Your turn**: the agent finished and waits for your next message.
+- **Idle**, **Not running**, and **Elsewhere · Working** or **Elsewhere · Idle** for a chat another app has open (read-only
+  here).
+
+Turn on **Show status symbols** in **Settings → Appearance** to add ◔ ▲ ✓ ○ ✕ next to the dots.
+
+## Views: Full, Chat and Prompts
+
+- **Full** shows everything: tool calls with inputs and diffs, thinking, plans, approvals and questions.
+- **Chat** folds a turn's tool calls under one **Show steps**.
+- **Prompts** lists each prompt you sent with the work it caused.
+
+<Shot name="chats-views.png" alt="The same chat in Full, Chat and Prompts views side by side" />
+
+## Model, Mode and Effort: pick before the first message
+
+The **Model**, **Mode** and **Effort** pills under the message box open a list: one click picks. A new chat offers the agent's
+models before your first message, and your pick is applied before that message goes out. Slash commands, image and file
+attachments work as in the agent's own CLI.
+
+## Approvals and questions: what the agent asks, in words
+
+An approval card says in words what the agent wants, with the exact command, path or URL in a code box and the agent's
+description under it. Question forms show their fields in the chat. Once you answer, the card leaves one short line, so you
+can see what was answered.
+
+## Plan card: one plan per chat, finished steps folded
+
+A chat has one plan card. While steps are open it stays at the end of the chat, and each update replaces it. Steps in
+progress come first, then steps to do, then a folded **✓ N done** line.
+
+## Subagent cards: model, tokens and what each helper does now
+
+A working subagent is a card: its model, type, tokens used, run time, and what it is doing right now ("Running: …",
+"Editing chat.js"). **Stop** sits on its title row and confirms in place. A finished one is a single line with its model, how
+long it ran, and Failed or Stopped when it didn't finish normally.
+
+<Shot name="chats-subagent-card.png" alt="A working subagent card with its model, tokens, run time and current action, next to a plan card with a folded done line" />
+
+## Activity tab: every helper and process each chat started
+
+The **Activity** tab in the right column lists the subagents and processes each chat started, with their run time, and how
+many subagents are working right now.
+
+## Scrolling: the chat moves only when you do
+
+Whatever you're reading stays put while replies stream, steps finish, pictures load or panes resize. At the bottom, the chat
+follows every update; scroll up and it stops following. **↓ Latest** brings it back. Each chat, subagent and pane remembers
+where you were reading, also after a restart, and opens there with a **New** line for anything that came in.
+
+## Saved chats from outside AIB
+
+Your saved Claude Code and OMP conversations from outside AIB are listed too. A chat another app has open shows
+**Elsewhere · Working** or **Elsewhere · Idle** and is read-only in AIB.
+
+## Continue with another agent
+
+Right-click a chat and choose **Continue with another agent…**. A new chat opens in the same folder with the next agent picked
+and an editable summary of the chat in the message box. Change the agent if you like, edit the summary, and send.
+
+## Organise: pin, hold, archive, delete
+
+Right-click a chat card or tab (or press Shift+F10) for **Rename** (F2), **Pin**, **Hold this chat…** with a note,
+**Mark handled**, **Archive** and **Delete**. Deleted chats wait in **Recently deleted**.
+
+## Ctrl+K finds chats, projects, files and actions
+
+Press **Ctrl+K** and type. Chats whose title contains the word rank first, archived ones included. See
+[Keyboard shortcuts](/shortcuts/).

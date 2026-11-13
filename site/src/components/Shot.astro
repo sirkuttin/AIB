@@ -1,0 +1,30 @@
+---
+// A screenshot from src/assets/shots/<name>. Until that file is captured, the README copy in docs/screenshots/ is used when one
+// exists, otherwise a box that says which picture goes here. So a missing picture never breaks the build.
+import { Image } from 'astro:assets';
+import type { ImageMetadata } from 'astro';
+
+interface Props {
+  name: string;
+  alt: string;
+  caption?: string;
+  phone?: boolean;
+}
+const { name, alt, caption, phone = false } = Astro.props;
+const shots = import.meta.glob<{ default: ImageMetadata }>('/src/assets/shots/*.{png,jpg,jpeg,webp,gif,svg}', { eager: true });
+const readme = import.meta.glob<{ default: ImageMetadata }>('../../../docs/screenshots/*.{png,jpg,jpeg,webp}', { eager: true });
+const hit = shots[`/src/assets/shots/${name}`] ?? readme[`../../../docs/screenshots/${name}`];
+---
+
+<figure class:list={['aib-shot', { phone }]}>
+  {
+    hit ? (
+      <Image src={hit.default} alt={alt} />
+    ) : (
+      <div class="aib-shot-missing" role="img" aria-label={alt} data-shot={name}>
+        <span>Picture coming: {alt}</span>
+      </div>
+    )
+  }
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>

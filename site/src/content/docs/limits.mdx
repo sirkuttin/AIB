@@ -1,0 +1,34 @@
+---
+title: "Limits chip: see how much of your plan you've used"
+description: The Limits chip under the message box shows your plan's usage, for example 5h 42% · wk 18%, from the provider's official numbers. Warning colour from 85%, red when you're blocked.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Hitting your plan's limit mid-task stops the agent cold, and the provider's usage page is one more tab to check. AIB shows the
+numbers in the chat, under the message box.
+
+## Limits chip: right after Ctx
+
+The **Limits** chip sits after **Ctx** under the message box, for example `5h 42% · wk 18%`, or `wk 26%` on plans with only a
+weekly limit. Hover it for each limit's reset time.
+
+Limits belong to your account, not the chat: every chat on the same account shows the latest numbers, also after a restart.
+
+## Warning colour from 85%, red when you're blocked
+
+The chip turns to the warning colour from 85% and red when a limit is reached.
+
+<Shot name="limits-chip.png" alt="The Limits chip in its normal, warning and red states, and the hover with reset times" />
+
+## Where the numbers come from
+
+AIB uses only each provider's official numbers. Reading them sends no prompt and uses none of your quota.
+
+| Agent | Source |
+| --- | --- |
+| Claude Code | The usage numbers Claude Code's adapter sends during a turn |
+| Codex | Codex's own session files, or its app server |
+| Mistral Vibe | Its account request (a monthly allowance) |
+| Qwen Code | "limit reached" once the cap is hit |
+| Every other agent, OMP included | No chip |

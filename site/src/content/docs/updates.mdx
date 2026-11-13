@@ -1,0 +1,43 @@
+---
+title: 'AIB Updates: Update button tells you when a new AIB is ready and installs it in one click'
+description: A teal Update button shows when a checked new version is ready. One click installs it while your chats keep running. Downloads are checked against SHA256SUMS, and the old version comes back if the new one doesn't start.
+---
+
+import Shot from '../../components/Shot.astro';
+
+A beta that ships often is easy to fall behind on. AIB checks for a new version once a day, downloads and checks it, and shows
+one button when it's ready.
+
+## Update button: teal, top right, one click
+
+A teal **Update** button shows at the top right as soon as a new AIB is ready. Click it: AIB installs the update, closes and
+opens again. Your working chats keep running in the keeper.
+
+If chats are working that the update can't carry over, the button reads **Update when chats finish** and waits for them by
+itself. Click it again to cancel the wait.
+
+<Shot name="updates-button.png" alt="The teal Update button at the top right of the AIB window" />
+
+## One desktop notification per new version
+
+AIB tells you once per new version, even while it sits in the tray.
+
+## What's new tab after every update
+
+After an update, a **What's new in AIB &lt;version&gt;** tab shows what changed, newest release first.
+
+<Shot name="updates-whats-new.png" alt="The What's new tab after an update, listing the newest release first" />
+
+## Safe updates: checked, and rolled back if needed
+
+- A new version is downloaded and its SHA-256 is checked against the release's `SHA256SUMS` before AIB offers it. A file that
+  doesn't match is refused, and nothing is installed.
+- Nothing is installed until you click **Update** or **Install now**.
+- If the new version doesn't start, the old one comes back.
+
+## Turn the daily check off
+
+Open **Settings → AIB server → Updates** and untick **Automatically check for updates**. With it off, AIB makes no update
+check at all. **Check for updates** there checks once, whenever you click it.
+
+The `.deb` package and source runs don't update in place: the button tells you how to install the downloaded file instead.

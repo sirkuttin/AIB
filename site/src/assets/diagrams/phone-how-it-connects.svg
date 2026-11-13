@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 250" width="760" height="250" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <title>How your phone reaches your PC: phone, then your own Tailscale network, then AIB on your PC. No AIB server in between.</title>
+  <rect width="760" height="250" rx="14" fill="#16151B"/>
+  <!-- phone -->
+  <rect x="40" y="55" width="110" height="150" rx="16" fill="#22212A" stroke="#2BB3A3" stroke-width="3"/>
+  <rect x="80" y="66" width="30" height="5" rx="2.5" fill="#2BB3A3"/>
+  <text x="95" y="125" fill="#F2F2F5" font-size="18" font-weight="600" text-anchor="middle">Your</text>
+  <text x="95" y="148" fill="#F2F2F5" font-size="18" font-weight="600" text-anchor="middle">phone</text>
+  <text x="95" y="180" fill="#A9A8B3" font-size="12" text-anchor="middle">AIB app + Tailscale</text>
+  <!-- tailnet -->
+  <rect x="235" y="80" width="290" height="100" rx="50" fill="none" stroke="#2BB3A3" stroke-width="2.5" stroke-dasharray="7 6"/>
+  <text x="380" y="122" fill="#F2F2F5" font-size="17" font-weight="600" text-anchor="middle">Your own Tailscale network</text>
+  <text x="380" y="146" fill="#A9A8B3" font-size="13" text-anchor="middle">encrypted, HTTPS, your devices only</text>
+  <!-- PC -->
+  <rect x="600" y="62" width="130" height="100" rx="8" fill="#22212A" stroke="#2BB3A3" stroke-width="3"/>
+  <rect x="645" y="162" width="40" height="18" fill="#22212A" stroke="#2BB3A3" stroke-width="3"/>
+  <rect x="625" y="180" width="80" height="8" rx="4" fill="#2BB3A3"/>
+  <text x="665" y="103" fill="#F2F2F5" font-size="18" font-weight="600" text-anchor="middle">Your PC</text>
+  <text x="665" y="128" fill="#A9A8B3" font-size="12" text-anchor="middle">AIB, its own</text>
+  <text x="665" y="145" fill="#A9A8B3" font-size="12" text-anchor="middle">phone port</text>
+  <!-- arrows -->
+  <path d="M152 130 H228" stroke="#FFC247" stroke-width="3" fill="none"/>
+  <path d="M228 130 l-10 -6 v12 z" fill="#FFC247"/>
+  <path d="M532 130 H594" stroke="#FFC247" stroke-width="3" fill="none"/>
+  <path d="M594 130 l-10 -6 v12 z" fill="#FFC247"/>
+  <text x="380" y="228" fill="#FF7A59" font-size="14" font-weight="600" text-anchor="middle">No AIB server, no relay, no AIB account in between</text>
+</svg>
