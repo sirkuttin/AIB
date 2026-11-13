@@ -248,24 +248,31 @@ Deno.test({
       async () => {
         const r = await phoneGet(port, "/api/remote/home", phone.token);
         const chat = ((r.json.chats ?? []) as Json[]).find((c) => c.id === id);
-        return chat && (chat.helpers as Json[]).length ? r : null;
+        return chat && chat.state === "working" ? r : null;
       },
-      "home with the helper",
+      "home with the working chat",
       30,
     );
     answers.push(home);
     const card = (home.json.chats as Json[]).find((c) => c.id === id)!;
-    assertEquals([card.state, home.json.main], ["working", id]);
-    assertEquals(card.helpers, [{
+    assert(!("main" in home.json), "no main chat");
+    assert(
+      typeof (card.project as Json).name === "string" && /^[0-9a-f]{12}$/.test((card.project as Json).id as string),
+      "the card names its project",
+    );
+    const chat = await until(
+      async () => {
+        const r = await phoneGet(port, `/api/remote/chat?id=${id}&tail=50`, phone.token);
+        return ((r.json.helpers ?? []) as Json[]).length ? r : null;
+      },
+      "the chat with its subagent",
+      30,
+    );
+    assertEquals(chat.json.helpers, [{
       id: "child-1",
       title: "Review the fixture",
       state: "running",
     }]);
-    const chat = await phoneGet(
-      port,
-      `/api/remote/chat?id=${id}&tail=50`,
-      phone.token,
-    );
     answers.push(chat);
     assertEquals(chat.status, 200);
     assert(!chat.text.includes(PNG), "no inline image bytes");
@@ -1020,23 +1027,27 @@ Deno.test({
         await page.eval('!document.cookie.includes("aib-phone")'),
         "the page script cannot read the cookie",
       );
-      const sections = await page.eval<string[]>(
-        '[...document.querySelectorAll(".ph-section")].map((h) => h.textContent)',
+      // one plain list (no sections, no main chat), newest change of state first: blog asks now, main started 4 min ago
+      assertEquals(await page.eval('document.querySelectorAll(".ph-section").length'), 0, "no sections");
+      assertEquals(
+        await page.eval<string[]>('[...document.querySelectorAll(".ph-card")].map((c) => c.dataset.chat)'),
+        ["blog", "main"],
       );
-      assertEquals(sections, ["Needs you · 1", "Main chat"]);
-      const helpers = await page.eval<string[]>(
-        '[...document.querySelectorAll(".ph-card.main .ph-helpers li")].map((li) => li.textContent)',
+      const card = await page.eval<string[]>(
+        `(() => { const c = document.querySelector('.ph-card[data-chat="main"]'); return [c.querySelector('.ph-title').textContent, c.querySelector('.ph-r2').textContent, c.querySelector('.ph-time').textContent, c.querySelector('.ph-state').textContent]; })()`,
       );
-      assertEquals(helpers, [
-        "Codex · testsworking",
-        "Gemini · docsworking",
-        "Claude · apidone",
-      ]);
+      assertEquals(card[0], "Main · checkout redesign");
+      assertEquals(card[1], "shop · Claude Code · Working · 4m", "project, agent, state in the PC's words");
+      assertEquals(card[2], "4m");
+      assertEquals(
+        await page.eval(`document.querySelector('.ph-card[data-chat="blog"] .ph-state').textContent`),
+        "Needs you",
+      );
       assert(
         await page.eval(NO_SIDEWAYS),
         `home: sideways scroll ${await page.eval(WIDTHS)}`,
       );
-      await page.click(".ph-card.main");
+      await page.click('.ph-card[data-chat="main"]');
       await page.waitFor(
         'document.querySelectorAll(".ph-msg").length >= 3',
         15000,
@@ -1047,20 +1058,39 @@ Deno.test({
         `chat: sideways scroll ${await page.eval(WIDTHS)}`,
       );
       assertEquals(
-        await page.eval('document.querySelector(".ph-fold").textContent'),
-        "Show steps (6)",
+        await page.eval('document.querySelector(".ph-steps-fold .ph-fold").textContent'),
+        "✓6 steps›",
       );
       assert(
         String(
           await page.eval('document.querySelector(".ph-live").textContent'),
         ).startsWith("Step 7 · RUN npm run lint · 4 min"),
       );
+      // one agent per chat: its subagents are a card in the stream (title and state only) and a shortcut under the title
+      assertEquals(
+        await page.eval('document.getElementById("phSubsGo").textContent'),
+        "2 subagents working ›",
+      );
+      assert(
+        await page.eval('![...document.querySelectorAll(".ph-head, #phSubs, .ph-bottom")].some((e) => /helper|main chat/i.test(e.textContent))'),
+        "no helper or main-chat words around the conversation",
+      );
+      await page.click("#phSubsGo");
+      await page.waitFor('document.querySelectorAll("#phSubs li").length === 3', 15000, "the Subagents card");
+      assertEquals(
+        await page.eval<string[]>('[...document.querySelectorAll("#phSubs li")].map((li) => li.textContent)'),
+        ["Codex · testsworking", "Gemini · docsworking", "Claude · apidone"],
+      );
+      assertEquals(
+        await page.eval('document.querySelector("#phSubs .ph-fold").textContent'),
+        "⑂Subagents · 3 · 2 working›",
+      );
       await page.waitFor(
         '(() => { const i = document.querySelector(".ph-img"); return i && i.complete && i.naturalWidth > 0; })()',
         15000,
         "the picture, by cookie",
       );
-      await page.click(".ph-fold");
+      await page.click(".ph-steps-fold .ph-fold");
       assert(
         await page.eval(NO_SIDEWAYS),
         `chat with steps open: sideways scroll ${await page.eval(WIDTHS)}`,
@@ -1313,19 +1343,25 @@ Deno.test({
       });
       await serveFor(page, s, { on: true });
       await signInPage(page, phone.token, phone.id);
-      await page.waitFor('!!document.querySelector(\'.ph-card.saved[data-saved="claude:s-long"]\')', 15000, "the not-running list");
+      await page.waitFor(`!!document.querySelector('.ph-card.nr[data-saved="claude:s-long"]')`, 15000, "the not-running chats");
+      // in the same list by time (the live chat started 4 min ago, s-two 10 min ago, s-long 2 h ago), lighter, "Not running"
       assertEquals(
-        await page.eval('[...document.querySelectorAll(".ph-section")].map((h) => h.textContent).at(-1)'),
-        "Not running · 2",
+        await page.eval<string[]>('[...document.querySelectorAll(".ph-card")].map((c) => c.dataset.chat || c.dataset.saved)'),
+        ["main", "claude:s-two", "claude:s-long"],
       );
-      assert(
-        String(await page.eval('document.querySelector(\'.ph-card.saved[data-saved="claude:s-long"] .ph-meta\').textContent'))
-          .startsWith("Not running · Claude Code · last active 2 h ago"),
+      assertEquals(
+        await page.eval(`document.querySelector('.ph-card.nr[data-saved="claude:s-long"] .ph-r2').textContent`),
+        "shop · Claude Code · Not running",
       );
+      assertEquals(await page.eval(`document.querySelector('.ph-card[data-saved="claude:s-long"] .ph-time').textContent`), "2h");
+      const looks = await page.eval<string[]>(
+        `[...document.querySelectorAll('.ph-card[data-chat="main"], .ph-card[data-saved="claude:s-long"]')].map((c) => getComputedStyle(c).backgroundColor)`,
+      );
+      assert(looks[0] !== looks[1], `not running is drawn lighter: ${looks}`);
       assert(await page.eval(NO_SIDEWAYS), `home: sideways scroll ${await page.eval(WIDTHS)}`);
 
       // read only, with Continue this chat
-      await page.click('.ph-card.saved[data-saved="claude:s-long"]');
+      await page.click('.ph-card.nr[data-saved="claude:s-long"]');
       await page.waitFor(
         'document.getElementById("app").dataset.screen === "saved" && !!document.getElementById("phContinueBtn")',
         15000,
@@ -1371,7 +1407,7 @@ Deno.test({
 Deno.test({
   ...OPTS,
   name:
-    'phone page at 375 px: "Needs you" opens the question sheet; approval sheet Deny / Allow once; composer, Stop, queue; switches off hide them',
+    'phone page at 375 px: approvals and questions are cards in the chat (open when newest, closed after newer activity, open from a notification, Show bar), inline answer and Allow once reach the agent, then a one-line record; no bottom sheet; composer, Stop, queue; switches off hide them',
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
@@ -1399,6 +1435,7 @@ Deno.test({
           ],
         },
       }];
+      main.events.push({ seq: main.events.length + 1, kind: "permission", time: main.events.length + 1, data: { key: "perm1", params: (main.permissions[0] as Json).params } });
       main.queue = {
         items: [{
           id: "q1",
@@ -1424,7 +1461,7 @@ Deno.test({
         },
         subagents: {},
         breadth: { sessionInfo: { title: "Blog site" } },
-        events: [{ seq: 1, kind: "user", data: { text: "Convert the posts" } }],
+        events: [{ seq: 1, kind: "user", data: { text: "Convert the posts" } }, { seq: 2, kind: "elicitation", data: { key: "q1", params: { message: "Which date format for posts?" } } }],
         permissions: [],
         elicitations: [{
           key: "q1",
@@ -1490,47 +1527,55 @@ Deno.test({
         `home: sideways scroll ${await page.eval(WIDTHS)}`,
       );
 
-      // "Needs you" -> the chat with the question sheet already up
+      // a question is a card IN the chat (no sheet over it), open because it is the newest thing there
       await page.click('.ph-card[data-chat="blog"]');
       await page.waitFor(
-        'document.getElementById("app").dataset.sheet === "question"',
+        '!!document.querySelector(\'.ph-req.open[data-req="q1"]\')',
         15000,
-        "the question sheet",
+        "the open question card",
+      );
+      assertEquals(
+        await page.eval(
+          '[document.querySelectorAll("#phSheet, .ph-sheet, .ph-dim, .ph-sheet-wrap, #app [role=dialog]").length, document.querySelector(\'.ph-req[data-req="q1"] .ph-rt b\').textContent]',
+        ),
+        [0, "Needs you · question"],
+        "no bottom sheet",
       );
       assert(
         await page.eval(NO_SIDEWAYS),
-        `question sheet: sideways scroll ${await page.eval(WIDTHS)}`,
+        `question card: sideways scroll ${await page.eval(WIDTHS)}`,
       );
       const opts = await page.eval<number[]>(
-        '[...document.querySelectorAll("#phSheet .ph-opt")].map((b) => b.getBoundingClientRect().height)',
+        '[...document.querySelectorAll(\'.ph-req[data-req="q1"] .ph-opt\')].map((b) => b.getBoundingClientRect().height)',
       );
       assert(
         opts.length === 2 && opts.every((h) => h >= 44),
         `choices are big targets: ${opts}`,
       );
-      await page.shot("phone-question-sheet");
-      await page.click("#phAnswer"); // nothing picked: it says what is missing, nothing is sent
+      await page.shot("phone-question-card");
+      await page.click('[data-answer="q1"]'); // nothing picked: it says what is missing, nothing is sent
       await page.waitFor(
-        'document.querySelector("#phSheet .ph-error")?.textContent === "Fill in: Date format."',
+        'document.querySelector(\'.ph-req[data-req="q1"] .ph-error\')?.textContent === "Fill in: Date format."',
         5000,
         "missing",
       );
       const before = s.liveCalls.length;
-      await page.click('#phSheet [data-field="format"] button:last-of-type');
-      await page.click("#phField-note");
+      await page.click('.ph-req[data-req="q1"] [data-field="format"] button:last-of-type');
+      await page.click("#phField-q1-note");
       await page.type("Use the long one on the home page");
       assertEquals(
         await page.eval(
-          'getComputedStyle(document.getElementById("phField-note")).fontSize',
+          'getComputedStyle(document.getElementById("phField-q1-note")).fontSize',
         ),
         "16px",
       );
       assertEquals(s.liveCalls.length, before);
-      await page.click("#phAnswer");
+      await page.click('[data-answer="q1"]');
+      // after acting, the card shrinks to a one-line record
       await page.waitFor(
-        'document.getElementById("app").dataset.sheet === ""',
+        '!!document.querySelector(\'.ph-req.done[data-req="q1"]\')',
         15000,
-        "the sheet closes",
+        "the record",
       );
       assertEquals(s.liveCalls.at(-1), ["elicitation", {
         id: "blog",
@@ -1538,8 +1583,14 @@ Deno.test({
         action: "accept",
         content: { format: "iso", note: "Use the long one on the home page" },
       }]);
+      assertEquals(
+        await page.eval('document.querySelector(\'.ph-req.done[data-req="q1"]\').textContent'),
+        "✓You answered from this phone: 2026-11-12, Use the long one on the home page",
+      );
+      await sleep(3500); // a poll: the request is gone on the PC, the record stays
+      assert(await page.eval('!!document.querySelector(\'.ph-req.done[data-req="q1"]\')'), "the record stays");
 
-      // the main chat: an approval waits; its sheet has two big buttons and the long command wraps
+      // the main chat: an approval card, open because it is the newest thing; two big buttons and the long command wraps
       await page.click(".ph-back");
       await page.waitFor(
         'document.getElementById("app").dataset.screen === "home"',
@@ -1548,43 +1599,74 @@ Deno.test({
       );
       await page.click('.ph-card[data-chat="main"]');
       await page.waitFor(
-        'document.getElementById("app").dataset.sheet === "permission"',
+        '!!document.querySelector(\'.ph-req.open[data-req="perm1"]\')',
         15000,
-        "the approval sheet",
+        "the open approval card",
       );
-      const sheet = await page.eval<Json>(`(() => {
-        const s = document.getElementById('phSheet').getBoundingClientRect();
-        const cmd = document.querySelector('#phSheet .ph-cmd');
-        const buttons = [...document.querySelectorAll('#phSheet .ph-answer .ph-btn')].map((b) => [b.textContent, Math.round(b.getBoundingClientRect().height)]);
-        return { top: s.top, bottom: Math.round(s.bottom), height: innerHeight, cmdWraps: cmd.scrollWidth <= cmd.clientWidth, buttons,
-          notes: [...document.querySelectorAll('#phSheet .ph-note')].map((n) => n.textContent) };
+      const card = await page.eval<Json>(`(() => {
+        const box = document.querySelector('.ph-req[data-req="perm1"]');
+        const cmd = box.querySelector('.ph-cmd');
+        const buttons = [...box.querySelectorAll('.ph-answer .ph-btn')].map((b) => [b.textContent, Math.round(b.getBoundingClientRect().height)]);
+        return { head: box.querySelector('.ph-rt b').textContent, cmdWraps: cmd.scrollWidth <= cmd.clientWidth, buttons,
+          notes: [...box.querySelectorAll('.ph-note')].map((n) => n.textContent) };
       })()`);
-      assertEquals(sheet.buttons, [["Deny", 48], ["Allow once", 48]]);
-      assert(sheet.cmdWraps, "the command wraps");
-      assert(
-        (sheet.top as number) >= 0 &&
-          (sheet.bottom as number) <= (sheet.height as number),
-        `the sheet fits: ${JSON.stringify(sheet)}`,
-      );
-      assert(
-        (sheet.notes as string[]).includes("Other choices are on your PC."),
-      );
+      assertEquals(card.head, "Needs you · approval");
+      assertEquals(card.buttons, [["Deny", 48], ["Allow once", 48]]);
+      assert(card.cmdWraps, "the command wraps");
+      assert((card.notes as string[]).includes("Other choices are on your PC."));
       assert(
         await page.eval(NO_SIDEWAYS),
-        `approval sheet: sideways scroll ${await page.eval(WIDTHS)}`,
+        `approval card: sideways scroll ${await page.eval(WIDTHS)}`,
       );
-      await page.shot("phone-approval-sheet");
-      await page.click('#phSheet [data-option="yes"]');
+      await page.shot("phone-approval-card");
+      // newer activity follows it: closed until tapped
+      main.events.push({
+        seq: main.events.length + 1,
+        kind: "update",
+        time: main.events.length + 1,
+        data: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Meanwhile I read the rest." } } },
+      });
       await page.waitFor(
-        'document.getElementById("app").dataset.sheet === ""',
+        '!!document.querySelector(\'.ph-req[data-req="perm1"]:not(.open)\')',
         15000,
-        "the sheet closes",
+        "closed after newer activity",
+      );
+      // scrolled away from it: "Needs you · Show ↑" above the message box; a tap brings it back, open
+      await page.eval("window.scrollTo(0, 0)");
+      await page.waitFor('document.getElementById("phAbove") && !document.getElementById("phAbove").hidden', 5000, "the Show bar");
+      assertEquals(
+        await page.eval('document.getElementById("phAbove").textContent'),
+        "Needs you · approval aboveShow ↑",
+      );
+      await page.eval('document.getElementById("phAbove").click(), true'); // a tap where it sits (page.click would scroll first)
+      await page.waitFor(
+        '(() => { const c = document.querySelector(\'.ph-req.open[data-req="perm1"]\'); if (!c) return false; const r = c.getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight; })()',
+        5000,
+        "open and in view",
+      );
+      // a notification tap lands on it open, even with newer activity after it
+      await page.goto(`https://${NAME}/phone.html#chat=main&sheet=1`);
+      await page.waitFor(
+        '!!document.querySelector(\'.ph-req.open[data-req="perm1"]\')',
+        15000,
+        "opened from a notification",
+      );
+      await page.click('.ph-req[data-req="perm1"] [data-option="yes"]');
+      await page.waitFor(
+        '!!document.querySelector(\'.ph-req.done[data-req="perm1"]\')',
+        15000,
+        "the record",
       );
       assertEquals(s.liveCalls.at(-1), ["permission", {
         id: "main",
         key: "perm1",
         option: "yes",
       }]);
+      assert(
+        String(await page.eval('document.querySelector(\'.ph-req.done[data-req="perm1"]\').textContent'))
+          .startsWith("✓You allowed once from this phone: npm run e2e"),
+      );
+      assertEquals(await page.eval('document.getElementById("phToast")?.textContent'), "Allowed once");
 
       // the composer at the bottom: 16 px text, Stop while working; typing survives the 3 s polls
       const bar = await page.eval<Json>(`(() => {
@@ -1670,13 +1752,13 @@ Deno.test({
         scopes: ["phone.read"],
       });
       await page.waitFor(
-        '!document.getElementById("phComposer") && !!document.querySelector(".ph-wait[data-wait=perm2]")',
+        '!document.getElementById("phComposer") && !!document.querySelector(\'.ph-req.open[data-req="perm2"]\')',
         15000,
         "controls hidden",
       );
       assertEquals(
         await page.eval(
-          'document.querySelectorAll(".ph-wait .ph-btn, .ph-queued .ph-btn").length',
+          'document.querySelectorAll(".ph-req .ph-btn, .ph-queued .ph-btn").length',
         ),
         0,
       );
@@ -1687,7 +1769,7 @@ Deno.test({
       );
       assert(
         await page.eval(
-          'document.querySelector(".ph-wait[data-wait=perm2]").textContent.includes("Finish this on your PC.")',
+          'document.querySelector(\'.ph-req[data-req="perm2"]\').textContent.includes("Allowing from this phone is off.")',
         ),
       );
       assert(
@@ -1702,7 +1784,7 @@ Deno.test({
         scopes: ["phone.read", "phone.prompt", "phone.approve", "phone.answer"],
       });
       await page.waitFor(
-        '!!document.getElementById("phComposer") && !!document.querySelector(".ph-wait .ph-btn")',
+        '!!document.getElementById("phComposer") && !!document.querySelector(".ph-req .ph-btn")',
         15000,
         "controls back",
       );
@@ -1714,7 +1796,7 @@ Deno.test({
       );
       assertEquals(
         await page.eval(
-          '[!!document.getElementById("phComposer"), document.querySelectorAll(".ph-wait .ph-btn, .ph-queued .ph-btn").length]',
+          '[!!document.getElementById("phComposer"), document.querySelectorAll(".ph-req .ph-btn, .ph-queued .ph-btn").length]',
         ),
         [false, 0],
       );
@@ -2126,7 +2208,7 @@ Deno.test({
 Deno.test({
   ...OPTS,
   name:
-    "phone page at 375 px: another chat needs you while the page is on screen -> a banner, no push; tap opens it with its sheet; hidden -> left",
+    "phone page at 375 px: no banner on the chat list; inside a chat, another chat needing you or finishing -> a banner, no push; tap opens it at its card; finished goes after 10 s; hidden -> left",
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
@@ -2174,6 +2256,17 @@ Deno.test({
       });
       await serveFor(page, s, { on: true });
       await signInPage(page, phone.token, phone.id);
+      // on the chat list: another chat finishing shows no banner (its card's state says it)
+      blog.busy = false;
+      blog.attention = { state: "idle", needs: 0, turnEndedAt: new Date().toISOString(), busySince: null };
+      await page.waitFor(
+        'document.querySelector(\'.ph-card[data-chat="blog"] .ph-state\')?.textContent === "Idle"',
+        15000,
+        "blog finished on its card",
+      );
+      await sleep(5000); // the finished turn settles (3 s) and the next polls come
+      assertEquals(await page.eval('document.querySelectorAll(".ph-banner").length'), 0, "no banner on the chat list");
+      assertEquals(pushes, [], "no push while the phone is in hand");
       // on the main chat (a link opens it, as a push would)
       await page.eval(`location.hash = "#chat=${main.id}"`);
       await page.waitFor(
@@ -2182,7 +2275,6 @@ Deno.test({
         "the main chat",
       );
       // the blog chat asks a question
-      blog.busy = false;
       blog.elicitations = [{
         key: "q1",
         params: {
@@ -2212,14 +2304,30 @@ Deno.test({
         `banner: sideways scroll ${await page.eval(WIDTHS)}`,
       );
       assertEquals(pushes, [], "no push while the phone is in hand");
-      // the tap opens that chat with its sheet up; the banner goes
+      // the tap opens that chat at its question card, open; the banner goes
       await page.click(".ph-banner-open");
       await page.waitFor(
-        'window.__aibPhone.chatId === "blog" && document.getElementById("app").dataset.sheet === "question"',
+        'window.__aibPhone.chatId === "blog" && !!document.querySelector(\'.ph-req.open[data-req="q1"]\')',
         10000,
-        "the blog chat with its question sheet",
+        "the blog chat with its question card open",
       );
       assertEquals(await page.eval('!document.querySelector(".ph-banner")'), true);
+      // the main chat finishes: "Chat finished" names it, and goes by itself after 10 s
+      main.busy = false;
+      main.attention = { state: "idle", needs: 0, turnEndedAt: new Date().toISOString(), busySince: null };
+      await page.waitFor(
+        '!!document.querySelector(".ph-banner.turn")',
+        15000,
+        "the finished banner",
+      );
+      assertEquals(
+        await page.eval<string>('document.querySelector(".ph-banner-open").textContent'),
+        "Chat finishedMain · checkout redesign",
+      );
+      const shown = Date.now();
+      await page.waitFor('!document.querySelector(".ph-banner")', 15000, "the finished banner goes by itself");
+      assert(Date.now() - shown >= 7000, "after about 10 s");
+      assertEquals(pushes, [], "no push while the phone is in hand");
       // the page is hidden: the PC knows at once (no waiting for the 15 s)
       assertEquals(s.ctx.presence.phones().map((p) => p.chat), ["blog"]);
       await page.eval(

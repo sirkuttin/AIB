@@ -99,7 +99,7 @@ test('Devices: one line under the switch says closing the window keeps AIB in th
   }
 });
 
-test('helper state dots: needs you = warning, working = accent, done = good, idle = muted', () => {
+test('subagent state dots: needs you = warning, working = accent, done = good, idle = muted', () => {
   assert.equal(P.helperTone('needs_you'), 'need');
   assert.equal(P.helperTone('running'), 'work');
   assert.equal(P.helperTone('completed'), 'turn');
@@ -113,12 +113,12 @@ test('helper state dots: needs you = warning, working = accent, done = good, idl
   assert.equal(bg('.ph-dot.idle'), 'var(--muted)');
 });
 
-test('phone.css: Live chip is a green dot with muted text; helpers box and inline links are padded', () => {
+test('phone.css: Live chip is a green dot with muted text; the Subagents card and inline links are padded', () => {
   const rules = cssRules(fs.readFileSync(path.join(APP, 'phone.css'), 'utf8'));
   const d = (sel) => Object.assign({}, ...rules.filter((r) => r.selector === sel).map((r) => r.declarations));
   assert.equal(d('.ph-chip.live').color, 'var(--muted)');
   assert.equal(d('.ph-chip.live::before').background, 'var(--ok)');
-  assert.match(d('.ph-helpers.ph-card').padding, /^\d+px (1[2-9]|[2-9]\d)px$/, 'inner horizontal padding');
+  assert.match(d('.ph-fold').padding, /^\d+(px)? (1[2-9]|[2-9]\d)px$/, 'inner horizontal padding');
   const pad = d('.ph-msg a').padding.split(' ');
   assert.ok(parseInt(pad[0], 10) * 2 + 21 >= 44, 'a link line (about 21 px) plus padding reaches 44 px');
 });

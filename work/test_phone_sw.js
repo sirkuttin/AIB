@@ -38,6 +38,7 @@ test('worker: a push shows only its words, with one tag; a tap opens the chat wi
       tag: 'aib-attention',
       renotify: true,
       icon: '/icons/icon-256.png',
+      badge: '/icons/badge-96.png',
       data: { chat: 'c1', sheet: true },
     },
   });

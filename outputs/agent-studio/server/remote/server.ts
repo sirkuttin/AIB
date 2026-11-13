@@ -24,6 +24,7 @@ import { cleanName, type Device, type DeviceStore, type PhoneScope } from './dev
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
 import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, revisionOf, type TitleCache } from './payloads.ts';
+import { projectsFor } from './projects.ts';
 import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChats, savedHistory } from './saved.ts';
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
 import type { Manifest } from '../artifacts/artifacts.ts';
@@ -52,6 +53,13 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
   '/icons/icon-128.png': `icons${sep}128x128.png`,
   '/icons/icon-256.png': `icons${sep}128x128@2x.png`,
   '/icons/icon-512.png': `icons${sep}icon.png`,
+  // the install icons (tools/make_icons.ts PHONE): Android's 192 px, maskable 192 and 512 (the mark inside the safe zone on the
+  // brand teal), the iPhone Home Screen icon (180 px, opaque) and the notification badge (white on see-through)
+  '/icons/icon-192.png': `icons${sep}phone-192.png`,
+  '/icons/maskable-192.png': `icons${sep}phone-maskable-192.png`,
+  '/icons/maskable-512.png': `icons${sep}phone-maskable-512.png`,
+  '/icons/apple-touch-180.png': `icons${sep}phone-apple-180.png`,
+  '/icons/badge-96.png': `icons${sep}phone-badge-96.png`,
 };
 export const MANIFEST_PATH = '/manifest.webmanifest';
 
@@ -159,7 +167,7 @@ export const PHONE_VIEW: Readonly<Record<string, 'page' | 'image' | 'text' | 'pc
   svg: 'page',
   md: 'page',
   image: 'image',
-  csv: 'text',
+  csv: 'page', // a table (the artifact origin draws it with ?view=1)
   json: 'text',
   text: 'text',
   pdf: 'pc',
@@ -199,10 +207,15 @@ export function manifestOf(pcName: string): Record<string, unknown> {
     display: 'standalone',
     background_color: '#16151b',
     theme_color: '#16151b',
+    // Chrome installs a page with a 192 and a 512 icon; maskable ones fill Android's circle or squircle instead of sitting small
+    // in a white one
     icons: [
-      { src: '/icons/icon-128.png', sizes: '128x128', type: 'image/png' },
-      { src: '/icons/icon-256.png', sizes: '256x256', type: 'image/png' },
+      { src: '/icons/icon-128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
+      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icons/icon-256.png', sizes: '256x256', type: 'image/png', purpose: 'any' },
       { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icons/maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   };
 }
@@ -476,7 +489,9 @@ export class RemoteServer {
     if (path === '/api/remote/home') {
       const notices = seen(null);
       const home = await homePayload(this.host.ctx, this.host.pcName(), this.host.titles);
-      const saved = (await this.host.saved.list(this.host.ctx)).map(publicSaved);
+      const savedList = await this.host.saved.list(this.host.ctx);
+      const project = projectsFor(this.host.ctx, savedList.map((c) => c.cwd));
+      const saved = savedList.map((c) => ({ ...publicSaved(c), project: project(c.cwd) }));
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
       const scopes = [...device.scopes];
       const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('');
@@ -545,7 +560,11 @@ export class RemoteServer {
     const own = store!.versionUrl(manifest, version);
     const path = own.slice(own.indexOf('/a/'));
     const ticket = this.host.tickets.mint(device.id, id);
-    return this.json(200, { ...base, view, url: `${origin}/r/${ticket}${path}${manifest.kind === 'md' ? '?view=1' : ''}` });
+    return this.json(200, {
+      ...base,
+      view,
+      url: `${origin}/r/${ticket}${path}${manifest.kind === 'md' || manifest.kind === 'csv' ? '?view=1' : ''}`,
+    });
   }
 
   /** A phone action (remote/actions.ts): device and switch, the body checked against the chat now, then the live op; one log line. */

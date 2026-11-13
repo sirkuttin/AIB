@@ -1,9 +1,10 @@
 /**
  * What the phone reads: small payloads built for a phone on a mobile link (review break 8), not the page's /api/live/* answers.
  *
- *   home   every live chat with its title, state, what waits for you, your turn, and its own helpers (`subagents`, folded under it
- *          on the phone; there is no server relation between chats, so none is made up). Needs-you chats first. A revision lets the
- *          phone poll cheaply (304 when nothing changed).
+ *   home   every live chat with its title, project (name and colour, no path), agent, state, whether it waits for you, your
+ *          turn, unread, when it last changed state (the list's order: newest change first) and its card's last line. One plain
+ *          list: no main chat, no sections (owner, phone prototypes round 2). Under HOME_BUDGET bytes. A revision lets the phone
+ *          poll cheaply (304 when nothing changed).
  *   chat   the last N events of one live chat, images replaced by URLs (/api/remote/image, cookie only) and other file bytes
  *          dropped; no model-in-use lookup, no settings, no permission bodies beyond a title. Artifact links (absolute loopback
  *          URLs of the PC's artifact origin, in live events and in the history a chat replays) point at the phone's artifact
@@ -12,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
+import { type PhoneProject, projectsFor } from './projects.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -45,32 +47,216 @@ export interface HomeChat {
   title: string;
   agent: string;
   folder: string;
+  /** The project the chat belongs to (remote/projects.ts): a short id, the PC's name for it and its colour. */
+  project: PhoneProject;
   state: string;
   needs: number;
   busySince: string | null;
   turnEndedAt: string | null;
   yourTurn: boolean;
-  helpers: Helper[];
+  /** Finished and not read yet on the PC (the PC's unread dot). */
+  unread: boolean;
+  /** When the chat last changed state (started working, asked, finished; a message you send starts it working). The list's order. */
+  changedAt: string;
+  /** The card's last line: what it asks, the step it works on, or the last message ('' until the PC has read it once). */
+  line: string;
 }
 
 export interface Home {
   revision: string;
   pcName: string;
+  /** Newest change of state first. */
   chats: HomeChat[];
-  /** The chat drawn as the big card: the newest working or needing chat with helpers, else the newest active chat. */
-  main: string | null;
 }
 
-/** Remembered first prompts of live chats (looked up once per chat, in the background), for chats with no other title. */
+/** The most a home answer may weigh (the phone polls it every 4 s on a mobile link): longer last lines are cut first. */
+export const HOME_BUDGET = 64 * 1024;
+export const LINE_MAX = 140;
+/** How long a home answer waits for the card lines that changed (a slow agent host never holds the list up longer). */
+export const LINE_WAIT_MS = 800;
+/** Chats that finished before this AIB started and were never read count as read (the PC page does the same from its start). */
+const STARTED = Date.now();
+
+type Phase = 'needs_you' | 'working' | 'opening' | 'idle';
+const phaseOf = (attention: Json): Phase => {
+  const s = str(attention.state, 20);
+  return s === 'needs_you' || s === 'working' || s === 'opening' ? s : 'idle';
+};
+const ms = (iso: unknown): number => (typeof iso === 'string' ? Date.parse(iso) || 0 : 0);
+
+/**
+ * When each live chat last changed state, kept while AIB runs: fed by the AttentionWatcher's look at the chat list every 2 s
+ * (watcher.ts onList) and by every home answer. Working takes the turn's start, idle the turn's end; asking (and opening) the
+ * time it was first seen. A chat seen for the first time takes the best time its list entry has.
+ */
+export class StateTimes {
+  readonly #at = new Map<string, { phase: Phase; at: number }>();
+  constructor(readonly clock: () => number = Date.now) {}
+
+  #first(phase: Phase, attention: Json, now: number): number {
+    if (phase === 'working') return ms(attention.busySince) || now;
+    if (phase === 'idle') return ms(attention.turnEndedAt) || ms(attention.busySince);
+    return now;
+  }
+
+  /** One look at the agent host's chat list. */
+  see(listing: unknown): void {
+    const now = this.clock();
+    const seen = new Set<string>();
+    for (const raw of Array.isArray(obj(listing).connections) ? obj(listing).connections as unknown[] : []) {
+      const c = obj(raw);
+      const id = str(c.id, 100);
+      if (!id || c.closed) continue;
+      seen.add(id);
+      this.#see(id, obj(c.attention), now);
+    }
+    for (const id of [...this.#at.keys()]) if (!seen.has(id)) this.#at.delete(id);
+  }
+
+  #see(id: string, attention: Json, now: number): number {
+    const phase = phaseOf(attention);
+    const old = this.#at.get(id);
+    if (old && old.phase === phase) return old.at;
+    let at: number;
+    if (!old) at = this.#first(phase, attention, now);
+    else if (phase === 'working') at = ms(attention.busySince) || now;
+    else if (phase === 'idle') at = ms(attention.turnEndedAt) || now;
+    else at = now;
+    this.#at.set(id, { phase, at });
+    while (this.#at.size > 2000) this.#at.delete(this.#at.keys().next().value!);
+    return at;
+  }
+
+  /** When this chat last changed state (ms; 0 when unknown). */
+  changedAt(id: string, attention: Json): number {
+    return this.#see(id, attention, this.clock());
+  }
+}
+
+/** The card line of a chat from its newest events and what waits: what it asks, the step it works on, the last message. */
+export function lineOf(state: Json): string {
+  const cut = (t: string) => {
+    const s = t.replace(/\s+/g, ' ').trim();
+    return s.length > LINE_MAX ? s.slice(0, LINE_MAX - 1) + '…' : s;
+  };
+  const perms = Array.isArray(state.permissions) ? state.permissions : [];
+  if (perms.length) {
+    const { title, detail } = permissionDetail(obj(obj(perms[0]).params));
+    return cut('Wants to run: ' + (detail || title));
+  }
+  const asks = Array.isArray(state.elicitations) ? state.elicitations : [];
+  if (asks.length) {
+    const m = obj(obj(asks[0]).params).message;
+    return cut('Asks: ' + (typeof m === 'string' && m.trim() ? m : 'a question'));
+  }
+  let message = '';
+  let who = '';
+  let step = '';
+  const running = new Map<string, string>();
+  for (const raw of Array.isArray(state.events) ? state.events : []) {
+    const e = obj(raw);
+    const data = obj(e.data);
+    if (e.kind === 'user') {
+      who = 'you';
+      message = typeof data.text === 'string' ? data.text : '';
+      continue;
+    }
+    if (e.kind !== 'update') continue;
+    const u = obj(data.update);
+    if (u.sessionUpdate === 'agent_message_chunk') {
+      const t = typeof obj(u.content).text === 'string' ? obj(u.content).text as string : '';
+      if (who === 'agent') message += t;
+      else {
+        who = 'agent';
+        message = t;
+      }
+    } else if (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update') {
+      const id = str(u.toolCallId, 200);
+      if (u.sessionUpdate === 'tool_call' && who === 'agent') who = 'steps'; // a new agent message after steps starts over
+      if (!id) continue;
+      const done = u.status === 'completed' || u.status === 'failed';
+      if (done) running.delete(id);
+      else running.set(id, str(u.title, 200) || running.get(id) || 'Step');
+    }
+  }
+  if (state.busy && running.size) step = [...running.values()].at(-1)!;
+  if (step) return cut('Working on: ' + step);
+  if (!message.trim()) return '';
+  return cut((who === 'you' ? 'You: ' : '') + message);
+}
+
+/**
+ * What the phone's home knows of live chats beyond the list: remembered first prompts (for chats with no other title), each chat's
+ * card line (looked up again in the background when the chat moved on), and when each changed state (StateTimes).
+ */
 export class TitleCache {
   readonly titles = new Map<string, string>();
+  readonly times = new StateTimes();
+  /** id -> [signature (cursor and what waits), line] */
+  readonly lines = new Map<string, [string, string]>();
   #busy = false;
   #queue: string[] = [];
+  #lineQueue = new Map<string, string>();
+  #lineBusy = false;
 
   want(ctx: WebContext, id: string): void {
     if (this.titles.has(id) || this.#queue.includes(id)) return;
     this.#queue.push(id);
     void this.#run(ctx);
+  }
+
+  /** The AttentionWatcher's look at the chat list (state-change times stay right while no phone looks). */
+  seeList(listing: unknown): void {
+    this.times.see(listing);
+  }
+
+  /** The card line known for this chat now; looked up again in the background when `sig` changed. */
+  line(ctx: WebContext, id: string, sig: string, cursor: number): string {
+    const known = this.lines.get(id);
+    if (!known || known[0] !== sig) {
+      this.#lineQueue.set(id, sig + '\n' + cursor);
+      void this.#runLines(ctx);
+    }
+    return known ? known[1] : '';
+  }
+
+  #lineWaiters: (() => void)[] = [];
+
+  /** Wait (at most `ms`) for the lines asked for to be looked up, so an answer carries them and its revision holds still. */
+  settleLines(ms: number): Promise<void> {
+    if (!this.#lineBusy && !this.#lineQueue.size) return Promise.resolve();
+    return new Promise((resolve) => {
+      const t = setTimeout(done, ms);
+      function done() {
+        clearTimeout(t);
+        resolve();
+      }
+      this.#lineWaiters.push(done);
+    });
+  }
+
+  async #runLines(ctx: WebContext): Promise<void> {
+    if (this.#lineBusy) return;
+    this.#lineBusy = true;
+    try {
+      while (this.#lineQueue.size) {
+        const [id, job] = this.#lineQueue.entries().next().value!;
+        this.#lineQueue.delete(id);
+        const [sig, cursorText] = job.split('\n');
+        const cursor = Number(cursorText) || 0;
+        let line = this.lines.get(id)?.[1] ?? '';
+        try {
+          // the newest events only; never cursor 0 (that read also refreshes the account's usage limits)
+          const state = obj(await ctx.host.liveState(id, Math.max(1, cursor - 80)));
+          if (state.id || Array.isArray(state.events)) line = lineOf(state);
+        } catch { /* gone */ }
+        this.lines.set(id, [sig, line]);
+        while (this.lines.size > 500) this.lines.delete(this.lines.keys().next().value!);
+      }
+    } finally {
+      this.#lineBusy = false;
+      for (const w of this.#lineWaiters.splice(0)) w();
+    }
   }
 
   async #run(ctx: WebContext): Promise<void> {
@@ -99,7 +285,7 @@ function helpersOf(subagents: unknown): Helper[] {
   const out: Helper[] = [];
   for (const [id, raw] of Object.entries(obj(subagents))) {
     const a = obj(raw);
-    out.push({ id, title: str(a.title, 120) || str(a.description, 120) || 'Helper', state: str(a.state, 40) || 'unknown' });
+    out.push({ id, title: str(a.title, 120) || str(a.description, 120) || 'Subagent', state: str(a.state, 40) || 'unknown' });
   }
   return out.slice(-30);
 }
@@ -108,16 +294,29 @@ export function revisionOf(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 20);
 }
 
+/** Cut the cards' last lines (longest first) until the answer fits `budget` bytes. */
+export function fitBudget<T extends { line: string }>(cards: T[], size: () => number, budget = HOME_BUDGET): void {
+  let over = size() - budget;
+  if (over <= 0) return;
+  for (const c of [...cards].sort((a, b) => b.line.length - a.line.length)) {
+    if (over <= 0) break;
+    const cut = Math.min(c.line.length, over + 1);
+    c.line = c.line.length - cut > 20 ? c.line.slice(0, c.line.length - cut - 1) + '…' : '';
+    over = size() - budget;
+  }
+}
+
 export async function homePayload(ctx: WebContext, pcName: string, titles: TitleCache): Promise<Home> {
   const listing = obj(await ctx.host.liveList());
   const marks = ctx.conversations.public().entries;
-  const chats: HomeChat[] = [];
-  for (const raw of Array.isArray(listing.connections) ? listing.connections : []) {
-    const c = obj(raw);
-    if (c.closed) continue;
+  const read = ctx.readState.public().chats;
+  const raws = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed && str(c.id, 100));
+  const project = projectsFor(ctx, raws.map((c) => str(c.projectRoot, 2000) || str(c.cwd, 2000)));
+  const chats: (HomeChat & { at: number })[] = [];
+  for (const c of raws) {
     const id = str(c.id, 100);
-    if (!id) continue;
-    const mark = obj(marks[`${str(c.provider, 60)}:${str(c.sessionId, 200)}`]);
+    const key = `${str(c.provider, 60)}:${str(c.sessionId, 200)}`;
+    const mark = obj(marks[key]);
     if (mark.archivedAt || mark.deletedAt) continue;
     const attention = obj(c.attention);
     const sessionTitle = str(obj(obj(c.breadth).sessionInfo).title, 170);
@@ -128,24 +327,35 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
     }
     const agent = agentName(c.provider);
     const folder = folderName(c.projectRoot || c.cwd);
+    const at = titles.times.changedAt(id, attention);
+    const ended = ms(attention.turnEndedAt);
+    const seen = Number(obj(read[key]).seenAt) || 0;
+    const needs = Number(attention.needs) || 0;
+    const asks = (Array.isArray(c.elicitations) ? c.elicitations : []).map((e) => str(obj(e).key, 100)).join(',');
     chats.push({
       id,
       title: title || `${agent}${folder ? ' in ' + folder : ''}`,
       agent,
       folder,
+      project: project(str(c.projectRoot, 2000) || str(c.cwd, 2000)),
       state: str(attention.state, 20) || 'idle',
-      needs: Number(attention.needs) || 0,
+      needs,
       busySince: (attention.busySince as string | null) ?? null,
       turnEndedAt: (attention.turnEndedAt as string | null) ?? null,
       yourTurn: Number(mark.yourTurnAt) > 0 && !mark.holdAt,
-      helpers: helpersOf(c.subagents),
+      unread: phaseOf(attention) === 'idle' && ended > (seen || STARTED),
+      changedAt: at ? new Date(at).toISOString() : '',
+      line: titles.line(ctx, id, `${Number(c.cursor) || 0}|${needs}|${asks}|${c.busy ? 1 : 0}`, Number(c.cursor) || 0),
+      at,
     });
   }
-  const activity = (c: HomeChat) => Math.max(Date.parse(c.busySince ?? '') || 0, Date.parse(c.turnEndedAt ?? '') || 0);
-  chats.sort((a, b) => (b.needs > 0 ? 1 : 0) - (a.needs > 0 ? 1 : 0) || activity(b) - activity(a) || a.title.localeCompare(b.title));
-  const active = chats.filter((c) => c.state === 'working' || c.state === 'needs_you');
-  const main = (active.find((c) => c.helpers.length) ?? active[0] ?? chats.find((c) => c.helpers.length) ?? chats[0])?.id ?? null;
-  const body = { pcName, chats, main };
+  // the lines that changed are looked up now (the newest events of those chats), within LINE_WAIT_MS
+  await titles.settleLines(LINE_WAIT_MS);
+  for (const c of chats) c.line = titles.lines.get(c.id)?.[1] ?? c.line;
+  chats.sort((a, b) => b.at - a.at || a.title.localeCompare(b.title));
+  const list: HomeChat[] = chats.map(({ at: _at, ...c }) => c);
+  const body = { pcName, chats: list };
+  fitBudget(list, () => new TextEncoder().encode(JSON.stringify(body)).byteLength);
   return { revision: revisionOf(body), ...body };
 }
 
@@ -211,6 +421,8 @@ export interface ChatPayload {
   title: string;
   agent: string;
   folder: string;
+  /** The project the chat belongs to (name and colour, as on its card). */
+  project: PhoneProject;
   state: string;
   needs: number;
   busy: boolean;
@@ -322,11 +534,13 @@ export async function chatPayload(
   const folder = folderName(state.projectRoot || state.cwd);
   const title = str(mark.title, 170) || str(obj(obj(state.breadth).sessionInfo).title, 170) || titles.titles.get(id) ||
     `${agent}${folder ? ' in ' + folder : ''}`;
+  const root = str(state.projectRoot, 2000) || str(state.cwd, 2000);
   return {
     id,
     title,
     agent,
     folder,
+    project: projectsFor(ctx, [root])(root),
     state: str(attention.state, 20) || 'idle',
     needs: Number(attention.needs) || 0,
     busy: !!state.busy,

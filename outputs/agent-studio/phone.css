@@ -1,6 +1,7 @@
 /* The phone page (phone.html). Its own small stylesheet: the desktop chat.html and its CSS are never loaded on the phone.
-   Phone sizes: drawn for 375 px wide, safe-area insets, 44 px tap targets, 16 px inputs (iPhone does not zoom). No sideways scroll:
-   long words and paths wrap; only code blocks scroll inside themselves. */
+   Layout of the owner-approved phone prototypes (round 3): one list of chat cards; a chat with its approvals and questions as cards
+   in the stream and the message box at the bottom. Drawn for 375 px wide, safe-area insets, 44 px tap targets, 16 px inputs
+   (iPhone does not zoom). No sideways scroll: long words and paths wrap; only code blocks and tables scroll inside themselves. */
 /* Colours: theme.css tokens only (the phone page loads themes.js and theme.css; the server marks <html> with the PC's theme). */
 * {
   box-sizing: border-box;
@@ -13,8 +14,21 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   overflow-x: hidden;
+}
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .app {
   max-width: 640px;
@@ -32,50 +46,90 @@ body {
 .ph-head {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 52px;
-  margin: 0 -16px;
-  padding: env(safe-area-inset-top) 16px 0;
+  gap: 4px;
+  min-height: 56px;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: env(safe-area-inset-top) calc(8px + env(safe-area-inset-right)) 0 calc(8px + env(safe-area-inset-left));
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
-.ph-head h1 {
+.ph-tt {
   flex: 1;
   min-width: 0;
+  padding: 4px 8px;
+}
+.ph-head h1 {
   margin: 0;
   font-size: 17px;
-  font-weight: 600;
+  font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ph-head .ph-sub {
+.ph-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
-  font-weight: 400;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.ph-back {
-  min-width: 44px;
+.ph-sub .ph-pname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-subs-go {
+  display: flex;
+  align-items: center;
   min-height: 44px;
-  margin-left: -10px;
+  margin: -10px 0 -10px;
+  padding: 0;
   border: 0;
   background: none;
   color: var(--accent);
-  font-size: 28px;
+  font-size: 13px;
+}
+.ph-back {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 8px 0 4px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--accent);
+  font-size: 16px;
+}
+.ph-chev {
+  margin-top: -2px;
+  font-size: 26px;
   line-height: 1;
 }
 .ph-chip {
   flex: none;
-  padding: 2px 10px;
+  margin-right: 6px;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 13px;
-  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--chip-idle-bg);
   color: var(--muted);
 }
 .ph-chip.live {
+  border: 1px solid var(--line);
+  background: transparent;
   color: var(--muted);
+}
+.ph-chip.turn {
+  background: var(--chip-done-bg);
+  color: var(--ok-text);
 }
 .ph-chip.live::before {
   content: '';
@@ -86,101 +140,28 @@ body {
   border-radius: 50%;
   background: var(--ok);
 }
+.ph-chip.need,
 .ph-chip.off {
-  color: var(--hd-need);
-  border-color: currentColor;
-}
-/* ---- sections and cards ---- */
-.ph-section {
-  margin: 20px 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.ph-card {
-  display: block;
-  width: 100%;
-  margin: 0 0 8px;
-  padding: 12px 14px;
-  min-height: 44px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--card-bg);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-button.ph-card {
-  cursor: pointer;
-}
-.ph-card.need {
-  border-color: var(--hd-need);
   background: var(--chip-needs-bg);
-}
-.ph-card.main {
-  padding: 14px 16px;
-}
-.ph-card.main .ph-title {
-  font-size: 18px;
-}
-.ph-title {
-  display: block;
-  font-weight: 600;
-}
-.ph-meta {
-  display: block;
-  color: var(--muted);
-  font-size: 14px;
-}
-.ph-meta .need,
-.ph-state.need {
   color: var(--hd-need);
-  font-weight: 600;
 }
-.ph-state.work {
+.ph-chip.work {
+  background: var(--chip-working-bg);
   color: var(--hd-work);
 }
-.ph-state.turn {
-  color: var(--hd-turn);
-}
-.ph-badge {
-  float: right;
-  min-width: 24px;
-  margin-left: 8px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--chip-needs-bg);
-  color: var(--hd-need);
-  border: 1px solid var(--hd-need);
-  font-size: 14px;
-  text-align: center;
-}
-.ph-helpers {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 8px 0 0;
-  border-top: 1px solid var(--line);
-}
-.ph-helpers li {
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  padding: 3px 0;
-  font-size: 14px;
-}
-.ph-helpers li {
-  align-items: center;
-}
-.ph-helpers li span:nth-child(2) {
-  flex: 1;
-  min-width: 0;
-}
-.ph-dot {
-  flex: none;
+.ph-pdot {
+  display: inline-block;
+  flex: 0 0 8px;
   width: 8px;
   height: 8px;
+  border-radius: 2px;
+  background: var(--muted);
+}
+.ph-dot {
+  display: inline-block;
+  flex: 0 0 9px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--hd-idle);
 }
@@ -189,6 +170,7 @@ button.ph-card {
 }
 .ph-dot.work {
   background: var(--accent);
+  animation: ph-pulse 1.4s ease-in-out infinite;
 }
 .ph-dot.turn {
   background: var(--ok);
@@ -196,22 +178,182 @@ button.ph-card {
 .ph-dot.idle {
   background: var(--muted);
 }
-/* The helpers box in the chat header: a card, so it keeps the card's inner padding (the list's own padding is for inside a card). */
-.ph-helpers.ph-card {
-  margin: 0 0 8px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
+@keyframes ph-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
-/* A link in a reply: at least 44 px to tap, without moving the text (vertical padding on an inline box does not move lines). */
-.ph-msg a {
-  padding: 12px 2px;
+.ph-spin {
+  display: inline-block;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  border-right-color: transparent;
+  animation: ph-rot 0.9s linear infinite;
 }
-.ph-helpers li span:last-child {
-  flex: none;
+@keyframes ph-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ph-dot.work,
+  .ph-spin,
+  .ph-req.flash {
+    animation: none !important;
+  }
 }
 .ph-empty {
   margin: 24px 0;
   color: var(--muted);
+}
+/* ---- home: the filter and one list of chat cards ---- */
+.ph-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 2px;
+}
+.ph-fb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  font-size: 15px;
+  font-weight: 600;
+}
+.ph-fn {
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-flist {
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+.ph-flist button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  font-size: 15px;
+  text-align: left;
+}
+.ph-flist button:last-child {
+  border-bottom: 0;
+}
+.ph-flist button[aria-pressed='true'] {
+  font-weight: 700;
+  color: var(--accent);
+}
+.ph-n {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.ph-card {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card-bg);
+  text-align: left;
+}
+.ph-card > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.ph-r1 {
+  gap: 8px;
+}
+.ph-r1 .ph-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ph-unread {
+  display: inline-block;
+  flex: 0 0 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ph-r2 {
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ph-r2 .ph-pname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-card > .ph-r3 {
+  display: -webkit-box;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 14px;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ph-card.nr {
+  background: transparent;
+}
+.ph-card.nr .ph-title {
+  font-weight: 600;
+  color: var(--muted);
+}
+.ph-state {
+  font-weight: 650;
+  white-space: nowrap;
+}
+.ph-state.need {
+  color: var(--hd-need);
+}
+.ph-state.work {
+  color: var(--hd-work);
+}
+.ph-state.turn {
+  color: var(--hd-turn);
+}
+.ph-state.idle,
+.ph-state.nr {
+  color: var(--muted);
+}
+.ph-home {
+  padding-bottom: 24px;
 }
 /* ---- forms ---- */
 .ph-form label {
@@ -228,7 +370,6 @@ button.ph-card {
   border-radius: 10px;
   background: var(--card-bg);
   color: var(--text);
-  font: inherit;
   font-size: 16px;
 }
 .ph-btn {
@@ -237,24 +378,38 @@ button.ph-card {
   min-height: 48px;
   margin: 16px 0 0;
   padding: 10px 16px;
-  border: 0;
-  border-radius: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 14px;
   background: var(--accent);
   color: var(--on-accent);
-  font: inherit;
   font-weight: 600;
 }
 .ph-btn.quiet {
   background: transparent;
+  border-color: var(--line);
   color: var(--accent);
-  border: 1px solid var(--line);
+}
+.ph-btn.sm {
+  width: auto;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 12px;
+  font-size: 15px;
+}
+.ph-btn.sm.quiet {
+  border-color: transparent;
 }
 .ph-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
+  cursor: default;
 }
 .ph-note {
+  margin: 8px 0 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
+}
+.ph-center {
+  text-align: center;
 }
 .ph-error {
   margin: 12px 0;
@@ -262,6 +417,7 @@ button.ph-card {
   border-radius: 10px;
   background: var(--chip-needs-bg);
   color: var(--hd-need);
+  font-size: 14px;
 }
 .ph-words {
   margin: 8px 0;
@@ -281,45 +437,62 @@ button.ph-card {
 .ph-steps li {
   margin: 4px 0;
 }
-/* ---- chat ---- */
-.ph-wait {
-  margin: 12px 0;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--hd-need);
-  background: var(--chip-needs-bg);
+.ph-section {
+  margin: 20px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.ph-wait b {
-  display: block;
-  color: var(--hd-need);
+/* ---- a chat ---- */
+.app[data-screen='chat'],
+.app[data-screen='saved'] {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.ph-chat {
+  flex: 1;
+  padding-bottom: 16px;
 }
 .ph-earlier {
-  margin: 12px 0;
+  margin: 10px 0;
   text-align: center;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 .ph-msg {
-  margin: 12px 0;
+  margin: 10px 0;
 }
 .ph-msg.you {
-  margin-left: 32px;
-  padding: 10px 12px;
-  border-radius: 14px 14px 4px 14px;
-  background: var(--bubble-user-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.ph-bub {
+  max-width: 86%;
+  padding: 9px 13px;
+  border-radius: 18px 18px 4px 18px;
+  background: var(--accent-wash);
   white-space: pre-wrap;
 }
-.ph-msg.agent > :first-child {
+.ph-who {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ph-text > :first-child {
   margin-top: 0;
 }
-.ph-msg.agent > :last-child {
+.ph-text > :last-child {
   margin-bottom: 0;
 }
-.ph-msg.notice {
-  padding: 8px 12px;
-  border-left: 3px solid var(--line);
-  color: var(--muted);
-  font-size: 14px;
+/* A link in a reply: at least 44 px to tap, without moving the text (vertical padding on an inline box does not move lines). */
+.ph-msg a {
+  padding: 12px 2px;
+  color: var(--accent);
 }
 .ph-msg pre,
 .ph-msg code {
@@ -359,95 +532,284 @@ button.ph-card {
   margin: 8px 0;
   border-radius: 8px;
 }
-.ph-fold {
+.ph-steered {
   display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ph-notice {
+  margin: 10px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.ph-notice.mine {
+  color: var(--text);
+}
+/* folds: a run of steps, the Subagents card */
+.ph-steps-fold,
+.ph-subs {
+  margin: 8px 0;
+  border-radius: 12px;
+  background: var(--bg-inset);
+}
+.ph-fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   min-height: 44px;
-  margin: 8px 0;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  padding: 0 12px;
+  border: 0;
   background: transparent;
   color: var(--muted);
-  font: inherit;
   font-size: 14px;
   text-align: left;
 }
+.ph-chev2 {
+  margin-left: auto;
+  font-size: 18px;
+  transition: transform 0.15s;
+}
+.open > .ph-fold .ph-chev2 {
+  transform: rotate(90deg);
+}
 .ph-fold-list {
-  list-style: none;
-  margin: -4px 0 8px;
-  padding: 0 12px;
-  font-size: 14px;
+  margin: 0;
+  padding: 0 12px 10px 34px;
   color: var(--muted);
+  font-size: 14px;
 }
 .ph-fold-list li {
-  padding: 3px 0;
+  margin: 4px 0;
+}
+.ph-fold-list li.run {
+  color: var(--accent);
+}
+.ph-sub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+}
+.ph-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 14px;
+  text-align: left;
+}
+.ph-sub-title {
+  flex: 1;
+  min-width: 0;
+}
+.ph-sw {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-more {
+  margin: 0 8px 6px 27px;
+  color: var(--muted);
+  font-size: 13px;
+}
+/* artifacts in the stream */
+.ph-art {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card-bg);
+  text-align: left;
+}
+.ph-art-icon {
+  display: flex;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+.ph-art-text {
+  flex: 1;
+  min-width: 0;
+}
+.ph-art-title {
+  display: block;
+  font-size: 15px;
+}
+.ph-art-kind {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
 }
 .ph-live {
-  margin: 12px 0;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--card-bg);
-  border: 1px solid var(--line);
-  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 4px;
+  color: var(--accent);
   font-size: 14px;
 }
 .ph-pconly {
-  margin: 16px 0 0;
+  margin: 6px 4px;
   color: var(--muted);
   font-size: 14px;
-  text-align: center;
 }
-/* ---- offline ---- */
-.ph-offline {
-  margin: 16px 0;
-  padding: 14px;
+.ph-wait {
+  margin: 12px 0;
+  padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hd-need);
+  background: var(--chip-needs-bg);
+}
+/* approvals and questions: cards in the stream */
+.ph-req {
+  margin: 10px 0;
+  border: 1px solid var(--hd-need);
+  border-radius: 16px;
+  background: var(--chip-needs-bg);
+}
+.ph-req.open {
   background: var(--card-bg);
 }
-.ph-offline h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
+.ph-req.flash {
+  animation: ph-flash 1.2s ease-out 2;
 }
-.ph-stale {
-  opacity: 0.65;
+@keyframes ph-flash {
+  50% {
+    box-shadow: 0 0 0 4px var(--chip-needs-bg);
+  }
 }
-/* ---- chat screen with a composer (phase B) ---- */
-.app[data-screen='chat'] {
+.ph-req-head {
   display: flex;
-  flex-direction: column;
-  padding-bottom: 0;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
-.ph-chat {
+.ph-rt {
   flex: 1;
-  padding-bottom: 16px;
+  min-width: 0;
+  font-size: 14px;
 }
-.ph-wait-title {
+.ph-rt b {
   display: block;
-  overflow-wrap: anywhere;
+  color: var(--hd-need);
+  font-size: 13px;
 }
-.ph-wait .ph-btn {
-  margin-top: 10px;
+.ph-req-title {
+  display: block;
+}
+.ph-pv {
+  display: block;
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-go {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--hd-need);
+  color: var(--bg);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ph-go.quiet {
+  background: transparent;
+  color: var(--muted);
+}
+.ph-rb {
+  padding: 0 12px 12px;
+}
+.ph-req.done {
+  border-color: var(--line);
+  background: transparent;
+}
+.ph-rec {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-cmd {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--code-bg);
+  font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .ph-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 12px;
 }
 .ph-row .ph-btn {
-  flex: 1 1 0;
   min-width: 0;
   margin: 0;
 }
-.ph-answer .ph-btn.allow {
-  flex-grow: 2;
-}
 .ph-btn.deny {
-  background: transparent;
-  color: var(--danger-text);
-  border: 1px solid var(--danger-text);
+  background: var(--card-bg);
+  border-color: var(--line);
+  color: var(--text);
+}
+.ph-field {
+  margin: 12px 0 0;
+}
+.ph-field-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.ph-opt {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 0 0 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  text-align: left;
+}
+.ph-opt.on {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  font-weight: 600;
 }
 .ph-input {
   display: block;
@@ -455,55 +817,140 @@ button.ph-card {
   min-height: 44px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--card-bg);
   color: var(--text);
-  font: inherit;
   font-size: 16px;
   resize: none;
 }
-/* the composer: always at the bottom of the screen, above the phone's home bar */
-.ph-composer {
+/* ---- the bottom bar: Needs you bar, queue, message box (always at the bottom of the screen, above the home bar) ---- */
+.ph-bottom,
+.ph-continue {
   position: sticky;
   bottom: 0;
   z-index: 2;
   margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
-  padding: 8px calc(12px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  padding: 8px calc(12px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
   background: var(--bg);
   border-top: 1px solid var(--line);
+}
+.ph-above {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--hd-need);
+  border-radius: 12px;
+  background: var(--chip-needs-bg);
+  font-size: 14px;
+  text-align: left;
+}
+.ph-above[hidden] {
+  display: none;
+}
+.ph-above b {
+  color: var(--hd-need);
+}
+.ph-above-text {
+  flex: 1;
+  min-width: 0;
+}
+.ph-above-go {
+  color: var(--hd-need);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ph-queue {
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+.ph-qh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+.ph-qh-go {
+  color: var(--accent);
+  font-weight: 500;
+}
+.ph-queued {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.ph-queued-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.ph-qa {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.ph-paused .ph-note {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 14px;
+}
+.ph-qnote {
+  margin: 0;
+  padding: 0 12px 8px;
+}
+.ph-queue textarea {
+  min-height: 70px;
 }
 .ph-composer-row {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 .ph-composer .ph-input {
   flex: 1;
   min-width: 0;
-  max-height: 160px;
+  max-height: 120px;
+  padding: 10px 14px;
+  border-radius: 22px;
+  line-height: 1.4;
 }
 .ph-send,
 .ph-stop {
+  display: inline-flex;
   flex: none;
-  min-width: 64px;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
   min-height: 44px;
-  padding: 0 14px;
+  border: 0;
   border-radius: 22px;
-  font: inherit;
-  font-weight: 600;
+  font-weight: 700;
 }
 .ph-send {
-  border: 0;
   background: var(--accent);
   color: var(--on-accent);
+  font-size: 20px;
 }
 .ph-stop {
-  border: 1px solid var(--danger-text);
-  background: transparent;
-  color: var(--danger-text);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 14px;
 }
 .ph-stop[hidden],
-.ph-act-error[hidden] {
+.ph-act-error[hidden],
+.ph-hint[hidden] {
   display: none;
 }
 .ph-act-error {
@@ -512,127 +959,48 @@ button.ph-card {
 .ph-send:disabled {
   opacity: 0.6;
 }
-/* a chat that is not running: Continue this chat at the bottom, like the composer */
-.app[data-screen='saved'] {
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 0;
+.ph-hint {
+  margin: 6px 4px 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 .ph-continue {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
-  padding: 8px calc(16px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
-  background: var(--bg);
-  border-top: 1px solid var(--line);
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
 }
 .ph-continue .ph-note {
   margin: 4px 0 0;
-  overflow-wrap: anywhere;
+  font-size: 14px;
 }
 .ph-continue .ph-btn {
   margin-top: 10px;
 }
 .ph-continue .ph-error {
   margin: 4px 0 8px;
-  overflow-wrap: anywhere;
 }
-.ph-card.saved .ph-title {
-  font-weight: 500;
-}
-/* queued messages */
-.ph-queued {
-  margin: 0 0 8px;
-  padding: 10px 12px;
-  border: 1px dashed var(--line);
-  border-radius: 12px;
-}
-.ph-queued-text {
-  margin: 0;
-  white-space: pre-wrap;
-}
-.ph-queued .ph-btn {
-  min-height: 44px;
-  padding: 6px 8px;
-  font-size: 15px;
-}
-/* the sheets: up from the bottom, over a dimmed chat; tall content scrolls inside the sheet */
-.ph-dim {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  background: var(--shadow-med);
-}
-.ph-sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 11;
-  max-width: 640px;
-  max-height: 88vh;
-  max-height: 88dvh;
-  margin: 0 auto;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  padding: 10px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
-  border-radius: 18px 18px 0 0;
-  border-top: 1px solid var(--line);
-  background: var(--bg);
-  box-shadow: 0 -8px 24px var(--shadow-soft);
-  overflow-wrap: anywhere;
-}
-.ph-grab {
-  width: 36px;
-  height: 4px;
-  margin: 0 auto 8px;
-  border-radius: 2px;
-  background: var(--line);
-}
-.ph-sheet-title {
-  margin: 4px 0 8px;
-  font-size: 17px;
-  font-weight: 600;
-}
-.ph-cmd {
-  margin: 8px 0;
-  padding: 10px;
-  border-radius: 8px;
-  background: var(--code-bg);
-  font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-.ph-field {
-  margin: 12px 0;
-}
-.ph-field-title {
-  margin: 0 0 6px;
-  font-weight: 600;
-}
-.ph-opt {
-  display: block;
-  width: 100%;
-  min-height: 48px;
-  margin: 0 0 8px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+/* ---- offline ---- */
+.ph-offline {
+  margin: 16px 0;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--hd-need);
   background: var(--card-bg);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
 }
-.ph-opt.on {
-  border: 2px solid var(--accent);
-  padding: 9px 13px;
-  font-weight: 600;
+.ph-offline h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
 }
-/* ---- phase C: finish setup (notifications, iPhone Home Screen), the setup bar on home, reconnecting ---- */
+.ph-offline.reconnecting {
+  border-style: dashed;
+}
+.ph-stale {
+  opacity: 0.55;
+}
+.ph-stale button,
+.ph-stale textarea {
+  pointer-events: none;
+}
+/* ---- finish setup (notifications, iPhone Home Screen), the setup bar on home ---- */
 .ph-setup-bar {
   display: flex;
   flex-wrap: wrap;
@@ -672,43 +1040,7 @@ button.ph-card {
   content: ' ✓';
   color: var(--accent);
 }
-.ph-offline.reconnecting {
-  border-style: dashed;
-}
-/* ---- artifacts (Phase D): a card in the chat, and the full-screen viewer with Close ---- */
-.ph-art {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 12px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--card-bg);
-}
-.ph-art-text {
-  flex: 1;
-  min-width: 0;
-}
-.ph-art-kind {
-  display: block;
-  color: var(--muted);
-  font-size: 13px;
-}
-.ph-art-title {
-  display: block;
-}
-.ph-art .ph-btn {
-  width: auto;
-  flex: none;
-  margin: 0;
-  min-height: 44px;
-}
-.ph-art .ph-note {
-  flex: none;
-  margin: 0;
-  font-size: 14px;
-}
+/* ---- the artifact viewer: full screen with Close ---- */
 html.ph-viewing,
 html.ph-viewing body {
   overflow: hidden;
@@ -725,8 +1057,7 @@ html.ph-viewing body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px
-    calc(16px + env(safe-area-inset-left));
+  padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
 }
 .ph-viewer-name {
@@ -769,46 +1100,38 @@ html.ph-viewing body {
   padding: 16px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
   overflow-wrap: anywhere;
 }
-.ph-steered {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-/* ---- banner: news about another chat while this phone is in hand (no push then; server/attention/presence.ts) ---- */
+/* ---- the banner inside a chat: another chat needs you or finished (no push then; server/attention/presence.ts) ---- */
 .ph-banner {
   position: sticky;
-  top: 8px;
-  z-index: 5;
+  top: calc(56px + env(safe-area-inset-top));
+  z-index: 2;
   display: flex;
-  align-items: stretch;
-  margin: 8px 0 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
-  background: var(--card-bg);
-  box-shadow: 0 4px 16px var(--shadow-soft);
+  align-items: center;
+  gap: 10px;
+  margin: 0 calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+  padding: 4px calc(4px + env(safe-area-inset-right)) 4px calc(14px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  background: var(--chip-done-bg);
 }
 .ph-banner.need {
-  border-left-color: var(--hd-need);
+  background: var(--chip-needs-bg);
 }
 .ph-banner-open {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 48px;
+  justify-content: center;
+  padding: 0;
   border: 0;
   background: none;
-  color: inherit;
-  font: inherit;
+  font-size: 14px;
   text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 .ph-banner-open strong {
   font-size: 13px;
+  color: var(--ok-text);
 }
 .ph-banner.need .ph-banner-open strong {
   color: var(--hd-need);
@@ -821,8 +1144,31 @@ html.ph-viewing body {
 .ph-banner-close {
   flex: none;
   min-width: 44px;
+  min-height: 44px;
   border: 0;
+  border-radius: 12px;
   background: none;
   color: var(--muted);
   font-size: 22px;
+}
+/* ---- a short confirmation ---- */
+.ph-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  z-index: 30;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 14px;
+  font-weight: 600;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-toast[hidden] {
+  display: none;
 }

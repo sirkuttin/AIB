@@ -49,6 +49,8 @@ import {
   icoMaster,
   ICON_SRC,
   parseGrid,
+  PHONE,
+  PHONE_TILE,
   PNGS,
   RIM,
   TRAY,
@@ -267,6 +269,53 @@ Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, colour 
   // makeIco writes what parseIco reads.
   const again = parseIco(makeIco(ico.map((i) => i.data)));
   assertEquals(again.map((i) => i.data.length), ico.map((i) => i.data.length));
+});
+
+Deno.test("phone install icons: 192 plain, maskable 192 and 512 (mark inside the 80 % safe zone on an opaque teal tile), opaque 180 iPhone icon, white-on-clear badge", async () => {
+  const tile = [0x2b, 0xb3, 0xa3];
+  assertEquals(PHONE_TILE.toLowerCase(), "#2bb3a3");
+  assertEquals(PHONE.map(([f, size]) => [f, size]), [
+    ["phone-192.png", 192],
+    ["phone-maskable-192.png", 192],
+    ["phone-maskable-512.png", 512],
+    ["phone-apple-180.png", 180],
+    ["phone-badge-96.png", 96],
+  ]);
+  for (const [file, size, kind] of PHONE) {
+    const png = await Deno.readFile(new URL(file, ICONS_DIR));
+    assertEquals(pngSize(png), { width: size, height: size }, file);
+    const { rgba } = await decodePng(png);
+    const px = (x: number, y: number) => [...rgba.slice((y * size + x) * 4, (y * size + x) * 4 + 4)];
+    if (kind === "plain") assert(await hasColour(png, HAT) && await hasColour(png, RIM) && px(0, 0)[3] === 0, file);
+    if (kind === "maskable" || kind === "apple") {
+      for (let i = 3; i < rgba.length; i += 4) assert(rgba[i] === 255, `${file}: opaque everywhere`);
+      assertEquals(px(0, 0).slice(0, 3), tile, `${file}: the teal tile`);
+      assert(await hasColour(png, HAT), `${file}: the black hat`);
+    }
+    if (kind === "maskable") {
+      // every pixel of the mark (not the tile colour) is inside the safe zone: a circle of 40 % of the size around the centre
+      const c = size / 2, r = size * 0.4;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const [pr, pg, pb] = px(x, y);
+          const isTile = Math.abs(pr - tile[0]) <= 24 && Math.abs(pg - tile[1]) <= 24 && Math.abs(pb - tile[2]) <= 24;
+          if (!isTile) assert(Math.hypot(x + 0.5 - c, y + 0.5 - c) <= r, `${file}: mark pixel ${x},${y} outside the safe zone`);
+        }
+      }
+    }
+    if (kind === "badge") {
+      let solid = 0;
+      for (let i = 0; i < rgba.length; i += 4) {
+        if (rgba[i + 3] > 0) assert(rgba[i] > 240 && rgba[i + 1] > 240 && rgba[i + 2] > 240, `${file}: only white`);
+        if (rgba[i + 3] > 200) solid++;
+      }
+      assert(solid > size * size * 0.2, `${file}: the silhouette`);
+      assertEquals(px(0, 0)[3], 0, `${file}: clear around it`);
+      // the amber agent square (icon.svg x 31-49, y 19-37) is cut out
+      const at = (v: number) => Math.round((9 + 0.82 * (3.5 + 0.93 * v)) * size / 100);
+      assertEquals(px(at(40), at(28))[3], 0, `${file}: the agent squares are cut out`);
+    }
+  }
 });
 
 Deno.test("icon.ico: every size 16-256, each a 32-bit RGBA PNG with real alpha and no light fringe on its see-through edge", async () => {
