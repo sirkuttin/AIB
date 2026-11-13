@@ -609,3 +609,160 @@ a.artifact-link code {
 .ar-built-t[hidden] {
   display: none;
 }
+
+/* Archive and Recently deleted (owner decisions 2026-11-12): the chat menu's words and feel. */
+/* the note line holds one message and, after Archive or Delete, an Undo button */
+.ar-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+.ar-note[hidden] {
+  display: none;
+}
+.ar-note-t {
+  min-width: 0;
+}
+.ar-note-undo {
+  color: var(--accent);
+}
+/* a row's ⋯: shown on the hovered or focused row (and the row whose menu is open) */
+.ar-dots {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+}
+.ar-it:hover .ar-dots,
+.ar-it:focus-visible .ar-dots,
+.ar-it:focus .ar-dots {
+  opacity: 1;
+}
+.ar-dots:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+.ar-rowmenu {
+  z-index: 21;
+  min-width: 170px;
+  max-width: 280px;
+}
+.ar-danger {
+  color: var(--menu-danger-text);
+}
+.ar-rowhint {
+  margin: 2px 8px 4px;
+  max-width: 240px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+}
+/* the foot groups: "▸ Archived 18", "▸ Recently deleted 4", written like the sidebar's */
+.ar-foothead {
+  color: var(--text-5);
+}
+.ar-foot-caret {
+  flex: 0 0 auto;
+  width: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.ar-foot-n {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-faint-3);
+  font-size: 11px;
+}
+.ar-archived-row .ar-it-title {
+  color: var(--text-5);
+}
+/* a Recently deleted row: its line, then Restore · Delete now, or the inline "Delete for good?" line */
+.ar-del {
+  max-width: 340px;
+  padding: 5px 8px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.ar-del-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-5);
+}
+.ar-del-line {
+  margin: 2px 0 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ar-del-acts {
+  display: flex;
+  gap: 6px;
+}
+.ar-btn-plain {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-field);
+  color: var(--text);
+  font-size: 11.5px;
+}
+.ar-btn-plain:hover {
+  background: var(--hover);
+}
+.ar-btn-dng {
+  color: var(--danger-text);
+  border-color: var(--danger-line);
+}
+.ar-btn-danger {
+  padding: 2px 9px;
+  border: 1px solid var(--danger-fill);
+  border-radius: 5px;
+  background: var(--danger-fill);
+  color: var(--primary-danger-text);
+  font-size: 11.5px;
+}
+.ar-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--error-bg);
+  color: var(--text);
+  font-size: 11.5px;
+}
+.ar-nav:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+/* the empty viewer when only archived or deleted artifacts are left */
+.ar-empty-hidden .ar-switch {
+  padding: 0;
+  color: var(--link);
+}
+.ar-deleted {
+  padding: 18px 16px;
+}
+.ar-deleted .ar-msg {
+  padding: 0;
+}
+/* ⧉ links and tool cards: "· archived" / "· deleted" after the title (decision 8a) */
+.artifact-state {
+  color: var(--muted);
+  font-size: 0.9em;
+  text-decoration: none;
+  display: inline-block;
+}
+a.artifact-link-deleted {
+  color: var(--muted);
+}

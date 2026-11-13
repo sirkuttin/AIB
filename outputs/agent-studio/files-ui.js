@@ -332,10 +332,12 @@
       st = A && A.state ? A.state() : null,
       seen = new Set(),
       out = [];
+    // A deleted artifact (Recently deleted; the Artifacts panel's list holds them) is no file's artifact: no ⧉ mark, and "Open in
+    // Artifacts" on its rewritten file opens the new one. An archived artifact still exists, so its ⧉ stays.
     for (const a of ((st && st.list) || []).concat(...Array.from(projectArts.values()).map((r) => r.list)))
       if (a && a.id && !seen.has(a.id)) {
-        seen.add(a.id);
-        out.push(a);
+        seen.add(a.id); // the panel's fresh copy comes first: a deleted one hides an older cached copy too
+        if (!a.deletedAt) out.push(a);
       }
     return out;
   }
