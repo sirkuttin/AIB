@@ -1175,6 +1175,93 @@ async function signInPage(
 Deno.test({
   ...OPTS,
   name:
+    'phone page, steer-on-send: Send goes to the steer route while a steerable chat works, to the queue when it cannot steer, to a prompt when idle; "Sent while working" on a steered bubble',
+  ignore: !browserPath,
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner });
+    const browser = await Browser.launch();
+    try {
+      fake.state.serve = serveStatus(readRemotePort(s.state)!);
+      await pc(s, "POST", "/api/live/devices/access", { on: true });
+      const base = {
+        provider: "claude",
+        cwd: "C:\code\shop",
+        closed: false,
+        subagents: {},
+        permissions: [],
+        elicitations: [],
+      };
+      const working = { state: "working", needs: 0, turnEndedAt: null, busySince: new Date(Date.now() - 5000).toISOString() };
+      const chats = [
+        {
+          ...base,
+          id: "can",
+          sessionId: "s-can",
+          busy: true,
+          steerable: true,
+          attention: working,
+          events: [
+            { seq: 1, kind: "user", data: { text: "first prompt" } },
+            { seq: 2, kind: "user", data: { text: "typed while it worked", steered: true } },
+          ],
+        },
+        { ...base, id: "cannot", sessionId: "s-cannot", busy: true, steerable: false, attention: working, events: [{ seq: 1, kind: "user", data: { text: "first prompt" } }] },
+        {
+          ...base,
+          id: "idle",
+          sessionId: "s-idle",
+          busy: false,
+          steerable: false,
+          attention: { state: "idle", needs: 0, turnEndedAt: new Date().toISOString(), busySince: null },
+          events: [{ seq: 1, kind: "user", data: { text: "first prompt" } }],
+        },
+      ] as unknown as FakeChat[];
+      s.chats.push(...chats);
+      const phone = await pairPhone(s);
+      const page = await browser.open("about:blank", 375, 812);
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
+      await serveFor(page, s, { on: true });
+      await signInPage(page, phone.token, phone.id);
+      const sendFrom = async (id: string, text: string) => {
+        await page.click(`.ph-card[data-chat="${id}"]`);
+        await page.waitFor(
+          `document.getElementById("app").dataset.screen === "chat" && window.__aibPhone.chatId === ${JSON.stringify(id)} && !!document.getElementById("phPrompt")`,
+          15000,
+          "the chat " + id,
+        );
+        await page.eval(
+          `(() => { const ta = document.getElementById('phPrompt'); ta.focus(); ta.value = ${JSON.stringify(text)}; ta.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+        );
+        const before = s.liveCalls.length;
+        await page.click("#phSend");
+        await until(() => s.liveCalls.length > before && s.liveCalls.some(([, b]) => b.text === text), "the send of " + id, 15);
+      };
+      await sendFrom("can", "steer me");
+      assertEquals(s.liveCalls.at(-1)![0], "steer");
+      assertEquals(
+        await page.eval('[...document.querySelectorAll(".ph-msg.you")].map((m) => m.textContent)'),
+        ["first prompt", "typed while it worked" + "Sent while working"],
+        "the steered bubble carries the tag, the first one does not",
+      );
+      await page.goto(`https://${NAME}/phone.html`);
+      await page.waitFor('document.getElementById("app").dataset.screen === "home" && !!document.querySelector(".ph-card")', 15000, "home");
+      await sendFrom("cannot", "after the turn");
+      assertEquals(s.liveCalls.at(-1)![0], "queue", "an agent that cannot steer: after the turn, as before");
+      await page.goto(`https://${NAME}/phone.html`);
+      await page.waitFor('document.getElementById("app").dataset.screen === "home" && !!document.querySelector(".ph-card")', 15000, "home");
+      await sendFrom("idle", "plain prompt");
+      assertEquals(s.liveCalls.at(-1)![0], "prompt");
+    } finally {
+      await browser.close().catch(() => {});
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name:
     'phone page at 375 px: "Not running" chats on home, one opens read only with Continue this chat (hidden when Send is off), continues into the live chat, which is then marked read on the PC; no sideways scroll',
   ignore: !browserPath,
   async fn() {
