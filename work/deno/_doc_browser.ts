@@ -304,7 +304,21 @@ export class Page {
     });
   }
   async goto(url: string): Promise<void> {
-    await this.send('Page.navigate', { url: withPageKey(url) }); // the launch key, as the app's window has it
+    // The launch key in the link, as the app's window has it; not when this page is already on that origin (a link that differs
+    // only by #fragment would not load the page again): the tab keeps the key in its sessionStorage instead.
+    let here = '';
+    try {
+      here = String(await this.eval('location.origin'));
+    } catch { /* no page yet */ }
+    let same = false;
+    try {
+      same = here === new URL(url).origin;
+    } catch { /* not a URL */ }
+    if (same && withPageKey(url) !== url) {
+      // a test that cleared the page's storage (a fresh profile): the tab keeps the key, as after its first link
+      await this.eval(`sessionStorage.setItem('aib-page-key', ${JSON.stringify(PAGE_KEY)})`).catch(() => {});
+    }
+    await this.send('Page.navigate', { url: same ? url : withPageKey(url) });
     await this.waitFor('document.readyState === "complete"', 10000);
   }
   async viewport(width: number, height = 900): Promise<void> {
