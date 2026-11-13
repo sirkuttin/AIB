@@ -1,6 +1,6 @@
 ---
 title: Download and install AIB
-description: Get AIB running on Windows, macOS or Linux, x64 or ARM. No admin rights, no account. Node.js 22 or newer for the agents.
+description: Get AIB running on Windows, macOS or Linux, x64 or ARM. No admin rights, no account.
 ---
 
 import { Tabs, TabItem, LinkButton, Aside } from '@astrojs/starlight/components';
@@ -58,12 +58,11 @@ window shows the app.
 </TabItem>
 </Tabs>
 
-## Install Node.js 22 or newer
+## Node.js: AIB installs it when an agent needs it
 
-The agents' adapters are small Node.js programs, so AIB needs **Node.js 22 or newer**. You don't have to install it first:
-each agent card in **Settings → AIB Linking** checks for Node.js and shows found, missing or too old. When it's missing or too
-old, click **Install Node.js 26 (LTS)** on the card. That button installs the current long-term-support release, 26; any
-version from 22 up works.
+You don't install anything else first. Claude Code, Codex and the npm Beta agents run on Node.js 22 or newer. Their card in
+**Settings → AIB Linking** checks for it, and when it's missing or too old the card shows **Install Node.js 26 (LTS)**. Click it:
+AIB installs Node.js with winget on Windows and nvm on macOS and Linux, then installs the agent.
 
 One exception: Kimi Code asks for Node.js 22.19 or newer. Its card checks that for you.
 
