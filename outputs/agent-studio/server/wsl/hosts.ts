@@ -141,8 +141,11 @@ export interface WslHostOptions {
   windowsLink?: () => KeeperLink | null;
   install?: (distro: string) => Promise<WslInstall>;
   spawnTransport?: TransportSpawner;
-  /** The Linux keeper version this AIB ships (a running older one with no live agent is replaced); null: never replaced for age. */
-  keeperVersion?: string | null;
+  /**
+   * The Linux keeper version this AIB ships (a running older one with no live agent is replaced); null: never replaced for age. The
+   * Linux keeper is built from the same source as the Windows one, so Studio passes the Windows keeper's version (asked lazily).
+   */
+  keeperVersion?: string | null | (() => Promise<string | null>);
   reconnect?: ReconnectPolicy;
   connectTimeoutMs?: number;
   /** The wsl.exe the keep-alive runs (default %SystemRoot%\System32\wsl.exe). */
@@ -192,6 +195,7 @@ export class WslHostImpl implements WslHost {
   #hold: KeeperChannel | null = null;
   #holdTimer: ReturnType<typeof setTimeout> | null = null;
   #stopped = false;
+  #begun = false;
 
   constructor(readonly options: WslHostOptions) {
     this.distro = options.distro;
@@ -200,7 +204,8 @@ export class WslHostImpl implements WslHost {
       connector: (start) => this.#connect(start),
       reconnect: options.reconnect ?? true,
       needs: WSL_KEEPER_NEEDS,
-      bundledVersion: () => Promise.resolve(options.keeperVersion ?? null),
+      bundledVersion: () =>
+        typeof options.keeperVersion === 'function' ? options.keeperVersion() : Promise.resolve(options.keeperVersion ?? null),
       lostMessage: `${options.distro} stopped (Windows restart or \`wsl --shutdown\`), so this agent stopped.`,
     });
     this.link.onTransport = (state, error) => {
@@ -239,9 +244,15 @@ export class WslHostImpl implements WslHost {
     this.#note = note;
   }
 
+  /** Has anything asked this host to start yet (a host is made on first use but starts only when work needs the distro)? */
+  get begun(): boolean {
+    return this.#begun;
+  }
+
   /** Install if needed, connect, start the helper and the keep-alive. Idempotent; after a failure, the next call tries again. */
   start(): Promise<void> {
     if (this.#stopped) return Promise.reject(new WslHelperError('AIB stopped using this distro', 'stopped'));
+    this.#begun = true;
     this.#starting ??= this.#start().catch((error) => {
       this.#starting = null;
       const message = error instanceof Error ? error.message : String(error);
@@ -504,6 +515,18 @@ export class WslHostImpl implements WslHost {
     }
   }
 
+  /** "Reconnect" on a stopped or failed distro: start again now (a ready host is left as it is). */
+  async reconnect(): Promise<void> {
+    if (this.#state === 'ready' || this.#stopped) return;
+    if (this.#state !== 'starting' && this.#state !== 'installing') this.#starting = null;
+    await this.start();
+  }
+
+  /** The running helper's version (helper.ready), null before it is ready. */
+  get helperVersion(): string | null {
+    return this.#readyValue?.helper || null;
+  }
+
   /** The methods the running helper offers ([] before it is ready). */
   get methods(): string[] {
     return this.#readyValue ? [...this.#readyValue.methods] : [];
@@ -592,7 +615,9 @@ export class WslHostImpl implements WslHost {
       });
       const running = (await client.list()).find((c) => c.live && c.label === label);
       if (running) {
-        this.#hold = windows.adopt(running, this.#holdListener());
+        // An earlier AIB's keep-alive: claimed, so this AIB can stop it at quit (a claim also ends the Windows keeper's `hold`).
+        const hold = this.#hold = windows.adopt(running, this.#holdListener());
+        await hold.claim();
         return;
       }
       const { command, args } = (this.options.holdCommand ?? holdCommand)(wslExe, this.distro, install);
@@ -751,4 +776,32 @@ export class WslHosts {
     }
     return { live, held };
   }
+}
+
+// ---- the hosts of this AIB --------------------------------------------------------------------------------------------------
+
+let sharedOptions: WslHostsOptions | null = null;
+let shared: WslHosts | null = null;
+
+/**
+ * Say how this AIB's hosts are made (Studio at start: its data folder and the Windows keeper link). Cheap: nothing is detected or
+ * started until a WSL project needs its distro (wslHosts().get). `replace` false: only when nothing was set up yet (a test's own
+ * set-up wins over the Studios it makes). Replacing starts a new set of hosts; the ones made so far are left as they are (tests stop
+ * them first). null forgets the options.
+ */
+export function configureWslHosts(options: WslHostsOptions | null, replace = true): void {
+  if (!replace && sharedOptions) return;
+  sharedOptions = options;
+  shared = null;
+}
+
+/** This AIB's hosts (made on first use), or null when AIB was not configured for WSL (no data folder: unit tests, the helper). */
+export function wslHosts(): WslHosts | null {
+  if (!shared && sharedOptions) shared = new WslHosts(sharedOptions);
+  return shared;
+}
+
+/** The hosts if any were made in this process (quit, status): never makes them. */
+export function wslHostsInUse(): WslHosts | null {
+  return shared;
 }

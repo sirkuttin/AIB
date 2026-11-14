@@ -29,7 +29,7 @@ import { LimitsFeed } from './usage_limits_feed.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
-import { forwarderOf } from '../keeper/client.ts';
+import { forwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -62,6 +62,7 @@ import { refOf } from '../platform/location.ts';
 import { isAibInternalLabel } from '../keeper/link.ts';
 import {
   distroName,
+  hostWhenReady,
   linkOf,
   readyHost,
   windowsPathInWsl,
@@ -71,6 +72,7 @@ import {
   wslLoc,
 } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
+import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
 
 const log = getLogger('studio');
 
@@ -369,6 +371,25 @@ export class Studio {
     if (this.keeper) {
       this.keeper.onLost = (channels) => this.#keeperLost(channels);
       this.keeper.onClient = () => saveKeeperInstance(this.stateDir, this.instanceId); // the ids now live as long as this keeper
+    }
+    // WSL projects (wsl/hosts.ts): one host per distro, made and started only when a WSL project needs it, so a PC without WSL pays
+    // nothing. The Windows keeper holds each distro's keep-alive; the Linux keeper is the same program, so it has the same version.
+    // The first Studio of the process sets this up (a test that set up its own hosts keeps them).
+    if (this.hasStateDir) {
+      const keeper = this.keeper;
+      let version: Promise<string | null> | null = null;
+      configureWslHosts({
+        stateDir: this.stateDir,
+        windowsLink: () => (this.#closed ? null : keeper),
+        keeperVersion: () =>
+          version ??= (async () => {
+            try {
+              return await programVersion(keeper?.options.binary ?? await keeperBinary(this.stateDir));
+            } catch {
+              return null;
+            }
+          })(),
+      }, false);
     }
     // The chats on the recovery list ran in the previous AIB of this data folder (an app restart, an update, or the split agent
     // host this process took over). Their transcript writes up to now are that AIB's own, not another app's: without this the
@@ -733,7 +754,7 @@ export class Studio {
     wsl: { distro: string; linuxPath: string },
     fresh = false,
   ): Promise<{ command: string[]; extra: Record<string, string>; spawn: WslSpawn; link: KeeperLink }> {
-    const host = readyHost(wsl.distro);
+    const host = await hostWhenReady(wsl.distro); // the first chat after a Windows start waits for its distro
     const name = distroName(wsl.distro);
     let command: string[];
     let extra: Record<string, string> = {};
@@ -1133,11 +1154,17 @@ export class Studio {
 
   /**
    * Rebuild the chats a distro's Linux keeper still runs (an AIB restart or update while WSL agents worked; the hold kept them alive).
-   * Same rules as the Windows keeper's take-over. The distro must be ready; it is not started for this. Returns how many were taken over.
+   * Same rules as the Windows keeper's take-over. The distro is started for this (only distros a chat on the recovery list ran in are
+   * asked: #wslDistrosToAdopt). Returns how many were taken over.
    */
   async adoptWslKeeper(distro: string): Promise<number> {
-    const host = wslHost(distro);
-    if (!host || host.state !== 'ready') return 0;
+    let host;
+    try {
+      host = await hostWhenReady(distro, 120_000);
+    } catch (error) {
+      log.warning('keeper: %s is not ready, so its chats were not taken over: %s', distro, errorText(error));
+      return 0;
+    }
     const link = linkOf(host);
     this.#followWslLink(link);
     return await this.#adoptFrom(link, distro);
@@ -1888,6 +1915,7 @@ export class Studio {
     for (const c of kept) c.releaseLease(); // the next AIB takes the lease when it takes the chat
     if (this.owners) this.owners.withdrawAll();
     if (this.#mcpHttp) await this.#mcpHttp.close(!!options.hold); // hold: the forwarder answers "AIB is closed" at once
+    await this.#quitWsl();
     if (options.hold) await holdKeeper(this.keeper); // last thing before leaving (a no-op when main.ts already said it)
     this.keeper?.disconnect(); // the keeper keeps the agents; whoever connects next (the update helper, then the new AIB) is its client
     announce(
@@ -1931,7 +1959,27 @@ export class Studio {
     if (this.owners) this.owners.withdrawAll();
     if (this.store) this.store.markWorkingUnknown();
     if (this.#mcpHttp) await this.#mcpHttp.close();
+    await this.#quitWsl();
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
+  }
+
+  /**
+   * The WSL side of leaving (design section 11 item 1), before the Windows keeper link closes: per distro the keep-alive is stopped
+   * unless WSL agents or shells still run there, and the transports end. With some left running the Windows keeper is told `hold`,
+   * so it keeps the keep-alive (and with it those agents) until the next AIB takes them over. Never throws.
+   */
+  async #quitWsl(): Promise<void> {
+    const hosts = wslHostsInUse();
+    if (!hosts) return;
+    try {
+      const { live, held } = await hosts.quit();
+      if (live > 0 && held.length) {
+        const holding = await holdKeeper(this.keeper);
+        announce('studio', 'wsl: %s agent(s) or shell(s) keep running in %s%s', live, held.join(', '), holding ? '; the keeper holds them' : '');
+      }
+    } catch (error) {
+      log.warning('wsl: leaving the distros failed: %s', errorText(error));
+    }
   }
 }
 

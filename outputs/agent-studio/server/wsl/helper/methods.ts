@@ -1,8 +1,9 @@
 /**
  * The WSL helper's phase 1 methods (wsl/contract.ts HelperMethods). Each one is the module AIB already runs for a Windows project,
  * here running natively in the distro: the Files view (worktrees/files.ts), Changes (worktrees/changes.ts), the folder checks
- * (desktop/folders.ts), agent detection (agents/adapters.ts) and the branch lookup (worktrees/chat_folders.ts). Results are what
- * those modules return, except files.read (raw bytes, base64) and the small fs.* answers for the folder browser.
+ * (desktop/folders.ts), agent detection (agents/adapters.ts), the branch lookup (worktrees/chat_folders.ts) and the saved sessions
+ * (transcripts/store.ts, transcripts/monitor.ts handleGet). Results are what those modules return, except files.read (raw bytes,
+ * base64) and the small fs.* answers for the folder browser.
  *
  * Paths are absolute Linux paths chosen by AIB from the project's ref; files.* and changes.* paths below a root are checked by the
  * modules themselves (resolveInside, safeRelpath).
@@ -14,14 +15,41 @@ import * as files from '../../worktrees/files.ts';
 import { checkPath, createFolder, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
 import { repoBranch } from '../../worktrees/chat_folders.ts';
 import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
+import { Store } from '../../transcripts/store.ts';
+import { handleGet } from '../../transcripts/monitor.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
+export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
+/** The /api/transcript arguments transcripts.read passes on (the page's paging; nothing else reaches handleGet). */
+const TRANSCRIPT_ARGS = ['limit', 'after', 'before', 'thinking', 'q', 'kind'];
 export const DEFAULT_AGENTS = ['claude', 'codex', 'omp'];
 
 export interface HelperContext {
   /** The login environment (env.get), once captured. */
   env(): Promise<{ env: Record<string, string>; shell: string; home: string; arch: string }>;
+}
+
+/** One transcripts Store per folder, kept for the helper's life (its summary and transcript caches). */
+const stores = new Map<string, Store>();
+
+/**
+ * The Claude Code projects folder of the distro user: `claudeDir` when AIB names it (tests: inside AIB_WSL_ROOT, never the user's
+ * own), else CLAUDE_CONFIG_DIR of the login environment, else ~/.claude; then `/projects`. Codex keeps no saved-session list AIB
+ * reads (as on Windows), so it has none.
+ */
+async function sessionStore(ctx: HelperContext, p: Record<string, unknown>): Promise<Store | null> {
+  const provider = str(p, 'provider');
+  if (provider !== 'claude' && provider !== 'codex') throw new RpcError('provider must be claude or codex', BAD_PARAMS);
+  if (provider === 'codex') return null;
+  const asked = str(p, 'claudeDir', true);
+  if (asked && (!osp.isabs(asked) || asked.length > 4096)) throw new RpcError('claudeDir must be an absolute path', BAD_PARAMS);
+  const login = await ctx.env();
+  const dir = asked || login.env.CLAUDE_CONFIG_DIR || osp.join(login.home || login.env.HOME || '/', '.claude');
+  const root = osp.join(osp.normpath(dir), 'projects');
+  let store = stores.get(root);
+  if (!store) stores.set(root, store = await Store.open(root));
+  return store;
 }
 
 /** An absolute path param, normalised; relative, NUL and over-long paths are refused. */
@@ -224,6 +252,25 @@ function phaseOne(ctx: HelperContext): Handlers {
       const base = asked && await commitExists(top, asked) ? asked : head;
       const [entries, cut] = await branchEntries(top, prefix, base);
       return { git: true, root: top, prefix, base, entries, cut };
+    },
+
+    'transcripts.sessions': async (p) => {
+      const store = await sessionStore(ctx, p);
+      if (!store) return { sessions: [] };
+      const limit = Math.min(Math.max(1, int(p, 'limit', SESSIONS_DEFAULT)), SESSIONS_MAX);
+      const sessions = (await store.sessions()).filter((s) => typeof s.cwd === 'string' && s.cwd.startsWith('/')).slice(0, limit);
+      return { sessions };
+    },
+
+    'transcripts.read': async (p) => {
+      const store = await sessionStore(ctx, p);
+      const key = str(p, 'key');
+      if (!store) return { status: 400, body: { error: 'Unknown transcript' } };
+      const args = new URLSearchParams({ key });
+      const given = p.args && typeof p.args === 'object' && !Array.isArray(p.args) ? p.args as Record<string, unknown> : {};
+      for (const name of TRANSCRIPT_ARGS) if (typeof given[name] === 'string') args.set(name, given[name] as string);
+      const reply = await handleGet(store, '/api/transcript', args.toString());
+      return { status: reply.status, body: reply.body };
     },
 
     'chat.repoBranch': async (p) => {

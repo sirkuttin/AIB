@@ -47,7 +47,8 @@ export class FakeWslHost implements WslHost {
   /** Linux folder -> Windows folder standing in for it. */
   readonly folders = new Map<string, string>();
   #urls = new Set<(url: string) => void>();
-  helperVersion = '0.0.0-fake';
+  helperVersion: string | null = '0.0.0-fake';
+  reconnects = 0;
 
   constructor(readonly dataDir: string, distro = 'Ubuntu', extraEnv: Record<string, string> = {}) {
     this.distro = distro;
@@ -80,6 +81,17 @@ export class FakeWslHost implements WslHost {
     if (!best) return linux;
     const rest = linux.slice(best.length).split('/').filter(Boolean);
     return [this.folders.get(best)!, ...rest].join(SEP);
+  }
+
+  start(): Promise<void> {
+    return this.state === 'ready' ? Promise.resolve() : Promise.reject(new WslHelperError(this.note || 'not ready', 'stopped'));
+  }
+
+  reconnect(): Promise<void> {
+    this.reconnects++;
+    this.state = 'ready';
+    this.note = '';
+    return Promise.resolve();
   }
 
   env(): Promise<Record<string, string>> {

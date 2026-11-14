@@ -14,20 +14,19 @@ export const RATE_MAX = 3;
 export const RATE_WINDOW_MS = 60_000;
 export const FIFO_NAME = 'open.fifo';
 
-/** The URL to pass on, or the reason it is refused. Parsed only to check it; the text that was sent is what goes on. */
+/**
+ * The URL to pass on, or the reason it is refused. Checked as text (the WSL layer never URL-parses: wsl_location_test's lint): a
+ * scheme, which must be http or https, then `//` and a host; no spaces or control characters. The text that was sent is what goes on.
+ */
 export function checkUrl(raw: string): { url: string } | { refused: string } {
   const url = raw.trim();
   if (!url) return { refused: 'no URL' };
   if (new TextEncoder().encode(url).length > MAX_URL_BYTES) return { refused: `longer than ${MAX_URL_BYTES} bytes` };
   if ([...url].some((c) => c.codePointAt(0)! < 0x20 || c.codePointAt(0) === 0x7f)) return { refused: 'control characters' };
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { refused: 'not a URL' };
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { refused: `${parsed.protocol} links are not opened` };
-  if (!/^https?:\/\//i.test(url)) return { refused: 'not a URL' };
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(url);
+  if (!scheme) return { refused: 'not a URL' };
+  if (!/^https?$/i.test(scheme[1])) return { refused: `${scheme[1].toLowerCase()}: links are not opened` };
+  if (!/^https?:\/\/[^\s/?#@]+(?:@[^\s/?#@]+)?(?:[/?#]\S*)?$/i.test(url)) return { refused: 'not a URL' };
   return { url };
 }
 

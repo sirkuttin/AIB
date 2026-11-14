@@ -39,7 +39,8 @@ import { announce, getLogger } from '../core/log.ts';
 import type { KeeperLink } from '../keeper/link.ts';
 import { inputText, KeeperPty, parseTerminalLabel, TERMINAL_PREFIX, type TerminalLabel, terminalProblem } from './keeper_pty.ts';
 import { isAibInternalLabel } from '../keeper/link.ts';
-import { distroName, linkOf, notReady, shellTitle, wslHost, wslLoc } from '../wsl/access.ts';
+import { distroName, hostWhenReady, linkOf, shellTitle, wslHost, wslLoc } from '../wsl/access.ts';
+import type { WslHost } from '../wsl/contract.ts';
 
 const log = getLogger('terminal');
 
@@ -579,17 +580,21 @@ export class TerminalSessions {
     if (running) return { session: running, resumed: true };
     const wsl = wslLoc(cwd);
     if (!wsl) throw new TerminalError('The chat folder is not in WSL.', 'bad_folder');
-    const host = wslHost(wsl.distro);
-    const why = notReady(host, wsl.distro);
-    if (why) throw new TerminalError(why, 'wsl_unavailable', { line: why });
-    const stat = await host!.call('fs.stat', { path: wsl.linuxPath }).catch(() => null);
+    let host: WslHost;
+    try {
+      host = await hostWhenReady(wsl.distro, 120_000); // the first terminal after a Windows start waits for its distro
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      throw new TerminalError(why, 'wsl_unavailable', { line: why });
+    }
+    const stat = await host.call('fs.stat', { path: wsl.linuxPath }).catch(() => null);
     if (!stat?.isDir) throw new TerminalError(`This chat's folder no longer exists: ${wsl.linuxPath}`, 'folder_missing', { cwd: String(cwd) });
     const again = this.#sessions.get(k); // opened by another page while this one waited
     if (again) return { session: again, resumed: true };
     if (this.#sessions.size >= this.#max) {
       throw new TerminalError(`${this.#max} terminals are already open.`, 'too_many', { max: this.#max, terminals: this.list() });
     }
-    const env = await host!.env();
+    const env = await host.env();
     const shell: ShellSpec = command ?? { file: env.SHELL || '/bin/bash', args: ['-l'] }; // the user's login shell
     const size = clampSize(cols, rows);
     const ref = String(cwd);
@@ -602,7 +607,7 @@ export class TerminalSessions {
     };
     const label: TerminalLabel = { t: 'terminal', v: 1, key: k, id: crypto.randomUUID(), cwd: ref, shell, startedAt: Date.now() };
     // never a child of AIB: a Linux shell cannot run on Windows
-    const pty = KeeperPty.spawn(linkOf(host!), options, label, () => {
+    const pty = KeeperPty.spawn(linkOf(host), options, label, () => {
       throw new Error(`The terminal could not start in ${distroName(wsl.distro)}.`);
     }, true);
     const session = this.#add(k, ref, { file: shell.file, args: shell.args }, pty, label);

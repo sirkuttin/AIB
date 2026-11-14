@@ -35,7 +35,7 @@ function withHost(host: FakeWslHost | null): void {
 
 Deno.test('wsl refs: parsed without URL rules, distro folded, Windows paths are not WSL', () => {
   assertEquals(wslLoc('wsl://Ubuntu/home/u/My App'), { distro: 'ubuntu', linuxPath: '/home/u/My App' });
-  assertEquals(wslLoc('wsl://ubuntu/home/u/a/../b'), { distro: 'ubuntu', linuxPath: '/home/u/b' });
+  assertEquals(wslLoc('wsl://ubuntu/home/u/a/../b'), null, 'a ref with a .. part is not a ref (location.ts validLinuxPath)');
   assertEquals(wslLoc('C:\\work\\app'), null);
   assertEquals(wslLoc('\\\\wsl.localhost\\Ubuntu\\home'), null);
   assertEquals(wslLoc('wsl://bad distro/x'), null);

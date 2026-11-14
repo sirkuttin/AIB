@@ -478,6 +478,8 @@ Deno.test('the ready line can list every phase 1 method of the contract', () => 
     'changes.diff',
     'changes.branchEntries',
     'chat.repoBranch',
+    'transcripts.sessions',
+    'transcripts.read',
   ];
   assertEquals(Object.keys(methods).sort(), [...names].sort());
 });

@@ -11,7 +11,7 @@ import { RouteTable, SCOPE_IMAGE, SCOPE_READ } from '../web/security.ts';
 import { type Dict, type Event, type Json, TEXT_LIMIT } from './normalize.ts';
 import { casefold, clipped, concat, isOSError, isoTimestamp, parseQs, pyInt, PyTypeError, strCmp, truthy } from './pycompat.ts';
 import { isDir, isFile, isRelativeTo, join, name, purePath, resolveLoose, rglobTail, statSig, stem, withoutSuffix } from './purepath.ts';
-import { wslSavedSessions } from '../wsl/transcripts.ts';
+import { wslSavedSessions, wslTranscriptGet } from '../wsl/transcripts.ts';
 import { Catalog, COMMAND_LIST_TTL, now, QUIET_UNKNOWN_SECONDS, type Resolved, type Source, Store } from './store.ts';
 import { Mutex, readExactly, type Task, type Transcript } from './transcript.ts';
 
@@ -284,6 +284,8 @@ export async function handleGet(source: Source, path: string, query: string, opt
   const args = parseQs(query);
   const arg = (key: string, fallback = '') => args.get(key)?.[0] ?? fallback;
   try {
+    const wsl = await wslTranscriptGet(path, args); // a saved session of a WSL project: read in its distro
+    if (wsl) return json(wsl.status, wsl.body);
     if (path === '/api/sessions') {
       const sessions = await source.sessions();
       // saved chats of WSL projects, read in their distro (wsl/transcripts.ts); none until a distro's helper lists them

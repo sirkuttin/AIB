@@ -8,20 +8,49 @@
  * run with the distro's python3. Never `wsl --shutdown` or `--terminate`, never the owner's ~/.claude or ~/.codex, never a real agent.
  * wsl.exe runs with piped stdio and a minimal environment (it inherits this process's hidden console: no window).
  */
-import { detectDistros } from '../../outputs/agent-studio/server/wsl/detect.ts';
+import { detectWsl } from '../../outputs/agent-studio/server/wsl/detect.ts';
 import type { WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { wslHost } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { configureWslHosts, type WslHostsOptions, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
 import { urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
+import type { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 
 export const DISTRO = Deno.env.get('AIB_WSL_E2E') ?? '';
-const found = DISTRO ? await detectDistros().catch(() => []) : [];
+const found = DISTRO ? detectWsl(true).distros : [];
 /** True when the real-WSL tests can run here. */
 export const WSL_E2E = !!DISTRO && found.some((d) => d.name.toLowerCase() === DISTRO.toLowerCase() && d.version === 2);
 export const KEY = DISTRO.toLowerCase();
 export const ROOT = `/tmp/aib-wsl-test-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+/** The Linux programs: `deno run -A tools/build.ts --wsl-only` (dist/wsl/linux-<arch>/), unless AIB_WSL_KEEPER_BIN/HELPER_BIN say. */
+const BUILT = new URL(`../../dist/wsl/linux-${Deno.build.arch === 'aarch64' ? 'arm64' : 'x64'}/`, import.meta.url);
+/** The Windows data folder of the AIB under test (the Linux keeper's data-<hash> folder is named after it). */
+export const STATE = WSL_E2E ? Deno.makeTempDirSync({ prefix: 'aib-wsl-e2e-state-' }) : '';
 if (WSL_E2E) {
   Deno.env.set('AGENT_STUDIO_TEST', '1');
   Deno.env.set('AIB_WSL_ROOT', ROOT); // before any host starts: the Linux keeper data and the agents' homes go inside it
+  const path = (name: string) => decodeURIComponent(new URL(name, BUILT).pathname).replace(/^\/([A-Za-z]:)/, '$1');
+  if (!Deno.env.get('AIB_WSL_KEEPER_BIN')) Deno.env.set('AIB_WSL_KEEPER_BIN', path('AIB-keeper-linux'));
+  if (!Deno.env.get('AIB_WSL_HELPER_BIN')) Deno.env.set('AIB_WSL_HELPER_BIN', path('AIB-wsl-helper-linux'));
+  newAib();
+  globalThis.addEventListener('unload', () => {
+    try {
+      Deno.removeSync(STATE, { recursive: true });
+    } catch { /* in use or gone */ }
+  });
+}
+
+/**
+ * This process becomes a new AIB as far as WSL goes: the hosts made so far are dropped without touching the distro (their transport
+ * ends, as when AIB crashes or quits), and the next wslHost() makes a fresh one that connects to the same Linux keeper.
+ */
+export function newAib(options: Partial<WslHostsOptions> = {}): void {
+  for (const host of wslHostsInUse()?.all() ?? []) host.stop();
+  configureWslHosts({ stateDir: STATE, wslExe: null, ...options });
+}
+
+/** A Windows keeper link for the keep-alive (tests that check the hold): newAib({windowsLink: () => link, wslExe: undefined}). */
+export function withWindowsKeeper(link: KeeperLink): Partial<WslHostsOptions> {
+  return { windowsLink: () => link, wslExe: undefined };
 }
 
 const WORK = new URL('../', import.meta.url);
@@ -55,9 +84,27 @@ export async function prepareRoot(): Promise<void> {
   if (git.code !== 0) throw new Error(`git in ${DISTRO}: ${git.err}`);
 }
 
-/** Remove the test root inside the distro (only it: ROOT is a fresh /tmp/aib-wsl-test-<random>). */
+/**
+ * End the test's WSL side: the Linux keeper this test started is shut down (its agents, shells and helper with it), the hosts are
+ * dropped, and the test root inside the distro is removed (only it: ROOT is a fresh /tmp/aib-wsl-test-<random>).
+ */
 export async function cleanRoot(): Promise<void> {
-  if (/^\/tmp\/aib-wsl-test-[0-9a-f]{12}$/.test(ROOT)) await inDistro('rm -rf -- "$1"', [ROOT]).catch(() => {});
+  for (const host of wslHostsInUse()?.all() ?? []) {
+    try {
+      const client = await host.link.client(false);
+      await client?.shutdown(true);
+    } catch { /* not running */ }
+  }
+  newAib();
+  if (/^\/tmp\/aib-wsl-test-[0-9a-f]{12}$/.test(ROOT)) {
+    // the keeper leaves within a few seconds of the shutdown; its folder goes after it
+    for (let i = 0; i < 20; i++) {
+      const left = await inDistro('ls "$1"/data-*/keeper/keeper.sock >/dev/null 2>&1 && echo busy || echo free', [ROOT]).catch(() => null);
+      if (!left || left.out.trim() !== 'busy') break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    await inDistro('rm -rf -- "$1"', [ROOT]).catch(() => {});
+  }
 }
 
 /** The distro's host once it is ready (Track B starts it on first use). */

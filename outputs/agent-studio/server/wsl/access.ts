@@ -1,16 +1,19 @@
 /**
  * Track C's one door to the WSL hosts (docs/wsl/design.md sections 2, 4, 5, 8): agents, terminals, the Files view and Changes of a WSL
- * project reach their distro only through here. It wraps Track B's registry (wsl/hosts.ts `wslHosts`) and distro list (wsl/detect.ts),
+ * project reach their distro only through here. It wraps Track B's registry (wsl/hosts.ts `wslHosts()`) and distro list (wsl/detect.ts),
  * so tests put a FakeWslHost in with setWslHostResolver and never need a real distro. Pure helpers for refs, names and the Linux side
  * of an agent spawn live here too. Nothing here touches Windows files for a WSL path.
  */
 import type { KeeperLink } from '../keeper/link.ts';
 import type { HelperMethods, WslHost } from './contract.ts';
-import { wslHosts } from './hosts.ts';
-import { detectDistros, type DistroInfo } from './detect.ts';
+import { wslHosts, wslHostsInUse } from './hosts.ts';
+import { detectWsl, type WslDistro } from './detect.ts';
 import { locOf } from '../platform/location.ts';
 import { ValueError } from '../core/py.ts';
 import { urlGate } from './open_urls.ts';
+
+/** A distro of this PC as the page and the routes see it (wsl/detect.ts WslDistro). */
+export type DistroInfo = Pick<WslDistro, 'name' | 'version'> & Partial<WslDistro>;
 
 type Resolver = (distro: string) => WslHost | null;
 let resolver: Resolver | null = null;
@@ -34,19 +37,23 @@ export function setDistroSource(fn: (() => Promise<DistroInfo[]>) | null): void 
 export function wslLoc(path: unknown): { distro: string; linuxPath: string } | null {
   if (typeof path !== 'string') return null;
   const loc = locOf(path);
-  return loc.kind === 'wsl' ? { distro: loc.distro, linuxPath: loc.linuxPath } : null;
+  return loc?.kind === 'wsl' ? { distro: loc.distro, linuxPath: loc.linuxPath } : null;
 }
 
 export function isWslPath(path: unknown): boolean {
   return wslLoc(path) !== null;
 }
 
-/** The host of a distro (by any casing), or null when AIB has none for it. The first time, its URL requests go through the gate. */
+/**
+ * The host of a distro (by any casing) for work in it, or null when AIB has none for it (not a WSL2 distro of this PC, or AIB has no
+ * WSL set-up: no data folder). The first time, the distro starts in the background (its state says how far it is: notReady) and its
+ * URL requests go through the gate.
+ */
 export function wslHost(distro: string): WslHost | null {
   const key = String(distro).toLowerCase();
   let host: WslHost | null = null;
   try {
-    host = resolver ? resolver(key) : wslHosts.get(key);
+    host = resolver ? resolver(key) : wslHosts()?.get(key) ?? null;
   } catch {
     host = null;
   }
@@ -54,14 +61,43 @@ export function wslHost(distro: string): WslHost | null {
     watched.add(host);
     urlGate.watch(host);
   }
+  const begun = host as (WslHost & { begun?: boolean }) | null;
+  if (begun && begun.begun === false) host!.start().catch(() => {}); // the failure is the host's state and note
   return host;
+}
+
+/** The host of a distro only if this AIB already uses it (status lines, saved sessions): never makes or starts one. */
+export function peekWslHost(distro: string): WslHost | null {
+  const key = String(distro).toLowerCase();
+  try {
+    return resolver ? resolver(key) : wslHostsInUse()?.peek(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The host of a distro once it is ready, starting it when needed and waiting up to `timeoutMs` (the first start after a Windows
+ * boot, or the first-time set-up, takes a while). ValueError with the line the user sees when it does not get ready.
+ */
+export async function hostWhenReady(distro: string, timeoutMs = 180_000): Promise<WslHost> {
+  const host = wslHost(distro);
+  if (host && host.state !== 'ready') {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      host.start().catch(() => {}),
+      new Promise((resolve) => (timer = setTimeout(resolve, timeoutMs))),
+    ]);
+    clearTimeout(timer);
+  }
+  return readyHost(distro);
 }
 
 /** The WSL2 distros of this PC (WSL1 is refused in phase 1). Never throws: none when WSL is missing or detection fails. */
 export async function wsl2Distros(): Promise<DistroInfo[]> {
   let found: DistroInfo[] = [];
   try {
-    found = await (distroSource ?? detectDistros)();
+    found = distroSource ? await distroSource() : detectWsl().distros;
   } catch {
     found = [];
   }
@@ -73,16 +109,7 @@ export async function wsl2Distros(): Promise<DistroInfo[]> {
 /** The distro as the user named it ("Ubuntu"), from its host or the last distro list; else the key itself. */
 export function distroName(distro: string): string {
   const key = String(distro).toLowerCase();
-  const host = resolver ? safe(() => resolver!(key)) : safe(() => wslHosts.get(key));
-  return host?.distro || names.get(key) || distro;
-}
-
-function safe<T>(work: () => T): T | null {
-  try {
-    return work();
-  } catch {
-    return null;
-  }
+  return peekWslHost(key)?.distro || names.get(key) || detectWsl().distros.find((d) => d.name.toLowerCase() === key)?.name || distro;
 }
 
 /** The Linux keeper link of a host (contract.ts types it unknown: it is a KeeperLink). */

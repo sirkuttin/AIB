@@ -23,6 +23,12 @@ export interface WslHost {
   env(): Promise<Record<string, string>>;
   /** Called when something inside the distro asks Windows to open a URL (BROWSER shim). */
   onOpenUrl(handler: (url: string) => void): () => void;
+  /** Install if needed, connect, start the helper (idempotent; the first use of a host starts it). Rejects with the reason. */
+  start(): Promise<void>;
+  /** "Reconnect" on a stopped or failed distro: start again now; a ready host is left as it is. */
+  reconnect(): Promise<void>;
+  /** The running helper's version (helper.ready), null before it is ready (Settings > About). */
+  readonly helperVersion: string | null;
 }
 
 export class WslHelperError extends Error {
@@ -50,8 +56,18 @@ export interface HelperMethods {
   'files.gitInfo': { params: { root: string }; result: unknown };
   'changes.get': { params: { folder: string; offset?: number; base?: string }; result: unknown };
   'changes.diff': { params: { folder: string; path: string; base?: string }; result: unknown };
-  'changes.branchEntries': { params: { folder: string }; result: unknown };
+  'changes.branchEntries': { params: { folder: string; base?: string }; result: unknown };
   'chat.repoBranch': { params: { folder: string }; result: { repo: string | null; branch: string | null } };
+  /**
+   * Saved sessions of the distro user's agents (~/.claude/projects, ~/.codex/sessions; CLAUDE_CONFIG_DIR / CODEX_HOME of the login
+   * environment win), as transcripts/store.ts lists them on Windows: items with key, sessionId, cwd (a Linux path), title, mtime.
+   */
+  'transcripts.sessions': { params: { provider: 'claude' | 'codex'; limit?: number; claudeDir?: string }; result: { sessions: Record<string, unknown>[] } };
+  /** A page of one saved session (key from transcripts.sessions; args: the page's limit, after, before, thinking, q, kind): the helper's /api/transcript answer. */
+  'transcripts.read': {
+    params: { provider: 'claude' | 'codex'; key: string; args?: Record<string, string>; claudeDir?: string };
+    result: { status: number; body: unknown };
+  };
 }
 
 /** Notification (no id) from the helper: a URL some process in the distro wants opened on Windows. http/https only, at most 2048 bytes. */

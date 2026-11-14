@@ -2,13 +2,14 @@
  * Saved chats of WSL projects (docs/wsl/design.md section 11, item 5): a chat that ended in a distro must still be listed after an AIB
  * restart, and reopening it resumes it there (Studio.connect with the ref and the session id: session/load runs in the distro).
  *
- * The transcripts are inside the distro (`~/.claude/projects`, `~/.codex`), so the helper reads them with transcripts/store.ts natively
- * and answers the same items Store.sessions() gives on Windows. That helper method is not in contract.ts yet; it is proposed as:
- *   'transcripts.sessions': { params: { provider: 'claude' | 'codex' }; result: { sessions: Record<string, unknown>[] } }
- * Until a helper lists it, nothing is added. Given the user's WSL project refs, a session whose folder is none of them is left out.
+ * The transcripts are inside the distro (`~/.claude/projects`), so the helper reads them with transcripts/store.ts natively and answers
+ * the same items Store.sessions() gives on Windows (`transcripts.sessions`); opening one reads its pages there too (`transcripts.read`,
+ * the helper's own /api/transcript answer). A helper without the methods lists nothing. Given the user's WSL project refs, a session
+ * whose folder is none of them is left out. Under test the helper is told the Claude folder inside AIB_WSL_ROOT (wslTestHomeEnv), so
+ * a test never lists the owner's own sessions.
  */
 import type { WslHost } from './contract.ts';
-import { distroName, wsl2Distros, wslHost } from './access.ts';
+import { distroName, hostWhenReady, peekWslHost, wsl2Distros, wslTestHomeEnv } from './access.ts';
 import { refOf } from '../platform/location.ts';
 
 type Dict = Record<string, unknown>;
@@ -24,11 +25,17 @@ export function wslSessionKey(distro: string, provider: string, key: string): st
 /** One distro's saved sessions, their folders as refs; [] when the helper cannot list them. */
 export async function distroSessions(host: WslHost, distro: string, projects: ReadonlySet<string> | null = null): Promise<Dict[]> {
   const out: Dict[] = [];
-  const call = host.call.bind(host) as unknown as (method: string, params: Dict, opts?: { timeoutMs?: number }) => Promise<{ sessions?: Dict[] }>;
+  let dirs: { claudeDir?: string };
+  try {
+    const test = wslTestHomeEnv();
+    dirs = test.CLAUDE_CONFIG_DIR ? { claudeDir: test.CLAUDE_CONFIG_DIR } : {};
+  } catch {
+    return out; // under test without AIB_WSL_ROOT: never the owner's sessions
+  }
   for (const provider of WSL_SESSION_PROVIDERS) {
     let listed: Dict[];
     try {
-      listed = (await call('transcripts.sessions', { provider }, { timeoutMs: 10_000 })).sessions ?? [];
+      listed = (await host.call('transcripts.sessions', { provider, ...dirs }, { timeoutMs: 10_000 })).sessions ?? [];
     } catch {
       continue; // a helper without the method (it throws), or a read that failed: nothing from this provider
     }
@@ -54,9 +61,42 @@ export async function wslSavedSessions(projects: ReadonlySet<string> | null = nu
   const out: Dict[] = [];
   try {
     for (const d of await wsl2Distros()) {
-      const host = wslHost(d.name);
+      const host = peekWslHost(d.name);
       if (host && host.state === 'ready') out.push(...await distroSessions(host, d.name.toLowerCase(), projects));
     }
   } catch { /* none */ }
   return out;
+}
+
+/** {distro, provider, key} of a wslSessionKey, or null for any other key. */
+export function parseWslSessionKey(key: unknown): { distro: string; provider: 'claude' | 'codex'; key: string } | null {
+  const match = typeof key === 'string' ? /^wsl\.([a-z0-9._-]{1,64})\.(claude|codex)\/(.+)$/s.exec(key) : null;
+  return match ? { distro: match[1], provider: match[2] as 'claude' | 'codex', key: match[3] } : null;
+}
+
+/**
+ * The viewer's GET for a saved WSL session (the page reads its history as for any saved chat): /api/transcript is answered by the
+ * distro's helper; a WSL session lists no subagents or background commands in phase 1. null when the key is not a WSL one.
+ */
+export async function wslTranscriptGet(path: string, args: Map<string, string[]>): Promise<{ status: number; body: unknown } | null> {
+  const key = args.get(path === '/api/transcript' ? 'key' : 'session')?.[0];
+  const wsl = parseWslSessionKey(key);
+  if (!wsl) return null;
+  if (path === '/api/agents') return { status: 200, body: { agents: [], now: Date.now() / 1000 } };
+  if (path === '/api/commands') return { status: 200, body: { commands: [], running: 0, total: 0 } };
+  if (path !== '/api/transcript') return { status: 400, body: { error: 'Not available for WSL sessions yet' } };
+  try {
+    const test = wslTestHomeEnv();
+    const host = await hostWhenReady(wsl.distro, 60_000);
+    const passed: Record<string, string> = {};
+    for (const [name, values] of args) if (name !== 'key' && values.length) passed[name] = values[0];
+    return await host.call('transcripts.read', {
+      provider: wsl.provider,
+      key: wsl.key,
+      args: passed,
+      ...(test.CLAUDE_CONFIG_DIR ? { claudeDir: test.CLAUDE_CONFIG_DIR } : {}),
+    }, { timeoutMs: 30_000 });
+  } catch (error) {
+    return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+  }
 }
