@@ -387,14 +387,19 @@ export function helperCompileArgs(t: Target, output: string): string[] {
 
 /** The helper's own files (its module graph), so a cached build is reused only while none of them changed. */
 async function helperSources(): Promise<string[]> {
+  // Relative to APP_DIR: `deno info` (2.9) reads an absolute Windows path as a URL with the scheme `c:` and lists only that one
+  // unresolved module, so the cache key would miss every change to the helper's code.
   const out = await new Deno.Command(Deno.execPath(), {
-    args: ['info', '--json', '--config', `${APP_DIR}/deno.json`, `${APP_DIR}/${WSL_HELPER_ENTRY}`],
+    args: ['info', '--json', '--config', 'deno.json', WSL_HELPER_ENTRY],
+    cwd: APP_DIR,
     stdout: 'piped',
     stderr: 'piped',
   }).output();
   if (!out.success) throw new Error(`deno info of the WSL helper failed:\n${new TextDecoder().decode(out.stderr).slice(-2000)}`);
   const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as { modules: { specifier: string; local?: string }[] };
-  return graph.modules.map((m) => m.local ?? m.specifier).sort();
+  const sources = graph.modules.map((m) => m.local ?? m.specifier).sort();
+  if (sources.length < 2) throw new Error(`deno info of the WSL helper listed ${sources.length} module(s); its build could not be cached safely`);
+  return sources;
 }
 
 /** One hash over everything both programs are built from, plus the deno and app versions. */
