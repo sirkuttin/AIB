@@ -8,6 +8,9 @@
  *   GET  /api/live/terminal?signin=<agent>&cols=&rows=  the same socket, running a Beta agent's own sign-in command instead of a shell
  *                                                   (ACP terminal auth: beta_signin.ts). The page never names the program: it is the
  *                                                   agent's own launcher with the sign-in args the agent host saved, else the catalog's.
+ *   GET  /api/live/terminal?signin=claude&arg=..&arg=..  a built-in agent's terminal sign-in (a chat's "Sign in" card): the agent's own
+ *                                                   launcher (Settings / Studio install / global, as a chat starts it) with the args
+ *                                                   of the terminal method the agent advertised (ACP terminal auth). Plain words only.
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
  */
@@ -18,7 +21,8 @@ import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import type { WebContext } from './server.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
 import { resolveBeta, signinArgv } from '../agents/beta_agents.ts';
-import { readTerminalMethod } from '../agents/beta_signin.ts';
+import { cleanTerminalArgs, readTerminalMethod } from '../agents/beta_signin.ts';
+import { builtinLaunch } from './shared.ts';
 import { defaultProbe, refreshWindowsPath, setupCommand } from '../agents/beta_setup.ts';
 import type { ShellSpec } from '../platform/pty.ts';
 import { remoteSetupCommand } from '../remote/install.ts';
@@ -71,7 +75,7 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const q = url.searchParams;
   const signin = q.get('signin');
   const setup = q.get('setup');
-  if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'));
+  if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
   else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
   else {ctx.terminals.attach(
       link,
@@ -86,8 +90,35 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   return { response };
 }
 
+export const BUILTIN_SIGNIN_AGENTS = new Set(['claude', 'codex']);
+const BUILTIN_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
+
+/**
+ * The program a built-in agent's terminal sign-in runs: its own launcher (as a chat starts it) plus the advertised method's args.
+ * The page only names the args, never the program; they must be 1 to 12 plain words (cleanTerminalArgs).
+ */
+export async function builtinSigninCommand(
+  ctx: Pick<WebContext, 'agentOptions' | 'settings'>,
+  agentId: string,
+  args: unknown,
+): Promise<ShellSpec | string> {
+  const words = cleanTerminalArgs(args);
+  if (!words) return 'This sign-in has no command AIB can run. Sign in with the agent itself, then choose Try again.';
+  const launch = await builtinLaunch(ctx.agentOptions, ctx.settings, agentId);
+  if (!launch.found || !launch.argv.length) return `${BUILTIN_NAMES[agentId]} is not installed. ${launch.problem}`.trim();
+  const argv = [...launch.argv, ...words];
+  return { file: argv[0], args: argv.slice(1) };
+}
+
 /** The program a Beta agent's terminal sign-in runs: [file, args], or a one-line reason it cannot run. */
-export async function signinCommand(ctx: Pick<WebContext, 'agentOptions'>, agentId: string): Promise<ShellSpec | string> {
+export async function signinCommand(
+  ctx: Pick<WebContext, 'agentOptions'> & Partial<Pick<WebContext, 'settings'>>,
+  agentId: string,
+  args: unknown = [],
+): Promise<ShellSpec | string> {
+  if (BUILTIN_SIGNIN_AGENTS.has(agentId) && ctx.settings) {
+    return await builtinSigninCommand(ctx as Pick<WebContext, 'agentOptions' | 'settings'>, agentId, args);
+  }
   const agent = betaAgent(agentId);
   if (!agent || agent.signin.kind !== 'terminal') return 'That agent does not sign in through a terminal.';
   const options = ctx.agentOptions;
@@ -106,8 +137,15 @@ export async function signinCommand(ctx: Pick<WebContext, 'agentOptions'>, agent
 }
 
 /** A sign-in terminal: key signin:<agent>, started in the home folder; it ends when the sign-in command ends. */
-async function attachSignin(ctx: WebContext, link: WsLink, agentId: string, cols: unknown, rows: unknown): Promise<void> {
-  const command = await signinCommand(ctx, agentId);
+async function attachSignin(
+  ctx: WebContext,
+  link: WsLink,
+  agentId: string,
+  cols: unknown,
+  rows: unknown,
+  args: string[] = [],
+): Promise<void> {
+  const command = await signinCommand(ctx, agentId, args);
   if (typeof command === 'string') {
     link.send(JSON.stringify({ type: 'error', message: command, code: 'signin_unavailable' }));
     link.close(1000, 'refused');

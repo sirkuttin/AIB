@@ -1269,19 +1269,22 @@
 
   /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
   // step: '' for the sign-in; 'install' or 'prereq:<id>' for a setup terminal (the server picks the command from its catalog).
-  function signinUrl(loc, agentId, cols, rows, step) {
+  function signinUrl(loc, agentId, cols, rows, step, args) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
     const q = new URLSearchParams(
       step
         ? { setup: agentId, step, cols: String(cols || 80), rows: String(rows || 24) }
         : { signin: agentId, cols: String(cols || 80), rows: String(rows || 24) },
     );
+    // A built-in agent's terminal sign-in (a chat's sign-in card): the advertised method's args; the server adds the program.
+    if (!step && Array.isArray(args)) args.forEach((a) => q.append('arg', String(a)));
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
   }
   /**
    * runSignin(box, agentId, hooks): run a Beta agent's own sign-in command (ACP terminal auth) in an AIB terminal inside `box`
    * (a ConPTY on the server: no window ever opens). hooks: {onReady(), onExit(code), onError(message)}. Returns {close()}, which ends
-   * the command. Same look and keys as the chat terminal (copy with Ctrl+Shift+C); nothing typed here goes to an agent chat.
+   * the command. hooks.args: a built-in agent's advertised sign-in args (Claude Code: --cli auth login --claudeai).
+   * Same look and keys as the chat terminal (copy with Ctrl+Shift+C); nothing typed here goes to an agent chat.
    */
   function runSignin(box, agentId, hooks) {
     const h = hooks || {};
@@ -1327,7 +1330,7 @@
         return Promise.resolve(host.token()).then((token) => {
           if (run.closed) return;
           const WS = (host && host.WebSocket) || root.WebSocket;
-          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows, h.step || ''), protocols(token));
+          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.args), protocols(token));
           ws.binaryType = 'arraybuffer';
           run.ws = ws;
           term.onData((data) => {

@@ -381,6 +381,13 @@ export interface AuthState {
   message: string;
   error: string;
   working: boolean;
+  /**
+   * Deno only. 'prompt': a message failed mid-session because the agent's login expired (ACP auth_required); the chat keeps working
+   * once signed in, and AIB sends that message again once. Absent: sign-in while the chat opens (setup).
+   */
+  during?: 'prompt';
+  /** Deno only: what the agent said (its own text, then the error), kept under the card. */
+  detail?: string;
 }
 
 interface Pending {
@@ -638,6 +645,15 @@ const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB can
 
 /** The agents whose steering behaviour AIB knows (the page picks its hint copy by this); any other agent that steers gets the fallback. */
 export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex', 'omp']);
+/** A request's failure as an RpcError (request() throws a RuntimeError carrying the agent's code and data), or null. */
+function asRpcError(error: unknown): RpcError | null {
+  if (error instanceof RpcError) return error;
+  if (!(error instanceof Error) || !Object.hasOwn(error, 'code')) return null;
+  const { code, data } = error as Error & { code?: unknown; data?: unknown };
+  return new RpcError({ message: error.message, code, data });
+}
+/** Built-in agents whose ACP terminal sign-in methods AIB runs itself, in an AIB terminal (Deno only). */
+export const TERMINAL_SIGNIN_PROVIDERS: ReadonlySet<string> = new Set(['claude']);
 
 /**
  * How long a Claude Code turn whose reply ended while its helpers run waits before it is ended early, when a steered message went in
@@ -949,6 +965,12 @@ export class Connection {
   /** Why this chat could not be rebuilt from the keeper's record ('' when it was, or was never rebuilt). It is then read-only. */
   rebuildError = '';
   #replaying = false;
+  /** The raw text and attachments of the latest prompt, so a turn that failed for sign-in can be sent again once (Deno only). */
+  #lastPrompt: { seq: number; text: unknown; attachments: unknown } | null = null;
+  /** The message to send again after a mid-session sign-in, or null. */
+  #authRetry: { text: unknown; attachments: unknown } | null = null;
+  /** True while the automatic resend after a sign-in is running: another auth failure then says the sign-in did not take. */
+  #authResent = false;
   /** Record time (seconds) while replaying, so rebuilt events keep their original times. */
   #clock: number | null = null;
   #outLines = new PyTextLines();
@@ -2922,6 +2944,97 @@ export class Connection {
     return false;
   }
 
+  /** The agent's own words of the current turn (its message chunks since the last user message), clipped; '' when none. */
+  #turnAgentText(): string {
+    const parts: string[] = [];
+    for (let i = this.events.length - 1; i >= 0 && parts.length < 200; i--) {
+      const e = this.events[i];
+      if (e.kind === 'user') break;
+      if (e.kind !== 'update' || !isDict(e.data)) continue;
+      const update = get(e.data, 'update');
+      if (!isDict(update) || get(update, 'sessionUpdate') !== 'agent_message_chunk') continue;
+      const content = get(update, 'content');
+      const piece = isDict(content) ? get(content, 'text') : null;
+      if (isStr(piece)) parts.push(piece);
+    }
+    return clip(parts.reverse().join('').trim(), 1000);
+  }
+
+  /** A prompt failed with ACP auth_required mid-session: show the sign-in card and keep the message for one resend (Deno only). */
+  #holdForSignIn(error: RpcError, seq: number): void {
+    const said = this.#turnAgentText();
+    const again = this.#authResent;
+    this.#authResent = false;
+    this.error = '';
+    const detail = clip([said, error.message].filter(Boolean).join('\n'), 1500);
+    this.auth = {
+      methods: [...this.authMethods],
+      message: clip(error.message, 500),
+      error: again ? 'AIB sent your message again after the sign-in, but the agent still asks for sign-in. Try again.' : '',
+      working: false,
+      during: 'prompt',
+      detail,
+    };
+    const last = this.#lastPrompt;
+    this.#authRetry = last && last.seq === seq ? { text: last.text, attachments: last.attachments } : this.#authRetry;
+    this.#queueNoteOutcome(null, false);
+    this.event('auth_required', { methods: this.auth.methods, message: this.auth.message, during: 'prompt', detail });
+  }
+
+  /** The person's answer to a mid-session sign-in card: authenticate in-app, retry after a terminal sign-in, or dismiss. */
+  #answerPromptAuth(auth: AuthState, action: unknown, methodId: unknown): void {
+    if (action === 'cancel') {
+      this.auth = null;
+      this.#authRetry = null;
+      this.event('error', { message: auth.detail || auth.message || 'Sign-in required' });
+      void this.#queuePump();
+      return;
+    }
+    if (action === 'retry') {
+      void this.#resumeAfterSignIn();
+      return;
+    }
+    if (action !== 'authenticate') throw new ValueError('Action must be authenticate, retry, or cancel');
+    const method = isStr(methodId) ? auth.methods.find((m) => m.id === methodId) ?? null : null;
+    if (method === null) throw new ValueError('Unknown sign-in method');
+    if (method.kind !== 'agent') {
+      throw new ValueError('This sign-in runs in a terminal: choose Sign in on the card, or finish it outside AIB, then choose Try again.');
+    }
+    auth.working = true;
+    auth.error = '';
+    void (async () => {
+      try {
+        await this.request('authenticate', this.authenticateParams(method.id), 900);
+      } catch (failure) {
+        if (this.auth === auth) {
+          auth.working = false;
+          auth.error = 'Sign-in failed: ' + clip(errorText(failure), 300);
+          this.#scheduleSnapshot();
+        }
+        return;
+      }
+      if (this.auth === auth) await this.#resumeAfterSignIn();
+    })();
+  }
+
+  /** Signed in again: the card goes and the message that failed is sent once more (nothing to send: the queue goes on). */
+  async #resumeAfterSignIn(): Promise<void> {
+    const retry = this.#authRetry;
+    this.auth = null;
+    this.#authRetry = null;
+    if (!retry || this.closed || !this.ready || (this.busy && !this.autonomous)) {
+      void this.#queuePump();
+      return;
+    }
+    this.#authResent = true;
+    try {
+      await this.prompt(retry.text, null, retry.attachments);
+    } catch (error) {
+      this.#authResent = false;
+      this.event('error', { message: 'AIB could not send your message again after the sign-in: ' + errorText(error) });
+    }
+  }
+
   /** Called from the HTTP layer: choose an in-app method, retry after an external sign-in, or cancel. */
   answerAuth(action: unknown, methodId: unknown = null): void {
     const auth = this.auth;
@@ -2929,6 +3042,7 @@ export class Connection {
       throw new ValueError('No sign-in is pending for this connection');
     }
     if (auth.working) throw new ValueError('Sign-in is already in progress');
+    if (auth.during === 'prompt') return this.#answerPromptAuth(auth, action, methodId);
     if (action === 'authenticate') {
       const method = isStr(methodId) ? auth.methods.find((m) => m.id === methodId) ?? null : null;
       if (method === null) throw new ValueError('Unknown sign-in method');
@@ -2963,7 +3077,11 @@ export class Connection {
         elicitation: { form: {}, url: {} },
         // A Beta agent that signs in through a terminal: AIB runs that sign-in itself (its own terminal, Settings > AIB Linking), so the
         // agent may offer its terminal-type methods (ACP auth.terminal); the chat's sign-in card then has a Sign in button.
-        ...(betaAgent(this.provider)?.signin.kind === 'terminal' ? { auth: { terminal: true } } : {}),
+        // Claude Code too (Deno only): its "claude-ai-login" / "console-login" terminal methods run in an AIB terminal from the chat's
+        // sign-in card (terminal_routes.ts builtinSigninCommand), never a separate console window.
+        ...(betaAgent(this.provider)?.signin.kind === 'terminal' || TERMINAL_SIGNIN_PROVIDERS.has(this.provider)
+          ? { auth: { terminal: true } }
+          : {}),
       },
     }, 45);
     this.#checkSetupAbort();
@@ -3312,6 +3430,7 @@ export class Connection {
     };
     if (fileSummaries.length) userEvent.files = fileSummaries; // names, types, sizes and a bounded text preview; never the full content
     this.event('user', userEvent);
+    this.#lastPrompt = { seq, text, attachments };
     this.turn = this.#runTurn(
       seq,
       text as string,
@@ -3405,6 +3524,7 @@ export class Connection {
       this.#backgroundOpenTools(seq);
       if (!(isDict(result) && result.stopReason === 'cancelled')) this.#steerUnread();
       this.#queueNoteOutcome(result, false);
+      this.#authResent = false;
       this.event('turn_end', result);
       const hook = this.onTurnEnd;
       // A turn that ended before a rebuild had its hooks run by the AIB that saw it end.
@@ -3421,6 +3541,18 @@ export class Connection {
         this.#receiptChanged(clientMessageId);
       }
     } catch (error) {
+      const authError = asRpcError(error);
+      if (authError && isAuthRequired(authError) && !this.closed && this.cancelSeq < seq && !this.auth && !this.#replaying) {
+        // The agent's login expired mid-session ("Failed to authenticate…" then ACP auth_required): one sign-in card, not two raw
+        // errors; once signed in, the message goes again once (Deno only).
+        this.#holdForSignIn(authError, seq);
+        if (clientMessageId) {
+          const receipt = this.promptReceipts.get(clientMessageId);
+          if (receipt) receipt.state = 'error';
+          this.#receiptChanged(clientMessageId);
+        }
+        return; // finally still runs
+      }
       log.exception(error, 'Prompt turn failed');
       const data = isDict(error) || error instanceof Error ? (error as { data?: unknown }).data : null;
       if (isDict(data) && isDict(data.subscriptionQuota)) {
