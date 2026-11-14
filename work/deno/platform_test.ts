@@ -13,6 +13,7 @@ import {
 import { ensureHiddenConsole } from '../../outputs/agent-studio/server/platform/console.ts';
 import { consoleSetup } from './_no_console.ts';
 import { basename, dirname, join } from '../../outputs/agent-studio/server/platform/path.ts';
+import { hkcuSubkeys, hkcuValue } from '../../outputs/agent-studio/server/platform/registry.ts';
 
 const win = Deno.build.os === 'windows';
 const appDir = PY_REF_DIR; // the Python reference (state_store.FileLock)
@@ -234,5 +235,18 @@ setTimeout(() => {}, 60000);`;
         } catch { /* gone, as it should be */ }
       }
     }
+  },
+});
+
+Deno.test({
+  name: 'registry (advapi32): HKCU subkeys and values are read without a child process; a missing key is empty',
+  ignore: !win,
+  fn() {
+    const keys = hkcuSubkeys('Software', ['AIBNoSuchValue']);
+    assert(keys.length > 0 && keys.every((k) => typeof k.key === 'string' && k.key && Object.keys(k.values).length === 0));
+    const missing = 'Software\\AIB-no-such-key-' + crypto.randomUUID();
+    assertEquals([hkcuSubkeys(missing, ['x']), hkcuValue(missing, 'x')], [[], undefined]);
+    const value = hkcuValue('Control Panel\\Desktop', 'WheelScrollLines');
+    assert(value === undefined || typeof value === 'string' || typeof value === 'number');
   },
 });

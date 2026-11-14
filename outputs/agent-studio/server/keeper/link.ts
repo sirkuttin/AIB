@@ -8,6 +8,16 @@
  * agent host (or plain in-process agents), logs why and Settings > About shows one quiet line (keeperProblem()). AIB_KEEPER=0 in the
  * environment turns it off: an internal escape hatch for tests and debugging, shown nowhere. A Studio built without a decision (unit
  * tests, the split agent host) starts no new chat in the keeper, but still takes over chats a keeper already holds (keeperWanted()).
+ *
+ * A link can also reach its keeper through a `connector` instead of a data folder: the Linux keeper of a WSL distro, over the
+ * stdio of a `wsl.exe … bridge` child (wsl/hosts.ts). With `reconnect`, the end of that transport is not the end of the keeper
+ * (docs/wsl/design.md section 11 item 2): the channels are suspended (operations wait), the connector is called again with backoff,
+ * and each channel is attached again from the last record it had (claimed again when it was ours). A channel is told `lost` (and
+ * onLost fires, so Studio may start the chat again) only when the keeper's `list` shows it ended or gone, or the keeper cannot be
+ * reached again: a transport hiccup never starts a second copy of a running agent.
+ *
+ * AIB's own channels (the WSL keep-alive `wsl-hold` in the Windows keeper, the `wsl-helper` in a Linux keeper; contract.ts labels)
+ * are not chats: isAibInternalLabel tells them apart, and they never count as live work (liveUserChannels).
  */
 import { announce, getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
@@ -18,6 +28,7 @@ import {
   ensureKeeper,
   type EnsureOptions,
   findKeeper,
+  KEEPER_NEEDS,
   keeperBinary,
   type KeeperClient,
   KeeperError,
@@ -27,9 +38,42 @@ import {
   programVersion,
   type SpawnSpec,
 } from './client.ts';
+import { WSL_HELPER_LABEL, WSL_HOLD_LABEL } from '../wsl/contract.ts';
 
 const log = getLogger('keeper');
 const ENC = new TextEncoder();
+
+/** The label's `aib` of one of AIB's own channels (contract.ts), or '' for anything else (a chat, a terminal, no label). */
+export function aibInternalKind(label: unknown): string {
+  if (typeof label !== 'string' || !label || label.length > 16384) return '';
+  try {
+    const value = JSON.parse(label);
+    const kind = value && typeof value === 'object' && !Array.isArray(value) ? value.aib : null;
+    return kind === WSL_HOLD_LABEL.aib || kind === WSL_HELPER_LABEL.aib ? kind : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Is this spawn label one of AIB's own channels (the WSL keep-alive or the WSL helper)? Studio's rebuild, orphan-terminal cleanup
+ * and live counts skip these: they are neither chats nor terminals, and must never be stopped as unknown or counted as work.
+ */
+export function isAibInternalLabel(label: unknown): boolean {
+  return aibInternalKind(label) !== '';
+}
+
+/** The live channels that are real work (agents, terminals): every live one except AIB's own (isAibInternalLabel). */
+export function liveUserChannels(listed: readonly ChannelInfo[]): ChannelInfo[] {
+  return listed.filter((c) => c.live && !isAibInternalLabel(c.label));
+}
+
+/** Reconnect timing for a link with a connector (design section 3: 0.5, 1, 2, 4 s ... for up to 30 s in all). */
+export interface ReconnectPolicy {
+  delaysMs: readonly number[];
+  totalMs: number;
+}
+export const DEFAULT_RECONNECT: ReconnectPolicy = { delaysMs: [500, 1000, 2000, 4000, 8000], totalMs: 30_000 };
 
 /** AIB_KEEPER=0 in the environment: the keeper is off (internal escape hatch for tests and debugging; never shown in the page). */
 export function keeperDisabled(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): boolean {
@@ -128,8 +172,25 @@ export interface KeeperChannelListener extends ChannelListener {
 }
 
 export interface KeeperLinkOptions extends EnsureOptions {
+  /** The keeper's data folder (ignored by the connection itself when `connector` is given). */
   dataDir: string;
+  /**
+   * Make a new authenticated connection instead of finding or starting the keeper of `dataDir` (a WSL distro's Linux keeper over a
+   * bridge). `start` false: the caller only wants a keeper that already runs (null when there is none, if the connector can tell).
+   */
+  connector?: (start: boolean) => Promise<KeeperClient | null>;
+  /** With a connector: a closed connection is a lost transport, reconnected as described above (true = DEFAULT_RECONNECT). */
+  reconnect?: boolean | ReconnectPolicy;
+  /** The features new chats need of this keeper (default KEEPER_NEEDS; WSL: WSL_KEEPER_NEEDS). */
+  needs?: readonly string[];
+  /** The version of the keeper this AIB ships for this link (default: `version` of keeperBinary(dataDir)); null when unknown. */
+  bundledVersion?: () => Promise<string | null>;
+  /** The `lost` error message when the keeper is gone after a transport loss (e.g. "Ubuntu stopped …, so this agent stopped."). */
+  lostMessage?: string;
 }
+
+/** The transport of a reconnecting link: 'lost' (suspended, reconnecting), 'restored', or 'gone' (the keeper could not be reached). */
+export type TransportState = 'lost' | 'restored' | 'gone';
 
 export class KeeperLink {
   readonly channels = new Map<string, KeeperChannel>();
@@ -137,10 +198,13 @@ export class KeeperLink {
   onLost: ((channels: KeeperChannel[]) => void) | null = null;
   /** Called each time a keeper connection is made (Studio remembers which keeper its instance id belongs to). */
   onClient: ((client: KeeperClient) => void) | null = null;
+  /** A reconnecting link's transport changed (wsl/hosts.ts shows "reconnecting" / "stopped"). */
+  onTransport: ((state: TransportState, error: Error | null) => void) | null = null;
   /** Why the running keeper cannot take new chats ('' = it can); new chats then run as children of AIB (Studio checks it). */
   problem = '';
   #client: KeeperClient | null = null;
-  #connecting: Promise<KeeperClient> | null = null;
+  #connecting: Promise<KeeperClient | null> | null = null;
+  #reconnecting: Promise<KeeperClient | null> | null = null;
   #closed = false;
   /** The connection that passed check() with nothing left to do (current version, every needed feature). */
   #checked: KeeperClient | null = null;
@@ -157,7 +221,8 @@ export class KeeperLink {
    *     holds chats: they would die with it). Until then the running one is used.
    */
   async check(): Promise<KeeperClient> {
-    const client = (await this.client(true))!;
+    const client = await this.client(true);
+    if (!client) throw new KeeperError('closed', 'the keeper could not be reached');
     if (this.#checked === client) return client;
     this.#renewing ??= this.#renew(client).finally(() => (this.#renewing = null));
     return await this.#renewing;
@@ -165,6 +230,7 @@ export class KeeperLink {
 
   async #bundledVersion(): Promise<string | null> {
     try {
+      if (this.options.bundledVersion) return await this.options.bundledVersion();
       return await programVersion(this.options.binary ?? await keeperBinary(this.options.dataDir));
     } catch {
       return null;
@@ -172,7 +238,7 @@ export class KeeperLink {
   }
 
   async #renew(client: KeeperClient, again = true): Promise<KeeperClient> {
-    const missing = missingFeatures(client.features);
+    const missing = missingFeatures(client.features, this.options.needs ?? KEEPER_NEEDS);
     const bundled = await this.#bundledVersion();
     const older = bundled !== null && compareKeeperVersions(bundled, client.keeperVersion) > 0;
     if (!missing.length && !older) {
@@ -180,7 +246,8 @@ export class KeeperLink {
       this.#checked = client;
       return client;
     }
-    const live = (await client.list()).filter((c) => c.live).length;
+    const listed = await client.list();
+    const live = liveUserChannels(listed).length; // AIB's own channels (hold, helper) never keep an old keeper
     if (live) {
       if (missing.length) {
         this.problem = `The running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')} and holds ${live} ` +
@@ -213,8 +280,24 @@ export class KeeperLink {
     // Its channels have all ended: let them go quietly (no "keeper lost" for chats that are already over).
     client.onClose = null;
     if (this.#client === client) this.#client = null;
-    for (const [id, channel] of this.channels) if (channel.client === client) this.channels.delete(id);
+    const dropped = new Map<string, KeeperChannel>();
+    for (const [id, channel] of this.channels) {
+      if (channel.client !== client) continue;
+      this.channels.delete(id);
+      dropped.set(id, channel);
+    }
     const pid = client.keeperPid;
+    // AIB's own live channels go first (a plain shutdown refuses while anything is live): the WSL helper holds no state, and the
+    // owner of a WSL keep-alive (wsl/hosts.ts) hears `lost` and starts it again in the new keeper.
+    for (const info of listed) {
+      if (!info.live || !isAibInternalLabel(info.label)) continue;
+      try {
+        await this.stopUnknown(client, info.channel);
+      } catch (error) {
+        log.warning('keeper: could not stop %s before the update: %s', info.channel, error instanceof Error ? error.message : error);
+      }
+      dropped.get(info.channel)?.markLost(null);
+    }
     try {
       await client.shutdown(false);
     } catch (error) {
@@ -222,14 +305,35 @@ export class KeeperLink {
       if (!client.closed) return await this.#adoptClient(client);
     }
     client.close();
-    for (let waited = 0; pid && pidAlive(pid) && waited < 5000; waited += 50) await new Promise((r) => setTimeout(r, 50));
-    return await this.#renew((await this.client(true))!, false);
+    if (!this.options.connector) {
+      for (let waited = 0; pid && pidAlive(pid) && waited < 5000; waited += 50) await new Promise((r) => setTimeout(r, 50));
+      return await this.#renew((await this.client(true))!, false);
+    }
+    // A keeper behind a connector (WSL) has a pid of another system: ask again until the old one is gone and a new one answers.
+    for (let attempt = 0;; attempt++) {
+      await new Promise((r) => setTimeout(r, 300));
+      try {
+        const next = await this.client(true);
+        if (next) return await this.#renew(next, false);
+      } catch (error) {
+        if (attempt >= 9) throw error;
+      }
+      if (attempt >= 9) throw new KeeperError('closed', 'the new keeper did not answer');
+    }
   }
 
   /** The keeper connection, starting a keeper when none runs (start=false: only an already running one, else null). */
   async client(start = true): Promise<KeeperClient | null> {
     if (this.#closed) throw new KeeperError('closed', 'this AIB no longer uses the keeper');
     if (this.#client && !this.#client.closed) return this.#client;
+    if (this.#reconnecting) return await this.#reconnecting;
+    const connector = this.options.connector;
+    if (connector) {
+      this.#connecting ??= connector(start).then((c) => (c ? this.#adoptClient(c) : null)).finally(() => {
+        this.#connecting = null;
+      });
+      return await this.#connecting;
+    }
     if (!start) {
       if (this.#connecting) return await this.#connecting;
       const found = await findKeeper(this.options.dataDir);
@@ -263,8 +367,23 @@ export class KeeperLink {
     return client;
   }
 
+  get #policy(): ReconnectPolicy | null {
+    const r = this.options.reconnect;
+    if (!this.options.connector || !r) return null;
+    return r === true ? DEFAULT_RECONNECT : r;
+  }
+
+  /** Is the transport down and being reconnected right now? */
+  get reconnecting(): boolean {
+    return this.#reconnecting !== null;
+  }
+
   #lost(client: KeeperClient, error: Error | null): void {
     if (this.#client === client) this.#client = null;
+    if (this.#policy && !this.#closed) {
+      this.#transportLost(client, error);
+      return;
+    }
     const lost = [...this.channels.values()].filter((c) => c.client === client);
     for (const channel of lost) {
       this.channels.delete(channel.id);
@@ -277,6 +396,101 @@ export class KeeperLink {
       } catch (caught) {
         log.exception(caught, 'keeper onLost hook failed');
       }
+    }
+  }
+
+  /** The transport ended (not necessarily the keeper): suspend its channels and reconnect in the background. */
+  #transportLost(client: KeeperClient, error: Error | null): void {
+    const affected = [...this.channels.values()].filter((c) => c.client === client && !c.lost);
+    for (const channel of affected) channel.suspend();
+    log.warning('keeper: the transport ended (%s); reconnecting %s channel(s)', error?.message ?? 'closed', affected.length);
+    this.#tell('lost', error);
+    if (!affected.length) return; // nothing waits: the next use connects again
+    const work = this.#reconnect(affected, error);
+    this.#reconnecting = work;
+    work.finally(() => {
+      if (this.#reconnecting === work) this.#reconnecting = null;
+    }).catch(() => {});
+  }
+
+  #tell(state: TransportState, error: Error | null): void {
+    try {
+      this.onTransport?.(state, error);
+    } catch (caught) {
+      log.exception(caught, 'keeper onTransport hook failed');
+    }
+  }
+
+  async #reconnect(affected: KeeperChannel[], cause: Error | null): Promise<KeeperClient | null> {
+    const policy = this.#policy ?? DEFAULT_RECONNECT;
+    const deadline = Date.now() + policy.totalMs;
+    let last: Error | null = cause;
+    let client: KeeperClient | null = null;
+    for (let attempt = 0; !this.#closed; attempt++) {
+      try {
+        client = await this.options.connector!(true);
+        if (client) break;
+      } catch (error) {
+        last = error instanceof Error ? error : new Error(String(error));
+      }
+      const wait = policy.delaysMs[Math.min(attempt, policy.delaysMs.length - 1)] ?? 1000;
+      if (Date.now() + wait > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+    if (this.#closed) {
+      client?.close();
+      return null;
+    }
+    if (!client) {
+      log.warning('keeper: could not reach the keeper again (%s)', last?.message ?? 'no answer');
+      this.#endLost(affected, last);
+      this.#tell('gone', last);
+      return null;
+    }
+    // Adopt it as the link's connection first (onClose, onClient), then put every waiting channel back where it was.
+    await this.#adoptClient(client);
+    let listed: ChannelInfo[] | null = null;
+    try {
+      listed = await client.list();
+    } catch (error) {
+      last = error instanceof Error ? error : new Error(String(error));
+    }
+    const byId = new Map((listed ?? []).map((info) => [info.channel, info]));
+    const lost: KeeperChannel[] = [];
+    for (const channel of affected) {
+      if (channel.lost) continue;
+      const info = byId.get(channel.id);
+      if (!listed || !info || !info.live || client.closed) {
+        lost.push(channel); // ended or gone while the transport was down (the keeper itself stopped): this is a real loss
+        continue;
+      }
+      try {
+        channel.client = client;
+        if (channel.owner) channel.epoch = await client.claim(channel.id); // the old connection's claim ended with it
+        await client.attach(channel.id, channel.lastSeq + 1, channel.relay());
+        channel.resume();
+      } catch (error) {
+        log.warning('keeper: could not re-attach %s: %s', channel.id, error instanceof Error ? error.message : error);
+        lost.push(channel);
+      }
+    }
+    if (lost.length) this.#endLost(lost, last);
+    this.#tell('restored', null);
+    return client;
+  }
+
+  #endLost(channels: KeeperChannel[], cause: Error | null): void {
+    const error = new KeeperError('keeper_lost', this.options.lostMessage ?? cause?.message ?? 'the keeper is gone');
+    const lost = channels.filter((c) => !c.lost);
+    for (const channel of lost) {
+      if (this.channels.get(channel.id) === channel) this.channels.delete(channel.id);
+      channel.markLost(error);
+    }
+    if (this.#closed || !lost.length) return;
+    try {
+      this.onLost?.(lost);
+    } catch (caught) {
+      log.exception(caught, 'keeper onLost hook failed');
     }
   }
 
@@ -401,10 +615,38 @@ export class KeeperChannel {
   pid = 0;
   epoch = 0;
   lost = false;
+  /** The newest record seq this channel's listener got (a reconnect attaches again from the one after). */
+  lastSeq = 0;
   #ready: Promise<void> = Promise.resolve();
   #owner = true;
+  #suspended: { resolve(): void; reject(error: Error): void } | null = null;
 
   constructor(readonly id: string, readonly listener: KeeperChannelListener) {}
+
+  /** This connection's side writes the channel (it spawned or claimed it, and was not fenced since). */
+  get owner(): boolean {
+    return this.#owner;
+  }
+
+  /** Is the channel waiting for its transport to come back (operations wait meanwhile)? */
+  get suspended(): boolean {
+    return this.#suspended !== null;
+  }
+
+  /** The transport is gone for now: operations wait until resume(), or fail when the channel is lost. */
+  suspend(): void {
+    if (this.#suspended || this.lost) return;
+    const waiting = new Promise<void>((resolve, reject) => (this.#suspended = { resolve, reject }));
+    waiting.catch(() => {}); // a lost channel's waiting operations fail one by one; this copy is never awaited
+    this.#ready = waiting;
+  }
+
+  /** Attached again (KeeperLink's reconnect): the waiting operations go out on the new connection. */
+  resume(): void {
+    const waiting = this.#suspended;
+    this.#suspended = null;
+    waiting?.resolve();
+  }
 
   start(work: () => Promise<void>, owner = true): void {
     this.#owner = owner;
@@ -423,9 +665,15 @@ export class KeeperChannel {
   relay(): ChannelListener {
     const l = this.listener;
     return {
-      record: (record: KeeperRecord) => l.record?.(record),
+      record: (record: KeeperRecord) => {
+        this.lastSeq = Math.max(this.lastSeq, record.seq);
+        l.record?.(record);
+      },
       live: (seq: number) => l.live?.(seq),
-      gap: (from: number, next: number) => l.gap?.(from, next),
+      gap: (from: number, next: number) => {
+        this.lastSeq = Math.max(this.lastSeq, next - 1);
+        l.gap?.(from, next);
+      },
       fenced: (epoch: number) => {
         this.#owner = false;
         l.fenced?.(epoch);
@@ -437,6 +685,9 @@ export class KeeperChannel {
   markLost(error: Error | null): void {
     if (this.lost) return;
     this.lost = true;
+    const waiting = this.#suspended;
+    this.#suspended = null;
+    waiting?.reject(error ?? new KeeperError('closed', 'the keeper connection is closed'));
     this.listener.lost?.(error);
   }
 
@@ -448,10 +699,21 @@ export class KeeperChannel {
     return this.epoch;
   }
 
-  #op<T>(work: (client: KeeperClient) => Promise<T>): Promise<T> {
-    return this.#ready.then(() => {
-      if (!this.client || this.client.closed) throw new KeeperError('closed', 'the keeper connection is closed');
-      return work(this.client);
+  /**
+   * One operation once the channel is ready. `retry` (an op the keeper deduplicates: a once-key): when the transport ended under it
+   * and the channel was suspended for a reconnect, it is sent once more after resume() instead of failing.
+   */
+  #op<T>(work: (client: KeeperClient) => Promise<T>, retry = false): Promise<T> {
+    const run = () =>
+      this.#ready.then(() => {
+        if (!this.client || this.client.closed) throw new KeeperError('closed', 'the keeper connection is closed');
+        return work(this.client);
+      });
+    if (!retry) return run();
+    return run().catch(async (error) => {
+      await Promise.resolve(); // the link's onClose (which suspends) runs before this
+      if (!(error instanceof KeeperError && error.code === 'closed') || !this.suspended) throw error;
+      return run();
     });
   }
 
@@ -462,7 +724,7 @@ export class KeeperChannel {
 
   /** Bytes to the agent's stdin. A once-key already used is treated as done. Failures go to listener.writeFailed. */
   write(body: Uint8Array, once?: string): Promise<boolean> {
-    const done = this.#op((c) => c.write(this.id, this.epoch, body, once)).then(() => true);
+    const done = this.#op((c) => c.write(this.id, this.epoch, body, once), !!once).then(() => true);
     done.catch((error) => this.#reportFailure(error));
     return done.catch(() => false);
   }

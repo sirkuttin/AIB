@@ -2,8 +2,12 @@
  * os.path as Python 3.11 does it (ntpath on Windows, posixpath elsewhere), for the ported modules that compare, join and resolve
  * request paths the way the Python server does: normpath, normcase, isabs, splitdrive, dirname, basename, join, abspath, realpath
  * (non-strict: resolves what exists and keeps the missing tail), and the stat helpers that answer false instead of throwing.
+ *
+ * A foreign path (location.ts isForeignPath: a `wsl://` ref, or `/home/u` on Windows) is never looked up on this PC: the stat
+ * helpers answer false, getsize throws NotFound, and abspath / realpath return it unchanged (else `/home/u` became `C:\home\u`).
  */
 import { isAbsolute } from './pypath.ts';
+import { isForeignPath } from './location.ts';
 
 export const WIN = Deno.build.os === 'windows';
 export const SEP = WIN ? '\\' : '/';
@@ -129,6 +133,7 @@ export function join(first: string, ...more: string[]): string {
 
 /** os.path.abspath. */
 export function abspath(path: string): string {
+  if (WIN && isForeignPath(path)) return path;
   if (!isabs(path)) {
     if (WIN) {
       const [drive] = splitdrive(path);
@@ -148,6 +153,7 @@ export function abspath(path: string): string {
 
 /** os.path.realpath (strict=False): links resolved for the part that exists, the missing tail kept as written. */
 export function realpath(path: string): string {
+  if (WIN && isForeignPath(path)) return path;
   const full = abspath(path);
   let head = full;
   const tail: string[] = [];
@@ -165,6 +171,7 @@ export function realpath(path: string): string {
 }
 
 function stat(path: string, follow = true): Deno.FileInfo | null {
+  if (WIN && isForeignPath(path)) return null;
   try {
     return follow ? Deno.statSync(path) : Deno.lstatSync(path);
   } catch {
@@ -190,6 +197,7 @@ export function islink(path: string): boolean {
 
 /** os.path.getsize; throws like Python when the file is missing. */
 export function getsize(path: string): number {
+  if (WIN && isForeignPath(path)) throw new Deno.errors.NotFound(`not a path of this PC: ${path}`);
   return Deno.statSync(path).size;
 }
 

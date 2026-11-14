@@ -15,6 +15,7 @@
  */
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { assertWindowsLocal, isForeignPath } from '../platform/location.ts';
 import { gitPath, locate, parseStatus, runGit, statusLetter } from './changes.ts';
 import { isLocalPath, type LocalOnly } from './local_only.ts';
 
@@ -41,7 +42,7 @@ export class FilesError extends Error {
 export function safeParts(rel: unknown): string[] {
   if (rel === undefined || rel === null || rel === '' || rel === '.') return [];
   if (typeof rel !== 'string' || rel.length > 1024 || rel.includes('\0')) throw new FilesError('Invalid path', 'bad_path');
-  if (isNetworkPath(rel)) throw new FilesError('Network and device paths are not supported', 'bad_path');
+  if (isNetworkPath(rel) || isForeignPath(rel)) throw new FilesError('Network and device paths are not supported', 'bad_path');
   const text = rel.replaceAll('\\', '/');
   if (text.startsWith('/') || /^[A-Za-z]:/.test(text)) throw new FilesError('Use a path inside the folder', 'bad_path');
   const parts = text.split('/').filter((p) => p !== '' && p !== '.');
@@ -62,14 +63,14 @@ export function within(real: string, root: string): boolean {
 
 /** The resolved root folder; refuses network paths and folders that are gone. */
 export function realRoot(root: string): string {
-  if (!root || isNetworkPath(root)) throw new FilesError('This folder cannot be shown', 'bad_root', 404);
+  if (!root || isNetworkPath(root) || isForeignPath(root)) throw new FilesError('This folder cannot be shown', 'bad_root', 404);
   let real: string;
   try {
     real = osp.realpath(root);
   } catch {
     throw new FilesError('This folder is not there any more', 'missing', 404);
   }
-  if (isNetworkPath(real) || !osp.isdir(real)) throw new FilesError('This folder is not there any more', 'missing', 404);
+  if (isNetworkPath(real) || isForeignPath(real) || !osp.isdir(real)) throw new FilesError('This folder is not there any more', 'missing', 404);
   return real;
 }
 
@@ -85,7 +86,7 @@ export function resolveInside(root: string, rel: unknown): [string, string] {
     throw new FilesError('Not found', 'not_found', 404);
   }
   if (real.startsWith('\\\\?\\')) real = real.slice(4);
-  if (isNetworkPath(real) || !within(real, base)) throw new FilesError('Not found', 'outside', 404);
+  if (isNetworkPath(real) || isForeignPath(real) || !within(real, base)) throw new FilesError('Not found', 'outside', 404);
   return [real, parts.join('/')];
 }
 
@@ -119,6 +120,7 @@ export async function ignoredOf(root: string, rels: string[]): Promise<Set<strin
     // Not runGit: its --literal-pathspecs is refused by check-ignore.
     const git = gitPath();
     if (!git) return out;
+    assertWindowsLocal(root, 'folder'); // Windows git never runs on a WSL ref (the helper runs this natively)
     let raw: Uint8Array, code: number;
     try {
       const r = await new Deno.Command(git, {

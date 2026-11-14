@@ -27,6 +27,7 @@ import * as local from '../worktrees/local_only.ts';
 import { mainCheckoutOf, recordForPath } from '../worktrees/worktrees.ts';
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath, tokenMatches } from './security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import { issue } from './file_tickets.ts';
 import { chatStudioOf, savedFolders } from './studio_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
@@ -47,7 +48,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   // shown; nothing else from the request is ever a folder.
   if (one(args, 'root') === 'project') {
     const path = one(args, 'project');
-    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path) || isForeignPath(path)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
     const added = ctx.addedProjects?.public().added;
     const known = added && Object.hasOwn(added, projectKey(path)) ? added[projectKey(path)].path : '';
     if (!known || !osp.isdir(known) || isNetworkPath(known)) return [404, { error: 'This project has no folder AIB knows.', code: 'unknown_folder' }];
@@ -68,13 +69,13 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   } catch {
     return [400, { error: 'Choose a chat', code: 'bad_chat' }];
   }
-  if (!cwd || isNetworkPath(cwd)) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
+  if (!cwd || isNetworkPath(cwd) || isForeignPath(cwd)) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const which = one(args, 'root', 'chat');
   if (which === 'main') {
     const record = recordForPath(ctx.stateDir ?? null, cwd);
     const project = record && isStr(record.project) ? record.project : '';
     const main = project && osp.isdir(project) ? project : files.mainFolderOf(cwd, mainCheckoutOf);
-    if (isNetworkPath(main)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+    if (isNetworkPath(main) || isForeignPath(main)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
     return main;
   }
   if (which !== 'chat') return [400, { error: 'Unknown folder', code: 'bad_root' }];

@@ -2,13 +2,15 @@
 import { docRows } from '../docs/rows.ts';
 import { clip, isDict, isStr, ValueError } from '../core/py.ts';
 import { isNetworkPath, tokenMatches } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import * as osp from '../platform/ospath.ts';
 import * as changes from './changes.ts';
 import * as worktrees from './worktrees.ts';
 
 /** Name of the checked-out branch of the repository holding cwd, read from HEAD (no subprocess); '' when unknown. Detached: short id. */
 export function repoBranch(cwd: unknown): string {
-  if (!cwd || !isStr(cwd) || isNetworkPath(cwd)) return ''; // a UNC path would make Windows authenticate to that server
+  // a UNC path would make Windows authenticate to that server; a WSL ref is read by the WSL helper, never here
+  if (!cwd || !isStr(cwd) || isNetworkPath(cwd) || isForeignPath(cwd)) return '';
   try {
     const start = osp.realpath(cwd);
     const folders = [start];

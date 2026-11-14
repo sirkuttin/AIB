@@ -332,6 +332,13 @@ Deno.test('worktree lookups: network and WSL paths are never read; a "not a work
   store.clock = () => clock;
   assertEquals([store.parentOf('\\\\server\\share\\x'), store.parentOf('\\\\wsl$\\Ubuntu\\home\\x'), asked.length], [null, null, 0]);
   assertEquals(worktreeParent('\\\\wsl$\\Ubuntu\\home\\x'), null);
+  // a WSL project is a wsl:// ref (docs/wsl/design.md): accepted as a project, and still never read from disk
+  assertEquals([store.parentOf('wsl://ubuntu/home/x'), store.projectFolder('wsl://ubuntu/home/x'), asked.length], [
+    null,
+    'wsl://ubuntu/home/x',
+    0,
+  ]);
+  assertEquals(worktreeParent('wsl://ubuntu/home/x/.claude/worktrees/y'), null);
   const folder = j('C:', 'w', 'later-a-worktree');
   assertEquals(store.parentOf(folder), null);
   answer = j('C:', 'w', 'main');

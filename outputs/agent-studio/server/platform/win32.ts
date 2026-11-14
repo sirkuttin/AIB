@@ -44,6 +44,11 @@ const advapi32Symbols = {
   ConvertSidToStringSidW: { parameters: ['pointer', 'buffer'], result: 'i32' },
   OpenProcessToken: { parameters: ['pointer', 'u32', 'buffer'], result: 'i32' },
   GetTokenInformation: { parameters: ['pointer', 'i32', 'buffer', 'u32', 'buffer'], result: 'i32' },
+  // The registry (platform/registry.ts: the WSL distro list under HKCU\…\Lxss, read without starting wsl.exe).
+  RegOpenKeyExW: { parameters: ['pointer', 'buffer', 'u32', 'u32', 'buffer'], result: 'i32' },
+  RegEnumKeyExW: { parameters: ['pointer', 'u32', 'buffer', 'buffer', 'pointer', 'pointer', 'pointer', 'pointer'], result: 'i32' },
+  RegQueryValueExW: { parameters: ['pointer', 'buffer', 'pointer', 'buffer', 'buffer', 'buffer'], result: 'i32' },
+  RegCloseKey: { parameters: ['pointer'], result: 'i32' },
 } as const;
 
 const ntdllSymbols = {

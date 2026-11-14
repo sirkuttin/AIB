@@ -8,12 +8,19 @@
  *   - programs start with a list of arguments, never through a shell; the one exception is a vendor .cmd launcher, which Windows
  *     runs through cmd.exe, so paths with cmd metacharacters are refused in that case;
  *   - nothing is read from VS Code's own state database.
+ *
+ * WSL projects (`wsl://<distro><linuxPath>` refs, docs/wsl/design.md section 8 item 11): only VS Code and Cursor open them, through
+ * their Remote-WSL support (`--remote wsl+<distro> <linux path>`), and File Explorer reveals them with
+ * `wsl.exe -d <distro> --cd <linux path> --exec explorer.exe .` (argv, never a shell). Nothing here reads a distro's files: the
+ * path must be a known WSL project or inside one (Linux rules: case-sensitive), checked on the text alone.
  */
 import { isDict, isInt, isStr, pyLen } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { isNetworkPath } from '../web/security.ts';
 import { expandUser, which as pyWhich } from '../platform/pypath.ts';
 import * as osp from '../platform/ospath.ts';
+import { insideLinux, isForeignPath, isWslRef, joinLinux, refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
+import { findDistro, wslExePath } from '../wsl/detect.ts';
 
 const log = getLogger('editors');
 
@@ -352,7 +359,72 @@ export function cleanPathText(value: unknown, what = 'path'): string {
   if (isNetworkPath(text)) { // \\server\share, \\?\C:\..., \\.\device: network and device paths are never opened
     throw new EditorError('Network and device paths cannot be opened from AIB', 'path_refused', 403);
   }
+  if (isForeignPath(text)) throw new EditorError('That path is not a folder of this PC', 'path_refused', 403); // WSL: see #openWsl
   return text;
+}
+
+// ---- WSL projects ------------------------------------------------------------------------------
+
+/** The programs that open a WSL project: VS Code and Cursor (Remote-WSL), and File Explorer (Reveal). */
+export const WSL_EDITORS: ReadonlySet<string> = new Set(['code', 'cursor', 'explorer']);
+
+/** What a program can do with a WSL project (no workspace files: those are read from disk). */
+function wslEntry(entry: Entry): Entry | null {
+  if (!WSL_EDITORS.has(entry.id) || entry.macApp) return null;
+  if (entry.kind === 'editor') return { ...entry, capabilities: { folder: true, file: true, fileAtLine: true, workspace: false } };
+  if (entry.kind === 'explorer') return { ...entry, capabilities: { folder: true, file: true, fileAtLine: false, workspace: false } };
+  return null;
+}
+
+/** The WSL roots among Studio's known project folders. */
+function wslRoots(roots: unknown[]): WslLoc[] {
+  return roots.map((r) => wslLocOf(r)).filter((r): r is WslLoc => r !== null);
+}
+
+/** A request path of a WSL project: a ref, or (with a WSL `base`) a relative Linux path. Must be inside a known WSL root. */
+export function resolveWslInside(raw: unknown, roots: unknown[], base: WslLoc | null = null, what = 'path'): WslLoc {
+  if (!isStr(raw) || !raw.trim() || pyLen(raw) > MAX_PATH_CHARS) throw new EditorError(`Invalid ${what}`);
+  if ([...raw].some((c) => c.codePointAt(0)! < 32) || raw.includes('\x7f')) throw new EditorError(`Invalid ${what}`);
+  const text = raw.trim();
+  let loc: WslLoc | null = null;
+  if (isWslRef(text)) loc = wslLocOf(text);
+  else if (base && !text.startsWith('/') && !/^[A-Za-z]:/.test(text) && !text.includes('\\')) {
+    const joined = joinLinux(base.linuxPath, text);
+    if (joined) loc = { kind: 'wsl', distro: base.distro, linuxPath: joined };
+  }
+  if (!loc) throw new EditorError(`That ${what} is not a WSL path AIB can open`, 'path_refused', 403);
+  const found = loc;
+  if (wslRoots(roots).some((r) => r.distro === found.distro && r.linuxPath !== '/' && insideLinux(found.linuxPath, r.linuxPath))) {
+    return found;
+  }
+  throw new EditorError('That location is not inside a project folder AIB knows, so AIB will not open it', 'path_refused', 403);
+}
+
+/** The distro name as Windows lists it (refs carry it folded; wsl.exe and VS Code take either). */
+function distroName(distro: string): string {
+  try {
+    return findDistro(distro)?.name ?? distro;
+  } catch {
+    return distro;
+  }
+}
+
+/** The argument list that opens a WSL location with a WSL-capable program (wslEntry), or throws EditorError. */
+export function buildWslCommand(entry: Entry, kind: Kind, loc: WslLoc, line: number | null = null, wslExe: string | null = null): string[] {
+  const distro = distroName(loc.distro);
+  if (kind === 'workspace') throw new EditorError('Workspace files of WSL projects cannot be opened from AIB yet', 'unsupported', 400);
+  if (entry.kind === 'editor') {
+    const remote = [entry.exe, '--remote', `wsl+${distro}`];
+    if (kind === 'file') return line ? [...remote, '-r', '--goto', `${loc.linuxPath}:${line}`] : [...remote, '-r', loc.linuxPath];
+    return [...remote, loc.linuxPath];
+  }
+  if (entry.kind === 'explorer') {
+    const exe = wslExe ?? wslExePath();
+    if (!exe) throw new EditorError('WSL is not installed on this PC', 'not_found', 404);
+    const folder = kind === 'file' ? loc.linuxPath.replace(/\/[^/]*$/, '') || '/' : loc.linuxPath;
+    return [exe, '-d', distro, '--cd', folder, '--exec', 'explorer.exe', '.'];
+  }
+  throw new EditorError(`${entry.name} cannot open WSL projects; use VS Code or Cursor`, 'unsupported', 400);
 }
 
 function pureParts(path: string): string[] {
@@ -629,6 +701,8 @@ export interface PopenOptions {
   /** POSIX: the program gets its own session so it outlives Studio. */
   start_new_session?: boolean;
   cwd?: string;
+  /** Extra environment variables (wsl.exe gets WSL_UTF8=1). */
+  env?: Record<string, string>;
 }
 
 export type Popen = (command: string[], options: PopenOptions) => void;
@@ -650,6 +724,7 @@ export function realPopen(command: string[], options: PopenOptions): void {
   const child = new Deno.Command(cmd[0], {
     args: cmd.slice(1),
     cwd: options.cwd,
+    ...(options.env ? { env: options.env } : {}),
     stdin: 'null',
     stdout: 'null',
     stderr: 'null',
@@ -707,6 +782,13 @@ export class Launcher {
     const entries = this.entries();
     const saved = this.#preferred();
     const chosen = entries.some((e) => e.id === saved && e.kind === 'editor') ? saved : defaultEditor(entries);
+    if (project && isWslRef(project)) { // a WSL project: only the programs that open one, no workspace files
+      const loc = resolveWslInside(project, this.#roots(), null, 'project folder');
+      const usable = entries.map(wslEntry).filter((e): e is Entry => e !== null);
+      const ids = usable.filter((e) => e.kind === 'editor').map((e) => e.id);
+      const wslDefault = ids.includes(saved) ? saved : DEFAULT_ORDER.find((id) => ids.includes(id)) ?? '';
+      return { editors: usable.map(publicEntry), default: wslDefault, detectedDefault: wslDefault, workspaces: [], project: refOf(loc) };
+    }
     const out: Listing = { editors: entries.map(publicEntry), default: chosen, detectedDefault: defaultEditor(entries), workspaces: [] };
     if (project) {
       const folder = resolveInside(project, this.#roots(), null, 'project folder');
@@ -726,6 +808,7 @@ export class Launcher {
     const entry = this.entries().find((e) => e.id === editorId);
     if (entry === undefined) throw new EditorError('That program was not found on this PC', 'not_found', 404);
     const roots = this.#roots();
+    if (isWslRef(body.path) || isWslRef(body.cwd)) return this.#openWsl(body, entry, kind, line as number | null, roots);
     let base: string | null = null;
     if (body.cwd !== undefined && body.cwd !== null) base = resolveInside(body.cwd, roots, null, 'folder');
     const path = kind !== 'workspace' ? resolveInside(body.path, roots, base) : this.#workspacePath(body.path, roots, base);
@@ -737,6 +820,28 @@ export class Launcher {
     }
     this.#start(entry, command, path);
     return { ok: true, editor: entry.id, name: entry.name, kind };
+  }
+
+  /** Open a WSL location: checked on the text alone (Windows never reads the distro; the program reports a missing file). */
+  #openWsl(body: Record<string, unknown>, found: Entry, kind: Kind, line: number | null, roots: unknown[]) {
+    const entry = wslEntry(found);
+    if (!entry) throw new EditorError(`${found.name} cannot open WSL projects; use VS Code or Cursor`, 'unsupported', 400);
+    const base = body.cwd !== undefined && body.cwd !== null ? resolveWslInside(body.cwd, roots, null, 'folder') : null;
+    const loc = resolveWslInside(body.path, roots, base);
+    const command = buildWslCommand(entry, kind, loc, line);
+    if (entry.viaCmd && command.slice(1).some((part) => CMD_UNSAFE.test(part))) {
+      throw new EditorError('That path has characters that cannot be passed safely to the editor launcher', 'unsafe_path', 400);
+    }
+    const options: PopenOptions = { stdin: 'null', stdout: 'null', stderr: 'null' };
+    if (this.#windows) options.creationflags = entry.kind === 'explorer' ? 0 : DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    else options.start_new_session = true;
+    if (entry.kind === 'explorer') options.env = { WSL_UTF8: '1' };
+    try {
+      this.#popen(command, options);
+    } catch (error) {
+      throw new EditorError(`Could not start ${entry.name}: ${(error as Error).message}`, 'launch_failed', 500);
+    }
+    return { ok: true as const, editor: entry.id, name: entry.name, kind };
   }
 
   #workspacePath(raw: unknown, roots: unknown[], base: string | null): string {
@@ -797,7 +902,9 @@ function keysOf(value: Record<string, unknown> | Map<string, unknown> | undefine
 export function knownRoots(studio: RootsSource): string[] {
   const roots: string[] = [];
   const add = (value: unknown) => {
-    if (isStr(value) && value && osp.isabs(value) && !roots.includes(value)) roots.push(value);
+    if (!isStr(value) || !value || roots.includes(value)) return;
+    if (osp.isabs(value) && !isForeignPath(value)) roots.push(value);
+    else if (wslLocOf(value)) roots.push(value); // a WSL project's ref
   };
   try {
     const listed = studio.liveList?.() ?? {};
@@ -815,7 +922,10 @@ export function knownRoots(studio: RootsSource): string[] {
     log.exception(error, 'Reading saved conversation folders for editor roots failed');
   }
   try {
-    for (const key of keysOf(studio.projectPrefs?.projects)) if (key.startsWith('w:')) add(key.slice(2));
+    for (const key of keysOf(studio.projectPrefs?.projects)) {
+      if (key.startsWith('w:')) add(key.slice(2));
+      else if (key.startsWith('p:wsl:/')) add(`wsl://${key.slice('p:wsl:/'.length)}`); // projectKey of a WSL ref
+    }
   } catch (error) {
     log.exception(error, 'Reading project folders for editor roots failed');
   }

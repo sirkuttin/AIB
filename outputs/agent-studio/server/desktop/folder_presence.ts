@@ -4,9 +4,11 @@
  * folder exists again. Read-only: this only stats folders, and never writes or deletes anything.
  *
  * Cached: an answer lives for TTL_MS, so the page polling every few seconds costs no stat in between, however many windows ask.
- * Network paths (UNC, mapped shares) are not stat-ed (a dead share can hang for a minute) and count as present.
+ * Network paths (UNC, mapped shares) are not stat-ed (a dead share can hang for a minute) and count as present. So do WSL projects
+ * (`wsl://` refs, and any other foreign path): Windows never looks into a distro, and a stopped distro must not hide its projects.
  */
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 
 export const TTL_MS = 30_000;
 export const MAX_PATHS = 200;
@@ -37,7 +39,7 @@ export class FolderPresence {
   constructor(readonly hooks: PresenceHooks = defaultHooks, readonly ttl = TTL_MS) {}
 
   isGone(path: string): boolean {
-    if (!path || path.length > 1024 || isNetworkPath(path)) return false;
+    if (!path || path.length > 1024 || isNetworkPath(path) || isForeignPath(path)) return false;
     const at = this.hooks.now();
     const hit = this.#seen.get(path);
     if (hit && at - hit.at < this.ttl && at >= hit.at) return hit.gone;
