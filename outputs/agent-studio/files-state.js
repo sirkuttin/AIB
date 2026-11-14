@@ -172,6 +172,11 @@
       }
       // aib-docs is always the first row of the tree, above every other folder (dot-folders too). No aib-docs folder yet: it shows
       // as an empty folder holding only "+ New doc", first all the same.
+      // o.docsOff (a WSL project): the docs row is there but greyed and closed, its tooltip says why; a real aib-docs folder is too.
+      if (dir === '' && o.docsOff) {
+        out.push({ docsFolder: true, docCount: 0, kind: 'dir', path: DOCS_FOLDER, name: DOCS_FOLDER, depth, ignored: false, open: false, canOpen: false, virtual: true, off: o.docsOff, badge: null, changed: 0, artifact: false });
+        list = list.filter((e) => !(e.dir && e.path === DOCS_FOLDER));
+      }
       const virt = dir === '' && o.newDoc && !list.some((e) => e.dir && e.path === DOCS_FOLDER);
       const isDocsDir = (e) => dir === '' && e.dir && e.path === DOCS_FOLDER;
       const entries = dir === '' ? list.filter(isDocsDir).concat(list.filter((e) => !isDocsDir(e))) : list;

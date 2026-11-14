@@ -35,7 +35,7 @@ type Json = Record<string, unknown>;
 /** What the server needs from the Studio that runs it. */
 export interface McpHttpStudio {
   /** The conversation's session folder and whether it works in its own worktree; null for a conversation not open here. */
-  conversation(id: string): { cwd: string; worktree: boolean } | null;
+  conversation(id: string): { cwd: string; worktree: boolean; restricted?: boolean } | null;
   /** The web server's base URL ('' when unknown). */
   baseUrl(): string;
   /** Path of the URL file the web server rewrites when it restarts on another port (artifact-web.json). */
@@ -233,7 +233,8 @@ export class ArtifactMcpHttp {
       key,
       conversation,
       worktree: !!open?.worktree,
-      cwd: open ? open.cwd : null,
+      restricted: !!open?.restricted, // a WSL chat: publish / update / list by content only
+      cwd: open && !open.restricted ? open.cwd : null,
       roots: () => [studio.baseUrl(), urlFromFile(studio.urlFile)],
     };
     let answer: Json | null;

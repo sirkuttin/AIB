@@ -11,7 +11,7 @@ import * as folders from '../desktop/folders.ts';
 import { presence } from '../desktop/folder_presence.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
-import { changesResponse, type ChatStudio, repoBranch } from '../worktrees/chat_folders.ts';
+import { changesResponse, type ChatStudio, branchOf } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
@@ -224,7 +224,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
       return await changesResponse(chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))), path, args, request.headers);
     });
   }
-  routes.set('GET /api/live/branch', (_ctx, url) => Promise.resolve([200, { branch: repoBranch(one(argsOf(url), 'cwd')) }]));
+  routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
   routes.set('GET /api/live/worktree', async (ctx, url) => [200, await merge.status(mergeStudio(ctx), one(argsOf(url), 'id'))]);
   routes.set('GET /api/live/worktree/clash', async (ctx, url) => [200, await merge.clashStatus(ctx, one(argsOf(url), 'project'))]);
   routes.set('POST /api/live/worktree/merge', (ctx, _url, body) => {

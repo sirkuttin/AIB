@@ -174,6 +174,13 @@
       .filter(Boolean);
   }
   const projectPathNow = () => (W() && W().currentProjectPath ? W().currentProjectPath() : '');
+  // A scope in a WSL project (wsl-ui.js): no docs, no image or binary preview in phase 1.
+  const WSL_DOCS_OFF = 'Docs are not available for WSL projects yet';
+  function wslScope(scope) {
+    const A = root.AIBWsl;
+    if (!A || !scope || scope.root === 'outside') return false;
+    return A.isWsl(scope.path) || (!scope.path && A.isWsl(projectPathNow()));
+  }
   function currentScope() {
     if (!following && pinned) return pinned;
     const c = chat && chat.projectKey === projectKey() ? chat : null;
@@ -241,7 +248,7 @@
   // folder or docs/ is listed again.
   function docsOf(scope) {
     const D = DL();
-    if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return null;
+    if (!D || !scope || scope.root === 'outside' || scope.root === 'project' || wslScope(scope)) return null;
     const now = D.cached(scope.id, scope.root);
     if (!now) loadDocs(scope, false);
     if (!now || scope.root !== 'chat') return now;
@@ -262,7 +269,7 @@
   }
   function loadDocs(scope, force) {
     const D = DL();
-    if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return Promise.resolve([]);
+    if (!D || !scope || scope.root === 'outside' || scope.root === 'project' || wslScope(scope)) return Promise.resolve([]);
     // A chat's copy lists the project's docs, which are in the main folder: asked again together (docsOf merges them).
     const both = scope.root === 'chat' ? D.listFor(scope.id, 'main', force) : Promise.resolve();
     return Promise.all([D.listFor(scope.id, scope.root, force), both]).then(([docs]) => {
@@ -752,7 +759,8 @@
         artifacts: arts,
         showIgnored,
         docs,
-        newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project',
+        newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project' && !wslScope(scope),
+        docsOff: wslScope(scope) ? WSL_DOCS_OFF : '',
         localNote: F().localNote(t.lo),
       });
     return { rows, scope, tree: t, changes };
@@ -786,10 +794,12 @@
     const live = scope && scope.branch ? projectChats().find((c) => c.key === scope.chatKey) : null;
     const lab = F().scopeLabel(live ? Object.assign({}, scope, { title: live.title }) : scope);
     els.scopeBtn.replaceChildren(el('span', lab.lbl, 'lbl'), el('b', lab.name), el('span', '▾', 'fx-caretdown'));
-    els.scopeBtn.title =
-      (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No project folder') +
-      (tree && tree.root ? '\n' + tree.root : '') +
-      '\nChoose which copy of the project to show';
+    // A WSL project has no copies (phase 1): the pill says it works in place, with the folder as "Ubuntu: /home/u/app".
+    els.scopeBtn.title = wslScope(scope)
+      ? 'WSL projects work in the project folder\n' + root.AIBWsl.tooltip(scope.path || projectPathNow())
+      : (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No project folder') +
+        (tree && tree.root ? '\n' + tree.root : '') +
+        '\nChoose which copy of the project to show';
     els.scopeBtn.setAttribute('aria-label', 'Showing files of: ' + lab.lbl + ' ' + lab.name + '. Change');
     const nChanged = changes ? changes.size : tree ? changedFromListing(tree).length : 0;
     els.changed.textContent = 'Changed ' + nChanged;
@@ -835,7 +845,7 @@
     const n = el(
       'div',
       null,
-      'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.docsFolder ? ' fx-docsdir' : '') + (r.ignored ? ' ignored' : '') + (r.local ? ' local' : '') +
+      'fx-row' + (r.kind === 'dir' ? ' dir' : '') + (r.docsFolder ? ' fx-docsdir' : '') + (r.off ? ' fx-off' : '') + (r.ignored ? ' ignored' : '') + (r.local ? ' local' : '') +
         (r.path === sel ? ' sel' : ''),
     );
     n.dataset.path = r.path;
@@ -861,7 +871,10 @@
     n.append(name);
     if (r.folder) n.append(el('span', r.folder, 'fx-dirpath'));
     const lo = loOf(scope);
-    n.title = r.local
+    if (r.off) n.setAttribute('aria-disabled', 'true');
+    n.title = r.off
+      ? r.off
+      : r.local
       ? F().localTip(r, lo)
       : r.path + (r.ignored ? '\nIgnored by git' : '') +
         (r.localWarn ? "\nIn AIB's local-only list, but a .gitignore rule turns it back on, so git can commit it." : '');
@@ -1935,6 +1948,11 @@
       f.title = 'Preview of ' + d.name + ' (view only)';
       f.src = d.viewUrl;
       body.append(f);
+    } else if (wslScope(tab.scope) && (d.binary || (d.image && d.text == null)) && !d.tooBig) {
+      // WSL projects (phase 1): no image or binary preview (the artifact origin serves Windows files only)
+      const note = el('div', null, 'fx-note');
+      note.append(el('p', 'Not available for WSL projects yet'));
+      body.append(note);
     } else if (d.tooBig || d.binary || d.text == null) {
       const note = el('div', null, 'fx-note');
       note.append(

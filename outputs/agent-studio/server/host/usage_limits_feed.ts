@@ -38,6 +38,8 @@ export interface LimitsConnection {
   ready: boolean;
   closed: boolean;
   replaying?: boolean;
+  /** Set for a chat in a WSL project: its account lives in that distro (its own key; Codex files there are not read in phase 1). */
+  wsl?: { distro: string } | null;
   request(method: string, params: Record<string, unknown>, timeout: number): Promise<unknown>;
 }
 
@@ -72,7 +74,8 @@ export class LimitsFeed {
   }
 
   key(c: LimitsConnection): string {
-    return accountKey(c.provider, c.env);
+    const key = accountKey(c.provider, c.env);
+    return key && c.wsl ? `wsl:${c.wsl.distro}|${key}` : key; // a distro's sign-in is another account than Windows'
   }
 
   /** The chat's account's latest snapshot, or null (no chip). */
@@ -123,6 +126,9 @@ export class LimitsFeed {
   }
 
   async #readCodex(c: LimitsConnection): Promise<LimitsSnapshot | null> {
+    // A WSL chat's ~/.codex is inside the distro and its app-server a Linux program: neither is reachable from here in phase 1
+    // (design section 4); the Windows ones would show another account's limits.
+    if (c.wsl) return null;
     const found = latestRolloutLimits(this.#home(c));
     if (found) return parseCodexRollout(found.rateLimits, found.at);
     const command = this.#appServer(c);

@@ -53,6 +53,8 @@ import { descendants, refreshDescendants } from '../platform/descendants.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
+import { WslClientCaps } from './wsl_caps.ts';
+import { distroName, guardRealWslAgent, wslTestHomeEnv } from '../wsl/access.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
@@ -427,6 +429,29 @@ export interface ConnectionOptions {
   id?: string;
   /** Rebuild this chat from a live keeper channel instead of starting an agent (needs `keeper`). */
   rebuild?: ChannelInfo | null;
+  /** A chat in a WSL project (needs `keeper`: the distro's Linux keeper). Studio resolves it through the distro's WSL host. */
+  wsl?: WslSpawn | null;
+}
+
+/**
+ * Where and how a WSL chat's agent runs in its distro (docs/wsl/design.md sections 2 and 5). The Connection's `cwd` stays the project
+ * ref (`wsl://ubuntu/home/u/app`: what Studio, the page and the records key on); the agent gets `linuxPath`. `env` is the distro's
+ * login environment (never AIB's own), `program` the helper's `which` of the command's program; `caps` the helper calls the agent's
+ * client terminals need. A rebuilt chat has none of the three: it starts nothing.
+ */
+export interface WslSpawn {
+  distro: string;
+  linuxPath: string;
+  env?: Record<string, string>;
+  program?: string;
+  caps?: { env(): Promise<Record<string, string>>; which(name: string): Promise<string | null> };
+}
+
+/** A tracker that observes nothing: a WSL chat's files are not Windows files, so none of them can become an artifact by path. */
+class NoWrites extends WriteTracker {
+  override observe(): string[] {
+    return [];
+  }
 }
 
 /**
@@ -571,6 +596,18 @@ export const ARTIFACT_PROMPT =
   'as the Markdown link the tool returns. When you change it, use the studio_artifact update tool so it gets a new ' +
   'version, and do not tell the user to open the file by hand. Only publish to claude.ai (or any other web ' +
   'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING;
+
+/**
+ * The same for a chat in a WSL project (design section 11: phase 1 offers only the artifact tools that need no project file). AIB
+ * runs on Windows and cannot read files inside the distro, so publish takes the content; there are no doc or merge tools.
+ */
+export const WSL_ARTIFACT_PROMPT =
+  'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
+  'mean this viewer and its studio_artifact tool. This project is in WSL: AIB runs on Windows and cannot open files inside the ' +
+  'distro, so when you make something the user should look at rather than source code (an HTML page, one-off report, chart, ' +
+  'diagram or SVG), publish it with the studio_artifact publish tool by passing its content (never a file path) and mention it ' +
+  'in your reply as the Markdown link the tool returns; use update with the new content to change it. AIB docs and merge tools ' +
+  'are not available in WSL projects. ' + TOOLS_LOADING;
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
@@ -741,7 +778,12 @@ function isOwnArtifactEntry(entry: unknown): boolean {
 export class Connection {
   readonly id: string;
   provider: string;
+  /** The chat's folder as AIB keys it: a Windows path, or a WSL project's ref. */
   cwd: string;
+  /** The folder the agent itself works in: cwd, or the Linux path of a WSL chat (ACP session/new and session/load get this one). */
+  agentCwd: string;
+  /** Set for a chat in a WSL project (its distro and Linux folder). */
+  readonly wsl: WslSpawn | null;
   /** {branch, base} of a chat that runs in its own git worktree. */
   worktree: Record<string, string> | null = null;
   /** The project this chat belongs to; a worktree chat's cwd differs from it. */
@@ -967,23 +1009,36 @@ export class Connection {
     provider: string,
     options: ConnectionOptions = {},
   ) {
-    guardRealAgent(command);
+    this.wsl = options.wsl ?? null;
+    if (this.wsl) guardRealWslAgent(command, isFixture(command));
+    else guardRealAgent(command);
     this.id = options.id ?? crypto.randomUUID().replaceAll('-', '');
     this.keeper = options.keeper ?? null;
     this.provider = provider;
     this.cwd = String(cwd);
-    const found = projectOfWorktree(this.cwd); // a chat in any app's git worktree belongs to the main checkout
+    this.agentCwd = this.wsl ? this.wsl.linuxPath : this.cwd;
+    if (this.wsl && !this.keeper) throw new ValueError('A WSL chat runs in its distro, and AIB has no connection to it');
+    // a chat in any app's git worktree belongs to the main checkout (a WSL chat works in place: no Windows lookup for its ref)
+    const found = this.wsl ? null : projectOfWorktree(this.cwd);
     this.projectRoot = found ? found.project : this.cwd;
-    this.writes = new WriteTracker(cwd);
-    // opt-in, off by default
-    this.caps = (options.capsFactory ?? defaultCaps)(
-      this.cwd,
-      !!options.enableTerminal,
-      options.enableFs ?? null,
-      (sid) => this.knownSessions.has(sid),
-      (kind, data) => this.event(kind, data),
-      (message) => this.write(message),
-    );
+    this.writes = this.wsl ? new NoWrites(cwd) : new WriteTracker(cwd);
+    // opt-in, off by default; a WSL chat never gets the fs capabilities, and its terminals run in the distro
+    const wslCaps = this.wsl?.caps;
+    this.caps = this.wsl && !options.capsFactory
+      ? new WslClientCaps(this.agentCwd, {
+        terminal: !!options.enableTerminal && !!wslCaps,
+        knownSession: (sid) => this.knownSessions.has(sid),
+        record: (kind, data) => this.event(kind, data),
+        writeResponse: (message) => this.write(message),
+      }, wslCaps ?? { env: () => Promise.resolve({}), which: () => Promise.resolve(null) })
+      : (options.capsFactory ?? defaultCaps)(
+        this.agentCwd,
+        !!options.enableTerminal,
+        this.wsl ? null : options.enableFs ?? null,
+        (sid) => this.knownSessions.has(sid),
+        (kind, data) => this.event(kind, data),
+        (message) => this.write(message),
+      );
     // In the keeper, the agent's client terminals run there too (note first), so they outlive an AIB restart with the chat.
     if (this.keeper && this.caps instanceof ClientCaps) this.caps.terminalBackend = this.#terminalBackend();
     // command is always a list (never a shell string).
@@ -998,12 +1053,15 @@ export class Connection {
     if (this.process !== null) {
       throw new RuntimeError('The agent already started');
     }
+    if (this.wsl) throw new RuntimeError('A WSL chat always works in its project folder');
     this.cwd = String(cwd);
+    this.agentCwd = this.cwd;
     (this.caps as { workspace: string }).workspace = this.cwd;
     this.writes = new WriteTracker(this.cwd); // nothing was observed yet: the same as changing its folder
   }
 
   startProcess(): void {
+    if (this.wsl) return this.#startInWsl();
     if (this.keeper) return this.#startInKeeper();
     const [program, ...args] = this.command;
     const extra = { ...testHomeEnv(this.command), ...(this.env ?? {}) };
@@ -1036,6 +1094,22 @@ export class Connection {
     delete env.DENO_SERVE_ADDRESS;
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: resolveProgram(program, env), args, cwd: this.cwd, env },
+      this.#keeperListener(),
+      () => this.#chatNote(),
+    );
+    this.#useChannel(channel);
+  }
+
+  /**
+   * Start the agent of a WSL chat as a channel of its distro's Linux keeper: the distro's login environment (Studio read it from the WSL
+   * host; never Deno.env), the program the helper's `which` found, the Linux folder as cwd. Nothing of Windows is resolved here.
+   */
+  #startInWsl(): void {
+    const wsl = this.wsl!;
+    const [program, ...args] = this.command;
+    const env: Record<string, string> = { ...(wsl.env ?? {}), ...wslTestHomeEnv(), ...(this.env ?? {}) };
+    const channel = this.keeper!.spawn(
+      { channel: `chat-${this.id}`, command: wsl.program || program, args, cwd: this.agentCwd, env },
       this.#keeperListener(),
       () => this.#chatNote(),
     );
@@ -1081,6 +1155,8 @@ export class Connection {
       id: this.id,
       provider: this.provider,
       cwd: this.cwd,
+      // which keeper holds it: a WSL chat's note says its distro, so a rebuild looks for it in that distro's keeper
+      loc: this.wsl ? { kind: 'wsl', distro: this.wsl.distro, linuxPath: this.wsl.linuxPath } : { kind: 'win' },
       projectRoot: this.projectRoot,
       worktree: this.worktree,
       resume: this.sessionId,
@@ -2904,7 +2980,7 @@ export class Connection {
         resumeCaps.loadSession ? 'session/load' : 'session/resume',
         {
           sessionId: resume,
-          cwd: this.cwd,
+          cwd: this.agentCwd,
           mcpServers,
           ...this.artifactPrompt(mcpServers),
           ...this.extraFolders(),
@@ -2912,7 +2988,7 @@ export class Connection {
       );
     } else {
       result = await this.#setupSessionCall('session/new', {
-        cwd: this.cwd,
+        cwd: this.agentCwd,
         mcpServers,
         ...this.artifactPrompt(mcpServers),
         ...this.extraFolders(),
@@ -3036,7 +3112,7 @@ export class Connection {
    */
   async probeSettings(timeoutSeconds = 30): Promise<Json> {
     await this.initializeForDiscovery();
-    const result = await this.request('session/new', { cwd: this.cwd, mcpServers: [] }, timeoutSeconds);
+    const result = await this.request('session/new', { cwd: this.agentCwd, mcpServers: [] }, timeoutSeconds);
     if (!isDict(result)) throw new ValueError('The agent returned an invalid session response');
     withModelsOption(result); // the remembered lists (agent-options.json) keep an agent's models list as its model option
     const sid = get(result, 'sessionId');
@@ -4311,7 +4387,7 @@ export class Connection {
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
     if (isDict(this.#sessionCaps()?.systemPrompt)) {
-      const content: Json[] = own ? [{ type: 'text', text: ARTIFACT_PROMPT }] : [];
+      const content: Json[] = own ? [{ type: 'text', text: this.wsl ? WSL_ARTIFACT_PROMPT : ARTIFACT_PROMPT }] : [];
       const worktree = this.worktree;
       if (own && worktree) { // only a chat that works in its own worktree (the merge tool comes with it)
         content.push({
@@ -4753,6 +4829,7 @@ export class Connection {
       provider: this.provider,
       cwd: this.cwd,
       projectRoot: this.projectRoot,
+      ...(this.wsl ? { wsl: { distro: this.wsl.distro, name: distroName(this.wsl.distro), linuxPath: this.wsl.linuxPath } } : {}),
       sessionId: this.sessionId,
       busy: this.busy,
       closed: this.closed,

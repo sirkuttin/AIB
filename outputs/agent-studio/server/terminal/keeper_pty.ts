@@ -104,14 +104,16 @@ export class KeeperPty implements Pty {
     readonly label: TerminalLabel,
     readonly info: ChannelInfo | null,
     readonly fallback: ((options: PtyOptions) => Pty) | null,
+    /** A shell in a WSL distro's Linux keeper: `options.env` is its whole environment (the distro's), never AIB's own. */
+    readonly foreign = false,
   ) {
     this.exited = new Promise((resolve) => (this.#exit = resolve));
     this.ready = new Promise((resolve) => (this.#ready = resolve));
   }
 
   /** A new shell in the keeper; `fallback` starts it as a child of AIB when the keeper cannot. Call start() once the session is wired. */
-  static spawn(link: KeeperLink, options: PtyOptions, label: TerminalLabel, fallback: (options: PtyOptions) => Pty): KeeperPty {
-    return new KeeperPty(link, 'spawn', options, label, null, fallback);
+  static spawn(link: KeeperLink, options: PtyOptions, label: TerminalLabel, fallback: (options: PtyOptions) => Pty, foreign = false): KeeperPty {
+    return new KeeperPty(link, 'spawn', options, label, null, fallback, foreign);
   }
 
   /** A shell an earlier AIB started in the keeper (from `list`). Call start() once the session is wired. */
@@ -156,8 +158,8 @@ export class KeeperPty implements Pty {
   #spawn(): void {
     const options = this.options!;
     const id = `${TERMINAL_PREFIX}${crypto.randomUUID().replaceAll('-', '')}`;
-    const env = shellEnvironment(options.env ?? {});
-    const windows = Deno.build.os === 'windows';
+    const env = this.foreign ? { ...(options.env ?? {}) } : shellEnvironment(options.env ?? {});
+    const windows = Deno.build.os === 'windows' && !this.foreign;
     this.#channel = this.link.spawn(
       {
         channel: id,
