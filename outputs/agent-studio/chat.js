@@ -3865,6 +3865,7 @@
       imageFeatureEnabled = !!bootstrap.features?.imageAttachments;
       window.AttachmentsUI?.setFeatures(bootstrap.features);
       instanceId = bootstrap.instanceId || '';
+      if ($('appVersion')) $('appVersion').textContent = bootstrap.server?.version || ''; // the exact build, beside the Beta tag
       discoveryEnabled = !!bootstrap.features?.sessionDiscovery;
       if (bootstrap.features?.formElicitation) await loadQuestionUI();
       if (window.AgentSettingsUI) await window.AgentSettingsUI.load();
