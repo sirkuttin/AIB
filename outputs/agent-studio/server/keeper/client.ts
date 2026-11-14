@@ -8,12 +8,18 @@
  *
  * Compatibility (the protocol's rule 4: AIB carries the burden): unknown events, response fields and record kinds are ignored, and a
  * feature is used only when hello's `features` lists it.
+ *
+ * The connection runs over a KeeperStream: a socket (Deno.Conn) to a keeper on this PC, or a child's stdin/stdout (pipeStream) for
+ * the keeper inside a WSL distro, reached through `wsl.exe … AIB-keeper bridge` (docs/wsl/design.md section 3). The bridge writes
+ * the BRIDGE_MAGIC line and a one-line preamble before any frame (readBridgePreamble); bytes already read past it go to the frame
+ * reader first (overStream's `initial`).
  */
 import { createHash } from 'node:crypto';
 import { APP_ROOT, APP_VERSION, isCompiled } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { spawnDetached } from '../platform/spawn_detached.ts';
 import { pidAlive } from '../host/host_client.ts';
+import { BRIDGE_MAGIC, type BridgePreamble } from '../wsl/contract.ts';
 
 const log = getLogger('keeper');
 const WIN = Deno.build.os === 'windows';
@@ -160,6 +166,119 @@ export class FrameReader {
   }
 }
 
+// ---- streams ----------------------------------------------------------------------------------------------------------------
+
+/** What a KeeperClient reads and writes: a Deno.Conn has exactly this shape; pipeStream makes one of a child's pipes. */
+export interface KeeperStream {
+  /** Bytes into `p`; the count, or null at the end. */
+  read(p: Uint8Array): Promise<number | null>;
+  /** Write some of `p`; the count written. */
+  write(p: Uint8Array): Promise<number>;
+  close(): void;
+}
+
+/** A KeeperStream over a readable and a writable (a child's stdout and stdin). close() ends both and then calls `onClose`. */
+export function pipeStream(
+  readable: ReadableStream<Uint8Array>,
+  writable: WritableStream<Uint8Array>,
+  onClose: (() => void) | null = null,
+): KeeperStream {
+  const reader = readable.getReader();
+  const writer = writable.getWriter();
+  let leftover: Uint8Array | null = null;
+  let closed = false;
+  return {
+    async read(p) {
+      if (!leftover || !leftover.length) {
+        const { value, done } = await reader.read();
+        if (done || !value) return null;
+        leftover = value;
+      }
+      const n = Math.min(p.length, leftover.length);
+      p.set(leftover.subarray(0, n));
+      leftover = leftover.subarray(n);
+      return n;
+    },
+    async write(p) {
+      if (closed) throw new KeeperError('closed', 'the keeper pipe is closed');
+      await writer.write(p.slice());
+      return p.length;
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      reader.cancel().catch(() => {});
+      writer.close().catch(() => {});
+      try {
+        onClose?.();
+      } catch { /* the owner's cleanup */ }
+    },
+  };
+}
+
+/** How much a bridge may print before its magic line (wsl.exe notices, a login message) before AIB gives up on it. */
+export const MAX_BRIDGE_NOTICE = 64 * 1024;
+
+/**
+ * Read the bridge's start: anything (wsl.exe notices), then a line `AIB-BRIDGE-1`, then one JSON line, the preamble. Returns it,
+ * the bytes read past it (the first keeper frames: give them to overStream as `initial`) and the notices. Throws KeeperError
+ * `bad_bridge` on an end, a missing magic line within MAX_BRIDGE_NOTICE bytes, or a preamble that is not one.
+ */
+export async function readBridgePreamble(
+  stream: KeeperStream,
+  limit = MAX_BRIDGE_NOTICE,
+): Promise<{ preamble: BridgePreamble; rest: Uint8Array; notices: string }> {
+  const magic = ENC.encode(BRIDGE_MAGIC);
+  let buffer = new Uint8Array(0);
+  const chunk = new Uint8Array(65536);
+  let magicEnd = -1; // index just past the magic line's newline
+  let noticesEnd = 0;
+  for (;;) {
+    if (magicEnd < 0) {
+      for (let at = 0; at + magic.length < buffer.length; at++) {
+        if (at > 0 && buffer[at - 1] !== 0x0a) continue;
+        if (!magic.every((b, i) => buffer[at + i] === b)) continue;
+        let end = at + magic.length;
+        if (buffer[end] === 0x0d) end++;
+        if (end >= buffer.length) break; // the line ending is not here yet
+        if (buffer[end] !== 0x0a) continue;
+        magicEnd = end + 1;
+        noticesEnd = at;
+        break;
+      }
+      if (magicEnd < 0 && buffer.length > limit) throw new KeeperError('bad_bridge', 'the WSL bridge did not start (no AIB-BRIDGE line)');
+    }
+    if (magicEnd >= 0) {
+      const newline = buffer.indexOf(0x0a, magicEnd);
+      if (newline >= 0) {
+        let preamble: BridgePreamble;
+        try {
+          preamble = JSON.parse(DEC.decode(buffer.subarray(magicEnd, newline)).trim());
+        } catch {
+          throw new KeeperError('bad_bridge', 'the WSL bridge sent an unreadable preamble');
+        }
+        if (
+          !preamble || typeof preamble !== 'object' || preamble.ev !== 'bridge' || preamble.bridge !== 1 ||
+          typeof preamble.token !== 'string' || !preamble.token
+        ) {
+          throw new KeeperError('bad_bridge', 'the WSL bridge sent a preamble AIB does not know');
+        }
+        return { preamble, rest: buffer.slice(newline + 1), notices: DEC.decode(buffer.subarray(0, noticesEnd)) };
+      }
+      if (buffer.length - magicEnd > MAX_HEADER) throw new KeeperError('bad_bridge', 'the WSL bridge preamble is too long');
+    }
+    const n = await stream.read(chunk);
+    if (n === null) {
+      const said = DEC.decode(buffer.subarray(0, Math.min(buffer.length, 2000))).replace(/\s+/g, ' ').trim();
+      throw new KeeperError('bad_bridge', `the WSL bridge ended before it was ready${said ? `: ${said}` : ''}`);
+    }
+    const joined = new Uint8Array(buffer.length + n);
+    joined.set(buffer);
+    joined.set(chunk.subarray(0, n), buffer.length);
+    buffer = joined;
+  }
+}
+
 // ---- the connection ---------------------------------------------------------------------------------------------------------
 
 interface Waiting {
@@ -174,7 +293,7 @@ export class KeeperClient {
   keeperPid = 0;
   /** Called once when the connection ends (the keeper died, or close()). */
   onClose: ((error: Error | null) => void) | null = null;
-  #conn: Deno.Conn;
+  #conn: KeeperStream;
   #nextId = 1;
   #waiting = new Map<number, Waiting>();
   #writes: Promise<void> = Promise.resolve();
@@ -182,9 +301,35 @@ export class KeeperClient {
   #closeError: Error | null = null;
   readonly done: Promise<void>;
 
-  private constructor(conn: Deno.Conn) {
+  private constructor(conn: KeeperStream, initial: Uint8Array | null = null) {
     this.#conn = conn;
-    this.done = this.#readLoop();
+    this.done = this.#readLoop(initial);
+  }
+
+  /**
+   * Authenticate over a stream that is already open (a WSL bridge's pipes, after readBridgePreamble). `initial`: bytes read past the
+   * preamble, handed to the frame reader before anything else. Throws like connect(); the stream is closed on failure.
+   */
+  static async overStream(
+    stream: KeeperStream,
+    token: string,
+    options: { client?: string; initial?: Uint8Array | null; pid?: number } = {},
+  ): Promise<KeeperClient> {
+    const keeper = new KeeperClient(stream, options.initial ?? null);
+    await keeper.#hello(token, options.client ?? `AIB ${APP_VERSION}`, options.pid ?? 0);
+    return keeper;
+  }
+
+  async #hello(token: string, client: string, pid: number): Promise<void> {
+    try {
+      const hello = await this.request({ op: 'hello', token, min: PROTOCOL, max: PROTOCOL, client });
+      this.features = Array.isArray(hello.features) ? hello.features.map(String) : [];
+      this.keeperVersion = String(hello.keeper ?? '');
+      this.keeperPid = Number(hello.pid ?? pid) || 0;
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   /** Dial and authenticate. Throws KeeperError (bad_token, unsupported_protocol, ...) or a connection error. */
@@ -197,15 +342,7 @@ export class KeeperClient {
       conn = await Deno.connect({ hostname: info.address.slice(0, at) || '127.0.0.1', port: Number(info.address.slice(at + 1)) });
     }
     const keeper = new KeeperClient(conn);
-    try {
-      const hello = await keeper.request({ op: 'hello', token: info.token, min: PROTOCOL, max: PROTOCOL, client });
-      keeper.features = Array.isArray(hello.features) ? hello.features.map(String) : [];
-      keeper.keeperVersion = String(hello.keeper ?? '');
-      keeper.keeperPid = Number(hello.pid ?? info.pid) || 0;
-    } catch (error) {
-      keeper.close();
-      throw error;
-    }
+    await keeper.#hello(info.token, client, info.pid);
     return keeper;
   }
 
@@ -237,11 +374,13 @@ export class KeeperClient {
     while (at < frame.length) at += await this.#conn.write(frame.subarray(at));
   }
 
-  async #readLoop(): Promise<void> {
+  async #readLoop(initial: Uint8Array | null): Promise<void> {
     const frames = new FrameReader();
     const buffer = new Uint8Array(65536);
     let error: Error | null = null;
     try {
+      await Promise.resolve(); // the constructor returns (and `request` can be called) before the first frame is handled
+      for (const [header, body] of initial?.length ? frames.push(initial) : []) this.#dispatch(header, body);
       while (true) {
         const n = await this.#conn.read(buffer);
         if (n === null) break;

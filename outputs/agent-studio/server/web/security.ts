@@ -243,7 +243,11 @@ export function authorize(
   return new Principal(PAGE, PAGE_SCOPES);
 }
 
-/** UNC and device paths: \\server\share, //server/share, \\?\C:\..., \\.\device. Opening one leaks the NTLM hash. */
+/**
+ * UNC and device paths: \\server\share, //server/share, \\?\C:\..., \\.\device. Opening one leaks the NTLM hash. Unchanged for WSL
+ * (docs/wsl/design.md section 6): `\\wsl$\…` stays refused here; a WSL project is a `wsl://` ref, which every gate that only makes
+ * sense for Windows folders also refuses through platform/location.ts isForeignPath (checked next to this one).
+ */
 export function isNetworkPath(value: unknown): boolean {
   const text = typeof value === 'string' ? value.trim() : '';
   return ['\\\\', '//', '\\/', '/\\'].some((p) => text.startsWith(p));

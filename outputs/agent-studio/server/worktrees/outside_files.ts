@@ -11,6 +11,7 @@
  */
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import { repoBranch } from './chat_folders.ts';
 import { worktreeParent } from '../desktop/folders.ts';
 import { extOf, type FileRead, FilesError, IMAGE_EXT, LIMITS, PAGE_EXT, within } from './files.ts';
@@ -23,7 +24,7 @@ export const MAX_AGENT_FILES = 200;
 export function checkShape(path: unknown): string {
   if (typeof path !== 'string' || !path || path.length > 1024 || path.includes('\0')) throw new FilesError('Invalid path', 'bad_path');
   const text = path.trim();
-  if (isNetworkPath(text)) throw new FilesError('Network and device paths are not supported', 'bad_path');
+  if (isNetworkPath(text) || isForeignPath(text)) throw new FilesError('Network and device paths are not supported', 'bad_path');
   const winAbs = /^[A-Za-z]:[\\/]/.test(text), posixAbs = !osp.WIN && text.startsWith('/');
   if (!winAbs && !posixAbs) throw new FilesError('Use a full path', 'bad_path');
   if (osp.WIN && !winAbs) throw new FilesError('Use a full path', 'bad_path');
@@ -50,7 +51,7 @@ const realOr = (p: string): string => {
 /** True when `path` is AIB's own data folder or inside it. */
 export function inDataFolder(path: string, dataDirs: (string | null | undefined)[]): boolean {
   for (const d of dataDirs) {
-    if (!d || isNetworkPath(d)) continue;
+    if (!d || isNetworkPath(d) || isForeignPath(d)) continue;
     if (within(path, d) || within(path, realOr(d))) return true;
   }
   return false;
@@ -67,7 +68,7 @@ export function resolveOutside(path: string, dataDirs: (string | null | undefine
     throw new FilesError('Not found', 'not_found', 404);
   }
   if (real.startsWith('\\\\?\\')) real = real.slice(4);
-  if (isNetworkPath(real)) throw new FilesError('Network and device paths are not supported', 'bad_path');
+  if (isNetworkPath(real) || isForeignPath(real)) throw new FilesError('Network and device paths are not supported', 'bad_path');
   if (inDataFolder(real, dataDirs)) throw new FilesError('Not shown', 'hidden', 403);
   let st: Deno.FileInfo;
   try {

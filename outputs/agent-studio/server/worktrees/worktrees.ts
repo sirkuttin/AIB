@@ -24,6 +24,7 @@
 import { FileLock, LOCK_TIMEOUT_MS, LockTimeout } from '../platform/lock.ts';
 import { basename, dirname, isabs, isdir, isfile, islink, join, normcase, normpath, SEP, splitdrive, WIN } from '../platform/ospath.ts';
 import { pathStr, which } from '../platform/pypath.ts';
+import { assertWindowsLocal } from '../platform/location.ts';
 import { pathOf, realpath } from '../state/paths.ts';
 import { entriesOf, put, readJsonFile, saveJson } from '../state/json.ts';
 import { clip, isDict, pyStrip, ValueError } from '../core/py.ts';
@@ -128,6 +129,7 @@ async function runProcess(
   input: Uint8Array | null,
   timeoutMs: number | null,
 ): Promise<{ code: number; out: Uint8Array; err: Uint8Array }> {
+  assertWindowsLocal(cwd, 'folder'); // a missed WSL route throws here instead of running Windows git on C:\…
   const child = new Deno.Command(command, {
     args,
     cwd,

@@ -2,7 +2,11 @@
  * The few pathlib / shutil behaviours the ported stores rely on, so a value the Python server would store is stored the same:
  * Path.expanduser(), Path.is_absolute(), str(Path(...)) (separator and '.' normalisation), Path.is_file(), Path.resolve() of an
  * existing file, os.access(X_OK) and shutil.which() as Python 3.11 does them (Windows: current folder first, PATHEXT).
+ * A foreign path (location.ts isForeignPath) is never looked up on this PC: pyStat and resolvePath throw NotFound (so the
+ * predicates answer false) and which() finds nothing.
  */
+import { isForeignPath } from './location.ts';
+
 const WIN = Deno.build.os === 'windows';
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC';
 
@@ -73,6 +77,7 @@ export function expandUser(path: string): string {
  * WindowsApps\wt.exe, os error 1920) gives the link's own stat, as Python's os.stat does.
  */
 export function pyStat(path: string): Deno.FileInfo {
+  if (WIN && isForeignPath(path)) throw new Deno.errors.NotFound(`not a path of this PC: ${path}`);
   try {
     return Deno.statSync(path);
   } catch (error) {
@@ -110,6 +115,7 @@ export function executable(path: string): boolean {
 
 /** str(Path(path).resolve()) for an existing path: the real path (links and '..' resolved, the case the file system stores). */
 export function resolvePath(path: string): string {
+  if (WIN && isForeignPath(path)) throw new Deno.errors.NotFound(`not a path of this PC: ${path}`);
   return Deno.realPathSync(path);
 }
 
@@ -121,6 +127,7 @@ function ntJoin(dir: string, file: string): string {
 
 /** shutil.which(cmd) of Python 3.11 (mode F_OK | X_OK). */
 export function which(cmd: string): string | null {
+  if (WIN && isForeignPath(cmd)) return null;
   const access = (name: string) => executable(name) && !isDir(name);
   if (WIN ? /[\\/]|^[A-Za-z]:/.test(cmd) : cmd.includes('/')) { // os.path.dirname(cmd) is not empty
     return access(cmd) ? cmd : null;

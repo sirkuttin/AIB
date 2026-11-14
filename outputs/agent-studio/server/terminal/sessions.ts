@@ -28,6 +28,7 @@
  * code:'gone'} and starts nothing.
  */
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import { clampSize, defaultShell, type Pty, type PtyOptions, type ShellSpec, spawnPty } from '../platform/pty.ts';
 import type { WsLink } from '../platform/websocket.ts';
 import { announce, getLogger } from '../core/log.ts';
@@ -80,6 +81,7 @@ export function checkCwd(cwd: unknown): string {
   const text = typeof cwd === 'string' ? cwd.trim() : '';
   if (!text) throw new TerminalError('This chat has no folder to open a terminal in.', 'no_folder');
   if (isNetworkPath(text)) throw new TerminalError('Network and device folders are not supported.', 'bad_folder');
+  if (isForeignPath(text)) throw new TerminalError('This folder is inside WSL, not on this PC.', 'bad_folder'); // WSL: its own route
   const absolute = Deno.build.os === 'windows' ? /^[A-Za-z]:[\\/]/.test(text) : text.startsWith('/');
   if (!absolute) throw new TerminalError('The chat folder is not an absolute path.', 'bad_folder');
   let dir = false;

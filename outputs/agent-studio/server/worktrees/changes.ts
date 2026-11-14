@@ -7,6 +7,7 @@
 import { clip } from '../core/py.ts';
 import { which } from '../platform/pypath.ts';
 import * as osp from '../platform/ospath.ts';
+import { assertWindowsLocal } from '../platform/location.ts';
 
 export const MAX_FILES = 300; // files listed per page (offset picks the page); totals count every file
 export const MAX_DIFF_BYTES = 200 * 1024; // per-file diff (and untracked file read) cap
@@ -70,6 +71,7 @@ export async function runGit(
 ): Promise<[Uint8Array, boolean, number | null]> {
   const git = gitPath();
   if (!git) return [new Uint8Array(), false, null];
+  assertWindowsLocal(cwd, 'folder'); // Windows git never runs on a WSL ref (the helper runs this natively)
   let child: Deno.ChildProcess;
   try {
     child = new Deno.Command(git, {

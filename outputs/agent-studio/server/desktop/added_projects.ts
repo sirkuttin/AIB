@@ -14,6 +14,10 @@
  *     is restored from the backup, else the list is empty.
  *   - a file written by a newer AIB (a higher version) is read as far as it can be and never overwritten; adding and removing
  *     are refused until AIB is updated.
+ *
+ * A WSL project (docs/wsl/design.md section 2) is stored with `path` (and its key) the canonical ref `wsl://<distro><linuxPath>`
+ * and `wsl: {distro, linuxPath}`. STORE_VERSION stays 1: an older AIB reads the entry as a folder it cannot find. Nothing here
+ * reads the disk for a ref; a foreign path that is not a valid ref (`/home/u` on Windows) is never added.
  */
 import { isDict, isStr, ValueError } from '../core/py.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson } from '../state/base.ts';
@@ -21,6 +25,7 @@ import { entriesOf, now, quarantine, readJsonFile, saveJson } from '../state/jso
 import { projectKey } from './project_delete.ts';
 import { worktreeParent } from './folders.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath, locOf, refOf, wslLocOf } from '../platform/location.ts';
 
 /** This file's own format version. */
 export const STORE_VERSION = 1;
@@ -28,6 +33,14 @@ export const STORE_VERSION = 1;
 export interface Added {
   path: string;
   at: number;
+  /** A WSL project: where it is (`path` is then refOf of it). */
+  wsl?: { distro: string; linuxPath: string };
+}
+
+/** The entry for a path: a WSL ref gets its `wsl` part (always from the ref itself, so the two never disagree). */
+function entryOf(path: string, at: number): Added {
+  const wsl = wslLocOf(path);
+  return wsl ? { path: refOf(wsl), at, wsl: { distro: wsl.distro, linuxPath: wsl.linuxPath } } : { path, at };
 }
 
 /** path -> the main checkout of a git worktree folder, or null. Tests pass their own. */
@@ -43,8 +56,8 @@ function parse(raw: unknown, max: number): Parsed {
   if (!isDict(raw) || typeof raw.version !== 'number' || raw.version < 1 || !isDict(raw.added)) return { ok: false };
   const added = new Map<string, Added>();
   for (const [key, item] of entriesOf(raw.added).slice(0, max)) {
-    if (!isDict(item) || !isStr(item.path) || projectKey(item.path) !== key) continue;
-    added.set(key, { path: item.path, at: typeof item.at === 'number' && item.at > 0 ? item.at : 0 });
+    if (!isDict(item) || !isStr(item.path) || projectKey(item.path) !== key || !locOf(item.path)) continue;
+    added.set(key, entryOf(item.path, typeof item.at === 'number' && item.at > 0 ? item.at : 0));
   }
   return { ok: true, newer: raw.version > STORE_VERSION, added };
 }
@@ -110,7 +123,7 @@ export class AddedProjects extends JsonFileStore {
 
   /** The main checkout of a worktree folder (cached: it reads the disk; a "none" answer only for a minute), or null. */
   parentOf(path: string): string | null {
-    if (!isStr(path) || !path || isNetworkPath(path)) return null;
+    if (!isStr(path) || !path || isNetworkPath(path) || isForeignPath(path)) return null; // WSL: phase 1 has no worktrees there
     const at = this.clock();
     const hit = this.#parents.get(path);
     if (hit && (hit.parent !== null || at - hit.at < NO_PARENT_TTL_MS)) return hit.parent;
@@ -170,12 +183,13 @@ export class AddedProjects extends JsonFileStore {
    * checkout. Returns true when the list changed. */
   add(...paths: unknown[]): Promise<boolean> {
     const fresh = paths.filter((p): p is string => isStr(p) && !!p.trim() && p.length <= 1024)
+      .filter((p) => !!locOf(p)) // a foreign path that is not a valid WSL ref is never a project
       .map((p) => this.projectFolder(p.trim()))
       .filter((p) => projectKey(p));
     this.sync();
     if (!fresh.length || fresh.every((p) => this.added.has(projectKey(p)))) return Promise.resolve(false);
     return this.#change((map) => {
-      for (const path of fresh) if (!map.has(projectKey(path))) map.set(projectKey(path), { path, at: now() });
+      for (const path of fresh) if (!map.has(projectKey(path))) map.set(projectKey(path), entryOf(path.trim(), now()));
     });
   }
 

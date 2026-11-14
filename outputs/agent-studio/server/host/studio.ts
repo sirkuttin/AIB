@@ -52,6 +52,7 @@ import { Recovery, StateStore } from '../state/recovery.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { builtinLaunch } from '../web/shared.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
@@ -1387,7 +1388,7 @@ export class Studio {
       if (!agentRegistry.isProvider(provider) || !sessionId || pyLen(sessionId) > 512) {
         throw new ValueError('Choose a provider and a saved session ID');
       }
-      if (isNetworkPath(cwd)) throw new ValueError('Network and device paths are not supported');
+      if (isNetworkPath(cwd) || isForeignPath(cwd)) throw new ValueError('Network and device paths are not supported');
       return Promise.resolve(this.probe.assess(provider, sessionId, { cwd: cwd || null, fresh: true }));
     } catch (error) {
       return Promise.reject(error);
