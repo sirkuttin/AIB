@@ -943,17 +943,18 @@
     });
     return n;
   }
-  // "1 file in this chat's copy, not in the shared folder": files an agent wrote under a local-only path inside the copy.
+  // "1 file here is only in this chat": files an agent wrote under a local-only path inside the copy.
   function strayNode(r, scope) {
     const n = el('div', null, 'fx-row fx-stray');
     n.style.setProperty('--d', String(r.depth));
     const text = el(
       'span',
-      r.count + (r.count === 1 ? ' file' : ' files') + " in this chat's copy, not in the shared folder. AIB moves " +
-        (r.count === 1 ? 'it' : 'them') + ' there before the copy is removed.',
+      (r.count === 1 ? '1 file here is' : r.count + ' files here are') + " only in this chat, so your other chats can't see " +
+        (r.count === 1 ? 'it' : 'them') + '. Nothing gets lost: AIB moves ' + (r.count === 1 ? 'it' : 'them') +
+        " into the project's own folder when this chat is archived or deleted.",
       'fx-stray-t',
     );
-    const b = btn('Move to the shared folder', 'fx-stray-btn', 'Move ' + (r.count === 1 ? 'it' : 'them') + ' into the main folder now (a name clash gets "(from chat-…)")');
+    const b = btn('Share with all chats now', 'fx-stray-btn', 'Move ' + (r.count === 1 ? 'it' : 'them') + " into the project's own folder now, where every chat sees it" + ' (a name clash gets "(from chat-…)")');
     b.onclick = (e) => {
       e.stopPropagation();
       b.disabled = true;
