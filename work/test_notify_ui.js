@@ -165,13 +165,13 @@ test('grouping: transitions inside the window coalesce, outside start a new grou
   assert.deepEqual(N.describe(r.group), {
     tag: 'studio-attention',
     title: 'A',
-    body: 'Finished',
-    target: { type: 'chat', key: 'a' },
+    body: 'To review',
+    target: { type: 'inbox', key: 'a' },
     silent: true,
   });
   r = N.addToGroup(r.group, [{ key: 'b', kind: 'needs', title: 'B', sound: 'needs' }], 20000);
   let d = N.describe(r.group);
-  assert.equal(d.title, '1 needs you \u00b7 1 finished');
+  assert.equal(d.title, '1 needs you \u00b7 1 to review');
   assert.equal(d.silent, false, 'something needs you: not silent');
   assert.equal(d.body, 'A\nB');
   assert.deepEqual(d.target, { type: 'inbox' });
@@ -185,7 +185,7 @@ test('grouping: transitions inside the window coalesce, outside start a new grou
     59000,
   );
   d = N.describe(r.group);
-  assert.equal(d.title, '1 needs you \u00b7 3 finished');
+  assert.equal(d.title, '1 needs you \u00b7 3 to review');
   assert.equal(d.body, 'A\nB\nC\nand 1 more');
   const later = N.addToGroup(r.group, [{ key: 'e', kind: 'needs', title: 'E' }], 1000 + N.GROUP_MS + 1);
   assert.deepEqual(
@@ -293,7 +293,7 @@ test('observeItems wires transitions, away state, mute and grouping (stubbed bro
       10000,
     );
     assert.equal(shown.length, 2);
-    assert.equal(shown[1].title, '2 finished');
+    assert.equal(shown[1].title, '2 to review');
     assert.equal(shown[1].o.body, 'Chat b\nChat a');
     assert.equal(shown[1].o.tag, shown[0].o.tag);
   } finally {

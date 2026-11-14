@@ -11,7 +11,7 @@
  * The same decisions through the real agent hosts (in-process, keeper, split) are in attention_modes_test.ts.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AttentionWatcher, type Fire, Notifier, SETTLE_MS } from '../../outputs/agent-studio/server/attention/watcher.ts';
+import { AttentionWatcher, type Fire, Notifier, requestText, SETTLE_MS } from '../../outputs/agent-studio/server/attention/watcher.ts';
 import { Presence } from '../../outputs/agent-studio/server/attention/presence.ts';
 import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
 
@@ -355,7 +355,7 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
   assertEquals(desktop, [{
     title: 'Chat a',
     body: 'Needs your approval',
-    target: { type: 'chat', key: 'claude:a' },
+    target: { type: 'inbox', key: 'claude:a' },
     test: false,
     silent: false,
   }]);
@@ -377,7 +377,7 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
   view['studio-notifications-app'] = JSON.stringify({ notifyFor: 'both' });
   now += 10_000;
   await n.fire([turn('c')]);
-  assertEquals(desktop.at(-1)!.title, '1 needs you \u00b7 1 finished', 'the kinds are named, never one waiting count');
+  assertEquals(desktop.at(-1)!.title, '1 needs you \u00b7 1 to review', 'the kinds are named, never one waiting count');
   // an AIB window has focus: no desktop notification; still a push (not typing for 2 minutes)
   now += 70_000;
   presence.report(true, 300_000);
@@ -578,12 +578,12 @@ Deno.test('notifier + presence: the chat open in the AIB window gets no desktop 
   now += 70_000;
   presence.report(false, 670_000, ['claude:a']);
   await n.fire([asks('b')]);
-  assertEquals(desktop.map((d) => d.target), [{ type: 'chat', key: 'claude:b' }]);
+  assertEquals(desktop.map((d) => d.target), [{ type: 'inbox', key: 'claude:b' }]);
   // switched to chat b: chat a is desktop news again
   now += 70_000;
   presence.report(false, 740_000, ['claude:b']);
   await n.fire([asks('a')]);
-  assertEquals(desktop.map((d) => d.target), [{ type: 'chat', key: 'claude:b' }, { type: 'chat', key: 'claude:a' }]);
+  assertEquals(desktop.map((d) => d.target), [{ type: 'inbox', key: 'claude:b' }, { type: 'inbox', key: 'claude:a' }]);
   // the window was minimized or closed (the page reports nothing open), or stopped reporting: nothing is open
   presence.report(false, 0, []);
   assertEquals(presence.openOnPc(), []);
@@ -591,4 +591,27 @@ Deno.test('notifier + presence: the chat open in the AIB window gets no desktop 
   assertEquals(presence.openOnPc(), ['claude:a'], 'only page keys');
   now += 45_000;
   assertEquals(presence.openOnPc(), [], 'stale after 45 s');
+});
+
+Deno.test('watcher: the desktop notification names the request and the project, never on a push (inbox v3)', async () => {
+  assertEquals(requestText({ params: { toolCall: { title: 'Bash', rawInput: { command: 'npm  install\nstripe' } } } }, null), 'Run npm install stripe');
+  assertEquals(requestText({ params: { toolCall: { title: 'Edit src/cart.ts' } } }, null), 'Edit src/cart.ts');
+  assertEquals(requestText(null, { params: { message: 'Which plan?' } }), 'Which plan?');
+  assertEquals(requestText(null, null), '');
+  const presence = new Presence();
+  const desktop: Json[] = [];
+  const pushes: Json[] = [];
+  const n = new Notifier({
+    desktop: () => (req) => (desktop.push(req), Promise.resolve({ shown: true })),
+    push: () => (text) => (pushes.push(text), Promise.resolve()),
+    presence,
+    viewPrefs: { public: () => ({ prefs: {} }) } as never,
+    clock: () => 1000,
+  });
+  await n.fire([{ key: 'claude:a', chat: 'c-a', kind: 'needs', title: 'Checkout', reason: 'approval', project: 'shopfront', what: 'Run npm install stripe@18.0.0' }]);
+  assertEquals(desktop[0].body, 'shopfront · Run npm install stripe@18.0.0');
+  assertEquals(desktop[0].target, { type: 'inbox', key: 'claude:a' });
+  assertEquals(pushes[0].body, 'Checkout', 'a push says the title only');
+  assert(!JSON.stringify(pushes).includes('stripe'));
+  n.close();
 });

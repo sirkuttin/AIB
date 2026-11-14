@@ -1135,6 +1135,79 @@
       drawInbox();
     }
   }
+  // ---- the in-page toast's card (notify-ui.js): the same row, read the same way, answered the same way ----
+  // {reason, line1 (the command, file, question or error), title, project, since, buttons (the agent's options, with their
+  // kind), reply, retry, loading, openOnly, more, full (the whole command)}; null when the chat is not in the inbox.
+  function toastCard(key) {
+    const Rp = RP(),
+      r = St()
+        .inbox(items)
+        .find((x) => x.key === key);
+    if (!r || !Rp) return null;
+    const item = itemOf(key);
+    if (item) wantDetail(item, r);
+    const d = detailFor(item),
+      act = Rp.rowActions(r, d);
+    const perm = !r.ask && d.permissions && d.permissions.length ? d.permissions[0] : null,
+      permLine = perm && Rp.permissionTitle ? Rp.permissionTitle(perm) : '';
+    const opts = perm && perm.params && Array.isArray(perm.params.options) ? perm.params.options : [];
+    const tc = perm && perm.params && perm.params.toolCall,
+      cmd = tc && tc.rawInput && typeof tc.rawInput.command === 'string' ? tc.rawInput.command.trim() : '';
+    const line1 =
+      r.reason === 'failed'
+        ? r.ask || (item && item.lastText) || 'The last turn ended with an error.'
+        : r.reason === 'asks'
+          ? r.ask || (item && item.lastText) || r.summary
+          : r.kind === 'yourTurn'
+            ? (item && item.lastText) || r.snippet || r.title
+            : r.ask || permLine || r.summary;
+    return {
+      reason: r.reason,
+      line1: String(line1 || '').replace(/\s+/g, ' ').trim(),
+      title: r.title,
+      project: r.projectName || '',
+      since: r.since || 0,
+      buttons: act.buttons.map((b) => {
+        const o = b.op === 'permission' ? opts.find((x) => x && x.optionId === b.optionId) : null;
+        return Object.assign({}, b, o && o.kind ? { kind: String(o.kind) } : {});
+      }),
+      reply: !!act.reply,
+      retry: !!act.retry,
+      loading: !!act.loading,
+      openOnly: !!act.openOnly,
+      more: act.more || 0,
+      full: cmd || permLine,
+    };
+  }
+  // The toast's answers go the inbox row's way (answerQuick, sendQuick, retryQuick) and reject on failure.
+  function toastSend(key, run) {
+    return Promise.resolve(run()).then(() => {
+      const s = quick.get(key);
+      if (s && s.error) {
+        const msg = s.error;
+        s.error = '';
+        throw new Error(msg);
+      }
+    });
+  }
+  const toastAnswer = (key, b) => toastSend(key, () => answerQuick(key, itemOf(key), b));
+  const toastReply = (key, text) =>
+    toastSend(key, () => {
+      qs(key).text = text;
+      return sendQuick(key);
+    });
+  const toastRetry = (key) => toastSend(key, () => retryQuick(key));
+  // A desktop notification was clicked: the inbox opens on that chat's request, highlighted; the chat on screen stays.
+  function openInboxOn(key) {
+    if (!inboxOpen) toggleInbox(true);
+    if (!key) return;
+    const w = rowEl(key);
+    if (!w) return;
+    focusRow(key);
+    w.classList.add('ws-inbox-flash');
+    if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest' });
+    root.setTimeout(() => w.classList.remove('ws-inbox-flash'), 2400);
+  }
   function startReply(key) {
     const s = qs(key);
     s.replying = true;
@@ -2821,9 +2894,12 @@
           if (!openKey(key)) return false;
           return true;
         },
-        openInbox: () => {
-          if (!inboxOpen) toggleInbox(true);
-        },
+        openInbox: (key) => openInboxOn(key),
+        // the toast's card and its answers (notify-ui.js): the same row and the same routes as the inbox
+        toastCard,
+        toastAnswer,
+        toastReply,
+        toastRetry,
         mutedProjects: () =>
           Object.keys((prefs && prefs.projects) || {})
             .filter((k) => prefs.projects[k].muted)

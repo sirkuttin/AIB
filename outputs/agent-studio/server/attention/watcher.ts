@@ -57,6 +57,25 @@ export interface Fire {
   kind: Kind;
   title: string;
   reason?: Reason;
+  /** The chat's project name, for the desktop notification's text ("shopfront · Run npm install stripe@18.0.0"). */
+  project?: string;
+  /** The request itself (an approval's command or file, a question's words); desktop notifications only, never a push. */
+  what?: string;
+}
+
+/** The words of a waiting request, for the desktop notification: an approval's command or title, a question's message. */
+export function requestText(permission: unknown, elicitation: unknown): string {
+  const flat = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+  const p = obj(obj(permission).params);
+  const tc = obj(p.toolCall);
+  const input = obj(tc.rawInput);
+  const command = flat(input.command);
+  if (command) return 'Run ' + command;
+  const file = flat(input.file_path) || flat(input.path);
+  const title = flat(tc.title) || flat(p.title);
+  if (title) return title;
+  if (file) return 'Edit ' + file;
+  return flat(obj(obj(elicitation).params).message);
 }
 
 /** A chat blocked on the person as the last look saw it (the tray menu's chat slots, window.ts trayChatSlots). */
@@ -104,7 +123,7 @@ export class AttentionWatcher {
   #stopped = false;
   #busy: Promise<void> | null = null;
   /** chat id -> [signature of its waiting requests, their keys] (a permission's key needs one state read per change). */
-  #needKeys = new Map<string, [string, string[]]>();
+  #needKeys = new Map<string, [string, string[], string]>();
   #kinds = new Map<string, [number, { worktree: boolean; scratch: boolean; worktreeOf?: string }]>();
   /** Finished turns seen done (turn key -> since when, ms): announced once they stayed done for SETTLE_MS. */
   #settling = new Map<string, number>();
@@ -191,6 +210,18 @@ export class AttentionWatcher {
   }
 
   /** A chat's title as the page shows it: your name for it, the agent's session title, the saved title, its first prompt. */
+  /** A chat's project as the page names it: its saved display name, else the folder's last part (a worktree under its repository). */
+  projectName(c: Json, prefs: unknown): string {
+    const base = str(c.projectRoot, 2000) || str(c.cwd, 2000);
+    if (!base) return '';
+    const kind = this.#kindOf(base);
+    const root = (kind.worktreeOf && str(kind.worktreeOf, 2000)) || base;
+    const named = obj(obj(obj(prefs).projects)[RULES.pathKey(root)]).name;
+    if (typeof named === 'string' && named.trim()) return named.trim().slice(0, 120);
+    const parts = RULES.splitPath(root).segments;
+    return (parts[parts.length - 1] || '').slice(0, 120);
+  }
+
   title(c: Json, names: Record<string, unknown>, marks: Record<string, unknown>): string {
     const key = chatKey(c);
     const mark = obj(marks[`${str(c.provider, 60)}:${str(c.sessionId, 300)}`]);
@@ -204,11 +235,16 @@ export class AttentionWatcher {
    * event that announced it: its number and time, which a rebuild keeps (the record replays them) and a new agent never repeats.
    */
   async #requestKeys(c: Json, needs: number): Promise<string[]> {
+    return (await this.#requests(c, needs))[0];
+  }
+
+  /** The request keys (as #requestKeys) and the words of the first request (requestText), read again only when they change. */
+  async #requests(c: Json, needs: number): Promise<[string[], string]> {
     const id = str(c.id, 100);
     const elicitations = (Array.isArray(c.elicitations) ? c.elicitations : []).map((e) => str(obj(e).key, 300)).filter(Boolean);
     const sig = `${needs}|${elicitations.join(',')}|${c.auth ? 1 : 0}`;
     const known = this.#needKeys.get(id);
-    if (known && known[0] === sig) return known[1];
+    if (known && known[0] === sig) return [known[1], known[2]];
     const cursor = Math.max(0, Math.trunc(Number(c.cursor) || 0));
     // The last events (a waiting chat adds few); the whole chat only when a request is older than that. Never cursor 0 (that read
     // also refreshes the account's usage limits).
@@ -231,8 +267,9 @@ export class AttentionWatcher {
     const name = (k: string) => named.get(k) ?? 'k:' + k;
     const keys = [...permissions.map((k) => 'p:' + name(k)), ...elicitations.map((k) => 'e:' + name(k)), ...(c.auth ? ['auth'] : [])];
     if (!keys.length) keys.push(`n:${needs}`); // a request with no key the list shows: one announcement per count
-    this.#needKeys.set(id, [sig, keys]);
-    return keys;
+    const what = requestText((Array.isArray(state.permissions) ? state.permissions : [])[0], (Array.isArray(c.elicitations) ? c.elicitations : [])[0]);
+    this.#needKeys.set(id, [sig, keys, what]);
+    return [keys, what];
   }
 
   async #poll(): Promise<void> {
@@ -271,6 +308,7 @@ export class AttentionWatcher {
       const phase = INBOX.phaseOf(attention, mark, nowSeconds);
       const flags = RULES.flags(this.facts(c, marks), prefs);
       const title = () => this.title(c, names, marks);
+      const project = this.projectName(c, prefs);
       const markObj = obj(mark);
       if (INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
         const reason: Reason = phase === 'failed' || phase === 'asks'
@@ -285,10 +323,13 @@ export class AttentionWatcher {
       if (state === 'needs_you') {
         const needs = Math.max(1, Number(attention.needs) || 1);
         const reason: Reason = c.auth ? 'signin' : Array.isArray(c.elicitations) && c.elicitations.length ? 'question' : 'approval';
-        for (const request of await this.#requestKeys(c, needs)) {
+        const [requests, what] = await this.#requests(c, needs);
+        for (const request of requests) {
           const fk = `needs|${key}|${request}`;
           if (this.fired.has(fk) || news.some((n) => n.fk === fk)) continue;
-          if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason, fk, flags });
+          if (RULES.notifies('needs', flags)) {
+            news.push({ key, chat: id, kind: 'needs', title: title(), reason, fk, flags, project, ...(what ? { what } : {}) });
+          }
           else quiet.push(fk);
         }
         continue;
@@ -307,7 +348,7 @@ export class AttentionWatcher {
         }
         if (phase === 'asks' && !settled(fk)) continue;
         if (turnKey) quiet.push(turnKey);
-        if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags });
+        if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags, project });
         else quiet.push(fk);
         continue;
       }
@@ -336,7 +377,7 @@ export class AttentionWatcher {
       }
       // done now: announced once it stayed done a moment (a helper's follow-up or the queue's next message comes right after)
       if (!settled(fk)) continue;
-      if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags });
+      if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags, project });
       else quiet.push(fk);
     }
     this.#blocked = blocked;
@@ -345,7 +386,7 @@ export class AttentionWatcher {
     if (quiet.length) this.fired.add(quiet);
     if (!news.length) return;
     const fresh = new Set(this.fired.add(news.map((n) => n.fk)));
-    const fires = news.filter((n) => fresh.has(n.fk)).map(({ key, chat, kind, title, reason }) => ({ key, chat, kind, title, reason }));
+    const fires = news.filter((n) => fresh.has(n.fk)).map(({ fk: _fk, flags: _flags, ...fire }) => bare(fire));
     // One fire per chat and kind in one look (several requests of one chat at once are one piece of news).
     const once = new Map<string, Fire>();
     for (const f of fires) once.set(`${f.kind}|${f.key}`, f);
@@ -357,7 +398,13 @@ export class AttentionWatcher {
 
 /** A desktop notification (server/desktop/notify.ts DesktopNotifications.show). */
 export type DesktopShow = (
-  req: { title: string; body: string; target: { type: 'chat'; key: string } | { type: 'inbox' }; test: boolean; silent?: boolean },
+  req: {
+    title: string;
+    body: string;
+    target: { type: 'chat'; key: string } | { type: 'inbox'; key?: string };
+    test: boolean;
+    silent?: boolean;
+  },
 ) => Promise<{ shown: boolean; reason?: string }>;
 
 export interface NotifierOptions {
@@ -375,7 +422,15 @@ export interface NotifierOptions {
   record?: (what: { to: 'desktop' | 'push' | 'banner' | 'read'; text: unknown; fires: Fire[] }) => void;
 }
 
-const bare = ({ key, chat, kind, title, reason }: Fire): Fire => ({ key, chat, kind, title, ...(reason ? { reason } : {}) });
+const bare = ({ key, chat, kind, title, reason, project, what }: Fire): Fire => ({
+  key,
+  chat,
+  kind,
+  title,
+  ...(reason ? { reason } : {}),
+  ...(project ? { project } : {}),
+  ...(what ? { what } : {}),
+});
 
 /**
  * The 60 s groups and where news goes, by where the owner is looking (notify-rules.js route, attention/presence.ts):
@@ -425,7 +480,8 @@ export class Notifier {
       if (r.desktop) desktop.push(f);
       if (r.push) push.push(f);
       if (r.banner) {
-        presence.hold(bare(f), !r.desktop && !view.pcFocused);
+        // a phone banner names the chat only, never the request (as a push)
+        presence.hold(bare({ ...f, what: undefined }), !r.desktop && !view.pcFocused);
         this.options.record?.({ to: 'banner', text: { kind: f.kind, title: f.title, chat: f.chat }, fires: [f] });
       }
       if (r.read) {
@@ -442,12 +498,22 @@ export class Notifier {
     const now = this.clock();
     const entries = (list: Fire[]): GroupEntry[] =>
       list.map((f) => ({ key: f.key, title: f.title, kind: f.kind, ...(f.reason ? { reason: f.reason } : {}), chat: f.chat }));
+    // The desktop notification also carries the project and the request ("shopfront · Run npm install stripe@18.0.0"); a push
+    // never does (notify-rules.js pushText: titles only).
+    const desktopEntries = (list: Fire[]): GroupEntry[] =>
+      entries(list).map((e, i) => ({
+        ...e,
+        ...(list[i].project ? { project: list[i].project } : {}),
+        ...(list[i].what ? { what: list[i].what } : {}),
+      }));
     const prefs = RULES.appPrefs(this.options.viewPrefs.public().prefs['studio-notifications-app']);
     const show = this.options.desktop();
     if (this.options.presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
     else if (show) {
       const open = this.options.presence.openOnPc(); // the chat open in the window is in front of the owner already
-      const wanted = entries(desktopFires.filter((f) => !INBOX.isOpen(f.key, open))).filter((i) => RULES.desktopWants(i.kind, prefs));
+      const wanted = desktopEntries(desktopFires.filter((f) => !INBOX.isOpen(f.key, open))).filter((i) =>
+        RULES.desktopWants(i.kind, prefs)
+      );
       if (wanted.length) {
         this.#desktop = RULES.addToGroup(this.#desktop, wanted, now).group;
         const d = RULES.describe(this.#desktop);
