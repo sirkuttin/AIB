@@ -2570,3 +2570,10 @@ aside .conversation-row:hover .connection.age-low .row-age,
 aside .conversation-row:focus-within .connection.age-low .row-age {
   visibility: visible; /* the rename button covers line 1 only */
 }
+
+/* The exact version beside the Beta tag (chat.js fills it from bootstrap): which build am I testing? */
+.beta-ver {
+  margin-left: 6px;
+  letter-spacing: 0.3px;
+  text-transform: none;
+}
