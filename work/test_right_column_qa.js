@@ -337,13 +337,16 @@ function column(width) {
   };
   return { shell, w, act, viewing, props, handle: () => shell.body.querySelector('.rs-activity') };
 }
+/* Chat column cap (resize-ui.js MAX_CHAT 1310): on a 1920 window Activity grows so the chat stops at 1310, i.e. 370 px, not the stored
+   280 default. The viewer (920 or the user's own width) is wider than that, so the cap never narrows it. */
+const NORMAL_1920 = 370;
 test('right column: 920 px on doc or artifact open, back to your width on close or tab switch', () => {
   const c = column(1920);
-  assert.equal(c.act(), 280);
+  assert.equal(c.act(), NORMAL_1920);
   c.viewing(true);
   assert.equal(c.act(), 920);
   c.viewing(false);
-  assert.equal(c.act(), 280);
+  assert.equal(c.act(), NORMAL_1920);
 });
 test('right column: a keyboard resize while viewing is remembered as the viewer width, normal width stays apart', () => {
   const c = column(1920);
@@ -352,7 +355,7 @@ test('right column: a keyboard resize while viewing is remembered as the viewer 
   for (const f of h.listeners.keydown || []) f({ key: 'ArrowLeft', shiftKey: true, preventDefault() {} });
   assert.equal(c.act(), 984);
   c.viewing(false);
-  assert.equal(c.act(), 280, 'the normal width is untouched');
+  assert.equal(c.act(), NORMAL_1920, 'the normal width is untouched');
   c.viewing(true);
   assert.equal(c.act(), 984, 'the viewer width is remembered');
   assert.equal(JSON.parse(c.w.localStorage.getItem('studio-layout-v1:>=1800')).viewer, 984);
