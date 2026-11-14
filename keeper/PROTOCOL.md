@@ -384,6 +384,10 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   connection counts as a client; one connecting resets the count.
 - **Hold:** after `hold` (section 4) neither of the two rules above runs until a client claims or spawns a channel; the exit rule
   (V2) still does once no channel is live.
+- **AIB's own channels** (keeper 1.4.0; spawn labels whose JSON has `"aib":"wsl-hold"` or `"aib":"wsl-helper"`, section 10) are not
+  work: a live channel in V1 means one that is neither, so a keep-alive or a WSL helper alone never runs the orphan command and is
+  never stopped as `orphaned`. For V2 a live `wsl-hold` still counts (it keeps a distro's agents alive and ends by itself once
+  they end); a `wsl-helper` does not. `live` in `status` still counts every live channel.
 - **Keeper crash:** the children die (Windows Job Objects). The next keeper adds an `exit` record with reason `keeper_lost`
   to every channel that was live. Nothing is ever resent.
 
@@ -416,7 +420,8 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   address file says `{"closed":true}` (AIB was quit on purpose) and gives a `tools/call` it cannot deliver a tool result with
   `isError` instead of a JSON-RPC error.
 - keeper 1.4.0 (protocol still 1, no new feature names): the `AIB-keeper bridge` subcommand (section 10: stdio to the data folder's
-  keeper, starting one when there is none; `--hold` keep-alive) and `serve --unix-only`.
+  keeper, starting one when there is none; `--hold` keep-alive) and `serve --unix-only`; AIB's own WSL channels are not work for the
+  lifetime rules (section 6).
 
 ## 10. Bridge
 

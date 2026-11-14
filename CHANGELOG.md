@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- WSL projects: work on code that lives in Linux without leaving AIB. New project and Add project offer "WSL: Ubuntu" (any WSL2
+  distro) next to Windows. Claude Code, Codex, OMP and your custom agents, installed in the distro, run there, in the Linux folder,
+  with the distro's own git, node and login environment, so nothing crosses the slow `\\wsl$` share and no Windows tool touches a
+  Linux repo. Chats, the terminal (your login shell, titled "bash (Ubuntu)"), Files and Changes all work, and every agent in every
+  distro sits in the same inbox and sidebar as your Windows chats. It all stays on your PC: AIB copies two programs (about 110 MB, once
+  per version) into `~/.aib-server` in the distro and talks to them through `wsl.exe`, with no network port opened. An agent's
+  sign-in page opens in your Windows browser; any other link from the distro asks first. Quitting AIB keeps WSL agents working, as it does for Windows chats, and the
+  next AIB picks them up; ended WSL chats stay listed and can be continued. Not in WSL projects yet: worktrees, live sync, merge,
+  Docs and file previews; AIB tools there are limited to artifacts. While a WSL project is open or a WSL chat runs, the distro
+  keeps running (VmmemWSL memory in Task Manager).
+
 ## 0.1.0-beta.9 (beta)
 
 - Removed the ⋯ menu at the bottom of the sidebar.

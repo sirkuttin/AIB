@@ -210,6 +210,11 @@ window shows Windows' generic one. `server/desktop/window_icon_win.ts` loads AIB
 and sets it on the class and on each of the app's windows (`WM_SETICON`) right after a window is made: title bar, Alt+Tab and the
 taskbar button. No AppUserModelID is set: the taskbar groups the window with AIB.exe and its Start menu shortcut by the exe path.
 
+The Windows zips also carry `AIB/wsl/AIB-keeper-linux` and `AIB/wsl/AIB-wsl-helper-linux` (the Linux keeper and the WSL helper, same
+architecture), which AIB copies into a distro the first time a WSL project needs it (`docs/WSL.md`); `--no-wsl` leaves them out, and
+`--wsl-only` builds just the pair into `dist/wsl/linux-<arch>/` for runs from source. They are cached by source hash in
+`dist/.wsl-cache/`.
+
 Releases are built locally and uploaded by hand; there is no CI workflow.
 
 ## Not done yet
