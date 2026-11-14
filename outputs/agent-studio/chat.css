@@ -3865,3 +3865,19 @@ span.chip-static:hover {
   padding: 2px 8px 4px 30px;
   border-top: 0;
 }
+
+/* The conversation stops at 1250 px on very wide windows, left-aligned (owner): messages with their time and Copy, the cards
+   and the composer share one edge. Text keeps its own character limit inside; tables and code use the full 1250 px. The scroll
+   container itself stays full width, so its scrollbar stays at the window edge. */
+#messages > *,
+#approvals,
+#questions,
+#turnRow,
+#queueBox,
+#planDock,
+.jump-wrap,
+#promptForm,
+.composer-row,
+#newChatForm {
+  max-width: 1250px;
+}
