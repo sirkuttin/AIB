@@ -50,7 +50,7 @@ test('the label is visually hidden but kept for screen readers', () => {
 });
 
 test('your prompts: Copy shows on hover or focus only (pointer screens), never on touch; the time always shows', () => {
-  const css = fs.readFileSync(path.join(APP_DIR, 'chat.css'), 'utf8');
+  const css = fs.readFileSync(path.join(APP_DIR, 'chat.css'), 'utf8').split('\r\n').join('\n'); // CRLF checkouts: the block end is found by a bare LF
   const block = css.slice(css.indexOf('@media (hover: hover)'));
   assert.match(block, /\.bubble\.user > \.bubble-head > \.copy-ctl \{\s*opacity: 0;/);
   assert.match(block, /\.bubble\.user:hover > \.bubble-head > \.copy-ctl,\s*\.bubble\.user:focus-within > \.bubble-head > \.copy-ctl \{\s*opacity: 1;/);

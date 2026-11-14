@@ -196,6 +196,7 @@ function fakeDoc(o = {}) {
       disabled: false,
       listeners: {},
       attrs: {},
+      dataset: {}, // notify-ui v3 toasts set node.dataset.chat
       append(...c) {
         for (const x of c) {
           if (x && typeof x === 'object' && x.tagName === 'OPTION' && n.tagName === 'SELECT' && !n.value) n.value = x.value;
@@ -313,8 +314,8 @@ test('notify-ui: no desktop notification about anything while AIB is in front (t
     N.observeItems([chat('a', { selected: true, state: 'needs_you' }), chat('b', { state: 'needs_you' })], 1000);
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(posts(calls).length, 0, 'in front: the badge, the list and an in-page toast for b only');
-    assert.equal(S.toasts.has('b:needs'), true);
-    assert.equal(S.toasts.has('a:needs'), false, 'the chat you are looking at gets nothing');
+    assert.equal(S.toasts.has('b') /* inbox v3: toasts are keyed by chat */, true);
+    assert.equal(S.toasts.has('a'), false, 'the chat you are looking at gets nothing');
     for (const k of [...S.toasts.keys()]) S.toasts.delete(k);
   });
 });
