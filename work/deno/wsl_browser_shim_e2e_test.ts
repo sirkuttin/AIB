@@ -16,9 +16,12 @@ Deno.test({
     const opened = recordUrls();
     try {
       const host = await readyHost();
-      const browser = (await host.env()).BROWSER;
+      const env = await host.env();
+      const browser = env.BROWSER;
       assert(browser && browser.startsWith('/'), `BROWSER is the shim: ${browser}`);
-      const run = (url: string) => inDistro('"$1" "$2"', [browser, url]);
+      assert(env.AIB_OPEN_FIFO?.startsWith('/'), `the shim's FIFO is in the agents' environment: ${env.AIB_OPEN_FIFO}`);
+      // as an agent runs it: with the environment AIB gives agents in the distro (BROWSER, AIB_OPEN_FIFO)
+      const run = (url: string) => inDistro('AIB_OPEN_FIFO="$3" "$1" "$2"', [browser, url, env.AIB_OPEN_FIFO]);
       await run('https://example.com/asked');
       await until(() => urlGate.waiting().some((w) => w.url === 'https://example.com/asked'), 'the question', 30);
       assertEquals(opened, []);
