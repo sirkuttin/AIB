@@ -5,6 +5,11 @@
    every step). No sections, no main chat. A card: title, unread dot, time, the project (its colour mark from the PC), agent, state
    in the PC's words (Working, Needs you, Your turn, Idle, Not running), and the last line. Chats that are not running are in the
    same list by time, drawn lighter. "All projects ▾" filters by project (no grouping), remembered on this phone.
+   Inbox (inbox prototype v3): an envelope at the top right of home, next to the project picker, with the count of chats that need
+   you in every project (needs-you colour), or a teal dot when only "To review" chats wait. A tap switches between the chat list and
+   the inbox: "Needs you in <picked project>", then "Needs you in other projects" right below, then "To review" (picked project
+   first); with All projects one "Needs you" list, then "To review". The PC's card: line 1 the request, line 2 chat · project, the
+   wait time, ONE action row (Allow once / Deny / Reply; a risky command Review first; To review Reply / ×). Once-only options only.
    A chat: one agent. Its subagents are a "Subagents · N" card in the stream (title and state only) with a shortcut under the
    title. Approvals and questions are cards IN the stream ("Needs you · approval / question"), never a sheet over the chat: a card
    is open when it is the newest thing in the chat, closed (tap to open) once newer activity follows it, and open when a
@@ -600,6 +605,100 @@
     return [...out.values()];
   }
 
+  /* ---- the inbox (inbox prototype v3, phone): the envelope at the top right of home, next to the project picker ---- */
+  const INBOX_LONG_MS = 15 * 60000; // the wait time turns orange after this (as on the PC)
+  /* A command a phone never allows with one tap: push, force, hard reset, recursive delete, dropping data. "Review first" opens the
+     chat at its waiting card instead. */
+  const RISKY = /\bgit\s+(push|reset\s+--hard|clean\b|branch\s+-D|rebase)\b|--force\b|\bpush\s+-f\b|\brm\s+-[a-z]*[rf]|\bRemove-Item\b[^|]*-Recurse|\b(rmdir|rd|del)\s+\/s\b|\bdrop\s+(table|database|schema)\b|\btruncate\s+table\b|\bmkfs\b|\bformat\s+[a-z]:/i;
+  const isRisky = (ask) => obj(ask).kind === 'permission' && RISKY.test(str(obj(ask).detail) + ' ' + str(obj(ask).title));
+
+  /* Does this live home chat need you (blocked: an approval or question, a failed turn, a question in its reply)? */
+  function inboxNeeds(c) {
+    c = obj(c);
+    return c.needs > 0 || c.state === 'needs_you' || c.phase === 'needs_you' || c.phase === 'failed' || c.phase === 'asks';
+  }
+  /* Is it waiting for you to read it ("To review": finished, not handled yet)? */
+  function inboxReview(c) {
+    c = obj(c);
+    if (inboxNeeds(c) || c.state === 'working' || c.phase === 'working') return false;
+    return c.phase ? c.phase === 'your_turn' : !!c.yourTurn;
+  }
+  const atOf = (c) => Date.parse(str(obj(c).changedAt)) || 0;
+
+  /* The envelope's mark: {count: chats that need you in every project, dot: only "To review" chats wait}. */
+  function inboxBadge(home) {
+    const chats = Array.isArray(obj(home).chats) ? home.chats : [];
+    const count = chats.filter(inboxNeeds).length;
+    return { count, dot: count === 0 && chats.some(inboxReview) };
+  }
+
+  /* The inbox's sections, in order. `filter`: the picked project id ('' = All projects); `name`: its name. Picked: "Needs you in
+     <name>" (always, may be empty), "Needs you in other projects" (when any), "To review" (picked project first). All projects: one
+     "Needs you" list, then "To review". Needs you oldest first; To review newest first. Each: {id, title, chats}. */
+  function inboxGroups(home, filter, name) {
+    const chats = Array.isArray(obj(home).chats) ? home.chats : [];
+    const needs = chats.filter(inboxNeeds).sort((a, b) => atOf(a) - atOf(b));
+    const review = chats.filter(inboxReview).sort((a, b) => atOf(b) - atOf(a));
+    const inP = (c) => obj(c.project).id === filter;
+    const out = [];
+    if (filter) {
+      out.push({ id: 'here', title: 'Needs you in ' + (str(name) || 'this project'), chats: needs.filter(inP) });
+      const there = needs.filter((c) => !inP(c));
+      if (there.length) out.push({ id: 'other', title: 'Needs you in other projects', chats: there });
+      if (review.length) out.push({ id: 'review', title: 'To review', chats: review.filter(inP).concat(review.filter((c) => !inP(c))) });
+    } else {
+      out.push({ id: 'needs', title: 'Needs you', chats: needs });
+      if (review.length) out.push({ id: 'review', title: 'To review', chats: review });
+    }
+    return out;
+  }
+
+  /* Line 1 of an inbox card: the actual request ("Run npm install", "Edit src/app.ts", the question), else the card's last line
+     without its prefix. No reason label. */
+  function inboxWhat(c) {
+    c = obj(c);
+    const a = obj(c.ask);
+    if (a.kind === 'permission') {
+      const d = str(a.detail);
+      if (!d) return str(a.title) || 'Asks to run something';
+      if (/^(edit|write|multiedit|create|update|apply)/i.test(str(a.title))) return 'Edit ' + d;
+      if (/^(read|fetch|webfetch|open|search|grep|glob)/i.test(str(a.title))) return str(a.title);
+      return 'Run ' + d;
+    }
+    if (a.kind === 'question') return str(a.title) || 'Has a question';
+    const line = str(c.line).replace(/^(Asks|Wants to run|Working on|You): /, '');
+    if (line) return line;
+    return c.phase === 'failed' ? 'The turn failed' : inboxReview(c) ? 'Finished' : 'Needs you';
+  }
+
+  /* The wait time on an inbox card: {text: "4m", long: waited 15 minutes or more} (never "waited"). */
+  function inboxWait(c, now) {
+    const t = atOf(c);
+    const n = now || Date.now();
+    return { text: ago(str(obj(c).changedAt), n), long: !!t && n - t >= INBOX_LONG_MS };
+  }
+
+  /* The card's ONE action row. Approval (phone may allow): Allow once / Deny / Reply; risky: Review first / Deny. To review:
+     Reply / ×. Anything else: Reply. Only once-only options ever (allow_once / reject_once, approvalButtons): nothing "always".
+     Each: {act: 'allow' | 'deny' | 'review' | 'reply' | 'handled', label, optionId?}. */
+  function inboxActions(c, can) {
+    c = obj(c);
+    if (!inboxNeeds(c)) return inboxReview(c) ? [{ act: 'reply', label: 'Reply' }, { act: 'handled', label: '×' }] : [];
+    const a = obj(c.ask);
+    if (a.kind === 'permission' && a.key && !a.pcOnly && obj(can).approve) {
+      const b = approvalButtons(a);
+      const allow = b.find((x) => x.tone === 'allow');
+      const deny = b.find((x) => x.tone === 'deny');
+      const out = [];
+      if (isRisky(a)) out.push({ act: 'review', label: 'Review first' });
+      else if (allow) out.push({ act: 'allow', label: 'Allow once', optionId: allow.optionId });
+      if (deny) out.push({ act: 'deny', label: 'Deny', optionId: deny.optionId });
+      if (!isRisky(a)) out.push({ act: 'reply', label: 'Reply' });
+      return out;
+    }
+    return [{ act: 'reply', label: 'Reply' }];
+  }
+
   /* Is a waiting card open? Your tap wins (`opened`: key -> true/false); else it is open when it is the newest thing in the chat
      (the last row) or a notification brought you to it (`land`). */
   function reqOpen(rows, key, opened, land) {
@@ -830,6 +929,14 @@
   }
 
   const api = {
+    inboxNeeds,
+    inboxReview,
+    inboxBadge,
+    inboxGroups,
+    inboxWhat,
+    inboxWait,
+    inboxActions,
+    isRisky,
     ATTACH,
     cleanFileName,
     looksText,
@@ -920,6 +1027,8 @@
     scopes: [], // this phone's switches (bootstrap, then every home / chat answer)
     filter: '', // the project id home shows ('' = All projects), remembered on this phone
     filterOpen: false,
+    focusPrompt: false, // Reply on an inbox card: focus the chat's message box once it loads
+    inbox: false, // home shows the inbox (the envelope is pressed) instead of the chat list
     reqOpened: {}, // waiting card key -> open (true) / closed (false), as you tapped it
     land: '', // a notification (or a banner) brought you to this chat: its first waiting card opens and comes into view
     landKey: '', // that card, once the chat loaded
@@ -2253,6 +2362,129 @@
     draw();
   }
 
+  /* The envelope at the top right of home, next to the project picker: the count of chats that need you (every project) on the
+     needs-you colour, or a teal dot when only "To review" chats wait. A tap switches between the chat list and the inbox. */
+  function envelopeBtn(home) {
+    const m = inboxBadge(home);
+    const b = button('ph-env' + (m.count ? ' has' : ''), '', () => {
+      S.inbox = !S.inbox;
+      S.filterOpen = false;
+      draw();
+      root.scrollTo(0, 0);
+    });
+    b.id = 'phInbox';
+    b.setAttribute('aria-pressed', S.inbox ? 'true' : 'false');
+    b.setAttribute(
+      'aria-label',
+      'Inbox' + (m.count ? ': ' + m.count + (m.count === 1 ? ' chat needs' : ' chats need') + ' you' : m.dot ? ': chats to review' : ''),
+    );
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = doc.createElementNS(NS, 'svg');
+    for (const [k, v] of Object.entries({ viewBox: '0 0 20 20', width: '22', height: '22', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }))
+      svg.setAttribute(k, v);
+    const path = doc.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M3 5.5h14v9H3zM3.5 6l6.5 5 6.5-5'); // the PC's envelope (workspace-ui.js)
+    svg.append(path);
+    b.append(svg);
+    if (m.count) b.append(el('span', 'ph-env-badge', String(m.count)));
+    else if (m.dot) b.append(el('span', 'ph-env-dot'));
+    return b;
+  }
+
+  /* The inbox under the picker: its sections (inboxGroups) with one card per chat. */
+  function inboxEl(home, picked) {
+    const box = el('div', 'ph-inbox');
+    box.id = 'phInboxList';
+    const now = Date.now();
+    const can = abilities(S.scopes);
+    for (const g of inboxGroups(home, picked ? picked.id : '', picked ? picked.name : '')) {
+      const sec = el('section', 'ph-isec');
+      sec.dataset.group = g.id;
+      sec.append(el('h2', 'ph-ih', g.title));
+      if (!g.chats.length) sec.append(el('p', 'ph-inone', 'Nothing needs you'));
+      for (const c of g.chats) sec.append(inboxCard(c, now, can));
+      box.append(sec);
+    }
+    return box;
+  }
+
+  /* One inbox card, the same as the PC's: line 1 the request and the wait time, line 2 chat · project, one action row. A tap on
+     the card opens the chat (at its waiting card when it waits on one). */
+  function inboxCard(c, now, can) {
+    const item = { project: obj(c.project), agent: c.agent };
+    const ask = obj(c.ask);
+    const card = el('div', 'ph-icard' + (inboxNeeds(c) ? '' : ' rev'));
+    card.dataset.chat = c.id;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    const open = () => openChat(c.id, c.title, !!ask.key, item);
+    card.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('button')) return;
+      open();
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.target === card && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        open();
+      }
+    });
+    const l1 = el('div', 'ph-il1');
+    l1.append(el('span', 'ph-iwhat', inboxWhat(c)));
+    const w = inboxWait(c, now);
+    if (w.text) l1.append(el('span', 'ph-iage' + (w.long ? ' old' : ''), w.text));
+    const l2 = el('div', 'ph-il2', str(c.title) + ' · ' + (str(obj(c.project).name) || 'No folder'));
+    card.append(l1, l2);
+    const acts = inboxActions(c, can);
+    if (acts.length) {
+      const row = el('div', 'ph-iacts');
+      for (const a of acts) {
+        const x = button('ph-btn ph-ib ' + a.act, a.label, () => inboxAct(c, a, item));
+        x.dataset.act = a.act;
+        if (a.optionId) x.dataset.option = a.optionId;
+        if (a.act === 'handled') x.setAttribute('aria-label', 'Mark handled');
+        x.disabled = S.sending || (S.offline && a.act !== 'reply' && a.act !== 'review');
+        row.append(x);
+      }
+      card.append(row);
+    }
+    if (S.actError && ask.key && S.actKey === ask.key) {
+      const e = el('p', 'ph-error', S.actError);
+      e.setAttribute('role', 'alert');
+      card.append(e);
+    }
+    return card;
+  }
+
+  /* An inbox card's button. Allow once / Deny answer the request from home; Review first and Reply open the chat (Reply with the
+     message box ready); × marks a To review chat handled on the PC. */
+  async function inboxAct(c, a, item) {
+    const ask = obj(c.ask);
+    if (a.act === 'allow' || a.act === 'deny') {
+      const done = await act('permission', { id: c.id, key: ask.key, option: a.optionId }, ask.key);
+      if (!done) return;
+      S.homeRev = '';
+      toast(a.act === 'allow' ? 'Allowed once' : 'Denied');
+      return;
+    }
+    if (a.act === 'handled') {
+      let r = null;
+      try {
+        r = await call('POST', '/api/remote/chat-op', { key: c.key, op: 'handled' });
+      } catch {
+        r = null;
+      }
+      if (r && r.status === 401) return removed();
+      if (!r || r.status !== 200) return toast(r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was changed.');
+      S.homeRev = '';
+      toast('Marked handled');
+      clearTimeout(S.timer);
+      tick();
+      return;
+    }
+    openChat(c.id, c.title, !!ask.key, item);
+    if (a.act === 'reply') S.focusPrompt = true;
+  }
+
   function drawHome() {
     const parts = [];
     const home = S.home;
@@ -2299,7 +2531,8 @@
         fb.append(dot);
       }
       fb.append(doc.createTextNode((picked ? picked.name : 'All projects') + ' ▾'));
-      bar.append(fb, el('span', 'ph-fn', list.length + (list.length === 1 ? ' chat' : ' chats') + ' · newest first'));
+      bar.append(fb, el('span', 'ph-fn', S.inbox ? 'Inbox' : list.length + (list.length === 1 ? ' chat' : ' chats') + ' · newest first'));
+      bar.append(envelopeBtn(home));
       body.append(bar);
       if (S.filterOpen) {
         const fl = el('div', 'ph-flist');
@@ -2324,6 +2557,7 @@
     }
     if (!home) body.append(el('p', 'ph-empty', 'Loading your chats…'));
     else if (!all.length) body.append(el('p', 'ph-empty', 'No chats on ' + S.pcName + ' yet. Start one in AIB on the PC.'));
+    else if (S.inbox) body.append(inboxEl(home, picked));
     else {
       const now = Date.now();
       const cards = el('div', 'ph-cards');
@@ -3561,6 +3795,14 @@
         }
       }
     }
+    // Reply on an inbox card: the chat's message box gets the focus once the chat has loaded
+    if (S.focusPrompt && S.screen === 'chat' && S.chat) {
+      const p = doc.getElementById('phPrompt');
+      if (p) {
+        S.focusPrompt = false;
+        p.focus({ preventScroll: true });
+      }
+    }
     const to = S.scrollTo;
     if (to && (S.screen === 'chat' || S.screen === 'saved') && (S.chat || S.saved)) {
       S.scrollTo = '';
@@ -3603,6 +3845,7 @@
 
   function goHome() {
     leaveChat();
+    S.focusPrompt = false;
     S.screen = 'home';
     draw();
     root.scrollTo(0, 0);

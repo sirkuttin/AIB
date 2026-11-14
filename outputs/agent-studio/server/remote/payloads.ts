@@ -65,6 +65,18 @@ export interface HomeChat {
   changedAt: string;
   /** The card's last line: what it asks, the step it works on, or the last message ('' until the PC has read it once). */
   line: string;
+  /** What it waits on first (the phone's inbox card answers it from home): an approval or a question, or null. Additive. */
+  ask: HomeAsk | null;
+}
+
+/** The first request a chat waits on, as the phone's inbox card needs it (only the options a phone may pick: allow/deny once). */
+export interface HomeAsk {
+  kind: 'permission' | 'question';
+  key: string;
+  title: string;
+  detail: string;
+  options: PhoneOption[];
+  pcOnly: boolean;
 }
 
 export interface Home {
@@ -198,6 +210,24 @@ export function lineOf(state: Json): string {
   return cut((who === 'you' ? 'You: ' : '') + message);
 }
 
+/** The first request a chat's state waits on (an approval, else a question), or null: the phone inbox card's line 1 and buttons. */
+export function askOf(state: Json): HomeAsk | null {
+  const perms = Array.isArray(state.permissions) ? state.permissions : [];
+  if (perms.length) {
+    const params = obj(obj(perms[0]).params);
+    const { title, detail } = permissionDetail(params);
+    const picked = phoneOptions(params);
+    return { kind: 'permission', key: str(obj(perms[0]).key, 100), title, detail: detail.slice(0, 400), options: picked.options, pcOnly: picked.pcOnly };
+  }
+  const asks = Array.isArray(state.elicitations) ? state.elicitations : [];
+  if (asks.length) {
+    const params = obj(obj(asks[0]).params);
+    const m = typeof params.message === 'string' && params.message.trim() ? params.message.slice(0, 400) : 'An agent has a question';
+    return { kind: 'question', key: str(obj(asks[0]).key, 100), title: m, detail: '', options: [], pcOnly: params.mode !== 'form' };
+  }
+  return null;
+}
+
 /**
  * What the phone's home knows of live chats beyond the list: remembered first prompts (for chats with no other title), each chat's
  * card line (looked up again in the background when the chat moved on), and when each changed state (StateTimes).
@@ -207,6 +237,8 @@ export class TitleCache {
   readonly times = new StateTimes();
   /** id -> [signature (cursor and what waits), line] */
   readonly lines = new Map<string, [string, string]>();
+  /** id -> the first request it waits on (askOf), looked up with its line */
+  readonly asks = new Map<string, HomeAsk | null>();
   #busy = false;
   #queue: string[] = [];
   #lineQueue = new Map<string, string>();
@@ -261,10 +293,14 @@ export class TitleCache {
         try {
           // the newest events only; never cursor 0 (that read also refreshes the account's usage limits)
           const state = obj(await ctx.host.liveState(id, Math.max(1, cursor - 80)));
-          if (state.id || Array.isArray(state.events)) line = lineOf(state);
+          if (state.id || Array.isArray(state.events)) {
+            line = lineOf(state);
+            this.asks.set(id, askOf(state));
+          }
         } catch { /* gone */ }
         this.lines.set(id, [sig, line]);
         while (this.lines.size > 500) this.lines.delete(this.lines.keys().next().value!);
+        while (this.asks.size > 500) this.asks.delete(this.asks.keys().next().value!);
       }
     } finally {
       this.#lineBusy = false;
@@ -364,12 +400,17 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
       unread: (phaseOf(attention) === 'idle' && ended > (seen || epoch)) || marked > seen,
       changedAt: at ? new Date(at).toISOString() : '',
       line: titles.line(ctx, id, `${Number(c.cursor) || 0}|${needs}|${asks}|${c.busy ? 1 : 0}`, Number(c.cursor) || 0),
+      ask: null,
       at,
     });
   }
   // the lines that changed are looked up now (the newest events of those chats), within LINE_WAIT_MS
   await titles.settleLines(LINE_WAIT_MS);
-  for (const c of chats) c.line = titles.lines.get(c.id)?.[1] ?? c.line;
+  for (const c of chats) {
+    c.line = titles.lines.get(c.id)?.[1] ?? c.line;
+    // only while it still waits (a request answered since the last look is not offered again)
+    c.ask = c.needs > 0 || c.state === 'needs_you' || c.phase === 'needs_you' || c.phase === 'asks' ? titles.asks.get(c.id) ?? null : null;
+  }
   chats.sort((a, b) => b.at - a.at || a.title.localeCompare(b.title));
   const list: HomeChat[] = chats.map(({ at: _at, ...c }) => c);
   const body = { pcName, waiting: list.filter((c) => INBOX.blocked(c.phase)).length, chats: list };

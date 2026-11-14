@@ -1743,3 +1743,145 @@ html.ph-viewing body {
   font-weight: 650;
   text-decoration: underline;
 }
+/* ---- home: the inbox (envelope at the top right, next to the project picker; inbox prototype v3) ---- */
+.ph-env {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-3, var(--muted));
+}
+.ph-env.has {
+  color: var(--need);
+  border-color: var(--need);
+}
+.ph-env[aria-pressed='true'] {
+  background: var(--hover);
+  border-color: var(--line-strong);
+}
+.ph-env-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--need);
+  color: var(--ws-badge-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.ph-env-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.ph-inbox {
+  padding: 4px 0 8px;
+}
+.ph-ih {
+  margin: 14px 0 4px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ph-inone {
+  margin: 2px 4px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-icard {
+  display: block;
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.ph-icard:hover,
+.ph-icard:focus-visible {
+  background: var(--hover);
+}
+.ph-il1 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  line-height: 22px;
+}
+.ph-iwhat {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ph-icard.rev .ph-iwhat {
+  color: var(--text-3, var(--muted));
+}
+.ph-iage {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-iage.old {
+  color: var(--warn);
+}
+.ph-il2 {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ph-iacts {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ph-btn.ph-ib {
+  flex: none;
+  width: auto;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border-color: var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+.ph-btn.ph-ib.allow,
+.ph-btn.ph-ib.review {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.ph-btn.ph-ib.handled {
+  width: 44px;
+  margin-left: auto;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+}
