@@ -31,10 +31,15 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "windows" {
 		ldflags += " -H windowsgui" // the shipped keeper is a GUI-subsystem program: it can never get a console window
 	}
-	for _, b := range [][]string{
+	builds := [][]string{
 		{"build", "-trimpath", "-ldflags", ldflags, "-o", keeperBin, "."},
 		{"build", "-o", agentBin, "./internal/fakeagent"},
-	} {
+	}
+	if pre := os.Getenv("AIB_KEEPER_TEST_BINS"); pre != "" {
+		// A test binary cross-built for a machine without Go (go test -c, run in WSL): the two programs were built next to it.
+		keeperBin, agentBin, builds = filepath.Join(pre, "AIB-keeper"+exe), filepath.Join(pre, "fakeagent"+exe), nil
+	}
+	for _, b := range builds {
 		cmd := exec.Command("go", b...)
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 		if out, err := cmd.CombinedOutput(); err != nil {

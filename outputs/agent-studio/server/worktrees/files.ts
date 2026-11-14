@@ -41,6 +41,7 @@ export class FilesError extends Error {
 export function safeParts(rel: unknown): string[] {
   if (rel === undefined || rel === null || rel === '' || rel === '.') return [];
   if (typeof rel !== 'string' || rel.length > 1024 || rel.includes('\0')) throw new FilesError('Invalid path', 'bad_path');
+  if (!osp.WIN) return posixParts(rel);
   if (isNetworkPath(rel)) throw new FilesError('Network and device paths are not supported', 'bad_path');
   const text = rel.replaceAll('\\', '/');
   if (text.startsWith('/') || /^[A-Za-z]:/.test(text)) throw new FilesError('Use a path inside the folder', 'bad_path');
@@ -48,6 +49,17 @@ export function safeParts(rel: unknown): string[] {
   for (const p of parts) {
     if (p === '..') throw new FilesError('Use a path inside the folder', 'bad_path');
     if (p.includes(':')) throw new FilesError('Invalid path', 'bad_path'); // a drive or an alternate data stream on Windows
+    if (NEVER_LISTED.has(p.toLowerCase())) throw new FilesError('Not shown', 'hidden');
+  }
+  return parts;
+}
+
+/** POSIX (the WSL helper, macOS, Linux): '\' and ':' are name characters and there are no drives; only '/' separates. */
+function posixParts(rel: string): string[] {
+  if (rel.startsWith('/')) throw new FilesError('Use a path inside the folder', 'bad_path');
+  const parts = rel.split('/').filter((p) => p !== '' && p !== '.');
+  for (const p of parts) {
+    if (p === '..') throw new FilesError('Use a path inside the folder', 'bad_path');
     if (NEVER_LISTED.has(p.toLowerCase())) throw new FilesError('Not shown', 'hidden');
   }
   return parts;
