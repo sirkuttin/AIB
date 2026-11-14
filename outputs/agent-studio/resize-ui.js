@@ -10,6 +10,7 @@
     COMPOSER_MIN = 56,
     COMPOSER_GROW = 200,
     SPLIT_MIN = 96;
+  const MAX_CHAT = 1310; // the conversation stops at 1250 px (chat.css) plus its side padding: wider windows give Activity the rest
   const MIN_CHAT = 420,
     SNAP = 40,
     STEP = 16,
@@ -84,6 +85,12 @@
         side -= fromSide;
         act -= take - fromSide;
       }
+    }
+    /* The chat column never grows past MAX_CHAT next to Activity: the divider stops there and Activity takes the rest (owner). Not
+       with split panes side by side (they share the column), and only as far as Activity may grow. */
+    if (actOn && !(minChat > MIN_CHAT)) {
+      const floor = vw - side - sc(MAX_CHAT, k);
+      if (floor > act) act = Math.min(floor, aMax);
     }
     if (o.subchat && actOn) {
       const room = Math.max(0, vw - side - minChat),
