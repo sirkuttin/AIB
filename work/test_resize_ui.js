@@ -86,7 +86,7 @@ test('a doc or artifact showing widens the column to 920 (or your viewer width),
   assert.equal(v({ viewer: true, viewerW: 700 }), 700);
   assert.equal(v({ viewer: true, activity: 400 }), 920, 'the normal width is kept apart');
   assert.equal(v({ viewer: true, activity: 1100 }), 1100, 'never narrower than the column you already had');
-  assert.equal(v({ viewer: false, viewerW: 700 }), 280, 'back to the normal width when the viewer closes');
+  assert.equal(v({ viewer: false, viewerW: 700 }), 370, 'back to the normal width when the viewer closes (280, raised so the chat stops at 1310)');
   const narrow = R.computeLayout({ vw: 1100, activity: 280, side: 240, sideOn: true, actOn: true, viewer: true });
   assert.ok(1100 - narrow.side - narrow.activity >= 420, JSON.stringify(narrow));
   assert.equal(R.computeLayout({ vw: 1440, viewer: true, sideOn: true, actOn: false }).activity, 0);
@@ -114,7 +114,7 @@ test('a subagent history widens Activity to max(your width, 480) within the room
 });
 test('Changes expanded widens Activity to about 60% of the window, never squeezing the chat below its minimum', () => {
   assert.equal(R.computeLayout({ vw: 1920, activity: 280, sideOn: true, actOn: true, expand: true }).activity, 1152);
-  assert.equal(R.computeLayout({ vw: 1920, activity: 280, sideOn: true, actOn: true, expand: false }).activity, 280);
+  assert.equal(R.computeLayout({ vw: 1920, activity: 280, sideOn: true, actOn: true, expand: false }).activity, 370); // chat capped at 1310
   const tight = R.computeLayout({ vw: 1200, activity: 280, sideOn: true, actOn: true, expand: true });
   assert.ok(1200 - tight.side - tight.activity >= 420 && tight.activity >= 280, JSON.stringify(tight));
   assert.equal(R.computeLayout({ vw: 1920, activity: 280, sideOn: true, actOn: false, expand: true }).activity, 0);
@@ -161,4 +161,13 @@ test('QA M3/m13: the chat list stops at 480 px; split panes side by side raise t
   assert.equal(R.maxActivity(1440, 240, 1, 725), 475);
   // A floor under MIN_CHAT changes nothing.
   assert.equal(R.maxSide(1100, 280, 1, 100), R.maxSide(1100, 280));
+});
+
+test('the chat column stops at 1310 px next to Activity: the divider gives Activity the rest; not with split panes', () => {
+  const L = (o) => R.computeLayout({ vw: 2560, activity: 280, side: 240, sideOn: true, actOn: true, ...o });
+  const a = L({});
+  assert.equal(2560 - a.side - a.activity, 1310);
+  assert.equal(L({ vw: 1400 }).activity, 280, 'a normal window keeps your width');
+  assert.equal(L({ minChat: 900 }).activity, 280, 'split panes side by side are not capped');
+  assert.equal(L({ actOn: false }).activity, 0, 'Activity hidden: nothing to give the room to');
 });
