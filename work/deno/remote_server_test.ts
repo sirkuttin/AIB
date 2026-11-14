@@ -13,7 +13,7 @@ import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { addHandler, removeHandler, rootState, setLevel, WARNING } from '../../outputs/agent-studio/server/core/log.ts';
 import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { HOME_BUDGET, lineOf, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
+import { askOf, HOME_BUDGET, lineOf, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
 import {
   type FakeChat,
   fakeTailscale,
@@ -363,6 +363,33 @@ Deno.test('card line: what it asks, the step it works on, else the last message'
   const running = { seq: 3, kind: 'update', data: { update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'Edit a.ts', status: 'in_progress' } } };
   assertEquals(lineOf({ busy: true, events: [say(1, 'Ok'), running] }), 'Working on: Edit a.ts');
   assertEquals(lineOf({ events: [say(1, 'x'.repeat(400))] }).length, 140);
+});
+
+Deno.test('home ask (phone inbox card): the first approval with only once-only options, else the first question, else null', () => {
+  const options = [
+    { optionId: 'a1', name: 'Allow once', kind: 'allow_once' },
+    { optionId: 'a2', name: 'Always allow', kind: 'allow_always' },
+    { optionId: 'r1', name: 'Deny', kind: 'reject_once' },
+  ];
+  const perm = askOf({ permissions: [{ key: 'p1', params: { toolCall: { title: 'Run', rawInput: { command: 'npm test' } }, options } }] });
+  assertEquals(perm, {
+    kind: 'permission',
+    key: 'p1',
+    title: 'Run',
+    detail: 'npm test',
+    options: [{ optionId: 'a1', name: 'Allow once', kind: 'allow_once' }, { optionId: 'r1', name: 'Deny', kind: 'reject_once' }],
+    pcOnly: false,
+  });
+  assertEquals(askOf({ elicitations: [{ key: 'q1', params: { mode: 'form', message: 'Which layout?' } }] }), {
+    kind: 'question',
+    key: 'q1',
+    title: 'Which layout?',
+    detail: '',
+    options: [],
+    pcOnly: false,
+  });
+  assertEquals(askOf({ elicitations: [{ key: 'q2', params: { mode: 'url', message: 'Sign in' } }] })?.pcOnly, true);
+  assertEquals(askOf({ events: [] }), null);
 });
 
 Deno.test({
