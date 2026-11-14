@@ -2061,6 +2061,16 @@
       saveAuto: (v) => saveQuiet({ server: { autoUpdateCheck: v } }),
     });
   }
+  function wslRows() {
+    const W = root.AIBWsl;
+    if (!W || !W.available()) return [];
+    return W.distros().map((d) => [
+      'WSL: ' + d.name,
+      d.helper
+        ? 'AIB helper ' + d.helper
+        : d.problem || d.line || (d.state === 'off' ? 'Not started (starts when a WSL project needs it)' : 'Not started'),
+    ]);
+  }
   function renderServerInfo(box) {
     const b = S.boot || {},
       sv = b.server || {};
@@ -2085,6 +2095,8 @@
       ['Host file format', sv.hostFormat],
       ['Python', sv.python],
       ['Host instance', b.instanceId],
+      // One line per WSL2 distro (wsl-ui.js): the AIB helper version running there, else what is wrong.
+      ...wslRows(),
     ];
     const dl = el('dl', null, 'st-facts');
     for (const [k, v] of rows) if (v !== undefined && v !== null && v !== '') dl.append(el('dt', k), el('dd', v));

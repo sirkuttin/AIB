@@ -58,6 +58,30 @@
     const title = el('h2', 'New project');
     title.id = 'npTitle';
 
+    // Location (only when this PC has a WSL2 distro, wsl-ui.js): Windows, or "WSL: Ubuntu". A WSL project's Folder is a Linux path;
+    // the server gets it as the ref wsl://<distro><path>. Browse… (the system dialog) still works: a pick inside a distro selects it.
+    const W = root.AIBWsl && root.AIBWsl.available() ? root.AIBWsl : null;
+    const distros = W ? W.distros() : [];
+    let locLabel = null,
+      location = null;
+    if (distros.length) {
+      locLabel = el('label', 'Location');
+      locLabel.htmlFor = 'npLocation';
+      location = d.createElement('select');
+      location.id = 'npLocation';
+      location.className = 'np-location';
+      const win = d.createElement('option');
+      win.value = '';
+      win.textContent = 'Windows';
+      location.append(win);
+      for (const x of distros) {
+        const o = d.createElement('option');
+        o.value = x.key;
+        o.textContent = 'WSL: ' + x.name;
+        location.append(o);
+      }
+      location.value = '';
+    }
     const folderLabel = el('label', 'Folder');
     folderLabel.htmlFor = 'npFolder';
     const row = el('div', null, 'np-row');
@@ -71,7 +95,13 @@
     const browse = el('button', 'Browse…', 'np-browse');
     browse.type = 'button';
     browse.title = 'Choose a folder with the system folder picker';
-    row.append(folder, browse);
+    // The distro's own folder list (GET /api/live/wsl/dirs), for a WSL location.
+    const browseWsl = el('button', 'Browse…', 'np-browse np-browse-wsl');
+    browseWsl.type = 'button';
+    browseWsl.hidden = true;
+    row.append(folder, browse, browseWsl);
+    const dirs = el('div', null, 'np-dirs');
+    dirs.hidden = true;
     const hint = el('p', null, 'np-hint');
     hint.id = 'npHint';
     hint.setAttribute('role', 'status');
@@ -115,7 +145,9 @@
     primary.type = 'submit';
     primary.disabled = true;
     actions.append(cancel, primary);
-    form.append(title, folderLabel, row, hint, nameLabel, name, nameNote, preview, gitRow, errorLine, actions);
+    form.append(title);
+    if (location) form.append(locLabel, location);
+    form.append(folderLabel, row, dirs, hint, nameLabel, name, nameNote, preview, gitRow, errorLine, actions);
     dialog.append(form);
     d.body.append(dialog);
 
@@ -131,6 +163,9 @@
       gitNote,
       primary,
       browse,
+      browseWsl,
+      dirs,
+      location,
       cancel,
       returnTo,
       check: null,
@@ -178,7 +213,7 @@
       paint();
     }
     function runCheck() {
-      const value = s.folder.value,
+      const value = pathOf(s),
         mine = ++s.seq;
       Promise.resolve(host.getJson('/api/live/folders/check', { path: value, name: s.name.value })).then(
         (check) => {
@@ -216,6 +251,13 @@
       schedule(false);
     });
     browse.onclick = () => pick(s, schedule);
+    browseWsl.onclick = () => (dirs.hidden ? showDirs(s, s.folder.value) : (dirs.hidden = true));
+    if (location)
+      location.addEventListener('change', () => {
+        errorLine.hidden = true;
+        locationChanged(s);
+        schedule(true);
+      });
     cancel.onclick = () => close(s);
     dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
@@ -230,7 +272,7 @@
         return;
       }
       if (e.key !== 'Tab') return;
-      const list = Array.from(dialog.querySelectorAll('input,button')).filter(
+      const list = Array.from(dialog.querySelectorAll('select,input,button')).filter(
         (n) => !n.disabled && !n.hidden && !(n.closest && n.closest('[hidden]')),
       );
       if (!list.length) return;
@@ -267,6 +309,82 @@
     schedule(true);
   }
 
+  // The WSL distro key the dialog is set to ('' = Windows).
+  const wslKey = (s) => (s.location ? s.location.value : '');
+  // What the server is asked about: the typed folder, or for a WSL location the ref of the typed Linux path.
+  function pathOf(s) {
+    const key = wslKey(s),
+      value = s.folder.value.trim();
+    if (!key) return s.folder.value;
+    return value ? root.AIBWsl.refOf(key, value.startsWith('/') ? value : '/' + value) : '';
+  }
+  function locationChanged(s) {
+    const key = wslKey(s),
+      W = root.AIBWsl;
+    s.browseWsl.hidden = !key;
+    s.dirs.hidden = true;
+    if (key) {
+      const x = W.distro(key);
+      s.browseWsl.textContent = 'Browse ' + W.distroName(key) + '…';
+      s.browseWsl.title = 'Choose a folder in ' + W.distroName(key);
+      s.folder.placeholder = ((x && x.home) || '/home/you') + '/project';
+      if (!s.folder.value.startsWith('/')) s.folder.value = x && x.home ? x.home + '/' : '';
+    } else {
+      s.folder.placeholder = '';
+      if (s.folder.value.startsWith('/')) s.folder.value = '';
+    }
+    s.folderTouched = true;
+  }
+  // The folder list of a distro: where it is, ".." up, its folders (git ones marked), and "Use this folder".
+  function showDirs(s, path) {
+    const key = wslKey(s),
+      W = root.AIBWsl;
+    if (!key) return;
+    s.dirs.hidden = false;
+    s.dirs.replaceChildren(el('p', 'Loading…', 'np-hint'));
+    const at = path && path.startsWith('/') ? path.replace(/\/+$/, '') || '/' : '';
+    Promise.resolve(W.listDirs(key, at)).then(
+      (r) => {
+        if (dlg !== s.dialog || wslKey(s) !== key) return;
+        s.dirs.replaceChildren();
+        if (!r || r.error || typeof r.path !== 'string') {
+          s.dirs.append(el('p', (r && r.error) || 'Could not list the folders.', 'np-hint error'));
+          return;
+        }
+        const head = el('div', null, 'np-row np-dirs-head');
+        head.append(el('span', W.distroName(key) + ': ' + r.path, 'np-hint np-dirs-here'));
+        const use = el('button', 'Use this folder', 'np-browse');
+        use.type = 'button';
+        use.onclick = () => {
+          s.folder.value = r.path;
+          s.folderTouched = true;
+          s.dirs.hidden = true;
+          s.schedule(true);
+          s.folder.focus();
+        };
+        head.append(use);
+        const list = el('div', null, 'np-dirs-list');
+        list.setAttribute('role', 'list');
+        const go = (label, to) => {
+          const b = el('button', label, 'np-dir');
+          b.type = 'button';
+          b.setAttribute('role', 'listitem');
+          b.onclick = () => showDirs(s, to);
+          list.append(b);
+        };
+        if (r.parent) go('..', r.parent);
+        for (const x of r.dirs || []) go(x.name + (x.isGit ? ' (git)' : ''), (r.path === '/' ? '' : r.path) + '/' + x.name);
+        if (!(r.dirs || []).length) list.append(el('p', 'No folders here.', 'np-hint'));
+        if (r.truncated) list.append(el('p', 'Only the first folders are shown. Type the path to go deeper.', 'np-hint'));
+        s.dirs.append(head, list);
+      },
+      (err) => {
+        if (dlg !== s.dialog) return;
+        s.dirs.replaceChildren(el('p', (err && err.message) || 'Could not list the folders.', 'np-hint error'));
+      },
+    );
+  }
+
   // Resolves {path: string|null} (null: cancelled). The desktop app has its own native dialog (its bundled Python has no tkinter); a
   // browser asks the server's tkinter picker. If the desktop dialog fails (not granted, no window), the server's picker is the fallback.
   function pickFolder(start) {
@@ -284,12 +402,25 @@
     s.picking = true;
     s.browse.disabled = true;
     s.browse.textContent = 'Waiting for the folder window…';
-    pickFolder(s.folder.value)
+    pickFolder(wslKey(s) ? '' : s.folder.value)
       .then(
         (res) => {
           if (dlg !== s.dialog) return;
           if (res && typeof res.path === 'string' && res.path) {
-            s.folder.value = toStyle(res.path).replace(/[\\/]+$/, '') || toStyle(res.path);
+            // A pick inside a distro (\\wsl.localhost\Ubuntu\...): that distro's location and its Linux path.
+            const unc = s.location ? root.AIBWsl.fromUnc(res.path) : null,
+              x = unc ? root.AIBWsl.distro(unc.name) : null;
+            if (x) {
+              s.location.value = x.key;
+              locationChanged(s);
+              s.folder.value = unc.linuxPath;
+            } else {
+              if (s.location && s.location.value) {
+                s.location.value = '';
+                locationChanged(s);
+              }
+              s.folder.value = toStyle(res.path).replace(/[\\/]+$/, '') || toStyle(res.path);
+            }
             s.folderTouched = true; // a folder chosen with Browse is meant, even with no name
             schedule(true);
           }

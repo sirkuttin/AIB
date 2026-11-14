@@ -476,7 +476,10 @@
     d.body.classList.toggle('ws-has-proj', !!p); // project colours were removed (owner decision); no stripe or tint
   }
 
+  // A project folder for display: a WSL one as "Ubuntu · ~/app" (wsl-ui.js), a Windows one as it is.
+  const pathText = (path) => (root.AIBWsl ? root.AIBWsl.displayPath(path) : String(path || ''));
   function drawListHead() {
+    if (root.AIBWsl) root.AIBWsl.redraw(); // the distro state line follows the project on screen
     const name = doc().getElementById('wsListName'),
       trigger = projBtn();
     const p = ws.active === St().ALL ? null : projectOfKey(ws.active);
@@ -487,7 +490,8 @@
       name.parentNode.insertBefore(projIcon(!p), name);
     }
     if (trigger) {
-      trigger.title = (p ? p.name + '\n' + (p.path || 'No folder') + '\n' : '') + 'Switch project (Ctrl+P)';
+      trigger.title =
+        (p ? p.name + '\n' + (p.path ? pathText(p.path) : 'No folder') + '\n' : '') + 'Switch project (Ctrl+P)';
       trigger.setAttribute('aria-label', 'Project: ' + (p ? p.name : 'none yet') + '. Switch project (Ctrl+P)');
     }
     const pen = doc().getElementById('wsRenameProj');
@@ -1625,13 +1629,20 @@
     return p.total + ' chats, ' + waitingFor(p.key) + ' need you, ' + p.working + ' working';
   }
   function projectRow(p, hiddenRow, canMove) {
+    const W = root.AIBWsl,
+      wsl = !!(W && W.isWsl(p.path));
     p = Object.assign({}, p, { waiting: waitingFor(p.key) });
     const row = el('div', null, 'ws-prow' + (ws.active === p.key ? ' cur' : '') + (hiddenRow ? ' hidden-row' : ''));
     row.dataset.project = p.key;
     const main = btn(
       null,
       'ws-prow-main',
-      p.name + '\n' + (p.path || 'No folder') + (p.custom ? '\nFolder name: ' + p.autoName : '') + '\n' + counts(p),
+      p.name +
+        '\n' +
+        (p.path ? (wsl ? W.tooltip(p.path) : p.path) : 'No folder') +
+        (p.custom ? '\nFolder name: ' + p.autoName : '') +
+        '\n' +
+        counts(p),
     );
     main.setAttribute(
       'aria-label',
@@ -1639,6 +1650,12 @@
     );
     main.setAttribute('aria-pressed', String(ws.active === p.key));
     main.append(projIcon(false), el('span', p.name, 'ws-prow-name'));
+    // A WSL project: its distro as a chip after the name ("Ubuntu"), the agent chip's look (.vend).
+    if (wsl) {
+      const chip = el('span', W.distroName(W.parse(p.path).key), 'vend ws-distro');
+      chip.setAttribute('aria-hidden', 'true');
+      main.append(chip);
+    }
     const b = badgeFor(p.waiting, p.working, p.unread);
     if (b) {
       b.setAttribute('aria-hidden', 'true');

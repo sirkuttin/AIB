@@ -201,6 +201,11 @@ export interface ToolContext {
   conversation: string;
   /** Offer the worktree merge tools. */
   worktree: boolean;
+  /**
+   * A chat in a WSL project (docs/wsl/design.md section 11): only publish, update and list, and only by content (AIB on Windows cannot
+   * read the distro's files); no doc, drawing, archive or merge tools.
+   */
+  restricted?: boolean;
   /** The session folder relative paths are resolved against, or null when unknown (relative paths are then refused). */
   cwd: string | null;
   /** Studio base URLs to try, in order; each is passed through loopbackUrl before use. */
@@ -486,6 +491,7 @@ function sourceArgs(ctx: ToolContext, args: Json): Json {
   const hasPath = path !== null && path !== '', hasContent = content !== null;
   if (hasPath && hasContent) throw new ToolError('Give either `path` or `content`, not both');
   if (!(hasPath || hasContent)) throw new ToolError('Give either `path` (a file) or `content` (the text to publish)');
+  if (hasPath && ctx.restricted) throw new ToolError('In a WSL project, publish by `content`: AIB cannot open files inside the distro');
   if (hasPath) return { path: resolvePath(ctx, path) };
   if (typeof content !== 'string') throw new ToolError('`content` must be a string');
   return { content };
@@ -639,7 +645,11 @@ const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
   [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES].map((name) => [name, (ctx, args) => docTool(ctx, name, args)]),
 );
 
+/** The tools a restricted (WSL) chat gets. */
+export const RESTRICTED_TOOLS: ReadonlySet<string> = new Set(['publish', 'update', 'list']);
+
 function handlers(ctx: ToolContext): Record<string, Handler> {
+  if (ctx.restricted) return Object.fromEntries(Object.entries(HANDLERS).filter(([name]) => RESTRICTED_TOOLS.has(name)));
   return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...DOC_HANDLERS };
 }
 
@@ -676,7 +686,10 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
     });
   }
   if (method === 'ping') return ok({});
-  if (method === 'tools/list') return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
+  if (method === 'tools/list') {
+    if (ctx.restricted) return ok({ tools: TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))) });
+    return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
+  }
   if (method === 'tools/call') {
     const name = Object.hasOwn(params, 'name') ? params.name : null;
     if (Array.isArray(name) || isDict(name)) throw new PyError('TypeError', `unhashable type: '${pyTypeName(name)}'`);

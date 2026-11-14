@@ -862,6 +862,19 @@ body > main {
 .ws-prow.cur .ws-prow-name {
   font-weight: 600;
 }
+/* A WSL project's distro after its name (workspace-ui.js projectRow): the header's branch chip size (.vend.hd-branch). */
+.vend.ws-distro {
+  height: 18px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 6px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--muted);
+}
 .ws-prow-more {
   flex: none;
   width: 28px;
@@ -2569,4 +2582,56 @@ aside .connection.age-low .hold-note {
 aside .conversation-row:hover .connection.age-low .row-age,
 aside .conversation-row:focus-within .connection.age-low .row-age {
   visibility: visible; /* the rename button covers line 1 only */
+}
+/* New project, WSL location (new-project-ui.js): Location takes the Folder field's look; the distro's folder list is an inset box
+   of folder buttons under the Folder row, in the same field colours. */
+.np-form select.np-location {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+}
+.np-dirs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.np-dirs[hidden] {
+  display: none;
+}
+.np-dirs-head {
+  align-items: center;
+}
+.np-dirs-here {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.np-dirs-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 180px;
+  overflow: auto;
+}
+.np-dir {
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.np-dir:hover {
+  background: var(--hover);
 }

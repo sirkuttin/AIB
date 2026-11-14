@@ -32,6 +32,7 @@ import { getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
 import { localOnlyOf } from './local_only.ts';
 import { moveStrays } from './local_strays.ts';
+import { WSL_REF_PREFIX } from '../wsl/contract.ts';
 
 const log = getLogger('worktrees');
 
@@ -1067,6 +1068,11 @@ export class Manager {
 
   /** plan() plus, when the chat works in place, why ('' when it gets a worktree). */
   async planWithReason(projectIn: string, key?: string | null): Promise<{ plan: Plan | null; reason: string }> {
+    // A WSL project (its ref, wsl://...) works in place in phase 1: no git runs on Windows for it, no sync is ever made.
+    if (String(projectIn).startsWith(WSL_REF_PREFIX)) {
+      say(`Worktree: ${projectIn} works in place: wsl`);
+      return { plan: null, reason: 'wsl' };
+    }
     const project = pathStr(String(projectIn));
     let reason: string;
     try {

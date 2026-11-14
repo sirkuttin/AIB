@@ -28,6 +28,11 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
  *   POST /api/live/files/exclude              the Files view: "Git exclude" on a row (a local-only path) and its Undo
  *   POST /api/live/files/strays/move          the Files view: move a chat copy's files under local-only paths to the main folder
+ *   GET  /api/live/wsl/status                 WSL projects: the distros, their state lines, the URLs waiting to be opened (wsl_routes.ts)
+ *   GET  /api/live/wsl/dirs                   WSL projects: the folder browser of New / Add project
+ *   GET  /api/live/wsl/agents                 WSL projects: which agents a distro has (the agent picker)
+ *   POST /api/live/wsl/reconnect              WSL projects: Reconnect on a stopped distro
+ *   POST /api/live/wsl/open-url               WSL projects: the answer to "<distro> wants to open <url>"
  *   POST /api/live/worktree/merge-request     the Changes tab's Merge button: a one-shot merge permission, then the chat is asked to merge
  *   POST /api/live/docs/open                  local docs: the page opens a doc (docs_routes.ts)
  *   GET  /api/live/docs/list                  local docs: the docs of a chat's project folder (Files, Ctrl+K, chips, picker)
@@ -101,6 +106,11 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/outside', 'read', 'get'],
   ['POST', '/api/live/files/exclude', 'write', 'body'],
   ['POST', '/api/live/files/strays/move', 'write', 'body'],
+  ['GET', '/api/live/wsl/status', 'read', 'get'], // WSL projects (wsl_routes.ts)
+  ['GET', '/api/live/wsl/dirs', 'read', 'get'],
+  ['GET', '/api/live/wsl/agents', 'read', 'get'],
+  ['POST', '/api/live/wsl/reconnect', 'write', 'body'],
+  ['POST', '/api/live/wsl/open-url', 'write', 'body'],
   ['POST', '/api/live/docs/open', 'write', 'body'],
   ['GET', '/api/live/docs/list', 'read', 'get'],
   ['GET', '/api/live/docs/info', 'read', 'get'],

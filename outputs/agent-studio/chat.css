@@ -3668,6 +3668,18 @@ span.chip-static:hover {
   cursor: pointer;
   padding: 0 2px;
 }
+/* WSL lines (wsl-ui.js): the distro state ("Ubuntu stopped." Reconnect) and "Ubuntu wants to open <url>" with its answers, in the
+   same box; the answers are text buttons at the notice's own size. */
+.studio-notice .wsl-act {
+  font-size: 13px;
+  line-height: 1.45;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+.studio-notice .wsl-act:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
 /* Agent messages are plain text on the page: no box, no title bar. The header stays in the DOM (the screen-reader name
    "Assistant") but its label is visually hidden; the time and copy button always show at the top-right. Like your own

@@ -17,6 +17,11 @@
  *   POST /api/live/files/exclude {id|project, root, path, action: 'add'|'undo', undo?}   "Git exclude" on a row, and its Undo
  *   POST /api/live/files/strays/move {id, root}   moves what a chat's copy holds under local-only paths into the main folder
  * Needs the Studio token, like the Changes routes.
+ *
+ * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
+ * distro's helper (wsl_routes.ts wslFiles); there is no main folder apart from it (no worktrees), no local-only paths, no preview
+ * link (read says `preview: 'Not available for WSL projects yet'` for images and binary files), and exclude / strays / outside refuse.
+ * The /api/live/wsl/* routes ride along in this table (wsl_routes.ts).
  */
 import { isStr } from '../core/py.ts';
 import { parseQs } from '../artifacts/origin.ts';
@@ -33,6 +38,8 @@ import { chatStudioOf, savedFolders } from './studio_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
 import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';
+import { wslLoc } from '../wsl/access.ts';
+import { wslFiles, wslRoutes } from './wsl_routes.ts';
 
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
@@ -51,6 +58,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
     if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path) || isForeignPath(path)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
     const added = ctx.addedProjects?.public().added;
     const known = added && Object.hasOwn(added, projectKey(path)) ? added[projectKey(path)].path : '';
+    if (known && wslLoc(known)) return known; // a WSL project: its distro's helper checks the folder
     if (!known || !osp.isdir(known) || isNetworkPath(known)) return [404, { error: 'This project has no folder AIB knows.', code: 'unknown_folder' }];
     return known;
   }
@@ -71,6 +79,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   }
   if (!cwd || isNetworkPath(cwd) || isForeignPath(cwd)) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const which = one(args, 'root', 'chat');
+  if (wslLoc(cwd)) return which === 'main' || which === 'chat' ? cwd : [400, { error: 'Unknown folder', code: 'bad_root' }];
   if (which === 'main') {
     const record = recordForPath(ctx.stateDir ?? null, cwd);
     const project = record && isStr(record.project) ? record.project : '';
@@ -86,7 +95,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
 export async function scopeFor(ctx: WebContext, args: Record<string, string[]>): Promise<{ root: string; main: string } | Reply> {
   const root = await rootFor(ctx, args);
   if (typeof root !== 'string') return root;
-  if (one(args, 'root', 'chat') !== 'chat') return { root, main: root };
+  if (one(args, 'root', 'chat') !== 'chat' || wslLoc(root)) return { root, main: root }; // a WSL chat works in place
   // A chat's own copy: the main folder is the project its worktree record names (never mainFolderOf: for a project that is itself a
   // user-made worktree that would be the user's other checkout). No record: the chat works in its folder itself.
   const record = recordForPath(ctx.stateDir ?? null, root);
@@ -132,6 +141,11 @@ export function filesRoutes(): Map<string, Handler> {
       const args = parseQs(url.search.slice(1));
       const scope = await scopeFor(ctx, args);
       if (Array.isArray(scope)) return scope;
+      const wsl = wslLoc(scope.root);
+      if (wsl) {
+        const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
+        return await wslFiles(kind, scope.root, wsl, args);
+      }
       return guarded(() => work(ctx, scope.root, args, scope.main));
     });
   };
@@ -140,6 +154,10 @@ export function filesRoutes(): Map<string, Handler> {
       if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
       if (!body || typeof body !== 'object' || Array.isArray(body)) return [400, { error: 'Invalid request' }];
       try {
+        const scope = await scopeFor(ctx, bodyArgs(body as Record<string, unknown>));
+        if (!Array.isArray(scope) && wslLoc(scope.root)) {
+          return [409, { error: 'Local-only files are not available for WSL projects yet.', code: 'wsl_unsupported' }];
+        }
         return await work(ctx, body as Record<string, unknown>);
       } catch (error) {
         if (error instanceof files.FilesError) return [error.status, { error: error.message, code: error.code }];
@@ -229,6 +247,9 @@ export function filesRoutes(): Map<string, Handler> {
     const args = parseQs(url.search.slice(1));
     const id = one(args, 'id');
     if (!id || id.length > 600) return Promise.resolve([400, { error: 'Choose a chat', code: 'bad_chat' }]);
+    if (ctx.host && wslChat(ctx, id)) {
+      return Promise.resolve([409, { error: 'Files outside the project are not available for WSL projects yet.', code: 'wsl_unsupported' }]);
+    }
     return guarded(async () => {
       const given = outside.checkShape(one(args, 'path'));
       // The guard first, so an unnamed path never tells whether it exists.
@@ -243,7 +264,14 @@ export function filesRoutes(): Map<string, Handler> {
       return { root: '', ...read, viewUrl, outside: outside.folderLabel(real) };
     });
   });
+  for (const [key, handler] of wslRoutes()) routes.set(key, handler);
   return routes;
+}
+
+/** True when `id` is a live WSL chat of this process (the outside route never reads a Windows path on its behalf). */
+function wslChat(ctx: WebContext, id: string): boolean {
+  const live = (ctx.host as unknown as { connections?: Map<string, { cwd?: string }> }).connections?.get(id);
+  return !!live && !!wslLoc(live.cwd);
 }
 
 /** AIB's own data folder(s): never shown through the outside route. */

@@ -212,7 +212,10 @@ body:not(.sf-files-mode) #filesPane {
 }
 .fx-row.ignored,
 .fx-row.ignored .fx-name,
-.fx-row.ignored .fx-ico {
+.fx-row.ignored .fx-ico,
+.fx-row.fx-off,
+.fx-row.fx-off .fx-name,
+.fx-row.fx-off .fx-ico {
   color: var(--text-faint);
   font-weight: 400;
 }
