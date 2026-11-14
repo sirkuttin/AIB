@@ -94,7 +94,7 @@ function setup(o) {
       // a chat's own copy ('chat' root) is that chat's folder; the main folder is ROOT
       const own = q.root === 'chat' ? list.find((c) => 'claude:' + c.id === q.id) : null,
         base = own ? own.cwd : ROOT;
-      return { root: base, path: q.path, abs: base + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: '' };
+      return { root: base, path: q.path, abs: base + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: opts.viewUrl && /\.(html?|svg|md)$/.test(q.path) ? '/view/' + q.path : '' };
     }
     if (path === '/api/live/files/outside') {
       const r = (opts.outside || {})[q.path];
@@ -1186,4 +1186,103 @@ test('Files: on window focus the local-only folders are listed again (another ch
   await flush();
   await flush();
   assert.ok(rowOf(t, 'private/new.md'), 'the new file shows with no click');
+});
+
+// ---- path links to artifacts and page files (owner: a linked file that is already an artifact opens that artifact) ---------------
+const linkTo = async (t, text) => {
+  const D2 = t.shell.document,
+    p = D2.createElement('p');
+  p.append(D2.createTextNode(text));
+  await t.FU.linkPaths(p);
+  return p.querySelector('a.fx-path');
+};
+const settle = async () => {
+  for (let i = 0; i < 6; i++) await flush();
+};
+const segPressed = (t) =>
+  t.shell.body
+    .querySelector('#fileView')
+    .querySelector('.fx-seg')
+    .querySelectorAll('button')
+    .find((b) => b.getAttribute('aria-pressed') === 'true').textContent;
+
+test("path link: a file that is the open chat's artifact opens that artifact in the Artifacts tab, not the file view", async () => {
+  const t = setup({ width: 1000 });
+  const a = await linkTo(t, 'Open outputs/bar-charts.html to see it.');
+  assert.ok(a, 'linked');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t.opened, ['art1'], 'the artifact opened by id');
+  assert.equal(t.FU._state().tabs.tabs.length, 0, 'no file tab');
+  assert.equal(t.FU._state().beside.tabs.length, 0, 'nothing beside');
+  assert.deepEqual(t.registered, [], 'never registers');
+});
+
+test("path link: another chat's artifact of the file opens too, matched by source path whatever the case and slashes", async () => {
+  const winPath = ROOT.toUpperCase().split('/').join('\\') + '\\OUTPUTS\\Bar-Charts.html';
+  const t = setup({ width: 1000, ownList: [], arts: { 'claude:a2': [{ id: 'other1', sourcePath: winPath, updatedAt: 5 }] } });
+  const a = await linkTo(t, 'See outputs/bar-charts.html');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t.opened, ['other1']);
+  assert.equal(t.FU._state().tabs.tabs.length, 0);
+});
+
+test("path link: the open chat's artifact wins over another chat's for the same file; a deleted one never counts", async () => {
+  const src = ROOT + '/outputs/bar-charts.html';
+  const t = setup({
+    width: 1000,
+    ownList: [{ id: 'gone', sourcePath: src, deletedAt: 9 }],
+    arts: { 'claude:a2': [{ id: 'other1', sourcePath: src, updatedAt: 5 }] },
+  });
+  const a = await linkTo(t, 'See outputs/bar-charts.html');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t.opened, ['other1'], 'the deleted one is skipped');
+  const t2 = setup({
+    width: 1000,
+    ownList: [{ id: 'mine', sourcePath: src, conversationId: 'claude:a1', updatedAt: 1 }],
+    arts: { 'claude:a2': [{ id: 'other1', sourcePath: src, updatedAt: 5 }] },
+  });
+  t2.FU.setMode('files'); // the other chats' lists load
+  await settle();
+  const b = await linkTo(t2, 'See outputs/bar-charts.html');
+  t2.shell.document.dispatch('click', { target: b, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t2.opened, ['mine']);
+});
+
+test('path link: a page file that is no artifact opens in the file view on Preview (Source one click away, Open in Artifacts kept)', async () => {
+  const t = setup({ width: 1000, ownList: [], viewUrl: true });
+  const a = await linkTo(t, 'See outputs/bar-charts.html');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t.opened, []);
+  assert.equal(t.FU._state().tabs.tabs[0].path, 'outputs/bar-charts.html');
+  const view = t.shell.body.querySelector('#fileView');
+  assert.equal(segPressed(t), 'Preview');
+  assert.ok(view.querySelector('iframe.sf-fv-page'), 'the page shows');
+  assert.ok(view.querySelectorAll('.fx-btn').some((x) => /Open in Artifacts/.test(x.textContent)), 'Open in Artifacts stays');
+  // Source is one click away and sticks on a redraw
+  view.querySelector('.fx-seg').querySelectorAll('button').find((b) => b.textContent === 'Source').click();
+  await settle();
+  assert.equal(segPressed(t), 'Source');
+  assert.equal(t.shell.body.querySelector('#fileView').querySelector('iframe.sf-fv-page'), null);
+});
+
+test('path link: a page file named with a line opens on Source at that line; a file opened from the tree still opens on Source', async () => {
+  const t = setup({ width: 1000, ownList: [], viewUrl: true });
+  const a = await linkTo(t, 'See outputs/bar-charts.html:4');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.equal(t.FU._state().tabs.tabs[0].line, 4);
+  assert.equal(segPressed(t), 'Source');
+  const t2 = setup({ width: 1000, ownList: [], viewUrl: true });
+  t2.FU.setMode('files');
+  await settle();
+  rowOf(t2, 'outputs').click();
+  await settle();
+  rowOf(t2, 'outputs/bar-charts.html').click();
+  await settle();
+  assert.equal(segPressed(t2), 'Source');
 });
