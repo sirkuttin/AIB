@@ -240,3 +240,50 @@ test('Retry (inbox 1b): a Failed row retries; the last message of yours is what 
   assert.deepEqual(R.lastUserText(events.slice(0, 1), ''), { text: 'first', attachments: false });
   assert.deepEqual(R.lastUserText(null), { text: '', attachments: false });
 });
+
+test('risky commands (push, force push, delete) need Review first and never offer Always allow', () => {
+  const cmdReq = (command, options) => ({ key: 'p1', params: { toolCall: { title: 'Bash', rawInput: { command } }, options } });
+  const opts = [
+    { optionId: 'once', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+    { optionId: 'no', name: 'Deny', kind: 'reject_once' },
+  ];
+  assert.deepEqual(R.riskOf('git push origin main'), { risky: true, note: 'Pushes commits to the remote.' });
+  assert.equal(R.riskOf('git push --force origin fix/vat').note, 'Force push: replaces the branch on the remote.');
+  assert.equal(R.riskOf('git push origin +main').note, 'Force push: replaces the branch on the remote.');
+  assert.equal(R.riskOf('rm -rf _site content/drafts').risky, true);
+  assert.equal(R.riskOf('Remove-Item -Recurse build').risky, true);
+  assert.equal(R.riskOf('git branch -D old').risky, true);
+  for (const safe of ['npm install stripe@18.0.0', 'git status', 'npm run format', 'git log --oneline', 'echo pushed'])
+    assert.equal(R.riskOf(safe).risky, false, safe);
+  const risky = R.rowActions(permRow, { permissions: [cmdReq('git push origin main', opts)] });
+  assert.equal(risky.review, true);
+  assert.deepEqual(
+    risky.buttons.map((b) => b.label),
+    ['Allow', 'Deny'],
+    'no Always allow for a risky command',
+  );
+  const plain = R.rowActions(permRow, { permissions: [cmdReq('npm test', opts)] });
+  assert.equal(plain.review, undefined);
+  assert.equal(plain.buttons.length, 3);
+});
+
+test('permissionAction: the command or file of an approval, and a small diff for an edit', () => {
+  const run = R.permissionAction({ params: { toolCall: { title: 'Bash', rawInput: { command: 'npm  test' } } } });
+  assert.equal(run.verb, 'Run');
+  assert.equal(run.command, 'npm test');
+  const d = R.diffOf('a\nb\nc\nd', 'a\nB\nB2\nd', 'x.ts');
+  assert.deepEqual(d.lines, [
+    ['ctx', ' a'],
+    ['del', '-b'],
+    ['del', '-c'],
+    ['add', '+B'],
+    ['add', '+B2'],
+    ['ctx', ' d'],
+  ]);
+  assert.equal(d.add, 2);
+  assert.equal(d.del, 2);
+  assert.equal(R.diffOf('', 'new\nfile', 'n.ts').add, 2, 'a new file is all added');
+  assert.equal(R.isLongCommand('npm test'), false);
+  assert.equal(R.isLongCommand('x'.repeat(R.LONG_COMMAND + 1)), true);
+});

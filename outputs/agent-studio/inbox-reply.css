@@ -1,56 +1,200 @@
-/* Quick reply from the inbox: context clamp, reply box, approval buttons, key hints. */
+/* The inbox panel (approved prototype v3, 2026-11-13): two alike section headers (Needs you, To review), one row per chat
+   (line 1 what it wants + the wait, line 2 chat title · project), at most one row of neutral actions, one quiet foot line.
+   Loaded after workspace.css: these rules win over its older inbox rules. */
+.ws-inbox-section {
+  padding: 12px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ws-inbox-none {
+  padding: 2px 10px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* one row: the card is the click target (it opens the chat); hover is neutral grey */
 .ws-inbox-item {
+  position: relative;
   display: flex;
   flex-direction: column;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: default;
 }
-.ws-inbox-sub.ctx {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  line-height: 16px;
+.ws-inbox-item:hover {
+  background: var(--hover);
 }
-.ws-inbox-sub.ctx.clamp {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-}
-.ws-inbox-more {
-  align-self: flex-start;
-  margin: 0 8px 0 40px;
-  height: 20px;
-  padding: 0 6px;
+.ws-inbox-item .ws-inbox-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--link);
-  font-size: 11px;
-  text-decoration: underline;
+  color: inherit;
+  text-align: left;
+  cursor: default;
 }
-.ws-inbox-more:hover,
-.ws-inbox-more:focus-visible {
-  background: var(--accent-wash-2);
+.ws-inbox-item .ws-inbox-row:hover,
+.ws-inbox-item .ws-inbox-row:focus-visible {
+  background: transparent;
 }
-.ws-inbox-acts {
+.ws-inbox-item .ws-inbox-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ws-inbox-l1 {
   display: flex;
-  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+}
+.ws-inbox-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ws-inbox-what code {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.ws-inbox-q {
+  color: var(--muted);
+}
+.ws-inbox-item.turn .ws-inbox-l1 {
+  color: var(--text-3);
+}
+.ws-inbox-age {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* a wait past 15 minutes turns orange and bold: the only colour on a row */
+.ws-inbox-age.long {
+  color: var(--status-needs);
+  font-weight: 600;
+}
+.ws-inbox-l2 {
+  display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px 8px 40px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ws-inbox-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-inbox-idot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.ws-inbox-idot.done {
+  background: var(--status-done);
+}
+.ws-inbox-idot.fail {
+  background: var(--danger);
+}
+
+/* the read-only detail under line 1: the diff, the full command, or a risky command and what it does */
+.ws-inbox-detail {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--code-bg);
+  font:
+    11.5px/1.5 Consolas,
+    monospace;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow: auto;
+}
+.ws-inbox-detail span {
+  display: block;
+}
+.ws-inbox-detail .ws-d-add {
+  background: var(--diff-add-bg);
+  color: var(--ok-text-2);
+}
+.ws-inbox-detail .ws-d-del {
+  background: var(--diff-del-bg);
+  color: var(--diff-removed-text);
+}
+.ws-inbox-askfull {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* at most one row of actions */
+.ws-inbox-acts {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0;
+  min-width: 0;
 }
 .ws-inbox-acts:empty {
   display: none;
 }
+.ws-inbox-item.replying .ws-inbox-acts {
+  flex-direction: column;
+  align-items: stretch;
+}
+/* neutral buttons; the default one gets a teal outline (no green fill, no red) */
 .ws-qa {
+  flex: none;
   height: 24px;
+  max-width: 160px;
+  margin: 0;
   padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: var(--button-bg);
+  background: transparent;
   color: var(--text);
   font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ws-qa:hover {
+  background: var(--hover);
+  border-color: var(--muted);
+}
+.ws-qa.def {
+  border-color: var(--accent-line);
+  color: var(--link);
+}
+.ws-qa.def:hover {
   border-color: var(--accent);
 }
 .ws-qa:disabled {
@@ -61,74 +205,69 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
-.ws-qa.ws-inbox-handled,
-.ws-qa.ws-qa-open {
+/* quiet text: Mark handled, Show diff, Full command, the × that marks a finished chat read */
+.ws-qa.ws-qa-quiet {
   position: static;
   height: 24px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--link);
-  text-decoration: underline;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  text-decoration: none;
 }
-.ws-qa.ws-inbox-handled:hover,
-.ws-qa.ws-qa-open:hover {
-  background: var(--accent-wash-2);
+.ws-qa.ws-qa-quiet:hover {
+  background: none;
+  color: var(--text);
 }
-.ws-qa-reply {
-  border-color: var(--subagent-card-selected-line);
+.ws-qa.ws-qa-read {
+  width: 24px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 4px;
 }
-.ws-qa-send.primary {
-  background: var(--ws-qa-send-primary-bg);
-  border-color: transparent;
-  color: var(--ws-qa-send-primary-text);
-  font-weight: 600;
-  border-radius: 999px;
+.ws-qa.ws-qa-read:hover {
+  background: var(--hover);
 }
-.ws-qa-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.ws-qa-choice.ok {
-  background: var(--ws-qa-choice-ok-bg);
-  border-color: transparent;
-}
-.ws-qa-choice.no {
-  color: var(--ws-qa-choice-no-text);
+.ws-qa.push {
+  margin-left: auto;
 }
 .ws-qa-note {
-  font-size: 11px;
+  flex: none;
+  font-size: 11.5px;
   color: var(--muted);
+  white-space: nowrap;
 }
 .ws-qa-queued {
   color: var(--link);
   font-weight: 600;
 }
+/* the reply box takes the action row's place, Send beside it */
 .ws-reply {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: flex-end;
   gap: 6px;
   width: 100%;
 }
 .ws-reply-box {
-  width: 100%;
-  min-height: 44px;
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  min-height: 36px;
   max-height: 120px;
   resize: vertical;
   padding: 6px 8px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: var(--ws-reply-box-bg);
+  background: var(--code-bg);
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
 }
-.ws-reply-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  align-items: center;
+.ws-reply-box:focus {
+  border-color: var(--accent);
+  outline: none;
 }
 .ws-inbox-err {
   width: 100%;
@@ -138,85 +277,45 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.ws-inbox-item.turn .ws-inbox-proj {
-  padding-right: 0;
-}
-.ws-inbox-keys {
-  position: sticky;
-  bottom: -4px;
-  margin: 4px -4px -4px;
-  padding: 6px 10px;
-  background: var(--bg-popover);
-  border-top: 1px solid var(--line-strong);
-  font:
-    12px Consolas,
-    monospace;
-  color: var(--muted);
-}
 
-/* ---- the inbox's sections and row words (inbox-rules.js: Needs you, then Finished) ---------------------------------------- */
-.ws-inbox-section {
+/* the foot: what still works and Notification settings… on one quiet line */
+.ws-inbox-foot {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 8px 8px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.ws-inbox-section .n {
-  font-weight: 400;
-  letter-spacing: 0;
-}
-.ws-inbox-section .ws-sec-note {
-  margin-left: auto;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-}
-/* the reason word leads each row: Approval, Question, Sign-in, Asks, Failed, Finished */
-.ws-inbox-reason {
-  flex: none;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--status-needs);
-}
-.ws-inbox-item.failed .ws-inbox-reason {
-  color: var(--danger);
-}
-.ws-inbox-item.finished .ws-inbox-reason {
-  color: var(--status-done);
-}
-/* a wait past 15 minutes turns orange and bold */
-.ws-inbox-age.long {
-  color: var(--status-needs);
-  font-weight: 600;
-}
-.ws-inbox-agent,
-.ws-inbox-helpers {
-  flex: none;
-  white-space: nowrap;
-}
-.ws-inbox-helpers {
-  color: var(--status-working);
-}
-/* what still runs, at the foot of the list (working chats are not rows) */
-.ws-inbox-working {
-  padding: 6px 8px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px 10px 6px;
+  border-top: 1px solid var(--line);
   font-size: 12px;
   color: var(--muted);
 }
-.ws-pop-empty .ws-empty-title {
-  margin: 0 0 2px;
-  font-weight: 600;
+.ws-inbox-foot .ws-inbox-working {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ws-inbox-foot .ws-notify-link {
+  flex: none;
+  margin-left: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.ws-inbox-foot .ws-notify-link:hover {
   color: var(--text);
 }
-.ws-pop-empty p {
-  margin: 0;
+
+/* the envelope: no orange border (the orange count badge stays); To review chats get a small teal dot, never a number */
+.ws-inbox-btn.has {
+  color: var(--text-3);
+  border-color: var(--line);
 }
-/* Finished chats never count: the envelope gets a small teal dot instead of a number */
 .ws-inbox-btn .ws-inbox-dot {
   position: absolute;
   right: -3px;
@@ -226,4 +325,22 @@
   border-radius: 50%;
   background: var(--status-done);
   box-shadow: 0 0 0 2px var(--ws-bg);
+}
+
+/* the page's global button and code styles (bold, a code chip) stay out of the inbox rows: plain weight, as the prototype */
+.ws-inbox-item .ws-inbox-row,
+.ws-inbox-item .ws-qa,
+.ws-inbox-foot .ws-notify-link {
+  font-family: inherit;
+  font-weight: 400;
+}
+.ws-inbox-what code,
+.ws-inbox-detail {
+  font-weight: 400;
+}
+.ws-inbox-what code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
 }

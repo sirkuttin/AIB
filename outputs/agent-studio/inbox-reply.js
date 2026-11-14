@@ -1,7 +1,8 @@
 (function (root) {
   'use strict';
-  // Quick reply from the inbox: the pure parts. What a row offers (reply box, approval buttons, choice buttons, or only
-  // "Open chat"), how its context text is clamped, and the keyboard state machine. No DOM here; workspace-ui.js draws.
+  // Quick reply from the inbox: the pure parts. What a row offers (reply box, approval buttons, choice buttons, or nothing: the
+  // card itself opens the chat), what an approval would do and whether it is risky, and the keyboard state machine. No DOM here;
+  // workspace-ui.js draws.
   const isStr = (v) => typeof v === 'string';
   const MAX_CONTEXT = 1200; // characters of the agent's last message kept per row
   const CLAMP_LINES = 3;
@@ -57,7 +58,8 @@
   //   buttons: one-click answers [{id, label, tone, op: "permission"|"elicitation", reqKey, optionId|value|field}]
   //   handled: Mark handled; open: Open chat (always); openOnly: nothing but Open chat can answer this row
   //   loading: approval buttons are still being fetched; more: how many other requests wait behind this one
-  //   retry:   a Failed row (besides Reply): Retry (your last message again, text only) and Continue with another agent
+  //   retry:   a Failed row (besides Reply): Retry (your last message again, text only)
+  //   review:  a risky command (push, force push, delete): Review first; risk: {risky, note}; no Always allow among the buttons
   function rowActions(row, detail) {
     const out = {
       reply: false,
@@ -111,7 +113,16 @@
         out.openOnly = true;
         return out;
       }
-      out.buttons = options.map((o, i) => ({
+      // A risky command (push, force push, delete) is never one tap: Review first, and no "Always allow" for it.
+      const risk = riskOf(first);
+      let opts = options;
+      if (risk.risky) {
+        out.review = true;
+        out.risk = risk;
+        const kept = options.filter((o) => !/always/i.test(String(o.kind || '') + ' ' + String(o.name || '')));
+        if (kept.length) opts = kept;
+      }
+      out.buttons = opts.map((o, i) => ({
         id: 'p' + i,
         label: String(o.name || o.optionId),
         tone: toneOf(o.kind),
@@ -142,6 +153,69 @@
     }
     return String((tc && (tc.title || tc.kind)) || (p && p.title) || '').trim();
   }
+
+  // ---- what an approval would do: line 1 of its row, the read-only detail, and whether it is risky ---------------------
+  // {verb, target, code, line, command, diff: {path, lines: [['ctx'|'add'|'del', text]], add, del} | null} for a permission
+  // request. verb/target come from ToolViews.actionOf (the approval card's own words); line is permissionTitle().
+  function permissionAction(req) {
+    const p = req && req.params,
+      tc = p && p.toolCall,
+      TV = root.ToolViews;
+    let a = null;
+    if (tc && TV && typeof TV.actionOf === 'function') {
+      try {
+        a = TV.actionOf(tc);
+      } catch {
+        a = null;
+      }
+    }
+    // tool-views.js not loaded (a test, a page mid-restart): a plain shell command still reads as "Run <command>"
+    const rawCmd = tc && tc.rawInput && isStr(tc.rawInput.command) ? tc.rawInput.command : '';
+    if (!a && rawCmd) a = { verb: 'Run', target: rawCmd, code: true };
+    const line = permissionTitle(req) || (a ? a.verb + ' ' + a.target : '');
+    const verb = a && isStr(a.verb) ? a.verb : '';
+    const target = a && isStr(a.target) ? String(a.target).replace(/\s+/g, ' ').trim() : '';
+    const raw = tc && Array.isArray(tc.content) ? tc.content.find((i) => i && i.type === 'diff' && isStr(i.path)) : null;
+    const diff = raw ? diffOf(raw.oldText, raw.newText, raw.path) : null;
+    return { verb, target, code: !!(a && a.code !== false && target), line, diff, command: verb === 'Run' ? target : '' };
+  }
+  // A small line diff (the common start and end kept as one line of context, the middle as removed then added): enough to
+  // answer an edit from the inbox safely. The chat's own diff view stays the full one.
+  function diffOf(oldText, newText, path) {
+    const a = oldText == null || oldText === '' ? [] : String(oldText).split(/\r?\n/),
+      b = newText == null || newText === '' ? [] : String(newText).split(/\r?\n/);
+    let s = 0;
+    while (s < a.length && s < b.length && a[s] === b[s]) s++;
+    let e = 0;
+    while (e < a.length - s && e < b.length - s && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
+    const lines = [];
+    if (s > 0) lines.push(['ctx', ' ' + a[s - 1]]);
+    for (const l of a.slice(s, a.length - e)) lines.push(['del', '-' + l]);
+    for (const l of b.slice(s, b.length - e)) lines.push(['add', '+' + l]);
+    if (e > 0) lines.push(['ctx', ' ' + a[a.length - e]]);
+    return { path: String(path || ''), lines: lines.slice(0, 400), add: b.length - e - s, del: a.length - e - s };
+  }
+  // Is this request risky (a push, a force push, a delete)? {risky, note}: the note says plainly what it does. req: a permission
+  // request, or a command as text.
+  const PUSH = /(^|[\s;&|(])git\s+(?:-\S+\s+)*push\b/i;
+  const FORCE = /\s(?:-f|--force(?:-with-lease)?)(?=\s|$)|\s\+\S+/;
+  const DELETE =
+    /(^|[\s;&|(])(?:rm|rmdir|del|erase|rd|Remove-Item|unlink|shred)(?=\s|$)|\bgit\s+(?:branch\s+-D\b|clean\s+-\S*f|reset\s+--hard\b)/i;
+  function riskOf(req) {
+    const a = isStr(req) ? { verb: '', target: '', command: req } : permissionAction(req);
+    const cmd = a.command || '';
+    if (a.verb === 'Delete') return { risky: true, note: 'Deletes ' + (a.target || 'files') + '.' };
+    if (!cmd) return { risky: false, note: '' };
+    const push = cmd.search(PUSH);
+    if (push >= 0)
+      return FORCE.test(cmd.slice(push).split(/[;&|]/)[0])
+        ? { risky: true, note: 'Force push: replaces the branch on the remote.' }
+        : { risky: true, note: 'Pushes commits to the remote.' };
+    if (DELETE.test(cmd)) return { risky: true, note: 'Deletes files or history for good.' };
+    return { risky: false, note: '' };
+  }
+  const LONG_COMMAND = 44; // about what fits on line 1 of the 360 px inbox next to "Run" and the wait time
+  const isLongCommand = (cmd) => isStr(cmd) && cmd.length > LONG_COMMAND;
 
   // ---- Retry ------------------------------------------------------------------------------------------------
   // What Retry sends: the text of the chat's last message from you (events of /api/live/state, oldest first; only those of
@@ -232,6 +306,11 @@
     rowActions,
     lastUserText,
     permissionTitle,
+    permissionAction,
+    diffOf,
+    riskOf,
+    isLongCommand,
+    LONG_COMMAND,
     sendRoute,
     initial,
     step,

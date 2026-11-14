@@ -75,7 +75,7 @@ test('QA m4: an archived chat you open gets a tab marked Archived; it goes when 
   );
 });
 
-test('QA m14: the open chat stays in the inbox while it needs you; stable order (longest wait first); R only where a reply works', () => {
+test('QA m14: stable inbox order (longest wait first) across polls; the open chat is left out on the desktop; no key-hint row', () => {
   const zeta = asking('a1', 'C:/w/zeta', 100),
     beta = asking('b1', 'C:/w/beta', 100),
     idle = conv('c1', 'C:/w/gamma');
@@ -84,20 +84,23 @@ test('QA m14: the open chat stays in the inbox while it needs you; stable order 
   const until = Date.now() + 5;
   while (Date.now() < until);
   const list = [zeta, beta, idle];
-  t.sync(list, zeta); // zeta starts waiting later, and it is the open chat
-  const badge = t.shell.byId.chatTabs.querySelector('.ws-badge');
-  assert.equal(badge && badge.textContent, '2', 'the badge counts the open chat too');
+  t.sync(list, idle); // zeta starts waiting later
+  const badge = () => t.shell.byId.chatTabs.querySelector('.ws-badge');
+  assert.equal(badge() && badge().textContent, '2');
   t.W.toggleInbox(true);
   const pop = t.shell.body.querySelector('#wsInbox');
   const order = () => pop.querySelectorAll('.ws-inbox-item').map((n) => n.dataset.key);
-  assert.deepEqual(order(), ['claude:b1', 'claude:a1'], 'the longest wait first, the open chat included');
-  const keys = pop.querySelector('.ws-inbox-keys').textContent;
-  assert.doesNotMatch(keys, /R reply/, 'questions cannot be answered with R');
+  assert.deepEqual(order(), ['claude:b1', 'claude:a1'], 'the longest wait first');
+  assert.equal(pop.querySelector('.ws-inbox-keys'), null, 'the keys work without a visible hint row');
   // Polls and re-openings keep the order (a blocked chat's activity is "now" on every poll).
   t.W.toggleInbox(false);
-  for (let i = 0; i < 3; i++) t.sync(list.slice(), i % 2 ? beta : idle);
+  for (let i = 0; i < 3; i++) t.sync(list.slice(), idle);
   t.W.toggleInbox(true);
   assert.deepEqual(order(), ['claude:b1', 'claude:a1']);
+  // the chat on screen is in front of you: the desktop leaves it out (inbox-rules.js isOpen)
+  t.W.toggleInbox(false);
+  t.sync(list.slice(), zeta);
+  assert.equal(badge() && badge().textContent, '1');
 });
 
 test('QA m12: overflowing tabs get scroll arrows and a fade on the hidden side', () => {

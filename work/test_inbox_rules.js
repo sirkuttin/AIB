@@ -302,3 +302,9 @@ test('R6 reads a 3 MB line without a "?" in linear time (the sentence regex was 
   assert.equal(R.asksOf('x'.repeat(200) + '. Should I merge it now? ').question, 'Should I merge it now?');
   assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
 });
+
+test('the inbox section names are constants: Needs you, To review, and the quiet empty line', () => {
+  assert.equal(R.NEEDS_LABEL, 'Needs you');
+  assert.equal(R.REVIEW_LABEL, 'To review');
+  assert.equal(R.NOTHING_BLOCKED, 'Nothing blocked');
+});

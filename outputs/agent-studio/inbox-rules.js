@@ -13,7 +13,7 @@
   //   asks       the last reply asks you something in plain text (asksOf below: rule R6 of the usage study, 2026-11-13).
   //   working    a turn runs, or the chat's helpers (Claude Code) or background shells still run, or the follow-up window after
   //              the last of them ended (the agent usually starts its own follow-up within 20 s).
-  //   your_turn  finished: the agent handed back and nothing runs. Listed under Finished, never counted.
+  //   your_turn  finished: the agent handed back and nothing runs. Listed under To review, never counted.
   //   idle / opening / closed
   // Blocked = needs_you, failed or asks: the inbox's "Needs you" section, and the ONE number every badge, title and tray shows.
   //
@@ -216,6 +216,11 @@
     finished: 'Finished',
   };
   const reasonWord = (r) => REASON_WORDS[r] || 'Needs you';
+  // The inbox panel's two section names, in one place (the owner may still rename the second; 2026-11-13: 'To review').
+  // The panel shows no reason word on a row any more: line 1 is the request itself.
+  const NEEDS_LABEL = 'Needs you';
+  const REVIEW_LABEL = 'To review';
+  const NOTHING_BLOCKED = 'Nothing blocked';
   // "2 subagents running" (the agent's own subagents still at work; the facts call them helpers), '' for none.
   const helpersLine = (n) => (Number(n) > 0 ? n + (Number(n) === 1 ? ' subagent' : ' subagents') + ' running' : '');
   // "waited 42m", "waited 1h 05m" (now and since in epoch seconds); long: past LONG_WAIT_SECONDS.
@@ -260,6 +265,9 @@
     HELPER_CAP_SECONDS,
     ASK_MIN_CHARS,
     LONG_WAIT_SECONDS,
+    NEEDS_LABEL,
+    REVIEW_LABEL,
+    NOTHING_BLOCKED,
     secondsOf,
     asksOf,
     classifyError,

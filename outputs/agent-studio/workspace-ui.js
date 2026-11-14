@@ -608,9 +608,9 @@
       null,
       'ws-inbox-btn' + (n ? ' has' : '') + (finished && !n ? ' done' : ''),
       n
-        ? 'Inbox: ' + n + ' chat' + (n === 1 ? '' : 's') + ' need you (all projects)' + (finished ? ', ' + finished + ' finished' : '')
+        ? 'Inbox: ' + n + ' chat' + (n === 1 ? '' : 's') + ' need you (all projects)' + (finished ? ', ' + finished + ' to review' : '')
         : finished
-          ? 'Inbox: nothing needs you; ' + finished + ' finished'
+          ? 'Inbox: nothing needs you; ' + finished + ' to review'
           : 'Inbox: nothing needs you',
     );
     env.setAttribute('aria-haspopup', 'dialog');
@@ -1106,13 +1106,6 @@
       drawInbox();
     }
   }
-  // Continue with another agent on a Failed row: the chat's hand-over (its own dialog asks before anything is sent).
-  function handoffQuick(key) {
-    const c = convOf(key);
-    if (!c || !host.handoff) return;
-    toggleInbox(false);
-    Promise.resolve(host.handoff(c)).catch(() => {});
-  }
   async function answerQuick(key, item, b) {
     const s = qs(key);
     if (s.busy || !item || !item.liveId || !host.postJson) return;
@@ -1243,25 +1236,43 @@
   }
 
   const actBtn = (label, cls, title) => btn(label, 'ws-qa ' + (cls || ''), title);
-  // "Working: 5 chats in 3 projects · 4 helpers": what still runs, at the foot of the inbox (working chats are not rows).
+  // "Working: 5 chats in 3 projects": what still runs, at the foot of the inbox (working chats are not rows). No subagent count.
   function workingLine() {
     const busy = items.filter((i) => i.phase === 'working' && !i.archived && !i.deleted);
     if (!busy.length) return '';
-    const projects = new Set(busy.map((i) => i.projectKey)).size,
-      helpers = busy.reduce((n, i) => n + (Number(i.helpers) || 0), 0);
-    const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
-    return (
-      'Working: ' +
-      plural(busy.length, 'chat') +
-      (projects > 1 ? ' in ' + projects + ' projects' : '') +
-      (helpers ? ' · ' + plural(helpers, 'subagent') : '')
-    );
+    const projects = new Set(busy.map((i) => i.projectKey)).size;
+    return 'Working: ' + busy.length + (busy.length === 1 ? ' chat' : ' chats') + (projects > 1 ? ' in ' + projects + ' projects' : '');
   }
-  // Two sections, most urgent first (inbox-rules.js): Needs you (approvals, questions, sign-ins, failed turns and questions in a
-  // reply; the longest wait first) and Finished (newest first; not counted).
+  const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+  // Line 1 of a row: the request itself (the command, the file, the question, the error, the agent's last words). Never a
+  // reason word. Returns the node and its plain text (for the tooltip).
+  function whatOf(r, item, pa) {
+    const w = el('span', null, 'ws-inbox-what');
+    const turn = r.reason === 'finished';
+    if (r.reason === 'approval' && pa && (pa.target || pa.line)) {
+      if (pa.verb && pa.target && pa.code) {
+        w.append(doc().createTextNode(pa.verb + ' '), el('code', pa.target));
+        if (pa.diff && (pa.diff.add || pa.diff.del))
+          w.append(el('span', '  +' + pa.diff.add + ' −' + pa.diff.del, 'ws-inbox-q'));
+      } else w.textContent = pa.line || pa.target;
+    } else if (r.reason === 'question') {
+      const q = item && item.elicReqs && item.elicReqs[0] && item.elicReqs[0].params;
+      w.textContent = oneLine((q && q.message) || r.ask || r.summary);
+    } else if (r.reason === 'signin') w.textContent = 'Sign in to the agent again to continue';
+    else if (r.reason === 'failed') w.textContent = oneLine(r.ask) || 'The last turn ended with an error.';
+    else if (r.reason === 'asks') w.textContent = oneLine(r.ask);
+    else if (turn) w.textContent = oneLine((item && item.lastText) || r.snippet) || 'Done.';
+    else w.textContent = oneLine(r.ask || r.summary);
+    return w;
+  }
+  // The inbox (approved prototype v3): a "Needs you" section (approvals, questions, sign-ins, failed turns and questions in a
+  // reply; the longest wait first; "Nothing blocked" when empty) and a "To review" section (finished turns, newest first; never
+  // counted). One row = line 1 what it wants + the wait, line 2 chat title · project, at most one row of actions. Clicking a row
+  // opens its chat. The keys (↑↓ R E O Esc) work without a hint row.
   function drawInbox() {
     if (!inboxPop) return;
-    const Rp = RP();
+    const Rp = RP(),
+      IR = root.AgentInboxRules;
     const a = doc().activeElement,
       inPop = !!(a && inboxPop.contains && inboxPop.contains(a));
     const keep = inPop
@@ -1275,126 +1286,110 @@
       : null;
     const rows = inboxView(),
       frag = doc().createDocumentFragment(),
-      IR = root.AgentInboxRules,
       blockedN = blockedOf(rows),
       working = workingLine();
     for (const k of Array.from(quick.keys())) if (!rows.some((r) => r.key === k)) quick.delete(k);
-    const head = el('div', 'Inbox', 'ws-pop-head');
-    head.append(el('span', blockedN ? blockedN + ' need you' : 'nothing needs you', 'n'));
-    frag.append(head);
-    if (!blockedN) {
-      const empty = el('div', null, 'ws-pop-empty');
-      empty.append(el('p', 'Nothing needs you.', 'ws-empty-title'));
-      empty.append(el('p', working ? "They're still working. You'll be told when one needs you." : 'Four score and zero waiting.'));
-      frag.append(empty);
-    }
-    let section = '';
+    const NEEDS = (IR && IR.NEEDS_LABEL) || 'Needs you',
+      REVIEW = (IR && IR.REVIEW_LABEL) || 'To review';
+    frag.append(el('div', NEEDS, 'ws-inbox-section'));
+    if (!blockedN) frag.append(el('div', (IR && IR.NOTHING_BLOCKED) || 'Nothing blocked', 'ws-inbox-none'));
+    let reviewHead = false;
     const nowS = Date.now() / 1000;
     for (const r of rows) {
       const item = itemOf(r.key),
-        turn = r.kind === 'yourTurn',
+        turn = r.reason === 'finished',
         s = qs(r.key);
-      if (r.section !== section) {
-        section = r.section;
-        const sh = el('div', null, 'ws-inbox-section');
-        if (section === 'needs') sh.append(el('span', 'Needs you'), el('span', blockedN, 'n'), el('span', 'oldest first', 'ws-sec-note'));
-        else sh.append(el('span', 'Finished'), el('span', rows.length - blockedN, 'n'), el('span', 'not counted', 'ws-sec-note'));
-        frag.append(sh);
+      if (r.section !== 'needs' && !reviewHead) {
+        reviewHead = true;
+        frag.append(el('div', REVIEW, 'ws-inbox-section'));
       }
       if (item) wantDetail(item, r);
       const act = Rp
         ? Rp.rowActions(r, detailFor(item))
         : { reply: false, buttons: [], handled: !!r.handled, open: true, loading: false, openOnly: false, more: 0 };
+      const perms = r.reason === 'approval' && Rp ? detailFor(item).permissions : null,
+        pa = perms && perms.length && Rp.permissionAction ? Rp.permissionAction(perms[0]) : null;
       const wrap = el(
         'div',
         null,
-        'ws-inbox-item' + (turn ? ' turn' : '') + ' ' + r.section + ' ' + r.reason + (s.replying ? ' replying' : ''),
+        'ws-inbox-item' + (turn ? ' turn' : '') + ' ws-s-' + r.section + ' ws-r-' + r.reason + (s.replying ? ' replying' : ''),
       );
       wrap.dataset.key = r.key;
       wrap.dataset.reason = r.reason;
       const b = btn(null, 'ws-inbox-row');
       b.dataset.key = r.key;
-      const text = el('span', null, 'ws-inbox-text');
-      const top = el('span', null, 'ws-inbox-top');
-      // Line 1: the reason word, the chat, how long it has waited on you (orange after 15 min) or when it finished.
-      const wait = r.section === 'needs' && IR ? IR.waitText(r.since, nowS) : null;
-      const age = el('span', wait ? 'waited ' + wait.text : ageOf(r.at), 'ws-inbox-age' + (wait && wait.long ? ' long' : ''));
-      top.append(el('span', IR ? IR.reasonWord(r.reason) : r.summary, 'ws-inbox-reason'), el('span', r.title, 'ws-inbox-title'), age);
-      // Line 2: the project (a label: rows are grouped by urgency, not by project), the agent, what its helpers do.
-      const meta = el('span', null, 'ws-inbox-meta');
-      meta.append(el('span', r.projectName, 'ws-inbox-proj'));
-      if (r.agent) meta.append(el('span', r.agent, 'ws-inbox-agent'));
-      const helpersLine = IR ? IR.helpersLine(r.helpers) : '';
-      if (helpersLine) meta.append(el('span', helpersLine, 'ws-inbox-helpers'));
-      // Context: the agent's last message (or its question), three lines; "more" opens it in place.
-      // An approval says what it would do ("Run npm install stripe@18.0.0"), as its card does, once its body is fetched.
-      const perms = !turn && !r.ask && Rp ? detailFor(item).permissions : null,
-        permLine = perms && perms.length && Rp.permissionTitle ? Rp.permissionTitle(perms[0]) : '';
-      const full =
-        r.reason === 'failed' || r.reason === 'asks'
-          ? r.ask || (item && item.lastText) || ''
-          : turn
-            ? (item && item.lastText) || r.snippet
-            : r.ask || permLine || r.summary;
-      const ctxLine = Rp
-        ? r.reason === 'failed'
-          ? full || 'The last turn ended with an error.'
-          : r.reason === 'asks'
-            ? full
-            : turn
-              ? 'Your turn' + (full ? ': “' + full + '”' : '')
-              : 'Needs you: ' + (full || r.summary)
-        : r.line;
-      const long = Rp ? Rp.isLong(ctxLine, Rp.CLAMP_LINES, Rp.PER_LINE) : false;
-      const sub = el('span', ctxLine, 'ws-inbox-sub' + (Rp ? ' ctx' : '') + (long && !s.expanded ? ' clamp' : ''));
-      text.append(top, sub, meta);
-      b.append(item ? dotFor(item) : el('span'), text);
-      b.title = r.title + '\n' + r.projectName + '\n' + (permLine ? 'Needs you: ' + permLine : r.line);
+      // Line 1: what it wants, and the wait alone ("4m"; orange after 15 min) or how long ago it finished.
+      const l1 = el('span', null, 'ws-inbox-l1');
+      const what = whatOf(r, item, pa);
+      const wait = IR ? IR.waitText(turn ? r.at : r.since, nowS) : { text: ageOf(r.at), long: false };
+      l1.append(what, el('span', wait.text, 'ws-inbox-age' + (!turn && wait.long ? ' long' : '')));
+      // Line 2: the chat title · project, quiet. A 6 px dot only on Failed and To review rows.
+      const l2 = el('span', null, 'ws-inbox-l2');
+      if (r.reason === 'failed') l2.append(el('span', null, 'ws-inbox-idot fail'));
+      else if (turn) l2.append(el('span', null, 'ws-inbox-idot done'));
+      l2.append(el('span', r.title + ' · ' + r.projectName, 'ws-inbox-where'));
+      b.append(l1, l2);
+      b.title = what.textContent + '\n' + r.title + ' · ' + r.projectName;
+      b.setAttribute('aria-label', what.textContent + ', ' + r.title + ', ' + r.projectName + ', ' + wait.text);
       b.onclick = () => openKey(r.key);
       wrap.append(b);
-      if (long) {
-        const more = btn(s.expanded ? 'less' : 'more', 'ws-inbox-more');
-        more.setAttribute('aria-expanded', String(!!s.expanded));
-        more.onclick = (e) => {
-          if (e && e.stopPropagation) e.stopPropagation();
-          s.expanded = !s.expanded;
-          drawInbox();
-          const w = rowEl(r.key),
-            m = w && w.querySelector('.ws-inbox-more');
-          if (m && m.focus) m.focus();
-        };
-        wrap.append(more);
+      // Clicking anywhere on the card that is not a control opens the chat too.
+      wrap.onclick = (e) => {
+        const t = e && e.target;
+        if (t && t.closest && t.closest('button, textarea, .ws-inbox-detail')) return;
+        openKey(r.key);
+      };
+      // The read-only detail under line 1: the diff, the full command, or (risky) the command and what it does.
+      const diff = pa && pa.diff,
+        cmd = pa && pa.command;
+      if (s.expanded && (diff || cmd)) {
+        const d = el('div', null, 'ws-inbox-detail');
+        if (diff && diff.lines.length) for (const [k, line] of diff.lines) d.append(el('span', line, 'ws-d-' + k));
+        else d.textContent = '$ ' + cmd + (act.risk && act.risk.note ? '\n' + act.risk.note : '');
+        wrap.append(d);
       }
       const acts = el('div', null, 'ws-inbox-acts');
-      const markBtn = (label) => {
-        const h = actBtn(label, 'ws-inbox-handled', 'Mark handled: ' + r.title + ' (E)');
-        h.disabled = s.busy;
-        h.onclick = (e) => {
+      const quietBtn = (label, cls, title, fn) => {
+        const q = actBtn(label, 'ws-qa-quiet ' + (cls || ''), title);
+        q.onclick = (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
-          markDone(r.key);
+          fn();
         };
+        return q;
+      };
+      const toggleDetail = () => {
+        s.expanded = !s.expanded;
+        drawInbox();
+      };
+      const replyBtn = (def) => {
+        const rb = actBtn('Reply', 'ws-qa-reply' + (def ? ' def' : ''), 'Reply without opening the chat (R)');
+        rb.disabled = s.busy;
+        rb.onclick = (e) => {
+          if (e && e.stopPropagation) e.stopPropagation();
+          startReply(r.key);
+        };
+        return rb;
+      };
+      const handledBtn = () => {
+        const h = quietBtn('Mark handled', 'ws-inbox-handled push', 'Mark handled (E)', () => markDone(r.key));
+        h.disabled = s.busy;
         return h;
       };
-      const openBtn = (label) => {
-        const o = actBtn(label || 'Open chat', 'ws-qa-open', 'Open chat: ' + r.title + ' (O)');
-        o.onclick = (e) => {
-          if (e && e.stopPropagation) e.stopPropagation();
-          openKey(r.key);
-        };
-        return o;
-      };
       if (act.reply && s.replying) {
+        // the reply box takes the action row's place; Send beside it; Esc closes it
+        if (r.reason === 'asks') {
+          const full = Rp && Rp.contextText ? Rp.contextText((item && item.lastText) || r.ask) : r.ask;
+          if (full) acts.append(el('div', full, 'ws-inbox-askfull'));
+        }
         const box = el('div', null, 'ws-reply');
         const ta = doc().createElement('textarea');
         ta.className = 'ws-reply-box';
         ta.rows = 2;
         ta.value = s.text;
         ta.disabled = s.busy;
-        ta.placeholder = 'Reply to this chat. Enter sends, Shift+Enter adds a line, Esc closes.';
+        ta.placeholder = 'Reply. Enter sends, Esc closes.';
         ta.setAttribute('aria-label', 'Reply to ' + r.title);
-        box.append(ta);
-        const chips = el('div', null, 'ws-reply-chips');
-        const send = actBtn(s.busy ? 'Sending…' : 'Send ↵', 'ws-qa-send primary', 'Send this reply (Enter)');
+        const send = actBtn(s.busy ? 'Sending…' : 'Send', 'ws-qa-send def', 'Send this reply (Enter)');
         send.disabled = s.busy || !s.text.trim();
         send.onclick = (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
@@ -1404,61 +1399,61 @@
           s.text = ta.value;
           send.disabled = s.busy || !ta.value.trim();
         });
-        chips.append(send, openBtn('Open chat'), markBtn('Mark handled'));
-        box.append(chips);
-        if (s.error) {
-          const er = el('div', s.error, 'ws-inbox-err');
-          er.setAttribute('role', 'alert');
-          box.append(er);
-        }
+        box.append(ta, send);
         acts.append(box);
-      } else if (act.reply) {
+      } else if (turn) {
+        // To review: Reply, and a plain × that marks it read (E does the same)
         if (s.queued) acts.append(el('span', 'Queued', 'ws-qa-note ws-qa-queued'));
-        const rb = actBtn('Reply', 'ws-qa-reply', 'Reply without opening the chat (R)');
-        rb.onclick = (e) => {
+        acts.append(replyBtn(false));
+        acts.append(quietBtn('×', 'ws-qa-read push', 'Mark as read (E)', () => markDone(r.key)));
+      } else if (r.reason === 'failed') {
+        // Retry / Reply / Mark handled; another agent stays reachable in the chat itself
+        const rt = actBtn(s.busy ? 'Sending…' : 'Retry', 'ws-qa-retry def', 'Send your last message again (text only; attachments are not resent)');
+        rt.disabled = s.busy;
+        rt.onclick = (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
-          startReply(r.key);
+          retryQuick(r.key);
         };
-        acts.append(rb);
-        if (act.retry) {
-          const rt = actBtn(s.busy ? 'Sending…' : 'Retry', 'ws-qa-retry primary', 'Send your last message again (text only; attachments are not resent)');
-          rt.disabled = s.busy;
-          rt.onclick = (e) => {
-            if (e && e.stopPropagation) e.stopPropagation();
-            retryQuick(r.key);
-          };
-          acts.append(rt);
-          if (host && host.handoff) {
-            const ho = actBtn('Continue with another agent…', 'ws-qa-handoff', 'Hand this chat over to another agent (asks first)');
-            ho.disabled = s.busy;
-            ho.onclick = (e) => {
-              if (e && e.stopPropagation) e.stopPropagation();
-              handoffQuick(r.key);
-            };
-            acts.append(ho);
-          }
-        }
-        if (act.handled) acts.append(markBtn('Mark handled'));
+        acts.append(rt, replyBtn(false), handledBtn());
+      } else if (r.reason === 'asks') {
+        if (s.queued) acts.append(el('span', 'Queued', 'ws-qa-note ws-qa-queued'));
+        acts.append(replyBtn(true), handledBtn());
       } else if (act.buttons.length) {
-        const bx = el('div', null, 'ws-qa-buttons');
-        for (const ab of act.buttons) {
-          const x = actBtn(ab.label, 'ws-qa-choice ' + ab.tone);
+        const deny = act.buttons.find((x) => x.tone === 'no');
+        const answer = (ab, def) => {
+          const x = actBtn(ab.label, 'ws-qa-choice' + (def ? ' def' : ''));
           x.disabled = s.busy;
           x.onclick = (e) => {
             if (e && e.stopPropagation) e.stopPropagation();
             answerQuick(r.key, item, ab);
           };
-          bx.append(x);
+          return x;
+        };
+        if (act.review && !s.expanded) {
+          // risky (push, force push, delete): never one tap; Review shows the full command and what it does first
+          const rv = actBtn('Review', 'ws-qa-review def', 'See exactly what it will do before allowing');
+          rv.onclick = (e) => {
+            if (e && e.stopPropagation) e.stopPropagation();
+            toggleDetail();
+          };
+          acts.append(rv);
+          if (deny) acts.append(answer(deny, false));
+        } else {
+          const def = act.buttons.find((x) => x.tone === 'ok') || act.buttons[0];
+          for (const ab of act.buttons) acts.append(answer(ab, ab === def));
+          if (act.more) acts.append(el('span', '+' + act.more + ' more', 'ws-qa-note'));
+          if (!act.review && diff)
+            acts.append(quietBtn(s.expanded ? 'Hide diff' : 'Show diff', 'ws-qa-diff push', 'The change, read-only', toggleDetail));
+          else if (!act.review && cmd && Rp.isLongCommand && Rp.isLongCommand(cmd))
+            acts.append(quietBtn(s.expanded ? 'Hide command' : 'Full command', 'ws-qa-full push', 'The whole command, read-only', toggleDetail));
         }
-        acts.append(bx);
-        if (act.more) acts.append(el('span', '+' + act.more + ' more waiting in the chat', 'ws-qa-note'));
       } else if (act.loading) {
-        acts.append(el('span', 'Loading the request…', 'ws-qa-note'), openBtn('Open chat'));
-      } else {
-        acts.append(openBtn('Open chat'));
-        if (act.handled) acts.append(markBtn('Mark handled'));
+        acts.append(el('span', 'Loading the request…', 'ws-qa-note'));
+      } else if (act.handled) {
+        // a sign-in or a complex question: no button; clicking the card opens the chat, where it is answered
+        acts.append(handledBtn());
       }
-      if (s.error && !(act.reply && s.replying)) {
+      if (s.error) {
         const er = el('div', s.error, 'ws-inbox-err');
         er.setAttribute('role', 'alert');
         acts.append(er);
@@ -1466,8 +1461,9 @@
       wrap.append(acts);
       frag.append(wrap);
     }
-    if (working) frag.append(el('div', working, 'ws-inbox-working'));
-    // Notification settings (desktop notifications, sounds, muted projects) live in Settings now; this is the way in.
+    // The foot: what still works and the way to the notification settings, on one quiet line.
+    const foot = el('div', null, 'ws-inbox-foot');
+    foot.append(el('span', working, 'ws-inbox-working'));
     if (root.AgentSettingsUI && root.AgentSettingsUI.open) {
       const notes = el('button', 'Notification settings…', 'ws-notify-link');
       notes.type = 'button';
@@ -1475,17 +1471,9 @@
         toggleInbox(false);
         root.AgentSettingsUI.open('notifications');
       });
-      frag.append(notes);
+      foot.append(notes);
     }
-    // The key line lists only what works on these rows (a question or an approval has no R reply).
-    if (rows.length) {
-      const can = rows.map((r) => (Rp ? Rp.rowActions(r, detailFor(itemOf(r.key))) : { reply: false, handled: false }));
-      const keys = ['↑↓ move'];
-      if (can.some((a) => a.reply)) keys.push('R reply', 'Enter send');
-      if (can.some((a) => a.handled)) keys.push('E mark handled');
-      keys.push('O open chat', 'Esc close');
-      frag.append(el('div', keys.join(' · '), 'ws-inbox-keys'));
-    }
+    frag.append(foot);
     inboxPop.replaceChildren(frag);
     if (keep && keep.key) {
       const w = rowEl(keep.key);

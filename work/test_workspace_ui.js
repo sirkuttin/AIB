@@ -231,7 +231,7 @@ test('the chat you have open is never Finished, even while AIB is in the backgro
   assert.equal(env().querySelector('.ws-badge').textContent, '1');
 });
 
-test('the inbox: Needs you then Finished; reason words, the project and agent on each row, helpers, the wait orange after 15 min', () => {
+test('the inbox (v3): "Needs you" and "To review" headers alike; line 1 the request, line 2 title · project, the wait alone', () => {
   const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
   const live = (id, attention) => liveChat({ id, attention });
   const failed = conv('f1', 'C:/work/alpha', {
@@ -248,50 +248,61 @@ test('the inbox: Needs you then Finished; reason words, the project and agent on
   });
   const here = conv('o', 'C:/work/gamma', { live: live('L5', { state: 'idle' }) });
   const list = [failed, asks, done, helping, here];
-  const t = setup({ conversations: list, selected: here });
+  const t = setup({ conversations: list, selected: here, scripts: ['inbox-rules.js', 'inbox-reply.js', ...SCRIPTS] });
   t.sync(list, here);
   const env = t.shell.byId.chatTabs.querySelector('.ws-inbox-btn');
   assert.equal(env.querySelector('.ws-badge').textContent, '2', 'the failed chat and the question; never the finished one');
   t.W.toggleInbox(true);
   const pop = inbox(t.shell);
+  assert.equal(pop.querySelector('.ws-pop-head'), null, 'no title line of its own: the badge holds the count');
   const heads = pop.querySelectorAll('.ws-inbox-section').map((h) => h.textContent);
-  assert.deepEqual(heads, ['Needs you2oldest first', 'Finished1not counted']);
+  assert.deepEqual(heads, ['Needs you', 'To review'], 'two headers, styled alike, no counts or notes');
+  assert.equal(t.ctx.AgentInboxRules.REVIEW_LABEL, 'To review', 'the second name is one constant');
   const rows = pop.querySelectorAll('.ws-inbox-item');
   assert.deepEqual(
     rows.map((r) => r.dataset.key),
     ['claude:f1', 'claude:q1', 'claude:d1'],
     'the longest wait first; the chat with helpers still running is working, not listed',
   );
-  assert.deepEqual(
-    rows.map((r) => r.querySelector('.ws-inbox-reason').textContent),
-    ['Failed', 'Asks', 'Finished'],
-  );
-  assert.match(rows[0].querySelector('.ws-inbox-sub').textContent, /Usage limit reached\. Resets at 16:00\.$/);
-  assert.match(rows[1].querySelector('.ws-inbox-sub').textContent, /Should I start the review now\?$/);
-  assert.equal(rows[0].querySelector('.ws-inbox-proj').textContent, 'alpha', 'the project is a label on the row');
-  assert.ok(rows[0].querySelector('.ws-inbox-agent'), 'the agent is named on the row');
-  assert.equal(rows[1].querySelector('.ws-inbox-helpers').textContent, '2 subagents running');
+  const what = (r) => r.querySelector('.ws-inbox-what').textContent;
+  assert.equal(what(rows[0]), 'Usage limit reached. Resets at 16:00.', 'line 1 is the error itself');
+  assert.equal(what(rows[1]), 'Should I start the review now?', 'line 1 is the question itself');
+  assert.equal(rows[0].querySelector('.ws-inbox-where').textContent, 'Title f1 \u00b7 alpha', 'line 2: chat title · project');
+  assert.equal(pop.querySelector('.ws-inbox-reason'), null, 'no reason words');
+  assert.equal(pop.querySelector('.ws-inbox-agent'), null, 'no agent or model name');
+  assert.equal(pop.querySelector('.ws-inbox-helpers'), null, 'no "N subagents running"');
+  assert.doesNotMatch(pop.textContent, /subagent|waited|Claude Code|Finished|Your turn|Open chat/);
   const age = (r) => r.querySelector('.ws-inbox-age');
-  assert.equal(age(rows[0]).textContent, 'waited 20m');
+  assert.equal(age(rows[0]).textContent, '20m', 'the wait alone');
   assert.ok(age(rows[0]).classList.contains('long'), 'orange after 15 minutes');
-  assert.equal(age(rows[1]).textContent, 'waited 2m');
+  assert.equal(age(rows[1]).textContent, '2m');
   assert.ok(!age(rows[1]).classList.contains('long'));
-  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 3 subagents');
+  // the 6 px inline dot only on Failed and To review rows; no dot column
+  assert.ok(rows[0].querySelector('.ws-inbox-idot.fail'));
+  assert.equal(rows[1].querySelector('.ws-inbox-idot'), null);
+  assert.ok(rows[2].querySelector('.ws-inbox-idot.done'));
+  assert.equal(pop.querySelector('.ws-inbox-row .d'), null);
+  // the foot: the Working line (no subagent count) and the settings link share one line; no key-hint row
+  const foot = pop.querySelector('.ws-inbox-foot');
+  assert.equal(foot.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat');
+  assert.equal(pop.querySelector('.ws-inbox-keys'), null, 'no visible keyboard hints');
 });
 
-test('the inbox with nothing blocked says so, and what still works', () => {
+test('the inbox with nothing blocked: the Needs you header stays with one quiet "Nothing blocked" line', () => {
   const helping = conv('h1', 'C:/work/gamma', { live: liveChat({ id: 'L4', attention: { state: 'idle', helpers: 1 } }) });
-  const t = setup({ conversations: [helping] });
+  const t = setup({ conversations: [helping], scripts: ['inbox-rules.js', ...SCRIPTS] });
   t.sync([helping], null);
   t.W.toggleInbox(true);
   const pop = inbox(t.shell);
-  assert.match(pop.querySelector('.ws-pop-empty').textContent, /Nothing needs you/);
-  assert.match(pop.querySelector('.ws-pop-empty').textContent, /still working/);
-  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat · 1 subagent');
+  assert.deepEqual(pop.querySelectorAll('.ws-inbox-section').map((h) => h.textContent), ['Needs you']);
+  assert.equal(pop.querySelector('.ws-inbox-none').textContent, 'Nothing blocked');
+  assert.equal(pop.querySelector('.ws-pop-empty'), null, 'no big empty block');
+  assert.doesNotMatch(pop.textContent, /Four score|Nothing needs you/);
+  assert.equal(pop.querySelector('.ws-inbox-working').textContent, 'Working: 1 chat');
   assert.equal(t.shell.byId.chatTabs.querySelector('.ws-inbox-btn .ws-badge'), null);
 });
 
-test('a Failed row: Retry sends your last message again; Continue with another agent opens the hand-over (inbox 1b)', async () => {
+test('a Failed row: Retry / Reply / Mark handled on one row; Retry sends your last message again; no hand-over on the row', async () => {
   const failed = conv('f1', 'C:/work/alpha', {
     live: liveChat({ id: 'L1', attention: { state: 'idle', failedAt: new Date().toISOString(), error: 'Usage limit reached.' } }),
   });
@@ -301,31 +312,110 @@ test('a Failed row: Retry sends your last message again; Continue with another a
   // with the inbox's quick actions (inbox-reply.js), as chat.html loads them
   const t = setup({ conversations: [failed, asks], scripts: ['inbox-reply.js', ...SCRIPTS] });
   const retried = [],
-    handed = [],
     notes = [];
   t.host.retryLast = async (c) => (retried.push(c.id), { queued: false, attachments: true });
-  t.host.handoff = (c) => handed.push(c.id);
+  t.host.handoff = () => assert.fail('the hand-over is not on the row any more');
   t.host.notice = (m) => notes.push(m);
   t.sync([failed, asks], null);
   t.W.toggleInbox(true);
   const row = (key) => inbox(t.shell).querySelectorAll('.ws-inbox-item').find((r) => r.dataset.key === key);
   const labels = (r) => r.querySelectorAll('.ws-qa').map((b) => b.textContent);
-  assert.deepEqual(labels(row('claude:f1')), ['Reply', 'Retry', 'Continue with another agent…', 'Mark handled']);
-  assert.ok(!labels(row('claude:q1')).includes('Retry'), 'only Failed rows retry');
+  assert.deepEqual(labels(row('claude:f1')), ['Retry', 'Reply', 'Mark handled']);
+  assert.equal(row('claude:f1').querySelectorAll('.ws-inbox-acts').length, 1, 'one action row');
+  assert.ok(row('claude:f1').querySelector('.ws-qa-retry').classList.contains('def'), 'Retry is the teal-outlined default');
+  assert.ok(row('claude:f1').querySelector('.ws-inbox-handled').classList.contains('ws-qa-quiet'), 'Mark handled is quiet text');
+  assert.deepEqual(labels(row('claude:q1')), ['Reply', 'Mark handled'], 'a question in the reply: Reply, Mark handled');
   const ev = { stopPropagation() {} };
   row('claude:f1').querySelector('.ws-qa-retry').onclick(ev);
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(retried, ['f1']);
   assert.deepEqual(notes, ['Sent your last message again, without its attachments.'], 'attachments are not resent, and it says so');
-  row('claude:f1').querySelector('.ws-qa-handoff').onclick(ev);
-  assert.deepEqual(handed, ['f1']);
-  assert.equal(inbox(t.shell).hidden, true, 'the inbox closes for the hand-over dialog');
   // a failed Retry says why on the row
   t.host.retryLast = async () => {
-    throw Error('There is no message of yours to send again. Use Open chat.');
+    throw Error('There is no message of yours to send again.');
   };
   t.W.toggleInbox(true);
   row('claude:f1').querySelector('.ws-qa-retry').onclick(ev);
   await new Promise((r) => setTimeout(r, 0));
   assert.match(row('claude:f1').querySelector('.ws-inbox-err').textContent, /no message of yours/);
 });
+
+test('a To review row: Reply and a plain × that marks it read (E too); no Open chat; clicking the card opens the chat', async () => {
+  const done = conv('d1', 'C:/work/beta', { yourTurn: true, yourTurnAt: Date.now() / 1000 - 60, live: liveChat({ id: 'L3', attention: { state: 'idle' } }) });
+  const t = setup({ conversations: [done], scripts: ['inbox-reply.js', ...SCRIPTS] });
+  const marked = [];
+  t.ctx.AgentOrganizeUI = { markHandled: async (c) => marked.push(c.id) };
+  t.sync([done], null);
+  t.W.toggleInbox(true);
+  const row = () => inbox(t.shell).querySelector('.ws-inbox-item');
+  const labels = row()
+    .querySelectorAll('.ws-qa')
+    .map((b) => b.textContent);
+  assert.deepEqual(labels, ['Reply', '\u00d7']);
+  const x = row().querySelector('.ws-qa-read');
+  assert.equal(x.title, 'Mark as read (E)');
+  assert.doesNotMatch(inbox(t.shell).textContent, /Open chat/);
+  x.onclick({ stopPropagation() {} });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(marked, ['d1'], '× marks it read');
+  // E on the focused row does the same
+  t.W.toggleInbox(true);
+  row().querySelector('.ws-inbox-row').focus();
+  inbox(t.shell).dispatch('keydown', { key: 'e', target: row().querySelector('.ws-inbox-row') });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(marked, ['d1', 'd1'], 'E marks it read');
+  // clicking the card (not a control) opens that chat
+  t.W.toggleInbox(true);
+  row().onclick({ target: row() });
+  assert.deepEqual(t.calls.opened.map((c) => c.id), ['d1']);
+});
+
+test('approvals: neutral buttons with a teal-outlined default; risky commands show Review first, then the full command and Allow / Deny', async () => {
+  const opts = [
+    { optionId: 'once', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+    { optionId: 'no', name: 'Deny', kind: 'reject_once' },
+  ];
+  const req = (cmd) => ({ key: 'p1', params: { toolCall: { title: 'Bash', kind: 'execute', rawInput: { command: cmd } }, options: opts } });
+  const needs = (id, live) => conv(id, 'C:/work/alpha', { live: liveChat(Object.assign({ id: live, attention: { state: 'needs_you', needs: 1 } })) });
+  const safe = needs('a1', 'L1'),
+    risky = needs('a2', 'L2'),
+    long = needs('a3', 'L3');
+  const bodies = {
+    L1: req('npm install stripe@18.0.0'),
+    L2: req('git push --force origin fix/vat'),
+    L3: req('npx playwright test tests/checkout.spec.ts --project=chromium --retries=2'),
+  };
+  const t = setup({ conversations: [safe, risky, long], scripts: ['inbox-reply.js', ...SCRIPTS] });
+  t.host.getJson = async (route, q) => ({ permissions: [bodies[q.id]] });
+  t.sync([safe, risky, long], null);
+  t.W.toggleInbox(true);
+  await new Promise((r) => setTimeout(r, 0));
+  const row = (key) => inbox(t.shell).querySelectorAll('.ws-inbox-item').find((r) => r.dataset.key === key);
+  const labels = (r) => r.querySelectorAll('.ws-qa').map((b) => b.textContent);
+  // a plain command: line 1 is the command; Allow / Always allow / Deny, Allow outlined; no green or red classes
+  assert.equal(row('claude:a1').querySelector('.ws-inbox-what').textContent, 'Run npm install stripe@18.0.0');
+  assert.equal(row('claude:a1').querySelector('.ws-inbox-what').querySelector('code').textContent, 'npm install stripe@18.0.0');
+  assert.deepEqual(labels(row('claude:a1')), ['Allow', 'Always allow', 'Deny']);
+  assert.deepEqual(
+    row('claude:a1')
+      .querySelectorAll('.ws-qa')
+      .map((b) => b.classList.contains('def')),
+    [true, false, false],
+  );
+  assert.equal(inbox(t.shell).querySelector('.ws-qa-choice.ok, .ws-qa-choice.no'), null, 'no green or red buttons');
+  // risky: Review / Deny; Review opens the full command and what it does, then Allow / Deny, never Always allow
+  assert.deepEqual(labels(row('claude:a2')), ['Review', 'Deny']);
+  row('claude:a2').querySelector('.ws-qa-review').onclick({ stopPropagation() {} });
+  const detail = row('claude:a2').querySelector('.ws-inbox-detail');
+  assert.match(detail.textContent, /^\$ git push --force origin fix\/vat\nForce push/);
+  assert.deepEqual(labels(row('claude:a2')), ['Allow', 'Deny']);
+  // a long command: "Full command" as quiet text at the end of the one row
+  const full = row('claude:a3').querySelector('.ws-qa-full');
+  assert.equal(full.textContent, 'Full command');
+  assert.ok(full.classList.contains('ws-qa-quiet'));
+  full.onclick({ stopPropagation() {} });
+  assert.match(row('claude:a3').querySelector('.ws-inbox-detail').textContent, /--retries=2/);
+  assert.equal(row('claude:a3').querySelector('.ws-qa-full').textContent, 'Hide command');
+});
+
