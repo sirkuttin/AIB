@@ -14,7 +14,7 @@ import { tokenMatches } from './security.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { WslHelperError } from '../wsl/contract.ts';
-import { distroName, notReady, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
+import { distroName, notReady, peekWslHost, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
@@ -34,9 +34,9 @@ function failed(error: unknown): Reply {
   throw error;
 }
 
-/** The distro's line for the state, '' when it is ready. */
+/** The distro's line for the state, '' when it is ready (never starts the distro). */
 function lineOf(distro: string): string {
-  return notReady(wslHost(distro), distro);
+  return notReady(peekWslHost(distro), distro);
 }
 
 /** GET /api/live/wsl/status: also the page's poll for URLs waiting to be opened. */
@@ -46,7 +46,7 @@ export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Reco
   const distros = [];
   for (const d of found) {
     const key = d.name.toLowerCase();
-    const host = wslHost(key);
+    const host = peekWslHost(key); // the poll never starts a distro
     const state = host ? host.state : 'off'; // 'off': on this PC, but AIB has not used it since it started
     let home: string | null = null;
     let helper: string | null = null;
@@ -55,7 +55,7 @@ export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Reco
       try {
         const env = await host.call('env.get', {}, { timeoutMs: 3000 });
         home = env.home || null;
-        helper = (host as { helperVersion?: string }).helperVersion ?? null; // not in contract.ts yet (requested)
+        helper = host.helperVersion;
       } catch (error) {
         problem = error instanceof Error ? error.message : String(error);
       }
@@ -123,10 +123,9 @@ export function wslRoutes(): Map<string, Handler> {
   guarded('POST', '/api/live/wsl/reconnect', async (_ctx, _args, body) => {
     const distro = typeof body.distro === 'string' ? body.distro : '';
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
-    const host = wslHost(distro) as (ReturnType<typeof wslHost> & { reconnect?: () => Promise<void> }) | null;
+    const host = wslHost(distro);
     if (!host) return [404, { error: `${distroName(distro)} is not available to AIB.`, code: 'wsl_unavailable' }];
-    // contract.ts has no reconnect yet (requested): a host without it reconnects on its own next use
-    if (typeof host.reconnect === 'function') await host.reconnect();
+    await host.reconnect().catch(() => {}); // a failure is the host's state and note, answered below
     return [200, { ok: true, state: host.state, line: lineOf(distro) }];
   });
   guarded('POST', '/api/live/wsl/open-url', (ctx, _args, body) => {
