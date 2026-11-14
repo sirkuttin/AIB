@@ -758,13 +758,18 @@ export class WslHosts {
   /**
    * AIB quits (design section 11 item 1): per distro, the keep-alive is killed unless a WSL agent is live; then the transport ends.
    * `live`: the WSL agents left running, held by their keep-alive. When it is above 0, Studio sends the Windows keeper `hold` (so
-   * the keep-alive is never stopped as orphaned and AIB is not started again in the tray).
+   * the keep-alive is never stopped as orphaned and AIB is not started again in the tray). `settleMs`: a quit that just stopped every
+   * chat waits up to this long for their channels to end, so agents on their way out do not keep the distro held.
    */
-  async quit(): Promise<{ live: number; held: string[] }> {
+  async quit(options: { settleMs?: number } = {}): Promise<{ live: number; held: string[] }> {
     let live = 0;
     const held: string[] = [];
     for (const host of this.all()) {
-      const count = await host.liveCount();
+      let count = await host.liveCount();
+      for (const until = Date.now() + (options.settleMs ?? 0); count && Date.now() < until;) {
+        await new Promise((r) => setTimeout(r, 200));
+        count = await host.liveCount();
+      }
       if (count && host.holding) {
         live += count;
         held.push(host.distro);

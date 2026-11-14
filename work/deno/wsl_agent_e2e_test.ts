@@ -149,10 +149,12 @@ Deno.test({
       assertEquals((await holdsOf(linkB)).length, 1, 'one keep-alive');
       await until(() => !readOr(info).includes('"held": true'), 'the hold ended', 10);
 
-      // A plain quit with nothing left running in the distro: the keep-alive goes, then the Windows keeper idles out.
+      // A plain quit stops the chat; with nothing left in the distro the keep-alive goes at once and the Windows keeper idles out
+      // (3 s here). A keep-alive left running would end only after its own 10 s grace.
       await b.close();
       studios.pop();
-      await until(() => !pidAlive(winPid), 'the Windows keeper left once nothing ran', 30);
+      assert(!readOr(info).includes('"held": true'), 'a plain quit with nothing running does not hold');
+      await until(() => !pidAlive(winPid), 'the Windows keeper left once nothing ran', 9);
       assertEquals(readOr(marker), '', 'still no restart in the tray');
     } finally {
       for (const s of studios) await s.close().catch(() => {});

@@ -1959,7 +1959,7 @@ export class Studio {
     if (this.owners) this.owners.withdrawAll();
     if (this.store) this.store.markWorkingUnknown();
     if (this.#mcpHttp) await this.#mcpHttp.close();
-    await this.#quitWsl();
+    await this.#quitWsl(3000); // every chat was just stopped: give their channels a moment to end
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
   }
 
@@ -1968,11 +1968,11 @@ export class Studio {
    * unless WSL agents or shells still run there, and the transports end. With some left running the Windows keeper is told `hold`,
    * so it keeps the keep-alive (and with it those agents) until the next AIB takes them over. Never throws.
    */
-  async #quitWsl(): Promise<void> {
+  async #quitWsl(settleMs = 0): Promise<void> {
     const hosts = wslHostsInUse();
     if (!hosts) return;
     try {
-      const { live, held } = await hosts.quit();
+      const { live, held } = await hosts.quit({ settleMs });
       if (live > 0 && held.length) {
         const holding = await holdKeeper(this.keeper);
         announce('studio', 'wsl: %s agent(s) or shell(s) keep running in %s%s', live, held.join(', '), holding ? '; the keeper holds them' : '');
