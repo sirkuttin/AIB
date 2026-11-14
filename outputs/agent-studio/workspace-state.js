@@ -236,16 +236,11 @@
   // Git worktree folders and Claude desktop scratch folders are not projects you switch to. Their chats stay in "All chats",
   // in Ctrl+K and in the inbox; nothing is deleted. The text rules below work at once; the server adds the one it can only
   // know from disk (a `.git` FILE pointing into a worktrees folder) through /api/live/folders/kinds.
-  const pathSegments = (p) =>
-    String(p || '')
-      .replace(/\\/g, '/')
-      .split('/')
-      .filter(Boolean);
-  const isScratchPath = (p) => pathSegments(p).some((seg) => /^scratch-/i.test(seg));
-  const isWorktreePath = (p) => {
-    const t = '/' + pathSegments(p).join('/').toLowerCase() + '/';
-    return t.includes('/.claude/worktrees/') || t.includes('/.git/worktrees/');
-  };
+  // The rules themselves are shared with the server's notifications (notify-rules.js).
+  const rules = () =>
+    root.AgentNotifyRules || (typeof module === 'object' && typeof require === 'function' ? require('./notify-rules.js') : null);
+  const isScratchPath = (p) => rules().isScratchPath(p);
+  const isWorktreePath = (p) => rules().isWorktreePath(p);
   const hiddenFromDropdown = (p) => !!(p && (p.isWorktree || p.isScratch));
   const dropdownProjects = (list) => (list || []).filter((p) => !hiddenFromDropdown(p));
   const visibleProjects = (list) => (list || []).filter((p) => !p.hidden);

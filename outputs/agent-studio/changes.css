@@ -11,8 +11,17 @@
 /* The default 280 px column: tighter tabs, so all three labels and the widen button fit without cutting anything (QA m8). */
 @container (max-width: 340px) {
   .pane-tabs .pane-tab {
-    padding: 0 6px;
-    gap: 4px;
+    padding: 0 3px;
+    gap: 3px;
+  }
+  .pane-tabs .pane-badge {
+    min-width: 16px;
+    padding: 0 4px;
+  }
+  .pane-tabs .pane-expand {
+    flex-basis: 24px;
+    width: 24px;
+    min-width: 24px;
   }
 }
 .pane-tab {

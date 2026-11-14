@@ -107,3 +107,15 @@ test('top list is working then failed; other finished rows are collapsed into do
   );
   assert.equal(U.sectionHeading(m), '1 working · 1 failed');
 });
+test('steer-on-send: a working helper marked as gone to the background says so; a finished one does not', () => {
+  const m = U.model(
+    [
+      { key: 'a', live: true, state: 'running', name: 'Alpha', created: NOW - 60, background: true },
+      { key: 'b', live: true, state: 'running', name: 'Beta', created: NOW - 60 },
+      { key: 'c', live: true, state: 'idle', name: 'Gamma', created: NOW - 60, background: true },
+    ],
+    NOW,
+  );
+  const by = Object.fromEntries([...m.top, ...m.done].map((i) => [i.key, i.background]));
+  assert.deepEqual(by, { a: true, b: false, c: false });
+});

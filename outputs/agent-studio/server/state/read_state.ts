@@ -6,6 +6,9 @@
  * newest event time (epoch ms) the user has seen; seenIndex (optional) is how many messages had been seen, which places the
  * unread line again after a restart replays history without original times. Least recently written chats are dropped past
  * MAX_CHATS.
+ *
+ * markedUnreadAt (optional, epoch ms): "Mark as unread" from a phone (owner, phone card menu). The chat shows unread on the PC and the
+ * phone until a read position newer than it arrives (any page or phone looking at the chat again), which clears it.
  */
 import { isDict, isStr, pyLen, ValueError } from '../core/py.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from './base.ts';
@@ -16,6 +19,8 @@ export interface ReadPosition {
   seenIndex?: number;
   /** write order (time.time()), for the LRU cap */
   at: number;
+  /** "Mark as unread" (epoch ms); cleared by a newer seenAt */
+  markedUnreadAt?: number;
 }
 
 const PROVIDER = /^[a-z0-9][a-z0-9_-]*$/;
@@ -70,6 +75,8 @@ export class ReadState extends JsonFileStore {
     if (index !== null) out.seenIndex = index;
     const at = item.at;
     out.at = typeof at === 'number' && !Number.isNaN(at) ? at : 0;
+    const unread = this.int(item.markedUnreadAt, this.MAX_TIME);
+    if (unread !== null && unread > seenAt) out.markedUnreadAt = unread;
     return out as unknown as ReadPosition;
   }
 
@@ -115,11 +122,16 @@ export class ReadState extends JsonFileStore {
     }
   }
 
-  public(): { revision: string; warning: string; chats: Record<string, { seenAt: number; seenIndex?: number }> } {
+  public(): {
+    revision: string;
+    warning: string;
+    chats: Record<string, { seenAt: number; seenIndex?: number; markedUnreadAt?: number }>;
+  } {
     this.sync();
-    const chats: Record<string, { seenAt: number; seenIndex?: number }> = {};
+    const chats: Record<string, { seenAt: number; seenIndex?: number; markedUnreadAt?: number }> = {};
     for (const [key, value] of this.chats) {
       chats[key] = 'seenIndex' in value ? { seenAt: value.seenAt, seenIndex: value.seenIndex } : { seenAt: value.seenAt };
+      if (value.markedUnreadAt) chats[key].markedUnreadAt = value.markedUnreadAt;
     }
     return { revision: `${this.nonce}.${this.counter}`, warning: this.warning, chats };
   }
@@ -129,6 +141,38 @@ export class ReadState extends JsonFileStore {
     this.requireReadable();
     saveJson(this.path, { version: VERSION, savedAt: now(), chats: this.chats }, '.studio-read-');
     this.seen = this.stamp();
+  }
+
+  /**
+   * Mark one chat unread (`unread` true: markedUnreadAt = now, so the PC and the phone show its unread dot until it is looked at
+   * again) or read (its read position moves to now, which also clears a mark). Returns whether anything changed.
+   */
+  markUnread(key: string, unread: boolean, nowMs = Date.now()): Promise<boolean> {
+    if (!this.#cls().key(key)) return Promise.reject(new ValueError('Invalid read position'));
+    return this.locked(() => {
+      this.sync();
+      const before = deepCopy(this.chats);
+      const old = this.chats.get(key);
+      const at = Math.min(Math.trunc(nowMs), this.#cls().MAX_TIME);
+      const next: Record<string, number> = { seenAt: old?.seenAt ?? 0, at: now() };
+      if (old?.seenIndex !== undefined) next.seenIndex = old.seenIndex;
+      if (unread) next.markedUnreadAt = Math.max(at, next.seenAt + 1);
+      else next.seenAt = Math.max(next.seenAt, at);
+      this.chats.set(key, next as unknown as ReadPosition);
+      if (sameJson(this.chats, before)) return false;
+      this.#prune();
+      try {
+        this.#save();
+      } catch (error) {
+        if (!isOSError(error)) throw error;
+        this.chats = before;
+        this.warning = `AIB could not save read positions: ${errorText(error)}`;
+        throw new ValueError(this.warning);
+      }
+      this.warning = '';
+      this.counter++;
+      return true;
+    });
   }
 
   /**
@@ -144,6 +188,7 @@ export class ReadState extends JsonFileStore {
     for (const [key, item] of entriesOf(changes)) {
       const entry = cls.key(key) ? cls.clean(item) : null;
       if (entry === null) return Promise.reject(new ValueError('Invalid read position'));
+      delete entry.markedUnreadAt; // only markUnread sets it
       clean.set(key, entry);
     }
     return this.locked(() => {
@@ -162,6 +207,8 @@ export class ReadState extends JsonFileStore {
           index = old.seenIndex;
         }
         if (index !== undefined) merged.seenIndex = index;
+        // a mark as unread stays until a newer read position passes it
+        if (old?.markedUnreadAt && old.markedUnreadAt >= merged.seenAt) merged.markedUnreadAt = old.markedUnreadAt;
         if (old && old.seenAt === merged.seenAt && old.seenIndex === merged.seenIndex) continue;
         time += 1e-6; // a batch keeps its own order
         merged.at = time;

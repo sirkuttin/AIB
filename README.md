@@ -8,7 +8,7 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
 
 **[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64).
 
-> **Beta: 0.1.0-beta.8.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
+> **Beta: 0.1.0-beta.9.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
 
 **_Codex and Claude Code working side by side in the same project_**
@@ -36,7 +36,7 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
   listed too, marked "In use elsewhere" when another app has them open.
 
 **4. Agents don't overwrite each other.** *A chat divided against itself cannot stand.*
-- In a git project, each chat works in its own worktree and branch, started from HEAD plus your uncommitted work.
+- In a git project, each chat works in its own worktree and branch, started from main (your uncommitted work comes along when your folder is on main).
 - Your saved edits are synced into the chats' worktrees.
 - **Merge** lands only that chat's changes and puts your unsaved edits back; conflicts go to the chat to resolve.
   **Discard** deletes the branch after one confirmation.
@@ -44,7 +44,7 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
 ![A chat working in its own copy: the Changes tab with Discard and Merge](docs/screenshots/06-worktree-changes-merge.png)
 
 **5. Nothing stops when AIB does.**
-- Chats and chat terminals run in a separate program, the keeper. They keep running when AIB restarts, updates or crashes.
+- Chats and chat terminals run in a separate program, the keeper. They keep running when you quit AIB, and when it restarts, updates or crashes.
 - **Install now** works while chats work. After a crash, AIB comes back in the tray.
 - Updates are verified against `SHA256SUMS` and roll back if the new version doesn't start.
 
@@ -100,8 +100,8 @@ Some Beta agents need their own paid plan or API key; Settings says which.
    - **macOS:** `AIB-<version>-macos-arm64.zip` (or `-x64`). Move `AIB.app` to Applications; right-click, **Open** the
      first time.
    - **Linux:** the AppImage (`chmod +x`, run) or the `.deb` (`sudo apt install ./AIB-…deb`).
-2. Install **Node.js 22 or newer**. The agent adapters are Node programs.
-3. Open AIB. The setup page installs or links your agents, runs their sign-in, and asks for a project folder.
+2. Open AIB. The setup page installs or links your agents, runs their sign-in, and asks for a project folder. Agents that
+   need Node.js show **Install Node.js 26 (LTS)** on their card; AIB installs it for you.
 
 ## How it works
 
@@ -132,8 +132,19 @@ Honest Abe would list these first.
 - The ten Beta agents are untested by us; some of their login commands are unconfirmed.
 - Builds are unsigned, so SmartScreen and Gatekeeper warn on first run.
 - Saved conversations from outside AIB are read for Claude Code and OMP only.
-- Quitting AIB ends chat terminals; restarts, updates and crashes don't.
 - The `.deb` and source runs don't update in place.
+
+## Known issues
+
+Bugs we know about and are fixing. Report new ones in [issues](https://github.com/sirkuttin/AIB/issues).
+
+- **Send ▾ while working:** when a turn starts from the phone, the queue or an approval card, **Interrupt** and **Send ▾**
+  can take up to 1.5 seconds to appear. Messages you send in that moment still go the right way.
+- **Background commands after a steer:** Codex isn't told when a command it moved to the background finishes. OMP stops
+  a background command after 2 minutes in total. Use **Stop** on the row to end one sooner.
+- **Phone remote control:** tested on Android only. iPhone, and the Tailscale install on macOS and Linux, are untested.
+- **Artifact link labels:** a link to another chat's artifact shows **· archived** or **· deleted** only after you switch
+  chats.
 
 ## Run from source
 

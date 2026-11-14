@@ -131,6 +131,7 @@
   function docUrl(o) {
     const p = new URLSearchParams();
     p.set('chat', o.chat || '');
+    if (o.project) p.set('project', o.project);
     p.set('name', o.name || '');
     if (o.page) p.set('page', o.page);
     if (o.block) p.set('block', o.block);

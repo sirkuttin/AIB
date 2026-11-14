@@ -148,3 +148,17 @@
     margin: 6px 15px 0;
   }
 }
+/* Messages sent while the agent works that have not gone in yet (held for an approval card, sending, fell back to after the turn). */
+.q-row.q-lane {
+  border-style: solid;
+  border-color: var(--warn-line);
+}
+.q-lane-note {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--queue-paused-text);
+  font-size: 11px;
+}

@@ -27,3 +27,8 @@ dist/
 .env*
 *.pem
 *.key
+
+# The website: built files and its packages are not committed.
+site/dist/
+site/node_modules/
+site/.astro/

@@ -72,6 +72,12 @@ export const SLOW: Record<string, number> = {
   'monitor_golden_test.ts': 16,
   'host_proxy_test.ts': 16,
   'drawing_page_test.ts': 15, // a headless Chrome or Edge on the drawing page
+  'remote_phone_e2e_test.ts': 30,
+  'remote_phone_v2b_e2e_test.ts': 25, // phone UI v2 part 2 in a headless Chrome: card menu, theme, install, new chat, artifacts // phone access: real AIBs with a fake Tailscale CLI, and the phone page in a headless Chrome
+  'remote_tray_e2e_test.ts': 10, // phone access keeps AIB in the tray: a real AIB with --start-in-tray (and, AIB_SLOW_TESTS=1, a built AIB.exe)
+  'desktop_log_e2e_test.ts': 8, // a built AIB.exe started with no arguments writes studio.log in its data folder (AIB_SLOW_TESTS=1)
+  'remote_setup_page_test.ts': 55, // Settings > Remote control's setup steps in a headless Chrome with a fake Tailscale
+  'attention_modes_test.ts': 60, // the attention watcher through the real agent hosts: in-process, the keeper (Go) and a split host
 };
 /** Rough serial seconds of the slower fast-tier files, so they start first too. Unlisted files count as 3 s. */
 const HINT: Record<string, number> = {

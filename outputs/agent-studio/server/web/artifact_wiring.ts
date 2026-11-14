@@ -12,8 +12,13 @@ import { OriginServer } from '../artifacts/origin.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import type { LiveBackend } from '../host/backend.ts';
 import { artifactFolder, type ChatStudio } from '../worktrees/chat_folders.ts';
+import { localRootsSync } from '../worktrees/local_only.ts';
+import { recordForPath } from '../worktrees/worktrees.ts';
+import { isdir } from '../platform/ospath.ts';
 
 type Json = Record<string, unknown>;
+/** How often the Recently deleted purge runs while AIB is open. */
+export const SWEEP_EVERY_MS = 6 * 3600 * 1000;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
 export class Artifacts {
@@ -26,6 +31,7 @@ export class Artifacts {
   #cwd = new Map<string, string | null>();
   #refreshing: Promise<void> | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;
+  #sweepTimer: ReturnType<typeof setInterval> | null = null;
   /** Per chat (lasting id): its last turn end and whether it was busy, as last listed. */
   #turns = new Map<string, { ended: string; busy: boolean }>();
   /**
@@ -45,6 +51,12 @@ export class Artifacts {
       emit: (chat, data) => this.emitToChat(chat, data),
       chatOf: (ident) => this.chatOf(ident),
       rootFor: (ident) => this.projectRootOf(ident),
+      // a worktree chat publishes from its main folder's local-only paths too (owner decision 8a)
+      localRoots: (_ident, cwd) => {
+        const record = recordForPath(stateDir, cwd);
+        const project = record && typeof record.project === 'string' && isdir(record.project) ? record.project : cwd;
+        return { main: project, roots: localRootsSync(project) };
+      },
     });
     this.watcher = new Watcher(this.service, () => this.conversations());
   }
@@ -56,13 +68,28 @@ export class Artifacts {
     this.#timer = setInterval(() => void this.refresh(true).catch(() => {}), 2000);
     Deno.unrefTimer(this.#timer);
     this.watcher.start();
+    // Recently deleted empties itself after 30 days: a sweep now (catching up on time AIB was quit) and every 6 hours
+    this.sweep();
+    this.#sweepTimer = setInterval(() => this.sweep(), SWEEP_EVERY_MS);
+    Deno.unrefTimer(this.#sweepTimer);
     return this.origin.port;
   }
 
   async stop(): Promise<void> {
     this.watcher.stop();
     if (this.#timer !== null) clearInterval(this.#timer);
+    if (this.#sweepTimer !== null) clearInterval(this.#sweepTimer);
     await this.origin?.stop().catch(() => {});
+  }
+
+  /** The 30-day purge of Recently deleted; a failure is logged and retried at the next sweep. */
+  sweep(): string[] {
+    try {
+      return this.service.sweep();
+    } catch (error) {
+      console.error('Artifact purge sweep failed; the next sweep tries again', error);
+      return [];
+    }
   }
 
   /** Re-read the open connections (and, with writes, what each one's agent wrote) from the agent host. One refresh at a time. */

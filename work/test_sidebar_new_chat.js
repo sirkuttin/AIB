@@ -8,6 +8,7 @@ const D = require('./fake_dom.js');
 const SCRIPTS = [
   'status-words.js',
   'ownership-ui.js',
+  'notify-rules.js',
   'sidebar-ui.js',
   'workspace-state.js',
   'split-tree.js',

@@ -30,7 +30,8 @@ type Json = Record<string, unknown>;
 
 /** The doc tools (doc_*) and drawing tools (drawing_*) are Deno only: the Python reference has none. */
 const DOCS = [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES];
-const DENO_ONLY_TOOLS = new Set(DOCS);
+/** archive (archive / unarchive this chat's artifacts) is Deno only too. */
+const DENO_ONLY_TOOLS = new Set(['archive', ...DOCS]);
 
 /**
  * A Deno reply line with the Deno-only tools taken out of a tools/list result, re-dumped the way the server dumps it, so it can be
@@ -259,7 +260,7 @@ Deno.test('initialize negotiation and tools/list', async () => {
   await shim.send({ jsonrpc: '2.0', method: 'notifications/initialized' }); // no reply expected
   assertEquals((await shim.request('ping')).result, {});
   const tools = ((await shim.request('tools/list')).result as Json).tools as Json[];
-  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', ...DOCS]);
+  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOCS]);
   for (const tool of tools) {
     assertEquals((tool.inputSchema as Json).type, 'object');
     assert((tool.description as string).length > 40);
@@ -420,11 +421,11 @@ Deno.test('a non-loopback URL is never called', async () => {
 Deno.test('worktree tools are offered only to a worktree chat', async () => {
   await using lab = new Lab();
   const plain = lab.shim();
-  assertEquals((((await plain.request('tools/list')).result as Json).tools as Json[]).length, 3 + DOCS.length);
+  assertEquals((((await plain.request('tools/list')).result as Json).tools as Json[]).length, 4 + DOCS.length);
   assertEquals(((await plain.request('tools/call', { name: 'merge_into_project', arguments: {} })).error as Json).code, -32602);
   const shim = lab.shim(lab.fake.url, { STUDIO_WORKTREE: '1' });
   const names = (((await shim.request('tools/list')).result as Json).tools as Json[]).map((t) => t.name);
-  assertEquals(names, ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...DOCS]);
+  assertEquals(names, ['publish', 'update', 'list', 'archive', 'merge_into_project', 'resolve_edit_clash', ...DOCS]);
   const merged = await shim.call('merge_into_project', {});
   assertEquals(firstText(merged), 'Merged 2 commits into main. Your copy now continues from the new main.\nTell the user.');
   assertEquals(lab.fake.requests.at(-1)!.body, { conversationId: 'conv1', action: 'merge' });
@@ -452,7 +453,8 @@ Deno.test('worktree tools are offered only to a worktree chat', async () => {
       'Still running, not waited for (AIB cannot tell where they work): tests. If one works in your worktree, check that its changes ' +
       'landed as you meant.',
   );
-  const description = String((((await shim.request('tools/list')).result as Json).tools as Json[])[3].description);
+  const listedTools = ((await shim.request('tools/list')).result as Json).tools as Json[];
+  const description = String(listedTools.find((t) => t.name === 'merge_into_project')!.description);
   assert(description.includes('merge on your own, without asking') && !description.includes('Merge into main?'), 'the agent merges on its own, no ask');
   assert((await shim.call('resolve_edit_clash', { action: 'nope' })).isError);
 });
@@ -848,10 +850,10 @@ Deno.test('HTTP tool: initialize, tools/list without a worktree, relative paths 
   const notified = await post(plain.url, JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
   assertEquals([notified.status, await notified.text()], [202, '']);
   const tools = (await (await post(plain.url, rpc(2, 'tools/list'))).json()).result.tools as Json[];
-  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', ...DOCS]);
+  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOCS]);
   const closed = httpTool(lab, null); // the conversation is not open here: no session folder, no worktree tools
   const listed = (await (await post(closed.url, rpc(3, 'tools/list'))).json()).result.tools as Json[];
-  assertEquals(listed.length, 3 + DOCS.length);
+  assertEquals(listed.length, 4 + DOCS.length);
   const relative = (await (await post(closed.url, call(4, 'publish', { title: 'x', path: 'page.html' }))).json()).result;
   assertEquals(relative.isError, true);
   assert(firstText(relative).includes('absolute'), firstText(relative));
@@ -947,4 +949,38 @@ Deno.test('built-binary Studio: an http entry first, the stdio entry as fallback
     return 'answered';
   }, () => 'closed');
   assertEquals(after, 'closed'); // the listener stops with the Studio
+});
+
+// ---- archive (Deno only): the agent archives / unarchives its own chat's artifacts ------------------------------------------
+
+Deno.test('archive: sends the ids for this chat, says what was done, and list marks archived ones', async () => {
+  await using lab = new Lab();
+  const shim = lab.shim();
+  lab.fake.reply = [200, {
+    artifacts: [{ id: 'a1', title: 'Old', link: 'studio-artifact://a1', archivedAt: 5.0 }],
+    refused: [{ id: 'b2', code: 'wrong_conversation', error: 'That artifact belongs to another chat' }],
+    unpinned: ['a1'],
+  }];
+  const [sentence, data] = payload(await shim.call('archive', { ids: ['a1', 'b2'] }));
+  assertEquals(lab.fake.requests.at(-1)!.path, '/api/live/artifacts/archive');
+  assertEquals(lab.fake.requests.at(-1)!.body, { conversationId: 'conv1', ids: ['a1', 'b2'], archived: true });
+  assertEquals(sentence, 'Archived 1 artifact(s). 1 of them were pinned and are unpinned now. Not archived: 1 (see refused).');
+  assertEquals((data as Json).archived, [{ id: 'a1', title: 'Old', link: 'studio-artifact://a1' }]);
+  // another chat's artifact only: the server answers 403 and nothing was done
+  lab.fake.reply = [403, { error: 'That artifact belongs to another chat', code: 'wrong_conversation', artifacts: [], refused: [] }];
+  const refused = await shim.call('archive', { ids: ['b2'], archived: false });
+  assertEquals(refused.isError, true);
+  assert(firstText(refused).includes('That artifact belongs to another chat'), firstText(refused));
+  assertEquals(lab.fake.requests.at(-1)!.body, { conversationId: 'conv1', ids: ['b2'], archived: false });
+  assertEquals((await shim.call('archive', { ids: [] })).isError, true, 'no ids: refused before any request');
+  // list: archived ones carry archived: true, others no extra key (the reply stays Python's for them)
+  lab.fake.reply = [200, { artifacts: [
+    { id: 'a1', title: 'Old', kind: 'html', version: 1, link: 'studio-artifact://a1', archivedAt: 5.0 },
+    { id: 'c3', title: 'New', kind: 'md', version: 2, link: 'studio-artifact://c3' },
+  ] }];
+  const [, listed] = payload(await shim.call('list', {}));
+  assertEquals(listed, [
+    { id: 'a1', title: 'Old', kind: 'html', version: 1, link: 'studio-artifact://a1', archived: true },
+    { id: 'c3', title: 'New', kind: 'md', version: 2, link: 'studio-artifact://c3' },
+  ]);
 });

@@ -11,6 +11,7 @@ const SCRIPTS = [
   'view-prefs.js',
   'status-words.js',
   'ownership-ui.js',
+  'notify-rules.js',
   'sidebar-ui.js',
   'workspace-state.js',
   'split-tree.js',

@@ -9,8 +9,14 @@
  * Each package also carries the keeper (keeper/, Go, built with CGO off for the target) next to the app's program: AIB/AIB-keeper.exe,
  * AIB.app/Contents/MacOS/AIB-keeper, AIB-keeper at the AppImage's top level, usr/lib/aib/AIB-keeper in the .deb. Needs Go ($GO or go).
  *
+ * The Windows zips also carry AIB/wsl/AIB-keeper-linux and AIB-wsl-helper-linux (Linux, same arch) for WSL projects; they are cached
+ * by source hash in dist/.wsl-cache, so only a change to the keeper or the helper rebuilds them.
+ *
  * Usage (from anywhere): deno run -A tools/build.ts [--targets all|windows-x64,macos-arm64,...] [--out dist/] [--keep] [--no-smoke]
  *                       [--version V]   (a test build that reports version V; default APP_VERSION)
+ *                       [--no-wsl]      (Windows zips without the WSL pair)
+ *                       deno run -A tools/build.ts --wsl-only [--targets windows-x64]   (only the WSL pair, into dist/wsl/linux-<arch>/,
+ *                       for running AIB from source)
  *
  * The version is APP_VERSION (server/core/app.ts). For the target this machine runs, the build starts the app headless (`AIB serve
  * --in-process`, temp state folder, a free port from 8920, no window) and checks that it serves the page.
@@ -243,6 +249,7 @@ export function modeFor(relPath: string, isDir: boolean): number {
   if (isDir) return 0o755;
   if (/(^|\/)Contents\/MacOS\/[^/]+$/.test(relPath)) return 0o755;
   if (/\.(exe|dll|dylib|so)$/i.test(relPath)) return 0o755;
+  if (/(^|\/)wsl\/[^/]+-linux$/.test(relPath)) return 0o755;
   return 0o644;
 }
 
@@ -341,12 +348,115 @@ export async function buildKeeper(t: Target, output: string): Promise<number> {
   return (await Deno.stat(output)).size;
 }
 
+// ---- WSL projects: the Linux keeper and helper that a Windows package installs into a distro (docs/wsl/design.md 3) ----------
+export const WSL_DIR = 'wsl';
+export const WSL_KEEPER = 'AIB-keeper-linux';
+export const WSL_HELPER = 'AIB-wsl-helper-linux';
+export const WSL_HELPER_ENTRY = 'server/wsl/helper_main.ts';
+/** Where `--wsl-only` leaves the pair for a run from source: dist/wsl/linux-<arch>/. */
+export const WSL_DEV_DIR = `${REPO}/dist/${WSL_DIR}`;
+
+/** The Linux target a Windows build installs into WSL: the same architecture (WSL on Windows on Arm runs arm64 Linux). */
+export function wslTarget(t: Target): Target {
+  return TARGETS.find((x) => x.os === 'linux' && x.arch === t.arch)!;
+}
+
+/**
+ * `deno compile` arguments for the helper: the permissions are baked in (files, its own git and shell runs, the environment, the
+ * user id for the passwd lookup; no network, since open.sock is a unix socket and needs only read and write).
+ */
+export function helperCompileArgs(t: Target, output: string): string[] {
+  return [
+    'compile',
+    '--no-check',
+    '--target',
+    t.triple,
+    '--allow-read',
+    '--allow-write',
+    '--allow-run',
+    '--allow-env',
+    '--allow-sys=uid',
+    '--deny-net',
+    '--config',
+    `${APP_DIR}/deno.json`,
+    '--output',
+    output,
+    `${APP_DIR}/${WSL_HELPER_ENTRY}`,
+  ];
+}
+
+/** The helper's own files (its module graph), so a cached build is reused only while none of them changed. */
+async function helperSources(): Promise<string[]> {
+  const out = await new Deno.Command(Deno.execPath(), {
+    args: ['info', '--json', '--config', `${APP_DIR}/deno.json`, `${APP_DIR}/${WSL_HELPER_ENTRY}`],
+    stdout: 'piped',
+    stderr: 'piped',
+  }).output();
+  if (!out.success) throw new Error(`deno info of the WSL helper failed:\n${new TextDecoder().decode(out.stderr).slice(-2000)}`);
+  const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as { modules: { specifier: string; local?: string }[] };
+  return graph.modules.map((m) => m.local ?? m.specifier).sort();
+}
+
+/** One hash over everything both programs are built from, plus the deno and app versions. */
+export async function wslSourceKey(): Promise<string> {
+  const hash = createHash('sha256');
+  hash.update(`${Deno.version.deno}\0${APP_VERSION}\0`);
+  const keeper: string[] = [];
+  const walk = async (dir: string) => {
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isDirectory) await walk(`${dir}/${e.name}`);
+      else if (/\.go$|^go\.(mod|sum)$/.test(e.name) && !e.name.endsWith('_test.go')) keeper.push(`${dir}/${e.name}`);
+    }
+  };
+  await walk(KEEPER_DIR);
+  for (const path of [...keeper.sort(), ...await helperSources()]) {
+    hash.update(path.replaceAll('\\', '/').replace(REPO, '') + '\0');
+    try {
+      hash.update(await Deno.readFile(path));
+    } catch {
+      hash.update('remote\0'); // a remote specifier: its URL above pins it
+    }
+  }
+  return hash.digest('hex').slice(0, 16);
+}
+
+/**
+ * Builds AIB-keeper-linux and AIB-wsl-helper-linux for the Linux target `t` into `outDir`. A build of the same sources is cached in
+ * dist/.wsl-cache/<key>-<target>/ and copied from there (the helper is a ~100 MB deno compile; the normal build stays fast).
+ */
+export async function buildWslBinaries(t: Target, outDir: string): Promise<{ keeper: number; helper: number; cached: boolean }> {
+  const cache = `${REPO}/dist/.wsl-cache/${await wslSourceKey()}-${t.id}`;
+  let cached = true;
+  try {
+    await Deno.stat(`${cache}/.complete`); // written last (a folder rename right after a 100 MB write is refused while it is scanned)
+  } catch {
+    cached = false;
+    await Deno.remove(cache, { recursive: true }).catch(() => {});
+    await Deno.mkdir(cache, { recursive: true });
+    await buildKeeper(t, `${cache}/${WSL_KEEPER}`);
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: helperCompileArgs(t, `${cache}/${WSL_HELPER}`),
+      cwd: APP_DIR,
+      stdout: 'piped',
+      stderr: 'piped',
+    }).output();
+    if (!out.success) {
+      throw new Error(`deno compile of the WSL helper failed for ${t.id}:\n${new TextDecoder().decode(out.stderr).slice(-2000)}`);
+    }
+    await Deno.writeTextFile(`${cache}/.complete`, '');
+  }
+  await Deno.mkdir(outDir, { recursive: true });
+  for (const name of [WSL_KEEPER, WSL_HELPER]) await Deno.copyFile(`${cache}/${name}`, `${outDir}/${name}`);
+  return { keeper: (await Deno.stat(`${outDir}/${WSL_KEEPER}`)).size, helper: (await Deno.stat(`${outDir}/${WSL_HELPER}`)).size, cached };
+}
+
 /**
  * The top-level names of outputs/agent-studio that go into the app: code, page files, vendored page libraries (vendor/: xterm.js and
- * its licenses), the agent allow-list and its lockfiles.
+ * its licenses), the agent allow-list and its lockfiles, the phone page's service worker (pwa/) and the app icons the phone page's
+ * manifest names (icons/, served on the phone port only).
  */
 export function stagedName(name: string, isDir: boolean): boolean {
-  if (isDir) return ['server', 'agent_locks', 'vendor'].includes(name);
+  if (isDir) return ['server', 'agent_locks', 'vendor', 'pwa', 'icons'].includes(name);
   return /\.(js|css|html)$/.test(name) || name === 'agent_versions.json';
 }
 
@@ -729,7 +839,15 @@ export interface Built {
   sha256: string;
 }
 
-async function buildTarget(target: Target, version: string, stageDir: string, included: string[], out: string, work: string) {
+async function buildTarget(
+  target: Target,
+  version: string,
+  stageDir: string,
+  included: string[],
+  out: string,
+  work: string,
+  wsl = true,
+) {
   const dir = `${work}/${target.id}`;
   await Deno.remove(dir, { recursive: true }).catch(() => {});
   await Deno.mkdir(dir, { recursive: true });
@@ -739,6 +857,14 @@ async function buildTarget(target: Target, version: string, stageDir: string, in
     await desktop(stageDir, included, target, `${dir}/${APP_NAME}`);
     embedWindowsIcon(`${dir}/${APP_NAME}/${APP_NAME}.exe`, await Deno.readFile(`${ICONS}/icon.ico`)); // --icon leaves the exe's icon as is
     keeperBytes(await buildKeeper(target, `${dir}/${APP_NAME}/${keeperFile(target)}`)); // AIB/AIB-keeper.exe
+    if (wsl) { // AIB/wsl/AIB-keeper-linux and AIB-wsl-helper-linux, installed into a distro by server/wsl/install.ts
+      const w = await buildWslBinaries(wslTarget(target), `${dir}/${APP_NAME}/${WSL_DIR}`);
+      console.log(
+        `  ${target.id} wsl: keeper ${(w.keeper / 1048576).toFixed(1)} MB, helper ${(w.helper / 1048576).toFixed(1)} MB${
+          w.cached ? ' (cached)' : ''
+        }`,
+      );
+    }
     await zipFolder(`${dir}/${APP_NAME}`, `${out}/${names[0]}`, APP_NAME);
   } else if (target.os === 'macos') {
     await desktop(stageDir, included, target, `${dir}/${APP_NAME}`); // deno desktop adds .app (AIB.app → AIB.app.app)
@@ -838,7 +964,24 @@ export function table(rows: Built[]): string {
   return lines.join('\n');
 }
 
+/** `--wsl-only [--targets windows-x64,...]`: only the WSL pair, for a run from source, into dist/wsl/linux-<arch>/. */
+async function wslOnly(targets: Target[]): Promise<number> {
+  const linux = [...new Set(targets.map((t) => (t.os === 'linux' ? t : wslTarget(t))))];
+  for (const t of linux) {
+    const dir = `${WSL_DEV_DIR}/${t.id}`;
+    const w = await buildWslBinaries(t, dir);
+    console.log(
+      `${dir}: keeper ${(w.keeper / 1048576).toFixed(1)} MB, helper ${(w.helper / 1048576).toFixed(1)} MB${w.cached ? ' (cached)' : ''}`,
+    );
+  }
+  return 0;
+}
+
 export async function main(argv: string[]): Promise<number> {
+  if (argv.includes('--wsl-only')) {
+    const arch = Deno.build.arch === 'aarch64' ? 'arm64' : 'x64';
+    return await wslOnly(parseTargets(argValue(argv, '--targets', `windows-${arch}`)));
+  }
   const targets = parseTargets(argValue(argv, '--targets', 'all'));
   const outArg = argValue(argv, '--out', `${REPO}/dist`);
   const out = outArg.replaceAll('\\', '/').replace(/\/$/, '');
@@ -854,7 +997,7 @@ export async function main(argv: string[]): Promise<number> {
   const names: string[] = [];
   for (const t of targets) {
     const started = Date.now();
-    names.push(...await buildTarget(t, version, stageDir, included, out, work));
+    names.push(...await buildTarget(t, version, stageDir, included, out, work, !argv.includes('--no-wsl')));
     console.log(`  ${t.id} built in ${((Date.now() - started) / 1000).toFixed(0)} s`);
     const exe = argv.includes('--no-smoke') ? null : runnable(t, work);
     if (exe) console.log(`  ${t.id} smoke check: ${await smokeCheck(exe)}`);
@@ -880,6 +1023,13 @@ export async function main(argv: string[]): Promise<number> {
     const entry = readZipListing(await Deno.readFile(r.path)).find((e) => e.name === want);
     if (!entry) throw new Error(`${r.name}: ${want} is missing`);
     if (r.name.includes('-macos-') && (entry.mode & 0o111) === 0) throw new Error(`${r.name}: ${want} is not executable`);
+  }
+  // Every Windows zip carries the WSL pair (unless --no-wsl).
+  for (const r of rows.filter((r) => r.name.includes('-windows-') && !argv.includes('--no-wsl'))) {
+    const listing = readZipListing(await Deno.readFile(r.path));
+    for (const name of [WSL_KEEPER, WSL_HELPER]) {
+      if (!listing.some((e) => e.name === `${APP_NAME}/${WSL_DIR}/${name}`)) throw new Error(`${r.name}: ${WSL_DIR}/${name} is missing`);
+    }
   }
   await Deno.writeTextFile(`${out}/SHA256SUMS`, sha256sums(rows));
   console.log(table(rows));

@@ -219,6 +219,8 @@ Deno.test('"Send to agent" queues the thread as a user message to the linked cha
     assertEquals((doc.live.comments.get(t.thread).sent as Json).chat, 'claude:s1');
     await sendComment(ctx, doc, t.thread, 'claude:s1');
     assertEquals(calls[1][1].clientMessageId, calls[0][1].clientMessageId); // the same thread state: one message
+    // T25 (steer-on-send): AIB's own sends wait for the turn end; the queue op is used whatever the chat does, never `steer`
+    assertEquals(calls.map(([name]) => name), ['queue', 'queue']);
     assertEquals((await sendComment(ctx, doc, t.thread, 'codex:gone'))[0], 409);
     assertEquals((await sendComment(ctx, doc, 't99', 'claude:s1'))[0], 404);
   } finally {

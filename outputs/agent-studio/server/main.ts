@@ -27,18 +27,21 @@ import type { LiveBackend } from './host/backend.ts';
 import { holdKeeper, orphanCommand, Studio } from './host/studio.ts';
 import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
 import { UpdateService } from './desktop/updater.ts';
+import { notifyUpdateReady } from './desktop/notify.ts';
 import { makeContext, WebServer } from './web/server.ts';
 import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
 import { mergesRunning } from './worktrees/merge.ts';
+import { startLocalBackups } from './worktrees/local_backup.ts';
 import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
+import { startAttention } from './attention/watcher.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -275,6 +278,9 @@ export async function main(argv: string[]): Promise<void> {
     // AIB only in the tray (the keeper's restart after a crash, or a quit the keeper could not hold): "Install when chats finish"
     // waits for the next launch, so an update never opens a window after the person quit.
     holdInstall: () => desktopApp?.background ?? false,
+    // One desktop notification per version once an update is downloaded and verified ("Desktop notifications" on), sent here so it
+    // also comes while the window is closed to the tray. A server run has no desktop notifications.
+    onReady: (version) => void notifyUpdateReady(ctx.desktopNotify, ctx.viewPrefs.public().prefs, version),
     // One process with the keeper: Install now leaves the chats in the keeper and the new version takes them over.
     keeper: studio?.keeper
       ? async () => {
@@ -302,7 +308,24 @@ export async function main(argv: string[]): Promise<void> {
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
+  // Phone access (Settings > Remote control), when it is on: the phone port for Tailscale Serve, on its own fixed port (remote/access.ts).
+  // In the background: a busy port is retried for ~20 s and then reported in Devices, never swapped for another.
+  ctx.phone.options.log = (m) => log.announce('studio', 'phone access: %s', m);
+  void ctx.phone.start();
+  // "Needs you" and "finished", decided here (not by the page), so desktop notifications and phone pushes come with the window
+  // closed; the same in-process, with the keeper and with a split agent host (attention/watcher.ts).
+  const attention = startAttention(ctx);
+  ctx.keepAwake.apply(ctx.settings.keepAwake()); // the saved value (off by default); the request dies with this process
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
+  // The daily zip of each project's local-only folders (never committed, so git keeps no copy): the added projects and the
+  // projects AIB keeps chat copies of.
+  const backups = startLocalBackups({
+    stateDir,
+    projects: () => [
+      ...Object.values(ctx.addedProjects.public().added).map((a) => String((a as { path?: unknown }).path ?? '')),
+      ...Object.values(new worktrees.Registry(stateDir).all()).map((r) => String(r.project ?? '')),
+    ].filter(Boolean),
+  });
   if (studio) {
     await studio.adoptKeeper(); // the take-over started above: chats whose agents still run in the keeper go on where they are
     studio.startAutoReconnect();
@@ -340,7 +363,11 @@ export async function main(argv: string[]): Promise<void> {
     }
     for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
+    backups.stop();
     await ctx.artifacts.stop().catch(() => {});
+    await attention.stop().catch(() => {});
+    ctx.keepAwake.release();
+    await ctx.phone.close().catch(() => {});
     await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
     // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
     if (release && studio) await studio.release({ hold }).catch(() => {});
@@ -389,6 +416,9 @@ export async function main(argv: string[]): Promise<void> {
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
+      // Phone access on (Settings > Remote control): closing the window keeps AIB in the tray, so the phone port, the attention watcher,
+      // notifications and pushes keep working; no idle quit in the tray; Quit AIB as always (owner's decision 2026-11-12).
+      phoneOn: () => ctx.phone.on,
       terminalsBusy: () => ctx.terminals.busyCount(), // a command running in a terminal is work: left to the keeper, never cut off
       mergesRunning, // Quit AIB lets a running merge finish before AIB exits
       trayCounts: studio

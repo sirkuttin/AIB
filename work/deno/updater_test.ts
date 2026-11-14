@@ -97,6 +97,10 @@ interface FakeOptions {
   withSums?: boolean;
   /** A release.json asset with this text (listed in SHA256SUMS). */
   info?: string;
+  /** The offered release's notes (its Markdown body). */
+  body?: string;
+  /** More releases in the list (older ones, drafts...), as the API sends them. */
+  more?: unknown[];
 }
 
 /** Serves /repos/acme/aib/releases and the asset downloads; counts every request. */
@@ -131,7 +135,10 @@ class FakeGitHub {
               url: this.base + "/assets/2",
             });
           }
-          return Response.json([release(tag, assets)]);
+          return Response.json([
+            release(tag, assets, o.body !== undefined ? { body: o.body, published_at: "2026-11-12T10:00:00Z" } : {}),
+            ...(o.more ?? []),
+          ]);
         }
         if (path === "/assets/1") {
           return new Response(payload as Uint8Array<ArrayBuffer>, {
@@ -1107,7 +1114,8 @@ Deno.test("state.json: refusals and odd files read the same in Deno and Python",
         base: fake.base,
       }) as PyService;
       const mine = a.e.service();
-      assertEquals(mine.state, theirs.state, text);
+      const { notified: _notified, ...mineState } = mine.state; // Deno only: the "update ready" notification went out for it
+      assertEquals(mineState, theirs.state, text);
       assertEquals(pyView(mine.status()), theirs.status, text);
     }
   }
@@ -1854,3 +1862,137 @@ function isFileSync(p: string): boolean {
     return false;
   }
 }
+
+// ---- the "update ready" desktop notification and the release notes (the Update button, owner 2026-11-12) -----------------
+import { getUpdateNotes, MAX_NOTES_RELEASES, postUpdateNotes, releaseNotes } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import {
+  APP_PREF_KEY,
+  desktopNotificationsOn,
+  type NotifyRequest,
+  notifyUpdateReady,
+  type ShowResult,
+} from '../../outputs/agent-studio/server/desktop/notify.ts';
+
+/** A stand-in for DesktopNotifications: records what would be shown; nothing reaches the screen. */
+function fakeNotifier() {
+  const shown: NotifyRequest[] = [];
+  return { shown, show: (req: NotifyRequest): Promise<ShowResult> => (shown.push(req), Promise.resolve({ shown: true })) };
+}
+
+Deno.test('update ready: one desktop notification per version when Desktop notifications is on, none when it is off', async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  const notifier = fakeNotifier();
+  let prefs: Record<string, string> = {}; // the app's default: on
+  const svc = () => env.service({ onReady: (v) => void notifyUpdateReady(notifier, prefs, v) });
+  const a = svc();
+  assertEquals((await a.check(true)).state, 'ready');
+  await Promise.resolve();
+  assertEquals(notifier.shown.length, 1);
+  assertEquals(notifier.shown[0], {
+    title: 'AIB update ready',
+    body: 'Click Update in the AIB window to install.',
+    target: null,
+    test: false,
+  });
+  // the same version again: a second check, a tick, a restart (state.json remembers it)
+  await a.check(true);
+  await a.tick();
+  const b = svc();
+  await b.check(true);
+  await b.tick();
+  assertEquals(notifier.shown.length, 1, 'one per version');
+  assertEquals(JSON.parse(Deno.readTextFileSync(env.dir + '/updates/state.json')).notified, '0.1.0-beta.2');
+
+  // the setting off: nothing is shown, and the version still counts as announced
+  using off = new Env();
+  off.base(fake.base);
+  const quiet = fakeNotifier();
+  const offPrefs = { [APP_PREF_KEY]: JSON.stringify({ desktop: false, sound: 'needs', notifyFor: 'needs' }) };
+  const c = off.service({ onReady: (v) => void notifyUpdateReady(quiet, offPrefs, v) });
+  assertEquals((await c.check(true)).state, 'ready');
+  await Promise.resolve();
+  assertEquals(quiet.shown, [], 'Desktop notifications off: no notification');
+  prefs = {};
+});
+
+Deno.test("update ready: no notification while nothing is ready, or without the desktop app's notifications", async () => {
+  using env = new Env();
+  env.base(DEAD);
+  const notifier = fakeNotifier();
+  const svc = env.service({ onReady: (v) => void notifyUpdateReady(notifier, {}, v) });
+  await svc.check(true); // offline
+  assertEquals(notifier.shown, []);
+  assertEquals(await notifyUpdateReady(null, {}, '1.0.0'), false, 'a server run has none');
+  assertEquals(desktopNotificationsOn({}), true, "the app's default is on");
+  assertEquals(desktopNotificationsOn({ [APP_PREF_KEY]: '{"desktop":true}' }), true);
+  assertEquals(desktopNotificationsOn({ [APP_PREF_KEY]: '{"desktop":false}' }), false);
+  assertEquals(desktopNotificationsOn({ [APP_PREF_KEY]: 'not json' }), true);
+});
+
+Deno.test('releaseNotes: the version and the releases before it, newest first; no drafts, no newer ones, no empty bodies; bounded', () => {
+  const r = (tag: string, body: string, extra: Record<string, unknown> = {}) =>
+    release(tag, [], { body, published_at: '2026-11-01T00:00:00Z', ...extra });
+  const list = [
+    r('v0.1.0-beta.8', 'eight'),
+    r('v0.1.0-beta.11', 'newer than the one installed'),
+    r('v0.1.0-beta.10', 'ten\r\nline two'),
+    r('v0.1.0-beta.9', 'nine draft', { draft: true }),
+    r('v0.1.0-beta.9', 'nine'),
+    r('v0.1.0-beta.7', '   '),
+    r('not-a-version', 'x'),
+  ];
+  const notes = releaseNotes(list, '0.1.0-beta.10', true);
+  assertEquals(notes.map((n) => n.version), ['0.1.0-beta.10', '0.1.0-beta.9', '0.1.0-beta.8']);
+  assertEquals(notes[0].body, 'ten\nline two');
+  assertEquals(notes[0].date, '2026-11-01T00:00:00Z');
+  assertEquals(releaseNotes(list, '0.1.0-beta.10', false), [], 'no pre-releases for someone on a release');
+  const many = Array.from({ length: 30 }, (_, i) => r(`v1.0.${i}`, 'x'.repeat(40_000)));
+  const capped = releaseNotes(many, '1.0.29', false);
+  assertEquals(capped.length, MAX_NOTES_RELEASES);
+  assertEquals(capped[0].version, '1.0.29');
+  assert(capped[0].body.length < 33_000, 'each body is cut');
+});
+
+Deno.test('release notes are kept with the download and offered once when that version runs', async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start({
+    body: '## New\n\nThe Update button.',
+    more: [
+      release('v0.1.0-beta.1', [], { body: 'First beta.', published_at: '2026-10-01T00:00:00Z' }),
+      release('v0.1.0-beta.3', [], { body: 'Not out yet for this check.', published_at: '2026-12-01T00:00:00Z', draft: true }),
+    ],
+  });
+  env.base(fake.base);
+  const before = env.service();
+  assertEquals((await before.check(true)).state, 'ready');
+  const saved = JSON.parse(Deno.readTextFileSync(env.dir + '/updates/release-notes.json'));
+  assertEquals(saved.version, '0.1.0-beta.2');
+  assertEquals(saved.releases.map((n: { version: string }) => n.version), ['0.1.0-beta.2', '0.1.0-beta.1']);
+  assertEquals(saved.shown, false);
+  assertEquals(getUpdateNotes(before), [200, { notes: null }], 'not while the old version runs');
+
+  // AIB opens again as 0.1.0-beta.2: the start-up cleanup removes the download, the notes stay until shown
+  const after = env.service({ current: '0.1.0-beta.2' });
+  after.cleanup();
+  const [code, body] = getUpdateNotes(after);
+  assertEquals(code, 200);
+  const notes = body.notes as { version: string; releases: { version: string; body: string }[] };
+  assertEquals(notes.version, '0.1.0-beta.2');
+  assertEquals(notes.releases.map((n) => n.version), ['0.1.0-beta.2', '0.1.0-beta.1']);
+  assertEquals(notes.releases[0].body, '## New\n\nThe Update button.');
+  assertEquals(postUpdateNotes(after, { shown: true }), [200, { ok: true, changed: true }]);
+  assertEquals(getUpdateNotes(after), [200, { notes: null }], 'once');
+  assertEquals(getUpdateNotes(env.service({ current: '0.1.0-beta.2' })), [200, { notes: null }], 'also after a restart');
+  assertThrows(() => postUpdateNotes(after, {}), ValueError);
+});
+
+Deno.test('release notes: a release without a body leaves no notes (no tab)', async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start();
+  env.base(fake.base);
+  assertEquals((await env.service().check(true)).state, 'ready');
+  assert(!isFileSync(env.dir + '/updates/release-notes.json'));
+  assertEquals(getUpdateNotes(env.service({ current: '0.1.0-beta.2' })), [200, { notes: null }]);
+});

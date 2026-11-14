@@ -65,6 +65,9 @@
     view = null;
     document.removeEventListener('keydown', onKey, true);
     overlay.remove ? overlay.remove() : overlay.parentNode?.removeChild(overlay);
+    // back where you were typing (focus-return.js), else to the picture you opened
+    const FR = typeof window !== 'undefined' ? window.AgentFocusReturn : null;
+    if (FR && FR.back()) return;
     if (opener && opener.isConnected !== false && typeof opener.focus === 'function') opener.focus();
   }
   function open(items, index, opener) {

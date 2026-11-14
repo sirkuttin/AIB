@@ -14,7 +14,8 @@ import * as fx from './_monitor_fixtures.ts';
 const py = new PyParity();
 const TMP = Deno.makeTempDirSync({ prefix: 'aib-monitor-golden-' });
 const TOLERANCE: Record<string, number> = { created: 0.0015, transcriptIdleSeconds: 2 };
-const IGNORED = new Set(['now']);
+// steered: a message Claude Code saved as sent while it worked (normalize.ts, B15, beta.9) is Deno only; the Python reference never had it
+const IGNORED = new Set(['now', 'steered']);
 
 function b64(bytes: Uint8Array): string {
   let text = '';

@@ -129,9 +129,12 @@ export async function runGit(
   return [data, false, waitKilled ? null : status.code];
 }
 
-/** True for a plain repository-relative path as git prints it (forward slashes, no '..', not absolute). */
+/** True for a plain repository-relative path as git prints it (forward slashes, no '..', not absolute). '\' is a name character on POSIX. */
 export function safeRelpath(path: unknown): path is string {
-  if (typeof path !== 'string' || !path || path.length > 1024 || path.includes('\0') || path.includes('\\') || path.startsWith('/')) {
+  if (
+    typeof path !== 'string' || !path || path.length > 1024 || path.includes('\0') || (osp.WIN && path.includes('\\')) ||
+    path.startsWith('/')
+  ) {
     return false;
   }
   if (osp.WIN && path.split('/')[0].includes(':')) return false; // ':' only means a drive on Windows

@@ -1,0 +1,97 @@
+---
+title: 'Agents: run Claude Code, Codex, OMP and ten more in AIB'
+description: Which coding agents work in AIB, how to set each one up, and what each costs. Each agent signs in with its own login, so your existing plan works as it is.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Shot from '../../components/Shot.astro';
+
+Running several coding agents used to mean several terminals, several windows and several ways to approve a command. In AIB
+every agent runs in the same window, with the same chat view, the same inbox, the same docs and the same phone remote. Each
+agent signs in with its own login, so your Claude, ChatGPT or Copilot plan works as it is. There is no AIB account.
+
+AIB talks to each agent through ACP, the Agent Client Protocol. Find all agents under **Settings → AIB Linking**.
+
+## Tested agents: Claude Code, Codex and OMP
+
+| Agent | How AIB sets it up |
+| --- | --- |
+| Claude Code | Click **Install**: AIB installs the pinned Claude Code ACP adapter. Click **Sign in**: Claude's own sign-in runs. |
+| Codex | The same, with the Codex ACP adapter and Codex's own sign-in. |
+| OMP | AIB uses `omp` from your PATH (on Windows also `%LOCALAPPDATA%\omp\omp.exe`). |
+
+AIB never asks for a password or an API key for these three, and never reads or stores their credentials.
+
+## Beta agents: ten more, off until you turn them on
+
+Turn them on in **Settings → AIB Linking → Beta agents**. Each card has an **Install** button, says what the agent costs, and
+has an API key box where the agent uses one. These agents are not tested by us yet.
+
+| Agent | What it costs |
+| --- | --- |
+| GitHub Copilot CLI | Needs a GitHub Copilot plan (the Free plan works) |
+| OpenCode | Free CLI · needs an API key |
+| Gemini CLI | Free CLI · needs a paid Gemini API key or a Code Assist Standard or Enterprise licence |
+| Qwen Code | Free CLI · model use is billed by your API key's provider |
+| Cursor CLI | Paid plan |
+| Goose | Free CLI · needs an API key |
+| Mistral Vibe | Free CLI · needs an API key |
+| Cline CLI | Free CLI · needs an API key |
+| Kimi Code | Free CLI · needs an API key |
+| Kilo Code CLI | Free CLI · needs an API key |
+
+- **Install from the card.** Most Beta agents install with npm into AIB's own folder. Cursor CLI, Goose and Mistral Vibe run
+  the vendor's installer in the card's terminal; the card shows the command before it runs it. If an install fails, the
+  output stays on screen with "Install failed."
+- **Installing or signing in turns the agent on**, so it shows up in **New chat** right away. Turned-on Beta agents appear
+  under a "Beta" label in the agent pickers. Agents that aren't ready show greyed out there, with the reason and
+  **Set up in Settings ›**.
+- **Qwen Code** has an **API address** box for Alibaba Model Studio keys. Leave it empty to use Qwen's default.
+- OpenCode's npm install is about 500 MB, because it downloads the program for your system.
+
+<Shot name="08b-settings-beta-agents.png" alt="Settings, AIB Linking: the Beta agents with their install status and Install buttons" />
+
+## Prerequisites: the card checks Node.js and uv for you
+
+Each card lists what the agent needs first: Node.js 22 or newer, and for Mistral Vibe on Windows, uv. Each one shows found,
+missing or too old, with an **Install Node.js 26 (LTS)** or **Install uv** button. The agent's **Install** button stays off
+until they're there. Kimi Code needs Node.js 22.19 or newer; its card checks that.
+
+Just installed something yourself? Click **Check again**. On Windows it finds the new program without restarting AIB.
+
+<Shot name="agents-prereq-card.png" alt="A Beta agent card listing Node.js as found and uv as missing, with an Install uv button" />
+
+## API keys: stored encrypted, never logged
+
+Cards that take an API key have a **Get an API key** link to the provider's key page. AIB encrypts the key on disk and passes
+it to that agent only:
+
+- **Windows** seals it to your Windows user account.
+- **macOS** keeps it in your login Keychain.
+- **Linux** keeps it in the system keyring, or in a file only you can read when there is no keyring.
+
+## Sign-in in an AIB terminal
+
+Agents that sign in by typing (Copilot, OpenCode, Cline, Kimi and Kilo) sign in inside an AIB terminal panel, never a separate
+window. A chat whose agent needs sign-in has its own **Sign in** button.
+
+## Any ACP agent: add it by command
+
+Any other agent that speaks ACP works too. In **Settings → AIB Linking → Add an ACP agent**, give its command, arguments and
+environment. It gets the same chat view, inbox, docs, artifacts and phone remote as every other agent.
+
+## Limits by provider
+
+The **Limits** chip under the message box shows how much of your plan you've used, where the provider offers official numbers:
+
+| Agent | Limits chip |
+| --- | --- |
+| Claude Code | Yes |
+| Codex | Yes |
+| Mistral Vibe | Yes (monthly allowance) |
+| Qwen Code | Shows "limit reached" once the cap is hit |
+| Every other agent, OMP included | No chip |
+
+See [Limits chip](/limits/).
+
+<Aside>Gemini's free Google sign-in moved to Google's Antigravity in June 2026, so Gemini CLI needs an API key or a paid plan. Qwen Code's free tier has ended, and AIB starts it with approvals on.</Aside>

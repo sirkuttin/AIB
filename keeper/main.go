@@ -30,6 +30,7 @@ type options struct {
 	segBytes        int64
 	maxChannelBytes int64
 	noSpawn         bool // fuzzing: never start a process
+	unixOnly        bool // WSL: never fall back to TCP (WSL forwards Linux loopback listeners to Windows)
 }
 
 type keeper struct {
@@ -65,6 +66,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp-forward" {
 		os.Exit(mcpForwardMain(os.Args[2:])) // design 3.7: never part of a serving keeper (mcpforward.go)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "bridge" {
+		os.Exit(bridgeMain(os.Args[2:])) // WSL: the stdio end of this distro's keeper (bridge.go)
+	}
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
@@ -82,6 +86,7 @@ func main() {
 	fs.DurationVar(&o.flushEvery, "flush", 200*time.Millisecond, "journal flush and fsync interval")
 	fs.Int64Var(&o.segBytes, "segment-bytes", 16<<20, "journal segment size")
 	fs.Int64Var(&o.maxChannelBytes, "max-channel-bytes", 2<<30, "per-channel journal cap; the oldest segment goes past it")
+	fs.BoolVar(&o.unixOnly, "unix-only", false, "listen on the unix socket only: exit 1 where there is none or its path is too long")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -182,7 +187,10 @@ func (k *keeper) logf(format string, args ...any) { k.log.Printf(format, args...
 
 func (k *keeper) listen() error {
 	sock := filepath.Join(k.dir, "keeper.sock")
-	if useUnixSocket && len(sock) < 100 {
+	if k.opts.unixOnly && (!useUnixSocket || len(sock) >= maxUnixSocketLen) {
+		return fmt.Errorf("--unix-only: no unix socket here, or %s is %d bytes (the limit is %d)", sock, len(sock), maxUnixSocketLen-1)
+	}
+	if useUnixSocket && len(sock) < maxUnixSocketLen {
 		os.Remove(sock) // stale: we hold the lock, so no keeper is using it
 		l, err := net.Listen("unix", sock)
 		if err != nil {

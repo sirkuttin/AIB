@@ -48,6 +48,15 @@ export const PLACEHOLDER_REPO = 'OWNER/aib';
 export const API_BASE = 'https://api.github.com';
 /** Test hook: a local fake release server (http://127.0.0.1:PORT). */
 export const BASE_ENV = 'AIB_UPDATE_API_BASE';
+/**
+ * Test hook, honoured only together with BASE_ENV (a fake release server): the version the updater takes this app to be, so an e2e
+ * test can download "the next version" with a source run and then start again as that version (the release-notes tab).
+ */
+export const CURRENT_ENV = 'AIB_UPDATE_CURRENT';
+/** The release notes kept with a downloaded update (<data>/updates/release-notes.json): how many releases, how long each. */
+export const NOTES_FILE = 'release-notes.json';
+export const MAX_NOTES_RELEASES = 20;
+export const MAX_NOTES_CHARS = 32 * 1024;
 export const CHECK_INTERVAL = 24 * 3600;
 /** An automatic check that failed for a passing reason (no network, GitHub busy) is tried again after this, not a day later. */
 export const RETRY_INTERVAL = 3600;
@@ -114,6 +123,49 @@ export function compare(a: string | Version | null, b: string | Version | null):
     return cmp(x, y);
   }
   return cmp(xa.length, xb.length);
+}
+
+/** One release's notes for the "What's new" tab: its version, publish date (ISO, '' when unknown), page and Markdown body. */
+export interface ReleaseNote {
+  version: string;
+  date: string;
+  page: string;
+  body: string;
+}
+
+/** <data>/updates/release-notes.json: the notes of `version` and the releases before it, newest first; shown once that version runs. */
+export interface ReleaseNotes {
+  version: string;
+  releases: ReleaseNote[];
+  shown: boolean;
+}
+
+/**
+ * The notes the "What's new in AIB <version>" tab shows: `version` and the releases before it (no drafts; pre-releases only when
+ * `withPre`), newest first, at most MAX_NOTES_RELEASES, each body cut at MAX_NOTES_CHARS. Releases with an empty body are left out.
+ */
+export function releaseNotes(releases: unknown, version: string, withPre: boolean): ReleaseNote[] {
+  const out: [Version, ReleaseNote][] = [];
+  const top = parseVersion(version);
+  if (!top) return [];
+  for (const r of Array.isArray(releases) ? releases : []) {
+    if (!isDict(r) || pyTruthy(r.draft)) continue;
+    const tag = pyStr(pyOr(r.tag_name, ''));
+    const parsed = parseVersion(tag);
+    if (!parsed || (parsed[3].length && !withPre) || compare(parsed, top) > 0) continue;
+    const body = typeof r.body === 'string' ? r.body.replace(/\r\n?/g, '\n').trim() : '';
+    if (!body) continue;
+    const date = typeof r.published_at === 'string' ? r.published_at : typeof r.created_at === 'string' ? r.created_at : '';
+    out.push([parsed, {
+      version: tag.replace(/^v+/, ''),
+      date: /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 40) : '',
+      page: typeof r.html_url === 'string' ? r.html_url.slice(0, 500) : '',
+      body: body.length > MAX_NOTES_CHARS ? body.slice(0, MAX_NOTES_CHARS) + '\n\n…' : body,
+    }]);
+  }
+  out.sort((a, b) => compare(b[0], a[0]));
+  const seen = new Set<string>();
+  return out.filter(([, n]) => !seen.has(n.version) && !!seen.add(n.version)).slice(0, MAX_NOTES_RELEASES).map(([, n]) => n);
 }
 
 export function isPrerelease(version: string): boolean {
@@ -540,6 +592,8 @@ export interface UpdateState {
   error: string;
   code: string;
   installWhenIdle: boolean;
+  /** The last version the "update ready" desktop notification went out for (one per version; '' none yet). */
+  notified: string;
 }
 
 export interface UpdateServiceOptions {
@@ -572,6 +626,11 @@ export interface UpdateServiceOptions {
   holdInstall?: () => boolean;
   /** The arguments this app was started with; the helper starts the new version with the same ones. Default: Deno.args. */
   appArgs?: string[];
+  /**
+   * An update became ready (downloaded and verified): called once per version, from the background check, also while the window is
+   * closed to the tray. main.ts sends the desktop notification from here when the person's "Desktop notifications" setting is on.
+   */
+  onReady?: ((version: string) => void | Promise<void>) | null;
   /** Starts the detached helper (update_helper.ts). Replaced in tests. */
   launcher?: (args: HelperArgs) => void | Promise<void>;
   current?: string;
@@ -620,7 +679,7 @@ export interface UpdateStatus {
 export type InstallResult = { state: 'installing'; chats?: number } | { state: 'waiting'; chats: number };
 
 function emptyState(): UpdateState {
-  return { lastCheck: 0, found: null, downloaded: null, error: '', code: '', installWhenIdle: false };
+  return { lastCheck: 0, found: null, downloaded: null, error: '', code: '', installWhenIdle: false, notified: '' };
 }
 
 /** Owns the update state for one Studio web server (updater.UpdateService). */
@@ -643,6 +702,9 @@ export class UpdateService {
   readonly app: AppInfo;
   state: UpdateState;
   readonly holdInstall: () => boolean;
+  onReady: ((version: string) => void | Promise<void>) | null;
+  /** The notes of the release list the last check read, for the version it found (written with the download). */
+  #notes: ReleaseNote[] = [];
   #checking = false;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #stopped = false;
@@ -658,7 +720,9 @@ export class UpdateService {
     // A tray-only start (the keeper's orphan restart) is not how the person runs AIB: the new version opens its window again.
     this.appArgs = [...(options.appArgs ?? Deno.args)].filter((a) => a !== '--start-in-tray');
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
-    this.current = options.current ?? APP_VERSION;
+    this.onReady = options.onReady ?? null;
+    const testCurrent = apiBase()[1] ? (envGet(CURRENT_ENV) ?? '').trim() : '';
+    this.current = options.current ?? (parseVersion(testCurrent) ? testCurrent : APP_VERSION);
     this.env = options.env ?? Deno.env.toObject();
     this.key = options.key ?? platformKey();
     this.now = options.now ?? (() => Date.now() / 1000);
@@ -686,6 +750,7 @@ export class UpdateService {
           error: pyStr(pyOr(data.error, '')),
           code: pyStr(pyOr(data.code, '')),
           installWhenIdle: pyTruthy(data.installWhenIdle),
+          notified: typeof data.notified === 'string' ? data.notified : '',
         };
       }
     } catch { /* missing or unreadable: start empty (Python: OSError, ValueError) */ }
@@ -859,7 +924,10 @@ export class UpdateService {
         const found = await this.#fetchRelease();
         this.state.found = found;
         this.#save();
-        if (found) await this.#download(found);
+        if (found) {
+          await this.#download(found);
+          this.#saveNotes(found.version);
+        }
       } catch (error) {
         if (!(error instanceof UpdateError)) throw error;
         this.state.error = error.message;
@@ -869,7 +937,76 @@ export class UpdateService {
     } finally {
       this.#checking = false;
     }
+    await this.announce();
     return this.status();
+  }
+
+  /** One "update ready" call (onReady) per version: the version is remembered in state.json, so a restart does not repeat it. */
+  async announce(): Promise<boolean> {
+    const st = this.status();
+    const version = st.state === 'ready' ? String(st.available?.version ?? '') : '';
+    if (!version || this.state.notified === version) return false;
+    this.state.notified = version;
+    this.#save();
+    try {
+      await this.onReady?.(version);
+    } catch (error) {
+      log.info('update: the "update ready" notice failed: %s', error);
+    }
+    return true;
+  }
+
+  // -- release notes (the "What's new in AIB <version>" tab after an update)
+  get notesPath(): string {
+    return join(this.root, NOTES_FILE);
+  }
+
+  #saveNotes(version: string): void {
+    const got = this.state.downloaded;
+    if (!got || got.version !== version) return;
+    const releases = this.#notes;
+    try {
+      if (!releases.length) Deno.removeSync(this.notesPath);
+      else writeJsonAtomic(this.notesPath, { version, releases, shown: false }, { prefix: NOTES_FILE + '.', suffix: '.tmp' });
+    } catch { /* no notes: the tab is skipped */ }
+  }
+
+  #readNotes(): ReleaseNotes | null {
+    try {
+      const data = JSON.parse(Deno.readTextFileSync(this.notesPath));
+      if (!isDict(data) || typeof data.version !== 'string' || !Array.isArray(data.releases)) return null;
+      const releases = (data.releases as unknown[]).filter((r): r is Dict =>
+        isDict(r) && typeof r.version === 'string' && typeof r.body === 'string'
+      )
+        .map((r) => ({
+          version: r.version as string,
+          date: pyStr(pyOr(r.date, '')),
+          page: pyStr(pyOr(r.page, '')),
+          body: r.body as string,
+        }));
+      return { version: data.version, releases, shown: data.shown === true };
+    } catch {
+      return null;
+    }
+  }
+
+  /** The notes to show once: this app runs the version they were stored for, they have a body, and they were not shown yet. */
+  pendingNotes(): ReleaseNotes | null {
+    const notes = this.#readNotes();
+    if (!notes || notes.shown || !notes.releases.length || notes.version !== this.current) return null;
+    return notes;
+  }
+
+  /** The page opened the tab: never again for this version. */
+  notesShown(): boolean {
+    const notes = this.#readNotes();
+    if (!notes || notes.shown) return false;
+    try {
+      writeJsonAtomic(this.notesPath, { ...notes, shown: true }, { prefix: NOTES_FILE + '.', suffix: '.tmp' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #fetchRelease(): Promise<Found | null> {
@@ -882,7 +1019,9 @@ export class UpdateService {
       throw new UpdateError('GitHub sent a release list that could not be read.', 'bad_response');
     }
     if (!this.key) throw new UpdateError('This computer is not a platform AIB has installers for.', 'unsupported_platform');
-    return pickRelease(releases, this.current, this.key, this.env, this.exists);
+    const found = pickRelease(releases, this.current, this.key, this.env, this.exists);
+    this.#notes = found ? releaseNotes(releases, found.version, isPrerelease(this.current) || found.prerelease) : [];
+    return found;
   }
 
   async #download(found: Found): Promise<void> {
@@ -1106,13 +1245,18 @@ export class UpdateService {
     try {
       held = this.holdInstall();
     } catch { /* unknown: not held */ }
-    if (held) log.info('update: the install waiting for idle chats is held: AIB was quit and only stays in the tray; it installs at the next launch');
+    if (held) {
+      log.info(
+        'update: the install waiting for idle chats is held: AIB was quit and only stays in the tray; it installs at the next launch',
+      );
+    }
     return held;
   }
 
   /** One pass: an automatic check when one is due, and the install the person asked to wait for once no chat is working. */
   async tick(): Promise<void> {
     await this.check(false);
+    await this.announce(); // a download an earlier run finished but never announced
     if (this.state.installWhenIdle && this.status().state === 'ready' && !this.#held() && !await this.#busy()) {
       await this.#go(await this.keeperHandover() === true); // idle chats in the keeper are left to the new version too
     }
@@ -1125,6 +1269,17 @@ export type RouteReply = [number, Record<string, unknown>];
 /** GET /api/live/update */
 export function getUpdate(service: UpdateService): RouteReply {
   return [200, { ...service.status() }];
+}
+
+/** GET /api/live/update/notes: {notes: {version, releases: [{version, date, page, body}]}} once after an update, else {notes: null}. */
+export function getUpdateNotes(service: UpdateService): RouteReply {
+  return [200, { notes: service.pendingNotes() }];
+}
+
+/** POST /api/live/update/notes {shown: true}: the page opened the "What's new" tab; it is not offered again. */
+export function postUpdateNotes(service: UpdateService, body: Record<string, unknown>): RouteReply {
+  if (body.shown !== true) throw new ValueError('shown must be true');
+  return [200, { ok: true, changed: service.notesShown() }];
 }
 
 /** POST /api/live/update/check: start a manual check in the background (a download can outlast a request); the page polls GET. */

@@ -12,7 +12,8 @@ import { afterConnect, discoverAdded } from './project_routes.ts';
 /** Studio.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to Python's set. */
 export const LIVE_POST_OPS = [
   'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending',
-  'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'dismiss-unknown',
+  'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'steer', 'tool-stop',
+  'dismiss-unknown',
   'worktree-discard', 'worktree-archive',
 ] as const;
 

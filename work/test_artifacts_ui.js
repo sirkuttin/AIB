@@ -137,7 +137,7 @@ const ids = (items) => items.map((i) => (i.sep ? '|' : i.id));
 test('menu on the latest version of a page with a source file', () => {
   assert.deepEqual(
     ids(A.menuItems({ kind: 'html', shown: 2, latest: 2, sourcePath: 'C:\\p\\a.html', canEditor: true })),
-    ['source', 'compare', '|', 'pin', 'editor', 'copy', 'download'],
+    ['source', 'compare', '|', 'pin', 'editor', 'copy', 'download', '|', 'archive', 'delete'],
   );
   assert.equal(A.menuItems({ kind: 'html', shown: 2, latest: 2 })[1].label, 'Compare with v1');
 });
@@ -148,6 +148,9 @@ test('restore appears only on an old version, and compare needs a previous one',
     '|',
     'pin',
     'download',
+    '|',
+    'archive',
+    'delete',
   ]);
   assert.ok(ids(A.menuItems({ kind: 'html', shown: 2, latest: 3 })).includes('restore'));
   assert.equal(
@@ -162,6 +165,9 @@ test('no source path hides editor and copy; no editor hides the editor item; pin
     '|',
     'pin',
     'download',
+    '|',
+    'archive',
+    'delete',
   ]);
   assert.ok(
     !ids(A.menuItems({ kind: 'svg', shown: 1, latest: 1, sourcePath: '/a.svg', canEditor: false })).includes('editor'),
@@ -174,9 +180,9 @@ test('no source path hides editor and copy; no editor hides the editor item; pin
   assert.equal(A.menuItems({ kind: 'svg', shown: 1, latest: 1 }).find((i) => i.id === 'pin').label, 'Pin');
 });
 test('menu per kind: text kinds have no View source, pictures and PDFs no source or compare', () => {
-  assert.deepEqual(ids(A.menuItems({ kind: 'csv', shown: 2, latest: 2 })), ['compare', '|', 'pin', 'download']);
-  assert.deepEqual(ids(A.menuItems({ kind: 'image', shown: 3, latest: 3 })), ['|', 'pin', 'download'].slice(1));
-  assert.deepEqual(ids(A.menuItems({ kind: 'pdf', shown: 2, latest: 2 })), ['pin', 'download']);
+  assert.deepEqual(ids(A.menuItems({ kind: 'csv', shown: 2, latest: 2 })), ['compare', '|', 'pin', 'download', '|', 'archive', 'delete']);
+  assert.deepEqual(ids(A.menuItems({ kind: 'image', shown: 3, latest: 3 })), ['pin', 'download', '|', 'archive', 'delete']);
+  assert.deepEqual(ids(A.menuItems({ kind: 'pdf', shown: 2, latest: 2 })), ['pin', 'download', '|', 'archive', 'delete']);
   assert.equal(A.menuItems({ kind: 'html', shown: 1, latest: 1, mode: 'source' })[0].label, 'View page');
   assert.equal(
     A.menuItems({ kind: 'html', shown: 2, latest: 2, mode: 'compare' }).find((i) => i.id === 'compare').label,
@@ -680,4 +686,340 @@ test('reply file paths: a Markdown link to a file becomes one link with its labe
     A.fileSegments(String.raw`[x](D:\other\a.md)`, P).filter((s) => s.t === 'file'),
     [],
   );
+});
+
+/* ---- archive and Recently deleted (owner decisions 2026-11-12) ---- */
+const DAY = 86400;
+const at = (y, mo, d, h = 0, mi = 0) => new Date(y, mo, d, h, mi).getTime() / 1000; // local time, like the page
+test('archived, deleted and live: one state per artifact; only live ones count', () => {
+  const live = art({ id: 'l' }),
+    arch = art({ id: 'a', archivedAt: 100 }),
+    del = art({ id: 'd', deletedAt: 200, archivedAt: 100 }),
+    hist = { id: 'h', title: 'doc rev', versions: 1 };
+  assert.deepEqual([live, arch, del].map(A.artState), ['live', 'archived', 'deleted']);
+  assert.equal(A.artState(null), 'gone');
+  assert.equal(A.isArchived(del), false, 'a deleted artifact reads deleted, not archived');
+  assert.equal(A.isLive(hist), false, 'a doc history is never a live artifact');
+  assert.deepEqual(A.liveOf([live, arch, del, hist]).map((a) => a.id), ['l']);
+  assert.deepEqual(['live', 'archived', 'deleted', 'gone'].map(A.stateWord), ['', 'archived', 'deleted', 'deleted']);
+});
+test('the picker: live artifacts in Pinned / This chat, then "Archived N" and "Recently deleted N" closed at the foot', () => {
+  const list = [
+    art({ id: 'p', title: 'Pinned', pinned: true }),
+    art({ id: 'l', title: 'Live' }),
+    art({ id: 'a1', title: 'Old draft', archivedAt: 1794175000 - 2 * DAY }),
+    art({ id: 'a2', title: 'Older draft', archivedAt: 1794175000 - 3 * DAY }),
+    art({ id: 'd1', title: 'Duplicate', deletedAt: 1794175000 - 60, purgeAt: 1794175000 - 60 + 30 * DAY }),
+  ];
+  let g = A.pickerGroups(list, 'l', NOW);
+  assert.deepEqual(
+    g.map((x) => [x.key, x.label, x.count === undefined ? x.items.length : x.count, x.items.length]),
+    [
+      ['pinned', 'Pinned', 1, 1],
+      ['chat', 'This chat', 1, 1],
+      ['archived', 'Archived', 2, 0],
+      ['deleted', 'Recently deleted', 1, 0],
+    ],
+  );
+  assert.equal(g[2].divider, true, 'one divider above the foot groups');
+  assert.equal(g[3].divider, false);
+  g = A.pickerGroups(list, 'a1', NOW, [], [], '', { archived: true, deleted: true });
+  const archived = g.find((x) => x.key === 'archived'),
+    deleted = g.find((x) => x.key === 'deleted');
+  assert.deepEqual(archived.items.map((r) => r.id), ['a1', 'a2'], 'newest archived first');
+  assert.equal(archived.items[0].meta, 'Archived 2 d ago');
+  assert.equal(archived.items[0].on, true);
+  assert.equal(archived.items[0].archived, true);
+  assert.equal(deleted.items[0].deleted, true);
+  assert.match(deleted.items[0].line, /^Deleted \d+ \w{3}, \d\d:\d\d\. Removed for good on \d+ \w{3}\.$/);
+  // nothing live: only the foot groups (no divider above them)
+  g = A.pickerGroups([list[2]], '', NOW);
+  assert.deepEqual(g.map((x) => [x.key, x.divider]), [['archived', false]]);
+  // a group you opened stays while empty and says so in the chat menu's words
+  g = A.pickerGroups([list[1]], 'l', NOW, [], [], '', { archived: true, deleted: true });
+  assert.deepEqual(
+    g.filter((x) => x.foot).map((x) => [x.label, x.count, x.empty]),
+    [
+      ['Archived', 0, 'Nothing archived.'],
+      ['Recently deleted', 0, 'Nothing deleted recently.'],
+    ],
+  );
+  assert.deepEqual(A.pickerGroups([list[1]], 'l', NOW).map((x) => x.key), ['chat'], 'closed and empty: not shown');
+});
+test('the picker is a dropdown as soon as something is archived or deleted, even with one live artifact or none', () => {
+  assert.equal(A.pickerIsPlain([art()]), true);
+  assert.equal(A.pickerIsPlain([art(), art({ id: 'z', archivedAt: 5 })]), false);
+  assert.equal(A.pickerIsPlain([art({ id: 'z', deletedAt: 5 })]), false);
+  assert.deepEqual(A.hiddenCounts([art(), art({ id: 'z', archivedAt: 5 }), art({ id: 'y', deletedAt: 6 })]), { archived: 1, deleted: 1 });
+  assert.equal(A.hiddenCounts([art()]), null);
+});
+test('the viewer menu ends with Archive and Delete (red); archived reads Unarchive and offers no Pin; deleted only Restore', () => {
+  const items = A.menuItems({ kind: 'md', shown: 1, latest: 1 });
+  assert.deepEqual(ids(items).slice(-3), ['|', 'archive', 'delete']);
+  assert.equal(items.find((i) => i.id === 'delete').danger, true);
+  assert.equal(items.find((i) => i.id === 'archive').label, 'Archive');
+  const arch = A.menuItems({ kind: 'md', shown: 1, latest: 1, archived: true, pinned: true });
+  assert.deepEqual(ids(arch).slice(-2), ['unarchive', 'delete']);
+  assert.equal(arch.find((i) => i.id === 'unarchive').label, 'Unarchive');
+  assert.ok(!ids(arch).includes('pin'));
+  assert.deepEqual(A.menuItems({ kind: 'md', shown: 1, latest: 1, deleted: true }), [{ id: 'undelete', label: 'Restore' }]);
+  // a copy AIB kept because the chat's folder is gone: Copy path offers it
+  assert.ok(ids(A.menuItems({ kind: 'md', shown: 1, latest: 1, sourceCopy: 'C:\\s\\a.md' })).includes('copycopy'));
+});
+test("a row's ⋯ menu: Open, Pin, then Archive and Delete; archived rows Unarchive; a now-a-doc row says what Delete takes", () => {
+  const rm = (a) => A.rowMenuItems(a).map((i) => (i.sep ? '|' : i.hint ? 'hint' : i.id));
+  assert.deepEqual(rm(art()), ['open', 'pin', '|', 'archive', 'delete']);
+  assert.equal(A.rowMenuItems(art({ pinned: true }))[1].label, 'Unpin');
+  assert.deepEqual(rm(art({ archivedAt: 5 })), ['open', '|', 'unarchive', 'delete']);
+  assert.deepEqual(rm(art({ becameDoc: 'checklist' })), ['open', 'pin', '|', 'archive', 'delete', 'hint']);
+  assert.match(A.rowMenuItems(art({ becameDoc: 'x' })).pop().hint, /^The doc stays\./);
+  assert.deepEqual(A.rowMenuItems(art({ deletedAt: 5 })), [], 'deleted rows have Restore and Delete now instead');
+  assert.equal(A.rowMenuItems(art()).find((i) => i.id === 'delete').danger, true);
+});
+test('dates read "12 Nov, 14:02" and "12 Dec"; another year is named', () => {
+  const now = at(2026, 10, 12, 15, 0) * 1000;
+  assert.equal(A.whenText(at(2026, 10, 12, 14, 2), now), '12 Nov, 14:02');
+  assert.equal(A.dayText(at(2026, 11, 12), now), '12 Dec');
+  assert.equal(A.dayText(at(2027, 0, 3), now), '3 Jan 2027');
+  assert.equal(A.dayText(0, now), '');
+});
+test('a Recently deleted row says when, when it goes for good, and which file went or why it stayed', () => {
+  const now = at(2026, 10, 12, 15, 0) * 1000;
+  const d = (o) => art(Object.assign({ deletedAt: at(2026, 10, 12, 14, 2), purgeAt: at(2026, 11, 12, 14, 2) }, o));
+  assert.equal(A.deletedLine(d({}), now), 'Deleted 12 Nov, 14:02. Removed for good on 12 Dec.');
+  assert.equal(
+    A.deletedLine(d({ deletedFile: { path: 'outputs/report.html' } }), now),
+    'Deleted 12 Nov, 14:02. Removed for good on 12 Dec. outputs/report.html went too; Restore puts it back.',
+  );
+  assert.equal(
+    A.deletedLine(d({ deletedFile: { path: 'README.md', kept: 'another artifact shows it', code: 'shared' } }), now),
+    'Deleted 12 Nov, 14:02. Removed for good on 12 Dec. Kept README.md: another artifact uses it.',
+  );
+  assert.equal(
+    A.fileSentence({ path: 'outputs/x.html', kept: 'it was already gone from disk', code: 'gone' }),
+    'outputs/x.html was already gone from disk.',
+  );
+  assert.equal(A.fileSentence({ path: 'a.md', kept: 'Some new server reason.', code: 'brand_new' }), 'Kept a.md: Some new server reason.');
+  for (const code of ['folder_unknown', 'link', 'not_file', 'outside', 'git', 'docs', 'shared'])
+    assert.match(A.fileSentence({ path: 'x', kept: 'r', code }), /^Kept x: [a-zA-Z]/, code);
+  assert.equal(A.deletedLine(art(), now), '', 'not deleted: no line');
+  assert.equal(A.deletedStage(d({ title: 'Load test summary' }), now), '"Load test summary" is in Recently deleted until 12 Dec.');
+});
+test('the note line names what happened: unpinned and archived, the file that went or stayed, a restored copy', () => {
+  assert.equal(A.archiveNote('Keeper flow', true, false), 'Archived "Keeper flow".');
+  assert.equal(A.archiveNote('Keeper flow', true, true), 'Unpinned and archived "Keeper flow".');
+  assert.equal(A.archiveNote('Keeper flow', false), 'Unarchived "Keeper flow".');
+  assert.equal(
+    A.deleteNote('Report', { path: 'outputs/report.html', action: 'moved' }),
+    'Deleted "Report". outputs/report.html went too. In Recently deleted for 30 days.',
+  );
+  assert.equal(
+    A.deleteNote('Notes', { path: 'notes.md', action: 'kept', code: 'outside', reason: 'x' }),
+    "Deleted \"Notes\". Kept notes.md: it is outside this chat's folder. In Recently deleted for 30 days.",
+  );
+  assert.equal(A.deleteNote('Typed', null), 'Deleted "Typed". In Recently deleted for 30 days.');
+  assert.equal(A.restoreNote('Report', { path: 'outputs/report.html', action: 'restored' }), 'Restored "Report". outputs/report.html is back.');
+  assert.equal(
+    A.restoreNote('Report', { path: 'outputs/report.html', action: 'restored_as', as: 'outputs/report (restored).html' }),
+    'Restored "Report". A new file sits at outputs/report.html, so the old one is back as outputs/report (restored).html.',
+  );
+  assert.equal(
+    A.restoreNote('Report', { path: 'outputs/report.html', action: 'kept', code: 'folder_gone', reason: 'r' }),
+    "Restored \"Report\" without its file: this chat's folder is gone.",
+  );
+  assert.equal(A.restoreNote('Typed', null), 'Restored "Typed".');
+  assert.equal(A.archivedStrip(art({ archivedAt: 1794175000 - 2 * DAY }), NOW), "Archived 2 d ago. Hidden from this chat's list.");
+});
+test('tool cards keep showing archived and deleted artifacts with the state word; a file card prefers the non-deleted artifact', () => {
+  const m = A.cardModel(A.artifactCall(rawRow()), [art({ version: 2, archivedAt: 5 })], NOW);
+  assert.equal(m.state, 'archived');
+  assert.equal(A.cardModel(A.artifactCall(rawRow()), [art({ version: 2 })], NOW).state, '');
+  const src = 'C:\\p\\outputs\\r.html';
+  const list = [art({ id: 'old', sourcePath: src, deletedAt: 9 }), art({ id: 'new', sourcePath: src })];
+  assert.equal(A.outputsCardModel(src, list, NOW).id, 'new');
+  assert.equal(A.outputsCardModel(src, [list[0]], NOW).state, 'deleted');
+});
+
+/* ---- archive and Recently deleted: the panel itself, on the fake DOM ---- */
+function panel(answers) {
+  const { page: fakePage, load } = require('./fake_dom.js');
+  const shell = fakePage({ ids: ['artifactsView'] });
+  const w = shell.window;
+  w.setInterval = () => 1;
+  w.clearInterval = () => {};
+  const calls = [];
+  let UI = null;
+  w.fetch = async (url, init) => {
+    const body = init && init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ url, body });
+    const hit = Object.keys(answers).find((k) => url.startsWith(k));
+    // the list answers what the page already has (as the server would), unless a test says otherwise
+    const reply = hit ? answers[hit] : url.startsWith('/api/live/artifacts?') ? () => ({ artifacts: JSON.parse(JSON.stringify(UI.state().list)) }) : { token: 't' };
+    const data = typeof reply === 'function' ? reply(url, body) : reply;
+    return { ok: !data.status, status: data.status || 200, json: async () => data };
+  };
+  const ctx = load(shell, ['artifacts-ui.js']);
+  UI = ctx.ArtifactsUI;
+  const badge = shell.document.createElement('span'),
+    tab = shell.document.createElement('button');
+  UI.mount({ view: shell.byId.artifactsView, badge, tab, win: ctx, reveal() {} });
+  const view = shell.byId.artifactsView;
+  const flush = async () => {
+    for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  };
+  return { shell, UI, calls, view, badge, flush, w, ctx };
+}
+const sum = (o) => Object.assign({ conversationId: 'c1', title: 'T', kind: 'html', version: 1, versions: 1, updatedAt: 1794175000, url: 'http://a/x/v1/' }, o);
+
+test('panel: a summary without archivedAt clears it (replayed Archive then Unarchive ends live); counts and picks skip hidden ones', async () => {
+  const p = panel({ '/api/live/artifacts?': { artifacts: [] } });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.setVisible(true);
+  p.UI.upsert(sum({ id: 'a', title: 'A', updatedAt: 2 }));
+  p.UI.upsert(sum({ id: 'b', title: 'B', updatedAt: 1 }));
+  assert.equal(p.badge.textContent, '2');
+  p.UI.upsert(sum({ id: 'a', title: 'A', updatedAt: 2, archivedAt: 5 }));
+  assert.equal(p.badge.textContent, '1', 'an archived artifact is not counted');
+  p.UI.upsert(sum({ id: 'a', title: 'A', updatedAt: 2 }));
+  const a = p.UI.state().list.find((x) => x.id === 'a');
+  assert.equal('archivedAt' in a, false, 'Unarchive cleared the flag');
+  assert.equal(p.badge.textContent, '2');
+  // purged ("Delete now" or the 30 days): the row goes
+  p.UI.upsert(sum({ id: 'b', deletedAt: 9, purgeAt: 99 }));
+  assert.equal(p.badge.textContent, '1');
+  p.UI.onEvents([{ type: 'artifact', conversationId: 'c1', artifact: { id: 'b', conversationId: 'c1', purged: true } }], 'c1');
+  assert.equal(p.UI.state().list.map((x) => x.id).join(','), 'a');
+});
+
+test('panel: link labels come from what the page knows, the rest in ONE states request; events relabel them', async () => {
+  const p = panel({
+    '/api/live/artifacts/states': (url) => {
+      const ids = decodeURIComponent(url.split('ids=')[1]).split(',');
+      return { states: Object.fromEntries(ids.map((id) => [id, id === 'cccccccc' ? 'deleted' : 'gone'])) };
+    },
+  });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.upsert(sum({ id: 'aaaaaaaa', title: 'Live' }));
+  p.UI.upsert(sum({ id: 'bbbbbbbb', title: 'Old', archivedAt: 5 }));
+  const box = p.shell.document.createElement('div');
+  for (const id of ['aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd', 'cccccccc']) {
+    const l = p.shell.document.createElement('a');
+    l.className = 'artifact-link';
+    l.dataset.artifactId = id;
+    l.textContent = '⧉ ' + id;
+    box.append(l);
+  }
+  p.shell.byId.messages.append(box);
+  p.UI.linkify(box);
+  p.w.runTimers();
+  await p.flush();
+  const asks = p.calls.filter((c) => c.url.startsWith('/api/live/artifacts/states'));
+  assert.equal(asks.length, 1, 'one request');
+  assert.match(decodeURIComponent(asks[0].url), /ids=cccccccc,dddddddd$/, 'only the unknown ids, once each');
+  const label = (l) => (l.querySelector('.artifact-state') || { textContent: '' }).textContent;
+  assert.deepEqual(box.children.map(label), ['', ' · archived', ' · deleted', ' · deleted', ' · deleted']);
+  // drawn again (a scrolled-back window): no new request
+  p.UI.linkify(box);
+  p.w.runTimers();
+  await p.flush();
+  assert.equal(p.calls.filter((c) => c.url.startsWith('/api/live/artifacts/states')).length, 1);
+  // an event archives the live one: its link says so at once
+  p.UI.upsert(sum({ id: 'aaaaaaaa', title: 'Live', archivedAt: 7 }));
+  assert.equal(label(box.children[0]), ' · archived');
+});
+
+test('panel: Archive from the viewer menu moves to the next live artifact; Undo in the note line brings it back', async () => {
+  const p = panel({
+    '/api/live/artifacts/item': { versions: [{ n: 1 }] },
+    '/api/live/artifacts/archive': (url, body) => ({
+      artifacts: [sum({ id: body.ids[0], title: 'First', updatedAt: 3, pinned: false, ...(body.archived ? { archivedAt: 50 } : {}) })],
+      refused: [],
+      unpinned: body.archived ? [body.ids[0]] : [],
+    }),
+    '/api/live/artifacts/pin': (url, body) => sum({ id: body.id, title: 'First', updatedAt: 3, pinned: body.pinned }),
+  });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.setVisible(true);
+  p.UI.upsert(sum({ id: 'f', title: 'First', updatedAt: 3, pinned: true }));
+  p.UI.upsert(sum({ id: 's', title: 'Second', updatedAt: 2 }));
+  assert.equal(p.UI.state().selId, 'f');
+  const more = p.view.querySelectorAll('button.ar-ico').find((b) => b.textContent === '⋯');
+  more.click();
+  const item = p.view.querySelectorAll('.ar-it').find((b) => b.dataset.id === 'archive');
+  assert.ok(item, 'Archive in the More menu');
+  item.click();
+  await p.flush();
+  const arch = p.calls.find((c) => c.url === '/api/live/artifacts/archive');
+  assert.deepEqual(arch.body, { conversationId: 'c1', ids: ['f'], archived: true });
+  assert.equal(p.UI.state().selId, 's', 'the viewer moved on');
+  const note = p.view.querySelector('.ar-note');
+  assert.equal(note.hidden, false);
+  assert.equal(note.querySelector('.ar-note-t').textContent, 'Unpinned and archived "First".');
+  const undo = note.querySelector('.ar-note-undo');
+  assert.equal(undo.hidden, false);
+  undo.onclick();
+  await p.flush();
+  const last = p.calls.filter((c) => c.url === '/api/live/artifacts/archive').pop();
+  assert.equal(last.body.archived, false);
+  assert.ok(p.calls.some((c) => c.url === '/api/live/artifacts/pin' && c.body.pinned === true), 'pinned again');
+  assert.equal(p.UI.state().selId, 'f', 'back on it');
+});
+
+test('panel: Delete shows which file went and offers Undo; a deleted artifact in the viewer is a message with Restore', async () => {
+  const p = panel({
+    '/api/live/artifacts/item': { versions: [{ n: 1 }] },
+    '/api/live/artifacts/delete': (url, body) => ({
+      artifact: sum({ id: body.id, title: 'Report', deletedAt: 1794175000, purgeAt: 1794175000 + 30 * 86400, deletedFile: { path: 'outputs/report.html' } }),
+      file: { path: 'outputs/report.html', action: 'moved' },
+    }),
+    '/api/live/artifacts/undelete': (url, body) => ({ artifact: sum({ id: body.id, title: 'Report' }), file: { path: 'outputs/report.html', action: 'restored' } }),
+  });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.setVisible(true);
+  p.UI.upsert(sum({ id: 'r', title: 'Report' }));
+  const more = p.view.querySelectorAll('button.ar-ico').find((b) => b.textContent === '⋯');
+  more.click();
+  const del = p.view.querySelectorAll('.ar-it').find((b) => b.dataset.id === 'delete');
+  assert.ok(del.classList.contains('ar-danger'), 'Delete is red');
+  del.click();
+  await p.flush();
+  assert.equal(p.view.querySelector('.ar-note-t').textContent, 'Deleted "Report". outputs/report.html went too. In Recently deleted for 30 days.');
+  assert.equal(p.UI.state().selId, '', 'nothing live left');
+  const empty = p.view.querySelector('.ar-empty');
+  assert.equal(empty.hidden, false);
+  assert.equal(p.view.querySelector('.ar-empty-t').textContent, 'Nothing showing.');
+  assert.equal(p.view.querySelector('.ar-empty-hidden').querySelector('button').textContent, 'Recently deleted 1');
+  // open it (as a link would): the stage says where it is, with Restore
+  await p.UI.open('r');
+  const msg = p.view.querySelector('.ar-deleted');
+  assert.ok(msg, 'the deleted message');
+  assert.match(msg.querySelector('.ar-msg').textContent, /^"Report" is in Recently deleted until \d+ \w{3}\. outputs\/report\.html went too; Restore puts it back\. Restore$/);
+  msg.querySelector('.ar-restore').click();
+  await p.flush();
+  assert.ok(p.calls.some((c) => c.url === '/api/live/artifacts/undelete'));
+  assert.equal(p.view.querySelector('.ar-note-t').textContent, 'Restored "Report". outputs/report.html is back.');
+  assert.equal(p.UI.state().list[0].deletedAt, undefined);
+});
+
+test('panel: the Undo note stays 10 s (5 s without Undo) and is held while the pointer is on it', () => {
+  const p = panel({ '/api/live/artifacts?': { artifacts: [] } });
+  const timers = new Map();
+  let seq = 0;
+  p.ctx.setTimeout = (fn, ms) => (timers.set(++seq, { fn, ms }), seq);
+  p.ctx.clearTimeout = (id) => timers.delete(id);
+  const note = p.view.querySelector('.ar-note');
+  p.UI.note('Plain message');
+  assert.deepEqual([...timers.values()].map((t) => t.ms), [5000]);
+  timers.clear();
+  p.UI.note('Archived "X".', () => {});
+  assert.deepEqual([...timers.values()].map((t) => t.ms), [10000]);
+  note.dispatch('pointerenter');
+  assert.equal(timers.size, 0, 'held: no timer while the pointer is on it');
+  note.dispatch('pointerleave');
+  assert.equal(timers.size, 1, 'the time left runs again');
+  const [t] = [...timers.values()];
+  assert.ok(t.ms >= 1500 && t.ms <= 10000, String(t.ms));
+  t.fn();
+  assert.equal(note.hidden, true);
+  assert.equal(note.querySelector('.ar-note-undo').hidden, true);
 });

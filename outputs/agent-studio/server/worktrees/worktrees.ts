@@ -29,6 +29,8 @@ import { entriesOf, put, readJsonFile, saveJson } from '../state/json.ts';
 import { clip, isDict, pyStrip, ValueError } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
+import { localOnlyOf } from './local_only.ts';
+import { moveStrays } from './local_strays.ts';
 
 const log = getLogger('worktrees');
 
@@ -932,9 +934,19 @@ export async function touchedPaths(cwd: string, base: string): Promise<string[]>
   return touched;
 }
 
-/** Copy .env* files at the same relative paths; skip symlinks, node_modules and .git; never overwrite. */
-export function copyEnvFiles(projectIn: string, target: string): void {
+/**
+ * Copy .env* files at the same relative paths; skip symlinks, node_modules and .git; never overwrite. `localOnly` (project-relative
+ * local-only entries) are skipped too: they are read from the main folder in every chat, and a copy would only be a stray.
+ */
+export function copyEnvFiles(projectIn: string, target: string, localOnly: string[] = []): void {
   const project = pathStr(String(projectIn));
+  const fold = (p: string) => (WIN ? p.toLowerCase() : p);
+  const skip = localOnly.map(fold);
+  const local = (full: string) => {
+    if (!skip.length) return false;
+    const rel = fold(relpath(full, project).replaceAll('\\', '/'));
+    return skip.some((e) => rel === e || rel.startsWith(e + '/'));
+  };
   const walk = (folder: string) => {
     let entries: Deno.DirEntry[];
     try {
@@ -946,11 +958,11 @@ export function copyEnvFiles(projectIn: string, target: string): void {
     for (const entry of entries) {
       const full = join(folder, entry.name);
       if (entry.isDirectory || (entry.isSymlink && isdir(full))) {
-        if (!SKIP_DIRS.has(entry.name) && !islink(full)) dirs.push(full);
+        if (!SKIP_DIRS.has(entry.name) && !islink(full) && !local(full)) dirs.push(full);
         continue;
       }
       if (!entry.name.startsWith('.env')) continue;
-      if (islink(full) || !isfile(full)) continue;
+      if (islink(full) || !isfile(full) || local(full)) continue;
       const relative = relpath(full, project);
       const destination = join(String(target), relative);
       if (lexists(destination)) continue;
@@ -1000,6 +1012,40 @@ export async function hasLfsPointers(path: string): Promise<boolean> {
     }
   }
   return false;
+}
+
+// ---- local-only folders ------------------------------------------------------------------------------------------
+/** The project's local-only entries (project-relative), [] when it has none or they cannot be read. */
+async function localEntries(project: string): Promise<string[]> {
+  try {
+    return (await localOnlyOf(project))?.entries ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Before a worktree is removed: move the files written into its local-only folders into the main folder (a clash gets
+ * "<name> (from chat-…)<ext>"). True when nothing is left to save; false when a file could not be moved (the removal must wait).
+ */
+export async function rescueStrays(record: WorktreeRecord): Promise<boolean> {
+  const path = str(record.path), project = str(record.project);
+  let lo;
+  try {
+    lo = await localOnlyOf(project);
+  } catch (error) {
+    log.exception(error, 'Reading the local-only folders of %s failed', project);
+    return false;
+  }
+  if (!lo || !lo.entries.length) return true;
+  const copy = lo.prefix ? join(path, ...lo.prefix.replace(/\/+$/, '').split('/')) : path;
+  const { moved, failed } = await hooks.moveStrays(copy, lo, basename(normpath(path)), str(record.snapshot));
+  for (const [from, to] of moved) say(`Worktree: moved ${from} from ${path} into ${project} as ${to} (local only)`);
+  if (failed.length) {
+    log.warning('Could not move local-only files out of %s: %s', path, failed.slice(0, 20).join(', '));
+    return false;
+  }
+  return true;
 }
 
 // ---- the manager -------------------------------------------------------------------------------------------------
@@ -1094,22 +1140,20 @@ export class Manager {
         await this.registry.update(plan.key, { snapshot, user: snapshot, userHead: head });
         Deno.mkdirSync(dirname(plan.path), { recursive: true });
         await git(['worktree', 'add', '-b', plan.branch, plan.path, snapshot], plan.project);
-        hooks.copyEnvFiles(plan.project, plan.path);
+        hooks.copyEnvFiles(plan.project, plan.path, await localEntries(plan.project));
         if (await hasLfsPointers(plan.path)) {
           throw new Fallback('the worktree would hold Git LFS pointer files');
         }
       } catch (error) {
         if (error instanceof Died) throw error; // tests: the process "dies" here and leaves the 'creating' record
         if (error instanceof Fallback) {
-          await this.#discard(record);
-          await this.registry.remove(plan.key);
+          await this.#discardOrKeep(plan.key, record);
           say(`Worktree: ${plan.project} works in place: ${error.message}`);
           throw error;
         }
         const text = error instanceof Error ? error.message : String(error);
         log.exception(error, 'Making the worktree failed');
-        await this.#discard(record);
-        await this.registry.remove(plan.key);
+        await this.#discardOrKeep(plan.key, record);
         say(`Worktree: ${plan.project} works in place: could not make the worktree (${text})`);
         throw new Fallback(`could not make the worktree: ${text}`);
       }
@@ -1119,8 +1163,12 @@ export class Manager {
     }
   }
 
-  /** Remove a worktree Studio made, its branch and its git registration. Refuses anything outside Studio's own worktrees folder. */
-  async #discard(record: WorktreeRecord): Promise<void> {
+  /**
+   * Remove a worktree Studio made, its branch and its git registration. Refuses anything outside Studio's own worktrees folder.
+   * Files written into the copy's local-only folders are moved into the main folder first; false when one could not be moved
+   * (nothing was removed then).
+   */
+  async #discard(record: WorktreeRecord): Promise<boolean> {
     const path = str(record.path),
       project = str(record.project),
       branch = str(record.branch);
@@ -1128,9 +1176,10 @@ export class Manager {
     const inside = !!path && normcase(realpath(path)).startsWith(root + SEP);
     if (!inside) {
       log.warning("Not removing %s: it is not under AIB's worktrees folder", path);
-      return;
+      return true;
     }
     const projectOk = !!project && isdir(project);
+    if (projectOk && lexists(path) && !(await rescueStrays(record))) return false;
     if (projectOk) {
       await git(['worktree', 'remove', '--force', path], project, { check: false });
     }
@@ -1142,14 +1191,23 @@ export class Manager {
       }
       await unpinUserBase(project, record);
     }
+    return true;
+  }
+
+  /** #discard, then forget the record; when a stray could not be moved, the record stays as a pending (confirmed) removal instead. */
+  async #discardOrKeep(key: string, record: WorktreeRecord): Promise<boolean> {
+    if (await this.#discard(record)) {
+      await this.registry.remove(key);
+      return true;
+    }
+    await this.registry.update(key, { status: PENDING, confirmed: true });
+    say(`Worktree: ${record.path ?? 'None'} holds local-only files that could not be moved; removal is pending and retried at the next start`);
+    return false;
   }
 
   async discard(key: string): Promise<void> {
     const record = this.registry.get(key);
-    if (record) {
-      await this.#discard(record);
-      await this.registry.remove(key);
-    }
+    if (record) await this.#discardOrKeep(key, record);
   }
 
   async setSession(key: string, provider: string, sessionId: string): Promise<void> {
@@ -1166,8 +1224,7 @@ export class Manager {
       if (ACTIVE.has(key)) continue;
       const pid = record.pid;
       if (pid !== Deno.pid && hooks.pidAlive(pid)) continue; // another running Studio is making it
-      await this.#discard(record);
-      await this.registry.remove(key);
+      if (!(await this.#discardOrKeep(key, record))) continue;
       done.push(key);
       say(`Worktree: removed a half-made worktree of an earlier run: ${record.path ?? 'None'}`);
     }
@@ -1208,6 +1265,8 @@ export class Manager {
       (await git(['rev-parse', '--git-dir'], project, { check: false }))
           .returncode === 0;
     if (lexists(path)) {
+      // local-only files written into the copy go to the main folder first (a plain remove deletes them, ignored or not)
+      if (projectOk && !(await rescueStrays(record))) return false;
       if (projectOk) {
         await git(['worktree', 'remove', ...(force ? ['--force'] : []), path], project, { check: false });
       }
@@ -1326,7 +1385,7 @@ export class Manager {
       }
       throw error;
     }
-    hooks.copyEnvFiles(project, path);
+    hooks.copyEnvFiles(project, path, await localEntries(project));
     say(`Worktree: recreated ${path} from ${branch}`);
     return path;
   }
@@ -1336,7 +1395,7 @@ export class Manager {
 export class Died extends Error {}
 
 /** Swappable pieces (tests). */
-export const hooks = { copyEnvFiles, pidAlive: (pid: unknown) => pidAlive(pid) };
+export const hooks = { copyEnvFiles, moveStrays, pidAlive: (pid: unknown) => pidAlive(pid) };
 
 // ---- sha1 (sync: repo hashes are needed in synchronous lock-path code) -------------------------------------------
 export function sha1Hex(data: Uint8Array): string {

@@ -1,0 +1,52 @@
+---
+title: 'How it works: ACP, the keeper and where your data lives'
+description: How AIB talks to agents over ACP, how the keeper keeps them running, how the app is built, where your data lives on each system, and how a phone request reaches your PC.
+---
+
+For evaluators and contributors: what runs on your PC when AIB runs, and how the parts talk to each other.
+
+## ACP: each agent is a separate process
+
+AIB talks to every agent through ACP, the Agent Client Protocol. Each agent runs as its own process and speaks JSON-RPC over
+stdio. AIB checks every message it gets. That's why every provider gets the same features: questions, approvals, plans,
+subagents and background commands arrive as real things AIB can show and act on, whichever agent sent them.
+
+AIB gives every agent the same tools of its own: docs, artifacts, the merge tool and the local-only folders. AIB refuses
+agents' ACP terminal and file requests unless it was started with `--enable-client-terminal` / `--enable-client-fs`.
+
+## Keeper: a small Go program that holds agents and terminals
+
+The keeper (`keeper/` in the repository) owns the agent processes and the chat terminals and keeps a journal of each chat. When
+AIB restarts, updates or crashes, the next AIB replays the journal and continues each chat without sending anything twice. See
+[Keeper](/keeper/).
+
+## App: a Deno server with a native window and tray
+
+AIB is a TypeScript web server on Deno with a plain-JavaScript page, shown in a native window with a tray icon. The server
+listens on `127.0.0.1` only. Artifacts are served on the next port, a separate origin, so a page an agent wrote can't reach
+AIB's controls.
+
+## Data folder per system
+
+Chats, settings, artifacts, worktrees, logs and backups live in one folder:
+
+| System | Data folder |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\AgentStudio` |
+| macOS | `~/Library/Application Support/AgentStudio` |
+| Linux | `~/.local/state/agent-studio` |
+
+Worktrees are never made inside your repository. Docs (`aib-docs/`) and the `private/` folder are in your project, where you
+and your agents can see them.
+
+## Phone path: from your phone to AIB
+
+1. Your phone reaches your PC over your Tailscale network, with HTTPS.
+2. **Tailscale Serve** on your PC passes `https://<your PC's name>` to AIB's phone port (from 8779 up, on `127.0.0.1`), and
+   port 8443 to AIB's phone artifact port. AIB sets this up with two `tailscale serve` commands; it never turns on Funnel.
+3. AIB's **phone gate** checks every request: it must come through Tailscale Serve for this PC, from the AIB phone page, with
+   the Tailscale login the phone was paired with. Page credentials and WebSockets are refused there.
+4. The phone's **device token**, given once when you approve the phone on the PC, is the real check. Each request is checked
+   against that phone's switches.
+
+The PC page and its own checks stay on `127.0.0.1`, unchanged. See [Privacy and security](/privacy/).

@@ -53,6 +53,7 @@ add(
 // buttons
 add('button', '--on-accent', '--accent', TEXT, 'primary button');
 add('button', '--on-accent-disabled', '--primary-disabled-bg', UI, 'disabled primary (Send with nothing to send)');
+add('button', '--update-btn-text', ['--update-btn-bg', '--update-btn-hover-bg'], TEXT, 'the Update button at the top right, and its hover');
 add('button', '--accent', [...SURFACES, '--bg-field', '--bg-composer'], UI, 'focus ring, accent border');
 add('button', '--text-bright', '--bg-composer', UI, 'ring round a focused primary button');
 add('button', '--text', '--button-bg', TEXT, 'plain button');

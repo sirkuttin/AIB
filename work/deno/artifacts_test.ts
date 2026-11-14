@@ -1243,6 +1243,25 @@ Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) surv
   assertEquals([after.becameDoc, after.becameDocRev, store.summary(after).becameDoc], ['timeline', 3, 'timeline'], 'Edit made it a doc: kept too');
 });
 
+Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive Python rewriting the manifest', async () => {
+  using tmp = temp();
+  const root = join(tmp.dir, 'artifacts');
+  const clock = new Clock(1000.0);
+  const store = new ArtifactStore(root, clock.now);
+  store.origin = 'http://127.0.0.1:1';
+  const m = store.create('c1', 'Report', 'html', 'r.html', enc('<p>one</p>'), { project: 'P', sourcePath: 'P/r.html' });
+  store.setArchived(m.id, true);
+  const deletedSource = { path: 'P/r.html', rel: 'r.html', bin: 'deleted-source/r.html', hash: 'ab', size: 10, mtime: 1700000000000 };
+  store.save({ ...store.get(m.id), deletedAt: 1003.0, deletedSource });
+  assert(/"archivedAt": 1000\.0/.test(Deno.readTextFileSync(join(root, m.id, 'manifest.json'))), 'times are Python floats');
+  await py.call('artifacts_shim', 'store_run', [root, [{ call: 'set_pinned', args: [m.id, true] }], 1006.0]);
+  const after = store.get(m.id);
+  assertEquals(after.pinned, true, 'Python did write it');
+  assertEquals([after.archivedAt, after.deletedAt, after.deletedSource], [1000.0, 1003.0, deletedSource]);
+  const s = store.summary(after);
+  assertEquals([s.archivedAt, s.deletedAt, s.deletedFile], [1000.0, 1003.0, { path: 'r.html' }]);
+});
+
 Deno.test('parity teardown', async () => {
   await py.close();
 });
@@ -1276,4 +1295,67 @@ Deno.test('wiring: "Open in Artifacts" registers a file for a saved chat that is
   const [refused, why] = preview('claude:nobody');
   assertEquals(refused, 404);
   assertEquals(why.error, 'This chat has no known project folder.');
+});
+
+// ---- local-only folders (owner decision 8a): publish from the main folder's local-only paths in any chat ----------------------------
+function localFixture() {
+  const tmp = temp();
+  const main = join(tmp.dir, 'main'), copy = join(tmp.dir, 'chat-1');
+  Deno.mkdirSync(join(main, 'private', 'designs'), { recursive: true });
+  Deno.mkdirSync(join(copy, 'outputs'), { recursive: true });
+  Deno.writeTextFileSync(join(main, 'private', 'designs', 'x.html'), '<title>X</title>x');
+  Deno.writeTextFileSync(join(main, 'shared.html'), '<p>tracked, main only</p>');
+  Deno.writeTextFileSync(join(tmp.dir, 'outside.html'), '<p>outside</p>');
+  const store = storeIn(tmp.dir);
+  const service = new Service(store, () => 't', () => copy, {
+    localRoots: (_id, cwd) => ({ main, roots: cwd === copy ? [join(main, 'private')] : [] }),
+  });
+  const publish = (path: string) =>
+    service.handlePost(headers(), '/api/live/artifacts/publish', { conversationId: 'c1', path }) as [number, Record<string, unknown>];
+  return { tmp, main, copy, publish };
+}
+
+Deno.test('local only (8a): a chat copy publishes the main folder private/ by full and by relative path; the rest stays refused', () => {
+  const { tmp, main, copy, publish } = localFixture();
+  using _ = tmp;
+  const [s1, full] = publish(join(main, 'private', 'designs', 'x.html'));
+  assertEquals(s1, 200, JSON.stringify(full));
+  const [s2, rel] = publish('private/designs/x.html'); // the copy has no private/: the main folder's file
+  assertEquals([s2, rel.id], [200, full.id]);
+  assertEquals(publish(join(main, 'shared.html'))[1].code, 'outside_project', 'only the local-only paths of main');
+  assertEquals(publish('..\\outside.html')[1].code, 'outside_project');
+  assertEquals(publish(join(main, 'private', '..', 'shared.html'))[1].code, 'outside_project');
+  // a copy's own file of the same name wins over main's
+  Deno.mkdirSync(join(copy, 'private', 'designs'), { recursive: true });
+  Deno.writeTextFileSync(join(copy, 'private', 'designs', 'x.html'), '<title>own</title>');
+  const [s3, own] = publish('private/designs/x.html');
+  assertEquals(s3, 200);
+  assert(own.id !== full.id, 'the copy file is its own artifact');
+});
+
+Deno.test({
+  name: 'local only (D1 regression): a link inside the copy or inside private/ that points outside is still refused',
+  ignore: Deno.build.os !== 'windows',
+  fn: () => {
+    const { tmp, main, copy, publish } = localFixture();
+    using _ = tmp;
+    const away = join(tmp.dir, 'away');
+    Deno.mkdirSync(away);
+    Deno.writeTextFileSync(join(away, 'y.html'), '<p>y</p>');
+    const links = [join(copy, 'outputs', 'link'), join(main, 'private', 'link')];
+    try {
+      for (const link of links) Deno.symlinkSync(away, link, { type: 'junction' });
+      assertEquals(publish(join(copy, 'outputs', 'link', 'y.html'))[1].code, 'outside_project');
+      assertEquals(publish('outputs/link/y.html')[1].code, 'outside_project');
+      assertEquals(publish(join(main, 'private', 'link', 'y.html'))[1].code, 'outside_project');
+      // relative: the copy has no such file and main's resolves outside private/, so nothing is found
+      assertEquals(publish('private/link/y.html')[0], 404);
+    } finally {
+      for (const link of links) {
+        try {
+          Deno.removeSync(link);
+        } catch { /* not made */ }
+      }
+    }
+  },
 });

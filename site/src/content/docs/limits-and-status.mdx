@@ -1,0 +1,49 @@
+---
+title: "Known limits: what AIB doesn't do yet"
+description: AIB is in beta. What's tested and what isn't, the known issues being fixed, and what's coming next.
+---
+
+Honest Abe would list these first.
+
+## Beta
+
+- Builds are not code-signed, so SmartScreen and Gatekeeper warn on first run.
+- Windows is tested daily. macOS and Linux are lightly tested: built and started, not used day to day. The chat terminal has
+  not run on a real Mac or Linux machine.
+- The `.deb` package and source runs don't update in place.
+
+## Beta agents
+
+The ten Beta agents are not tested by us; they were tested against a stand-in agent. Some of their login commands are
+unconfirmed, and the vendor installers for Cursor CLI, Goose and Mistral Vibe haven't run on a real machine yet. If one fails,
+the card keeps the output, and you can run the command yourself.
+
+## Phone
+
+- Android tested; iPhone not tested yet, reports welcome.
+- Tailscale is the only way to connect for now. Installing Tailscale from AIB is untested on macOS and Linux.
+
+## Saved chats from outside AIB
+
+AIB reads saved conversations from outside AIB for Claude Code and OMP only.
+
+## Known issues
+
+Bugs we know about and are fixing:
+
+- **Chat scroll:** the chat can jump to the top while an agent works. Scroll back down or click **↓ Latest**.
+- **Send ▾ while working:** when a turn starts from the phone, the queue or an approval card, **Interrupt** and **Send ▾** can
+  take up to 1.5 seconds to appear. Messages you send in that moment still go the right way.
+- **Background commands after a steer:** Codex isn't told when a command it moved to the background finishes. OMP stops a
+  background command after 2 minutes in total. Use **Stop** on the row to end one sooner.
+- **Artifact link labels:** a link to another chat's artifact shows **· archived** or **· deleted** only after you switch chats.
+
+Report new ones in [issues](https://github.com/sirkuttin/AIB/issues).
+
+## Coming next
+
+- **The main agent:** one agent that starts other providers' agents, hands work between them and merges their results. Today
+  you hand work over yourself: shared docs, artifacts and the `private/` folder carry it, and **Continue with another agent…**
+  starts a new chat with another agent and a summary.
+- **A no-account relay for the phone**, for people who don't want Tailscale. It shows greyed out as "coming later" in
+  **Settings → Remote control**.

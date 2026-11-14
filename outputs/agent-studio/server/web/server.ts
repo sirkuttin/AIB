@@ -4,6 +4,7 @@
  * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here; stage B's private Python web server is gone.
  * The HTTP API is identical to the Python server's; work/contract/ checks it against both servers.
  */
+import { type Backend, KeepAwake, realBackend } from '../platform/keep_awake.ts';
 import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts';
 import type { LiveBackend } from '../host/backend.ts';
 import { HostUnavailable } from '../host/host_client.ts';
@@ -38,6 +39,10 @@ import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
 import { ArtifactHistory } from '../docs/history.ts';
+import { type AccessOptions, PhoneAccess } from '../remote/access.ts';
+import { Presence } from '../attention/presence.ts';
+import type { DeviceStore } from '../remote/devices.ts';
+import { devicesRoutes } from './devices_routes.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -194,6 +199,15 @@ export interface WebContext {
   /** The desktop app's own notifications (desktop/notify.ts), set by main.ts in the app; null in a server run (a browser uses the
    * web Notification API instead). */
   desktopNotify: DesktopNotifications | null;
+  /** Phone access (remote/access.ts): the switch, Tailscale checks, the phone port, pairing. Settings > Remote control. */
+  phone: PhoneAccess;
+  /** The paired phones (<state>/devices.json; remote/devices.ts), the same store phone.devices holds. */
+  devices: DeviceStore;
+  /** Whether the owner is at the PC (the page reports it: POST /api/live/presence): no desktop notification while an AIB window
+   * has focus, no phone push while the owner is working in it (attention/presence.ts). */
+  presence: Presence;
+  /** "Keep this PC awake while AIB runs" (platform/keep_awake.ts): applied from Settings and at start, released on close. */
+  keepAwake: KeepAwake;
 }
 
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
@@ -204,14 +218,14 @@ export class WebServer {
   readonly native = new Map<string, Handler>();
 
   constructor(readonly ctx: WebContext) {
-    this.native.set('GET /api/live/list', async (c) => {
+    this.native.set('GET /api/live/list', async (c, url) => {
       const listing = await c.host.liveList();
       // Recovered chats (open before a restart) of folders that are not added projects are not listed either.
       const recovered = Array.isArray(listing.recovered)
-        ? (listing.recovered as unknown[]).filter((r) =>
-          !r || typeof r !== 'object' || c.addedProjects.shows(folderOfSession(r))
-        )
+        ? (listing.recovered as unknown[]).filter((r) => !r || typeof r !== 'object' || c.addedProjects.shows(folderOfSession(r)))
         : listing.recovered;
+      const names = c.viewPrefs.chatNamesRevision();
+      const knownNames = url.searchParams.get('names');
       return this.json(200, {
         ...listing,
         ...(recovered === undefined ? {} : { recovered }),
@@ -219,6 +233,9 @@ export class WebServer {
         projectsRevision: projectsRevision(c),
         readStateRevision: c.readState.revision(),
         settingsRevision: c.settings.revision(),
+        // chat names (Rename) can change from a phone: the page sends the revision it has (?names=) and gets the names when it differs
+        chatNamesRevision: names,
+        ...(knownNames && knownNames !== names ? { chatNames: c.viewPrefs.chatNames() } : {}),
         webInstanceId: c.webInstanceId,
       });
     });
@@ -244,12 +261,34 @@ export class WebServer {
       const view = c.viewPrefs.public();
       return this.json(200, { revision: view.revision, warning: view.warning, refused: result.refused, ok: true });
     });
-    // The desktop app shows the page's notifications itself. {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
+    // Rename on the PC: one chat's name, under the view preferences' lock (ViewPrefs.setChatName), never the whole names value,
+    // so a rename on a phone the page has not read yet is kept. {key, name} -> {ok, chatNamesRevision, chatNames}.
+    this.native.set('POST /api/live/chat-name', async (c, _url, body) => {
+      const key = body && typeof body.key === 'string' ? body.key : '';
+      const name = body && typeof body.name === 'string' ? body.name : null;
+      if (!/^[a-z0-9][a-z0-9_-]*:.{1,500}$/.test(key) || name === null || name.length > 200) {
+        return this.json(400, { error: 'Invalid request' });
+      }
+      try {
+        await c.viewPrefs.setChatName(key, name);
+      } catch (error) {
+        if (error instanceof ViewPrefsBusy) return this.json(503, { error: error.message, code: 'busy' });
+        throw error;
+      }
+      return this.json(200, { ok: true, chatNamesRevision: c.viewPrefs.chatNamesRevision(), chatNames: c.viewPrefs.chatNames() });
+    });
+    // The desktop app shows a notification itself: the Settings test (the AttentionWatcher shows the others from the server, never
+    // the page). {title, body, target?, test?} -> {ok, shown, reason?, mechanism}.
     this.native.set('POST /api/live/desktop/notify', async (c, _url, body) => {
       const n = c.desktopNotify;
       if (!n) return this.json(409, { error: 'Only the AIB desktop app shows notifications itself' });
       const result = await n.show(cleanNotifyRequest(body));
       return this.json(200, { ok: true, shown: result.shown, reason: result.reason ?? '', mechanism: n.mechanism });
+    });
+    // The page: its window has focus or not, and how long since the last input in it (attention/presence.ts).
+    this.native.set('POST /api/live/presence', (c, _url, body) => {
+      c.presence.report(body?.focused, body?.idleMs);
+      return this.json(200, { ok: true });
     });
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
@@ -257,7 +296,7 @@ export class WebServer {
       return this.json(200, { ...projectsView(c), ok: true });
     });
     this.native.set('POST /api/live/project-add', async (c, _url, body) => {
-      await projectAdd(c.addedProjects, body, c.removedProjects);
+      await projectAdd(c.addedProjects, body, c.removedProjects, pathStr(c.stateDir));
       return this.json(200, { ...projectsView(c), ok: true });
     });
     this.native.set('POST /api/live/project-remove', async (c, _url, body) => {
@@ -283,6 +322,12 @@ export class WebServer {
       });
     }
     for (const [key, handler] of docsRoutes()) {
+      this.native.set(key, async (c, url, body) => {
+        const [status, payload] = await handler(c, url, body);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of devicesRoutes()) {
       this.native.set(key, async (c, url, body) => {
         const [status, payload] = await handler(c, url, body);
         return this.json(status, payload);
@@ -437,7 +482,9 @@ export class WebServer {
           // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
           if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
             const listed = reply.body as { sessions?: unknown };
-            if (Array.isArray(listed.sessions)) listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+            if (Array.isArray(listed.sessions)) {
+              listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+            }
           }
           if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
           return new Response(JSON.stringify(reply.body), {
@@ -532,6 +579,10 @@ export function makeContext(
     terminalKeeper?: KeeperLink | null;
     /** Stores to share (an --in-process Studio passes its own, so one instance of each file is read and written). */
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
+    /** Phone access options (tests: a fake Tailscale CLI, a short bind retry). */
+    phone?: AccessOptions;
+    /** The OS backend for keep-awake (tests: a recording one, or null); default: the real one for this OS (none in a test run). */
+    keepAwakeBackend?: Backend | null;
   },
 ): WebContext {
   const ctx: WebContext = {
@@ -562,7 +613,16 @@ export function makeContext(
     terminals: new TerminalSessions({ keeper: options.terminalKeeper ?? null }),
     docs: new DocStore(options.stateDir, { history: new ArtifactHistory(() => ctx.artifacts?.store ?? null) }),
     desktopNotify: null,
+    phone: null as unknown as PhoneAccess,
+    devices: null as unknown as DeviceStore,
+    presence: new Presence(),
+    keepAwake: new KeepAwake(options.keepAwakeBackend === undefined ? realBackend() : options.keepAwakeBackend),
   };
+  ctx.phone = new PhoneAccess(ctx, options.stateDir, {
+    avoid: () => (ctx.port ? [ctx.port, ctx.port + 1] : []),
+    ...options.phone,
+  });
+  ctx.devices = ctx.phone.devices;
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(
     options.stateDir,

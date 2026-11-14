@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$AIB_STEER_PY" "$(dirname "$0")/omp.py"

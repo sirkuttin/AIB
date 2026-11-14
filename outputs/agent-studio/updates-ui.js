@@ -1,8 +1,13 @@
 (function (root) {
   'use strict';
-  // Updates: the amber line ("AIB 0.1.x is ready to install. Install now / Later") and the Settings card (Check for updates, the
-  // automatic-check toggle). The server (updater.py) does the checking, downloading and SHA-256 verification; nothing is installed
-  // unless the person clicks "Install now". This file draws what GET /api/live/update says and sends the clicks.
+  // Updates: the teal "Update" button at the top right of the window (the right end of the tab strip, right under the window's
+  // own minimise / maximise / close buttons), the Settings card (Check for updates, the automatic-check toggle), and the "What's
+  // new in AIB <version>" tab after an update. The server (updater.ts) does the checking, downloading and SHA-256 verification;
+  // nothing is installed unless the person clicks. This file draws what GET /api/live/update says and sends the clicks.
+  //   - The button shows while a verified update is ready and stays until it is installed (no "Later").
+  //   - Click: install at once. Chats working that the update cannot take over: it waits for them by itself and reads "Update when
+  //     chats finish"; a click then cancels the wait. A copy that cannot update itself (a .deb, a source run): the click opens a
+  //     small popover in the page with the instructions. Never a pop-up dialog.
   const doc = () => root.document;
   const el = (tag, content, cls) => {
     const n = doc().createElement(tag);
@@ -15,62 +20,50 @@
     FIRST_POLL_MS = 3000;
 
   // ---- pure: what to show ---------------------------------------------------------------------------------------------
-  // The amber line for a status. later: the set of versions the person dismissed with "Later" (until the page is reopened).
-  // Buttons: {id: 'install'|'when-idle'|'how'|'later'|'cancel-wait', label}.
-  function banner(status, later, notice) {
-    if (!status || status.state !== 'ready' || !status.available) return { show: false, text: '', buttons: [] };
-    const v = status.available.version;
-    if (later && later.has(v) && !status.installWhenIdle && !notice) return { show: false, text: '', buttons: [] };
-    const name = 'AIB ' + v;
+  // The button for a status. notice: what the last click led to ({kind: 'installing', chats} | {kind: 'error', text}), or null.
+  // Returns {show, label, title, action: 'install'|'cancel-wait'|'how'|'none', disabled, waiting}.
+  function button(status, notice) {
+    const hide = { show: false, label: '', title: '', action: 'none', disabled: false, waiting: false };
+    if (!status || status.state !== 'ready' || !status.available) return hide;
+    const name = 'AIB ' + status.available.version;
     if (notice && notice.kind === 'installing')
       return {
         show: true,
-        text:
-          'Installing ' +
-          name +
-          '. AIB will close and open again by itself.' +
-          (notice.chats > 0 ? ' Your working chats keep running.' : ''),
-        buttons: [],
+        label: 'Updating…',
+        title:
+          'Installing ' + name + '. AIB will close and open again by itself.' + (notice.chats > 0 ? ' Your working chats keep running.' : ''),
+        action: 'none',
+        disabled: true,
+        waiting: false,
       };
     if (status.installWhenIdle)
       return {
         show: true,
-        text: name + ' will install when your chats finish. AIB then closes and opens again.',
-        buttons: [{ id: 'cancel-wait', label: 'Cancel' }],
-      };
-    if (notice && notice.kind === 'busy')
-      return {
-        show: true,
-        text:
-          notice.chats +
-          (notice.chats === 1 ? ' chat is' : ' chats are') +
-          ' working. ' +
-          name +
-          ' can install when they finish.',
-        buttons: [
-          { id: 'when-idle', label: 'Install when chats finish' },
-          { id: 'later', label: 'Later' },
-        ],
-      };
-    if (notice && notice.kind === 'error')
-      return {
-        show: true,
-        text: notice.text,
-        buttons: [{ id: 'later', label: 'Later' }],
+        label: 'Update when chats finish',
+        title: name + ' will install when your chats finish. AIB then closes and opens again. Click to cancel the wait.',
+        action: 'cancel-wait',
+        disabled: false,
+        waiting: true,
       };
     if (!status.inPlace)
       return {
         show: true,
-        text: name + ' is downloaded and verified. ' + (status.instructions || ''),
-        buttons: [{ id: 'later', label: 'Later' }],
+        label: 'Update',
+        title: name + ' is downloaded and verified. This copy of AIB cannot install it by itself: click for how.',
+        action: 'how',
+        disabled: false,
+        waiting: false,
       };
     return {
       show: true,
-      text: name + ' is ready to install.',
-      buttons: [
-        { id: 'install', label: 'Install now' },
-        { id: 'later', label: 'Later' },
-      ],
+      label: 'Update',
+      title:
+        (notice && notice.kind === 'error' ? notice.text + ' ' : '') +
+        name +
+        ' is ready. Click to install. AIB closes and opens again; working chats keep running.',
+      action: 'install',
+      disabled: false,
+      waiting: false,
     };
   }
 
@@ -94,7 +87,13 @@
       return cur + ' This copy runs from source, so it does not update itself: updates come through the AIB desktop app.';
     switch (status.state) {
       case 'ready':
-        return 'AIB ' + status.available.version + ' is downloaded and verified. ' + cur;
+        return (
+          'AIB ' +
+          status.available.version +
+          ' is downloaded and verified' +
+          (status.installWhenIdle ? '; it installs when your chats finish. ' : '. ') +
+          cur
+        );
       case 'found':
         return 'AIB ' + status.available.version + ' is available; downloading it. ' + cur;
       case 'refused':
@@ -118,28 +117,59 @@
   const S = {
     host: null,
     status: null,
-    later: new Set(),
     notice: null,
     timer: null,
-    bannerNode: null,
+    btn: null,
+    pop: null, // {node, text} while the popover is open
     cards: new Set(),
-    saveAuto: null,
+    notesAsked: false,
   };
 
-  function paintBanner() {
-    const n = S.bannerNode;
-    if (!n) return;
-    const b = banner(S.status, S.later, S.notice);
-    n.hidden = !b.show;
-    n.replaceChildren();
-    if (!b.show) return;
-    n.append(el('span', b.text));
-    for (const btn of b.buttons) {
-      const x = el('button', btn.label, 'update-btn');
-      x.type = 'button';
-      x.addEventListener('click', () => act(btn.id));
-      n.append(x);
+  // The button: one node, kept across redraws of the tab strip (workspace-ui.js puts it back at the strip's right end).
+  function buttonNode() {
+    if (S.btn) return S.btn;
+    const b = el('button', 'Update', 'upd-btn');
+    b.type = 'button';
+    b.id = 'updateButton';
+    b.hidden = true;
+    b.addEventListener('click', onButton);
+    S.btn = b;
+    return b;
+  }
+  // Put the button at the end of `strip` (the tab strip at the window's top right). Called after every strip redraw.
+  function attach(strip) {
+    if (!strip) return;
+    const b = buttonNode();
+    if (b.parentNode !== strip || strip.lastChild !== b) strip.append(b);
+  }
+  // The strips of the page: the one whose top-right corner is nearest the window's top-right corner gets the button.
+  function place(strips) {
+    const list = (strips || []).filter(Boolean);
+    if (!list.length) return;
+    let best = list[list.length - 1];
+    if (list.length > 1 && typeof best.getBoundingClientRect === 'function') {
+      let score = -Infinity;
+      for (const s of list) {
+        const r = s.getBoundingClientRect();
+        const v = r.right - r.top * 4;
+        if (v > score) (score = v), (best = s);
+      }
     }
+    attach(best);
+  }
+
+  function paintButton() {
+    const b = buttonNode();
+    if (!b.parentNode) attach(doc().getElementById('chatTabs'));
+    const v = button(S.status, S.notice);
+    b.hidden = !v.show;
+    b.textContent = v.label || 'Update';
+    b.title = v.title;
+    b.setAttribute('aria-label', v.title || 'Update AIB');
+    b.disabled = !!v.disabled;
+    b.classList.toggle('waiting', !!v.waiting);
+    b.dataset.action = v.action;
+    if (!v.show) closePop();
   }
   function paintCards() {
     for (const c of Array.from(S.cards)) {
@@ -151,8 +181,39 @@
     }
   }
   function paint() {
-    paintBanner();
+    paintButton();
     paintCards();
+  }
+
+  // ---- the popover: instructions, why it waits, what went wrong (in the page, under the button) -----------------------------
+  function closePop() {
+    if (!S.pop) return;
+    S.pop.node.remove();
+    S.pop = null;
+    if (S.btn) S.btn.setAttribute('aria-expanded', 'false');
+  }
+  function openPop(text, extra) {
+    closePop();
+    const b = buttonNode();
+    const p = el('div', null, 'upd-pop');
+    p.id = 'updatePopover';
+    p.setAttribute('role', 'dialog');
+    p.setAttribute('aria-label', 'Update');
+    const x = el('button', '×', 'upd-pop-x');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Close');
+    x.addEventListener('click', () => closePop());
+    p.append(x, el('p', text, 'upd-pop-text'));
+    if (extra) p.append(el('p', extra, 'upd-pop-note'));
+    (doc().body || doc().documentElement).append(p);
+    if (typeof b.getBoundingClientRect === 'function') {
+      const r = b.getBoundingClientRect(),
+        w = root.innerWidth || 0;
+      p.style.top = Math.round(r.bottom + 6) + 'px';
+      p.style.right = Math.max(8, Math.round(w - r.right)) + 'px';
+    }
+    b.setAttribute('aria-expanded', 'true');
+    S.pop = { node: p, text };
   }
 
   function schedule(ms) {
@@ -168,6 +229,7 @@
   }
   function refresh() {
     if (!S.host) return Promise.resolve();
+    if (!S.notesAsked) showNotes();
     return Promise.resolve(S.host.get('/api/live/update')).then(setStatus, () => schedule(POLL_MS));
   }
   function check() {
@@ -176,30 +238,88 @@
     paint();
     return Promise.resolve(S.host.post('update/check', {})).then(setStatus, () => refresh());
   }
-  function install(whenIdle) {
-    return Promise.resolve(S.host.post('update/install', { whenIdle: !!whenIdle })).then(
+  const errBody = (err) => (err && err.body) || err || {};
+  // Install now. Chats working that the update cannot take over (409 chats_working): it switches to "install when chats finish"
+  // by itself and says why in the popover.
+  function install() {
+    closePop();
+    return Promise.resolve(S.host.post('update/install', { whenIdle: false })).then(
       (res) => {
         S.notice = res && res.state === 'installing' ? { kind: 'installing', chats: Number(res.chats) || 0 } : null;
+        paint();
         return refresh();
       },
       (err) => {
-        const body = (err && err.body) || err || {};
-        if (body.code === 'chats_working' || err.code === 'chats_working')
-          S.notice = { kind: 'busy', chats: Number(body.chats || err.chats) || 1 };
-        else S.notice = { kind: 'error', text: (err && err.message) || 'Could not start the install.' };
-        paint();
+        const body = errBody(err);
+        if (body.code === 'chats_working' || err.code === 'chats_working') {
+          S.notice = null;
+          const why = (err && err.message) || '';
+          return Promise.resolve(S.host.post('update/install', { whenIdle: true })).then(
+            () =>
+              refresh().then(() =>
+                openPop(
+                  (why ? why + ' ' : '') + 'AIB installs the update when they finish, then closes and opens again.',
+                  'Click "Update when chats finish" to cancel the wait.',
+                ),
+              ),
+            (e2) => fail((e2 && e2.message) || 'Could not start the install.'),
+          );
+        }
+        if (body.code === 'manual' || err.code === 'manual') {
+          openPop((err && err.message) || (S.status && S.status.instructions) || 'Install it from the downloaded file.');
+          return refresh();
+        }
+        return fail((err && err.message) || 'Could not start the install.');
       },
     );
   }
+  function fail(text) {
+    S.notice = { kind: 'error', text };
+    paint();
+    openPop(text, 'Click Update to try again.');
+  }
+  function cancelWait() {
+    closePop();
+    return Promise.resolve(S.host.post('update/install', { cancelWait: true })).then(setStatus, () => refresh());
+  }
+  function onButton() {
+    const action = S.btn ? S.btn.dataset.action : 'none';
+    if (action === 'install') return install();
+    if (action === 'cancel-wait') return cancelWait();
+    if (action === 'how') {
+      if (S.pop) return closePop();
+      const st = S.status || {};
+      openPop(
+        'AIB ' + ((st.available && st.available.version) || '') + ' is downloaded and verified. ' + (st.instructions || ''),
+        st.available && st.available.path ? 'The file: ' + st.available.path : '',
+      );
+    }
+    return undefined;
+  }
+  // Old name, kept for callers: the Settings card's Install now and the tests.
   function act(id) {
-    if (id === 'later') {
-      if (S.status && S.status.available) S.later.add(S.status.available.version);
-      S.notice = null;
-      paint();
-    } else if (id === 'install') install(false);
-    else if (id === 'when-idle') install(true);
-    else if (id === 'cancel-wait')
-      Promise.resolve(S.host.post('update/install', { cancelWait: true })).then(setStatus, () => refresh());
+    if (id === 'install') return install();
+    if (id === 'cancel-wait') return cancelWait();
+    if (id === 'how') return onButton();
+    return undefined;
+  }
+
+  // ---- the "What's new in AIB <version>" tab, once after an update -----------------------------------------------------------
+  function showNotes() {
+    S.notesAsked = true;
+    if (!S.host) return Promise.resolve(false);
+    return Promise.resolve(S.host.get('/api/live/update/notes'))
+      .then((res) => {
+        const notes = res && res.notes;
+        if (!notes || !Array.isArray(notes.releases) || !notes.releases.length) return false;
+        const FU = root.AgentFilesUI;
+        if (!FU || !FU.openNotes || !FU.openNotes(notes)) return false;
+        return Promise.resolve(S.host.post('update/notes', { shown: true })).then(
+          () => true,
+          () => true,
+        );
+      })
+      .catch(() => false);
   }
 
   // ---- the Settings card -----------------------------------------------------------------------------------------
@@ -235,7 +355,7 @@
     box.append(
       el(
         'p',
-        'A check asks GitHub for the newest release. A new version is downloaded and its SHA-256 is checked against the release before AIB offers it. Nothing is installed until you click Install now.',
+        'A check asks GitHub for the newest release. A new version is downloaded and its SHA-256 is checked against the release before AIB offers it. Nothing is installed until you click Update (top right) or Install now.',
         'st-note',
       ),
     );
@@ -247,14 +367,45 @@
     if (!S.status) refresh();
   }
 
-  // host: {get(path), post(name, body)}; bannerNode: the amber line's element (may be null).
-  function init(host, bannerNode) {
+  // host: {get(path), post(name, body)}.
+  function init(host) {
     S.host = host;
-    S.bannerNode = bannerNode || doc().getElementById('updateBanner');
+    const d = doc();
+    paintButton();
+    if (d && d.addEventListener) {
+      d.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && S.pop) {
+          closePop();
+          if (S.btn && S.btn.focus) S.btn.focus();
+        }
+      });
+      d.addEventListener('pointerdown', (e) => {
+        const t = e.target;
+        if (!S.pop || !t) return;
+        if (S.pop.node.contains(t) || (S.btn && S.btn.contains(t))) return;
+        closePop();
+      });
+    }
     schedule(FIRST_POLL_MS);
   }
 
-  const api = { init, renderCard, refresh, check, banner, cardLine, atTime, sourceRun, act, _state: S };
+  const api = {
+    init,
+    renderCard,
+    refresh,
+    check,
+    button,
+    cardLine,
+    atTime,
+    sourceRun,
+    act,
+    attach,
+    place,
+    showNotes,
+    closePop,
+    _paint: paint,
+    _state: S,
+  };
   root.AibUpdates = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

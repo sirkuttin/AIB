@@ -135,9 +135,16 @@
   // ---- send route ----------------------------------------------------------------------------------------
   // A reply to a chat whose agent is working (or that already has queued messages, which must go first) joins the queue,
   // exactly like the composer does; an idle chat takes it as a normal prompt. snap: a live state / listing entry.
-  function sendRoute(snap) {
+  // A reply the person typed steers (goes in at once) while the agent works and can read messages mid-turn, like the composer's
+  // Enter; slash commands and agents that can't steer still queue. text: the typed words (optional).
+  function sendRoute(snap, text) {
     const q = snap && snap.queue,
       waiting = !!(q && Array.isArray(q.items) && q.items.length);
+    if (snap && snap.busy && snap.steerable) {
+      const SM = root.AgentSendMenu,
+        slash = SM ? SM.isSlashCommand(text, snap.breadth && snap.breadth.commands) : /^\s*\//.test(String(text || ''));
+      if (!slash) return 'steer';
+    }
     return snap && (snap.busy || waiting) ? 'queue' : 'prompt';
   }
 

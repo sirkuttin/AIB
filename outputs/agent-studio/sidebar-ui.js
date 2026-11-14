@@ -56,17 +56,11 @@
     host && host.aliasKey ? host.aliasKey(c) : String(c.provider) + ':' + (c.sessionId || c.id || c.key);
 
   // ---- projects -----------------------------------------------------------------------------
-  // "C:\Repos\App\", "c:/repos/app" and "C:\\Repos\\\\App" are the same folder on Windows; POSIX paths keep their case.
-  function splitPath(cwd) {
-    let p = String(cwd == null ? '' : cwd).trim();
-    const raw = p;
-    p = p.replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
-    const unc = p.startsWith('//');
-    p = p.replace(/\/{2,}/g, '/');
-    const segments = p.split('/').filter(Boolean);
-    const windows = /^[a-zA-Z]:/.test(p) || unc || raw.indexOf('\\') >= 0;
-    return { segments, windows };
-  }
+  // Folder keys come from the rules shared with the server's notifications (notify-rules.js): a project's preferences (hidden,
+  // muted) are saved under this key, and the server must find them the same way.
+  const rules = () =>
+    root.AgentNotifyRules || (typeof module === 'object' && typeof require === 'function' ? require('./notify-rules.js') : null);
+  const splitPath = (cwd) => rules().splitPath(cwd);
   // The folder a chat belongs to for grouping, naming and filtering: its projectRoot. A worktree chat's cwd differs from it;
   // records that carry no projectRoot (older ones, saved transcripts, agent-listed sessions) fall back to cwd.
   function rootOf(c) {
@@ -90,12 +84,7 @@
     const parent = worktreeHook && base ? worktreeHook(base) : null;
     return parent && parent.of ? String(parent.branch || 'worktree') : '';
   }
-  function pathKey(cwd) {
-    const { segments, windows } = splitPath(cwd);
-    if (!segments.length) return '';
-    const joined = segments.join('/');
-    return windows ? 'w:' + joined.toLowerCase() : 'p:' + joined;
-  }
+  const pathKey = (cwd) => rules().pathKey(cwd);
   // cwds: array of folder strings. Returns Map(key -> {key, name, path}). Equal last segments get parent segments added.
   function projectNames(cwds) {
     const seen = new Map();
@@ -184,7 +173,9 @@
     const ended = Math.max(a.endedAt, derivedEnded.get(key) || 0);
     const stored = root.AgentReadState ? root.AgentReadState.seenAt(key) : viewed[key];
     const seen = stored ? stored : epoch;
-    const unread = ended > seen;
+    // "Mark as unread" from a phone (read-state.js markedUnread) shows the unread dot until the chat is looked at again
+    const marked = root.AgentReadState && root.AgentReadState.markedUnread ? root.AgentReadState.markedUnread(key) : 0;
+    const unread = ended > seen || marked > 0;
     let state = ['needs_you', 'working', 'opening', 'idle'].indexOf(a.state) >= 0 ? a.state : 'idle';
     if (state === 'idle' && unread) state = 'unread';
     const needs = state === 'needs_you' ? Math.max(1, a.needs) : 0;
@@ -247,11 +238,24 @@
 
   // ---- last viewed --------------------------------------------------------------------------
   // The server keeps it (AgentReadState); the in-chat unread line reads the same stored value for the same chat key.
-  function markViewed(c, when) {
+  /* When you last really looked at this page: it got focus or came into view, or you clicked or typed in it. A phone's "Mark as
+     unread" is undone only by that (after the mark) or by a new message in the chat, never by the open chat being marked seen on
+     every list update while the window merely counts as visible (the desktop app's window does while another window covers it). */
+  let lookedAt = 0;
+  function heldUnread(c, key) {
+    const marked = root.AgentReadState && root.AgentReadState.markedUnread ? root.AgentReadState.markedUnread(key) : 0;
+    if (!marked || lookedAt > marked) return false;
+    const a = attentionOf(c);
+    const ended = Math.max((a && a.endedAt) || 0, derivedEnded.get(key) || 0);
+    return !(ended > marked);
+  }
+  /* periodic: the open chat marked seen because the list was drawn (not because you looked): a phone's mark stays (heldUnread). */
+  function markViewed(c, when, periodic) {
     if (!c) return;
     if (!when && host && host.holdSeen && host.holdSeen(c)) return;
     const key = keyOf(c),
       at = when || Date.now();
+    if (periodic && heldUnread(c, key)) return;
     if (root.AgentReadState) root.AgentReadState.mark(key, at);
     else viewed[key] = at;
   }
@@ -281,7 +285,7 @@
         else if (!busySince.has(key)) busySince.set(key, Date.now());
       } else busySince.delete(key);
     }
-    if (selected && looking()) markViewed(selected);
+    if (selected && looking()) markViewed(selected, 0, true);
     updateTitle(all);
   }
   // The page owns the base tab title (the open conversation's name); this adds the "(n) " prefix.
@@ -654,6 +658,7 @@
     if (d) {
       baseTitle = String(d.title || 'AIB').replace(/^\(\d+\)\s*/, '') || 'AIB';
       const seen = () => {
+        if (looking()) lookedAt = Date.now();
         if (host && looking()) {
           const s = host.getSelected && host.getSelected();
           if (s) {
@@ -664,6 +669,9 @@
       };
       d.addEventListener('visibilitychange', seen);
       if (root.addEventListener) root.addEventListener('focus', seen);
+      const touched = () => (lookedAt = Date.now());
+      d.addEventListener('pointerdown', touched, true);
+      d.addEventListener('keydown', touched, true);
     }
   }
 

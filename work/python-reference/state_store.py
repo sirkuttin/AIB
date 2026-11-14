@@ -1028,7 +1028,7 @@ class SettingsStore(JsonFileStore):
     def blank():
         return {'agents': {'builtin': {'omp': True, 'claude': True, 'codex': True}, 'custom': []},
                 'defaults': {'agent': '', 'byAgent': {}, 'projects': {}, 'migrated': False},
-                'server': {'autoReconnect': True, 'worktreePerChat': True, 'autoUpdateCheck': True},   # worktreePerChat: on by default; hidden, never shown by public()
+                'server': {'autoReconnect': True, 'worktreePerChat': True, 'autoUpdateCheck': True, 'keepAwake': False},   # worktreePerChat: on by default; hidden, never shown by public()
                 'editors': {'default': ''},
                 'appearance': {'defaultView': 'full'},
                 'launchers': {'claude': '', 'codex': ''}}
@@ -1088,6 +1088,8 @@ class SettingsStore(JsonFileStore):
             doc['server']['worktreePerChat'] = server['worktreePerChat']
         if isinstance(server.get('autoUpdateCheck'), bool):
             doc['server']['autoUpdateCheck'] = server['autoUpdateCheck']
+        if isinstance(server.get('keepAwake'), bool):
+            doc['server']['keepAwake'] = server['keepAwake']
         editor = raw.get('editors') if isinstance(raw.get('editors'), dict) else {}
         doc['editors']['default'] = editor.get('default') if editor.get('default') in editors.DEFAULT_ORDER else ''
         appearance = raw.get('appearance') if isinstance(raw.get('appearance'), dict) else {}
@@ -1385,7 +1387,7 @@ class SettingsStore(JsonFileStore):
 
     def _apply_server(self, work, patch):
         patch = self._section(patch, 'server')
-        if set(patch) - {'autoReconnect', 'worktreePerChat', 'autoUpdateCheck'}:
+        if set(patch) - {'autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake'}:
             raise ValueError('Unknown server setting')
         if 'worktreePerChat' in patch:
             if not isinstance(patch['worktreePerChat'], bool):
@@ -1395,6 +1397,10 @@ class SettingsStore(JsonFileStore):
             if not isinstance(patch['autoUpdateCheck'], bool):
                 raise ValueError('autoUpdateCheck must be true or false')
             work['server']['autoUpdateCheck'] = patch['autoUpdateCheck']
+        if 'keepAwake' in patch:
+            if not isinstance(patch['keepAwake'], bool):
+                raise ValueError('keepAwake must be true or false')
+            work['server']['keepAwake'] = patch['keepAwake']
         if 'autoReconnect' in patch:
             if not isinstance(patch['autoReconnect'], bool):
                 raise ValueError('autoReconnect must be true or false')

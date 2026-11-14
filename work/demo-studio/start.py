@@ -346,6 +346,26 @@ def write_marks(state, chats, now):
     (state / 'studio-conversations.json').write_text(json.dumps({'version': 1, 'savedAt': now, 'entries': entries}), encoding='utf-8')
 
 
+def project_key(path):
+    """The key Studio files an added project under (desktop/project_delete.ts projectKey)."""
+    raw = str(path).strip()
+    text = raw.removeprefix('\\\\?\\').replace('\\', '/')
+    unc = text.startswith('//')
+    segments = [part for part in re.sub(r'/{2,}', '/', text).split('/') if part]
+    if not segments:
+        return ''
+    windows = bool(re.match(r'^[a-zA-Z]:', text)) or unc or '\\' in raw
+    joined = '/'.join(segments)
+    return 'w:' + joined.lower() if windows else 'p:' + joined
+
+
+def write_added_projects(state, folders, now):
+    """The demo adds its own projects (Studio shows saved chats only for added folders), as a user would with New project."""
+    added = {project_key(folder): {'path': str(folder), 'at': now} for folder in folders}
+    state.mkdir(parents=True, exist_ok=True)
+    (state / 'studio-added-projects.json').write_text(json.dumps({'version': 1, 'savedAt': now, 'start': 'fresh', 'added': added}), encoding='utf-8')
+
+
 def generate(demo):
     """Everything the demo shows, except the artifact (published once Studio is up)."""
     for name in ('state', 'claude', 'omp', 'owners', 'projects', 'bin'):
@@ -359,6 +379,7 @@ def generate(demo):
     (alpha / 'limits.py').write_text('HITS = {}\nWINDOW = 60\n\n\ndef allow(key, now, limit=30):\n    hits = [t for t in HITS.get(key, []) if now - t < WINDOW]\n    HITS[key] = hits + [now]\n    return len(hits) < limit\n', encoding='utf-8', newline='\n')
     chats = build_chats(demo, now)
     write_marks(demo / 'state', chats, now)
+    write_added_projects(demo / 'state', [demo / 'projects' / 'alpha', demo / 'projects' / 'alpha' / 'docs', demo / 'projects' / 'beta'], now)
     # OMP is started as `<omp-command> acp`; a tiny launcher runs the fixture agent for it.
     if os.name == 'nt':
         launcher = demo / 'bin' / 'omp.cmd'

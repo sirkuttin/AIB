@@ -42,6 +42,8 @@ module.exports = [
   // chat.js is the last script: it uses AgentChoice (agent-choice.js) by its bare name, and exports only window.AgentStudioGet, window.AgentChatView and the test hook window.StudioChat.
   { files: ['outputs/agent-studio/chat.js'], languageOptions: { globals: { AgentChoice: 'readonly' } } },
   // These two pull a sibling module with require() when the tests load them in node.
-  { files: ['outputs/agent-studio/artifacts-ui.js', 'outputs/agent-studio/attention-ui.js'], languageOptions: { globals: { require: 'readonly' } } },
+  { files: ['outputs/agent-studio/artifacts-ui.js', 'outputs/agent-studio/attention-ui.js', 'outputs/agent-studio/notify-ui.js', 'outputs/agent-studio/sidebar-ui.js', 'outputs/agent-studio/workspace-state.js'], languageOptions: { globals: { require: 'readonly' } } },
+  // The phone page's service worker (served at /sw.js on the phone port): the worker global, not a window.
+  { files: ['outputs/agent-studio/pwa/sw.js'], languageOptions: { globals: { self: 'readonly' } } },
   { files: ['eslint.config.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { require: 'readonly', module: 'writable' } }, rules: js.configs.recommended.rules },
 ];

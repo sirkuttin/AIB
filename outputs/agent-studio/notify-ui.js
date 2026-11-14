@@ -9,13 +9,17 @@
   //   * Studio away (hidden or not focused): a desktop notification (if turned on) and a sound (per setting).
   //   * Transitions within about a minute merge into ONE notification ("3 agents are waiting for you") that replaces the older.
   //   * Muted projects (server-side project prefs) never notify or sound; the inbox still lists them.
-  // In the AIB desktop app the app process shows the notification itself (desktop-bridge.js notify -> server/desktop/notify.ts):
-  // no browser permission is involved, the choices are AIB's own (saved in the data folder: view-prefs.js syncs APP_PREF_KEY) and
-  // desktop notifications start on, for Needs you only. In a browser the web Notification API and its permission, as before.
+  // In the AIB desktop app the SERVER shows desktop notifications (server/attention/watcher.ts, through server/desktop/notify.ts):
+  // it watches every chat itself, so they also come with the window closed, and this page never asks for one (no double
+  // notification); only the Settings test goes through desktop-bridge.js. The choices are AIB's own (saved in the data folder:
+  // view-prefs.js syncs APP_PREF_KEY, the server reads them) and start on, for Needs you only. The page still shows its in-page
+  // toasts and plays the sounds. In a browser the web Notification API and its permission, as before.
   const PREF_KEY = 'studio-notifications',
     APP_PREF_KEY = 'studio-notifications-app';
-  const GROUP_MS = 60000;
-  const TAG = 'studio-attention';
+  // The rules shared with the server (notify-rules.js): grouping, the notification text, the desktop app's choices.
+  const R =
+    root.AgentNotifyRules || (typeof module === 'object' && typeof require === 'function' ? require('./notify-rules.js') : null);
+  const GROUP_MS = R.GROUP_MS;
 
   // ---- pure logic ---------------------------------------------------------------------------------------------
   // entries: [{key, title, state, needs, yourTurn, yourTurnAt, eligible, muted, selected}]; prev: the last result's `next`, or null.
@@ -42,7 +46,6 @@
     if (kind === 'needs') return 'needs';
     return pref === 'both' ? 'turn' : null;
   }
-  const SOUND_RANK = { turn: 1, needs: 2 };
 
   // What to do about one event. o: {kind, away, selected, eligible, muted, notifyFor, soundPref, desktopReady}
   function decide(o) {
@@ -53,68 +56,9 @@
     return { toast: false, desktop: !!o.desktopReady, sound: soundFor(o.kind, o.soundPref) };
   }
 
-  // Coalesce events into one group per ~60 s. group: null or {startedAt, entries:[{key, kind, title}], sounded}.
-  // Returns {group, sound} where sound is the sound to play now (a louder kind than already played in this group) or null.
-  function addToGroup(group, items, now, windowMs) {
-    const win = windowMs || GROUP_MS;
-    let g =
-      group && now - group.startedAt <= win
-        ? { startedAt: group.startedAt, entries: group.entries.map((x) => ({ ...x })), sounded: group.sounded }
-        : { startedAt: now, entries: [], sounded: null };
-    let best = null;
-    for (const it of items) {
-      const at = g.entries.findIndex((x) => x.key === it.key);
-      if (at >= 0) {
-        const old = g.entries[at];
-        g.entries[at] = {
-          key: it.key,
-          title: it.title || old.title,
-          kind: old.kind === 'needs' || it.kind === 'needs' ? 'needs' : 'turn',
-        };
-      } else g.entries.push({ key: it.key, title: it.title, kind: it.kind });
-      if (it.sound && (!best || SOUND_RANK[it.sound] > SOUND_RANK[best])) best = it.sound;
-    }
-    let sound = null;
-    if (best && (!g.sounded || SOUND_RANK[best] > SOUND_RANK[g.sounded])) {
-      sound = best;
-      g.sounded = best;
-    }
-    return { group: g, sound };
-  }
-
-  // The notification text for a group. One entry names the chat; several say how many are waiting (titles, up to 3).
-  function describe(group) {
-    const list = (group && group.entries) || [];
-    if (list.length === 1)
-      return {
-        tag: TAG,
-        title: list[0].title || 'AIB',
-        body: list[0].kind === 'needs' ? 'Needs you' : 'Your turn',
-        target: { type: 'chat', key: list[0].key },
-      };
-    const names = list.slice(0, 3).map((x) => x.title || 'Conversation');
-    if (list.length > 3) names.push('and ' + (list.length - 3) + ' more');
-    return {
-      tag: TAG,
-      title: list.length + ' agents are waiting for you',
-      body: names.join('\n'),
-      target: { type: 'inbox' },
-    };
-  }
-
-  const SOUND_MODES = ['needs', 'both', 'off'],
-    NOTIFY_FOR = ['both', 'needs'];
-  // app: the desktop app's defaults (notifications on, Needs you only); a browser's stay off until allowed, for both kinds.
-  function cleanPrefs(v, app) {
-    v = v && typeof v === 'object' ? v : {};
-    // The old checkbox ("Play a sound") was a boolean: on becomes "Needs you only", off stays off.
-    const sound = SOUND_MODES.includes(v.sound) ? v.sound : v.sound === false ? 'off' : 'needs';
-    return {
-      desktop: app ? v.desktop !== false : v.desktop === true,
-      sound,
-      notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : app ? 'needs' : 'both',
-    };
-  }
+  const addToGroup = R.addToGroup;
+  const describe = R.describe;
+  const cleanPrefs = R.cleanPrefs;
 
   // ---- runtime ------------------------------------------------------------------------------------------------
   const S = {
@@ -350,7 +294,7 @@
         muted: e.muted,
         notifyFor: S.prefs.notifyFor,
         soundPref: S.prefs.sound,
-        desktopReady: desktopReady(),
+        desktopReady: !native() && desktopReady(), // the desktop app: the server notifies (see the top)
       });
       if (d.toast) showToast(ev.key, ev.kind, e.title);
       if (d.desktop || d.sound)
@@ -546,13 +490,51 @@
     paintPop();
   }
 
-  // host: {openChat(key), openInbox(), mutedProjects() -> [{key, name}], unmute(key)}
+  // ---- presence: is the owner at the PC? (server/attention/presence.ts) ----
+  // The server sends no desktop notification while an AIB window has focus, and no phone push while you are working in it (focus
+  // and input in the last 2 minutes). This page tells it: at once when focus changes, else every 20 s.
+  const PRESENCE_MS = 20000;
+  const P = { lastInput: Date.now(), sent: 0, focused: null };
+  function presenceNow() {
+    return { focused: !away(), idleMs: Math.max(0, Date.now() - P.lastInput) };
+  }
+  function reportPresence(force) {
+    if (!S.host || typeof S.host.presence !== 'function') return null;
+    const now = Date.now(),
+      body = presenceNow();
+    if (!force && body.focused === P.focused && now - P.sent < PRESENCE_MS) return null;
+    P.focused = body.focused;
+    P.sent = now;
+    const failed = () => {
+      P.sent = 0; // not delivered (the page is still starting, the server restarted): the next 5 s tick sends it again
+      P.focused = null;
+    };
+    try {
+      Promise.resolve(S.host.presence(body)).then((ok) => ok === false && failed(), failed);
+    } catch {
+      failed();
+    }
+    return body;
+  }
+  function noteInput() {
+    P.lastInput = Date.now();
+  }
+
+  // host: {openChat(key), openInbox(), mutedProjects() -> [{key, name}], unmute(key), presence?(body)}
   function init(host) {
     S.host = host;
     loadPrefs();
     doc().addEventListener('visibilitychange', comeBack);
     root.addEventListener('focus', comeBack);
     root.setInterval(reconcile, 1000); // DOM only: drops toasts for the chat you just opened
+    const changed = () => reportPresence(true);
+    doc().addEventListener('visibilitychange', changed);
+    root.addEventListener('focus', changed);
+    root.addEventListener('blur', changed);
+    for (const type of ['keydown', 'pointerdown', 'wheel', 'touchstart'])
+      doc().addEventListener(type, noteInput, { passive: true, capture: true });
+    root.setInterval(() => reportPresence(false), 5000);
+    reportPresence(true);
   }
 
   const api = {
@@ -571,6 +553,8 @@
     testText,
     native,
     chime,
+    reportPresence,
+    noteInput,
     GROUP_MS,
     _state: S,
   };

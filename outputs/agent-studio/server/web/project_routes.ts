@@ -8,7 +8,8 @@
  * `projects` are the other project folders the page knows (a disk delete never touches a folder holding or inside one of them).
  *
  * POST /api/live/project-add (Deno only): {path} or {paths: [...]}: add projects to AIB (the New project dialog; a page's projects
- * made with that dialog before this version, kept in its own storage). Answers the project preferences view.
+ * made with that dialog before this version, kept in its own storage). Answers the project preferences view. A git project gets AIB's
+ * default local-only `/private` in its .git/info/exclude (worktrees/local_only.ts ensureDefault; skipped when it commits private/).
  *
  * The added-projects list (desktop/added_projects.ts): a project is in AIB only when the user added it. Saved chats of other
  * folders are left out of /api/sessions and of the agent's session/list answer ("Find more chats via agent") by filterSessions.
@@ -26,6 +27,8 @@ import {
 } from '../desktop/project_delete.ts';
 import type { ConversationState } from '../state/store.ts';
 import type { AddedProjects } from '../desktop/added_projects.ts';
+import { ensureDefault } from '../worktrees/local_only.ts';
+import { defaultsAllowed } from '../worktrees/local_strays.ts';
 
 type Json = Record<string, unknown>;
 
@@ -112,13 +115,21 @@ async function addQuietly(added: AddedProjects, folders: unknown[]): Promise<voi
 }
 
 /** POST /api/live/project-add: {path} or {paths}. */
-export async function projectAdd(added: AddedProjects, body: unknown, removed: RemovedProjects | null = null): Promise<void> {
+export async function projectAdd(
+  added: AddedProjects,
+  body: unknown,
+  removed: RemovedProjects | null = null,
+  stateDir = '',
+): Promise<void> {
   if (!isDict(body)) throw new ValueError('Invalid request');
   const paths = Array.isArray(body.paths) ? body.paths.slice(0, 100) : [body.path];
   if (!paths.length || !paths.every((p) => isStr(p) && p.trim() && p.length <= 1024 && projectKey(p))) {
     throw new ValueError('Choose a project folder');
   }
   await added.add(...paths);
+  // the default local-only /private (idempotent, never throws; not a git folder: nothing). A test Studio (temp or no state folder)
+  // writes it only for projects in the temp folder, never into a real repo's .git/info/exclude (local_strays.defaultsAllowed).
+  await Promise.all(paths.filter((p) => defaultsAllowed(stateDir, String(p))).map((p) => ensureDefault(String(p))));
   if (removed) await bringBack(removed, paths); // adding a removed project again brings its chats back too
 }
 

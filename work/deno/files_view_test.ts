@@ -260,3 +260,142 @@ Deno.test({
 });
 
 void WIN;
+
+// ---- local-only folders: the main folder's private/ in every scope (owner decisions 1a, 3, 4a) -----------------------------------
+/** main repo/ with private/ (TASKS.md, designs/x.html, node_modules/) local only, build/ gitignored, and a chat copy chat-1a2b. */
+function makeLocalRepo() {
+  const r = makeRepo();
+  const p = (...parts: string[]) => osp.join(r.repo, ...parts);
+  // the chat copy is made from a commit, so it has no private/ (an excluded folder never reaches a copy)
+  const exclude = p('.git', 'info', 'exclude');
+  Deno.mkdirSync(osp.dirname(exclude), { recursive: true });
+  write(exclude, '# user line\n# AIB: local only (shown in every chat; never committed)\n/private\n# AIB: end\n');
+  Deno.mkdirSync(p('private', 'designs'), { recursive: true });
+  write(p('private', 'TASKS.md'), 'main tasks\n');
+  write(p('private', 'designs', 'x.html'), '<p>x</p>\n');
+  Deno.mkdirSync(p('private', 'node_modules'));
+  const wt = osp.join(r.root, 'chat-1a2b');
+  git(r.repo, 'worktree', 'add', '-q', '-b', 'studio/chat-1a2b', wt);
+  const state = osp.join(r.root, 'state');
+  Deno.mkdirSync(state);
+  write(
+    osp.join(state, 'studio-worktrees.json'),
+    JSON.stringify({ version: 1, worktrees: { k1: { path: wt, project: r.repo, status: 'ready', branch: 'studio/chat-1a2b' } } }),
+  );
+  const ctx = fakeCtx(wt);
+  (ctx as unknown as { stateDir: string }).stateDir = state;
+  (ctx as unknown as { host: unknown }).host = {
+    liveState: (id: string) => Promise.resolve(id === 'live1' ? { cwd: wt } : id === 'main1' ? { cwd: r.repo } : null),
+  };
+  return { ...r, p, wt, state, ctx, exclude };
+}
+type ListReply = {
+  entries: { path: string; local?: boolean; from?: string; ignored: boolean; noExclude?: string; strays?: number }[];
+  localOnly: { main: string; entries: string[]; defaultState: string };
+};
+const post = async (ctx: WebContext, path: string, body: unknown, token = 'tok') => {
+  const handler = filesRoutes().get('POST ' + path)!;
+  const url = new URL('http://127.0.0.1' + path);
+  return await handler(ctx, url, body, new Request(url, { method: 'POST', headers: { 'X-Studio-Token': token } }));
+};
+
+Deno.test({
+  name: 'local only: a chat copy lists, opens and searches the main folder private/ (local, not ignored, any depth)',
+  ignore: !HAVE_GIT,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const r = makeLocalRepo();
+    try {
+      assert(!osp.exists(osp.join(r.wt, 'private')), 'nothing is put in the copy');
+      const [s, top] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat') as [number, ListReply];
+      assertEquals(s, 200);
+      const priv = top.entries.find((e) => e.path === 'private')!;
+      assertEquals([priv.local, priv.from, priv.ignored, priv.noExclude], [true, 'main', false, 'already']);
+      assertEquals(osp.normcase(top.localOnly.main), osp.normcase(r.repo));
+      assertEquals([top.localOnly.entries, top.localOnly.defaultState], [['private'], 'on']);
+      assertEquals(top.entries.find((e) => e.path === 'README.md')!.noExclude, 'tracked');
+      const [, inside] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=private') as [number, ListReply];
+      const byPath = Object.fromEntries(inside.entries.map((e) => [e.path, e]));
+      assertEquals([byPath['private/designs'].local, byPath['private/designs'].ignored], [true, false], 'a sub-folder opens too');
+      assertEquals([byPath['private/TASKS.md'].local, byPath['private/TASKS.md'].from], [true, 'main']);
+      assertEquals(byPath['private/node_modules'].ignored, true, 'node_modules inside stays dim');
+      const [, deep] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=private/designs') as [number, ListReply];
+      assertEquals(deep.entries.map((e) => e.path), ['private/designs/x.html']);
+      const [s2, read] = await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=private/TASKS.md') as [
+        number,
+        { text: string; abs: string; local: boolean },
+      ];
+      assertEquals([s2, read.text, read.local], [200, 'main tasks\n', true]);
+      assertEquals(osp.normcase(read.abs), osp.normcase(r.p('private', 'TASKS.md')), 'Copy path / Open in editor name the real file');
+      assertEquals((await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=private/../README.md'))[0], 400);
+      assertEquals((await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=private/nope.md'))[0], 404);
+      const [, found] = await call(r.ctx, '/api/live/files/search', 'id=live1&root=chat&q=TASKS') as [
+        number,
+        { matches: { path: string }[]; localOnly: { entries: string[] } },
+      ];
+      assertEquals(found.matches.map((m) => m.path), ['private/TASKS.md']);
+      assertEquals(found.localOnly.entries, ['private']);
+      // the main folder's own scope: the same row, local, no `from`
+      const [, mainTop] = await call(r.ctx, '/api/live/files/list', 'id=main1&root=chat') as [number, ListReply];
+      const mp = mainTop.entries.find((e) => e.path === 'private')!;
+      assertEquals([mp.local, mp.from, mp.ignored], [true, undefined, false]);
+      assertEquals(mainTop.entries.find((e) => e.path === 'node_modules')!.ignored, true, 'node_modules stays ignored');
+      assertEquals(mainTop.entries.find((e) => e.path === 'build')!.ignored, true, 'a .gitignored folder stays ignored');
+      assertEquals(mainTop.entries.find((e) => e.path === 'build')!.noExclude, undefined, 'an ignored folder may be made local only');
+      const [, mainFound] = await call(r.ctx, '/api/live/files/search', 'id=main1&root=chat&q=x.html') as [number, { matches: { path: string }[] }];
+      assertEquals(mainFound.matches.map((m) => m.path), ['private/designs/x.html'], 'excluded files are found in the main folder too');
+    } finally {
+      git(r.repo, 'worktree', 'remove', '--force', r.wt);
+      r.dispose();
+    }
+  },
+});
+
+Deno.test({
+  name: 'local only: POST exclude adds and undoes the AIB line, refuses tracked paths, needs the token; a copy-only file moves (Q3)',
+  ignore: !HAVE_GIT,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const r = makeLocalRepo();
+    try {
+      const body = (extra: Record<string, unknown>) => ({ id: 'main1', root: 'chat', action: 'add', ...extra });
+      assertEquals((await post(r.ctx, '/api/live/files/exclude', body({ path: 'outputs' }), 'bad'))[0], 403);
+      const [s1, add] = await post(r.ctx, '/api/live/files/exclude', body({ path: 'outputs' })) as [
+        number,
+        { ok: boolean; undo: string; localOnly: { entries: string[] } },
+      ];
+      assertEquals([s1, add.ok, add.localOnly.entries], [200, true, ['private', 'outputs']]);
+      assert(Deno.readTextFileSync(r.exclude).startsWith('# user line\n'), 'the user line is kept');
+      const [, list] = await call(r.ctx, '/api/live/files/list', 'id=main1&root=chat') as [number, ListReply];
+      assertEquals(list.entries.find((e) => e.path === 'outputs')!.local, true, 'the row turns local');
+      const [s2, undo] = await post(r.ctx, '/api/live/files/exclude', body({ action: 'undo', undo: add.undo })) as [
+        number,
+        { ok: boolean; localOnly: { entries: string[] } },
+      ];
+      assertEquals([s2, undo.ok, undo.localOnly.entries], [200, true, ['private']]);
+      const [s3, refused] = await post(r.ctx, '/api/live/files/exclude', body({ path: 'README.md' })) as [
+        number,
+        { ok: boolean; code: string; error: string },
+      ];
+      assertEquals([s3, refused.code, refused.error], [409, 'tracked', "Git tracks this, so it can't be excluded"]);
+      assertEquals((await post(r.ctx, '/api/live/files/exclude', body({ path: '../x' })))[0], 400);
+      // a file only the chat's copy has: moved into the main folder at once, then excluded
+      write(osp.join(r.wt, 'notes.md'), 'from the chat\n');
+      const [s4, moved] = await post(r.ctx, '/api/live/files/exclude', body({ id: 'live1', path: 'notes.md' })) as [
+        number,
+        { ok: boolean; moved: [string, string][] },
+      ];
+      assertEquals([s4, moved.ok, moved.moved], [200, true, [['notes.md', 'notes.md']]]);
+      assertEquals(Deno.readTextFileSync(r.p('notes.md')), 'from the chat\n');
+      assert(!osp.exists(osp.join(r.wt, 'notes.md')));
+      const [, chatTop] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat') as [number, ListReply];
+      assertEquals(chatTop.entries.find((e) => e.path === 'notes.md')!.from, 'main');
+      assertEquals((await post(r.ctx, '/api/live/files/strays/move', { id: 'live1', root: 'chat' }))[0], 200);
+    } finally {
+      git(r.repo, 'worktree', 'remove', '--force', r.wt);
+      r.dispose();
+    }
+  },
+});

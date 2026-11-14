@@ -14,7 +14,7 @@ import { findPrompts } from '../transcripts/prompts.ts';
 import { changesResponse, type ChatStudio, repoBranch } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
-import { getUpdate, postUpdateCheck, postUpdateInstall } from '../desktop/updater.ts';
+import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
@@ -124,10 +124,14 @@ async function refreshList(ctx: WebContext): Promise<void> {
 export function studioRoutes(): Map<string, StudioHandler> {
   const routes = new Map<string, StudioHandler>();
   // ---- settings and conversation marks ----
-  routes.set('GET /api/live/settings', async (ctx, url) => [200, await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1')]);
+  routes.set('GET /api/live/settings', async (ctx, url) => [200, {
+    ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1')),
+    keepAwake: ctx.keepAwake.status(),
+  }]);
   routes.set('POST /api/live/settings', async (ctx, _url, body) => {
     await ctx.settings.update(body);
-    return [200, { ...(await settingsView(studioOf(ctx))), ok: true }];
+    ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
+    return [200, { ...(await settingsView(studioOf(ctx))), keepAwake: ctx.keepAwake.status(), ok: true }];
   });
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);
@@ -239,8 +243,17 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('GET /api/live/update', (ctx) => Promise.resolve(getUpdate(ctx.updates)));
   routes.set('POST /api/live/update/check', (ctx, _url, body) => Promise.resolve(postUpdateCheck(ctx.updates, body ?? {})));
   routes.set('POST /api/live/update/install', (ctx, _url, body) => postUpdateInstall(ctx.updates, body ?? {}));
+  routes.set('GET /api/live/update/notes', (ctx) => Promise.resolve(getUpdateNotes(ctx.updates)));
+  routes.set('POST /api/live/update/notes', (ctx, _url, body) => Promise.resolve(postUpdateNotes(ctx.updates, body ?? {})));
   // ---- artifacts (GET; the gate already ran, with the agent key for the list) ----
-  for (const path of ['/api/live/artifacts', '/api/live/artifacts/item', '/api/live/artifacts/source', '/api/live/artifacts/diff']) {
+  const artifactGets = [
+    '/api/live/artifacts',
+    '/api/live/artifacts/item',
+    '/api/live/artifacts/source',
+    '/api/live/artifacts/diff',
+    '/api/live/artifacts/states',
+  ];
+  for (const path of artifactGets) {
     routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
       const args = argsOf(url);
       await ctx.artifacts.prepare(path === '/api/live/artifacts', null);
@@ -338,7 +351,15 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
   }
   const publishing = path === '/api/live/artifacts/publish' || path === '/api/live/artifacts/preview';
-  await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : null);
+  // Delete and Restore move the source file: they need the OWNER chat's folder (an artifact opened from another chat's link too),
+  // resolved from the manifest, never the requesting chat's and never manifest.project (the main checkout of a worktree chat).
+  let owner: unknown = null;
+  if (path === '/api/live/artifacts/delete' || path === '/api/live/artifacts/undelete') {
+    try {
+      owner = ctx.artifacts.service.store.get(body.id).conversationId ?? null;
+    } catch { /* the route says what is wrong */ }
+  }
+  await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : owner);
   delete body[FROM_DOC_RESOLVED];
   if (path === '/api/live/artifacts/publish') {
     // "Built from <doc › page>": the tool's fromDoc, or (an update without one) the link the artifact has, at the page's rev now

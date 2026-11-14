@@ -278,6 +278,66 @@ scrollTest('2e window resized (shorter, then narrower, then back): a following l
   assert(!p, p);
 });
 
+scrollTest('2f a 5-line draft in the composer while the agent works on a plan: keys and plan updates keep the list following, no "↓ Latest"', async (lab) => {
+  // Was (owner's screenshot, beta.9): at the bottom, following, the agent working through a plan card at the end, and "↓ Latest" showing.
+  // The composer's autosize (workspace-ui.js) set the box to height 'auto' and read it back to measure the text, on every key press and
+  // every sidebar refresh. For that moment the composer was 2 lines tall, the list taller, and Chrome clamped its scrollTop to the
+  // shorter end; then the composer went back to its height. The list's sizes ended where they were, so no ResizeObserver ran, and the
+  // scroll event that followed was the only trace: the controller took it for you scrolling up (follow off, gap 71 px), and the
+  // next update at the end lit "↓ Latest".
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  const plan = (texts: string[], done: number) => ({
+    u: {
+      sessionUpdate: 'plan',
+      entries: texts.map((content, i) => ({ content, status: i < done ? 'completed' : i === done ? 'in_progress' : 'pending', priority: 'medium' })),
+    },
+  });
+  const tasks = ['Read the steer design', 'Build the steer server side', 'Add the steer button', 'Test it end to end'];
+  chat.tool('pl-0', 'Read the design PLANSTEP0', 'completed');
+  chat.step(plan(tasks, 0));
+  await page.waitFor(`[...document.querySelectorAll('#messages .plan')].some((e) => e.textContent.includes('0/4 done'))`, 15000, 'plan card');
+  await settle(600);
+  await page.eval('document.getElementById("prompt").focus()');
+  await page.type(['Steer note one', 'line two', 'line three', 'line four', 'line five'].join('\n'));
+  await settle(600);
+  const tall = await page.eval<number>('document.getElementById("prompt").getBoundingClientRect().height');
+  assert(tall > 100, `the draft makes the composer taller than its 2 lines (${tall} px)`);
+  await assertFollowing(page, '5-line draft typed');
+  const checks: string[] = [];
+  const check = async (what: string) => {
+    const x = await m(page);
+    const bad = [following(x), x.jump !== null && `"${x.jump}" shows`].filter(Boolean).join(', ');
+    if (bad) checks.push(`${what}: ${bad} (gap ${x.gap})`);
+  };
+  // keys that do not change the composer's height (each ran the autosize)
+  for (const k of ['a', 'b', 'c']) {
+    await page.type(k);
+    await settle(250);
+    await check(`typed "${k}" on the last line`);
+  }
+  // the plan card at the end updates in place: it shrinks (steps fold into "N done") and grows (a step's text wraps), tool rows before it
+  const grown = tasks.map((t, i) => (i === 2 ? t + ', with the long active form that wraps onto a second line in the card '.repeat(3) : t));
+  for (const [n, [texts, done]] of ([[tasks, 1], [grown, 2], [tasks, 3], [grown, 2]] as [string[], number][]).entries()) {
+    chat.tool(`pl-${n + 1}`, `Step ${n + 1}`, 'completed');
+    chat.step(plan(texts.map((t, i) => (i === done ? `${t} PLANSTEP${n + 1}` : t)), done)); // the step in progress carries the marker
+    await shown(page, `PLANSTEP${n + 1}`);
+    await settle(300);
+    await page.type('d');
+    await settle(300);
+    await check(`plan update ${n + 1} and a key`);
+  }
+  assert(!checks.length, checks.join('; '));
+  // you really scroll up: follow stops and the next update lights the button
+  await wheel(page, -400);
+  await settle(300);
+  chat.say('\n\nWhile you read AFTERDRAFT');
+  await shown(page, 'AFTERDRAFT');
+  await settle(500);
+  const x = await m(page);
+  assert(x.paused && x.jump !== null, `scrolled up: paused ${x.paused}, button ${JSON.stringify(x.jump)}`);
+});
+
 // ---- 3. scrolled up, reading: nothing moves; the jump button counts and takes you back ----------------------------------------
 
 scrollTest('3a scrolled up: updates do not move what you read, the jump button counts them and takes you back to following', async (lab) => {
@@ -1606,3 +1666,53 @@ scrollTest('G2 a smooth scroll down to the end of a fast stream follows again, t
   await settle(800);
   await assertFollowing(page, 'after scrolling down to the end of the stream');
 });
+
+// ---- J. a long busy chat: the oldest rows and events are dropped, never the ones you read ---------------------------------------
+
+/** Read a little above the end, then let `burst` add a lot (each call a batch); every frame and after each batch, the row you read
+ *  stays at its offset and the list never shows its top. Was (owner, beta.9 test build, a lead chat with many steps and helpers): a
+ *  live chat keeps its newest 500 rows (chat.js liveRows) and 6000 events (refreshOnce); once the row you read was older than
+ *  that it was dropped, the controller found no row of the place (rowFor falls back to the first row drawn) and put the list at
+ *  scrollTop 0. */
+async function readThroughTrim(lab: Lab, burst: (chat: Chat, b: number) => void, batches: number) {
+  const page = lab.page;
+  const chat = await openSeeded(lab);
+  await wheel(page, -600);
+  await settle(600);
+  const before = await anchor(page);
+  const x0 = await m(page);
+  assert(before && x0.paused && x0.top > 1000, `reading above the end: ${JSON.stringify(x0)}`);
+  const problems: string[] = [];
+  for (let b = 0; b < batches; b++) {
+    await startRowFrames(page, before!.text);
+    await startFrames(page);
+    burst(chat, b);
+    chat.say(`\n\nBatch ${b} done BATCH${b}`);
+    await shown(page, `BATCH${b}`, 'messages', 30000);
+    await settle(1200);
+    const rows = rowFramesProblems(await stopRowFrames(page), before!, 2);
+    const low = (await stopFrames(page)).filter((f) => f.top < x0.top - 50);
+    const x = await m(page);
+    if (rows) problems.push(`batch ${b}: ${rows}`);
+    if (low.length) problems.push(`batch ${b}: ${low.length} frames with the list moved up to scrollTop ${Math.min(...low.map((f) => f.top))} (was ${x0.top})`);
+    if (!x.paused) problems.push(`batch ${b}: following again`);
+    if (problems.length) break;
+  }
+  assert(!problems.length, problems.join('\n'));
+  chat.end();
+}
+
+scrollTest('J1 reading while 500 more steps arrive (past the 500 rows a chat keeps): the row you read and the scrollbar stay put', (lab) =>
+  readThroughTrim(lab, (chat, b) => {
+    for (let i = 0; i < 100; i++) chat.tool(`j1-${b}-${i}`, `Busy step ${b}.${i}`, 'completed');
+  }, 6));
+
+scrollTest('J2 reading while a helper streams 7000 events (past the 6000 a chat keeps): the row you read stays put', (lab) =>
+  readThroughTrim(lab, (chat, b) => {
+    if (b === 0) {
+      chat.step({ u: { sessionUpdate: 'tool_call', toolCallId: 'agent-1', title: 'Agent', kind: 'think', status: 'pending', _meta: { claudeCode: { toolName: 'Agent' } } } });
+      chat.step({ u: { sessionUpdate: 'subagent_update', sessionId: 'child-1', title: 'Review the code', capabilities: { cancel: {} }, state: { state: 'running' } } });
+    }
+    for (let i = 0; i < 1000; i++)
+      chat.step({ sid: 'child-1', u: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'w ' }, _meta: { claudeCode: { parentToolUseId: 'agent-1' } } } });
+  }, 7));

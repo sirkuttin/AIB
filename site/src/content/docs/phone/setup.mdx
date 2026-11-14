@@ -1,0 +1,143 @@
+---
+title: 'Phone setup guide: connect your phone to AIB in about ten minutes'
+description: Step by step, button by button. Turn on phone access, let AIB set up Tailscale on your PC, pair your phone with a QR code, install AIB on the home screen and turn on notifications.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
+
+Set this up once. Then your phone gets a push when any chat needs you, and you answer it there. Your phone connects to your PC
+over your own Tailscale network. Nothing goes through a server of ours.
+
+AIB does most of the work: under **Settings → Remote control** it shows four steps, each with one button that runs the step
+for you, and each turns green by itself when it's done.
+
+## Before you start
+
+- AIB 0.1.0-beta.9 or newer, running on your PC.
+- An Android phone with Chrome or Firefox. Android tested; iPhone not tested yet, reports welcome.
+- A free Tailscale login. Use Google, Microsoft or GitHub, and use the same one on your PC and your phone. The login is with
+  Tailscale, not AIB.
+
+## On your PC
+
+<Steps>
+
+1. **Turn on phone access.**
+
+   In AIB, open **Settings → Remote control**. Tick **Let paired phones reach AIB**. Four setup steps appear below it:
+   **Tailscale on this PC**, **HTTPS for your tailnet**, **Share AIB on your tailnet** and **Add a phone**.
+
+   While phone access is on, closing the AIB window keeps AIB running in the tray, so your phone keeps working. Use **Quit** in
+   the tray menu to stop it.
+
+   <Shot name="setup-01-switch-on.png" alt="Settings, Remote control, with Let paired phones reach AIB ticked and the four setup steps below" />
+
+2. **Tailscale on this PC: install it and sign in.**
+
+   Click **Install Tailscale**. What happens next depends on your system:
+
+   - **Windows:** AIB installs it with winget, or downloads Tailscale's installer from pkgs.tailscale.com, checks it and runs
+     it. Windows asks once for permission: click **Yes**.
+   - **macOS:** AIB downloads Tailscale's installer from tailscale.com, checks it and opens it. macOS asks for your password,
+     then asks you to allow Tailscale's network extension. Prefer the Mac App Store? Use the link on the step.
+   - **Linux:** AIB opens its setup terminal on the card and runs Tailscale's install script. Type your password when sudo
+     asks. AIB doesn't keep it.
+
+   Then click **Sign in to Tailscale**. Your browser opens Tailscale's login page. Sign in with the login you'll use on your
+   phone. The step turns green: "Signed in as …".
+
+   Already have Tailscale? AIB finds it and skips to **Sign in to Tailscale**, or straight to the next step if you're signed
+   in.
+
+   <Shot name="setup-02-tailscale-signed-in.png" alt="Step 1, Tailscale on this PC, green with Signed in as and the PC's tailnet name" />
+
+3. **HTTPS for your tailnet: turn it on.**
+
+   Click **Turn on HTTPS**. Tailscale's page opens in your browser. Click **Enable** there. The step turns green, usually within
+   a minute: "This PC has a certificate for …".
+
+   Your phone needs HTTPS to install AIB and get notifications. Tailscale turns it on for your whole tailnet, and only from its
+   own page.
+
+   Your PC's name will appear in public certificate logs. If the name says too much, rename the PC in Tailscale first: click
+   **Rename this PC in Tailscale**.
+
+   <Shot name="setup-03-https.png" alt="Step 2, HTTPS for your tailnet, green with This PC has a certificate for" />
+
+4. **Share AIB on your tailnet.**
+
+   Click **Share AIB**. AIB runs two `tailscale serve` commands so your phone can reach it at `https://<your PC's name>`, and
+   artifacts at port 8443. Only devices on your tailnet can reach it, not the internet. The step turns green: "Tailscale sends
+   `https://…` to AIB".
+
+   Every command AIB ran is listed under **What AIB changed on this PC**. AIB never turns on Funnel, and never uninstalls
+   Tailscale or signs you out.
+
+   Is another program already shared at that address? The step says what, and offers **Replace and share**. Is Tailscale Funnel
+   on for that port? The step offers **Turn off Funnel**. See [Troubleshooting](/troubleshooting/#phone-port-443-is-taken-or-funnel-is-on).
+
+   <Shot name="setup-04-shared.png" alt="Step 3, Share AIB on your tailnet, green, with the status line Reachable at https://… through Tailscale" />
+
+</Steps>
+
+## On your phone
+
+<Steps>
+
+5. **Get your phone ready.**
+
+   Install Tailscale from Google Play. Open it, sign in with the same login as on your PC, and turn it on.
+
+6. **Pair your phone.**
+
+   Under **Phones**, the list starts empty: "No phones are paired. A house with no phones cannot stand… on the couch and answer
+   chats." Click **Add a phone**. AIB shows a QR code, six words and a countdown. The code expires in 5 minutes and works once.
+
+   Scan the QR code with your phone's camera. Or open the address under the words on the phone and type the six words, with
+   spaces between them. Give the phone a name when it asks.
+
+   <Shot name="setup-05-add-phone-qr.png" alt="Add a phone: the QR code, the six words, the address and the countdown" />
+
+7. **Check the words and approve the phone on your PC.**
+
+   The phone shows two check words. Your PC shows **Approve "&lt;phone name&gt;"?** with the same two words. Approve only if
+   they match. Pick what this phone may do with its switches (see [Remote control](/phone/#you-stay-in-charge-of-each-phone)),
+   then click **Approve**. Approve within 10 minutes, or the phone has to start again.
+
+   You can change the switches later on the phone's row under **Phones**.
+
+   <Shot name="setup-06-approve.png" alt="The Approve dialog on the PC with the two check words and the phone's switches" />
+
+8. **Install AIB on the phone.**
+
+   On the phone page, tap **Install AIB**, then **Install**. AIB opens from its own icon, full screen, without the browser bar.
+   In Firefox, tap the menu ⋮, then **Add app to Home screen** (older versions: **Add to Home screen**), then **Add**.
+
+   <Shot name="setup-08-install-aib.png" alt="Install app on the phone: AIB on STUDIO-PC, with Cancel and Install" phone />
+
+9. **Turn on notifications.**
+
+   Open AIB from the home-screen icon. Tap **Turn on notifications** and allow them. The phone says "Notifications are on. You
+   get one when a chat needs you or finishes."
+
+   <Shot name="setup-09-notifications-on.png" alt="The installed AIB app on the phone with notifications turned on" phone />
+
+</Steps>
+
+That's it. The next time a chat needs you, your phone buzzes.
+
+<Aside title="iPhone">iPhone isn't tested yet. The phone page has iPhone hints built in: tap the Share button (in Safari it can be under ⋯ next to the address), then **Add to Home Screen**, leave **Open as Web App** on and tap **Add**. Open AIB from that icon and turn notifications on there: iPhone sends notifications only to apps on the Home Screen. Reports welcome in [issues](https://github.com/sirkuttin/AIB/issues).</Aside>
+
+## Undo everything
+
+- **Stop sharing** on the **Share AIB on your tailnet** step removes AIB's `tailscale serve` setup.
+- **Turn off remote control** under **What AIB changed on this PC**, or untick **Let paired phones reach AIB**. Off means
+  nothing on your PC is reachable from other devices.
+- **Remove** on a phone's row ends that phone's access. **Remove all phones** ends every phone's access and makes new push
+  keys, so no old subscription works.
+- Tailscale stays installed and signed in. Uninstall it from your system if you no longer want it.
+
+## Lost a phone?
+
+Click **Remove** on its row in **Settings → Remote control**, and also remove the phone in Tailscale's admin page.

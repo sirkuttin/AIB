@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const D = require('./fake_dom.js');
 
-const SCRIPTS = ['status-words.js', 'ownership-ui.js', 'sidebar-ui.js', 'workspace-state.js', 'split-tree.js', 'workspace-ui.js'];
+const SCRIPTS = ['status-words.js', 'ownership-ui.js', 'notify-rules.js', 'sidebar-ui.js', 'workspace-state.js', 'split-tree.js', 'workspace-ui.js'];
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
 function setup({ store = {}, prefs = {} } = {}) {

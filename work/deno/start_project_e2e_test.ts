@@ -312,7 +312,7 @@ async function runEarly(fx: Fixture, keep: (b: Browser) => void): Promise<void> 
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: SLOW_KINDS });
     await page.goto(`http://127.0.0.1:${web.port}/`);
     await page.waitFor(`!!(window.AgentWorkspaceUI && AgentWorkspaceUI._items().length >= 3)`, 30_000, 'the three chats listed');
-    // While the folder kinds are on their way: open Beta's chat, then pick Delta (no tabs: Beta's chat stays in the middle).
+    // While the folder kinds are on their way: open Beta's chat, then pick Delta (no tabs: the new-chat view opens, Beta's chat leaves the middle).
     await page.eval(`AgentWorkspaceUI.selectProject(${JSON.stringify(BETA)}), 1`);
     await page.waitFor(`!!document.querySelector('#connections button[data-key="claude:s-1"]')`, 10_000, "Beta's chat listed");
     await page.eval(`document.querySelector('#connections button[data-key="claude:s-1"]').click(), 1`);
@@ -321,7 +321,8 @@ async function runEarly(fx: Fixture, keep: (b: Browser) => void): Promise<void> 
     assertEquals(await page.eval(`window.__opened.slice()`), ['s-1'], 'opened before the kinds answered (the test is meaningful)');
     await new Promise((res) => setTimeout(res, 3000)); // the kinds answer, and a list poll
     assertEquals(await page.eval(`window.__opened.slice()`), ['s-1'], "last session's chat (Alpha's) was not reopened over Beta's");
-    assertEquals(await page.eval(`document.getElementById('title').textContent`), 'Work on Beta');
+    // Delta has no open chat: the middle shows the new-chat view, not Beta's chat (empty_project_view_e2e_test.ts).
+    assertEquals(await page.eval(`document.getElementById('title').textContent`), 'New chat');
     assertEquals(await page.eval(`AgentWorkspaceUI._state().active`), DELTA, 'the project you picked');
     const saved = await until(
       () => {

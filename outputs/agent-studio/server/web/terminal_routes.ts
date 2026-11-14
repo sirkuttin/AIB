@@ -21,6 +21,7 @@ import { resolveBeta, signinArgv } from '../agents/beta_agents.ts';
 import { readTerminalMethod } from '../agents/beta_signin.ts';
 import { defaultProbe, refreshWindowsPath, setupCommand } from '../agents/beta_setup.ts';
 import type { ShellSpec } from '../platform/pty.ts';
+import { remoteSetupCommand } from '../remote/install.ts';
 import type { WsLink } from '../platform/websocket.ts';
 
 export const TERMINAL_SOCKET = '/api/live/terminal';
@@ -123,7 +124,10 @@ async function attachSignin(ctx: WebContext, link: WsLink, agentId: string, cols
  */
 async function attachSetup(ctx: WebContext, link: WsLink, agentId: string, step: string, cols: unknown, rows: unknown): Promise<void> {
   await refreshWindowsPath().catch(() => false);
-  const command = await setupCommand(agentId, step, defaultProbe(ctx.agentOptions.nodeCommand || '', true));
+  // setup=remote: Settings > Remote control on Linux (install Tailscale, the operator line, start tailscaled); remote/install.ts
+  const command = agentId === 'remote'
+    ? remoteSetupCommand(step)
+    : await setupCommand(agentId, step, defaultProbe(ctx.agentOptions.nodeCommand || '', true));
   if (typeof command === 'string') {
     link.send(JSON.stringify({ type: 'error', message: command, code: 'setup_unavailable' }));
     link.close(1000, 'refused');

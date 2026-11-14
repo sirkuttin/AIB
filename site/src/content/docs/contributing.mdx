@@ -1,0 +1,93 @@
+---
+title: Contributing
+description: Run AIB from source, run the tests, build the desktop app for all six targets, find your way around the repository, and send a change.
+---
+
+AIB is beta software and the first release is in a feature freeze: bug fixes, tests, documentation and small polish are
+welcome. Discuss new features in an [issue](https://github.com/sirkuttin/AIB/issues) first. The full guide is
+[CONTRIBUTING.md](https://github.com/sirkuttin/AIB/blob/main/CONTRIBUTING.md).
+
+## Run AIB from source
+
+AIB is TypeScript on [Deno](https://deno.com), pinned to 2.9.8, with a plain-JavaScript page and no build step for the page.
+
+```sh
+cd outputs/agent-studio
+deno run -A server/main.ts --open
+```
+
+It opens at `http://127.0.0.1:8767`. The keeper is built from `keeper/` with Go when AIB starts (once per change; Go 1.23 or
+newer on PATH, or `$GO`). Without Go, AIB runs chats without the keeper and **Settings → AIB server → About AIB** says so.
+
+```sh
+deno run -A server/main.ts --in-process      # agents inside the web server (tests, debugging)
+deno run -A server/main.ts --stop-host       # stop the agent host (refuses while chats work, unless --force)
+deno run -A server/main.ts deploy [--host]   # restart without cutting off a turn
+```
+
+The desktop app and a source run share one data folder. Run one at a time, or give the source run its own `--state-dir`.
+
+## Run the tests
+
+You need Deno 2.9.8, Node.js 20 or newer for the page tests, and Python 3.10 or newer for the parity, contract and end-to-end
+tests. Tests use temporary data folders and fake agents; they never touch your real data folder or `~/.claude`.
+
+**While you work:** run only the tests that cover what you changed.
+
+```sh
+cd outputs/agent-studio
+deno task test:affected
+```
+
+**Before you hand a branch over** (about a minute):
+
+```sh
+cd outputs/agent-studio
+deno task test:fast
+deno task check
+deno task lint
+cd ../..
+npm install
+npm test
+```
+
+**Before a merge or a release** (about four minutes):
+
+```sh
+cd outputs/agent-studio
+deno task test
+cd ../..
+python work/run_parallel.py contract
+python work/run_parallel.py e2e
+```
+
+## Build the desktop app
+
+All six targets (Windows, macOS and Linux, each x64 and arm64) build from one Windows machine:
+
+```sh
+deno run -A tools/build.ts --targets all --out dist
+```
+
+It writes the zips, AppImages and `.deb`s plus `SHA256SUMS`, checks sizes, and starts the app once headless to make sure it
+serves the page. Releases are built this way and uploaded by hand.
+
+## Repository layout
+
+| Path | What's there |
+| --- | --- |
+| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point. All OS-specific code lives in `server/platform/`. |
+| `outputs/agent-studio/*.js, *.css, *.html` | The page: plain browser JavaScript and CSS, served as they are. |
+| `outputs/agent-studio/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
+| `keeper/` | The keeper (Go) and its protocol. |
+| `tools/` | `build.ts` (the six-target build) and the test runner. |
+| `work/` | Page tests, the worktree end-to-end suite, contract tests and the fake ACP agents the tests use. |
+| `site/` | This website (Astro Starlight). |
+
+## Send a change
+
+Keep a change small and say what you ran. Add or update a test with the change. Don't add dependencies without a reason.
+
+- **Report a bug:** [issues](https://github.com/sirkuttin/AIB/issues).
+- **Report a security problem:** see [SECURITY.md](https://github.com/sirkuttin/AIB/blob/main/SECURITY.md).
+- **Licence:** GNU AGPL-3.0. By contributing you agree your work is released under it.

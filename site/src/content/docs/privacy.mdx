@@ -1,0 +1,59 @@
+---
+title: 'Privacy and security: what stays on your PC, and what leaves it'
+description: No account, no telemetry, no cloud service of ours. Every network call AIB makes, how credentials are kept, how the page is locked to your PC, and what a phone can and can't do.
+---
+
+AIB runs on your PC. This page lists everything that leaves it, so you can check "local" for yourself.
+
+## No account, no telemetry, no cloud service of ours
+
+AIB has no account, sends no telemetry and runs no server of ours. Chats, settings and artifacts stay in AIB's data folder;
+docs and private notes stay in your project.
+
+## Every network call AIB makes
+
+| When | Where to | Can you turn it off? |
+| --- | --- | --- |
+| Once a day, the update check, and the download of a new version | `api.github.com` and GitHub's release files | Yes: **Settings → AIB server → Updates** |
+| When you click **Install** on an agent card | npm for the adapters and Beta agents; the vendor's installer for Cursor CLI, Goose and Mistral Vibe; the Node.js or uv installer when you click those | Happens only when you click |
+| When you click **Install Tailscale** | winget, or Tailscale's own download servers | Happens only when you click |
+| While phone access is on | Tailscale, which links your PC and your phone | Untick **Let paired phones reach AIB** |
+| When a chat needs you and a phone has push on | Your phone browser's push service, with the message encrypted to your phone | Per phone: the **Push notifications** switch |
+
+Links you click open in your own browser.
+
+## Your agents' own traffic
+
+Each agent talks to its own provider, as it does without AIB: Claude Code to Anthropic, Codex to OpenAI, and so on. Your code
+and prompts go only to the providers of the agents you use.
+
+## Credentials
+
+- AIB never reads or stores Claude Code, Codex or OMP credentials. Their own sign-in handles them.
+- API keys you enter for Beta agents are encrypted on disk (Windows: sealed to your user account; macOS: login Keychain;
+  Linux: system keyring, or a file only you can read) and passed only to that agent.
+
+## The page is locked to your PC
+
+- The AIB server and the keeper listen on `127.0.0.1` (or a socket only your user can open).
+- Every change needs a per-process page token plus same-origin checks, so other websites can't drive AIB.
+- Artifacts run sandboxed on their own local origin, with no network access.
+
+## Phones
+
+- **You approve each phone on the PC**, after checking that two words match on both screens. A pairing code lives 5 minutes,
+  works once, and three wrong tries end it. If another device tries a used code, the PC says so.
+- **Each phone has its own switches**, checked on every request. See [Remote control](/phone/#you-stay-in-charge-of-each-phone).
+- **Never on a phone:** the terminal, Settings, custom agents, deleting projects, updates, shutting down AIB, "Allow always".
+- **Phone activity** records time, phone, action, chat and result. Message text and commands are never kept.
+- **AIB never turns on Tailscale Funnel**, so AIB is never on the public internet. Only devices on your tailnet reach it.
+- **What AIB changed on this PC** lists every Tailscale command AIB ran.
+
+## Push messages
+
+A push says only that a chat needs you or finished, and the chat's name. It's encrypted to your phone. The push keys are made
+on your PC; there is no account and no Firebase project.
+
+## Report a security problem
+
+See [SECURITY.md](https://github.com/sirkuttin/AIB/blob/main/SECURITY.md) for how to report one privately.

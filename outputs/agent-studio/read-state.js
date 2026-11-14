@@ -13,6 +13,7 @@
   const KEY_OK = /^[a-z0-9][a-z0-9_-]*:.+$/;
   let host = null,
     chats = {}, // key -> {seenAt (ms), seenIndex?}
+    marks = {}, // key -> markedUnreadAt (ms): "Mark as unread" from a phone, until the chat is looked at again (the server's)
     pending = {},
     revision = null,
     flushTimer = 0,
@@ -71,7 +72,10 @@
 
   const seenAt = (key) => (chats[key] ? chats[key].seenAt : 0);
   const seenIndex = (key) => (chats[key] && chats[key].seenIndex != null ? chats[key].seenIndex : null);
+  // When a phone marked this chat unread (ms), while nothing newer was read since; else 0. The unread dot shows for it.
+  const markedUnread = (key) => (marks[key] && marks[key] > seenAt(key) ? marks[key] : 0);
   function mark(key, at, index) {
+    if (marks[key] && (Number(at) || 0) > marks[key]) delete marks[key]; // looked at again: the server clears it with this position
     const next = { seenAt: Number(at) || 0 };
     if (index != null) next.seenIndex = index;
     if (!merge(chats, key, next)) return false;
@@ -110,7 +114,14 @@
     try {
       const data = await host.get('/api/live/read-state');
       let changed = false;
-      for (const k of Object.keys((data && data.chats) || {})) changed = merge(chats, k, data.chats[k]) || changed;
+      const nextMarks = {};
+      for (const k of Object.keys((data && data.chats) || {})) {
+        changed = merge(chats, k, data.chats[k]) || changed;
+        const m = data.chats[k] && data.chats[k].markedUnreadAt;
+        if (validKey(k) && validTime(m) && m > 0) nextMarks[k] = m;
+      }
+      if (JSON.stringify(nextMarks) !== JSON.stringify(marks)) changed = true;
+      marks = nextMarks;
       revision = (data && data.revision) || rev || revision;
       if (changed) saveCache();
       return changed;
@@ -160,7 +171,7 @@
         if (root.document.visibilityState === 'hidden') flush();
       });
   }
-  const api = { init, seenAt, seenIndex, mark, sync, flush, migrate, _merge: merge, _reset: loadCache };
+  const api = { init, seenAt, seenIndex, markedUnread, mark, sync, flush, migrate, _merge: merge, _reset: loadCache };
   root.AgentReadState = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

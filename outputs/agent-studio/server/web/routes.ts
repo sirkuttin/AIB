@@ -18,12 +18,16 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/view-prefs                 save the page's view and appearance preferences (state/view_prefs.ts)
  *   POST /api/live/agent-options              the model / mode / effort lists a new chat can offer (state/agent_options.ts)
  *   POST /api/live/desktop/notify             the desktop app shows a notification natively (desktop/notify.ts)
+ *   GET  /api/live/update/notes               the release notes to show once after an update ("What's new in AIB <version>")
+ *   POST /api/live/update/notes               the page showed them: not offered again
  *   POST /api/live/project-remove             "Delete project…": remove a project from AIB, optionally its folder (project_routes.ts)
  *   POST /api/live/project-add                add projects to AIB (the New project dialog; project_routes.ts)
  *   GET  /api/live/files/list                 the Files view: one folder of a chat's folder (files_routes.ts)
  *   GET  /api/live/files/search               the Files view: file names matching a filter
  *   GET  /api/live/files/read                 the Files view: one file, read only
  *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
+ *   POST /api/live/files/exclude              the Files view: "Git exclude" on a row (a local-only path) and its Undo
+ *   POST /api/live/files/strays/move          the Files view: move a chat copy's files under local-only paths to the main folder
  *   POST /api/live/worktree/merge-request     the Changes tab's Merge button: a one-shot merge permission, then the chat is asked to merge
  *   POST /api/live/docs/open                  local docs: the page opens a doc (docs_routes.ts)
  *   GET  /api/live/docs/list                  local docs: the docs of a chat's project folder (Files, Ctrl+K, chips, picker)
@@ -50,6 +54,32 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/docs/duplicate             local docs: "Duplicate doc" (every page, a new doc in the same project)
  *   POST /api/live/docs/trash                 local docs: "Move doc to trash" (history kept)
  *   POST /api/live/docs/reveal                local docs: "Show in folder" for a Markdown export in Downloads
+ *   GET  /api/live/devices                    Settings > Remote control: phone access, Tailscale checks, paired phones, pairing (devices_routes.ts)
+ *   POST /api/live/devices/access             Settings > Remote control: the Phone access switch
+ *   POST /api/live/devices/check              Settings > Remote control: Check again (reads Tailscale once more)
+ *   POST /api/live/devices/pair               Settings > Remote control: Add a phone (a one-time code, QR and six words)
+ *   POST /api/live/devices/pair/cancel        Settings > Remote control: Cancel on the pairing code
+ *   POST /api/live/devices/approve            Settings > Remote control: Approve a phone that claimed the code
+ *   POST /api/live/devices/reject             Settings > Remote control: Reject it
+ *   POST /api/live/devices/remove             Settings > Remote control: Remove one phone
+ *   POST /api/live/devices/remove-all         Settings > Remote control: Remove all phones
+ *   POST /api/live/devices/scopes             Settings > Remote control: a paired phone's switches (Answer, Send, Approve once, Push)
+ *   GET  /api/live/devices/activity           Settings > Remote control: Phone activity
+ *   POST /api/live/devices/prefs              Settings > Remote control: a phone's Silent reminders {id, remind}
+ *   POST /api/live/devices/tailscale/refresh  Settings > Remote control: re-read Tailscale (3 s while a step waits, 30 s otherwise)
+ *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
+ *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job
+ *   POST /api/live/devices/tailscale/cancel   Settings > Remote control: Cancel on a setup job
+ *   POST /api/live/presence                   the page: its window has focus or not, time since the last input (attention/presence.ts)
+ *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
+ *   POST /api/live/artifacts/delete           Delete: to Recently deleted, the source file into the artifact's bin (page only)
+ *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)
+ *   POST /api/live/artifacts/purge            "Delete now": remove a deleted artifact for good (page only)
+ *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
+ *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
+ *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
+ *   POST /api/live/chat-name                  rename one chat (or clear its name): per key, so a phone's rename of another chat stays
+ * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
@@ -60,6 +90,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/view-prefs', 'write', 'body'],
   ['POST', '/api/live/agent-options', 'write', 'body'],
   ['POST', '/api/live/desktop/notify', 'write', 'body'],
+  ['GET', '/api/live/update/notes', 'read', 'get'],
+  ['POST', '/api/live/update/notes', 'write', 'body'],
   ['POST', '/api/live/project-remove', 'write', 'body'],
   ['POST', '/api/live/project-add', 'write', 'body'],
   ['GET', '/api/live/folders/gone', 'read', 'get'], // folders that no longer exist (folder_presence.ts)
@@ -67,6 +99,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/search', 'read', 'get'],
   ['GET', '/api/live/files/read', 'read', 'get'],
   ['GET', '/api/live/files/outside', 'read', 'get'],
+  ['POST', '/api/live/files/exclude', 'write', 'body'],
+  ['POST', '/api/live/files/strays/move', 'write', 'body'],
   ['POST', '/api/live/docs/open', 'write', 'body'],
   ['GET', '/api/live/docs/list', 'read', 'get'],
   ['GET', '/api/live/docs/info', 'read', 'get'],
@@ -92,6 +126,31 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/docs/duplicate', 'write', 'body'],
   ['POST', '/api/live/docs/trash', 'write', 'body'],
   ['POST', '/api/live/docs/reveal', 'write', 'body'],
+  ['GET', '/api/live/devices', 'read', 'get'],
+  ['POST', '/api/live/devices/access', 'write', 'body'],
+  ['POST', '/api/live/devices/check', 'write', 'body'],
+  ['POST', '/api/live/devices/pair', 'write', 'body'],
+  ['POST', '/api/live/devices/pair/cancel', 'write', 'body'],
+  ['POST', '/api/live/devices/approve', 'write', 'body'],
+  ['POST', '/api/live/devices/reject', 'write', 'body'],
+  ['POST', '/api/live/devices/remove', 'write', 'body'],
+  ['POST', '/api/live/devices/remove-all', 'write', 'body'],
+  ['POST', '/api/live/devices/scopes', 'write', 'body'],
+  ['GET', '/api/live/devices/activity', 'read', 'get'],
+  ['POST', '/api/live/devices/prefs', 'write', 'body'],
+  ['POST', '/api/live/devices/tailscale/refresh', 'write', 'body'],
+  ['POST', '/api/live/devices/tailscale/run', 'write', 'body'],
+  ['GET', '/api/live/devices/tailscale/job', 'write', 'get'],
+  ['POST', '/api/live/devices/tailscale/cancel', 'write', 'body'],
+  ['POST', '/api/live/presence', 'write', 'body'],
+  ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],
+  ['POST', '/api/live/artifacts/delete', 'artifacts.write', 'own-gate'],
+  ['POST', '/api/live/artifacts/undelete', 'artifacts.write', 'own-gate'],
+  ['POST', '/api/live/artifacts/purge', 'artifacts.write', 'own-gate'],
+  ['GET', '/api/live/artifacts/states', 'artifacts.read', 'get'],
+  ['POST', '/api/live/steer', 'write', 'body'],
+  ['POST', '/api/live/tool-stop', 'write', 'body'],
+  ['POST', '/api/live/chat-name', 'write', 'body'],
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

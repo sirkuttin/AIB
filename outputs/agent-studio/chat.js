@@ -309,12 +309,51 @@
     const c = mainCtl();
     return c ? !c.following : !!$('messages').dataset.paused;
   };
+  /* A live chat keeps its newest 6000 events and its newest 500 rows (Full view): older ones are dropped as new ones come. Never
+     the row you are reading, though: a list anchored on a live row ('L:<event number>') keeps every event and row from that row
+     on, up to a hard cap. Dropping it made the list jump to its top while you read in a busy chat (helpers' events count too):
+     the controller found no row of that place any more and fell back to the first row drawn, at your old offset. */
+  const EVENTS_KEEP = 6000,
+    EVENTS_HOLD = 30000,
+    ROWS_KEEP = 500,
+    ROWS_HOLD = 3000,
+    UNITS_HOLD = 3000; // a condensed view's cap (views.js CAP, 500) while you read
+  /* While a list's reader is anchored on a live row: the event number of the first live row drawn in it (the rows above your place
+     stay as well, so neither the text nor the scrollbar moves), else of your row; 0 when following, on the old scroll path, or on
+     another kind of row (a saved transcript's). */
+  function readingSeq(ctl) {
+    const s = ctl && ctl.state;
+    if (!s || s.mode !== 'anchor' || typeof s.rid !== 'string' || !s.rid.startsWith('L:')) return 0;
+    let n = Number(s.rid.slice(2));
+    for (const el of ctl.box.children) {
+      const r = el.dataset && (el.dataset.rid || el.dataset.ridFrom);
+      if (!r) continue;
+      if (r.startsWith('L:') && Number(r.slice(2)) > 0) n = Math.min(n, Number(r.slice(2)));
+      break;
+    }
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  const seqOfRow = (r) => (r && typeof r.rid === 'string' && r.rid.startsWith('L:') ? Number(r.rid.slice(2)) : NaN);
+  /* How many of the oldest items to drop to keep `keep`, but none from the first one at or after `from` (an event number; 0: no
+     reader), and never fewer than leaves `hold`. seqOf reads an item's event number. */
+  function trimCut(list, keep, hold, from, seqOf) {
+    let cut = Math.max(0, list.length - keep);
+    if (!cut || !(from > 0)) return cut;
+    let i = 0;
+    while (i < cut && !(seqOf(list[i]) >= from)) i++;
+    return Math.max(i, list.length - hold);
+  }
+  function trimEvents(list, ...readers) {
+    const from = Math.min(...readers.map(readingSeq).filter((n) => n > 0));
+    const cut = trimCut(list, EVENTS_KEEP, EVENTS_HOLD, Number.isFinite(from) ? from : 0, (e) => e && e.seq);
+    return cut ? list.slice(cut) : list;
+  }
   /* Draws the main list again from what is already loaded (no request). */
   function repaintMain() {
     if (current && snapshot)
       showRows(
         $('messages'),
-        withUnknownSends(liveRows(snapshot.sessionId, events, snapshot, viewOf() !== 'full'), snapshot.unknownReceipts),
+        withUnknownSends(liveRows(snapshot.sessionId, events, snapshot, viewOf() !== 'full', readingSeq(mainCtl())), snapshot.unknownReceipts),
         'main',
         liveExtra(),
       );
@@ -747,7 +786,7 @@
     } catch {}
   }
   async function post(path, data) {
-    if (path === 'prompt' || path === 'queue') rememberSend(data);
+    if (path === 'prompt' || path === 'queue' || path === 'steer') rememberSend(data);
     const response = await request(
       '/api/live/' + path,
       {
@@ -772,7 +811,7 @@
       );
     }
     if (!response.ok) {
-      if ((path === 'prompt' || path === 'queue') && response.body?.code === 'prompt_state_unknown')
+      if ((path === 'prompt' || path === 'queue' || path === 'steer') && response.body?.code === 'prompt_state_unknown')
         forgetAttemptById(data.clientMessageId);
       throw responseError(response);
     }
@@ -790,7 +829,9 @@
   function clearError() {
     $('error').hidden = true;
   }
-  let clashUi = null;
+  let clashUi = null,
+    sendMenu = null,
+    sendIntent = 'default';
   let ownershipHints = {},
     ownershipCertainty = 'checked';
   // A project whose folder no longer exists (a deleted temp folder, an unplugged drive) is not listed, and neither are its chats.
@@ -840,7 +881,7 @@
   async function listConversations() {
     listedAt = Date.now();
     const [live, saved, ownership] = await Promise.all([
-      get('/api/live/list'),
+      get('/api/live/list', namesRevision ? { names: namesRevision } : {}),
       get('/api/sessions'),
       get('/api/live/ownership').catch(() => null),
     ]);
@@ -876,6 +917,7 @@
       known = new Set(),
       recoveredBy = new Map(recoveredList.map((r) => [r.provider + ':' + r.sessionId, r]));
     conversations = [];
+    syncNames(live);
     window.AgentOrganizeUI?.sync(live.conversationRevision);
     await window.AgentReadState?.sync(live.readStateRevision);
     if (!readMigrated && window.AgentReadState) {
@@ -974,6 +1016,8 @@
       if (updated) selected = updated;
     }
     renderConversations();
+    // The title the agent gave the chat later (it arrives with the list) shows in the header as it does in the tab.
+    if (selected && !newDraft && !window.AgentHeaderUI?.isEditing?.() && $('title').textContent !== titleOf(selected)) $('title').textContent = titleOf(selected);
     if (
       selected &&
       !current &&
@@ -1086,7 +1130,10 @@
     const termIcon = window.AibTerminal?.rowIcon(aliasKey(c));
     if (termIcon) button.querySelector('.connection-title')?.append(termIcon);
     button.title = c.cwd + '\n' + c.id;
-    button.onclick = () => openConversation(c);
+    button.onclick = () => {
+      window.AgentWorkspaceUI?.closeDrawer?.(); // choosing the chat that is already open still closes the narrow drawer
+      openConversation(c);
+    };
     button.addEventListener('pointerdown', (e) => window.AgentSplitUI?.startCardDrag(e, aliasKey(c)));
     let more = window.AgentOrganizeUI?.menuButton(c);
     if (!more) {
@@ -1209,12 +1256,33 @@
     const opening = continuingKey === aliasKey(selected),
       sending = sendingKey === aliasKey(selected),
       gone = isDiscarded(selected);
-    $('prompt').disabled = opening || sending || gone;
+    // While a message is on its way the box takes no typing (read-only), but it keeps the focus: a disabled box lost it, and after
+    // Enter you had to click back into it to type the next message.
+    $('prompt').disabled = opening || gone;
+    $('prompt').readOnly = sending;
     $('prompt').placeholder = gone ? DISCARDED_NOTE : 'Message ' + nameOf(selected.provider) + '… Enter to send';
     $('prompt').title = gone ? DISCARDED_NOTE : '';
     const busy = !!(connected && snapshot.busy);
     const queueMode = busy || (connected && snapshot?.queue?.items?.length > 0);
-    $('send').textContent = opening ? 'Opening…' : queueMode ? 'Queue' : 'Send';
+    // The button always says Send. While the agent works, Enter sends now (steers) when the agent can read it, else queues.
+    const SM = window.AgentSendMenu,
+      composer = SM
+        ? SM.view({
+            busy,
+            autonomous: !!(connected && snapshot.autonomous),
+            hasQueue: false,
+            steerable: !!(connected && snapshot.steerable),
+            agentId: (connected && snapshot.steerAgent) || selected.provider,
+            agent: nameOf(selected.provider),
+            text: $('prompt').value,
+            commands: snapshot?.breadth?.commands,
+          })
+        : { working: false, more: false, items: [], keyHint: '' };
+    sendMenu ||= SM && SM.init({ doc: document, root: document, send: $('send'), onPick: (id) => sendWith(id) });
+    sendMenu?.update(composer);
+    // The shortcuts while the agent works: the Send button's tooltip and the ▾ menu (no hint row under the box: its height stays put)
+    $('send').title = composer.working && composer.keyHint ? composer.keyHint : '';
+    $('send').textContent = opening ? 'Opening…' : 'Send';
     $('send').hidden = false;
     $('send').disabled =
       gone ||
@@ -1252,8 +1320,10 @@
     window.AgentQueueUI?.render(
       { box: $('queueBox'), connection: current, busy, post, refresh, fail },
       connected ? snapshot.queue : null,
+      connected ? snapshot.steerLane : null,
     );
-    if (queueMode) $('prompt').placeholder = 'Message ' + nameOf(selected.provider) + '… Enter to queue';
+    if (composer.working && composer.placeholder) $('prompt').placeholder = composer.placeholder;
+    else if (queueMode) $('prompt').placeholder = 'Message ' + nameOf(selected.provider) + '… Enter to queue';
     $('markHandled').hidden = !(
       turn?.status?.kind === 'your-turn' && typeof window.AgentWorkspaceUI?.markHandled === 'function'
     );
@@ -1295,7 +1365,9 @@
       },
     );
     $('composerNote').textContent = connected
-      ? queueMode
+      ? composer.working && composer.note
+        ? composer.note
+        : queueMode
         ? 'Enter to queue it for when this turn ends · Shift+Enter for a new line · Interrupt stops the current turn; background work may continue.'
         : 'Enter to send · Shift+Enter for a new line · Interrupt stops the current turn; background work may continue.'
       : 'Enter to continue & send · Shift+Enter for a new line. Drafts are saved in this browser. Continue only after this conversation has stopped in other apps.';
@@ -1356,6 +1428,9 @@
     }
     if (window.ToolViews?.line && row.role === 'tool' && (row.raw || row.call)) {
       const line = window.ToolViews.line(row, () => bubbleFull(row));
+      // a command or helper that went on in the background after a steer: the pill (and Stop) sit on the row itself, under its line
+      const pill = toolBackgroundPill(row);
+      if (pill) line.insertBefore(pill, line.querySelector(':scope > .tool-detail'));
       // a doc tool row: DOC label, "open ↗", the doc-created card (doc-links.js)
       const docRow = window.AgentDocLinks?.decorateToolRow ? window.AgentDocLinks.decorateToolRow(line, row) : line;
       if (docRow !== line || line.classList?.contains('doc-tool')) return docRow;
@@ -1387,6 +1462,15 @@
     box.append(result);
     return box;
   }
+  /* "Still running in the background" (+ Stop when AIB can stop it) for a tool row the server marked (update.background). */
+  function toolBackgroundPill(row) {
+    const bg = row.role === 'tool' && window.AgentSendMenu?.backgroundOf(row.raw);
+    if (!bg) return null;
+    return window.AgentSendMenu.backgroundPill(document, bg, async () => {
+      await post('tool-stop', { id: current, toolCallId: row.raw.toolCallId });
+      await refresh();
+    });
+  }
   function bubbleFull(row) {
     const article = text('article', '', 'bubble ' + row.role);
     /* links or files with no words: a compact row whose time lines up with the box (and repeats only when it changes) */
@@ -1402,6 +1486,7 @@
     const head = text('div', '', 'bubble-head');
     /* the screen-reader name of a message: "You" for yours, live or saved (saved transcripts say "User") */
     head.append(text('strong', row.role === 'user' ? 'You' : row.label || row.role), text('time', date(row.time)));
+    if (row.steered && window.AgentSendMenu) head.append(text('span', window.AgentSendMenu.COPY.tag, 'sent-tag'));
     article.append(head);
     if (row.injectedNote && window.StreamUI?.noteCard)
       article.append(window.StreamUI.noteCard(row.injectedNote, row, resolveAgentName));
@@ -1422,6 +1507,11 @@
     } else if (row.value && row.role === 'notice' && (row.label === 'error' || row.label === 'disconnected'))
       article.append(linkedPre(row.value)); // an agent's error often names a page to open (a plan to upgrade, a sign-in)
     else if (row.value) article.append(text('pre', row.value));
+    if (!window.ToolViews?.line) {
+      // (with tool lines the pill is on the line, not repeated in its opened detail)
+      const pill = toolBackgroundPill(row);
+      if (pill) article.append(pill);
+    }
     if (row.actions?.length) article.append(clashButtons(row.actions));
     for (const [index, image] of (row.attachments || []).entries()) {
       if (image && image.type === 'studio_file') {
@@ -1552,6 +1642,7 @@
           earlier: !!extra?.earlier,
           working: !!extra?.working,
           live: extra?.live || null,
+          ...(ctl && !ctl.following ? { cap: UNITS_HOLD } : {}), // while you read, the oldest groups stay (your place among them)
         })
       : null;
     if (proj && find) proj.units = proj.units.filter((u) => window.ChatViews.promptMatches(u.prompt, find.q));
@@ -1816,7 +1907,7 @@
       (c.elsewhere && c.elsewhere.working)
     );
   }
-  function liveRows(session, evs = events, snap = snapshot, uncapped = false) {
+  function liveRows(session, evs = events, snap = snapshot, uncapped = false, keepFrom = 0) {
     const rows = [],
       tools = new Map(), // toolCallId -> {row, turn}
       uses = new Map(), // toolCallId -> how many calls used it
@@ -1832,6 +1923,7 @@
         label,
         value,
         actions,
+        steered = false,
         attachments = [];
       const sid = event.data?.sessionId || snap?.sessionId;
       if (sid !== session) continue;
@@ -1840,6 +1932,7 @@
         role = 'user';
         label = 'You';
         value = event.data.text;
+        steered = !!event.data.steered;
         attachments = [...(event.data.attachments || []), ...(window.AttachmentsUI?.eventFiles(event.data) || [])];
       } else if (event.kind === 'update') {
         const u = event.data.update || {},
@@ -1943,6 +2036,7 @@
           attachments,
           rid,
           ...(actions ? { actions } : {}),
+          ...(steered ? { steered } : {}),
         });
     }
     if (asks.size) {
@@ -1958,7 +2052,9 @@
     /* In-progress steps spin while work is going on for this chat: its own reply, or helpers still running after the reply ended. */
     const helpersWorking = Object.values(snapshot?.subagents || {}).some((a) => a && agentIsActive({ ...a, live: true }));
     const folded = window.PlanUI ? window.PlanUI.fold(rows, { live: true, working: !!snapshot?.busy || helpersWorking }) : rows;
-    return uncapped ? folded : folded.slice(-500); // a condensed view caps after it has projected (views.js), so the latest prompt is never cut off
+    if (uncapped) return folded; // a condensed view caps after it has projected (views.js), so the latest prompt is never cut off
+    const cut = trimCut(folded, ROWS_KEEP, ROWS_HOLD, keepFrom, seqOfRow); // never the row you read (keepFrom: readingSeq)
+    return cut ? folded.slice(cut) : folded;
   }
   /* What you chose on an approval or a question card, by request key (this page only; another window's answer reads "Answered"). */
   const answerChoice = new Map();
@@ -2027,9 +2123,13 @@
     }
   }
   function collectChildren() {
+    /* helpers AIB marked as going on in the background after a steer (the server's tool_call_update with background.helper) */
+    const inBackground = new Map();
     events.forEach((e) => {
       if (e.kind !== 'update') return;
       const u = e.data.update || {};
+      if (u.sessionUpdate === 'tool_call_update' && u.background && typeof u.background.helper === 'string')
+        inBackground.set(u.background.helper, u.background.state === 'running');
       if (u.sessionUpdate === 'subagent_update') {
         const child = u.subagent || u;
         const id = child.sessionId || child.subagentSessionId;
@@ -2062,6 +2162,7 @@
         window.SubagentsUI?.noteEvent(children.get(sid), e);
       }
     });
+    for (const [id, child] of children) child.background = inBackground.get(id) === true;
     // Model, tokens and what each helper is doing now (subagents-ui.js details); a part not known now keeps what was known before.
     const facts = window.SubagentsUI?.details?.(events, snapshot.sessionId);
     if (facts)
@@ -2415,7 +2516,7 @@
     renderSubagentControls();
     renderSubHead();
     if (subSelection.live) {
-      showRows($('submessages'), liveRows(target), 'sub');
+      showRows($('submessages'), liveRows(target, events, snapshot, false, readingSeq(managed($('submessages')))), 'sub');
       return;
     }
     const working = window.SubagentsUI?.classify(subSelection).group === 'working';
@@ -2430,9 +2531,29 @@
     }
   }
   let readMigrated = false;
-  async function refresh() {
-    if (!selected || polling) return;
+  // One read of the open chat at a time. The 1.5 s poll skips a beat while one runs ({poll: true}); any other caller (after a send,
+  // an answer, a switch) gets one more read after the running one, which may have left before the change: so the working composer
+  // (Interrupt, Send ▾) shows as soon as the send is answered, not a poll later (QA beta.9).
+  let pollRun = null,
+    pollNext = null;
+  function refresh(opts) {
+    if (!selected) return Promise.resolve();
+    if (pollRun) {
+      if (opts && opts.poll) return pollRun;
+      return (pollNext ||= pollRun.then(() => {
+        pollNext = null;
+        return refresh();
+      }));
+    }
     polling = true;
+    pollRun = refreshOnce().finally(() => {
+      polling = false;
+      pollRun = null;
+    });
+    return pollRun;
+  }
+  async function refreshOnce() {
+    if (!selected) return;
     const key = selected.key;
     try {
       if (current) {
@@ -2449,7 +2570,7 @@
         snapshot = next;
         if (next.reset) events = [];
         events.push(...next.events);
-        events = events.slice(-6000);
+        events = trimEvents(events, mainCtl(), managed($('submessages'))); // never from the row you read in the chat or a helper's view
         cursor = next.cursor;
         window.AgentArtifactsUI?.onEvents(next.events, current);
         collectChildren();
@@ -2460,7 +2581,7 @@
         liveHistoryNote(next);
         showRows(
           $('messages'),
-          withUnknownSends(liveRows(next.sessionId, events, snapshot, viewOf() !== 'full'), next.unknownReceipts),
+          withUnknownSends(liveRows(next.sessionId, events, snapshot, viewOf() !== 'full', readingSeq(mainCtl())), next.unknownReceipts),
           'main',
           liveExtra(),
         );
@@ -2723,19 +2844,73 @@
     $('renameDialog').showModal();
     $('renameInput').select();
   }
+  /* Chat names can change from a phone (server: ViewPrefs.setChatName). The list answer carries their revision, and the names when
+     the one this page sent is old: they replace this page's copy. A rename here saves only that one chat's name (POST
+     /api/live/chat-name), never this page's whole copy (view-prefs.js does not send this key after start), so it never puts back
+     a name a phone changed. The first list call already sends the revision of the names this page started with (namesRevisionOf,
+     the server's own hash of the saved value), so a phone rename between the page loading and its first list call is not missed. */
+  function namesRevisionOf(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return text.length + '.' + h.toString(36);
+  }
+  let namesRevision = (() => {
+    try {
+      return namesRevisionOf(localStorage.getItem('studio-conversation-names') || '');
+    } catch (e) {
+      return 'boot';
+    }
+  })();
+  let renamesOnTheirWay = 0;
+  function takeNames(next, render) {
+    if (JSON.stringify(next) === JSON.stringify(aliases)) return;
+    for (const k of Object.keys(aliases)) delete aliases[k];
+    for (const k of Object.keys(next)) if (typeof next[k] === 'string') aliases[k] = next[k];
+    try {
+      localStorage.setItem('studio-conversation-names', JSON.stringify(aliases)); // this browser's copy only (never sent back)
+    } catch (e) {
+      /* this browser's copy stays old; the data folder has them */
+    }
+    sidebarSignature = '';
+    if (render) renderConversations(); // the list call draws the list itself after syncNames
+    if (selected) renderHeader();
+  }
+  function syncNames(live) {
+    // a rename of this page still on its way: the next list answer brings the names with it
+    if (renamesOnTheirWay) return;
+    const rev = typeof live.chatNamesRevision === 'string' ? live.chatNamesRevision : '';
+    if (live.chatNames && typeof live.chatNames === 'object' && !Array.isArray(live.chatNames)) takeNames(live.chatNames);
+    if (rev) namesRevision = rev;
+  }
   function renameChat(c, value) {
     const v = String(value || '').trim();
-    if (v) aliases[aliasKey(c)] = v;
-    else delete aliases[aliasKey(c)];
+    const key = aliasKey(c);
+    if (v) aliases[key] = v;
+    else delete aliases[key];
     try {
       localStorage.setItem('studio-conversation-names', JSON.stringify(aliases));
     } catch (e) {
-      fail(Error('Could not save the display name in this browser.'));
-      return false;
+      /* this browser's copy; the data folder gets the name below */
     }
     sidebarSignature = '';
     renderConversations();
     if (selected) renderHeader();
+    renamesOnTheirWay++;
+    post('chat-name', { key, name: v })
+      .then((out) => {
+        renamesOnTheirWay--;
+        if (renamesOnTheirWay || !out || typeof out.chatNames !== 'object' || !out.chatNames) return;
+        takeNames(out.chatNames, true);
+        if (typeof out.chatNamesRevision === 'string') namesRevision = out.chatNamesRevision;
+      })
+      .catch((e) => {
+        renamesOnTheirWay--;
+        namesRevision = 'retry'; // the next list answer brings AIB's names back
+        fail(Error('The name could not be saved in AIB: ' + (e && e.message ? e.message : 'try again')));
+      });
     return true;
   }
   async function handoffFor(c) {
@@ -3383,7 +3558,7 @@
     try {
       snap = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
     } catch {}
-    const route = window.AgentInboxReply ? window.AgentInboxReply.sendRoute(snap) : 'prompt';
+    const route = window.AgentInboxReply ? window.AgentInboxReply.sendRoute(snap, value) : 'prompt';
     await post(route, { id, text: value, clientMessageId, attachments: [] });
     clearAttempt(key, value, '');
     try {
@@ -3394,7 +3569,7 @@
       if (hit && !current) await openConversation(hit);
       else if (current) await refresh();
     }
-    return { queued: route === 'queue' };
+    return { queued: route === 'queue', steered: route === 'steer' };
   }
   async function reloadAfterAnswer() {
     try {
@@ -3412,6 +3587,8 @@
       if (!$('send').disabled) continueConversation();
       return;
     }
+    const intent = sendIntent;
+    sendIntent = 'default';
     const value = $('prompt').value,
       images = selectedAttachments().slice();
     if ((!value.trim() && !images.length) || !current || sendingKey || (!imageCapability() && images.length)) return;
@@ -3439,7 +3616,10 @@
         sendingKey = '';
         renderHeader();
       }
-      if (message) $('promptForm').requestSubmit();
+      if (message) {
+        sendIntent = 'after'; // the brief that follows a /doc command waits for the turn to end
+        $('promptForm').requestSubmit();
+      }
       return;
     }
     const key = aliasKey(selected),
@@ -3452,12 +3632,43 @@
       const fingerprint = await imageFingerprint(images),
         clientMessageId = attemptId(key, value, fingerprint),
         attachments = await imageBlocks(images);
-      await post(snapshot && (snapshot.busy || snapshot.queue?.items?.length) ? 'queue' : 'prompt', {
-        id: connection,
-        text: value,
-        clientMessageId,
-        attachments,
-      });
+      const body = { id: connection, text: value, clientMessageId, attachments },
+        wayOf = (s) =>
+          window.AgentSendMenu
+            ? window.AgentSendMenu.route(
+                {
+                  busy: !!s?.busy,
+                  hasQueue: !!s?.queue?.items?.length,
+                  steerable: !!s?.steerable,
+                  text: value,
+                  commands: s?.breadth?.commands,
+                },
+                intent,
+              )
+            : s && (s.busy || s.queue?.items?.length)
+              ? 'queue'
+              : 'prompt',
+        sendBy = async (way) => {
+          if (way === 'steer') await post('steer', body);
+          else if (way === 'interrupt') {
+            // Interrupt and send: it joins the queue, then jumps to the front and cancels the turn (what the queue row's ↑ does)
+            await post('queue', body);
+            await post('queue-send-now', { id: connection, messageId: clientMessageId });
+          } else await post(way, body);
+        };
+      const way = wayOf(snapshot);
+      try {
+        await sendBy(way);
+      } catch (error) {
+        // The page knows the chat from its last poll (up to 1.5 s old): a turn that started since (the phone, the inbox, the queue,
+        // Claude Code's own cycle, an approval card's turn) makes the agent refuse a prompt, which it did not take. Read the chat
+        // now and send it the way that fits: held while a card is open, steered, or after this turn (QA beta.9).
+        if (way !== 'prompt' || !/Wait for the current turn/.test(error.message)) throw error;
+        const now = await get('/api/live/state', { id: connection, after: connection === current ? cursor : 0 });
+        const again = wayOf(now);
+        if (again === 'prompt') throw error;
+        await sendBy(again);
+      }
       followSent(); // you sent it: the view goes to your message and follows the reply, wherever you had scrolled
       clearAttempt(key, value, fingerprint);
       clearSentAttachments(key, images);
@@ -3479,17 +3690,37 @@
     } finally {
       sendingKey = '';
       renderHeader();
+      // Sent (or kept after an error): the box is where you type the next one. From the Send button or its ▾ menu as well.
+      if (selected && aliasKey(selected) === key) composerFocusBack();
     }
   };
+  /* After a send: the focus goes (back) to the message box unless you put it somewhere else meanwhile. */
+  function composerFocusBack() {
+    const a = document.activeElement,
+      box = $('prompt');
+    if (!box || box.disabled || a === box) return;
+    const ours = !a || a === document.body || a === $('send') || !!a.closest?.('.send-split, .send-menu');
+    if (ours) box.focus({ preventScroll: true });
+  }
   $('prompt').onkeydown = (e) => {
     if (window.AgentDocLinks?.handleKey(e)) return;
     if (window.AgentBreadth?.handleKey(e)) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+    const intent = window.AgentSendMenu
+      ? window.AgentSendMenu.keyIntent(e, { busy: !!snapshot?.busy })
+      : e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing
+        ? 'default'
+        : '';
+    if (intent) {
       e.preventDefault();
       if (!$('prompt').value.trim() && !selectedAttachments().length) return;
-      if (!$('send').disabled) $('promptForm').requestSubmit();
+      if (!$('send').disabled) sendWith(intent);
     }
   };
+  // Send with a chosen intent: 'default' (Enter), 'now', 'after' (Alt+Enter) or 'interrupt' (menu only).
+  function sendWith(intent) {
+    sendIntent = intent;
+    $('promptForm').requestSubmit();
+  }
   $('cancel').onclick = async () => {
     try {
       await post('cancel', { id: current });
@@ -3553,7 +3784,12 @@
       window.AttachmentsUI.addFiles([...$('imageFiles').files], imagePickerKey, attachHost);
     imagePickerKey = '';
     $('imageFiles').value = '';
+    window.AgentFocusReturn?.back(); // the file picker closed: back in the box you were typing in, not on + Attach
   };
+  $('imageFiles').addEventListener('cancel', () => {
+    imagePickerKey = '';
+    window.AgentFocusReturn?.back();
+  });
   $('prompt').addEventListener('paste', (event) => {
     if (!attachAvailable()) return;
     const key = curKey(),
@@ -3603,7 +3839,7 @@
   /* A hidden tab pauses only the 1.5 s chat poll and catches up the moment it is shown again. The conversation list keeps its own
    poll (notify-ui.js raises desktop notifications from it while the tab is in the background). */
   setInterval(() => {
-    if (!document.hidden) refresh();
+    if (!document.hidden) refresh({ poll: true });
   }, 1500);
   setInterval(() => listConversations().catch(fail), 5000);
   document.addEventListener?.('visibilitychange', () => {
@@ -4332,10 +4568,13 @@
       m.histKey = '';
       if (next.reset) m.events = [];
       m.events.push(...next.events);
-      m.events = m.events.slice(-6000);
+      // a side pane you read keeps its place's events and rows too (trimEvents)
+      const pane = [...document.querySelectorAll('.mirror-msgs')].find((b) => b.dataset.mirror === key),
+        paneCtl = pane ? pane._scrollCtl : null;
+      m.events = trimEvents(m.events, paneCtl);
       m.cursor = next.cursor;
       m.sid = next.sessionId;
-      m.rows = liveRows(next.sessionId, m.events, next);
+      m.rows = liveRows(next.sessionId, m.events, next, false, readingSeq(paneCtl));
     } else if (isPseudoKey(c.key)) {
       m.histKey = '';
       m.rows = [{ role: 'notice', label: 'Not running', value: pseudoNote(c) }];
@@ -4679,7 +4918,8 @@
     settingsChanged,
   });
   window.StartPageUI?.init();
-  window.AibUpdates?.init({ get: (path, params) => get(path, params), post }, $('updateBanner'));
+  window.AibUpdates?.init({ get: (path, params) => get(path, params), post }); // the Update button at the strip's right end
+  window.AIBDevicesUI?.watch?.({ get: (path, params) => get(path, params), post }); // Remote control's notice: share missing at start
 
   try {
     renderAgents();
@@ -5358,6 +5598,7 @@
     viewStore,
     rowStatus,
     renderHeader,
+    sendWith,
     safeImageBlock,
     showRows,
     sortAgents,

@@ -284,6 +284,8 @@
               ? ws.last[pk]
               : tabs[0];
       if (target && openKey(target)) return;
+      // A project with no open chat shows the new-chat view in it, never the chat of the project we came from.
+      if (!target && selectedKey && (itemOf(selectedKey) || {}).projectKey !== pk && newChatIn(pk)) return;
       if (draft) draft.pk = pk;
     } else if (paneKey && openKey(paneKey)) return;
     lastSig = '';
@@ -676,11 +678,20 @@
   // chat-list button and the inbox sit on the first pane's strip.
   function drawStrip() {
     if (!strip) return;
+    const U = root.AibUpdates;
     if (splitOn()) {
-      for (const pane of S().panes()) if (pane.strip) drawStripInto(pane.strip, pane);
+      const strips = [];
+      for (const pane of S().panes())
+        if (pane.strip) {
+          drawStripInto(pane.strip, pane);
+          strips.push(pane.strip);
+        }
+      // The Update button (updates-ui.js) sits at the right end of the strip at the window's top right.
+      if (U && U.place) U.place(strips);
       return;
     }
     drawStripInto(strip, null);
+    if (U && U.attach) U.attach(strip);
   }
   function drawStripInto(node, pane) {
     const pk = activeProjectKey(),
@@ -1332,16 +1343,38 @@
     }
   }
 
+  /* The text's height, measured on a hidden copy of the composer outside the page flow. Measuring the composer itself (height 'auto',
+     read, set back) made it 2 lines tall for a moment: the chat history above grew, the browser pulled its scroll position up to
+     the shorter end, and the scroll controller, which sees no size change once the composer is back, took that for you scrolling
+     up (follow off, "↓ Latest" while at the bottom). It also laid the whole page out twice per key. */
+  let measurer = null;
+  function textHeight(box) {
+    const d = box.ownerDocument || doc();
+    if (!measurer || measurer.ownerDocument !== d || !measurer.isConnected) {
+      measurer = d.createElement('textarea');
+      measurer.setAttribute('aria-hidden', 'true');
+      measurer.tabIndex = -1;
+      d.body.append(measurer);
+    }
+    const cs = root.getComputedStyle(box);
+    measurer.style.cssText =
+      'position:absolute;top:0;left:-10000px;visibility:hidden;pointer-events:none;overflow:hidden;height:auto;min-height:0;max-height:none;' +
+      'box-sizing:' + cs.boxSizing + ';width:' + box.getBoundingClientRect().width + 'px;';
+    for (const p of ['font', 'letterSpacing', 'wordSpacing', 'lineHeight', 'textTransform', 'textIndent', 'tabSize', 'whiteSpace', 'overflowWrap', 'wordBreak', 'padding', 'borderWidth', 'borderStyle'])
+      measurer.style[p] = cs[p];
+    measurer.rows = box.rows || 2;
+    measurer.value = box.value;
+    return measurer.scrollHeight;
+  }
   function autosize() {
     const box = doc().getElementById('prompt');
     if (!box || !box.style) return;
-    /* A one-line composer whose text still fits stays as it is. Resetting to 'auto' to measure laid the whole page out twice on
-       every key press (the chat history above shrinks and grows with the composer), which made typing stutter in a long chat. */
+    /* A one-line composer whose text still fits stays as it is (no layout read at all). The height comes from textHeight(), a hidden
+       copy that holds the text only, never the placeholder (the longer one while the agent works must not make an empty box taller). */
     if (parseFloat(box.style.height) <= 56 && box.scrollHeight <= box.clientHeight) return;
-    box.style.height = 'auto';
     const cap = root.ResizeUI && root.ResizeUI.composerCap ? root.ResizeUI.composerCap(root) : 200;
-    const h = Math.min(cap, Math.max(56, box.scrollHeight || 0));
-    box.style.height = h + 'px';
+    const h = Math.min(cap, Math.max(56, (root.getComputedStyle ? textHeight(box) : box.scrollHeight) || 0));
+    if (box.style.height !== h + 'px') box.style.height = h + 'px';
   }
 
   // ---- project preferences (shared via the server) --------------------------------------------
@@ -2085,19 +2118,33 @@
   const mutedProject = (pk) => !!(prefs && pk && St().prefOf(prefs, pk).muted);
   function notifyChats() {
     const N = root.AgentNotifyUI;
-    if (!N || !N.observeItems) return;
+    if (!N || !N.observeItems || !root.AgentNotifyRules) return;
+    const R = root.AgentNotifyRules; // the same rules as the server's notifications (notify-rules.js)
     N.observeItems(
-      items.map((i) => ({
-        key: i.key,
-        title: i.title,
-        state: i.state,
-        needs: i.needs,
-        yourTurn: i.yourTurn,
-        yourTurnAt: i.yourTurnAt,
-        eligible: !i.archived && !i.deleted && !hiddenProject(i.projectKey) && !i.projectWorktree && !i.projectScratch,
-        muted: mutedProject(i.projectKey),
-        selected: i.key === selectedKey,
-      })),
+      items.map((i) => {
+        const f = R.flags(
+          {
+            archived: i.archived,
+            deleted: i.deleted,
+            held: i.held,
+            projectKey: i.projectKey,
+            worktree: i.projectWorktree,
+            scratch: i.projectScratch,
+          },
+          prefs,
+        );
+        return {
+          key: i.key,
+          title: i.title,
+          state: i.state,
+          needs: i.needs,
+          yourTurn: i.yourTurn,
+          yourTurnAt: i.yourTurnAt,
+          eligible: f.eligible,
+          muted: f.muted,
+          selected: i.key === selectedKey,
+        };
+      }),
     );
   }
   // Called by the page every time the conversation list is drawn.
@@ -2270,7 +2317,9 @@
     if (splitReady()) S().noteOpened(key, ws.active);
     if (FU() && FU().showChat) FU().showChat();
     lastSig = '';
-    setListOpen(false);
+    // The narrow drawer closes when you go to another chat. The page also starts the chat it already shows again (its live
+    // connection came up, a reconnect): that is not navigation, and it must not take the drawer away from a Files action in it.
+    if (!(prev && keyOf(prev) === key)) setListOpen(false);
   }
   // Called when the new-chat view opens (prev = the chat we were on, if any). "+" keeps every tab and adds a temporary
   // "New chat" tab; the new chat starts in the project of the tab we were on.
@@ -2625,6 +2674,9 @@
               return { key: k, name: p ? p.name : k };
             }),
         unmute: (key) => setPrefOf(key, { muted: false }),
+        // whether AIB is in front and when you last used it: the server's notifications and phone pushes skip you then
+        presence: (body) =>
+          host.postJson ? Promise.resolve(host.postJson('presence', body)).then(() => true, () => false) : false,
       });
   }
 
@@ -2721,6 +2773,10 @@
         : Promise.resolve(),
     // For files-ui.js: the project on screen, its name, its chats that need you, and the narrow-window drawer.
     currentProject: () => (ws && ws.active !== St().ALL ? ws.active : ''),
+    currentProjectPath: () => {
+      const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
+      return p ? p.path || '' : '';
+    },
     currentProjectName: () => {
       const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
       return p ? p.name : '';
@@ -2733,6 +2789,13 @@
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,
+    // Tests (steer_e2e_test.ts P9): a typed quick reply to the chat with this key, through the inbox row's own send (sendQuick).
+    _sendQuick: async (key, text) => {
+      qs(key).text = String(text || '');
+      await sendQuick(key);
+      const s = quick.get(key);
+      return s ? { error: s.error, queued: !!s.queued } : { error: '', queued: false };
+    },
   };
   root.AgentWorkspaceUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

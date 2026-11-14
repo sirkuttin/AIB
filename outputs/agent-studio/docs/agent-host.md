@@ -151,13 +151,22 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   while they work: they finish there, and switch over by themselves when none is working."). After the drain the new agent host
   (started with `--keeper`) runs its agents in the keeper; the next start of AIB is one process.
 * **Snapshots and truncation.** At each turn end, once the chat is quiet (no request, question, sign-in or held answer in flight, no
-  half-read line), the Connection writes a `snapshot` note (`sv` 1: its whole rebuildable state, the event list and numbering
-  included, the chat note's fields, and `upTo`, the last record it had handled) through the record queue, then asks the keeper to
-  `truncate` before `upTo + 1` (the keeper deletes whole old segments only). A rebuild buffers the record until the live end, starts at
-  the newest snapshot it understands (skipping AIB's own writes and notes before the snapshot note, which it already covers) and
-  replays only the records after it; a truncated record without a covering snapshot leaves the chat read-only. `firstNote` also finds a
-  snapshot's copy of the chat note when the original was truncated away. A snapshot over 12 MiB is not written (the previous one, or
-  the start, is used). Mid-turn there is no snapshot: a long turn is replayed from the last turn end.
+  half-read line), the Connection writes a `snapshot` note through the record queue: `sv` 2 holds its rebuildable state without the
+  event history (numbering, `eventsFrom` and `sequence`: the history kept runs from one to the other), the chat note's fields, `upTo`
+  (the last record it had handled) and `events`, only the events made since the previous snapshot. When those do not fit (over 4 MiB,
+  e.g. after a `session/load` replay), they go first into `t: 'event', chunk: 1` notes of at most 4 MiB, all sent in one go just
+  before the snapshot note. So a note stays small however long the chat is, and each turn end writes only what is new. Then it asks
+  the keeper to `truncate` before the smaller of `upTo + 1` and the oldest note still holding an event of the kept history (the keeper
+  deletes whole old segments only): once events leave the history (`MAX_EVENTS`), the segments holding them go, so the journal stays
+  at about the history's size twice (its chunks, plus the raw records since its first event). A rebuild buffers the record until the
+  live end, collects the chunks, starts at the newest snapshot it understands (`sv` 1, beta.8's whole-history note, is still
+  restored; the next snapshot stores its history in chunks), puts the history back from the chunks (each event once; a chunk lost to
+  the keeper's 2 GiB cap only shortens it from the front), skips AIB's own writes and notes before the snapshot note, which it already
+  covers, and replays only the records after it; a truncated record without a covering snapshot leaves the chat read-only. An older
+  AIB ignores `sv` 2 and the chunk notes (`t: 'event'` without `kind`), so a truncated record is read-only there. `firstNote` also
+  finds a snapshot's copy of the chat note when the original was truncated away. A state over 12 MiB (not the history) is not
+  written; one agent message over 12 MiB is stored as a `studio_note` saying it was left out. Mid-turn there is no snapshot: a long
+  turn is replayed from the last turn end.
 * **Stable event ids.** Studio's own events (artifact, Studio note) go into the record as `event` notes (`Connection.recordedEvent`),
   so a rebuild numbers every event exactly as before. Each state carries `eventsId`, the id of the chat's numbering, kept across a
   rebuild when the record gives the same numbering (a snapshot, or a chat note with `ev: 1`); while a chat is being rebuilt its state

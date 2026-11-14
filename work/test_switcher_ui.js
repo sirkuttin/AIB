@@ -97,7 +97,7 @@ function setup(conversations, extra = {}) {
   };
   const window = { document, localStorage, setTimeout: () => 0 };
   const ctx = { window, Object, Array, String, Number, Promise, Error, Map, Set, Date, JSON, Math, isNaN, RegExp };
-  for (const f of ['sidebar-ui.js', 'organize-ui.js', 'commands-registry.js', 'switcher-ui.js'])
+  for (const f of ['notify-rules.js', 'sidebar-ui.js', 'organize-ui.js', 'commands-registry.js', 'switcher-ui.js'])
     vm.runInNewContext(fs.readFileSync(require('node:path').join(APP_DIR, f), 'utf8'), ctx);
   const aliases = extra.aliases || {};
   let selected = extra.selected || null;

@@ -32,6 +32,9 @@ such a location and tells you to pass `--dir`.
 
 ## What is in it
 
+Studio lists saved chats only for projects the user added, so the demo adds its own three folders (alpha, alpha/docs, beta) to the demo
+state (`studio-added-projects.json`) on the user's behalf. The sidebar shows the chats below from the first start.
+
 | Project | Chat | What it shows |
 | --- | --- | --- |
 | alpha (git repo, uncommitted changes) | Add rate limiting to the API | **Pinned.** Long: tool calls with descriptions, TodoWrite task list, `mcp__ccd_turn__update_plan`, a background command, "Async agent launched", a `mcp__ccd_turn__wrap_up` next step, a failing test round. Has one artifact ("Rate limits"). |

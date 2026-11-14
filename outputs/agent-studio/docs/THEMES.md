@@ -8,7 +8,7 @@ what it is for. It is generated from theme.css (the comments there are the sourc
 
 - **Core tokens** (46): the values a theme must set. Neutrals (page, panels, lines, text), the accent, the status
   families, syntax colours, the terminal and the shadow ink.
-- **Derived tokens** (286): formulas over the core tokens (`var()` or `color-mix(in srgb, ...)`), in the first
+- **Derived tokens** (287): formulas over the core tokens (`var()` or `color-mix(in srgb, ...)`), in the first
   block of theme.css, which applies to `:root` and to any element with `data-theme` (so the Settings swatches can show a
   theme). A theme that sets only the core tokens still paints everything; a theme may pin any derived token in its block.
 - **Themes**: one block `[data-theme='<id>'] { color-scheme: dark|light; core tokens; pins }`. AIB teal (dark) is the
@@ -235,9 +235,10 @@ where the theme pins it). The designer's themes pin many of these; theme.css has
 | `--studio-notice-line` | `color-mix(in srgb, var(--warn) 34%, var(--bg))` | .studio-notice {border} | `#5d4925` | `#d2c09d` |
 | `--studio-notice-bg` | `color-mix(in srgb, var(--warn) 11%, var(--bg))` | .studio-notice {background} | `#2a241c` | `#ebe3d4` |
 | `--studio-notice-text` | `color-mix(in srgb, var(--warn) 42%, var(--text))` | .studio-notice {color} | `#f0d9a0` | `#473210` |
-| `--update-btn-line` | `color-mix(in srgb, var(--warn) 54%, var(--bg-field))` | .update-banner .update-btn {border} | `#906f34` | `#c0a675` |
-| `--update-btn-text` | `color-mix(in srgb, var(--warn) 28%, var(--text))` | .update-banner .update-btn {color} | `#f7e6b8` | `#362813` |
-| `--update-btn-bg` | `color-mix(in srgb, var(--warn) 19%, var(--bg))` | .update-banner .update-btn:hover {background} | `#3c311f` | `#e2d7c1` |
+| `--update-btn-line` | `var(--accent)` | .upd-btn {border-color} | `#2bb3a3` | `#0f766e` |
+| `--update-btn-text` | `var(--on-accent)` | .upd-btn {color} | `#0b1f1d` | `#ffffff` |
+| `--update-btn-bg` | `var(--accent)` | .upd-btn {background} | `#2bb3a3` | `#0f766e` |
+| `--update-btn-hover-bg` | `color-mix(in srgb, var(--accent) 85%, var(--text))` | .upd-btn:hover {background} | `#48bbac` | `#106762` |
 | `--activity-dot-bg` | `color-mix(in srgb, var(--line) 58%, var(--text-faint))` | .sa-dot {background}; .ac-dot {background} | `#565555` | `#b0ab9f` |
 | `--activity-dot-failed-bg` | `color-mix(in srgb, var(--danger) 84%, var(--bg))` | .sa-failed .sa-dot,.proc-failed .sa-dot {background} | `#d9666e` | `#b54544` |
 | `--activity-failed-text` | `color-mix(in srgb, var(--danger-bright) 94%, var(--bg))` | .sa-failed .sa-title {color}; .proc-failed .proc-title {color} | `#f1b0bc` | `#ad2d27` |

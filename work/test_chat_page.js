@@ -395,3 +395,54 @@ test('the header hint says "unknown" for a saved chat when GET /api/live/ownersh
   for (const certainty of ['checked', undefined])
     assert.match((await header(certainty)).text, /cannot prove it is free/);
 });
+
+/* ---- review 3: chat names, renamed on the PC and on a phone ---- */
+function namesRevisionOf(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return text.length + '.' + h.toString(36);
+}
+
+test('review 3: the first list call sends the names this page started with; a PC rename saves only its chat; the answer is taken', async () => {
+  const boot = '{"claude:a":"Old A","claude:b":"B"}';
+  // the data folder now: a phone renamed a after this page loaded
+  let names = { 'claude:a': 'Phone A', 'claude:b': 'B' };
+  const renames = [];
+  const page = makePage({
+    local: { 'studio-conversation-names': boot },
+    routes: {
+      ...listRoutes,
+      '/api/live/list': (q) => ({
+        body: {
+          connections: [],
+          recovered: [],
+          instanceId: 'A',
+          chatNamesRevision: 'server-2',
+          ...(q.names && q.names !== 'server-2' ? { chatNames: names } : {}),
+        },
+      }),
+      '/api/live/chat-name': (_q, body) => {
+        renames.push(body);
+        names = { ...names, [body.key]: body.name };
+        return { body: { ok: true, chatNamesRevision: 'server-3', chatNames: names } };
+      },
+    },
+  });
+  await page.hook.refreshToken();
+  await page.hook.listConversations();
+  const first = page.calls.find((c) => c.url === '/api/live/list');
+  assert.equal(first.query.names, namesRevisionOf(boot), 'the revision of what it started with (the server’s own hash)');
+  assert.equal(JSON.parse(page.context.localStorage.getItem('studio-conversation-names'))['claude:a'], 'Phone A', 'the phone’s name');
+
+  // a rename here while this page still had the old copy: only that chat goes, and AIB's names come back
+
+  names = { 'claude:a': 'Phone A again', 'claude:b': 'B' }; // the phone renames a again; this page has not seen it
+  page.context.window.AgentChatView.renameChat({ provider: 'claude', id: 'b', sessionId: 'b', key: 'k-b' }, 'PC B');
+  for (let i = 0; i < 5; i++) await page.tick();
+  assert.deepEqual(renames, [{ key: 'claude:b', name: 'PC B' }], 'one chat’s name, never the whole copy');
+  assert.deepEqual(names, { 'claude:a': 'Phone A again', 'claude:b': 'PC B' }, 'the phone’s rename stayed');
+  assert.deepEqual(JSON.parse(page.context.localStorage.getItem('studio-conversation-names')), names, 'this page took them');
+});

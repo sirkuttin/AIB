@@ -29,7 +29,8 @@ import {
   withModelsOption,
 } from './breadth.ts';
 import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
-import { MessageQueue, type QueueItem, type SavedItem } from './msgqueue.ts';
+import { MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
+import { killVerified, type ProcId } from '../platform/kill_verified.ts';
 import { type AuthMethod, describeAuthMethods, isAuthRequired, PromptStateUnknown, RpcError } from './rpc_errors.ts';
 import {
   eventImageSize,
@@ -401,6 +402,15 @@ export interface PendingChange {
   queuedAt: number;
 }
 
+/** What one snapshot writes: chunk notes of the events since the last one, then the snapshot note (holding the last chunk). */
+interface SnapshotPlan {
+  chunks: Json[];
+  note: Json;
+  bytes: number;
+  chunkBytes: number;
+  last: number;
+}
+
 type Hook = (connection: Connection) => unknown;
 
 export interface ConnectionOptions {
@@ -419,10 +429,17 @@ export interface ConnectionOptions {
   rebuild?: ChannelInfo | null;
 }
 
-/** The format of a keeper `snapshot` note this code writes and can restore (its `sv`). */
-export const SNAPSHOT_VERSION = 1;
-/** A snapshot larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
+/**
+ * The format of a keeper `snapshot` note this code writes (its `sv`). 1: the whole event history inside the note (beta.8 and before;
+ * still restored). 2: the note holds the chat's state without its history; each snapshot also stores only the events made since the
+ * one before (in the note itself, or in `t: 'event'` chunk notes just before it when they do not fit), so a note stays small however
+ * long the chat is, and the journal keeps the chunks the history still needs (truncate stops at the oldest of them).
+ */
+export const SNAPSHOT_VERSION = 2;
+/** A snapshot note larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
 export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+/** Events per chunk note, in UTF-8 bytes (several chunks when a snapshot has more new events, e.g. after a session/load). */
+export const EVENT_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Why a keeper-run agent ended without being asked to: the keeper itself went away. */
 export const KEEPER_LOST =
@@ -562,6 +579,17 @@ export const WORKTREE_PROMPT =
   "merge_into_project tool; you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
   'conflicts there, commit, and call it again.';
 
+/**
+ * Local-only files (AIB's block of .git/info/exclude; host/studio.ts fills Connection.localOnly). A chat in its own copy is told
+ * where the main folder's local-only folders are ({paths}) and, when private/ is local only, that it may use it ({private}).
+ */
+export const LOCAL_ONLY_WORKTREE_PROMPT = 'Local-only files (git never commits them) are kept in the main project folder, not in this ' +
+  'copy: {paths}. Read and write them there by their full path. Never create those paths in this copy: ' +
+  'files there are not shared with other chats.';
+export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for local-only notes.';
+/** The same for a chat that works in the project folder itself. */
+export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of this project for local-only notes: git never commits it.';
+
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 
@@ -573,6 +601,119 @@ const HELD = Symbol('held');
 
 const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB cannot tell whether the agent received it. ' +
   'Check the conversation. If it is missing, press Send again.';
+
+// ---- steer-on-send (messages sent while the agent works) -------------------------------------------------------------------------
+
+/** The agents whose steering behaviour AIB knows (the page picks its hint copy by this); any other agent that steers gets the fallback. */
+export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex', 'omp']);
+
+/**
+ * How long a Claude Code turn whose reply ended while its helpers run waits before it is ended early, when a steered message went in
+ * during the turn: the steer may get its own model cycle, whose output comes a moment after the first cycle's result (recording C4).
+ * Any main-session output in that time cancels the early end. Tests lower it.
+ */
+export const steerTiming = { settleMs: 3000, steerTimeoutSeconds: 30, steerLateSeconds: 300 };
+
+/** The note on a queued message a steer could not deliver (the agent refused it or did not answer). */
+export const STEER_FAILED_NOTE = "Couldn't send now: sends when this turn ends.";
+/** Codex may drop a steer that lands as its turn ends (codex-acp v1 turn/completed): no reply after it means it was probably lost. */
+export const CODEX_UNREAD_NOTE = "Codex may not have read this: it ended its turn without answering it. Press Resume to send it again, or remove it.";
+
+/**
+ * Background-command phrases in a tool result (B6). Claude Code: its run_in_background, and the moves of a running command (a steer,
+ * its timeout, Ctrl+B). OMP: its job. The id is the task (or job) id. Claude Code's are read from the result's start only (a command
+ * that printed this would have to print it first).
+ */
+const CLAUDE_BACKGROUND_TEXT = [
+  /^Command running in background with ID: (\S+?)\.(?:\s|$)/,
+  /^Command was moved to the background \(ID: ([^)\s]+)\)/,
+  /^[^\n]*?timeout and was moved to the background \(ID: ([^)\s]+)\)/,
+  /^[^\n]*?manually backgrounded by user with ID: ([^\s.]+)/,
+];
+const OMP_BACKGROUND_TEXT = [/(?:^|\n)Backgrounded as job (\S+?)[\s(.]/];
+
+/** The text of a tool result: Claude Code's string rawOutput, or the text blocks of OMP's {content: [...]}. */
+function rawOutputText(raw: unknown): string {
+  if (isStr(raw)) return raw;
+  if (isDict(raw) && Array.isArray(raw.content)) {
+    return raw.content.map((b) => (isDict(b) && isStr(b.text) ? b.text : '')).join('');
+  }
+  return '';
+}
+
+/**
+ * A tool result's background task id, from the agent's own signal: Claude Code's meta (toolResponse.backgroundTaskId, with
+ * backgroundedToDeliverMessage for a steer) or its result text; any other agent: OMP's details.async {state: running, jobId} or its
+ * "Backgrounded as job" text. (A Codex command that outlives its turn is found at the turn's end instead.)
+ */
+export function backgroundTask(update: Json, claude: boolean): string | null {
+  const raw = get(update, 'rawOutput');
+  if (claude) {
+    const meta = get(update, '_meta');
+    const code = isDict(meta) ? get(meta, 'claudeCode') : null;
+    const response = isDict(code) ? get(code, 'toolResponse') : null;
+    const task = isDict(response) ? get(response, 'backgroundTaskId') : null;
+    if (isStr(task) && task) return task;
+  } else {
+    const details = isDict(raw) ? get(raw, 'details') : null;
+    const job = isDict(details) && isDict(details.async) ? details.async : null;
+    if (job && job.state === 'running' && isStr(job.jobId) && job.jobId) return job.jobId;
+  }
+  const text = rawOutputText(raw).replace(/^\s+/, '');
+  for (const pattern of claude ? CLAUDE_BACKGROUND_TEXT : OMP_BACKGROUND_TEXT) {
+    const m = pattern.exec(text);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** A tool update that says the tool is over (completed / failed) and does not say it keeps running in the background. */
+function toolEnded(update: Json, claude: boolean): boolean {
+  const status = get(update, 'status');
+  if (status !== 'completed' && status !== 'failed') {
+    const raw = get(update, 'rawOutput');
+    const details = isDict(raw) ? get(raw, 'details') : null;
+    const job = isDict(details) && isDict(details.async) ? details.async : null;
+    return !!job && isStr(job.state) && ['completed', 'failed', 'killed', 'cancelled', 'stopped'].includes(job.state);
+  }
+  return backgroundTask(update, claude) === null;
+}
+
+/** A tool AIB has seen in this chat: whether it is a shell command, its last status, when it began, which prompt turn it was in. */
+interface ToolSeen {
+  shell: boolean;
+  status: string;
+  since: number;
+  main: boolean;
+  turn: number;
+}
+
+/** A tool call that moved to the background (any of the three signals): what the page shows and what Stop may kill. */
+interface BackgroundTool {
+  /** The #bgShells key (Claude's task id, OMP's job id, or `open:<toolCallId>` for a Codex command that outlived its turn). */
+  task: string;
+  state: 'running' | 'done' | 'stopped';
+  /** The processes that started with the command, by (pid, start time); null when they cannot be told apart from others. */
+  procs: ProcId[] | null;
+  stoppable: boolean;
+  since: number;
+  at: number;
+  endedAt: number | null;
+  /**
+   * A Claude Code helper (its child session id) rather than a command: marked from the adapter's own "Async agent launched" reply,
+   * done when its subagent_update leaves running. Never stoppable: it runs inside the agent's own process, so there is no process
+   * of its own (pid and start time) AIB could verify and kill.
+   */
+  helper?: string;
+}
+
+/** The adapter's reply when a helper went on in the background (claude-agent-acp 0.97, recording C2: `<toolUseId>:reply`). */
+const HELPER_BACKGROUND_TEXT = /^\s*Async agent launched successfully/;
+
+/** Stop on a background row was refused (HTTP 409): not stoppable, not running, or the processes cannot be verified. */
+export class NotStoppable extends Error {
+  override name = 'NotStoppable';
+}
 
 /** str(a) for each item of `e.get('args') or []` (a string iterates its characters, as in Python). */
 function argStrings(args: unknown): string[] {
@@ -605,6 +746,12 @@ export class Connection {
   worktree: Record<string, string> | null = null;
   /** The project this chat belongs to; a worktree chat's cwd differs from it. */
   projectRoot: string;
+  /**
+   * Local-only files this chat is told about (host/studio.ts, before setup): absolute `entries` (the main folder's), the existing
+   * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's private/ when git
+   * really ignores it (`private`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
+   */
+  localOnly: { entries: string[]; dirs: string[]; private: string } | null = null;
   sessionId: string | null = null;
   events: Json[] = [];
   eventImageBytes = 0;
@@ -644,8 +791,33 @@ export class Connection {
   #bgShells = new Map<string, number[] | null>();
   /** Bash/PowerShell tool calls of this chat -> when their tool_call came (seconds): a background shell started after it. */
   #shellCalls = new Map<string, number>();
-  /** The agent's processes when the current prompt turn began (Claude Code only): none of them is a shell that turn starts. */
+  /** The agent's processes when the current prompt turn began: none of them is a shell that turn starts. */
   #turnProcesses: Set<number> | null = null;
+  /** Tool calls seen (any agent, any session): shell or not, last status, start, turn. At most 300, oldest dropped. */
+  #tools = new Map<string, ToolSeen>();
+  /** Tool calls that moved to the background, by toolCallId (snapshot `toolBackground`; Stop). */
+  #bgTools = new Map<string, BackgroundTool>();
+  /** Steers of the current prompt turn: how many went in, whether main-session output came after the last, which may be unread. */
+  #steerTurn: { injected: number; outputAfter: boolean; unread: SteerItem[] } = { injected: 0, outputAfter: false, unread: [] };
+  /** The pending early end of a held turn after a steer (see steerTiming.settleMs). */
+  #settleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set once the running prompt's session/prompt was written: a steer before it would find no turn (promptRequired). */
+  #promptOut = new ThreadEvent();
+  /** The steer lane's pump (one at a time) and whether it must look again when it finishes. */
+  #steerRun: Promise<void> | null = null;
+  #steerAgain = false;
+  /** The steer request in flight (cancel() leaves it in the lane; its answer decides). */
+  #steerInflight: SteerItem | null = null;
+  /** Rebuilt from the keeper: the answer to each steer the old AIB sent, by message id (the lane waits for it instead of resending). */
+  #replayedSteers = new Map<string, Promise<string>>();
+  /** steer notes by JSON-RPC id of the _session/steering they announce (a rebuild shows the message and applies the answer). */
+  #steerNotes = new Map<string, Json>();
+  /**
+   * Steers whose answer did not come within steerTiming.steerTimeoutSeconds, by message id: the message waits in the after-turn
+   * queue, but is not sent from there until the late answer says the agent did not take it (or steerLateSeconds pass), so a steer
+   * the agent took late is never sent a second time as a prompt.
+   */
+  #steerLate = new Set<string>();
   closed = false;
   initial: unknown = {};
   imageSupported = false;
@@ -761,8 +933,17 @@ export class Connection {
   /** The keeper sent `live`: records from here on are handled as they come. */
   #replayLive = false;
   #snapshotQueued = false;
+  /** The newest event seq already stored in the journal by a snapshot (in its note or a chunk note before it). */
+  #eventsSaved = 0;
+  /** The journal notes that hold stored events: [record seq, last event seq], oldest first (truncate keeps what the history needs). */
+  #eventChunks: [number, number][] = [];
+  /** While replaying: the stored event chunks met, by record seq. */
+  #replayChunks = new Map<number, Json[]>();
   /** Snapshots written and journal truncations asked for (tests). */
   snapshots = 0;
+  /** The size in bytes of the last snapshot note written, and of the chunk notes written with it (tests, logs). */
+  snapshotBytes = 0;
+  snapshotChunkBytes = 0;
   /** A rebuild: the seq of the snapshot it started from (0: the start of the record) and how many records it replayed after it. */
   replayedFrom = 0;
   replayedRecords = 0;
@@ -928,6 +1109,7 @@ export class Connection {
           this.#replayGapNext = next;
           this.#replayBuffer = [];
           this.#replaySnapshot = null;
+          this.#replayChunks.clear();
           return;
         }
         this.#enqueue(() => {
@@ -1078,6 +1260,7 @@ export class Connection {
     const entry: Pending = { done: new ThreadEvent(), method, params };
     this.pending.set(id, entry);
     if (method === 'session/prompt') return this.#replayTurn(id, entry, params);
+    if (method === '_session/steering') return this.#replaySteer(id, entry, params);
     void entry.done.wait().then(() => {
       if (this.pending.get(id) === entry) this.pending.delete(id);
       this.#applyAnswered(method, params, entry.response ?? {});
@@ -1105,6 +1288,38 @@ export class Connection {
     } catch (error) {
       if (this.#replaying) this.#rebuildFailed(error);
       else log.exception(error, 'Applying a response to a request from before the restart failed');
+    }
+  }
+
+  /**
+   * A steer the old AIB sent (B4): once its answer is known (from the record, or live) the same happens as live: injected shows the
+   * user's message (at the same place, so events number the same); the lane, restored later from the queue store, takes the answer
+   * from #replayedSteers instead of sending the message again.
+   */
+  #replaySteer(id: unknown, entry: Pending, params: Json): void {
+    const key = JSON.stringify(id);
+    const note = this.#steerNotes.get(key) ?? null;
+    this.#steerNotes.delete(key);
+    const itemId = note && isStr(note.receipt) ? note.receipt : null;
+    const outcome = entry.done.wait().then(() => {
+      if (this.pending.get(id) === entry) this.pending.delete(id);
+      const response = entry.response ?? {};
+      const result = Object.hasOwn(response, 'error') ? null : response.result;
+      const said = isDict(result) ? result.outcome : null;
+      if (said === 'injected' || said === 'startedNewTurn') {
+        const blocks = get(params, 'prompt', []);
+        const images = (Array.isArray(blocks) ? blocks : []).filter((b) => isDict(b) && b.type === 'image') as unknown as ImageBlock[];
+        if (itemId && note) {
+          this.#steerLanded(itemId, isStr(note.text) ? note.text : '', images, Array.isArray(note.files) ? note.files as FileSummary[] : [],
+            isStr(note.fingerprint) ? note.fingerprint : '');
+        }
+        return 'injected';
+      }
+      return said === 'promptRequired' ? 'promptRequired' : 'failed';
+    });
+    if (itemId) {
+      this.#replayedSteers.set(itemId, outcome);
+      while (this.#replayedSteers.size > 100) this.#replayedSteers.delete(this.#replayedSteers.keys().next().value!);
     }
   }
 
@@ -1146,6 +1361,7 @@ export class Connection {
     }
     if (!note || note.rpc === undefined) return;
     if (note.t === 'receipt') this.#receiptNotes.set(JSON.stringify(note.rpc), note);
+    else if (note.t === 'steer') this.#steerNotes.set(JSON.stringify(note.rpc), note);
     else if (note.t === 'fsWrite' || note.t === 'clientTerminal') this.#sideNotes.set(`${note.t}:${JSON.stringify(note.rpc)}`, note);
   }
 
@@ -1313,10 +1529,23 @@ export class Connection {
   #bufferReplay(record: KeeperRecord): void {
     if (record.kind === 'note') {
       const note = parseNote(record.body);
-      if (note?.t === 'snapshot' && note.sv === SNAPSHOT_VERSION && isDict(note.state) && isInt(note.upTo)) {
+      if (note?.t === 'event' && note.chunk === 1 && Array.isArray(note.events)) { // stored history (written before a snapshot)
+        this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
+        return;
+      }
+      if (note?.t === 'snapshot' && (note.sv === 1 || note.sv === 2) && isDict(note.state) && isInt(note.upTo)) {
+        if (note.sv === 2 && Array.isArray(note.events) && note.events.length) {
+          this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
+        }
+        delete note.events; // kept once, in the chunks
         this.#replaySnapshot = { note, seq: record.seq };
         const upTo = note.upTo;
         this.#replayBuffer = this.#replayBuffer.filter((r) => r.seq > upTo);
+        // Chunks wholly before the history this snapshot keeps are no longer needed.
+        const from = note.sv === 2 && isInt(note.state.eventsFrom) ? note.state.eventsFrom : Infinity;
+        for (const [seq, events] of this.#replayChunks) {
+          if (!events.length || (events.at(-1)!.seq as number) < from) this.#replayChunks.delete(seq);
+        }
         return;
       }
     }
@@ -1327,12 +1556,14 @@ export class Connection {
   async #replayFromSnapshot(): Promise<void> {
     const snapshot = this.#replaySnapshot;
     const records = this.#replayBuffer;
+    const chunks = this.#replayChunks;
     this.#replayBuffer = [];
     this.#replaySnapshot = null;
+    this.#replayChunks = new Map();
     if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
       throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
     }
-    if (snapshot) this.#restoreSnapshot(snapshot.note);
+    if (snapshot) this.#restoreSnapshot(snapshot.note, chunks);
     this.replayedFrom = snapshot ? snapshot.seq : 0;
     for (const record of records) {
       if (this.rebuildError || this.#ended) return;
@@ -1344,7 +1575,7 @@ export class Connection {
   }
 
   /** The state a snapshot note carries, put back exactly (what the replay of everything before `upTo` would have rebuilt). */
-  #restoreSnapshot(note: Json): void {
+  #restoreSnapshot(note: Json, chunks: Map<number, Json[]>): void {
     const s = note.state as Json;
     const entries = (value: unknown) => (Array.isArray(value) ? value.filter((e) => Array.isArray(e) && e.length === 2) : []);
     this.initial = s.initial ?? {};
@@ -1359,8 +1590,17 @@ export class Connection {
     this.changeSeq = isInt(s.changeSeq) ? s.changeSeq : 0;
     this.changeFailures = Array.isArray(s.changeFailures) ? s.changeFailures.filter(isDict) as Json[] : [];
     this.turnEndedAt = typeof s.turnEndedAt === 'number' ? s.turnEndedAt : null;
-    this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
     this.sequence = isInt(s.sequence) ? s.sequence : 0;
+    if (note.sv === 1) { // beta.8 and before: the whole history inside the note; the next snapshot stores it in chunks
+      this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
+      this.#eventsSaved = 0;
+      this.#eventChunks = [];
+    } else {
+      this.events = this.#chunkEvents(chunks, isInt(s.eventsFrom) ? s.eventsFrom : this.sequence + 1);
+      this.#eventsSaved = this.sequence;
+      this.#eventChunks = [...chunks].filter(([, e]) => e.length).map(([seq, e]) => [seq, e.at(-1)!.seq as number] as [number, number])
+        .sort((a, b) => a[0] - b[0]);
+    }
     this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
     this.subagents = new Map(entries(s.subagents) as [string, Json][]);
     this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
@@ -1368,6 +1608,9 @@ export class Connection {
       (Array.isArray(s.bgShells) ? s.bgShells : []).filter((e): e is [string, number[] | null] =>
         Array.isArray(e) && isStr(e[0]) && (e[1] === null || (Array.isArray(e[1]) && e[1].every(isInt)))
       ),
+    );
+    this.#bgTools = new Map(
+      entries(s.bgTools).filter((e) => isStr(e[0]) && isDict(e[1]) && isStr((e[1] as Json).task)) as [string, BackgroundTool][],
     );
     const b = isDict(s.breadth) ? s.breadth : {};
     this.breadth = {
@@ -1387,6 +1630,30 @@ export class Connection {
     this.#lastSeq = note.upTo as number;
   }
 
+  /**
+   * The history a version-2 snapshot keeps: the stored events from `from` to `sequence`, each once, in order. A chunk that is gone
+   * (the keeper's size cap dropped an old segment) leaves the history starting after the hole, never with one in it.
+   */
+  #chunkEvents(chunks: Map<number, Json[]>, from: number): Json[] {
+    const bySeq = new Map<number, Json>();
+    for (const events of chunks.values()) {
+      for (const e of events) {
+        const seq = e.seq;
+        if (isInt(seq) && seq >= from && seq <= this.sequence) bySeq.set(seq, e);
+      }
+    }
+    const out: Json[] = [];
+    for (let seq = this.sequence; seq >= from; seq--) {
+      const e = bySeq.get(seq);
+      if (!e) {
+        log.warning('keeper: %s: events %s..%s are no longer stored; the history starts after them', this.id, from, seq);
+        break;
+      }
+      out.push(e);
+    }
+    return out.reverse();
+  }
+
   /** Take a snapshot once the record queue has handled what it holds now (so `upTo` is exact). */
   #scheduleSnapshot(): void {
     if (!this.channel || this.#replaying || this.#snapshotQueued) return;
@@ -1404,9 +1671,9 @@ export class Connection {
       !this.#held.length && this.#outLines.idle && this.#errLines.idle;
   }
 
-  /** The state as a snapshot note, or null when it is too large to store. */
-  snapshotNote(): Json | null {
-    const state: Json = {
+  /** The chat's state for a snapshot note, without its event history (that goes in chunks: see #snapshotPlan). */
+  #snapshotState(): Json {
+    return {
       initial: this.initial,
       sessionId: this.sessionId,
       ready: this.ready,
@@ -1418,11 +1685,13 @@ export class Connection {
       changeSeq: this.changeSeq,
       changeFailures: this.changeFailures,
       turnEndedAt: this.turnEndedAt,
-      events: this.events,
+      // The history kept: events from eventsFrom to sequence, stored in this note and the chunk notes before it (and earlier ones).
+      eventsFrom: this.events.length ? this.events[0].seq : this.sequence + 1,
       sequence: this.sequence,
       subagents: [...this.subagents],
       liveHelpers: [...this.#liveHelpers],
       bgShells: [...this.#bgShells],
+      bgTools: [...this.#bgTools],
       breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
       writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
       promptReceipts: [...this.promptReceipts],
@@ -1431,32 +1700,89 @@ export class Connection {
       stderr: this.stderr,
       eventsId: this.eventsId,
     };
-    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state };
-    return JSON.stringify(note).length > MAX_SNAPSHOT_BYTES ? null : note;
+  }
+
+  /**
+   * What a snapshot writes now: the events made since the last one, cut into chunks of at most EVENT_CHUNK_BYTES (the last one goes
+   * inside the snapshot note when it fits), and the snapshot note. null when the state alone is too large to store.
+   */
+  #snapshotPlan(): SnapshotPlan | null {
+    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: this.#lastSeq, chat: this.#chatNote(), state: this.#snapshotState() };
+    const stateBytes = ENCODER.encode(JSON.stringify(note)).length;
+    if (stateBytes > MAX_SNAPSHOT_BYTES - 1024) return null;
+    const groups: { events: Json[]; bytes: number }[] = [];
+    let group: { events: Json[]; bytes: number } = { events: [], bytes: 0 };
+    for (const event of this.events) {
+      if ((event.seq as number) <= this.#eventsSaved) continue;
+      let stored = event;
+      let bytes = ENCODER.encode(JSON.stringify(event)).length + 1;
+      if (bytes > MAX_SNAPSHOT_BYTES - 1024) { // one agent message larger than a note: its place in the history says so after a restart
+        stored = {
+          seq: event.seq,
+          kind: 'studio_note',
+          time: event.time,
+          data: { message: 'An agent message too large to keep across a restart was left out here.' },
+        };
+        bytes = ENCODER.encode(JSON.stringify(stored)).length + 1;
+      }
+      if (group.events.length && group.bytes + bytes > EVENT_CHUNK_BYTES) {
+        groups.push(group);
+        group = { events: [], bytes: 0 };
+      }
+      group.events.push(stored);
+      group.bytes += bytes;
+    }
+    if (group.events.length) groups.push(group);
+    const inline = groups.length && stateBytes + groups.at(-1)!.bytes <= MAX_SNAPSHOT_BYTES - 1024 ? groups.pop()! : null;
+    note.events = inline ? inline.events : [];
+    return {
+      chunks: groups.map((g) => ({ t: 'event', chunk: 1, events: g.events })),
+      note,
+      bytes: stateBytes + (inline ? inline.bytes : 0),
+      chunkBytes: groups.reduce((sum, g) => sum + g.bytes, 0),
+      last: this.sequence,
+    };
+  }
+
+  /** The snapshot note a snapshot now would write (with the events since the last one), or null when it is too large to store. */
+  snapshotNote(): Json | null {
+    return this.#snapshotPlan()?.note ?? null;
   }
 
   /**
    * Write a snapshot note when the chat is quiet (a turn just ended), then let the keeper drop the journal segments before it
-   * (truncate), so a rebuild reads and replays only what came after. Never throws.
+   * (truncate), so a rebuild reads and replays only what came after, plus the chunks the kept history is in. Never throws.
    */
   async #writeSnapshot(): Promise<void> {
     const channel = this.channel;
     if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
-    let note: Json | null;
+    let plan: SnapshotPlan | null;
     try {
-      note = this.snapshotNote();
+      plan = this.#snapshotPlan();
     } catch (error) {
       log.exception(error, 'keeper: making a snapshot failed');
       return;
     }
-    if (!note) {
+    if (!plan) {
       log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
       return;
     }
-    const seq = await channel.snapshot(note);
-    if (seq === null) return;
+    // All sent at once, in order, before anything AIB writes after this moment (a write after the note is replayed; one before is not).
+    const stored = await Promise.all([...plan.chunks, plan.note].map((n) => channel.snapshot(n)));
+    const seq = stored.at(-1);
+    if (!seq || stored.some((s) => s === null)) return; // tried again at the next quiet moment (a stored chunk is then just repeated)
+    const lastOf = (events: unknown) => (events as Json[]).at(-1)!.seq as number;
+    plan.chunks.forEach((chunk, i) => this.#eventChunks.push([stored[i]!, lastOf(chunk.events)]));
+    if ((plan.note.events as Json[]).length) this.#eventChunks.push([seq, lastOf(plan.note.events)]);
+    this.#eventsSaved = plan.last;
+    const first = this.events.length ? this.events[0].seq as number : Infinity;
+    this.#eventChunks = this.#eventChunks.filter(([, last]) => last >= first);
     this.snapshots += 1;
-    await channel.truncate((note.upTo as number) + 1); // records after upTo are still needed (they may come before the note)
+    this.snapshotBytes = plan.bytes;
+    this.snapshotChunkBytes = plan.chunkBytes;
+    // Records after upTo are still needed (they may come before the note), and so are the chunks the kept history is in.
+    const after = (plan.note.upTo as number) + 1;
+    await channel.truncate(this.#eventChunks.length ? Math.min(this.#eventChunks[0][0], after) : after);
   }
 
   /** The record cannot be rebuilt by this code: keep showing the chat, never write to it. */
@@ -1608,52 +1934,246 @@ export class Connection {
     return this.backgroundShellsRunning() ? [...this.#bgShells.keys()] : [];
   }
 
-  /** The agent's processes now, as the turn begins (an MCP server, the PowerShell tool's own shell): see #watchShells. */
+  /** The agent's processes now, as the turn begins (an MCP server, the PowerShell tool's own shell): see #markBackground. */
   #noteTurnProcesses(): void {
     this.#turnProcesses = null;
     const pid = this.process?.pid;
-    if (this.#replaying || !pid || !this.#claudeHolds()) return;
+    if (this.#replaying || !pid) return;
     refreshDescendants();
     const now = descendants(pid);
     if (now) this.#turnProcesses = new Set(now.map((d) => d.pid));
   }
 
-  /** Bash/PowerShell calls and the background shells they started, the chat's own or a helper's (see backgroundShellsRunning). */
-  #watchShells(update: Json, kind: unknown, meta: unknown): void {
+  /**
+   * Every agent's tool calls (any session: a helper's shells run in the same agent): which are shell commands, their status, and
+   * which moved to the background (Claude Code's backgroundTaskId, OMP's details.async, the result text; see backgroundTask), so the
+   * page can mark the row and Stop can end it. Also notes main-session output for the steer rules (B1, B13).
+   */
+  #watchTools(params: Json): void {
+    if (!this.ready || this.closed) return;
+    const update = get(params, 'update');
+    if (!isDict(update)) return;
+    const kind = get(update, 'sessionUpdate');
+    const main = get(params, 'sessionId') === this.sessionId;
+    const meta = get(update, '_meta');
     const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
+    if (
+      main && this.busy && !this.autonomous &&
+      (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') &&
+      !(isDict(claude) && get(claude, 'parentToolUseId'))
+    ) this.#mainOutput();
+    if (kind === 'session_message' || kind === 'subagent_update') return this.#watchHelper(update, kind, main);
+    if (kind !== 'tool_call' && kind !== 'tool_call_update') return;
     const id = get(update, 'toolCallId');
-    if (!isStr(id)) return;
-    const tool = isDict(claude) ? get(claude, 'toolName') : null;
-    if (kind === 'tool_call' && (tool === 'Bash' || tool === 'PowerShell')) {
-      if (!this.#shellCalls.has(id)) this.#shellCalls.set(id, this.#now());
-      while (this.#shellCalls.size > 200) this.#shellCalls.delete(this.#shellCalls.keys().next().value!);
+    if (!isStr(id) || !id) return;
+    const toolName = isDict(claude) ? get(claude, 'toolName') : null;
+    let seen = this.#tools.get(id);
+    if (kind === 'tool_call' && !seen) {
+      // A shell command: Claude Code's Bash or PowerShell; for the other agents an `execute` tool (Codex exec_command, OMP bash).
+      // Never an MCP tool or WebFetch, whatever kind it reports.
+      const shell = isStr(toolName) ? toolName === 'Bash' || toolName === 'PowerShell' : get(update, 'kind') === 'execute';
+      seen = { shell, status: '', since: this.#now(), main, turn: this.promptSeq };
+      this.#tools.set(id, seen);
+      while (this.#tools.size > 300) this.#tools.delete(this.#tools.keys().next().value!);
+      if (shell) {
+        if (!this.#shellCalls.has(id)) this.#shellCalls.set(id, seen.since);
+        while (this.#shellCalls.size > 200) this.#shellCalls.delete(this.#shellCalls.keys().next().value!);
+      }
+    }
+    const status = get(update, 'status');
+    if (seen && isStr(status)) seen.status = status;
+    if (kind !== 'tool_call_update') return;
+    const background = this.#bgTools.get(id);
+    if (background) {
+      // Codex: the command's completed update comes after the turn; OMP: a second completed on the old card, or the job's end.
+      if (background.state === 'running' && toolEnded(update, this.#claudeHolds())) this.#backgroundEnded(id, background, 'done');
       return;
     }
-    if (kind !== 'tool_call_update') return;
-    const response = isDict(claude) ? get(claude, 'toolResponse') : null;
-    let task = isDict(response) ? get(response, 'backgroundTaskId') : null;
-    if (!isStr(task) || !task) {
-      // The same fact in the result text, which every client gets: "Command running in background with ID: <id>. Output is ...".
-      const raw = get(update, 'rawOutput');
-      const m = isStr(raw) ? /^Command running in background with ID: (\S+?)\.(?:\s|$)/.exec(raw) : null;
-      task = m ? m[1] : null;
-    }
-    if (!isStr(task) || !task || this.#bgShells.has(task)) return;
-    const since = this.#shellCalls.get(id) ?? this.#now() - 10;
+    const task = backgroundTask(update, this.#claudeHolds());
+    if (task) this.#markBackground(id, task);
+  }
+
+  /**
+   * The tool `id` went on running in the background as `task`. Notes the agent's processes that started with the command: not there
+   * when the turn began, and not older than its tool call (two seconds of slack for ps's whole-second start times). An older one (an
+   * MCP server, the PowerShell tool's own shell) is not it. None: the command already ended. A process of unknown age counts as
+   * running (never cut one off) but makes Stop unavailable. Stop is offered only for a shell command whose processes cannot belong
+   * to another command (no other shell command running, none started since this one) and whose start times are known.
+   */
+  #markBackground(id: string, task: string, onlyIfRunning = false): void {
+    if (this.#bgShells.has(task) || this.#bgTools.has(id)) return;
+    const since = this.#shellCalls.get(id) ?? this.#tools.get(id)?.since ?? this.#now() - 10;
     const pid = this.process?.pid;
     refreshDescendants(); // the command started a moment ago: a snapshot from before it would not have it
     const now = pid ? descendants(pid) : null;
-    // The processes that started with the command: not there when the turn began, and not older than its tool call (two seconds of
-    // slack for ps's whole-second start times). An older one (an MCP server, the PowerShell tool's own shell) is not it. None: the
-    // command already ended. A process of unknown age counts (never cut one off).
     const before = this.#turnProcesses;
-    const pids = now
-      ? now.filter((d) => !before?.has(d.pid) && (d.started === null || d.started >= since - 2)).map((d) => d.pid)
-      : null;
-    if (pids && !pids.length) return;
-    this.#bgShells.set(task, pids);
+    const mine = now ? now.filter((d) => !before?.has(d.pid) && (d.started === null || d.started >= since - 2)) : null;
+    const taken = new Set([...this.#bgTools.values()].filter((t) => t.state === 'running').flatMap((t) => t.procs ?? []).map((p) => p.pid));
+    const pids = mine ? mine.filter((d) => !taken.has(d.pid)) : null;
+    const at = this.#now();
+    if (pids && !pids.length) {
+      if (onlyIfRunning) return;
+      this.#bgTools.set(id, { task, state: 'done', procs: null, stoppable: false, since, at, endedAt: at });
+      this.#trimBackground();
+      this.#announceBackground(id);
+      return;
+    }
+    this.#bgShells.set(task, pids ? pids.map((d) => d.pid) : null);
     while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
-    log.info('chat %s: background shell %s started (%s)', this.id, task, pids ? `processes ${pids.join(', ')}` : 'processes unknown');
+    const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
+    const others = [...this.#tools].some(([other, t]) =>
+      other !== id && t.shell &&
+      (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
+    );
+    const known = pids !== null && before !== null && pids.every((d) => d.started !== null);
+    const stoppable = shell && known && !others;
+    const procs = stoppable ? pids!.map((d) => ({ pid: d.pid, started: d.started as number })) : null;
+    this.#bgTools.set(id, { task, state: 'running', procs, stoppable, since, at, endedAt: null });
+    this.#trimBackground();
+    this.#announceBackground(id);
+    log.info(
+      'chat %s: tool %s went to the background as %s (%s%s)',
+      this.id,
+      id,
+      task,
+      pids ? `processes ${pids.map((d) => d.pid).join(', ')}` : 'processes unknown',
+      stoppable ? '' : ', no Stop',
+    );
+  }
+
+  /**
+   * Claude Code helpers (recording C2): a steer moves a foreground helper to the background, and the adapter says so in the main
+   * session with a session_message `<toolUseId>:reply` from the helper's session, "Async agent launched successfully". Its row (the
+   * Agent tool call, and the helper's card in the Activity pane) is marked running in the background, without Stop; it is done once
+   * the helper's subagent_update leaves running.
+   */
+  #watchHelper(update: Json, kind: unknown, main: boolean): void {
+    if (kind === 'subagent_update') {
+      const child = get(update, 'sessionId');
+      let state = get(update, 'state');
+      state = isDict(state) ? get(state, 'state') : state;
+      if (!isStr(child) || !isStr(state) || state === 'running' || state === 'requires_action') return;
+      for (const [id, t] of this.#bgTools) {
+        if (t.helper === child && t.state === 'running') this.#backgroundEnded(id, t, 'done');
+      }
+      return;
+    }
+    if (!main) return;
+    const messageId = get(update, 'messageId');
+    const sender = get(update, 'senderSessionId');
+    if (!isStr(messageId) || !messageId.endsWith(':reply') || !isStr(sender) || sender === this.sessionId) return;
+    const content = get(update, 'content');
+    const text = rawOutputText({ content: Array.isArray(content) ? content : [] });
+    if (!HELPER_BACKGROUND_TEXT.test(text)) return;
+    const id = messageId.slice(0, -':reply'.length);
+    if (!id || this.#bgTools.has(id) || !this.#liveHelpers.has(sender)) return;
+    const at = this.#now();
+    this.#bgTools.set(id, {
+      task: `helper:${sender}`,
+      state: 'running',
+      procs: null,
+      stoppable: false,
+      since: this.#tools.get(id)?.since ?? at,
+      at,
+      endedAt: null,
+      helper: sender,
+    });
+    this.#trimBackground();
+    this.#announceBackground(id);
+    log.info('chat %s: helper %s (%s) went on in the background', this.id, sender, id);
+  }
+
+  /**
+   * The page reads a tool row's background state from the row's updates (`update.background = {state, stoppable}`): each change is
+   * a tool_call_update of AIB's own for that row. A recorded event (keeper note), so a rebuild has it in the same place; never made
+   * while replaying (the note brings it back).
+   */
+  #announceBackground(id: string): void {
+    const t = this.#bgTools.get(id);
+    if (!t || this.#replaying) return;
+    this.recordedEvent('update', {
+      sessionId: this.sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: id,
+        background: {
+          state: t.state,
+          stoppable: t.state === 'running' && t.stoppable && !this.closed,
+          ...(t.helper ? { helper: t.helper } : {}),
+        },
+      },
+    });
+  }
+
+  #trimBackground(): void {
+    while (this.#bgTools.size > 100) this.#bgTools.delete(this.#bgTools.keys().next().value!);
+  }
+
+  #backgroundEnded(id: string, background: BackgroundTool, state: 'done' | 'stopped'): void {
+    background.state = state;
+    background.endedAt = this.#now();
+    this.#bgShells.delete(background.task);
+    log.info('chat %s: background tool %s %s', this.id, id, state === 'done' ? 'ended' : 'was stopped');
+    this.#announceBackground(id);
+  }
+
+  /**
+   * Codex keeps running a command past its turn's end (recording X1): an execute tool of the main session still open when the turn
+   * ends, whose processes still run, is a background command from then on (its completed update comes later, with no new turn).
+   */
+  #backgroundOpenTools(seq: number): void {
+    if (this.#claudeHolds()) return; // Claude Code says so itself (backgroundTaskId); its turn never ends with a tool open
+    for (const [id, seen] of [...this.#tools]) {
+      if (seen.turn !== seq || !seen.main || !seen.shell || this.#bgTools.has(id)) continue;
+      if (seen.status === 'completed' || seen.status === 'failed') continue;
+      this.#markBackground(id, `open:${id}`, true);
+    }
+  }
+
+  /** The background tools as the page sees them (snapshot `toolBackground`): {toolCallId: {state, stoppable}}. */
+  toolBackground(): Record<string, { state: string; stoppable: boolean; helper?: string }> {
+    if (!this.#bgTools.size) return {};
+    this.backgroundShellsRunning(); // drops shells whose processes ended
+    const out: Record<string, { state: string; stoppable: boolean; helper?: string }> = {};
+    for (const [id, t] of this.#bgTools) {
+      if (t.helper) {
+        // a helper ends with its subagent_update; one AIB no longer counts as live (an agent restart) is over too
+        if (t.state === 'running' && (this.closed || !this.#liveHelpers.has(t.helper))) this.#backgroundEnded(id, t, 'done');
+      } else if (t.state === 'running' && !this.#bgShells.has(t.task)) this.#backgroundEnded(id, t, 'done');
+      out[id] = { state: t.state, stoppable: t.state === 'running' && t.stoppable && !this.closed, ...(t.helper ? { helper: t.helper } : {}) };
+    }
+    return out;
+  }
+
+  /**
+   * Stop a command running in the background (POST /api/live/tool-stop): AIB kills the processes it noted when the command moved
+   * there, re-verified now (still the agent's, same start time) together with what they started since, leaf first
+   * (platform/kill_verified.ts). Refused (NotStoppable, HTTP 409) for anything else: an MCP tool, a command whose processes could
+   * not be told apart, one that already ended. The agent learns of it on its own (Claude Code's task notification).
+   */
+  async stopBackgroundTool(toolCallId: unknown): Promise<Json> {
+    this.#refuseReadOnly();
+    const background = isStr(toolCallId) ? this.#bgTools.get(toolCallId) : undefined;
+    if (!background) throw new NotStoppable('That tool is not running in the background.');
+    this.toolBackground();
+    if (background.helper) {
+      throw new NotStoppable("AIB can't stop a helper by itself: it runs inside the agent's own process. Ask the agent to stop it.");
+    }
+    if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
+    if (!background.stoppable || !background.procs?.length) {
+      throw new NotStoppable('AIB cannot tell which processes belong to this command, so it cannot stop it.');
+    }
+    const pid = this.process?.pid;
+    if (this.closed || !pid) throw new NotStoppable('The agent is not running.');
+    const result = await killVerified(pid, background.procs);
+    if (!result) throw new NotStoppable('AIB cannot list the processes right now. Try again.');
+    if (!result.killed.length) {
+      this.#backgroundEnded(toolCallId as string, background, 'done');
+      return { ok: true, toolCallId, state: 'done', killed: 0 };
+    }
+    this.#backgroundEnded(toolCallId as string, background, 'stopped');
+    log.info('chat %s: stopped background tool %s (processes %s)', this.id, toolCallId, result.killed.map((k) => k.pid).join(', '));
+    return { ok: true, toolCallId, state: 'stopped', killed: result.killed.length };
   }
 
   /** A helper started during the current prompt turn is still running (or waits for the user). */
@@ -1663,6 +2183,29 @@ export class Connection {
       if (state === 'running' || state === 'requires_action') return true;
     }
     return false;
+  }
+
+  /** Main-session output of the running prompt turn: a steer before it was read (B13), and a pending early end is off (B1). */
+  #mainOutput(): void {
+    this.#steerTurn.outputAfter = true;
+    this.#steerTurn.unread = [];
+    this.#clearSettle();
+  }
+
+  #clearSettle(): void {
+    if (this.#settleTimer !== null) clearTimeout(this.#settleTimer);
+    this.#settleTimer = null;
+  }
+
+  /** End the held turn early once steerTiming.settleMs pass with no main-session output (which clears the timer). */
+  #armSettle(early: { seq: number; fire: () => void }): void {
+    this.#clearSettle();
+    this.#settleTimer = setTimeout(() => {
+      this.#settleTimer = null;
+      if (this.#endEarly !== early || !this.busy || this.autonomous || this.cancelSeq >= early.seq || !this.#helpersRunning()) return;
+      this.#endEarly = null;
+      early.fire();
+    }, steerTiming.settleMs);
   }
 
   /**
@@ -1675,9 +2218,6 @@ export class Connection {
     const update = get(params, 'update');
     if (!isDict(update)) return;
     const kind = get(update, 'sessionUpdate');
-    if (kind === 'tool_call' || kind === 'tool_call_update') {
-      this.#watchShells(update, kind, get(update, '_meta')); // a helper's shells run in the same agent
-    }
     if (kind === 'subagent_update') {
       const child = get(update, 'sessionId');
       let state = get(update, 'state');
@@ -1699,6 +2239,10 @@ export class Connection {
         // A background task ended: one shell whose processes could not be listed stops counting (the others are read from the OS).
         const unknown = [...this.#bgShells].find(([, pids]) => pids === null);
         if (unknown) this.#bgShells.delete(unknown[0]);
+        // ...and a row marked running in the background whose processes are gone is done now, not at the next snapshot (the process
+        // list is cached for a second): Claude Code sends nothing else for the command (recording C1)
+        refreshDescendants();
+        this.toolBackground();
       }
       if (this.autonomous) return this.#endAutonomous('end_turn');
       const early = this.#endEarly;
@@ -1706,6 +2250,14 @@ export class Connection {
         early && this.busy && !AUTONOMOUS_ORIGINS.has(get(origin, 'kind') as string) && this.cancelSeq < early.seq &&
         this.#helpersRunning()
       ) {
+        // B1: a steer interrupts the running cycle, which then ends with a result of its own; the steered message's reply comes
+        // after it (in the same cycle, or a cycle of its own, recording C4). So with a steer in this turn, only a result after
+        // main-session output that came after the last steer can end the turn early, and only once no more output follows for a
+        // moment. A human result is never a turn end by itself.
+        if (this.#steerTurn.injected) {
+          if (this.#steerTurn.outputAfter) this.#armSettle(early);
+          return;
+        }
         this.#endEarly = null;
         early.fire();
         return new Promise((resolve) => setTimeout(resolve, 0)); // the turn's end is recorded before what comes after it
@@ -2068,6 +2620,7 @@ export class Connection {
       }
       this.writes.observe(params);
       this.event('update', params);
+      this.#watchTools(params);
       return this.#watchHeldTurn(params);
     } else if (method === 'elicitation/complete') {
       this.completeElicitation(params);
@@ -2354,6 +2907,7 @@ export class Connection {
           cwd: this.cwd,
           mcpServers,
           ...this.artifactPrompt(mcpServers),
+          ...this.extraFolders(),
         },
       );
     } else {
@@ -2361,6 +2915,7 @@ export class Connection {
         cwd: this.cwd,
         mcpServers,
         ...this.artifactPrompt(mcpServers),
+        ...this.extraFolders(),
       });
     }
     this.#takeSession(result, resume);
@@ -2643,12 +3198,15 @@ export class Connection {
       if (receipt.state === 'unknown') {
         throw new PromptStateUnknown(PROMPT_UNKNOWN);
       }
-      return {
-        accepted: true,
-        duplicate: true,
-        clientMessageId,
-        turnState: receipt.state,
-      };
+      // B3: a steer the agent did not take (promptRequired, or it failed) goes again as this prompt, with the same id.
+      if (receipt.state !== 'steering') {
+        return {
+          accepted: true,
+          duplicate: true,
+          clientMessageId,
+          turnState: receipt.state,
+        };
+      }
     }
     this.#refuseReadOnly();
     if (this.closed || !this.ready || !this.sessionId) {
@@ -2698,6 +3256,9 @@ export class Connection {
     this.busy = true;
     this.autonomous = false; // a prompt sent while Claude Code ran a cycle of its own takes that cycle over
     this.#turnHelpers.clear();
+    this.#steerTurn = { injected: 0, outputAfter: false, unread: [] };
+    this.#clearSettle();
+    this.#promptOut.clear();
     this.#noteTurnProcesses();
     this.turnStartedAt = now();
     this.error = '';
@@ -2737,27 +3298,31 @@ export class Connection {
       if (replayed) { // the old AIB sent it: wait for its response, from the record or live
         const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
         if (promptReceipt) promptReceipt.sent = true; // the agent has it already (a deliberate stop records it as delivered)
+        this.#promptOut.set();
         result = await this.#untilReplyEnds(seq, this.#awaitReplayed(replayed.entry, replayed.id));
       } else if (this.cancelSeq >= seq) { // cancelled while the hook above was still working: the agent never had this turn
+        this.#promptOut.set();
         result = { stopReason: 'cancelled' };
       } else {
         // (not `receipt`: that is the keeper's receipt note for this turn, below)
         const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
         if (promptReceipt) promptReceipt.sent = true;
-        result = await this.#untilReplyEnds(
-          seq,
-          this.request('session/prompt', {
-            sessionId: this.sessionId,
-            prompt: blocks,
-          }, 86400, {
-            // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
-            note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
-            once: clientMessageId ? `prompt:${clientMessageId}` : undefined,
-          }),
-        );
+        const response = this.request('session/prompt', {
+          sessionId: this.sessionId,
+          prompt: blocks,
+        }, 86400, {
+          // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
+          note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
+          once: clientMessageId ? `prompt:${clientMessageId}` : undefined,
+        });
+        this.#promptOut.set(); // written: a steer from now on reaches this turn
+        result = await this.#untilReplyEnds(seq, response);
         await this.#studioContextSent(context);
       }
+      this.#clearSettle();
       this.turnEndedAt = this.#now();
+      this.#backgroundOpenTools(seq);
+      if (!(isDict(result) && result.stopReason === 'cancelled')) this.#steerUnread();
       this.#queueNoteOutcome(result, false);
       this.event('turn_end', result);
       const hook = this.onTurnEnd;
@@ -2789,6 +3354,8 @@ export class Connection {
         this.#receiptChanged(clientMessageId);
       }
     } finally {
+      this.#promptOut.set();
+      this.#clearSettle();
       this.withdrawTurnRequests();
       await this.#finishTurn();
       await this.#queueAfterTurn();
@@ -3054,9 +3621,13 @@ export class Connection {
     return this.queue.public(light);
   }
 
-  /** A chat rebuilt from the keeper: its saved queue goes on as it was (the turn never stopped), so it is not paused. */
+  /**
+   * A chat rebuilt from the keeper: its saved queue goes on as it was (the turn never stopped), so it is not paused; messages sent
+   * while it worked go back into the steer lane (a steer the old AIB sent takes its answer from the record, B4).
+   */
   async queueContinue(saved: SavedItem[] | unknown): Promise<void> {
-    this.queue.load(saved, '');
+    this.queue.load(saved, '', true);
+    void this.#steerPump(); // not awaited: a steer the old AIB sent may still wait for the agent's answer
     await this.#queuePump();
   }
 
@@ -3123,6 +3694,388 @@ export class Connection {
       turnState: has ? 'queued' : 'working',
       queue: this.queue.public(),
     };
+  }
+
+  // ---- messages sent while the agent works: the steer lane (steer-on-send) ----------------------------------------------------
+  /** `_meta.steering.supported` of the initialize result (top level, where the three adapters put it, or under agentCapabilities). */
+  steeringSupported(): boolean {
+    const initial = isDict(this.initial) ? this.initial : {};
+    const caps = get(initial, 'agentCapabilities');
+    for (const holder of [get(initial, '_meta'), isDict(caps) ? get(caps, '_meta') : null]) {
+      const steering = isDict(holder) ? get(holder, 'steering') : null;
+      if (isDict(steering) && steering.supported === true) return true;
+    }
+    return false;
+  }
+
+  /** What the composer keys on (snapshot `steerable`): a prompt turn of ours runs and the agent can read a message during it. */
+  steerable(): boolean {
+    return this.busy && !this.autonomous && this.ready && !this.closed && !this.rebuildError && this.steeringSupported();
+  }
+
+  /** A slash command the agent offers (or /doc): never sent into a running turn, it waits for the turn to end (B17). */
+  #isAgentCommand(text: unknown): boolean {
+    if (!isStr(text)) return false;
+    const m = /^\/(\S+)/.exec(pyStrip(text));
+    if (!m) return false;
+    return m[1] === 'doc' || this.breadth.commands.some((c) => c.name === m[1]);
+  }
+
+  /**
+   * Send now (POST /api/live/steer; Enter in the composer, a typed inbox or phone reply). Same payload as prompt(). AIB decides:
+   *   idle (or Claude Code's own cycle)        an ordinary prompt                                   state 'prompted'
+   *   working, the agent can steer             `_session/steering` now, through the steer lane      'injected' / 'sending' / 'fallback'
+   *   working, an approval or question open    held until it is answered (owner decision 5)        'held'
+   *   working, no steering, or a slash command  the after-turn queue, as today                       'queued'
+   * Retrying the same clientMessageId never sends twice.
+   */
+  async steer(text: unknown, clientMessageId: string | null = null, attachments: unknown = null): Promise<Json> {
+    this.#refuseReadOnly();
+    const [, , , fingerprint] = this.preparePrompt(text, clientMessageId, attachments);
+    if (this.closed || !this.ready || !this.sessionId) throw new ValueError('This connection is not ready');
+    const id = clientMessageId || crypto.randomUUID().replaceAll('-', '');
+    const q = this.queue;
+    const inLane = q.findSteer(id);
+    const queued = q.find(id) ?? (q.inflight && q.inflight.id === id ? q.inflight : null);
+    const receipt = clientMessageId ? this.#knownReceipt(id) : null;
+    if (inLane || queued || receipt) {
+      const known = inLane ? inLane.fingerprint : queued ? queued.fingerprint : receipt!.fingerprint;
+      if (known !== fingerprint) throw new ValueError('This client message ID was already used for different text');
+      if (!inLane && !queued && receipt!.state === 'unknown') throw new PromptStateUnknown(PROMPT_UNKNOWN);
+      return this.#steerAnswer(id, true);
+    }
+    const working = this.busy && !this.autonomous;
+    if (working && (this.#isAgentCommand(text) || !this.steeringSupported())) {
+      await this.queueAdd(text, id, attachments);
+      return this.#steerAnswer(id, false);
+    }
+    if (!working && !q.steer.length) {
+      await this.prompt(text, id, attachments);
+      return this.#steerAnswer(id, false);
+    }
+    if (q.steer.length >= 50) throw new ValueError('At most 50 messages can wait to be sent');
+    q.steer.push({
+      id,
+      text: text as string,
+      attachments: pyTruthy(attachments) ? attachments as unknown[] : [],
+      fingerprint,
+      queuedAt: Date.now() / 1000,
+      state: 'sending',
+      heldReason: '',
+    });
+    this.#queueChanged();
+    await this.#steerPump();
+    return this.#steerAnswer(id, false);
+  }
+
+  /** The steer route's answer: where message `id` is now (state, see steer()), with the lanes. */
+  #steerAnswer(id: string, duplicate: boolean): Json {
+    const q = this.queue;
+    const inLane = q.findSteer(id);
+    const receipt = this.#knownReceipt(id);
+    let state: string;
+    if (inLane) state = inLane.state;
+    else if (q.find(id) || (q.inflight && q.inflight.id === id)) state = 'queued';
+    else if (receipt?.state === 'injected') state = 'injected';
+    else state = 'prompted';
+    return {
+      accepted: true,
+      duplicate,
+      clientMessageId: id,
+      id,
+      state,
+      turnState: receipt ? receipt.state : state === 'queued' ? 'queued' : 'working',
+      steerLane: q.steerPublic(),
+      queue: q.public(),
+    };
+  }
+
+  /** Run the steer lane: one item at a time, in order. Concurrent calls join the running pass (which then looks once more). */
+  #steerPump(): Promise<void> {
+    if (this.#steerRun) {
+      this.#steerAgain = true;
+      return this.#steerRun;
+    }
+    const run = (async () => {
+      try {
+        do {
+          this.#steerAgain = false;
+          await this.#steerLane();
+        } while (this.#steerAgain);
+      } catch (error) {
+        log.exception(error, 'Sending a message to the running turn failed');
+      } finally {
+        this.#steerRun = null;
+      }
+    })();
+    this.#steerRun = run;
+    return run;
+  }
+
+  async #steerLane(): Promise<void> {
+    const q = this.queue;
+    while (true) {
+      if (this.#replaying || this.rebuildError || this.closed || !this.ready || !this.sessionId) return;
+      const head = q.steer[0];
+      if (!head) return;
+      if (!this.busy || this.autonomous) {
+        // Idle (or Claude Code's own cycle, which a prompt takes over): the first goes as an ordinary prompt and the rest are steered
+        // into its turn (B9). A helper's open card does not hold it: the main agent is idle (owner, 2026-11-12).
+        q.steer.shift();
+        if (head.state === 'fallback') {
+          // The agent said it did not take it (promptRequired): safe to send, even when a restart left its receipt "unknown".
+          this.promptReceipts.set(head.id, { fingerprint: String(head.fingerprint), state: 'steering' });
+        }
+        try {
+          await this.prompt(head.text, head.id, head.attachments.length ? head.attachments : null);
+        } catch (error) {
+          const unknown = error instanceof PromptStateUnknown;
+          if (!unknown) log.warning('Sending a held message failed: %s', errorText(error));
+          this.#steerToQueue([head], unknown ? STEER_RESTART_NOTE : clip(errorText(error), 300), unknown ? 'unknown' : 'error');
+        }
+        this.#queueChanged();
+        continue;
+      }
+      if (head.state === 'fallback') return; // B2: the agent's turn is over; it goes as a prompt once AIB has finished that turn
+      if (this.permissions.size || this.elicitations.size) {
+        // Owner decision 5 (B8): never steered while an approval or question is open (OMP would cancel the card). Released by any
+        // close of the last card (#cardsChanged), and by the turn's end (#queueAfterTurn).
+        let changed = false;
+        for (const item of q.steer) {
+          if (item.state === 'sending') {
+            item.state = 'held';
+            item.heldReason = 'approval';
+            changed = true;
+          }
+        }
+        if (changed) this.#queueChanged();
+        return;
+      }
+      if (!this.steeringSupported()) { // cannot happen for a chat that took a steer; kept safe: they wait for the turn to end
+        const all = q.steer;
+        q.steer = [];
+        this.#steerToQueue(all, '');
+        this.#queueChanged();
+        return;
+      }
+      if (!this.#promptOut.isSet()) { // the prompt that started this turn is not written yet: a steer now would find no turn
+        await this.#promptOut.wait(30000);
+        continue;
+      }
+      let changed = false;
+      for (const item of q.steer) {
+        if (item.state === 'held') {
+          item.state = 'sending';
+          item.heldReason = '';
+          changed = true;
+        }
+      }
+      if (changed) this.#queueChanged();
+      const seq = this.promptSeq;
+      this.#steerInflight = head;
+      let outcome: string;
+      try {
+        const replayed = this.#replayedSteers.get(head.id);
+        this.#replayedSteers.delete(head.id);
+        outcome = replayed
+          ? ((await within(replayed, steerTiming.steerTimeoutSeconds * 1000)) || 'failed')
+          : await this.#sendSteer(head);
+      } finally {
+        this.#steerInflight = null;
+      }
+      const index = q.steer.indexOf(head);
+      if (index >= 0) {
+        if (outcome === 'injected') q.steer.splice(index, 1);
+        else if (outcome === 'promptRequired' && this.cancelSeq < seq) head.state = 'fallback';
+        else if (outcome === 'promptRequired') { // the user interrupted meanwhile: it waits with the others, paused
+          q.steer.splice(index, 1);
+          this.#steerToQueue([head], '', 'interrupted');
+        } else {
+          q.steer.splice(index, 1);
+          this.#steerToQueue([head], STEER_FAILED_NOTE);
+        }
+      }
+      this.#queueChanged();
+    }
+  }
+
+  /**
+   * One `_session/steering` (always with idleBehavior promptRequired: without it Claude Code starts a turn AIB never asked for,
+   * recording C3). Carries the <studio-context> note like a prompt (B12; no turn-start hook: no turn starts). Returns 'injected',
+   * 'promptRequired' or 'failed'. In the keeper the steer note goes first and the once-key stops a resend (B4).
+   */
+  async #sendSteer(item: SteerItem): Promise<string> {
+    let images: ImageBlock[];
+    let fileBlocks: Json[];
+    let files: FileSummary[];
+    try {
+      [images, fileBlocks, files] = this.preparePrompt(item.text, null, item.attachments.length ? item.attachments : null);
+    } catch (error) {
+      log.warning('A held message can no longer be sent: %s', errorText(error));
+      return 'failed';
+    }
+    let context: [string, unknown] | null = null;
+    const provider = this.contextForPrompt;
+    if (provider) {
+      try {
+        const made = await provider(this);
+        context = pyTruthy(made) ? made as [string, unknown] : null;
+      } catch (error) {
+        log.exception(error, 'The note for the prompt could not be made');
+      }
+    }
+    if (this.onUserPrompt) {
+      try {
+        this.onUserPrompt(this, item.text, item.id);
+      } catch (error) {
+        log.exception(error, 'on_user_prompt hook failed');
+      }
+    }
+    const blocks = [
+      ...(context ? [{ type: 'text', text: context[0] }] : []),
+      ...(pyStrip(item.text) ? [{ type: 'text', text: item.text }] : []),
+      ...fileBlocks,
+      ...images,
+    ];
+    this.promptReceipts.set(item.id, { fingerprint: String(item.fingerprint), state: 'steering' });
+    while (this.promptReceipts.size > 1000) this.promptReceipts.delete(this.promptReceipts.keys().next().value!);
+    this.#receiptChanged(item.id);
+    // The request may answer after the lane gave up on it (steerTimeoutSeconds): the late answer is still read (#steerLateAnswer).
+    const answer: Promise<{ result?: unknown; error?: unknown }> = this.request('_session/steering', {
+      sessionId: this.sessionId,
+      prompt: blocks,
+      _meta: { steering: { idleBehavior: 'promptRequired' } },
+    }, steerTiming.steerLateSeconds, {
+      note: (rpc) => ({ t: 'steer', rpc, receipt: item.id, text: item.text, files, fingerprint: item.fingerprint }),
+      once: `steer:${item.id}`,
+    }).then((result) => ({ result }), (error) => ({ error }));
+    const first = await within(answer, steerTiming.steerTimeoutSeconds * 1000);
+    if (first === false) {
+      log.warning('chat %s: the agent did not answer a message sent while it works within %s s', this.id, steerTiming.steerTimeoutSeconds);
+      this.#steerLateAnswer(item, answer, images, files, context);
+      return 'failed';
+    }
+    if (Object.hasOwn(first, 'error')) {
+      log.warning('The agent did not take a message sent while it works: %s', errorText(first.error));
+      return 'failed';
+    }
+    const outcome = isDict(first.result) ? first.result.outcome : null;
+    if (outcome === 'injected' || outcome === 'startedNewTurn') {
+      if (outcome === 'startedNewTurn') log.warning('chat %s: the agent started a turn of its own for a steer', this.id);
+      this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
+      void this.#studioContextSent(context);
+      return 'injected';
+    }
+    if (outcome === 'promptRequired') return 'promptRequired';
+    log.warning('chat %s: a steer came back %s', this.id, pyRepr(outcome));
+    return 'failed';
+  }
+
+  /**
+   * A steer that timed out goes to the after-turn queue with its id (#steerLane), but stays unsent there (#queuePump) until its answer
+   * comes: taken (injected) → it leaves the queue and shows as sent while working, as if it had answered in time; anything else (not
+   * taken, an error, steerLateSeconds with no answer) → it is free to go after the turn, with the same id.
+   */
+  #steerLateAnswer(
+    item: SteerItem,
+    answer: Promise<{ result?: unknown; error?: unknown }>,
+    images: ImageBlock[],
+    files: FileSummary[],
+    context: [string, unknown] | null,
+  ): void {
+    this.#steerLate.add(item.id);
+    void answer.then((late) => {
+      this.#steerLate.delete(item.id);
+      const outcome = !Object.hasOwn(late, 'error') && isDict(late.result) ? late.result.outcome : null;
+      if ((outcome === 'injected' || outcome === 'startedNewTurn') && !this.closed) {
+        const q = this.queue;
+        const at = q.items.findIndex((i) => i.id === item.id);
+        if (at >= 0) q.items.splice(at, 1);
+        log.info('chat %s: the agent took message %s late; it is not sent again', this.id, item.id);
+        this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
+        void this.#studioContextSent(context);
+      } else {
+        log.info('chat %s: the late answer to message %s: not taken (%s)', this.id, item.id, pyRepr(outcome));
+      }
+      this.#queueChanged();
+      void this.#queuePump();
+    });
+  }
+
+  /**
+   * The agent took a steered message: it shows as the user's bubble (no adapter echoes it), tagged `steered` ("Sent while working"),
+   * and its receipt is final. Live and on a keeper rebuild alike, right where the answer is in the record.
+   */
+  #steerLanded(id: string, text: string, images: ImageBlock[], files: FileSummary[], fingerprint: string, item?: SteerItem): void {
+    const receipt = this.promptReceipts.get(id);
+    if (receipt) receipt.state = 'injected';
+    else this.promptReceipts.set(id, { fingerprint, state: 'injected' });
+    this.promptReceipts.get(id)!.sent = true;
+    this.#receiptChanged(id);
+    const userEvent: Json = { text, attachments: images, sessionId: this.sessionId, clientMessageId: id, steered: true };
+    if (files.length) userEvent.files = files;
+    this.event('user', userEvent);
+    if (!this.busy || this.autonomous) return;
+    this.#steerTurn.injected += 1;
+    this.#steerTurn.outputAfter = false;
+    this.#clearSettle();
+    if (item && this.provider === 'codex') this.#steerTurn.unread.push(item);
+  }
+
+  /**
+   * B13: codex-acp v1 can drop a steer that lands as its turn completes. A steer with no main-session output after it by the turn's
+   * end goes back in the queue, paused, with a note (a new id, so Resume really sends it again).
+   */
+  #steerUnread(): void {
+    const unread = this.#steerTurn.unread;
+    this.#steerTurn.unread = [];
+    if (!unread.length) return;
+    const q = this.queue;
+    q.items.unshift(...unread.map((i) => ({
+      id: crypto.randomUUID().replaceAll('-', ''),
+      text: i.text,
+      attachments: i.attachments,
+      fingerprint: i.fingerprint,
+      queuedAt: Date.now() / 1000,
+      lease: null,
+      note: CODEX_UNREAD_NOTE,
+    })));
+    q.hold = 'unknown';
+    this.#queueChanged();
+  }
+
+  /** Steer-lane items into the after-turn queue, at its front (after an item being sent now), in order. */
+  #steerToQueue(items: SteerItem[], note: string, hold = ''): void {
+    if (!items.length) return;
+    const q = this.queue;
+    const at = q.sendNow ? Math.min(1, q.items.length) : 0;
+    q.items.splice(at, 0, ...items.map((i) => ({
+      id: i.id,
+      text: i.text,
+      attachments: i.attachments,
+      fingerprint: i.fingerprint,
+      queuedAt: i.queuedAt,
+      lease: null,
+      note,
+    })));
+    if (hold && !q.sendNow && !q.hold) q.hold = hold;
+  }
+
+  /** Interrupt (B8): what waits in the steer lane moves to the after-turn queue, paused; a steer in flight is decided by its answer. */
+  #laneInterrupted(): void {
+    const q = this.queue;
+    const inflight = this.#steerInflight && q.steer.includes(this.#steerInflight) ? this.#steerInflight : null;
+    const moved = q.steer.filter((i) => i !== inflight);
+    if (!moved.length) return;
+    q.steer = inflight ? [inflight] : [];
+    this.#steerToQueue(moved, '', 'interrupted');
+    this.#queueChanged();
+  }
+
+  /** An approval or question was answered or withdrawn: with none open, messages held for it go now (B8). */
+  #cardsChanged(): void {
+    if (!this.queue.steer.length || this.permissions.size || this.elicitations.size) return;
+    void this.#steerPump();
   }
 
   /**
@@ -3238,7 +4191,8 @@ export class Connection {
       (this.auth ? 1 : 0);
     if (failed) q.hold = 'error';
     else if (needs) q.hold = 'needs_you';
-    else if (isDict(result) && result.stopReason === 'cancelled') {
+    else if (isDict(result) && result.stopReason === 'cancelled' && this.cancelSeq >= this.promptSeq) {
+      // B14: only the user's own Interrupt pauses the queue; a 'cancelled' the agent reports on its own (after a steer) does not.
       q.hold = 'interrupted';
     }
   }
@@ -3249,6 +4203,7 @@ export class Connection {
       this.queue.hold = '';
     }
     this.#queueChanged();
+    await this.#steerPump(); // the steer lane first: a message the agent could not take mid-turn goes now, as a prompt
     await this.#queuePump();
   }
 
@@ -3259,9 +4214,10 @@ export class Connection {
       const q = this.queue;
       if (
         this.closed || !this.ready || this.busy || !this.sessionId ||
-        q.inflight || !q.items.length || q.pauseReason()
+        q.inflight || !q.items.length || q.pauseReason() || q.steer.length // the steer lane goes first
       ) return;
       if (this.permissions.size || this.elicitations.size || this.auth) return;
+      if (this.#steerLate.has(q.items[0].id)) return; // its steer may still land (#steerLateAnswer), which then pumps again
       const item = q.items.shift()!;
       q.inflight = item;
       let failure: [string, string] | null = null;
@@ -3349,24 +4305,53 @@ export class Connection {
    * not advertise client system prompts (ACP unstable `systemPrompt`; appended after the agent's own).
    */
   artifactPrompt(servers: unknown[] | null): Json {
-    if (!(servers ?? []).some(isOwnArtifactEntry)) return {};
+    const own = (servers ?? []).some(isOwnArtifactEntry);
+    const local = this.localOnlyText();
+    if (!own && !local) return {};
     const out: Json = {};
-    const caps = isDict(this.initial) ? get(pyTruthy(this.initial) ? this.initial : {}, 'agentCapabilities') : null;
-    const sessionCaps = isDict(caps) ? get(caps, 'sessionCapabilities') : null;
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
-    if (isDict(sessionCaps) && isDict(get(sessionCaps, 'systemPrompt'))) {
-      const content: Json[] = [{ type: 'text', text: ARTIFACT_PROMPT }];
+    if (isDict(this.#sessionCaps()?.systemPrompt)) {
+      const content: Json[] = own ? [{ type: 'text', text: ARTIFACT_PROMPT }] : [];
       const worktree = this.worktree;
-      if (worktree) { // only a chat that works in its own worktree (the merge tool comes with it)
+      if (own && worktree) { // only a chat that works in its own worktree (the merge tool comes with it)
         content.push({
           type: 'text',
           text: WORKTREE_PROMPT.replace('{branch}', worktree.branch ?? '')
             .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
+      if (local) content.push({ type: 'text', text: local });
       out.systemPrompt = { mode: 'append', content };
     }
     return out;
+  }
+
+  /** The agent's `sessionCapabilities` from initialize, or null. */
+  #sessionCaps(): Json | null {
+    const caps = isDict(this.initial) ? get(pyTruthy(this.initial) ? this.initial : {}, 'agentCapabilities') : null;
+    const sessionCaps = isDict(caps) ? get(caps, 'sessionCapabilities') : null;
+    return isDict(sessionCaps) ? sessionCaps as Json : null;
+  }
+
+  /** What this chat is told about local-only files ('' when nothing). */
+  localOnlyText(): string {
+    const lo = this.localOnly;
+    if (!lo) return '';
+    if (!this.worktree) return lo.private ? LOCAL_ONLY_PROMPT : '';
+    if (!lo.entries.length) return '';
+    const text = LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', lo.entries.join(', '));
+    return lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
+  }
+
+  /**
+   * {additionalDirectories: [...]} for a worktree chat whose project has local-only folders, when the agent advertises the ACP
+   * session capability (Claude Code's and Codex's adapters do): those folders of the main folder become writable for it. Never the
+   * main folder itself. {} otherwise.
+   */
+  extraFolders(): Json {
+    const dirs = this.worktree ? this.localOnly?.dirs ?? [] : [];
+    if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
+    return { additionalDirectories: [...dirs] };
   }
 
   /** True when a permission request is for Studio's studio_artifact tool on a chat Studio gave that tool to. */
@@ -3397,6 +4382,7 @@ export class Connection {
     const outcome = option === null || option === undefined ? { outcome: 'cancelled' } : { outcome: 'selected', optionId: option };
     this.write({ jsonrpc: '2.0', id: pending.rpcId, result: { outcome } });
     this.permissions.delete(key as string);
+    this.#cardsChanged();
     // A background helper of Claude Code asks between turns: once answered, a message queued meanwhile can go.
     if (!this.busy && this.#claudeHolds()) void this.#queuePump();
   }
@@ -3486,6 +4472,7 @@ export class Connection {
     }
     this.write({ jsonrpc: '2.0', id: pending.rpcId, result });
     this.elicitations.delete(key as string);
+    this.#cardsChanged();
     if (this.ready && !this.busy && this.#claudeHolds()) void this.#queuePump(); // as permission() does
     if (action !== 'accept' && !this.ready && !this.closed) {
       const what = get(pending.params, 'mode') === 'form' ? 'a question' : 'a link request';
@@ -3517,6 +4504,7 @@ export class Connection {
         );
       }
     }
+    this.#cardsChanged();
   }
 
   /** Withdraw UI for an agent-originated RPC; IDs are direction-specific. */
@@ -3525,6 +4513,7 @@ export class Connection {
     const reason = 'The agent cancelled this request.';
     this.#clearPermissions({ rpcId: requestId, reason });
     this.#clearElicitations({ rpcId: requestId, reason });
+    this.#cardsChanged();
   }
 
   #clearPermissions(
@@ -3534,16 +4523,19 @@ export class Connection {
       reason = 'The session ended.',
       scoped = false,
       everything = false,
+      except = null,
     }: {
       sessionId?: unknown;
       rpcId?: unknown;
       reason?: string;
       scoped?: boolean;
       everything?: boolean;
+      except?: ((sessionId: unknown) => boolean) | null;
     },
   ): void {
     for (const [key, item] of [...this.permissions]) {
       const sid = isDict(item.params) ? get(item.params, 'sessionId') : null;
+      if (except?.(sid)) continue;
       const rpcMatch = rpcId !== null && typeof item.rpcId === typeof rpcId &&
         item.rpcId === rpcId;
       if (
@@ -3565,18 +4557,21 @@ export class Connection {
       rpcId = null,
       reason = 'The session ended.',
       scoped = false,
+      except = null,
     }: {
       sessionId?: unknown;
       requestId?: unknown;
       rpcId?: unknown;
       reason?: string;
       scoped?: boolean;
+      except?: ((sessionId: unknown) => boolean) | null;
     },
   ): void {
     const everything = sessionId === null && requestId === null &&
       rpcId === null && !scoped;
     for (const [key, item] of [...this.elicitations]) {
       const params = item.params;
+      if (except?.(get(params, 'sessionId'))) continue;
       const rpcMatch = rpcId !== null && typeof item.rpcId === typeof rpcId &&
         item.rpcId === rpcId;
       const ownRequest = get(params, 'requestId');
@@ -3643,8 +4638,13 @@ export class Connection {
     // ACP prompt-turn cancellation: answer every pending permission request with the `cancelled` outcome FIRST (recorded as
     // withdrawn), then notify session/cancel; the agent ends the turn with stopReason `cancelled`.
     this.cancelSeq = this.promptSeq;
+    if (this.busy && !this.autonomous) this.#laneInterrupted();
+    // B7: a helper still running in the background from an earlier turn goes on, so its approval stays open; everything else this
+    // turn asked (the main session's, a helper the turn waits for) is answered cancelled, as before.
+    const background = (sid: unknown) => isStr(sid) && sid !== this.sessionId && this.#liveHelpers.has(sid) && !this.#turnHelpers.has(sid);
     this.#clearPermissions({
       everything: true,
+      except: background,
       reason: 'The turn was cancelled.',
     });
     if (this.sessionId && !this.closed) {
@@ -3660,6 +4660,7 @@ export class Connection {
     }
     this.#clearElicitations({
       scoped: true,
+      except: background,
       reason: 'The turn was cancelled.',
     });
     if (this.autonomous) void this.#endAutonomous('cancelled'); // stopped: its result may never come
@@ -3758,6 +4759,14 @@ export class Connection {
       error: this.error,
       settings: this.settings,
       queue: this.queue.public(light),
+      // Steer-on-send: the composer keys on `steerable` alone; steerAgent picks the page's hint copy; the lane of messages sent
+      // while the agent works; background tool rows ({toolCallId: {state, stoppable}}).
+      steerable: this.steerable(),
+      // Claude Code's own follow-up cycle (busy, but no turn of ours): the composer stays the plain Send, as before steer-on-send (T27)
+      autonomous: this.busy && this.autonomous,
+      steerAgent: STEER_AGENTS.has(this.provider) ? this.provider : null,
+      steerLane: this.queue.steerPublic(light),
+      toolBackground: this.toolBackground(),
       pendingChanges: [...this.pendingChanges.values()].map((v) => ({ ...v })),
       changeFailures: this.changeFailures.map((v) => ({ ...v })),
       state: this.closed

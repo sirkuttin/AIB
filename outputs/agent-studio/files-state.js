@@ -145,8 +145,23 @@
       changes = o.changes || null,
       arts = o.artifacts || null,
       docs = o.docs || null; // docIndex()
+    // Docs belong to the project: a chat's own copy (a worktree) has only the docs that were committed when it was made, a new doc is
+    // in the main folder. So aib-docs always lists every doc the docs index knows, whether or not the copy's folder has it.
+    const docDirs = docs ? Array.from(docs.byDir.keys()).filter((d) => d.indexOf(DOCS_FOLDER + '/') === 0 && d.indexOf('/', DOCS_FOLDER.length + 1) < 0) : [];
+    const withDocs = (dir, list) => {
+      if (!docDirs.length || !Array.isArray(list)) return list;
+      if (dir === '') return list.some((e) => e.dir && e.path === DOCS_FOLDER) ? list : list.concat([{ name: DOCS_FOLDER, path: DOCS_FOLDER, dir: true }]);
+      if (dir !== DOCS_FOLDER) return list;
+      const have = new Set(list.map((e) => slash(e.path)));
+      const extra = docDirs.filter((d) => !have.has(d)).map((d) => ({ name: d.slice(DOCS_FOLDER.length + 1), path: d, dir: true }));
+      if (!extra.length) return list;
+      return list.concat(extra).sort((a, b) => !!b.dir - !!a.dir || String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase()));
+    };
     const walk = (dir, depth) => {
-      const list = cache[dir];
+      let list = cache[dir];
+      // the copy has no aib-docs folder yet ("Not found"): its docs are the project's
+      if (dir === DOCS_FOLDER && docDirs.length && list && list.error) list = [];
+      list = withDocs(dir, list);
       if (list === 'loading' || list === undefined) {
         if (depth > 0 || list === 'loading') out.push({ kind: 'loading', path: dir + '/…', depth });
         return;
@@ -190,31 +205,40 @@
           out.push(docRow(d, depth, changes, e));
           continue;
         }
-        const isOpen = !!e.dir && open.has(e.path) && (!e.ignored || o.showIgnored);
+        // a local-only path (the main folder's, in every scope) is never dim and opens without "Show ignored"
+        const local = !!e.local;
+        const isOpen = !!e.dir && open.has(e.path) && (local || !e.ignored || o.showIgnored);
         const row = {
           kind: e.dir ? 'dir' : 'file',
           path: e.path,
           name: e.name,
           depth,
-          ignored: !!e.ignored,
+          ignored: !!e.ignored && !local,
           open: isOpen,
-          canOpen: !!e.dir && (!e.ignored || !!o.showIgnored),
+          canOpen: !!e.dir && (local || !e.ignored || !!o.showIgnored),
           badge: null,
           changed: 0,
           artifact: false,
+          local,
+          localWarn: e.localWarn || '',
+          noExclude: e.noExclude || '',
         };
-        if (e.dir) row.changed = changes ? changedBelow(changes, e.path) : Number(e.changed) || 0;
+        if (e.dir && !local) row.changed = changes ? changedBelow(changes, e.path) : Number(e.changed) || 0;
         if (isDocsDir(e)) Object.assign(row, { docsFolder: true, docCount: docs ? docsIn(docs) : 0 });
         else {
-          row.badge = changes ? badgeOf(changes.get(e.path)) : letterBadge(e.status);
+          row.badge = local ? null : changes ? badgeOf(changes.get(e.path)) : letterBadge(e.status); // git never tracks a local-only file
           row.artifact = !!(arts && arts.has(e.path));
         }
         out.push(row);
+        // files a chat's copy holds under a local-only path (they are not the shared ones): a warning row right below
+        if (Number(e.strays) > 0) out.push({ kind: 'stray', path: e.path + '/!stray', entry: e.path, count: Number(e.strays), depth: depth + 1 });
         if (isOpen) walk(e.path, depth + 1);
       }
       // the last row inside aib-docs
       if (dir === DOCS_FOLDER && o.newDoc) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
     };
+    // the project commits private/, so AIB does not keep it local only: one note at the top
+    if (o.localNote) out.unshift({ kind: 'localnote', path: '!localnote', text: o.localNote, depth: 0 });
     walk('', 0);
     return out;
   }
@@ -251,8 +275,64 @@
         badge: changes ? badgeOf(changes.get(path)) : null,
         changed: 0,
         artifact: !!(arts && arts.has(path)),
+        local: isLocalRel(o.localOnly, path),
       };
     }
+  }
+
+  // ---- local-only paths ---------------------------------------------------------------------------------------------------
+  // `lo`: a list reply's localOnly ({main, entries, defaultState}). Paths compare case-insensitively when main is a Windows path.
+  function isLocalRel(lo, rel) {
+    if (!lo || !Array.isArray(lo.entries) || !lo.entries.length) return false;
+    const win = isWinPath(lo.main),
+      p = lowerIf(slash(rel).replace(/^\/+|\/+$/g, ''), win);
+    if (!p) return false;
+    return lo.entries.some((e) => {
+      const x = lowerIf(slash(e), win);
+      return p === x || p.startsWith(x + '/');
+    });
+  }
+  // The real file on disk for a local-only row: the main folder's (C:\…\main\private\TASKS.md).
+  function localAbs(lo, rel) {
+    const m = String((lo && lo.main) || '').replace(/[\\/]+$/, '');
+    if (!m) return '';
+    return isWinPath(m) ? m + '\\' + slash(rel).replace(/\//g, '\\') : m + '/' + slash(rel);
+  }
+  const LOCAL_LINE = 'Local only: never committed (listed in .git/info/exclude).';
+  // The tooltip of a local-only row (owner decision 4a): its name, what local only means, and the real path it shows.
+  function localTip(row, lo) {
+    const abs = localAbs(lo, row.path);
+    return (
+      row.name + '\n' + LOCAL_LINE + (abs ? '\nThe same ' + (row.kind === 'dir' ? 'folder' : 'file') + ' in every chat: ' + abs : '')
+    );
+  }
+  const LOCAL_NOTE_TRACKED = "private/ is committed in this project, so AIB doesn't keep it local only.";
+  const localNote = (lo) => (lo && lo.defaultState === 'tracked' ? LOCAL_NOTE_TRACKED : '');
+  // "Git exclude" in a row's right-click menu: greyed with the reason when it can't apply (the server's refusals, by row).
+  const EXCLUDE_WHY = {
+    tracked: "Git tracks this, so it can't be excluded",
+    already: 'Already local only',
+    no_git: 'Not a git project',
+    docs: 'Docs are committed',
+    reserved: 'Git always ignores this',
+  };
+  function excludeItem(row, scope) {
+    const docsRow = !!row && (row.docsFolder || /^aib-docs(\/|$)/i.test(slash(row.path)));
+    const why = row && row.local ? 'already' : docsRow ? 'docs' : (row && row.noExclude) || '';
+    if (why) return { text: 'Git exclude', disabled: true, sub: EXCLUDE_WHY[why] || 'Not available here' };
+    const copy = !!(scope && scope.root === 'chat' && scope.branch);
+    return {
+      text: 'Git exclude',
+      disabled: false,
+      sub: copy ? 'Moves it to the main folder, never committed' : 'Never committed; shown in every chat',
+    };
+  }
+  // A path a reply names inside the main folder's local-only paths -> its relative path, for a chat working in its own copy
+  // (Files shows those paths in the copy's scope too). null otherwise.
+  function localRel(path, lo) {
+    if (!lo || !lo.main) return null;
+    const rel = relTo(path, lo.main);
+    return rel !== null && isLocalRel(lo, rel) ? rel : null;
   }
   const changedPaths = (map) => Array.from((map || new Map()).keys()).sort((a, b) => a.localeCompare(b));
   // Where a query matches inside a name, for <mark>: [before, hit, after] or null.
@@ -296,6 +376,14 @@
     if (chat.branch) return { id: chat.id, root: 'chat', label: 'Copy', branch: chat.branch, chatKey: chat.key, title: chat.title };
     return { id: chat.id, root: 'main', label: 'Folder', branch: '', chatKey: chat.key, title: chat.title, path: projectPath || chat.cwd || '' };
   }
+  // With no chat in the project: its own folder, shown through the project route (no chat id). {id: 'project:<path>', root: 'project', path}.
+  function projectScope(projectPath) {
+    const p = String(projectPath || '');
+    if (!p) return null;
+    return { id: 'project:' + p, root: 'project', label: 'Folder', branch: '', chatKey: '', title: '', path: p };
+  }
+  // The query of a Files request for a scope: a project folder is asked by its path, every other scope by its chat.
+  const scopeArgs = (s) => (s.root === 'project' ? { root: 'project', project: s.path } : { id: s.id, root: s.root });
   const scopeId = (s) => (s ? s.id + '|' + s.root : '');
   // The scope menu: this chat's copy, the main folder, other chats' copies, and "Follow the open chat".
   function scopeMenu(chat, projectPath, others, current, following) {
@@ -303,10 +391,13 @@
     const cur = scopeId(current);
     if (chat && chat.id && chat.branch) {
       const s = { id: chat.id, root: 'chat', label: 'Copy', branch: chat.branch, chatKey: chat.key, title: chat.title };
-      out.push({ kind: 'scope', text: "This chat's copy", sub: chat.branch, scope: s, on: scopeId(s) === cur });
+      out.push({ kind: 'scope', text: chat.title || "This chat's copy", sub: 'This chat \u00b7 ' + chat.branch, scope: s, on: scopeId(s) === cur });
     }
     const mainChat = chat && chat.id ? chat : (others || [])[0];
-    if (mainChat && mainChat.id) {
+    if (!(mainChat && mainChat.id) && projectPath) {
+      const s = projectScope(projectPath);
+      out.push({ kind: 'scope', text: 'Project folder', sub: projectPath, scope: s, on: scopeId(s) === cur });
+    } else if (mainChat && mainChat.id) {
       const s = { id: mainChat.id, root: 'main', label: 'Folder', branch: '', chatKey: mainChat.key, title: mainChat.title, path: projectPath };
       out.push({ kind: 'scope', text: 'Main folder', sub: projectPath || '', scope: s, on: scopeId(s) === cur });
     }
@@ -322,10 +413,10 @@
     out.push({ kind: 'follow', text: 'Follow the open chat', on: !!following });
     return out;
   }
-  // The scope button's text: "Copy ⎇ branch" or "Folder name".
+  // The scope button's text: "Copy <chat name>" (⎇ branch when the chat has no name) or "Folder name".
   function scopeLabel(s) {
     if (!s) return { lbl: 'Folder', name: 'No chat open' };
-    if (s.branch) return { lbl: 'Copy', name: '\u2387 ' + s.branch };
+    if (s.branch) return { lbl: 'Copy', name: s.title || '\u2387 ' + s.branch };
     const p = slash(s.path || '').replace(/\/+$/, '');
     return { lbl: 'Folder', name: p.slice(p.lastIndexOf('/') + 1) || p || 'Project folder' };
   }
@@ -422,12 +513,33 @@
     }
     return out;
   }
+  // Absolute paths a reply names (C:\x\y.png, C:/x/y.png, \\server\share\y.png, /home/x/y.png), with an extension, optionally with
+  // :line. The caller keeps the ones outside the chat's folder. Never inside a URL, a relative path (./a/b.c, ~/a.c) or a longer word.
+  const ABS_RE =
+    /(?:[A-Za-z]:[\\/]|\\\\[^\s\\/:*?"<>|`'()[\]{},;]+[\\/]|\/)(?:[^\s\\/:*?"<>|`'()[\]{},;]+[\\/])*[^\s\\/:*?"<>|`'()[\]{},;]+\.[A-Za-z0-9]{1,12}(?::(\d{1,7})(?::\d{1,5})?)?(?![\w\-\\/])/g;
+  function absCandidates(text) {
+    const s = String(text == null ? '' : text),
+      out = [];
+    ABS_RE.lastIndex = 0;
+    let m;
+    while ((m = ABS_RE.exec(s))) {
+      const at = m.index,
+        before = s.slice(Math.max(0, at - 200), at);
+      if (/[a-z][a-z0-9+.-]*:\/*\S*$/i.test(before) || /[\w@.~:$/\\-]$/.test(before)) continue;
+      const v = m[0],
+        lineAt = v.search(/:\d+(?::\d+)?$/);
+      out.push({ at, len: v.length, text: v, path: lineAt > 2 ? v.slice(0, lineAt) : v, line: lineAt > 2 ? Number(m[1]) || 0 : 0 });
+    }
+    return out;
+  }
   // The same file named twice in one paragraph is linked once: keep the first of each (case-insensitive on Windows paths).
-  function dedupe(cands, rootDir) {
+  // `lo` (optional): the scope's localOnly, so a full path into the main folder's local-only paths links too.
+  function dedupe(cands, rootDir, lo) {
     const seen = new Set(),
       out = [];
     for (const c of cands || []) {
-      const rel = relTo(c.path, rootDir);
+      let rel = relTo(c.path, rootDir);
+      if (rel === null && lo) rel = localRel(c.path, lo);
       const k = rel === null ? null : isWinPath(rootDir) ? rel.toLowerCase() : rel;
       if (k === null || seen.has(k)) continue;
       seen.add(k);
@@ -459,6 +571,8 @@
     markHit,
     keyMove,
     followScope,
+    projectScope,
+    scopeArgs,
     scopeId,
     scopeMenu,
     scopeLabel,
@@ -475,8 +589,17 @@
     keepTab,
     closeTab,
     pathCandidates,
+    absCandidates,
     dedupe,
     opensBeside,
+    isLocalRel,
+    localAbs,
+    localTip,
+    localNote,
+    localRel,
+    excludeItem,
+    EXCLUDE_WHY,
+    LOCAL_LINE,
   };
   root.AgentFilesState = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -33,7 +33,7 @@ function setup(sessions, connections = []) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'aib-gone-'));
   const asked = [];
   const page = makePage({
-    scripts: ['status-words.js', 'sidebar-ui.js'],
+    scripts: ['status-words.js', 'notify-rules.js', 'sidebar-ui.js'],
     routes: {
       '/api/sessions': () => ({ body: { sessions: typeof sessions === 'function' ? sessions(base) : sessions } }),
       '/api/live/list': () => ({ body: { connections, recovered: [], instanceId: 'A' } }),

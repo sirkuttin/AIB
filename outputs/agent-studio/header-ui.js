@@ -103,7 +103,9 @@
     const target = c.selected,
       original = c.title || '';
     let done = false;
-    const finish = (save) => {
+    // byKey: Enter or Escape. The focus then goes back where you were typing (focus-return.js: the message box), else to the
+    // title. A blur (you clicked or tabbed somewhere else) leaves it where you put it.
+    const finish = (save, byKey) => {
       if (done) return;
       done = true;
       editing = null;
@@ -111,17 +113,19 @@
       h1.textContent = original;
       if (save && value !== original) c.onRename(target, value);
       if (c.onChange) c.onChange();
-      if (h1.focus) h1.focus();
+      if (!byKey) return;
+      const FR = typeof window !== 'undefined' ? window.AgentFocusReturn : null;
+      if (!(FR && FR.back()) && h1.focus) h1.focus();
     };
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        finish(true);
+        finish(true, true);
       } else if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        finish(false);
+        finish(false, true);
       }
     });
     input.addEventListener('blur', () => finish(true));
