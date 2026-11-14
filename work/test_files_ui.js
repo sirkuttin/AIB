@@ -1160,7 +1160,7 @@ test('Files: a stray row warns about files in the copy and moves them on request
   await flush();
   const stray = t.shell.body.querySelector('.fx-stray');
   assert.ok(stray, 'the warning row');
-  assert.ok(stray.textContent.includes("1 file in this chat's copy, not in the shared folder"));
+  assert.ok(stray.textContent.includes("1 file here is only in this chat"));
   stray.querySelector('.fx-stray-btn').click();
   await flush();
   await flush();
