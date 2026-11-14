@@ -131,7 +131,8 @@
     imagePickerKey = '',
     newDraft = null,
     startingNew = false,
-    lastMainRows = [];
+    lastMainRows = [],
+    splitLeft = null; // split view: the rows the main list showed for the chat that just left focus, for its pane's copy (takeLeft)
   const newOptions = new Map(), // agent|folder -> the lists a new chat can offer (wantNewOptions)
     attachmentStore = new Map(),
     MAX_IMAGES = 4,
@@ -1151,7 +1152,33 @@
     wrapper.append(button, more);
     return wrapper;
   }
+  /* Split view, focus moving from one pane to another: the two panes swap their drawn rows instead of clearing. The chat you
+     leave keeps its rows (and its last rows for the copy, stash) for its pane's copy; the chat you focus takes the rows its pane's
+     copy already shows, so the focused pane never shows "Loading conversation…" (a blank, white frame) while its rows load. */
+  function splitSwap(c) {
+    splitLeft = null;
+    if (!window.AgentSplitUI?.active?.()) return null;
+    const key = aliasKey(c),
+      prev = selected ? aliasKey(selected) : '';
+    if (prev && prev !== key) {
+      if (lastMainRows.length) mirrorEntry(prev).rows = lastMainRows;
+      if ($('messages').children.length) splitLeft = { key: prev, nodes: [...$('messages').childNodes] };
+    }
+    const box = [...document.querySelectorAll('.mirror-msgs')].find((b) => b.dataset.mirror === key);
+    return box && box.children.length ? [...box.childNodes] : null;
+  }
+  function takeLeft(key) {
+    const l = splitLeft;
+    if (!l || l.key !== key) return null;
+    splitLeft = null;
+    return l.nodes;
+  }
   function beginConversation(c) {
+    const incoming = splitSwap(c),
+      opening = () =>
+        incoming
+          ? $('messages').replaceChildren(...incoming)
+          : $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
     window.AgentWorkspaceUI?.noteOpened(c);
     connectionIssue = false;
     window.AgentOwnershipUI?.clear($('ownershipPrompt'));
@@ -1167,7 +1194,7 @@
     $('newChatBar').hidden = true;
     if (mainCtl()) {
       /* the chat you open comes back where you left it (the owner's Q6); one never read here follows (or opens at its New line) */
-      $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
+      opening();
       $('messages')._winStart = null; // another chat: its own window
       $('messages')._tail = null;
       mainCtl().switchTo(aliasKey(c), () => window.ScrollController.FOLLOW);
@@ -1205,7 +1232,8 @@
     $('subchatPane').hidden = true;
     $('messages').hidden = false;
     $('renameCurrent').hidden = false;
-    $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
+    opening();
+    if (incoming) mainCtl()?.apply(); // the rows from the pane's copy, at the place you read there
     $('subagentList').replaceChildren();
     $('runningCommandList').replaceChildren();
     $('commandCount').textContent = '0';
@@ -4910,6 +4938,7 @@
       stash: (key) => {
         if (key && lastMainRows.length) mirrorEntry(key).rows = lastMainRows;
       },
+      take: takeLeft,
       wake: () => setTimeout(tickMirrors, 60),
       release: (box) => {
         box?._scrollCtl?.detach();

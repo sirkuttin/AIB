@@ -3026,6 +3026,7 @@
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,
+    _inboxKeys: () => rowKeys(), // tests (split_focus_e2e_test.ts): the chats the inbox lists now
     // Tests (steer_e2e_test.ts P9): a typed quick reply to the chat with this key, through the inbox row's own send (sendQuick).
     _sendQuick: async (key, text) => {
       qs(key).text = String(text || '');
