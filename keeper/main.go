@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -324,6 +325,43 @@ func (k *keeper) liveCount() int {
 	return n
 }
 
+// internalKind: "wsl-hold" or "wsl-helper" for AIB's own WSL channels (spawn label {"aib":"wsl-hold",...} / {"aib":"wsl-helper",...},
+// PROTOCOL.md section 10), "" for anything else (an agent, a terminal, no label).
+func internalKind(label string) string {
+	if !strings.HasPrefix(label, "{") {
+		return ""
+	}
+	var l struct {
+		Aib string `json:"aib"`
+	}
+	if json.Unmarshal([]byte(label), &l) != nil {
+		return ""
+	}
+	if l.Aib == "wsl-hold" || l.Aib == "wsl-helper" {
+		return l.Aib
+	}
+	return ""
+}
+
+// liveWork: the live channels that are work (agents, terminals), and the live WSL keep-alives. AIB's own channels are not work: a
+// keep-alive or a helper alone never starts AIB again (V1) nor is stopped as orphaned. A keep-alive still keeps the keeper from its
+// idle exit (V2), since it holds a distro's agents; it ends by itself once its distro has no work left (bridge --hold). A helper
+// alone keeps nothing: it holds no state.
+func (k *keeper) liveWork() (work, holds int) {
+	for _, ch := range k.channelList() {
+		if !ch.isLive() {
+			continue
+		}
+		switch internalKind(ch.label) {
+		case "":
+			work++
+		case "wsl-hold":
+			holds++
+		}
+	}
+	return work, holds
+}
+
 func (k *keeper) addConn(c *conn) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -436,18 +474,19 @@ func (k *keeper) monitor() {
 		if k.isStopping() {
 			continue
 		}
-		live, clients := k.liveCount(), k.clientCount()
+		live, holds := k.liveWork()
+		clients := k.clientCount()
 		if clients > 0 {
 			noClientSince, attempts = time.Time{}, 0
 		} else if noClientSince.IsZero() {
 			noClientSince = now
 		}
-		if live == 0 && clients == 0 {
+		if live == 0 && holds == 0 && clients == 0 {
 			if quietSince.IsZero() {
 				quietSince = now
 			}
 			if now.Sub(quietSince) >= k.opts.exitAfter {
-				k.logf("no live channel and no client for %v: exiting", k.opts.exitAfter)
+				k.logf("no live work and no client for %v: exiting", k.opts.exitAfter)
 				go k.stop("idle")
 				continue
 			}

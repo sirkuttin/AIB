@@ -25,7 +25,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -258,12 +257,5 @@ func holdNeeded(list, status map[string]any) bool {
 
 func ownChannel(ch map[string]any) bool {
 	label, _ := ch["label"].(string)
-	if !strings.HasPrefix(label, "{") {
-		return false
-	}
-	var l struct {
-		Aib string `json:"aib"`
-	}
-	json.Unmarshal([]byte(label), &l)
-	return l.Aib == "wsl-helper" || l.Aib == "wsl-hold"
+	return internalKind(label) != ""
 }
