@@ -25,7 +25,8 @@ export const MAX_TITLE = 200;
 export const MAX_BODY = 500;
 export const MAX_KEY = 400;
 
-export type NotifyTarget = { type: 'chat'; key: string } | { type: 'inbox' };
+/** What a click opens: a chat, or the inbox (on one chat's request, highlighted, when `key` is set; the chat on screen stays). */
+export type NotifyTarget = { type: 'chat'; key: string } | { type: 'inbox'; key?: string };
 
 export interface NotifyRequest {
   title: string;
@@ -75,7 +76,9 @@ export function cleanNotifyRequest(raw: unknown): NotifyRequest {
   const t = raw.target;
   if (isDict(t)) {
     if (t.type === 'chat' && isStr(t.key) && t.key && t.key.length <= MAX_KEY) target = { type: 'chat', key: t.key };
-    else if (t.type === 'inbox') target = { type: 'inbox' };
+    else if (t.type === 'inbox') {
+      target = isStr(t.key) && t.key && t.key.length <= MAX_KEY ? { type: 'inbox', key: t.key } : { type: 'inbox' };
+    }
   }
   return { title: title || 'AIB', body, target, test: raw.test === true, ...(raw.silent === true ? { silent: true } : {}) };
 }

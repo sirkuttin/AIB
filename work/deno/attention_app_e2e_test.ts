@@ -85,7 +85,10 @@ Deno.test({
         'the page saw the chat need you',
       );
       await sleep(3000);
-      assertEquals(shown, [['Invoice parser', 'Needs your approval']], 'one desktop notification (the reason since inbox 1b)');
+      // one desktop notification: the chat, then "<project> · <the request>" (inbox v3)
+      assertEquals(shown.length, 1, 'one desktop notification');
+      assertEquals(shown[0][0], 'Invoice parser');
+      assert(String(shown[0][1]).endsWith('\u00b7 Run npm test'), `project · the request: ${shown[0][1]}`);
       assertEquals(pagePosts, 0, 'the page posted no notification of its own');
       assert(presence.some((p) => p.focused === false), `the page reports AIB is not in front: ${JSON.stringify(presence)}`);
       assertEquals(page.errors, [], 'console errors');

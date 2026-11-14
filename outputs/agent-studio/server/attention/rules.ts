@@ -38,6 +38,10 @@ export interface GroupEntry {
   kind: Kind;
   reason?: Reason;
   chat?: string;
+  /** The chat's project name (desktop notifications only; never a push). */
+  project?: string;
+  /** The request itself ("Run npm install stripe@18.0.0"); desktop notifications only, never a push. */
+  what?: string;
 }
 
 export interface Group {
@@ -48,6 +52,11 @@ export interface Group {
 
 export interface Rules {
   GROUP_MS: number;
+  TO_REVIEW: string;
+  MAX_TITLE: number;
+  MAX_BODY: number;
+  clipText(text: unknown, n: number): string;
+  isRisky(text: unknown): boolean;
   TAG: string;
   PUSH_TAG: string;
   splitPath(cwd: unknown): { segments: string[]; windows: boolean };
@@ -68,7 +77,7 @@ export interface Rules {
     tag: string;
     title: string;
     body: string;
-    target: { type: 'chat'; key: string } | { type: 'inbox' };
+    target: { type: 'chat'; key: string } | { type: 'inbox'; key?: string };
     silent: boolean;
   };
   pushText(group: Group): { title: string; body: string; tag: string; chat: string; sheet: boolean; silent: boolean };

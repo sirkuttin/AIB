@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  // Tells you when a chat needs you ("Needs you": a question, approval or sign-in) or has handed the turn back ("Your turn").
+  // Tells you when a chat needs you ("Needs you": a question, approval or sign-in) or has handed the turn back ("To review").
   // The workspace code (workspace-ui.js) feeds it the same normalized chats the inbox and tabs use, after every list refresh, so
   // the words and the rules (hidden projects, worktree and scratch folders) match the list. Everything here is decided from
   // TRANSITIONS: a chat newly entering needs-you or your-turn is announced once, never again for the same transition.
@@ -88,6 +88,8 @@
     current: [],
     pop: null,
     stack: null,
+    more: null, // the "+N more in the inbox" line under the toasts
+    seq: 0,
     blocked: false,
     testNote: null, // the desktop app's answer to the last test: {text, warn}
   };
@@ -163,11 +165,12 @@
     }
     if (!S.host) return;
     if (target && target.type === 'chat' && S.host.openChat) S.host.openChat(target.key);
-    else if (S.host.openInbox) S.host.openInbox();
+    else if (S.host.openInbox) S.host.openInbox(target && typeof target.key === 'string' ? target.key : undefined);
   }
 
   // The desktop app: its notification was clicked and the window is in front again (server/desktop/window.ts
-  // openFromNotification). True once the page is ready to open it; the app tries again while the page still loads.
+  // openFromNotification). True once the page is ready to open it; the app tries again while the page still loads. A
+  // {type: 'inbox', key} target opens the inbox on that chat's request, highlighted: the chat on screen does not change.
   function openFromDesktop(target) {
     if (!S.host) return false;
     if (target && (target.type === 'chat' || target.type === 'inbox')) openTarget(target);
@@ -211,6 +214,77 @@
   }
 
   // ---- in-page toasts (Studio in front, a chat other than the one you are looking at) ----
+  // The toast is where you answer (inbox prototype v3): the same card as the inbox. Line 1 is the thing itself (the command,
+  // file, question or error), line 2 "chat · project" and the wait; ONE row of actions: the agent's own once-options (Allow /
+  // Deny), the choices, Reply with the box in place, Retry. Risky commands (push, force push, delete) show Review first, then
+  // the full command and Allow / Deny: never one tap, never "Always allow". The chat on screen never changes.
+  //   * A needs-you toast steps back into the inbox after NEEDS_MS unless the pointer or focus is in it (or a reply / a review
+  //     is open); × also sends it there. To review (the agent finished its turn) is quiet: no buttons, gone after TURN_MS.
+  //   * At most MAX_TOASTS at once, the oldest wait first; the rest say "+N more in the inbox".
+  //   * Answering anywhere (here, the inbox, the chat, the phone) clears it: the next list refresh drops it (reconcile).
+  // host.toastCard(key) gives the card ({reason, line1, title, project, since, buttons, reply, retry, loading, openOnly, more,
+  // full}); host.toastAnswer / toastReply / toastRetry send, the same way the inbox's own row does.
+  const NEEDS_MS = 15000,
+    TURN_MS = 6000,
+    MAX_TOASTS = 2;
+  const BLOCKED_PHASES = ['needs_you', 'failed', 'asks'];
+  const isBlocked = (e) =>
+    BLOCKED_PHASES.indexOf(typeof e.phase === 'string' && e.phase ? e.phase : e.state === 'needs_you' ? 'needs_you' : '') >= 0;
+
+  // The one row of actions for a card (pure). reviewing: Review was pressed on a risky command. Returns {risky, detail (the
+  // text the read-only view shows, or ''), link ({label} quiet "Full command" text at the right, or null), buttons: [{label,
+  // def, act: 'answer'|'review'|'reply'|'retry', button?}], note}.
+  function toastActions(card, reviewing, showing) {
+    const c = card || {};
+    const out = { risky: false, detail: '', link: null, buttons: [], note: '' };
+    if (c.reason === 'finished') return out; // To review: quiet, no buttons
+    const full = String(c.full || c.line1 || '');
+    const perms = (c.buttons || []).filter((b) => b && b.op === 'permission');
+    if (perms.length) {
+      // the agent's once-options only: "Always allow" belongs in the chat
+      const always = (b) => /always/i.test(String(b.kind || '')) || /\balways\b/i.test(String(b.label || ''));
+      const once = perms.filter((b) => !always(b));
+      const allow = once.filter((b) => b.tone === 'ok'),
+        deny = once.filter((b) => b.tone === 'no'),
+        rest = once.filter((b) => b.tone !== 'ok' && b.tone !== 'no');
+      const list = allow.concat(rest, deny);
+      out.risky = !!(R.isRisky && R.isRisky(full));
+      if (out.risky && !reviewing) {
+        out.buttons.push({ label: 'Review', def: true, act: 'review' });
+        if (deny[0]) out.buttons.push({ label: deny[0].label, def: false, act: 'answer', button: deny[0] });
+      } else {
+        const pick = out.risky ? [allow[0] || list[0], deny[0]].filter(Boolean) : list;
+        pick.forEach((b, i) => out.buttons.push({ label: b.label, def: i === 0 && b.tone !== 'no', act: 'answer', button: b }));
+        if (out.risky) out.detail = full;
+        else if (full && full !== String(c.line1 || '')) {
+          out.link = { label: showing ? 'Hide command' : 'Full command' };
+          if (showing) out.detail = full;
+        }
+      }
+    } else if ((c.buttons || []).length) {
+      c.buttons.forEach((b, i) => out.buttons.push({ label: b.label, def: i === 0, act: 'answer', button: b }));
+    } else if (c.retry) {
+      out.buttons.push({ label: 'Retry', def: true, act: 'retry' }, { label: 'Reply', def: false, act: 'reply' });
+    } else if (c.reply) {
+      out.buttons.push({ label: 'Reply', def: true, act: 'reply' });
+    } else if (c.loading) out.note = 'Loading the request…';
+    if (c.more && out.buttons.length) out.note = '+' + c.more + ' more';
+    return out;
+  }
+
+  // The card of a chat: the page's (workspace-ui.js) when it gives one, else the title alone.
+  function cardOf(t) {
+    let c = null;
+    try {
+      c = S.host && typeof S.host.toastCard === 'function' ? S.host.toastCard(t.chat) : null;
+    } catch {
+      c = null;
+    }
+    if (!c) c = { line1: t.title, title: t.title, project: '', buttons: [] };
+    if (t.kind === 'turn') c = Object.assign({}, c, { reason: 'finished' });
+    return c;
+  }
+
   function stack() {
     if (!S.stack) {
       S.stack = doc().createElement('div');
@@ -225,56 +299,277 @@
   function dropToast(key) {
     const t = S.toasts.get(key);
     if (!t) return;
-    root.clearTimeout(t.timer);
-    t.node.remove();
+    if (t.node) t.node.remove();
     S.toasts.delete(key);
+    arrange();
   }
-  function showToast(chat, kind, title) {
-    const key = chat + ':' + kind;
-    dropToast(key);
-    const node = doc().createElement('div');
-    node.className = 'toast toast-' + kind;
-    node.setAttribute('role', 'status');
-    const text = doc().createElement('div');
-    text.className = 'toast-text';
-    const head = doc().createElement('strong');
-    head.textContent = title;
-    const sub = doc().createElement('span');
-    sub.textContent = kind === 'needs' ? 'Needs you' : 'Your turn';
-    text.append(head, sub);
-    const open = doc().createElement('button');
-    open.type = 'button';
-    open.className = 'toast-open';
-    open.textContent = 'Open';
-    open.addEventListener('click', () => {
-      dropToast(key);
-      openTarget({ type: 'chat', key: chat });
+  function make(tag, cls, text) {
+    const n = doc().createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+  function tbtn(label, cls, onClick, title) {
+    const b = make('button', cls, label);
+    b.type = 'button';
+    if (title) b.title = title;
+    b.addEventListener('click', (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      onClick();
     });
-    const close = doc().createElement('button');
-    close.type = 'button';
-    close.className = 'toast-close';
-    close.textContent = '×';
-    close.setAttribute('aria-label', 'Dismiss');
-    close.addEventListener('click', () => dropToast(key));
-    node.append(text, open, close);
-    const entry = { node, chat, kind, timer: null };
-    if (kind === 'turn') entry.timer = root.setTimeout(() => dropToast(key), 10000);
-    S.toasts.set(key, entry);
-    stack().append(node);
-    while (S.toasts.size > 5) {
-      const oldest = [...S.toasts.entries()].find(([, t]) => t.kind === 'turn') || [...S.toasts.entries()][0];
-      dropToast(oldest[0]);
+    return b;
+  }
+  const errText = (e, fallback) => (e && e.message) || fallback;
+  function runAct(t, a) {
+    if (t.busy) return;
+    if (a.act === 'review') {
+      t.reviewing = true;
+      paintToast(t);
+      return;
+    }
+    if (a.act === 'reply') {
+      t.replying = true;
+      paintToast(t);
+      const ta = t.node && t.node.querySelector('textarea');
+      if (ta && ta.focus) ta.focus();
+      return;
+    }
+    const send =
+      a.act === 'retry'
+        ? S.host && S.host.toastRetry && (() => S.host.toastRetry(t.chat))
+        : S.host && S.host.toastAnswer && (() => S.host.toastAnswer(t.chat, a.button));
+    if (!send) return;
+    t.busy = true;
+    t.error = '';
+    paintToast(t);
+    Promise.resolve()
+      .then(send)
+      .then(
+        () => dropToast(t.key),
+        (e) => {
+          t.busy = false;
+          t.error = errText(e, 'The answer could not be sent.');
+          paintToast(t);
+        },
+      );
+  }
+  function sendReply(t) {
+    const text = String(t.text || '').trim();
+    if (t.busy || !text || !S.host || !S.host.toastReply) return;
+    t.busy = true;
+    t.error = '';
+    paintToast(t);
+    Promise.resolve()
+      .then(() => S.host.toastReply(t.chat, text))
+      .then(
+        () => dropToast(t.key),
+        (e) => {
+          t.busy = false;
+          t.error = errText(e, 'The message could not be sent.');
+          paintToast(t);
+        },
+      );
+  }
+  // Draws one toast from its card (again when the card or its state changes).
+  function paintToast(t) {
+    const c = t.card,
+      turn = t.kind === 'turn',
+      node = t.node;
+    node.className = 'toast toast-card toast-' + t.kind + (t.busy ? ' busy' : '');
+    node.replaceChildren();
+    const body = make('div', 'toast-body');
+    const IR = root.AgentInboxRules;
+    const w = !turn && c.since && IR && IR.waitText ? IR.waitText(c.since, Date.now() / 1000) : null;
+    if (turn) {
+      body.append(make('div', 'toast-l1', c.title || t.title));
+      body.append(make('div', 'toast-l2', [R.TO_REVIEW, c.project].filter(Boolean).join(' · ')));
+    } else {
+      body.append(make('div', 'toast-l1', c.line1 || c.title || t.title));
+      const l2 = make('div', 'toast-l2', [c.title || t.title, c.project].filter(Boolean).join(' · '));
+      if (w && w.text !== 'just now') l2.append(make('span', 'toast-age' + (w.long ? ' long' : ''), w.text));
+      body.append(l2);
+    }
+    const a = toastActions(c, t.reviewing, t.showFull);
+    if (a.detail) body.append(make('div', 'toast-detail', '$ ' + a.detail));
+    if (t.replying) {
+      const box = make('div', 'toast-reply');
+      const ta = make('textarea');
+      ta.rows = 2;
+      ta.value = t.text || '';
+      ta.disabled = !!t.busy;
+      ta.placeholder = 'Reply. Enter sends, Esc closes.';
+      ta.setAttribute('aria-label', 'Reply to ' + (c.title || t.title));
+      const send = tbtn(t.busy ? 'Sending…' : 'Send', 'toast-btn def', () => sendReply(t));
+      send.disabled = !!t.busy || !String(t.text || '').trim();
+      ta.addEventListener('input', () => {
+        t.text = ta.value;
+        send.disabled = !!t.busy || !ta.value.trim();
+      });
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          if (e.preventDefault) e.preventDefault();
+          sendReply(t);
+        } else if (e.key === 'Escape') {
+          if (e.preventDefault) e.preventDefault();
+          if (e.stopPropagation) e.stopPropagation();
+          t.replying = false;
+          paintToast(t);
+        }
+      });
+      ta.addEventListener('click', (e) => e && e.stopPropagation && e.stopPropagation());
+      box.append(ta, send);
+      body.append(box);
+    } else if (a.buttons.length || a.link || a.note) {
+      const row = make('div', 'toast-acts');
+      for (const b of a.buttons) {
+        const x = tbtn(b.label, 'toast-btn' + (b.def ? ' def' : ''), () => runAct(t, b));
+        x.disabled = !!t.busy;
+        row.append(x);
+      }
+      if (a.note) row.append(make('span', 'toast-note', a.note));
+      if (a.link)
+        row.append(
+          tbtn(a.link.label, 'toast-link', () => {
+            t.showFull = !t.showFull;
+            paintToast(t);
+          }),
+        );
+      body.append(row);
+    }
+    if (t.error) {
+      const er = make('div', 'toast-err', t.error);
+      er.setAttribute('role', 'alert');
+      body.append(er);
+    }
+    // clicking the card (not a button or the box) opens the chat, as an inbox row does
+    body.addEventListener('click', (e) => {
+      const tg = e && e.target;
+      if (tg && tg.closest && tg.closest('button, textarea, .toast-detail')) return;
+      dropToast(t.key);
+      openTarget({ type: 'chat', key: t.chat });
+    });
+    const close = tbtn('×', 'toast-close', () => dropToast(t.key), turn ? 'Dismiss' : 'Dismiss: it stays in the inbox');
+    close.setAttribute('aria-label', turn ? 'Dismiss' : 'Dismiss: it stays in the inbox');
+    node.append(body, close);
+  }
+  // The toasts in their order: needs you first, the oldest wait first; then To review, newest first.
+  function ordered() {
+    return [...S.toasts.values()].sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'needs' ? -1 : 1;
+      if (a.kind === 'needs') return (a.since || 0) - (b.since || 0) || a.seq - b.seq;
+      return b.seq - a.seq;
+    });
+  }
+  // Shows at most MAX_TOASTS (their timers start when they show) and "+N more in the inbox" for the rest.
+  function arrange(now) {
+    if (!S.toasts.size && !S.stack) return;
+    const t0 = now === undefined ? Date.now() : now;
+    const list = ordered(),
+      shown = list.slice(0, MAX_TOASTS),
+      rest = list.length - shown.length;
+    const st = stack();
+    for (const t of list) if (shown.indexOf(t) < 0 && t.node) t.node.remove();
+    for (const t of shown) if (!t.hideAt) t.hideAt = t0 + (t.kind === 'turn' ? TURN_MS : NEEDS_MS);
+    if (S.more) S.more.remove();
+    S.more = null;
+    // put them in order only when it changed (moving a node would take the focus out of a reply being typed)
+    const want = shown.map((t) => t.node),
+      now0 = Array.from(st.children || []);
+    if (want.length !== now0.length || want.some((n, i) => n !== now0[i])) {
+      for (const n of want) n.remove();
+      st.append(...want);
+    }
+    if (rest > 0) {
+      S.more = tbtn('+' + rest + ' more in the inbox', 'toast-more', () => {
+        if (S.host && S.host.openInbox) S.host.openInbox();
+      });
+      st.append(S.more);
     }
   }
+  function showToast(chat, kind, title, since, now) {
+    const old = S.toasts.get(chat);
+    if (old && old.node) old.node.remove();
+    S.toasts.delete(chat);
+    const t = {
+      key: chat,
+      chat,
+      kind,
+      title,
+      since: Number(since) || 0,
+      seq: ++S.seq,
+      node: make('div', 'toast'),
+      hideAt: 0,
+      hover: false,
+      reviewing: false,
+      replying: false,
+      showFull: false,
+      busy: false,
+      error: '',
+      text: '',
+      card: null,
+    };
+    t.node.setAttribute('role', kind === 'needs' ? 'alert' : 'status');
+    t.node.dataset.chat = chat;
+    t.node.addEventListener('mouseenter', () => (t.hover = true));
+    t.node.addEventListener('mouseleave', () => (t.hover = false));
+    t.card = cardOf(t);
+    t.cardSig = JSON.stringify(t.card);
+    paintToast(t);
+    S.toasts.set(chat, t);
+    arrange(now);
+    return t;
+  }
+  // Is the owner in this toast (pointer, focus, a reply or a review open)? Then it waits.
+  function engaged(t) {
+    const a = doc().activeElement;
+    return (
+      t.hover ||
+      t.replying ||
+      t.reviewing ||
+      t.showFull ||
+      t.busy ||
+      !!(a && t.node && t.node.contains && t.node.contains(a))
+    );
+  }
+  // Every second: toasts past their time step back into the inbox (not while you are in one); cards still loading (an
+  // approval's body is fetched) are drawn again once they change.
+  function tickToasts(now) {
+    const t0 = now === undefined ? Date.now() : now;
+    const shown = ordered().slice(0, MAX_TOASTS);
+    let gone = false;
+    for (const t of shown) {
+      if (engaged(t)) {
+        t.hideAt = t0 + (t.kind === 'turn' ? TURN_MS : NEEDS_MS);
+        continue;
+      }
+      if (t.hideAt && t0 >= t.hideAt) {
+        if (t.node) t.node.remove();
+        S.toasts.delete(t.key);
+        gone = true;
+        continue;
+      }
+      if (!t.replying && !t.busy) {
+        const c = cardOf(t),
+          sig = JSON.stringify(c);
+        if (sig !== t.cardSig) {
+          t.card = c;
+          t.cardSig = sig;
+          paintToast(t);
+        }
+      }
+    }
+    if (gone) arrange(t0);
+  }
 
-  // Remove toasts that no longer apply: the chat is open now, or it stopped needing you / handing you the turn.
+  // Remove toasts that no longer apply: the chat is open now, or it stopped needing you / handing you the turn (answered
+  // anywhere: here, the inbox, the chat itself, the phone).
   function reconcile() {
     const cur = new Map(S.current.map((e) => [e.key, e]));
     for (const [key, t] of [...S.toasts]) {
       const e = cur.get(t.chat);
       if (!e || e.muted || e.selected) dropToast(key);
-      else if (t.kind === 'needs' && e.state !== 'needs_you') dropToast(key);
-      else if (t.kind === 'turn' && (!e.yourTurn || e.state === 'needs_you')) dropToast(key);
+      else if (t.kind === 'needs' && !isBlocked(e)) dropToast(key);
+      else if (t.kind === 'turn' && (!e.yourTurn || isBlocked(e))) dropToast(key);
     }
   }
 
@@ -312,7 +607,7 @@
         soundPref: S.prefs.sound,
         desktopReady: !native() && desktopReady(), // the desktop app: the server notifies (see the top)
       });
-      if (d.toast) showToast(ev.key, ev.kind, e.title);
+      if (d.toast) showToast(ev.key, ev.kind, e.title, e.since, t);
       if (d.desktop || d.sound)
         batch.push({ key: ev.key, kind: ev.kind, title: e.title, sound: d.sound, desktop: d.desktop });
     }
@@ -392,7 +687,7 @@
       selectRow(
         'Notify for',
         [
-          ['both', 'Needs you + Finished'],
+          ['both', 'Needs you + ' + R.TO_REVIEW],
           ['needs', 'Needs you only'],
         ],
         S.prefs.notifyFor,
@@ -556,7 +851,10 @@
     loadPrefs();
     doc().addEventListener('visibilitychange', comeBack);
     root.addEventListener('focus', comeBack);
-    root.setInterval(reconcile, 1000); // DOM only: drops toasts for the chat you just opened
+    root.setInterval(() => {
+      reconcile(); // DOM only: drops toasts for the chat you just opened
+      tickToasts();
+    }, 1000);
     const changed = () => reportPresence(true);
     doc().addEventListener('visibilitychange', changed);
     root.addEventListener('focus', changed);
@@ -575,6 +873,11 @@
     describe,
     cleanPrefs,
     observeItems,
+    toastActions,
+    tickToasts,
+    NEEDS_MS,
+    TURN_MS,
+    MAX_TOASTS,
     init,
     enableDesktop,
     mountSettings,

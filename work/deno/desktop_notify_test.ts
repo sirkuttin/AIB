@@ -649,3 +649,9 @@ Deno.test("a Finished-only notification is silent on every OS (phase 1b)", async
   await n.show({ title: "b", body: "Needs your approval", target: null, test: false });
   assertEquals(seen, [true, false]);
 });
+
+Deno.test("a notification click can open the inbox on one chat's request (inbox v3)", () => {
+  assertEquals(cleanNotifyRequest({ title: "a", body: "b", target: { type: "inbox", key: "claude:x" } }).target, { type: "inbox", key: "claude:x" });
+  assertEquals(cleanNotifyRequest({ title: "a", body: "b", target: { type: "inbox", key: 7 } }).target, { type: "inbox" });
+  assertEquals(cleanNotifyRequest({ title: "a", body: "b", target: { type: "inbox", key: "k".repeat(500) } }).target, { type: "inbox" });
+});

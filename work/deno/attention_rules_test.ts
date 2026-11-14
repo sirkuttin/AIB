@@ -5,7 +5,7 @@
  * stores and asks the same function. For a table of chats both must say the same: may it notify, is it muted, is it held.
  * Real folders on disk (a git worktree whose .git is a file, a Claude scratch folder, a .claude/worktrees folder).
  */
-import { assertEquals } from './_assert.ts';
+import { assert, assertEquals } from './_assert.ts';
 import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
 import { folderKinds } from '../../outputs/agent-studio/server/desktop/folders.ts';
 import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
@@ -161,7 +161,7 @@ Deno.test('notification rules: the desktop app choices, the 60 s groups and the 
     tag: 'studio-attention',
     title: 'Blog',
     body: 'Needs your approval',
-    target: { type: 'chat', key: 'claude:a' },
+    target: { type: 'inbox', key: 'claude:a' },
     silent: false,
   });
   assertEquals(RULES.pushText(g1), {
@@ -173,7 +173,7 @@ Deno.test('notification rules: the desktop app choices, the 60 s groups and the 
     silent: false,
   });
   g1 = RULES.addToGroup(g1, [{ key: 'claude:b', title: 'Shop', kind: 'turn', chat: 'c2' }], 30_000).group;
-  assertEquals(RULES.describe(g1).title, '1 needs you \u00b7 1 finished');
+  assertEquals(RULES.describe(g1).title, '1 needs you \u00b7 1 to review');
   assertEquals(RULES.describe(g1).silent, false);
   assertEquals(RULES.pushText(g1), {
     title: '2 chats are waiting for you',
@@ -219,7 +219,7 @@ Deno.test('notification rules: grouped toasts name the kinds, Finished alone is 
   g = RULES.addToGroup(g, [{ key: 'k:c', title: 'C', kind: 'turn', reason: 'finished' }], 2000).group;
   g = RULES.addToGroup(g, [{ key: 'k:d', title: 'D', kind: 'needs', reason: 'failed' }], 3000).group;
   const d = RULES.describe(g);
-  assertEquals(d.title, '2 need you \u00b7 1 failed \u00b7 1 finished', 'finished and blocked are never one "waiting" count');
+  assertEquals(d.title, '2 need you \u00b7 1 failed \u00b7 1 to review', 'finished and blocked are never one "waiting" count');
   assertEquals(d.silent, false);
   // a finish of a chat already listed as needing you does not hide its reason
   g = RULES.addToGroup(g, [{ key: 'k:a', title: 'A', kind: 'turn', reason: 'finished' }], 4000).group;
@@ -227,8 +227,43 @@ Deno.test('notification rules: grouped toasts name the kinds, Finished alone is 
   // Finished only: silent on the desktop and on the phone
   const f = RULES.addToGroup(null, [{ key: 'k:x', title: 'X', kind: 'turn', reason: 'finished' }, { key: 'k:y', title: 'Y', kind: 'turn' }], 0)
     .group;
-  assertEquals([RULES.describe(f).title, RULES.describe(f).silent, RULES.pushText(f).silent], ['2 finished', true, true]);
-  assertEquals(RULES.describe({ startedAt: 0, entries: [f.entries[0]], sounded: null }).body, 'Finished');
+  assertEquals([RULES.describe(f).title, RULES.describe(f).silent, RULES.pushText(f).silent], ['2 to review', true, true]);
+  assertEquals(RULES.describe({ startedAt: 0, entries: [f.entries[0]], sounded: null }).body, 'To review');
   // an older caller with no reason: approval for needs, finished for a turn
   assertEquals([RULES.reasonFor({ kind: 'needs' }), RULES.reasonFor({ kind: 'turn' })], ['approval', 'finished']);
+});
+
+Deno.test('notification rules: one desktop notification says "<project> · <the request>" within 63 / 255 (inbox v3)', () => {
+  const g = RULES.addToGroup(
+    null,
+    [{ key: 'claude:a', title: 'Checkout', kind: 'needs', reason: 'approval', chat: 'c1', project: 'shopfront', what: 'Run npm install stripe@18.0.0' }],
+    0,
+  ).group;
+  const d = RULES.describe(g);
+  assertEquals([d.title, d.body], ['Checkout', 'shopfront · Run npm install stripe@18.0.0']);
+  assertEquals(d.target, { type: 'inbox', key: 'claude:a' }, 'a click opens the inbox on that request; the chat on screen stays');
+  // the phone push never carries the request or the project
+  assertEquals(RULES.pushText(g).body, 'Checkout');
+  // cut to the Windows balloon limits
+  const long = RULES.describe(
+    RULES.addToGroup(null, [{ key: 'k', title: 'T'.repeat(100), kind: 'needs', project: 'p', what: 'x'.repeat(400) }], 0).group,
+  );
+  assertEquals([Array.from(long.title).length, Array.from(long.body).length], [RULES.MAX_TITLE, RULES.MAX_BODY]);
+  assert(long.body.endsWith('…') && long.title.endsWith('…'));
+  // no request words: the reason line; To review replaces "Finished"
+  const turn = RULES.describe(RULES.addToGroup(null, [{ key: 'k', title: 'T', kind: 'turn', project: 'blog' }], 0).group);
+  assertEquals(turn.body, 'blog · ' + RULES.TO_REVIEW);
+  assertEquals(RULES.TO_REVIEW, 'To review');
+  // grouped wording stays
+  const two = RULES.addToGroup(g, [{ key: 'k2', title: 'B', kind: 'needs', reason: 'failed', project: 'blog' }], 10).group;
+  assertEquals([RULES.describe(two).title, RULES.describe(two).target], ['1 needs you · 1 failed', { type: 'inbox' }]);
+});
+
+Deno.test('notification rules: risky commands (push, force push, delete) are never one tap', () => {
+  for (const c of ['git push origin main', 'Run git push --force origin fix', 'rm -rf _site', 'git branch -D old', 'Remove-Item -Recurse x', 'del /q a.txt', 'git reset --hard HEAD~1']) {
+    assertEquals(RULES.isRisky(c), true, c);
+  }
+  for (const c of ['npm install stripe', 'git status', 'Edit src/cart.ts', 'git log --format=%H', 'npm run format', '']) {
+    assertEquals(RULES.isRisky(c), false, c);
+  }
 });
