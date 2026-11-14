@@ -339,6 +339,9 @@
       p.body.replaceChildren(rootEl);
       p.mirror = { root: rootEl, title, status, msgs, comp };
       p.mirrorKey = key;
+      // The chat that just left focus: its pane keeps the rows the real view drew (no empty copy while they are fetched again).
+      const left = key && host.mirror && host.mirror.take ? host.mirror.take(key) : null;
+      if (left && left.length) msgs.append(...left);
       const rows = key && host.mirror ? host.mirror.rows(key) : null;
       if (rows) host.mirror.paint(msgs, rows);
       else if (key && host.mirror && host.mirror.wake) host.mirror.wake();
@@ -498,8 +501,10 @@
     const key = g.active,
       c = key && key !== T().DRAFT ? host.convOf(key) : null;
     if (c && key !== selectedKey()) {
-      render();
+      // Open first, then move the view: the chat you focus takes the rows its pane's copy shows, the chat you leave hands its rows
+      // to its pane's copy (chat.js beginConversation). Both happen in this one task, so no frame shows an empty pane.
       host.open(c);
+      render();
     } else {
       render();
       host.redraw();
