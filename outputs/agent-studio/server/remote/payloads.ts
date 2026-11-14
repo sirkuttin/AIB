@@ -578,7 +578,17 @@ export async function chatPayload(
       ...(form ? { schema: params.requestedSchema ?? {} } : {}),
     });
   }
-  if (state.auth) waiting.push({ kind: 'sign-in', title: 'An agent needs you to sign in', pcOnly: true });
+  if (state.auth) {
+    // The chat's sign-in card (the same one the PC shows); the sign-in itself runs on the PC (a terminal or the agent's browser page).
+    const auth = obj(state.auth);
+    const name = AGENT_NAMES[str(state.provider, 40)] ?? 'An agent';
+    waiting.push({
+      kind: 'sign-in',
+      title: `${name} needs you to sign in${auth.during === 'prompt' ? ' again' : ''}`,
+      detail: 'Sign in on the PC.',
+      pcOnly: true,
+    });
+  }
   const queue = obj(state.queue);
   const queued: QueuedItem[] = (Array.isArray(queue.items) ? queue.items : []).map(obj).map((i) => ({
     id: str(i.id, 128),

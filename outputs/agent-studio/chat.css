@@ -1751,6 +1751,32 @@ a.elicitation-open {
   overflow-wrap: anywhere;
   margin: 6px 0 0;
 }
+/* The sign-in card (elicitation-ui.js signinCard): a choice of ways, the AIB terminal the sign-in runs in, the agent's own words. */
+.auth-signin-choice {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+.auth-signin-terminal {
+  height: 220px;
+  margin: 8px 0;
+  padding: 4px;
+  background: var(--term-bg);
+  border-radius: 6px;
+}
+.auth-signin-status {
+  margin: 6px 0;
+  font-size: 12px;
+}
+.auth-signin-details {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.auth-signin-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 6px 0 0;
+}
 .approval .elicitation-subagent {
   margin: 0 0 6px;
 }

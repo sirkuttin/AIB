@@ -3021,7 +3021,9 @@
         body.append(row);
         body.append(el('p', 'ph-note ph-center', 'Decline tells ' + (c.agent || 'the agent') + ' you won’t answer.'));
       }
-    } else body.append(el('p', 'ph-note', 'Finish this on your PC.'));
+    } else if (wait.kind === 'sign-in')
+      body.append(el('p', 'ph-note', 'Sign in on the PC: open this chat in AIB on ' + S.pcName + ' and choose Sign in.'));
+    else body.append(el('p', 'ph-note', 'Finish this on your PC.'));
     if (wait.kind === 'permission' && S.actError && S.actKey === key) {
       const e = el('p', 'ph-error', S.actError);
       e.setAttribute('role', 'alert');

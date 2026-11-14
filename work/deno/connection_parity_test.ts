@@ -736,9 +736,12 @@ const SCRIPTS: Script[] = [
     steps: [{ op: 'setup' }, { op: 'close' }],
   },
   {
+    // An agent AIB does not run terminal sign-ins for: ACP authenticate is still refused for a terminal method (the page runs it, or
+    // the person does). Claude Code is Deno only since the sign-in card (it is sent auth.terminal and its terminal methods run in an
+    // AIB terminal; the Python reference never had that): work/deno/chat_signin_test.ts.
     name: 'sign-in: terminal method refused, in-app method, retry',
     flags: ['--auth-required'],
-    provider: 'claude',
+    provider: 'omp',
     steps: [
       { op: 'setup_bg' },
       { op: 'wait', for: 'auth' },

@@ -2035,6 +2035,16 @@
         const row = asks.get(event.data?.key);
         if (row) row.withdrawn = true;
         continue;
+      } else if (event.kind === 'auth_required') {
+        /* The agent's login expired mid-session: its "Failed to authenticate…" text goes under the sign-in card (Details), not in
+           the chat as a raw bubble; the card itself is drawn from snapshot.auth. */
+        const last = rows.at(-1),
+          detail = String(event.data?.detail || '');
+        if (event.data?.during === 'prompt' && last?.role === 'assistant' && String(last.value || '').trim() &&
+          detail.indexOf(String(last.value).trim()) === 0
+        )
+          rows.pop();
+        continue;
       } else if (event.kind === 'error' || event.kind === 'disconnected') {
         role = 'notice';
         label = event.kind;
@@ -2741,6 +2751,16 @@
             if (current === connection) await refresh();
           }
         : null,
+      // A built-in agent's terminal sign-in (Claude Code): the advertised method's args run after the agent's own launcher in an AIB
+      // terminal inside the card (a ConPTY, never a console window). The card asks for a retry when it exits 0.
+      runTerminal:
+        !terminal &&
+        (snap.provider === 'claude' || snap.provider === 'codex') &&
+        window.AibTerminal &&
+        window.AibTerminal.runSignin
+          ? (method, box, hooks) =>
+              window.AibTerminal.runSignin(box, snap.provider, Object.assign({}, hooks, { args: method.args }))
+          : null,
     };
   }
   let setupWatch = '';
