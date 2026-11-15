@@ -11,8 +11,8 @@
  *   candidates `git status --porcelain -z -uall` in the project folder (GIT_OPTIONAL_LOCKS=0). `.env*` files are listed by a small walk.
  *   stability  a changed file is synced when its size and mtime are the same in two consecutive scans. Editor temp files, symlinks,
  *              files over 20 MB, unmerged files and files with conflict markers are skipped; a locked file is retried.
- *   no echoes  nothing happens while Merge holds the project's "sync paused" flag; a scan whose project HEAD moved only takes a new
- *              baseline; more than 200 changed files in one scan pause the project until the user presses Resume (worktree-sync.json).
+ *   no echoes  nothing happens while Merge holds the project's "sync paused" flag; a scan whose project HEAD moved takes a new
+ *              baseline and catches the chats up (dirty files only, so a save just after the move is not lost in the baseline); more than 200 changed files in one scan pause the project until the user presses Resume (worktree-sync.json).
  *
  * Per chat worktree, under its worktree lock (a cross-process lock file shared with Python's worktrees.worktree_lock, so a Python host
  * and a Deno process never write into the same worktree at once): a changed file the chat has not touched is written through a temp
