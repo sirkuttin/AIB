@@ -6,7 +6,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { worktreeStatus } from '../../outputs/agent-studio/server/web/studio_routes.ts';
+import { forgetWorktreeStatus, worktreeStatus } from '../../outputs/agent-studio/server/web/studio_routes.ts';
 import { runGit } from './_worktree_fixtures.ts';
 
 const ROOT = new URL('../slowreq-fixture/state/', import.meta.url);
@@ -108,14 +108,33 @@ Deno.test('worktree status: concurrent requests share one run; a slow run is ans
   assert(performance.now() - t0 < 2_000, 'answered at the wait, not when the run ends');
   assertEquals(runs, 1, 'eight requests, one run');
   for (const a of answers) assertEquals(a.state, 'checking');
-  // the next poll joins the same run, which now ends: its result comes back, and is reused right after
+  // the next poll joins the same run, which now ends: its result comes back
   const next = worktreeStatus('chat-a', slow, 5_000);
   release({ worktree: true, state: 'ready', enabled: true });
   assertEquals((await next).state, 'ready');
-  assertEquals((await worktreeStatus('chat-a', slow, 100)).state, 'ready');
   assertEquals(runs, 1);
   // another chat runs on its own
   assertEquals((await worktreeStatus('chat-b', () => Promise.resolve({ worktree: false }), 100)).worktree, false);
+});
+
+Deno.test('worktree status: a finished answer is not reused; a merge action drops a run that predates it', async () => {
+  // The Merge button asks only when something changed (a turn ended, a commit landed): it must get the state after that change.
+  // (A WSL chat's merge e2e saw 'nochanges' right after the chat committed: the answer from just before was reused for 1.5 s.)
+  let state = 'nochanges', runs = 0;
+  const now = () => (runs++, Promise.resolve({ worktree: true, state }));
+  assertEquals((await worktreeStatus('chat-c', now, 1_000)).state, 'nochanges');
+  state = 'ready'; // the chat committed its work
+  assertEquals((await worktreeStatus('chat-c', now, 1_000)).state, 'ready');
+  assertEquals(runs, 2);
+  // a run still going when a merge lands is not joined afterwards: the next request runs again
+  let release!: (v: Record<string, unknown>) => void;
+  const old = worktreeStatus('chat-c', () => new Promise((resolve) => (release = resolve)), 50);
+  assertEquals((await old).state, 'checking');
+  forgetWorktreeStatus('chat-c');
+  state = 'nochanges'; // merged
+  assertEquals((await worktreeStatus('chat-c', now, 1_000)).state, 'nochanges');
+  release({ worktree: true, state: 'ready' }); // the old run ends late: it does not take the new run's place
+  assertEquals((await worktreeStatus('chat-c', now, 1_000)).state, 'nochanges');
 });
 
 Deno.test('changes route: identical concurrent requests share one run', async () => {
