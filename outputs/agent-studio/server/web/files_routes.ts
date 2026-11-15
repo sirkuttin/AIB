@@ -55,7 +55,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   // shown; nothing else from the request is ever a folder.
   if (one(args, 'root') === 'project') {
     const path = one(args, 'project');
-    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path) || isForeignPath(path)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path) || (isForeignPath(path) && !wslLoc(path))) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
     const added = ctx.addedProjects?.public().added;
     const known = added && Object.hasOwn(added, projectKey(path)) ? added[projectKey(path)].path : '';
     if (known && wslLoc(known)) return known; // a WSL project: its distro's helper checks the folder
@@ -77,7 +77,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   } catch {
     return [400, { error: 'Choose a chat', code: 'bad_chat' }];
   }
-  if (!cwd || isNetworkPath(cwd) || isForeignPath(cwd)) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
+  if (!cwd || isNetworkPath(cwd) || (isForeignPath(cwd) && !wslLoc(cwd))) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const which = one(args, 'root', 'chat');
   if (wslLoc(cwd)) return which === 'main' || which === 'chat' ? cwd : [400, { error: 'Unknown folder', code: 'bad_root' }];
   if (which === 'main') {

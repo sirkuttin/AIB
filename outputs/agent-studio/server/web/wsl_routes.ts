@@ -177,23 +177,26 @@ export async function wslFiles(
   wsl: { distro: string; linuxPath: string },
   args: Record<string, string[]>,
 ): Promise<Reply> {
-  const host = wslHost(wsl.distro);
-  const why = notReady(host, wsl.distro);
-  if (why) return [409, { error: why, code: 'wsl_unavailable' }];
+  let host: WslHost;
+  try {
+    host = await hostWhenReady(wsl.distro); // a distro still starting is waited for, not answered with 'starting'
+  } catch (error) {
+    return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+  }
   // no local-only files (phase 1): the same answer a folder without git gets, so no exclude hints are offered
   const localOnly = { main: ref, entries: [], defaultState: 'no-git', sig: '' };
   try {
     if (kind === 'list') {
-      const listing = await host!.call('files.list', { root: wsl.linuxPath, rel: one(args, 'dir') }) as Record<string, unknown>;
+      const listing = await host.call('files.list', { root: wsl.linuxPath, rel: one(args, 'dir') }) as Record<string, unknown>;
       const { sig: _sig, ...rest } = listing ?? {};
       return [200, { root: ref, ...rest, localOnly, wsl: true }];
     }
     if (kind === 'search') {
-      const found = await host!.call('files.search', { root: wsl.linuxPath, query: one(args, 'q') }) as Record<string, unknown>;
+      const found = await host.call('files.search', { root: wsl.linuxPath, query: one(args, 'q') }) as Record<string, unknown>;
       return [200, { root: ref, ...(found ?? {}), localOnly, wsl: true }];
     }
     const rel = one(args, 'path').replace(/^\/+/, '');
-    const read = await host!.call('files.read', { root: wsl.linuxPath, rel, maxBytes: LIMITS.readBytes });
+    const read = await host.call('files.read', { root: wsl.linuxPath, rel, maxBytes: LIMITS.readBytes });
     return [200, { root: ref, ...fileReadOf(wsl.linuxPath, rel, read), viewUrl: '', wsl: true }];
   } catch (error) {
     return failed(error);
