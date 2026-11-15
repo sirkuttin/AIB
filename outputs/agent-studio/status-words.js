@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
   // The ONE status vocabulary (docs/design/review-decisions.html, "Status words, the same everywhere"):
-  //   Working · 4m   Your turn   Needs you   Idle   Not running   Elsewhere · Working / Elsewhere · Idle   Reconnecting…
+  //   Working · 4m   Your turn   Needs you   Idle   Ready   Elsewhere · Working / Elsewhere · Idle   Reconnecting…
   // statusOf(facts) maps what a caller knows about a conversation to {kind, label, tone, dotClass, title, detail}.
   // The header chip, the composer turn line and the sidebar card phrase all call it, so the words cannot drift.
   // Pure: no DOM, no clock except facts.now, no network.
@@ -24,7 +24,7 @@
   //   elsewhereWorking the other app is visibly working (recent writes, running subagents or processes)
   //   reconnecting     Studio is reloading this chat by itself after a restart (server-side fact)   -> Reconnecting…
   //   recovered, recent, agentList   why a chat is not attached (only changes the tooltip)
-  //   reconnectError   the automatic reopen after a restart gave up (string, the reason) -> Not running · could not reopen
+  //   reconnectError   the automatic reopen after a restart gave up (string, the reason) -> Couldn't reopen
   //   now              current time in ms
   const T = {
     working: { tone: 'work', dot: 'd-work' },
@@ -106,7 +106,7 @@
     if (typeof f.reconnectError === 'string')
       return make(
         'not-running',
-        'Not running · could not reopen',
+        "Couldn't reopen",
         'AIB could not reopen it after the restart' +
           (f.reconnectError ? ': ' + f.reconnectError.slice(0, 300) : '') +
           '. Send a message to try again.',
@@ -114,7 +114,7 @@
     if (f.recovered) title = 'It was open in AIB before the server restarted. Send a message to reconnect it.';
     else if (f.recent) title = 'Written a moment ago; not confirmed to be running. ' + NOT_RUNNING_TITLE;
     else if (f.agentList) title = 'The agent listed this chat; AIB has not read it. ' + NOT_RUNNING_TITLE;
-    return make('not-running', 'Not running', title);
+    return make('not-running', 'Ready', title);
   }
 
   // Does the event log say "the agent finished and the user has not acted since"? handledAt (seconds) hides a turn end

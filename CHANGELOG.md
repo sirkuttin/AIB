@@ -22,6 +22,11 @@
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
+- Ready and Couldn't reopen: clear words for a chat with no agent. A saved chat that has no agent running now says Ready instead of
+  Not running (it opens read-only with its saved messages, and an agent starts when you send a message), in the sidebar, the chat
+  header and on the phone. A chat AIB tried to reopen after a restart and could not now says Couldn't reopen, with the
+  reason when you hover; sending a message tries again.
+
 - Live sync no longer holds back a file you save right after a commit or a Merge. A save made in the moment after the project's
   branch moved (your own commit, or Merge landing a chat) could wait for the chat's next message before reaching its copy; it now
   arrives within a second or two like any other save, on Windows and in WSL projects.
@@ -30,11 +35,11 @@
   could not take it over right away, for example because Ubuntu was slow to start, reopening the chat now picks up that running
   agent instead of starting a second one for the same conversation. The chat keeps its history and its running turn, and it is
   listed once.
-- WSL chats no longer get stuck as "Not running" after a restart or update. If their agent is still running in the distro, AIB now
+- WSL chats no longer get stuck showing Ready (no agent) after a restart or update. If their agent is still running in the distro, AIB now
   picks it up even when its list of open chats lost the chat, and continuing such a chat picks up that same agent instead of starting
   a second one for the same conversation (Codex refused that second one with "session is in use by another Codex client"). A distro
   whose AIB helper was being replaced is started again instead of counting as not ready. A chat AIB could not reopen after a restart
-  now says "Not running · could not reopen", with the reason when you hover, and sending a message tries again.
+  now says "Couldn't reopen", with the reason when you hover, and sending a message tries again.
 
 - AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
   merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in

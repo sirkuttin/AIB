@@ -302,7 +302,7 @@ test('a recovered chat that is being reconnected carries the reconnecting fact; 
   assert.match(flat(h.run('rowStatus(conversations[0])')), /Reconnecting/);
   assert.match(h.run('pseudoNote(conversations[0])'), /is reconnecting/);
   h.run('conversations[0].recovered.reconnecting=false');
-  assert.match(flat(h.run('rowStatus(conversations[0])')), /Not running/);
+  assert.match(flat(h.run('rowStatus(conversations[0])')), /Ready/);
   assert.doesNotMatch(h.run('pseudoNote(conversations[0])'), /Nothing is sent automatically|Reconnect to load/);
 });
 

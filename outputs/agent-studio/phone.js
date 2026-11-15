@@ -3,7 +3,7 @@
    Owner-approved layout (phone prototypes round 3, aib-phone-prototypes.html):
    Home: ONE plain list of chat cards, newest change of state first (starts working, asks, finishes, you send; cards do not move for
    every step). No sections, no main chat. A card: title, unread dot, time, the project (its colour mark from the PC), agent, state
-   in the PC's words (Working, Needs you, Your turn, Idle, Not running), and the last line. Chats that are not running are in the
+   in the PC's words (Working, Needs you, Your turn, Idle, Ready), and the last line. Chats that are not running are in the
    same list by time, drawn lighter. "All projects ▾" filters by project (no grouping), remembered on this phone.
    Inbox (inbox prototype v3): an envelope at the top right of home, next to the project picker, with the count of chats that need
    you in every project (needs-you colour), or a teal dot when only "To review" chats wait. A tap switches between the chat list and
@@ -33,7 +33,7 @@
    (https://<name>:8443) and shows it full screen with Close: pages, SVG, Markdown and CSV tables in a sandboxed frame (never
    same-origin), pictures as pictures, text in a sandboxed frame. A PDF, or any artifact while that origin is not set up, says
    "Open on your PC".
-   Not running (owner decisions 3b, 4): such a chat opens read only with its saved messages and Continue this chat (only when this
+   Ready = not running (owner decisions 3b, 4): such a chat opens read only with its saved messages and Continue this chat (only when this
    phone may send), which starts it again on the PC with its saved agent and settings; a chat another app has open is refused with
    the reason. A chat whose newest messages are on screen (page visible, scrolled to the end) is marked read on the PC, at most
    every READ_MS.
@@ -86,9 +86,9 @@
   }
 
   /* The status words for a chat card: {text, tone} (tone: need | work | turn | idle | nr). Same words as the PC: Needs you,
-     Working, Your turn, Idle, Not running. */
+     Working, Your turn, Idle, Ready. */
   function stateWords(c, now) {
-    if (c && c.notRunning) return { text: 'Not running', tone: 'nr' };
+    if (c && c.notRunning) return { text: 'Ready', tone: 'nr' };
     if (c.needs > 0 || c.state === 'needs_you') return { text: 'Needs you', tone: 'need' };
     // the inbox's phase (inbox-rules.js, from the server): a failed turn and a question in the reply need you too; helpers or a
     // background shell still running keep the chat working
@@ -415,11 +415,11 @@
     return false;
   }
 
-  /* The words under a chat that is not running: "Not running · Claude Code · last active 3 h ago". */
+  /* The words under a chat that is not running: "Ready · Claude Code · last active 3 h ago". */
   function savedWords(c, now) {
     const e = elapsed(obj(c).lastActive, now);
     const when = e ? 'last active ' + (e === 'just now' ? e : e + ' ago') : '';
-    return ['Not running', str(obj(c).agent), when].filter(Boolean).join(' · ');
+    return ['Ready', str(obj(c).agent), when].filter(Boolean).join(' · ');
   }
 
   /* The event a live chat may be marked read up to on the PC, or 0: the page is visible, the chat's end is on screen, it runs, and
@@ -2309,7 +2309,7 @@
     tick();
   }
 
-  /* One chat card (a live chat, or one that is not running: lighter, "Not running"). */
+  /* One chat card (a live chat, or one that is not running: lighter, "Ready"). */
   function chatCard(item, now) {
     const c = item.chat;
     const live = item.kind === 'live';
@@ -2632,7 +2632,7 @@
       header(title, {
         back: goHome,
         sub: meta.project ? projectLine(meta.project, [agent]) : agent,
-        chip: S.offline ? ['Offline', 'off'] : ['Not running', 'idle'],
+        chip: S.offline ? ['Offline', 'off'] : ['Ready', 'idle'],
       }),
     ];
     if (S.offline) parts.push(offlineBox());
@@ -2640,7 +2640,7 @@
     if (!c) body.append(el('p', 'ph-empty', 'Loading…'));
     else if (c.gone) body.append(el('p', 'ph-empty', 'This chat is no longer in the list on ' + S.pcName + '.'));
     else {
-      body.append(el('p', 'ph-earlier', 'Not running on ' + S.pcName + '. These are its saved messages.'));
+      body.append(el('p', 'ph-earlier', 'Not open on ' + S.pcName + ': these are its saved messages.'));
       if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
       const rows = rowsFrom(c.events);
       const list = el('div', 'ph-list');
@@ -3558,7 +3558,7 @@
       return body;
     }
     if (c.gone) {
-      body.append(el('p', 'ph-empty', 'This chat is not running on ' + S.pcName + ' any more. Go back to your chats: it is in the list as Not running.'));
+      body.append(el('p', 'ph-empty', 'This chat has no agent open on ' + S.pcName + ' any more. Go back to your chats: it is in the list as Ready.'));
       return body;
     }
     const can = abilities(S.scopes);

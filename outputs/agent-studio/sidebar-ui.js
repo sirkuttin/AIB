@@ -136,7 +136,7 @@
     working: 'Working',
     opening: 'Opening',
     idle: 'Idle',
-    saved: 'Not running',
+    saved: 'Ready',
   };
   // The same dot classes as the card phrase (status-words.js dotClass), so a project heading and its cards agree.
   const STATE_DOT = { needs_you: 'd-need', unread: 'd-turn', working: 'd-work', opening: 'd-idle', idle: 'd-idle' };

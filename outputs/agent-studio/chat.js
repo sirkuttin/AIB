@@ -4465,7 +4465,7 @@
     }
     if (c.recovered) {
       box.append(
-        text('span', c.recovered.reconnecting ? 'Reconnecting…' : 'Not running', 'badge badge-recovered'),
+        text('span', c.recovered.reconnecting ? 'Reconnecting…' : 'Ready', 'badge badge-recovered'),
         text(
           'span',
           c.recovered.reconnecting ? ' AIB is reconnecting it' : ' Was open in AIB before restart',
@@ -4478,7 +4478,7 @@
       // AIB tried to reopen it after the restart and gave up: say so (the reason on hover), never just "Saved"
       box.title = reconnectFailedTitle(c.reconnectError);
       box.append(
-        text('span', 'Not running', 'badge badge-recovered'),
+        text('span', "Couldn't reopen", 'badge badge-recovered'),
         text('span', ' Could not reopen after the restart', 'status-detail'),
       );
       return box;
@@ -4932,7 +4932,7 @@
       m.rows = liveRows(next.sessionId, m.events, next, false, readingSeq(paneCtl));
     } else if (isPseudoKey(c.key)) {
       m.histKey = '';
-      m.rows = [{ role: 'notice', label: 'Not running', value: pseudoNote(c) }];
+      m.rows = [{ role: 'notice', label: 'Ready', value: pseudoNote(c) }];
     } else {
       const w = await pollHistory(c.key);
       m.histKey = c.key;

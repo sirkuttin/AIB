@@ -573,7 +573,7 @@ export class Studio {
   /**
    * Reload, in the background, every conversation that was live in Studio before the restart. Uses the ordinary resume path of
    * connect() with continueAnyway=false, so the ownership check runs: a conversation another app owns or may be using is skipped
-   * and stays "Not running". Nothing is ever sent to an agent. At most `concurrency` start at once, `stagger` seconds apart; a
+   * and stays "Ready". Nothing is ever sent to an agent. At most `concurrency` start at once, `stagger` seconds apart; a
    * failure is retried up to `tries` times and then dropped from the recovery list. Returns how many were queued.
    */
   startAutoReconnect(concurrency = 2, stagger = 1.0, tries: number | null = null, retryDelay = 5.0): number {
@@ -629,7 +629,7 @@ export class Studio {
       // The chat says why it is not running (liveList reconnectFailed), so it never just sits there: Continue tries again.
       this.reconnectFailures.set(pairKey(provider, sessionId), { provider, sessionId, cwd, error: last.slice(0, 500), at: Date.now() / 1000 });
       if (this.store!.forgetConversation(provider, sessionId)) {
-        console.error(`Auto-reconnect: gave up on ${label}; it stays Not running`);
+        console.error(`Auto-reconnect: gave up on ${label}; it stays Ready (Couldn't reopen)`);
       }
     } finally {
       this.reconnectPending.delete(pairKey(provider, sessionId));
