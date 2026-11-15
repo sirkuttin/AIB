@@ -162,21 +162,23 @@ Deno.test({ name: 'wsl helper sync.*: a new helper watches the saved chats again
 Deno.test({ name: 'wsl helper sync.*: a storm pauses the project, the amber line says so, sync.resume ends it; bad params refused', ...T, async fn() {
   using box = new Sandbox();
   const c = await chatBox(box);
-  // the folder watcher too (ReadDirectoryChangesW here, inotify in the distro); a long settle, so the three writes are one scan's
-  const sync = new HelperSync(box.state, { settle: 0.6, poll: 0.2, watch: true });
+  const sync = fast(box.state, true); // the folder watcher too (ReadDirectoryChangesW here, inotify in the distro)
   sync.live.storm = 2;
   const h = syncMethods(sync);
   const merge = mergeMethods(box.state);
   try {
     await h['sync.chats']({ chats: [{ chat: 'c1', cwd: c.wt }] });
     await new Promise((r) => setTimeout(r, 500));
-    for (const n of [1, 2, 3]) write(box.project, `s${n}.txt`, `${n}\n`);
+    // three new files at once: made in a folder outside the project, then moved in with one rename (no scan can see only some)
+    const stage = pathOf(box.base, 'stage');
+    for (const n of [1, 2, 3]) write(stage, `s${n}.txt`, `${n}\n`);
+    Deno.renameSync(stage, pathOf(box.project, 'storm'));
     await until(async () => ((await merge['merge.clashStatus']({ project: box.project }) as Json).result as Json).syncPaused === true, 'paused');
     const line = (await merge['merge.clashStatus']({ project: box.project }) as Json).result as Json;
     assertEquals(line.syncLine, 'Lots of files changed in proj; live sync paused. Resume?');
-    assertEquals(text(c.wt, 's1.txt'), null, 'nothing copied while paused');
+    assertEquals(text(c.wt, 'storm/s1.txt'), null, 'nothing copied while paused');
     assertEquals(await h['sync.resume']({ project: box.project }), { resumed: true });
-    await until(() => text(c.wt, 's3.txt') === '3\n', 'caught up after Resume');
+    await until(() => text(c.wt, 'storm/s3.txt') === '3\n', 'caught up after Resume');
     assertEquals(await h['sync.resume']({ project: box.project }), { resumed: false });
     const watched = (sync.status().projects as Json[])[0];
     assertEquals(watched.watching, true);
@@ -335,8 +337,10 @@ Deno.test({ name: 'wsl sync: Resume on the amber line of a WSL project goes to i
   lab.conns.set('c1', chat);
   await lab.win.chatOpened(chat);
   await new Promise((r) => setTimeout(r, 400));
-  write(box.project, 's1.txt', '1\n');
-  write(box.project, 's2.txt', '2\n');
+  const stage = pathOf(box.base, 'stage'); // two new files at once (one rename), so one scan sees both
+  write(stage, 's1.txt', '1\n');
+  write(stage, 's2.txt', '2\n');
+  Deno.renameSync(stage, pathOf(box.project, 'storm'));
   const merge = mergeMethods(box.state);
   await until(async () => ((await merge['merge.clashStatus']({ project: box.project }) as Json).result as Json).syncPaused === true, 'paused');
   const ctx = { stateDir: box.state } as never;
@@ -344,6 +348,6 @@ Deno.test({ name: 'wsl sync: Resume on the amber line of a WSL project goes to i
   const url = new URL('http://127.0.0.1/api/live/worktree/clash');
   const answer = await post(ctx, url, { action: 'resume-sync', project: lab.ref(box.project) }, new Request(url));
   assertEquals(answer, [200, { ok: true, resumed: true }]);
-  await until(() => text(c.wt, 's2.txt') === '2\n', 'caught up');
+  await until(() => text(c.wt, 'storm/s2.txt') === '2\n', 'caught up');
   assertEquals(await post(ctx, url, { action: 'resume-sync', project: 'wsl://debian/home/u/app' }, new Request(url)), [200, { ok: true, resumed: false }]);
 } });
