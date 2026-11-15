@@ -5,6 +5,7 @@
  *   AIB-wsl-helper [--data <linux data folder>]   JSON-RPC 2.0 lines on stdin/stdout; the first line is `helper.ready`
  *
  * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
+ * It installs AIB's own copies of agents into <root>/agents (helper/agent_install.ts).
  * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts). It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
  * can be written by group or others. Its state is in files (the worktree registry, the live sync records and the list of chats live sync
  * watches, helper/sync.ts): AIB may kill and respawn it at any time, and a new helper watches the same chats again at its start.
@@ -174,11 +175,23 @@ async function helperMain(args: string[]): Promise<number> {
   const named = argValue(args, '--data').startsWith('/') ? data : '';
   // live sync of the WSL chats' worktrees (helper/sync.ts), over the same data folder; its poll can be stretched by AIB's tests only
   const sync = named ? new HelperSync(named, syncPoll(base.AIB_WSL_SYNC_POLL)) : null;
+  // A Node.js installed in a terminal after this start (agent install's Check again): read the login PATH again, keep the rest.
+  const refreshPath = async () => {
+    const login = await captured;
+    const again = await captureLoginEnv(shell, base);
+    if (again.how === 'none') return;
+    const path = agentEnv(again.env).PATH;
+    login.env.PATH = path;
+    Deno.env.set('PATH', path);
+  };
   const methods = makeMethods({
     env: () => captured,
     own: [root, data, ...(exeDir ? [exeDir] : [])],
     ...(named ? { data: named } : {}),
     ...(sync ? { sync } : {}),
+    root, // AIB's own agent installs: <root>/agents/<id>/<version>
+    notify: (method, params) => void send({ jsonrpc: '2.0', method, params }).catch(() => {}),
+    refreshPath,
   });
   // git needs the login PATH first; then the chats the last helper synced are watched again and caught up
   if (named) void captured.then(() => worktreeStartup(named)).then(() => sync?.resumeSaved()).catch(() => {});

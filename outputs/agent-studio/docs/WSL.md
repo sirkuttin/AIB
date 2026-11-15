@@ -12,8 +12,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   turned into the same thing. New project runs `git init` in the distro.
 - The project row has a distro badge; the header path reads `Ubuntu · ~/app`. While the distro starts, a line says so ("Starting
   Ubuntu…", "Setting up AIB in Ubuntu (first time, ~100 MB)"; after a `wsl --shutdown`: "Ubuntu stopped. Reconnect").
-- Chats start the agent as the distro has it (`claude-agent-acp`, `codex-acp` installed with npm in the distro). A missing one shows
-  its install command and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
+- Chats start the agent as the distro has it: AIB's own install (see "Agent installs in the distro") first, else `claude-agent-acp` /
+  `codex-acp` installed with npm in the distro. A missing Claude Code or Codex gets an "Install in Ubuntu" button (the npm command
+  stays, for doing it yourself) and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
 - AIB tools in a WSL chat are limited to artifacts (publish, list, update) and, for a chat in its own copy, the merge tools
   (merge_into_project, resolve_edit_clash), reached through WSL interop; docs and the swarm helper tools are not available yet, and
@@ -164,6 +165,38 @@ everywhere else, so Windows is unchanged). There are no per-file calls between A
   environment wins) with the Windows reader (`agents/codex_limits.ts`). A WSL chat has its own account key (`wsl:<distro>|codex`);
   there is no app-server fallback in the distro. Under test the folder is `<AIB_WSL_ROOT>/home/.codex`.
 
+## Agent installs in the distro
+
+The new-chat agent panel of a WSL project offers **Install in Ubuntu** for a missing Claude Code or Codex, and **Update in Ubuntu**
+when AIB's own copy there is older than the version AIB pins now (the old copy keeps working until the new one is complete). It is
+the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/helper/agent_install.ts`):
+
+- Into `~/.aib-server/agents/<id>/<version>/` only: `npm ci --prefix <that folder> --ignore-scripts --omit=dev` with AIB's reviewed
+  lockfile (`agent_locks/<id>.package-lock.json`, every package pinned with its integrity hash) and the version of
+  `agent_versions.json`; npm's cache is `~/.aib-server/agents/.npm-cache`. Never `npm i -g`, nothing outside `~/.aib-server`. AIB
+  sends the entry and the lockfile text with each call; the helper still takes only a known agent, one of its own package names, an
+  exact version, and a lockfile that pins that package and has an integrity hash for every download. `.complete` is written last.
+- `agents.detect` looks in `~/.aib-server/agents` first (`adapters.ts findStudioInstall`), so chats and the Claude sign-in start AIB's
+  copy; Codex's sign-in uses the `@openai/codex` CLI that comes with it (`signin` in the detect row).
+- The job's state is on disk (`install.json`, `install.lock` with the helper's pid, `install.log`), so it goes on while AIB restarts
+  and the page picks it up again; a job whose helper died reads as interrupted. The page polls
+  `GET /api/live/wsl/agents/install` once a second; each saved state also comes over the helper channel as the notification
+  `agents.installProgress`, which answers a status read while the helper restarts. Cancel kills npm's whole process group and
+  removes the half-made folder.
+- Node.js 22+ and npm must be in the distro; AIB never installs system packages. Without them the panel says so ("Node.js 22 or newer
+  is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js."), shows the command that installs it without root (nvm, as
+  nodejs.org offers it) with Copy, and **Check again**. The helper reads the login shell's PATH again on Check again (and by itself
+  at most every 15 s while Node.js is missing), so a Node.js installed in the terminal is seen without restarting anything. A
+  version manager's shim (asdf, mise) is followed to the node it really runs to find npm; Debian's `/usr/share/nodejs/npm` is found
+  through the `npm` on PATH.
+- Routes: `GET /api/live/wsl/agents` (adds `installable`, `pinned`, `managed`, `update`, `job`, `installBlock`, `nodeInstall`; `force=1`
+  looks for Node.js again), `GET|POST /api/live/wsl/agents/install`, `POST /api/live/wsl/agents/install/cancel`. Helper methods:
+  `agents.installCheck`, `agents.install`, `agents.installStatus`, `agents.installCancel` (a helper without them keeps the copyable
+  command only).
+- Not done: uninstall from the distro (remove `~/.aib-server/agents/<id>` by hand); older versions are kept after an update (a running
+  chat may still use one); the Beta agents are not offered in the distro.
+- Tests: `wsl_agent_install_test` (fake npm, fake host), `test_wsl_ui.js` (the panel), `wsl_agent_install_e2e` (real distro).
+
 ## Building and testing
 
 ```
@@ -193,6 +226,7 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_sync_e2e` | live sync with the helper's poll stretched to 5 minutes, so only inotify wakes a scan: events counted, a user edit and a new file in the copy within seconds, the prompt's note naming them, the helper killed and a new one catching up, Merge after sync landing only the chat's change, an edit both made merged at the next turn, a clash kept with its markers and the clash line until the chat resolves it |
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
+| `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
@@ -204,4 +238,4 @@ over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `ws
 ## Not done yet (phase 2)
 
 The docs store; the full AIB tools tunnel; background-task output and ownership
-checks for WSL chats; AIB-managed agent installs in the distro.
+checks for WSL chats.

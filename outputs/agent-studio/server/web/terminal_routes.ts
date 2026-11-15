@@ -196,6 +196,12 @@ export async function wslSigninCommand(agentId: string, distro: string, args: un
   const label = BUILTIN_NAMES[agentId] ?? agentId;
   if (agentId !== 'claude' && agentId !== 'codex') return `Signing in to ${label} inside ${name} is not available yet.`;
   if (agentId === 'codex') {
+    // the Codex CLI next to the adapter (AIB's own install in the distro has one), else `codex` on the distro's PATH
+    const row = (await host!.call('agents.detect', { ids: ['codex'] })).agents.find((a) => a.id === 'codex');
+    if (row?.signin?.length && row.signin[0].startsWith('/')) {
+      const [file, ...rest] = row.signin.map(String);
+      return { file, args: [...rest, 'login'] };
+    }
     const codex = (await host!.call('which', { name: 'codex' })).path;
     return codex ? { file: codex, args: ['login'] } : `The Codex CLI is not installed in ${name}.`;
   }

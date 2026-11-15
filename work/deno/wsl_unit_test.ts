@@ -314,6 +314,10 @@ Deno.test("wsl sign-in: Claude's login runs in the distro with the sign-in card'
       { file: '/usr/bin/node', args: [...adapter, '--cli', 'auth', 'login', '--claudeai'] },
     );
     assertEquals(await wslSigninCommand('codex', 'ubuntu', ['--x']), { file: '/usr/bin/codex', args: ['login'] });
+    // AIB's own Codex install in the distro: the CLI next to the adapter (agents.detect `signin`), run with its node
+    const cli = ['/home/u/.aib-server/agents/codex/2.6.0/node_modules/@openai/codex/bin/codex.js'];
+    host.handlers['agents.detect'] = () => ({ agents: [{ id: 'codex', found: true, source: 'studio', signin: ['/usr/bin/node', ...cli] }] });
+    assertEquals(await wslSigninCommand('codex', 'ubuntu'), { file: '/usr/bin/node', args: [...cli, 'login'] });
   } finally {
     setWslHostResolver(null);
   }

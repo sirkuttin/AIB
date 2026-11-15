@@ -13,7 +13,7 @@ args = sys.argv[1:]
 log = os.environ.get('FAKE_NPM_LOG')
 if log:
     with open(log, 'a', encoding='utf-8') as handle:
-        handle.write(json.dumps({'args': args, 'cwd': os.getcwd(), 'pid': os.getpid()}) + '\n')
+        handle.write(json.dumps({'args': args, 'cwd': os.getcwd(), 'pid': os.getpid(), 'cache': os.environ.get('npm_config_cache')}) + '\n')
 prefix = pathlib.Path(args[args.index('--prefix') + 1]) if '--prefix' in args else pathlib.Path.cwd()
 manifest = json.loads((prefix / 'package.json').read_text(encoding='utf-8'))
 package, version = next(iter(manifest['dependencies'].items()))

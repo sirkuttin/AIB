@@ -3345,16 +3345,20 @@
         },
       });
     };
+    const rerender = () => newDraft && !selected && renderNewChat();
     if (!row.found) {
-      line.textContent = agentName + ' is not installed in ' + name + '.' + (row.note ? ' ' + row.note : '');
+      line.textContent = agentName + ' is not installed in ' + name + '.' + (row.installable ? '' : row.note ? ' ' + row.note : '');
       box.append(line);
+      // AIB installs Claude Code and Codex into its own folder in the distro (wsl-ui.js installBox); the npm command stays for a
+      // person who prefers to install it themselves.
+      if (row.installable) box.append(W.installBox({ key: p.key, id: newDraft.provider, agentName, row, done: rerender }));
       if (row.install) {
         const cmd = document.createElement('code');
         cmd.className = 'nc-wsl-cmd';
         cmd.textContent = row.install;
         const copyLine = document.createElement('p');
-        copyLine.className = 'st-note';
-        copyLine.append('Install it in ' + name + ': ', cmd, ' ');
+        copyLine.className = 'st-note' + (row.installable ? ' dim' : '');
+        copyLine.append((row.installable ? 'Or install it yourself in ' : 'Install it in ') + name + ': ', cmd, ' ');
         const copy = document.createElement('button');
         copy.type = 'button';
         copy.className = 'st-link';
@@ -3369,8 +3373,11 @@
       }
       link('Open ' + name + ' terminal', openShell, 'A terminal in ' + name + ' to install ' + agentName);
     } else {
-      line.textContent = agentName + ' in ' + name + (row.version ? ' (' + row.version + ')' : '') + '.';
+      line.textContent =
+        agentName + ' in ' + name + (row.version ? ' (' + row.version + ')' : '') + (row.managed ? ', installed by AIB' : '') + '.';
       box.append(line);
+      // AIB's own install, older than the version AIB pins now: "Update in Ubuntu" (the old one keeps working meanwhile)
+      if (row.update) box.append(W.installBox({ key: p.key, id: newDraft.provider, agentName, row, done: rerender }));
       link('Sign in', () =>
         runTerm({
           ready: 'Finish the sign-in in this terminal. AIB does not see what you type here.',

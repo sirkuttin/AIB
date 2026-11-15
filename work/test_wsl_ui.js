@@ -378,3 +378,118 @@ test('project list: a WSL row has a distro chip and "Ubuntu: /home/u/app" in its
   assert.equal(wsl[0].querySelector('.ws-distro').textContent, 'Ubuntu');
   assert.equal(wsl[0].title.split('\n')[1], 'Ubuntu: /home/u/app');
 });
+
+// ---- AIB's own install of an agent in a distro (wsl-ui.js installBox, shown by chat.js in the new-chat agent panel) --------------
+function installPage(replies) {
+  const gets = [],
+    posts = [];
+  const t = wslPage(STATUS, [], {
+    getJson: (path, params) => {
+      gets.push([path, plain(params || {})]);
+      if (path === '/api/live/wsl/status') return Promise.resolve(plain(STATUS));
+      const r = replies.get && replies.get(path, params);
+      return r instanceof Error ? Promise.reject(r) : Promise.resolve(r || {});
+    },
+    postJson: (name, body) => {
+      posts.push([name, plain(body)]);
+      const r = replies.post && replies.post(name, body);
+      return r instanceof Error ? Promise.reject(r) : Promise.resolve(r || {});
+    },
+  });
+  return Object.assign(t, { gets, posts });
+}
+const MISSING = { id: 'claude', found: false, installable: true, pinned: '0.102.0', install: 'npm i -g x' };
+
+test('Install in Ubuntu: the button starts the job in the distro; a progress bar with Cancel while it runs; done repaints the panel', async () => {
+  let polls = 0;
+  const t = installPage({
+    post: (name) => (name === 'wsl/agents/install' ? { state: 'running', stage: 'downloading', percent: 30, agent: 'claude' } : {}),
+    get: (path) => {
+      if (path !== '/api/live/wsl/agents/install') return {};
+      polls++;
+      return polls === 1 ? { state: 'running', stage: 'verifying', percent: 92 } : { state: 'done', percent: 100 };
+    },
+  });
+  await settle();
+  let repainted = 0;
+  const box = t.W.installBox({ key: 'ubuntu', id: 'claude', agentName: 'Claude Code', row: MISSING, done: () => repainted++ });
+  const go = box.querySelector('button');
+  assert.equal(go.textContent, 'Install in Ubuntu');
+  assert.ok(go.title.includes('~/.aib-server/agents') && go.title.includes('0.102.0'), go.title);
+  go.click();
+  await settle();
+  assert.deepEqual(t.posts[0], ['wsl/agents/install', { distro: 'ubuntu', agent: 'claude' }]);
+  assert.ok(box.textContent.includes('Installing Claude Code in Ubuntu… Downloading and unpacking…'), box.textContent);
+  const bar = box.querySelector('.st-progress');
+  assert.equal(bar.getAttribute('aria-valuenow'), '30');
+  assert.equal(box.querySelector('button').textContent, 'Cancel');
+  t.shell.window.runTimers();
+  await settle();
+  assert.deepEqual(t.gets.filter(([p]) => p === '/api/live/wsl/agents/install')[0][1], { distro: 'ubuntu', agent: 'claude' });
+  assert.ok(box.textContent.includes('Checking the install…'));
+  assert.equal(box.querySelector('.st-progress').getAttribute('aria-valuenow'), '92');
+  t.shell.window.runTimers();
+  await settle();
+  assert.equal(repainted, 1, 'done: the panel looks at the distro again');
+  assert.equal(t.W.installJob('ubuntu', 'claude'), null);
+});
+
+test('Install in Ubuntu: Cancel posts the cancel; a failure shows its line and Retry', async () => {
+  const t = installPage({
+    post: (name) =>
+      name === 'wsl/agents/install'
+        ? { state: 'running', stage: 'preparing', percent: 2 }
+        : name === 'wsl/agents/install/cancel'
+          ? { state: 'idle' }
+          : {},
+  });
+  await settle();
+  const box = t.W.installBox({ key: 'ubuntu', id: 'codex', agentName: 'Codex', row: Object.assign({}, MISSING, { id: 'codex' }), done: () => {} });
+  box.querySelector('button').click();
+  await settle();
+  box.querySelector('button').click(); // Cancel
+  await settle();
+  assert.deepEqual(t.posts[1], ['wsl/agents/install/cancel', { distro: 'ubuntu', agent: 'codex' }]);
+  assert.equal(t.W.installJob('ubuntu', 'codex'), null);
+
+  const f = installPage({ post: () => Object.assign(Error('Could not reach the npm registry. Check the internet connection and try again.'), { code: '' }) });
+  await settle();
+  const fbox = f.W.installBox({ key: 'ubuntu', id: 'claude', agentName: 'Claude Code', row: MISSING, done: () => {} });
+  fbox.querySelector('button').click();
+  await settle();
+  assert.ok(fbox.querySelector('.bad').textContent.startsWith('Could not reach the npm registry'));
+  assert.equal(fbox.querySelector('button').textContent, 'Retry');
+});
+
+test('Install in Ubuntu: without Node.js the button is off, the line says why, the nvm command can be copied, Check again asks with force', async () => {
+  const t = installPage({ get: (path) => (path === '/api/live/wsl/agents' ? { agents: [] } : {}) });
+  await settle();
+  const row = Object.assign({}, MISSING, {
+    installBlock: 'Node.js 22 or newer is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js.',
+    nodeInstall: 'curl … | bash && nvm install 22',
+  });
+  const box = t.W.installBox({ key: 'ubuntu', id: 'claude', agentName: 'Claude Code', row, done: () => {} });
+  assert.ok(box.textContent.includes('Ubuntu has no Node.js.'));
+  assert.equal(box.querySelector('code').textContent, 'curl … | bash && nvm install 22');
+  const buttons = box.querySelectorAll('button');
+  assert.deepEqual(buttons.map((b) => b.textContent), ['Copy', 'Install in Ubuntu', 'Check again']);
+  assert.equal(buttons[1].disabled, true);
+  buttons[2].click();
+  await settle();
+  assert.deepEqual(t.gets.filter(([p]) => p === '/api/live/wsl/agents').pop()[1], { distro: 'ubuntu', force: '1' });
+});
+
+test('Update in Ubuntu: AIB\'s own install older than the pinned version; a job still running after a reload is shown and polled', async () => {
+  const t = installPage({ get: () => ({ state: 'running', stage: 'downloading', percent: 50 }) });
+  await settle();
+  const row = { id: 'claude', found: true, managed: true, update: true, version: '0.101.0', pinned: '0.102.0', installable: true };
+  const box = t.W.installBox({ key: 'ubuntu', id: 'claude', agentName: 'Claude Code', row, done: () => {} });
+  assert.ok(box.textContent.includes('AIB now uses Claude Code 0.102.0; Ubuntu has 0.101.0.'));
+  assert.equal(box.querySelector('button').textContent, 'Update in Ubuntu');
+  const running = Object.assign({}, row, { job: { state: 'running', stage: 'downloading', percent: 10 } });
+  const box2 = t.W.installBox({ key: 'ubuntu', id: 'codex', agentName: 'Codex', row: running, done: () => {} });
+  assert.ok(box2.textContent.startsWith('Updating Codex in Ubuntu…'));
+  t.shell.window.runTimers();
+  await settle();
+  assert.equal(box2.querySelector('.st-progress').getAttribute('aria-valuenow'), '50');
+});

@@ -23,6 +23,8 @@ export interface WslHost {
   env(): Promise<Record<string, string>>;
   /** Called when something inside the distro asks Windows to open a URL (BROWSER shim). */
   onOpenUrl(handler: (url: string) => void): () => void;
+  /** Called for the helper's other notifications (agents.installProgress). Optional: older hosts and fakes may not have it. */
+  onNotify?(handler: (method: string, params: Record<string, unknown>) => void): () => void;
   /** Install if needed, connect, start the helper (idempotent; the first use of a host starts it). Rejects with the reason. */
   start(): Promise<void>;
   /** "Reconnect" on a stopped or failed distro: start again now; a ready host is left as it is. */
@@ -45,7 +47,25 @@ export const HELPER_PROTOCOL = 1;
 export interface HelperMethods {
   'env.get': { params: Record<string, never>; result: { env: Record<string, string>; shell: string; home: string; arch: string } };
   'which': { params: { name: string }; result: { path: string | null } };
-  'agents.detect': { params: { ids?: string[] }; result: { agents: { id: string; found: boolean; command?: string[]; version?: string; note?: string }[] } };
+  /**
+   * The agents the distro has, AIB's own install (<root>/agents/<id>/<version>) first. `source` is adapters.ts LaunchRow.source
+   * ('studio' = AIB's own install); `signin` is Codex's own CLI as an argv (the one next to the adapter, else `codex` on PATH).
+   */
+  'agents.detect': {
+    params: { ids?: string[] };
+    result: { agents: { id: string; found: boolean; command?: string[]; version?: string; note?: string; source?: string; signin?: string[] }[] };
+  };
+  /**
+   * AIB-managed agent installs in the distro (helper/agent_install.ts: agents/installer.ts run natively into <root>/agents/<id>/<version>,
+   * `npm ci` from AIB's lockfile, never `npm i -g`). Offered by a helper that knows its root. `entry` and `lock` are AIB's
+   * agent_versions.json entry and lockfile text. installCheck: what is missing to install (code '' | 'node_missing' | 'node_broken' |
+   * 'node_old' | 'npm_missing'); `force` reads the login PATH again first. install refuses with error code 'install_refused' (one plain
+   * line) or a node code. Each saved job state also arrives as the notification `agents.installProgress` (WslInstallView).
+   */
+  'agents.installCheck': { params: { force?: boolean }; result: { code: string; node: string; nodeVersion: string; npm: boolean; minNode: number } };
+  'agents.install': { params: WslInstallParams; result: WslInstallView & { attached?: boolean } };
+  'agents.installStatus': { params: WslInstallParams; result: WslInstallView };
+  'agents.installCancel': { params: WslInstallParams; result: WslInstallView };
   'fs.stat': { params: { path: string }; result: { exists: boolean; isDir: boolean; isFile: boolean; size: number; mtimeMs: number } };
   'fs.listDirs': { params: { path: string; limit?: number }; result: { path: string; parent: string | null; dirs: { name: string; isGit: boolean }[]; truncated: boolean } };
   'folder.check': { params: { path: string }; result: { ok: boolean; reason?: string; isGit: boolean; realPath: string } };
@@ -151,6 +171,30 @@ export interface WslMergeAnswer {
   result?: Record<string, unknown>;
   refused?: { message: string; code: string; status: number; extra: Record<string, unknown> };
   actions: { op: string; payload: Record<string, unknown>; must?: boolean; fail?: string }[];
+}
+
+/** An agents.install* call: the agent, AIB's allow-list entry for it, and its lockfile text (null: none). */
+export interface WslInstallParams {
+  agent: string;
+  entry: { package: string; version: string; packageBytes?: number; minFreeBytes?: number };
+  lock?: string | null;
+}
+
+/** An install job's state (agents/installer.ts InstallView): state 'idle' | 'running' | 'failed' | 'done'. */
+export interface WslInstallView {
+  agent: string;
+  state: string;
+  stage: string;
+  percent: number;
+  message: string;
+  version?: string;
+  interrupted?: boolean;
+}
+
+/** Notification (no id) from the helper: an install job's state was saved (progress, done, failed). */
+export interface HelperInstallProgress {
+  method: 'agents.installProgress';
+  params: WslInstallView;
 }
 
 /** Notification (no id) from the helper: a URL some process in the distro wants opened on Windows. http/https only, at most 2048 bytes. */

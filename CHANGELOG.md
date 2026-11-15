@@ -15,6 +15,12 @@
   other projects and folders on a Windows drive). A WSL chat's Codex usage limits show up in the chip, read from the distro's
   `~/.codex`. A new chat in a WSL git project works in its own copy (a git worktree made inside the distro, next to AIB's other files in `~/.aib-server`), as on Windows: Files shows the copy or the main folder, Changes shows the chat's branch, Discard removes the copy and its branch, and the chat keeps its copy across AIB restarts. Merge works there too: the Merge button (or asking the chat) lands the chat's own commits on main, runs entirely inside the distro with Linux git, brings main into the copy first when it moved (conflicts go back to the chat), and sets your uncommitted edits in the project folder aside and puts them back, never overwriting them (if they clash, they stay in a named stash and "Keep my version" restores them). Live sync works there too: a file you save in the WSL project folder reaches the chat's copy within a second or two (AIB watches it from inside the distro, where Windows would miss the change), the chat's next message tells it which files you changed, a file you both edited is combined in the chat's copy at its next turn, and an edit on the same line is never overwritten: the chat's copy gets conflict markers, your file stays as you saved it, and the clash line shows until the chat resolves it. Not in WSL projects yet: Docs; AIB tools there are limited to artifacts and merge. While a WSL project is open or a WSL chat runs, the distro
   keeps running (VmmemWSL memory in Task Manager).
+- WSL projects: Install in Ubuntu. When Claude Code or Codex is missing in the distro, the new-chat panel has an "Install in Ubuntu"
+  button instead of only a command to copy. AIB installs the same reviewed versions it uses on Windows into its own folder there
+  (`~/.aib-server/agents`; never a global npm install, nothing else in the distro changes), with a progress bar and Cancel, and the
+  install keeps going if AIB restarts. When AIB moves to a newer reviewed version, the panel offers "Update in Ubuntu". The distro needs
+  Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
+  "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
 ## 0.1.0-beta.9 (beta)
 

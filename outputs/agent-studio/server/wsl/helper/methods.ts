@@ -26,6 +26,8 @@ import { worktreeMethods } from './worktrees.ts';
 import { mergeMethods } from './merge.ts';
 import { HelperSync, syncMethods } from './sync.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
+import { findCodexCli } from '../../agents/signin.ts';
+import { installMethods } from './agent_install.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -45,6 +47,15 @@ export interface HelperContext {
   data?: string;
   /** Live sync of the WSL chats' worktrees over `data` (helper/sync.ts); made here when not given. Only with `data`. */
   sync?: HelperSync;
+  /**
+   * AIB's folder in the distro (~/.aib-server, or AIB_WSL_ROOT): agents.detect looks for AIB's own installs in <root>/agents first, and
+   * the agents.install* methods (helper/agent_install.ts) are offered. Without it, only agents the user installed are found.
+   */
+  root?: string;
+  /** Sends a notification line to AIB (agents.installProgress). */
+  notify?(method: string, params: Record<string, unknown>): void;
+  /** Reads the login shell's PATH again (a Node.js installed since the helper started). */
+  refreshPath?(): Promise<void>;
 }
 
 /** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
@@ -133,9 +144,16 @@ function packageVersion(entry: string): string | undefined {
   return undefined;
 }
 
-function agentRow(id: string, row: LaunchRow): { id: string; found: boolean; command?: string[]; version?: string; note?: string } {
-  const out: { id: string; found: boolean; command?: string[]; version?: string; note?: string } = { id, found: row.found };
+type AgentRow = { id: string; found: boolean; command?: string[]; version?: string; note?: string; source?: string; signin?: string[] };
+
+async function agentRow(id: string, row: LaunchRow): Promise<AgentRow> {
+  const out: AgentRow = { id, found: row.found, source: row.source };
   if (row.argv.length) out.command = row.argv;
+  // Codex signs in with its own CLI: the @openai/codex next to the adapter (AIB's install has it), else `codex` on PATH
+  if (id === 'codex' && row.found) {
+    const cli = await findCodexCli(row.argv);
+    if (cli) out.signin = cli;
+  }
   const version = row.found && row.path && row.source !== 'path' ? packageVersion(row.path) : undefined;
   if (version) out.version = version;
   const note = row.problem || row.text;
@@ -149,6 +167,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
   const methods = {
     ...phaseOne(ctx),
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
+    ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
   };
   return Object.fromEntries(
     Object.entries(methods).map(([name, handler]) => [name, async (p: Record<string, unknown>) => {
@@ -173,9 +192,11 @@ function phaseOne(ctx: HelperContext): Handlers {
       if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) throw new RpcError('ids must be a list of strings', BAD_PARAMS);
       const agents = [];
       for (const id of ids as string[]) {
-        if (id === 'claude') agents.push(agentRow(id, await resolveClaude({})));
-        else if (id === 'codex') agents.push(agentRow(id, await resolveCodex({})));
-        else if (id === 'omp') agents.push(agentRow(id, resolveOmp(defaultOmpCommand())));
+        // AIB's own install (<root>/agents/<id>/<version>, newest complete one) first, then one the user installed
+        const stateDir = ctx.root ?? null;
+        if (id === 'claude') agents.push(await agentRow(id, await resolveClaude({ stateDir })));
+        else if (id === 'codex') agents.push(await agentRow(id, await resolveCodex({ stateDir })));
+        else if (id === 'omp') agents.push(await agentRow(id, resolveOmp(defaultOmpCommand())));
         else agents.push({ id, found: false, note: 'AIB does not look for this agent in WSL yet' });
       }
       return { agents };
