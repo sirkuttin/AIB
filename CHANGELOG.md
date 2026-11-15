@@ -21,6 +21,14 @@
   install keeps going if AIB restarts. When AIB moves to a newer reviewed version, the panel offers "Update in Ubuntu". The distro needs
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
+- AIB Linking (WSL): every agent in every distro on one Settings page. A new Settings section, right under AIB Linking (Windows
+  only), lists the WSL distros on this PC: which one is WSL's default, which ones AIB cannot use and why (a WSL 1 distro gets the
+  command that converts it), and how to get WSL when the PC has none. Each usable distro has its own cards: its state (Ready, Not
+  running with "Start Ubuntu and check", Stopped with Reconnect) and "Agents in Ubuntu" with the same agent cards as on Windows:
+  Install in Ubuntu, Update in Ubuntu, progress with Cancel, Retry after a failure, and the Node.js line when the distro has none.
+  Each card says whether AIB installed it or it is your own install. Your Windows on/off switch for an agent covers its distro copies
+  too. Opening Settings never starts a distro: only the Start button does, and it says it copies AIB's helper there (about 100 MB).
+  The new-chat panel's "not installed in Ubuntu" line gets a "Set up Ubuntu in Settings" link, and Settings > About links here.
 
 - Ready and Couldn't reopen: clear words for a chat with no agent. A saved chat that has no agent running now says Ready instead of
   Not running (it opens read-only with its saved messages, and an agent starts when you send a message), in the sidebar, the chat
