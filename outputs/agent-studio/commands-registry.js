@@ -214,6 +214,26 @@
     chatAction('thinking', (ctx) => (ctx.thinking ? 'Hide thinking' : 'Show thinking'), {
       keywords: ['reasoning', 'thoughts'],
     }),
+    // multi-window 2.5A: the open chat, or the doc on screen, into its own window (it moves there: owner decision 4)
+    {
+      id: 'chat:popout',
+      group: 'This chat',
+      scope: 'chat',
+      title: 'Pop out this chat',
+      keywords: ['window', 'pop out', 'new window', 'separate', 'monitor'],
+      shortcut: '',
+      when: (ctx) => can(ctx, 'popOutChat'),
+      run: (ctx) => ctx.do.popOutChat(),
+    },
+    {
+      id: 'doc:popout',
+      group: 'Moving around',
+      title: 'Pop out this doc',
+      keywords: ['window', 'pop out', 'new window', 'separate', 'monitor', 'doc'],
+      shortcut: '',
+      when: (ctx) => can(ctx, 'popOutDoc'),
+      run: (ctx) => ctx.do.popOutDoc(),
+    },
     chatAction('handoff', 'Continue with another agent…', { keywords: ['handoff', 'switch agent', 'claude', 'omp'] }),
     chatAction('end', "End this chat's session", {
       keywords: ['stop', 'disconnect', 'close', 'end session', 'studio session'],

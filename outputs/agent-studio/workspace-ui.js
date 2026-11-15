@@ -377,6 +377,8 @@
   };
   function mayShowHere(t) {
     const W = Win();
+    if (popoutKey()) return !!t && t.chat === popoutKey(); // a chat pop-out shows only its own chat, whatever is known
+    if (t && t.chat && popped(t.chat)) return false; // popped out of this window: its window shows it (even before presence knows)
     if (!W || !W.canRoute()) return true;
     if (W.pinned()) return W.mayShowHere(t);
     return !W.known() || W.mayShowHere(t);
@@ -385,8 +387,12 @@
   // target {chat?, project}; openHere() opens it in this window. Returns true when it was opened here or handed on.
   function routeOpen(target, openHere) {
     const W = Win(),
-      t = target || {};
-    if (mayShowHere(t) || !host || !host.postJson || !t.project) return openHere() !== false;
+      t = Object.assign({}, target || {});
+    if (popoutKey() && !t.project) t.project = (t.chat && (itemOf(t.chat) || {}).projectKey) || (W ? W.pinnedProject() : '');
+    if (mayShowHere(t)) return openHere() !== false;
+    // a pop-out never replaces its chat: without the desktop app's routing there is nowhere else to open it
+    if (popoutKey() && (!W || !W.canRoute() || !host || !host.postJson || !t.project)) return false;
+    if (!host || !host.postJson || !t.project) return openHere() !== false;
     W.route(t, (path, body) => host.postJson(path, body)).then(
       (r) => {
         if (r.to === 'self') openHere();
@@ -511,6 +517,172 @@
     if (e.preventDefault) e.preventDefault();
     if (e.stopPropagation) e.stopPropagation();
     openProjectWindow(pk, { x: e.clientX || 0, y: (e.clientY || 0) + 8 });
+    return true;
+  }
+  /* ---- a chat in its own small window (multi-window Phase 2.5A; design section 8; owner decision 4: popping out MOVES it) ----
+     The pop-out page (?w=&kind=chat&mode=chat&chat=<lasting key>&project=) shows one chat: header, transcript, composer
+     (body.aib-mode-chat hides the sidebar, tabs, split, Activity column, right panel and start page). It writes no layout
+     (store-merge.js layoutWritable is false there); Ctrl+Shift+N, Ctrl+P, the tab keys and the split keys do nothing; Ctrl+K and
+     every link go through routeOpen, so another chat opens in its own window, never over this one. Its chat gone (deleted, or
+     no longer listed) closes the window (K3 op 'close').
+     In the window it came from: "Pop out" in the chat's menus asks for the window (K3 op 'popout', by the chat's lasting key),
+     and the tab closes here. This window remembers what it moved (sessionStorage, per window): the sidebar row shows ↗ and
+     opening the chat from anywhere brings the pop-out forward (routeOpen sends it there). When the pop-out goes (its pagehide
+     'bye', or it is gone from the presence answer), the tab comes back here as a background tab. */
+  const popoutKey = () => {
+    const W = Win();
+    const c = W && W.context ? W.context() : null;
+    return c && c.kind === 'chat' && c.chat ? c.chat : '';
+  };
+  const POPS_KEY = 'aib-chat-popouts';
+  let pops = null; // [{key, project, title, w, seen, at}]
+  const popListOf = () => {
+    if (pops) return pops;
+    try {
+      const v = JSON.parse(root.sessionStorage.getItem(POPS_KEY) || '[]');
+      pops = Array.isArray(v) ? v.filter((p) => p && typeof p.key === 'string' && typeof p.project === 'string') : [];
+    } catch (e) {
+      pops = [];
+    }
+    return pops;
+  };
+  function savePops() {
+    try {
+      root.sessionStorage.setItem(POPS_KEY, JSON.stringify(popListOf().slice(-8)));
+    } catch (e) {
+      /* private window */
+    }
+  }
+  // The window (not this one) showing chat key, from the presence answer, or ''.
+  function windowOfChat(key) {
+    const W = Win();
+    if (!W || !key) return '';
+    const w = W.others().find((x) => x.kind === 'chat' && x.chat === key);
+    return w ? w.w : '';
+  }
+  // Is chat key popped out (moved from this window, or shown in a pop-out the presence answer lists)?
+  const popped = (key) => !!key && !popoutKey() && (popListOf().some((p) => p.key === key) || !!windowOfChat(key));
+  // The chat menus' items (organize-ui.js host.menuExtras): "Pop out" in the desktop app, never inside a pop-out.
+  function chatMenuItems(c) {
+    if (!c || popoutKey() || !canOpenWindows()) return [];
+    const key = keyOf(c);
+    if (!key || popped(key)) return [];
+    return [{ id: 'popout', label: 'Pop out', run: () => popOutChat(key) }];
+  }
+  // Resolves true when the chat's window opened (or was brought forward); its tab then closes here.
+  function popOutChat(key) {
+    const W = Win(),
+      c = convOf(key),
+      it = itemOf(key);
+    const pk = (it && it.projectKey) || (c ? projectKeyOf(c) : '');
+    if (!c || !pk || !W || !W.app() || !host || !host.postJson) return Promise.resolve(false);
+    closeCtx(false);
+    const title = String((it && it.title) || (host.titleOf ? host.titleOf(c) : '') || 'Chat').slice(0, 80);
+    const body = { op: 'popout', from: W.id(), chat: { key, project: pk, title } };
+    return Promise.resolve(host.postJson('desktop/windows', body)).then(
+      (r) => {
+        pops = popListOf().filter((p) => p.key !== key);
+        pops.push({ key, project: pk, title, w: (r && typeof r.w === 'string' && r.w) || '', seen: false, at: Date.now() });
+        savePops();
+        if (!closeTabKey(key)) refresh();
+        return true;
+      },
+      (e) => {
+        const status = e && e.status;
+        if (status === 409) showWindowNote('AIB has 8 windows open, the most it can. Close one to open another.');
+        else if (status === 501) showWindowNote('Popping out a chat needs the AIB desktop app.');
+        else if (host.notice) host.notice('That chat could not be popped out. Try again in a moment.');
+        return false;
+      },
+    );
+  }
+  // The pop-out closed: its tab comes back in its project here, in the background (the active tab and project stay).
+  function restorePopped(key) {
+    const p = popListOf().find((x) => x.key === key);
+    if (!p) return;
+    pops = popListOf().filter((x) => x !== p);
+    savePops();
+    if (convOf(key) && ws) {
+      const before = ws;
+      const next = St().openTab(ws, p.project, key);
+      commit(Object.assign({}, next, { last: before.last, recent: before.recent, active: before.active }));
+    }
+    refresh();
+  }
+  // A moved chat whose window was listed and is gone now comes back (window-context.js onChange: a new answer, or a 'bye').
+  function checkPops() {
+    const W = Win();
+    if (!W || !W.known() || popoutKey()) return;
+    let changed = false;
+    for (const p of popListOf().slice()) {
+      const w = windowOfChat(p.key);
+      if (w) {
+        if (!p.seen || p.w !== w) {
+          p.seen = true;
+          p.w = w;
+          changed = true;
+        }
+      } else if (p.seen) restorePopped(p.key);
+    }
+    if (changed) savePops();
+  }
+  // The pop-out's chat is not there (deleted, or gone from the list): its window closes itself.
+  let popGoneSeen = 0;
+  function closePopout() {
+    const W = Win();
+    if (!W || !host || !host.postJson || !W.canRoute()) {
+      try {
+        root.close();
+      } catch (e) {
+        /* not a window the page opened */
+      }
+      return;
+    }
+    Promise.resolve(host.postJson('desktop/windows', { op: 'close', from: W.id(), w: W.id() })).catch(() => {});
+  }
+  function checkPopoutChat() {
+    const key = popoutKey();
+    if (!key || !host || !items.length) return; // an empty list is a list still loading, not proof
+    const it = byKey.get(key);
+    const gone = !it || !!it.deleted;
+    popGoneSeen = gone ? popGoneSeen + 1 : 0;
+    if (popGoneSeen === 2) closePopout(); // twice in a row: one list without it is not proof
+  }
+  // Keys with no meaning in a pop-out (E3): new chat, the project dropdown, the tab keys and the split keys.
+  function popoutKeyOff(e) {
+    if (!e || !popoutKey()) return false;
+    const k = String(e.key || '').toLowerCase(),
+      mod = e.ctrlKey || e.metaKey;
+    const off =
+      (mod && e.shiftKey && !e.altKey && k === 'n') ||
+      (e.altKey && !mod && !e.shiftKey && k === 'n') ||
+      ((e.ctrlKey || e.altKey) && !e.metaKey && !e.shiftKey && k === 'p') ||
+      (e.ctrlKey && !e.altKey && !e.shiftKey && (k === '\\' || /^[1-9]$/.test(k))) ||
+      (e.ctrlKey && e.altKey && (k === 'arrowright' || k === 'arrowleft')) ||
+      !!St().shortcutFor(e);
+    if (!off) return false;
+    e.preventDefault();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    return true;
+  }
+  function initPopout() {
+    const d = doc();
+    if (d.body) d.body.classList.add('aib-mode-chat');
+    if (root.addEventListener) root.addEventListener('keydown', popoutKeyOff, true);
+  }
+  /* The desktop app's routed opens (K3 route, K6 answers): a project switches this window to it, a doc opens here. False ('no')
+     when this window may not show it: a pop-out, or another window owns that project. */
+  function openProjectFromDesktop(pk) {
+    if (!pk || popoutKey() || !mayShowProject(pk) || !projectOfKey(pk)) return false;
+    if (!ws || ws.active !== pk) selectProject(pk);
+    return true;
+  }
+  function openDocFromDesktop(project, name) {
+    if (!project || !name || popoutKey() || !mayShowProject(project) || !projectOfKey(project)) return false;
+    if (!ws || ws.active !== project) selectProject(project);
+    const U = FU();
+    if (!U || !U.openDoc || !U.currentScope) return false;
+    U.openDoc(U.currentScope(), { name, title: name, where: 'tab' });
     return true;
   }
   // While a project switch opens that project's chat: its files come back as they were (files-ui.js projectShown), instead of
@@ -2683,6 +2855,7 @@
     lastSyncArgs = [conversations, selected];
     items = (conversations || []).filter((c) => c && c.provider).map(normalize);
     byKey = new Map(items.map((i) => [i.key, i]));
+    if (popoutKey()) checkPopoutChat();
     rebuildProjects();
     askKinds();
     // A new chat gets its session id after it opens, which changes its key: keep its tab.
@@ -3001,6 +3174,7 @@
 
   function init(h) {
     host = h;
+    if (popoutKey()) initPopout();
     ws = read();
     prefs = readLocalPrefs() || St().emptyPrefs();
     if (root.AgentSidebarUI && root.AgentSidebarUI.setNameHook)
@@ -3201,6 +3375,9 @@
           return pk ? { key: pk, name: p ? p.name : '' } : null;
         },
         openInbox: (key) => openInboxOn(key),
+        // K3 route's other targets (K6): a project switches this window to it, a doc opens here; false: not this window's
+        openProject: openProjectFromDesktop,
+        openDoc: openDocFromDesktop,
         // the toast's card and its answers (notify-ui.js): the same row and the same routes as the inbox
         toastCard,
         toastAnswer,
@@ -3225,7 +3402,10 @@
     const W = Win();
     if (W) {
       // what the other windows show changed (their open chats, a window came or went): the badge, inbox, title and toasts follow
-      W.onChange(() => refresh());
+      W.onChange(() => {
+        checkPops(); // a chat popped out of this window and its window closed: the tab comes back
+        refresh();
+      });
       // A sidebar row of a chat another window owns (its project's window, or popped out) opens there, not here (A1, D3).
       d.addEventListener(
         'click',
@@ -3315,6 +3495,13 @@
     windowOfProject,
     focusProjectWindow,
     projectClickOpensWindow,
+    // multi-window Phase 2.5A: a chat in its own window
+    popoutKey,
+    popoutMissing: () => closePopout(),
+    chatMenuItems,
+    popOutChat,
+    chatPoppedOut: popped,
+    _pops: () => popListOf().slice(),
     init,
     sync,
     syncPrefs,

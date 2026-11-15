@@ -676,6 +676,9 @@
   function openMenu(trigger, c, origin, point, extra) {
     if (!point && menu && menuTrigger === trigger) return closeMenu(true);
     closeMenu(false);
+    // the page's own items for every chat menu (a chat's "Pop out", multi-window 2.5A), after the caller's
+    const more = typeof host.menuExtras === 'function' ? host.menuExtras(c) || [] : [];
+    if (more.length) extra = (Array.isArray(extra) ? extra : []).concat(more);
     const items = menuModel(c, {
       thinking: thinkingState(),
       handoff: typeof host.handoff === 'function',
