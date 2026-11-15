@@ -127,7 +127,9 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
   await using lab = new KeeperStudioLab();
   const a = lab.studio();
   const c = await a.connect('omp', lab.work);
-  await a.liveCall('prompt', { id: c.id, text: 'stream:8:120', clientMessageId: 'm1' });
+  // 300 ms a chunk: after "answered" the turn still has ~900 ms to go, so a rebuild on a loaded machine (the history store's Worker
+  // starting, other tests running) still meets it mid-turn.
+  await a.liveCall('prompt', { id: c.id, text: 'stream:8:300', clientMessageId: 'm1' });
   if (when === 'streaming') await until(() => said(c).includes('chunk1 '), 'streaming', 10);
   if (when !== 'streaming') await until(() => c.permissions.size === 1, 'the question', 10);
   if (when === 'answered' || when === 'idle') {
@@ -147,7 +149,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
   assertEquals(r.process!.pid, agentPid); // the same agent process
   assertEquals(r.sessionId, 'fake-session');
   assertEquals(r.events.filter((e) => e.kind === 'user').length, 1);
-  assertEquals((r.events.find((e) => e.kind === 'user')!.data as Json).text, 'stream:8:120');
+  assertEquals((r.events.find((e) => e.kind === 'user')!.data as Json).text, 'stream:8:300');
   assertEquals(b.store!.receipt('omp', 'fake-session', 'm1')!.state, when === 'idle' ? 'finished' : 'working');
   if (when === 'streaming' || when === 'question') {
     await until(() => r.permissions.size === 1, 'the question, shown once', 10);
