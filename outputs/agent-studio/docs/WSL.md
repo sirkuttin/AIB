@@ -17,7 +17,10 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
 - AIB tools in a WSL chat are limited to artifacts (publish, list, update), reached through WSL interop; docs, merge and the swarm
   helper tools are not available yet, and the chat says so.
-- Chats work in the project folder (no worktree, no live sync, no merge button). The Docs tab is off. The Files tab previews
+- A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
+  Windows project; a folder that is not git, has no commits yet, or cannot get a copy keeps the chat in the project folder, with the
+  same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, and Discard removes the
+  copy and its branch. There is no Merge button and no live sync for WSL copies yet. The Docs tab is off. The Files tab previews
   pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
   (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
   as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
@@ -67,6 +70,25 @@ the keep-alive the same way.
 re-attaches each from its last record and only reports a chat as stopped when the Linux keeper's `list` says it ended. After
 `wsl --shutdown` the chats end with "Ubuntu stopped (Windows restart or `wsl --shutdown`), so this agent stopped."
 
+## Worktrees
+
+The worktree manager (`worktrees/worktrees.ts`) runs whole in the helper (`wsl/helper/worktrees.ts`, the `worktree.*` methods),
+natively, with Linux path rules. Its root is `<data>/worktrees/<repo hash>/<slug>` and its registry `<data>/studio-worktrees.json`,
+where `<data>` is the Linux keeper's data folder of this Windows AIB (`~/.aib-server/data-<hash>`, passed to the helper as `--data`):
+the records sit next to the keeper that holds the chats, so they survive AIB restarts and helper restarts. AIB keeps no record of a
+WSL worktree on Windows; `wsl/worktrees.ts` turns the helper's Linux paths into refs.
+
+- A chat's `cwd` is the worktree's ref (`wsl://ubuntu/home/u/.aib-server/data-…/worktrees/…/chat-…`), its agent's cwd the Linux
+  folder, its `projectRoot` the project's ref; the chat note's `loc.linuxPath` is the worktree, so a restarted AIB re-adopts the chat
+  on it. A Continue finds the worktree by the session on its record (made again from its branch if the folder was deleted).
+- Safety: the helper rebuilds the plan AIB sends back and refuses it unless the folder is exactly `<root>/<repo hash>/<slug>` on
+  branch `studio/<slug>`; removal keeps Manager's checks (real path inside the root, compared case-sensitively). A project or data
+  folder under `/mnt/<drive>` never gets a worktree. At its start the helper removes half-made worktrees and retries pending
+  removals, as a Windows AIB does at its start.
+- Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes sends
+  `worktree.merge: false`, so the page shows Discard but no Merge. A helper without the methods (older, or no `--data`) leaves
+  chats in the project folder.
+
 ## Previews, outside files, delete, Codex limits
 
 - **Previews.** The Files read asks the helper for the file's bytes (`files.read`, base64, capped at 1 MB); for a picture or page the
@@ -112,16 +134,17 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_terminal_e2e` | the login shell in the Linux folder, resize |
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
+| `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_worktrees_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
 
-Worktrees, live sync and merge inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
+Live sync and merge inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
 checks for WSL chats; AIB-managed agent installs in the distro.

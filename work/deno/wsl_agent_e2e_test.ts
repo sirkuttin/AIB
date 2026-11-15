@@ -47,7 +47,9 @@ Deno.test({
       const a = studioIn(state);
       studios.push(a);
       const c = await a.connect('claude', ref);
-      assertEquals(c.agentCwd, `${ROOT}/repo`);
+      // the repo is git: the chat works in its own worktree in the distro (wsl_worktrees_e2e checks it in detail)
+      assert(c.agentCwd.startsWith(`${ROOT}/data-`) && c.agentCwd.includes('/worktrees/'), c.agentCwd);
+      assertEquals(c.projectRoot, ref);
       await a.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: 'm1' });
       await until(() => c.permissions.size === 1, 'the question', 30);
       await a.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
@@ -64,7 +66,7 @@ Deno.test({
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       assert(r?.ready && !r.closed, 'adopted from the distro keeper');
-      assertEquals(r.wsl?.linuxPath, `${ROOT}/repo`);
+      assertEquals([r.wsl?.linuxPath, r.projectRoot], [c.agentCwd, ref]);
       const client = (await linkOf(await readyHost()).client(false))!;
       assertEquals(liveUserChannels(await client.list()).length, 1, 'one agent in the distro, never a second');
     } finally {

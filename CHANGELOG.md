@@ -13,7 +13,7 @@
   pictures and pages like any project, and opens files a chat wrote outside the project folder. Delete project can move the folder to
   the trash in Ubuntu (the "Move folder to trash in Ubuntu" tick box; never a permanent delete, and it refuses your home folder,
   other projects and folders on a Windows drive). A WSL chat's Codex usage limits show up in the chip, read from the distro's
-  `~/.codex`. Not in WSL projects yet: worktrees, live sync, merge and Docs; AIB tools there are limited to artifacts. While a WSL project is open or a WSL chat runs, the distro
+  `~/.codex`. A new chat in a WSL git project works in its own copy (a git worktree made inside the distro, next to AIB's other files in `~/.aib-server`), as on Windows: Files shows the copy or the main folder, Changes shows the chat's branch, Discard removes the copy and its branch, and the chat keeps its copy across AIB restarts. Not in WSL projects yet: live sync, merge and Docs; AIB tools there are limited to artifacts. While a WSL project is open or a WSL chat runs, the distro
   keeps running (VmmemWSL memory in Task Manager).
 
 ## 0.1.0-beta.9 (beta)
