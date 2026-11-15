@@ -8,6 +8,9 @@
  *
  * JSON keys, event kinds and error messages are Python's word for word: they reach the page through the host RPC.
  */
+import type { AllowGate } from '../allow/gate.ts';
+import { houseRules } from '../allow/brief.ts';
+import type { MatchContext } from '../allow/matcher.ts';
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
 import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
@@ -400,6 +403,8 @@ interface Pending {
 interface AgentRequest {
   rpcId: unknown;
   params: Json;
+  /** Allow rules: the card's "Always allow" choice (computed once, on first snapshot). */
+  allow?: Json;
 }
 
 export interface PendingChange {
@@ -730,6 +735,8 @@ function toolEnded(update: Json, claude: boolean): boolean {
 /** A tool AIB has seen in this chat: whether it is a shell command, its last status, when it began, which prompt turn it was in. */
 interface ToolSeen {
   shell: boolean;
+  /** Claude Code's tool name (Bash, PowerShell, Edit, mcp__x__y), or null: allow rules pick the shell parser by it. */
+  toolName?: string | null;
   status: string;
   since: number;
   main: boolean;
@@ -800,6 +807,9 @@ export class Connection {
    * really ignores it (`private`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
    */
   localOnly: { entries: string[]; dirs: string[]; private: string } | null = null;
+  /** Allow rules (server/allow): the host's gate and this chat's scratch folder (outside its worktree). */
+  allowGate: AllowGate | null = null;
+  scratchDir: string | null = null;
   sessionId: string | null = null;
   events: Json[] = [];
   eventImageBytes = 0;
@@ -2061,7 +2071,7 @@ export class Connection {
       // A shell command: Claude Code's Bash or PowerShell; for the other agents an `execute` tool (Codex exec_command, OMP bash).
       // Never an MCP tool or WebFetch, whatever kind it reports.
       const shell = isStr(toolName) ? toolName === 'Bash' || toolName === 'PowerShell' : get(update, 'kind') === 'execute';
-      seen = { shell, status: '', since: this.#now(), main, turn: this.promptSeq };
+      seen = { shell, toolName: isStr(toolName) ? toolName : null, status: '', since: this.#now(), main, turn: this.promptSeq };
       this.#tools.set(id, seen);
       while (this.#tools.size > 300) this.#tools.delete(this.#tools.keys().next().value!);
       if (shell) {
@@ -2649,6 +2659,7 @@ export class Connection {
           return;
         }
       }
+      if (method === 'session/request_permission' && this.allowGate && this.#allowByRule(message, params, seenKey)) return;
       if (method === 'session/request_permission') {
         const key = hex(12);
         this.permissions.set(key, { rpcId: message.id, params });
@@ -4525,7 +4536,8 @@ export class Connection {
   artifactPrompt(servers: unknown[] | null): Json {
     const own = (servers ?? []).some(isOwnArtifactEntry);
     const local = this.localOnlyText();
-    if (!own && !local) return {};
+    const brief = this.scratchDir ? houseRules(this.scratchDir) : ''; // allow rules: the house rules with the literal scratch path
+    if (!own && !local && !brief) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
     if (isDict(this.#sessionCaps()?.systemPrompt)) {
@@ -4538,6 +4550,7 @@ export class Connection {
             .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
+      if (brief) content.push({ type: 'text', text: brief });
       if (local) content.push({ type: 'text', text: local });
       out.systemPrompt = { mode: 'append', content };
     }
@@ -4567,9 +4580,144 @@ export class Connection {
    * main folder itself. {} otherwise.
    */
   extraFolders(): Json {
-    const dirs = this.worktree ? this.localOnly?.dirs ?? [] : [];
+    const dirs = [...(this.worktree ? this.localOnly?.dirs ?? [] : []), ...(this.scratchDir ? [this.scratchDir] : [])];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };
+  }
+
+  /** What the allow-rules matcher knows of this chat and request (tool name from the earlier tool_call, the current mode). */
+  allowContext(params: unknown): MatchContext {
+    const call = isDict(params) ? get(params, 'toolCall') : null;
+    const id = isDict(call) ? get(call, 'toolCallId') : null;
+    const mode = get(this.#modes(), 'currentModeId');
+    return {
+      provider: this.provider,
+      toolName: isStr(id) ? this.#tools.get(id)?.toolName ?? null : null,
+      mode: isStr(mode) ? mode : null,
+      cwd: this.cwd,
+      project: this.projectRoot || this.cwd,
+      scratch: this.scratchDir,
+      stateDir: this.allowGate?.stateDir ?? null,
+    };
+  }
+
+  /**
+   * Allow rules: answer a matching request with the agent's allow-once option. Live: match, record the decision (before the
+   * answer), record a `permission_auto` event, then answer. Keeper replay: never match again; the decision log says whether the
+   * live AIB answered it (its event note and its answer are in the record and replay on their own).
+   */
+  #allowByRule(message: Json, params: Json, seenKey: string): boolean {
+    const gate = this.allowGate!;
+    const options = get(params, 'options', []);
+    const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
+    if (!allow || !isStr(allow.optionId)) return false; // no allow-once: never auto-answered (fail closed)
+    const once = `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`;
+    if (this.#replaying) {
+      const done = gate.log.find(this.id, once);
+      return !!done && !done.swept;
+    }
+    let result;
+    try {
+      result = gate.decide(params, this.allowContext(params));
+    } catch (error) {
+      log.exception(error, 'Allow rules: the matcher failed; the request asks');
+      return false;
+    }
+    if (!result.allow) return false;
+    gate.log.record(this.id, {
+      key: once,
+      optionId: allow.optionId,
+      ruleId: result.ruleId,
+      label: result.label,
+      flagged: result.flagged,
+      time: Date.now(),
+    });
+    this.recordedEvent('permission_auto', {
+      sessionId: get(params, 'sessionId'),
+      params: { sessionId: get(params, 'sessionId'), toolCall: get(params, 'toolCall') },
+      ruleId: result.ruleId,
+      label: result.label,
+      flagged: result.flagged,
+    });
+    this.write({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: allow.optionId } } });
+    return true;
+  }
+
+  /** Drafts of cards shown lately, by key: "Save the rule anyway?" after another device answered first. */
+  #allowSeen = new Map<string, { params: Json; draft: Json | null }>();
+
+  #allowRemember(key: string, v: AgentRequest): Json | null {
+    const draft = this.#allowChoice(v);
+    if (draft && !this.#allowSeen.has(key)) {
+      this.#allowSeen.set(key, { params: v.params, draft });
+      while (this.#allowSeen.size > 50) this.#allowSeen.delete(this.#allowSeen.keys().next().value!);
+    }
+    return draft;
+  }
+
+  /** The card's "Always allow" choice for a waiting request (cached on it). */
+  #allowChoice(v: AgentRequest): Json | null {
+    if (!this.allowGate) return null;
+    if (!v.allow) {
+      try {
+        v.allow = this.allowGate.drafts(v.params, this.allowContext(v.params)) as unknown as Json;
+      } catch (error) {
+        log.exception(error, 'Allow rules: could not draft a rule');
+        v.allow = { project: { offer: true, available: false, reason: "AIB can't read this request.", hideAgentAlways: false }, off: '' };
+      }
+    }
+    return v.allow;
+  }
+
+  /** The waiting card's params and draft (allow-answer), or null when it is no longer waiting. */
+  allowPending(key: string): { params: Json; draft: Json | null; waiting: boolean } | null {
+    const pending = this.permissions.get(key);
+    if (pending) {
+      const draft = this.#allowChoice(pending);
+      this.#allowSeen.set(key, { params: pending.params, draft });
+      while (this.#allowSeen.size > 50) this.#allowSeen.delete(this.#allowSeen.keys().next().value!);
+      return { params: pending.params, draft, waiting: true };
+    }
+    const seen = this.#allowSeen.get(key);
+    return seen ? { ...seen, waiting: false } : null;
+  }
+
+  /**
+   * After a rule is saved: answer the waiting cards it now covers, each through permission() (so a phone answering the same card
+   * at the same moment gets "stale"). The decision is logged as `swept`: on replay the card still appears, then the answer
+   * removes it.
+   */
+  allowSweep(): number {
+    if (!this.allowGate || this.#replaying) return 0;
+    let n = 0;
+    for (const [key, pending] of [...this.permissions]) {
+      const options = get(pending.params, 'options', []);
+      const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
+      if (!allow || !isStr(allow.optionId)) continue;
+      const result = this.allowGate.decide(pending.params, this.allowContext(pending.params));
+      if (!result.allow) continue;
+      const seenKey = JSON.stringify(pending.rpcId);
+      this.allowGate.log.record(this.id, {
+        key: `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`,
+        optionId: allow.optionId,
+        ruleId: result.ruleId,
+        label: result.label,
+        flagged: result.flagged,
+        time: Date.now(),
+        swept: true,
+      });
+      this.recordedEvent('permission_auto', {
+        sessionId: get(pending.params, 'sessionId'),
+        params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
+        ruleId: result.ruleId,
+        label: result.label,
+        flagged: result.flagged,
+        key,
+      });
+      this.permission(key, allow.optionId);
+      n++;
+    }
+    return n;
   }
 
   /** True when a permission request is for Studio's studio_artifact tool on a chat Studio gave that tool to. */
@@ -5079,6 +5227,7 @@ export class Connection {
       permissions: light ? [] : [...this.permissions].map(([k, v]) => ({
         key: k,
         params: v.params,
+        ...(this.allowGate ? { allow: this.#allowRemember(k, v) } : {}),
         route: this.route(isDict(v.params) ? get(v.params, 'sessionId') : null),
       })),
       elicitations: [...this.elicitations].map(([k, v]) => ({

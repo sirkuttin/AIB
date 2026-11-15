@@ -147,7 +147,8 @@ Deno.test({
     assert(!runGit(c.cwd, 'ls-files').includes('private/'), 'private/ was excluded before the snapshot');
     const made = host.received('session/new');
     assertEquals(made.length, 1);
-    assertEquals(made[0].additionalDirectories, [privateDir]);
+    assertEquals(made[0].additionalDirectories, [privateDir, c.scratchDir], 'and the scratch folder of the chat (allow rules), outside the worktree');
+    assert(systemTexts(made[0]).some((t) => t.includes('House rules from AIB') && t.includes(c.scratchDir!)), 'the brief has the literal scratch path');
     const note = systemTexts(made[0]).at(-1)!;
     assert(note.includes(privateDir) && note.includes('not in this copy'), note);
     const sessionId = c.sessionId!;
@@ -158,7 +159,7 @@ Deno.test({
     await until(() => reopened.ready, 'the chat is reopened', 30);
     const loaded = host.received('session/load');
     assertEquals(loaded.length, 1);
-    assertEquals(loaded[0].additionalDirectories, [privateDir], 'session/load carries the grant too');
+    assertEquals(loaded[0].additionalDirectories, [privateDir, reopened.scratchDir], 'session/load carries the grant too');
     assert(systemTexts(loaded[0]).at(-1)!.includes(privateDir));
   },
 });
@@ -180,7 +181,7 @@ Deno.test({
     await until(() => c.ready, 'the chat is ready', 30);
     assertEquals(c.worktree, null);
     const second = host.received('session/new')[1];
-    assert(!('additionalDirectories' in second));
+    assertEquals(second.additionalDirectories, [c.scratchDir], 'only the scratch folder (allow rules)');
     assertEquals(systemTexts(second).at(-1), LOCAL_ONLY_PROMPT);
   },
 });
@@ -199,7 +200,7 @@ Deno.test({
     await until(() => c.ready, 'the chat is ready', 30);
     assertEquals(host.exclude(), before, 'the exclude file is untouched');
     const params = host.received('session/new')[0];
-    assert(!('additionalDirectories' in params));
+    assertEquals(params.additionalDirectories, [c.scratchDir], 'only the scratch folder (allow rules)');
     assert(!systemTexts(params).some((t) => t.includes('private')), JSON.stringify(systemTexts(params)));
     assertEquals(c.localOnly, null);
   },

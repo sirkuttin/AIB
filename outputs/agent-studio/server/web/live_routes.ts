@@ -85,6 +85,10 @@ export function liveRoutes(): Map<string, LiveHandler> {
   });
   // Deno only (routes.ts DENO_ONLY): the model / mode / effort lists a new chat can offer, before its session exists.
   routes.set('POST /api/live/agent-options', (ctx, _url, body) => ctx.host.liveCall('agent-options', body ?? {}));
+  // Allow rules (routes.ts DENO_ONLY): the page's Always choice and Settings; the host's #allowCall.
+  for (const op of ['answer', 'rules', 'remove', 'restore', 'review', 'enable', 'builtin']) {
+    routes.set(`POST /api/live/allow/${op}`, (ctx, _url, body) => ctx.host.liveCall(`allow-${op}`, body ?? {}));
+  }
   for (const name of LIVE_POST_OPS) {
     routes.set(`POST /api/live/${name}`, async (ctx, _url, body) => {
       // "Find more chats via agent" lists only chats of added projects (empty pages skipped); it never adds one.

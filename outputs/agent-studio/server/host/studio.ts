@@ -58,6 +58,7 @@ import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local
 import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
+import { AllowGate } from '../allow/gate.ts';
 
 const log = getLogger('studio');
 
@@ -261,6 +262,8 @@ export class Studio {
   readonly stateDir: string;
   /** The projects the user added (desktop/added_projects.ts): a chat opened here adds its folder. */
   readonly addedProjects: AddedProjects | null;
+  /** Allow rules (server/allow): one gate for every chat of this host; null without a state folder. */
+  readonly allow: AllowGate | null;
   readonly hasStateDir: boolean;
   ownerProbe: OwnerProbe;
   readonly owners: OwnerRegistry | null;
@@ -335,6 +338,7 @@ export class Studio {
     // Recovery state is kept only when a state directory was configured explicitly.
     this.store = this.hasStateDir ? new StateStore(this.stateDir, `recovery-${name}`) : null;
     this.addedProjects = this.hasStateDir ? new AddedProjects(this.stateDir) : null;
+    this.allow = this.hasStateDir ? new AllowGate(this.stateDir) : null;
     this.recovery = this.store ? new Recovery(this.store) : null;
     if (this.recovery) this.recovery.queues = new QueueStore(this.stateDir, `queues-${name}`); // queued messages survive a host restart (paused)
     const dir = this.hasStateDir ? this.stateDir : null;
@@ -947,6 +951,10 @@ export class Studio {
 
   /** The Studio's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
   #wire(c: Connection): void {
+    if (this.allow) {
+      c.allowGate = this.allow;
+      c.scratchDir = this.allow.scratchFor(c.id);
+    }
     c.onRelease = (conn) => {
       this.withdraw(conn);
       if (conn.channel) this.#keeperNoLongerNeeded();
@@ -1326,6 +1334,7 @@ export class Studio {
       recovered: this.recovered(),
       recoveryWarning: this.store ? this.store.warning : '',
       instanceId: this.instanceId,
+      allowRulesTampered: this.allow ? this.allow.tampered() : false, // the page's "Allow rules are off" banner
     };
   }
 
@@ -1459,6 +1468,75 @@ export class Studio {
     return [...this.connections.values()].filter((c) => !c.closed && wt.same(c.cwd, path));
   }
 
+  /**
+   * Allow rules: the page-session calls (POST /api/live/allow/*; never an MCP tool or a phone route).
+   *   allow-answer  {id, key, option, scope, saveOnly?}  answer the card and save its rule, in one call: the rule is saved only when
+   *                 the answer went through; answered elsewhere -> 409 answered_elsewhere, and saveOnly then saves it anyway.
+   *                 Waiting cards the rule now covers are answered too (sweep).
+   *   allow-rules   the list for Settings; allow-remove / allow-restore {ruleId}; allow-review; allow-enable {on};
+   *   allow-builtin {name, on}.
+   */
+  #allowCall(name: string, body: Json): [number, unknown] {
+    const gate = this.allow;
+    if (!gate) return [404, { error: 'Allow rules need a state folder' }];
+    const store = gate.store;
+    if (name === 'allow-rules') return [200, store.public()];
+    if (name === 'allow-remove') return [200, { ok: store.remove(String(need(body, 'ruleId'))), ...store.public() }];
+    if (name === 'allow-restore') return [200, { ok: store.restore(String(need(body, 'ruleId'))), ...store.public() }];
+    if (name === 'allow-review') {
+      store.review();
+      return [200, { ok: true, ...store.public() }];
+    }
+    if (name === 'allow-enable') {
+      store.setEnabled(body.on === true);
+      return [200, { ok: true, ...store.public() }];
+    }
+    if (name === 'allow-builtin') {
+      const which = String(need(body, 'name'));
+      if (!['safeReads', 'syntax', 'scratch'].includes(which)) throw new ValueError('Unknown built-in rule');
+      store.setBuiltin(which as 'safeReads', body.on === true);
+      return [200, { ok: true, ...store.public() }];
+    }
+    if (name !== 'allow-answer') return [404, { error: 'Not found' }];
+    const c = this.#connection(body);
+    const key = String(need(body, 'key'));
+    const scope = body.scope === 'global' ? 'global' : 'project';
+    const found = c.allowPending(key);
+    if (!found) throw new ValueError('Unknown approval');
+    const draft = isDict(found.draft) ? found.draft[scope] : null;
+    if (!isDict(draft) || draft.available !== true || !Array.isArray(draft.rules) || !draft.rules.length) {
+      return [400, { error: isDict(draft) && isStr(draft.reason) && draft.reason ? draft.reason : 'No rule can be made from this request' }];
+    }
+    if (!body.saveOnly) {
+      if (!found.waiting) return [409, { error: 'This request was already answered elsewhere. Save the rule anyway?', code: 'answered_elsewhere' }];
+      const option = body.option;
+      const options = Array.isArray(found.params.options) ? found.params.options : [];
+      const chosen = options.find((o) => isDict(o) && o.optionId === option);
+      if (!isDict(chosen) || chosen.kind !== 'allow_once') throw new ValueError('Always allow goes with an allow-once answer');
+      try {
+        c.permission(key, option);
+      } catch (error) {
+        if (error instanceof Error && /stale|no longer|answered/i.test(error.message)) {
+          return [409, { error: 'This request was already answered elsewhere. Save the rule anyway?', code: 'answered_elsewhere' }];
+        }
+        throw error;
+      }
+    }
+    const saved = (draft.rules as Json[]).map((r) => store.add({ ...r, from: 'card' } as never));
+    let also = 0;
+    const project = c.projectRoot || c.cwd;
+    for (const other of this.connections.values()) {
+      if (scope === 'project' && (other.projectRoot || other.cwd).toLowerCase() !== project.toLowerCase()) continue;
+      try {
+        also += other.allowSweep();
+      } catch (error) {
+        log.exception(error, 'Allow rules: answering waiting cards failed');
+      }
+    }
+    return [200, { ok: true, rules: saved, alsoAllowed: also }];
+  }
+
+
   #connection(body: Json): Connection {
     const id = need(body, 'id');
     if (id !== null && typeof id === 'object') throw new TypeError(`unhashable type: '${Array.isArray(id) ? 'list' : 'dict'}'`);
@@ -1479,6 +1557,7 @@ export class Studio {
     await connection.close(); // closes the connection, kills the agent's process tree and any client terminals
     connection.tree?.kill();
     const outcome = await this.worktrees!.remove(record.key, true);
+    if (connection.scratchDir && this.allow) this.allow.removeScratch(connection.scratchDir); // allow rules: the scratch folder goes with it
     return { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
   }
 
@@ -1602,6 +1681,7 @@ export class Studio {
       });
       return [200, connection.public()];
     }
+    if (name.startsWith('allow-')) return this.#allowCall(name, body); // allow rules: page-session routes only (web/live_routes.ts)
     if (name === 'agent-options') return [200, await this.agentOptionsFor(body)]; // POST /api/live/agent-options (web/live_routes.ts)
     if (name === 'discover') return [200, await this.listAgentSessions(need(body, 'provider'), body.cwd ?? null, body.cursor ?? null)];
     if (name === 'forget') return [200, { ok: true, forgotten: this.forgetRecovered(body.provider, body.sessionId) }];
