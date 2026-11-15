@@ -522,6 +522,7 @@
       connected: !!live,
       issue: !!live && (o.issue !== undefined ? o.issue : !!(host && host.issueFor && host.issueFor(c))),
       recovered: !!(c && c.recovered),
+      reconnectError: c && typeof c.reconnectError === 'string' ? c.reconnectError : undefined, // the reopen after a restart gave up
       reconnecting: !!((c && c.recovered && c.recovered.reconnecting) || (live && live.reconnecting)),
       agentList: !!(c && c.source === 'agent'),
       verdict: hint && hint.verdict,

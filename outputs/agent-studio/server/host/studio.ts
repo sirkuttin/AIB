@@ -62,7 +62,7 @@ import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import type { WslSpawn } from '../acp/connection.ts';
 import { refOf } from '../platform/location.ts';
-import { isAibInternalLabel } from '../keeper/link.ts';
+import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
 import {
   distroName,
   hostWhenReady,
@@ -605,6 +605,7 @@ export class Studio {
   async reconnectOne(item: [string, string, string], tries: number, retryDelay: number): Promise<void> {
     const [provider, sessionId, cwd] = item;
     const label = `${provider} ${sessionId} in ${cwd}`;
+    let last = '';
     try {
       for (let attempt = 1; attempt <= tries; attempt++) {
         if (this.reconnectStop.isSet()) return;
@@ -617,11 +618,14 @@ export class Studio {
             console.error(`Auto-reconnect: skipped ${label}: ${error.message}`);
             return;
           }
-          log.warning('Auto-reconnect of %s failed (try %s of %s): %s', label, attempt, tries, errorText(error));
-          console.error(`Auto-reconnect: ${label} failed (try ${attempt} of ${tries}): ${errorText(error)}`);
+          last = errorText(error);
+          log.warning('Auto-reconnect of %s failed (try %s of %s): %s', label, attempt, tries, last);
+          console.error(`Auto-reconnect: ${label} failed (try ${attempt} of ${tries}): ${last}`);
           if (attempt < tries && await this.reconnectStop.wait(retryDelay * 1000)) return;
         }
       }
+      // The chat says why it is not running (liveList reconnectFailed), so it never just sits there: Continue tries again.
+      this.reconnectFailures.set(pairKey(provider, sessionId), { provider, sessionId, cwd, error: last.slice(0, 500), at: Date.now() / 1000 });
       if (this.store!.forgetConversation(provider, sessionId)) {
         console.error(`Auto-reconnect: gave up on ${label}; it stays Not running`);
       }
@@ -632,7 +636,17 @@ export class Studio {
 
   forgetRecovered(provider: unknown, sessionId: unknown): boolean {
     if (!isStr(provider) || !isStr(sessionId)) throw new ValueError('Invalid conversation');
-    return !!(this.store && this.store.forgetConversation(provider, sessionId));
+    const failed = this.reconnectFailures.delete(pairKey(provider, sessionId));
+    return !!(this.store && this.store.forgetConversation(provider, sessionId)) || failed;
+  }
+
+  /** Chats the automatic reconnect gave up on in this process, with the last reason (until they run again or are forgotten). */
+  readonly reconnectFailures = new Map<string, { provider: string; sessionId: string; cwd: string; error: string; at: number }>();
+
+  /** reconnectFailures without the chats that run again (a Continue, a take-over). */
+  reconnectFailed(): Json[] {
+    const openNow = new Set([...this.connections.values()].filter((c) => !c.closed).map((c) => pairKey(c.provider, c.sessionId)));
+    return [...this.reconnectFailures.entries()].filter(([key]) => !openNow.has(key)).map(([, failure]) => ({ ...failure }));
   }
 
   /**
@@ -1053,6 +1067,8 @@ export class Studio {
       if (!stat.isDir) throw new ValueError('Choose an existing workspace folder');
     }
     const [command, env] = launch ? [launch.command, launch.extra] : await this.agentLaunch(provider, !resume);
+    // its agent may still run in the distro's keeper (a take-over at start that failed or never asked): taken over, never a second one
+    if (launch && resume) await this.#wslTakeOverFirst(wsl!.distro);
     for (const connection of this.connections.values()) {
       if (resume && connection.provider === provider && connection.sessionId === resume && !connection.closed) {
         if (!connection.ready) throw new OwnershipConflict('This conversation is already opening in AIB. Wait for it to finish.');
@@ -1261,12 +1277,40 @@ export class Studio {
    * the previous AIB stopped). Only those are asked, so a start never boots a distro no chat of AIB ran in.
    */
   #wslDistrosToAdopt(): string[] {
-    const out = new Set<string>();
+    const out = new Set<string>(this.#heldDistros); // a live keep-alive in the Windows keeper: that distro's keeper holds work
     for (const item of this.store ? [...this.store.conversations.values()] : []) {
       const loc = wslLoc(item.cwd);
       if (loc) out.add(loc.distro);
     }
     return [...out];
+  }
+
+  /**
+   * The distros whose keep-alive (wsl-hold) the Windows keeper still runs (seen during its take-over): their Linux keeper may hold
+   * chats even when the recovery list lost them (an AIB without WSL support, or an auto-reconnect that gave up, forgot them).
+   */
+  #heldDistros = new Set<string>();
+
+  /** The distros whose Linux keeper this process has asked (taken over or found nothing to take over). */
+  #wslAsked = new Set<string>();
+  #wslAsking = new Map<string, Promise<number>>();
+
+  /**
+   * Before a WSL chat is continued: if this process has not yet asked its distro's keeper (the take-over at start failed or never
+   * asked), ask now, so an agent still running there is taken over instead of a second one started for the same session.
+   */
+  async #wslTakeOverFirst(distro: string): Promise<void> {
+    if (this.#adopting && !this.#adoptDone) await this.#adopting; // the take-over at start first
+    if (this.#wslAsked.has(distro)) return;
+    let run = this.#wslAsking.get(distro);
+    if (!run) {
+      run = this.adoptWslKeeper(distro).catch((error) => {
+        log.warning('keeper: taking WSL chats over from %s failed: %s', distro, errorText(error));
+        return 0;
+      }).finally(() => this.#wslAsking.delete(distro));
+      this.#wslAsking.set(distro, run);
+    }
+    await run;
   }
 
   /**
@@ -1300,7 +1344,10 @@ export class Studio {
       }
       return 0;
     }
-    if (!client) return 0;
+    if (!client) {
+      if (distro) this.#wslAsked.add(distro); // no Linux keeper runs: nothing of it to take over
+      return 0;
+    }
     const missing = missingFeatures(client.features);
     if (missing.length) {
       // The same rule as Install now's (release.json keeper.needs): a keeper without what this AIB needs is not taken over, and
@@ -1313,11 +1360,16 @@ export class Studio {
     if (!distro) noteKeeperTakeoverProblem('');
     let adopted = 0;
     const listed = await client.list();
+    if (distro) this.#wslAsked.add(distro);
     for (const info of listed) {
       try {
         if (info.kind !== 'pipe') continue;
         if (info.channel.startsWith(CLIENT_TERMINAL_PREFIX)) continue; // an agent's client terminal: its chat takes it over
-        if (isAibInternalLabel(info.label)) continue; // AIB's own WSL hold or helper: never a chat, never stopped as an orphan
+        if (isAibInternalLabel(info.label)) { // AIB's own WSL hold or helper: never a chat, never stopped as an orphan
+          const held = !distro && info.live ? heldDistro(info.label) : '';
+          if (held) this.#heldDistros.add(held);
+          continue;
+        }
         if (!info.live) {
           if (info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
           continue;
@@ -1669,6 +1721,7 @@ export class Studio {
       connections: listed,
       autoReconnect: !!(this.store && this.autoReconnect),
       recovered: this.recovered(),
+      reconnectFailed: this.reconnectFailed(),
       recoveryWarning: this.store ? this.store.warning : '',
       instanceId: this.instanceId,
       allowRulesTampered: this.allow ? this.allow.tampered() : false, // the page's "Allow rules are off" banner

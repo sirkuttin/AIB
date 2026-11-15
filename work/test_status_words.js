@@ -158,3 +158,13 @@ test('helpers or a background command still running after the reply: Working (·
   assert.equal(W.statusOf({ connected: true, yourTurn: true, helpers: 0 }).label, 'Your turn');
   assert.equal(W.statusOf({ connected: true, needs: 1, helpers: 2 }).label, 'Needs you', 'a request still wins');
 });
+
+test('a chat the reopen after a restart gave up on says so, with the reason in the tooltip (still Not running, still Continue)', () => {
+  const r = s({ recovered: false, reconnectError: 'Ubuntu stopped. Reconnect' });
+  assert.deepEqual([r.kind, r.label, r.tone], ['not-running', 'Not running · could not reopen', 'off']);
+  assert.ok(r.title.includes('could not reopen it after the restart: Ubuntu stopped. Reconnect'), r.title);
+  assert.ok(r.title.includes('Send a message to try again'), r.title);
+  assert.ok(s({ reconnectError: '' }).title.startsWith('AIB could not reopen it after the restart.'));
+  assert.equal(s({ connected: true, reconnectError: 'x' }).label, 'Idle', 'a running chat is not "could not reopen"');
+  assert.equal(s({}).label, 'Not running', 'no reason, no change');
+});
