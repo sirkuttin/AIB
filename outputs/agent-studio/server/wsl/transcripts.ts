@@ -22,6 +22,23 @@ export function wslSessionKey(distro: string, provider: string, key: string): st
   return `wsl.${distro.toLowerCase()}.${provider}/${key}`;
 }
 
+/** `provider:sessionId` -> the session's folder (a ref), from the last listing: how a saved WSL chat finds its project for the Files tab. */
+const cwdBySession = new Map<string, string>();
+
+function rememberCwd(provider: string, item: Dict, cwd: string): void {
+  const last = String(item.key ?? '').replace(/\.jsonl$/, '').split('/').pop() ?? '';
+  for (const id of new Set([String(item.sessionId ?? ''), last, last.slice(last.lastIndexOf('_') + 1)])) {
+    if (id) cwdBySession.set(`${provider}:${id}`, cwd);
+  }
+}
+
+/** The folder (a ref) a saved WSL chat ran in, or '' when no listed session has that id. Lists the ready distros once when it is not known yet. */
+export async function wslSessionCwd(provider: string, sessionId: string): Promise<string> {
+  const id = `${provider}:${sessionId}`;
+  if (!cwdBySession.has(id)) await wslSavedSessions();
+  return cwdBySession.get(id) ?? '';
+}
+
 /** One distro's saved sessions, their folders as refs; [] when the helper cannot list them. */
 export async function distroSessions(host: WslHost, distro: string, projects: ReadonlySet<string> | null = null): Promise<Dict[]> {
   const out: Dict[] = [];
@@ -42,6 +59,7 @@ export async function distroSessions(host: WslHost, distro: string, projects: Re
     for (const item of listed) {
       const cwd = typeof item.cwd === 'string' && item.cwd.startsWith('/') ? refOf({ kind: 'wsl', distro, linuxPath: item.cwd }) : '';
       if (!cwd || (projects && !projects.has(cwd))) continue;
+      rememberCwd(provider, item, cwd);
       out.push({
         ...item,
         cwd,

@@ -8,6 +8,7 @@ import * as changes from './changes.ts';
 import * as worktrees from './worktrees.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { notReady, wslHost, wslLoc } from '../wsl/access.ts';
+import { parseWslSessionKey, wslSessionCwd } from '../wsl/transcripts.ts';
 
 /** Name of the checked-out branch of the repository holding cwd, read from HEAD (no subprocess); '' when unknown. Detached: short id. */
 export function repoBranch(cwd: unknown): string {
@@ -105,6 +106,13 @@ export async function changesFolder(studio: ChatStudio, ident: unknown): Promise
     const at = ident.indexOf(':');
     cwd = lookup(ident.slice(0, at), ident.slice(at + 1)) || '';
   }
+  if (!cwd && /^(claude|codex):/.test(ident)) {
+    // A saved chat of a WSL project: its transcript is inside the distro, so the Windows lookup above finds nothing
+    const at = ident.indexOf(':');
+    cwd = await wslSessionCwd(ident.slice(0, at), ident.slice(at + 1)).catch(() => '');
+  }
+  const keyed = !cwd ? parseWslSessionKey(ident) : null; // the same chat named by its transcript key (wsl.<distro>.<provider>/<key>)
+  if (keyed) cwd = await wslSessionCwd(keyed.provider, keyed.key.replace(/\.jsonl$/, '').split('/').pop() ?? '').catch(() => '');
   if (!cwd) return null;
   if (wslLoc(cwd)) return cwd; // a WSL project's ref: its distro's helper checks the folder (Windows never stats it)
   if (!osp.isdir(cwd)) return null;
