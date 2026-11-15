@@ -319,7 +319,7 @@ function matchPart(
 }
 
 const RISKY_FLAG =
-  /shell|node-options|prefix|require|import|loader|exec|config|registry|userconfig|globalconfig|cwd|dir|pack|extcmd|template|tool|hook|script|plugin|preload|eval|^-x$/i;
+  /shell|node-options|prefix|require|import|loader|exec|config|registry|userconfig|globalconfig|cwd|dir|pack|extcmd|template|tool|hook|script|plugin|preload|eval|pre|program|command|cmd|editor|pager|basetemp|use-|^-x$/i;
 
 /** '' when a command rule covers this part. */
 export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, ctx: MatchContext): string {
@@ -353,10 +353,14 @@ export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, 
       if (!m) return `flag ${a}`;
       if (RISKY_FLAG.test(m[1])) return `flag ${m[1]}`;
       const value = m[2] ?? (/^-[A-Za-z]./.test(a) && !a.startsWith('--') ? a.slice(2) : '');
-      if (value && /[\\/:~]/.test(value)) {
+      // a value that could name a folder or file is path-checked, `.` and `..` included (re-review R2)
+      if (value && (/[\\/:~]/.test(value) || /^\.{1,2}$/.test(value) || /(^|[\\/])\.\.([\\/]|$)/.test(value))) {
         const v = checkPath(value, pctx.cwd, pctx.root);
         if (!v.ok) return `${a}: ${v.reason}`;
       }
+      // a rule that isn't a known project script: a joined value (--x=v, -X:v) may only be a number or an existing path, never a
+      // command name (re-review R1: rg --pre=calc, sort --compress-program=calc)
+      if (m[2] !== undefined && !script && !/^\d+$/.test(m[2]) && !existingPath(m[2], pctx.cwd)) return `flag ${a}`;
       if ((MESSAGE_FLAGS[words.join(' ')] ?? []).includes(m[1]) && m[2] === undefined && i + 1 < part.words.length) i++; // its text
       continue;
     }
@@ -424,6 +428,16 @@ const CODE_ARGS = new Set([
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 /** Flags whose next word is free text, per rule (git commit -m "message"). */
 const MESSAGE_FLAGS: Record<string, string[]> = { 'git commit': ['-m', '--message'] };
+
+function existingPath(word: string, cwd: string): boolean {
+  if (!word) return false;
+  try {
+    Deno.statSync(resolve(cwd, fromGitBash(word)));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** A word counts as a path only when it exists, or its folder exists and it looks like a file name (review H3). */
 function looksLikePath(word: string, cwd: string): boolean {

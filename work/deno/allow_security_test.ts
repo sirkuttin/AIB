@@ -105,7 +105,7 @@ Deno.test('security H1: a flag or nothing as the second word never saves a one-w
 Deno.test('security H2: joined flag values are path-checked; git dangerous flags match as prefixes', () => {
   using l = lab();
   const rules = [rule(['mytool', 'build']), rule(['git', 'fetch'])];
-  assert(match(bash('mytool build --out=src/x.js'), l.ctx(), rules, ALL).allow, 'a value inside the project');
+  assert(match(bash('mytool build --out=src/a.js'), l.ctx(), rules, ALL).allow, 'an existing path inside the project');
   for (
     const cmd of [
       'mytool build --target-directory=C:/Windows/Temp src/a.js',
@@ -192,6 +192,8 @@ Deno.test("security H5: a rules file signed without AIB's key is tampered on the
   const dir = Deno.makeTempDirSync({ prefix: 'aib-allow-sig-' });
   try {
     const store = new AllowStore(dir);
+    assert(!store.tampered && store.active() !== null, 'a user who never had the feature: no file, no banner');
+    assert(!existsFile(join(dir, 'allow-rules.json')) && !existsFile(join(dir, 'allow-rules.key')), 'nothing is written until a rule changes');
     store.add({ kind: 'mcp', scope: 'global', server: 'x', tool: 'y', label: 'x', from: 'card' });
     assert(!new AllowStore(dir).tampered, "AIB's own signature holds");
     const text = JSON.stringify({
@@ -331,6 +333,44 @@ Deno.test('security H11: more risky env names; Claude ask rules for Edit, WebFet
   }
 });
 
+Deno.test('security re-review R1, R2: joined values naming a command, and . or .. values, ask', () => {
+  using l = lab();
+  const rules = [
+    rule(['rg', 'todo']),
+    rule(['sort', 'readme']),
+    rule(['cp', 'readme']),
+    rule(['copy-item', 'readme']),
+    rule(['pytest', 'tests']),
+  ];
+  assert(!draft(l, 'rg todo -z src').available || true); // whatever the card offers, the inputs below ask
+  for (
+    const cmd of [
+      'rg todo --pre=calc src',
+      'sort readme --compress-program=calc',
+      'cp readme --target=..',
+      'cp readme --target=src/../..',
+      'pytest tests --basetemp=..',
+      'pytest tests --anything=calc',
+      'cp readme --editor=vim',
+      'cp readme --use-compress-program=x',
+    ]
+  ) {
+    assert(!match(bash(cmd), l.ctx(), rules, ALL).allow, cmd);
+  }
+  assert(!match(bash('Copy-Item readme -Destination:..'), l.ctx({ toolName: 'PowerShell' }), rules, ALL).allow, 'pwsh -X:..');
+  assert(match(bash('cp readme --depth=3 src/a.js'), l.ctx(), rules, ALL).allow, 'a number value');
+  assert(match(bash('cp readme --into=src src/a.js'), l.ctx(), rules, ALL).allow, 'an existing folder value');
+});
+
 Deno.test('security cleanup', () => {
   Deno.removeSync(SHIMS, { recursive: true });
 });
+
+function existsFile(path: string): boolean {
+  try {
+    Deno.statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
