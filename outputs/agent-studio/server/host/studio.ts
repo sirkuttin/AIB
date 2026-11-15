@@ -1327,7 +1327,10 @@ export class Studio {
           continue;
         }
         if (this.connections.has(note.id)) continue;
-        if (await this.#rebuildChat(info, note, keeper, distro)) adopted++;
+        if (await this.#rebuildChat(info, note, keeper, distro)) {
+          const rebuilt = this.connections.get(note.id);
+          if (!rebuilt || !await this.#dropDuplicate(rebuilt)) adopted++;
+        }
       } catch (error) {
         log.exception(error, 'keeper: taking over channel failed');
       }
@@ -1373,6 +1376,27 @@ export class Studio {
         log.warning('keeper: could not remove client terminal %s: %s', info.channel, errorText(error));
       }
     }
+  }
+
+  /**
+   * A keeper can hold two agents for one session (an earlier AIB that could not take its chat over started another one for it).
+   * Both would be listed as the same chat twice. Keep the one that is working, else the first; the other agent is stopped (the
+   * session's own transcript is shared, so nothing is lost). True when `c` was the one dropped.
+   */
+  async #dropDuplicate(c: Connection): Promise<boolean> {
+    if (!c.sessionId || c.closed) return false;
+    const other = [...this.connections.values()].find((o) =>
+      o !== c && !o.closed && o.provider === c.provider && o.sessionId === c.sessionId
+    );
+    if (!other) return false;
+    const loser = c.busy && !other.busy ? other : c;
+    announce('studio', 'keeper: %s %s was running twice; stopping the %s one (%s)', c.provider, c.sessionId, loser === c ? 'second' : 'first', loser.id);
+    try {
+      await loser.close();
+    } catch (error) {
+      log.warning('keeper: could not stop the duplicate chat %s: %s', loser.id, errorText(error));
+    }
+    return loser === c;
   }
 
   async #rebuildChat(info: ChannelInfo, note: Json, keeper: KeeperLink, distro: string | null): Promise<boolean> {
