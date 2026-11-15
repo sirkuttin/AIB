@@ -196,7 +196,8 @@ export function studioRoutes(): Map<string, StudioHandler> {
       setSwarmEnabled(ctx.stateDir, swarm.enabled);
       rest = others;
     }
-    if (!isDict(rest) || Object.keys(rest).length) await ctx.settings.update(rest);
+    // only a body that held nothing but swarm skips the Settings patch; anything else (an empty body too) goes through it as before
+    if (!(rest !== body && isDict(rest) && !Object.keys(rest).length)) await ctx.settings.update(rest);
     ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
     return [200, { ...(await settingsView(studioOf(ctx))), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
   });
