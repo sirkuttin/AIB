@@ -179,6 +179,8 @@
       }
     };
     const write = (k, v) => {
+      // a pop-out (multi-window: one chat or doc in a small window) reads the text size and never writes it (store-merge.js)
+      if (win.AibStore && !win.AibStore.layoutWritable()) return;
       try {
         const s = store();
         if (s) s.setItem(k, v);
@@ -363,6 +365,10 @@
       const b = bucketKey(win.innerWidth, helper);
       if (b === bucket) return;
       bucket = b;
+      reread('bucket');
+    }
+    /* The text size is one setting for every AIB window: a change made in another window shows here at once (its storage event). */
+    function reread(why) {
       const next = sanitize(readBucket());
       const prev = state;
       if (next.chat === prev.chat && next.ui === prev.ui && next.font === prev.font && next.spacing === prev.spacing)
@@ -371,7 +377,7 @@
       state = next;
       render();
       anchorsAfter(anchors);
-      emit('bucket');
+      emit(why);
     }
     /* Popups are placed with viewport coordinates, but a zoomed popup multiplies left/top too: move it back inside the window. */
     function fitPopup(node) {
@@ -425,6 +431,9 @@
     doc.addEventListener('keydown', onKeydown, true);
     doc.addEventListener('wheel', onWheel, { capture: true, passive: false });
     win.addEventListener('resize', onResize);
+    win.addEventListener('storage', (e) => {
+      if (e && (e.key === keyNow() || e.key === null)) reread('window');
+    });
     render();
     if (state.chat !== CHAT.def || state.ui !== UI.def) win.setTimeout(() => emit('init'), 0);
     return ctl;

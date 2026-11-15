@@ -186,10 +186,17 @@
       }
     };
     const write = (k, v) => {
+      // a pop-out (one chat or doc in a small window) writes no layout: its small width would land on a real window's layout
+      if (win.AibStore && !win.AibStore.layoutWritable()) return;
       try {
         store() && store().setItem(k, v);
       } catch (e) {}
     };
+    /* Multi-window: each window keeps its own column widths, right panel width and chat-list switch (store-merge.js winKey:
+       the main window the plain key, window n key + ':w<n>', on its first run copied from the main window). The right panel
+       width changes only when you drag it in this window, never because another window changed something. */
+    const wk = (k) => (win.AibStore ? win.AibStore.winKey(k) : k);
+    const layoutKey = (width) => wk(storageKey(width));
     const $ = (id) => doc.getElementById(id);
     const reduced = () => {
       try {
@@ -199,8 +206,8 @@
       }
     };
     let bucket = bucketKey(win.innerWidth),
-      sizes = sanitize(read(storageKey(win.innerWidth)));
-    let sideHidden = read(SIDE_KEY) === '1';
+      sizes = sanitize(read(layoutKey(win.innerWidth)));
+    let sideHidden = read(wk(SIDE_KEY)) === '1';
     let eff = { side: 0, activity: 0 };
     const wideSide = () => win.innerWidth > NARROW,
       wideAct = () => win.innerWidth >= NARROW;
@@ -223,12 +230,12 @@
         return false;
       }
     };
-    const save = () => write(storageKey(win.innerWidth), JSON.stringify(sizes));
+    const save = () => write(layoutKey(win.innerWidth), JSON.stringify(sizes));
     const setSideHidden = (v) => {
       v = !!v;
       if (v === sideHidden) return;
       sideHidden = v;
-      write(SIDE_KEY, v ? '1' : '0');
+      write(wk(SIDE_KEY), v ? '1' : '0');
     };
     const setActHidden = (v) => {
       v = !!v;
@@ -590,7 +597,7 @@
       let changed = false;
       if (b !== bucket) {
         bucket = b;
-        sizes = sanitize(read(storageKey(win.innerWidth)));
+        sizes = sanitize(read(layoutKey(win.innerWidth)));
         const p = $('prompt');
         if (p && p.style) p.style.height = '';
         changed = true;

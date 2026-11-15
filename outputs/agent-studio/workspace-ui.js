@@ -53,14 +53,65 @@
   let blankNext = false; // the next new-chat view is "add a project": no project folder is pre-filled
   let nextPk = ''; // the next new-chat view starts in this project (the "+" on a project heading)
 
+  /* Multi-window (store-merge.js): the workspace blob splits into entries, tabs and last chat per project ('t:'/'l:' + project)
+     plus the active project and the recent one. A write reads the stored blob again and changes only the entries this window
+     changed and may write (a project window only its own project; the active project only the main window), so another window's
+     open tabs are never written over. The saved format is unchanged. */
+  const AS = () => root.AibStore || null;
+  let wsStore = null;
+  const wsEntries = (raw) => {
+    const w = St().sanitize(raw),
+      o = { _active: w.active, _recent: w.recent };
+    for (const pk of Object.keys(w.tabs)) o['t:' + pk] = w.tabs[pk];
+    for (const pk of Object.keys(w.last)) o['l:' + pk] = w.last[pk];
+    return o;
+  };
+  const wsBuild = (o) => {
+    const w = St().empty();
+    if (typeof o._active === 'string') w.active = o._active;
+    if (typeof o._recent === 'string') w.recent = o._recent;
+    for (const k of Object.keys(o)) {
+      if (k.startsWith('t:')) w.tabs[k.slice(2)] = o[k];
+      else if (k.startsWith('l:')) w.last[k.slice(2)] = o[k];
+    }
+    return w;
+  };
+  function wsMerged() {
+    if (!wsStore && AS()) {
+      wsStore = AS().map(STORE, {
+        entries: wsEntries,
+        build: wsBuild,
+        writable: (k) => (k[0] === '_' ? AS().ctx.kind === 'main' && AS().layoutWritable() : AS().mayWriteProject(k.slice(2))),
+      });
+      // another window changed its projects' tabs: take them; this window's active project and the strip it shows stay its own
+      wsStore.onChange((obj) => {
+        if (!ws) return;
+        const mine = activeProjectKey();
+        const next = wsBuild(obj);
+        next.active = ws.active;
+        next.recent = ws.recent;
+        if (ws.tabs[mine]) next.tabs[mine] = ws.tabs[mine];
+        else delete next.tabs[mine];
+        if (ws.last[mine]) next.last[mine] = ws.last[mine];
+        else delete next.last[mine];
+        ws = St().sanitize(next);
+        wsStore.adopt(wsEntries(ws));
+      });
+    }
+    return wsStore;
+  }
   function read() {
     try {
-      return St().sanitize(JSON.parse(root.localStorage.getItem(STORE)));
+      return wsMerged() ? St().sanitize(wsBuild(wsMerged().load())) : St().sanitize(JSON.parse(root.localStorage.getItem(STORE)));
     } catch (e) {
       return St().empty();
     }
   }
   function write() {
+    if (wsMerged()) {
+      wsMerged().write(wsEntries(ws));
+      return;
+    }
     try {
       root.localStorage.setItem(STORE, JSON.stringify(ws));
     } catch (e) {
@@ -263,14 +314,30 @@
   // or the server lists it as added.
   const PENDING_KEY = 'studio-pending-projects-v1';
   let pending = {};
+  /* Multi-window: one entry per pending project; a write changes only the projects this window added or dropped. */
+  let pendingStore = null;
+  function pendingMerged() {
+    if (!pendingStore && AS()) {
+      pendingStore = AS().map(PENDING_KEY, { entries: (raw) => St().sanitizePending(raw) });
+      pendingStore.onChange((obj) => {
+        pending = St().sanitizePending(obj);
+        pendingStore.adopt(pending);
+      });
+    }
+    return pendingStore;
+  }
   function readPending() {
     try {
-      return St().sanitizePending(JSON.parse(root.localStorage.getItem(PENDING_KEY)));
+      return St().sanitizePending(pendingMerged() ? pendingMerged().load() : JSON.parse(root.localStorage.getItem(PENDING_KEY)));
     } catch (e) {
       return {};
     }
   }
   function writePending() {
+    if (pendingMerged()) {
+      pendingMerged().write(pending);
+      return;
+    }
     try {
       root.localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
     } catch (e) {
@@ -551,9 +618,21 @@
   /* The chat you are looking at never counts toward the inbox, and a "your turn" that arrived while you were looking at it
      stays seen after you switch away (its card keeps the Your turn mark). Remembered per browser. */
   const SEEN_TURNS_KEY = 'studio-seen-turns';
+  /* Multi-window: a seen turn is one entry; marking one reads the stored list again and adds only it (the newest 400 kept), so
+     a turn seen in another window stays seen. */
+  let seenStore = null;
+  const seenMerged = () => {
+    if (!seenStore && AS()) {
+      seenStore = AS().map(SEEN_TURNS_KEY, { cap: 400 });
+      seenStore.onChange((obj) => {
+        for (const k of Object.keys(obj)) if ((seenTurns[k] || 0) < obj[k]) seenTurns[k] = obj[k];
+      });
+    }
+    return seenStore;
+  };
   let seenTurns = (() => {
     try {
-      const v = JSON.parse(root.localStorage.getItem(SEEN_TURNS_KEY) || '{}');
+      const v = seenMerged() ? seenMerged().load() : JSON.parse(root.localStorage.getItem(SEEN_TURNS_KEY) || '{}');
       return v && typeof v === 'object' ? v : {};
     } catch (e) {
       return {};
@@ -568,6 +647,10 @@
     seenTurns[item.key] = item.yourTurnAt;
     const keys = Object.keys(seenTurns);
     if (keys.length > 400) for (const k of keys.slice(0, keys.length - 400)) delete seenTurns[k];
+    if (seenMerged()) {
+      seenMerged().set(item.key, item.yourTurnAt);
+      return;
+    }
     try {
       root.localStorage.setItem(SEEN_TURNS_KEY, JSON.stringify(seenTurns));
     } catch (e) {

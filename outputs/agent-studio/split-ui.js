@@ -42,9 +42,40 @@
   const active = () => !!L && !narrow();
   const selectedKey = () => (host ? host.selectedKey() : '');
 
+  /* Multi-window (store-merge.js): layouts are saved per project ("all" for All chats); a write reads the stored value again and
+     changes only this window's layout key, so another window's split panes are never written over. A pop-out saves none. */
+  let merged = null;
+  function mergedStore() {
+    const AS = root.AibStore;
+    if (!merged && AS) {
+      merged = AS.map(T().STORE, {
+        entries: (raw) => T().sanitizeStore(raw).layouts,
+        build: (layouts) => ({ v: 1, layouts }),
+        writable: (k) => AS.mayWriteProject(k),
+      });
+      // another window changed its layouts: take them (the layout on screen here stays this window's)
+      merged.onChange((layouts) => {
+        const mine = K && store && store.layouts ? store.layouts[K] : undefined;
+        const next = { v: 1, layouts: { ...layouts } };
+        if (mine) next.layouts[K] = mine;
+        else delete next.layouts[K];
+        store = next;
+        merged.adopt(store.layouts);
+      });
+    }
+    return merged;
+  }
   function persist() {
     store = T().putLayout(store, K, L);
-    T().write(root.localStorage, store);
+    const m = mergedStore();
+    if (!m) {
+      T().write(root.localStorage, store);
+      return;
+    }
+    const mine = store.layouts[K];
+    const all = mine ? m.set(K, mine) : m.del(K);
+    store = { v: 1, layouts: { ...all, ...(mine ? { [K]: mine } : {}) } };
+    if (!mine) delete store.layouts[K];
   }
   function setLayout(next) {
     L = next && T().countGroups(next) >= 2 ? next : null;
@@ -860,7 +891,7 @@
     liveNodes = Array.from(main.children).filter(
       (n) => n !== strip0 && n.id !== 'subagentsPane' && n.id !== 'splitStage',
     );
-    store = T().read(root.localStorage);
+    store = mergedStore() ? { v: 1, layouts: mergedStore().load() } : T().read(root.localStorage);
     wasNarrow = narrow();
     d.addEventListener('pointerdown', onPointerDown, true);
     d.addEventListener('pointermove', onMove);

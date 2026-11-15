@@ -115,23 +115,49 @@
       }
     },
   };
-  function saveTabs() {
+  /* Multi-window (store-merge.js): file tabs and open folders are saved per project, and a window writes only the projects it may
+     (a project window its own, a pop-out none); another window's projects are taken from the stored value, never written over. */
+  const AS = () => root.AibStore || null;
+  let tabsStore = null;
+  const tabsMerged = () => {
+    if (!tabsStore && AS()) {
+      tabsStore = AS().map(TABS_KEY, { writable: (pk) => AS().mayWriteProject(pk) });
+      tabsStore.onChange((obj, changed) => {
+        // another window changed its projects' tabs: take them (this window's own project on screen keeps what it shows)
+        for (const pk of changed) {
+          if (pk === projectKey()) continue;
+          const t = obj[pk];
+          if (t && Array.isArray(t.tabs)) tabsByProject[pk] = { tabs: t.tabs.filter(validTab), active: '' };
+          else delete tabsByProject[pk];
+        }
+        tabsStore.adopt(savedTabs());
+      });
+    }
+    return tabsStore;
+  };
+  const validTab = (x) => x && typeof x.path === 'string' && x.scope && typeof x.scope.id === 'string';
+  function savedTabs() {
     const out = {};
     for (const pk of Object.keys(tabsByProject)) {
       const t = tabsByProject[pk];
       if (t && t.tabs.length) out[pk] = { tabs: t.tabs.filter((x) => !x.preview && x.kind !== 'notes').slice(0, 40), active: '' };
     }
-    store.set(TABS_KEY, JSON.stringify(out));
+    return out;
+  }
+  function saveTabs() {
+    const out = savedTabs();
+    if (tabsMerged()) tabsMerged().write(out);
+    else store.set(TABS_KEY, JSON.stringify(out));
   }
   function loadTabs() {
     try {
-      const raw = JSON.parse(store.get(TABS_KEY, '{}'));
+      const raw = tabsMerged() ? tabsMerged().load() : JSON.parse(store.get(TABS_KEY, '{}'));
       if (raw && typeof raw === 'object') {
         for (const pk of Object.keys(raw)) {
           const t = raw[pk];
           if (t && Array.isArray(t.tabs))
             tabsByProject[pk] = {
-              tabs: t.tabs.filter((x) => x && typeof x.path === 'string' && x.scope && typeof x.scope.id === 'string'),
+              tabs: t.tabs.filter(validTab),
               active: '',
             };
         }
@@ -192,6 +218,7 @@
   // Open folders are remembered per project and per tree: the chat's own copy is one tree (its chat id), the main folder another.
   const OPEN_KEY = 'aib-files-open-v1',
     OPEN_CAP = 200;
+  let openStore = null;
   function openKey(scope) {
     return projectKey() + '\n' + (scope.root === 'main' ? 'main' : F().scopeId(scope));
   }
@@ -213,6 +240,15 @@
     }
     save() {
       if (!this.ready) return;
+      const pk = this.key.split('\n')[0];
+      if (AS()) {
+        // read again and change only this tree's entry (store-merge.js); only for a project this window may write
+        if (!AS().mayWriteProject(pk)) return;
+        if (!openStore) openStore = AS().map(OPEN_KEY, { writable: (k) => AS().mayWriteProject(k.split('\n')[0]) });
+        if (this.size) openStore.set(this.key, [...this]);
+        else openStore.del(this.key);
+        return;
+      }
       const all = readOpen();
       if (this.size) all[this.key] = [...this];
       else delete all[this.key];
@@ -637,7 +673,8 @@
   }
   function setMode(next, focus) {
     applyMode(next);
-    store.set(MODE_KEY, mode);
+    // the Chats | Files switch is per window (store-merge.js winKey); a pop-out writes none
+    if (!AS() || AS().layoutWritable()) store.set(AS() ? AS().winKey(MODE_KEY) : MODE_KEY, mode);
     paint();
     if (focus && els) {
       const target = mode === 'files' ? els.tree.querySelector('.fx-row[tabindex="0"]') || els.filter : els.chatsBtn;
@@ -2711,7 +2748,7 @@
     loadTabs();
     mount();
     const d = doc();
-    applyMode(store.get(MODE_KEY, 'chats'));
+    applyMode(store.get(AS() ? AS().winKey(MODE_KEY) : MODE_KEY, 'chats'));
     besideBox();
     d.addEventListener('keydown', onKey, true);
     if (root.addEventListener) root.addEventListener('resize', () => layoutBeside());
@@ -2799,6 +2836,8 @@
       newDoc = null;
       docViewEl = null;
       tabsByProject = {};
+      tabsStore = null;
+      openStore = null;
       beside = F().emptyTabs();
       for (const k of Object.keys(besideBy)) delete besideBy[k];
       for (const k of Object.keys(viewBy)) delete viewBy[k];

@@ -68,21 +68,43 @@
     renameTarget = null,
     connectionIssue = false,
     imageFeatureEnabled = false;
+  /* Unsent drafts per chat. Multi-window (store-merge.js, `merge` = AibStore): every save reads the stored drafts again and
+     changes only the chat being typed in, so a draft typed in another AIB window is never deleted; a pop-out writes only its own
+     chat's draft. Another window's drafts come in through its storage event. */
+  const draftsOf = (parsed) => {
+    const out = {};
+    if (
+      parsed &&
+      parsed.version === 1 &&
+      parsed.drafts &&
+      typeof parsed.drafts === 'object' &&
+      !Array.isArray(parsed.drafts)
+    ) {
+      for (const [id, value] of Object.entries(parsed.drafts)) if (typeof value === 'string') out[id] = value;
+    }
+    return out;
+  };
   class DraftStore {
-    constructor(storage, key = 'studio-drafts-v1') {
+    constructor(storage, key = 'studio-drafts-v1', merge = null) {
       this.storage = storage;
       this.key = key;
       this.data = {};
+      this.merged = null;
       try {
-        const parsed = JSON.parse(storage.getItem(key) || '{}');
-        if (
-          parsed.version === 1 &&
-          parsed.drafts &&
-          typeof parsed.drafts === 'object' &&
-          !Array.isArray(parsed.drafts)
-        ) {
-          for (const [id, value] of Object.entries(parsed.drafts)) if (typeof value === 'string') this.data[id] = value;
-        }
+        if (merge && merge.map) {
+          this.merged = merge.map(key, {
+            entries: draftsOf,
+            build: (drafts) => ({ version: 1, drafts }),
+            writable: (id) => merge.mayWriteChat(id),
+          });
+          this.data = this.merged.load();
+          this.merged.onChange((all, changed) => {
+            for (const id of changed) {
+              if (typeof all[id] === 'string' && all[id]) this.data[id] = all[id];
+              else delete this.data[id];
+            }
+          });
+        } else this.data = draftsOf(JSON.parse(storage.getItem(key) || '{}'));
       } catch {}
     }
     get(id) {
@@ -92,19 +114,28 @@
       if (typeof value !== 'string') throw Error('Draft must be text');
       if (value) this.data[id] = value;
       else delete this.data[id];
-      this.persist();
+      this.persist(id);
       return this;
     }
     delete(id) {
       delete this.data[id];
-      this.persist();
+      this.persist(id);
     }
-    persist() {
+    persist(id) {
+      if (this.merged && id !== undefined) {
+        if (this.data[id]) this.merged.set(id, this.data[id]);
+        else this.merged.del(id);
+        return;
+      }
+      if (this.merged) {
+        this.merged.write({ ...this.data });
+        return;
+      }
       this.storage.setItem(this.key, JSON.stringify({ version: 1, drafts: this.data }));
     }
   }
   const children = new Map(),
-    drafts = new DraftStore(localStorage);
+    drafts = new DraftStore(localStorage, 'studio-drafts-v1', window.AibStore);
   let commands = [],
     selectedCommand = null,
     showCommandHistory = false,
@@ -192,6 +223,7 @@
     ? window.ChatViews.viewStore(
         localStorage,
         () => window.AgentSettingsUI?.defaultView?.() || window.ChatViews.DEFAULT_VIEW,
+        window.AibStore,
       )
     : null;
   const viewOf = () => (viewStore ? viewStore.get(curKey()) : 'full');
@@ -319,7 +351,7 @@
   const PLACE_DRAW_MAX = 300;
   /* Your place in each chat survives a restart and a new build folder (the owner's Q7): kept under a localStorage key that
      view-prefs.js copies to AIB's data folder (studio-view.json). The newest 200 chats. */
-  window.ScrollController?.configure({ storage: localStorage, storageKey: 'studio-scroll-v1', max: 200 });
+  window.ScrollController?.configure({ storage: localStorage, storageKey: 'studio-scroll-v1', max: 200, merge: window.AibStore });
   /* Reading the main list (not following): the controller's state; on the old path its paused flag. */
   const mainReading = () => {
     const c = mainCtl();
