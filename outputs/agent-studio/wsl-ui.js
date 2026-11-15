@@ -146,17 +146,20 @@
     if (!host || !host.getJson) return Promise.reject(Error('Not ready'));
     return Promise.resolve(host.getJson('/api/live/wsl/dirs', { distro: key, path: path || '' }));
   }
-  /** The agents found in a distro: {agents: [{id, found, version?, note?, install?}]}; cached per distro for a minute. */
+  /**
+   * The agents found in a distro: {agents: [{id, found, version?, note?, install?, installable?, pinned?, managed?, update?, job?,
+   * installBlock?, nodeInstall?}]}; cached per distro for a minute. force: ask now, and let the distro look for Node.js again.
+   */
   const agentCache = new Map();
-  function agents(key, again) {
+  function agents(key, again, force) {
     const k = String(key).toLowerCase(),
       hit = agentCache.get(k);
-    if (hit && (hit.busy || Date.now() - hit.at < 60000)) return hit.value;
+    if (hit && (hit.busy || (!force && Date.now() - hit.at < 60000))) return hit.value;
     const rec = hit || { at: 0, busy: false, value: null };
     rec.busy = true;
     agentCache.set(k, rec);
     if (host && host.getJson)
-      Promise.resolve(host.getJson('/api/live/wsl/agents', { distro: k }))
+      Promise.resolve(host.getJson('/api/live/wsl/agents', force ? { distro: k, force: '1' } : { distro: k }))
         .then((r) => {
           rec.value = r && Array.isArray(r.agents) ? r : { agents: [] };
         })
@@ -172,6 +175,190 @@
   function agentIn(key, id, again) {
     const list = agents(key, again);
     return list ? list.agents.find((a) => a && a.id === id) || { id, found: false } : null;
+  }
+
+  // ---- AIB's own install of an agent in a distro ("Install in Ubuntu") ------------------------------------------------------
+  // The job runs in the distro (its helper), so it goes on while AIB or the page restarts. Here: the Install / Update button, a
+  // progress bar with Cancel, polling once a second while it runs, the failure line with Retry, and, while Node.js is missing in the
+  // distro, the line that says so with the command that installs it (Copy) and Check again. The same states as Settings' installs.
+  const jobs = new Map(); // "<key>\0<agent>" -> {state: running|failed|refused, stage, percent, message}
+  const jobTimers = new Map();
+  const painters = new Map(); // the one panel shown per agent: repaints when its job changes
+  const jobKey = (key, id) => String(key).toLowerCase() + '\0' + id;
+  const STAGES = {
+    preparing: 'Getting ready…',
+    downloading: 'Downloading and unpacking…',
+    verifying: 'Checking the install…',
+  };
+  function installJob(key, id) {
+    return jobs.get(jobKey(key, id)) || null;
+  }
+  function setJob(key, id, job) {
+    const k = jobKey(key, id);
+    if (job) jobs.set(k, job);
+    else jobs.delete(k);
+    const paint = painters.get(k);
+    if (paint) paint();
+  }
+  /** Look at the distro's agents again (an install finished, or Node.js may be there now). */
+  function forget(key) {
+    agentCache.delete(String(key).toLowerCase());
+  }
+  function pollJob(key, id, done) {
+    const k = jobKey(key, id);
+    if (jobTimers.has(k) || typeof root.setTimeout !== 'function') return;
+    jobTimers.set(
+      k,
+      root.setTimeout(() => {
+        jobTimers.delete(k);
+        if (!host || !host.getJson) return;
+        Promise.resolve(host.getJson('/api/live/wsl/agents/install', { distro: String(key).toLowerCase(), agent: id })).then(
+          (state) => applyJob(key, id, state, done),
+          () => pollJob(key, id, done), // AIB is restarting: the job goes on in the distro, so keep asking
+        );
+      }, 1000),
+    );
+  }
+  function applyJob(key, id, state, done) {
+    if (state && state.state === 'running') {
+      setJob(key, id, state);
+      pollJob(key, id, done);
+      return;
+    }
+    setJob(key, id, state && state.state === 'failed' ? state : null);
+    forget(key); // finished (or cancelled, or failed): the agent list says what is there now
+    if (done) done();
+  }
+  function startInstall(key, id, done) {
+    setJob(key, id, { state: 'running', stage: 'preparing', percent: 2 });
+    return post('wsl/agents/install', { distro: String(key).toLowerCase(), agent: id }).then(
+      (state) => applyJob(key, id, state, done),
+      (error) => {
+        const code = (error && error.code) || '';
+        // Node.js missing: the panel's Node.js line (from the agent list, looked at again) says it, with no Retry
+        if (/^node_|^npm_/.test(code)) {
+          setJob(key, id, null);
+          forget(key);
+          agents(key, done, true);
+          return;
+        }
+        setJob(key, id, { state: 'refused', message: (error && error.message) || 'The install could not be started.' });
+      },
+    );
+  }
+  function cancelInstall(key, id, done) {
+    return post('wsl/agents/install/cancel', { distro: String(key).toLowerCase(), agent: id }).then(
+      (state) => applyJob(key, id, state, done),
+      (error) => {
+        const job = installJob(key, id);
+        if (job) job.cancelError = (error && error.message) || 'The install could not be cancelled.';
+        setJob(key, id, job);
+      },
+    );
+  }
+  function copyButton(text) {
+    const copy = el('button', 'Copy', 'st-link');
+    copy.type = 'button';
+    copy.onclick = () =>
+      Promise.resolve(root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText(text)).then(
+        () => (copy.textContent = 'Copied'),
+        () => {},
+      );
+    return copy;
+  }
+  /**
+   * The install panel of one agent row (o: {key, id, agentName, row, done: repaint the new-chat panel, openShell?}). Only for a
+   * row the server marks installable that is missing, or AIB's own install that is older than the version AIB pins (row.update).
+   */
+  function installBox(o) {
+    const box = el('div', null, 'nc-wsl-install');
+    const k = jobKey(o.key, o.id),
+      name = distroName(o.key),
+      row = o.row || {};
+    if (!jobs.has(k) && row.job && (row.job.state === 'running' || row.job.state === 'failed')) jobs.set(k, row.job);
+    const paint = () => {
+      box.replaceChildren();
+      const job = installJob(o.key, o.id);
+      const verb = row.update ? 'Update' : 'Install';
+      if (job && job.state === 'running') {
+        if (!jobTimers.has(k)) pollJob(o.key, o.id, o.done);
+        const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
+        const line = el(
+          'p',
+          (row.update ? 'Updating ' : 'Installing ') + o.agentName + ' in ' + name + '… ' + (STAGES[job.stage] || ''),
+          'st-note',
+        );
+        line.setAttribute('role', 'status');
+        const bar = el('div', null, 'st-progress');
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-label', (row.update ? 'Updating ' : 'Installing ') + o.agentName + ' in ' + name);
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        bar.setAttribute('aria-valuenow', String(percent));
+        const fill = el('div', null, 'st-progress-bar');
+        fill.style.width = percent + '%';
+        bar.append(fill);
+        const actions = el('p', null, 'st-note');
+        const cancel = el('button', 'Cancel', 'st-link');
+        cancel.type = 'button';
+        cancel.title = 'Stop the install and remove what it downloaded so far';
+        cancel.onclick = () => {
+          cancel.disabled = true;
+          cancelInstall(o.key, o.id, o.done);
+        };
+        actions.append(cancel);
+        box.append(line, bar, actions);
+        if (job.cancelError) box.append(el('p', job.cancelError, 'st-note bad'));
+        return;
+      }
+      if (job && (job.state === 'failed' || job.state === 'refused')) box.append(el('p', job.message || 'The install failed.', 'st-note bad'));
+      if (row.update) {
+        box.append(
+          el(
+            'p',
+            'AIB now uses ' + o.agentName + ' ' + row.pinned + '; ' + name + ' has ' + (row.version || 'an older one') + '.',
+            'st-note',
+          ),
+        );
+      }
+      const blocked = row.installBlock || '';
+      if (blocked) {
+        box.append(el('p', blocked, 'st-note dim'));
+        if (row.nodeInstall) {
+          const cmd = el('code', row.nodeInstall, 'nc-wsl-cmd');
+          const line = el('p', null, 'st-note');
+          line.append('Install Node.js in ' + name + ': ', cmd, ' ', copyButton(row.nodeInstall));
+          box.append(line);
+        }
+      }
+      const actions = el('p', null, 'st-note');
+      const go = el('button', job ? 'Retry' : verb + ' in ' + name, 'primary nc-wsl-go');
+      go.type = 'button';
+      go.disabled = !!blocked;
+      go.title = blocked
+        ? 'Needs Node.js in ' + name + ' first'
+        : 'AIB installs ' + o.agentName + (row.pinned ? ' ' + row.pinned : '') + ' into its own folder in ' + name +
+          ' (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in ' + name + ' changes.';
+      go.onclick = () => {
+        go.disabled = true;
+        startInstall(o.key, o.id, o.done);
+      };
+      actions.append(go);
+      if (blocked) {
+        const again = el('button', 'Check again', 'st-link');
+        again.type = 'button';
+        again.title = 'Look for Node.js in ' + name + ' again';
+        again.onclick = () => {
+          again.disabled = true;
+          agents(o.key, o.done, true);
+        };
+        actions.append(again);
+      }
+      box.append(actions);
+    };
+    painters.set(k, paint);
+    paint();
+    return box;
   }
 
   // ---- the two lines over the chat (server-notice look) -------------------------------------------------------------------
@@ -265,6 +452,11 @@
     listDirs,
     agents,
     agentIn,
+    forget,
+    installBox,
+    installJob,
+    startInstall,
+    cancelInstall,
     redraw: draw,
     status: () => status,
     available: () => !!status.available,
