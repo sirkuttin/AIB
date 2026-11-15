@@ -148,3 +148,18 @@ test('chat.js card: AIB Always replaces the agent own always (2a), and Yes with 
   await card.children.find((n) => n.textContent === 'Yes').onclick();
   assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ id: 'c1', key: 'k1', option: 'yes', scope: 'project' }]);
 });
+
+test('the desktop banner shows while the rules file was changed outside AIB, with Review opening Settings', () => {
+  const shell = page();
+  const ctx = load(shell, ['allow-rules-ui.js']);
+  const opened = [];
+  ctx.AgentSettingsUI = { open: (s) => opened.push(s) };
+  ctx.AllowRulesUI.banner(true);
+  const bar = shell.document.querySelector('main').querySelector('.allow-banner');
+  assert.ok(bar && !bar.hidden);
+  assert.match(bar.textContent, /changed outside AIB/);
+  bar.querySelector('button').onclick();
+  assert.deepEqual(opened, ['allow']);
+  ctx.AllowRulesUI.banner(false);
+  assert.equal(bar.hidden, true);
+});

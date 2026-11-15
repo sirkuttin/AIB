@@ -182,6 +182,33 @@
       .catch((error) => slot.append(el('p', 'Allow rules could not be loaded: ' + (error && error.message ? error.message : error), 'st-note bad')));
   }
 
-  root.AllowRulesUI = { choice, answer, toast, renderSettings };
+  /* The desktop banner while the rules file was changed outside AIB (every rule is off until the owner reviews them). */
+  let bannerEl = null;
+  function banner(tampered) {
+    const d = doc();
+    if (!d) return;
+    let bar = bannerEl;
+    if (!tampered) {
+      if (bar) bar.hidden = true;
+      return;
+    }
+    if (!bar) {
+      const main = d.querySelector ? d.querySelector('main') : null;
+      if (!main || !main.prepend) return;
+      bar = el('div', null, 'allow-banner');
+      bar.id = 'allowRulesBanner';
+      bar.setAttribute('role', 'alert');
+      bar.append(el('span', 'Allow rules are off. The rules file was changed outside AIB. Review the rules, then switch them back on. '));
+      const review = el('button', 'Review');
+      review.type = 'button';
+      review.onclick = () => root.AgentSettingsUI && root.AgentSettingsUI.open && root.AgentSettingsUI.open('allow');
+      bar.append(review);
+      main.prepend(bar);
+      bannerEl = bar;
+    }
+    bar.hidden = false;
+  }
+
+  root.AllowRulesUI = { choice, answer, toast, renderSettings, banner };
   if (typeof module === 'object' && module.exports) module.exports = root.AllowRulesUI;
 })(typeof window !== 'undefined' ? window : globalThis);

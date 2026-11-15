@@ -174,11 +174,13 @@ Deno.test({
     await until(() => c.permissions.size === 1, 'a card: rules are off', 10);
     const pub = (await a.liveCall('allow-rules', {}))[1] as Json;
     assert(pub.tampered === true);
+    assert(a.liveListSync().allowRulesTampered === true, 'the page list carries the banner flag');
     const off = (((c.public() as Json).permissions as Json[])[0].allow as Json).off as string;
     assert(off.includes('changed outside AIB'), off);
     c.permission([...c.permissions.keys()][0], 'yes');
     await until(() => !c.busy, 'turn end', 10);
     await a.liveCall('allow-review', {});
+    assertEquals(a.liveListSync().allowRulesTampered, false);
     await a.liveCall('prompt', { id: c.id, text: 'allow:ls src', clientMessageId: 'm2' });
     await until(() => kinds(c, 'permission_auto').length === 1, 'allowed again after review', 10);
   },

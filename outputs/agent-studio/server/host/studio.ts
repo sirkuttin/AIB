@@ -1334,6 +1334,7 @@ export class Studio {
       recovered: this.recovered(),
       recoveryWarning: this.store ? this.store.warning : '',
       instanceId: this.instanceId,
+      allowRulesTampered: this.allow ? this.allow.tampered() : false, // the page's "Allow rules are off" banner
     };
   }
 

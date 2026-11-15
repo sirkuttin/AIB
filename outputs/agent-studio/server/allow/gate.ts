@@ -25,6 +25,12 @@ export class AllowGate {
     return dir;
   }
 
+  /** The rules file changed outside AIB (rules are off until reviewed). */
+  tampered(): boolean {
+    this.store.check();
+    return this.store.tampered;
+  }
+
   decide(params: unknown, ctx: MatchContext): MatchResult {
     const active = this.store.active();
     if (!active) return { allow: false, reason: this.store.tampered ? 'rules changed outside AIB' : 'rules are off' };

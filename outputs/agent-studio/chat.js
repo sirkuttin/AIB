@@ -939,6 +939,7 @@
     }
     window.AgentWorkspaceUI?.syncPrefs?.(live.projectsRevision);
     window.AgentSettingsUI?.sync(live.settingsRevision);
+    window.AllowRulesUI?.banner?.(!!live.allowRulesTampered);
     for (const c of saved.sessions) {
       const owned = live.connections.find((l) => !l.closed && l.provider === c.provider && l.sessionId === c.id);
       if (owned) matched.add(owned.id);

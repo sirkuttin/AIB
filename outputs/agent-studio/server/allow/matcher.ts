@@ -362,7 +362,14 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   const base = { scope, ...(scope === 'project' ? { project: resolve(ctx.project) } : {}) } as const;
   if (req.kind === 'special') return { ...no(''), offer: false, hideAgentAlways: false };
   if (ctx.facts?.riskyEnv) return no(`Not available: allow rules are off for this chat because ${ctx.facts.riskyEnv}.`);
-  if (req.kind === 'unknown') return no(`Not available: ${req.reason}.`, false, false);
+  if (req.kind === 'unknown') {
+    // Decision 2a hides the agent's own always on command, file-edit, MCP and fetch cards, even when AIB can't read them yet.
+    const call = callOf(params);
+    const tool = claudeToolName(params, ctx.toolName) ?? '';
+    const hide = ['execute', 'edit', 'delete', 'move', 'fetch'].includes(String(call.kind)) ||
+      /^(Bash|PowerShell|WebFetch|Edit|Write|MultiEdit|NotebookEdit|mcp__)/.test(tool);
+    return no(`Not available: ${req.reason}.`, false, hide);
+  }
   const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
   if (flagged) return no('Not available: Claude flagged this request in bypass mode; your rules never answer those.');
   if (req.kind === 'mcp') {
