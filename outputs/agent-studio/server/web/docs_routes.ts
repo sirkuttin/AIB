@@ -5,6 +5,8 @@
  *
  *   POST /api/live/docs/open {id, name, create?}    the page opens a doc (`create`: Markdown, makes a new one and links it to chat
  *                                                   `id`; opening never re-links): {doc, name, file, rev, epoch, ...info}.
+ *        or {project: <project key>, name}          a doc pop-out (multi-window E5): by an added project's key and the doc's name,
+ *                                                   never a live chat id; the answer adds projectId ('project:<folder>').
  *   GET  /api/live/docs/list?id=<chat>&root=chat|main  the docs of the folder the Files view shows for that chat (files_routes
  *                                                   rootFor): {docs: [{name, title, dir, owned, pages, pageList: [{id, title}],
  *                                                   chat (linked chat), open, editedAt, editedBy, writing: [{chat, name, page,
@@ -97,6 +99,15 @@ const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const DELETED: Reply = [409, { error: 'This artifact is in Recently deleted. Restore it first.', code: 'deleted' }];
 const NOT_OPEN: Reply = [404, { error: 'Open the doc first', code: 'doc_not_open' }];
 
+/** 'project:<folder>' (files_routes.rootFor): the id a doc tab whose chat is gone, or a doc pop-out, asks with. */
+const PROJECT_ID = 'project:';
+/** The folder of the added project with this key (the page's AgentSidebarUI.pathKey = project_delete.projectKey), or null. */
+function addedFolderOf(ctx: WebContext, key: string): string | null {
+  if (!key || key.length > 1024) return null;
+  const added = ctx.addedProjects?.public().added;
+  return added && Object.hasOwn(added, key) && typeof added[key].path === 'string' ? added[key].path : null;
+}
+
 function refused(error: unknown): Reply {
   if (error instanceof DocRefusal) return [400, { ...error.toJSON(), error: error.message, code: error.code }];
   throw error;
@@ -119,14 +130,22 @@ function onDoc(work: (ctx: WebContext, doc: OpenDoc, args: Json, url: URL) => Pr
 export function docsRoutes(): Map<string, Route> {
   const routes = new Map<string, Route>();
   routes.set('POST /api/live/docs/open', async (ctx, _url, body) => {
-    const root = await rootFor(ctx, { id: [String(body?.id ?? '')], root: ['main'] });
+    // A doc pop-out (multi-window E5) names its project by key and the doc by name, never by a live chat id (those change at a
+    // restart): {project: <project key>, name}. The key must be an added project's; its folder then counts as 'project:<folder>'.
+    const byKey = !body?.id && typeof body?.project === 'string' ? addedFolderOf(ctx, body.project) : null;
+    if (!body?.id && typeof body?.project === 'string' && !byKey) {
+      return [404, { error: 'This project is not in AIB any more.', code: 'unknown_folder' }];
+    }
+    const id = byKey ? PROJECT_ID + byKey : String(body?.id ?? '');
+    const root = await rootFor(ctx, { id: [id], root: ['main'] });
     if (typeof root !== 'string') return root;
     try {
-      const create = typeof body?.create === 'string' ? body.create : undefined;
+      const create = byKey ? undefined : typeof body?.create === 'string' ? body.create : undefined;
       const doc = await ctx.docs.open(root, body?.name, create, 'user');
       // a new doc is linked to the chat it was made from; opening one never moves its link (the link route is the user's pick)
       if (create !== undefined) ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.id ?? '')), true);
-      return [200, { ok: true, ...(await ctx.docs.infoWithOwned(doc)) }];
+      // by key: the page asks later calls (Duplicate, the chat list) with this id
+      return [200, { ok: true, ...(await ctx.docs.infoWithOwned(doc)), ...(byKey ? { projectId: id } : {}) }];
     } catch (error) {
       return refused(error);
     }

@@ -808,6 +808,13 @@ a.fx-path code {
   color: var(--muted);
   font-size: 12px;
 }
+/* the doc is popped out into its own window: a quiet arrow; a click brings that window forward */
+.fx-docpop {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
 /* an agent writing the doc right now */
 .fx-docdot {
   flex: none;

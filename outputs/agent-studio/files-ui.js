@@ -1037,7 +1037,17 @@
       n.append(dot);
     }
     n.append(el('span', pagesText(r.pages), 'fx-docpages'));
-    n.title = r.name + ' · doc, ' + pagesText(r.pages) + (live ? '\n' + live : '') + '\nClick: open. Double-click: keep the tab open';
+    // popped out into its own window: ↗, and a click brings that window forward
+    const popped = !!(DL() && DL().poppedOut && r.doc && DL().poppedOut(projectKey(), r.doc.name));
+    if (popped) {
+      const arrow = el('span', '↗', 'fx-docpop');
+      arrow.setAttribute('aria-label', 'In its own window');
+      n.append(arrow);
+      n.classList.add('popped');
+    }
+    n.title =
+      r.name + ' · doc, ' + pagesText(r.pages) + (live ? '\n' + live : '') +
+      (popped ? '\nIn its own window. Click: bring it forward' : '\nClick: open. Double-click: keep the tab open');
     if (r.badge) {
       const b = btn(null, 'fx-chg ' + r.badge.status, 'Changed: show the Changes tab');
       b.tabIndex = -1;
@@ -1059,6 +1069,19 @@
       folderMenu(n, e.clientX, e.clientY);
     });
     return n;
+  }
+  // A doc popped out of this window comes back as a background tab when its window closes (doc-links.js restorePop): the tab
+  // strip and the active tab stay as they are.
+  function restoreDocTab(scope, d) {
+    if (!scope || !d || !d.name) return;
+    const pk = d.project || projectKey();
+    const cur = tabsByProject[pk] || F().emptyTabs();
+    if (cur.tabs.some((t) => t.id === F().docTabId(d.name))) return;
+    const next = F().openDocTab(cur, scope, { name: d.name, title: d.title || d.name }, { keep: true });
+    tabsByProject[pk] = { tabs: next.tabs, active: cur.active };
+    saveTabs();
+    if (W() && W().refresh) W().refresh();
+    paint();
   }
   function openDocRow(scope, d, keep) {
     openDoc(scope, { name: d.name, title: d.title || d.name, dir: d.dir, where: 'tab', preview: !keep });
@@ -1407,6 +1430,8 @@
   const frames = new Map(); // 'main|' or 'artifacts|' + tab id -> {frame, tab, where, hooks}
   function openDoc(scope, d) {
     if (!scope || !d || !d.name) return;
+    // popped out into its own window (multi-window 2.5B, doc-links.js): bring that window forward instead of a second copy
+    if (DL() && DL().focusPopout && DL().focusPopout(projectKey(), d.name)) return;
     // The tab remembers the project folder: if its chat is gone after a restart, the doc still opens from the project.
     if (!scope.path && projectPathNow()) scope = Object.assign({}, scope, { path: projectPathNow() });
     setTabsHere(F().openDocTab(tabsHere(), scope, d, { keep: !d.preview }));
@@ -1540,6 +1565,22 @@
       // the doc header's "Shown in 1 artifact" chip: that artifact in the right column
       const A = AR();
       if (A && A.open && str(data.id)) A.open(str(data.id));
+    } else if (data.type === 'aib-doc:popout') {
+      // "Pop out" in the doc's menu: the doc moves into its own window (owner decision 4); its tab or viewer closes here
+      if (!DL() || !DL().popOut) return;
+      DL().popOut({
+        project: projectKey(),
+        name: tab.doc.name,
+        title: tab.doc.title || tab.name,
+        scope: Object.assign({}, tab.scope, { path: tab.scope.path || projectPathNow() }),
+        closeHere: () => {
+          if (rec.where === 'artifacts') {
+            frames.delete('artifacts|' + tab.id);
+            if (rec.hooks.closed) rec.hooks.closed();
+          } else closeFileTab(tab.id);
+          paint();
+        },
+      });
     } else if (data.type === 'aib-doc:docs-changed') {
       // "Duplicate doc" made a new doc: Files, Ctrl+K and the picker list it without a reload
       refreshDocs(tab.scope);
@@ -2746,6 +2787,7 @@
   function init(h) {
     host = h;
     loadTabs();
+    if (DL() && DL().onPops) DL().onPops(() => paint()); // a doc popped out or back: its row's arrow
     mount();
     const d = doc();
     applyMode(store.get(AS() ? AS().winKey(MODE_KEY) : MODE_KEY, 'chats'));
@@ -2815,6 +2857,7 @@
     currentScope,
     search: searchFiles,
     openDoc,
+    restoreDocTab,
     openNotes,
     attachDocFrame,
     startNewDoc,
