@@ -24,7 +24,13 @@ import type { EnvPrereqs } from '../../outputs/agent-studio/server/wsl/contract.
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { NODE_INSTALL, resetInstallProgress } from '../../outputs/agent-studio/server/wsl/agent_install.ts';
 import { PREREQS } from '../../outputs/agent-studio/server/agents/beta_setup.ts';
-import { NVM_INSTALL_SHA256, NVM_INSTALL_URL, NVM_NOT_PINNED, NVM_VERSION, nvmInstallLine } from '../../outputs/agent-studio/server/agents/nvm.ts';
+import {
+  NVM_INSTALL_SHA256,
+  NVM_INSTALL_URL,
+  NVM_NOT_PINNED,
+  NVM_VERSION,
+  nvmInstallLine,
+} from '../../outputs/agent-studio/server/agents/nvm.ts';
 import { profileFor, wslNodeCommand, wslNodeScript, wslNodeSteps } from '../../outputs/agent-studio/server/wsl/node_setup.ts';
 
 type Json = Record<string, unknown>;
@@ -79,16 +85,26 @@ const RATE = {
 /** The three phase 2 helper methods, as simple stand-ins (the real ones are the helper builder's, on the Linux side). */
 function phase2Helper(host: FakeWslHost, prereqs: EnvPrereqs = PREREQS_OK): void {
   host.handlers['env.prereqs'] = () => structuredClone(prereqs);
-  host.handlers['agents.signinStatus'] = (p) =>
-    ({
-      agents: ((p.ids as string[]) ?? []).map((id) =>
-        id === 'claude' ? { id, state: 'signed_in', account: 'u@example.com' } : id === 'codex' ? { id, state: 'signed_out' } : { id, state: 'unknown' }
-      ),
-    });
+  host.handlers['agents.signinStatus'] = (p) => ({
+    agents: ((p.ids as string[]) ?? []).map((id) =>
+      id === 'claude'
+        ? { id, state: 'signed_in', account: 'u@example.com' }
+        : id === 'codex'
+        ? { id, state: 'signed_out' }
+        : { id, state: 'unknown' }
+    ),
+  });
   host.handlers['agents.uninstall'] = (p) => ({ ok: true, removed: [`${TEST_ROOT}/agents/${p.id}/0.0.1`] });
   host.handlers['agents.detect'] = () => ({
     agents: [
-      { id: 'claude', found: true, command: ['node', '/r/agents/claude/0.102.0/x.js'], version: '0.102.0', source: 'studio', bundledCli: true },
+      {
+        id: 'claude',
+        found: true,
+        command: ['node', '/r/agents/claude/0.102.0/x.js'],
+        version: '0.102.0',
+        source: 'studio',
+        bundledCli: true,
+      },
       { id: 'codex', found: true, command: ['codex-acp'], version: '2.6.0', source: 'global', bundledCli: true },
       { id: 'omp', found: false },
     ],
@@ -99,7 +115,14 @@ function ctxOf(settings: SettingsStore | undefined, terminals: { key: string }[]
   return { token: 't', stateDir: null, settings, terminals: { list: () => terminals } } as unknown as WebContext;
 }
 
-async function route(ctx: WebContext, method: 'GET' | 'POST', path: string, query = '', body: Json | null = null, token = 't'): Promise<[number, Json]> {
+async function route(
+  ctx: WebContext,
+  method: 'GET' | 'POST',
+  path: string,
+  query = '',
+  body: Json | null = null,
+  token = 't',
+): Promise<[number, Json]> {
   const handler = wslRoutes().get(`${method} ${path}`)!;
   assert(handler, `${method} ${path} is a route`);
   const url = new URL(`http://127.0.0.1${path}${query ? '?' + query : ''}`);
@@ -118,20 +141,30 @@ Deno.test('settings agentsByDistro: on when unset, per distro, apart from the Wi
     await store.update({ agentsByDistro: { ubuntu: { claude: false, codex: true } } });
     await store.update({ agents: { builtin: { claude: true } } });
     assertEquals([store.distroAgentEnabled('ubuntu', 'claude'), store.distroAgentEnabled('UBUNTU', 'claude')], [false, false]);
-    assertEquals([store.distroAgentEnabled('debian', 'claude'), store.builtinEnabled('claude')], [true, true], 'other distros and Windows untouched');
+    assertEquals(
+      [store.distroAgentEnabled('debian', 'claude'), store.builtinEnabled('claude')],
+      [true, true],
+      'other distros and Windows untouched',
+    );
     assertEquals((store.public().settings as Json).agentsByDistro, { ubuntu: { claude: false, codex: true } });
     assertEquals(new SettingsStore(dir).distroAgents(), { ubuntu: { claude: false, codex: true } }, 'saved');
     // null forgets the value (on again); the last one gone drops the key
     await store.update({ agentsByDistro: { ubuntu: { claude: null, codex: null } } });
     assert(!('agentsByDistro' in (store.public().settings as Json)));
-    for (const bad of [{ 'Bad Distro': { claude: false } }, { ubuntu: { 'not-an-agent': false } }, { ubuntu: { claude: 'off' } }, { ubuntu: 'x' }]) {
+    for (
+      const bad of [{ 'Bad Distro': { claude: false } }, { ubuntu: { 'not-an-agent': false } }, { ubuntu: { claude: 'off' } }, {
+        ubuntu: 'x',
+      }]
+    ) {
       let refused = false;
       await store.update({ agentsByDistro: bad }).catch(() => (refused = true));
       assert(refused, `refused: ${JSON.stringify(bad)}`);
     }
     // a hand-edited file keeps only valid entries
     assertEquals(
-      SettingsStore.cleanDoc({ agentsByDistro: { ubuntu: { claude: false, junk: true, codex: 'x' }, 'BAD KEY': { claude: false }, debian: {} } }).agentsByDistro,
+      SettingsStore.cleanDoc({
+        agentsByDistro: { ubuntu: { claude: false, junk: true, codex: 'x' }, 'BAD KEY': { claude: false }, debian: {} },
+      }).agentsByDistro,
       { ubuntu: { claude: false } },
     );
   } finally {
@@ -153,7 +186,10 @@ Deno.test('POST /api/live/wsl/agents/enabled: {ok, enabled}, validated, needs th
     assertEquals((await post({ distro: 'bad distro', id: 'claude', enabled: false }))[1].code, 'bad_distro');
     assertEquals((await post({ distro: 'ubuntu', id: 'nope', enabled: false }))[1].code, 'bad_agent');
     assertEquals((await post({ distro: 'ubuntu', id: 'claude', enabled: 'no' }))[1].code, 'bad_enabled');
-    assertEquals(await post({ distro: 'ubuntu', id: 'custom-gone', enabled: false }), [404, { error: 'That agent is not in the list', code: 'bad_agent' }]);
+    assertEquals(await post({ distro: 'ubuntu', id: 'custom-gone', enabled: false }), [404, {
+      error: 'That agent is not in the list',
+      code: 'bad_agent',
+    }]);
     assertEquals(await post({ distro: 'ubuntu', id: 'gemini', enabled: false }), [200, { ok: true, enabled: false }], 'Beta agents too');
     assertEquals(settings.distroAgents(), { ubuntu: { claude: true, gemini: false } });
   } finally {
@@ -162,7 +198,8 @@ Deno.test('POST /api/live/wsl/agents/enabled: {ok, enabled}, validated, needs th
 });
 
 Deno.test({
-  name: 'the switch matrix: Windows off + Ubuntu on starts in Ubuntu; Windows on + Ubuntu off refuses only the WSL chat (new, Continue; not the reconnect)',
+  name:
+    'the switch matrix: Windows off + Ubuntu on starts in Ubuntu; Windows on + Ubuntu off refuses only the WSL chat (new, Continue; not the reconnect)',
   ...T,
   async fn() {
     const dir = tempDir();
@@ -203,8 +240,14 @@ Deno.test({
       // another distro with no saved value is on
       assertEquals(studio.settings.distroAgentEnabled('debian', 'omp'), true);
       // a custom agent's own name in the line
-      assertEquals(wslAgentOffLine('custom-x', 'Ubuntu', { customAgent: () => ({ name: 'My agent' }) }), 'My agent is turned off for Ubuntu in Settings > AIB Linking (WSL)');
-      assertEquals(wslAgentOffLine('gemini', 'Debian', { customAgent: () => null }), 'Gemini CLI is turned off for Debian in Settings > AIB Linking (WSL)');
+      assertEquals(
+        wslAgentOffLine('custom-x', 'Ubuntu', { customAgent: () => ({ name: 'My agent' }) }),
+        'My agent is turned off for Ubuntu in Settings > AIB Linking (WSL)',
+      );
+      assertEquals(
+        wslAgentOffLine('gemini', 'Debian', { customAgent: () => null }),
+        'Gemini CLI is turned off for Debian in Settings > AIB Linking (WSL)',
+      );
     } finally {
       await studio.close().catch(() => {});
       setWslHostResolver(null);
@@ -218,148 +261,210 @@ Deno.test({
 
 // ---- 2. agents rows ---------------------------------------------------------------------------------------------------------------
 
-Deno.test('GET /api/live/wsl/agents rows: enabled per distro, signin, canUninstall only for AIB\'s own install, Codex limits', T, async () => {
-  const dir = tempDir();
-  const host = new FakeWslHost('unused', 'Ubuntu');
-  phase2Helper(host);
-  host.handlers['codex.limits'] = () => ({ found: { rateLimits: RATE, at: 1794380000 } });
-  withHost(host);
-  try {
-    const settings = new SettingsStore(dir);
-    await settings.update({ agentsByDistro: { ubuntu: { codex: false } }, agents: { builtin: { claude: false } } });
-    const [status, body] = await route(ctxOf(settings), 'GET', '/api/live/wsl/agents', 'distro=Ubuntu&peek=1');
-    assertEquals([status, body.state, body.line], [200, 'ready', '']);
-    const rows = Object.fromEntries((body.agents as Json[]).map((r) => [r.id, r]));
-    assertEquals([rows.claude.enabled, rows.codex.enabled, rows.omp.enabled], [true, false, true], 'the distro switch, not the Windows one');
-    assertEquals(rows.claude.signin, { state: 'signed_in', account: 'u@example.com' });
-    assertEquals([rows.codex.signin, rows.omp.signin], [{ state: 'signed_out' }, { state: 'unknown' }]);
-    assertEquals([rows.claude.canUninstall, rows.codex.canUninstall, rows.omp.canUninstall], [true, false, false]);
-    const limits = rows.codex.limits as Json;
-    assertEquals([limits.agent, limits.source, (limits.windows as Json[]).length], ['codex', 'codex-rollout', 2]);
-    assert(!('limits' in rows.claude) && !('limits' in rows.omp), 'limits only on the Codex row');
-    assertEquals(host.calls.find(([m]) => m === 'codex.limits'), ['codex.limits', { codexDir: TEST_ROOT + '/home/.codex' }], 'under test, the temp home');
-    // no numbers: null; the agent picker (no peek) gets the same fields
-    host.handlers['codex.limits'] = () => ({ found: null });
-    const [, picker] = await route(ctxOf(settings), 'GET', '/api/live/wsl/agents', 'distro=ubuntu');
-    const codex = (picker.agents as Json[]).find((r) => r.id === 'codex')!;
-    assertEquals([codex.limits, codex.enabled, 'state' in picker], [null, false, false]);
-    // an older helper without agents.signinStatus: 'unknown' with the reason, the rest still answered
-    delete host.handlers['agents.signinStatus'];
-    const [, old] = await route(ctxOf(settings), 'GET', '/api/live/wsl/agents', 'distro=ubuntu&peek=1');
-    assertEquals((old.agents as Json[])[0].signin, { state: 'unknown', note: 'The AIB helper in Ubuntu cannot check sign-ins yet. Restart AIB.' });
-  } finally {
-    setWslHostResolver(null);
-    setDistroSource(null);
-    Deno.removeSync(dir, { recursive: true });
-  }
-});
+Deno.test(
+  "GET /api/live/wsl/agents rows: enabled per distro, signin, canUninstall only for AIB's own install, Codex limits",
+  T,
+  async () => {
+    const dir = tempDir();
+    const host = new FakeWslHost('unused', 'Ubuntu');
+    phase2Helper(host);
+    host.handlers['codex.limits'] = () => ({ found: { rateLimits: RATE, at: 1794380000 } });
+    withHost(host);
+    try {
+      const settings = new SettingsStore(dir);
+      await settings.update({ agentsByDistro: { ubuntu: { codex: false } }, agents: { builtin: { claude: false } } });
+      const [status, body] = await route(ctxOf(settings), 'GET', '/api/live/wsl/agents', 'distro=Ubuntu&peek=1');
+      assertEquals([status, body.state, body.line], [200, 'ready', '']);
+      const rows = Object.fromEntries((body.agents as Json[]).map((r) => [r.id, r]));
+      assertEquals(
+        [rows.claude.enabled, rows.codex.enabled, rows.omp.enabled],
+        [true, false, true],
+        'the distro switch, not the Windows one',
+      );
+      assertEquals(rows.claude.signin, { state: 'signed_in', account: 'u@example.com' });
+      assertEquals([rows.codex.signin, rows.omp.signin], [{ state: 'signed_out' }, { state: 'unknown' }]);
+      assertEquals([rows.claude.canUninstall, rows.codex.canUninstall, rows.omp.canUninstall], [true, false, false]);
+      const limits = rows.codex.limits as Json;
+      assertEquals([limits.agent, limits.source, (limits.windows as Json[]).length], ['codex', 'codex-rollout', 2]);
+      assert(!('limits' in rows.claude) && !('limits' in rows.omp), 'limits only on the Codex row');
+      assertEquals(
+        host.calls.find(([m]) => m === 'codex.limits'),
+        ['codex.limits', { codexDir: TEST_ROOT + '/home/.codex' }],
+        'under test, the temp home',
+      );
+      // no numbers: null; the agent picker (no peek) gets the same fields
+      host.handlers['codex.limits'] = () => ({ found: null });
+      const [, picker] = await route(ctxOf(settings), 'GET', '/api/live/wsl/agents', 'distro=ubuntu');
+      const codex = (picker.agents as Json[]).find((r) => r.id === 'codex')!;
+      assertEquals([codex.limits, codex.enabled, 'state' in picker], [null, false, false]);
+      // an older helper without agents.signinStatus: 'unknown' with the reason, the rest still answered
+      delete host.handlers['agents.signinStatus'];
+      const [, old] = await route(ctxOf(settings), 'GET', '/api/live/wsl/agents', 'distro=ubuntu&peek=1');
+      assertEquals((old.agents as Json[])[0].signin, {
+        state: 'unknown',
+        note: 'The AIB helper in Ubuntu cannot check sign-ins yet. Restart AIB.',
+      });
+    } finally {
+      setWslHostResolver(null);
+      setDistroSource(null);
+      Deno.removeSync(dir, { recursive: true });
+    }
+  },
+);
 
 // ---- 3. uninstall -----------------------------------------------------------------------------------------------------------------
 
-Deno.test('POST /api/live/wsl/agents/uninstall: the helper result; refused while the install or sign-in runs; helper refusals verbatim; never a start', T, async () => {
-  const host = new CountingHost('unused', 'Ubuntu');
-  phase2Helper(host);
-  withHost(host);
-  resetInstallProgress();
-  const post = (body: Json, terminals: { key: string }[] = []) => route(ctxOf(undefined, terminals), 'POST', '/api/live/wsl/agents/uninstall', '', body);
-  try {
-    // a distro AIB has not started: refused, not started
-    assertEquals(await post({ distro: 'Ubuntu', id: 'claude' }), [409, { error: 'Ubuntu is not running.', code: 'wsl_unavailable' }]);
-    assertEquals([host.starts, host.calls.length], [0, 0]);
-    host.begun = true;
-    assertEquals(await post({ distro: 'ubuntu', id: 'claude' }), [200, { ok: true, removed: [`${TEST_ROOT}/agents/claude/0.0.1`] }]);
-    assertEquals(host.calls.at(-1), ['agents.uninstall', { id: 'claude' }]);
-    assertEquals((await post({ distro: 'ubuntu', id: 'omp' }))[0], 400, 'only what AIB installs');
-    // the install job runs (the same job state the install routes read)
-    host.handlers['agents.installStatus'] = (p) => ({ agent: p.agent, state: 'running', stage: 'npm', percent: 40, message: '' });
-    const n = host.calls.length;
-    assertEquals(await post({ distro: 'ubuntu', id: 'codex' }), [200, {
-      ok: false,
-      removed: [],
-      blocked: 'Codex is being installed in Ubuntu right now. Wait for it to finish, or cancel it, then uninstall.',
-    }]);
-    assert(!host.calls.slice(n).some(([m]) => m === 'agents.uninstall'), 'the helper was not asked to uninstall');
-    host.handlers['agents.installStatus'] = (p) => ({ agent: p.agent, state: 'idle', stage: '', percent: 0, message: '' });
-    // its sign-in terminal runs
-    assertEquals((await post({ distro: 'ubuntu', id: 'codex' }, [{ key: 'signin:codex@ubuntu' }]))[1].blocked, 'A sign-in to Codex in Ubuntu is running. Finish or cancel it, then uninstall.');
-    // the helper's refusals, answered or thrown, verbatim
-    host.handlers['agents.uninstall'] = () => ({ ok: false, removed: [], blocked: 'A chat runs Codex from this folder (pid 4242).' });
-    assertEquals(await post({ distro: 'ubuntu', id: 'codex' }), [200, { ok: false, removed: [], blocked: 'A chat runs Codex from this folder (pid 4242).' }]);
-    host.handlers['agents.uninstall'] = () => {
-      throw new WslHelperError('AIB has not installed Codex in Ubuntu, so there is nothing to uninstall.', 'uninstall_refused');
-    };
-    assertEquals((await post({ distro: 'ubuntu', id: 'codex' }))[1].blocked, 'AIB has not installed Codex in Ubuntu, so there is nothing to uninstall.');
-    delete host.handlers['agents.uninstall'];
-    assertEquals((await post({ distro: 'ubuntu', id: 'codex' }))[1].code, 'install_refused', 'an older helper: too old');
-    assertEquals(host.starts, 0, 'nothing started the distro');
-  } finally {
-    setWslHostResolver(null);
-    setDistroSource(null);
-  }
-});
+Deno.test(
+  'POST /api/live/wsl/agents/uninstall: the helper result; refused while the install or sign-in runs; helper refusals verbatim; never a start',
+  T,
+  async () => {
+    const host = new CountingHost('unused', 'Ubuntu');
+    phase2Helper(host);
+    withHost(host);
+    resetInstallProgress();
+    const post = (body: Json, terminals: { key: string }[] = []) =>
+      route(ctxOf(undefined, terminals), 'POST', '/api/live/wsl/agents/uninstall', '', body);
+    try {
+      // a distro AIB has not started: refused, not started
+      assertEquals(await post({ distro: 'Ubuntu', id: 'claude' }), [409, { error: 'Ubuntu is not running.', code: 'wsl_unavailable' }]);
+      assertEquals([host.starts, host.calls.length], [0, 0]);
+      host.begun = true;
+      assertEquals(await post({ distro: 'ubuntu', id: 'claude' }), [200, { ok: true, removed: [`${TEST_ROOT}/agents/claude/0.0.1`] }]);
+      assertEquals(host.calls.at(-1), ['agents.uninstall', { id: 'claude' }]);
+      assertEquals((await post({ distro: 'ubuntu', id: 'omp' }))[0], 400, 'only what AIB installs');
+      // the install job runs (the same job state the install routes read)
+      host.handlers['agents.installStatus'] = (p) => ({ agent: p.agent, state: 'running', stage: 'npm', percent: 40, message: '' });
+      const n = host.calls.length;
+      assertEquals(await post({ distro: 'ubuntu', id: 'codex' }), [200, {
+        ok: false,
+        removed: [],
+        blocked: 'Codex is being installed in Ubuntu right now. Wait for it to finish, or cancel it, then uninstall.',
+      }]);
+      assert(!host.calls.slice(n).some(([m]) => m === 'agents.uninstall'), 'the helper was not asked to uninstall');
+      host.handlers['agents.installStatus'] = (p) => ({ agent: p.agent, state: 'idle', stage: '', percent: 0, message: '' });
+      // its sign-in terminal runs
+      assertEquals(
+        (await post({ distro: 'ubuntu', id: 'codex' }, [{ key: 'signin:codex@ubuntu' }]))[1].blocked,
+        'A sign-in to Codex in Ubuntu is running. Finish or cancel it, then uninstall.',
+      );
+      // the helper's refusals, answered or thrown, verbatim
+      host.handlers['agents.uninstall'] = () => ({ ok: false, removed: [], blocked: 'A chat runs Codex from this folder (pid 4242).' });
+      assertEquals(await post({ distro: 'ubuntu', id: 'codex' }), [200, {
+        ok: false,
+        removed: [],
+        blocked: 'A chat runs Codex from this folder (pid 4242).',
+      }]);
+      host.handlers['agents.uninstall'] = () => {
+        throw new WslHelperError('AIB has not installed Codex in Ubuntu, so there is nothing to uninstall.', 'uninstall_refused');
+      };
+      assertEquals(
+        (await post({ distro: 'ubuntu', id: 'codex' }))[1].blocked,
+        'AIB has not installed Codex in Ubuntu, so there is nothing to uninstall.',
+      );
+      delete host.handlers['agents.uninstall'];
+      assertEquals((await post({ distro: 'ubuntu', id: 'codex' }))[1].code, 'install_refused', 'an older helper: too old');
+      assertEquals(host.starts, 0, 'nothing started the distro');
+    } finally {
+      setWslHostResolver(null);
+      setDistroSource(null);
+    }
+  },
+);
 
 // ---- 4. prereqs -------------------------------------------------------------------------------------------------------------------
 
-Deno.test('GET /api/live/wsl/prereqs: peek never starts the distro (state and line), start=1 does, the ready shape, force passed on', T, async () => {
-  const host = new CountingHost('unused', 'Ubuntu');
-  phase2Helper(host);
-  host.state = 'starting';
-  withHost(host);
-  const get = (q: string) => route(ctxOf(undefined), 'GET', '/api/live/wsl/prereqs', q);
-  try {
-    assertEquals(await get('distro=Ubuntu&peek=1'), [200, { distro: 'ubuntu', name: 'Ubuntu', state: 'off', line: '', prereqs: null }]);
-    assertEquals(await get('distro=ubuntu&peek=1&force=1'), [200, { distro: 'ubuntu', name: 'Ubuntu', state: 'off', line: '', prereqs: null }]);
-    assertEquals([host.starts, host.calls.length], [0, 0]);
-    host.begun = true;
-    host.state = 'stopped';
-    host.note = 'Ubuntu stopped (Windows restart or `wsl --shutdown`).';
-    assertEquals(await get('distro=ubuntu&peek=1'), [200, {
-      distro: 'ubuntu',
-      name: 'Ubuntu',
-      state: 'stopped',
-      line: 'Ubuntu stopped (Windows restart or `wsl --shutdown`).',
-      prereqs: null,
-    }]);
-    assertEquals(host.starts, 0);
-    assertEquals(await get('distro=ubuntu&peek=1&start=1&force=1'), [200, { distro: 'ubuntu', name: 'Ubuntu', state: 'ready', line: '', prereqs: PREREQS_OK }]);
-    assertEquals([host.starts, host.calls.at(-1)], [1, ['env.prereqs', { force: true }]]);
-    assertEquals((await get('distro=ubuntu&peek=1'))[1].prereqs, PREREQS_OK);
-    assertEquals(host.calls.at(-1), ['env.prereqs', { force: false }]);
-    assertEquals((await get('distro=no%20such'))[1].code, 'bad_distro');
-  } finally {
-    setWslHostResolver(null);
-    setDistroSource(null);
-  }
-});
+Deno.test(
+  'GET /api/live/wsl/prereqs: peek never starts the distro (state and line), start=1 does, the ready shape, force passed on',
+  T,
+  async () => {
+    const host = new CountingHost('unused', 'Ubuntu');
+    phase2Helper(host);
+    host.state = 'starting';
+    withHost(host);
+    const get = (q: string) => route(ctxOf(undefined), 'GET', '/api/live/wsl/prereqs', q);
+    try {
+      assertEquals(await get('distro=Ubuntu&peek=1'), [200, { distro: 'ubuntu', name: 'Ubuntu', state: 'off', line: '', prereqs: null }]);
+      assertEquals(await get('distro=ubuntu&peek=1&force=1'), [200, {
+        distro: 'ubuntu',
+        name: 'Ubuntu',
+        state: 'off',
+        line: '',
+        prereqs: null,
+      }]);
+      assertEquals([host.starts, host.calls.length], [0, 0]);
+      host.begun = true;
+      host.state = 'stopped';
+      host.note = 'Ubuntu stopped (Windows restart or `wsl --shutdown`).';
+      assertEquals(await get('distro=ubuntu&peek=1'), [200, {
+        distro: 'ubuntu',
+        name: 'Ubuntu',
+        state: 'stopped',
+        line: 'Ubuntu stopped (Windows restart or `wsl --shutdown`).',
+        prereqs: null,
+      }]);
+      assertEquals(host.starts, 0);
+      assertEquals(await get('distro=ubuntu&peek=1&start=1&force=1'), [200, {
+        distro: 'ubuntu',
+        name: 'Ubuntu',
+        state: 'ready',
+        line: '',
+        prereqs: PREREQS_OK,
+      }]);
+      assertEquals([host.starts, host.calls.at(-1)], [1, ['env.prereqs', { force: true }]]);
+      assertEquals((await get('distro=ubuntu&peek=1'))[1].prereqs, PREREQS_OK);
+      assertEquals(host.calls.at(-1), ['env.prereqs', { force: false }]);
+      assertEquals((await get('distro=no%20such'))[1].code, 'bad_distro');
+    } finally {
+      setWslHostResolver(null);
+      setDistroSource(null);
+    }
+  },
+);
 
 // ---- 5. the Node.js terminal ------------------------------------------------------------------------------------------------------
 
-Deno.test('setup=wsl-node: refused unless canInstallNode (its reason), never starts a distro unasked, asks prereqs with force', T, async () => {
-  const host = new CountingHost('unused', 'Ubuntu');
-  phase2Helper(host);
-  host.state = 'starting';
-  withHost(host);
-  try {
-    assertEquals(await wslNodeSetupCommand('ubuntu'), 'Ubuntu is not running. Start it in Settings > AIB Linking (WSL), then install Node.js.');
-    assertEquals(host.starts, 0);
-    assertEquals(await wslNodeSetupCommand('no such'), 'Choose a distro.');
-    phase2Helper(host, { ...PREREQS_OK, node: { state: 'shim_unset', manager: 'asdf' }, canInstallNode: false, nodeInstallBlocked: 'asdf has no Node.js version set. Run: asdf install nodejs latest' });
-    assertEquals(await wslNodeSetupCommand('ubuntu', true), 'asdf has no Node.js version set. Run: asdf install nodejs latest');
-    assertEquals([host.starts, host.calls.at(-1)], [1, ['env.prereqs', { force: true }]]);
+Deno.test(
+  'setup=wsl-node: refused unless canInstallNode (its reason), never starts a distro unasked, asks prereqs with force',
+  T,
+  async () => {
+    const host = new CountingHost('unused', 'Ubuntu');
     phase2Helper(host);
-    const ready = await wslNodeSetupCommand('ubuntu');
-    assert(typeof ready !== 'string', String(ready));
-    assertEquals([ready.home, ready.command.file, ready.command.args.slice(0, 3)], ['/home/u', '/bin/bash', ['--noprofile', '--norc', '-c']]);
-    assertEquals(ready.command.args[3], wslNodeScript('/usr/bin/zsh'));
-    host.handlers['env.prereqs'] = () => {
-      throw new WslHelperError('nope', 'unknown_method');
-    };
-    assertEquals(await wslNodeSetupCommand('ubuntu'), 'The AIB helper in Ubuntu is too old to install Node.js. Restart AIB.');
-  } finally {
-    setWslHostResolver(null);
-    setDistroSource(null);
-  }
-});
+    host.state = 'starting';
+    withHost(host);
+    try {
+      assertEquals(
+        await wslNodeSetupCommand('ubuntu'),
+        'Ubuntu is not running. Start it in Settings > AIB Linking (WSL), then install Node.js.',
+      );
+      assertEquals(host.starts, 0);
+      assertEquals(await wslNodeSetupCommand('no such'), 'Choose a distro.');
+      phase2Helper(host, {
+        ...PREREQS_OK,
+        node: { state: 'shim_unset', manager: 'asdf' },
+        canInstallNode: false,
+        nodeInstallBlocked: 'asdf has no Node.js version set. Run: asdf install nodejs latest',
+      });
+      assertEquals(await wslNodeSetupCommand('ubuntu', true), 'asdf has no Node.js version set. Run: asdf install nodejs latest');
+      assertEquals([host.starts, host.calls.at(-1)], [1, ['env.prereqs', { force: true }]]);
+      phase2Helper(host);
+      const ready = await wslNodeSetupCommand('ubuntu');
+      assert(typeof ready !== 'string', String(ready));
+      assertEquals([ready.home, ready.command.file, ready.command.args.slice(0, 3)], ['/home/u', '/bin/bash', [
+        '--noprofile',
+        '--norc',
+        '-c',
+      ]]);
+      assertEquals(ready.command.args[3], wslNodeScript('/usr/bin/zsh'));
+      host.handlers['env.prereqs'] = () => {
+        throw new WslHelperError('nope', 'unknown_method');
+      };
+      assertEquals(await wslNodeSetupCommand('ubuntu'), 'The AIB helper in Ubuntu is too old to install Node.js. Restart AIB.');
+    } finally {
+      setWslHostResolver(null);
+      setDistroSource(null);
+    }
+  },
+);
 
 Deno.test('the Node.js steps: pinned install.sh checked before it runs, PROFILE by login shell, --lts, 22.19 checked, no sudo/apt; fail closed', () => {
   assertEquals([profileFor('/usr/bin/zsh'), profileFor('/bin/bash'), profileFor('/usr/bin/fish'), profileFor('')], [
@@ -378,7 +483,7 @@ Deno.test('the Node.js steps: pinned install.sh checked before it runs, PROFILE 
   assert(!steps.some((s) => /\bsudo\b|\bapt(-get)?\b/.test(s)), 'never sudo or apt');
   const script = wslNodeScript('/bin/bash');
   for (const step of steps) assert(script.includes(`aib_step '${step.replaceAll("'", `'\\''`)}'`), `printed and run: ${step}`);
-  assert(script.includes("printf '\\n$ %s\\n' \"$1\""), 'each command is printed before it runs');
+  assert(script.includes('printf \'\\n$ %s\\n\' "$1"'), 'each command is printed before it runs');
   // no checksum: refused, nothing runs
   assertEquals(wslNodeCommand(PREREQS_OK, 'Ubuntu', ''), NVM_NOT_PINNED);
   assertEquals(nvmInstallLine({ sha256: '' }), `echo '${NVM_NOT_PINNED}' && false`);
@@ -400,7 +505,9 @@ Deno.test('the nvm tag and checksum live only in agents/nvm.ts; the Beta card, t
     for (const entry of Deno.readDirSync(dir)) {
       const url = new URL(entry.name + (entry.isDirectory ? '/' : ''), dir);
       if (entry.isDirectory) walk(url);
-      else if (entry.name.endsWith('.ts') && /nvm-sh\/nvm\/v\d|v0\.4\d\.\d/.test(Deno.readTextFileSync(url))) hits.push(url.pathname.split('/server/')[1]);
+      else if (entry.name.endsWith('.ts') && /nvm-sh\/nvm\/v\d|v0\.4\d\.\d/.test(Deno.readTextFileSync(url))) {
+        hits.push(url.pathname.split('/server/')[1]);
+      }
     }
   };
   walk(root);

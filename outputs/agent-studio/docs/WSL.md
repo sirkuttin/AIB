@@ -319,8 +319,8 @@ the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/h
   looks for Node.js again), `GET|POST /api/live/wsl/agents/install`, `POST /api/live/wsl/agents/install/cancel`. Helper methods:
   `agents.installCheck`, `agents.install`, `agents.installStatus`, `agents.installCancel` (a helper without them keeps the copyable
   command only).
-- Not done: uninstall from the distro (remove `~/.aib-server/agents/<id>` by hand); older versions are kept after an update (a running
-  chat may still use one); the Beta agents are not offered in the distro.
+- Uninstall: `POST /api/live/wsl/agents/uninstall` (Settings > AIB Linking (WSL), phase 2, below). Older versions are kept after an
+  update (a running chat may still use one); the Beta agents are not offered in the distro.
 - Tests: `wsl_agent_install_test` (fake npm, fake host), `test_wsl_ui.js` (the panel), `wsl_agent_install_e2e` (real distro).
 
 ## Settings > AIB Linking (WSL): what the routes give it
@@ -347,6 +347,48 @@ Design: `docs/wsl/linking-design.md` (section 11 overrides the rest). Opening Se
   runs `codex login` from it; `codex` on the distro's PATH only when the adapter has none. Windows is unchanged.
 - Tests: `wsl_linking_test` (no distro: zero start calls on a counting FakeWslHost, the status fields, shim and bundled-CLI
   detection in temp folders), `wsl_linking_e2e` (real distro).
+
+## Settings > AIB Linking (WSL): phase 2 routes
+
+Design: `docs/wsl/linking-design.md` section 12 (it overrides the rest). Helper methods `env.prereqs`, `agents.uninstall`,
+`agents.signinStatus` (contract.ts, frozen) are the Linux side; these are the Windows routes over them.
+
+- **Each distro's own On/Off switch per agent.** Settings key `agentsByDistro: {"<distro key>": {"<agent id>": boolean}}` in
+  `studio-settings.json` (the folded distro name; present only when not empty; an agent with no value in a distro is on; exposed as is
+  by `GET /api/live/settings`). `POST /api/live/wsl/agents/enabled {distro, id, enabled}` -> `{ok, enabled}` (id: a built-in, Beta or
+  existing custom agent; the page token as every WSL route). A WSL chat reads only this switch, never the Windows one, and a Windows
+  chat never reads it (`host/studio.ts wslLaunch`): an agent turned off for the distro is refused for a new chat, the agent options
+  probe and the person's Continue with "Claude Code is turned off for Ubuntu in Settings > AIB Linking (WSL)", before the distro is
+  asked anything; the automatic reconnect at start is never refused (a running chat is not cut off by the switch).
+- `GET /api/live/wsl/agents` rows (with or without `peek`) add `enabled` (that switch), `signin: {state: 'signed_in' | 'signed_out' |
+  'unknown', account?, note?}` (helper `agents.signinStatus`; an older helper: 'unknown' with "The AIB helper in Ubuntu cannot check
+  sign-ins yet. Restart AIB."), `canUninstall` (AIB's own install: `source` 'studio') and, on the Codex row only, `limits`: the Limits
+  chip's snapshot (`usage_limits_feed.ts wslCodexLimits`: helper `codex.limits` over that distro's `~/.codex`, never merged with
+  Windows') or null.
+- `POST /api/live/wsl/agents/uninstall {distro, id}` -> the helper's `{ok, removed, message?, blocked?}`. Never starts a distro (409
+  `wsl_unavailable` when it is not ready). Refused with `ok: false`, `removed: []` and `blocked` (the reason, verbatim) while the
+  agent's install job runs in that distro (the job state the install routes read), while its sign-in terminal
+  (`signin:<agent>@<distro>`) runs, or when the helper refuses (answered, or thrown with a `*refused*` / `*blocked*` code). Claude
+  Code and Codex only (400 otherwise); a helper without the method: 409 "too old".
+- `GET /api/live/wsl/prereqs?distro=<d>&peek=1[&start=1][&force=1]`: not ready -> `{distro, name, state, line, prereqs: null}` (never
+  started); ready -> `{distro, name, state: 'ready', line: '', prereqs: EnvPrereqs}` (helper `env.prereqs`, `force` reads the login
+  PATH again). `start=1` is the click; without `peek` the distro is started and waited for (as `/wsl/agents`).
+- **Install Node.js in Ubuntu**: the terminal `/api/live/terminal?setup=wsl-node&distro=<d>[&start=1]` (key
+  `setup:wsl-node@<distro>`, in the Linux home, through `terminals.attachWsl`; the server reads `distro` from the query). It asks the
+  helper's `env.prereqs` (force) first and refuses unless `canInstallNode` (the line is `nodeInstallBlocked`). The steps
+  (`wsl/node_setup.ts`), each printed as `$ <command>` before it runs, the first failure stopping the rest, run by `/bin/bash
+  --noprofile --norc -c` with the distro's login environment: `mktemp`; `curl -fsSLo` nvm's install.sh at the pinned tag; `sha256sum
+  -c` against the pinned SHA-256; `touch` and `PROFILE=<.zshrc for zsh (ZDOTDIR), .bashrc for bash, else .profile> bash <file>`;
+  remove the temp file; load nvm; `nvm install --lts`; `node --version` at least 22.19. Never sudo, never apt. After exit 0 the page
+  asks `prereqs?force=1`.
+- **One nvm pin** (`agents/nvm.ts`): `NVM_VERSION` v0.41.0 and `NVM_INSTALL_SHA256` (of that tag's install.sh, computed 2026-11-15
+  from raw.githubusercontent.com and checked against github.com/.../raw). The Beta card's Node.js step (`beta_setup.ts`, Linux and
+  macOS: `shasum -a 256` where `sha256sum` is missing), the copy line of the distro rows (`wsl/agent_install.ts NODE_INSTALL`, now
+  `--lts` with the checksum) and the button all use it; an empty checksum makes every one refuse ("nvm checksum not pinned yet").
+- Tests: `wsl_linking_routes_test` (FakeWslHost with stand-in helper methods: the switch matrix, the rows, uninstall refusals, prereqs
+  peek, the Node.js terminal's refusals and steps, the single pin), `wsl_linking_routes_e2e` (real distro: no host made by peek,
+  the rows with the real helper, the button's script run in the distro against a stand-in install.sh served by `file://`, never the
+  real installer).
 
 ## Settings > AIB Linking (WSL)
 
@@ -416,13 +458,14 @@ keeps one failure from hiding the others' results.
 | `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
 | `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends |
+| `wsl_linking_routes_e2e` | phase 2 routes: peek, Uninstall and the Node.js terminal make no host before AIB used the distro; with the real helper and a stand-in login shell, `prereqs?start=1`, the rows' `enabled` / `signin` / `canUninstall` / `limits`, Uninstall and the Node.js terminal (the "too old" answers while the helper lacks the phase 2 methods); the Node.js script run with bash in the distro against a stand-in install.sh (`file://`): checksum gate, PROFILE per login shell, the 22.19 minimum, every command printed |
 | `wsl_linking_e2e` | Settings' peek before AIB used the distro makes no host; with a stand-in login shell and asdf's layout (shims for node, npm, codex-acp; a fake `@agentclientprotocol/codex-acp` with its `@openai/codex`): detect resolves the shim to `[real node, entry]`, `signin` and `bundledCli` name the bundled CLI, the peek row says so, the Codex sign-in runs it |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)

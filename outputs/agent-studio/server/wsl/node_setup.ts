@@ -23,13 +23,13 @@ export function profileFor(loginShell: string): string {
   return '$HOME/.profile';
 }
 
-/** The commands the button runs, in order, exactly as they are printed. */
-export function wslNodeSteps(loginShell: string, sha256 = NVM_INSTALL_SHA256): string[] {
+/** The commands the button runs, in order, exactly as they are printed. `url`: tests give a stand-in (file://); AIB never does. */
+export function wslNodeSteps(loginShell: string, sha256 = NVM_INSTALL_SHA256, url = NVM_INSTALL_URL): string[] {
   const profile = profileFor(loginShell);
   const { major, minor } = MIN_WSL_NODE;
   return [
     't="$(mktemp)"',
-    `curl -fsSLo "$t" ${NVM_INSTALL_URL}`,
+    `curl -fsSLo "$t" ${url}`,
     `echo "${sha256}  $t" | sha256sum -c -`,
     `touch "${profile}"`, // nvm writes to PROFILE only when the file exists
     `PROFILE="${profile}" bash "$t"`,
@@ -44,12 +44,12 @@ export function wslNodeSteps(loginShell: string, sha256 = NVM_INSTALL_SHA256): s
 }
 
 /** The bash script of the button: prints each step (`$ <command>`), runs it, stops at the first failure with its exit code. */
-export function wslNodeScript(loginShell: string, sha256 = NVM_INSTALL_SHA256): string {
+export function wslNodeScript(loginShell: string, sha256 = NVM_INSTALL_SHA256, url = NVM_INSTALL_URL): string {
   const quote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
   const lines = [
     'aib_step() { printf \'\\n$ %s\\n\' "$1"; eval "$1"; s=$?; if [ "$s" -ne 0 ]; then printf \'\\nStopped: that command failed (exit %s). Nothing else ran.\\n\' "$s"; exit "$s"; fi; }',
-    ...wslNodeSteps(loginShell, sha256).map((step) => `aib_step ${quote(step)}`),
-    'printf \'\\nNode.js is installed. Choose Check again in AIB.\\n\'',
+    ...wslNodeSteps(loginShell, sha256, url).map((step) => `aib_step ${quote(step)}`),
+    "printf '\\nNode.js is installed. Choose Check again in AIB.\\n'",
   ];
   return lines.join('\n');
 }

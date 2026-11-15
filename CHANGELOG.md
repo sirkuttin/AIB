@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- AIB Linking (WSL): each distro has its own On/Off switch per agent. Turning Claude Code off in Ubuntu no longer depends on, or
+  touches, its Windows switch: a new chat (or Continue) in a WSL project with an agent turned off for that distro says so ("Claude Code
+  is turned off for Ubuntu in Settings > AIB Linking (WSL)"), and Windows chats never read the distro switch.
+- AIB Linking (WSL): the agent rows of a distro now carry its sign-in state, whether AIB installed it (so it can be uninstalled), and
+  for Codex the usage limits of the distro's own sign-in (never mixed with Windows').
+- AIB Linking (WSL): Uninstall removes the copy of Claude Code or Codex that AIB installed in a distro; it refuses while that agent's
+  install or sign-in runs or a chat uses it, and never touches your own installs or your sign-in.
+- AIB Linking (WSL): a prerequisites check per distro (Node.js, npm, git, curl, free space), read without ever starting the distro.
+- AIB Linking (WSL): "Install Node.js in Ubuntu" runs nvm's installer in a terminal panel inside the distro, showing every command
+  first; the installer script is checked against a pinned checksum before it runs, then nvm installs the Node.js LTS. No sudo.
+- Node.js via nvm: one pinned nvm version everywhere AIB offers it (Beta agents on Linux and macOS, the distro copy line, the WSL
+  button), and the installer script is now checked against its SHA-256 before it runs.
 - WSL projects: work on code that lives in Linux without leaving AIB. New project and Add project offer "WSL: Ubuntu" (any WSL2
   distro) next to Windows. Claude Code, Codex, OMP and your custom agents, installed in the distro, run there, in the Linux folder,
   with the distro's own git, node and login environment, so nothing crosses the slow `\\wsl$` share and no Windows tool touches a
