@@ -17,7 +17,18 @@ function fakeStorage() {
   };
 }
 const win = (storage, ctx, extra = {}) =>
-  M.make({}, Object.assign({ storage, ctx: Object.assign({ w: 'm', kind: 'main', mode: '', project: '', chat: '' }, ctx), channel: null, noEvents: true }, extra));
+  M.make(
+    {},
+    Object.assign(
+      {
+        storage,
+        ctx: Object.assign({ w: 'm', kind: 'main', mode: '', project: '', chat: '' }, ctx),
+        channel: null,
+        noEvents: true,
+      },
+      extra,
+    ),
+  );
 const drafts = (W) =>
   W.map('studio-drafts-v1', {
     entries: (p) => (p && p.version === 1 && p.drafts) || {},
@@ -36,7 +47,10 @@ test('two windows: each draft survives the other window writing its own (C1)', (
   assert.deepEqual(saved, { version: 1, drafts: { 'chat-x': 'hello from A', 'chat-y': 'hello from B' } });
   // a whole-value write (the module's old shape) only writes what changed since it loaded
   A.write({ 'chat-x': 'hello from A, more' });
-  assert.deepEqual(JSON.parse(st.getItem('studio-drafts-v1')).drafts, { 'chat-x': 'hello from A, more', 'chat-y': 'hello from B' });
+  assert.deepEqual(JSON.parse(st.getItem('studio-drafts-v1')).drafts, {
+    'chat-x': 'hello from A, more',
+    'chat-y': 'hello from B',
+  });
   B.del('chat-y');
   assert.deepEqual(JSON.parse(st.getItem('studio-drafts-v1')).drafts, { 'chat-x': 'hello from A, more' });
 });
@@ -51,7 +65,10 @@ test('one window: the saved text is exactly what the old code wrote (formats unc
   assert.equal(st.getItem('studio-drafts-v1'), JSON.stringify({ version: 1, drafts: { b: 'two' } }));
   // unknown fields of the stored value are the builder's to keep
   st.setItem('k', JSON.stringify({ v: 2, extra: 'x', items: { a: 1 } }));
-  const K = win(st, {}).map('k', { entries: (p) => p.items, build: (obj, prev) => Object.assign({}, prev, { items: obj }) });
+  const K = win(st, {}).map('k', {
+    entries: (p) => p.items,
+    build: (obj, prev) => Object.assign({}, prev, { items: obj }),
+  });
   K.load();
   K.set('b', 2);
   assert.deepEqual(JSON.parse(st.getItem('k')), { v: 2, extra: 'x', items: { a: 1, b: 2 } });

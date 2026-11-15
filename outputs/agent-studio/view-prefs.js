@@ -55,18 +55,26 @@
      file does NOT send: their page script saves each change itself, per item, so a change made elsewhere (a phone) is not
      overwritten by this page's whole, older value. studio-conversation-names: chat.js renameChat -> POST /api/live/chat-name. */
   const SEED_ONLY = Object.freeze(['studio-conversation-names']);
-  const synced = (k) =>
-    typeof k === 'string' && (KEYS.includes(k) || PREFIXES.some((p) => k.startsWith(p) && k.length > p.length));
+  /* Multi-window (N2): a window's own copy of a key carries ':w<n>' (store-merge.js winKey) and syncs like the key itself. */
+  const WIN_SUFFIX = /:w[2-8]$/;
+  const synced = (k) => {
+    if (typeof k !== 'string') return false;
+    if (KEYS.includes(k) || PREFIXES.some((p) => k.startsWith(p) && k.length > p.length)) return true;
+    return WIN_SUFFIX.test(k) && KEYS.includes(k.replace(WIN_SUFFIX, ''));
+  };
   // A drag saves once, at its end; a held arrow key is one small request per repeat.
   const RETRY_MS = 5000;
 
   /* What to do at start. saved: {key: value} from the data folder; local: {key: value} of the synced keys in localStorage.
      Returns {seed: {key: value} to write into localStorage, upload: {key: value} to send to the server}. */
-  function plan(saved, local) {
+  function plan(saved, local, missingOnly) {
     const seed = {},
       upload = {};
     for (const k of Object.keys(saved || {})) {
-      if (synced(k) && typeof saved[k] === 'string' && local[k] !== saved[k]) seed[k] = saved[k];
+      if (!synced(k) || typeof saved[k] !== 'string' || local[k] === saved[k]) continue;
+      // another AIB window is open (N1): its newer change may still be on its way to the server, so only fill what is missing
+      if (missingOnly && typeof local[k] === 'string') continue;
+      seed[k] = saved[k];
     }
     for (const k of Object.keys(local || {})) {
       if (synced(k) && typeof local[k] === 'string' && !Object.prototype.hasOwnProperty.call(saved || {}, k))
@@ -85,12 +93,32 @@
         data && typeof data.prefs === 'object' && data.prefs && !Array.isArray(data.prefs) ? data.prefs : {};
       const out = {};
       for (const k of Object.keys(prefs)) if (typeof prefs[k] === 'string') out[k] = prefs[k];
+      // the server says another window is alive (multi-window N1): seed only the keys this profile does not have
+      if (data && data.seed === 'missing-only') Object.defineProperty(out, MISSING_ONLY, { value: true });
       return out;
     } catch (e) {
       return null;
     }
   }
 
+  const MISSING_ONLY = typeof Symbol === 'function' ? Symbol('missing-only') : '__missingOnly';
+  /* A2: another AIB window changed a shared setting (its storage event): repaint it here at once, without writing anything. */
+  function applyFromOtherWindow(win, k, v) {
+    try {
+      const T = win.AibThemes;
+      if (k === 'aib-theme' && T) {
+        if (T.valid(v)) T.paint(T.migrate ? T.migrate(v) : v);
+      } else if (k === 'aib-status-glyphs' && T) {
+        const html = win.document && win.document.documentElement;
+        if (html && html.setAttribute) {
+          html.setAttribute('data-status-glyphs-pref', v === 'on' ? 'on' : 'off');
+          html.setAttribute('data-status-glyphs', v === 'on' ? 'on' : 'off');
+        }
+      }
+      if (win.dispatchEvent && typeof win.CustomEvent === 'function')
+        win.dispatchEvent(new win.CustomEvent('aib-pref-changed', { detail: { key: k, value: v } }));
+    } catch (e) {}
+  }
   let live = null;
   /* opts (tests): storage, proto (the Storage prototype to hook), fetch, setTimeout, clearTimeout. */
   function init(win, opts) {
@@ -118,7 +146,7 @@
         if (synced(k)) local[k] = storage.getItem(k);
       }
     } catch (e) {}
-    const { seed, upload } = plan(saved, local);
+    const { seed, upload } = plan(saved, local, !!saved[MISSING_ONLY]);
     /* What the data folder has, key by key. Writing the value it already has sends nothing: the page rewrites the same sidebar
        state on every list update; each of those was a request a change made right after it had to wait for. */
     const known = new Map();
@@ -238,6 +266,14 @@
       flush(true);
     };
     if (win.addEventListener) {
+      win.addEventListener('storage', (e) => {
+        if (!e || !synced(e.key)) return;
+        try {
+          if (e.storageArea && e.storageArea !== storage) return;
+        } catch (err) {}
+        known.set(e.key, e.newValue); // the other window sends it to the server; this page need not send it again
+        applyFromOtherWindow(win, e.key, e.newValue);
+      });
       win.addEventListener('pagehide', unload);
       win.addEventListener('pageshow', () => (leaving = false)); // back from the back/forward cache
     }
@@ -264,7 +300,7 @@
     return live;
   }
 
-  const api = { KEYS, PREFIXES, SEED_ONLY, synced, plan, readBlock, init };
+  const api = { KEYS, PREFIXES, SEED_ONLY, synced, plan, readBlock, init, applyFromOtherWindow };
   root.AibViewPrefs = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
   /* Runs as soon as it is loaded: it is the first deferred script, so every other script (and DOMContentLoaded) comes after. */

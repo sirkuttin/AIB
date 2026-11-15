@@ -4,16 +4,19 @@
   const KEY = 'studio-activity-hidden',
     NARROW = 1100;
   const isNarrow = (width) => Number(width) < NARROW;
+  /* Per window (multi-window, store-merge.js winKey): the main window the plain key, window n KEY + ':w<n>'. */
+  const key = () => (root.AibStore ? root.AibStore.winKey(KEY) : KEY);
   function readHidden(store) {
     try {
-      return (store || localStorage).getItem(KEY) === '1';
+      return (store || localStorage).getItem(key()) === '1';
     } catch (e) {
       return false;
     }
   }
   function writeHidden(value, store) {
+    if (root.AibStore && !root.AibStore.layoutWritable()) return; // a pop-out writes no layout
     try {
-      (store || localStorage).setItem(KEY, value ? '1' : '0');
+      (store || localStorage).setItem(key(), value ? '1' : '0');
     } catch (e) {}
   }
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);

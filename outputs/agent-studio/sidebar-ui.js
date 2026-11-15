@@ -333,10 +333,33 @@
     flat = !!on;
   }
   const isCollapsed = (key) => collapsed.has(key);
+  /* Multi-window (store-merge.js): the collapsed groups are a set shared by every window; a change reads the stored list again and
+     adds or removes only this group, so a group another window collapsed meanwhile stays collapsed. */
+  let collapsedStore = null;
+  function collapsedMerged() {
+    const AS = root.AibStore;
+    if (!collapsedStore && AS) {
+      collapsedStore = AS.map(KEYS.collapsed, {
+        entries: (arr) => {
+          const o = {};
+          if (Array.isArray(arr)) for (const k of arr) if (typeof k === 'string') o[k] = 1;
+          return o;
+        },
+        build: (obj) => Object.keys(obj),
+      });
+      collapsedStore.onChange((obj) => {
+        collapsed = new Set(Object.keys(obj));
+        if (host && host.render) host.render();
+      });
+    }
+    return collapsedStore;
+  }
   function setCollapsed(key, value) {
     if (value) collapsed.add(key);
     else collapsed.delete(key);
-    write('collapsed', Array.from(collapsed));
+    const m = collapsedMerged();
+    if (m) collapsed = new Set(Object.keys(value ? m.set(key, 1) : m.del(key)));
+    else write('collapsed', Array.from(collapsed));
   }
   // Open the group holding c, e.g. before jumping to it from the switcher. True when something changed.
   function reveal(c) {
@@ -669,9 +692,9 @@
 
   function init(h) {
     host = h;
-    collapsed = new Set(
-      Array.isArray(read('collapsed', [])) ? read('collapsed', []).filter((x) => typeof x === 'string') : [],
-    );
+    collapsed = collapsedMerged()
+      ? new Set(Object.keys(collapsedMerged().load()))
+      : new Set(Array.isArray(read('collapsed', [])) ? read('collapsed', []).filter((x) => typeof x === 'string') : []);
     const first = Number(read('epoch', 0));
     epoch = first > 0 ? first : Date.now();
     if (!(first > 0)) write('epoch', epoch);

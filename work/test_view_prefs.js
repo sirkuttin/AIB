@@ -354,3 +354,46 @@ test('review 3: chat names are seeded and moved once, but a later change is neve
   const q = page({ 'studio-conversation-names': '{"claude:z":"Z"}' }, {});
   assert.equal(q.storage.getItem('studio-conversation-names'), '{"claude:z":"Z"}');
 });
+
+/* Multi-window Phase 1B (N1, N2, A2). */
+test('N2: a window\'s own copy of a key (:w2 ... :w8) syncs like the key itself; other suffixes do not', () => {
+  assert.equal(V.synced('studio-side-hidden:w2'), true);
+  assert.equal(V.synced('aib-sidebar-mode:w8'), true);
+  assert.equal(V.synced('studio-layout-v1:<1400:w3'), true, 'a prefixed key with a window suffix');
+  assert.equal(V.synced('studio-side-hidden:w9'), false);
+  assert.equal(V.synced('studio-side-hidden:t-abcd'), false);
+  assert.equal(V.synced('not-a-pref:w2'), false);
+});
+
+test('N1: with another window alive (seed "missing-only") a newer local value is not overwritten by the server\'s older one', () => {
+  assert.deepEqual(V.plan({ a: '1', 'aib-theme': 'old' }, { 'aib-theme': 'new' }, true).seed, {});
+  assert.deepEqual(V.plan({ 'aib-theme': 'old', 'studio-side-hidden': '1' }, { 'aib-theme': 'new' }, true).seed, { 'studio-side-hidden': '1' });
+  assert.deepEqual(V.plan({ 'aib-theme': 'old' }, { 'aib-theme': 'new' }, false).seed, { 'aib-theme': 'old' }, 'one window: as before');
+  // the flag rides in the data block
+  const block = V.readBlock({ getElementById: () => ({ textContent: '{"prefs":{"aib-theme":"old"},"seed":"missing-only"}' }) });
+  const S = storageClass();
+  const storage = new S({ 'aib-theme': 'new' });
+  const ctl = V.init(
+    { document: { getElementById: () => ({ textContent: '{"prefs":{"aib-theme":"old","studio-cwd":"C:/x"},"seed":"missing-only"}' }), addEventListener() {} }, addEventListener() {} },
+    { storage, proto: S.prototype, fetch: null, setTimeout: () => 0, clearTimeout: () => {} },
+  );
+  assert.equal(storage.getItem('aib-theme'), 'new');
+  assert.equal(storage.getItem('studio-cwd'), 'C:/x');
+  assert.deepEqual(ctl.seeded, ['studio-cwd']);
+  assert.equal(block['aib-theme'], 'old');
+});
+
+test('A2: a theme another window picked is painted here without writing anything', () => {
+  const attrs = {};
+  let painted = null;
+  const win = {
+    AibThemes: { valid: (v) => v === 'dark-x', paint: (v) => (painted = v) },
+    document: { documentElement: { setAttribute: (k, v) => (attrs[k] = v) } },
+  };
+  V.applyFromOtherWindow(win, 'aib-theme', 'dark-x');
+  assert.equal(painted, 'dark-x');
+  V.applyFromOtherWindow(win, 'aib-theme', 'bogus');
+  assert.equal(painted, 'dark-x', 'an invalid value is ignored');
+  V.applyFromOtherWindow(win, 'aib-status-glyphs', 'on');
+  assert.equal(attrs['data-status-glyphs'], 'on');
+});

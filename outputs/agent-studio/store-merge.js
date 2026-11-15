@@ -136,7 +136,8 @@
     const stores = new Map(); // key -> store
     let channel = null;
     try {
-      channel = opts.channel !== undefined ? opts.channel : win.BroadcastChannel ? new win.BroadcastChannel(CHANNEL) : null;
+      channel =
+        opts.channel !== undefined ? opts.channel : win.BroadcastChannel ? new win.BroadcastChannel(CHANNEL) : null;
     } catch (e) {
       channel = null;
     }
@@ -358,5 +359,6 @@
   const api = { make, readContext, W_RE, HEAL_MS, CHANNEL };
   root.AibStoreMerge = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (typeof document !== 'undefined' && root === (typeof window !== 'undefined' ? window : null)) root.AibStore = make(root);
+  if (typeof document !== 'undefined' && root === (typeof window !== 'undefined' ? window : null))
+    root.AibStore = make(root);
 })(typeof window !== 'undefined' ? window : globalThis);
