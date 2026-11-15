@@ -32,6 +32,17 @@ export interface WindowsRouteContext {
 }
 
 type Reply = [number, Record<string, unknown>];
+/** An open waits for the one before it at most this long (a window that never finishes opening does not block every later one). */
+const QUEUE_WAIT_MS = 10_000;
+
+async function waitAtMost(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([p, new Promise((r) => (timer = setTimeout(r, ms)))]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class WindowsRoute {
   readonly rate: RateLimit;
@@ -61,7 +72,7 @@ export class WindowsRoute {
   }
 
   #open(dw: DesktopWindows, req: OpenRequest, from: string): Promise<Reply> {
-    const run = this.#chain.then(async (): Promise<Reply> => {
+    const run = waitAtMost(this.#chain, QUEUE_WAIT_MS).then(async (): Promise<Reply> => {
       const there = dw.list().find((info) => showsAlready(info, req));
       if (there) {
         dw.focus(there.w);
