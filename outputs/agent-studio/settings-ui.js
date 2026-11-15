@@ -14,6 +14,7 @@
 
   const SECTIONS = [
     { id: 'agents', label: 'AIB Linking' },
+    { id: 'wsl', label: 'AIB Linking (WSL)', windowsOnly: true }, // drawn by wsl-settings-ui.js; only when AIB runs on Windows
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
@@ -86,6 +87,27 @@
         'codex',
         'gemini',
         'acp',
+      ],
+    },
+    {
+      id: 'wsl-linking',
+      section: 'wsl',
+      label: 'Agents in your WSL distros',
+      keywords: [
+        'wsl',
+        'ubuntu',
+        'debian',
+        'linux',
+        'distro',
+        'install',
+        'update',
+        'claude code',
+        'codex',
+        'omp',
+        'node',
+        'helper',
+        'wsl --install',
+        'not supported',
       ],
     },
     {
@@ -264,6 +286,23 @@
     },
   ];
   const sectionLabel = (id) => (SECTIONS.find((s) => s.id === id) || { label: id }).label;
+  // Does AIB itself run on Windows? Its state folder says so (C:\... or a \\server share); before bootstrap has answered, the
+  // browser's own platform (Settings is shown by the desktop app or a browser on the same PC).
+  function windowsHost() {
+    const dir = S.boot && typeof S.boot.stateDir === 'string' ? S.boot.stateDir : '';
+    if (dir) return /^(?:[A-Za-z]:[\\/]|\\\\)/.test(dir);
+    const n = root.navigator;
+    const p = (n && ((n.userAgentData && n.userAgentData.platform) || n.platform || n.userAgent)) || '';
+    return /win/i.test(String(p));
+  }
+  // The section drawn: the chosen one, or AIB Linking while the chosen one is not shown here (AIB Linking (WSL) on a Mac or Linux AIB).
+  const shownSection = () => (sectionShown(S.section) ? S.section : 'agents');
+  const sectionShown = (id) => {
+    const s = SECTIONS.find((x) => x.id === id);
+    return !!s && (!s.windowsOnly || windowsHost());
+  };
+  // Entries that draw their own cards (several, with group headings) instead of going into one card with a title.
+  const OWN_CARDS = new Set(['wsl-linking']);
   // Page headings that differ from the short name in the section list.
   const PAGE_HEADINGS = {};
   const pageHeading = (id) => PAGE_HEADINGS[id] || sectionLabel(id);
@@ -787,11 +826,11 @@
       );
   }
 
-  function progressBar(a, job) {
+  function progressBar(a, job, label) {
     const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
     const bar = el('div', null, 'st-progress');
     bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-label', 'Installing ' + a.name);
+    bar.setAttribute('aria-label', label || 'Installing ' + a.name);
     bar.setAttribute('aria-valuemin', '0');
     bar.setAttribute('aria-valuemax', '100');
     bar.setAttribute('aria-valuenow', String(percent));
@@ -801,23 +840,106 @@
     return bar;
   }
 
+  // ---- where an agent row's state lives: an env adapter ------------------------------------------------------------------------
+  // agentRow draws one agent's card from `a` and an env: the env says where its install and sign-in jobs are kept and what the
+  // buttons do. WIN_ENV is this PC's Windows agents (the stores above, keyed by agent id); a WSL distro passes its own
+  // (wsl-settings-ui.js: the job store of wsl-ui.js, keys "wsl:<distro>:<agent>"), so the same agent in Windows and in a distro
+  // never shares a job, a terminal or a card key.
+  const WIN_ENV = {
+    key: (a) => a.id, // the card's data-agent (keepView, openAgent) and the key of its terminal and setup note
+    tag: (a) => (a.beta ? '' : a.builtin ? 'Built in' : 'Added by you'), // Beta agents carry no tag: the section heading says Beta
+    installOf: (a) => installOf(a),
+    installRunning: (a) => installRunning(a),
+    signinOf: (a) => signinOf(a),
+    signinWaiting: (a) => signinWaiting(a),
+    statusText: (a) => statusText(a),
+    canSignIn: (a) => canSignIn(a),
+    startSignin: (a) => startSignin(a),
+    cancelSignin: (a) => cancelSignin(a),
+    showCheck: (a) => !!(a.found && a.signin),
+    checkAgain: (a) => (a.beta ? checkOne(a) : checkSignins(true)),
+    setupOf: (a) => setupOf(a),
+    canInstall: (a) => canInstall(a),
+    installLabel: () => 'Install',
+    installOff: () => '', // why an offered Install cannot run yet ('' = it can)
+    installTitle: () => '',
+    startInstall: (a) => startInstall(a),
+    cancelInstall: (a) => cancelInstall(a),
+    installBlock: (a) => installBlock(a),
+    recheck: () => load(true),
+    progressLabel: (a) => 'Installing ' + a.name,
+    progressText: (a, job) => progressText(a, job),
+    launcherLine: (a, st) => (st.text !== 'Not installed' ? ['Launcher', a.launcher || a.command || '(no command)'] : null),
+    terminal: (a) => betaTerms[a.id] || null,
+    toggle: true, // false: no On/Off switch on this card; toggleNote says where it is
+    toggleNote: () => '',
+    sharedKey: false, // true: the Beta key box is not drawn; the card says the Windows key is used
+    canUninstall: (a) => canUninstall(a),
+    uninstall: (a) => uninstallAgent(a),
+    extraLines: null, // (a, row, {job, running}): lines of the env's own, after the row's status lines
+    editable: true, // agents you added: Edit and Remove
+  };
+  // An env for agents outside Windows: nothing it does not name reaches Windows' stores (no sign-in, no uninstall, no switch).
+  const nothing = () => null;
+  function makeEnv(spec) {
+    return Object.assign(
+      {
+        key: (a) => a.id,
+        tag: () => '',
+        installOf: nothing,
+        installRunning: () => false,
+        signinOf: nothing,
+        signinWaiting: () => false,
+        statusText: (a) => (a.found ? { text: 'Found', cls: 'ok' } : { text: 'Not installed', cls: 'warn' }),
+        canSignIn: () => false,
+        startSignin: nothing,
+        cancelSignin: nothing,
+        showCheck: () => false,
+        checkAgain: nothing,
+        setupOf: nothing,
+        canInstall: () => false,
+        installLabel: () => 'Install',
+        installOff: () => '',
+        installTitle: () => '',
+        startInstall: nothing,
+        cancelInstall: nothing,
+        installBlock: () => '',
+        recheck: nothing,
+        progressLabel: (a) => 'Installing ' + a.name,
+        progressText: () => 'Installing…',
+        launcherLine: nothing,
+        terminal: nothing,
+        toggle: false,
+        toggleNote: () => '',
+        sharedKey: true,
+        canUninstall: () => false,
+        uninstall: nothing,
+        extraLines: null,
+        editable: false,
+      },
+      spec || {},
+    );
+  }
+
   // opts.sharedBlock: the page draws the "Node.js is needed" line once for all rows, so the row does not repeat it.
-  function agentRow(a, opts) {
+  // env: where the row's state lives (WIN_ENV when not given: this PC's Windows agents).
+  function agentRow(a, opts, env) {
+    const E = env || WIN_ENV;
     const shared = !!(opts && opts.sharedBlock);
     const row = el('div', null, 'st-agent' + (a.enabled ? '' : ' off'));
-    row.dataset.agent = a.id; // keepView finds this card again after a repaint
+    row.dataset.agent = E.key(a); // keepView finds this card again after a repaint
     const head = el('div', null, 'st-agent-head');
     head.append(el('span', a.letter || '?', 'st-letter'), el('strong', a.name));
-    // Beta agents carry no tag: the section heading says Beta.
-    if (!a.beta) head.append(el('span', a.builtin ? 'Built in' : 'Added by you', 'st-tag'));
-    const job = installOf(a),
-      running = installRunning(a),
+    const tag = E.tag(a);
+    if (tag) head.append(el('span', tag, 'st-tag'));
+    const job = E.installOf(a),
+      running = E.installRunning(a),
       refused = !!job && job.state === 'refused';
-    const waiting = !running && signinWaiting(a);
+    const waiting = !running && E.signinWaiting(a);
     // The start page has no On/Off switch (.st-actions is hidden there): a turned-off agent says so and offers Turn on, instead of
     // looking ready (Found, Not checked) while the page says no agent is set up.
     // A Beta card keeps its full look while off (cost, install command, the Off switch): that is what you decide from.
-    if (shared && !a.enabled && !a.beta && !running && !waiting) {
+    if (shared && E.toggle && !a.enabled && !a.beta && !running && !waiting) {
       head.append(
         el('span', 'Turned off', 'st-status dim'),
         button('Turn on', () => saveQuiet(togglePatch(a.id, true)), 'st-primary'),
@@ -828,31 +950,38 @@
       );
       return row;
     }
-    if (running) head.append(button('Cancel', () => cancelInstall(a), 'st-cancel'));
+    if (running) head.append(button('Cancel', () => E.cancelInstall(a), 'st-cancel'));
     else if (waiting)
       head.append(
         el('span', 'Waiting for sign-in…', 'st-status warn'),
-        button('Cancel', () => cancelSignin(a), 'st-cancel'),
+        button('Cancel', () => E.cancelSignin(a), 'st-cancel'),
       );
     else {
-      const st = statusText(a);
+      const st = E.statusText(a);
       head.append(el('span', st.text, 'st-status ' + st.cls));
-      if (canSignIn(a)) head.append(button('Sign in', () => startSignin(a), 'st-primary'));
-      if (a.found && a.signin)
-        head.append(button('Check again', () => (a.beta ? checkOne(a) : checkSignins(true)), 'st-link'));
-      if (!a.found && setupOf(a)) betaInstallButton(a, head, job, refused);
-      else if (canInstall(a))
-        head.append(
-          button(job && (job.state === 'failed' || refused) ? 'Retry' : 'Install', () => startInstall(a), 'st-primary'),
+      if (E.canSignIn(a)) head.append(button('Sign in', () => E.startSignin(a), 'st-primary'));
+      if (E.showCheck(a)) head.append(button('Check again', () => E.checkAgain(a), 'st-link'));
+      if (!a.found && E.setupOf(a)) betaInstallButton(a, head, job, refused);
+      else if (E.canInstall(a)) {
+        const go = button(
+          job && (job.state === 'failed' || refused) ? 'Retry' : E.installLabel(a),
+          () => E.startInstall(a),
+          'st-primary',
         );
+        const off = E.installOff(a),
+          title = off || E.installTitle(a);
+        if (off) go.disabled = true;
+        if (title) go.title = title;
+        head.append(go);
+      }
     }
     row.append(head);
-    const blockedBy = !a.found && !running && (setupOf(a) || {}).blockedBy;
+    const blockedBy = !a.found && !running && (E.setupOf(a) || {}).blockedBy;
     if (blockedBy) row.append(note(blockedBy, 'dim st-beta-blocked'));
     // A built-in AIB installs (Claude Code, Codex) that cannot install yet: the same "Needs first:" as a Beta card, on the card.
-    if (blockedBy && !a.beta) row.append(needsFirst(a, setupOf(a), true));
+    if (blockedBy && !a.beta) row.append(needsFirst(a, E.setupOf(a), true));
     if (running) {
-      row.append(progressBar(a, job), note(progressText(a, job)));
+      row.append(progressBar(a, job, E.progressLabel(a)), note(E.progressText(a, job)));
     } else if (waiting) {
       row.append(
         note(
@@ -866,14 +995,10 @@
         ),
       );
     } else {
-      const st = statusText(a);
-      if (st.text !== 'Not installed') {
-        row.append(
-          el('span', 'Launcher', 'st-hint'),
-          el('code', a.launcher || a.command || '(no command)', 'st-command'),
-        );
-      }
-      const sign = signinOf(a);
+      const st = E.statusText(a);
+      const launcher = E.launcherLine(a, st);
+      if (launcher) row.append(el('span', launcher[0], 'st-hint'), el('code', launcher[1], 'st-command'));
+      const sign = E.signinOf(a);
       if (sign && sign.state === 'failed') row.append(note(sign.message || 'The sign-in failed.', 'bad'));
       else if (sign && sign.state === 'manual') {
         const line = note(
@@ -884,10 +1009,10 @@
         row.append(line);
       }
       // One line under the row: a failure wins, then why installs cannot run, then what the agent is missing.
-      const block = installBlock(a);
+      const block = E.installBlock(a);
       if (job && job.state === 'failed') row.append(note(job.message || 'The install failed.', 'bad'));
       else if (refused) row.append(note(job.message, 'bad'));
-      else if (block && setupOf(a)) {
+      else if (block && E.setupOf(a)) {
         // "Needs first:" above says it; only the do-it-yourself npm line stays
         if (a.installHint) row.append(note(a.installHint, 'dim'));
       } else if (block && shared) {
@@ -896,7 +1021,7 @@
         const line = note(block + (a.installHint ? ' ' + a.installHint : ''), 'dim');
         line.append(
           ' ',
-          button('Check again', () => load(true), 'st-link'),
+          button('Check again', () => E.recheck(a), 'st-link'),
         );
         row.append(line);
       } else if (
@@ -905,10 +1030,11 @@
         !(a.installable && /^Not installed/.test(a.problem)) &&
         !(a.beta && /^Not installed/.test(a.problem)) // the Beta card shows the install command itself
       )
-        row.append(note(a.problem, canInstall(a) || (a.installable && a.launcherSource === 'missing') ? 'dim' : 'bad'));
+        row.append(note(a.problem, E.canInstall(a) || (a.installable && a.launcherSource === 'missing') ? 'dim' : 'bad'));
     }
-    if (a.beta) betaLines(a, row);
-    else if (betaTerms[a.id]) row.append(betaTerms[a.id].node); // a built-in's Node.js install runs in the card's terminal
+    if (E.extraLines) E.extraLines(a, row, { job, running });
+    if (a.beta) betaLines(a, row, E);
+    else if (E.terminal(a)) row.append(E.terminal(a).node); // a built-in's Node.js install runs in the card's terminal
     if (!a.builtin && !a.beta) {
       const bits = [];
       if (a.args && a.args.length) bits.push(a.args.length + (a.args.length === 1 ? ' argument' : ' arguments'));
@@ -919,15 +1045,17 @@
       if (bits.length) row.append(note(bits.join(' · ')));
     }
     const actions = el('div', null, 'st-actions');
-    actions.append(
-      toggle(a.enabled ? 'On' : 'Off', a.enabled, (on) => {
-        saveQuiet(togglePatch(a.id, on)); // on/off only: the agent's command, arguments and environment are never sent back
-      }),
-    );
-    if (opts && opts.uninstall && canUninstall(a) && !running && !waiting) {
-      actions.append(button('Uninstall', () => uninstallAgent(a), 'st-danger'));
+    if (E.toggle)
+      actions.append(
+        toggle(a.enabled ? 'On' : 'Off', a.enabled, (on) => {
+          saveQuiet(togglePatch(a.id, on)); // on/off only: the agent's command, arguments and environment are never sent back
+        }),
+      );
+    else if (E.toggleNote(a)) actions.append(el('span', E.toggleNote(a), 'st-hint'));
+    if (opts && opts.uninstall && E.canUninstall(a) && !running && !waiting) {
+      actions.append(button('Uninstall', () => E.uninstall(a), 'st-danger'));
     }
-    if (!a.builtin && !a.beta) {
+    if (E.editable && !a.builtin && !a.beta) {
       actions.append(
         button('Edit', () => {
           S.form = formFrom(a);
@@ -938,7 +1066,7 @@
       );
     }
     row.append(actions);
-    if (!a.builtin && S.form && S.form.id === a.id) row.append(agentForm());
+    if (E.editable && !a.builtin && S.form && S.form.id === a.id) row.append(agentForm());
     return row;
   }
   function removeAgent(a) {
@@ -1190,12 +1318,13 @@
     }
   }
   // The card's own lines: cost, the agent's note, how to install it when it is missing, the API key box, the sign-in terminal.
-  function betaLines(a, row) {
+  function betaLines(a, row, env) {
+    const E = env || WIN_ENV;
     const info = betaInfo(a);
     if (info.cost) row.append(el('p', info.cost, 'st-beta-cost'));
     if (info.note) row.append(note(info.note, 'dim'));
-    if (!a.found && !installRunning(a)) {
-      const setup = info.setup || null;
+    if (!a.found && !E.installRunning(a)) {
+      const setup = E.setupOf(a) || null;
       if (setup && setup.prereqs && setup.prereqs.length) row.append(needsFirst(a, setup));
       const how = el('div', null, 'st-beta-install');
       // npm agents: AIB installs the package into its own folder (Install); the global npm command is the do-it-yourself way.
@@ -1215,16 +1344,17 @@
       line.append(code, copy);
       how.append(line);
       if (info.docs) how.append(externalLink('Install instructions', info.docs, 'st-link st-beta-docs'));
-      const again = button('Check again', () => load(true), 'st-link');
+      const again = button('Check again', () => E.recheck(a), 'st-link');
       how.append(' ', again);
       if (setup && setup.uninstallDocs)
         how.append(' ', externalLink('How to uninstall', setup.uninstallDocs, 'st-link st-beta-docs'));
       row.append(how);
     }
-    const msg = setupNotes[a.id];
+    const msg = setupNotes[E.key(a)];
     if (msg && !a.found) row.append(note(msg, 'dim'));
-    if (info.keyEnv) row.append(keyBox(a, info));
-    const term = betaTerms[a.id];
+    // A distro's card uses the key saved on Windows (one key per agent): it says so instead of a second key box.
+    if (info.keyEnv) row.append(E.sharedKey ? note('API key (' + info.keyEnv + '): uses your Windows key, saved in AIB Linking.', 'dim st-beta-key-shared') : keyBox(a, info));
+    const term = E.terminal(a);
     if (term) row.append(term.node);
   }
   // A link to a page on the web: target=_blank, which the desktop app hands to the system browser (desktop-bridge.js).
@@ -2108,6 +2238,11 @@
     const dl = el('dl', null, 'st-facts');
     for (const [k, v] of rows) if (v !== undefined && v !== null && v !== '') dl.append(el('dt', k), el('dd', v));
     box.append(dl);
+    if (wslRows().length && sectionShown('wsl')) {
+      const more = note('WSL distros: details and agent installs in ');
+      more.append(button('AIB Linking (WSL)', () => goSection('wsl'), 'st-link'), '.');
+      box.append(more);
+    }
     if (b.stateDir && root.navigator && root.navigator.clipboard)
       box.append(
         button('Copy state folder path', () => {
@@ -2144,6 +2279,10 @@
     'agents-list': renderAgentsList,
     'agents-beta': renderAgentsBeta,
     'agents-add': renderAgentsAdd,
+    'wsl-linking': (box) =>
+      root.AIBWslSettings
+        ? root.AIBWslSettings.render(box)
+        : box.append(note('This part could not be drawn: wsl-settings-ui.js is missing.', 'bad')),
     'default-agent': renderDefaultAgent,
     'default-picks': renderDefaultPicks,
     'default-projects': renderDefaultProjects,
@@ -2231,20 +2370,21 @@
   }
   function renderNav() {
     const counts = sectionCounts(INDEX, S.query),
-      searching = !!S.query.trim();
+      searching = !!S.query.trim(),
+      current = shownSection();
     S.nav.replaceChildren(
-      ...SECTIONS.map((s) => {
+      ...SECTIONS.filter((s) => sectionShown(s.id)).map((s) => {
         const b = el(
           'button',
           null,
           'st-section' +
-            (!searching && S.section === s.id ? ' active' : '') +
+            (!searching && current === s.id ? ' active' : '') +
             (searching && !counts[s.id] ? ' empty' : ''),
         );
         b.type = 'button';
         b.append(el('span', s.label));
         if (searching) b.append(el('span', String(counts[s.id]), 'st-count'));
-        if (!searching && S.section === s.id) b.setAttribute('aria-current', 'page');
+        if (!searching && current === s.id) b.setAttribute('aria-current', 'page');
         b.addEventListener('click', () => {
           S.query = '';
           S.search.value = '';
@@ -2258,8 +2398,10 @@
   function renderContent() {
     if (!S.content) return;
     const searching = !!S.query.trim();
-    const entries = searching ? filterIndex(INDEX, S.query) : INDEX.filter((e) => e.section === S.section);
-    S.title.textContent = searching ? 'Search results' : pageHeading(S.section);
+    const shown = INDEX.filter((e) => sectionShown(e.section));
+    const current = shownSection();
+    const entries = searching ? filterIndex(shown, S.query) : shown.filter((e) => e.section === current);
+    S.title.textContent = searching ? 'Search results' : pageHeading(current);
     const frag = doc().createDocumentFragment();
     if (S.loadError && !S.data) {
       const n = note(
@@ -2276,13 +2418,14 @@
     }
     if (S.data && S.data.warning) frag.append(note(S.data.warning, 'bad'));
     if (!entries.length) frag.append(note('No settings match "' + S.query.trim() + '".'));
+    S.drawn = entries.map((e) => e.id);
     let lastSection = '';
     for (const e of entries) {
       if (searching && e.section !== lastSection) {
         lastSection = e.section;
         frag.append(el('h4', sectionLabel(e.section), 'st-group'));
       }
-      const c = card(TITLES[e.id] || e.label);
+      const c = OWN_CARDS.has(e.id) ? el('div', null, 'st-cards') : card(TITLES[e.id] || e.label);
       c.dataset.setting = e.id;
       try {
         RENDER[e.id](c);
@@ -2301,7 +2444,9 @@
     S.content.replaceChildren(frag);
     restoreView();
   }
-  const rowOf = (agent) => (S.content ? S.content.querySelectorAll('.st-agent').find((r) => r.dataset && r.dataset.agent === agent) : null);
+  // Array.from: a browser's querySelectorAll is a NodeList, which has no find
+  const rowOf = (agent) =>
+    S.content ? Array.from(S.content.querySelectorAll('.st-agent')).find((r) => r.dataset && r.dataset.agent === agent) || null : null;
   const topOf = (n) => (n && n.getBoundingClientRect ? n.getBoundingClientRect().top : 0);
   // Redrawing the page replaces every node, which drops the scroll position (the page is briefly empty, so the scroll clamps to 0)
   // and the focus (the clicked button is gone). keepView() records both before the redraw; the function it returns puts them back:
@@ -2322,7 +2467,7 @@
       const now = agent ? rowOf(agent) : null;
       if (inside && !c.contains(doc().activeElement)) {
         const here = now || c;
-        const buttons = here.querySelectorAll ? here.querySelectorAll('button,input,select,textarea,a') : [];
+        const buttons = here.querySelectorAll ? Array.from(here.querySelectorAll('button,input,select,textarea,a')) : [];
         const next =
           buttons.find((b) => b.textContent === label && b.className === cls) ||
           buttons.find((b) => b.textContent === label) ||
@@ -2428,9 +2573,19 @@
       }
     }
   }
+  // Another section of the open page, as its button in the section list does (opens the page when it is closed).
+  function goSection(id) {
+    if (!S.open || !S.page) return openPage(id);
+    if (!sectionShown(id)) return;
+    S.query = '';
+    S.search.value = '';
+    S.section = id;
+    renderAll();
+  }
   // Open Settings > AIB Linking with the Beta agent's card in view (from a menu that lists the agent as not ready).
-  function openAgent(id) {
-    openPage('agents');
+  // section/key: another section's card (AIB Linking (WSL): 'wsl', 'wsl:<distro>:<agent>').
+  function openAgent(id, section) {
+    openPage(section || 'agents');
     const show = () => {
       const row = rowOf(id);
       if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
@@ -2508,6 +2663,13 @@
     installBlockOf: installBlock,
     agentRow, // one agent's row (status, Install / Cancel / Retry); a start page can draw the same row
     renderAgentsBeta,
+    makeEnv, // an env for agentRow outside Windows (wsl-settings-ui.js)
+    goSection,
+    redraw: () => {
+      if (S.open) renderAll();
+    },
+    showing: (id) => S.open && (S.drawn || []).includes(id), // is this entry on the page now (its section, or a search hit)
+    windowsHost,
     BETA_NOTE,
     signInBeta, // a chat's Sign in for a Beta agent's terminal sign-in (resolves true on success)
     betaSigninKind: (id) => betaInfo(betaAgents().find((x) => x.id === id)).signin || '',

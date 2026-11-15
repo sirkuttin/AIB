@@ -348,6 +348,37 @@ Design: `docs/wsl/linking-design.md` (section 11 overrides the rest). Opening Se
 - Tests: `wsl_linking_test` (no distro: zero start calls on a counting FakeWslHost, the status fields, shim and bundled-CLI
   detection in temp folders), `wsl_linking_e2e` (real distro).
 
+## Settings > AIB Linking (WSL)
+
+A Settings section of its own, listed right under AIB Linking, only when AIB runs on Windows (bootstrap's state folder is a Windows
+path; before bootstrap answers, the browser's platform). Design: `docs/wsl/linking-design.md` (section 11 overrides it). Phase 1,
+drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `wsl-linking` and its RENDER hook):
+
+- **WSL on this PC**: every distro of the status (`WSL 2`, `WSL default` for the status's `isDefault`, the chip Ready / Starting /
+  Not running / Stopped / Problem), then the `skipped` ones (WSL 1, musl) as Not supported with the server's reason; a WSL 1 one
+  gets the copyable `wsl --set-version <name> 2`. No distro at all: `wsl --install` (or `wsl --install -d Ubuntu` when the status
+  says `wsl.exe` is there), Microsoft's page and Check again.
+- Per usable distro, a group: its status card (State, AIB helper, Home; Not running gets **Start Ubuntu and check**, which says it
+  copies AIB's helper there the first time, about 100 MB, and starts it; Stopped or Problem gets Reconnect), and, once the distro is
+  ready, **Agents in Ubuntu**.
+- The agent cards are Settings' own `agentRow` with an env of the distro (`makeEnv`): the job store is wsl-ui.js's (the only one;
+  Settings never keeps a second), card keys are `wsl:<distro>:<agent>`, so a Windows and an Ubuntu install of Claude Code at once
+  never share a job, a terminal or a card. Install / Update in Ubuntu, progress with Cancel, Install failed with Retry, and the
+  Node.js line with its command to copy, all through the existing install routes. Tags: Installed by AIB (`managed`) or Your own
+  install. The chip says Found (no sign-in status yet).
+- One On/Off switch per agent, the Windows one: a distro card has no switch and says "On: uses the Windows switch in AIB Linking".
+  A Beta card in a distro (later phase) says it uses the Windows API key instead of a key box.
+- Claude Code and Codex cards: when the row's `bundledCli` is true, "The standalone claude command is not needed"; otherwise the
+  vendor's command to copy and its docs (owner decision 3a: AIB never installs it).
+- **Opening Settings never starts a distro**: the section reads the status poll (never starts one) and asks
+  `GET /api/live/wsl/agents?distro&peek=1` only for a distro that is ready (again after a minute, or on Check again with
+  `force=1`). Only the Start and check click adds `start=1`. A not-ready peek answer never fills the new-chat panel's cache.
+- Links: the new-chat panel's "not installed in Ubuntu" state has **Set up Ubuntu in Settings** (opens the section with that
+  card in view); Settings > About has "WSL distros: details and agent installs in AIB Linking (WSL)".
+- Later phases (not drawn): the prerequisites checklist, the Node.js panel, Uninstall, sign-in status, Codex limits, Repair AIB
+  helper, Open Ubuntu terminal, Beta agents and the "AIB in Ubuntu" card with Remove.
+- Tests: `work/test_wsl_settings.js` (fake routes of the contract: every phase 1 state, no start on open, the namespaces).
+
 ## Building and testing
 
 ```

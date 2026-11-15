@@ -1067,3 +1067,17 @@ html[data-ui-scaled] .st-page {
 .dv-remind .st-toggle {
   margin: 0;
 }
+
+/* Settings > AIB Linking (WSL) (wsl-settings-ui.js): the same cards and agent rows as AIB Linking; these only space them. */
+.wl-lead {
+  margin: 0 0 10px;
+}
+.wl-distro .st-tag {
+  margin-left: 2px;
+}
+.wl-facts {
+  margin: 4px 0 8px;
+}
+.wl-foot {
+  margin: 10px 0 0;
+}
