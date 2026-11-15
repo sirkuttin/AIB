@@ -1192,7 +1192,7 @@ export class Studio {
   #wire(c: Connection): void {
     if (this.allow) {
       c.allowGate = this.allow;
-      c.scratchDir = this.allow.scratchFor(c.id);
+      if (!c.wsl) c.scratchDir = this.allow.scratchFor(c.id); // a Windows scratch folder is no folder for an agent in a distro (its additionalDirectories must be Linux paths)
     }
     c.onRelease = (conn) => {
       this.withdraw(conn);
