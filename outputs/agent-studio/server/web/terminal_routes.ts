@@ -16,6 +16,12 @@
  *                                                   sign-in card's advertised args when given). A distro AIB is not using is
  *                                                   refused, never started, unless start=1 (the user's click starts it and waits); for the next
  *                                                   5 minutes the login page it asks for opens on Windows without asking (wsl/open_urls.ts)
+ *   GET  /api/live/terminal?setup=wsl-node&distro=<distro>[&start=1]&cols=&rows=  "Install Node.js in Ubuntu" (Settings > AIB Linking (WSL)):
+ *                                                   a distro terminal in the Linux home running nvm's installer, pinned by its
+ *                                                   SHA-256, then `nvm install --lts` (wsl/node_setup.ts). Asks the helper's
+ *                                                   env.prereqs first (force) and is refused unless canInstallNode (the line is its
+ *                                                   nodeInstallBlocked). A distro AIB is not using is refused, never started, unless
+ *                                                   start=1. Key setup:wsl-node@<distro>. The page reads prereqs?force=1 after exit 0
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
  */
@@ -36,6 +42,11 @@ import { refOf } from '../platform/location.ts';
 import { distroName, hostWhenReady, notReady, peekState, peekWslHost } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { BUILTIN_NAMES } from '../agents/agent_registry.ts';
+import { type EnvPrereqs, WslHelperError, type WslHost } from '../wsl/contract.ts';
+import { wslNodeCommand } from '../wsl/node_setup.ts';
+
+/** A distro name as the routes take it (wsl_routes.ts DISTRO). */
+const WSL_DISTRO = /^[A-Za-z0-9._-]{1,64}$/;
 
 export const TERMINAL_SOCKET = '/api/live/terminal';
 export const TERMINAL_PROTOCOL = 'aib-terminal';
@@ -85,7 +96,8 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const signin = q.get('signin');
   const setup = q.get('setup');
   const distro = q.get('distro');
-  if (signin !== null && distro) {
+  if (setup === 'wsl-node') void attachWslNode(ctx, link, distro ?? '', q.get('cols'), q.get('rows'), q.get('start') === '1');
+  else if (signin !== null && distro) {
     void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'), q.getAll('arg'), q.get('start') === '1');
   } else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
   else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
@@ -194,7 +206,35 @@ async function attachSetup(ctx: WebContext, link: WsLink, agentId: string, step:
  */
 export async function wslSigninCommand(agentId: string, distro: string, args: unknown = [], start = false): Promise<ShellSpec | string> {
   const name = distroName(distro);
-  // Only the user's click (`start`) may start the distro; otherwise a distro AIB is not using is answered, never started.
+  const host = await clickedHost(distro, start, 'sign in');
+  if (typeof host === 'string') return host;
+  const label = BUILTIN_NAMES[agentId] ?? agentId;
+  if (agentId !== 'claude' && agentId !== 'codex') return `Signing in to ${label} inside ${name} is not available yet.`;
+  if (agentId === 'codex') {
+    // the Codex CLI next to the adapter (AIB's own install in the distro has one), else `codex` on the distro's PATH
+    const row = (await host.call('agents.detect', { ids: ['codex'] })).agents.find((a) => a.id === 'codex');
+    if (row?.signin?.length && row.signin[0].startsWith('/')) {
+      const [file, ...rest] = row.signin.map(String);
+      return { file, args: [...rest, 'login'] };
+    }
+    const codex = (await host.call('which', { name: 'codex' })).path;
+    return codex ? { file: codex, args: ['login'] } : `The Codex CLI is not installed in ${name}.`;
+  }
+  const row = (await host.call('agents.detect', { ids: ['claude'] })).agents.find((a) => a.id === 'claude');
+  if (!row?.found || !row.command?.length) return `${label} is not installed in ${name}.`;
+  const [file, ...rest] = row.command.map(String);
+  const program = file.includes('/') ? file : (await host.call('which', { name: file })).path;
+  if (!program) return `${file} was not found in ${name}.`;
+  // A chat's sign-in card names the method Claude advertised (--cli auth login --claudeai / --console); else the Claude.ai login.
+  return { file: program, args: [...rest, ...(cleanTerminalArgs(args) ?? ['--cli', 'auth', 'login', '--claudeai'])] };
+}
+
+/**
+ * The host of a distro for a terminal the user clicked, or the line it shows instead. Only the click's `start` may start the distro;
+ * otherwise a distro AIB is not using is answered ("<distro> is not running. Start it in Settings > AIB Linking (WSL), then <then>."),
+ * never started.
+ */
+async function clickedHost(distro: string, start: boolean, then: string): Promise<WslHost | string> {
   let host = peekWslHost(distro);
   if (start && (!host || host.state !== 'ready')) {
     try {
@@ -203,28 +243,48 @@ export async function wslSigninCommand(agentId: string, distro: string, args: un
       return error instanceof Error ? error.message : String(error);
     }
   }
-  if (peekState(host) === 'off') return `${name} is not running. Start it in Settings > AIB Linking (WSL), then sign in.`;
-  const why = notReady(host, distro);
-  if (why) return why;
-  const label = BUILTIN_NAMES[agentId] ?? agentId;
-  if (agentId !== 'claude' && agentId !== 'codex') return `Signing in to ${label} inside ${name} is not available yet.`;
-  if (agentId === 'codex') {
-    // the Codex CLI next to the adapter (AIB's own install in the distro has one), else `codex` on the distro's PATH
-    const row = (await host!.call('agents.detect', { ids: ['codex'] })).agents.find((a) => a.id === 'codex');
-    if (row?.signin?.length && row.signin[0].startsWith('/')) {
-      const [file, ...rest] = row.signin.map(String);
-      return { file, args: [...rest, 'login'] };
-    }
-    const codex = (await host!.call('which', { name: 'codex' })).path;
-    return codex ? { file: codex, args: ['login'] } : `The Codex CLI is not installed in ${name}.`;
+  if (peekState(host) === 'off') return `${distroName(distro)} is not running. Start it in Settings > AIB Linking (WSL), then ${then}.`;
+  return notReady(host, distro) || host!;
+}
+
+/**
+ * The Node.js button's terminal in a distro (wsl/node_setup.ts): the command and the Linux home it starts in, or the one line it shows
+ * instead. The helper's env.prereqs is asked first, reading the login PATH again (force): refused unless canInstallNode.
+ */
+export async function wslNodeSetupCommand(distro: string, start = false): Promise<{ command: ShellSpec; home: string } | string> {
+  if (!WSL_DISTRO.test(distro)) return 'Choose a distro.';
+  const name = distroName(distro);
+  const host = await clickedHost(distro, start, 'install Node.js');
+  if (typeof host === 'string') return host;
+  let prereqs: EnvPrereqs;
+  try {
+    prereqs = await host.call('env.prereqs', { force: true }, { timeoutMs: 30_000 });
+  } catch (error) {
+    if (error instanceof WslHelperError && error.code === 'unknown_method') return `The AIB helper in ${name} is too old to install Node.js. Restart AIB.`;
+    return `AIB could not check what ${name} has: ${error instanceof Error ? error.message : String(error)}`;
   }
-  const row = (await host!.call('agents.detect', { ids: ['claude'] })).agents.find((a) => a.id === 'claude');
-  if (!row?.found || !row.command?.length) return `${label} is not installed in ${name}.`;
-  const [file, ...rest] = row.command.map(String);
-  const program = file.includes('/') ? file : (await host!.call('which', { name: file })).path;
-  if (!program) return `${file} was not found in ${name}.`;
-  // A chat's sign-in card names the method Claude advertised (--cli auth login --claudeai / --console); else the Claude.ai login.
-  return { file: program, args: [...rest, ...(cleanTerminalArgs(args) ?? ['--cli', 'auth', 'login', '--claudeai'])] };
+  const command = wslNodeCommand(prereqs, name);
+  if (typeof command === 'string') return command;
+  const home = (await host.env()).HOME || '';
+  if (!home.startsWith('/')) return 'The Linux home folder is unknown.';
+  return { command, home };
+}
+
+/** The Node.js button's terminal: key setup:wsl-node@<distro>, in the Linux home; it ends when the steps end. */
+async function attachWslNode(ctx: WebContext, link: WsLink, distro: string, cols: unknown, rows: unknown, start: boolean): Promise<void> {
+  let ready: { command: ShellSpec; home: string } | string;
+  try {
+    ready = await wslNodeSetupCommand(distro, start);
+  } catch (error) {
+    ready = `The Node.js install could not start: ${(error as Error).message}`;
+  }
+  if (typeof ready === 'string') {
+    link.send(JSON.stringify({ type: 'error', message: ready, code: 'setup_unavailable' }));
+    link.close(1000, 'refused');
+    return;
+  }
+  const key = distro.toLowerCase();
+  void ctx.terminals.attachWsl(link, `setup:wsl-node@${key}`, refOf({ kind: 'wsl', distro: key, linuxPath: ready.home }), cols, rows, ready.command);
 }
 
 /** A sign-in terminal in a distro: key signin:<agent>@<distro>, in the Linux home; it ends when the login ends. */

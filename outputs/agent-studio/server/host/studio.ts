@@ -188,6 +188,12 @@ const REQUEST_ERROR_NAMES = new Set([
   'Error',
 ]);
 
+/** The line a WSL chat gets when its agent is turned off for its distro in Settings > AIB Linking (WSL). */
+export function wslAgentOffLine(provider: string, distroLabel: string, settings: { customAgent(id: string): { name: string } | null }): string {
+  const label = agentRegistry.isCustom(provider) ? settings.customAgent(provider)?.name ?? provider : agentRegistry.agentName(provider);
+  return `${label} is turned off for ${distroLabel} in Settings > AIB Linking (WSL)`;
+}
+
 export function isRequestError(error: unknown): error is Error {
   if (!(error instanceof Error)) return false;
   if (error instanceof Deno.errors.NotFound || error instanceof Deno.errors.PermissionDenied) return true;
@@ -236,6 +242,8 @@ export interface ConnectOptions {
   picks?: Partial<Record<'model' | 'mode' | 'effort', string>> | null;
   /** Swarm: this new chat is a helper of that main chat (swarm/service.ts). Its role is decided here, before its tools are (review break 1). */
   helperOf?: { helperId: string; parent: string } | null;
+  /** The automatic reconnect at start (reconnectOne), not the person's Continue: a WSL agent turned off for its distro is not refused then. */
+  auto?: boolean;
 }
 
 /** Swarm: body.helperOf of a connect request ({helperId, parent}), else null. */
@@ -665,7 +673,7 @@ export class Studio {
       for (let attempt = 1; attempt <= tries; attempt++) {
         if (this.reconnectStop.isSet()) return;
         try {
-          await this.connect(provider, cwd, sessionId, { background: false, continueAnyway: false });
+          await this.connect(provider, cwd, sessionId, { background: false, continueAnyway: false, auto: true });
           console.error(`Auto-reconnect: reconnected ${label}`);
           return;
         } catch (error) {
@@ -898,29 +906,29 @@ export class Studio {
    * What a chat in a WSL project starts (design sections 4 and 5): the agent as the distro has it (the helper's `agents.detect`; a
    * custom agent's command found with `which`), the distro's login environment, and the Linux keeper link it runs in. Throws
    * ValueError with the line the user sees when the distro is not ready or the agent is not installed there.
+   * On/Off (docs/wsl/linking-design.md section 12): a WSL chat reads only its distro's own switch (settings.distroAgentEnabled), never
+   * the Windows one; an agent turned off for the distro is refused for a new chat (`fresh`) and for the person's Continue
+   * (`continued`), never for the automatic reconnect at start.
    */
   async wslLaunch(
     provider: string,
     wsl: { distro: string; linuxPath: string },
     fresh = false,
+    continued = false,
   ): Promise<{ command: string[]; extra: Record<string, string>; spawn: WslSpawn; link: KeeperLink }> {
-    const host = await hostWhenReady(wsl.distro); // the first chat after a Windows start waits for its distro
     const name = distroName(wsl.distro);
+    if ((fresh || continued) && !this.settings.distroAgentEnabled(wsl.distro, provider)) throw new ValueError(wslAgentOffLine(provider, name, this.settings));
+    const host = await hostWhenReady(wsl.distro); // the first chat after a Windows start waits for its distro
     let command: string[];
     let extra: Record<string, string> = {};
     if (agentRegistry.isCustom(provider)) {
       const agent = this.settings.customAgent(provider);
       if (agent === null) throw new ValueError('That agent is not in Settings (it may have been removed)');
-      if (fresh && !agent.enabled) throw new ValueError(`${agent.name} is turned off in Settings`);
       for (const e of agent.env) registerSecret(e.value);
       command = [agent.command, ...agent.args];
       extra = Object.fromEntries(agent.env.map((e) => [e.name, e.value]));
     } else {
       const label = isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.BUILTIN_NAMES[provider] ?? provider;
-      if (fresh && (agentRegistry.BUILTIN_IDS as readonly string[]).includes(provider) && !this.settings.builtinEnabled(provider)) {
-        throw new ValueError(`${label} is turned off in Settings`);
-      }
-      if (fresh && isBeta(provider) && !this.settings.betaEnabled(provider)) throw new ValueError(`${label} is turned off in Settings`);
       const detected = await host.call('agents.detect', { ids: [provider] });
       const row = detected.agents.find((a) => a.id === provider);
       if (!row?.found || !row.command?.length) throw new ValueError(`${label} is not installed in ${name}`);
@@ -1103,7 +1111,7 @@ export class Studio {
     if (record) workspace = realpath(await this.worktrees!.ensure(record)); // made again from its branch if deleted
     if (!wsl && !isdir(workspace)) throw new ValueError('Choose an existing workspace folder');
     if (!agentRegistry.isProvider(provider)) throw new ValueError('Choose an agent');
-    const launch = wsl ? await this.wslLaunch(provider, wsl, !resume) : null;
+    const launch = wsl ? await this.wslLaunch(provider, wsl, !resume, !!resume && !options.auto) : null;
     if (launch && this.worktrees) {
       // the same two lookups in the distro: a discarded worktree is not continued; a chat that has one keeps it (made again if deleted)
       const session = resume ? `${provider}:${resume}` : null;

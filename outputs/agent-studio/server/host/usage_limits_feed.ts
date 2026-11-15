@@ -24,6 +24,7 @@ import {
 } from '../state/usage_limits.ts';
 import { peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
 import { TimeoutError } from '../acp/connection.ts';
+import type { WslHost } from '../wsl/contract.ts';
 import { appServerCommand, appServerLimits, codexHome, latestRolloutLimits } from '../agents/codex_limits.ts';
 
 const log = getLogger('usage-limits');
@@ -54,6 +55,23 @@ export interface LimitsFeedOptions {
 }
 
 const underTest = () => Deno.env.get('AGENT_STUDIO_TEST') === '1';
+
+/**
+ * The newest Codex limits in the ~/.codex of a ready distro's host (helper `codex.limits`), as the snapshot the chat's Limits chip
+ * shows (parseCodexRollout), or null when it has none. Under test the folder inside AIB_WSL_ROOT, never the owner's own. Also the
+ * Codex row of Settings > AIB Linking (WSL) (wsl_routes.ts): per distro, never merged with Windows'. Rejects with the helper's error.
+ */
+export async function wslCodexLimits(host: Pick<WslHost, 'call'>): Promise<LimitsSnapshot | null> {
+  let dirs: { codexDir?: string };
+  try {
+    const test = wslTestHomeEnv();
+    dirs = test.CODEX_HOME ? { codexDir: test.CODEX_HOME } : {};
+  } catch {
+    return null;
+  }
+  const { found } = await host.call('codex.limits', dirs, { timeoutMs: 10_000 });
+  return found ? parseCodexRollout(found.rateLimits, found.at) : null;
+}
 
 export class LimitsFeed {
   readonly store: UsageLimitsStore;
@@ -142,15 +160,7 @@ export class LimitsFeed {
   async #readWslCodex(distro: string): Promise<LimitsSnapshot | null> {
     const host = peekWslHost(distro);
     if (!host || host.state !== 'ready') return null;
-    let dirs: { codexDir?: string };
-    try {
-      const test = wslTestHomeEnv(); // under test: the folder inside AIB_WSL_ROOT, never the owner's own
-      dirs = test.CODEX_HOME ? { codexDir: test.CODEX_HOME } : {};
-    } catch {
-      return null;
-    }
-    const { found } = await host.call('codex.limits', dirs, { timeoutMs: 10_000 });
-    return found ? parseCodexRollout(found.rateLimits, found.at) : null;
+    return await wslCodexLimits(host);
   }
 
   async #readVibe(c: LimitsConnection): Promise<LimitsSnapshot | null> {

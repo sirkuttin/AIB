@@ -16,7 +16,8 @@
  *    "server":   {"autoReconnect": true, "worktreePerChat": true, "autoUpdateCheck": true, "keepAwake": false},
  *    "editors":  {"default": "" | "code" | "cursor" | "windsurf" | "devin"},
  *    "appearance": {"defaultView": "full" | "chat"},
- *    "launchers": {"claude": "", "codex": ""}}
+ *    "launchers": {"claude": "", "codex": ""},
+ *    "agentsByDistro": {"<distro key>": {"<agent id>": false}}}   (present only when not empty)
  *
  * public() never contains an environment value: custom agents show env as [{name, set: true}].
  */
@@ -78,6 +79,22 @@ export interface Settings {
   editors: { default: string };
   appearance: { defaultView: string };
   launchers: Record<string, string>;
+  /**
+   * Settings > AIB Linking (WSL): each distro's own On/Off switch per agent (docs/wsl/linking-design.md section 12), keyed by the
+   * folded distro name. An agent with no saved value in a distro is on. The Windows switches (agents.builtin, betaOff, custom
+   * enabled) never apply to WSL chats, and these never apply to Windows chats. Present only when not empty.
+   */
+  agentsByDistro?: Record<string, Record<string, boolean>>;
+}
+
+/** A distro key in agentsByDistro: the folded distro name (wsl_routes.ts DISTRO, lower case). */
+export const DISTRO_KEY = /^[a-z0-9._-]{1,64}$/;
+/** At most this many distros keep switches (a PC has a handful). */
+export const MAX_DISTROS = 32;
+
+/** An agent id a distro switch may name: a built-in, a Beta or a custom agent id (one line). */
+export function distroAgentId(value: unknown): value is string {
+  return isProvider(value) && !value.includes('\n');
 }
 
 type Dict = Record<string, unknown>;
@@ -96,6 +113,7 @@ export class SettingsStore extends JsonFileStore {
   static FILE = 'studio-settings.json';
   static MAX_PROJECTS = 300;
   static MAX_VALUE = 200;
+  static MAX_DISTROS = MAX_DISTROS;
   static DEFAULT_VIEWS: readonly string[] = ['full', 'chat'];
 
   data: Settings = SettingsStore.blank();
@@ -267,6 +285,15 @@ export class SettingsStore extends JsonFileStore {
     for (const key of Object.keys(doc.launchers)) {
       doc.launchers[key] = this.launcherPath(Object.prototype.hasOwnProperty.call(launchers, key) ? launchers[key] : undefined);
     }
+    const byDistro = isDict(raw.agentsByDistro) ? raw.agentsByDistro : {};
+    for (const [distro, switches] of Object.entries(byDistro)) {
+      if (!DISTRO_KEY.test(distro) || !isDict(switches)) continue;
+      const kept: Record<string, boolean> = {};
+      for (const [agentId, on] of Object.entries(switches)) if (distroAgentId(agentId) && typeof on === 'boolean') kept[agentId] = on;
+      if (!Object.keys(kept).length) continue;
+      if (Object.keys(doc.agentsByDistro ?? {}).length >= this.MAX_DISTROS) break;
+      (doc.agentsByDistro ??= {})[distro] = kept;
+    }
     return doc;
   }
 
@@ -412,6 +439,20 @@ export class SettingsStore extends JsonFileStore {
     return Object.prototype.hasOwnProperty.call(builtin, agentId) ? builtin[agentId] : true;
   }
 
+  /**
+   * A distro's own switch for an agent (Settings > AIB Linking (WSL)): on unless it was turned off for that distro. The Windows
+   * switch is not read: a WSL chat uses only this one.
+   */
+  distroAgentEnabled(distro: string, agentId: string): boolean {
+    const switches = this.snapshot().agentsByDistro?.[String(distro).toLowerCase()];
+    return switches && Object.prototype.hasOwnProperty.call(switches, agentId) ? switches[agentId] : true;
+  }
+
+  /** Every distro's switches as saved ({} when none): the page shows them, a missing value is on. */
+  distroAgents(): Record<string, Record<string, boolean>> {
+    return this.snapshot().agentsByDistro ?? {};
+  }
+
   /** The launcher script saved in Settings for 'claude' or 'codex' ('' when none). */
   launcher(agentId: string): string {
     const launchers = this.snapshot().launchers;
@@ -463,7 +504,7 @@ export class SettingsStore extends JsonFileStore {
   }
 
   #update(body: Dict): Promise<boolean> {
-    const known = ['agents', 'defaults', 'server', 'editors', 'appearance', 'launchers'];
+    const known = ['agents', 'defaults', 'server', 'editors', 'appearance', 'launchers', 'agentsByDistro'];
     const unknown = Object.keys(body).filter((key) => !known.includes(key));
     if (unknown.length) {
       return Promise.reject(new ValueError('Unknown settings section: ' + unknown.map((k) => clip(k, 30)).sort(pyCompare).join(', ')));
@@ -477,6 +518,7 @@ export class SettingsStore extends JsonFileStore {
       this.#applyEditors(work, body.editors);
       this.#applyAppearance(work, body.appearance);
       this.#applyLaunchers(work, body.launchers);
+      this.#applyDistroAgents(work, body.agentsByDistro);
       work = this.#cls().cleanDoc(work); // one last pass: what is kept is exactly what a reload would give
       if (sameJson(work, this.data)) return false;
       const before = this.data;
@@ -669,6 +711,27 @@ export class SettingsStore extends JsonFileStore {
         throw new ValueError('The launcher must be the full path of an existing script file');
       }
       work.launchers[key] = pathStr(path);
+    }
+  }
+
+  /** {"<distro key>": {"<agent id>": true | false | null}}: sets a distro's switch (null forgets it: on again). */
+  #applyDistroAgents(work: Settings, value: unknown): void {
+    const patch = section(value, 'agentsByDistro');
+    for (const [distro, switches] of Object.entries(patch)) {
+      if (!DISTRO_KEY.test(distro)) throw new ValueError('Choose a distro');
+      for (const [agentId, on] of Object.entries(section(switches, 'agentsByDistro'))) {
+        if (!distroAgentId(agentId)) throw new ValueError('Choose an agent');
+        if (on !== null && typeof on !== 'boolean') throw new ValueError('Agents can only be turned on or off');
+        const map = (work.agentsByDistro ??= {});
+        if (on === null) {
+          if (map[distro]) delete map[distro][agentId];
+        } else {
+          if (!map[distro] && Object.keys(map).length >= this.#cls().MAX_DISTROS) throw new ValueError('Too many distros with saved switches');
+          (map[distro] ??= {})[agentId] = on;
+        }
+        if (map[distro] && !Object.keys(map[distro]).length) delete map[distro];
+        if (!Object.keys(map).length) delete work.agentsByDistro;
+      }
     }
   }
 
