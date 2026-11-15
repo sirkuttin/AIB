@@ -191,6 +191,7 @@ export class WslHostImpl implements WslHost {
   #lineBuffer = new Uint8Array(0);
   #env: Promise<Record<string, string>> | null = null;
   #urlHandlers = new Set<(url: string) => void>();
+  #notifyHandlers = new Set<(method: string, params: Record<string, unknown>) => void>();
   #urlTimes: number[] = [];
   #hold: KeeperChannel | null = null;
   #holdTimer: ReturnType<typeof setTimeout> | null = null;
@@ -485,6 +486,17 @@ export class WslHostImpl implements WslHost {
       this.#openUrl((message.params as Record<string, unknown> | undefined)?.url);
       return;
     }
+    if (message.id === undefined && typeof message.method === 'string') { // the helper's other notifications (agents.installProgress)
+      const params = message.params && typeof message.params === 'object' && !Array.isArray(message.params) ? message.params : {};
+      for (const handler of this.#notifyHandlers) {
+        try {
+          handler(message.method, params as Record<string, unknown>);
+        } catch (error) {
+          log.exception(error, 'A WSL helper notification handler failed');
+        }
+      }
+      return;
+    }
     if (typeof message.id !== 'string') return; // not an answer to this run's requests (ids carry this run's prefix)
     const pending = this.#pending.get(message.id);
     if (!pending) return;
@@ -574,6 +586,11 @@ export class WslHostImpl implements WslHost {
   onOpenUrl(handler: (url: string) => void): () => void {
     this.#urlHandlers.add(handler);
     return () => this.#urlHandlers.delete(handler);
+  }
+
+  onNotify(handler: (method: string, params: Record<string, unknown>) => void): () => void {
+    this.#notifyHandlers.add(handler);
+    return () => this.#notifyHandlers.delete(handler);
   }
 
   #openUrl(url: unknown): void {

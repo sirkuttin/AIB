@@ -5,7 +5,12 @@
  *                                                   openRequests: [{id, distro, name, url, at}]}: the Location choice, the distro state
  *                                                   line, Settings > About, and the URLs waiting for "Open" (wsl/open_urls.ts)
  *   GET  /api/live/wsl/dirs?distro&path            the New / Add project folder browser: fs.listDirs in the distro ('' = its home)
- *   GET  /api/live/wsl/agents?distro               the agent picker: which agents the distro has, and the install command of the others
+ *   GET  /api/live/wsl/agents?distro[&force=1]     the agent picker: which agents the distro has, the install command of the others, and
+ *                                                   AIB's own install of Claude Code / Codex (installable, pinned, update, job,
+ *                                                   installBlock + nodeInstall when Node.js is missing; force: look for Node.js again)
+ *   GET  /api/live/wsl/agents/install?distro&agent  the install job in the distro (wsl/agent_install.ts; the job runs in its helper)
+ *   POST /api/live/wsl/agents/install {distro, agent}         "Install in Ubuntu" / "Update in Ubuntu": start (or join) the job
+ *   POST /api/live/wsl/agents/install/cancel {distro, agent}  Cancel: the job's npm is killed and its half-made folder removed
  *   POST /api/live/wsl/reconnect {distro}          "Reconnect" on a stopped distro's state line
  *   POST /api/live/wsl/open-url {id, action}       the page's answer to "Ubuntu wants to open <url>": open, always (for that distro), dismiss
  * Plus the Files view of a WSL project (wslFiles, called by files_routes.ts): list, search and read through the distro's helper.
@@ -20,6 +25,7 @@ import { distroName, hostWhenReady, notReady, peekWslHost, WSL_INSTALL, wsl2Dist
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
+import { installFacts, wslInstallCall } from '../wsl/agent_install.ts';
 
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
@@ -153,15 +159,33 @@ export function wslRoutes(): Map<string, Handler> {
       return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
     }
     const found = await host.call('agents.detect', { ids: [...BUILTIN_IDS] });
+    const name = distroName(distro);
+    const facts = await installFacts(host, distro.toLowerCase(), name, found.agents, one(args, 'force') === '1');
     const agents = found.agents.map((a) => ({
       id: a.id,
       found: !!a.found,
       ...(a.version ? { version: a.version } : {}),
       ...(a.note ? { note: a.note } : {}),
       ...(!a.found && WSL_INSTALL[a.id] ? { install: WSL_INSTALL[a.id] } : {}),
+      ...(facts[a.id] ?? {}),
     }));
-    return [200, { distro: distro.toLowerCase(), name: distroName(distro), agents }];
+    return [200, { distro: distro.toLowerCase(), name, agents }];
   });
+  // AIB's own install of an agent in the distro: the job runs in the distro's helper, so it goes on while AIB restarts
+  const install = async (distro: string, action: 'start' | 'cancel' | 'status', agent: unknown): Promise<Reply> => {
+    if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
+    let host: WslHost;
+    try {
+      host = await hostWhenReady(distro);
+    } catch (error) {
+      return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+    }
+    return await wslInstallCall(host, distro.toLowerCase(), distroName(distro), action, agent);
+  };
+  const bodyDistro = (body: Record<string, unknown>) => (typeof body.distro === 'string' ? body.distro : '');
+  guarded('GET', '/api/live/wsl/agents/install', (_ctx, args) => install(one(args, 'distro'), 'status', one(args, 'agent')));
+  guarded('POST', '/api/live/wsl/agents/install', (_ctx, _args, body) => install(bodyDistro(body), 'start', body.agent));
+  guarded('POST', '/api/live/wsl/agents/install/cancel', (_ctx, _args, body) => install(bodyDistro(body), 'cancel', body.agent));
   guarded('POST', '/api/live/wsl/reconnect', async (_ctx, _args, body) => {
     const distro = typeof body.distro === 'string' ? body.distro : '';
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
