@@ -28,7 +28,9 @@ import { UsageLimitsStore } from '../state/usage_limits.ts';
 import { LimitsFeed, REFRESH_SECONDS } from './usage_limits_feed.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
+import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, tunnelEntry } from '../artifacts/mcp_http.ts';
+import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { forwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
@@ -67,9 +69,9 @@ import {
   linkOf,
   readyHost,
   windowsPathInWsl,
-  WSL_TOOLS_LIMITED,
   WSL_TOOLS_NOTICE,
   wslHost,
+  wslToolsNotice,
   wslLoc,
 } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
@@ -343,6 +345,8 @@ export class Studio {
    */
   readonly keeperForNew: boolean;
   #mcpHttp: ArtifactMcpHttp | null = null;
+  /** Stops this Studio answering WSL agents' tool calls (wsl/mcp_tunnel.ts); null when it never did. */
+  #untunnel: (() => void) | null = null;
 
   constructor(options: StudioOptions, construct: StudioConstruct = {}) {
     this.options = options;
@@ -428,6 +432,8 @@ export class Studio {
             }
           })(),
       }, false);
+      // WSL agents' tool calls through the tunnel (wsl/mcp_tunnel.ts) are answered by this Studio.
+      if (!this.options.noArtifactTool) this.#untunnel = mcpTunnelGate.set((request) => this.wslToolCall(request));
     }
     // The chats on the recovery list ran in the previous AIB of this data folder (an app restart, an update, or the split agent
     // host this process took over). Their transcript writes up to now are that AIB's own, not another app's: without this the
@@ -753,16 +759,24 @@ export class Studio {
   }
 
   /**
-   * The `studio_artifact` entry of a WSL chat (design section 11, phase 1): the Windows keeper's MCP forwarder run through WSL interop
-   * (`/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address file>`), so the agent in the distro reaches AIB's HTTP tool endpoint on
-   * Windows loopback without a tunnel. WSLENV hands MCP_FORWARD_HEADERS over to the Windows process. The endpoint gives such a chat
-   * only publish / update / list by content (mcp.ts RESTRICTED_TOOLS), and the merge tools in its own worktree (wsl/merge.ts). No entry when the forwarder cannot be had: the chat then says
-   * the tools are missing instead of failing silently. The user's own --mcp-config entries are Windows commands and are not passed.
+   * The `studio_artifact` entry of a WSL chat (design sections 4 and 11). Either way the endpoint gives such a chat the tool groups of
+   * mcp.ts WSL_TOOL_GROUPS (artifacts by content, merge in its own worktree; no docs or swarm tools yet).
+   *   - The tunnel (phase 2), when the distro's helper has one: the Linux keeper program as forwarder
+   *     (`<root>/<ver>/AIB-keeper mcp-forward --helper-socket <data>/helper/mcp.sock`), the key in its environment; each message goes
+   *     through the helper channel to this Studio (wslToolCall). Needs no WSL interop and opens no port.
+   *   - Else the interop entry (phase 1): the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address
+   *     file>`, WSLENV handing MCP_FORWARD_HEADERS over to the Windows process.
+   *   - Else no entry, and the chat says the tools are missing instead of failing silently.
+   * The user's own --mcp-config entries are Windows commands and are not passed.
    */
-  async wslMcpServers(conversationId: string): Promise<{ servers: McpServer[]; notice: string }> {
+  async wslMcpServers(conversationId: string, distro = ''): Promise<{ servers: McpServer[]; notice: string }> {
     if (this.options.noArtifactTool || !this.hasStateDir) return { servers: [], notice: '' };
     const key = artifactKeys.issue(conversationId);
     if (!key) return { servers: [], notice: WSL_TOOLS_NOTICE };
+    const tunnel = distro ? wslHost(distro)?.mcpTunnel ?? null : null;
+    if (tunnel) {
+      return { servers: [tunnelEntry(tunnel.forwarder, tunnel.socket, key, conversationId) as unknown as McpServer], notice: wslToolsNotice() };
+    }
     let forwarder: string | null = null;
     try {
       forwarder = await forwarderOf(this.keeper?.options.binary ?? null, this.stateDir);
@@ -781,7 +795,21 @@ export class Studio {
     }
     const entry = forwardEntry(program, file, key, conversationId) as { env: { name: string; value: string }[] };
     entry.env.push({ name: 'WSLENV', value: 'MCP_FORWARD_HEADERS' }); // the agent's variable crosses into the Windows forwarder
-    return { servers: [entry as unknown as McpServer], notice: WSL_TOOLS_LIMITED };
+    return { servers: [entry as unknown as McpServer], notice: wslToolsNotice() };
+  }
+
+  /**
+   * One tool call from an agent in a WSL distro, through the tunnel (wsl/mcp_tunnel.ts): only for a live chat of this AIB in that same
+   * distro, then the HTTP endpoint's own key check and reply (ArtifactMcpHttp.tunneled).
+   */
+  async wslToolCall(request: { distro: string; key: string; conversation: string; body: string }): Promise<TunnelAnswer> {
+    if (this.#closed) return { status: 503, body: '', error: 'AIB is closed, so this tool cannot answer now. Try again later, once AIB is open again.' };
+    const c = this.connections.get(request.conversation);
+    if (!c || c.closed || !c.wsl || c.wsl.distro.toLowerCase() !== request.distro.toLowerCase()) {
+      const refused = { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'AIB refused the artifact key for this conversation' } };
+      return { status: 401, body: JSON.stringify(refused) };
+    }
+    return await this.artifactMcpHttp().tunneled(request.key, request.conversation, request.body);
   }
 
   /**
@@ -1068,10 +1096,10 @@ export class Studio {
       c.sessionLease = lease;
       if (asHelper) c.swarm = { role: 'helper', helperId: asHelper.helperId, parent: asHelper.parent };
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
-      else if (c.worktree && !wsl) c.swarm = { role: 'main' }; // a WSL chat has no swarm tools (restricted AIB tools)
+      else if (c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)) c.swarm = { role: 'main' }; // WSL: only once its swarm tools are on
       let toolsNotice = '';
       if (launch) {
-        const tools = await this.wslMcpServers(c.id); // restricted tools: artifacts, merge in its own worktree; no doc or swarm tools
+        const tools = await this.wslMcpServers(c.id, wsl!.distro); // the tunnel, else interop, else a notice (WSL_TOOL_GROUPS)
         c.mcpServers = tools.servers;
         toolsNotice = tools.notice;
       } else {
@@ -2024,6 +2052,7 @@ export class Studio {
   async release(options: { hold?: boolean } = {}): Promise<number> {
     if (this.#closed) return 0;
     this.#closed = true;
+    this.#untunnel?.();
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
@@ -2064,6 +2093,7 @@ export class Studio {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    this.#untunnel?.();
     if (this.deliberateStop && this.store) {
       for (const c of this.connections.values()) {
         if (!c.sessionId) continue;

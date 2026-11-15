@@ -314,7 +314,7 @@ Deno.test({
             typeof p.token,
             p.token.length,
             p.arch,
-          ], ['bridge', 1, '1.4.0', 'string', 64, 'amd64']);
+          ], ['bridge', 1, '1.5.0', 'string', 64, 'amd64']);
           assert(
             p.home.startsWith('/') && p.uid > 0 && p.pid > 0,
             JSON.stringify(p),

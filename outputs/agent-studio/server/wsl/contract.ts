@@ -29,6 +29,13 @@ export interface WslHost {
   reconnect(): Promise<void>;
   /** The running helper's version (helper.ready), null before it is ready (Settings > About). */
   readonly helperVersion: string | null;
+  /**
+   * Phase 2 MCP tunnel: what a WSL chat's `studio_artifact` entry runs (`<forwarder> mcp-forward --helper-socket <socket>`, both Linux
+   * paths), or null when this helper has no tunnel (older helper, or its relay did not start: AIB falls back to the interop entry).
+   */
+  readonly mcpTunnel?: { forwarder: string; socket: string } | null;
+  /** Called for each tool call an agent in the distro sends through the tunnel (HelperMcpRequest), once, never for a replayed one. */
+  onMcpRequest?(handler: (request: HelperMcpRequest['params']) => void): () => void;
 }
 
 export class WslHelperError extends Error {
@@ -112,6 +119,26 @@ export interface HelperMethods {
     params: { provider: 'claude' | 'codex'; key: string; args?: Record<string, string>; claudeDir?: string };
     result: { status: number; body: unknown };
   };
+  /**
+   * The MCP tunnel (phase 2; helper/mcp_tunnel.ts, wsl/mcp_tunnel.ts). A forwarder's message arrives as the notification
+   * HelperMcpRequest; AIB first takes it with `mcp.accept` (ok false: the helper already gave up on it, so AIB must not run it), runs it
+   * on its HTTP tool endpoint's checks, and answers with `mcp.reply` (status as HTTP: 200 with body, 202 none, else an error; 503 with
+   * `error`: AIB cannot take it, the forwarder says so at once). `mcp.closed` true: AIB was quit on purpose, so new messages are
+   * answered "AIB is closed" at once; any other call from AIB clears it. Offered only when helper.ready carries `mcp: {socket}`.
+   */
+  'mcp.accept': { params: { rid: string }; result: { ok: boolean } };
+  'mcp.reply': { params: { rid: string; status: number; body?: string; error?: string }; result: { ok: boolean } };
+  'mcp.closed': { params: { closed: boolean }; result: { ok: boolean } };
+}
+
+/**
+ * Notification (no id) from the helper: one MCP message from an agent's `mcp-forward --helper-socket` in the distro. `headers` are
+ * the forwarder's MCP_FORWARD_HEADERS (the conversation id and its artifact key); `body` the JSON-RPC message text. `rid` names it in
+ * `mcp.accept` and `mcp.reply`.
+ */
+export interface HelperMcpRequest {
+  method: 'mcp.request';
+  params: { rid: string; headers: Record<string, string>; body: string };
 }
 
 /** A worktree plan on the helper channel (worktrees.ts Plan, Linux paths): `path` is always <data>/worktrees/<repo hash>/<slug>. */

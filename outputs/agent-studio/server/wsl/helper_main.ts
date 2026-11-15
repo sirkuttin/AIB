@@ -2,22 +2,26 @@
  * AIB-wsl-helper: AIB's file, git and lookup work for WSL projects, run inside the distro (design 1, 3). Built with `deno compile`
  * for Linux (tools/build.ts wslBinaries) and spawned by AIB as a pipe channel of the distro's keeper, label {aib:'wsl-helper', v}.
  *
- *   AIB-wsl-helper [--data <linux data folder>]   JSON-RPC 2.0 lines on stdin/stdout; the first line is `helper.ready`
+ *   AIB-wsl-helper [--data <linux data folder>] [--keeper <AIB-keeper>]   JSON-RPC 2.0 lines on stdin/stdout; the first line is `helper.ready`
  *
  * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
- * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts). It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
+ * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts).
+ * It runs the MCP tunnel (helper/mcp_tunnel.ts): `<keeper> mcp-relay` serves <data>/helper/mcp.sock for agents' forwarders (the keeper
+ * program from --keeper, else the AIB-keeper next to this program); helper.ready then carries `mcp: {socket}`. It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
  * can be written by group or others. It holds no state in memory (the worktree registry is a file): AIB may kill and respawn it at any time.
  */
 import { APP_VERSION } from '../core/app.ts';
 import { HELPER_PROTOCOL, WSL_ROOT_DIR } from './contract.ts';
 import { agentEnv, captureLoginEnv, cleanPath, loginShell } from './helper/env.ts';
-import { lineWriter, serveLines } from './helper/rpc.ts';
+import { type Handlers, lineWriter, serveLines } from './helper/rpc.ts';
 import { makeMethods } from './helper/methods.ts';
 import { serveOpenFifo, shimScript } from './helper/browser.ts';
 import { worktreeStartup } from './helper/worktrees.ts';
+import { McpTunnel, SOCKET_NAME, spawnKeeperRelay } from './helper/mcp_tunnel.ts';
 
 const COMPILED = !/^deno(\.exe)?$/i.test(Deno.execPath().replace(/^.*[\\/]/, ''));
 const SHIM_NAME = 'aib-open';
+const KEEPER_NAME = 'AIB-keeper';
 
 function argValue(args: string[], flag: string): string {
   const i = args.indexOf(flag);
@@ -115,6 +119,24 @@ async function runningExes(): Promise<string[] | null> {
   }
 }
 
+function isFile(path: string): boolean {
+  try {
+    return Deno.statSync(path).isFile;
+  } catch {
+    return false;
+  }
+}
+
+/** Every call from AIB but `mcp.closed` says an AIB is there (the tunnel stops answering "AIB is closed"). */
+function withTouch(methods: Handlers, tunnel: McpTunnel): Handlers {
+  return Object.fromEntries(
+    Object.entries(methods).map(([name, fn]) => [name, name === 'mcp.closed' ? fn : (params: Record<string, unknown>) => {
+      tunnel.touch();
+      return fn(params);
+    }]),
+  );
+}
+
 async function writeOut(bytes: Uint8Array): Promise<void> {
   for (let at = 0; at < bytes.length;) at += await Deno.stdout.write(bytes.subarray(at));
 }
@@ -164,7 +186,25 @@ async function helperMain(args: string[]): Promise<number> {
   });
   // worktrees only with the data folder named (one per Windows AIB): `<data>/worktrees`, its registry `<data>/studio-worktrees.json`
   const named = argValue(args, '--data').startsWith('/') ? data : '';
-  const methods = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])], ...(named ? { data: named } : {}) });
+  const own = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])], ...(named ? { data: named } : {}) });
+  // The MCP tunnel: only with a keeper program to run the relay (one that knows `mcp-relay`; an older one exits at once: no tunnel).
+  const keeper = argValue(args, '--keeper') || (exeDir ? `${exeDir}/${KEEPER_NAME}` : '');
+  let tunnel: McpTunnel | null = null;
+  let socket: string | null = null;
+  if (keeper.startsWith('/') && isFile(keeper)) {
+    tunnel = new McpTunnel({
+      socket: `${run}/${SOCKET_NAME}`,
+      notify: (method, params) => void send({ jsonrpc: '2.0', method, params }).catch(() => {}),
+      spawnRelay: spawnKeeperRelay(keeper),
+      log: (text) => console.error(`AIB-wsl-helper: ${text}`),
+    });
+    socket = await tunnel.start();
+    if (!socket) {
+      tunnel.stop();
+      tunnel = null;
+    }
+  }
+  const methods = tunnel ? withTouch({ ...own, ...tunnel.methods() }, tunnel) : own;
   if (named) void captured.then(() => worktreeStartup(named)).catch(() => {}); // git needs the login PATH first
   if (COMPILED && exeDir) {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);
@@ -173,10 +213,11 @@ async function helperMain(args: string[]): Promise<number> {
   await send({
     jsonrpc: '2.0',
     method: 'helper.ready',
-    params: { helper: APP_VERSION, protocol: HELPER_PROTOCOL, methods: Object.keys(methods) },
+    params: { helper: APP_VERSION, protocol: HELPER_PROTOCOL, methods: Object.keys(methods), ...(socket ? { mcp: { socket } } : {}) },
   });
   await serveLines(Deno.stdin.readable, send, methods);
   open?.close();
+  tunnel?.stop();
   return 0;
 }
 

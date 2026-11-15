@@ -3,7 +3,8 @@
  * keeper, the fake ACP agent, temp folders). Checks design sections 2, 5, 8 and 11 on the Track C side:
  *   - a WSL chat starts in the distro's keeper (never the Windows one) with the distro's env (never AIB's), the helper's agent and
  *     `which`, the Linux folder as the agent's cwd and in session/new, the ref as AIB's key, `loc` in its chat note;
- *   - its AIB tools: the Windows forwarder through interop (/mnt/... path, WSLENV), and the notice in the chat;
+ *   - its AIB tools: the Windows forwarder through interop (/mnt/... path, WSLENV), and the notice in the chat; with the helper's
+ *     tunnel, the Linux keeper's forwarder on the helper socket, and a tool call through the tunnel answered (a wrong key refused);
  *   - a crashed AIB's next process rebuilds the chat from the distro's keeper (the recovery list names the distro);
  *   - the Windows keeper's wsl-hold channel is never stopped as an orphan;
  *   - a distro that is not ready, an agent the distro lacks: a clear refusal;
@@ -18,7 +19,8 @@ import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver, WSL_TOOLS_LIMITED, WSL_TOOLS_NOTICE } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { setWslHostResolver, WSL_TOOLS_NOTICE, wslToolsNotice } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { mcpTunnelGate } from '../../outputs/agent-studio/server/wsl/mcp_tunnel.ts';
 import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
 import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
 
@@ -156,7 +158,7 @@ Deno.test({
       assert(String(entry.command).startsWith('/mnt/') && /AIB-keeper(\.exe)?$/i.test(String(entry.command)), String(entry.command));
       assertEquals((entry.args as string[])[0], 'mcp-forward');
       assert((entry.env as Json[]).some((e) => e.name === 'WSLENV' && e.value === 'MCP_FORWARD_HEADERS'));
-      assert(notes(c).includes(WSL_TOOLS_LIMITED), notes(c).join(' | '));
+      assert(notes(c).includes(wslToolsNotice()), notes(c).join(' | '));
     } else {
       assert(notes(c).includes(WSL_TOOLS_NOTICE), 'no entry: the chat says the tools are missing');
     }
@@ -177,6 +179,64 @@ Deno.test({
     // the Windows keeper holds nothing of it
     const windows = await studio.keeper!.client(false);
     if (windows) assertEquals((await windows.list()).filter((ch) => ch.channel === `chat-${c.id}`), []);
+  },
+});
+
+Deno.test({
+  name: 'wsl chat: with the helper\'s tunnel the entry is the Linux forwarder on its socket; a tool call through it is answered',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    lab.host.mcpTunnel = { forwarder: '/tmp/aib-wsl-test-fake/1.0.0-abcdef12/AIB-keeper', socket: '/tmp/aib-wsl-test-fake/data-x/helper/mcp.sock' };
+    const studio = lab.studio();
+    const c = await studio.connect('claude', REF);
+    const sessionNew = lab.received().find((m) => m.method === 'session/new')!;
+    const servers = (sessionNew.params as Json).mcpServers as Json[];
+    assertEquals(servers.length, 1);
+    const entry = servers[0];
+    assertEquals(entry.command, lab.host.mcpTunnel.forwarder);
+    assertEquals(entry.args, ['mcp-forward', '--helper-socket', lab.host.mcpTunnel.socket]);
+    const env = entry.env as { name: string; value: string }[];
+    assert(!env.some((e) => e.name === 'WSLENV'), 'nothing crosses WSL interop');
+    const headers = JSON.parse(env.find((e) => e.name === 'MCP_FORWARD_HEADERS')!.value) as Record<string, string>;
+    assertEquals(headers['X-Studio-Conversation-Id'], c.id);
+    assert(notes(c).includes(wslToolsNotice()), notes(c).join(' | '));
+    assert(c.ownArtifactTool({ toolCall: { name: 'mcp__studio_artifact__publish' } }), "the tunnel entry is AIB's own tool (its calls need no permission)");
+
+    // The helper hands a tool call over (mcp.request): AIB accepts it, answers it through its endpoint's checks, and replies.
+    const replies: Json[] = [];
+    lab.host.handlers['mcp.accept'] = () => ({ ok: true });
+    lab.host.handlers['mcp.reply'] = (p) => (replies.push(p), { ok: true });
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' });
+    lab.host.mcpRequest({ rid: 'r1', headers, body });
+    await until(() => replies.length === 1, 'the reply', 10);
+    assertEquals([replies[0].rid, replies[0].status], ['r1', 200]);
+    const names = ((JSON.parse(String(replies[0].body)).result as Json).tools as Json[]).map((t) => t.name);
+    assert(names.includes('publish') && names.includes('archive') && !names.includes('doc_create') && !names.includes('start_helper'), names.join());
+
+    // A wrong key, or the key of a chat in another distro, is refused (401), and no tool runs.
+    lab.host.mcpRequest({ rid: 'r2', headers: { ...headers, 'X-Studio-Artifact-Key': 'wrong' }, body });
+    await until(() => replies.length === 2, 'the refusal', 10);
+    assertEquals([replies[1].rid, replies[1].status], ['r2', 401]);
+    assert(String(replies[1].body).includes('refused the artifact key'));
+    const other = await studio.wslToolCall({ distro: 'Debian', key: headers['X-Studio-Artifact-Key'], conversation: c.id, body });
+    assertEquals(other.status, 401);
+
+    // A request the helper already gave up on (accept says no) never runs.
+    lab.host.handlers['mcp.accept'] = () => ({ ok: false });
+    lab.host.mcpRequest({ rid: 'r3', headers, body });
+    await pause(300);
+    assertEquals(replies.length, 2);
+
+    // A closed AIB answers 503 with a message (the forwarder says "AIB is closed" at once).
+    lab.host.handlers['mcp.accept'] = () => ({ ok: true });
+    await studio.close();
+    lab.studios.splice(lab.studios.indexOf(studio), 1);
+    const closed = await studio.wslToolCall({ distro: 'Ubuntu', key: headers['X-Studio-Artifact-Key'], conversation: c.id, body });
+    assertEquals(closed.status, 503);
+    assert(String(closed.error).includes('AIB is closed'));
+    void mcpTunnelGate;
   },
 });
 
