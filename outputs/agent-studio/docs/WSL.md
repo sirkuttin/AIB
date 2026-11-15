@@ -16,7 +16,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   `codex-acp` installed with npm in the distro. A missing Claude Code or Codex gets an "Install in Ubuntu" button (the npm command
   stays, for doing it yourself) and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
-- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive), the doc and drawing tools and, for a
+- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive: the publish and update descriptions a
+  WSL chat gets have no `path` and say up front that only `content` works there, and that a PNG or other binary file must be
+  embedded in an HTML page as an inline base64 `<img>` or opened by the user; the refusal of a `path` repeats it), the doc and drawing tools and, for a
   chat in its own copy, the merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro
   (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
@@ -317,7 +319,9 @@ the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/h
 - The job's state is on disk (`install.json`, `install.lock` with the helper's pid, `install.log`), so it goes on while AIB restarts
   and the page picks it up again; a job whose helper died reads as interrupted. The page polls
   `GET /api/live/wsl/agents/install` once a second; each saved state also comes over the helper channel as the notification
-  `agents.installProgress`, which answers a status read while the helper restarts. Cancel kills npm's whole process group and
+  `agents.installProgress`, which answers a status read while the helper restarts. A status read never starts a distro (only
+  `start=1` does): a distro that is not ready answers `{ok, state: 'idle', distro, name, distroState, line}` (while AIB is bringing
+  it back, starting or reconnecting, the last progress, `stale`). Cancel kills npm's whole process group and
   removes the half-made folder.
 - Node.js 22+ and npm must be in the distro; AIB never installs system packages. Without them the panel says so ("Node.js 22 or newer
   is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js."), shows the command that installs it without root (nvm, as
@@ -362,7 +366,11 @@ The helper side of the Settings checklist, Uninstall and sign-in status (`docs/w
   `canInstallNode` is false, with `nodeInstallBlocked` saying why and what to do, when node is managed by asdf / mise, the login
   shell is not bash or zsh, its start-up file (`~/.bashrc`, `$ZDOTDIR/.zshrc` or `~/.zshrc`, the `PROFILE` nvm gets) does not exist,
   or curl is missing. `force: true` reads the login environment again first (PATH and `NVM_DIR`), so a Node.js installed in a
-  terminal since the helper started is seen. Never installs anything.
+  terminal since the helper started is seen. Never installs anything. Added after the freeze (optional): `node.managerVersion`
+  (`asdf --version` / `mise --version`, run only when one manages node: asdf 0.16+ sets a version with `asdf set -u`, older asdf
+  with `asdf global`) and `pkgManager` (`apt` / `dnf` / `yum` / `zypper` / `pacman` / `apk` / `unknown`, from `/etc/os-release`
+  `ID` and `ID_LIKE`, the family whose program is found first, else the first package manager program found on PATH or in the
+  system folders); the curl reason in `nodeInstallBlocked` uses that family's command.
 - **`agents.uninstall {id}` -> `{ok, removed, message?, blocked?}`** (`wsl/helper/agent_install.ts`). Only `claude` and `codex`;
   removes every `<root>/agents/<id>/<version>` with installer.ts `uninstall` (marker first, then the job files). Nothing installed:
   `{ok: true, removed: []}`. Refusals are answers with `ok: false` and one plain line: `blocked: 'installing'` (this helper's job
@@ -491,7 +499,9 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   and the WSL 1 command, the keep-alive line; the no-WSL card when there is no distro).
 - **What Ubuntu needs** (above the agents; `GET /api/live/wsl/prereqs?distro&peek=1`, `force=1` on Check again; never `start`):
   Remote control's check list (`.dv-checks`). Rows: Node.js 22.19 or newer (found with version, manager and path / missing / too
-  old / `shim_unset`: "asdf has no Node.js version set" with asdf's or mise's own command to copy and never nvm / broken), npm,
+  old / `shim_unset`: "asdf has no Node.js version set" with asdf's or mise's own command to copy and never nvm: `asdf install
+  nodejs latest && asdf set -u nodejs latest` for asdf 0.16+, `... && asdf global nodejs latest` for older asdf, both labelled
+  when the helper did not report asdf's version; `mise use -g node@lts` / broken), npm,
   git, curl, free space in the home folder, and "Checked with: zsh login shell (interactive)" (non-interactive; plain shell, which
   says a version manager in the profile is not seen). `prereqs: null` (not ready): the answer's line.
 - **Install Node.js in Ubuntu** only when `canInstallNode` (and never for `shim_unset`): the card's terminal panel (the Windows
@@ -499,12 +509,22 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   for a setup step now). Exit 0: prerequisites with `force=1`, then the agents with `force=1`; the panel closes once Node.js is
   seen. `canInstallNode` false: `nodeInstallBlocked` verbatim, **Open Ubuntu terminal** (the new-chat panel's `wsl-shell:<d>`
   terminal in the distro's home, in the card) and Check again.
-- git or curl missing: `sudo apt install git` / `sudo apt install curl` to copy only (AIB never runs them), Open Ubuntu terminal,
+- Close on the Node.js panel and on an agent's sign-in panel also ends that program on the server (`POST /api/live/terminal/end`
+  with `setup:wsl-node@<d>` / `signin:<agent>@<d>`, `wsl-ui.js endTerminal`), as the Windows card's Close does; before, Close only
+  dropped the socket and the program kept running in the distro (and blocked Remove). The "Open Ubuntu terminal" panel's Close
+  does not end its shell (`wsl-shell:<d>` is shared with the new-chat panel).
+- git or curl missing: the install line of the distro's package manager (`pkgManager`; absent = apt): `sudo apt install git`,
+  `sudo dnf install git`, `sudo yum install git`, `sudo zypper install git`, `sudo pacman -S git`, `sudo apk add git`, to copy only
+  (AIB never runs them); `unknown`: "Install git with your distro's package manager" and nothing to copy. Open Ubuntu terminal,
   Check again.
 - **Each distro has its own On/Off switch per agent** ("Use in Ubuntu", `rows[].enabled`, absent = on):
   `POST /api/live/wsl/agents/enabled {distro, id, enabled}`; drawn at once, put back with "The switch could not be saved…" when
   the request fails or answers `ok: false`. The Windows switch is unchanged (agentRow's env takes `toggleLabel` and `onToggle`;
   an env without `onToggle` never reaches Windows' save).
+  The phone's New chat follows it too: `GET /api/remote/new/options` gives a WSL project its own `agents` list (each agent on or
+  off by that distro's switch, "Turned off for Ubuntu in Settings on your PC (AIB Linking (WSL))."), the phone offers that list
+  for the project, and a phone's Start in a WSL project is checked against it (`remote/newchat.ts agentsFor`); Windows projects
+  and the top-level list keep the Windows switch.
 - The chip: Install failed / Not installed / Update available / Signed in / Not signed in / Installed (AIB's copy) / Found.
 - Sign-in (`rows[].signin`): "Signed in to Claude Code in Ubuntu as <account>", "Not signed in … yet" with **Sign in**, or
   "Sign-in in Ubuntu: unknown (<note>)". Sign in (signed out; or unknown for Claude Code and Codex) runs the WSL sign-in terminal

@@ -644,9 +644,11 @@ export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
   'mean this viewer and its studio_artifact tool. This project is in WSL: AIB runs on Windows and cannot open files inside the ' +
   'distro, so when you make something the user should look at rather than source code (an HTML page, one-off report, chart, ' +
-  'diagram or SVG), publish it with the studio_artifact publish tool by passing its content (never a file path) and mention it ' +
-  'in your reply as the Markdown link the tool returns; use update with the new content to change it. AIB docs and helper tools ' +
-  'are not available in WSL projects. ' + TOOLS_LOADING;
+  'diagram or SVG), publish it with the studio_artifact publish tool by passing its content (never a file path: `path` is not ' +
+  'supported in WSL projects) and mention it in your reply as the Markdown link the tool returns; use update with the new content ' +
+  'to change it. A PNG or other binary file cannot be published from inside the distro yet: embed it in an HTML page as an ' +
+  'inline base64 <img> and publish that page, or ask the user to open the file. AIB helper tools are not available in WSL ' +
+  'projects. ' + TOOLS_LOADING;
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +

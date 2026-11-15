@@ -567,7 +567,7 @@ function sourceArgs(ctx: ToolContext, args: Json): Json {
   const hasPath = path !== null && path !== '', hasContent = content !== null;
   if (hasPath && hasContent) throw new ToolError('Give either `path` or `content`, not both');
   if (!(hasPath || hasContent)) throw new ToolError('Give either `path` (a file) or `content` (the text to publish)');
-  if (hasPath && ctx.restricted) throw new ToolError('In a WSL project, publish by `content`: AIB cannot open files inside the distro');
+  if (hasPath && ctx.restricted) throw new ToolError(WSL_PATH_REFUSED);
   if (hasPath) return { path: resolvePath(ctx, path) };
   if (typeof content !== 'string') throw new ToolError('`content` must be a string');
   return { content };
@@ -752,6 +752,38 @@ export const WSL_TOOL_GROUPS: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 
 /** The artifact tools a WSL chat gets with the `artifacts` group on. */
 export const RESTRICTED_TOOLS: ReadonlySet<string> = new Set(WSL_TOOL_GROUPS.artifacts ? ['publish', 'update', 'list', 'archive'] : []);
 
+/**
+ * What a WSL chat's publish and update say up front, and what the refusal of a `path` repeats: only `content` works there (AIB on
+ * Windows cannot open files inside the distro), and how to show a binary file anyway.
+ */
+export const WSL_CONTENT_ONLY = 'In this WSL project only `content` works: pass the text itself (HTML, SVG, Markdown, CSV, JSON or ' +
+  'plain text); `path` is not supported, because AIB runs on Windows and cannot open files inside the distro. A PNG or other binary ' +
+  'file cannot be published from inside the distro yet: embed it in an HTML page as an inline base64 <img> ' +
+  '(src="data:image/png;base64,...") and publish that page, or ask the user to open the file.';
+export const WSL_PATH_REFUSED = 'In a WSL project, publish by `content`: AIB cannot open files inside the distro. ' + WSL_CONTENT_ONLY;
+
+/** publish and update as a WSL chat sees them: no `path` in the schema or the words, the content-only advice instead. */
+function contentOnly(tool: Json): Json {
+  const schema = tool.inputSchema as Json;
+  const { path: _path, ...properties } = schema.properties as Json;
+  const content = { ...(properties.content as Json) };
+  content.description = tool.name === 'publish'
+    ? 'The file text to publish (HTML, SVG, Markdown, CSV, JSON, plain text). Required in a WSL project.'
+    : 'The new file text. Required in a WSL project.';
+  const description = String(tool.description)
+    .replace(
+      'Give either `path` (an existing file; relative paths are resolved against the session folder) or `content` (the text itself, ' +
+        'with `filename` such as "report.html" so AIB knows the kind).',
+      'Give `content` (the text itself, with `filename` such as "report.html" so AIB knows the kind).',
+    )
+    .replace('Pass its `id` and the new `path` or `content`.', 'Pass its `id` and the new `content`.');
+  return {
+    ...tool,
+    description: `${description} ${WSL_CONTENT_ONLY}`,
+    inputSchema: { ...schema, properties: { ...properties, content }, required: [...(schema.required as string[]), 'content'] },
+  };
+}
+
 const SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
   SWARM_TOOLS.map((t) => [String(t.name), (ctx: ToolContext, args: Json) => swarmTool(ctx, String(t.name), args)]),
 );
@@ -773,7 +805,7 @@ function handlers(ctx: ToolContext): Record<string, Handler> {
 function restrictedTools(ctx: ToolContext): Json[] {
   const g = WSL_TOOL_GROUPS;
   return [
-    ...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))),
+    ...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))).map((t) => t.name === 'publish' || t.name === 'update' ? contentOnly(t) : t),
     ...(ctx.worktree && g.merge ? WORKTREE_TOOLS : []),
     ...(ctx.main && g.swarm ? SWARM_TOOLS : []),
     ...(g.docs ? [...DOC_TOOLS, ...DRAWING_TOOLS] : []),

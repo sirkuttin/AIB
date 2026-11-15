@@ -749,7 +749,12 @@ test('Node.js from asdf or mise with no version set: says so with the manager\'s
   const card = t.cardOf('What Ubuntu needs');
   assert.deepEqual(heads(card)[0], ['Node.js 22.19 or newer', 'asdf has no Node.js version set']);
   assert.ok(card.textContent.includes('Node.js in Ubuntu comes from asdf, and asdf has no Node.js version set, so node does not run.'));
-  assert.equal(card.querySelector('code').textContent, 'asdf install nodejs latest && asdf set -u nodejs "$(asdf latest nodejs)"');
+  // no asdf version from the helper: both generations' commands, each labelled
+  assert.deepEqual(card.querySelectorAll('code').map((c) => c.textContent), [
+    'asdf install nodejs latest && asdf set -u nodejs latest',
+    'asdf install nodejs latest && asdf global nodejs latest',
+  ]);
+  assert.ok(card.textContent.includes('asdf 0.16 or newer:') && card.textContent.includes('asdf 0.15 or older:'));
   assert.ok(card.textContent.includes(blocked));
   assert.ok(!buttons(card).some((b) => /Install/.test(b)), 'no Install button');
   assert.ok(!/nvm/.test(card.textContent), 'nvm is never offered');
@@ -761,6 +766,42 @@ test('Node.js from asdf or mise with no version set: says so with the manager\'s
   assert.deepEqual(heads(mc)[0], ['Node.js 22.19 or newer', 'mise has no Node.js version set']);
   assert.equal(mc.querySelector('code').textContent, 'mise use -g node@lts');
   assert.ok(!buttons(mc).some((b) => /Install/.test(b)) && !/nvm/.test(mc.textContent));
+});
+
+test('asdf with no Node.js version set: the command of the asdf generation the helper reports (0.16+ asdf set -u, older asdf global)', async () => {
+  for (const [version, want] of [
+    ['0.18.0', 'asdf install nodejs latest && asdf set -u nodejs latest'],
+    ['0.16.0', 'asdf install nodejs latest && asdf set -u nodejs latest'],
+    ['0.15.0', 'asdf install nodejs latest && asdf global nodejs latest'],
+  ]) {
+    const t = setup({ prereqs: (q) => needsOf(withNode({ state: 'shim_unset', manager: 'asdf', managerVersion: version }, { canInstallNode: false }), q.distro) });
+    await openWsl(t);
+    const card = t.cardOf('What Ubuntu needs');
+    assert.deepEqual(card.querySelectorAll('code').map((c) => c.textContent), [want], version);
+    assert.ok(!card.textContent.includes('or newer:') && !card.textContent.includes('or older:'), 'one command, no labels');
+  }
+});
+
+test('git and curl missing: the install line follows the distro\'s package manager; unknown says so with nothing to copy', async () => {
+  const lines = async (pkgManager) => {
+    const t = setup({ prereqs: (q) => needsOf(Object.assign({}, P_OK, { git: { state: 'missing' }, curl: { state: 'missing' }, pkgManager }), q.distro) });
+    await openWsl(t);
+    const card = t.cardOf('What Ubuntu needs');
+    return { codes: card.querySelectorAll('code').map((c) => c.textContent), card, t };
+  };
+  assert.deepEqual((await lines('dnf')).codes, ['sudo dnf install git', 'sudo dnf install curl']);
+  assert.deepEqual((await lines('yum')).codes, ['sudo yum install git', 'sudo yum install curl']);
+  assert.deepEqual((await lines('zypper')).codes, ['sudo zypper install git', 'sudo zypper install curl']);
+  assert.deepEqual((await lines('pacman')).codes, ['sudo pacman -S git', 'sudo pacman -S curl']);
+  assert.deepEqual((await lines('apk')).codes, ['sudo apk add git', 'sudo apk add curl']);
+  assert.deepEqual((await lines('apt')).codes, ['sudo apt install git', 'sudo apt install curl']);
+  assert.deepEqual((await lines(undefined)).codes, ['sudo apt install git', 'sudo apt install curl'], 'an older helper: apt, as before');
+  const u = await lines('unknown');
+  assert.deepEqual(u.codes, []);
+  assert.ok(u.card.textContent.includes("Install git with your distro's package manager in Ubuntu (AIB does not run it)."));
+  assert.ok(u.card.textContent.includes("Install curl with your distro's package manager in Ubuntu (AIB does not run it)."));
+  assert.ok(!buttons(u.card).some((b) => /^Install/.test(b)), 'nothing runs a package manager');
+  assert.equal(u.t.calls.posts.length, 0);
 });
 
 test('canInstallNode false: the reason verbatim, Open Ubuntu terminal (a shell in the distro\'s home, in the card) and Check again', async () => {
@@ -861,6 +902,36 @@ test('Sign in: the distro sign-in terminal on the card (signin=codex&distro=ubun
   assert.equal(t.terms[0].closed, true);
   assert.equal(t.rowOf('wsl:ubuntu:codex').querySelector('.st-beta-term'), null);
   assert.ok(noStart(t));
+});
+
+test('Close on the Node.js and sign-in panels also ends that terminal on the server (terminal/end with its distro key)', async () => {
+  const ends = (t) => t.calls.posts.filter(([n]) => n === 'terminal/end').map(([, b]) => b.key);
+  const t = setup({
+    prereqs: (q) => needsOf(withNode({ state: 'missing' }), q.distro),
+    agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CODEX, { signin: { state: 'signed_out' } })] }),
+  });
+  await openWsl(t);
+  t.cardOf('What Ubuntu needs').querySelectorAll('button').find((b) => b.textContent === 'Install Node.js in Ubuntu').click();
+  await settle();
+  assert.deepEqual(ends(t), [], 'opening the panel ends nothing');
+  t.cardOf('What Ubuntu needs').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.equal(t.terms[0].closed, true);
+  assert.equal(t.cardOf('What Ubuntu needs').querySelector('.st-beta-term'), null);
+  assert.deepEqual(ends(t), ['setup:wsl-node@ubuntu']);
+  t.rowOf('wsl:ubuntu:codex').querySelectorAll('button').find((b) => b.textContent === 'Sign in').click();
+  await settle();
+  t.rowOf('wsl:ubuntu:codex').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.deepEqual(ends(t), ['setup:wsl-node@ubuntu', 'signin:codex@ubuntu']);
+  // "Open Ubuntu terminal" (the shared wsl-shell terminal) is not ended by its panel's Close
+  const s = setup({ prereqs: (q) => needsOf(withNode({ state: 'missing' }, { canInstallNode: false, nodeInstallBlocked: 'x' }), q.distro) });
+  await openWsl(s);
+  s.cardOf('What Ubuntu needs').querySelectorAll('button').find((b) => b.textContent === 'Open Ubuntu terminal').click();
+  await settle();
+  s.cardOf('What Ubuntu needs').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.deepEqual(ends(s), []);
 });
 
 test('Sign in for a distro that stopped running since the page was drawn: start=1, only on that click', async () => {
