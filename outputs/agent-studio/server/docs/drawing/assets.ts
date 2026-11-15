@@ -21,8 +21,7 @@ import { exportJson, exportSvg, importJson, sceneFromSvg } from './files.ts';
 import type { LiveDoc } from '../live_doc.ts';
 import { DRAWING_SRC } from '../markdown.ts';
 import type { OpenDoc, SkippedEdit } from '../store.ts';
-
-const sep = Deno.build.os === 'windows' ? '\\' : '/';
+import { fsOf, sepOf } from '../doc_fs.ts';
 
 export interface DrawingRef {
   drawing: string;
@@ -56,6 +55,7 @@ export function drawingSrc(drawing: string): string {
 /** The two files of a drawing block, or null for a src that is not a drawing in the doc folder's assets folder. */
 export function drawingFiles(dir: string, src: string): { svg: string; json: string } | null {
   if (!DRAWING_SRC.test(src)) return null;
+  const sep = sepOf(dir); // '/' in a WSL project's ref (doc_fs.ts)
   const svg = `${dir}${sep}${src.replace(/^\.\//, '').replace(/\//g, sep)}`;
   return { svg, json: svg.slice(0, -'.svg'.length) };
 }
@@ -63,19 +63,13 @@ export function drawingFiles(dir: string, src: string): { svg: string; json: str
 /** What AIB last wrote (or read and found equal) per drawing file, so an agent's file edit shows as a difference. */
 const written = new WeakMap<OpenDoc, Map<string, string>>();
 
-async function readText(path: string): Promise<string | null> {
-  try {
-    return await Deno.readTextFile(path);
-  } catch {
-    return null;
-  }
+/** This PC's files, or a WSL project's through its helper (doc_fs.ts). */
+function readText(path: string): Promise<string | null> {
+  return fsOf(path).readText(path);
 }
 
-async function writeAtomic(path: string, text: string): Promise<void> {
-  await Deno.mkdir(path.slice(0, path.lastIndexOf(sep)), { recursive: true });
-  const tmp = `${path}.${Deno.pid}.tmp`;
-  await Deno.writeTextFile(tmp, text);
-  await Deno.rename(tmp, path);
+function writeAtomic(path: string, text: string): Promise<void> {
+  return fsOf(path).writeAtomic(path, text);
 }
 
 /** Take in file edits to the doc's drawings and write their files from the doc. Returns the refused element edits (also in doc.skipped). */

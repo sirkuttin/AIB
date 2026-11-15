@@ -15,8 +15,8 @@ import type { LiveDoc } from './live_doc.ts';
 import { jsonOf } from './blocks.ts';
 import { chartSrc, expandTable, hasSpans, normalize, type PMJson } from './markdown.ts';
 import { CHART_TYPES, MAX_SERIES } from './schema.ts';
+import { fsOf, sepOf } from './doc_fs.ts';
 
-const sep = Deno.build.os === 'windows' ? '\\' : '/';
 export const CHART_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 /** Rows of data a chart takes (after the series row). */
 export const MAX_CHART_ROWS = 50;
@@ -267,6 +267,7 @@ export function fixChartIds(live: LiveDoc): void {
 
 /** The pictures of the doc's charts in aib-docs/<doc>/assets/, written when they differ; pictures of charts that are gone go. */
 export async function syncCharts(doc: { live: LiveDoc; dir: string }): Promise<void> {
+  const sep = sepOf(doc.dir), fs = fsOf(doc.dir); // this PC's files, or a WSL project's (doc_fs.ts)
   const assets = `${doc.dir}${sep}assets`;
   const want = new Map<string, string>();
   for (const el of chartElements(doc.live)) {
@@ -278,19 +279,14 @@ export async function syncCharts(doc: { live: LiveDoc; dir: string }): Promise<v
       // a chart the schema can't read (mid-sync): next write
     }
   }
-  if (want.size) await Deno.mkdir(assets, { recursive: true });
+  if (want.size) await fs.mkdir(assets);
   for (const [id, svg] of want) {
     const path = `${assets}${sep}${chartSrc(id).slice('assets/'.length)}`;
-    let now: string | null = null;
-    try {
-      now = await Deno.readTextFile(path);
-    } catch { /* new */ }
-    if (now !== svg) await Deno.writeTextFile(path, svg);
+    const now = await fs.readText(path); // null: new
+    if (now !== svg) await fs.writeText(path, svg);
   }
-  try {
-    for await (const e of Deno.readDir(assets)) {
-      const m = /^(.+)\.chart\.svg$/.exec(e.name);
-      if (e.isFile && m && !want.has(m[1])) await Deno.remove(`${assets}${sep}${e.name}`).catch(() => {});
-    }
-  } catch { /* no assets folder */ }
+  for (const e of (await fs.readDir(assets)) ?? []) { // null: no assets folder
+    const m = /^(.+)\.chart\.svg$/.exec(e.name);
+    if (e.isFile && m && !want.has(m[1])) await fs.remove(`${assets}${sep}${e.name}`).catch(() => {});
+  }
 }
