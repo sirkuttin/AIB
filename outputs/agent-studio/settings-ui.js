@@ -14,6 +14,7 @@
 
   const SECTIONS = [
     { id: 'agents', label: 'AIB Linking' },
+    { id: 'wsl', label: 'AIB Linking (WSL)', windowsOnly: true }, // drawn by wsl-settings-ui.js; only when AIB runs on Windows
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
@@ -86,6 +87,27 @@
         'codex',
         'gemini',
         'acp',
+      ],
+    },
+    {
+      id: 'wsl-linking',
+      section: 'wsl',
+      label: 'Agents in your WSL distros',
+      keywords: [
+        'wsl',
+        'ubuntu',
+        'debian',
+        'linux',
+        'distro',
+        'install',
+        'update',
+        'claude code',
+        'codex',
+        'omp',
+        'node',
+        'helper',
+        'wsl --install',
+        'not supported',
       ],
     },
     {
@@ -264,6 +286,23 @@
     },
   ];
   const sectionLabel = (id) => (SECTIONS.find((s) => s.id === id) || { label: id }).label;
+  // Does AIB itself run on Windows? Its state folder says so (C:\... or a \\server share); before bootstrap has answered, the
+  // browser's own platform (Settings is shown by the desktop app or a browser on the same PC).
+  function windowsHost() {
+    const dir = S.boot && typeof S.boot.stateDir === 'string' ? S.boot.stateDir : '';
+    if (dir) return /^(?:[A-Za-z]:[\\/]|\\\\)/.test(dir);
+    const n = root.navigator;
+    const p = (n && ((n.userAgentData && n.userAgentData.platform) || n.platform || n.userAgent)) || '';
+    return /win/i.test(String(p));
+  }
+  // The section drawn: the chosen one, or AIB Linking while the chosen one is not shown here (AIB Linking (WSL) on a Mac or Linux AIB).
+  const shownSection = () => (sectionShown(S.section) ? S.section : 'agents');
+  const sectionShown = (id) => {
+    const s = SECTIONS.find((x) => x.id === id);
+    return !!s && (!s.windowsOnly || windowsHost());
+  };
+  // Entries that draw their own cards (several, with group headings) instead of going into one card with a title.
+  const OWN_CARDS = new Set(['wsl-linking']);
   // Page headings that differ from the short name in the section list.
   const PAGE_HEADINGS = {};
   const pageHeading = (id) => PAGE_HEADINGS[id] || sectionLabel(id);
@@ -2199,6 +2238,11 @@
     const dl = el('dl', null, 'st-facts');
     for (const [k, v] of rows) if (v !== undefined && v !== null && v !== '') dl.append(el('dt', k), el('dd', v));
     box.append(dl);
+    if (wslRows().length && sectionShown('wsl')) {
+      const more = note('WSL distros: details and agent installs in ');
+      more.append(button('AIB Linking (WSL)', () => goSection('wsl'), 'st-link'), '.');
+      box.append(more);
+    }
     if (b.stateDir && root.navigator && root.navigator.clipboard)
       box.append(
         button('Copy state folder path', () => {
@@ -2235,6 +2279,10 @@
     'agents-list': renderAgentsList,
     'agents-beta': renderAgentsBeta,
     'agents-add': renderAgentsAdd,
+    'wsl-linking': (box) =>
+      root.AIBWslSettings
+        ? root.AIBWslSettings.render(box)
+        : box.append(note('This part could not be drawn: wsl-settings-ui.js is missing.', 'bad')),
     'default-agent': renderDefaultAgent,
     'default-picks': renderDefaultPicks,
     'default-projects': renderDefaultProjects,
@@ -2322,20 +2370,21 @@
   }
   function renderNav() {
     const counts = sectionCounts(INDEX, S.query),
-      searching = !!S.query.trim();
+      searching = !!S.query.trim(),
+      current = shownSection();
     S.nav.replaceChildren(
-      ...SECTIONS.map((s) => {
+      ...SECTIONS.filter((s) => sectionShown(s.id)).map((s) => {
         const b = el(
           'button',
           null,
           'st-section' +
-            (!searching && S.section === s.id ? ' active' : '') +
+            (!searching && current === s.id ? ' active' : '') +
             (searching && !counts[s.id] ? ' empty' : ''),
         );
         b.type = 'button';
         b.append(el('span', s.label));
         if (searching) b.append(el('span', String(counts[s.id]), 'st-count'));
-        if (!searching && S.section === s.id) b.setAttribute('aria-current', 'page');
+        if (!searching && current === s.id) b.setAttribute('aria-current', 'page');
         b.addEventListener('click', () => {
           S.query = '';
           S.search.value = '';
@@ -2349,8 +2398,10 @@
   function renderContent() {
     if (!S.content) return;
     const searching = !!S.query.trim();
-    const entries = searching ? filterIndex(INDEX, S.query) : INDEX.filter((e) => e.section === S.section);
-    S.title.textContent = searching ? 'Search results' : pageHeading(S.section);
+    const shown = INDEX.filter((e) => sectionShown(e.section));
+    const current = shownSection();
+    const entries = searching ? filterIndex(shown, S.query) : shown.filter((e) => e.section === current);
+    S.title.textContent = searching ? 'Search results' : pageHeading(current);
     const frag = doc().createDocumentFragment();
     if (S.loadError && !S.data) {
       const n = note(
@@ -2367,13 +2418,14 @@
     }
     if (S.data && S.data.warning) frag.append(note(S.data.warning, 'bad'));
     if (!entries.length) frag.append(note('No settings match "' + S.query.trim() + '".'));
+    S.drawn = entries.map((e) => e.id);
     let lastSection = '';
     for (const e of entries) {
       if (searching && e.section !== lastSection) {
         lastSection = e.section;
         frag.append(el('h4', sectionLabel(e.section), 'st-group'));
       }
-      const c = card(TITLES[e.id] || e.label);
+      const c = OWN_CARDS.has(e.id) ? el('div', null, 'st-cards') : card(TITLES[e.id] || e.label);
       c.dataset.setting = e.id;
       try {
         RENDER[e.id](c);
@@ -2392,7 +2444,9 @@
     S.content.replaceChildren(frag);
     restoreView();
   }
-  const rowOf = (agent) => (S.content ? S.content.querySelectorAll('.st-agent').find((r) => r.dataset && r.dataset.agent === agent) : null);
+  // Array.from: a browser's querySelectorAll is a NodeList, which has no find
+  const rowOf = (agent) =>
+    S.content ? Array.from(S.content.querySelectorAll('.st-agent')).find((r) => r.dataset && r.dataset.agent === agent) || null : null;
   const topOf = (n) => (n && n.getBoundingClientRect ? n.getBoundingClientRect().top : 0);
   // Redrawing the page replaces every node, which drops the scroll position (the page is briefly empty, so the scroll clamps to 0)
   // and the focus (the clicked button is gone). keepView() records both before the redraw; the function it returns puts them back:
@@ -2413,7 +2467,7 @@
       const now = agent ? rowOf(agent) : null;
       if (inside && !c.contains(doc().activeElement)) {
         const here = now || c;
-        const buttons = here.querySelectorAll ? here.querySelectorAll('button,input,select,textarea,a') : [];
+        const buttons = here.querySelectorAll ? Array.from(here.querySelectorAll('button,input,select,textarea,a')) : [];
         const next =
           buttons.find((b) => b.textContent === label && b.className === cls) ||
           buttons.find((b) => b.textContent === label) ||
@@ -2519,9 +2573,19 @@
       }
     }
   }
+  // Another section of the open page, as its button in the section list does (opens the page when it is closed).
+  function goSection(id) {
+    if (!S.open || !S.page) return openPage(id);
+    if (!sectionShown(id)) return;
+    S.query = '';
+    S.search.value = '';
+    S.section = id;
+    renderAll();
+  }
   // Open Settings > AIB Linking with the Beta agent's card in view (from a menu that lists the agent as not ready).
-  function openAgent(id) {
-    openPage('agents');
+  // section/key: another section's card (AIB Linking (WSL): 'wsl', 'wsl:<distro>:<agent>').
+  function openAgent(id, section) {
+    openPage(section || 'agents');
     const show = () => {
       const row = rowOf(id);
       if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
@@ -2599,6 +2663,13 @@
     installBlockOf: installBlock,
     agentRow, // one agent's row (status, Install / Cancel / Retry); a start page can draw the same row
     renderAgentsBeta,
+    makeEnv, // an env for agentRow outside Windows (wsl-settings-ui.js)
+    goSection,
+    redraw: () => {
+      if (S.open) renderAll();
+    },
+    showing: (id) => S.open && (S.drawn || []).includes(id), // is this entry on the page now (its section, or a search hit)
+    windowsHost,
     BETA_NOTE,
     signInBeta, // a chat's Sign in for a Beta agent's terminal sign-in (resolves true on success)
     betaSigninKind: (id) => betaInfo(betaAgents().find((x) => x.id === id)).signin || '',

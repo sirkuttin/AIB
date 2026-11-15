@@ -3444,6 +3444,11 @@
         box.append(copyLine);
       }
       link('Open ' + name + ' terminal', openShell, 'A terminal in ' + name + ' to install ' + agentName);
+      // Settings > AIB Linking (WSL) with this distro's card of the agent in view (wsl-settings-ui.js)
+      const provider = newDraft.provider;
+      if (window.AIBWslSettings)
+        link('Set up ' + name + ' in Settings', () => window.AIBWslSettings.open(p.key, provider),
+          'Settings > AIB Linking (WSL): the agents in ' + name + ', their installs and updates');
     } else {
       line.textContent =
         agentName + ' in ' + name + (row.version ? ' (' + row.version + ')' : '') + (row.managed ? ', installed by AIB' : '') + '.';
