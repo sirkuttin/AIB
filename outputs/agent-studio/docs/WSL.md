@@ -36,8 +36,8 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 
 Side effects: the distro stays running while a WSL project is open or WSL chats run (VmmemWSL memory); `wsl.exe` processes appear
 under AIB and AIB-keeper in Task Manager; `~/.aib-server` appears in the Linux home; the first use after a Windows start takes a
-few seconds. Saved sessions started outside AIB are listed only once AIB has used the distro since it started; background-task
-output is missing for WSL chats. Codex usage limits are read from the distro's `~/.codex` (a chat's chip is keyed per distro; a
+few seconds. Saved sessions started outside AIB are listed only once AIB has used the distro since it started. A WSL chat's
+background commands are listed with their output, but AIB cannot stop one (there is no Stop on its row; ask the agent). Codex usage limits are read from the distro's `~/.codex` (a chat's chip is keyed per distro; a
 distro that is not running is not started for it).
 
 ## How it works
@@ -52,7 +52,7 @@ Per distro in use AIB keeps one **host** (`wsl/hosts.ts`, made on first use, so 
 | --- | --- | --- |
 | Linux keeper | in the distro, `~/.aib-server/data-<12 hex of the Windows data folder>/` | the same Go keeper, built for Linux; holds the WSL agents, terminals and the helper |
 | Transport | `wsl.exe --distribution D --cd ~ --exec .aib-server/<ver>/AIB-keeper bridge --data …`, AIB's child | keeper frames over its stdin/stdout (`keeper/PROTOCOL.md` section 10); ends with AIB; reconnected with backoff if it dies |
-| Helper | a channel in the Linux keeper, label `{"aib":"wsl-helper","v":ver}` | `AIB-wsl-helper` (a `deno compile` of `server/wsl/helper_main.ts`): JSON-RPC lines for Files, Changes, folder checks, agent detection, `which`, the login environment, saved sessions, files outside the project, project delete and Codex limits (`wsl/contract.ts` HelperMethods) |
+| Helper | a channel in the Linux keeper, label `{"aib":"wsl-helper","v":ver}` | `AIB-wsl-helper` (a `deno compile` of `server/wsl/helper_main.ts`): JSON-RPC lines for Files, Changes, folder checks, agent detection, `which`, the login environment, saved sessions, background commands, the ownership check, files outside the project, project delete and Codex limits (`wsl/contract.ts` HelperMethods) |
 | Keep-alive | a channel in the **Windows** keeper, label `{"aib":"wsl-hold","distro":d}` | `wsl.exe … bridge --hold`: keeps the distro and its agents alive while AIB is away; exits by itself once the distro has no work |
 
 `<ver>` is the app version plus the first 8 hex of the SHA-256 of both Linux programs. `wsl/install.ts` copies them over `wsl.exe`
@@ -209,6 +209,50 @@ everywhere else, so Windows is unchanged). There are no per-file calls between A
   environment wins) with the Windows reader (`agents/codex_limits.ts`). A WSL chat has its own account key (`wsl:<distro>|codex`);
   there is no app-server fallback in the distro. Under test the folder is `<AIB_WSL_ROOT>/home/.codex`.
 
+## Background tasks and ownership
+
+A WSL chat's transcripts, its agents' task output and its processes are all inside the distro, so the Windows code runs there, in the
+helper (`wsl/helper/bgtasks.ts`), unchanged, and AIB asks it through four methods (contract.ts): `transcripts.query`, `ownership.check`,
+`ownership.hints` and `proc.tree`.
+
+- **Background commands.** The page's `/api/agents`, `/api/commands` and `/api/command` for a WSL session (`wsl.<distro>.claude/…`)
+  go to `transcripts.query`, which runs `transcripts/monitor.ts` (handleGet, commandList, commandOutput) on the distro's transcripts.
+  So the Activity pane lists the chat's background commands and subagents, their running counts and a command's latest output, as for a
+  Windows chat. Output is read only from Claude Code's own task folder: on Linux `$TMPDIR/claude-<uid>/<project folder>/<session>/
+  tasks/<id>.output` (then `$TMPDIR/claude/…`). The helper's store keys come back as WSL keys, so a subagent's history and a command's
+  output are read through the same route again. These reads are polled, so they never start a distro: a distro that is not ready,
+  or a helper without the method, answers "Command updates unavailable: Ubuntu stopped. Reconnect" (no subagents for `/api/agents`)
+  instead of "No commands running".
+- **Busy children.** Whether a chat is really idle (quit, update, idle exit: `Studio.busyList` 'background'; the inbox's working state)
+  depends on whether the processes a background shell started still run. A WSL agent's pid is a Linux pid, so `Connection` asks
+  `wsl/procs.ts`, which keeps a per-distro snapshot of the processes below the WSL agents (`proc.tree`: `platform/descendants.ts`, i.e.
+  `ps`, in the distro) at most 3 s old and fetches a new one in the background. Until an answer is in, or while the helper is away, the
+  answer is "cannot be listed", which already means "still running": a WSL chat is never taken for idle while its command may run.
+  A command's processes are noted from the first snapshot after it went to the background. **Stop is not offered** for a WSL chat's
+  background command (its pids are the distro's; AIB's Stop kills Windows processes), and the route refuses it with "AIB can't stop a
+  command in a WSL chat yet. Ask the agent to stop it."
+- **Ownership.** Before a saved WSL chat is continued (Continue, the auto-reconnect), AIB asks the distro whether another agent process
+  holds it (`ownership.check`: `ownership/probe.ts` OwnershipProbe and `ownership.ts` findExternalOwner run natively). Inside a distro
+  that means:
+  - strong, refused with the Windows words ("This claude conversation is already open in another agent process (PID 1234). Stop it in
+    its current client before continuing here.", the PID is the Linux one): a `claude` or `omp` process in the distro whose command line
+    names the session (`--resume <id>`, `--session-id <id>`), or a live owner announcement in AIB's Windows registry;
+  - weak, asked first ("Another app may be using this conversation: …"): the transcript in the distro written in the last two minutes by
+    someone other than AIB, a process that has it open, or a Claude Code process running in the chat's folder;
+  - never: AIB's own agents in that distro (every live pipe channel of this AIB's Linux keeper and the agents' client terminals, with
+    all they started; AIB passes their pids as `exclude`) and the helper itself. Another AIB's agents (another Windows data folder) do
+    count. A transcript write before AIB released the chat is AIB's own (`releasedAgo`).
+  - A process is named the way it was started (its comm or argv[0]), because Claude Code's `/proc/<pid>/exe` is `node` or a version
+    file. The compiled helper may not read `/proc` itself (Deno wants `--allow-all` for it, and the helper is built without), so it lists
+    processes with `ps`, their folders with `readlink /proc/<pid>/cwd`, and open transcripts with one `find /proc/*/fd -lname`: all
+    read-only, nothing is ever signalled.
+  - A helper that cannot answer (an older one, a timeout) leaves only the Windows registry check, as a Windows check whose process
+    list cannot be read does. The conversation list's hints ("Elsewhere · Working") come from `ownership.hints` of each ready distro,
+    every 5 s at most, without the chats this AIB runs or released in the last two minutes. `GET /api/live/ownership` with a WSL
+    folder is answered from the distro.
+- Tests: `wsl_bgtasks_test` (no distro: the helper's methods on temp folders with a stand-in process list, the viewer's keys and the
+  distro away, the snapshots, Continue refused, asked and excluded, a background shell over a FakeWslHost), `wsl_bgtasks_e2e`.
+
 ## Docs
 
 **Decision: the open doc stays in AIB on Windows; only its files are in the distro.** A doc is a live Y.Doc that the page's editor
@@ -315,14 +359,17 @@ keeps one failure from hiding the others' results.
 | `wsl_fixes_e2e` | the set-up probe with `-` for no `AIB_WSL_ROOT` answers `$HOME/.aib-server` (read-only); the New project dialog's check and create in the distro (new, existing, missing parent, with and without a name and git init) |
 | `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
+| `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
 
-Background-task output and ownership checks for WSL chats.
+- Stopping a WSL chat's background command from AIB (no Stop on its row; the agent can stop it).
+- Background commands of Codex sessions in WSL (Codex keeps no saved-session list AIB reads, as on Windows) and ownership hints of
+  OMP sessions in a distro (AIB reads only the distro's Claude Code folder).

@@ -21,6 +21,17 @@
   install keeps going if AIB restarts. When AIB moves to a newer reviewed version, the panel offers "Update in Ubuntu". The distro needs
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
+- WSL projects: background commands. The Activity pane of a WSL chat now lists the commands Claude Code runs in the background in
+  the distro (a long test run, a dev server) and its subagents, with how many are still running and each command's latest output, as
+  for a Windows chat. While such a command runs, the chat counts as still working in the background, so quitting or updating AIB
+  warns you instead of cutting it off. If Ubuntu is not running, the pane says "Command updates unavailable: Ubuntu stopped.
+  Reconnect" instead of "No commands running". AIB cannot stop a WSL background command itself yet (no Stop button there; ask the
+  agent).
+- WSL projects: no second agent on one conversation. Before continuing a saved WSL chat, AIB now checks inside the distro whether
+  another program already has that conversation open (for example `claude --resume` in a VS Code terminal in Ubuntu) and refuses with
+  "This claude conversation is already open in another agent process (PID …)", exactly as for Windows chats. A chat written to
+  moments ago by another app asks before continuing. AIB's own agents in the distro never count, and the chat list's "Elsewhere"
+  hints now cover WSL chats too.
 
 - Ready and Couldn't reopen: clear words for a chat with no agent. A saved chat that has no agent running now says Ready instead of
   Not running (it opens read-only with its saved messages, and an agent starts when you send a message), in the sidebar, the chat
