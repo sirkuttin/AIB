@@ -652,12 +652,35 @@ export async function aibUsage(d: RemoveDeps): Promise<AibUsage> {
 
 // ---- the helper methods ----------------------------------------------------------------------------------------------------
 
-/** Is a keeper listening on <dataDir>/keeper/keeper.sock? A connect, closed at once (no hello, no signal). */
+/** __SO_ACCEPTCON in /proc/net/unix's Flags column: the socket listens. */
+const ACCEPTCON = 0x10000;
+
+/** The paths of the listening unix sockets in /proc/net/unix text. */
+export function listeningSockets(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const line of text.split('\n').slice(1)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 8) continue;
+    if ((parseInt(cols[3], 16) & ACCEPTCON) && cols[7].startsWith('/')) out.add(cols.slice(7).join(' '));
+  }
+  return out;
+}
+
+/**
+ * Is a keeper listening on <dataDir>/keeper/keeper.sock? Read from /proc/net/unix by sh (the compiled helper may not read /proc
+ * itself, and it is built without network access); only when that cannot be read, a connect closed at once (no hello, no signal).
+ */
 export async function keeperListening(dataDir: string, timeoutMs = 1500): Promise<boolean> {
+  const sock = `${dataDir}/keeper/keeper.sock`;
+  try {
+    const out = await new Deno.Command('/bin/sh', { args: ['-c', 'cat /proc/net/unix'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output();
+    const text = new TextDecoder().decode(out.stdout);
+    if (out.success && text.includes('Path')) return listeningSockets(text).has(sock);
+  } catch { /* no sh: try a connect */ }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const conn = await Promise.race([
-      Deno.connect({ transport: 'unix', path: `${dataDir}/keeper/keeper.sock` }),
+      Deno.connect({ transport: 'unix', path: sock }),
       new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('timeout')), timeoutMs))),
     ]);
     conn.close();

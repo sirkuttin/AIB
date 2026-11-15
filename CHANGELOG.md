@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
+  agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
+  another AIB build still uses them. Reading it never starts the distro.
+- AIB Linking (WSL): Remove AIB from Ubuntu deletes this AIB's own folder in the distro and lists everything first, with sizes. It
+  refuses while a chat there is working, a chat or terminal still runs, a sign-in, Node.js set-up or agent install runs, or a chat
+  copy has changes that are not committed (new files count). Installed agents, the npm cache and the helper versions go only when no
+  other AIB on this PC uses them. Your ~/.claude, ~/.codex, your projects and their branches are never touched, nothing outside
+  AIB's folder is ever deleted, and links are never followed.
+- AIB Linking (WSL): after Remove, nothing starts that distro or puts AIB back into it (not a chat, not a restart of AIB) until you
+  click Set up again, which installs AIB there afresh. Chats that worked in a removed chat copy say "workspace removed".
 - AIB Linking (WSL): each distro has its own On/Off switch per agent. Turning Claude Code off in Ubuntu no longer depends on, or
   touches, its Windows switch: a new chat (or Continue) in a WSL project with an agent turned off for that distro says so ("Claude Code
   is turned off for Ubuntu in Settings > AIB Linking (WSL)"), and Windows chats never read the distro switch.

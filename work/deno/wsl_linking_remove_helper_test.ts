@@ -27,6 +27,7 @@ import {
   dataProblem,
   type FsInfo,
   isOurs,
+  listeningSockets,
   parseProcRows,
   type ProcRow,
   type RemoveDeps,
@@ -465,6 +466,18 @@ Deno.test('usage: parts, data folders, agents, chat copies; a cut walk is partia
 });
 
 // ---- 6. processes and the RPC methods --------------------------------------------------------------------------------------
+
+Deno.test('remove: a keeper is alive when /proc/net/unix lists its socket as listening', () => {
+  const text = 'Num       RefCount Protocol Flags    Type St Inode Path\n' +
+    `0000000000000000: 00000002 00000000 00010000 0001 01 1234 ${OTHER}/keeper/keeper.sock\n` +
+    `0000000000000000: 00000003 00000000 00000000 0001 03 1235 ${DATA}/keeper/keeper.sock\n` +
+    '0000000000000000: 00000002 00000000 00010000 0001 01 1236 @abstract\n' +
+    '0000000000000000: 00000002 00000000 00010000 0001 01 1237\n';
+  const listening = listeningSockets(text);
+  assert(listening.has(`${OTHER}/keeper/keeper.sock`), 'listening');
+  assert(!listening.has(`${DATA}/keeper/keeper.sock`), 'a connected (not listening) socket is not a keeper');
+  assertEquals(listening.size, 1);
+});
 
 Deno.test('remove: process rows, isOurs and uses', async () => {
   const rows = parseProcRows(`1\t/usr/bin/sh\t/\tsh\x01-c\x01x\n12\t${ROOT}/${VER}/AIB-keeper\t${HOME}\t${ROOT}/${VER}/AIB-keeper\x01serve\x01--data\x01${DATA}\nnot a row\n`);
