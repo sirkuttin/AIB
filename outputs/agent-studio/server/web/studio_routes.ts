@@ -77,6 +77,56 @@ export async function savedFolders(ctx: WebContext, ident: string): Promise<Map<
   return saved;
 }
 
+/** How long the Merge/Changes poll waits for a chat's worktree status before it answers "still checking" (the page gives up at 30 s). */
+export const WORKTREE_STATUS_WAIT_MS = 20_000;
+/** A finished status is reused this long: several views of one chat poll it at once. */
+export const WORKTREE_STATUS_REUSE_MS = 1_500;
+const statusRuns = new Map<string, Promise<Record<string, unknown>>>();
+const statusDone = new Map<string, { at: number; value: Record<string, unknown> }>();
+
+/**
+ * One chat's worktree status for GET /api/live/worktree: concurrent requests for the same chat share one run, a fresh answer is
+ * reused briefly, and a run that takes longer than WORKTREE_STATUS_WAIT_MS is answered as "still checking" while it goes on
+ * (the next poll gets its result), so a slow git can never hold the page past its own time-out.
+ */
+export async function worktreeStatus(
+  id: string,
+  run: () => Promise<Record<string, unknown>>,
+  waitMs = WORKTREE_STATUS_WAIT_MS,
+): Promise<Record<string, unknown>> {
+  const done = statusDone.get(id);
+  if (done && Date.now() - done.at < WORKTREE_STATUS_REUSE_MS) return done.value;
+  let pending = statusRuns.get(id);
+  if (!pending) {
+    pending = run();
+    statusRuns.set(id, pending);
+    pending.then((value) => {
+      if (statusDone.size > 200) statusDone.clear();
+      statusDone.set(id, { at: Date.now(), value });
+    }, () => {}).finally(() => statusRuns.delete(id));
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
+  try {
+    const value = await Promise.race([pending, late]);
+    return value ?? { worktree: true, enabled: false, state: 'checking', message: 'Still checking this chat’s changes…', base: '' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const changesRuns = new Map<string, Promise<Reply>>();
+
+/** One run for identical concurrent requests: the first starts it, the rest wait for the same answer. */
+export function shared<T>(runs: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
+  let pending = runs.get(key);
+  if (!pending) {
+    pending = run().finally(() => runs.delete(key));
+    runs.set(key, pending);
+  }
+  return pending;
+}
+
 function mergeStudio(ctx: WebContext): merge.MergeStudio {
   return {
     stateDir: ctx.stateDir,
@@ -231,17 +281,23 @@ export function studioRoutes(): Map<string, StudioHandler> {
   });
   // ---- Changes view, branch, worktree Merge and clashes ----
   for (const path of ['/api/live/changes', '/api/live/changes/file']) {
-    routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
-      const args = argsOf(url);
-      return await changesResponse(chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))), path, args, request.headers);
+    routes.set(`GET ${path}`, (ctx, url, _body, request) => {
+      // identical requests at once (several views of one chat poll it) share one run of git; the token is part of the key
+      const key = `${request.headers.get('X-Studio-Token') ?? ''}|${path}|${url.search}`;
+      return shared(changesRuns, key, async () => {
+        const args = argsOf(url);
+        return await changesResponse(chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))), path, args, request.headers);
+      });
     });
   }
   routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
   // A WSL chat's merge runs in its distro's helper (wsl/merge.ts); every other chat's here (merge.ts).
   routes.set('GET /api/live/worktree', async (ctx, url) => {
     const studio = mergeStudio(ctx), id = one(argsOf(url), 'id');
-    const wsl = await wslMerge.wslMergeChat(studio, id);
-    return [200, wsl ? await wslMerge.wslMergeStatus(wsl) : await merge.status(studio, id)];
+    return [200, await worktreeStatus(id, async () => {
+      const wsl = await wslMerge.wslMergeChat(studio, id);
+      return wsl ? await wslMerge.wslMergeStatus(wsl) : await merge.status(studio, id);
+    })];
   });
   routes.set('GET /api/live/worktree/clash', async (ctx, url) => {
     const project = one(argsOf(url), 'project');

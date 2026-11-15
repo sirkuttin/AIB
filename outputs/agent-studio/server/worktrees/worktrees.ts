@@ -95,7 +95,12 @@ export interface GitOptions {
 export type GitFn = (args: string[], cwd: string, options?: GitOptions) => Promise<GitResult>;
 
 /** Test seams (Python's tests patch worktrees.git and worktrees._rmtree). */
-export const testing: { git: GitFn | null; rmtree: ((path: string) => void) | null } = { git: null, rmtree: null };
+export const testing: {
+  git: GitFn | null;
+  rmtree: ((path: string) => void) | null;
+  /** The program (and leading arguments) run in place of `git` by realGit: a test points it at a fake git that hangs. */
+  gitCommand: string[] | null;
+} = { git: null, rmtree: null, gitCommand: null };
 
 const DECODER = new TextDecoder('utf-8');
 
@@ -131,6 +136,7 @@ async function runProcess(
   timeoutMs: number | null,
 ): Promise<{ code: number; out: Uint8Array; err: Uint8Array }> {
   assertWindowsLocal(cwd, 'folder'); // a missed WSL route throws here instead of running Windows git on C:\…
+  const signal = timeoutMs !== null ? AbortSignal.timeout(timeoutMs) : null;
   const child = new Deno.Command(command, {
     args,
     cwd,
@@ -138,14 +144,15 @@ async function runProcess(
     stdin: input ? 'piped' : 'null',
     stdout: 'piped',
     stderr: 'piped',
-    ...(timeoutMs !== null ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+    ...(signal ? { signal } : {}),
   }).spawn();
   if (input) {
     const writer = child.stdin.getWriter();
     writer.write(input).catch(() => {}).finally(() => writer.close().catch(() => {}));
   }
   const done = await child.output();
-  if (done.signal !== null && timeoutMs !== null && done.code !== 0) {
+  // Windows reports a killed child as exit code 1 with no signal: the time-out is known by the abort signal itself.
+  if (signal?.aborted && timeoutMs !== null && done.code !== 0) {
     throw new Error(`Command '${[command, ...args].join(' ')}' timed out after ${timeoutMs / 1000} seconds`);
   }
   return { code: done.code, out: done.stdout, err: done.stderr };
@@ -164,7 +171,8 @@ export async function realGit(args: string[], cwd: string, options: GitOptions =
   const command = ['-c', 'core.longpaths=true', ...(identity ? SNAPSHOT_IDENTITY : []), ...args];
   let done: { code: number; out: Uint8Array; err: Uint8Array };
   try {
-    done = await runProcess('git', command, String(cwd), gitEnv(env), encodeInput(input, binary), timeout * 1000);
+    const [program, ...lead] = testing.gitCommand ?? ['git'];
+    done = await runProcess(program, [...lead, ...command], String(cwd), gitEnv(env), encodeInput(input, binary), timeout * 1000);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
     if (check) throw new GitError(`git ${args[0]} failed: ${text}`);
@@ -923,18 +931,113 @@ export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/** Paths whose working-tree content differs from commit `base` (changed, deleted, or new and not ignored), CRLF-safe. */
+/** Seconds one git run of touchedPaths may take (it is polled by the Changes and Merge views; nothing may hang them). */
+export const TOUCHED_GIT_TIMEOUT = 20;
+
+/**
+ * Paths whose working-tree content differs from commit `base` (changed, deleted, or new and not ignored), CRLF-safe.
+ * A fixed number of git runs however many files differ (blob ids, clean hashes and smudged contents are each read in one batch):
+ * one run per file took ~2.5 minutes for a worktree 644 files away from its base on Windows, where each git start costs ~0.2 s.
+ */
 export async function touchedPaths(cwd: string, base: string): Promise<string[]> {
-  const names = nulList((await git(['diff', '--name-only', '-z', '--no-renames', base, '--'], cwd)).stdout);
-  const touched: string[] = [];
-  for (const name of names) {
-    const blob = pyStrip((await git(['rev-parse', '--verify', '-q', `${base}:${name}`], cwd, { check: false })).stdout);
-    if (!(await fileMatchesBlob(cwd, name, blob))) touched.push(name);
-  }
-  for (const name of nulList((await git(['ls-files', '-o', '--exclude-standard', '-z'], cwd)).stdout)) {
-    if (!touched.includes(name)) touched.push(name);
+  const opts = { timeout: TOUCHED_GIT_TIMEOUT };
+  const names = nulList((await git(['diff', '--name-only', '-z', '--no-renames', base, '--'], cwd, opts)).stdout);
+  const differs = names.length ? await differingFiles(cwd, base, names) : new Set<string>();
+  const touched = names.filter((n) => differs.has(n));
+  const seen = new Set(touched);
+  for (const name of nulList((await git(['ls-files', '-o', '--exclude-standard', '-z'], cwd, opts)).stdout)) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      touched.push(name);
+    }
   }
   return touched;
+}
+
+/** The names (of `names`, relative to the worktree top `cwd`) whose file is not the same as `base:<name>` (fileMatchesBlob, batched). */
+async function differingFiles(cwd: string, base: string, names: string[]): Promise<Set<string>> {
+  const opts = { timeout: TOUCHED_GIT_TIMEOUT, check: false };
+  const out = new Set<string>();
+  // A name with a line break cannot go through git's line-based batch input: those few are checked one by one, as before.
+  const odd = names.filter((n) => /[\r\n]/.test(n) || n !== n.trim());
+  const plain = names.filter((n) => !odd.includes(n));
+  for (const name of odd) {
+    const blob = pyStrip((await git(['rev-parse', '--verify', '-q', `${base}:${name}`], cwd, opts)).stdout);
+    if (!(await fileMatchesBlob(cwd, name, blob))) out.add(name);
+  }
+  if (!plain.length) return out;
+  // 1. the blob of every name in base ('' when base has no such path)
+  const check = await git(['cat-file', '--batch-check=%(objectname)'], cwd, { ...opts, input: plain.map((n) => `${base}:${n}\n`).join('') });
+  const ids = check.stdout.split('\n');
+  if (check.returncode !== 0 || ids.length < plain.length) return await oneByOne(cwd, base, plain, out);
+  const blobs = new Map<string, string>();
+  const hashable: string[] = [];
+  plain.forEach((name, i) => {
+    const line = ids[i].trim();
+    const blob = /^[0-9a-f]{40,64}$/.test(line) ? line : ''; // '<object> missing' (or ambiguous): no such file in base
+    blobs.set(name, blob);
+    const full = pathOf(String(cwd), name);
+    if (!lexists(full)) {
+      if (blob) out.add(name);
+    } else if (!blob || islink(full) || !isfile(full)) out.add(name);
+    else hashable.push(name);
+  });
+  if (!hashable.length) return out;
+  // 2. the clean hash of every remaining file, as `hash-object --path` gives (filters are chosen by each path)
+  const hashed = await git(['hash-object', '--stdin-paths'], cwd, { ...opts, input: hashable.map((n) => n + '\n').join('') });
+  const sums = hashed.stdout.split('\n');
+  if (hashed.returncode !== 0 || sums.length < hashable.length) return await oneByOne(cwd, base, hashable, out);
+  const smudge = hashable.filter((name, i) => sums[i].trim() !== blobs.get(name));
+  if (!smudge.length) return out;
+  // 3. the rest may still be the blob as it is checked out (smudge filters, line endings): compare with `cat-file --filters`
+  const cat = await git(['cat-file', '--batch', '--filters'], cwd, {
+    ...opts,
+    binary: true,
+    input: smudge.map((n) => `${blobs.get(n)} ${n}\n`).join(''),
+  });
+  const contents = cat.returncode === 0 ? parseBatch(cat.out, smudge.length) : null;
+  if (!contents) return await oneByOne(cwd, base, smudge, out);
+  smudge.forEach((name, i) => {
+    const want = contents[i];
+    let same = false;
+    if (want) {
+      try {
+        same = sameBytes(Deno.readFileSync(pathOf(String(cwd), name)), want);
+      } catch {
+        same = false;
+      }
+    }
+    if (!same) out.add(name);
+  });
+  return out;
+}
+
+async function oneByOne(cwd: string, base: string, names: string[], out: Set<string>): Promise<Set<string>> {
+  for (const name of names) {
+    const blob = pyStrip((await git(['rev-parse', '--verify', '-q', `${base}:${name}`], cwd, { check: false, timeout: TOUCHED_GIT_TIMEOUT })).stdout);
+    if (!(await fileMatchesBlob(cwd, name, blob))) out.add(name);
+  }
+  return out;
+}
+
+/** The objects of `git cat-file --batch` output, in order (null for a missing one); null when the output is not `count` objects. */
+export function parseBatch(data: Uint8Array, count: number): (Uint8Array | null)[] | null {
+  const found: (Uint8Array | null)[] = [];
+  const dec = new TextDecoder();
+  let at = 0;
+  while (found.length < count) {
+    const eol = data.indexOf(10, at);
+    if (eol < 0) return null;
+    const header = dec.decode(data.subarray(at, eol)).trim().split(' ');
+    at = eol + 1;
+    if (header.length === 3 && /^\d+$/.test(header[2])) {
+      const size = Number(header[2]);
+      if (at + size > data.length) return null;
+      found.push(data.subarray(at, at + size));
+      at += size + 1; // the object, then a newline
+    } else found.push(null); // '<object> missing' / 'ambiguous'
+  }
+  return found;
 }
 
 /**
