@@ -12,7 +12,7 @@ import * as osp from '../../platform/ospath.ts';
 import { which } from '../../platform/pypath.ts';
 import { branchEntries, commitExists, getChanges, getFileDiff, locate } from '../../worktrees/changes.ts';
 import * as files from '../../worktrees/files.ts';
-import { checkPath, createFolder, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
+import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
 import { repoBranch } from '../../worktrees/chat_folders.ts';
 import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
 import { Store } from '../../transcripts/store.ts';
@@ -176,6 +176,14 @@ function phaseOne(ctx: HelperContext): Handlers {
         isGit,
         realPath: c.path ? osp.realpath(c.path) : '',
       };
+    },
+
+    // The New project dialog's check and create, run by the same functions a Windows project uses, here with Linux rules.
+    'folder.project': (p) => ({ ...checkProject(str(p, 'path'), str(p, 'name', true), false) }),
+
+    'folder.createProject': async (p) => {
+      const path = str(p, 'path'), name = str(p, 'name', true), gitInit = p.gitInit === true;
+      return { ...(name ? await createProject(path, name, gitInit) : await createFolder(path, gitInit)) };
     },
 
     'git.init': async (p) => {

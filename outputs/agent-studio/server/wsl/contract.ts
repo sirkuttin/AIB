@@ -49,6 +49,8 @@ export interface HelperMethods {
   'fs.stat': { params: { path: string }; result: { exists: boolean; isDir: boolean; isFile: boolean; size: number; mtimeMs: number } };
   'fs.listDirs': { params: { path: string; limit?: number }; result: { path: string; parent: string | null; dirs: { name: string; isGit: boolean }[]; truncated: boolean } };
   'folder.check': { params: { path: string }; result: { ok: boolean; reason?: string; isGit: boolean; realPath: string } };
+  'folder.project': { params: { path: string; name?: string }; result: Record<string, unknown> };
+  'folder.createProject': { params: { path: string; name?: string; gitInit?: boolean }; result: Record<string, unknown> };
   'git.init': { params: { path: string }; result: { ok: boolean; message?: string } };
   'files.list': { params: { root: string; rel?: string; offset?: number; limit?: number }; result: unknown };
   'files.search': { params: { root: string; query: string; limit?: number }; result: unknown };

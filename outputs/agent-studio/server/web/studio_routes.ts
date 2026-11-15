@@ -20,6 +20,8 @@ import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { ROUTES } from './routes.ts';
 import type { WebContext } from './server.ts';
+import { wslProjectReply } from './wsl_routes.ts';
+import { wslLocOf } from '../platform/location.ts';
 import { bringBack, restoreFolders } from './project_routes.ts';
 import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
@@ -150,9 +152,11 @@ export function studioRoutes(): Map<string, StudioHandler> {
     return refusedReply(() => ctx.launcher.open(body));
   });
   // ---- folders ----
-  routes.set('GET /api/live/folders/check', (_ctx, url) => {
+  routes.set('GET /api/live/folders/check', async (_ctx, url) => {
     const args = argsOf(url);
-    return Promise.resolve([200, folders.checkProject(one(args, 'path'), one(args, 'name'))]);
+    const wsl = wslLocOf(one(args, 'path'));
+    if (wsl) return await wslProjectReply(wsl, (host, linux) => host.call('folder.project', { path: linux, name: one(args, 'name') }));
+    return [200, folders.checkProject(one(args, 'path'), one(args, 'name'))];
   });
   routes.set('GET /api/live/folders/kinds', (_ctx, url) => {
     const args = argsOf(url);
@@ -177,6 +181,11 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('POST /api/live/folders/create', async (ctx, _url, body) => {
     const gitInit = body && Object.hasOwn(body, 'gitInit') ? body.gitInit : false;
     if (typeof body?.path !== 'string' || typeof gitInit !== 'boolean') throw new ValueError('Invalid request');
+    const wsl = wslLocOf(body.path);
+    if (wsl) {
+      const name = Object.hasOwn(body, 'name') && typeof body.name === 'string' ? body.name : '';
+      return await wslProjectReply(wsl, (host, linux) => host.call('folder.createProject', { path: linux, name, gitInit }));
+    }
     const named = Object.hasOwn(body, 'name'); // with a name: <path>\<name>, made or used; without: <path> itself, made
     if (named && typeof body.name !== 'string') throw new ValueError('Invalid request');
     let result: folders.CreateResult;

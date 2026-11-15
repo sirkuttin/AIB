@@ -14,6 +14,7 @@ import { tokenMatches } from './security.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { WslHelperError, type WslHost } from '../wsl/contract.ts';
+import { refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
 import { distroName, hostWhenReady, notReady, peekWslHost, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
@@ -27,6 +28,32 @@ const DISTRO = /^[A-Za-z0-9._-]{1,64}$/;
 
 /** What a WSL Files read says instead of a preview (design section 8 item 8). */
 export const WSL_NO_PREVIEW = 'Not available for WSL projects yet';
+
+/**
+ * The New project dialog's folder check and create for a WSL path: the helper runs the same functions a Windows project uses, with
+ * Linux rules; every Linux path in the answer goes back to the page as the project's ref.
+ */
+export async function wslProjectReply(
+  loc: WslLoc,
+  call: (host: WslHost, linuxPath: string) => Promise<Record<string, unknown>>,
+): Promise<Reply> {
+  let host: WslHost;
+  try {
+    host = await hostWhenReady(loc.distro);
+  } catch (error) {
+    return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+  }
+  try {
+    const out = { ...await call(host, loc.linuxPath) };
+    for (const key of ['path', 'parent', 'folder']) {
+      const value = out[key];
+      if (typeof value === 'string' && value.startsWith('/')) out[key] = refOf({ kind: 'wsl', distro: loc.distro, linuxPath: value });
+    }
+    return [200, out];
+  } catch (error) {
+    return failed(error);
+  }
+}
 
 /** A helper failure as a reply: its code, status 400 (409 when the distro is not ready). */
 function failed(error: unknown): Reply {
