@@ -212,7 +212,7 @@
         }
         // a local-only path (the main folder's, in every scope) is never dim and opens without "Show ignored"
         const local = !!e.local;
-        const isOpen = !!e.dir && open.has(e.path) && (local || !e.ignored || o.showIgnored);
+        const isOpen = !!e.dir && open.has(e.path); // ignored folders open too (owner): they stay dimmed
         const row = {
           kind: e.dir ? 'dir' : 'file',
           path: e.path,
@@ -220,7 +220,7 @@
           depth,
           ignored: !!e.ignored && !local,
           open: isOpen,
-          canOpen: !!e.dir && (local || !e.ignored || !!o.showIgnored),
+          canOpen: !!e.dir,
           badge: null,
           changed: 0,
           artifact: false,
