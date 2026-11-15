@@ -16,6 +16,13 @@
   `~/.codex`. A new chat in a WSL git project works in its own copy (a git worktree made inside the distro, next to AIB's other files in `~/.aib-server`), as on Windows: Files shows the copy or the main folder, Changes shows the chat's branch, Discard removes the copy and its branch, and the chat keeps its copy across AIB restarts. Merge works there too: the Merge button (or asking the chat) lands the chat's own commits on main, runs entirely inside the distro with Linux git, brings main into the copy first when it moved (conflicts go back to the chat), and sets your uncommitted edits in the project folder aside and puts them back, never overwriting them (if they clash, they stay in a named stash and "Keep my version" restores them). Not in WSL projects yet: live sync and Docs; AIB tools there are limited to artifacts and merge. While a WSL project is open or a WSL chat runs, the distro
   keeps running (VmmemWSL memory in Task Manager).
 
+- AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
+  merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
+  `~/.aib-server`, and the helper passes it to AIB over the connection AIB already keeps. No network port is opened, nothing on
+  Windows is exposed to Linux, and each chat's own key is checked as before. It keeps working where interop is switched off, and a
+  tool call made while AIB is closed says so at once instead of hanging. Docs and helper chats are still not available in WSL
+  projects; the chat's note says which tools it has.
+
 ## 0.1.0-beta.9 (beta)
 
 - Removed the ⋯ menu at the bottom of the sidebar.

@@ -15,9 +15,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 - Chats start the agent as the distro has it (`claude-agent-acp`, `codex-acp` installed with npm in the distro). A missing one shows
   its install command and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
-- AIB tools in a WSL chat are limited to artifacts (publish, list, update) and, for a chat in its own copy, the merge tools
-  (merge_into_project, resolve_edit_clash), reached through WSL interop; docs and the swarm helper tools are not available yet, and
-  the chat says so.
+- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive) and, for a chat in its own copy, the
+  merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro (see AIB tools below; WSL
+  interop is only the fallback); docs and the swarm helper tools are not available yet, and the chat says so.
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
   Windows project; a folder that is not git, has no commits yet, or cannot get a copy keeps the chat in the project folder, with the
   same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the
@@ -90,6 +90,43 @@ WSL worktree on Windows; `wsl/worktrees.ts` turns the helper's Linux paths into 
 - Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes shows
   Discard and Merge, as on Windows. A helper without the methods (older, or no `--data`) leaves chats in the project folder.
 
+## AIB tools (MCP tunnel)
+
+An agent in the distro cannot reach AIB's tool endpoint on Windows `127.0.0.1` (WSL2 NAT), and AIB never opens a port for it. So a
+WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
+
+```
+<root>/<ver>/AIB-keeper mcp-forward --helper-socket <data>/helper/mcp.sock      env MCP_FORWARD_HEADERS={key, conversation id}
+```
+
+| Hop | What |
+| --- | --- |
+| forwarder (`keeper/mcpforward.go`) | the agent's MCP server: one connection per message to the socket, `{"headers","body"}` in, `{"status","body"\|"error"}` out; retries only a failed dial, for 15 s |
+| relay (`keeper/mcprelay.go`) | `AIB-keeper mcp-relay --socket <data>/helper/mcp.sock`, the helper's child: the socket (0600, folder 0700) is listened on in Go, because a compiled Deno program can only use a unix socket path fixed at build time; lines pass through its stdio |
+| helper (`wsl/helper/mcp_tunnel.ts`) | sends each message to AIB as the notification `mcp.request {rid, headers, body}` on the helper channel; `mcp.accept`, `mcp.reply`, `mcp.closed` (contract.ts) |
+| AIB (`wsl/mcp_tunnel.ts`, `Studio.wslToolCall`) | takes it with `mcp.accept`, checks that the conversation is a live chat in that distro, then the HTTP endpoint's own key check and reply (`artifacts/mcp_http.ts tunneled`), and answers with `mcp.reply` |
+
+- **Security.** The per-conversation key is checked exactly as for the HTTP endpoint (`artifacts/keys.ts`); a chat of another distro
+  or a closed chat is refused the same way. The key is in the forwarder's environment and passes the helper channel (the Linux
+  keeper's journal, 0700); the page token and Windows `127.0.0.1` never enter Linux. The helper.ready line names the socket only
+  when the relay listens.
+- **Nothing runs twice.** AIB must accept a message within 15 s, else the forwarder hears "AIB is not running" and a late accept is
+  refused, so a message read later from the journal (a reconnect) never runs. A message read from an adopted helper's replay (a new
+  AIB) is never handed on. A forwarder that leaves before AIB accepted is dropped; an accepted call without a reply within 10
+  minutes is answered with an error. When AIB is quit with WSL agents running, the helper is told (`mcp.closed`) and answers "AIB is
+  closed; try again later" at once; any call from the next AIB clears it.
+- **Limits.** A message is at most 8 MB (the relay refuses lines over 16 MB) and an answer at most 3 MB.
+- **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts` and `merge` on; `docs` (the docs store does not
+  run in WSL yet) and `swarm` (no helper chats in WSL projects yet) off. Switching a group on there changes the tool list, Studio's
+  main-chat role (swarm) and the chat's note (`wsl/access.ts wslToolsNotice`). Publish takes `content` only: AIB on Windows cannot
+  read the distro's files.
+- **Fallback.** A helper without the tunnel (an older one, or a keeper program without `mcp-relay`) gets the phase 1 interop entry
+  (the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address file>`, `WSLENV=MCP_FORWARD_HEADERS`);
+  with neither, no entry and the chat's notice. Both entries reach the same tool list.
+- **Tests.** `wsl_mcp_tunnel_test` (no distro: the helper's end with a fake and with the real relay and forwarder, AIB's gate,
+  `tunneled`, the switchboard), `wsl_hosts_test` (the ready line, no replayed call handed on), `wsl_studio_test` (the entry, a call
+  answered, a wrong key and another distro refused), Go `mcprelay_test.go`; real WSL: `wsl_tunnel_e2e`.
+
 ## Merge
 
 The merge engine (`worktrees/merge.ts`) runs whole in the helper too (`wsl/helper/merge.ts`, the `merge.*` methods), unchanged, over
@@ -160,6 +197,7 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_tunnel_e2e` | the tunnel entry run inside the distro: a tools/list reaches AIB and the WSL tool list comes back, also with interop off for the forwarder (`unshare -rm`, `/run/WSL` hidden); a wrong key refused; a helper without the tunnel falls back to the interop entry, which cannot start with interop off |
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 
@@ -172,5 +210,5 @@ over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `ws
 
 ## Not done yet (phase 2)
 
-Live sync inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
+Live sync inside the distro; the docs store; background-task output and ownership
 checks for WSL chats; AIB-managed agent installs in the distro.
