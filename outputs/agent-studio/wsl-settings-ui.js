@@ -69,6 +69,11 @@
   const rowNotes = new Map(); // card key -> {text, cls}: a switch that could not be saved, an uninstall refused
   const uninstalling = new Set(); // card keys whose uninstall runs
   const terms = new Map(); // panel key -> {node, status, run, running}: the terminal panels on the cards, kept across repaints
+  const aibs = new Map(); // distro key -> {value, at, busy, error}: the last peek answer of "AIB in <distro>" (GET /api/live/wsl/aib)
+  const removing = new Map(); // distro key -> 'checking' | 'applying' while a Remove question or the removal itself runs
+  const removedNow = new Set(); // distro keys this page removed AIB from, until a status read after it says so itself
+  const leftovers = new Map(); // distro key -> {message, left}: what a removal could not delete, shown until Set up again
+  let removeBox = null; // the open Remove dialog: {key, box, close}
   let wired = false,
     lastSig = '',
     focusWant = '', // a card to bring into view once it is drawn ("Set up Ubuntu in Settings")
@@ -136,7 +141,7 @@
   // Only what this section draws: the 5 s poll repaints nothing when nothing here changed.
   function signature(st) {
     return JSON.stringify([
-      (st.distros || []).map((d) => [d.key, d.name, d.state, d.line, d.helper, d.home, d.problem, d.isDefault]),
+      (st.distros || []).map((d) => [d.key, d.name, d.state, d.line, d.helper, d.home, d.problem, d.isDefault, d.removed === true]),
       st.skipped || [],
       st.wsl || null,
     ]);
@@ -154,6 +159,7 @@
         if (d.state !== 'ready') continue;
         if (notReadyAnswer(lists.get(d.key))) fetchList(d.key);
         if (notReadyAnswer(needs.get(d.key))) fetchNeeds(d.key);
+        if (notReadyAnswer(aibs.get(d.key))) fetchAib(d.key);
       }
       redraw();
     });
@@ -219,6 +225,35 @@
         redraw();
       });
   }
+  /** What AIB keeps in the distro (GET /api/live/wsl/aib, peek only: never starts it); force: measure again (Refresh). */
+  function fetchAib(key, opts) {
+    const o = opts || {};
+    const Wsl = W();
+    if (!Wsl || !Wsl.peekAib) return Promise.resolve(null);
+    const rec = aibs.get(key) || { value: null, at: 0, busy: false, error: '' };
+    if (rec.busy && !o.force) return Promise.resolve(rec.value);
+    rec.busy = true;
+    aibs.set(key, rec);
+    return Wsl.peekAib(key, { force: !!o.force })
+      .then(
+        (value) => {
+          rec.value = value;
+          rec.error = '';
+          return value;
+        },
+        (error) => {
+          rec.error = (error && error.message) || 'What AIB keeps in this distro could not be read.';
+          return null;
+        },
+      )
+      .finally(() => {
+        rec.busy = false;
+        rec.at = Date.now();
+        redraw();
+      });
+  }
+  /** AIB was removed from the distro: by this page just now, or the status says so (state 'off', removed: true). */
+  const isRemoved = (d) => removedNow.has(d.key) || (d.removed === true && d.state !== 'ready');
   /** Node.js in the distro: true (ok), false (missing, too old, no version set, broken) or null (not known yet). */
   function nodeOk(key) {
     const rec = needs.get(key);
@@ -317,7 +352,7 @@
     for (const d of st.distros || []) {
       const row = el('div', null, 'st-agent wl-distro');
       const head = el('div', null, 'st-agent-head');
-      const [chip, cls] = chipOf(d);
+      const [chip, cls] = isRemoved(d) ? ['Not set up', 'dim'] : chipOf(d);
       head.append(
         el('span', letterOf(d.name), 'st-letter'),
         el('strong', d.name),
@@ -367,6 +402,7 @@
 
   // ---- one distro --------------------------------------------------------------------------------------------------------
   function distroCard(d) {
+    if (isRemoved(d)) return removedCard(d);
     const c = card(d.name);
     c.dataset.distro = d.key;
     const Wsl = W();
@@ -1007,9 +1043,441 @@
     c.append(foot);
     return c;
   }
+  // ---- "AIB in Ubuntu" and Remove (design section 13) ------------------------------------------------------------------------
+  const GB = 1024 * 1024 * 1024,
+    MB = 1024 * 1024;
+  function bytesText(b) {
+    const n = Math.max(0, Number(b) || 0);
+    if (n >= GB) return (n / GB).toFixed(1).replace(/\.0$/, '') + ' GB';
+    if (n >= MB) return Math.round(n / MB) + ' MB';
+    if (n >= 1024) return Math.round(n / 1024) + ' KB';
+    return n + ' bytes';
+  }
+  const agentName = (id) => (NAMES[id] ? NAMES[id][0] : String(id || ''));
+  /** wouldRemove grouped by its `what`, in the order the server gave: [{what, bytes, paths}]. */
+  function groupRemove(items) {
+    const out = [],
+      at = new Map();
+    for (const x of items || []) {
+      if (!x) continue;
+      const what = String(x.what || x.path || '');
+      let g = at.get(what);
+      if (!g) {
+        g = { what, bytes: 0, paths: [] };
+        at.set(what, g);
+        out.push(g);
+      }
+      g.bytes += Math.max(0, Number(x.bytes) || 0);
+      if (x.path) g.paths.push(String(x.path));
+    }
+    return out;
+  }
+  /** After a removal (or the status says AIB was removed): "AIB is not set up in Ubuntu" with Set up again. */
+  function removedCard(d) {
+    const c = card(d.name);
+    c.dataset.distro = d.key;
+    c.dataset.removed = '1';
+    c.append(facts([['State', 'AIB not set up']]));
+    c.append(note('AIB is not set up in ' + d.name + '.', 'wl-removed'));
+    c.append(
+      note(
+        'Your projects, sign-ins and your own installs in ' + d.name + ' are as they were. Set up again copies AIB\'s helper to ' +
+          d.name + ' (about 100 MB, into ~/.aib-server) and starts it. Opening a WSL project in ' + d.name + ' does the same.',
+        'dim',
+      ),
+    );
+    const left = leftovers.get(d.key);
+    if (left) {
+      if (left.message) c.append(note(left.message, 'bad'));
+      if (left.left.length) {
+        c.append(note('Left in ' + d.name + ':', 'bad'));
+        const ul = el('ul', null, 'wl-rm-list wl-left');
+        for (const x of left.left) ul.append(el('li', x));
+        c.append(ul);
+      }
+    }
+    const busy = starting.has(d.key) && starting.get(d.key) === '';
+    const go = button(busy ? 'Setting up AIB in ' + d.name + '…' : 'Set up again', () => setUpAgain(d), 'primary',
+      'Copies AIB\'s helper to ' + d.name + ' (about 100 MB, into ~/.aib-server) and starts it');
+    go.disabled = busy;
+    c.append(actions(go));
+    const err = starting.get(d.key);
+    if (err) c.append(note(err, 'bad'));
+    return c;
+  }
+  /** Set up again: the same start as "Start Ubuntu and check" (agents?peek=1&start=1); the server clears its removed flag. */
+  function setUpAgain(d) {
+    removedNow.delete(d.key);
+    leftovers.delete(d.key);
+    aibs.delete(d.key);
+    lists.delete(d.key);
+    needs.delete(d.key);
+    return startDistro(d);
+  }
+  function aibCard(d) {
+    const name = d.name;
+    const c = card('AIB in ' + name);
+    c.dataset.aib = d.key;
+    let rec = aibs.get(d.key);
+    const stale = !rec || (!rec.busy && Date.now() - rec.at > (notReadyAnswer(rec) ? 5000 : STALE_MS));
+    if (stale) {
+      fetchAib(d.key);
+      rec = aibs.get(d.key);
+    }
+    const busy = removing.has(d.key);
+    const value = rec && rec.value;
+    const u = value && value.usage;
+    const refresh = button('Refresh', () => fetchAib(d.key, { force: true }), 'st-link', 'Measure what AIB keeps in ' + name + ' again');
+    refresh.disabled = busy || !!(rec && rec.busy);
+    const remove = button('Remove AIB from ' + name, () => askRemove(d), 'st-danger',
+      'Shows exactly what would be deleted from ' + name + ' and what is kept, before anything is deleted');
+    remove.disabled = busy;
+    if (rec && rec.error && !value) {
+      c.append(note('What AIB keeps in ' + name + ' could not be read: ' + rec.error, 'bad'));
+      c.append(actions(remove, refresh));
+      return c;
+    }
+    if (!value) {
+      c.append(note('Looking at what AIB keeps in ' + name + '…'));
+      return c;
+    }
+    if (!u) {
+      c.append(note(value.line || name + ' is not ready yet.'));
+      return c;
+    }
+    c.append(
+      note(
+        'Everything AIB keeps in ' + name + ', in ' + (u.root || '~/.aib-server') + ' on this PC. Your projects, ~/.claude, ' +
+          '~/.codex and anything you installed yourself are not in it.',
+      ),
+    );
+    const dl = el('dl', null, 'st-facts wl-usage');
+    for (const p of u.parts || []) {
+      if (!p) continue;
+      const dt = el('dt', p.label || p.key);
+      if (p.path) dt.title = p.path;
+      dl.append(dt, el('dd', bytesText(p.bytes)));
+      if (p.key === 'agents')
+        for (const a of u.agents || [])
+          if (a && a.id)
+            dl.append(
+              el('dt', agentName(a.id) + ((a.versions || []).length ? ' ' + a.versions.join(', ') : ''), 'wl-sub'),
+              el('dd', bytesText(a.bytes), 'wl-sub'),
+            );
+    }
+    dl.append(el('dt', 'In all', 'wl-total'), el('dd', bytesText(u.totalBytes), 'wl-total'));
+    c.append(dl);
+    const versions = (u.versions || []).slice();
+    if (u.current && !versions.includes(u.current)) versions.unshift(u.current);
+    if (versions.length)
+      c.append(note('AIB versions installed: ' + versions.map((v) => (v === u.current ? v + ' (current)' : v)).join(', '), 'wl-line'));
+    const wt = u.worktrees || { count: 0, dirty: 0 };
+    const count = Number(wt.count) || 0,
+      dirty = Number(wt.dirty) || 0;
+    c.append(
+      note(
+        'Chat copies: ' + (count ? count + ', ' + (dirty ? dirty + ' with unsaved changes' : 'none with unsaved changes') : 'none'),
+        'wl-line' + (dirty ? ' warn' : ''),
+      ),
+    );
+    c.append(note('Chats working now: ' + (Number(u.chatsWorking) || 0), 'wl-line'));
+    const others = (u.dataFolders || []).filter((f) => f && !f.mine);
+    if (others.length) {
+      const box = el('div', null, 'wl-others');
+      box.append(el('p', 'Other AIB data folders in ' + name, 'st-label wl-others-title'));
+      const ul = el('ul', null, 'wl-rm-list');
+      for (const f of others) {
+        const li = el('li', null, 'wl-other');
+        li.append(el('code', f.name), el('span', bytesText(f.bytes), 'wl-size'));
+        if (f.keeperAlive) li.append(el('span', 'in use', 'st-status warn'));
+        ul.append(li);
+      }
+      box.append(ul, note('These belong to another AIB build or data folder. Remove here never touches them.', 'dim'));
+      c.append(box);
+    }
+    const state = removing.get(d.key);
+    if (state === 'checking') c.append(note('Checking what Remove would delete…', 'wl-busy'));
+    else if (state === 'applying') c.append(note('Removing AIB from ' + name + '…', 'wl-busy'));
+    c.append(actions(remove, refresh));
+    return c;
+  }
+
+  /**
+   * Remove AIB from Ubuntu: the in-page question of delete-project-ui.js (role alertdialog, Cancel focused, Escape cancels, focus
+   * kept inside). It opens at once, asks the server with mode 'check' (deletes nothing) and lists exactly what goes, grouped, with
+   * sizes; what is kept and why; what is never touched. `blocked` reasons are shown verbatim and keep the button off. The button
+   * needs a second click, or the tick when chats in the distro are working (usage.chatsWorking). Nothing is claimed before the
+   * apply answer.
+   */
+  function askRemove(d) {
+    if (removeBox) removeBox.close(false);
+    const D = doc(),
+      key = d.key,
+      name = d.name;
+    const scrim = el('div', null, 'dp-scrim');
+    const box = el('div', null, 'dp-dialog wl-remove');
+    box.dataset.wsl = 'remove';
+    box.setAttribute('role', 'alertdialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-labelledby', 'wlRemoveTitle');
+    const title = el('h2', 'Remove AIB from ' + name + '?', 'dp-title');
+    title.id = 'wlRemoveTitle';
+    const main = el('p', 'This stops AIB\'s helper in ' + name + ' and deletes what is listed here. Nothing is deleted before you confirm.', 'dp-main');
+    const status = el('p', 'Checking what would be deleted…', 'dp-note');
+    status.setAttribute('role', 'status');
+    const body = el('div', null, 'wl-rm-body');
+    const never = el('div', null, 'wl-rm-never');
+    never.append(
+      el('p', 'Your projects, ~/.claude, ~/.codex, nvm and asdf are not touched.', 'dp-note'),
+      el('p', 'Chat branches stay in your repos.', 'dp-note'),
+    );
+    const rec = aibs.get(key);
+    const working = Number(rec && rec.value && rec.value.usage && rec.value.usage.chatsWorking) || 0;
+    const tickRow = el('label', null, 'dp-disk');
+    const tick = D.createElement('input');
+    tick.type = 'checkbox';
+    tick.checked = false;
+    tickRow.append(tick, el('span', 'I understand chats running in ' + name + ' will stop'));
+    tickRow.hidden = true;
+    const again = el('p', null, 'dp-warn');
+    again.hidden = true;
+    const error = el('p', null, 'dp-error');
+    error.setAttribute('role', 'alert');
+    error.hidden = true;
+    const row = el('div', null, 'cg-confirm-row dp-row');
+    const no = el('button', 'Cancel', 'cg-confirm-no dp-cancel');
+    const check = el('button', 'Check again', 'cg-confirm-no wl-rm-check');
+    const yes = el('button', 'Remove AIB from ' + name, 'cg-confirm-yes cg-discard dp-ok');
+    no.type = check.type = yes.type = 'button';
+    check.hidden = true;
+    row.append(no, check, yes);
+    box.append(title, main, status, body, never, tickRow, again, error, row);
+
+    let info = null, // the last check (or a refused apply) answer
+      busy = true, // a request runs
+      armed = false, // the first click of the second-click confirm
+      over = false, // the apply answered: only Close is left
+      done = false;
+    const blocked = () => !!info && info.blocked.length > 0;
+    const draw = () => {
+      const gate = working > 0 && !!info && !blocked() && !over;
+      tickRow.hidden = !gate;
+      tick.disabled = busy;
+      again.hidden = !armed || gate || busy;
+      again.textContent = armed ? 'Choose Remove AIB from ' + name + ' again to delete these. This cannot be undone.' : '';
+      yes.hidden = over;
+      yes.disabled = busy || !info || blocked() || (gate && !tick.checked);
+      yes.textContent = removing.get(key) === 'applying' ? 'Removing…' : 'Remove AIB from ' + name;
+      check.hidden = !blocked() || over;
+      check.disabled = busy;
+      no.disabled = busy;
+      no.textContent = blocked() || over ? 'Close' : 'Cancel';
+    };
+    const list = (heading, items, cls) => {
+      const wrap = el('div', null, 'wl-rm-part' + (cls ? ' ' + cls : ''));
+      wrap.append(el('p', heading, 'dp-main wl-rm-head'));
+      const ul = el('ul', null, 'wl-rm-list');
+      for (const n of items) ul.append(n);
+      wrap.append(ul);
+      return wrap;
+    };
+    // what the check (or a refused apply) says: blocked reasons, what goes (grouped), what is kept and why
+    const showCheck = (r) => {
+      body.replaceChildren();
+      status.hidden = true;
+      if (r.blocked.length) {
+        const wrap = el('div', null, 'wl-rm-blocked');
+        wrap.append(el('p', 'AIB cannot be removed from ' + name + ' now:', 'dp-warn'));
+        for (const why of r.blocked) wrap.append(el('p', String(why), 'dp-warn wl-reason'));
+        body.append(wrap);
+      }
+      const groups = groupRemove(r.wouldRemove);
+      if (groups.length) {
+        const total = groups.reduce((s, g) => s + g.bytes, 0);
+        body.append(
+          list(
+            (r.blocked.length ? 'Remove would delete' : 'Deleted') + ' (' + bytesText(total) + ' in all):',
+            groups.map((g) => {
+              const li = el('li', null, 'wl-rm-item');
+              const head = el('div', null, 'wl-rm-line');
+              head.append(el('span', g.what + (g.paths.length > 1 ? ' (' + g.paths.length + ')' : '')), el('span', bytesText(g.bytes), 'wl-size'));
+              li.append(head);
+              for (const p of g.paths) li.append(el('code', p, 'wl-rm-path'));
+              return li;
+            }),
+            'wl-rm-gone',
+          ),
+        );
+      } else body.append(el('p', 'Nothing of this AIB is left to delete in ' + name + '.', 'dp-note'));
+      if (r.kept.length)
+        body.append(
+          list(
+            'Kept:',
+            r.kept.map((k) => {
+              const li = el('li', null, 'wl-rm-item');
+              li.append(el('code', k.path, 'wl-rm-path'), el('span', String(k.why || ''), 'wl-rm-why'));
+              return li;
+            }),
+            'wl-rm-kept',
+          ),
+        );
+      if (r.message) body.append(el('p', r.message, 'dp-note'));
+    };
+    const showFailure = (r) => {
+      body.replaceChildren();
+      status.hidden = true;
+      main.textContent = 'AIB could not remove everything from ' + name + '.';
+      if (r.message) body.append(el('p', r.message, 'dp-error wl-rm-message'));
+      if (r.left.length) body.append(list('Left in ' + name + ':', r.left.map((x) => el('li', String(x))), 'wl-rm-left'));
+      if (r.removed.length) body.append(list('Removed:', r.removed.map((x) => el('li', String(x))), 'wl-rm-done'));
+    };
+    const fail = (e) => {
+      removing.delete(key);
+      busy = false;
+      armed = false;
+      error.textContent = (e && e.message) || String(e || 'Ubuntu did not answer.');
+      error.hidden = false;
+      status.hidden = true;
+      draw();
+    };
+    function runCheck() {
+      busy = true;
+      armed = false;
+      error.hidden = true;
+      status.hidden = false;
+      status.textContent = 'Checking what would be deleted…';
+      removing.set(key, 'checking');
+      draw();
+      redraw();
+      return Promise.resolve()
+        .then(() => W().removeAib(key, 'check'))
+        .then(
+          (r) => {
+            removing.delete(key);
+            if (done) return;
+            busy = false;
+            info = r;
+            showCheck(r);
+            draw();
+          },
+          (e) => !done && fail(e),
+        )
+        .finally(() => {
+          if (removing.get(key) === 'checking') removing.delete(key);
+          redraw();
+        });
+    }
+    function apply() {
+      busy = true;
+      error.hidden = true;
+      removing.set(key, 'applying');
+      draw();
+      redraw();
+      return Promise.resolve()
+        .then(() => W().removeAib(key, 'apply', true))
+        .then(
+          (r) => {
+            removing.delete(key);
+            busy = false;
+            armed = false;
+            if (r.ok) {
+              removedNow.add(key);
+              leftovers.delete(key);
+              forgetDistro(key);
+              close(false);
+              return afterRemove(key);
+            }
+            if (r.blocked.length) {
+              // refused when it ran again: nothing was deleted
+              info = r;
+              showCheck(r);
+              draw();
+              return null;
+            }
+            // partial: say what went and what was left, verbatim; the host is off with the removed flag
+            over = true;
+            showFailure(r);
+            removedNow.add(key);
+            leftovers.set(key, { message: r.message || '', left: r.left.map(String) });
+            forgetDistro(key);
+            draw();
+            return afterRemove(key);
+          },
+          (e) => fail(e),
+        )
+        .finally(() => {
+          if (removing.get(key) === 'applying') removing.delete(key);
+          redraw();
+        });
+    }
+    function close(refocus) {
+      if (done) return;
+      done = true;
+      box.remove();
+      scrim.remove();
+      if (removeBox && removeBox.box === box) removeBox = null;
+      if (refocus !== false) {
+        const back = Array.from(D.querySelectorAll('.st-card')).find((n) => n.dataset && n.dataset.aib === key);
+        const b = back && Array.from(back.querySelectorAll('button')).find((x) => x.textContent === 'Remove AIB from ' + name);
+        if (b && b.focus) b.focus();
+      }
+    }
+    tick.addEventListener('change', draw);
+    no.addEventListener('click', () => !busy && close());
+    check.addEventListener('click', () => !busy && runCheck());
+    scrim.addEventListener('click', () => !busy && close());
+    yes.addEventListener('click', () => {
+      if (busy || !info || blocked() || over) return;
+      const gate = working > 0;
+      if (gate ? !tick.checked : !armed) {
+        if (!gate) armed = true;
+        return draw();
+      }
+      apply();
+    });
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!busy) close();
+      } else if (e.key === 'Tab') {
+        const order = [tick, no, check, yes].filter((b) => !b.disabled && !b.hidden && !(b === tick && tickRow.hidden));
+        const at = order.indexOf(D.activeElement);
+        e.preventDefault();
+        const to = order[(at + (e.shiftKey ? order.length - 1 : 1)) % order.length] || no;
+        if (to.focus) to.focus();
+      }
+    });
+    D.body.append(scrim, box);
+    no.focus();
+    removeBox = { key, box, close };
+    draw();
+    runCheck();
+    return removeBox;
+  }
+  /** The distro's answers are out of date after a removal: asked again once it is set up. */
+  function forgetDistro(key) {
+    aibs.delete(key);
+    lists.delete(key);
+    needs.delete(key);
+  }
+  /** The status after a removal: the server's removed flag takes over from this page's own once it is read. */
+  function afterRemove(key) {
+    const Wsl = W();
+    return Promise.resolve(Wsl && Wsl.refresh ? Wsl.refresh() : null).then(
+      (st) => {
+        const d = st && (st.distros || []).find((x) => x && x.key === key);
+        if (d && d.removed === true) removedNow.delete(key);
+        redraw();
+      },
+      () => redraw(),
+    );
+  }
+
   function group(d) {
     const out = [el('h4', d.name, 'st-group'), distroCard(d)];
-    if (d.state === 'ready') out.push(needsCard(d), agentsCard(d));
+    if (isRemoved(d)) return out;
+    if (d.state === 'ready') out.push(needsCard(d), agentsCard(d), aibCard(d));
     return out;
   }
 
@@ -1076,6 +1544,9 @@
     open,
     _lists: lists,
     _needs: needs,
+    _aibs: aibs,
+    bytesText,
+    groupRemove,
     _reset: () => {
       lists.clear();
       needs.clear();
@@ -1084,6 +1555,11 @@
       rowNotes.clear();
       uninstalling.clear();
       for (const k of Array.from(terms.keys())) closePanel(k);
+      if (removeBox) removeBox.close(false);
+      aibs.clear();
+      removing.clear();
+      removedNow.clear();
+      leftovers.clear();
       lastSig = '';
       focusWant = '';
       pick = '';

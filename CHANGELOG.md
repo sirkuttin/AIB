@@ -12,6 +12,17 @@
   AIB's folder is ever deleted, and links are never followed.
 - AIB Linking (WSL): after Remove, nothing starts that distro or puts AIB back into it (not a chat, not a restart of AIB) until you
   click Set up again, which installs AIB there afresh. Chats that worked in a removed chat copy say "workspace removed".
+
+- AIB in Ubuntu: see what AIB takes up in each WSL distro, and remove it cleanly. Settings > AIB Linking (WSL) has a new card per
+  distro with the disk space AIB uses there, part by part (its programs, the agents it installed, the npm cache, this AIB's data
+  folder and chat copies, logs, in all), the AIB versions installed, how many chat copies have unsaved changes and how many chats
+  are working now. Other AIB builds' data folders in the same distro are listed too, marked "in use" when that AIB runs, and are
+  never touched. Reading the card never starts the distro.
+- Remove AIB from Ubuntu: before anything is deleted, a dialog lists exactly what goes (with sizes), what is kept and why (parts
+  another AIB build still uses), and says your projects, `~/.claude`, `~/.codex`, nvm and asdf are not touched and chat branches stay
+  in your repos. It will not run while a chat works there, an install or sign-in runs, or a chat copy has uncommitted changes, and
+  says which. Confirming takes a second click. Afterwards the distro reads "AIB is not set up in Ubuntu" with Set up again; if
+  something could not be deleted, AIB lists it.
 - AIB Linking (WSL): each distro has its own On/Off switch per agent. Turning Claude Code off in Ubuntu no longer depends on, or
   touches, its Windows switch: a new chat (or Continue) in a WSL project with an agent turned off for that distro says so ("Claude Code
   is turned off for Ubuntu in Settings > AIB Linking (WSL)"), and Windows chats never read the distro switch.
