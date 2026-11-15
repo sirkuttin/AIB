@@ -18,7 +18,7 @@ import { BriefError, overlaps, readBrief, wrapReport } from '../../outputs/agent
 import { pickProvider } from '../../outputs/agent-studio/server/swarm/rules.ts';
 import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
 import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { CLAUDE_HELPERS_DEFAULT, claudeHelpers, setClaudeHelpers } from '../../outputs/agent-studio/server/swarm/settings.ts';
+import { CLAUDE_HELPERS_DEFAULT, claudeHelpers, setClaudeHelpers, setSwarmEnabled, swarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
@@ -106,6 +106,38 @@ Deno.test('rules: Claude helpers are on by default (a setting); off, no rule pic
   }
 });
 
+Deno.test('swarm.enabled: off by default, kept next to claudeHelpers in the same file', () => {
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-swarm-enabled-' });
+  try {
+    assertEquals(swarmEnabled(dir), false, 'no file: off');
+    setClaudeHelpers(dir, false);
+    assertEquals(swarmEnabled(dir), false, 'a file without the key: off');
+    setSwarmEnabled(dir, true);
+    assertEquals(swarmEnabled(dir), true);
+    assertEquals(claudeHelpers(dir), false, 'turning swarm on keeps claudeHelpers');
+    setClaudeHelpers(dir, true);
+    assertEquals(swarmEnabled(dir), true, 'and the other way round');
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  ...T,
+  name: 'swarm.enabled off (the default): a main chat is not offered the helper tools and the route refuses; on: offered',
+  async fn() {
+    await using box = new Box(false);
+    const off = await box.studio.connect('claude', box.project);
+    assertEquals(env(off).STUDIO_MAIN, undefined, 'off: no helper tools');
+    const refused = await box.swarm.tool(off.id, 'start_helper', BRIEF);
+    assertEquals(refused[0], 403);
+    assert(String((refused[1] as Json).error).includes('turned off'));
+    setSwarmEnabled(box.state, true);
+    const on = await box.studio.connect('claude', box.project);
+    assertEquals(env(on).STUDIO_MAIN, '1', 'on: a chat started after is offered the tools');
+  },
+});
+
 Deno.test('auto-approval: AIB tools by each adapter shape; a command titled like the tool is not', () => {
   assertEquals(ownToolName({ _meta: { claudeCode: { toolName: 'mcp__studio_artifact__start_helper' } } }), 'start_helper');
   assertEquals(ownToolName({ title: 'x', rawInput: { server: 'studio_artifact', tool: 'merge_helper', arguments: {} } }), 'merge_helper');
@@ -147,7 +179,8 @@ class Box {
   readonly studio: Studio;
   readonly swarm: Swarm;
 
-  constructor() {
+  constructor(swarmOn = true) {
+    if (swarmOn) setSwarmEnabled(this.state, true); // phase 1 is off by default (swarm/settings.ts): the slice tests turn it on first
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
     const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0 }, { keeper: null });

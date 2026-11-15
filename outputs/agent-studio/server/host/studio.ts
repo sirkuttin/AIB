@@ -63,6 +63,7 @@ import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { helperOf, readHelpers } from '../swarm/registry.ts';
+import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import type { WslSpawn } from '../acp/connection.ts';
 import { refOf } from '../platform/location.ts';
@@ -1829,6 +1830,7 @@ export class Studio {
   #isMain(c: Connection): boolean {
     if (c.swarm?.role !== 'main' || !c.worktree) return false;
     if (!this.hasStateDir) return true;
+    if (!swarmEnabled(this.stateDir)) return false; // swarm phase 1 is opt-in (swarm/settings.ts): no helper tools while it is off
     return !helperOf(readHelpers(this.stateDir), { live: c.id, lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : null, path: c.cwd });
   }
 
