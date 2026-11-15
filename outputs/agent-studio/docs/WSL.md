@@ -574,6 +574,7 @@ refuses anything but `/tmp/aib-wsl-test-<name>` (no deeper folder). So no test c
 2. The `removed` flag (`<state folder>/wsl-removed.json`, survives a restart): from here `wslHost()` and `peekWslHost()` give no
    host for the distro, so nothing (a chat, the take-over at start, Files, a sign-in terminal) can start it or install AIB again;
    they say "AIB was removed from Ubuntu. To use it there again, open Settings > AIB Linking (WSL) and click Set up again."
+   AIB's own refusals run once more right after it (a chat that went live just before the flag): any, and the flag is undone.
 3. The keep-alive in the Windows keeper is stopped (`releaseHold`).
 4. Helper `aib.remove {mode:'apply'}`: the refusals run again (any: the flag is cleared and the keep-alive comes back; nothing was
    deleted); then the chat copies are deleted, `git worktree prune` runs in each of their projects (while the helper still runs;

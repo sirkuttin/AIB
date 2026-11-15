@@ -6,7 +6,7 @@
  *          terminal, an install job) + the helper's `aib.remove {mode:'check'}`. Nothing changes.
  *   apply: 1. the same refusals again (any: ok false, nothing changes);
  *          2. the 'removed' flag (wsl/removed.ts): from here wslHost()/hostWhenReady() give no host for the distro, so nothing starts
- *             it or installs AIB into it again until "Set up again";
+ *             it or installs AIB into it again until "Set up again"; AIB's own refusals run once more (any: the flag is undone);
  *          3. the keep-alive in the Windows keeper is stopped;
  *          4. helper `aib.remove {mode:'apply'}`: it refuses again (then the flag is cleared and the keep-alive comes back: nothing
  *             was deleted), else deletes the chat copies, runs `git worktree prune` in their projects (branches stay), the rest of
@@ -197,6 +197,11 @@ export async function removeAib(steps: RemoveSteps, mode: 'check' | 'apply'): Pr
     return pageShape({ ...check, mode, blocked, ok: check.ok && !blocked.length, removed: [], left: [] });
   }
   steps.markRemoved(); // from here nothing starts the distro or installs AIB there again
+  const late = await steps.refusals(); // a chat or terminal that started just before the flag
+  if (late.length) {
+    await steps.undoMark();
+    return pageShape({ ...check, mode, ok: false, blocked: late, removed: [], left: [] });
+  }
   await steps.releaseHold();
   let applied: AibRemoveResult;
   try {

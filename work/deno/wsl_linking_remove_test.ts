@@ -347,6 +347,13 @@ Deno.test('remove order: the full apply, and every refusal or failure leaves the
   assertEquals([r7.ok, r7.left], [false, ['/r/0.1.0-0123abcd: a program still uses it']]);
   assert(r7.message);
 
+  // a chat that went live between the first refusals and the flag: refused right after the flag, which is undone
+  const late = recordingSteps();
+  let asked = 0;
+  late.refusals = () => Promise.resolve(asked++ ? ['A chat or terminal still runs in Ubuntu. Close it, then remove.'] : []);
+  const r10 = await removeAib(late, 'apply');
+  assertEquals([r10.ok, r10.blocked, late.log], [false, ['A chat or terminal still runs in Ubuntu. Close it, then remove.'], ['call check', 'mark', 'undo']]);
+
   const guarded = recordingSteps({ guard: 'Test guard: Remove under test needs AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>.' });
   const r8 = await removeAib(guarded, 'apply');
   assertEquals([r8.ok, guarded.log], [false, []]);
