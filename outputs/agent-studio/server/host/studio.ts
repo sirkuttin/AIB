@@ -28,7 +28,7 @@ import { UsageLimitsStore } from '../state/usage_limits.ts';
 import { LimitsFeed, REFRESH_SECONDS } from './usage_limits_feed.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, tunnelEntry } from '../artifacts/mcp_http.ts';
+import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { forwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
@@ -1384,8 +1384,13 @@ export class Studio {
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
       : null;
-    c.swarm = helper ? { role: 'helper', helperId: helper.id, parent: helper.parent.live } : c.worktree && !wsl ? { role: 'main' } : null;
+    c.swarm = helper
+      ? { role: 'helper', helperId: helper.id, parent: helper.parent.live }
+      : c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)
+      ? { role: 'main' }
+      : null;
     c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
+    if (wsl) for (const entry of c.mcpServers) ownTunnelEntry(entry); // its tunnel entry is still AIB's own tool after a restart
     c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;
     c.recovery = this.recovery as never;
     this.connections.set(c.id, c);

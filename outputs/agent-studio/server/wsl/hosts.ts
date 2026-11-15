@@ -299,6 +299,8 @@ export class WslHostImpl implements WslHost {
     await this.#ensureHelper();
     this.#setState('ready', '');
     void this.#ensureHold();
+    // an AIB is here again: a helper an earlier AIB told "closed" (quit) answers its agents' tool calls again
+    if (this.mcpTunnel) void this.call('mcp.closed', { closed: false }).catch(() => {});
   }
 
   // ---- the transport ------------------------------------------------------------------------------------------------------

@@ -104,6 +104,15 @@ export function tunnelEntry(forwarder: string, socket: string, key: string, conv
   };
 }
 
+/** A WSL chat taken over from its keeper: its recorded tunnel entry (AIB wrote it) is Studio's own again. */
+export function ownTunnelEntry(entry: unknown): void {
+  const e = entry as { name?: unknown; args?: unknown };
+  const args = Array.isArray(e?.args) ? e.args : [];
+  if (e?.name === SERVER_NAME && args.length === 3 && args[0] === 'mcp-forward' && args[1] === '--helper-socket' && typeof args[2] === 'string') {
+    OWN_TUNNEL_SOCKETS.add(args[2]);
+  }
+}
+
 const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 /** Every URL a server in this process serves: an http entry naming one of them is Studio's own (connection.ts). */
 const OWN_URLS = new Set<string>();
