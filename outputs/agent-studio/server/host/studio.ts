@@ -1557,6 +1557,7 @@ export class Studio {
     await connection.close(); // closes the connection, kills the agent's process tree and any client terminals
     connection.tree?.kill();
     const outcome = await this.worktrees!.remove(record.key, true);
+    if (connection.scratchDir && this.allow) this.allow.removeScratch(connection.scratchDir); // allow rules: the scratch folder goes with it
     return { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
   }
 

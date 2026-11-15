@@ -25,6 +25,16 @@ export class AllowGate {
     return dir;
   }
 
+  /** Remove a chat's scratch folder (only a folder directly under <state>/scratch; links are removed, never followed). */
+  removeScratch(dir: string): void {
+    const root = join(this.stateDir, 'scratch');
+    const name = dir.slice(root.length + 1);
+    if (!dir.startsWith(root + (Deno.build.os === 'windows' ? '\\' : '/')) || !name || /[\\/]/.test(name)) return;
+    try {
+      Deno.removeSync(dir, { recursive: true });
+    } catch { /* already gone or busy: left for a later clean-up */ }
+  }
+
   /** The rules file changed outside AIB (rules are off until reviewed). */
   tampered(): boolean {
     this.store.check();
