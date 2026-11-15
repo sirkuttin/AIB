@@ -13,6 +13,8 @@
   for a distro AIB does not recognise it says to install them with the distro's package manager. Still text to copy only.
 - AIB Linking (WSL): Close on the Node.js install panel or an agent's sign-in panel now also stops that program in the distro, as
   on Windows; before, it kept running unseen (and Remove AIB from Ubuntu refused because of it).
+- Phone: New chat in a WSL project offers the agents by that distro's own On/Off switch (Settings > AIB Linking (WSL)), not the
+  Windows one, and says "Turned off for Ubuntu" for the ones switched off there. Windows projects are unchanged.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.

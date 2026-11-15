@@ -509,6 +509,10 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   `POST /api/live/wsl/agents/enabled {distro, id, enabled}`; drawn at once, put back with "The switch could not be saved…" when
   the request fails or answers `ok: false`. The Windows switch is unchanged (agentRow's env takes `toggleLabel` and `onToggle`;
   an env without `onToggle` never reaches Windows' save).
+  The phone's New chat follows it too: `GET /api/remote/new/options` gives a WSL project its own `agents` list (each agent on or
+  off by that distro's switch, "Turned off for Ubuntu in Settings on your PC (AIB Linking (WSL))."), the phone offers that list
+  for the project, and a phone's Start in a WSL project is checked against it (`remote/newchat.ts agentsFor`); Windows projects
+  and the top-level list keep the Windows switch.
 - The chip: Install failed / Not installed / Update available / Signed in / Not signed in / Installed (AIB's copy) / Found.
 - Sign-in (`rows[].signin`): "Signed in to Claude Code in Ubuntu as <account>", "Not signed in … yet" with **Sign in**, or
   "Sign-in in Ubuntu: unknown (<note>)". Sign in (signed out; or unknown for Claude Code and Codex) runs the WSL sign-in terminal

@@ -122,6 +122,19 @@ test('review 1: a forgotten start (AIB restarted): the first message went if the
   assert.deepEqual(P.firstSend(null, 'c9'), { first: false, cmid: '' });
 });
 
+test('New chat in a WSL project: the agents are the project\'s own list (its distro\'s switches); other projects use the PC\'s list', () => {
+  const all = [{ id: 'claude', ok: true }, { id: 'codex', ok: false, why: 'Turned off in Settings on your PC.' }];
+  const wslOwn = [{ id: 'claude', ok: false, why: 'Turned off for Ubuntu in Settings on your PC (AIB Linking (WSL)).' }, { id: 'codex', ok: true, why: '' }];
+  assert.deepEqual(P.projectAgents({ id: 'w', agents: wslOwn }, all), wslOwn);
+  assert.deepEqual(P.projectAgents({ id: 'p' }, all), all, 'a Windows project: the PC list');
+  assert.deepEqual(P.projectAgents(null, all), all);
+  assert.deepEqual(P.projectAgents({ id: 'p' }, undefined), []);
+  // Start chat follows the project's list: Codex can start in Ubuntu although it is off on Windows; Claude Code cannot
+  const nc = { project: 'w', agent: 'codex', agents: P.projectAgents({ agents: wslOwn }, all) };
+  assert.equal(P.newChatReady(nc, 'Fix it'), true);
+  assert.equal(P.newChatReady({ ...nc, agent: 'claude' }, 'Fix it'), false);
+});
+
 test("review 13: New chat sends a model or mode only when you picked one or one is saved, never the agent's own shown as default", () => {
   const list = { choices: [{ value: 'opus' }, { value: 'sonnet' }], default: '', current: 'sonnet' };
   assert.equal(P.pickToSend(list, 'sonnet'), '', 'the agent’s own: no pick');
