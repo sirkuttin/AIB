@@ -855,12 +855,15 @@
           run: () => exportMd('all'),
         },
         { sep: true },
+        // a doc tab or the Artifacts viewer: move the doc into its own small window (multi-window 2.5B; chat.html does it)
+        ...(D.framed
+          ? [{ label: 'Pop out', small: 'Into its own window', data: { act: 'popout' }, run: () => D.tell({ type: 'aib-doc:popout' }) }]
+          : []),
         { label: 'Duplicate doc', data: { act: 'duplicate' }, run: () => duplicateDoc() },
-        {
-          label: 'Show in Files',
-          data: { act: 'files' },
-          run: () => D.tell({ type: 'aib-doc:show-in-files', dir: D.info && D.info.dir }),
-        },
+        // no Files panel in a pop-out
+        ...(D.popout
+          ? []
+          : [{ label: 'Show in Files', data: { act: 'files' }, run: () => D.tell({ type: 'aib-doc:show-in-files', dir: D.info && D.info.dir }) }]),
         { sep: true },
         { label: 'Move doc to trash…', danger: true, data: { act: 'trash' }, run: () => askTrash(more) },
       ],

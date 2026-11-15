@@ -108,12 +108,19 @@
   // ---------------------------------------------------------------------------------------------------------------------------
   // Talking to chat.html (the doc tab is a same-origin frame)
 
+  // A doc pop-out (multi-window Phase 2.5B, design section 8 and K0): its own small window,
+  // /doc.html?w=<id>&kind=doc&project=<project key>&name=<doc name>. No parent page: it opens the doc by project key and name
+  // (never a live chat id, which changes at a restart), writes no layout, and does itself what a doc tab asks chat.html for.
+  D.framed = !!(window.parent && window.parent !== window);
+  D.popout = !D.framed && params.get('kind') === 'doc' && !!params.get('project') && !!params.get('name') && !params.get('chat');
   D.tell = (msg) => {
-    if (window.parent && window.parent !== window) window.parent.postMessage(msg, location.origin);
+    if (D.framed) window.parent.postMessage(msg, location.origin);
+    else if (D.popout) popoutAsk(msg);
   };
   const picks = new Map();
   D.pickChat = (purpose) =>
     new Promise((resolve) => {
+      if (D.popout) return popoutPick(purpose).then(resolve, () => resolve(null));
       if (!window.parent || window.parent === window) return resolve(null);
       const requestId = 'p' + Math.random().toString(36).slice(2);
       picks.set(requestId, resolve);
@@ -337,6 +344,12 @@
   const idOf = () => D.chatId || params.get('chat') || '';
   D.chatIdNow = idOf;
   async function openDoc(create) {
+    if (D.popout && !D.chatId) {
+      // by project key and name (E5); later calls (Duplicate, the chat list) use the 'project:<folder>' id the answer names
+      const info = await openDocAs({ project: params.get('project') || '', name: params.get('name') || '' });
+      if (info.projectId) D.chatId = info.projectId;
+      return info;
+    }
     const body = { id: idOf(), name: params.get('name') || '' };
     if (create) body.create = '';
     try {
@@ -453,7 +466,7 @@
     const n = list.length;
     chip.textContent = 'Shown in ' + n + (n === 1 ? ' artifact: ' : ' artifacts: ') + list.map((a) => a.title || 'Untitled').join(', ');
     chip.title = list.map((a) => (a.title || 'Untitled') + ' (built from ' + (a.pageTitle || 'a page') + ')').join('\n') +
-      '\nClick: open it in the Artifacts column';
+      (D.popout ? '\nClick: open its chat in the project window' : '\nClick: open it in the Artifacts column');
   }
   document.addEventListener('DOMContentLoaded', () => {
     const chip = $('docShown');
@@ -1262,6 +1275,7 @@
       chat: params.get('chat') || '',
       name: (D.info && D.info.name) || params.get('name') || '',
     });
+    if (D.popout) q.set('project', params.get('project') || ''); // a pop-out has no chat: the link names the doc's project
     if (where.page) q.set('page', where.page);
     if (where.block) q.set('block', where.block);
     return location.origin + '/doc.html?' + q.toString();
@@ -1336,6 +1350,148 @@
     const T = window.AibThemes; // themes.js: paint() sets <html data-theme>; the choice is already saved by the window that made it
     if (e.key === 'aib-theme' && T && T.paint && T.valid(e.newValue)) T.paint(e.newValue);
   });
+
+  // ---------------------------------------------------------------------------------------------------------------------------
+  // The doc pop-out (D.popout): what a doc tab asks chat.html for, done here. The frame-only asks and what each does here:
+  //   aib-doc:open (Duplicate's "Open it")      -> the route (K3 op 'route') opens it in the project's window
+  //   aib-doc:show-artifact ("Shown in" chip)   -> the route opens the artifact's chat in the project's window
+  //   aib-doc:pick-chat ("Send to a chat…")     -> a menu here of the project's open chats (GET /api/live/list)
+  //   aib-doc:closed (moved to the trash)       -> the line says so, then the window closes itself (op 'close')
+  //   aib-doc:show-in-files                     -> hidden in the ⋯ menu (no Files panel here)
+  //   aib-doc:pin, aib-doc:title, docs-changed  -> nothing (no tab strip; the window title follows document.title)
+  // The pop-out writes no layout: doc.html keeps nothing of the window's size (the last page per doc is the doc's, not the window's).
+
+  const WIN = params.get('w') || '';
+  const PROJECT = params.get('project') || '';
+  async function windowsCall(body) {
+    return api('POST', '/api/live/desktop/windows', body);
+  }
+  /** Open a chat, project or doc where it belongs (the B6 chooser); {to:'self'} never happens for a doc this window shows. */
+  async function route(target) {
+    try {
+      const r = await windowsCall({ op: 'route', from: WIN, target: Object.assign({ project: PROJECT }, target) });
+      return !!(r && typeof r.to === 'string');
+    } catch (error) {
+      return false;
+    }
+  }
+  D.route = route;
+  function closeSelf() {
+    windowsCall({ op: 'close', from: WIN, w: WIN }).catch(() => {
+      try {
+        window.close(); // a browser tab opened with window.open (serve mode)
+      } catch (e) {
+        /* nothing more to do */
+      }
+    });
+  }
+  function popoutAsk(msg) {
+    const type = msg && msg.type;
+    if (type === 'aib-doc:open' && msg.name) {
+      route({ doc: { project: PROJECT, name: String(msg.name) } }).then((ok) => {
+        if (!ok) D.toast('Open it from the project window.');
+      });
+    } else if (type === 'aib-doc:show-artifact') {
+      if (!msg.chat) return D.toast('Open it from the project window.');
+      route({ chat: String(msg.chat) }).then((ok) => {
+        if (!ok) D.toast('Open it from the project window.');
+      });
+    } else if (type === 'aib-doc:closed') {
+      reportPresence(); // still listed until it goes; the project window does not put a trashed doc back
+      setTimeout(closeSelf, 1500);
+    }
+  }
+  /** "Send to a chat…" here: the project's open chats (live connections whose folder is this project). */
+  function popoutPick(purpose) {
+    return api('GET', '/api/live/list').then((r) => {
+      const chats = (Array.isArray(r && r.connections) ? r.connections : []).filter(
+        (c) => c && !c.closed && c.id && pathKey(c.projectRoot || c.cwd || '') === PROJECT,
+      );
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          resolve(v);
+        };
+        const items = chats.length
+          ? chats.map((c) => ({
+              label: (c.breadth && c.breadth.sessionInfo && c.breadth.sessionInfo.title) || c.title || agentName(c.provider),
+              small: agentName(c.provider),
+              keep: true, // the pick resolves before the menu's onClose (which answers "none")
+              run: () => (finish(c.id), closeMenu()),
+            }))
+          : [{ label: 'No open chat in this project', disabled: true }];
+        D.menu($('btnComments'), [{ head: purpose === 'link' ? 'Link this doc to' : 'Send to' }, ...items], {
+          cls: 'pick-menu',
+          onClose: () => finish(null),
+        });
+      });
+    });
+  }
+  // The project key the page uses everywhere (notify-rules.js pathKey = server project_delete.projectKey).
+  function pathKey(cwd) {
+    const raw = String(cwd || '').trim();
+    let p = raw.replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
+    const unc = p.startsWith('//');
+    p = p.replace(/\/{2,}/g, '/');
+    const m = /^wsl:\/\/([^/]+)(\/.*)?$/i.exec(raw);
+    if (m) return 'p:wsl:/' + m[1] + (m[2] && m[2] !== '/' ? m[2] : '');
+    const segments = p.split('/').filter(Boolean);
+    if (!segments.length) return '';
+    const windows = /^[a-zA-Z]:/.test(p) || unc || raw.indexOf('\\') >= 0;
+    return windows ? 'w:' + segments.join('/').toLowerCase() : 'p:' + segments.join('/');
+  }
+  D._pathKey = pathKey;
+
+  // Presence (K2): this window shows this doc. The project window sees it in the answer's windows (its ↗ on the doc row), and
+  // sees it go (left:true on pagehide, or no report for 45 s) to put the doc's tab back.
+  let lastInput = Date.now();
+  function presenceBody() {
+    return {
+      w: WIN,
+      kind: 'doc',
+      project: { key: PROJECT, name: '' },
+      doc: { project: PROJECT, name: params.get('name') || '' },
+      focused: document.hasFocus(),
+      visible: document.visibilityState !== 'hidden',
+      idleMs: Date.now() - lastInput,
+      open: [],
+    };
+  }
+  function reportPresence() {
+    if (!D.popout || !WIN || !D.token) return;
+    api('POST', '/api/live/presence', presenceBody()).catch(() => {});
+  }
+  D.reportPresence = reportPresence;
+  if (D.popout) {
+    document.documentElement.classList.add('doc-popout');
+    D.on('boot', () => {
+      reportPresence();
+      setInterval(reportPresence, 10000);
+    });
+    for (const ev of ['focus', 'blur']) window.addEventListener(ev, reportPresence);
+    document.addEventListener('visibilitychange', reportPresence);
+    for (const ev of ['keydown', 'pointerdown']) window.addEventListener(ev, () => (lastInput = Date.now()), true);
+    window.addEventListener('pagehide', () => {
+      if (!WIN || !D.token) return;
+      try {
+        fetch('/api/live/presence', {
+          method: 'POST',
+          keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'X-Studio-Token': D.token },
+          body: JSON.stringify({ w: WIN, left: true }),
+        });
+      } catch (e) {
+        /* the page is going */
+      }
+      try {
+        new BroadcastChannel('aib-windows').postMessage({ t: 'bye', from: WIN, at: Date.now() });
+      } catch (e) {
+        /* no channel */
+      }
+    });
+  }
 
   // ---------------------------------------------------------------------------------------------------------------------------
 
