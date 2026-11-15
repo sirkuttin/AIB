@@ -58,6 +58,8 @@ export interface WindowInfo {
   chat: string | null;
   doc: DocRef | null;
   visible: boolean;
+  /** A chat or doc pop-out: the window it was moved out of (kept across restarts); null otherwise or unknown. */
+  from?: string | null;
 }
 
 /** K4: the desktop app's windows, as the server asks for them. null in serve mode (no desktop). */

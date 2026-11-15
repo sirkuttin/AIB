@@ -4508,10 +4508,31 @@
     }
   })();
   /* A hidden tab pauses only the 1.5 s chat poll and catches up the moment it is shown again. The conversation list keeps its own
-   poll (notify-ui.js raises desktop notifications from it while the tab is in the background). */
+   poll (notify-ui.js raises desktop notifications from it while the tab is in the background). A window in the background while
+   another AIB window is open (window-context.js pollMs, multi-window Phase 3) polls its chat every 5 s, and catches up the
+   moment it gets focus. */
+  const CHAT_POLL_MS = 1500,
+    CHAT_POLL_BACKGROUND_MS = 5000;
+  const pollEvery = (fast, slow) => {
+    try {
+      return window.AibWindow?.pollMs ? window.AibWindow.pollMs(fast, slow) : fast;
+    } catch {
+      return fast;
+    }
+  };
+  let chatPolledAt = 0;
   setInterval(() => {
-    if (!document.hidden) refresh({ poll: true });
-  }, 1500);
+    if (document.hidden) return;
+    const now = Date.now();
+    if (now - chatPolledAt < pollEvery(CHAT_POLL_MS, CHAT_POLL_BACKGROUND_MS) - 100) return;
+    chatPolledAt = now;
+    refresh({ poll: true });
+  }, 500);
+  window.addEventListener?.('focus', () => {
+    if (document.hidden || Date.now() - chatPolledAt < 400) return;
+    chatPolledAt = Date.now();
+    refresh({ poll: true });
+  });
   setInterval(() => listConversations().catch(fail), 5000);
   document.addEventListener?.('visibilitychange', () => {
     if (!document.hidden) refresh();
@@ -5525,7 +5546,13 @@
       mirrorBusy = false;
     }
   }
-  setInterval(tickMirrors, 1500);
+  let mirrorsAt = 0;
+  setInterval(() => {
+    const now = Date.now();
+    if (now - mirrorsAt < pollEvery(1500, 5000) - 100) return;
+    mirrorsAt = now;
+    tickMirrors();
+  }, 500);
   window.AgentSplitUI?.init({
     convOf: (key) => conversations.find((c) => aliasKey(c) === key),
     selectedKey: () => (selected ? aliasKey(selected) : ''),

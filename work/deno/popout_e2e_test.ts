@@ -10,6 +10,10 @@
  *  - The move (owner decision 4): "Pop out" in a chat tab's menu asks for the chat window (op 'popout' by the lasting key), the
  *    tab closes in the project window (the active tab stays), the sidebar row shows ↗, a notification for it is 'no' there,
  *    clicking the row brings the pop-out forward, and closing the pop-out puts the tab back as a background tab.
+ *  - Phase 3: after a restart (the project window's own record of the move is gone with its sessionStorage), the restored
+ *    pop-out's `from` (desktop-windows.json, in the presence answer) makes that window take it back: closing it puts the tab back.
+ *  - Phase 3: a window in the background while another AIB window is open polls its chat every 5 s, not 1.5 s; focused, or the
+ *    only window, it keeps 1.5 s.
  *  - Routed opens from the desktop app (K3 route, K6): {type:'project'} switches the main window to it, {type:'doc'} opens the
  *    doc there; a project window says 'no' to another project.
  *
@@ -31,7 +35,8 @@ const APP_PAGE = [
   'window.bindings = { aibDesktop() {} };',
   'window.__winCalls = [];',
   'const __f = window.fetch.bind(window);',
-  "window.fetch = async (u, o) => { const r = await __f(u, o); if (String(u).includes('/api/live/desktop/windows')) window.__winCalls.push({ body: JSON.parse(o.body), status: r.status }); return r; };",
+  'window.__statePolls = 0;',
+  "window.fetch = async (u, o) => { if (String(u).includes('/api/live/state')) window.__statePolls++; const r = await __f(u, o); if (String(u).includes('/api/live/desktop/windows')) window.__winCalls.push({ body: JSON.parse(o.body), status: r.status }); return r; };",
   'window.__focus = false;',
   'Document.prototype.hasFocus = function () { return !!window.__focus; };',
   "Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible' });",
@@ -311,6 +316,89 @@ Deno.test({
       assertEquals(await askOpen(b, { type: 'doc', project: 'w:c:/another', name: 'x' }), 'no');
       assertEquals(a.errors, [], 'console errors');
       assertEquals(b.errors, [], 'console errors (project window)');
+      await b.close();
+      await a.close();
+    } finally {
+      await t.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'chat pop-out after a restart: the restored pop-out names the window it came from; closing it puts the tab back there',
+  ignore: !browserPath,
+  async fn() {
+    const t = await lab();
+    try {
+      // as restored from desktop-windows.json: the pop-out w2 was moved out of the main window before the restart
+      t.dw.restore({ w: 'w2', kind: 'chat', chat: K1, project: t.pk }, 'Checkout work · AIB', 'm');
+      // another pop-out, moved out of a window that is not this one: not taken
+      t.dw.restore({ w: 'w3', kind: 'chat', chat: 'claude:sess-9', project: t.pk }, 'Elsewhere · AIB', 'w5');
+      const a = await t.open(`${t.base}/?w=m`); // a fresh page: no sessionStorage record of the move
+      await a.waitFor(`!!document.querySelector('button.connection[data-key="${K2}"]')`, 20000, 'the chat in the list');
+      await a.click(`button.connection[data-key="${K2}"]`);
+      await a.waitFor(`window.AgentWorkspaceUI.openKeys()[0] === ${JSON.stringify(K2)}`, 10000, 'chat 2 open');
+      assertEquals(await a.eval('window.AgentWorkspaceUI._pops().length'), 0, 'nothing remembered after the restart');
+      const pop = await t.open(t.popUrl('w2'), 480, 720);
+      await pop.waitFor(`window.AgentWorkspaceUI.openKeys()[0] === ${JSON.stringify(K1)}`, 15000, 'the pop-out shows its chat');
+      await fresh(a, 2);
+      const ans = await a.eval<Json>('window.AibWindow.answer()');
+      assertEquals((ans.windows as Json[]).find((x) => x.w === 'w2')!.from, 'm', 'the answer names where it came from');
+      await a.waitFor(`(() => { const p = window.AgentWorkspaceUI._pops(); return p.length === 1 && p[0].key === ${JSON.stringify(K1)} && p[0].seen && p[0].w === 'w2'; })()`, 10000, 'taken back as its own');
+      await a.waitFor(`!!document.querySelector('button.connection.popped[data-key="${K1}"] .ws-chatpop')`, 5000, 'the ↗ on the row');
+      // closing the pop-out: the tab comes back here, in the background
+      await pop.goto('about:blank');
+      t.dw.close('w2');
+      await a.waitFor(`(window.AgentWorkspaceUI._state().tabs[${JSON.stringify(t.pk)}] || []).includes(${JSON.stringify(K1)})`, 10000, 'the tab is back');
+      assertEquals(await selectedKey(a), K2, 'in the background');
+      assertEquals(await a.eval('window.AgentWorkspaceUI._pops().length'), 0);
+      assertEquals(a.errors, [], 'console errors (main window)');
+      assertEquals(pop.errors, [], 'console errors (pop-out)');
+      await pop.close();
+      await a.close();
+    } finally {
+      await t.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'background windows poll less: unfocused with another window open, the chat is polled every 5 s; focused or alone, every 1.5 s',
+  ignore: !browserPath,
+  async fn() {
+    const t = await lab();
+    try {
+      const a = await t.open(`${t.base}/?w=m`);
+      await a.waitFor(`!!document.querySelector('button.connection[data-key="${K1}"]')`, 20000, 'the chat in the list');
+      await a.click(`button.connection[data-key="${K1}"]`);
+      await a.waitFor(`window.AgentWorkspaceUI.openKeys()[0] === ${JSON.stringify(K1)}`, 10000, 'chat 1 open');
+      const polls = async (focus: boolean, ms: number) => {
+        await a.eval(`window.__focus = ${focus}, true`);
+        await sleep(600);
+        await a.eval('window.__statePolls = 0, true');
+        await sleep(ms);
+        return await a.eval<number>('window.__statePolls');
+      };
+      // alone: today's rate, focused or not
+      await fresh(a, 1);
+      assertEquals(await a.eval('window.AibWindow.pollMs(1500, 5000)'), 1500);
+      assert((await polls(false, 4600)) >= 2, 'alone and unfocused: still every 1.5 s');
+      // another window open (a project window)
+      await t.dw.open({ project: { key: 'w:c:/another', name: 'another', path: 'C:\another' } }, 'm');
+      const b = await t.open(t.base + windowPath({ w: 'w2', kind: 'project', project: 'w:c:/another' }));
+      await fresh(a, 2);
+      const focused = await polls(true, 4600);
+      assert(focused >= 2, `focused: every 1.5 s (${focused} polls in 4.6 s)`);
+      await fresh(a, 2);
+      assertEquals(await a.eval('window.__focus = false, window.AibWindow.background()'), true);
+      const bg = await polls(false, 6000);
+      assert(bg >= 1 && bg <= 2, `in the background: every 5 s (${bg} polls in 6 s)`);
+      // focus comes back: it catches up at once
+      await a.eval('window.__statePolls = 0, window.__focus = true, window.dispatchEvent(new Event("focus")), true');
+      await a.waitFor('window.__statePolls >= 1', 1200, 'a poll on focus');
+      assertEquals(a.errors, [], 'console errors');
       await b.close();
       await a.close();
     } finally {

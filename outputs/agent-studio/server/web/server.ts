@@ -128,6 +128,31 @@ export function withThemePref(html: string, pref: string | undefined, symbols?: 
   return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + attrs);
 }
 
+/**
+ * The presence answer with each pop-out's `from` (the window it was moved out of, from the desktop app's list, kept across a
+ * restart): that window takes the tab back when the pop-out closes, also after a restart (workspace-ui.js checkPops).
+ */
+export function withPopFrom<T extends { windows?: unknown }>(answer: T, dw: DesktopWindows | null): T {
+  const views = (answer as { windows?: unknown }).windows;
+  if (!dw || !Array.isArray(views)) return { ...answer };
+  let list: ReturnType<DesktopWindows['list']> = [];
+  try {
+    list = dw.list();
+  } catch {
+    return { ...answer };
+  }
+  const fromOf = new Map(list.filter((i) => i.from).map((i) => [i.w, i.from as string]));
+  if (!fromOf.size) return { ...answer };
+  return {
+    ...answer,
+    windows: views.map((v) => {
+      const w = v && typeof v === 'object' ? (v as { w?: unknown; kind?: unknown }) : null;
+      const from = w && typeof w.w === 'string' && (w.kind === 'chat' || w.kind === 'doc') ? fromOf.get(w.w) : undefined;
+      return from ? { ...(v as Record<string, unknown>), from } : v;
+    }),
+  };
+}
+
 /** Added projects whose folder is gone from the disk (folder_presence.ts, cached): the page leaves them out until it is back. */
 function goneAdded(c: WebContext): string[] {
   const out: string[] = [];
@@ -303,7 +328,7 @@ export class WebServer {
     // The page: its window has focus or not, how long since the last input in it, the chats it shows (attention/presence.ts).
     // K2: one slot per window id (w; none: slot "_"), and the answer names the sound owner, the chats open in any window and the
     // windows (multi-window design section 4).
-    this.native.set('POST /api/live/presence', (c, _url, body) => this.json(200, { ...c.presence.reportWindow(body) }));
+    this.native.set('POST /api/live/presence', (c, _url, body) => this.json(200, withPopFrom(c.presence.reportWindow(body), c.desktopWindows)));
     // K3: open, pop out, route to, focus or close an AIB window (windows_route.ts); 501 without the desktop app (serve).
     this.native.set('POST /api/live/desktop/windows', async (c, _url, body) => {
       const [status, payload] = await this.windows.call(c, body);
