@@ -16,7 +16,17 @@
  * just installed in a terminal is seen without restarting anything.
  */
 import * as adapters from '../../agents/adapters.ts';
-import { findNpmCliFor, InstallRefused, Installer, type InstallView, MIN_NODE_MAJOR, nodeVersion } from '../../agents/installer.ts';
+import {
+  findNpmCliFor,
+  InstallRefused,
+  Installer,
+  type InstallView,
+  LOCK_NAME,
+  MIN_NODE_MAJOR,
+  nodeVersion,
+  readJson,
+} from '../../agents/installer.ts';
+import { pidAlive } from '../../host/host_client.ts';
 import { isDict } from '../../core/py.ts';
 import { isFile } from '../../platform/pypath.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
@@ -40,6 +50,45 @@ export interface InstallContext {
   nodeProbe?: (node: string) => string | Promise<string>;
   npmCli?: string;
   diskFree?: (path: string) => number;
+  /** Tests: the distro's processes for the uninstall refusal (default: /proc read by sh); null when they cannot be read. */
+  processes?: () => Promise<ProcRow[] | null>;
+}
+
+/** One process of the distro: its program (/proc/<pid>/exe) and command line (NULs as spaces). */
+export interface ProcRow {
+  pid: number;
+  exe: string;
+  cmdline: string;
+}
+
+/**
+ * Every process of the distro (all users, as far as /proc shows them) with its program and command line. Read by sh: the compiled
+ * helper may not read /proc itself (helper/bgtasks.ts distroProcesses says why). null when the list cannot be read.
+ */
+export async function distroProcRows(): Promise<ProcRow[] | null> {
+  try {
+    const out = await new Deno.Command('/bin/sh', {
+      args: ['-c', 'for p in /proc/[0-9]*; do e=$(readlink "$p/exe" 2>/dev/null); c=$(tr "\\000" " " < "$p/cmdline" 2>/dev/null); printf "%s\\t%s\\t%s\\n" "${p#/proc/}" "$e" "$c"; done; exit 0'],
+      stdin: 'null',
+      stdout: 'piped',
+      stderr: 'null',
+    }).output();
+    if (!out.success) return null;
+    const rows: ProcRow[] = [];
+    for (const line of new TextDecoder().decode(out.stdout).split('\n')) {
+      const [pid, exe = '', ...rest] = line.split('\t');
+      if (/^\d+$/.test(pid ?? '')) rows.push({ pid: Number(pid), exe, cmdline: rest.join('\t').trim() });
+    }
+    return rows.length ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The processes (not this helper) whose program or command line is inside one of `folders`. */
+export function procsUsing(rows: ProcRow[], folders: string[], self = Deno.pid): ProcRow[] {
+  const prefixes = [...new Set(folders.filter(Boolean).map((f) => f.replace(/\/+$/, '') + '/'))];
+  return rows.filter((r) => r.pid !== self && prefixes.some((p) => r.exe.startsWith(p) || r.cmdline.includes(p)));
 }
 
 export interface WireEntry {
@@ -157,7 +206,101 @@ export function installMethods(ctx: InstallContext): Handlers {
     'agents.installStatus': async (p) => ({ ...await installer.status(take(p)).catch(refused) }),
 
     'agents.installCancel': async (p) => ({ ...await installer.cancel(take(p)).catch(refused) }),
+
+    'agents.uninstall': (p) => uninstall(ctx, installer, allow, str(p, 'id')),
   };
+}
+
+const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
+
+/** The version folders AIB installed under `base` (real folders inside it, never a link), as [name, path]. */
+function versionFolders(base: string): string[] {
+  const out: string[] = [];
+  try {
+    for (const item of Deno.readDirSync(base)) {
+      if (!item.isDirectory || item.isSymlink) continue;
+      const folder = `${base}/${item.name}`;
+      if (adapters.inside(folder, base)) out.push(folder);
+    }
+  } catch { /* nothing installed */ }
+  return out;
+}
+
+/**
+ * `agents.uninstall {id}`: removes AIB's own copy of one agent, every <root>/agents/<id>/<version> (installer.ts uninstall does the
+ * deleting, marker first). Idempotent: nothing installed is ok with removed []. A refusal is an answer ({ok: false, blocked, message}):
+ * 'installing' while an install of it runs (this helper's job or another live process holding install.lock), 'running' while any
+ * process of the distro runs from that folder (a chat or sign-in of any AIB data folder: /proc exe and command lines), 'unchecked'
+ * when the process list cannot be read. Only known managed agents; <root>/agents/<id> must be a real folder inside the root (no link
+ * anywhere on the way), so nothing outside it, the user's own installs, ~/.claude and ~/.codex are never touched.
+ */
+async function uninstall(ctx: InstallContext, installer: Installer, allow: Record<string, unknown>, id: string) {
+  if (!(WSL_MANAGED as readonly string[]).includes(id)) {
+    throw new RpcError('AIB cannot uninstall that agent in WSL.', BAD_PARAMS, { code: 'install_refused' });
+  }
+  const name = AGENT_NAMES[id] ?? id;
+  const root = ctx.root.replace(/[\\/]+$/, '');
+  const agents = `${root}/agents`;
+  const base = `${agents}/${id}`;
+  for (const path of [agents, base]) {
+    let info: Deno.FileInfo;
+    try {
+      info = Deno.lstatSync(path);
+    } catch {
+      return { ok: true, removed: [] as string[] }; // not there: nothing installed
+    }
+    if (info.isSymlink || !info.isDirectory) {
+      return { ok: false, removed: [] as string[], blocked: 'unsafe', message: `${path} is not a plain folder, so AIB leaves it alone.` };
+    }
+  }
+  if (!adapters.inside(base, root) || adapters.inside(root, base)) {
+    return { ok: false, removed: [] as string[], blocked: 'unsafe', message: `${base} is not inside AIB's folder, so AIB leaves it alone.` };
+  }
+  const folders = versionFolders(base);
+  if (!folders.length) return { ok: true, removed: [] as string[] };
+  const job = installer.jobs.get(id);
+  const holder = (readJson(`${base}/${LOCK_NAME}`) ?? {}).pid;
+  if ((job && job.alive) || (holder !== Deno.pid && pidAlive(holder))) {
+    return {
+      ok: false,
+      removed: [] as string[],
+      blocked: 'installing',
+      message: `${name} is being installed right now. Wait for it to finish, or cancel it, then uninstall.`,
+    };
+  }
+  const rows = await (ctx.processes ?? distroProcRows)();
+  if (!rows) {
+    return {
+      ok: false,
+      removed: [] as string[],
+      blocked: 'unchecked',
+      message: `AIB could not check whether ${name} is running, so it did not uninstall it. Try again.`,
+    };
+  }
+  let real = base;
+  try {
+    real = Deno.realPathSync(base);
+  } catch { /* the plain path */ }
+  const using = procsUsing(rows, [base, real]);
+  if (using.length) {
+    const n = using.length;
+    return {
+      ok: false,
+      removed: [] as string[],
+      blocked: 'running',
+      message: `${name} is running from AIB's copy (${n === 1 ? 'process' : `${n} processes`} ${using.slice(0, 3).map((r) => r.pid).join(', ')}): ` +
+        'a chat or a sign-in uses it. End those chats or the sign-in first, then uninstall.',
+    };
+  }
+  // installer.ts uninstall needs an allow-list entry for the id; its version is never used there
+  if (!allow[id]) allow[id] = { package: (adapters.installPackages(id) ?? [['']])[0][0], version: '0.0.0' };
+  try {
+    const done = await installer.uninstall(id);
+    return { ok: true, removed: done.removed };
+  } catch (error) {
+    if (error instanceof InstallRefused) return { ok: false, removed: [] as string[], blocked: 'failed', message: error.message };
+    throw error;
+  }
 }
 
 export type { InstallView };

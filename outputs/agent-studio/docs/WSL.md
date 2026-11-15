@@ -323,6 +323,55 @@ the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/h
   update (a running chat may still use one); the Beta agents are not offered in the distro.
 - Tests: `wsl_agent_install_test` (fake npm, fake host), `test_wsl_ui.js` (the panel), `wsl_agent_install_e2e` (real distro).
 
+**Verified 2026-11-15 (one real install of each pinned agent in a temp root, `agents.install` of the helper, Ubuntu 24.04 x86_64,
+Node 24.22.1 through asdf; nothing signed in, only `--help` run with a throwaway HOME; the temp root was removed afterwards):**
+
+- Claude Code (`@agentclientprotocol/claude-agent-acp` 0.102.0, `npm ci --ignore-scripts`, 31 s): **the `claude` program is
+  bundled.** `node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude` is a 342 MB glibc ELF binary (Claude Code 2.1.321;
+  package 327 MB, install 404 MB in all). npm installed the linux-x64 optional package although install scripts were off; no musl
+  copy and no other platform's package was fetched. Its sign-in: `claude auth login` (`--claudeai` default, `--console`, `--sso`,
+  `--email`), with `claude auth status` and `claude auth logout`; AIB runs it through the adapter as
+  `node dist/index.js --cli auth login --claudeai` (`signin.ts DEFAULT_TERMINAL`; the `--cli` route itself was not re-run here).
+- Codex (`@agentclientprotocol/codex-acp` 2.6.0, 25 s): **the `codex` CLI is bundled.** `@openai/codex` 0.166.0 (`bin/codex.js`,
+  28 KB) with `@openai/codex-linux-x64` (436 MB: a static musl `codex` binary, its own `bwrap` and `rg`; that package only ships a
+  musl build, which runs on glibc distros); install 457 MB. Sign-in: `codex login` (`--device-auth` is listed, also
+  `--with-api-key`, `--with-access-token`), status `codex login status`.
+- npm's cache in `agents/.npm-cache` grew to 330 MB for the two installs.
+
+## Linking (WSL) phase 2: helper methods
+
+The helper side of the Settings checklist, Uninstall and sign-in status (`docs/wsl/linking-design.md` section 12; shapes frozen in
+`wsl/contract.ts`). All three are read-only except the uninstall's deletion, and none starts an agent.
+
+- **`env.prereqs {force?}` -> `EnvPrereqs`** (`wsl/helper/prereqs.ts`). Node.js through the login PATH (no `/mnt` folder), at least
+  22.19: `ok`, `missing`, `old`, `broken` (found but `node --version` fails), `shim_unset` (an asdf / mise shim with "No version is
+  set"); `manager` asdf / mise (shim path), nvm (`NVM_DIR` or `~/.nvm`), aib (inside the AIB folder), else system. npm is found
+  next to the node found or next to `node -p process.execPath` (an asdf shim has no npm beside it), version from npm's
+  package.json. git (`git --version`), curl (on PATH), `diskFreeMB` of the home filesystem (`df -Pk`), `arch`, `loginShell`,
+  `envMode` (`-lic` = login-interactive, `-lc` = login, else plain), `nvm.present` (`$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh`).
+  `canInstallNode` is false, with `nodeInstallBlocked` saying why and what to do, when node is managed by asdf / mise, the login
+  shell is not bash or zsh, its start-up file (`~/.bashrc`, `$ZDOTDIR/.zshrc` or `~/.zshrc`, the `PROFILE` nvm gets) does not exist,
+  or curl is missing. `force: true` reads the login environment again first (PATH and `NVM_DIR`), so a Node.js installed in a
+  terminal since the helper started is seen. Never installs anything.
+- **`agents.uninstall {id}` -> `{ok, removed, message?, blocked?}`** (`wsl/helper/agent_install.ts`). Only `claude` and `codex`;
+  removes every `<root>/agents/<id>/<version>` with installer.ts `uninstall` (marker first, then the job files). Nothing installed:
+  `{ok: true, removed: []}`. Refusals are answers with `ok: false` and one plain line: `blocked: 'installing'` (this helper's job
+  or another live process holds `install.lock`), `'running'` (a process of the distro, of any user and any AIB data folder, has its
+  program or command line inside that folder, read from `/proc/*/exe` and `/proc/*/cmdline` by sh; the pids are in the message),
+  `'unchecked'` (the process list could not be read), `'unsafe'` (`agents` or `agents/<id>` is a link or not a folder, or is not
+  inside the root), `'failed'` (a folder could not be removed). Only real folders inside `<root>/agents/<id>/` are deleted; the
+  user's own installs, `~/.claude`, `~/.codex` and other agents are never touched.
+- **`agents.signinStatus {ids?}` -> `{agents: [{id, state, account?, note?}]}`** (`wsl/helper/signin_status.ts`; default ids claude,
+  codex, omp). Files' presence, size and JSON shape only, at most 1 MB, `CLAUDE_CONFIG_DIR` / `CODEX_HOME` of the login environment
+  first. Claude Code: `.credentials.json` with a `claudeAiOauth` object = `signed_in` (`account` = `oauthAccount.emailAddress` of
+  `.claude.json`, the only text taken from a file), an API key / Bedrock / Vertex variable in the login environment = `signed_in`
+  (its name in `note`, never its value), no file = `signed_out`, anything else `unknown`. Codex: `auth.json` with a `tokens` object
+  or a non-empty `OPENAI_API_KEY` = `signed_in`, both empty or no file = `signed_out`, credentials kept in the keyring
+  (`cli_auth_credentials_store` in config.toml) = `unknown`. OMP and other ids: `unknown`. No token value, and no JSON parse error
+  (it can quote the file), ever reaches the answer.
+- Tests: `wsl_linking_helper_test` (no distro: fake runners and files for every Node.js case, a temp root with fake agent folders
+  and a fake process list, fake credential files with a fake token that must never appear), `wsl_linking_helper_e2e` (real distro).
+
 ## Settings > AIB Linking (WSL): what the routes give it
 
 Design: `docs/wsl/linking-design.md` (section 11 overrides the rest). Opening Settings never starts a distro:
@@ -500,13 +549,14 @@ keeps one failure from hiding the others' results.
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
 | `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends |
 | `wsl_linking_routes_e2e` | phase 2 routes: peek, Uninstall and the Node.js terminal make no host before AIB used the distro; with the real helper and a stand-in login shell, `prereqs?start=1`, the rows' `enabled` / `signin` / `canUninstall` / `limits`, Uninstall and the Node.js terminal (the "too old" answers while the helper lacks the phase 2 methods); the Node.js script run with bash in the distro against a stand-in install.sh (`file://`): checksum gate, PROFILE per login shell, the 22.19 minimum, every command printed |
+| `wsl_linking_helper_e2e` | `env.prereqs` on the distro as it is (asdf shim: ok, npm found next to the real node, no nvm offer); with a stand-in login shell: Node.js missing, too old, an asdf shim with no version, each after `force`; `agents.uninstall` refused while a test process runs from the fake agent folder, then removing only it, a linked `agents/<id>` left alone; `agents.signinStatus` over fake credential files, the fake token never in the answer |
 | `wsl_linking_e2e` | Settings' peek before AIB used the distro makes no host; with a stand-in login shell and asdf's layout (shims for node, npm, codex-acp; a fake `@agentclientprotocol/codex-acp` with its `@openai/codex`): detect resolves the shim to `[real node, entry]`, `signin` and `bundledCli` name the bundled CLI, the peek row says so, the Codex sign-in runs it |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_linking_helper_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
