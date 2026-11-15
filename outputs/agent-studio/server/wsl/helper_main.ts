@@ -5,6 +5,7 @@
  *   AIB-wsl-helper [--data <linux data folder>]   JSON-RPC 2.0 lines on stdin/stdout; the first line is `helper.ready`
  *
  * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
+ * It installs AIB's own copies of agents into <root>/agents (helper/agent_install.ts).
  * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts). It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
  * can be written by group or others. It holds no state in memory (the worktree registry is a file): AIB may kill and respawn it at any time.
  */
@@ -164,7 +165,23 @@ async function helperMain(args: string[]): Promise<number> {
   });
   // worktrees only with the data folder named (one per Windows AIB): `<data>/worktrees`, its registry `<data>/studio-worktrees.json`
   const named = argValue(args, '--data').startsWith('/') ? data : '';
-  const methods = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])], ...(named ? { data: named } : {}) });
+  // A Node.js installed in a terminal after this start (agent install's Check again): read the login PATH again, keep the rest.
+  const refreshPath = async () => {
+    const login = await captured;
+    const again = await captureLoginEnv(shell, base);
+    if (again.how === 'none') return;
+    const path = agentEnv(again.env).PATH;
+    login.env.PATH = path;
+    Deno.env.set('PATH', path);
+  };
+  const methods = makeMethods({
+    env: () => captured,
+    own: [root, data, ...(exeDir ? [exeDir] : [])],
+    ...(named ? { data: named } : {}),
+    root, // AIB's own agent installs: <root>/agents/<id>/<version>
+    notify: (method, params) => void send({ jsonrpc: '2.0', method, params }).catch(() => {}),
+    refreshPath,
+  });
   if (named) void captured.then(() => worktreeStartup(named)).catch(() => {}); // git needs the login PATH first
   if (COMPILED && exeDir) {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);

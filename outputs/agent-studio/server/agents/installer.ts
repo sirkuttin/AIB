@@ -24,7 +24,7 @@ import { clip, isDict, pyJsonDumps, pyStr, ValueError } from '../core/py.ts';
 import { pidAlive } from '../host/host_client.ts';
 import { diskFree } from '../platform/disk.ts';
 import { ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
-import { isFile } from '../platform/pypath.ts';
+import { isFile, which } from '../platform/pypath.ts';
 import { abspath, pathOf, realpath } from '../state/paths.ts';
 
 export const MIN_NODE_MAJOR = 22; // the adapters' `engines` field
@@ -263,6 +263,14 @@ export function findNpmCli(node: string): string {
   ) {
     if (isFile(candidate)) return candidate;
   }
+  // macOS / Linux packages that keep npm elsewhere (Debian's /usr/share/nodejs/npm): the `npm` on PATH, when it is npm-cli.js itself
+  if (Deno.build.os !== 'windows') {
+    const npm = which('npm');
+    try {
+      const target = npm ? realpath(npm) : '';
+      if (target.endsWith('/npm-cli.js') && isFile(target)) return target;
+    } catch { /* a broken link */ }
+  }
   return '';
 }
 
@@ -388,6 +396,15 @@ export interface InstallerOptions {
   /** A fixed npm-cli.js (tests use a fake); unset means: look next to node. */
   npmCli?: string | null;
   diskFree?: (path: string) => number;
+  /**
+   * The lockfile text of an entry, instead of reading `entry.lockfile` under APP_ROOT (the WSL helper: AIB sends its reviewed lockfile
+   * over the helper channel). null: no lockfile, so `npm install <package>@<exact>`.
+   */
+  readLock?: (entry: AllowEntry) => string | null;
+  /** Extra environment for npm (the WSL helper: its cache inside ~/.aib-server, so nothing is written outside AIB's folder). */
+  npmEnv?: Record<string, string>;
+  /** Called with the job's state each time it is saved (the WSL helper sends it to AIB as a progress notification). */
+  onSave?: (view: InstallView) => void;
 }
 
 type Outcome = 'done' | 'cancelled' | 'failed';
@@ -401,6 +418,9 @@ export class Installer {
   readonly diskFree: (path: string) => number;
   readonly jobs = new Map<string, Job>();
   readonly #allow: Record<string, unknown> | null;
+  readonly #readLock: ((entry: AllowEntry) => string | null) | null;
+  readonly #npmEnv: Record<string, string>;
+  readonly #onSave: ((view: InstallView) => void) | null;
   readonly #guard = new Mutex();
 
   constructor(stateDir: string, options: InstallerOptions = {}) {
@@ -410,6 +430,9 @@ export class Installer {
     this.nodeProbe = options.nodeProbe ?? ((node) => nodeVersion(node));
     this.npmCli = options.npmCli ?? null;
     this.diskFree = options.diskFree ?? diskFree;
+    this.#readLock = options.readLock ?? null;
+    this.#npmEnv = options.npmEnv ?? {};
+    this.#onSave = options.onSave ?? null;
   }
 
   // ---- what can be installed --------------------------------------------------------------------------------------
@@ -681,7 +704,11 @@ export class Installer {
   save(agentId: string, state: string, stage: string, percent: number, message: string, version: unknown, pid: number): InstallView {
     const data = { state, stage, percent: Math.trunc(percent), message, version, pid, updatedAt: now() };
     writeJson(pathOf(agentDir(this.stateDir, agentId), STATE_NAME), data);
-    return { agent: agentId, state, stage, percent: Math.trunc(percent), message, version: version as string };
+    const view = { agent: agentId, state, stage, percent: Math.trunc(percent), message, version: version as string };
+    try {
+      this.#onSave?.({ ...view });
+    } catch { /* a listener's problem never stops the job */ }
+    return view;
   }
 
   #progress(job: Job, stage: string, percent: number): void {
@@ -729,14 +756,16 @@ export class Installer {
   async #install(job: Job, entry: AllowEntry, node: string, npmCli: string): Promise<[Outcome, string]> {
     const { agentId, folder, version } = job;
     const pkg = String(entry.package);
-    const lockSource = entry.lockfile ? pathOf(APP_ROOT, String(entry.lockfile)) : null;
-    const useLock = !!lockSource && isFile(lockSource);
+    const lockSource = !this.#readLock && entry.lockfile ? pathOf(APP_ROOT, String(entry.lockfile)) : null;
+    const lockText = this.#readLock ? this.#readLock(entry) : null;
+    const useLock = lockText !== null || (!!lockSource && isFile(lockSource));
     Deno.mkdirSync(folder, { recursive: true });
     const manifest = { name: `studio-agent-${agentId}`, version: '1.0.0', private: true, dependencies: { [pkg]: version } };
     Deno.writeTextFileSync(pathOf(folder, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
     let args: string[];
     if (useLock) {
-      Deno.copyFileSync(lockSource!, pathOf(folder, 'package-lock.json'));
+      if (lockText !== null) Deno.writeTextFileSync(pathOf(folder, 'package-lock.json'), lockText);
+      else Deno.copyFileSync(lockSource!, pathOf(folder, 'package-lock.json'));
       args = [npmCli, 'ci', '--prefix', folder, ...NPM_ARGS];
     } else args = [npmCli, 'install', `${pkg}@${version}`, '--prefix', folder, ...NPM_ARGS];
     if (job.cancelEvent.isSet()) return ['cancelled', ''];
@@ -746,6 +775,7 @@ export class Installer {
       if (!['npm_config_prefix', 'npm_config_global', 'npm_config_location'].includes(k.toLowerCase())) env[k] = v;
     }
     Object.assign(env, {
+      ...this.#npmEnv,
       npm_config_loglevel: 'error',
       npm_config_progress: 'false',
       npm_config_update_notifier: 'false',
