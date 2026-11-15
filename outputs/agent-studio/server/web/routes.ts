@@ -81,7 +81,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
  *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job
  *   POST /api/live/devices/tailscale/cancel   Settings > Remote control: Cancel on a setup job
- *   POST /api/live/presence                   the page: window focus, time since the last input, open chats (attention/presence.ts)
+ *   POST /api/live/presence                   the page: window focus, time since the last input, open chats, per window (attention/presence.ts K2)
+ *   POST /api/live/desktop/windows            open / pop out / route to / focus / close an AIB window (windows_route.ts K3; page only)
  *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
  *   POST /api/live/artifacts/delete           Delete: to Recently deleted, the source file into the artifact's bin (page only)
  *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)
@@ -181,6 +182,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/devices/tailscale/job', 'write', 'get'],
   ['POST', '/api/live/devices/tailscale/cancel', 'write', 'body'],
   ['POST', '/api/live/presence', 'write', 'body'],
+  ['POST', '/api/live/desktop/windows', 'write', 'body'], // multi-window K3: page token only, 2 KB, 10 per 10 s
   ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],
   ['POST', '/api/live/artifacts/delete', 'artifacts.write', 'own-gate'],
   ['POST', '/api/live/artifacts/undelete', 'artifacts.write', 'own-gate'],
