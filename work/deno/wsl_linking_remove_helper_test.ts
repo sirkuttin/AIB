@@ -486,6 +486,24 @@ Deno.test('remove: process rows, isOurs and uses', async () => {
   assertEquals(usage.result?.root, ROOT);
 });
 
+Deno.test("remove: the test guard and the <ver> come from the helper's start environment, not the login one it swaps in", async () => {
+  // helper_main.ts replaces the process environment with the login shell's: AIB_WSL_TEST must still hold (a real-WSL e2e found it lost)
+  const real = `${HOME}/.aib-server`;
+  const fs = distro().file(`${real}/data-0123456789ab/x`).file(`${real}/${VER}/AIB-keeper`);
+  const { test: _test, version: _version, ...rest } = deps(fs, { root: real, data: `${real}/data-0123456789ab` });
+  const before = fs.snapshot();
+  const env = () => Promise.resolve({ home: HOME, env: {} });
+  const handlers = aibMethods({ root: real, data: `${real}/data-0123456789ab`, env, start: { test: true, version: VER }, deps: rest });
+  const reply = await handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'aib.remove', params: { mode: 'apply' } }), handlers) as {
+    result: { ok: boolean; blocked: string[] };
+  };
+  assertEquals(reply.result.ok, false);
+  assert(/test guard/.test(reply.result.blocked[0]), reply.result.blocked[0]);
+  assertEquals(fs.snapshot(), before);
+  const usage = await handleLine(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'aib.usage', params: {} }), handlers) as { result: { current: string } };
+  assertEquals(usage.result.current, VER);
+});
+
 Deno.test('remove: the helper offers aib.* only with both its root and its data folder', T, async () => {
   const { makeMethods } = await import('../../outputs/agent-studio/server/wsl/helper/methods.ts');
   const env = () => Promise.resolve({ env: {}, shell: '/bin/sh', home: HOME, arch: 'amd64' });

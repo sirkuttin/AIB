@@ -68,6 +68,8 @@ export interface HelperContext {
   prereqDeps?: Partial<PrereqDeps>;
   /** Tests: aib.usage / aib.remove's file system, process list and checks (helper/aib_remove.ts RemoveDeps). */
   aibDeps?: Partial<RemoveDeps>;
+  /** The helper's start environment for aib.* (this AIB's <ver>, the test guard): read before the login environment replaces it. */
+  aibStart?: { version?: string; test?: boolean };
 }
 
 /** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
@@ -197,7 +199,9 @@ export function makeMethods(ctx: HelperContext): Handlers {
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
     // Linking (WSL) phase 3: disk use and Remove AIB from this distro (helper/aib_remove.ts), only with both folders known
-    ...(ctx.root && data ? aibMethods({ root: ctx.root, data, env: ctx.env, ...(ctx.aibDeps ? { deps: ctx.aibDeps } : {}) }) : {}),
+    ...(ctx.root && data
+      ? aibMethods({ root: ctx.root, data, env: ctx.env, ...(ctx.aibStart ? { start: ctx.aibStart } : {}), ...(ctx.aibDeps ? { deps: ctx.aibDeps } : {}) })
+      : {}),
   };
   return Object.fromEntries(
     Object.entries(methods).map(([name, handler]) => [name, async (p: Record<string, unknown>) => {

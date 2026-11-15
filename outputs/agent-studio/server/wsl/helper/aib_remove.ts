@@ -684,22 +684,29 @@ export interface AibContext {
   root: string;
   data: string;
   env(): Promise<{ home: string; env: Record<string, string> }>;
+  /**
+   * The helper's own start environment (helper_main.ts reads it before the login environment replaces it): AIB_WSL_VERSION (this
+   * AIB's <ver>) and AIB_WSL_TEST ('1': the test guard). Default: the environment when aibMethods is made.
+   */
+  start?: { version?: string; test?: boolean };
   /** Tests: everything else (RemoveDeps). */
   deps?: Partial<RemoveDeps>;
 }
 
 /** `aib.usage` and `aib.remove` over this helper's root and data folder. */
 export function aibMethods(ctx: AibContext): Handlers {
+  // read now: helper_main.ts swaps the process environment for the login shell's once it is captured
+  const version = ctx.start?.version ?? Deno.env.get('AIB_WSL_VERSION') ?? '';
+  const test = ctx.start?.test ?? Deno.env.get('AIB_WSL_TEST') === '1';
   const deps = async (): Promise<RemoveDeps> => {
     const login = await ctx.env();
-    const version = Deno.env.get('AIB_WSL_VERSION') ?? '';
     return {
       fs: denoFs,
       root: ctx.root,
       data: ctx.data,
       version: VERSION_NAME.test(version) ? version : '',
       home: login.home || login.env.HOME || '',
-      test: Deno.env.get('AIB_WSL_TEST') === '1',
+      test,
       self: Deno.pid,
       procs: procRows,
       keeperAlive: (dir) => keeperListening(dir),

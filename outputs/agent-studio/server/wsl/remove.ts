@@ -58,7 +58,7 @@ case "$root" in /mnt/?|/mnt/?/*) no 'the AIB folder is on a Windows drive';; esa
 [ "$root" != "$HOME" ] || no 'the AIB folder is the home folder'
 case "$HOME/" in "$root"/*) no 'the home folder is inside the AIB folder';; esac
 if [ "$test" = 1 ]; then
-  case "$root" in /tmp/aib-wsl-test-*) ;; *) no 'test guard: not a /tmp/aib-wsl-test-* folder';; esac
+  case "$root" in /tmp/aib-wsl-test-*/*|*[!A-Za-z0-9_/-]*) no 'test guard: not a /tmp/aib-wsl-test-* folder';; /tmp/aib-wsl-test-?*) ;; *) no 'test guard: not a /tmp/aib-wsl-test-* folder';; esac
   [ "$root" != "$HOME/.aib-server" ] || no 'test guard: never ~/.aib-server'
 fi
 case "$name" in data-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) no 'not a data folder name';; esac

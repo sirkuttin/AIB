@@ -829,6 +829,10 @@ export class WslHostImpl implements WslHost {
       const listed = await client.list();
       const live = liveUserChannels(listed).length;
       if (live) return { ok: false, live, message: `${live} chat(s) or terminal(s) still run in ${this.distro}` };
+      // from here the host never reconnects: a dropped transport must not start a keeper (and AIB) again
+      this.#stopped = true;
+      if (this.#holdTimer !== null) clearTimeout(this.#holdTimer);
+      this.#holdTimer = null;
       const helper = this.#helper;
       this.#helperGone(new WslHelperError('AIB was removed from this distro', 'stopped'));
       if (helper) await helper.kill().catch(() => {});
