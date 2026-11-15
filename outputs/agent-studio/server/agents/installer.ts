@@ -274,6 +274,27 @@ export function findNpmCli(node: string): string {
   return '';
 }
 
+/**
+ * The program a node command really runs (`process.execPath`), or ''. Version managers put a shim script on PATH (asdf, mise, volta),
+ * so npm is not next to the `node` found there but next to the real one. macOS / Linux only: Windows never needs it.
+ */
+export async function nodeExecPath(node: string): Promise<string> {
+  try {
+    const out = (await adapters.runCapture([node, '-p', 'process.execPath'], { timeout: 15 })).stdout.trim();
+    return out.startsWith('/') && !out.includes('\n') && isFile(out) ? out : '';
+  } catch {
+    return '';
+  }
+}
+
+/** findNpmCli, and on macOS / Linux, when `node` is a version manager's shim, npm next to the node it really runs. */
+export async function findNpmCliFor(node: string): Promise<string> {
+  const found = findNpmCli(node);
+  if (found || Deno.build.os === 'windows') return found;
+  const real = await nodeExecPath(node);
+  return real && real !== node ? findNpmCli(real) : '';
+}
+
 /** '22.4.0' from `node --version`, or '' when it does not run. */
 export async function nodeVersion(node: string, run?: adapters.RunFn): Promise<string> {
   let stdout = '';
@@ -480,7 +501,7 @@ export class Installer {
         `Node.js ${MIN_NODE_MAJOR} or newer is needed to install ${name}; this PC has Node.js ${version}. Update Node.js and try again.`,
       );
     }
-    const npmCli = this.npmCli || findNpmCli(node);
+    const npmCli = this.npmCli || await findNpmCliFor(node);
     if (!npmCli || !isFile(npmCli)) {
       throw new InstallRefused('npm was not found next to Node.js. Reinstall Node.js from nodejs.org and try again.');
     }

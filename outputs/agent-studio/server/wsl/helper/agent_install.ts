@@ -16,7 +16,7 @@
  * just installed in a terminal is seen without restarting anything.
  */
 import * as adapters from '../../agents/adapters.ts';
-import { findNpmCli, InstallRefused, Installer, type InstallView, MIN_NODE_MAJOR, nodeVersion } from '../../agents/installer.ts';
+import { findNpmCliFor, InstallRefused, Installer, type InstallView, MIN_NODE_MAJOR, nodeVersion } from '../../agents/installer.ts';
 import { isDict } from '../../core/py.ts';
 import { isFile } from '../../platform/pypath.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
@@ -125,7 +125,7 @@ export function installMethods(ctx: InstallContext): Handlers {
       if (!node) return { code: 'node_missing' as NodeCode, node: '', nodeVersion: '', npm: false };
       const version = await (ctx.nodeProbe ?? ((n: string) => nodeVersion(n)))(node);
       const major = /^(\d+)/.exec(version || '');
-      const npm = !!(ctx.npmCli ? isFile(ctx.npmCli) : findNpmCli(node));
+      const npm = !!(ctx.npmCli ? isFile(ctx.npmCli) : await findNpmCliFor(node));
       const code: NodeCode = !major ? 'node_broken' : parseInt(major[1], 10) < MIN_NODE_MAJOR ? 'node_old' : !npm ? 'npm_missing' : '';
       return { code, node, nodeVersion: version, npm };
     };
