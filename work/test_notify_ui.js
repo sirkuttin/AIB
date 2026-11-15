@@ -104,11 +104,11 @@ test('decide: in front means no desktop and no sound; toast only for other chats
   assert.deepEqual(N.decide({ ...base, selected: true }), { toast: false, desktop: false, sound: null });
 });
 
-test('decide: away fires the desktop notification and the sound, also for the selected chat', () => {
+test('decide: away fires the desktop notification and the sound, but never for the chat open in the window', () => {
   const base = {
     kind: 'needs',
     away: true,
-    selected: true,
+    selected: false,
     eligible: true,
     muted: false,
     notifyFor: 'both',
@@ -116,6 +116,9 @@ test('decide: away fires the desktop notification and the sound, also for the se
     desktopReady: true,
   };
   assert.deepEqual(N.decide(base), { toast: false, desktop: true, sound: 'needs' });
+  // the chat open in the window (visible, not focused: the owner reads another app) is in front of them already
+  assert.deepEqual(N.decide({ ...base, selected: true }), { toast: false, desktop: false, sound: null });
+  assert.deepEqual(N.decide({ ...base, selected: true, kind: 'turn' }), { toast: false, desktop: false, sound: null });
   assert.deepEqual(N.decide({ ...base, desktopReady: false }), { toast: false, desktop: false, sound: 'needs' });
   assert.equal(N.decide({ ...base, kind: 'turn' }).sound, null, 'Needs you only: no sound for Your turn');
   assert.equal(N.decide({ ...base, kind: 'turn', soundPref: 'both' }).sound, 'turn');
@@ -162,12 +165,14 @@ test('grouping: transitions inside the window coalesce, outside start a new grou
   assert.deepEqual(N.describe(r.group), {
     tag: 'studio-attention',
     title: 'A',
-    body: 'Your turn',
-    target: { type: 'chat', key: 'a' },
+    body: 'To review',
+    target: { type: 'inbox', key: 'a' },
+    silent: true,
   });
   r = N.addToGroup(r.group, [{ key: 'b', kind: 'needs', title: 'B', sound: 'needs' }], 20000);
   let d = N.describe(r.group);
-  assert.equal(d.title, '2 agents are waiting for you');
+  assert.equal(d.title, '1 needs you \u00b7 1 to review');
+  assert.equal(d.silent, false, 'something needs you: not silent');
   assert.equal(d.body, 'A\nB');
   assert.deepEqual(d.target, { type: 'inbox' });
   assert.equal(d.tag, 'studio-attention', 'a stable tag replaces the older notification');
@@ -180,7 +185,7 @@ test('grouping: transitions inside the window coalesce, outside start a new grou
     59000,
   );
   d = N.describe(r.group);
-  assert.equal(d.title, '4 agents are waiting for you');
+  assert.equal(d.title, '1 needs you \u00b7 3 to review');
   assert.equal(d.body, 'A\nB\nC\nand 1 more');
   const later = N.addToGroup(r.group, [{ key: 'e', kind: 'needs', title: 'E' }], 1000 + N.GROUP_MS + 1);
   assert.deepEqual(
@@ -195,7 +200,7 @@ test('grouping: the same chat is listed once and needs-you wins; a sound plays o
   assert.equal(r.sound, 'turn');
   r = N.addToGroup(r.group, [{ key: 'a', kind: 'needs', title: 'A2', sound: 'needs' }], 5000);
   assert.equal(r.sound, 'needs', 'a louder kind chimes');
-  assert.deepEqual(r.group.entries, [{ key: 'a', title: 'A2', kind: 'needs' }]);
+  assert.deepEqual(r.group.entries, [{ key: 'a', title: 'A2', kind: 'needs', reason: 'approval' }]);
   r = N.addToGroup(
     r.group,
     [
@@ -277,8 +282,18 @@ test('observeItems wires transitions, away state, mute and grouping (stubbed bro
       ],
       9000,
     );
+    assert.equal(shown.length, 1, 'the chat open in the window (unfocused): no desktop notification for its finished turn');
+    // switched to b: a's next finished turn is news again, grouped with b's
+    N.observeItems(
+      [
+        chat('a', { yourTurn: true, yourTurnAt: 11 }),
+        chat('b', { selected: true, yourTurn: true, yourTurnAt: 7 }),
+        chat('c', { muted: true }),
+      ],
+      10000,
+    );
     assert.equal(shown.length, 2);
-    assert.equal(shown[1].title, '2 agents are waiting for you');
+    assert.equal(shown[1].title, '2 to review');
     assert.equal(shown[1].o.body, 'Chat b\nChat a');
     assert.equal(shown[1].o.tag, shown[0].o.tag);
   } finally {
@@ -287,4 +302,26 @@ test('observeItems wires transitions, away state, mute and grouping (stubbed bro
     if (realNotif === undefined) delete globalThis.Notification;
     else globalThis.Notification = realNotif;
   }
+});
+
+test('detect (inbox phases): no "finished" while helpers run, then once; a failed turn and a question in the reply are "needs" news', () => {
+  const e = (phase, extra = {}) =>
+    Object.assign({ key: 'k', title: 'T', state: 'idle', phase, eligible: true, muted: false, yourTurn: true, yourTurnAt: 50 }, extra);
+  let r = N.detect(null, [e('working', { state: 'working', yourTurn: false, yourTurnAt: 0 })]);
+  // the turn ended while two helpers still run: the server marks it your turn, but the chat is still working
+  r = N.detect(r.next, [e('working')]);
+  assert.deepEqual(r.events, [], 'no toast or chime while helpers run');
+  r = N.detect(r.next, [e('your_turn')]);
+  assert.deepEqual(r.events, [{ key: 'k', kind: 'turn' }], 'once they are done');
+  r = N.detect(r.next, [e('your_turn')]);
+  assert.deepEqual(r.events, []);
+  // a new turn fails: needs-you news once per failure
+  r = N.detect(r.next, [e('working', { state: 'working' })]);
+  r = N.detect(r.next, [e('failed', { since: 70 })]);
+  assert.deepEqual(r.events, [{ key: 'k', kind: 'needs', needs: 1 }]);
+  r = N.detect(r.next, [e('failed', { since: 70 })]);
+  assert.deepEqual(r.events, []);
+  // then a reply that asks you something
+  r = N.detect(r.next, [e('asks', { since: 90 })]);
+  assert.deepEqual(r.events, [{ key: 'k', kind: 'needs', needs: 1 }]);
 });

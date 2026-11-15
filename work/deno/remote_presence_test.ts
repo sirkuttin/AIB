@@ -15,6 +15,7 @@ import { DEVICE_HEADER } from "../../outputs/agent-studio/server/remote/server.t
 import { readRemotePort } from "../../outputs/agent-studio/server/remote/port.ts";
 import { PHONE_TTL_MS } from "../../outputs/agent-studio/server/attention/presence.ts";
 import { startAttention } from "../../outputs/agent-studio/server/attention/watcher.ts";
+
 import {
   type FakeChat,
   fakeTailscale,
@@ -25,6 +26,9 @@ import {
   remoteStudio,
   serveStatus,
 } from "./_remote_fixture.ts";
+
+// The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs keep the old 3 s (watcher.ts).
+Deno.env.set('AIB_TEST_SETTLE_MS', '3000');
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -244,6 +248,7 @@ Deno.test({
         tag: "aib-attention",
         chat: "c1",
         sheet: false,
+        silent: true, // a finished chat pushes silently (inbox 1b)
       });
       assertEquals(
         t.desktop.length,

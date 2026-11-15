@@ -87,17 +87,21 @@ test('inbox lists every waiting chat across projects, one row each, with kinds',
   const rows = W.inbox(sample());
   assert.deepEqual(
     rows.map((r) => r.key),
-    ['b2', 'a1'],
-    'newest activity first',
+    ['a1', 'b2'],
+    'the longest wait first (with no wait time known, the oldest activity)',
   );
-  assert.deepEqual(rows[0].kinds, [{ kind: 'auth', count: 1 }]);
-  assert.deepEqual(rows[1].kinds, [
+  assert.deepEqual(rows[1].kinds, [{ kind: 'auth', count: 1 }]);
+  assert.deepEqual(rows[0].kinds, [
     { kind: 'question', count: 1 },
     { kind: 'permission', count: 1 },
   ]);
-  assert.equal(rows[1].needs, 2);
-  assert.equal(rows[1].summary, 'Question, Permission');
-  assert.equal(rows[0].projectName, 'P-b');
+  assert.equal(rows[0].needs, 2);
+  assert.equal(rows[0].summary, 'Question, Permission');
+  assert.equal(rows[1].projectName, 'P-b');
+  assert.deepEqual(
+    rows.map((r) => r.reason),
+    ['question', 'signin'],
+  );
   assert.deepEqual(
     W.inbox([item('z', 'p', { state: 'needs_you', needs: 1, archived: true })]),
     [],

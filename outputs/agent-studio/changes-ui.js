@@ -462,7 +462,7 @@
     /* -- network -- */
     async function getToken(force) {
       if (token && !force) return token;
-      const r = await win.fetch('/api/live/bootstrap');
+      const r = await win.fetch('/api/live/bootstrap', win.AIBPageAuth ? win.AIBPageAuth.init() : undefined);
       if (!r.ok) throw new Error('AIB is not reachable');
       token = (await r.json()).token || '';
       return token;

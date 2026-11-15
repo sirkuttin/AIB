@@ -146,3 +146,15 @@ test('conversation.elsewhere {working, confirmed, verdict} maps to Elsewhere wor
   );
   assert.equal(s({ connected: true, elsewhere: { working: true, verdict: 'owned_elsewhere' } }).kind, 'idle');
 });
+
+test('helpers or a background command still running after the reply: Working (· N helpers), never Your turn (the inbox rule)', () => {
+  const two = W.statusOf({ connected: true, yourTurn: true, helpers: 2 });
+  assert.equal(two.kind, 'working');
+  assert.equal(two.label, 'Working · 2 subagents');
+  assert.equal(W.statusOf({ connected: true, yourTurn: true, helpers: 1 }).label, 'Working · 1 subagent');
+  const bg = W.statusOf({ connected: true, yourTurn: true, background: true });
+  assert.equal(bg.kind, 'working');
+  assert.equal(bg.label, 'Working');
+  assert.equal(W.statusOf({ connected: true, yourTurn: true, helpers: 0 }).label, 'Your turn');
+  assert.equal(W.statusOf({ connected: true, needs: 1, helpers: 2 }).label, 'Needs you', 'a request still wins');
+});

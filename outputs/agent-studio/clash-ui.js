@@ -45,12 +45,12 @@
       const mine = ++seq;
       if (!project) return paint(null);
       try {
-        if (!token) token = (await (await win.fetch('/api/live/bootstrap')).json()).token || '';
+        if (!token) token = (await (await win.fetch('/api/live/bootstrap', win.AIBPageAuth ? win.AIBPageAuth.init() : undefined)).json()).token || '';
         let r = await win.fetch('/api/live/worktree/clash?project=' + encodeURIComponent(project), {
           headers: { 'X-Studio-Token': token },
         });
         if (r.status === 403) {
-          token = (await (await win.fetch('/api/live/bootstrap')).json()).token || '';
+          token = (await (await win.fetch('/api/live/bootstrap', win.AIBPageAuth ? win.AIBPageAuth.init() : undefined)).json()).token || '';
           r = await win.fetch('/api/live/worktree/clash?project=' + encodeURIComponent(project), {
             headers: { 'X-Studio-Token': token },
           });
@@ -65,7 +65,7 @@
       if (!project) return;
       resumeBtn.disabled = true;
       try {
-        if (!token) token = (await (await win.fetch('/api/live/bootstrap')).json()).token || '';
+        if (!token) token = (await (await win.fetch('/api/live/bootstrap', win.AIBPageAuth ? win.AIBPageAuth.init() : undefined)).json()).token || '';
         await win.fetch('/api/live/worktree/clash', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },

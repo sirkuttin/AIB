@@ -284,7 +284,29 @@
   async function listDir(scope, dir) {
     const t = treeOf(scope);
     if (t.cache[dir] === 'loading') return;
-    t.cache[dir] = 'loading';
+    // A folder already listed keeps its rows while it is listed again (an agent's write, a doc made): the tree does not blink to
+    // "Loading…", and a row or the "New doc" name field the person is using stays. A call while that listing runs lists it once
+    // more afterwards, so the newest state still shows.
+    if (!t.relisting) t.relisting = new Map();
+    if (t.relisting.has(dir)) {
+      t.relisting.set(dir, true);
+      if (!Array.isArray(t.cache[dir])) t.cache[dir] = 'loading'; // dropped on purpose meanwhile: shows as loading till then
+      return;
+    }
+    const again = Array.isArray(t.cache[dir]);
+    if (again) t.relisting.set(dir, false);
+    else t.cache[dir] = 'loading';
+    try {
+      await listOnce(scope, t, dir);
+    } finally {
+      if (again) {
+        const more = t.relisting.get(dir);
+        t.relisting.delete(dir);
+        if (more) listDir(scope, dir);
+      }
+    }
+  }
+  async function listOnce(scope, t, dir) {
     if (dir === '' || dir === F().DOCS_FOLDER) loadDocs(scope, true);
     try {
       const r = await host.getJson('/api/live/files/list', Object.assign(F().scopeArgs(scope), { dir }));
@@ -477,16 +499,19 @@
   // open chat's artifacts (GET /api/live/artifacts is per chat), so the other chats' lists are fetched here too, at most every 30 s.
   const ART_TTL = 30000;
   const projectArts = new Map(); // chat id -> {at, list, loading}
+  // Returns a promise that settles when every list still loading has come in (a path link waits for it before it decides).
   function loadProjectArtifacts(force) {
-    if (!host) return;
-    const now = Date.now();
+    if (!host) return Promise.resolve();
+    const now = Date.now(),
+      waits = [];
     for (const c of projectChats().slice(0, 40)) {
       const id = c.key; // artifacts are kept under the chat's lasting key (provider:sessionId)
       const rec = projectArts.get(id);
+      if (rec && rec.loading && rec.promise) waits.push(rec.promise);
       if (rec && (rec.loading || (!force && now - rec.at < ART_TTL))) continue;
-      const next = { at: now, list: rec ? rec.list : [], loading: true };
+      const next = { at: now, list: rec ? rec.list : [], loading: true, promise: null };
       projectArts.set(id, next);
-      Promise.resolve(host.getJson('/api/live/artifacts', { conversationId: id })).then(
+      next.promise = Promise.resolve(host.getJson('/api/live/artifacts', { conversationId: id })).then(
         (r) => {
           next.list = (r && Array.isArray(r.artifacts) ? r.artifacts : []).map((a) => Object.assign({}, a, { ownerKey: c.key }));
           next.loading = false;
@@ -499,7 +524,9 @@
           next.loading = false;
         },
       );
+      waits.push(next.promise);
     }
+    return Promise.all(waits).then(() => {});
   }
   function projectArtifactList() {
     const A = AR(),
@@ -929,17 +956,18 @@
     });
     return n;
   }
-  // "1 file in this chat's copy, not in the shared folder": files an agent wrote under a local-only path inside the copy.
+  // "1 file here is only in this chat": files an agent wrote under a local-only path inside the copy.
   function strayNode(r, scope) {
     const n = el('div', null, 'fx-row fx-stray');
     n.style.setProperty('--d', String(r.depth));
     const text = el(
       'span',
-      r.count + (r.count === 1 ? ' file' : ' files') + " in this chat's copy, not in the shared folder. AIB moves " +
-        (r.count === 1 ? 'it' : 'them') + ' there before the copy is removed.',
+      (r.count === 1 ? '1 file here is' : r.count + ' files here are') + " only in this chat, so your other chats can't see " +
+        (r.count === 1 ? 'it' : 'them') + '. Nothing gets lost: AIB moves ' + (r.count === 1 ? 'it' : 'them') +
+        " into the project's own folder when this chat is archived or deleted.",
       'fx-stray-t',
     );
-    const b = btn('Move to the shared folder', 'fx-stray-btn', 'Move ' + (r.count === 1 ? 'it' : 'them') + ' into the main folder now (a name clash gets "(from chat-…)")');
+    const b = btn('Share with all chats now', 'fx-stray-btn', 'Move ' + (r.count === 1 ? 'it' : 'them') + " into the project's own folder now, where every chat sees it" + ' (a name clash gets "(from chat-…)")');
     b.onclick = (e) => {
       e.stopPropagation();
       b.disabled = true;
@@ -1855,6 +1883,11 @@
     loadProjectArtifacts(false);
     const r = ensureRead(tab, redraw),
       d = r.data;
+    // opened from a path link: a page file shows its Preview first (Source is one click away)
+    if (d && pageWanted.has(tab.id)) {
+      pageWanted.delete(tab.id);
+      if (d.page && d.viewUrl) r.mode = 'page';
+    } else if (r.error) pageWanted.delete(tab.id);
     const head = el('div', null, 'sf-fv-head');
     const crumb = el('div', null, 'sf-fv-crumb');
     const proj = (W() && W().currentProjectName && W().currentProjectName()) || '';
@@ -2353,19 +2386,68 @@
   function openLink(a, how) {
     openTarget({ scope: scopeOfLink(a), rel: a.dataset.filePath, line: Number(a.dataset.line) || 0, abs: a.dataset.abs || '' }, how);
   }
+  // The full paths a link can mean: its own, and its folder path under the chat's copy, the main folder and the main folder's
+  // local-only root (a full path into AIB/private links as the copy's private/... file, while the artifact may name either).
+  function linkAbsPaths(t) {
+    const out = [],
+      sc = t && t.scope;
+    if (t && t.abs) out.push(t.abs);
+    if (sc && sc.root !== 'outside' && t.rel) {
+      const c = projectChats().find((x) => x.key === sc.chatKey) || (chat && chat.key === sc.chatKey ? chat : null),
+        lo = loOf(sc);
+      for (const r of [treeOf(sc).root, lo && lo.main, c && c.cwd, c && c.projectPath, sc.path])
+        if (r) out.push(String(r).replace(/[\\/]+$/, '') + '/' + t.rel);
+    }
+    return out;
+  }
+  // The artifact a path link names (matched by its source file, case and slashes aside on Windows): the open chat's first, else
+  // the newest of any chat of the project. Deleted ones never count (projectArtifactList leaves them out).
+  function artifactForLink(t) {
+    const paths = linkAbsPaths(t);
+    if (!paths.length) return null;
+    const hits = projectArtifactList().filter((a) => a.sourcePath && paths.some((p) => samePath(a.sourcePath, p)));
+    if (!hits.length) return null;
+    const mine = chat ? hits.find((a) => a.conversationId === chat.key || a.ownerKey === chat.key) : null;
+    return mine || hits.slice().sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0))[0];
+  }
+  // Files a path link shows as a page rather than as text, when it opens in the file view (a :line link stays on the text).
+  const pageWanted = new Set(); // tab id
   // t: {scope, rel, line, abs}. how: '' (the width rule), 'beside', 'tab' or 'editor'.
+  // A link to a file that is an artifact opens that artifact (latest version) in the Artifacts tab; anything else opens in the file
+  // view, on Preview for a page file (html, svg, md) unless the link names a line. Returns a promise (tests wait on it).
   function openTarget(t, how) {
     const scope = t && t.scope,
       rel = t && t.rel,
       line = (t && t.line) || 0;
-    if (!scope || !rel) return;
+    if (!scope || !rel) return Promise.resolve(false);
     if (how === 'editor') {
       if (ED() && t.abs) ED().openFile(t.abs, line, dirAbs(t.abs));
-      return;
+      return Promise.resolve(false);
     }
-    const wide = F().opensBeside(root.innerWidth || 0);
-    if (how === 'beside' || (how !== 'tab' && wide)) openFile(scope, rel, { keep: true, beside: true, line, keepDrawer: true });
-    else openFile(scope, rel, { keep: true, line });
+    const asFile = () => {
+      if (!line) pageWanted.add(F().tabId(scope, rel));
+      const wide = F().opensBeside(root.innerWidth || 0);
+      if (how === 'beside' || (how !== 'tab' && wide)) openFile(scope, rel, { keep: true, beside: true, line, keepDrawer: true });
+      else openFile(scope, rel, { keep: true, line });
+      return false;
+    };
+    const asArtifact = (a) =>
+      openInArtifacts(a, '', null, () => asFile()).then(
+        (ok) => !!ok,
+        () => asFile(),
+      );
+    // "Open to the side" is the file itself, beside the chat
+    if (how === 'beside' || line) return Promise.resolve(asFile());
+    const hit = artifactForLink(t);
+    if (hit) return asArtifact(hit);
+    // the project's artifact lists may still be on their way (a click soon after the app opened): wait for them, at most 1.5 s
+    let timer = 0;
+    const late = new Promise((res) => (timer = (root.setTimeout || setTimeout)(res, 1500)));
+    return Promise.race([loadProjectArtifacts(false), late]).then(() => {
+      (root.clearTimeout || clearTimeout)(timer);
+      const a = artifactForLink(t);
+      return a ? asArtifact(a) : asFile();
+    });
   }
   function linkMenu(a, x, y) {
     if (menu) closeMenu(false);

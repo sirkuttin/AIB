@@ -5,6 +5,11 @@
    every step). No sections, no main chat. A card: title, unread dot, time, the project (its colour mark from the PC), agent, state
    in the PC's words (Working, Needs you, Your turn, Idle, Not running), and the last line. Chats that are not running are in the
    same list by time, drawn lighter. "All projects ▾" filters by project (no grouping), remembered on this phone.
+   Inbox (inbox prototype v3): an envelope at the top right of home, next to the project picker, with the count of chats that need
+   you in every project (needs-you colour), or a teal dot when only "To review" chats wait. A tap switches between the chat list and
+   the inbox: "Needs you in <picked project>", then "Needs you in other projects" right below, then "To review" (picked project
+   first); with All projects one "Needs you" list, then "To review". The PC's card: line 1 the request, line 2 chat · project, the
+   wait time, ONE action row (Allow once / Deny / Reply; a risky command Review first; To review Reply / ×). Once-only options only.
    A chat: one agent. Its subagents are a "Subagents · N" card in the stream (title and state only) with a shortcut under the
    title. Approvals and questions are cards IN the stream ("Needs you · approval / question"), never a sheet over the chat: a card
    is open when it is the newest thing in the chat, closed (tap to open) once newer activity follows it, and open when a
@@ -46,6 +51,10 @@
    viewer (v3 ▾, "vN is available · Switch"). Theme: the PC's theme in this phone's light or dark (themes.js phoneTheme), or this
    phone's own pick (⋯ at the top of the list → Theme, localStorage). Install AIB: our button from beforeinstallprompt (Finish
    setup and the ⋯ menu; never a banner), the Share steps on an iPhone, Firefox's menu steps, hidden once installed.
+   Attachments: 📎 left of the message box (a chat and New chat) opens Take photo / Choose photos / Choose files; the picks show as
+   chips (a thumbnail for pictures, ×), and go with the message by the same routes (prompt, steer, queue, New chat's first
+   message). The PC composer's limits; a photo over 2000 px on its long edge is scaled and sent as JPEG; the chat says what its
+   agent takes (no pictures without image input, text files only without embedded context), and the server checks it all again.
    Pure helpers (rowsFrom, stateWords, orderHome, reqOpen, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom,
    artifactRef...) are exported for node tests. */
 (function (root) {
@@ -53,6 +62,8 @@
   const CHAT_MS = 3000;
   const PAIR_POLL_MS = 2000;
   const TIMEOUT_MS = 10000;
+  const OPTIONS_MS = 30000; // New chat's projects and agents: the PC looks for every agent's program first (seconds when busy)
+  const UPLOAD_MS = 180000; // a message with attachments: up to 20 MB on mobile data
   const TAIL = 300;
   const DB = 'aib-phone';
   const READ_MS = 5000; // a chat's read position goes to the PC at most this often
@@ -79,12 +90,16 @@
   function stateWords(c, now) {
     if (c && c.notRunning) return { text: 'Not running', tone: 'nr' };
     if (c.needs > 0 || c.state === 'needs_you') return { text: 'Needs you', tone: 'need' };
-    if (c.state === 'working') {
-      const e = ago(c.busySince, now);
+    // the inbox's phase (inbox-rules.js, from the server): a failed turn and a question in the reply need you too; helpers or a
+    // background shell still running keep the chat working
+    if (c.phase === 'failed') return { text: 'Failed', tone: 'need' };
+    if (c.phase === 'asks') return { text: 'Needs you', tone: 'need' };
+    if (c.state === 'working' || c.phase === 'working') {
+      const e = c.state === 'working' ? ago(c.busySince, now) : '';
       return { text: 'Working' + (e && e !== 'now' ? ' · ' + e : ''), tone: 'work' };
     }
     if (c.state === 'opening') return { text: 'Starting…', tone: 'idle' };
-    if (c.yourTurn) return { text: 'Your turn', tone: 'turn' };
+    if (c.phase ? c.phase === 'your_turn' : c.yourTurn) return { text: 'Your turn', tone: 'turn' };
     return { text: 'Idle', tone: 'idle' };
   }
 
@@ -237,7 +252,14 @@
       const key = 'e' + (e.seq || rows.length);
       const last = rows[rows.length - 1];
       if (e.kind === 'user') {
-        rows.push({ kind: 'you', key, text: str(data.text), images: imagesOf(data.attachments), steered: data.steered === true });
+        rows.push({
+          kind: 'you',
+          key,
+          text: str(data.text),
+          images: imagesOf(data.attachments),
+          files: (Array.isArray(data.files) ? data.files : []).map((f) => str(obj(f).name)).filter(Boolean),
+          steered: data.steered === true,
+        });
       } else if (e.kind === 'update') {
         const u = obj(data.update);
         const kind = u.sessionUpdate;
@@ -583,6 +605,100 @@
     return [...out.values()];
   }
 
+  /* ---- the inbox (inbox prototype v3, phone): the envelope at the top right of home, next to the project picker ---- */
+  const INBOX_LONG_MS = 15 * 60000; // the wait time turns orange after this (as on the PC)
+  /* A command a phone never allows with one tap: push, force, hard reset, recursive delete, dropping data. "Review first" opens the
+     chat at its waiting card instead. */
+  const RISKY = /\bgit\s+(push|reset\s+--hard|clean\b|branch\s+-D|rebase)\b|--force\b|\bpush\s+-f\b|\brm\s+-[a-z]*[rf]|\bRemove-Item\b[^|]*-Recurse|\b(rmdir|rd|del)\s+\/s\b|\bdrop\s+(table|database|schema)\b|\btruncate\s+table\b|\bmkfs\b|\bformat\s+[a-z]:/i;
+  const isRisky = (ask) => obj(ask).kind === 'permission' && RISKY.test(str(obj(ask).detail) + ' ' + str(obj(ask).title));
+
+  /* Does this live home chat need you (blocked: an approval or question, a failed turn, a question in its reply)? */
+  function inboxNeeds(c) {
+    c = obj(c);
+    return c.needs > 0 || c.state === 'needs_you' || c.phase === 'needs_you' || c.phase === 'failed' || c.phase === 'asks';
+  }
+  /* Is it waiting for you to read it ("To review": finished, not handled yet)? */
+  function inboxReview(c) {
+    c = obj(c);
+    if (inboxNeeds(c) || c.state === 'working' || c.phase === 'working') return false;
+    return c.phase ? c.phase === 'your_turn' : !!c.yourTurn;
+  }
+  const atOf = (c) => Date.parse(str(obj(c).changedAt)) || 0;
+
+  /* The envelope's mark: {count: chats that need you in every project, dot: only "To review" chats wait}. */
+  function inboxBadge(home) {
+    const chats = Array.isArray(obj(home).chats) ? home.chats : [];
+    const count = chats.filter(inboxNeeds).length;
+    return { count, dot: count === 0 && chats.some(inboxReview) };
+  }
+
+  /* The inbox's sections, in order. `filter`: the picked project id ('' = All projects); `name`: its name. Picked: "Needs you in
+     <name>" (always, may be empty), "Needs you in other projects" (when any), "To review" (picked project first). All projects: one
+     "Needs you" list, then "To review". Needs you oldest first; To review newest first. Each: {id, title, chats}. */
+  function inboxGroups(home, filter, name) {
+    const chats = Array.isArray(obj(home).chats) ? home.chats : [];
+    const needs = chats.filter(inboxNeeds).sort((a, b) => atOf(a) - atOf(b));
+    const review = chats.filter(inboxReview).sort((a, b) => atOf(b) - atOf(a));
+    const inP = (c) => obj(c.project).id === filter;
+    const out = [];
+    if (filter) {
+      out.push({ id: 'here', title: 'Needs you in ' + (str(name) || 'this project'), chats: needs.filter(inP) });
+      const there = needs.filter((c) => !inP(c));
+      if (there.length) out.push({ id: 'other', title: 'Needs you in other projects', chats: there });
+      if (review.length) out.push({ id: 'review', title: 'To review', chats: review.filter(inP).concat(review.filter((c) => !inP(c))) });
+    } else {
+      out.push({ id: 'needs', title: 'Needs you', chats: needs });
+      if (review.length) out.push({ id: 'review', title: 'To review', chats: review });
+    }
+    return out;
+  }
+
+  /* Line 1 of an inbox card: the actual request ("Run npm install", "Edit src/app.ts", the question), else the card's last line
+     without its prefix. No reason label. */
+  function inboxWhat(c) {
+    c = obj(c);
+    const a = obj(c.ask);
+    if (a.kind === 'permission') {
+      const d = str(a.detail);
+      if (!d) return str(a.title) || 'Asks to run something';
+      if (/^(edit|write|multiedit|create|update|apply)/i.test(str(a.title))) return 'Edit ' + d;
+      if (/^(read|fetch|webfetch|open|search|grep|glob)/i.test(str(a.title))) return str(a.title);
+      return 'Run ' + d;
+    }
+    if (a.kind === 'question') return str(a.title) || 'Has a question';
+    const line = str(c.line).replace(/^(Asks|Wants to run|Working on|You): /, '');
+    if (line) return line;
+    return c.phase === 'failed' ? 'The turn failed' : inboxReview(c) ? 'Finished' : 'Needs you';
+  }
+
+  /* The wait time on an inbox card: {text: "4m", long: waited 15 minutes or more} (never "waited"). */
+  function inboxWait(c, now) {
+    const t = atOf(c);
+    const n = now || Date.now();
+    return { text: ago(str(obj(c).changedAt), n), long: !!t && n - t >= INBOX_LONG_MS };
+  }
+
+  /* The card's ONE action row. Approval (phone may allow): Allow once / Deny / Reply; risky: Review first / Deny. To review:
+     Reply / ×. Anything else: Reply. Only once-only options ever (allow_once / reject_once, approvalButtons): nothing "always".
+     Each: {act: 'allow' | 'deny' | 'review' | 'reply' | 'handled', label, optionId?}. */
+  function inboxActions(c, can) {
+    c = obj(c);
+    if (!inboxNeeds(c)) return inboxReview(c) ? [{ act: 'reply', label: 'Reply' }, { act: 'handled', label: '×' }] : [];
+    const a = obj(c.ask);
+    if (a.kind === 'permission' && a.key && !a.pcOnly && obj(can).approve) {
+      const b = approvalButtons(a);
+      const allow = b.find((x) => x.tone === 'allow');
+      const deny = b.find((x) => x.tone === 'deny');
+      const out = [];
+      if (isRisky(a)) out.push({ act: 'review', label: 'Review first' });
+      else if (allow) out.push({ act: 'allow', label: 'Allow once', optionId: allow.optionId });
+      if (deny) out.push({ act: 'deny', label: 'Deny', optionId: deny.optionId });
+      if (!isRisky(a)) out.push({ act: 'reply', label: 'Reply' });
+      return out;
+    }
+    return [{ act: 'reply', label: 'Reply' }];
+  }
+
   /* Is a waiting card open? Your tap wins (`opened`: key -> true/false); else it is open when it is the newest thing in the chat
      (the last row) or a notification brought you to it (`land`). */
   function reqOpen(rows, key, opened, land) {
@@ -678,16 +794,17 @@
     if (x.latest) parts.push('latest');
     return parts.join(' · ');
   }
-  /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed. */
-  function newChatReady(nc, text) {
+  /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed (or something is
+     attached: `attached`, how many). */
+  function newChatReady(nc, text, attached) {
     const n = obj(nc);
     const a = (Array.isArray(n.agents) ? n.agents : []).find((x) => x && x.id === n.agent);
-    return !!(n.project && a && a.ok && String(text || '').trim());
+    return !!(n.project && a && a.ok && (String(text || '').trim() || attached > 0));
   }
   /* The first message's own checks before anything starts (the server checks the same). '' = fine. */
-  function firstMessageProblem(text) {
+  function firstMessageProblem(text, attached) {
     const t = String(text || '');
-    if (!t.trim()) return 'Type your first message.';
+    if (!t.trim() && !(attached > 0)) return 'Type your first message.';
     if (t.trimStart().startsWith('/')) return 'Messages that start with / are commands. Type them in AIB on your PC.';
     if (t.length > 8000) return 'A message from a phone can be at most 8000 characters.';
     return '';
@@ -719,7 +836,114 @@
     return v;
   }
 
+  // ---- attachments: the PC composer's types and limits (attachments-ui.js; the server checks the same, acp/attachments.ts) ----
+  const MiB = 1048576;
+  const ATTACH = {
+    images: 4,
+    files: 8,
+    imageBytes: 5 * MiB,
+    imageTotal: 15 * MiB,
+    textBytes: 2 * MiB,
+    binaryBytes: 10 * MiB,
+    total: 20 * MiB,
+    nameChars: 200,
+    longEdge: 2000, // a phone photo bigger than this is scaled down (long edge) and sent as JPEG: less mobile data, less context
+    jpegQuality: 0.85,
+  };
+  const PICTURE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const TEXT_TYPES = new Set([
+    'application/json', 'application/xml', 'application/javascript', 'application/x-javascript', 'application/typescript',
+    'application/yaml', 'application/x-yaml', 'application/toml', 'application/sql', 'application/x-sh', 'application/x-ndjson',
+    'application/csv', 'application/xhtml+xml', 'image/svg+xml',
+  ]);
+  const TEXT_EXTS = new Set(('txt text log md markdown json jsonl ndjson csv tsv py js mjs cjs ts tsx jsx yaml yml toml xml html htm css ' +
+    'sql sh ini cfg conf env rs go java c h cpp hpp cs rb php swift kt ps1 bat svg diff patch tex rst').split(' '));
+  /* A file name the PC accepts as a label (no path signs, control or invisible characters, at most 200 characters). Phones name
+     files themselves ("IMG_2041.jpg", "1000012345.jpg", or a document's title): odd signs become "_", never a refusal. */
+  function cleanFileName(name) {
+    let n = String(name || '')
+      .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '')
+      .replace(/[\/\\:<>"|?*]/g, '_')
+      .trim()
+      .replace(/^\.+/, '')
+      .replace(/\.+$/, '');
+    if (n.length > ATTACH.nameChars) {
+      const dot = n.lastIndexOf('.');
+      const ext = dot > 0 && n.length - dot <= 10 ? n.slice(dot) : '';
+      n = n.slice(0, ATTACH.nameChars - ext.length).trim() + ext;
+    }
+    return n || 'file';
+  }
+  const extOf = (name) => {
+    const i = String(name).lastIndexOf('.');
+    return i > 0 ? String(name).slice(i + 1).toLowerCase() : '';
+  };
+  /* Could be a text file by its type or name (the bytes decide: valid UTF-8 without NUL). */
+  function looksText(name, mime) {
+    const m = String(mime || '').toLowerCase();
+    return m.startsWith('text/') || TEXT_TYPES.has(m) || m.endsWith('+json') || m.endsWith('+xml') || TEXT_EXTS.has(extOf(name));
+  }
+  /* The size of a picture that fits inside `max` on its long edge (never larger than it is). */
+  function fitInside(width, height, max) {
+    const w = Math.max(1, Math.round(width) || 1);
+    const h = Math.max(1, Math.round(height) || 1);
+    const s = Math.min(1, max / Math.max(w, h));
+    return { width: Math.max(1, Math.round(w * s)), height: Math.max(1, Math.round(h * s)), scaled: s < 1 };
+  }
+  function sizeWords(n) {
+    const v = Number(n) || 0;
+    if (v < 1024) return v + ' B';
+    if (v < MiB) return Math.round(v / 1024) + ' KB';
+    return (v / MiB).toFixed(1).replace(/\.0$/, '') + ' MB';
+  }
+  /* Why `item` ({kind: 'image' | 'file', name, size, text}) can't join `items` (the chips already there), or ''. `takes`: what the
+     chat's agent can take ({pictures, binary}; null while unknown, in New chat: the PC says once the chat opens). */
+  function attachProblem(items, item, takes, agent) {
+    const list = Array.isArray(items) ? items : [];
+    const it = obj(item);
+    const who = str(agent) || 'This agent';
+    const name = str(it.name) || 'This file';
+    if (!(Number(it.size) > 0)) return name + ': the file is empty.';
+    if (it.kind === 'image') {
+      if (takes && !takes.pictures) return who + ' can’t take pictures.';
+      if (list.filter((x) => x.kind === 'image').length >= ATTACH.images) return 'Up to ' + ATTACH.images + ' pictures per message.';
+      if (it.size > ATTACH.imageBytes) return name + ': pictures can be at most 5 MB.';
+      const pics = list.filter((x) => x.kind === 'image').reduce((n, x) => n + x.size, 0);
+      if (pics + it.size > ATTACH.imageTotal) return 'Pictures can be at most 15 MB in all.';
+    } else {
+      if (takes && !takes.binary && !it.text) return who + ' can take text files only, not ' + name + '.';
+      if (list.filter((x) => x.kind !== 'image').length >= ATTACH.files) return 'Up to ' + ATTACH.files + ' files per message.';
+      if (it.text && it.size > ATTACH.textBytes) return name + ': text files can be at most 2 MB.';
+      if (it.size > ATTACH.binaryBytes) return name + ': files can be at most 10 MB.';
+    }
+    if (list.reduce((n, x) => n + x.size, 0) + it.size > ATTACH.total) return 'Attachments can be at most 20 MB in all.';
+    return '';
+  }
+  /* What goes to the PC: bytes only (base64), a picture's type, a file's name and type; never a path. */
+  function attachBody(items) {
+    return (Array.isArray(items) ? items : []).map((x) =>
+      x.kind === 'image'
+        ? { type: 'image', mimeType: x.mime, data: x.data }
+        : { type: 'file', name: x.name, mimeType: x.mime || '', data: x.data },
+    );
+  }
+
   const api = {
+    inboxNeeds,
+    inboxReview,
+    inboxBadge,
+    inboxGroups,
+    inboxWhat,
+    inboxWait,
+    inboxActions,
+    isRisky,
+    ATTACH,
+    cleanFileName,
+    looksText,
+    fitInside,
+    sizeWords,
+    attachProblem,
+    attachBody,
     firstMessageFate,
     firstSend,
     pickToSend,
@@ -803,6 +1027,8 @@
     scopes: [], // this phone's switches (bootstrap, then every home / chat answer)
     filter: '', // the project id home shows ('' = All projects), remembered on this phone
     filterOpen: false,
+    focusPrompt: false, // Reply on an inbox card: focus the chat's message box once it loads
+    inbox: false, // home shows the inbox (the envelope is pressed) instead of the chat list
     reqOpened: {}, // waiting card key -> open (true) / closed (false), as you tapped it
     land: '', // a notification (or a banner) brought you to this chat: its first waiting card opens and comes into view
     landKey: '', // that card, once the chat loaded
@@ -813,6 +1039,9 @@
     qopen: false, // the waiting-to-send list is open
     answers: {}, // question key -> {field: value}
     draft: '', // the composer's text
+    attach: { chat: [], new: [] }, // the chosen pictures and files of the chat's box and New chat's: {id, kind, name, mime, size, data, thumb}
+    attachNote: { chat: '', new: '' }, // why a picked file was not added
+    attachBusy: { chat: 0, new: 0 }, // picks still being read (and scaled)
     sending: false,
     actError: '', // the last refused or failed action, shown on the card it came from or above the composer
     actKey: '', // the waiting card the error belongs to ('' = the composer)
@@ -883,9 +1112,9 @@
 
   // ---- network ----
   class Offline extends Error {}
-  async function call(method, path, body) {
+  async function call(method, path, body, timeoutMs) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => ctl.abort(), timeoutMs || TIMEOUT_MS);
     const headers = {};
     if (S.token) headers['X-AIB-Device'] = S.token;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -1229,6 +1458,7 @@
     sheet.setAttribute('role', 'menu');
     sheet.append(el('div', 'ph-grab'));
     if (m.kind === 'phone') phoneMenu(sheet, m);
+    else if (m.kind === 'attach') attachMenu(sheet, m);
     else cardMenu(sheet, m);
     layer.append(shade, sheet);
     if (menuEl) menuEl.replaceWith(layer);
@@ -1553,17 +1783,26 @@
     loadNewOptions();
   }
   async function loadNewOptions() {
+    const asked = S.nc;
     let r = null;
+    let why = '';
+    const started = Date.now();
     try {
-      r = await call('GET', '/api/remote/new/options');
-    } catch {
-      r = null;
+      r = await call('GET', '/api/remote/new/options', undefined, OPTIONS_MS);
+    } catch (error) {
+      why = error instanceof Offline ? error.message : 'unreachable';
     }
     const nc = S.nc;
-    if (!nc || S.screen !== 'new') return;
+    if (!nc || nc !== asked || S.screen !== 'new') return;
     if (r && r.status === 401) return removed();
     if (!r || r.status !== 200) {
-      nc.loadError = r ? r.data.error || 'The projects could not be read.' : "Can't reach " + S.pcName + '.';
+      nc.loadError = r
+        ? r.data.error || 'The projects could not be read.'
+        : why === 'down'
+        ? 'AIB on ' + S.pcName + ' is not answering right now.'
+        : Date.now() - started >= OPTIONS_MS - 500
+        ? S.pcName + ' took too long to answer.'
+        : "Can't reach " + S.pcName + '.';
       draw();
       return;
     }
@@ -1644,8 +1883,19 @@
     const body = el('main', 'ph-new' + (S.offline ? ' ph-stale' : ''));
     body.append(el('p', 'ph-ncs', '1 · Project'));
     const project = (nc.projects || []).find((p) => p.id === nc.project);
-    if (nc.loadError) body.append(el('p', 'ph-error', nc.loadError));
-    else if (!nc.projects) body.append(el('p', 'ph-empty', 'Loading your projects…'));
+    if (nc.loadError) {
+      const err = el('p', 'ph-error', nc.loadError);
+      err.id = 'phNcLoadError';
+      err.setAttribute('role', 'alert');
+      const again = button('ph-btn sm', 'Try again', () => {
+        nc.loadError = '';
+        nc.projects = null;
+        draw();
+        loadNewOptions();
+      });
+      again.id = 'phNcRetry';
+      body.append(err, again);
+    } else if (!nc.projects) body.append(el('p', 'ph-empty', 'Loading your projects…'));
     else if (!project) {
       if (!nc.projects.length) body.append(el('p', 'ph-empty', 'No projects in AIB on ' + S.pcName + ' yet. Add one there first.'));
       for (const p of nc.projects) {
@@ -1724,9 +1974,14 @@
     ta.addEventListener('input', () => {
       S.ncText = ta.value;
       const go = doc.getElementById('phNewStart');
-      if (go) go.disabled = !newChatReady(S.nc, S.ncText) || S.nc.starting || S.offline;
+      if (go) go.disabled = !newChatReady(S.nc, S.ncText, S.attach.new.length) || S.nc.starting || S.offline || S.attachBusy.new > 0;
     });
-    bottom.append(ta);
+    bottom.append(chipsEl('new'));
+    const nrow = el('div', 'ph-composer-row');
+    const clip = attachButton('new');
+    clip.disabled = !ready || nc.starting;
+    nrow.append(clip, ta);
+    bottom.append(nrow);
     if (nc.error) {
       const err = el('p', 'ph-error', nc.error);
       err.id = 'phNewError';
@@ -1736,7 +1991,7 @@
     const go = el('button', 'ph-btn', nc.starting ? 'Starting…' : 'Start chat');
     go.type = 'submit';
     go.id = 'phNewStart';
-    go.disabled = !newChatReady(nc, S.ncText) || nc.starting || S.offline;
+    go.disabled = !newChatReady(nc, S.ncText, S.attach.new.length) || nc.starting || S.offline || S.attachBusy.new > 0;
     bottom.append(go);
     bottom.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -1749,25 +2004,27 @@
     const nc = S.nc;
     if (!nc || nc.starting) return;
     const text = S.ncText || '';
-    const problem = firstMessageProblem(text);
+    const items = S.attach.new;
+    const problem = firstMessageProblem(text, items.length);
     if (problem) {
       nc.error = problem;
       return draw();
     }
-    if (!newChatReady(nc, text)) return;
+    if (!newChatReady(nc, text, items.length) || S.attachBusy.new) return;
     nc.starting = true;
     nc.error = '';
     draw();
     // one id for this Start and every retry of it: the PC answers a repeat with the chat the first one started (never a second)
     const cmid = nc.cmid || (nc.cmid = newMessageId());
     const body = { project: nc.project, agent: nc.agent, text, clientMessageId: cmid };
+    if (items.length) body.attachments = attachBody(items);
     const model = pickToSend(nc.lists && nc.lists.model, nc.model);
     const mode = pickToSend(nc.lists && nc.lists.mode, nc.mode);
     if (model) body.model = model;
     if (mode) body.mode = mode;
     let r = null;
     try {
-      r = await call('POST', '/api/remote/new', body);
+      r = await call('POST', '/api/remote/new', body, items.length ? UPLOAD_MS : TIMEOUT_MS);
     } catch {
       r = null;
     }
@@ -1788,11 +2045,15 @@
     const picks = [agent.name, name(nc.lists && nc.lists.model, nc.model), name(nc.lists && nc.lists.mode, nc.mode)].filter(Boolean);
     S.ncText = '';
     S.nc = null;
+    S.attach.new = [];
+    S.attachNote.new = '';
     const id = r.data.id;
-    openChat(id, text.length > 60 ? text.slice(0, 58) + '…' : text, false, { project, agent: agent.name });
+    const title = text.trim() || (items[0] && items[0].name) || 'New chat';
+    openChat(id, title.length > 60 ? title.slice(0, 58) + '…' : title, false, { project, agent: agent.name });
     S.newJob = {
       id,
       text,
+      items, // the first message's pictures and files, back in the box if the PC holds the message
       cmid,
       state: 'opening',
       error: '',
@@ -1820,6 +2081,7 @@
         j.state = 'gone';
         j.error = 'AIB restarted on ' + S.pcName + ' before your first message went. It is in the box below: send it.';
         S.draft = j.text;
+        S.attach.chat = j.items || [];
         S.actError = j.error;
         S.actKey = '';
       }
@@ -1837,6 +2099,7 @@
     } else {
       j.error = str(r.data.error) || 'Your first message was not sent.';
       S.draft = j.text;
+      S.attach.chat = j.items || [];
       S.actError = j.error;
       S.actKey = '';
     }
@@ -2099,6 +2362,129 @@
     draw();
   }
 
+  /* The envelope at the top right of home, next to the project picker: the count of chats that need you (every project) on the
+     needs-you colour, or a teal dot when only "To review" chats wait. A tap switches between the chat list and the inbox. */
+  function envelopeBtn(home) {
+    const m = inboxBadge(home);
+    const b = button('ph-env' + (m.count ? ' has' : ''), '', () => {
+      S.inbox = !S.inbox;
+      S.filterOpen = false;
+      draw();
+      root.scrollTo(0, 0);
+    });
+    b.id = 'phInbox';
+    b.setAttribute('aria-pressed', S.inbox ? 'true' : 'false');
+    b.setAttribute(
+      'aria-label',
+      'Inbox' + (m.count ? ': ' + m.count + (m.count === 1 ? ' chat needs' : ' chats need') + ' you' : m.dot ? ': chats to review' : ''),
+    );
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = doc.createElementNS(NS, 'svg');
+    for (const [k, v] of Object.entries({ viewBox: '0 0 20 20', width: '22', height: '22', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }))
+      svg.setAttribute(k, v);
+    const path = doc.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M3 5.5h14v9H3zM3.5 6l6.5 5 6.5-5'); // the PC's envelope (workspace-ui.js)
+    svg.append(path);
+    b.append(svg);
+    if (m.count) b.append(el('span', 'ph-env-badge', String(m.count)));
+    else if (m.dot) b.append(el('span', 'ph-env-dot'));
+    return b;
+  }
+
+  /* The inbox under the picker: its sections (inboxGroups) with one card per chat. */
+  function inboxEl(home, picked) {
+    const box = el('div', 'ph-inbox');
+    box.id = 'phInboxList';
+    const now = Date.now();
+    const can = abilities(S.scopes);
+    for (const g of inboxGroups(home, picked ? picked.id : '', picked ? picked.name : '')) {
+      const sec = el('section', 'ph-isec');
+      sec.dataset.group = g.id;
+      sec.append(el('h2', 'ph-ih', g.title));
+      if (!g.chats.length) sec.append(el('p', 'ph-inone', 'Nothing needs you'));
+      for (const c of g.chats) sec.append(inboxCard(c, now, can));
+      box.append(sec);
+    }
+    return box;
+  }
+
+  /* One inbox card, the same as the PC's: line 1 the request and the wait time, line 2 chat · project, one action row. A tap on
+     the card opens the chat (at its waiting card when it waits on one). */
+  function inboxCard(c, now, can) {
+    const item = { project: obj(c.project), agent: c.agent };
+    const ask = obj(c.ask);
+    const card = el('div', 'ph-icard' + (inboxNeeds(c) ? '' : ' rev'));
+    card.dataset.chat = c.id;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    const open = () => openChat(c.id, c.title, !!ask.key, item);
+    card.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('button')) return;
+      open();
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.target === card && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        open();
+      }
+    });
+    const l1 = el('div', 'ph-il1');
+    l1.append(el('span', 'ph-iwhat', inboxWhat(c)));
+    const w = inboxWait(c, now);
+    if (w.text) l1.append(el('span', 'ph-iage' + (w.long ? ' old' : ''), w.text));
+    const l2 = el('div', 'ph-il2', str(c.title) + ' · ' + (str(obj(c.project).name) || 'No folder'));
+    card.append(l1, l2);
+    const acts = inboxActions(c, can);
+    if (acts.length) {
+      const row = el('div', 'ph-iacts');
+      for (const a of acts) {
+        const x = button('ph-btn ph-ib ' + a.act, a.label, () => inboxAct(c, a, item));
+        x.dataset.act = a.act;
+        if (a.optionId) x.dataset.option = a.optionId;
+        if (a.act === 'handled') x.setAttribute('aria-label', 'Mark handled');
+        x.disabled = S.sending || (S.offline && a.act !== 'reply' && a.act !== 'review');
+        row.append(x);
+      }
+      card.append(row);
+    }
+    if (S.actError && ask.key && S.actKey === ask.key) {
+      const e = el('p', 'ph-error', S.actError);
+      e.setAttribute('role', 'alert');
+      card.append(e);
+    }
+    return card;
+  }
+
+  /* An inbox card's button. Allow once / Deny answer the request from home; Review first and Reply open the chat (Reply with the
+     message box ready); × marks a To review chat handled on the PC. */
+  async function inboxAct(c, a, item) {
+    const ask = obj(c.ask);
+    if (a.act === 'allow' || a.act === 'deny') {
+      const done = await act('permission', { id: c.id, key: ask.key, option: a.optionId }, ask.key);
+      if (!done) return;
+      S.homeRev = '';
+      toast(a.act === 'allow' ? 'Allowed once' : 'Denied');
+      return;
+    }
+    if (a.act === 'handled') {
+      let r = null;
+      try {
+        r = await call('POST', '/api/remote/chat-op', { key: c.key, op: 'handled' });
+      } catch {
+        r = null;
+      }
+      if (r && r.status === 401) return removed();
+      if (!r || r.status !== 200) return toast(r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was changed.');
+      S.homeRev = '';
+      toast('Marked handled');
+      clearTimeout(S.timer);
+      tick();
+      return;
+    }
+    openChat(c.id, c.title, !!ask.key, item);
+    if (a.act === 'reply') S.focusPrompt = true;
+  }
+
   function drawHome() {
     const parts = [];
     const home = S.home;
@@ -2145,7 +2531,8 @@
         fb.append(dot);
       }
       fb.append(doc.createTextNode((picked ? picked.name : 'All projects') + ' ▾'));
-      bar.append(fb, el('span', 'ph-fn', list.length + (list.length === 1 ? ' chat' : ' chats') + ' · newest first'));
+      bar.append(fb, el('span', 'ph-fn', S.inbox ? 'Inbox' : list.length + (list.length === 1 ? ' chat' : ' chats') + ' · newest first'));
+      bar.append(envelopeBtn(home));
       body.append(bar);
       if (S.filterOpen) {
         const fl = el('div', 'ph-flist');
@@ -2170,6 +2557,7 @@
     }
     if (!home) body.append(el('p', 'ph-empty', 'Loading your chats…'));
     else if (!all.length) body.append(el('p', 'ph-empty', 'No chats on ' + S.pcName + ' yet. Start one in AIB on the PC.'));
+    else if (S.inbox) body.append(inboxEl(home, picked));
     else {
       const now = Date.now();
       const cards = el('div', 'ph-cards');
@@ -2347,6 +2735,12 @@
         img.alt = 'Picture';
         img.src = url;
         imgBox.append(img);
+      }
+      if ((r.files || []).length) {
+        const files = el('ul', 'ph-sent-files');
+        files.setAttribute('aria-label', 'Attached files');
+        for (const name of r.files) files.append(el('li', '', name));
+        imgBox.append(files);
       }
       box.append(m);
     });
@@ -2627,7 +3021,9 @@
         body.append(row);
         body.append(el('p', 'ph-note ph-center', 'Decline tells ' + (c.agent || 'the agent') + ' you won’t answer.'));
       }
-    } else body.append(el('p', 'ph-note', 'Finish this on your PC.'));
+    } else if (wait.kind === 'sign-in')
+      body.append(el('p', 'ph-note', 'Sign in on the PC: open this chat in AIB on ' + S.pcName + ' and choose Sign in.'));
+    else body.append(el('p', 'ph-note', 'Finish this on your PC.'));
     if (wait.kind === 'permission' && S.actError && S.actKey === key) {
       const e = el('p', 'ph-error', S.actError);
       e.setAttribute('role', 'alert');
@@ -2811,10 +3207,12 @@
       send.type = 'submit';
       send.id = 'phSend';
       send.setAttribute('aria-label', 'Send');
-      row.append(ta, stop, send);
+      row.append(attachButton('chat'), ta, stop, send);
       const hint = el('p', 'ph-hint');
       hint.id = 'phHint';
-      bar.append(extra, err, row, hint);
+      const chips = el('div', 'ph-chips-slot');
+      chips.id = 'phChipsSlot';
+      bar.append(extra, err, chips, row, hint);
       bar.addEventListener('submit', (event) => {
         event.preventDefault();
         sendDraft();
@@ -2826,18 +3224,266 @@
     const ta = bar.querySelector('#phPrompt');
     if (ta.value !== S.draft) ta.value = S.draft;
     ta.placeholder = 'Message ' + (c.agent || 'the agent');
-    bar.querySelector('#phSend').disabled = S.sending;
+    bar.querySelector('#phSend').disabled = S.sending || S.attachBusy.chat > 0;
+    bar.querySelector('#phChipsSlot').replaceChildren(chipsEl('chat'));
     bar.querySelector('#phStop').hidden = !c.busy;
     bar.querySelector('#phBottomExtra').replaceChildren(bottomExtra(c, abilities(S.scopes)));
     const err = bar.querySelector('#phActError');
     err.textContent = S.actKey ? '' : S.actError;
     err.hidden = !err.textContent;
     const hint = bar.querySelector('#phHint');
-    hint.textContent = c.busy
+    hint.textContent = S.sending && S.attach.chat.length
+      ? 'Sending ' + sizeWords(S.attach.chat.reduce((n, x) => n + x.size, 0)) + '…'
+      : c.busy
       ? (c.agent || 'The agent') + ' is working. Send ' + (c.steerable ? 'gives it your message now' : 'adds your message to the queue') + '; ■ stops the turn.'
       : '';
     hint.hidden = !hint.textContent || !!err.textContent;
     return bar;
+  }
+
+  // ---- attachments: 📎 in the message box (a chat and New chat) -> Take photo / Choose photos / Choose files; chips; sent with
+  // the message (prompt, steer or queue; New chat's first message). Bytes only, the PC composer's limits (ATTACH); a big photo is
+  // scaled to ATTACH.longEdge and sent as JPEG (which also drops its EXIF data, such as where it was taken). ----
+  const SVG = 'http://www.w3.org/2000/svg';
+  function clipIcon() {
+    const svg = doc.createElementNS(SVG, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '22');
+    svg.setAttribute('height', '22');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = doc.createElementNS(SVG, 'path');
+    path.setAttribute('d', 'M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.9-8.9a3.7 3.7 0 0 1 5.2 5.2l-8.9 8.9a1.8 1.8 0 0 1-2.6-2.6l8.2-8.2');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.append(path);
+    return svg;
+  }
+  function attachButton(target) {
+    const b = button('ph-attach', '', () => openAttach(target));
+    b.id = target === 'new' ? 'phNewAttach' : 'phAttach';
+    b.setAttribute('aria-label', 'Attach photos or files');
+    b.append(clipIcon());
+    return b;
+  }
+  /* What the agent of `target` can take ({pictures, binary}), or null while unknown (New chat), and its name. */
+  function attachTakes(target) {
+    if (target === 'chat') {
+      const c = S.chat || {};
+      return { takes: c.takes && typeof c.takes === 'object' ? c.takes : null, agent: c.agent || 'This agent' };
+    }
+    const nc = S.nc || {};
+    const a = (nc.agents || []).find((x) => x.id === nc.agent);
+    return { takes: null, agent: (a && a.name) || 'This agent' };
+  }
+  /* The three file inputs, outside #app (a poll's draw never takes them). Camera: one photo; photos: several; files: anything. */
+  let pickEls = null;
+  function pickers() {
+    if (pickEls) return pickEls;
+    const make = (id, accept, multiple, capture) => {
+      const input = el('input', 'ph-pickfile');
+      input.type = 'file';
+      input.id = id;
+      if (accept) input.accept = accept;
+      if (multiple) input.multiple = true;
+      if (capture) input.setAttribute('capture', 'environment');
+      input.tabIndex = -1;
+      input.setAttribute('aria-hidden', 'true');
+      input.addEventListener('change', () => {
+        const files = [...(input.files || [])];
+        const target = input.dataset.target === 'new' ? 'new' : 'chat';
+        input.value = '';
+        if (files.length) addPicked(files, target);
+      });
+      doc.body.append(input);
+      return input;
+    };
+    pickEls = {
+      camera: make('phPickCamera', 'image/*', false, true),
+      photos: make('phPickPhotos', 'image/*', true, false),
+      files: make('phPickFiles', '', true, false),
+    };
+    return pickEls;
+  }
+  function openAttach(target) {
+    pickers();
+    S.menu = { kind: 'attach', target };
+    drawMenu();
+  }
+  function attachMenu(sheet, m) {
+    sheet.setAttribute('aria-label', 'Attach');
+    const { takes, agent } = attachTakes(m.target);
+    const noPics = takes && !takes.pictures;
+    const head = el('div', 'ph-mh');
+    head.append(el('b', '', 'Attach'), el('span', '', 'Up to ' + ATTACH.images + ' photos and ' + ATTACH.files + ' files, 20 MB in all'));
+    sheet.append(head);
+    const pick = (which) => () => {
+      const target = m.target;
+      const input = pickers()[which];
+      input.dataset.target = target;
+      S.menu = null;
+      drawMenu();
+      input.click(); // still inside the tap: the phone opens its camera or picker
+    };
+    const camera = menuItem('camera', '◉', 'Take photo', pick('camera'), noPics ? agent + ' can’t take pictures' : '');
+    const photos = menuItem('photos', '▣', 'Choose photos', pick('photos'), noPics ? agent + ' can’t take pictures' : '');
+    camera.disabled = photos.disabled = !!noPics;
+    const files = menuItem('files', '▤', 'Choose files', pick('files'), takes && !takes.binary ? 'Text files only' : '');
+    sheet.append(camera, photos, files, menuItem('cancel', '', 'Cancel', closeMenu));
+  }
+  function base64Of(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return root.btoa(bin);
+  }
+  const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+  const blobOf = (canvas, type, quality) => new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, quality));
+  function canvasOf(bitmap, width, height) {
+    const canvas = doc.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#fff'; // a see-through PNG sent as JPEG gets white, not black
+    g.fillRect(0, 0, width, height);
+    g.drawImage(bitmap, 0, 0, width, height);
+    return canvas;
+  }
+  function thumbOf(bitmap) {
+    try {
+      const t = fitInside(bitmap.width, bitmap.height, 112);
+      return canvasOf(bitmap, t.width, t.height).toDataURL('image/jpeg', 0.7);
+    } catch {
+      return '';
+    }
+  }
+  const pickId = () => 'att-' + randomHex(6);
+  /* A picked picture as it will be sent: a PNG, JPEG, GIF or WebP that fits (long edge ATTACH.longEdge, 5 MB) goes as it is; a
+     bigger one, or another type the phone can read (HEIC), is scaled and sent as JPEG (a PNG screenshot stays PNG while that fits).
+     GIFs go as they are (scaling would stop them moving). */
+  async function preparePicture(file, name, mime) {
+    let bitmap = null;
+    try {
+      bitmap = await root.createImageBitmap(file);
+    } catch {
+      bitmap = null;
+    }
+    const known = PICTURE_TYPES.includes(mime);
+    if (!bitmap) {
+      if (!known) throw Error(name + ': this picture type can’t be sent. Pick a JPEG or PNG.');
+      const bytes = await bytesOf(file);
+      return { id: pickId(), kind: 'image', name, mime, size: bytes.length, data: base64Of(bytes), thumb: '' };
+    }
+    try {
+      const fit = fitInside(bitmap.width, bitmap.height, ATTACH.longEdge);
+      const thumb = thumbOf(bitmap);
+      if (known && (mime === 'image/gif' || (!fit.scaled && file.size <= ATTACH.imageBytes))) {
+        const bytes = await bytesOf(file);
+        return { id: pickId(), kind: 'image', name, mime, size: bytes.length, data: base64Of(bytes), thumb };
+      }
+      const canvas = canvasOf(bitmap, fit.width, fit.height);
+      let type = 'image/jpeg';
+      let blob = null;
+      if (mime === 'image/png') {
+        const png = await blobOf(canvas, 'image/png');
+        if (png && png.size <= ATTACH.imageBytes) {
+          blob = png;
+          type = 'image/png';
+        }
+      }
+      if (!blob) blob = await blobOf(canvas, 'image/jpeg', ATTACH.jpegQuality);
+      if (!blob) throw Error(name + ': this picture could not be read.');
+      const bytes = await bytesOf(blob);
+      const shown = type === 'image/jpeg' ? name.replace(/\.[^.]{1,8}$/, '') + '.jpg' : name;
+      return { id: pickId(), kind: 'image', name: shown, mime: type, size: bytes.length, data: base64Of(bytes), thumb, scaled: fit.scaled };
+    } finally {
+      bitmap.close();
+    }
+  }
+  function decodesAsText(bytes) {
+    if (bytes.includes(0)) return false;
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function prepareFile(file) {
+    const name = cleanFileName(file.name);
+    const mime = String(file.type || '').toLowerCase().split(';')[0].trim();
+    if (!file.size) throw Error(name + ': the file is empty.');
+    if (PICTURE_TYPES.includes(mime) || /^image\/(heic|heif|avif|bmp)$/.test(mime)) return preparePicture(file, name, mime);
+    if (file.size > ATTACH.binaryBytes) throw Error(name + ': files can be at most 10 MB.');
+    const bytes = await bytesOf(file);
+    const text = looksText(name, mime) && decodesAsText(bytes);
+    return { id: pickId(), kind: 'file', name, mime, size: bytes.length, text, data: base64Of(bytes) };
+  }
+  async function addPicked(files, target) {
+    const { takes, agent } = attachTakes(target);
+    const notes = [];
+    S.attachNote[target] = '';
+    S.attachBusy[target]++;
+    draw();
+    for (const file of files) {
+      let item = null;
+      try {
+        item = await prepareFile(file);
+      } catch (error) {
+        notes.push(String((error && error.message) || 'This file could not be read.'));
+        continue;
+      }
+      const why = attachProblem(S.attach[target], item, takes, agent);
+      if (why) notes.push(why);
+      else S.attach[target] = [...S.attach[target], item];
+    }
+    S.attachBusy[target]--;
+    S.attachNote[target] = [...new Set(notes)].join(' · ');
+    draw();
+  }
+  function removeChip(target, id) {
+    S.attach[target] = S.attach[target].filter((x) => x.id !== id);
+    S.attachNote[target] = '';
+    draw();
+  }
+  /* The chosen pictures and files above the message box: a thumbnail (pictures) or the file's type, the name, the size, ×. */
+  function chipsEl(target) {
+    const items = S.attach[target];
+    const box = el('div', 'ph-chips');
+    box.id = target === 'new' ? 'phNewChips' : 'phChips';
+    if (items.length) {
+      const list = el('ul', 'ph-chip-list');
+      list.setAttribute('aria-label', 'Attached');
+      for (const item of items) {
+        const chip = el('li', 'ph-chip ' + (item.kind === 'image' ? 'pic' : 'file'));
+        chip.dataset.chip = item.id;
+        if (item.kind === 'image' && item.thumb) {
+          const img = el('img', 'ph-chip-thumb');
+          img.src = item.thumb;
+          img.alt = '';
+          chip.append(img);
+        } else chip.append(el('span', 'ph-chip-ext', (extOf(item.name) || (item.kind === 'image' ? 'img' : 'file')).slice(0, 4).toUpperCase()));
+        const t = el('span', 'ph-chip-t');
+        t.append(el('span', 'ph-chip-name', item.name), el('small', '', sizeWords(item.size)));
+        chip.append(t);
+        const x = button('ph-chip-x', '×', () => removeChip(target, item.id));
+        x.setAttribute('aria-label', 'Remove ' + item.name);
+        x.dataset.remove = item.id;
+        chip.append(x);
+        list.append(chip);
+      }
+      box.append(list);
+    }
+    if (S.attachBusy[target]) box.append(el('p', 'ph-note ph-chip-busy', 'Adding…'));
+    if (S.attachNote[target]) {
+      const note = el('p', 'ph-error ph-attach-note', S.attachNote[target]);
+      note.id = target === 'new' ? 'phNewAttachNote' : 'phAttachNote';
+      note.setAttribute('role', 'alert');
+      box.append(note);
+    }
+    box.hidden = !box.childNodes.length;
+    return box;
   }
 
   /* The bottom bar when this phone can't send here (its switch is off, or the chat can't take messages): what waits, and why. */
@@ -3151,6 +3797,14 @@
         }
       }
     }
+    // Reply on an inbox card: the chat's message box gets the focus once the chat has loaded
+    if (S.focusPrompt && S.screen === 'chat' && S.chat) {
+      const p = doc.getElementById('phPrompt');
+      if (p) {
+        S.focusPrompt = false;
+        p.focus({ preventScroll: true });
+      }
+    }
     const to = S.scrollTo;
     if (to && (S.screen === 'chat' || S.screen === 'saved') && (S.chat || S.saved)) {
       S.scrollTo = '';
@@ -3193,6 +3847,7 @@
 
   function goHome() {
     leaveChat();
+    S.focusPrompt = false;
     S.screen = 'home';
     draw();
     root.scrollTo(0, 0);
@@ -3258,6 +3913,8 @@
     S.land = land ? 'first' : '';
     S.answers = {};
     S.draft = '';
+    S.attach.chat = [];
+    S.attachNote.chat = '';
     S.editing = null;
     draw();
     root.scrollTo(0, 0);
@@ -3283,7 +3940,7 @@
     draw();
     let r = null;
     try {
-      r = await call('POST', '/api/remote/' + op, body);
+      r = await call('POST', '/api/remote/' + op, body, body && body.attachments ? UPLOAD_MS : TIMEOUT_MS);
     } catch {
       r = null;
     }
@@ -3312,13 +3969,16 @@
   async function sendDraft() {
     const text = S.draft;
     const c = S.chat;
-    if (!c || !text.trim() || S.sending) return;
+    const items = S.attach.chat;
+    if (!c || (!text.trim() && !items.length) || S.sending || S.attachBusy.chat) return;
     const job = S.newJob && S.newJob.id === c.id ? S.newJob : null;
     const how = firstSend(job, c.id);
     const op = how.first ? 'new/first' : c.busy ? (c.steerable ? 'steer' : 'queue') : 'prompt';
     // the first message keeps its id (a repeat is dropped by the agent host); after a restart, a changed text is a new message
     const cmid = how.cmid && (how.first || text === job.text) ? how.cmid : newMessageId();
-    const done = await act(op, { id: c.id, text, clientMessageId: cmid });
+    const body = { id: c.id, text, clientMessageId: cmid };
+    if (items.length) body.attachments = attachBody(items);
+    const done = await act(op, body);
     if (done && job && (how.first || how.cmid)) job.state = 'sent';
     if (!done && how.first && S.actStatus === 404) {
       // AIB restarted and forgot this start: the next Send is a normal message with the same id
@@ -3328,6 +3988,8 @@
     }
     if (done) {
       S.draft = '';
+      S.attach.chat = S.attach.chat.filter((x) => !items.includes(x));
+      S.attachNote.chat = '';
       const ta = doc.getElementById('phPrompt');
       if (ta) {
         ta.value = '';

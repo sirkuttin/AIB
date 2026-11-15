@@ -18,12 +18,17 @@
  * card menu (rename into the PC's shared chat names, mark read / unread in the PC's read state, Mark handled, archive, delete and
  * this phone's Undo; every paired phone, except that ending a session needs Send), a chat's artifacts in phone shape and each
  * artifact's versions, and the PC's theme in bootstrap and home. One activity line per action, never message text or names.
+ *
+ * Attachments (owner: "allow sending attachments from the phone app"): prompt, steer, queue and New chat's first message carry
+ * pictures and files as bytes (remote/actions.ts phoneAttachments: never a path, the PC composer's limits, what the agent takes).
+ * Their bodies may be up to MAX_ATTACH_BODY, read only after the phone's key and its Send (or Start new chats) switch are checked.
  */
 import { APP_ROOT, APP_VERSION } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { type WebContext, withThemePref } from '../web/server.ts';
-import { ACTION_OPS, checkAction, Refusal } from './actions.ts';
+import { ACTION_OPS, attachedWords, checkAction, Refusal } from './actions.ts';
+import { MAX_PROMPT_BODY_BYTES, MAX_TOTAL_ATTACHMENT_BYTES } from '../acp/attachments.ts';
 import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
@@ -54,6 +59,17 @@ export const COOKIE_NAME = '__Host-aib-phone';
 const COOKIE_MAX_AGE = 400 * 24 * 3600; // Chrome's cap; renewed whenever the phone page loads
 /** The biggest body a phone sends: a message of MAX_TEXT (8000) characters of 4-byte emoji, JSON-escaped, and its fields. */
 export const MAX_BODY = 48 * 1024;
+/** A message with pictures and files (the PC composer's 20 MiB as base64, and the text): only on these routes, and only read once
+ * the phone's key and its switch for the route are checked (a phone without Send never gets more than MAX_BODY read). */
+export const MAX_ATTACH_BODY = MAX_PROMPT_BODY_BYTES;
+export const ATTACH_ROUTES: ReadonlySet<string> = new Set([
+  '/api/remote/prompt',
+  '/api/remote/steer',
+  '/api/remote/queue',
+  '/api/remote/new',
+  '/api/remote/new/first',
+]);
+const TOO_BIG = `Attachments can be at most ${MAX_TOTAL_ATTACHMENT_BYTES / 1048576} MiB in all.`;
 
 /** The phone page's files (and only these) are served on the phone port. Never chat.html, '/', or the page bootstrap. The service
  * worker (pwa/sw.js, at the root so its scope is the whole phone origin) and the app icons are served here only: the page port
@@ -386,11 +402,42 @@ export class RemoteServer {
     return device;
   }
 
-  async #body(request: Request): Promise<Record<string, unknown> | null> {
+  async #body(request: Request, max = MAX_BODY): Promise<Record<string, unknown> | null> {
+    return (await this.#bodyOf(request, max)).body;
+  }
+
+  /** The JSON object a phone sent, at most `max` bytes; `tooBig` when it sent more (nothing past `max` is kept). */
+  async #bodyOf(request: Request, max: number): Promise<{ body: Record<string, unknown> | null; tooBig: boolean }> {
     const declared = Number(request.headers.get('Content-Length') ?? '0');
-    if (declared > MAX_BODY) return null;
-    const raw = new Uint8Array(await request.arrayBuffer());
-    if (!raw.byteLength || raw.byteLength > MAX_BODY) return null;
+    if (declared > max) {
+      await drain(request);
+      return { body: null, tooBig: true };
+    }
+    // read at most `max` bytes, whatever Content-Length said (a chunked body has none)
+    const reader = request.body?.getReader();
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > max) {
+        await reader.cancel().catch(() => {});
+        return { body: null, tooBig: true };
+      }
+      parts.push(value);
+    }
+    const raw = new Uint8Array(size);
+    let at = 0;
+    for (const part of parts) {
+      raw.set(part, at);
+      at += part.byteLength;
+    }
+    return { body: this.#parse(raw), tooBig: false };
+  }
+
+  #parse(raw: Uint8Array): Record<string, unknown> | null {
+    if (!raw.byteLength) return null;
     try {
       const body = JSON.parse(new TextDecoder().decode(raw));
       return body && typeof body === 'object' && !Array.isArray(body) ? body : null;
@@ -703,9 +750,10 @@ export class RemoteServer {
   /** A phone action (remote/actions.ts): device and switch, the body checked against the chat now, then the live op; one log line. */
   async #action(request: Request, path: string): Promise<Response> {
     const { op, audit } = ACTION_OPS[path];
-    const body = await this.#body(request);
     const chatOf = (value: unknown) => (typeof value === 'string' ? value.slice(0, 100) : '');
+    // the phone's key and switch first: a message with attachments is only read for a phone that may send it
     const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
+    const { body, tooBig } = await this.#bodyOf(request, device instanceof Response || !ATTACH_ROUTES.has(path) ? MAX_BODY : MAX_ATTACH_BODY);
     if (device instanceof Response) {
       const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
       if (known && device.headers.get('X-AIB-Refused') === 'scope') {
@@ -721,6 +769,10 @@ export class RemoteServer {
     }
     const log = (chat: unknown, result: string) =>
       this.host.audit.write({ device: device.id, name: device.name, action: audit, chat: chatOf(chat), result });
+    if (tooBig && ATTACH_ROUTES.has(path)) {
+      log('', 'refused: too_big');
+      return this.json(413, { error: TOO_BIG, code: 'too_big' });
+    }
     if (!body) {
       log('', 'refused: invalid request');
       return this.json(400, { error: 'Invalid request', code: 'invalid' });
@@ -734,7 +786,8 @@ export class RemoteServer {
       return this.json(error.status, { error: error.message, code: error.code });
     }
     const [status, payload] = await this.host.ctx.host.liveCall(op, checked);
-    log(checked.id, status === 200 ? 'done' : `failed (${status})`);
+    const files = attachedWords(checked.attachments);
+    log(checked.id, (status === 200 ? 'done' : `failed (${status})`) + (files ? ', ' + files : ''));
     const answer = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
     if (status !== 200) {
       return this.json(status, {
@@ -787,7 +840,7 @@ export class RemoteServer {
       if (!folder) return this.json(404, { error: 'This project is no longer in AIB on your PC.', code: 'not_found' });
       if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(agent)) return this.json(400, { error: 'Invalid request', code: 'invalid' });
       // only an agent that can start a chat now: asking a turned-off or missing agent for its lists could start it (a probe)
-      const can = (await agentsNow(this.host.ctx)).find((a) => a.id === agent);
+      const can = (await agentsNow(this.host.ctx, { stale: true })).find((a) => a.id === agent);
       if (!can) return this.json(400, { error: 'Invalid request', code: 'invalid' });
       if (!can.ok) {
         return this.json(403, {
@@ -829,10 +882,10 @@ export class RemoteServer {
 
   /** The phone's own POST routes of part 2: new chat, the card menu. One activity line each (never message text or names). */
   async #phone(request: Request, path: string): Promise<Response> {
-    const body = await this.#body(request);
     const audit = PHONE_AUDIT[path];
     const chatOf = (v: unknown) => (typeof v === 'string' ? v.slice(0, 100) : '');
     const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
+    const { body, tooBig } = await this.#bodyOf(request, device instanceof Response || !ATTACH_ROUTES.has(path) ? MAX_BODY : MAX_ATTACH_BODY);
     if (device instanceof Response) {
       const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
       if (known && device.headers.get('X-AIB-Refused') === 'scope') {
@@ -848,6 +901,10 @@ export class RemoteServer {
     }
     const log = (chat: unknown, result: string) =>
       this.host.audit.write({ device: device.id, name: device.name, action: audit, chat: chatOf(chat), result });
+    if (tooBig && ATTACH_ROUTES.has(path)) {
+      log('', 'refused: too_big');
+      return this.json(413, { error: TOO_BIG, code: 'too_big' });
+    }
     if (!body) {
       log('', 'refused: invalid request');
       return this.json(400, { error: 'Invalid request', code: 'invalid' });
@@ -858,15 +915,33 @@ export class RemoteServer {
         const allowed = () => !!this.host.devices.byId(device.id)?.scopes.includes('phone.start');
         const started = await this.newChats.start(this.host.ctx, device.id, body, allowed);
         this.host.saved.invalidate();
-        log(started.id, started.existing ? 'sent again: the chat it already started' : `started on the PC with ${started.agent}`);
+        const files = started.existing ? '' : attachedWords(body.attachments);
+        log(
+          started.id,
+          (started.existing ? 'sent again: the chat it already started' : `started on the PC with ${started.agent}`) +
+            (files ? ', first message ' + files : ''),
+        );
         return this.json(200, { ok: true, id: started.id, ...(started.existing ? { existing: true } : {}) });
       }
       if (path === '/api/remote/new/first') {
         const job = this.newChats.job(device.id, typeof body.id === 'string' ? body.id : '');
         if (!job) throw new Refusal(404, 'not_found', 'This new chat is not known here any more. Send your message in the chat.');
-        const checked = await checkAction(this.host.ctx, 'prompt', { id: job.id, text: body.text, clientMessageId: body.clientMessageId });
-        const [status, answer] = await this.newChats.send(this.host.ctx, job, checked.text as string, checked.clientMessageId as string);
-        log(job.id, status === 200 ? 'first message sent' : `failed (${status})`);
+        const checked = await checkAction(this.host.ctx, 'prompt', {
+          id: job.id,
+          text: body.text,
+          clientMessageId: body.clientMessageId,
+          ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
+        });
+        const attachments = Array.isArray(checked.attachments) ? checked.attachments as Record<string, unknown>[] : [];
+        const [status, answer] = await this.newChats.send(
+          this.host.ctx,
+          job,
+          checked.text as string,
+          checked.clientMessageId as string,
+          attachments,
+        );
+        const files = attachedWords(attachments);
+        log(job.id, (status === 200 ? 'first message sent' : `failed (${status})`) + (files ? ', ' + files : ''));
         if (status !== 200) return this.json(status, { error: job.error, code: answer.code ?? 'failed' });
         return this.json(200, { ok: true, state: job.state });
       }

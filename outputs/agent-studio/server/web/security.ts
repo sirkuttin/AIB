@@ -3,7 +3,8 @@
  * authorize() decides who is asking (a Principal) and refuses the request when that principal lacks the scope.
  *
  *   page        the Studio page in a browser (or the desktop window): X-Studio-Token, Host and Origin of this server, Fetch Metadata
- *               same-origin or absent, no navigation on /api/, POSTs only with an Origin or same-origin.
+ *               same-origin or absent, no navigation on /api/, POSTs only with an Origin or same-origin. Bootstrap needs no token
+ *               but hands one out only to a caller with the launch key or a page session (page_access.ts).
  *   agent_tool  the artifact MCP shim (no browser): X-Studio-Artifact-Key valid for one conversation, and no Origin or Sec-Fetch-*
  *               headers (a browser must never be able to use a key).
  *
@@ -18,6 +19,8 @@ export const PAGE = 'page', AGENT_TOOL = 'agent_tool', HOST_RPC = 'host_rpc';
 
 export const SCOPE_STATIC = 'static';
 export const SCOPE_BOOTSTRAP = 'bootstrap';
+/** POST /api/live/page-session: the page trades the launch key for a page session (page_access.ts); no token yet. */
+export const SCOPE_PAIR = 'pair';
 export const SCOPE_IMAGE = 'image';
 export const SCOPE_READ = 'read';
 export const SCOPE_WRITE = 'write';
@@ -31,6 +34,7 @@ export type Scope = string;
 export const PAGE_SCOPES: ReadonlySet<Scope> = new Set([
   SCOPE_STATIC,
   SCOPE_BOOTSTRAP,
+  SCOPE_PAIR,
   SCOPE_IMAGE,
   SCOPE_READ,
   SCOPE_WRITE,
@@ -41,7 +45,7 @@ export const PAGE_SCOPES: ReadonlySet<Scope> = new Set([
   SCOPE_SHUTDOWN,
 ]);
 export const TOOL_SCOPES: ReadonlySet<Scope> = new Set([SCOPE_ARTIFACTS_TOOL, SCOPE_WORKTREE_TOOL]);
-export const TOKENLESS_SCOPES: ReadonlySet<Scope> = new Set([SCOPE_STATIC, SCOPE_BOOTSTRAP]);
+export const TOKENLESS_SCOPES: ReadonlySet<Scope> = new Set([SCOPE_STATIC, SCOPE_BOOTSTRAP, SCOPE_PAIR]);
 
 /** Constant-time comparison of two tokens as UTF-8 bytes; never throws; an empty expected value never matches. */
 export function tokenMatches(supplied: unknown, expected: unknown): boolean {

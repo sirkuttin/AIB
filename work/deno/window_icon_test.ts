@@ -6,6 +6,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import {
   applyAppIcon,
+  attentionIconPair,
   iconPixels,
   iconSizes,
   LAUFEY_WINDOW_CLASS,
@@ -14,6 +15,8 @@ import {
   windowsOf,
 } from '../../outputs/agent-studio/server/desktop/window_icon_win.ts';
 import { decodePng, embedWindowsIcon, parseIco } from '../../tools/build.ts';
+import { withAttentionDot } from '../../outputs/agent-studio/server/desktop/png_badge.ts';
+import { trayIconBytes } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
 const ICO = new URL('../../outputs/agent-studio/icons/icon.ico', import.meta.url);
@@ -134,5 +137,34 @@ Deno.test({
       win.close();
       Deno.removeSync(dir, { recursive: true });
     }
+  },
+});
+
+Deno.test({
+  name: 'the attention window icon (inbox 1b): the app icon with the amber dot, at the system big and small sizes',
+  ignore: !WINDOWS,
+  fn: async () => {
+    const pair = attentionIconPair({ big: await withAttentionDot(trayIconBytes(32)), small: await withAttentionDot(trayIconBytes(16)) });
+    assert(pair, 'made');
+    const sizes = iconSizes();
+    for (const [h, size] of [[pair.big, sizes.big], [pair.small, sizes.small]] as const) {
+      const p = iconPixels(h)!;
+      assertEquals(p.width, size);
+      let amber = 0;
+      for (let i = 0; i < p.rgba.length; i += 4) {
+        const [r, g, b, a] = p.rgba.subarray(i, i + 4);
+        if (a > 200 && r > 200 && g > 120 && g < 190 && b < 60) amber++;
+      }
+      assert(amber > 0, `the dot shows at ${size} px`);
+    }
+    // a plain icon has no such dot (the check is not fooled by the icon's own colours)
+    const plain = attentionIconPair({ big: trayIconBytes(32), small: trayIconBytes(16) })!;
+    const p = iconPixels(plain.small)!;
+    let amber = 0;
+    for (let i = 0; i < p.rgba.length; i += 4) {
+      const [r, g, b, a] = p.rgba.subarray(i, i + 4);
+      if (a > 200 && r > 200 && g > 120 && g < 190 && b < 60) amber++;
+    }
+    assertEquals(amber, 0);
   },
 });

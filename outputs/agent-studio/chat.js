@@ -131,7 +131,8 @@
     imagePickerKey = '',
     newDraft = null,
     startingNew = false,
-    lastMainRows = [];
+    lastMainRows = [],
+    splitLeft = null; // split view: the rows the main list showed for the chat that just left focus, for its pane's copy (takeLeft)
   const newOptions = new Map(), // agent|folder -> the lists a new chat can offer (wantNewOptions)
     attachmentStore = new Map(),
     MAX_IMAGES = 4,
@@ -708,10 +709,15 @@
     return error;
   }
   // Every /api/ GET except bootstrap carries the page token. A 403 means the token is stale (Studio restarted): fetch a fresh one and retry once; a GET is safe to repeat.
+  // Bootstrap carries the page's own proof instead (page-auth.js: its link's launch key, or the page session made with it); without
+  // it AIB answers with an empty token.
+  const pageAuth = () => (window.AIBPageAuth ? window.AIBPageAuth.headers() : {});
+  const NOT_CONNECTED =
+    'This browser is not connected to AIB yet. Open AIB from its app window, or start it with --open (or use the link it prints in its console) once; after that this browser stays connected.';
   async function get(path, params = {}) {
     const open = path === '/api/live/bootstrap',
       url = path + '?' + new URLSearchParams(params),
-      send = () => request(url, open ? {} : { headers: { 'X-Studio-Token': token } }, 15000);
+      send = () => request(url, { headers: open ? pageAuth() : { 'X-Studio-Token': token } }, 15000);
     if (!open && !token) await refreshToken();
     let response = await send();
     if (response.status === 403 && !open) {
@@ -727,9 +733,10 @@
   }
   window.AgentStudioGet = get;
   async function refreshToken() {
-    const response = await request('/api/live/bootstrap', {}, 15000);
+    const response = await request('/api/live/bootstrap', { headers: pageAuth() }, 15000);
     if (!response.ok) throw responseError(response);
     token = response.body.token;
+    if (!token) throw Error(NOT_CONNECTED);
     if (response.body.instanceId) instanceId = response.body.instanceId;
     showStudioNotice(response.body);
   }
@@ -1145,7 +1152,33 @@
     wrapper.append(button, more);
     return wrapper;
   }
+  /* Split view, focus moving from one pane to another: the two panes swap their drawn rows instead of clearing. The chat you
+     leave keeps its rows (and its last rows for the copy, stash) for its pane's copy; the chat you focus takes the rows its pane's
+     copy already shows, so the focused pane never shows "Loading conversation…" (a blank, white frame) while its rows load. */
+  function splitSwap(c) {
+    splitLeft = null;
+    if (!window.AgentSplitUI?.active?.()) return null;
+    const key = aliasKey(c),
+      prev = selected ? aliasKey(selected) : '';
+    if (prev && prev !== key) {
+      if (lastMainRows.length) mirrorEntry(prev).rows = lastMainRows;
+      if ($('messages').children.length) splitLeft = { key: prev, nodes: [...$('messages').childNodes] };
+    }
+    const box = [...document.querySelectorAll('.mirror-msgs')].find((b) => b.dataset.mirror === key);
+    return box && box.children.length ? [...box.childNodes] : null;
+  }
+  function takeLeft(key) {
+    const l = splitLeft;
+    if (!l || l.key !== key) return null;
+    splitLeft = null;
+    return l.nodes;
+  }
   function beginConversation(c) {
+    const incoming = splitSwap(c),
+      opening = () =>
+        incoming
+          ? $('messages').replaceChildren(...incoming)
+          : $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
     window.AgentWorkspaceUI?.noteOpened(c);
     connectionIssue = false;
     window.AgentOwnershipUI?.clear($('ownershipPrompt'));
@@ -1161,7 +1194,7 @@
     $('newChatBar').hidden = true;
     if (mainCtl()) {
       /* the chat you open comes back where you left it (the owner's Q6); one never read here follows (or opens at its New line) */
-      $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
+      opening();
       $('messages')._winStart = null; // another chat: its own window
       $('messages')._tail = null;
       mainCtl().switchTo(aliasKey(c), () => window.ScrollController.FOLLOW);
@@ -1199,7 +1232,8 @@
     $('subchatPane').hidden = true;
     $('messages').hidden = false;
     $('renameCurrent').hidden = false;
-    $('messages').replaceChildren(text('p', 'Loading conversation…', 'empty-state'));
+    opening();
+    if (incoming) mainCtl()?.apply(); // the rows from the pane's copy, at the place you read there
     $('subagentList').replaceChildren();
     $('runningCommandList').replaceChildren();
     $('commandCount').textContent = '0';
@@ -1443,6 +1477,10 @@
     const box = text('div', '', 'note-actions');
     const result = text('span', '', 'note-actions-result');
     for (const a of actions) {
+      if (a && /^swarm-/.test(a.id)) {
+        box.append(swarmButton(a, box, result));
+        continue;
+      }
       if (!a || !['keep-mine', 'leave'].includes(a.id)) continue;
       const button = text('button', a.label || a.id, 'note-action');
       button.type = 'button';
@@ -1461,6 +1499,30 @@
     }
     box.append(result);
     return box;
+  }
+  /* Swarm phase 1: the buttons on a helper's line in the main chat (Undo / Merge again of its merge, Open chat). */
+  function swarmButton(a, box, result) {
+    const button = text('button', a.label || a.id, 'note-action');
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      if (a.id === 'swarm-open') {
+        const helpers = (await get('/api/live/swarm', { conversationId: current }).catch(() => null))?.helpers || [];
+        const chat = helpers.find((h) => h.id === a.helper)?.chat;
+        const c = chat && conversations.find((x) => x.live?.id === chat);
+        if (c) await openConversation(c);
+        else result.textContent = 'The helper chat is not open';
+        return;
+      }
+      for (const b of box.querySelectorAll('button')) b.disabled = true;
+      try {
+        const done = await post(a.id === 'swarm-undo' ? 'swarm/undo' : 'swarm/merge-again', { helper: a.helper });
+        result.textContent = done?.state === 'cannot_undo' ? "Can't undo cleanly: nothing changed" : '';
+      } catch (error) {
+        result.textContent = error.message || 'Failed';
+        for (const b of box.querySelectorAll('button')) b.disabled = false;
+      }
+    });
+    return button;
   }
   /* "Still running in the background" (+ Stop when AIB can stop it) for a tool row the server marked (update.background). */
   function toolBackgroundPill(row) {
@@ -2000,6 +2062,16 @@
       } else if (event.kind === 'request_withdrawn') {
         const row = asks.get(event.data?.key);
         if (row) row.withdrawn = true;
+        continue;
+      } else if (event.kind === 'auth_required') {
+        /* The agent's login expired mid-session: its "Failed to authenticate…" text goes under the sign-in card (Details), not in
+           the chat as a raw bubble; the card itself is drawn from snapshot.auth. */
+        const last = rows.at(-1),
+          detail = String(event.data?.detail || '');
+        if (event.data?.during === 'prompt' && last?.role === 'assistant' && String(last.value || '').trim() &&
+          detail.indexOf(String(last.value).trim()) === 0
+        )
+          rows.pop();
         continue;
       } else if (event.kind === 'error' || event.kind === 'disconnected') {
         role = 'notice';
@@ -2707,6 +2779,21 @@
             if (current === connection) await refresh();
           }
         : null,
+      // A built-in agent's terminal sign-in (Claude Code): the advertised method's args run after the agent's own launcher in an AIB
+      // terminal inside the card (a ConPTY, never a console window). The card asks for a retry when it exits 0. A chat in a WSL
+      // project signs in where its agent runs: the login runs inside the chat's distro (distro terminal, Linux home).
+      runTerminal:
+        !terminal &&
+        (snap.provider === 'claude' || snap.provider === 'codex') &&
+        window.AibTerminal &&
+        window.AibTerminal.runSignin
+          ? (method, box, hooks) =>
+              window.AibTerminal.runSignin(
+                box,
+                snap.provider,
+                Object.assign({}, hooks, { args: method.args, distro: (snap.wsl && snap.wsl.distro) || '' }),
+              )
+          : null,
     };
   }
   let setupWatch = '';
@@ -3710,6 +3797,25 @@
     }
     return { queued: route === 'queue', steered: route === 'steer' };
   }
+  // Retry from the inbox's Failed row: your last message to the chat, sent again as a new message (a new clientMessageId) by the
+  // quick-reply route. Text only: attachments are not sent again (the row says so).
+  async function retryLast(c) {
+    const id = c && c.live && !c.live.closed ? c.live.id : '';
+    if (!id) throw Error('This chat is not running. Use Open chat.');
+    let events = [];
+    try {
+      const top = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
+      const cursor = Math.max(0, Math.trunc(Number(top && top.cursor) || 0));
+      events = (await get('/api/live/state', { id, after: Math.max(1, cursor - 400) }))?.events || [];
+      if (!events.some((e) => e && e.kind === 'user') && cursor > 400) events = (await get('/api/live/state', { id, after: 1 }))?.events || [];
+    } catch {
+      throw Error('Your last message could not be read. Use Open chat.');
+    }
+    const last = window.AgentInboxReply ? window.AgentInboxReply.lastUserText(events, c.live.sessionId) : { text: '' };
+    if (!last.text) throw Error('There is no message of yours to send again. Use Open chat.');
+    const res = await quickPrompt(c, last.text);
+    return { ...res, attachments: !!last.attachments };
+  }
   async function reloadAfterAnswer() {
     try {
       await listConversations();
@@ -3947,9 +4053,11 @@
     try {
       const bootstrap = await get('/api/live/bootstrap');
       token = bootstrap.token;
+      if (!token) throw Error(NOT_CONNECTED);
       imageFeatureEnabled = !!bootstrap.features?.imageAttachments;
       window.AttachmentsUI?.setFeatures(bootstrap.features);
       instanceId = bootstrap.instanceId || '';
+      if ($('appVersion')) $('appVersion').textContent = bootstrap.server?.version || ''; // the exact build, beside the Beta tag
       discoveryEnabled = !!bootstrap.features?.sessionDiscovery;
       if (bootstrap.features?.formElicitation) await loadQuestionUI();
       if (window.AgentSettingsUI) await window.AgentSettingsUI.load();
@@ -4640,6 +4748,8 @@
     getJson: get,
     postJson: post,
     quickPrompt,
+    retryLast,
+    handoff: (c) => handoffFor(c),
     reload: reloadAfterAnswer,
     conversations: () => conversations,
     getSelected: () => selected,
@@ -4983,6 +5093,7 @@
       stash: (key) => {
         if (key && lastMainRows.length) mirrorEntry(key).rows = lastMainRows;
       },
+      take: takeLeft,
       wake: () => setTimeout(tickMirrors, 60),
       release: (box) => {
         box?._scrollCtl?.detach();

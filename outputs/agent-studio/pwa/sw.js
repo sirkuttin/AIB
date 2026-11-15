@@ -44,12 +44,14 @@
   function notificationOf(data) {
     const d = data && typeof data === 'object' ? data : {};
     const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+    const silent = d.silent === true;
     return {
       title: text(d.title, 120) || 'AIB',
       options: {
         body: text(d.body, 400),
         tag: TAG,
-        renotify: true,
+        renotify: !silent,
+        silent, // Finished only: no sound or vibration (a chat that needs you still rings)
         icon: '/icons/icon-256.png',
         badge: '/icons/badge-96.png', // the status bar's small icon (Android draws its alpha only; without it a grey square)
         data: { chat: text(d.chat, 100), sheet: d.sheet === true },

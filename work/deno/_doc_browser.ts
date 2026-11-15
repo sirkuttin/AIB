@@ -5,6 +5,7 @@
  * Content Security Policy violation.
  */
 import { assert } from './_assert.ts';
+import { PAGE_KEY, withPageKey } from './_page_key.ts';
 import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import { docsTool } from '../../outputs/agent-studio/server/web/docs_routes.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
@@ -74,6 +75,7 @@ export async function studio(root?: string, port = 0) {
     claudeProjects: state,
     ompSessions: state,
     shutdown: () => {},
+    pageKey: PAGE_KEY, // the browser's link carries it (Page.goto)
   });
   const web = new WebServer(ctx);
   const bound = await web.listen(port);
@@ -302,7 +304,21 @@ export class Page {
     });
   }
   async goto(url: string): Promise<void> {
-    await this.send('Page.navigate', { url });
+    // The launch key in the link, as the app's window has it; not when this page is already on that origin (a link that differs
+    // only by #fragment would not load the page again): the tab keeps the key in its sessionStorage instead.
+    let here = '';
+    try {
+      here = String(await this.eval('location.origin'));
+    } catch { /* no page yet */ }
+    let same = false;
+    try {
+      same = here === new URL(url).origin;
+    } catch { /* not a URL */ }
+    if (same && withPageKey(url) !== url) {
+      // a test that cleared the page's storage (a fresh profile): the tab keeps the key, as after its first link
+      await this.eval(`sessionStorage.setItem('aib-page-key', ${JSON.stringify(PAGE_KEY)})`).catch(() => {});
+    }
+    await this.send('Page.navigate', { url: same ? url : withPageKey(url) });
     await this.waitFor('document.readyState === "complete"', 10000);
   }
   async viewport(width: number, height = 900): Promise<void> {

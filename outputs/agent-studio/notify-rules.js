@@ -17,6 +17,31 @@
   //   * Where the owner is looking (route): a chat on a phone's screen gets no desktop notification and no push; while a phone is
   //     in hand at all, news goes to its page as a banner, not as a push; the PC's focus and input rules stay as they were.
   const GROUP_MS = 60000;
+  // The second inbox section's name (owner 2026-11-13, "for now"): the agent finished its turn and it is yours to look at. One
+  // constant, so the final name is a one-line swap; it replaces "Finished" / "Your turn" in every notification.
+  const TO_REVIEW = 'To review';
+  // Windows balloons hold a 63-character title and a 255-character text (server/desktop/tray_win.ts); every OS gets the same.
+  const MAX_TITLE = 63,
+    MAX_BODY = 255;
+  // Cut to n characters (code points), ending in "…" when cut.
+  function clipText(s, n) {
+    const chars = Array.from(String(s == null ? '' : s));
+    return chars.length <= n ? chars.join('') : chars.slice(0, Math.max(0, n - 1)).join('').trimEnd() + '\u2026';
+  }
+  // A command that is never allowed with one tap (push, force push, delete): Review shows it in full first, and there is no
+  // "Always allow" for it. text: the command (or the approval's line, "Run git push origin main").
+  const RISKY = [
+    /\bgit\s+(?:-\S+\s+)*push\b/i,
+    /\bgit\s+(?:-\S+\s+)*branch\s+(?:\S+\s+)*-(?:D|d|-delete)\b/,
+    /\bgit\s+(?:-\S+\s+)*(?:clean\s+-\S*f|reset\s+--hard)\b/i,
+    /(?:^|[\s;&|(])(?:rm|rmdir|del|erase|rd|unlink|shred)\s/i,
+    /\bRemove-Item\b/i,
+    /--force\b/i,
+  ];
+  const isRisky = (text) => {
+    const t = String(text == null ? '' : text);
+    return !!t.trim() && RISKY.some((re) => re.test(t));
+  };
   const TAG = 'studio-attention';
   const PUSH_TAG = 'aib-attention';
 
@@ -77,7 +102,9 @@
   // ---- the desktop app's choices ------------------------------------------------------------------------------------------------
   const SOUND_MODES = ['needs', 'both', 'off'],
     NOTIFY_FOR = ['both', 'needs'];
-  // app: the desktop app's defaults (notifications on, Needs you only); a browser's stay off until allowed, for both kinds.
+  // app: the desktop app's defaults (notifications on, for Needs you + Finished; Finished ones are silent); a browser's stay off
+  // until allowed, for both kinds. Anyone who saved "Needs you only" (notifyFor: 'needs') keeps it: the page writes the whole
+  // object, so a saved value is a choice the owner saw.
   function cleanPrefs(v, app) {
     v = v && typeof v === 'object' ? v : {};
     // The old checkbox ("Play a sound") was a boolean: on becomes "Needs you only", off stays off.
@@ -85,7 +112,7 @@
     return {
       desktop: app ? v.desktop !== false : v.desktop === true,
       sound,
-      notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : app ? 'needs' : 'both',
+      notifyFor: NOTIFY_FOR.includes(v.notifyFor) ? v.notifyFor : 'both',
     };
   }
   // The saved text of studio-notifications-app (view preferences) as the desktop app's choices.
@@ -112,15 +139,23 @@
     let best = null;
     for (const it of items) {
       const at = g.entries.findIndex((x) => x.key === it.key);
-      // An entry is {key, title, kind} (+ chat: the live chat's id, which the server's pushes open).
+      // An entry is {key, title, kind, reason} (+ chat: the live chat's id, which the server's pushes open). A chat that needs
+      // you stays "needs" (and keeps its reason) when a finish of the same chat joins the group.
       const entry = (old) => {
+        const needs = (old && old.kind === 'needs') || it.kind === 'needs';
+        const src = it.kind === 'needs' || !old ? it : old;
         const e = {
           key: it.key,
           title: it.title || (old ? old.title : ''),
-          kind: (old && old.kind === 'needs') || it.kind === 'needs' ? 'needs' : 'turn',
+          kind: needs ? 'needs' : 'turn',
+          reason: reasonFor(src) || (needs ? 'approval' : 'finished'),
         };
         const chat = it.chat || (old && old.chat);
         if (chat) e.chat = chat;
+        // The desktop notification's text (never a push's): the chat's project and the request itself.
+        const project = it.project || (old && old.project);
+        if (project) e.project = String(project);
+        if (src.what) e.what = String(src.what);
         return e;
       };
       if (at >= 0) g.entries[at] = entry(g.entries[at]);
@@ -135,23 +170,78 @@
     return { group: g, sound };
   }
 
-  // The desktop notification for a group. One entry names the chat; several say how many are waiting (titles, up to 3).
+  // ---- reasons: what a piece of news is about (inbox-rules.js reasonOf) ---------------------------------------------------------
+  const REASONS = ['approval', 'question', 'signin', 'asks', 'failed', 'wake', 'finished'];
+  // An item's reason; an older caller without one: 'approval' for needs, 'finished' for a turn.
+  function reasonFor(it) {
+    const x = it || {};
+    if (REASONS.indexOf(x.reason) >= 0) return x.reason;
+    return x.kind === 'needs' ? 'approval' : x.kind === 'turn' ? 'finished' : '';
+  }
+  // The one-chat line under its title.
+  const REASON_LINES = {
+    approval: 'Needs your approval',
+    question: 'Has a question for you',
+    signin: 'Needs you to sign in',
+    asks: 'Asks you something',
+    failed: 'Failed',
+    wake: 'Snooze ended',
+    finished: TO_REVIEW,
+  };
+  // The kinds of a group in words, never folded into one "waiting": "2 need you · 1 failed · 1 to review".
+  function tally(list) {
+    let needs = 0,
+      failed = 0,
+      finished = 0;
+    for (const x of list || []) {
+      const r = reasonFor(x);
+      if (r === 'failed') failed++;
+      else if (x.kind === 'turn' || r === 'finished') finished++;
+      else needs++;
+    }
+    const parts = [];
+    if (needs) parts.push(needs + (needs === 1 ? ' needs you' : ' need you'));
+    if (failed) parts.push(failed + ' failed');
+    if (finished) parts.push(finished + ' ' + TO_REVIEW.toLowerCase());
+    return parts.join(' \u00b7 ');
+  }
+  // A group with nothing that needs you (Finished only) is silent on every OS.
+  const quietGroup = (list) => list.length > 0 && list.every((x) => x.kind !== 'needs');
+
+  // The text of one entry: "<project> · <the request>" ("shopfront · Run npm install stripe@18.0.0"); without the request, the
+  // reason line ("shopfront · Needs your approval").
+  function entryBody(x) {
+    const flat = (v) =>
+      String(v || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const line = flat(x.what) || REASON_LINES[reasonFor(x)] || 'Needs you',
+      project = flat(x.project);
+    return project ? project + ' \u00b7 ' + line : line;
+  }
+  // The desktop notification for a group. One entry: the chat's title, then "<project> · <the request>". Several name the kinds
+  // ("2 need you · 1 failed") and the titles (up to 3). Cut to the Windows limits (63 / 255). A click brings AIB forward with
+  // the inbox open (on that request, highlighted, for one entry); the chat on screen never changes. silent: nothing in it
+  // needs you, so no OS sound.
   function describe(group) {
     const list = (group && group.entries) || [];
+    const silent = quietGroup(list);
     if (list.length === 1)
       return {
         tag: TAG,
-        title: list[0].title || 'AIB',
-        body: list[0].kind === 'needs' ? 'Needs you' : 'Your turn',
-        target: { type: 'chat', key: list[0].key },
+        title: clipText(list[0].title || 'AIB', MAX_TITLE),
+        body: clipText(entryBody(list[0]), MAX_BODY),
+        target: { type: 'inbox', key: list[0].key },
+        silent,
       };
-    const names = list.slice(0, 3).map((x) => x.title || 'Conversation');
+    const names = list.slice(0, 3).map((x) => clipText(x.title || 'Conversation', 80));
     if (list.length > 3) names.push('and ' + (list.length - 3) + ' more');
     return {
       tag: TAG,
-      title: list.length + ' agents are waiting for you',
-      body: names.join('\n'),
+      title: clipText(tally(list), MAX_TITLE),
+      body: clipText(names.join('\n'), MAX_BODY),
       target: { type: 'inbox' },
+      silent,
     };
   }
 
@@ -169,6 +259,7 @@
         tag: PUSH_TAG,
         chat: e.chat || '',
         sheet: e.kind === 'needs',
+        silent: e.kind !== 'needs',
       };
     }
     const names = list.slice(0, 3).map(title);
@@ -180,6 +271,7 @@
       tag: PUSH_TAG,
       chat: needs.length === 1 ? first.chat || '' : '',
       sheet: needs.length === 1,
+      silent: !needs.length,
     };
   }
 
@@ -205,6 +297,11 @@
 
   const api = {
     GROUP_MS,
+    TO_REVIEW,
+    MAX_TITLE,
+    MAX_BODY,
+    clipText,
+    isRisky,
     TAG,
     PUSH_TAG,
     splitPath,
@@ -217,6 +314,9 @@
     cleanPrefs,
     appPrefs,
     desktopWants,
+    REASONS,
+    reasonFor,
+    tally,
     addToGroup,
     describe,
     pushText,

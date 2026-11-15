@@ -556,7 +556,7 @@
     if (checking) return;
     checking = true;
     try {
-      const b = await (await fetch('/api/live/bootstrap', { cache: 'no-store' })).json();
+      const b = await (await fetch('/api/live/bootstrap', window.AIBPageAuth ? window.AIBPageAuth.init({ cache: 'no-store' }) : { cache: 'no-store' })).json();
       if (b && b.token && b.token !== D.token && D.session) {
         D.token = b.token;
         failures = 0;
@@ -1343,7 +1343,7 @@
     layout();
     for (const h of document.querySelectorAll('[data-icon]')) h.replaceChildren(icon(h.dataset.icon));
     try {
-      const b = await (await fetch('/api/live/bootstrap', { cache: 'no-store' })).json();
+      const b = await (await fetch('/api/live/bootstrap', window.AIBPageAuth ? window.AIBPageAuth.init({ cache: 'no-store' }) : { cache: 'no-store' })).json();
       D.token = b.token;
       D.emit('boot');
       await open(params.get('new') === '1');
@@ -1354,6 +1354,9 @@
     }
   }
   D.boot = boot;
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else setTimeout(boot, 0);
+  // doc.html loads this deferred, with doc-toolbar.js and doc-panels.js after it: they run before DOMContentLoaded, but one still
+  // downloading lets a timer run first, and a boot from setTimeout could then emit 'boot' before doc-toolbar.js hooks it (no
+  // toolbar; paintTools failing on every page). DOMContentLoaded comes after every deferred script.
+  if (document.readyState === 'complete') setTimeout(boot, 0);
+  else document.addEventListener('DOMContentLoaded', boot);
 })();

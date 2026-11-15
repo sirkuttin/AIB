@@ -37,7 +37,10 @@
   const doFetch = (url, init) => (fetchOverride || root.fetch.bind(root))(url, init);
   async function getToken(fresh) {
     if (token && !fresh) return token;
-    const r = await doFetch('/api/live/bootstrap', { cache: 'no-store' });
+    const r = await doFetch(
+      '/api/live/bootstrap',
+      root.AIBPageAuth ? root.AIBPageAuth.init({ cache: 'no-store' }) : { cache: 'no-store' },
+    );
     if (!r.ok) throw new Error('bootstrap ' + r.status);
     token = (await r.json()).token || '';
     return token;

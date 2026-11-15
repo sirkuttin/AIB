@@ -182,6 +182,31 @@
     if (!blockedSince.has(key)) blockedSince.set(key, Date.now() / 1000);
     return blockedSince.get(key);
   }
+  // The inbox's phase of a chat (inbox-rules.js, the same rules as the server, the phone and the trays): from the agent host's
+  // attention facts and the chat's marks. A chat with no agent running is never blocked and never Finished in the inbox.
+  function inboxFacts(lv, e, s) {
+    const IR = root.AgentInboxRules;
+    // the agent host's facts; a listing without them (an older host) reads the sidebar's state
+    const a = lv && lv.attention && typeof lv.attention.state === 'string' ? lv.attention : { state: s.state === 'unread' ? 'idle' : s.state };
+    const phase = !lv ? 'idle' : IR ? IR.phaseOf(a, e, Date.now() / 1000) : s.state === 'needs_you' ? 'needs_you' : 'idle';
+    const since = IR ? IR.waitingSince(phase, a, 0) : 0;
+    return {
+      phase,
+      since,
+      helpers: Number(a.helpers) || 0,
+      question: typeof a.question === 'string' ? a.question : '',
+      error: typeof a.error === 'string' ? a.error : '',
+      failKind: typeof a.failKind === 'string' ? a.failKind : '',
+    };
+  }
+  const agentNameOf = (provider) => {
+    const A = root.AgentChoice;
+    try {
+      return (A && A.nameOf && A.nameOf(provider)) || provider || '';
+    } catch (e) {
+      return provider || '';
+    }
+  };
   function normalize(c) {
     const S = root.AgentSidebarUI,
       O = root.AgentOrganizeUI;
@@ -190,6 +215,8 @@
       e = O && O.entryOf ? O.entryOf(c) || {} : {};
     const lv = c.live && !c.live.closed ? c.live : null;
     return {
+      ...inboxFacts(lv, Object.assign({}, e, { yourTurnAt: Number(c.yourTurnAt) || 0 }), s), // the page's own your-turn reading
+      agent: agentNameOf(c.provider),
       key: keyOf(c),
       title: host.titleOf(c),
       projectKey: projectKeyOf(c),
@@ -535,38 +562,69 @@
       /* private window */
     }
   }
+  // The chats open in this window (inbox-rules.js openKeys): the active tab's chat (not while a file tab shows) and the chat of
+  // every split pane, while the window is visible (focused or not). They are in front of you: the inbox, its badge, the window
+  // title, the desktop notifications and (through the presence report, notify-ui.js) the trays and the taskbar dot leave them out.
+  function openChatKeys() {
+    const IR = root.AgentInboxRules,
+      d = doc();
+    if (!IR || !IR.openKeys) return selectedKey ? [selectedKey] : [];
+    const fileShown = !!(FU() && FU().showingFile && FU().showingFile());
+    const panes = splitOn()
+      ? S()
+          .panes()
+          .map((p) => p.group && p.group.active)
+          .filter((k) => k && k !== St().DRAFT && itemOf(k))
+      : [];
+    return IR.openKeys({
+      selected: fileShown && !panes.length ? '' : selectedKey,
+      panes,
+      visible: !d || d.visibilityState !== 'hidden',
+    });
+  }
   function inboxView() {
+    const IR = root.AgentInboxRules,
+      open = openChatKeys();
     return St()
       .inbox(items)
       .filter((r) => {
-        // The open chat stays when it is blocked on you (it still needs you, and the badge counts it like the cards do);
-        // a "your turn" you are looking at is seen (seenTurns below).
-        // The chat you have open never counts as "your turn", even while AIB is in the background: it is the chat you're on.
-        if (r.key === selectedKey && r.kind !== 'needs') return false;
-        if (r.kind === 'yourTurn') {
+        // The chat open in the window is in front of you: no row and no count, in Needs you or Finished (inbox-rules.js isOpen).
+        // When you switch to another chat, a chat still waiting comes back.
+        if (IR && IR.isOpen ? IR.isOpen(r.key, open) : open.indexOf(r.key) >= 0) return false;
+        // a Finished chat you are looking at is seen (seenTurns below).
+        // The chat you have open is never Finished, even while AIB is in the background: it is the chat you're on.
+        if (r.section === 'finished') {
+          if (r.key === selectedKey) return false;
           const it = itemOf(r.key);
           if (it && (seenTurns[r.key] || 0) >= it.yourTurnAt) return false;
         }
         return true;
       });
   }
+  // The one number: chats blocked on you in every project (inbox-rules.js countOf). The badge, the window title, the trays and
+  // the phone all show it; Finished chats never count (the envelope gets a small teal dot for them).
+  const blockedOf = (rows) => rows.filter((r) => r.section === 'needs').length;
   function inboxButton() {
-    const inbox = inboxView();
+    const inbox = inboxView(),
+      n = blockedOf(inbox),
+      finished = inbox.length - n;
     const env = btn(
       null,
-      'ws-inbox-btn' + (inbox.length ? ' has' : ''),
-      inbox.length
-        ? 'Inbox: ' + inbox.length + ' chat' + (inbox.length === 1 ? '' : 's') + ' waiting on you (all projects)'
-        : 'Inbox: nothing is waiting on you',
+      'ws-inbox-btn' + (n ? ' has' : '') + (finished && !n ? ' done' : ''),
+      n
+        ? 'Inbox: ' + n + ' chat' + (n === 1 ? '' : 's') + ' need you (all projects)' + (finished ? ', ' + finished + ' to review' : '')
+        : finished
+          ? 'Inbox: nothing needs you; ' + finished + ' to review'
+          : 'Inbox: nothing needs you',
     );
     env.setAttribute('aria-haspopup', 'dialog');
     env.setAttribute('aria-expanded', String(inboxOpen));
     env.append(svgIcon(ENVELOPE));
-    if (inbox.length) {
-      const n = el('span', inbox.length > 99 ? '99+' : inbox.length, 'ws-badge');
-      n.setAttribute('aria-hidden', 'true');
-      env.append(n);
-    }
+    if (n) {
+      const b = el('span', n > 99 ? '99+' : n, 'ws-badge');
+      b.setAttribute('aria-hidden', 'true');
+      env.append(b);
+    } else if (finished) env.append(el('span', null, 'ws-inbox-dot'));
     env.onclick = () => toggleInbox();
     return env;
   }
@@ -1026,6 +1084,32 @@
       if (ta && ta.focus) ta.focus();
     }
   }
+  // Retry on a Failed row: your last message again (text only), by the quick-reply route; the row goes once it is sent.
+  async function retryQuick(key) {
+    const s = qs(key),
+      c = convOf(key);
+    if (s.busy) return;
+    if (!c || !host.retryLast) {
+      s.error = 'This chat is not available. Use Open chat.';
+      drawInbox();
+      return;
+    }
+    const keys = rowKeys();
+    s.busy = true;
+    s.error = '';
+    drawInbox();
+    try {
+      const res = await host.retryLast(c);
+      if (res && res.attachments && host.notice) host.notice('Sent your last message again, without its attachments.');
+      quick.delete(key);
+      drawInbox();
+      focusNeighbour(keys, key);
+    } catch (e) {
+      s.busy = false;
+      s.error = (e && e.message) || 'The message could not be sent.';
+      drawInbox();
+    }
+  }
   async function answerQuick(key, item, b) {
     const s = qs(key);
     if (s.busy || !item || !item.liveId || !host.postJson) return;
@@ -1054,6 +1138,79 @@
       detail.delete(item.liveId);
       drawInbox();
     }
+  }
+  // ---- the in-page toast's card (notify-ui.js): the same row, read the same way, answered the same way ----
+  // {reason, line1 (the command, file, question or error), title, project, since, buttons (the agent's options, with their
+  // kind), reply, retry, loading, openOnly, more, full (the whole command)}; null when the chat is not in the inbox.
+  function toastCard(key) {
+    const Rp = RP(),
+      r = St()
+        .inbox(items)
+        .find((x) => x.key === key);
+    if (!r || !Rp) return null;
+    const item = itemOf(key);
+    if (item) wantDetail(item, r);
+    const d = detailFor(item),
+      act = Rp.rowActions(r, d);
+    const perm = !r.ask && d.permissions && d.permissions.length ? d.permissions[0] : null,
+      permLine = perm && Rp.permissionTitle ? Rp.permissionTitle(perm) : '';
+    const opts = perm && perm.params && Array.isArray(perm.params.options) ? perm.params.options : [];
+    const tc = perm && perm.params && perm.params.toolCall,
+      cmd = tc && tc.rawInput && typeof tc.rawInput.command === 'string' ? tc.rawInput.command.trim() : '';
+    const line1 =
+      r.reason === 'failed'
+        ? r.ask || (item && item.lastText) || 'The last turn ended with an error.'
+        : r.reason === 'asks'
+          ? r.ask || (item && item.lastText) || r.summary
+          : r.kind === 'yourTurn'
+            ? (item && item.lastText) || r.snippet || r.title
+            : r.ask || permLine || r.summary;
+    return {
+      reason: r.reason,
+      line1: String(line1 || '').replace(/\s+/g, ' ').trim(),
+      title: r.title,
+      project: r.projectName || '',
+      since: r.since || 0,
+      buttons: act.buttons.map((b) => {
+        const o = b.op === 'permission' ? opts.find((x) => x && x.optionId === b.optionId) : null;
+        return Object.assign({}, b, o && o.kind ? { kind: String(o.kind) } : {});
+      }),
+      reply: !!act.reply,
+      retry: !!act.retry,
+      loading: !!act.loading,
+      openOnly: !!act.openOnly,
+      more: act.more || 0,
+      full: cmd || permLine,
+    };
+  }
+  // The toast's answers go the inbox row's way (answerQuick, sendQuick, retryQuick) and reject on failure.
+  function toastSend(key, run) {
+    return Promise.resolve(run()).then(() => {
+      const s = quick.get(key);
+      if (s && s.error) {
+        const msg = s.error;
+        s.error = '';
+        throw new Error(msg);
+      }
+    });
+  }
+  const toastAnswer = (key, b) => toastSend(key, () => answerQuick(key, itemOf(key), b));
+  const toastReply = (key, text) =>
+    toastSend(key, () => {
+      qs(key).text = text;
+      return sendQuick(key);
+    });
+  const toastRetry = (key) => toastSend(key, () => retryQuick(key));
+  // A desktop notification was clicked: the inbox opens on that chat's request, highlighted; the chat on screen stays.
+  function openInboxOn(key) {
+    if (!inboxOpen) toggleInbox(true);
+    if (!key) return;
+    const w = rowEl(key);
+    if (!w) return;
+    focusRow(key);
+    w.classList.add('ws-inbox-flash');
+    if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest' });
+    root.setTimeout(() => w.classList.remove('ws-inbox-flash'), 2400);
   }
   function startReply(key) {
     const s = qs(key);
@@ -1156,10 +1313,43 @@
   }
 
   const actBtn = (label, cls, title) => btn(label, 'ws-qa ' + (cls || ''), title);
-  // One flat list: approvals, questions, sign-ins and "your turn" chats at the same level, newest first.
+  // "Working: 5 chats in 3 projects": what still runs, at the foot of the inbox (working chats are not rows). No subagent count.
+  function workingLine() {
+    const busy = items.filter((i) => i.phase === 'working' && !i.archived && !i.deleted);
+    if (!busy.length) return '';
+    const projects = new Set(busy.map((i) => i.projectKey)).size;
+    return 'Working: ' + busy.length + (busy.length === 1 ? ' chat' : ' chats') + (projects > 1 ? ' in ' + projects + ' projects' : '');
+  }
+  const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+  // Line 1 of a row: the request itself (the command, the file, the question, the error, the agent's last words). Never a
+  // reason word. Returns the node and its plain text (for the tooltip).
+  function whatOf(r, item, pa) {
+    const w = el('span', null, 'ws-inbox-what');
+    const turn = r.reason === 'finished';
+    if (r.reason === 'approval' && pa && (pa.target || pa.line)) {
+      if (pa.verb && pa.target && pa.code) {
+        w.append(doc().createTextNode(pa.verb + ' '), el('code', pa.target));
+        if (pa.diff && (pa.diff.add || pa.diff.del))
+          w.append(el('span', '  +' + pa.diff.add + ' −' + pa.diff.del, 'ws-inbox-q'));
+      } else w.textContent = pa.line || pa.target;
+    } else if (r.reason === 'question') {
+      const q = item && item.elicReqs && item.elicReqs[0] && item.elicReqs[0].params;
+      w.textContent = oneLine((q && q.message) || r.ask || r.summary);
+    } else if (r.reason === 'signin') w.textContent = 'Sign in to the agent again to continue';
+    else if (r.reason === 'failed') w.textContent = oneLine(r.ask) || 'The last turn ended with an error.';
+    else if (r.reason === 'asks') w.textContent = oneLine(r.ask);
+    else if (turn) w.textContent = oneLine((item && item.lastText) || r.snippet) || 'Done.';
+    else w.textContent = oneLine(r.ask || r.summary);
+    return w;
+  }
+  // The inbox (approved prototype v3): a "Needs you" section (approvals, questions, sign-ins, failed turns and questions in a
+  // reply; the longest wait first; "Nothing blocked" when empty) and a "To review" section (finished turns, newest first; never
+  // counted). One row = line 1 what it wants + the wait, line 2 chat title · project, at most one row of actions. Clicking a row
+  // opens its chat. The keys (↑↓ R E O Esc) work without a hint row.
   function drawInbox() {
     if (!inboxPop) return;
-    const Rp = RP();
+    const Rp = RP(),
+      IR = root.AgentInboxRules;
     const a = doc().activeElement,
       inPop = !!(a && inboxPop.contains && inboxPop.contains(a));
     const keep = inPop
@@ -1172,89 +1362,111 @@
         }
       : null;
     const rows = inboxView(),
-      frag = doc().createDocumentFragment();
+      frag = doc().createDocumentFragment(),
+      blockedN = blockedOf(rows),
+      working = workingLine();
     for (const k of Array.from(quick.keys())) if (!rows.some((r) => r.key === k)) quick.delete(k);
-    const head = el('div', 'Needs you across projects', 'ws-pop-head');
-    head.append(el('span', rows.length, 'n'));
-    frag.append(head);
-    if (!rows.length) frag.append(el('p', 'Nothing needs you.', 'ws-pop-empty'));
+    const NEEDS = (IR && IR.NEEDS_LABEL) || 'Needs you',
+      REVIEW = (IR && IR.REVIEW_LABEL) || 'To review';
+    frag.append(el('div', NEEDS, 'ws-inbox-section'));
+    if (!blockedN) frag.append(el('div', (IR && IR.NOTHING_BLOCKED) || 'Nothing blocked', 'ws-inbox-none'));
+    let reviewHead = false;
+    const nowS = Date.now() / 1000;
     for (const r of rows) {
       const item = itemOf(r.key),
-        turn = r.kind === 'yourTurn',
+        turn = r.reason === 'finished',
         s = qs(r.key);
+      if (r.section !== 'needs' && !reviewHead) {
+        reviewHead = true;
+        frag.append(el('div', REVIEW, 'ws-inbox-section'));
+      }
       if (item) wantDetail(item, r);
       const act = Rp
         ? Rp.rowActions(r, detailFor(item))
         : { reply: false, buttons: [], handled: !!r.handled, open: true, loading: false, openOnly: false, more: 0 };
-      const wrap = el('div', null, 'ws-inbox-item' + (turn ? ' turn' : '') + (s.replying ? ' replying' : ''));
+      const perms = r.reason === 'approval' && Rp ? detailFor(item).permissions : null,
+        pa = perms && perms.length && Rp.permissionAction ? Rp.permissionAction(perms[0]) : null;
+      const wrap = el(
+        'div',
+        null,
+        'ws-inbox-item' + (turn ? ' turn' : '') + ' ws-s-' + r.section + ' ws-r-' + r.reason + (s.replying ? ' replying' : ''),
+      );
       wrap.dataset.key = r.key;
+      wrap.dataset.reason = r.reason;
       const b = btn(null, 'ws-inbox-row');
       b.dataset.key = r.key;
-      const text = el('span', null, 'ws-inbox-text');
-      const top = el('span', null, 'ws-inbox-top');
-      top.append(el('span', r.title, 'ws-inbox-title'), el('span', ageOf(r.at), 'ws-inbox-age'));
-      const meta = el('span', null, 'ws-inbox-meta');
-      meta.append(el('span', r.projectName, 'ws-inbox-proj'));
-      // Context: the agent's last message (or its question), three lines; "more" opens it in place.
-      // An approval says what it would do ("Run npm install stripe@18.0.0"), as its card does, once its body is fetched.
-      const perms = !turn && !r.ask && Rp ? detailFor(item).permissions : null,
-        permLine = perms && perms.length && Rp.permissionTitle ? Rp.permissionTitle(perms[0]) : '';
-      const full = turn ? (item && item.lastText) || r.snippet : r.ask || permLine || r.summary;
-      const ctxLine = Rp
-        ? turn
-          ? 'Your turn' + (full ? ': “' + full + '”' : '')
-          : 'Needs you: ' + (full || r.summary)
-        : r.line;
-      const long = Rp ? Rp.isLong(ctxLine, Rp.CLAMP_LINES, Rp.PER_LINE) : false;
-      const sub = el('span', ctxLine, 'ws-inbox-sub' + (Rp ? ' ctx' : '') + (long && !s.expanded ? ' clamp' : ''));
-      text.append(top, sub, meta);
-      b.append(item ? dotFor(item) : el('span'), text);
-      b.title = r.title + '\n' + r.projectName + '\n' + (permLine ? 'Needs you: ' + permLine : r.line);
+      // Line 1: what it wants, and the wait alone ("4m"; orange after 15 min) or how long ago it finished.
+      const l1 = el('span', null, 'ws-inbox-l1');
+      const what = whatOf(r, item, pa);
+      const wait = IR ? IR.waitText(turn ? r.at : r.since, nowS) : { text: ageOf(r.at), long: false };
+      l1.append(what, el('span', wait.text, 'ws-inbox-age' + (!turn && wait.long ? ' long' : '')));
+      // Line 2: the chat title · project, quiet. A 6 px dot only on Failed and To review rows.
+      const l2 = el('span', null, 'ws-inbox-l2');
+      if (r.reason === 'failed') l2.append(el('span', null, 'ws-inbox-idot fail'));
+      else if (turn) l2.append(el('span', null, 'ws-inbox-idot done'));
+      l2.append(el('span', r.title + ' · ' + r.projectName, 'ws-inbox-where'));
+      b.append(l1, l2);
+      b.title = what.textContent + '\n' + r.title + ' · ' + r.projectName;
+      b.setAttribute('aria-label', what.textContent + ', ' + r.title + ', ' + r.projectName + ', ' + wait.text);
       b.onclick = () => openKey(r.key);
       wrap.append(b);
-      if (long) {
-        const more = btn(s.expanded ? 'less' : 'more', 'ws-inbox-more');
-        more.setAttribute('aria-expanded', String(!!s.expanded));
-        more.onclick = (e) => {
-          if (e && e.stopPropagation) e.stopPropagation();
-          s.expanded = !s.expanded;
-          drawInbox();
-          const w = rowEl(r.key),
-            m = w && w.querySelector('.ws-inbox-more');
-          if (m && m.focus) m.focus();
-        };
-        wrap.append(more);
+      // Clicking anywhere on the card that is not a control opens the chat too.
+      wrap.onclick = (e) => {
+        const t = e && e.target;
+        if (t && t.closest && t.closest('button, textarea, .ws-inbox-detail')) return;
+        openKey(r.key);
+      };
+      // The read-only detail under line 1: the diff, the full command, or (risky) the command and what it does.
+      const diff = pa && pa.diff,
+        cmd = pa && pa.command;
+      if (s.expanded && (diff || cmd)) {
+        const d = el('div', null, 'ws-inbox-detail');
+        if (diff && diff.lines.length) for (const [k, line] of diff.lines) d.append(el('span', line, 'ws-d-' + k));
+        else d.textContent = '$ ' + cmd + (act.risk && act.risk.note ? '\n' + act.risk.note : '');
+        wrap.append(d);
       }
       const acts = el('div', null, 'ws-inbox-acts');
-      const markBtn = (label) => {
-        const h = actBtn(label, 'ws-inbox-handled', 'Mark handled: ' + r.title + ' (E)');
-        h.disabled = s.busy;
-        h.onclick = (e) => {
+      const quietBtn = (label, cls, title, fn) => {
+        const q = actBtn(label, 'ws-qa-quiet ' + (cls || ''), title);
+        q.onclick = (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
-          markDone(r.key);
+          fn();
         };
+        return q;
+      };
+      const toggleDetail = () => {
+        s.expanded = !s.expanded;
+        drawInbox();
+      };
+      const replyBtn = (def) => {
+        const rb = actBtn('Reply', 'ws-qa-reply' + (def ? ' def' : ''), 'Reply without opening the chat (R)');
+        rb.disabled = s.busy;
+        rb.onclick = (e) => {
+          if (e && e.stopPropagation) e.stopPropagation();
+          startReply(r.key);
+        };
+        return rb;
+      };
+      const handledBtn = () => {
+        const h = quietBtn('Mark handled', 'ws-inbox-handled push', 'Mark handled (E)', () => markDone(r.key));
+        h.disabled = s.busy;
         return h;
       };
-      const openBtn = (label) => {
-        const o = actBtn(label || 'Open chat', 'ws-qa-open', 'Open chat: ' + r.title + ' (O)');
-        o.onclick = (e) => {
-          if (e && e.stopPropagation) e.stopPropagation();
-          openKey(r.key);
-        };
-        return o;
-      };
       if (act.reply && s.replying) {
+        // the reply box takes the action row's place; Send beside it; Esc closes it
+        if (r.reason === 'asks') {
+          const full = Rp && Rp.contextText ? Rp.contextText((item && item.lastText) || r.ask) : r.ask;
+          if (full) acts.append(el('div', full, 'ws-inbox-askfull'));
+        }
         const box = el('div', null, 'ws-reply');
         const ta = doc().createElement('textarea');
         ta.className = 'ws-reply-box';
         ta.rows = 2;
         ta.value = s.text;
         ta.disabled = s.busy;
-        ta.placeholder = 'Reply to this chat. Enter sends, Shift+Enter adds a line, Esc closes.';
+        ta.placeholder = 'Reply. Enter sends, Esc closes.';
         ta.setAttribute('aria-label', 'Reply to ' + r.title);
-        box.append(ta);
-        const chips = el('div', null, 'ws-reply-chips');
-        const send = actBtn(s.busy ? 'Sending…' : 'Send ↵', 'ws-qa-send primary', 'Send this reply (Enter)');
+        const send = actBtn(s.busy ? 'Sending…' : 'Send', 'ws-qa-send def', 'Send this reply (Enter)');
         send.disabled = s.busy || !s.text.trim();
         send.onclick = (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
@@ -1264,43 +1476,61 @@
           s.text = ta.value;
           send.disabled = s.busy || !ta.value.trim();
         });
-        chips.append(send, openBtn('Open chat'), markBtn('Mark handled'));
-        box.append(chips);
-        if (s.error) {
-          const er = el('div', s.error, 'ws-inbox-err');
-          er.setAttribute('role', 'alert');
-          box.append(er);
-        }
+        box.append(ta, send);
         acts.append(box);
-      } else if (act.reply) {
+      } else if (turn) {
+        // To review: Reply, and a plain × that marks it read (E does the same)
         if (s.queued) acts.append(el('span', 'Queued', 'ws-qa-note ws-qa-queued'));
-        const rb = actBtn('Reply', 'ws-qa-reply', 'Reply without opening the chat (R)');
-        rb.onclick = (e) => {
+        acts.append(replyBtn(false));
+        acts.append(quietBtn('×', 'ws-qa-read push', 'Mark as read (E)', () => markDone(r.key)));
+      } else if (r.reason === 'failed') {
+        // Retry / Reply / Mark handled; another agent stays reachable in the chat itself
+        const rt = actBtn(s.busy ? 'Sending…' : 'Retry', 'ws-qa-retry def', 'Send your last message again (text only; attachments are not resent)');
+        rt.disabled = s.busy;
+        rt.onclick = (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
-          startReply(r.key);
+          retryQuick(r.key);
         };
-        acts.append(rb);
-        if (act.handled) acts.append(markBtn('Mark handled'));
+        acts.append(rt, replyBtn(false), handledBtn());
+      } else if (r.reason === 'asks') {
+        if (s.queued) acts.append(el('span', 'Queued', 'ws-qa-note ws-qa-queued'));
+        acts.append(replyBtn(true), handledBtn());
       } else if (act.buttons.length) {
-        const bx = el('div', null, 'ws-qa-buttons');
-        for (const ab of act.buttons) {
-          const x = actBtn(ab.label, 'ws-qa-choice ' + ab.tone);
+        const deny = act.buttons.find((x) => x.tone === 'no');
+        const answer = (ab, def) => {
+          const x = actBtn(ab.label, 'ws-qa-choice' + (def ? ' def' : ''));
           x.disabled = s.busy;
           x.onclick = (e) => {
             if (e && e.stopPropagation) e.stopPropagation();
             answerQuick(r.key, item, ab);
           };
-          bx.append(x);
+          return x;
+        };
+        if (act.review && !s.expanded) {
+          // risky (push, force push, delete): never one tap; Review shows the full command and what it does first
+          const rv = actBtn('Review', 'ws-qa-review def', 'See exactly what it will do before allowing');
+          rv.onclick = (e) => {
+            if (e && e.stopPropagation) e.stopPropagation();
+            toggleDetail();
+          };
+          acts.append(rv);
+          if (deny) acts.append(answer(deny, false));
+        } else {
+          const def = act.buttons.find((x) => x.tone === 'ok') || act.buttons[0];
+          for (const ab of act.buttons) acts.append(answer(ab, ab === def));
+          if (act.more) acts.append(el('span', '+' + act.more + ' more', 'ws-qa-note'));
+          if (!act.review && diff)
+            acts.append(quietBtn(s.expanded ? 'Hide diff' : 'Show diff', 'ws-qa-diff push', 'The change, read-only', toggleDetail));
+          else if (!act.review && cmd && Rp.isLongCommand && Rp.isLongCommand(cmd))
+            acts.append(quietBtn(s.expanded ? 'Hide command' : 'Full command', 'ws-qa-full push', 'The whole command, read-only', toggleDetail));
         }
-        acts.append(bx);
-        if (act.more) acts.append(el('span', '+' + act.more + ' more waiting in the chat', 'ws-qa-note'));
       } else if (act.loading) {
-        acts.append(el('span', 'Loading the request…', 'ws-qa-note'), openBtn('Open chat'));
-      } else {
-        acts.append(openBtn('Open chat'));
-        if (act.handled) acts.append(markBtn('Mark handled'));
+        acts.append(el('span', 'Loading the request…', 'ws-qa-note'));
+      } else if (act.handled) {
+        // a sign-in or a complex question: no button; clicking the card opens the chat, where it is answered
+        acts.append(handledBtn());
       }
-      if (s.error && !(act.reply && s.replying)) {
+      if (s.error) {
         const er = el('div', s.error, 'ws-inbox-err');
         er.setAttribute('role', 'alert');
         acts.append(er);
@@ -1308,7 +1538,9 @@
       wrap.append(acts);
       frag.append(wrap);
     }
-    // Notification settings (desktop notifications, sounds, muted projects) live in Settings now; this is the way in.
+    // The foot: what still works and the way to the notification settings, on one quiet line.
+    const foot = el('div', null, 'ws-inbox-foot');
+    foot.append(el('span', working, 'ws-inbox-working'));
     if (root.AgentSettingsUI && root.AgentSettingsUI.open) {
       const notes = el('button', 'Notification settings…', 'ws-notify-link');
       notes.type = 'button';
@@ -1316,17 +1548,9 @@
         toggleInbox(false);
         root.AgentSettingsUI.open('notifications');
       });
-      frag.append(notes);
+      foot.append(notes);
     }
-    // The key line lists only what works on these rows (a question or an approval has no R reply).
-    if (rows.length) {
-      const can = rows.map((r) => (Rp ? Rp.rowActions(r, detailFor(itemOf(r.key))) : { reply: false, handled: false }));
-      const keys = ['↑↓ move'];
-      if (can.some((a) => a.reply)) keys.push('R reply', 'Enter send');
-      if (can.some((a) => a.handled)) keys.push('E mark handled');
-      keys.push('O open chat', 'Esc close');
-      frag.append(el('div', keys.join(' · '), 'ws-inbox-keys'));
-    }
+    frag.append(foot);
     inboxPop.replaceChildren(frag);
     if (keep && keep.key) {
       const w = rowEl(keep.key);
@@ -1622,7 +1846,8 @@
   }
   // "Need you" counts follow the inbox: the chat you're looking at and "Your turn" chats you've already seen don't count.
   function waitingFor(pk) {
-    const keys = new Set(inboxView().map((r) => r.key));
+    // the one number (inbox-rules.js): chats blocked on you; finished chats never count
+    const keys = new Set(inboxView().filter((r) => r.section === 'needs').map((r) => r.key));
     return items.filter((i) => keys.has(i.key) && (pk == null || i.projectKey === pk)).length;
   }
   function counts(p) {
@@ -2137,6 +2362,7 @@
     const N = root.AgentNotifyUI;
     if (!N || !N.observeItems || !root.AgentNotifyRules) return;
     const R = root.AgentNotifyRules; // the same rules as the server's notifications (notify-rules.js)
+    const open = openChatKeys();
     N.observeItems(
       items.map((i) => {
         const f = R.flags(
@@ -2154,15 +2380,18 @@
           key: i.key,
           title: i.title,
           state: i.state,
+          phase: i.phase,
+          since: i.since,
           needs: i.needs,
           yourTurn: i.yourTurn,
           yourTurnAt: i.yourTurnAt,
           eligible: f.eligible,
           muted: f.muted,
-          selected: i.key === selectedKey,
+          selected: open.indexOf(i.key) >= 0, // open in the window: no toast, desktop notification or sound for it
         };
       }),
     );
+    if (N.reportPresence) N.reportPresence(false); // the open chat changed: the server's trays and notifications follow at once
   }
   // Called by the page every time the conversation list is drawn.
   let lastSyncArgs = null;
@@ -2250,7 +2479,9 @@
       '|' +
       prefsVer +
       '|' +
-      items.map((i) => i.yourTurnAt || 0).join(',');
+      items.map((i) => (i.yourTurnAt || 0) + i.phase + (i.helpers || 0) + (i.since || 0)).join(',') +
+      '|' +
+      (inboxOpen ? Math.floor(Date.now() / 60000) : ''); // the inbox's phases, helpers and waits ("waited 12m" moves each minute)
     if (sig === lastSig) return;
     if (drag && drag.on) return; // do not rebuild the dropdown under a drag; the next sync redraws
     lastSig = sig;
@@ -2680,9 +2911,12 @@
           if (!openKey(key)) return false;
           return true;
         },
-        openInbox: () => {
-          if (!inboxOpen) toggleInbox(true);
-        },
+        openInbox: (key) => openInboxOn(key),
+        // the toast's card and its answers (notify-ui.js): the same row and the same routes as the inbox
+        toastCard,
+        toastAnswer,
+        toastReply,
+        toastRetry,
         mutedProjects: () =>
           Object.keys((prefs && prefs.projects) || {})
             .filter((k) => prefs.projects[k].muted)
@@ -2692,6 +2926,7 @@
             }),
         unmute: (key) => setPrefOf(key, { muted: false }),
         // whether AIB is in front and when you last used it: the server's notifications and phone pushes skip you then
+        openKeys: openChatKeys,
         presence: (body) =>
           host.postJson ? Promise.resolve(host.postJson('presence', body)).then(() => true, () => false) : false,
       });
@@ -2803,9 +3038,12 @@
     openDrawer: () => {
       if (root.matchMedia && root.matchMedia('(max-width:1100px)').matches) setListOpen(true);
     },
+    // The chats open in this window (inbox-rules.js openKeys): the page's presence report and the window title leave them out.
+    openKeys: openChatKeys,
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,
+    _inboxKeys: () => rowKeys(), // tests (split_focus_e2e_test.ts): the chats the inbox lists now
     // Tests (steer_e2e_test.ts P9): a typed quick reply to the chat with this key, through the inbox row's own send (sendQuick).
     _sendQuick: async (key, text) => {
       qs(key).text = String(text || '');

@@ -23,6 +23,7 @@ import type { WebContext } from './server.ts';
 import { bringBack, restoreFolders } from './project_routes.ts';
 import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
+import { Swarm } from '../swarm/service.ts';
 
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
@@ -239,6 +240,29 @@ export function studioRoutes(): Map<string, StudioHandler> {
     if (body?.action === 'resume-sync') return [200, { ok: true, resumed: await merge.resumeSync(ctx.stateDir, body.project) }];
     return refusedReply(() => merge.resolveClash(mergeStudio(ctx), body?.id, typeof body?.action === 'string' ? body.action : ''));
   });
+  // ---- swarm phase 1: the merge line's Undo / Merge again, and a chat's helpers (page only; never the agent key) ----
+  routes.set('POST /api/live/swarm/undo', (ctx, _url, body) => swarmOf(ctx).undo(body?.helper));
+  routes.set('POST /api/live/swarm/merge-again', (ctx, _url, body) => swarmOf(ctx).mergeAgain(body?.helper));
+  routes.set('GET /api/live/swarm', (ctx, url) => {
+    const id = one(argsOf(url), 'conversationId');
+    const swarm = swarmOf(ctx);
+    const helpers = swarm.registry.all().filter((h) => !id || h.parent.live === id || h.chat.live === id).map((h) => ({
+      id: h.id,
+      title: h.title,
+      provider: h.chat.provider,
+      model: h.chat.model,
+      chat: h.chat.live,
+      parent: h.parent.live,
+      state: h.state,
+      reason: h.reason,
+      rule: h.rule,
+      picked_by: h.picked_by,
+      branch: h.worktree.branch,
+      brief: h.brief,
+      merged: !!h.merge && !h.merge.undo,
+    }));
+    return Promise.resolve([200, { helpers }]);
+  });
   // ---- updates ----
   routes.set('GET /api/live/update', (ctx) => Promise.resolve(getUpdate(ctx.updates)));
   routes.set('POST /api/live/update/check', (ctx, _url, body) => Promise.resolve(postUpdateCheck(ctx.updates, body ?? {})));
@@ -261,6 +285,19 @@ export function studioRoutes(): Map<string, StudioHandler> {
     });
   }
   return routes;
+}
+
+const SWARMS = new WeakMap<WebContext, Swarm>();
+
+/** The web server's swarm service (one per server), its helper watcher started on first use. */
+export function swarmOf(ctx: WebContext): Swarm {
+  let swarm = SWARMS.get(ctx);
+  if (!swarm) {
+    swarm = new Swarm({ stateDir: ctx.stateDir, host: ctx.host, settings: ctx.settings });
+    SWARMS.set(ctx, swarm);
+    swarm.startWatching();
+  }
+  return swarm;
 }
 
 /** artifact_route's error mapping: Python answers KeyError/ValueError/TypeError/OSError/RuntimeError with 400 (the Service already maps its own). */
@@ -324,8 +361,19 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     const allowed = gateFor(ctx, request, path, conversation);
     if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
     const action = typeof body.action === 'string' ? body.action : 'merge';
+    // A helper's key never merges its own branch: its main chat merges it with merge_helper (swarm review break 3).
+    if (action === 'merge' && swarmOf(ctx).isHelper(conversation)) {
+      return [403, { error: 'Helpers are merged by their main chat: report back instead', code: 'helper' }];
+    }
     if (action === 'merge') return await refusedReply(() => merge.mergeFromTool(mergeStudio(ctx), conversation));
     return await refusedReply(() => merge.resolveClash(mergeStudio(ctx), conversation, action, true));
+  }
+  if (path === '/api/live/swarm/tool') { // swarm phase 1: the key is bound to the body's conversation; the role is checked in the service
+    const [body, bad] = await ownGateBody(request, 200000);
+    if (bad) return bad;
+    const allowed = gateFor(ctx, request, path, body.conversationId);
+    if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
+    return await swarmOf(ctx).tool(body.conversationId, body.action, body.args);
   }
   if (path === DOCS_TOOL) { // an agent's doc tool: the key is bound to the body's conversation, as for publish
     const [body, bad] = await ownGateBody(request, 4 * 1024 * 1024);

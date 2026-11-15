@@ -39,6 +39,38 @@ export const TRAY_ITEMS: TrayItem[] = [
   { id: 'quit', label: 'Quit AIB' },
   { id: 'stop', label: 'Stop all chats and quit' },
 ];
+/**
+ * The tray menu's chat slots (architect review break 19: a Windows tray menu is made once, so its chat list is a fixed set of
+ * items): up to TRAY_SLOTS chats blocked on the person, under the fixed items, each opening its chat; more than that and the last
+ * slot says "+N more" and opens the inbox. A slot with nothing to show is left out of the menu (not a blank line).
+ */
+export const TRAY_SLOTS = 5;
+export const SLOT_ITEMS: TrayItem[] = Array.from({ length: TRAY_SLOTS }, (_, i) => ({ id: `chat-${i}`, label: '', hidden: true }));
+/** The reason words of a tray slot (inbox-rules.js reasonWord). */
+const SLOT_REASON: Record<string, string> = {
+  approval: 'Approval',
+  question: 'Question',
+  signin: 'Sign-in',
+  asks: 'Asks',
+  failed: 'Failed',
+};
+export interface TraySlot {
+  label: string;
+  target: NotifyTarget;
+}
+/** The tray's chat slots for these blocked chats (`total`: how many are blocked, at least blocked.length). */
+export function trayChatSlots(blocked: { key: string; title: string; reason?: string }[], total = blocked.length): TraySlot[] {
+  const all = Math.max(total, blocked.length);
+  const room = all > TRAY_SLOTS ? TRAY_SLOTS - 1 : TRAY_SLOTS;
+  const cut = (t: string) => (t.length > 60 ? t.slice(0, 59).trimEnd() + '…' : t);
+  const slots: TraySlot[] = blocked.slice(0, room).map((b) => ({
+    label: `${cut(b.title || 'Conversation')} · ${SLOT_REASON[b.reason ?? ''] ?? 'Needs you'}`,
+    target: { type: 'chat', key: b.key },
+  }));
+  if (all > slots.length) slots.push({ label: `+${all - slots.length} more`, target: { type: 'inbox' } });
+  return slots;
+}
+
 /** The menu position of Stop all chats and quit (its label turns into the confirm line for STOP_CONFIRM_MS). */
 export const STOP_INDEX = 3;
 /** How long the confirm line stays armed after the first click on Stop all chats and quit. */
@@ -202,6 +234,24 @@ export function pageDecision(href: string, appOrigin: string): PageDecision {
 /** The page-state probe the window runs: where it is (an error page reports chrome-error://chromewebdata/). */
 export const PAGE_PROBE = `JSON.stringify({ href: String(location.href), title: String(document.title || '') })`;
 
+/**
+ * What the page holds to prove it is the page (page-auth.js): the launch key kept for this tab and the page session this origin
+ * keeps. Read through the window's private evaluate channel only, and checked in this process (DesktopOptions.pageConnected).
+ */
+export const PAGE_AUTH_PROBE = `(() => { const r = (a, n) => { try { return String(window[a].getItem(n) || ''); } catch { return ''; } };
+  return JSON.stringify({ key: r('sessionStorage', 'aib-page-key'), session: r('localStorage', 'aib-page-session') }); })()`;
+
+/** The auth probe's answer, or null when it couldn't be read. */
+export function parseAuthProbe(value: unknown): { key: string; session: string } | null {
+  if (typeof value !== 'string' || !value.startsWith('{')) return null;
+  try {
+    const o = JSON.parse(value);
+    return { key: typeof o?.key === 'string' ? o.key : '', session: typeof o?.session === 'string' ? o.session : '' };
+  } catch {
+    return null;
+  }
+}
+
 /** The probe's answer, or null when it couldn't be read (the page is loading, or the call failed). */
 export function parseProbe(value: unknown): { href: string; title: string } | null {
   if (typeof value !== 'string' || !value) return null;
@@ -286,6 +336,8 @@ export interface TrayItem {
   label: string;
   /** Shown greyed out and never chosen (a status line). */
   disabled?: boolean;
+  /** Not in the menu for now (an empty chat slot); Shell.updateTraySlots shows it. */
+  hidden?: boolean;
 }
 
 /** The page function a notification click calls (notify-ui.js openFromDesktop): true once the page has opened the target. */
@@ -319,6 +371,13 @@ export interface Shell {
    * items as createTray got. Never throws.
    */
   updateTray?(tooltip: string, index: number, label: string): void;
+  /**
+   * The tray's chat slots (SLOT_ITEMS, after the fixed items createTray got): these labels in order, the rest left out of the menu.
+   * Never throws.
+   */
+  updateTraySlots?(labels: string[]): void;
+  /** Windows: the attention dot on the app window's icon (title bar, Alt+Tab, taskbar button) on or off. Never throws. */
+  setWindowAttention?(on: boolean): void;
   /** A native OK/Cancel question; Cancel is the default button. Resolves true for OK. Must not block the event loop. */
   ask(message: string): Promise<boolean>;
   openExternal(url: string): void;
@@ -345,6 +404,12 @@ export interface DesktopOptions {
   /** The window loaded our page (the update helper's health marker is written then). */
   onPageLoaded?: () => void;
   /**
+   * True when what our page holds (PAGE_AUTH_PROBE) gets it the token: the launch key, or a page session the server knows. Our page
+   * without either (the runtime's startup navigation to its own serve port lands there through a key-less redirect, which may
+   * overwrite the keyed one) is sent to `url` again, which carries the key. Not given: not checked (tests of other things).
+   */
+  pageConnected?: (held: { key: string; session: string }) => boolean;
+  /**
    * The normal close path (the web server). stopAgents: Stop all chats and quit. leave: Quit AIB with work running; the chats stay in
    * the keeper, which holds them until an AIB is started again (no restart in the tray). Never returns in the real app (Deno.exit).
    */
@@ -369,7 +434,7 @@ export interface DesktopOptions {
   /** Merges running in this process (AIB does not exit in the middle of one: it would leave a half-done repo). */
   mergesRunning?: () => number;
   /** What works now, for the status line, the quit decision and the idle quit. Default: busyCount, nobody waiting. */
-  trayCounts?: () => Promise<{ working: number; needsYou: number }>;
+  trayCounts?: () => Promise<{ working: number; needsYou: number; blocked?: { key: string; title: string; reason?: string }[] }>;
   /** In the background: how long nothing must work before AIB quits by itself (default 10 s; 0 = never). */
   trayIdleQuitMs?: number;
   /**
@@ -403,10 +468,15 @@ export class DesktopApp {
   readonly notifications: DesktopNotifications;
   /** Sending the window back to our page: at most 4 times in 30 s, so a page that fails at once can't make a navigation loop. */
   readonly backAllowed = rateLimiter(4, 30_000);
+  /** Opening our page again with the key because it was not connected: at most 3 times in 60 s (no loop if it never connects). */
+  readonly keyAllowed = rateLimiter(3, 60_000);
   keeper: WindowHandle | null = null;
   #watchdog: ReturnType<typeof setInterval> | undefined;
   #trayTimer: ReturnType<typeof setInterval> | undefined;
   #trayView: { status: string; tooltip: string } | null = null;
+  /** The tray's chat slots as shown, and the window icon's attention dot (null: not set yet). */
+  #slots: TraySlot[] = [];
+  #attention: boolean | null = null;
   #idleSince: number | null = null;
   #windowOpened = false;
 
@@ -454,7 +524,7 @@ export class DesktopApp {
     this.shell.createTray(
       this.options.trayIcon,
       WINDOW_TITLE,
-      TRAY_ITEMS,
+      [...TRAY_ITEMS, ...SLOT_ITEMS],
       () => void this.showWindow(),
       (id) => void this.onTrayMenu(id),
     );
@@ -468,6 +538,9 @@ export class DesktopApp {
     if (id === 'open') return this.showWindow();
     if (id === 'quit') return this.requestQuit();
     if (id === 'stop') return this.requestStop();
+    const slot = /^chat-(\d+)$/.exec(id);
+    const target = slot ? this.#slots[Number(slot[1])]?.target : undefined;
+    if (target) return this.openFromNotification(target).then(() => {});
     return Promise.resolve();
   }
 
@@ -499,11 +572,13 @@ export class DesktopApp {
         phoneOn: this.phoneOn(),
         status: this.#trayView?.status ?? '',
         items: TRAY_ITEMS.map((i) => (i.id === 'status' ? this.#trayView?.status ?? '' : i.id === 'stop' ? stopLabel : i.label)),
+        chats: this.#slots.map((s) => s.label),
+        attention: !!this.#attention,
       })
     ).catch(() => {});
   }
 
-  async #counts(): Promise<{ working: number; needsYou: number } | null> {
+  async #counts(): Promise<{ working: number; needsYou: number; blocked?: { key: string; title: string; reason?: string }[] } | null> {
     try {
       if (this.options.trayCounts) return await this.options.trayCounts();
       const n = await this.options.busyCount();
@@ -514,7 +589,7 @@ export class DesktopApp {
   }
 
   /** Everything quitting must not cut off: chats working (queued, helpers, waiting for the person), terminal commands, merges. */
-  async work(): Promise<{ working: number; needsYou: number; terminals: number; merges: number; total: number } | null> {
+  async work(): Promise<{ working: number; needsYou: number; blocked?: { key: string; title: string; reason?: string }[]; terminals: number; merges: number; total: number } | null> {
     const counts = await this.#counts();
     if (!counts) return null;
     const safe = (f?: () => number) => {
@@ -543,6 +618,22 @@ export class DesktopApp {
           this.shell.updateTray?.(view.tooltip, 1, view.status);
         } catch { /* not fatal */ }
         this.trayState('status');
+      }
+      const slots = trayChatSlots(work.blocked ?? [], work.blocked ? work.needsYou : 0);
+      if (slots.map((x) => x.label).join('\n') !== this.#slots.map((x) => x.label).join('\n')) {
+        this.#slots = slots;
+        try {
+          this.shell.updateTraySlots?.(slots.map((x) => x.label));
+        } catch { /* not fatal */ }
+        this.trayState('chats');
+      }
+      const attention = work.needsYou > 0;
+      if (attention !== this.#attention) {
+        this.#attention = attention;
+        try {
+          this.shell.setWindowAttention?.(attention);
+        } catch { /* not fatal */ }
+        this.trayState('attention');
       }
     }
     const idleMs = this.options.trayIdleQuitMs ?? 10_000;
@@ -752,6 +843,7 @@ export class DesktopApp {
           this.options.onPageLoaded?.();
         } catch { /* not fatal */ }
       }
+      await this.#ensureConnected(win, page.href, why);
       return decision;
     }
     if (win !== this.window || win.isClosed() || this.#quitting) return decision;
@@ -766,6 +858,29 @@ export class DesktopApp {
     log.warning('window: on %s (%s, %s); sending it back to %s', page.href, decision, why, this.options.url);
     win.navigate(this.options.url);
     return decision;
+  }
+
+  /**
+   * Our page, but holding neither the launch key nor a known page session ("This browser is not connected to AIB yet"): the
+   * runtime sent the window to its serve port after our keyed navigation, and that redirect carries no key (it is open to every
+   * local process, so it never may). The key reaches the page only here, through this window's own navigate. Rate-limited.
+   */
+  async #ensureConnected(win: WindowHandle, href: string, why: string): Promise<void> {
+    const check = this.options.pageConnected;
+    if (!check || win !== this.window || win.isClosed() || this.#quitting) return;
+    const held = parseAuthProbe(await win.evaluate(PAGE_AUTH_PROBE));
+    if (!held) return; // can't read it now: the next load or watchdog tick looks again
+    let connected = true;
+    try {
+      connected = check(held);
+    } catch { /* unknown: leave the page alone */ }
+    if (connected) return;
+    if (!this.keyAllowed()) {
+      log.warning('window: our page (%s) is not connected; not opened again: too many tries in a row', why);
+      return;
+    }
+    log.warning('window: our page %s holds no launch key or known page session (%s); opening it again with the key', href, why);
+    win.navigate(this.options.url);
   }
 
   async busy(): Promise<number | null> {

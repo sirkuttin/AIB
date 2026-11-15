@@ -60,6 +60,21 @@ class GateContract(unittest.TestCase):
         if '--in-process' in self.server.command():   # the agents are managed by the web server, as in the reference
             self.assertEqual((mine['hostPid'], mine['instanceId']), (mine['pid'], mine['webInstanceId']))
 
+    def test_bootstrap_gives_the_token_only_to_the_page(self):
+        """Deno only: any other local program (an agent's shell command) gets every field but an empty token, so it cannot act as the
+        page (approve its own permissions, merge, settings). The page proves itself with its link's launch key (server/web/page_access.ts)."""
+        if server_kind() == 'python':
+            self.skipTest('the Python reference hands the token to every local caller')
+        outside = self.server.bootstrap(page_key=False)
+        self.assertEqual(outside.status, 200)
+        body = outside.json()
+        self.assertEqual(body['token'], '')
+        self.assertEqual(sorted(body), sorted(self.server.bootstrap().json()), 'the same keys')
+        reply = self.server.request('GET', '/api/live/list', self.server.page_headers(X_Studio_Token=body['token']))
+        self.assertEqual((reply.status, reply.json()), (403, {'error': 'Invalid local session token'}))
+        reply = self.server.request('POST', '/api/live/permission', self.server.page_headers(X_Studio_Token=''), {'id': 'claude:x', 'key': 'k', 'option': 'allow'})
+        self.assertEqual(reply.status, 403)
+
     def test_bootstrap_refuses_a_cross_site_page(self):
         reply = self.server.request('GET', '/api/live/bootstrap', self.server.page_headers(token=False, Sec_Fetch_Site='cross-site'))
         self.assertEqual(reply.status, 403)

@@ -3,6 +3,7 @@
  * phone request, a fake Tailscale CLI (status / serve status answers from a JSON file the test edits), and an in-process Studio
  * whose agent host the test fills (chats, events, subagents).
  */
+import { PAGE_KEY } from './_page_key.ts';
 import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
 import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
@@ -315,6 +316,7 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
     ompSessions: state,
     shutdown: () => {},
     phone: { bindRetryMs: 1500, ...phone },
+    pageKey: PAGE_KEY, // a browser on chat.html carries it in its link (_doc_browser.ts Page.goto)
   });
   const web = new WebServer(ctx);
   const port = await web.listen(0);

@@ -13,6 +13,8 @@
   //   opening          the agent is still starting                                           -> Opening… (transitional)
   //   needs, needsKind how many requests wait (approval / question / sign-in) and the first kind
   //   busy, busySince  the agent is working; busySince is when it started (ms)
+  //   helpers          the reply ended but this many of its helpers still run (attention.helpers)  -> Working · 2 helpers
+  //   background       the reply ended but a background command it started still runs (attention.shells) -> Working
   //   yourTurn         true = the agent finished its turn and the user has not acted since.
   //                    CONTRACT with the "your turn" mark owner (workspace code): expose a boolean `yourTurn` on the
   //                    conversation object (c.yourTurn or c.live.yourTurn); it is cleared only by acting (reply, hold,
@@ -75,6 +77,15 @@
           elapsedMs: f.busySince ? Math.max(0, now - f.busySince) : 0,
         });
       }
+      // the inbox's rule (inbox-rules.js): a chat whose helpers or background command still run is working, never Your turn
+      const helpers = Math.max(0, Number(f.helpers) || 0);
+      if (helpers)
+        return make(
+          'working',
+          'Working · ' + helpers + (helpers === 1 ? ' subagent' : ' subagents'),
+          'The reply is done; its subagents still run. You can send now.',
+        );
+      if (f.background) return make('working', 'Working', 'The reply is done; a command it started still runs. You can send now.');
       if (f.yourTurn) return make('your-turn', 'Your turn', 'It finished and is waiting for you. Shows in the inbox.');
       return make('idle', 'Idle', 'Connected, nothing pending.');
     }

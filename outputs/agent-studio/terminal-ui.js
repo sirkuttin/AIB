@@ -1276,8 +1276,9 @@
 
   /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
   // step: '' for the sign-in; 'install' or 'prereq:<id>' for a setup terminal (the server picks the command from its catalog).
-  // distro: a WSL distro key; the sign-in then runs the agent's login inside that distro (wsl-ui.js).
-  function signinUrl(loc, agentId, cols, rows, step, distro) {
+  // distro: a WSL distro key; the sign-in then runs the agent's login inside that distro (wsl-ui.js, a WSL chat's sign-in card).
+  // args: a built-in agent's advertised sign-in args (a chat's sign-in card); the server adds the program.
+  function signinUrl(loc, agentId, cols, rows, step, distro, args) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
     const q = new URLSearchParams(
       step
@@ -1285,12 +1286,15 @@
         : { signin: agentId, cols: String(cols || 80), rows: String(rows || 24) },
     );
     if (distro && !step) q.set('distro', distro);
+    // A built-in agent's terminal sign-in (a chat's sign-in card): the advertised method's args; the server adds the program.
+    if (!step && Array.isArray(args)) args.forEach((a) => q.append('arg', String(a)));
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
   }
   /**
    * runSignin(box, agentId, hooks): run a Beta agent's own sign-in command (ACP terminal auth) in an AIB terminal inside `box`
    * (a ConPTY on the server: no window ever opens). hooks: {onReady(), onExit(code), onError(message)}. Returns {close()}, which ends
-   * the command. Same look and keys as the chat terminal (copy with Ctrl+Shift+C); nothing typed here goes to an agent chat.
+   * the command. hooks.args: a built-in agent's advertised sign-in args (Claude Code: --cli auth login --claudeai).
+   * Same look and keys as the chat terminal (copy with Ctrl+Shift+C); nothing typed here goes to an agent chat.
    */
   function runSignin(box, agentId, hooks) {
     const h = hooks || {};
@@ -1339,7 +1343,7 @@
           // h.url(cols, rows): another socket address for the same panel (a distro's own shell, "Open Ubuntu terminal").
           const url = h.url
             ? h.url(root.location, term.cols, term.rows)
-            : signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.distro || '');
+            : signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.distro || '', h.args);
           const ws = new WS(url, protocols(token));
           ws.binaryType = 'arraybuffer';
           run.ws = ws;

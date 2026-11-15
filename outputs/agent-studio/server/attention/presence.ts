@@ -21,8 +21,11 @@
  * event), so a later rule (for example one summary when the phone is put away while chats still need you) can be added on the
  * "ended" event without rework.
  *
- * The PC page does not say which chat it shows: a focused window already stops every desktop notification and an active one every
- * push, and holding back pushes for a chat on a focused but idle PC would swallow the push the owner walked away from the PC to get.
+ * The PC page also says which chats it shows (`open`: the active tab's chat and any split pane's, while the window is visible:
+ * inbox-rules.js openKeys). openOnPc() is that list while the report is fresh. Those chats are left out of the DESKTOP only (no
+ * desktop notification, not in the tray count, the tray's chat slots or the taskbar dot): they are already in front of the
+ * owner. Pushes ignore it on purpose: holding back pushes for a chat on a focused but idle PC would swallow the push the owner
+ * walked away from the PC to get, so pushes still go by active() alone.
  */
 export const STALE_MS = 45_000;
 export const ACTIVE_MS = 120_000;
@@ -79,6 +82,7 @@ export class Presence {
   #focused = false;
   #at = 0;
   #inputAt = 0;
+  #open: string[] = [];
   #phones = new Map<string, { chat: string | null; since: number; at: number; held: HeldAlert[] }>();
   /** alert id -> the phones whose page has not got it yet */
   #pending = new Map<number, Pending>();
@@ -87,11 +91,13 @@ export class Presence {
 
   constructor(readonly clock: () => number = Date.now) {}
 
-  /** A page's report: its window has focus or not, and the time since its last input (ms). */
-  report(focused: unknown, idleMs: unknown): void {
+  /** A page's report: its window has focus or not, the time since its last input (ms), the chats it shows (page keys). */
+  report(focused: unknown, idleMs: unknown, open?: unknown): void {
     const now = this.clock();
     const idle = Number(idleMs);
     this.#focused = focused === true;
+    this.#open = (Array.isArray(open) ? open : []).filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length <= 400)
+      .slice(0, 20);
     this.#at = now;
     if (Number.isFinite(idle) && idle >= 0) this.#inputAt = Math.max(this.#inputAt, now - Math.min(idle, 7 * 86400_000));
   }
@@ -102,6 +108,11 @@ export class Presence {
 
   active(): boolean {
     return this.focused() && this.clock() - this.#inputAt < ACTIVE_MS;
+  }
+
+  /** The chats open in the AIB window now (page keys), focused or not; none once the page stopped reporting. */
+  openOnPc(): string[] {
+    return this.clock() - this.#at < STALE_MS ? [...this.#open] : [];
   }
 
   // ---- phones -------------------------------------------------------------------------------------------------------------------

@@ -219,11 +219,171 @@
     line.appendChild(el('span', 'elicitation-url-rest', u.pathname + u.search + u.hash));
     return line;
   }
+  /*
+   * The one sign-in card (a chat whose agent needs sign-in again mid-session, or at setup when AIB can run the agent's terminal
+   * sign-in itself): "<Agent> needs you to sign in again", one Sign in button (a choice only when the agent offers several ways AIB
+   * can run), the agent's own words under Details. Nothing runs before the click. A terminal method runs in an AIB terminal inside
+   * the card (context.runTerminal: a ConPTY, no window); when it exits 0 the card asks the server to retry (it sends the failed
+   * message again once). A failure says what happened and the button becomes Try again.
+   */
+  function signinCard(container, auth, context, sig) {
+    const card = el('section', 'elicitation-card auth-card auth-signin-card');
+    const provider = context.providerName || 'The agent';
+    const slot = { card, signature: sig, context, run: null };
+    const again = auth.during === 'prompt';
+    card.appendChild(el('h3', 'elicitation-heading', provider + (again ? ' needs you to sign in again' : ' needs you to sign in')));
+    const runnable = auth.methods.filter(
+      (m) =>
+        m &&
+        typeof m.id === 'string' &&
+        (m.kind === 'agent' ||
+          (m.kind === 'terminal' &&
+            ((Array.isArray(m.args) && m.args.length && typeof context.runTerminal === 'function') ||
+              typeof context.onTerminalSignin === 'function'))),
+    );
+    const others = auth.methods.filter((m) => m && runnable.indexOf(m) < 0);
+    card.appendChild(
+      el(
+        'p',
+        'elicitation-message auth-signin-lead',
+        runnable.length
+          ? again
+            ? 'Your sign-in has expired. Sign in and AIB sends your last message again.'
+            : 'Sign in to open this chat.'
+          : "This agent did not offer a sign-in AIB can run. Sign in with the agent's own tool, then choose Try again.",
+      ),
+    );
+    let chosen = runnable[0] || null;
+    if (runnable.length > 1) {
+      const pick = el('div', 'auth-signin-choice');
+      pick.setAttribute('role', 'radiogroup');
+      runnable.forEach((m, i) => {
+        const label = el('label', 'auth-signin-option');
+        const radio = el('input');
+        radio.type = 'radio';
+        radio.name = 'auth-signin-' + Math.random().toString(36).slice(2);
+        radio.value = m.id;
+        radio.checked = i === 0;
+        radio.addEventListener('change', () => {
+          if (radio.checked) chosen = m;
+        });
+        label.appendChild(radio);
+        label.appendChild(el('span', 'auth-method-name', ' ' + (m.name || m.id)));
+        if (m.description) label.appendChild(el('span', 'elicitation-description', ' ' + m.description));
+        pick.appendChild(label);
+      });
+      card.appendChild(pick);
+    }
+    const term = el('div', 'auth-signin-terminal');
+    term.hidden = true;
+    card.appendChild(term);
+    const status = el('p', 'auth-signin-status');
+    status.setAttribute('role', 'status');
+    status.hidden = true;
+    card.appendChild(status);
+    const err = el('p', 'elicitation-error');
+    err.hidden = !auth.error;
+    if (auth.error) err.textContent = auth.error;
+    card.appendChild(err);
+    const actions = el('div', 'elicitation-actions');
+    const go = el('button', 'auth-signin-go', auth.working ? 'Signing in…' : auth.error ? 'Try again' : 'Sign in');
+    go.type = 'button';
+    go.disabled = !!auth.working;
+    const cancel = el('button', '', again ? 'Dismiss' : 'Cancel');
+    cancel.type = 'button';
+    cancel.disabled = !!auth.working;
+    const say = (text) => {
+      status.textContent = text;
+      status.hidden = !text;
+    };
+    const failed = (message) => {
+      err.textContent = message;
+      err.hidden = false;
+      go.textContent = 'Try again';
+      go.disabled = false;
+      cancel.disabled = false;
+    };
+    const retry = async (text) => {
+      say(text);
+      try {
+        await context.onAuth('retry');
+      } catch (e) {
+        failed(e && e.message ? e.message : 'AIB could not continue after the sign-in.');
+      }
+    };
+    go.addEventListener('click', async () => {
+      err.hidden = true;
+      go.disabled = true;
+      if (!runnable.length) return retry('Checking…');
+      const m = chosen || runnable[0];
+      try {
+        if (typeof context.onAuth !== 'function') throw new Error('The sign-in handler is unavailable.');
+        if (m.kind === 'agent') {
+          say('Signing in… finish it in the browser window the agent opens.');
+          await context.onAuth('authenticate', m.id);
+          return;
+        }
+        if (!(Array.isArray(m.args) && m.args.length && typeof context.runTerminal === 'function')) {
+          await context.onTerminalSignin(m.id); // a Beta agent: its card in Settings runs it, then the chat reconnects
+          return;
+        }
+        if (slot.run) slot.run.close();
+        term.hidden = false;
+        say('Starting the sign-in…');
+        cancel.disabled = true;
+        slot.run = context.runTerminal(m, term, {
+          onReady: () => say('Finish the sign-in in this terminal (a browser page may open). AIB does not see what you type here.'),
+          onExit: (code) => {
+            slot.run = null;
+            if (code === 0)
+              return retry(again ? 'Signed in. Sending your message again…' : 'Signed in. Opening the chat…');
+            say('');
+            failed('The sign-in did not finish (it ended with code ' + code + ').');
+          },
+          onError: (message) => {
+            slot.run = null;
+            say('');
+            failed(message || 'The sign-in could not start.');
+          },
+        });
+      } catch (e) {
+        say('');
+        failed(e && e.message ? e.message : 'The sign-in could not be started.');
+      }
+    });
+    cancel.addEventListener('click', async () => {
+      if (slot.run) slot.run.close();
+      slot.run = null;
+      try {
+        await context.onAuth('cancel');
+      } catch (e) {
+        failed(e && e.message ? e.message : 'The sign-in step could not be sent.');
+      }
+    });
+    actions.appendChild(go);
+    actions.appendChild(cancel);
+    card.appendChild(actions);
+    const detail = auth.detail || auth.message || '';
+    if (detail || others.length) {
+      const more = el('details', 'auth-signin-details');
+      more.appendChild(el('summary', '', 'Details'));
+      if (detail) more.appendChild(el('pre', 'auth-signin-detail', detail));
+      others.forEach((m) =>
+        more.appendChild(
+          el('p', 'auth-instructions', (m.name || m.id) + ': ' + (m.instructions || 'Complete this sign-in outside AIB.')),
+        ),
+      );
+      card.appendChild(more);
+    }
+    container.appendChild(card);
+    return slot;
+  }
   function renderAuth(container, auth, context) {
     context = context || {};
     let slot = authCards.get(container);
     if (!auth || !Array.isArray(auth.methods)) {
       if (slot) {
+        if (slot.run) slot.run.close();
         slot.card.remove();
         authCards.delete(container);
       }
@@ -234,7 +394,15 @@
       slot.context = context;
       return;
     }
-    if (slot) slot.card.remove();
+    if (slot) {
+      if (slot.run) slot.run.close();
+      slot.card.remove();
+    }
+    if (auth.during === 'prompt' || typeof context.runTerminal === 'function') {
+      slot = signinCard(container, auth, context, sig);
+      authCards.set(container, slot);
+      return;
+    }
     const card = el('section', 'elicitation-card auth-card');
     const provider = context.providerName || 'The agent';
     card.appendChild(el('h3', 'elicitation-heading', provider + ' needs you to sign in'));

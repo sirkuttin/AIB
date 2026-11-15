@@ -298,11 +298,29 @@
     lastList = list;
     const d = doc();
     if (!d) return;
+    // The one number (inbox-rules.js): chats blocked on you (an open request, a failed turn, a question in the reply), each
+    // counted once however many requests it has; finished chats never count. The same as the inbox badge and the trays. The
+    // chat open in the window is left out (inbox-rules.js isOpen): it is in front of you.
+    const IR = root.AgentInboxRules,
+      O = root.AgentOrganizeUI,
+      W = root.AgentWorkspaceUI,
+      now = Date.now() / 1000;
+    let open = [];
+    try {
+      open = (W && typeof W.openKeys === 'function' && W.openKeys()) || [];
+    } catch (e) {
+      open = [];
+    }
     let n = 0;
     for (const c of list) {
-      const s = statusOf(c);
-      if (s.state === 'needs_you') n += Math.max(1, s.needs);
-      else if (c.yourTurn) n += 1;
+      const live = liveOf(c);
+      const mark = (O && O.entryOf ? O.entryOf(c) : null) || {};
+      if (!live || mark.archivedAt || mark.deletedAt) continue;
+      if (open.length && open.indexOf(keyOf(c)) >= 0) continue;
+      const a = attentionOf(c); // the agent host's facts (an older listing without them reads its state)
+      const facts = live.attention && typeof live.attention.state === 'string' ? live.attention : { state: a ? a.state : 'idle' };
+      const blocked = IR ? IR.blocked(IR.phaseOf(facts, mark, now)) : statusOf(c).state === 'needs_you';
+      if (blocked) n += 1;
     }
     const next = (n ? '(' + n + ') ' : '') + baseTitle;
     if (d.title !== next) d.title = next;
@@ -529,6 +547,8 @@
         busy: s.state === 'working',
         busySince: busySince.get(keyOf(c)),
         yourTurn: flag === null ? s.state === 'unread' : flag,
+        helpers: (live.attention && Number(live.attention.helpers)) || 0, // the inbox's facts: still working after the reply
+        background: !!(live.attention && live.attention.shells),
       });
     }
     const st = W.statusOf(facts);

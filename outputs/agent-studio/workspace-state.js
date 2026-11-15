@@ -361,12 +361,22 @@
     if (!kinds || !kinds.length) return KIND_LABELS.input;
     return kinds.map((k) => kindLabel(k.kind) + (k.count > 1 ? ' x' + k.count : '')).join(', ');
   }
-  // The inbox: ONE flat list, newest first. A chat is in it when it is blocked on you (an approval, a question, a sign-in) or
-  // when its agent finished a turn and you have not acted (`yourTurn`, kept on the server until you reply, hold, archive,
-  // delete or Mark handled; looking at the chat does not clear it). A blocked chat that is also your-turn is one row.
-  // Row: {key, title, projectKey, projectName, provider, kind: "needs" | "yourTurn", needs, kinds, summary, ask, snippet,
-  // line, handled (can be marked handled), at (seconds), activity}.
+  // The inbox: two sections, by urgency (inbox-rules.js, the same rules as the server, the phone and the trays).
+  //   Needs you  chats blocked on you: an open approval, question or sign-in; a turn that failed with an error the agent
+  //              reported; a reply that asks you something in plain text. The longest wait first. The ONE number counts these.
+  //   Finished   live chats whose agent handed back (`yourTurn`, kept on the server until you reply, hold, archive, delete or
+  //              Mark handled) and nothing of theirs still runs (helpers, a background shell, their follow-up). Newest first;
+  //              never counted.
+  // Row: {key, title, projectKey, projectName, provider, agent, section: "needs" | "finished", reason (approval | question | signin
+  // | failed | asks | finished), kind: "needs" (answer the request) | "yourTurn" (reply / Mark handled), needs, kinds, summary,
+  // ask, snippet, line, handled (can be marked handled), since (waiting since, s; Needs you), at (seconds), helpers, activity}.
   const SNIPPET_MAX = 120;
+  const IR = () =>
+    root.AgentInboxRules || (typeof module === 'object' && typeof require === 'function' ? require('./inbox-rules.js') : null);
+  // An item's phase: the page works it out from the agent host's attention facts and the chat's marks (workspace-ui normalize);
+  // without one (a hand-made item), from the sidebar state and the your-turn mark as before.
+  const phaseOfItem = (i) =>
+    typeof i.phase === 'string' && i.phase ? i.phase : i.state === 'needs_you' ? 'needs_you' : i.yourTurn ? 'your_turn' : 'idle';
   function snippetOf(text) {
     const line =
       String(text || '')
@@ -376,25 +386,33 @@
     return line.length > SNIPPET_MAX ? line.slice(0, SNIPPET_MAX - 1).trimEnd() + '…' : line;
   }
   function inbox(items) {
+    const R = IR();
     const out = [];
     for (const i of live(items)) {
-      const blocked = i.state === 'needs_you';
-      if (!blocked && !i.yourTurn) continue;
+      const phase = phaseOfItem(i);
+      if (phase !== 'needs_you' && phase !== 'failed' && phase !== 'asks' && phase !== 'your_turn') continue;
       const base = {
         key: i.key,
         title: i.title || 'Conversation',
         projectKey: i.projectKey,
         projectName: i.projectName || 'No folder',
         provider: i.provider,
+        agent: i.agent || i.provider || '',
+        helpers: Number(i.helpers) || 0,
         activity: Number(i.activity) || 0,
       };
-      if (blocked) {
+      // `activity` of a blocked chat is "now" on every poll, which reshuffled the inbox between openings: use when it started
+      // waiting on you (the agent's report for a failure or a question; needsAt, kept by the page, for a request).
+      const since = Number(i.since) || Number(i.needsAt) || base.activity || Number(i.yourTurnAt) || 0;
+      if (phase === 'needs_you') {
         const needs = Math.max(1, Number(i.needs) || 0);
         const kinds = classifyNeeds({ needs, elicitations: i.elicitations, auth: i.auth });
         const ask = String(i.ask || '').trim(),
           summary = describeNeeds(kinds);
         out.push({
           ...base,
+          section: 'needs',
+          reason: R ? R.reasonOf(phase, kinds) : 'approval',
           kind: 'needs',
           needs,
           kinds,
@@ -403,14 +421,33 @@
           snippet: '',
           line: 'Needs you: ' + (ask || summary),
           handled: !!i.yourTurn,
-          // `activity` of a blocked chat is "now" on every poll, which reshuffled the inbox between openings: use when it
-          // started waiting on you (needsAt, kept by the page) so the order holds still.
-          at: Number(i.needsAt) || base.activity || Number(i.yourTurnAt) || 0,
+          since,
+          at: since,
+        });
+      } else if (phase === 'failed' || phase === 'asks') {
+        const words = String((phase === 'failed' ? i.error : i.question) || '').trim();
+        const summary = phase === 'failed' ? 'Failed' : 'Asks';
+        out.push({
+          ...base,
+          section: 'needs',
+          reason: phase,
+          kind: 'yourTurn', // answered by a reply (or Mark handled), like a finished turn
+          needs: 0,
+          kinds: [],
+          summary,
+          ask: words,
+          snippet: '',
+          line: summary + (words ? ': ' + words : ''),
+          handled: true,
+          since,
+          at: since,
         });
       } else {
         const snippet = String(i.snippet || '').trim();
         out.push({
           ...base,
+          section: 'finished',
+          reason: 'finished',
           kind: 'yourTurn',
           needs: 0,
           kinds: [],
@@ -419,11 +456,13 @@
           snippet,
           line: 'Your turn' + (snippet ? ': “' + snippet + '”' : ''),
           handled: true,
+          since: 0,
           at: Number(i.yourTurnAt) || base.activity,
         });
       }
     }
-    return out.sort((a, b) => b.at - a.at || a.projectName.localeCompare(b.projectName) || a.key.localeCompare(b.key));
+    if (R) return R.sortRows(out);
+    return out.sort((a, b) => (a.section === b.section ? 0 : a.section === 'needs' ? -1 : 1) || b.at - a.at);
   }
 
   // The inbox grouped by project (alphabetical), each group's rows keeping the inbox order: [{projectKey, projectName, rows}].

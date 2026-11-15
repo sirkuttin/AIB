@@ -35,6 +35,18 @@ export interface AuthMethod {
   description: string;
   kind: 'agent' | 'terminal' | 'env_var' | 'other';
   instructions: string;
+  /**
+   * A terminal method of ACP type "terminal" (clientCapabilities.auth.terminal): the args AIB appends to the agent's own launcher and
+   * runs in an AIB terminal when the person clicks Sign in. Only when the agent advertised plain words (Deno only).
+   */
+  args?: string[];
+}
+
+/** 1 to 12 plain words with no character a shell would read (beta_signin cleanTerminalArgs), else null. */
+function runnableArgs(value: unknown): string[] | null {
+  if (!Array.isArray(value) || !value.length || value.length > 12) return null;
+  const ok = value.every((a) => isStr(a) && a.length > 0 && a.length <= 200 && !/[&|<>^%!"`$;\r\n\0]/.test(a));
+  return ok ? [...value as string[]] : null;
 }
 
 const text = (value: unknown, limit = 500) => (isStr(value) ? clip(value, limit) : '');
@@ -72,7 +84,12 @@ export function describeAuthMethods(methods: unknown, provider = ''): AuthMethod
       kind = 'other';
       instructions = "This sign-in type is not supported inside AIB. Complete it with the agent's own tools, then choose Retry.";
     }
-    out.push({ id: item.id, name: text(item.name) || item.id, description: text(item.description, 1000), kind, instructions });
+    const method: AuthMethod = { id: item.id, name: text(item.name) || item.id, description: text(item.description, 1000), kind, instructions };
+    if (kind === 'terminal' && mtype === 'terminal') {
+      const args = runnableArgs(item.args);
+      if (args) method.args = args;
+    }
+    out.push(method);
   }
   return out;
 }

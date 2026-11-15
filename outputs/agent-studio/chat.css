@@ -1751,6 +1751,32 @@ a.elicitation-open {
   overflow-wrap: anywhere;
   margin: 6px 0 0;
 }
+/* The sign-in card (elicitation-ui.js signinCard): a choice of ways, the AIB terminal the sign-in runs in, the agent's own words. */
+.auth-signin-choice {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+.auth-signin-terminal {
+  height: 220px;
+  margin: 8px 0;
+  padding: 4px;
+  background: var(--term-bg);
+  border-radius: 6px;
+}
+.auth-signin-status {
+  margin: 6px 0;
+  font-size: 12px;
+}
+.auth-signin-details {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.auth-signin-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 6px 0 0;
+}
 .approval .elicitation-subagent {
   margin: 0 0 6px;
 }
@@ -3145,44 +3171,163 @@ span.chip-static:hover {
     bottom: auto;
   }
 }
+/* The in-page toast (notify-ui.js): the inbox's card, neutral (no orange fill), one row of actions; the default action gets a
+   teal outline. To review is a small quiet toast with no buttons. */
 .toast {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  align-items: flex-start;
+  gap: 6px;
+  width: 344px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 9px 34px 9px 12px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-popover);
   box-shadow: 0 6px 24px var(--shadow-strong);
 }
-.toast-needs {
-  border-color: var(--status-needs-line);
-  background: var(--status-needs-bg);
+.toast-turn {
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
-.toast-text {
+.toast.busy {
+  opacity: 0.75;
+}
+.toast-body {
   display: flex;
   flex-direction: column;
+  gap: 3px;
   min-width: 0;
   flex: 1;
+  cursor: pointer;
 }
-.toast-text strong {
+.toast-l1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
 }
-.toast-text span {
+.toast-l2 {
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 11px;
   color: var(--muted);
 }
-.toast button {
-  font-size: 11px;
-  padding: 5px 9px;
+.toast-age {
+  margin-left: auto;
 }
-.toast-close {
+.toast-age.long {
+  color: var(--status-needs-line);
+}
+.toast-detail {
+  margin-top: 2px;
+  padding: 6px 8px;
+  max-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  cursor: text;
+}
+.toast-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: nowrap;
+}
+.toast button.toast-btn {
+  font-size: 11px;
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
   background: none;
-  border: none;
+  color: var(--text);
+  white-space: nowrap;
+}
+.toast button.toast-btn.def {
+  border-color: var(--accent);
+}
+.toast button.toast-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.toast-note {
+  font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
+}
+.toast button.toast-link {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.toast button.toast-link:hover {
+  color: var(--text);
+}
+.toast-reply {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+.toast-reply textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  font: inherit;
+  font-size: 12px;
+}
+.toast-err {
+  font-size: 11px;
+  color: var(--danger-text);
+}
+.toast button.toast-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.toast button.toast-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.toast-stack > button.toast-more {
+  align-self: flex-end;
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.toast-stack > button.toast-more:hover {
+  color: var(--text);
+}
+/* A desktop notification was clicked: its request's inbox row, highlighted for a moment (notify-ui.js openFromDesktop). */
+.ws-inbox-item.ws-inbox-flash {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
 }
 .sidebar-tools {
   display: flex;
@@ -3876,4 +4021,20 @@ span.chip-static:hover {
 .tool-line > .bg-pill {
   padding: 2px 8px 4px 30px;
   border-top: 0;
+}
+
+/* The conversation stops at 1250 px on very wide windows, left-aligned (owner): messages with their time and Copy, the cards
+   and the composer share one edge. Text keeps its own character limit inside; tables and code use the full 1250 px. The scroll
+   container itself stays full width, so its scrollbar stays at the window edge. */
+#messages > *,
+#approvals,
+#questions,
+#turnRow,
+#queueBox,
+#planDock,
+.jump-wrap,
+#promptForm,
+.composer-row,
+#newChatForm {
+  max-width: 1250px;
 }

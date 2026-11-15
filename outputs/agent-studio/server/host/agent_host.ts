@@ -241,7 +241,7 @@ export class AgentHost {
   lifecycleCheck(now = Date.now() / 1000): boolean {
     const attached = this.webAttached() > 0;
     const working = attached ? [] : this.studio.workingList();
-    const needsYou = working.filter((w) => w.state === 'needs_you').length;
+    const needsYou = attached ? 0 : this.studio.blockedChats(); // the inbox's one number (inbox-rules.js), as the app's tray
     if (this.lifecycle.tray) {
       if (!attached && working.length > 0) {
         this.tray ??= this.lifecycle.tray(() => void this.openApp(), () => this.stopAll('the tray menu'), (m) => logger.warning('%s', m));

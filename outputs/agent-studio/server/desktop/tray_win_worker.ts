@@ -82,7 +82,10 @@ function run(start: TrayWorkerStart): void {
 
   const menu = u.CreatePopupMenu();
   const MF_GRAYED = 0x1;
-  start.items.forEach((item, i) => u.AppendMenuW(menu, MF_STRING | (item.disabled ? MF_GRAYED : 0), BigInt(menuCommand(i)), wide(item.label)));
+  // a hidden item (an empty chat slot) is not in the menu; the main thread adds it by its command id (tray_win.ts setMenuSlots)
+  start.items.forEach((item, i) => {
+    if (!item.hidden) u.AppendMenuW(menu, MF_STRING | (item.disabled ? MF_GRAYED : 0), BigInt(menuCommand(i)), wide(item.label));
+  });
 
   const taskbarCreated = u.RegisterWindowMessageW(wide('TaskbarCreated'));
   let hwndValue = 0n;

@@ -36,6 +36,8 @@ parser.add_argument('--models', action='store_true', help="A long model list, th
 parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
+parser.add_argument('--prompt-auth', action='store_true', help="An expired login mid-session (claude-agent-acp's shape): until --auth-file exists, every session/prompt sends the agent text 'Failed to authenticate: OAuth session expired and could not be refreshed' and fails with -32000 'Authentication required'. initialize advertises an agent method 'fixture-login' (authenticate writes --auth-file) and, to a client that sends clientCapabilities.auth.terminal, a terminal method 'claude-ai-login' (args ['--fixture-login']) and 'console-login' (args ['--fixture-login', '--fail-login'] with --fail-login: exits 3)")
+parser.add_argument('--fail-login', action='store_true', help='With --fixture-login: print a line and exit 3 without signing in')
 parser.add_argument('--terminal-env', action='store_true', help="With --beta-auth: the terminal method also advertises env {'AIB_FIXTURE_LOGIN': 'from-agent'} (ACP v1 map shape); --fixture-login writes that variable's value into --auth-file")
 parser.add_argument('--held-turn', action='store_true', help="Claude Code's held turns (claude-agent-acp): announces agentCapabilities._meta.claudeCode; 'approve' asks a permission whose answer ends the turn; 'gate:<file>' ends its turn once <file> exists; 'helper:<gate>' (or 'helper-ask:<gate>', whose helper asks a permission) starts a background helper, ends its reply (usage_update with _claude/origin human) but holds the response until the helper finished (when <gate> exists) and its follow-up cycle ended (when <gate>.end exists, usage_update with origin task-notification); another prompt settles a held one first, as the adapter does; 'bgshell:<gate>' starts a background Bash shell (a real child process) that runs until <gate> exists; any other prompt gets 'Fixture reply: <text>'")
 parser.add_argument('--not-claude', action='store_true', help='With --held-turn: the same stream without the claudeCode announcement (another agent)')
@@ -44,6 +46,9 @@ parser.add_argument('--limits', action='store_true', help="Usage limits: a promp
 parser.add_argument('--extra-dirs', action='store_true', help='Advertise sessionCapabilities.additionalDirectories and systemPrompt (as claude-agent-acp and codex-acp do): local-only folders are granted and told; FAKE_ACP_LOG shows the params')
 parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read), 'steer-late:<gate>' (X3: a steer is answered promptRequired just before the turn ends). After a steer-bash command ends, Claude's own cycle is held while <gate>.cycle-hold exists, until <gate>.cycle-end exists. Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
 args = parser.parse_args()
+if args.fixture_login and args.fail_login:
+    print('Fixture terminal login: failed.', flush=True)
+    sys.exit(3)
 if args.fixture_login:
     if args.auth_file:
         with open(args.auth_file, 'w', encoding='utf-8') as _f:
@@ -878,6 +883,13 @@ for line in sys.stdin:
                 if args.terminal_env:
                     terminal_method['env'] = {'AIB_FIXTURE_LOGIN': 'from-agent'}
                 init['authMethods'].insert(0, terminal_method)
+        elif args.prompt_auth:
+            wants_terminal = bool(((params.get('clientCapabilities') or {}).get('auth') or {}).get('terminal'))
+            init['authMethods'] = [{'id': 'fixture-login', 'name': 'Fixture sign-in', 'description': 'In-app fixture sign-in'}]
+            if wants_terminal:
+                init['authMethods'] = [
+                    {'id': 'claude-ai-login', 'name': 'Claude Subscription', 'description': 'Use Claude subscription', 'type': 'terminal', 'args': ['--fixture-login']},
+                    {'id': 'console-login', 'name': 'Anthropic Console', 'description': 'Use Anthropic Console', 'type': 'terminal', 'args': ['--fixture-login', '--fail-login']}]
         elif args.auth_required:
             init['authMethods'] = [{'id': 'fixture-login', 'name': 'Fixture sign-in', 'description': 'In-app fixture sign-in'},
                 {'id': 'fixture-terminal', 'name': 'Fixture terminal login', 'description': 'Run in a terminal', '_meta': {'terminal-auth': {'command': 'fixture-cli', 'args': ['login']}}}]
@@ -896,6 +908,17 @@ for line in sys.stdin:
             result(key, {})
         else:
             emit({'id': key, 'error': {'code': -32602, 'message': 'Fixture sign-in needs an API key in _meta.api-key'}})
+    elif method == 'authenticate' and args.prompt_auth:
+        if params.get('methodId') == 'fixture-login' and not args.auth_reject:
+            if args.auth_file:
+                with open(args.auth_file, 'w', encoding='utf-8') as _f:
+                    _f.write('signed in')
+            result(key, {})
+        else:
+            emit({'id': key, 'error': {'code': -32602, 'message': 'Fixture sign-in rejected'}})
+    elif method == 'session/prompt' and args.prompt_auth and not (args.auth_file and os.path.exists(args.auth_file)):
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Failed to authenticate: OAuth session expired and could not be refreshed'}})
+        emit({'id': key, 'error': {'code': -32000, 'message': 'Authentication required', 'data': {'reason': 'auth_required'}}})
     elif method == 'authenticate':
         if args.auth_reject or params.get('methodId') != 'fixture-login':
             emit({'id': key, 'error': {'code': -32602, 'message': 'Fixture sign-in rejected'}})

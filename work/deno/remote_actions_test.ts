@@ -5,7 +5,8 @@
  *    bypassPermissions, default), an option named "always", an unknown option and AIB's merge tool are refused; the agent host gets
  *    exactly {id, key, option};
  *  - answer: form questions only (a link question is refused), a withdrawn question is refused;
- *  - send: plain text only (attachments and "/" commands refused); a chat that is not running, closed or not ready is refused with
+ *  - send: text (and pictures and files as bytes: remote_attach_test.ts), never a path field or a "/" command; a chat that is not
+ *    running, closed or not ready is refused with
  *    "tap Continue this chat";
  *  - queue: edit / remove / send now only for a message queued in that chat right now;
  *  - switches: Answer / Send / Approve off for a phone -> those routes refused; turned on again on the PC -> allowed;
@@ -200,22 +201,21 @@ Deno.test({
 
 Deno.test({
   ...OPTS,
-  name: 'send: plain text is delivered; attachments and "/" commands are refused; a chat not running gets "tap Continue this chat"',
+  name: 'send: plain text is delivered; a path instead of bytes and "/" commands are refused; a chat not running gets "tap Continue this chat"',
   async fn() {
     const s = await phoneOn();
     try {
       s.chats.push(chat('c1'), chat('shut', { closed: true }), chat('opening', { ready: false }));
       const phone = await pairPhone(s);
       const send = (body: Json, path = '/api/remote/prompt') => post(s, phone.token, path, body);
-      const png = 'iVBORw0KGgo=';
       for (
         const body of [
-          { id: 'c1', text: 'look', clientMessageId: 'm1', attachments: [{ type: 'image', mimeType: 'image/png', data: png }] },
           { id: 'c1', text: 'look', clientMessageId: 'm1', files: [{ name: 'a.txt' }] },
+          { id: 'c1', text: 'look', clientMessageId: 'm1', attachments: [{ type: 'file', name: 'a.txt', path: 'C:\a.txt' }] },
         ]
       ) {
         const r = await send(body);
-        assertEquals([r.status, r.json.code], [403, 'text_only']);
+        assertEquals([r.status, r.json.code], [400, 'bytes_only']);
       }
       for (const text of ['/doc release plan: add dates', '  /compact', '/clear']) {
         const r = await send({ id: 'c1', text, clientMessageId: 'm2' });
@@ -246,7 +246,7 @@ Deno.test({
       assertEquals(q.status, 200);
       // steer: the same checks as a prompt; the agent host gets exactly {id, text, clientMessageId} and decides (steer now / hold / prompt)
       assertEquals((await send({ id: 'c1', text: '/doc x', clientMessageId: 'm6s' }, '/api/remote/steer')).json.code, 'text_only');
-      assertEquals((await send({ id: 'c1', text: 'hi', clientMessageId: 'm6s', files: [{}] }, '/api/remote/steer')).json.code, 'text_only');
+      assertEquals((await send({ id: 'c1', text: 'hi', clientMessageId: 'm6s', files: [{}] }, '/api/remote/steer')).json.code, 'bytes_only');
       assertEquals((await send({ id: 'shut', text: 'hi', clientMessageId: 'm6s' }, '/api/remote/steer')).json.code, 'not_live');
       const st = await send({ id: 'c1', text: 'while you work', clientMessageId: 'm6s', toolCallId: 'x' }, '/api/remote/steer');
       assertEquals(st.status, 200);

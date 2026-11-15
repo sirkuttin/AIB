@@ -275,7 +275,7 @@ Deno.test("a click opens what the last shown notification was about", async () =
     test: false,
   });
   await n.show({
-    title: "2 agents are waiting for you",
+    title: "2 need you",
     body: "a\nb",
     target: { type: "inbox" },
     test: false,
@@ -632,4 +632,26 @@ Deno.test("a click with no chat (the test) still brings the window to the front,
     app.stop();
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
+});
+
+Deno.test("a Finished-only notification is silent on every OS (phase 1b)", async () => {
+  // Linux: low urgency (no sound); macOS: never a `sound name`; Windows balloons are always NIIF_NOSOUND
+  assertEquals(posixCommand("linux", "t", "b", true)!.args, ["--app-name=AIB", "--urgency=low", "--", "t", "b"]);
+  assert(!posixCommand("darwin", "t", "b", true)!.args.join(" ").includes("sound name"));
+  assert(!posixCommand("darwin", "t", "b", false)!.args.join(" ").includes("sound name"));
+  // the request carries it through the route and DesktopNotifications to the OS layer
+  assertEquals(cleanNotifyRequest({ title: "a", body: "Finished", silent: true }).silent, true);
+  assertEquals(cleanNotifyRequest({ title: "a", body: "x", silent: "yes" }).silent, undefined);
+  const seen: (boolean | undefined)[] = [];
+  const os: OsNotify = { mechanism: "fake", show: (_t, _b, silent) => (seen.push(silent), Promise.resolve({ shown: true })) };
+  const n = new DesktopNotifications(os, () => {}, () => true);
+  await n.show({ title: "a", body: "Finished", target: null, test: false, silent: true });
+  await n.show({ title: "b", body: "Needs your approval", target: null, test: false });
+  assertEquals(seen, [true, false]);
+});
+
+Deno.test("a notification click can open the inbox on one chat's request (inbox v3)", () => {
+  assertEquals(cleanNotifyRequest({ title: "a", body: "b", target: { type: "inbox", key: "claude:x" } }).target, { type: "inbox", key: "claude:x" });
+  assertEquals(cleanNotifyRequest({ title: "a", body: "b", target: { type: "inbox", key: 7 } }).target, { type: "inbox" });
+  assertEquals(cleanNotifyRequest({ title: "a", body: "b", target: { type: "inbox", key: "k".repeat(500) } }).target, { type: "inbox" });
 });

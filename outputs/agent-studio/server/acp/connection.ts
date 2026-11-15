@@ -50,6 +50,7 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
 import { descendants, refreshDescendants } from '../platform/descendants.ts';
+import { INBOX } from '../attention/inbox_rules.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
@@ -382,6 +383,13 @@ export interface AuthState {
   message: string;
   error: string;
   working: boolean;
+  /**
+   * Deno only. 'prompt': a message failed mid-session because the agent's login expired (ACP auth_required); the chat keeps working
+   * once signed in, and AIB sends that message again once. Absent: sign-in while the chat opens (setup).
+   */
+  during?: 'prompt';
+  /** Deno only: what the agent said (its own text, then the error), kept under the card. */
+  detail?: string;
 }
 
 interface Pending {
@@ -629,6 +637,37 @@ export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of 
 
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
+/** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
+export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper'];
+const OWN_TOOL_NAMES = new Set(['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...SWARM_TOOL_NAMES]);
+
+/**
+ * The studio_artifact tool a permission request is for, by the adapter's own shape, or ''. Claude Code names it in
+ * _meta.claudeCode.toolName (mcp__studio_artifact__<tool>); other adapters put the MCP server and tool in rawInput ({server, tool}, as
+ * codex-acp's McpInvocation) or a title "Tool: studio_artifact/<tool>" (codex-acp) / "<tool> (studio_artifact MCP Server)" (Gemini CLI).
+ * An agent-written title alone counts only for an MCP-shaped call: a command (kind execute) titled like the tool is not AIB's tool
+ * (review break 4).
+ */
+export function ownToolName(call: Json): string {
+  const meta = isDict(call._meta) ? call._meta : {};
+  const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
+  const fromClaude = isStr(claude.toolName) ? claude.toolName : isStr(call.name) ? call.name : '';
+  const prefixed = (n: string) => {
+    const m = /^mcp__studio_artifact__([a-z_]+)\n?$/.exec(n);
+    return m && OWN_TOOL_NAMES.has(m[1]) ? m[1] : '';
+  };
+  if (fromClaude) return prefixed(fromClaude);
+  const raw = isDict(call.rawInput) ? call.rawInput : {};
+  const invocation = isDict(raw.invocation) ? raw.invocation : raw;
+  if (invocation.server === 'studio_artifact' && isStr(invocation.tool) && OWN_TOOL_NAMES.has(invocation.tool)) return invocation.tool;
+  if (call.kind === 'execute' || call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') return '';
+  const title = isStr(call.title) ? call.title.trim() : '';
+  const codex = /^Tool: studio_artifact\/([a-z_]+)$/.exec(title);
+  if (codex && OWN_TOOL_NAMES.has(codex[1])) return codex[1];
+  const gemini = /^([a-z_]+) \(studio_artifact MCP Server\)$/.exec(title);
+  if (gemini && OWN_TOOL_NAMES.has(gemini[1])) return gemini[1];
+  return prefixed(title);
+}
 
 /** The `_claude/origin` kinds of a cycle Claude Code started on its own (claude-agent-acp's AUTONOMOUS_RESULT_ORIGINS). */
 const AUTONOMOUS_ORIGINS = new Set(['task-notification', 'peer', 'coordinator', 'observer', 'observer-activity']);
@@ -643,6 +682,15 @@ const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB can
 
 /** The agents whose steering behaviour AIB knows (the page picks its hint copy by this); any other agent that steers gets the fallback. */
 export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex', 'omp']);
+/** A request's failure as an RpcError (request() throws a RuntimeError carrying the agent's code and data), or null. */
+function asRpcError(error: unknown): RpcError | null {
+  if (error instanceof RpcError) return error;
+  if (!(error instanceof Error) || !Object.hasOwn(error, 'code')) return null;
+  const { code, data } = error as Error & { code?: unknown; data?: unknown };
+  return new RpcError({ message: error.message, code, data });
+}
+/** Built-in agents whose ACP terminal sign-in methods AIB runs itself, in an AIB terminal (Deno only). */
+export const TERMINAL_SIGNIN_PROVIDERS: ReadonlySet<string> = new Set(['claude']);
 
 /**
  * How long a Claude Code turn whose reply ended while its helpers run waits before it is ended early, when a steered message went in
@@ -812,8 +860,28 @@ export class Connection {
   busy = false;
   /** Wall-clock time of the last turn_end event (attention summary). */
   turnEndedAt: number | null = null;
+  /** Swarm: this chat's role, set by the Studio when it is made (a helper's own record says whose); null outside a worktree. */
+  swarm: { role: 'main' | 'helper'; helperId?: string; parent?: string } | null = null;
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
+  /**
+   * The last turn ended in an error the agent reported (its session/prompt answered with an error: a usage limit, a prompt too
+   * long, a refused connection): when, and the agent's words. Never for a Stop, a closed chat or AIB's own reconnecting. Cleared
+   * when the next turn starts. The inbox's Failed (inbox-rules.js).
+   */
+  turnFailedAt: number | null = null;
+  turnError = '';
+  /** The last reply asks you something in plain text (inbox-rules.js asksOf, rule R6): when it ended, and the question. */
+  #asks: { at: number; question: string } | null = null;
+  /** When each live helper was first seen running, and each background shell started (seconds): the inbox's caps. */
+  #helperSince = new Map<string, number>();
+  #shellSince = new Map<string, number>();
+  /** When the chat's last helper or background shell ended (seconds): the agent's own follow-up usually starts within 20 s. */
+  #workEndedAt: number | null = null;
+  /** Helpers or shells counted as work at the last look (a shell's end is read from the OS, so it is noticed by looking). */
+  #hadWork = false;
+  /** The background-shell answer of the last look, at most 2 s old (a process listing per call is too slow for every list). */
+  #shellsSeen: { at: number; running: boolean } | null = null;
   /**
    * True while `busy` stands for a model cycle Claude Code started on its own (a background helper finished and it answers the
    * task notification), not for a prompt of ours. Ends at that cycle's result (see #watchHeldTurn).
@@ -939,6 +1007,12 @@ export class Connection {
   /** Why this chat could not be rebuilt from the keeper's record ('' when it was, or was never rebuilt). It is then read-only. */
   rebuildError = '';
   #replaying = false;
+  /** The raw text and attachments of the latest prompt, so a turn that failed for sign-in can be sent again once (Deno only). */
+  #lastPrompt: { seq: number; text: unknown; attachments: unknown } | null = null;
+  /** The message to send again after a mid-session sign-in, or null. */
+  #authRetry: { text: unknown; attachments: unknown } | null = null;
+  /** True while the automatic resend after a sign-in is running: another auth failure then says the sign-in did not take. */
+  #authResent = false;
   /** Record time (seconds) while replaying, so rebuilt events keep their original times. */
   #clock: number | null = null;
   #outLines = new PyTextLines();
@@ -1680,6 +1754,15 @@ export class Connection {
     this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
     this.subagents = new Map(entries(s.subagents) as [string, Json][]);
     this.#liveHelpers = new Set(Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : []);
+    const times = (value: unknown) => new Map(entries(value).filter((e) => isStr(e[0]) && typeof e[1] === 'number') as [string, number][]);
+    this.#helperSince = times(s.helperSince);
+    for (const child of this.#liveHelpers) if (!this.#helperSince.has(child)) this.#helperSince.set(child, this.#now()); // an older note
+    this.#shellSince = times(s.shellSince);
+    this.turnFailedAt = typeof s.turnFailedAt === 'number' ? s.turnFailedAt : null;
+    this.turnError = isStr(s.turnError) ? s.turnError : '';
+    const asks = isDict(s.asks) ? s.asks : null;
+    this.#asks = asks && typeof asks.at === 'number' && isStr(asks.question) ? { at: asks.at, question: asks.question } : null;
+    this.#workEndedAt = typeof s.workEndedAt === 'number' ? s.workEndedAt : null;
     this.#bgShells = new Map(
       (Array.isArray(s.bgShells) ? s.bgShells : []).filter((e): e is [string, number[] | null] =>
         Array.isArray(e) && isStr(e[0]) && (e[1] === null || (Array.isArray(e[1]) && e[1].every(isInt)))
@@ -1766,7 +1849,13 @@ export class Connection {
       sequence: this.sequence,
       subagents: [...this.subagents],
       liveHelpers: [...this.#liveHelpers],
+      helperSince: [...this.#helperSince],
       bgShells: [...this.#bgShells],
+      shellSince: [...this.#shellSince],
+      turnFailedAt: this.turnFailedAt,
+      turnError: this.turnError,
+      asks: this.#asks,
+      workEndedAt: this.#workEndedAt,
       bgTools: [...this.#bgTools],
       breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
       writes: { paths: [...this.writes.paths], calls: [...this.writes.calls] },
@@ -2095,6 +2184,8 @@ export class Connection {
       return;
     }
     this.#bgShells.set(task, pids ? pids.map((d) => d.pid) : null);
+    this.#shellSince.set(task, at);
+    this.#shellsSeen = null;
     while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
     const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
     const others = [...this.#tools].some(([other, t]) =>
@@ -2302,8 +2393,15 @@ export class Connection {
       if (isStr(child) && live && this.busy && !this.autonomous) {
         this.#turnHelpers.add(child);
       }
-      if (isStr(child) && live) this.#liveHelpers.add(child);
-      else if (isStr(child) && isStr(state)) this.#liveHelpers.delete(child);
+      if (isStr(child) && live) {
+        this.#liveHelpers.add(child);
+        if (!this.#helperSince.has(child)) this.#helperSince.set(child, this.#now());
+      } else if (isStr(child) && isStr(state)) {
+        const had = this.#liveHelpers.size;
+        this.#liveHelpers.delete(child);
+        this.#helperSince.delete(child);
+        if (had && !this.#liveHelpers.size) this.#workEndedAt = this.#now(); // the follow-up window starts (inbox-rules.js)
+      }
       return;
     }
     if (get(params, 'sessionId') !== this.sessionId) return; // a subagent's own updates
@@ -2356,6 +2454,7 @@ export class Connection {
   #endAutonomous(stopReason: string): Promise<void> {
     this.autonomous = false;
     this.turnEndedAt = this.#now();
+    if (stopReason !== 'cancelled') this.#noteAsks();
     const result = { stopReason };
     this.#queueNoteOutcome(result, false);
     this.event('turn_end', result);
@@ -2921,6 +3020,97 @@ export class Connection {
     return false;
   }
 
+  /** The agent's own words of the current turn (its message chunks since the last user message), clipped; '' when none. */
+  #turnAgentText(): string {
+    const parts: string[] = [];
+    for (let i = this.events.length - 1; i >= 0 && parts.length < 200; i--) {
+      const e = this.events[i];
+      if (e.kind === 'user') break;
+      if (e.kind !== 'update' || !isDict(e.data)) continue;
+      const update = get(e.data, 'update');
+      if (!isDict(update) || get(update, 'sessionUpdate') !== 'agent_message_chunk') continue;
+      const content = get(update, 'content');
+      const piece = isDict(content) ? get(content, 'text') : null;
+      if (isStr(piece)) parts.push(piece);
+    }
+    return clip(parts.reverse().join('').trim(), 1000);
+  }
+
+  /** A prompt failed with ACP auth_required mid-session: show the sign-in card and keep the message for one resend (Deno only). */
+  #holdForSignIn(error: RpcError, seq: number): void {
+    const said = this.#turnAgentText();
+    const again = this.#authResent;
+    this.#authResent = false;
+    this.error = '';
+    const detail = clip([said, error.message].filter(Boolean).join('\n'), 1500);
+    this.auth = {
+      methods: [...this.authMethods],
+      message: clip(error.message, 500),
+      error: again ? 'AIB sent your message again after the sign-in, but the agent still asks for sign-in. Try again.' : '',
+      working: false,
+      during: 'prompt',
+      detail,
+    };
+    const last = this.#lastPrompt;
+    this.#authRetry = last && last.seq === seq ? { text: last.text, attachments: last.attachments } : this.#authRetry;
+    this.#queueNoteOutcome(null, false);
+    this.event('auth_required', { methods: this.auth.methods, message: this.auth.message, during: 'prompt', detail });
+  }
+
+  /** The person's answer to a mid-session sign-in card: authenticate in-app, retry after a terminal sign-in, or dismiss. */
+  #answerPromptAuth(auth: AuthState, action: unknown, methodId: unknown): void {
+    if (action === 'cancel') {
+      this.auth = null;
+      this.#authRetry = null;
+      this.event('error', { message: auth.detail || auth.message || 'Sign-in required' });
+      void this.#queuePump();
+      return;
+    }
+    if (action === 'retry') {
+      void this.#resumeAfterSignIn();
+      return;
+    }
+    if (action !== 'authenticate') throw new ValueError('Action must be authenticate, retry, or cancel');
+    const method = isStr(methodId) ? auth.methods.find((m) => m.id === methodId) ?? null : null;
+    if (method === null) throw new ValueError('Unknown sign-in method');
+    if (method.kind !== 'agent') {
+      throw new ValueError('This sign-in runs in a terminal: choose Sign in on the card, or finish it outside AIB, then choose Try again.');
+    }
+    auth.working = true;
+    auth.error = '';
+    void (async () => {
+      try {
+        await this.request('authenticate', this.authenticateParams(method.id), 900);
+      } catch (failure) {
+        if (this.auth === auth) {
+          auth.working = false;
+          auth.error = 'Sign-in failed: ' + clip(errorText(failure), 300);
+          this.#scheduleSnapshot();
+        }
+        return;
+      }
+      if (this.auth === auth) await this.#resumeAfterSignIn();
+    })();
+  }
+
+  /** Signed in again: the card goes and the message that failed is sent once more (nothing to send: the queue goes on). */
+  async #resumeAfterSignIn(): Promise<void> {
+    const retry = this.#authRetry;
+    this.auth = null;
+    this.#authRetry = null;
+    if (!retry || this.closed || !this.ready || (this.busy && !this.autonomous)) {
+      void this.#queuePump();
+      return;
+    }
+    this.#authResent = true;
+    try {
+      await this.prompt(retry.text, null, retry.attachments);
+    } catch (error) {
+      this.#authResent = false;
+      this.event('error', { message: 'AIB could not send your message again after the sign-in: ' + errorText(error) });
+    }
+  }
+
   /** Called from the HTTP layer: choose an in-app method, retry after an external sign-in, or cancel. */
   answerAuth(action: unknown, methodId: unknown = null): void {
     const auth = this.auth;
@@ -2928,6 +3118,7 @@ export class Connection {
       throw new ValueError('No sign-in is pending for this connection');
     }
     if (auth.working) throw new ValueError('Sign-in is already in progress');
+    if (auth.during === 'prompt') return this.#answerPromptAuth(auth, action, methodId);
     if (action === 'authenticate') {
       const method = isStr(methodId) ? auth.methods.find((m) => m.id === methodId) ?? null : null;
       if (method === null) throw new ValueError('Unknown sign-in method');
@@ -2962,7 +3153,11 @@ export class Connection {
         elicitation: { form: {}, url: {} },
         // A Beta agent that signs in through a terminal: AIB runs that sign-in itself (its own terminal, Settings > AIB Linking), so the
         // agent may offer its terminal-type methods (ACP auth.terminal); the chat's sign-in card then has a Sign in button.
-        ...(betaAgent(this.provider)?.signin.kind === 'terminal' ? { auth: { terminal: true } } : {}),
+        // Claude Code too (Deno only): its "claude-ai-login" / "console-login" terminal methods run in an AIB terminal from the chat's
+        // sign-in card (terminal_routes.ts builtinSigninCommand), never a separate console window.
+        ...(betaAgent(this.provider)?.signin.kind === 'terminal' || TERMINAL_SIGNIN_PROVIDERS.has(this.provider)
+          ? { auth: { terminal: true } }
+          : {}),
       },
     }, 45);
     this.#checkSetupAbort();
@@ -3311,6 +3506,7 @@ export class Connection {
     };
     if (fileSummaries.length) userEvent.files = fileSummaries; // names, types, sizes and a bounded text preview; never the full content
     this.event('user', userEvent);
+    this.#lastPrompt = { seq, text, attachments };
     this.turn = this.#runTurn(
       seq,
       text as string,
@@ -3338,6 +3534,9 @@ export class Connection {
     this.#noteTurnProcesses();
     this.turnStartedAt = now();
     this.error = '';
+    this.turnFailedAt = null; // sending is acting on a failure or a question
+    this.turnError = '';
+    this.#asks = null;
     this.promptSeq += 1;
     const seq = this.promptSeq;
     if (clientMessageId) {
@@ -3397,9 +3596,11 @@ export class Connection {
       }
       this.#clearSettle();
       this.turnEndedAt = this.#now();
+      if (!(isDict(result) && result.stopReason === 'cancelled')) this.#noteAsks();
       this.#backgroundOpenTools(seq);
       if (!(isDict(result) && result.stopReason === 'cancelled')) this.#steerUnread();
       this.#queueNoteOutcome(result, false);
+      this.#authResent = false;
       this.event('turn_end', result);
       const hook = this.onTurnEnd;
       // A turn that ended before a rebuild had its hooks run by the AIB that saw it end.
@@ -3416,12 +3617,29 @@ export class Connection {
         this.#receiptChanged(clientMessageId);
       }
     } catch (error) {
+      const authError = asRpcError(error);
+      if (authError && isAuthRequired(authError) && !this.closed && this.cancelSeq < seq && !this.auth && !this.#replaying) {
+        // The agent's login expired mid-session ("Failed to authenticate…" then ACP auth_required): one sign-in card, not two raw
+        // errors; once signed in, the message goes again once (Deno only).
+        this.#holdForSignIn(authError, seq);
+        if (clientMessageId) {
+          const receipt = this.promptReceipts.get(clientMessageId);
+          if (receipt) receipt.state = 'error';
+          this.#receiptChanged(clientMessageId);
+        }
+        return; // finally still runs
+      }
       log.exception(error, 'Prompt turn failed');
       const data = isDict(error) || error instanceof Error ? (error as { data?: unknown }).data : null;
       if (isDict(data) && isDict(data.subscriptionQuota)) {
         this.onLimits?.(this, 'qwen-quota', data.subscriptionQuota, this.#now()); // Qwen: the cap is reached
       }
       this.error = errorText(error);
+      // Failed (the inbox): only the agent's own answer to this prompt, never a Stop or a chat that closed under it.
+      if (errorName(error) === 'RuntimeError' && !this.closed && this.cancelSeq < seq) {
+        this.turnFailedAt = this.#now();
+        this.turnError = errorText(error).replace(/\s+/g, ' ').trim().slice(0, 300);
+      }
       this.#queueNoteOutcome(null, true);
       this.event('error', { message: errorText(error) });
       if (clientMessageId) {
@@ -4435,13 +4653,7 @@ export class Connection {
     if (!(this.mcpServers ?? []).some(isOwnArtifactEntry)) return false;
     const call = isDict(params) ? get(params, 'toolCall') : null;
     if (!isDict(call)) return false;
-    const meta = isDict(call._meta) ? call._meta : {};
-    const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
-    let name: unknown = get(claude, 'toolName');
-    if (!pyTruthy(name)) name = get(call, 'name');
-    if (!pyTruthy(name)) name = get(call, 'title');
-    if (!pyTruthy(name)) name = '';
-    return isStr(name) && OWN_ARTIFACT_TOOL.test(name);
+    return !!ownToolName(call);
   }
 
   permission(key: unknown, option: unknown): void {
@@ -4801,19 +5013,93 @@ export class Connection {
     }
   }
 
-  /** Cheap summary for the sidebar, status line and notifications. needs_you wins over working. */
+  /**
+   * Cheap summary for the sidebar, status line, notifications and the inbox. needs_you wins over working. `state` keeps its old
+   * meaning (quit, idle exit and the keeper's lifecycle read it); `phase` and the facts after it are the inbox's (inbox-rules.js):
+   * helpers (Claude Code's helpers still running, each for at most an hour), shells (a background shell started in the last 30
+   * minutes still runs), followUntil (the follow-up window after the last of them ended), failedAt / error / failKind (the agent
+   * reported an error for the last turn), asksAt / question (the last reply asks you something in plain text).
+   */
   attention(): Json {
     const needs = this.permissions.size + this.elicitations.size +
       (this.auth ? 1 : 0); // includes subagent requests
     const state = this.closed ? 'closed' : needs ? 'needs_you' : !this.ready ? 'opening' : this.busy ? 'working' : 'idle';
     const iso = (t: number | null) => t ? new Date(Math.floor(t) * 1000).toISOString().slice(0, 19) + 'Z' : null;
+    const exact = (t: number | null) => t ? new Date(Math.round(t * 1000)).toISOString() : null; // compared with mark times
     const started = this.busy && !this.closed ? this.turnStartedAt : null;
+    const at = this.#now();
+    const helpers = this.closed
+      ? 0
+      : [...this.#liveHelpers].filter((h) => at - (this.#helperSince.get(h) ?? at) < INBOX.HELPER_CAP_SECONDS).length;
+    const shells = !this.closed && this.#shellsRunning(at);
+    const work = helpers > 0 || shells;
+    if (this.#hadWork && !work && !this.#workEndedAt) this.#workEndedAt = at; // a shell's end is seen by looking
+    if (work) this.#workEndedAt = null;
+    this.#hadWork = work;
+    const ended = this.#workEndedAt;
+    const followUntil = ended && ended >= (this.turnEndedAt ?? 0) ? ended + INBOX.FOLLOW_UP_SECONDS : null;
+    const facts = {
+      helpers,
+      shells,
+      followUntil: exact(followUntil),
+      failedAt: exact(this.turnFailedAt),
+      error: this.turnFailedAt ? this.turnError : '',
+      failKind: this.turnFailedAt ? INBOX.classifyError(this.turnError) : '',
+      asksAt: exact(this.#asks?.at ?? null),
+      question: this.#asks?.question ?? '',
+    };
     return {
       state,
       needs: state === 'closed' ? 0 : needs,
       turnEndedAt: iso(this.turnEndedAt),
       busySince: iso(started),
+      phase: INBOX.basePhase({ closed: this.closed, ready: this.ready, busy: this.busy, needs, ...facts }, at),
+      ...facts,
     };
+  }
+
+  /** A background shell started within the inbox's cap still runs (the OS is asked at most every 2 s). */
+  #shellsRunning(at: number): boolean {
+    if (!this.#bgShells.size) return false;
+    const seen = this.#shellsSeen;
+    if (!seen || at - seen.at >= 2 || at < seen.at) {
+      const running = this.backgroundShellsRunning();
+      for (const task of [...this.#shellSince.keys()]) if (!this.#bgShells.has(task)) this.#shellSince.delete(task);
+      const capped = running && [...this.#bgShells.keys()].some((t) => at - (this.#shellSince.get(t) ?? at) < INBOX.SHELL_CAP_SECONDS);
+      this.#shellsSeen = { at, running: capped };
+    }
+    return this.#shellsSeen!.running;
+  }
+
+  /**
+   * The turn just ended: does its last reply ask you something (inbox-rules.js asksOf)? The reply is the main session's message
+   * after its last tool call. The same on a rebuild from the keeper's record, which replays the same events.
+   */
+  #noteAsks(): void {
+    const parts: string[] = [];
+    let size = 0;
+    for (let i = this.events.length - 1; i >= 0 && size < 16384; i--) {
+      const e = this.events[i];
+      if (e.kind === 'user' || e.kind === 'turn_end') break;
+      if (e.kind !== 'update' || !isDict(e.data) || get(e.data, 'sessionId') !== this.sessionId) continue;
+      const update = get(e.data, 'update');
+      if (!isDict(update)) continue;
+      const kind = get(update, 'sessionUpdate');
+      if (kind === 'tool_call') {
+        const meta = get(update, '_meta');
+        const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
+        if (!(isDict(claude) && get(claude as Json, 'parentToolUseId'))) break;
+      }
+      if (kind !== 'agent_message_chunk') continue;
+      const content = get(update, 'content');
+      const text = isDict(content) ? get(content, 'text') : null;
+      if (isStr(text)) {
+        parts.push(text);
+        size += text.length;
+      }
+    }
+    const found = INBOX.asksOf(parts.reverse().join('').slice(-16384)); // the reply's end: one chunk may be megabytes
+    this.#asks = found.asks ? { at: this.#now(), question: found.question } : null;
   }
 
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */
@@ -4885,6 +5171,7 @@ export class Connection {
     if (rebuilding) data.rebuilding = true;
     if (this.channel) data.eventsId = this.eventsId; // a chat in the keeper: its numbering survives a rebuild (chat.js compares it)
     if (this.worktree) data.worktree = { ...this.worktree }; // only a worktree chat has this key; the page does not show it yet
+    if (this.swarm) data.swarm = { ...this.swarm };
     return data;
   }
 

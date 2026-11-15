@@ -42,6 +42,9 @@ import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
+import { INBOX } from './attention/inbox_rules.ts';
+import { swarmOf } from './web/studio_routes.ts';
+import { takeLaunchKeyFromEnv } from './web/page_access.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -122,6 +125,9 @@ export async function main(argv: string[]): Promise<void> {
   // binds its own ports in every mode (the page and the artifact origin on port + 1, the agent host's port), so drop it first. Its
   // port is kept: in window mode it redirects to our page (desktop/serve_address.ts). In a desktop binary the listeners are not
   // Deno.serve (platform/http_serve.ts), and every mode without the app window keeps the runtime's startup window hidden.
+  // The page's launch key (web/page_access.ts) a launcher may choose (tests): taken out of the environment before anything starts,
+  // so no agent, terminal, keeper or agent host this process starts can read it.
+  const launchKey = takeLaunchKeyFromEnv();
   let runtimePort: number | null = null;
   try {
     runtimePort = servePort(Deno.env.get('DENO_SERVE_ADDRESS'));
@@ -261,6 +267,7 @@ export async function main(argv: string[]): Promise<void> {
     stores: studio
       ? { conversations: studio.conversations, projectPrefs: studio.projectPrefs, readState: studio.readState, settings: studio.settings }
       : undefined,
+    pageKey: launchKey,
   });
   // A known project folder inside a repo wins for chats in any worktree; saved worktree chats map back to their project.
   worktrees.known.projects = () => [...ctx.projectPrefs.projects.keys()].filter((k) => k.startsWith('w:')).map((k) => k.slice(2));
@@ -315,6 +322,7 @@ export async function main(argv: string[]): Promise<void> {
   // "Needs you" and "finished", decided here (not by the page), so desktop notifications and phone pushes come with the window
   // closed; the same in-process, with the keeper and with a split agent host (attention/watcher.ts).
   const attention = startAttention(ctx);
+  const swarm = swarmOf(ctx); // swarm phase 1: helper reports and lines that waited for a restart (swarm/service.ts)
   ctx.keepAwake.apply(ctx.settings.keepAwake()); // the saved value (off by default); the request dies with this process
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
   // The daily zip of each project's local-only folders (never committed, so git keeps no copy): the added projects and the
@@ -366,6 +374,7 @@ export async function main(argv: string[]): Promise<void> {
     backups.stop();
     await ctx.artifacts.stop().catch(() => {});
     await attention.stop().catch(() => {});
+    await swarm.stopWatching().catch(() => {});
     ctx.keepAwake.release();
     await ctx.phone.close().catch(() => {});
     await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
@@ -388,7 +397,9 @@ export async function main(argv: string[]): Promise<void> {
   if (desktop) {
     const { nativeShell } = await import('./desktop/native.ts');
     const app = desktopApp = new DesktopApp(nativeShell(), {
-      url: `${url}/`,
+      url: ctx.pageAccess.pageUrl(url), // `${url}/#aib-key=...`: the window is the page that gets the token (web/page_access.ts)
+      // Our page holding no key or known session (the runtime's own navigation landed there without the key): opened again with it.
+      pageConnected: (held) => ctx.pageAccess.holds(held),
       stateDir,
       trayIcon: trayIconPng(),
       busyCount: async () => (await host.busyConnections()).length,
@@ -423,8 +434,15 @@ export async function main(argv: string[]): Promise<void> {
       mergesRunning, // Quit AIB lets a running merge finish before AIB exits
       trayCounts: studio
         ? () => {
-          const working = studio!.workingList();
-          return Promise.resolve({ working: working.length, needsYou: working.filter((w) => w.state === 'needs_you').length });
+          // needs you: the inbox's one number (inbox-rules.js), the same as the page's badge and the phone's
+          // and the blocked chats themselves for the tray menu's chat slots (the attention watcher's last look, with their titles)
+          // The chat open in the AIB window is left out (inbox-rules.js isOpen): it is in front of the owner already.
+          const open = ctx.presence.openOnPc();
+          return Promise.resolve({
+            working: studio!.workingList().length,
+            needsYou: studio!.blockedChats(open),
+            blocked: attention.blocked().filter((b) => !INBOX.isOpen(b.key, open)),
+          });
         }
         : undefined,
     });
@@ -435,12 +453,20 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
   writeStartedMarker(stateDir); // `serve`: up once it listens
+  // The link with the launch key (web/page_access.ts): a browser that opens it once is given the page token from then on. Printed
+  // only to a console a person sees, never into a redirected log file another program could read.
+  const pageLink = ctx.pageAccess.pageUrl(url);
+  let onConsole = false;
+  try {
+    onConsole = Deno.stdout.isTerminal();
+  } catch { /* no stdout */ }
+  if (onConsole) console.log(`Open AIB in a browser with this link (it connects that browser to this AIB): ${pageLink}`);
   if (options.open) {
     const opener = Deno.build.os === 'windows'
-      ? ['cmd', '/c', 'start', '', url]
+      ? ['cmd', '/c', 'start', '', pageLink]
       : Deno.build.os === 'darwin'
-      ? ['open', url]
-      : ['xdg-open', url];
+      ? ['open', pageLink]
+      : ['xdg-open', pageLink];
     new Deno.Command(opener[0], { args: opener.slice(1), stdout: 'null', stderr: 'null' }).spawn();
   }
 }

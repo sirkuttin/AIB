@@ -25,7 +25,8 @@ export const MAX_TITLE = 200;
 export const MAX_BODY = 500;
 export const MAX_KEY = 400;
 
-export type NotifyTarget = { type: 'chat'; key: string } | { type: 'inbox' };
+/** What a click opens: a chat, or the inbox (on one chat's request, highlighted, when `key` is set; the chat on screen stays). */
+export type NotifyTarget = { type: 'chat'; key: string } | { type: 'inbox'; key?: string };
 
 export interface NotifyRequest {
   title: string;
@@ -34,6 +35,11 @@ export interface NotifyRequest {
   target: NotifyTarget | null;
   /** The Settings test button. */
   test: boolean;
+  /**
+   * No sound (a Finished-only notification). Windows balloons are always silent (NIIF_NOSOUND); macOS's `display notification`
+   * plays no sound unless one is named, and AIB never names one; Linux sends it with `--urgency=low`.
+   */
+  silent?: boolean;
 }
 
 export interface ShowResult {
@@ -48,7 +54,7 @@ export interface ShowResult {
 export interface OsNotify {
   /** 'windows-balloon' | 'osascript' | 'notify-send' */
   mechanism: string;
-  show(title: string, body: string): Promise<ShowResult>;
+  show(title: string, body: string, silent?: boolean): Promise<ShowResult>;
   /** Registers the click handler (Windows only; elsewhere a click is the OS's business). */
   onClick?(fn: () => void): void;
 }
@@ -70,9 +76,11 @@ export function cleanNotifyRequest(raw: unknown): NotifyRequest {
   const t = raw.target;
   if (isDict(t)) {
     if (t.type === 'chat' && isStr(t.key) && t.key && t.key.length <= MAX_KEY) target = { type: 'chat', key: t.key };
-    else if (t.type === 'inbox') target = { type: 'inbox' };
+    else if (t.type === 'inbox') {
+      target = isStr(t.key) && t.key && t.key.length <= MAX_KEY ? { type: 'inbox', key: t.key } : { type: 'inbox' };
+    }
   }
-  return { title: title || 'AIB', body, target, test: raw.test === true };
+  return { title: title || 'AIB', body, target, test: raw.test === true, ...(raw.silent === true ? { silent: true } : {}) };
 }
 
 // ---------- Windows ----------
@@ -136,8 +144,11 @@ export function windowsNotify(layer: WindowsLayer): OsNotify & { clicked(): void
 /** A leading '-' would be read as an option by osascript: an en dash looks the same. */
 const noOption = (s: string) => s.replace(/^-/, '\u2013');
 
-/** The command that shows one notification, or null on an OS without one. Text only ever goes in as separate arguments. */
-export function posixCommand(os: string, title: string, body: string): { cmd: string; args: string[] } | null {
+/**
+ * The command that shows one notification, or null on an OS without one. Text only ever goes in as separate arguments. silent: no
+ * sound (macOS: no `sound name`, which AIB never adds; Linux: low urgency, which notification servers show without a sound).
+ */
+export function posixCommand(os: string, title: string, body: string, silent = false): { cmd: string; args: string[] } | null {
   if (os === 'darwin') {
     return {
       cmd: 'osascript',
@@ -154,7 +165,7 @@ export function posixCommand(os: string, title: string, body: string): { cmd: st
     };
   }
   if (os === 'linux' || os === 'freebsd' || os === 'netbsd' || os === 'openbsd') {
-    return { cmd: 'notify-send', args: ['--app-name=AIB', '--', title, body] };
+    return { cmd: 'notify-send', args: ['--app-name=AIB', ...(silent ? ['--urgency=low'] : []), '--', title, body] };
   }
   return null;
 }
@@ -188,10 +199,10 @@ export function posixNotify(os: string, run: Runner = runHidden): OsNotify | nul
   let missing = false;
   return {
     mechanism: probe.cmd,
-    async show(title, body) {
+    async show(title, body, silent) {
       const why = probe.cmd === 'osascript' ? "osascript isn't available" : "notify-send isn't installed";
       if (missing) return { shown: false, reason: why };
-      const c = posixCommand(os, title, body)!;
+      const c = posixCommand(os, title, body, silent === true)!;
       let code: number | 'missing';
       try {
         code = await run(c.cmd, c.args);
@@ -275,7 +286,7 @@ export class DesktopNotifications {
     if (!this.allowed()) return { shown: false, reason: 'too many notifications in a row; try again in a moment' };
     let result: ShowResult;
     try {
-      result = await this.os.show(req.title, req.body);
+      result = await this.os.show(req.title, req.body, req.silent === true);
     } catch (error) {
       result = { shown: false, reason: 'the system refused it' };
       log.info('notifications: %s failed: %s', this.os.mechanism, error);

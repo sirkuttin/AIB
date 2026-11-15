@@ -28,6 +28,9 @@ import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
 import { DENO, Fixture, MAIN, nativePath } from './_host_fixture.ts';
 import { WORK } from './_parity.ts';
 
+// The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs keep the old 3 s (watcher.ts).
+Deno.env.set('AIB_TEST_SETTLE_MS', '3000');
+
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -177,7 +180,8 @@ async function scenario(mode: Mode): Promise<string[]> {
     assertEquals(w.count('turn'), 2, `${mode.name}: not while the helper runs`);
     open('g2');
     open('g2.end');
-    await w.until(() => w.count('turn') === 3, 'finished after the helper');
+    // the inbox's follow-up window (20 s after the helper's end, inbox-rules.js) comes before the settle
+    await w.until(() => w.count('turn') === 3, 'finished after the helper', 45);
     await w.idle();
     assertEquals(w.count('turn'), 3, `${mode.name}: once after the helper`);
 

@@ -83,13 +83,15 @@ Some files should never be committed (scratch notes, plans, research), yet every
 - Right-column tab labels and long project names in the sidebar now fit.
 - Very long chats no longer slow the keeper down.
 - The sidebar's ⋯ menu is gone, so there's less to click past.
+- A long, busy chat no longer jumps to the top while you read it.
+- After you send, the text cursor stays in the message box, and it comes back there when a menu or popup closes.
 
 ### Tested
-Run with nothing uncommitted on the release branch, one commit before the version bump (Windows 11):
-- App-side tests: 1,804 passed, 0 failed, slow real-build tests included.
+Run with nothing uncommitted on the release branch (Windows 11); the release commit adds only README and website text:
+- App-side tests: 1,810 passed, 0 failed, slow real-build tests included.
 - Page tests: 1,324 passed, 0 failed.
 - Worktree end-to-end tests: 20 passed.
-- Server comparison tests: 6 of 6 groups passed. After the version bump, the update, page and comparison tests ran again on the release commit.
+- Server comparison tests: 6 of 6 groups passed.
 - Includes the steer tests against recorded traffic from the real Claude Code, Codex and OMP adapters, layout tests of the Send menu at six widths, and real-build tests of the tray with phone access on.
 - Phone remote control tried by hand on a real Android phone: pairing by QR and words, push, chats, new chat, the card menu, themes, artifact versions and the installed app.
 

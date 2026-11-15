@@ -4,7 +4,9 @@
   python work/demo-studio/start.py --port 8810 --keep     reuse the data from the last run (chats, pins, artifacts) if it exists
   python work/demo-studio/start.py --stop --port 8810     stops that Studio and deletes its temp folder (add --keep to keep the data)
 
-Never touches work/agent-studio-state or ~/.claude: everything lives in one temp folder, agent-studio-demo-<port>.
+Never touches work/agent-studio-state or the owner's agent folders (~/.claude, ~/.codex ...): everything lives in one temp folder,
+agent-studio-demo-<port>, and the server's home folder and agent folders (HOME, USERPROFILE, CODEX_HOME, CLAUDE_CONFIG_DIR, VIBE_HOME,
+XDG_*) point at empty fixture folders in <port folder>/home.
 Starts the Deno server (deno run -A outputs/agent-studio/server/main.ts serve --in-process ...) with no console window. Deno is
 found as AIB_DENO, else `deno` on PATH. See work/demo-studio/README.md.
 """
@@ -393,6 +395,67 @@ def generate(demo):
     return launcher
 
 
+# ---- the agents' own folders -------------------------------------------------------------------
+# Every agent folder Studio (and an agent it starts) may read: the usage-limits chip reads <CODEX_HOME>/sessions and auth.json,
+# Claude Code reads CLAUDE_CONFIG_DIR, Vibe VIBE_HOME; the rest fall back to the home folder. The demo points them all at empty
+# fixture folders in its own temp folder, so a demo never reads the owner's real ~/.codex, ~/.claude, ~/.gemini ...
+AGENT_HOME_VARS = {'CODEX_HOME': '.codex', 'CLAUDE_CONFIG_DIR': '.claude', 'VIBE_HOME': '.vibe'}   # server/state/usage_limits.ts HOME_VARS
+XDG_VARS = {'XDG_CONFIG_HOME': '.config', 'XDG_DATA_HOME': '.local/share', 'XDG_STATE_HOME': '.local/state', 'XDG_CACHE_HOME': '.cache'}
+
+
+def deno_cache(base):
+    """Deno's cache folder as the owner's environment has it, so moving HOME does not make Deno download its packages again."""
+    if base.get('DENO_DIR'):
+        return base['DENO_DIR']
+    if os.name == 'nt':
+        return str(pathlib.Path(base.get('LOCALAPPDATA') or pathlib.Path.home() / 'AppData' / 'Local') / 'deno')
+    home = pathlib.Path(base.get('HOME') or pathlib.Path.home())
+    if sys.platform == 'darwin':
+        return str(home / 'Library' / 'Caches' / 'deno')
+    return str(pathlib.Path(base.get('XDG_CACHE_HOME') or home / '.cache') / 'deno')
+
+
+def page_key(demo):
+    """The demo Studio's page launch key (<demo>/page-key.txt, made once): AIB gives the page token to bootstrap only with it
+    (server/web/page_access.ts). A browser opens the demo with it in the link (#aib-key=...), the scripts send it as a header."""
+    path = pathlib.Path(demo) / 'page-key.txt'
+    try:
+        key = path.read_text(encoding='utf-8').strip()
+    except OSError:
+        key = ''
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', key):
+        key = 'demo-page-key-' + os.urandom(16).hex()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(key, encoding='utf-8')
+    return key
+
+
+def page_link(port, demo):
+    """The demo's page with its launch key: open this in a browser."""
+    return f'http://127.0.0.1:{port}/chat.html#aib-key={page_key(demo)}'
+
+
+def demo_env(demo, base=None):
+    """The demo Studio's environment: `base` (default os.environ) with the home folder and every agent folder in <demo>/home, and
+    the page's launch key (page_key)."""
+    base = dict(os.environ if base is None else base)
+    home = pathlib.Path(demo) / 'home'
+    env = dict(base, DENO_DIR=deno_cache(base), HOME=str(home), USERPROFILE=str(home), AIB_PAGE_KEY=page_key(demo))
+    if os.name == 'nt':
+        env['HOMEDRIVE'], env['HOMEPATH'] = os.path.splitdrive(str(home))
+    for name, sub in AGENT_HOME_VARS.items():
+        env[name] = str(home / sub)
+    for name, sub in XDG_VARS.items():
+        env[name] = str(home / sub)
+    for sub in list(AGENT_HOME_VARS.values()) + list(XDG_VARS.values()):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+    # git reads ~/.gitconfig: the demo's own, so merges in the demo commit as Demo (and never with the owner's settings)
+    gitconfig = home / '.gitconfig'
+    if not gitconfig.exists():
+        gitconfig.write_text('[user]\n\tname = Demo\n\temail = demo@example.invalid\n[commit]\n\tgpgsign = false\n', encoding='utf-8')
+    return env
+
+
 # ---- starting ----------------------------------------------------------------------------------
 def deno_executable():
     return os.environ.get('AIB_DENO') or shutil.which('deno')
@@ -425,10 +488,10 @@ def wait_ready(port, process, timeout):
     return False
 
 
-def publish_artifact(port, session):
+def publish_artifact(port, session, demo):
     """One artifact in chat A1, made through Studio's own API (the same call the artifact tool makes)."""
     base = f'http://127.0.0.1:{port}'
-    token = json.loads(http(base + '/api/live/bootstrap')[1])['token']
+    token = json.loads(http(base + '/api/live/bootstrap', headers={'X-AIB-Page-Key': page_key(demo)})[1])['token']
     page = ('<!doctype html><meta charset="utf-8"><title>Rate limits</title><body style="font:16px system-ui;margin:2rem">'
             '<h1>Rate limits</h1><table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>Route</th><th>Limit</th></tr>'
             '<tr><td>/login</td><td>5 / minute</td></tr><tr><td>/search</td><td>30 / minute</td></tr><tr><td>/export</td><td>2 / minute</td></tr></table></body>')
@@ -474,7 +537,8 @@ def start(options):
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     else:
         kwargs['start_new_session'] = True
-    process = subprocess.Popen(studio_command(options, demo), stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=flags, cwd=str(demo), **kwargs)
+    process = subprocess.Popen(studio_command(options, demo), stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=flags, cwd=str(demo),
+                               env=demo_env(demo), **kwargs)
     (demo / 'studio.pid').write_text(json.dumps({'pid': process.pid, 'port': options.port, 'startedAt': time.time()}), encoding='utf-8')
     if not wait_ready(options.port, process, options.timeout):
         tail = (demo / 'studio.log').read_text(encoding='utf-8', errors='replace')[-1500:]
@@ -485,11 +549,11 @@ def start(options):
     if fresh:
         try:
             chats = json.loads((demo / 'chats.json').read_text(encoding='utf-8'))
-            if not publish_artifact(options.port, chats['a1']):
+            if not publish_artifact(options.port, chats['a1'], demo):
                 note = ' (the demo artifact could not be published)'
         except (urllib.error.URLError, OSError, ValueError, KeyError) as error:
             note = f' (the demo artifact could not be published: {error})'
-    print(f'Demo Studio: http://127.0.0.1:{options.port}/chat.html{note}')
+    print(f'Demo Studio: {page_link(options.port, demo)}{note}')
     print(f'PID: {process.pid}')
     print(f'Data: {demo}')
     where = f' --dir "{options.dir}"' if options.dir else ''

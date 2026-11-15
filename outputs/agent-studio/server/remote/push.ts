@@ -142,6 +142,8 @@ export interface PushMessage {
   tag: string;
   chat: string;
   sheet: boolean;
+  /** Finished only: the phone shows it without a sound or vibration (pwa/sw.js). */
+  silent?: boolean;
 }
 
 export interface SendResult {
@@ -169,6 +171,7 @@ export class PushSender {
       tag: message.tag,
       chat: message.chat,
       sheet: message.sheet,
+      ...(message.silent ? { silent: true } : {}),
     });
     const urgent = message.sheet || /need/i.test(message.title);
     const out: SendResult[] = [];

@@ -25,7 +25,28 @@ export const TRAY_HIDE = WM_APP + 4;
 export const TRAY_COMMAND = WM_APP + 5;
 /** Switch to icon wParam (0 = the start icon, n = altIcons[n - 1]); the worker owns the icons, so it makes the change. */
 export const TRAY_SET_ICON = WM_APP + 6;
-export const MF_GRAYED = 0x1, MF_BYPOSITION = 0x400;
+export const MF_GRAYED = 0x1, MF_BYPOSITION = 0x400, MF_BYCOMMAND = 0x0, MF_SEPARATOR = 0x800;
+/** The command id of the line above the chat slots (never chosen: a separator). */
+export const SLOT_SEPARATOR_COMMAND = 0xfff0;
+
+/**
+ * The menu calls that show these slot labels: every slot item (command ids of items first .. first + count - 1) and the line above
+ * them removed, then the line and one item per label appended in order (the slots are the last items of the menu). Pure, tested.
+ */
+export function slotMenuOps(
+  first: number,
+  count: number,
+  labels: string[],
+): ({ op: 'delete'; command: number } | { op: 'append'; command: number; label: string; separator?: boolean })[] {
+  const ops: ({ op: 'delete'; command: number } | { op: 'append'; command: number; label: string; separator?: boolean })[] = [
+    { op: 'delete', command: SLOT_SEPARATOR_COMMAND },
+  ];
+  for (let i = 0; i < count; i++) ops.push({ op: 'delete', command: menuCommand(first + i) });
+  const shown = labels.slice(0, count);
+  if (shown.length) ops.push({ op: 'append', command: SLOT_SEPARATOR_COMMAND, label: '', separator: true });
+  shown.forEach((label, i) => ops.push({ op: 'append', command: menuCommand(first + i), label }));
+  return ops;
+}
 export const TRAY_UID = 1;
 export const TRAY_WINDOW_CLASS = 'AIBTrayWindow';
 
@@ -157,6 +178,8 @@ export interface WindowsTray {
   setIcon(index: number): void;
   /** Changes a menu item's text (the host's status line). Never throws. */
   setItemLabel(index: number, label: string, disabled?: boolean): void;
+  /** Shows these labels in the chat slots (items first .. first + count - 1, the last of the menu); the rest leave the menu. */
+  setSlots(first: number, count: number, labels: string[]): void;
   /** Shows a balloon (a toast on Windows 10/11) on the icon: Shell_NotifyIconW's result (0: refused). Never throws. */
   balloon(title: string, body: string): number;
 }
@@ -220,6 +243,7 @@ export function startWindowsTray(
             if (icons[index] !== undefined) postToTray(hwnd, TRAY_SET_ICON, BigInt(index));
           },
           setItemLabel: (index, label, disabled) => setMenuLabel(menu, index, label, disabled),
+          setSlots: (first, count, labels) => setMenuSlots(menu, slotMenuOps(first, count, labels)),
           balloon: (title, body) => showBalloon(hwnd, title, body),
         });
       }
@@ -283,6 +307,26 @@ function setMenuLabel(menu: bigint, index: number, label: string, disabled = fal
     const text = new Uint16Array(label.length + 1);
     for (let i = 0; i < label.length; i++) text[i] = label.charCodeAt(i);
     user.symbols.ModifyMenuW(Deno.UnsafePointer.create(menu), index, MF_BYPOSITION | (disabled ? MF_GRAYED : 0), BigInt(menuCommand(index)), text);
+    user.close();
+  } catch { /* the tray is gone */ }
+}
+
+/** DeleteMenu / AppendMenuW from this thread (menus are not tied to a thread): the chat slots. */
+function setMenuSlots(menu: bigint, ops: ReturnType<typeof slotMenuOps>): void {
+  try {
+    const user = Deno.dlopen('user32.dll', {
+      DeleteMenu: { parameters: ['pointer', 'u32', 'u32'], result: 'i32' },
+      AppendMenuW: { parameters: ['pointer', 'u32', 'usize', 'buffer'], result: 'i32' },
+    });
+    const h = Deno.UnsafePointer.create(menu);
+    for (const o of ops) {
+      if (o.op === 'delete') user.symbols.DeleteMenu(h, o.command, MF_BYCOMMAND); // 0 when it is not there: fine
+      else {
+        const text = new Uint16Array(o.label.length + 1);
+        for (let i = 0; i < o.label.length; i++) text[i] = o.label.charCodeAt(i);
+        user.symbols.AppendMenuW(h, o.separator ? MF_SEPARATOR : 0 /* MF_STRING */, BigInt(o.command), text);
+      }
+    }
     user.close();
   } catch { /* the tray is gone */ }
 }

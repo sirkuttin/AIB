@@ -18,7 +18,7 @@ import { Connection, errorName } from '../../outputs/agent-studio/server/acp/con
 type Step = Json & { op: string };
 const AGENTS: Record<string, string> = { fake: FAKE, stream: STREAM_AGENT };
 
-function condition(c: Connection, spec: string): () => boolean {
+function condition(c: Connection, spec: string, state: Json): () => boolean {
   const [name, ...rest] = spec.split(':');
   const arg = rest.join(':');
   const updates = () => c.events.filter((e) => e.kind === 'update');
@@ -39,6 +39,10 @@ function condition(c: Connection, spec: string): () => boolean {
       return () => c.ready;
     case 'closed':
       return () => c.closed && !c.busy;
+    case 'error_text': // error_text:<substring>: an error event says it
+      return () => c.events.some((e) => e.kind === 'error' && String((e.data as Json).message ?? '').includes(arg));
+    case 'wrote': // wrote:<method>: the request went to the agent
+      return () => (state.writes as Json[]).some((w) => w.method === arg);
     case 'events': {
       const [kind, count] = arg.split(':');
       return () => c.events.filter((e) => e.kind === kind).length >= Number(count);
@@ -109,7 +113,7 @@ async function step(c: Connection, s: Step, state: Json): Promise<unknown> {
       );
     }
     case 'wait':
-      await until(condition(c, s.for as string), s.for as string, 20);
+      await until(condition(c, s.for as string, state), s.for as string, 20);
       return null;
     case 'sleep':
       await new Promise((resolve) => setTimeout(resolve, s.ms as number));
@@ -185,7 +189,7 @@ async function runPort(
   );
   const writes: unknown[] = [];
   const results: Json[] = [];
-  const state: Json = { folder };
+  const state: Json = { folder, writes };
   const c = new Connection(
     [PYTHON, AGENTS[agent], ...flags],
     folder,
@@ -244,6 +248,14 @@ const DROP = new Set([
   'toolBackground',
 ]);
 
+/**
+ * The inbox's facts in attention() (feat/inbox-phase1): Deno only. The Python reference keeps the old attention ({state, needs,
+ * turnEndedAt, busySince}); the rules behind these live in one file (inbox-rules.js), covered by work/test_inbox_rules.js and
+ * work/deno/inbox_facts_test.ts. Dropped only from attention objects ('error' is also a snapshot key).
+ */
+const INBOX_FACTS = new Set(['phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question']);
+const isAttention = (o: Json) => 'needs' in o && 'state' in o && 'phase' in o;
+
 /** Same shape with times dropped, random keys and terminal ids numbered in order of appearance, the temp folder replaced, the connection id gone. */
 function scrub(run: Json): Json {
   const cwd = run.cwd as string;
@@ -262,8 +274,9 @@ function scrub(run: Json): Json {
     if (Array.isArray(value)) return value.map(walk);
     if (value === null || typeof value !== 'object') return value;
     const out: Json = {};
+    const attention = isAttention(value as Json);
     for (const [k, v] of Object.entries(value)) {
-      if (DROP.has(k)) continue;
+      if (DROP.has(k) || (attention && INBOX_FACTS.has(k))) continue;
       if (
         (k === 'key' || k === 'leaseId') && typeof v === 'string' &&
         /^[A-Za-z0-9_-]{24}$/.test(v)
@@ -525,6 +538,7 @@ const SCRIPTS: Script[] = [
       { op: 'public' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'change', kind: 'config', configId: 'effort', value: 'high' },
       { op: 'change', kind: 'config', configId: 'verbose', value: true },
@@ -558,6 +572,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'events:update:4' }, // the announcements that follow session/new (when they arrive is a race in Python)
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'cancel' },
       { op: 'wait', for: 'idle' },
@@ -573,6 +588,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue_add', text: 'mcp', id: 'c' },
@@ -607,6 +623,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue', action: 'send_now', args: ['b'] },
@@ -702,6 +719,8 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'idle' },
       { op: 'prompt', text: 'die' },
       { op: 'wait', for: 'closed' },
+      // closed comes first in Python (its reader thread, at the agent's exit); the turn's own failure follows from the turn's thread
+      { op: 'wait', for: 'error_text:ACP connection closed' },
       { op: 'cancel' },
       { op: 'public' },
     ],
@@ -717,9 +736,12 @@ const SCRIPTS: Script[] = [
     steps: [{ op: 'setup' }, { op: 'close' }],
   },
   {
+    // An agent AIB does not run terminal sign-ins for: ACP authenticate is still refused for a terminal method (the page runs it, or
+    // the person does). Claude Code is Deno only since the sign-in card (it is sent auth.terminal and its terminal methods run in an
+    // AIB terminal; the Python reference never had that): work/deno/chat_signin_test.ts.
     name: 'sign-in: terminal method refused, in-app method, retry',
     flags: ['--auth-required'],
-    provider: 'claude',
+    provider: 'omp',
     steps: [
       { op: 'setup_bg' },
       { op: 'wait', for: 'auth' },
@@ -754,6 +776,9 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg', resume: 'resumed-id' },
       { op: 'wait', for: 'elicitations' },
+      // the question comes with the initialize answer: answered before setup sent session/load, the load is never sent (Python's
+      // setup thread can lag that far behind), and the messages to the agent go in another order
+      { op: 'wait', for: 'wrote:session/load' },
       { op: 'public' },
       { op: 'elicit', action: 'decline' },
       { op: 'join_setup' },
@@ -766,6 +791,7 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg' },
       { op: 'wait', for: 'elicitations' },
+      { op: 'wait', for: 'wrote:session/new' }, // as above: the answer goes after session/new on both sides
       { op: 'elicit', action: 'accept', content: { label: 'x' } },
       { op: 'join_setup' },
       { op: 'close' },
@@ -839,6 +865,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'permissions' },
       { op: 'kill' },
       { op: 'wait', for: 'closed' },
+      { op: 'wait', for: 'error_text:ACP connection closed' }, // the turn's failure, after closed in Python (see above)
       { op: 'public' },
       { op: 'close' },
     ],

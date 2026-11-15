@@ -8,8 +8,12 @@
  *   GET  /api/live/terminal?signin=<agent>&cols=&rows=  the same socket, running a Beta agent's own sign-in command instead of a shell
  *                                                   (ACP terminal auth: beta_signin.ts). The page never names the program: it is the
  *                                                   agent's own launcher with the sign-in args the agent host saved, else the catalog's.
- *   GET  /api/live/terminal?signin=<agent>&distro=<distro>&cols=&rows=  an agent's own login inside a WSL distro (design section 8 item 4):
- *                                                   a distro terminal in the Linux home running the agent's login command; for the next
+ *   GET  /api/live/terminal?signin=claude&arg=..&arg=..  a built-in agent's terminal sign-in (a chat's "Sign in" card): the agent's own
+ *                                                   launcher (Settings / Studio install / global, as a chat starts it) with the args
+ *                                                   of the terminal method the agent advertised (ACP terminal auth). Plain words only.
+ *   GET  /api/live/terminal?signin=<agent>&distro=<distro>[&arg=..]&cols=&rows=  an agent's own login inside a WSL distro (design section 8 item 4):
+ *                                                   a distro terminal in the Linux home running the agent's login command (the
+ *                                                   sign-in card's advertised args when given); for the next
  *                                                   5 minutes the login page it asks for opens on Windows without asking (wsl/open_urls.ts)
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
@@ -21,7 +25,8 @@ import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import type { WebContext } from './server.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
 import { resolveBeta, signinArgv } from '../agents/beta_agents.ts';
-import { readTerminalMethod } from '../agents/beta_signin.ts';
+import { cleanTerminalArgs, readTerminalMethod } from '../agents/beta_signin.ts';
+import { builtinLaunch } from './shared.ts';
 import { defaultProbe, refreshWindowsPath, setupCommand } from '../agents/beta_setup.ts';
 import type { ShellSpec } from '../platform/pty.ts';
 import { remoteSetupCommand } from '../remote/install.ts';
@@ -79,8 +84,8 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const signin = q.get('signin');
   const setup = q.get('setup');
   const distro = q.get('distro');
-  if (signin !== null && distro) void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'));
-  else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'));
+  if (signin !== null && distro) void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'), q.getAll('arg'));
+  else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
   else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
   else {ctx.terminals.attach(
       link,
@@ -95,8 +100,34 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   return { response };
 }
 
+export const BUILTIN_SIGNIN_AGENTS = new Set(['claude', 'codex']);
+
+/**
+ * The program a built-in agent's terminal sign-in runs: its own launcher (as a chat starts it) plus the advertised method's args.
+ * The page only names the args, never the program; they must be 1 to 12 plain words (cleanTerminalArgs).
+ */
+export async function builtinSigninCommand(
+  ctx: Pick<WebContext, 'agentOptions' | 'settings'>,
+  agentId: string,
+  args: unknown,
+): Promise<ShellSpec | string> {
+  const words = cleanTerminalArgs(args);
+  if (!words) return 'This sign-in has no command AIB can run. Sign in with the agent itself, then choose Try again.';
+  const launch = await builtinLaunch(ctx.agentOptions, ctx.settings, agentId);
+  if (!launch.found || !launch.argv.length) return `${BUILTIN_NAMES[agentId]} is not installed. ${launch.problem}`.trim();
+  const argv = [...launch.argv, ...words];
+  return { file: argv[0], args: argv.slice(1) };
+}
+
 /** The program a Beta agent's terminal sign-in runs: [file, args], or a one-line reason it cannot run. */
-export async function signinCommand(ctx: Pick<WebContext, 'agentOptions'>, agentId: string): Promise<ShellSpec | string> {
+export async function signinCommand(
+  ctx: Pick<WebContext, 'agentOptions'> & Partial<Pick<WebContext, 'settings'>>,
+  agentId: string,
+  args: unknown = [],
+): Promise<ShellSpec | string> {
+  if (BUILTIN_SIGNIN_AGENTS.has(agentId) && ctx.settings) {
+    return await builtinSigninCommand(ctx as Pick<WebContext, 'agentOptions' | 'settings'>, agentId, args);
+  }
   const agent = betaAgent(agentId);
   if (!agent || agent.signin.kind !== 'terminal') return 'That agent does not sign in through a terminal.';
   const options = ctx.agentOptions;
@@ -115,8 +146,15 @@ export async function signinCommand(ctx: Pick<WebContext, 'agentOptions'>, agent
 }
 
 /** A sign-in terminal: key signin:<agent>, started in the home folder; it ends when the sign-in command ends. */
-async function attachSignin(ctx: WebContext, link: WsLink, agentId: string, cols: unknown, rows: unknown): Promise<void> {
-  const command = await signinCommand(ctx, agentId);
+async function attachSignin(
+  ctx: WebContext,
+  link: WsLink,
+  agentId: string,
+  cols: unknown,
+  rows: unknown,
+  args: string[] = [],
+): Promise<void> {
+  const command = await signinCommand(ctx, agentId, args);
   if (typeof command === 'string') {
     link.send(JSON.stringify({ type: 'error', message: command, code: 'signin_unavailable' }));
     link.close(1000, 'refused');
@@ -150,7 +188,7 @@ async function attachSetup(ctx: WebContext, link: WsLink, agentId: string, step:
  * The login an agent installed in a WSL distro runs, as [file, args] in that distro, or a one-line reason. Claude: its adapter's own
  * `--cli auth login --claudeai` (as on Windows, agents/signin.ts); Codex: `codex login` (the CLI found with the helper's `which`).
  */
-export async function wslSigninCommand(agentId: string, distro: string): Promise<ShellSpec | string> {
+export async function wslSigninCommand(agentId: string, distro: string, args: unknown = []): Promise<ShellSpec | string> {
   const host = wslHost(distro);
   const why = notReady(host, distro);
   if (why) return why;
@@ -163,18 +201,27 @@ export async function wslSigninCommand(agentId: string, distro: string): Promise
   }
   const row = (await host!.call('agents.detect', { ids: ['claude'] })).agents.find((a) => a.id === 'claude');
   if (!row?.found || !row.command?.length) return `${label} is not installed in ${name}.`;
-  const [file, ...args] = row.command.map(String);
+  const [file, ...rest] = row.command.map(String);
   const program = file.includes('/') ? file : (await host!.call('which', { name: file })).path;
   if (!program) return `${file} was not found in ${name}.`;
-  return { file: program, args: [...args, '--cli', 'auth', 'login', '--claudeai'] };
+  // A chat's sign-in card names the method Claude advertised (--cli auth login --claudeai / --console); else the Claude.ai login.
+  return { file: program, args: [...rest, ...(cleanTerminalArgs(args) ?? ['--cli', 'auth', 'login', '--claudeai'])] };
 }
 
 /** A sign-in terminal in a distro: key signin:<agent>@<distro>, in the Linux home; it ends when the login ends. */
-async function attachWslSignin(ctx: WebContext, link: WsLink, agentId: string, distro: string, cols: unknown, rows: unknown): Promise<void> {
+async function attachWslSignin(
+  ctx: WebContext,
+  link: WsLink,
+  agentId: string,
+  distro: string,
+  cols: unknown,
+  rows: unknown,
+  args: string[] = [],
+): Promise<void> {
   let command: ShellSpec | string;
   let home = '';
   try {
-    command = await wslSigninCommand(agentId, distro);
+    command = await wslSigninCommand(agentId, distro, args);
     if (typeof command !== 'string') home = (await wslHost(distro)!.env()).HOME || '';
   } catch (error) {
     command = `The sign-in could not start: ${(error as Error).message}`;
