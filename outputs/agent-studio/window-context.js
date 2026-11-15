@@ -170,6 +170,20 @@
     if (pinned()) return !!t.project && t.project === c.project && !(t.chat && ownerOf({ chat: t.chat }));
     return !ownerOf(t);
   }
+  /* Phase 3 (design E6): a window in the background polls less often. In the background: this page has no focus while another
+     AIB window is open (the last fresh answer lists one). Alone, or focused, a window keeps today's rates, so one AIB window on a
+     second screen still updates as fast as before. pollMs(fast, slow): the period to use now. */
+  function background() {
+    let focused = true;
+    try {
+      const d = root.document;
+      focused = !d || typeof d.hasFocus !== 'function' || !!d.hasFocus();
+    } catch (e) {
+      focused = true;
+    }
+    return !focused && others().length > 0;
+  }
+  const pollMs = (fast, slow) => (background() ? slow : fast);
   // Routing needs the desktop app and an app window id; in serve mode (or an old app) every open stays in this page.
   const canRoute = () => app() && APP_W.test(me());
   const known = () => !!answer();
@@ -291,6 +305,8 @@
     others,
     othersOpen,
     soundMine,
+    background,
+    pollMs,
     ownerOf,
     ownedElsewhere,
     mayShowHere,

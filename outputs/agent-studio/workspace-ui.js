@@ -614,6 +614,18 @@
     const W = Win();
     if (!W || !W.known() || popoutKey()) return;
     let changed = false;
+    /* After a restart this window's own record of the move is gone (sessionStorage is per window and per run), but the app
+       restores the pop-out with the window it was moved out of (desktop-windows.json `from`, in the presence answer): this
+       window takes it back as its own, so closing the pop-out still puts the tab back here. */
+    const self = W.id();
+    for (const o of W.others()) {
+      if (!o || o.kind !== 'chat' || typeof o.chat !== 'string' || !o.chat || o.from !== self) continue;
+      if (popListOf().some((p) => p.key === o.chat)) continue;
+      const project = (typeof o.project === 'string' && o.project) || (itemOf(o.chat) || {}).projectKey || '';
+      if (!project || !mayShowProject(project)) continue;
+      popListOf().push({ key: o.chat, project, title: '', w: o.w, seen: true, at: Date.now(), adopted: true });
+      changed = true;
+    }
     for (const p of popListOf().slice()) {
       const w = windowOfChat(p.key);
       if (w) {

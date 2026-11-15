@@ -42,6 +42,13 @@ export class FakeDesktopWindows implements DesktopWindows {
     if (withMain) this.#add({ w: 'm', kind: 'main' }, 'AIB');
   }
 
+  /** A window as if restored from the saved list (no open() call): a pop-out with the window it was moved out of. */
+  restore(spec: WindowSpec, title: string, from?: string): FakeWindow {
+    const x = this.#add(spec, title);
+    if (from) x.from = from;
+    return x;
+  }
+
   #add(spec: WindowSpec, title: string): FakeWindow {
     const info: FakeWindow = {
       w: spec.w,
@@ -62,7 +69,7 @@ export class FakeDesktopWindows implements DesktopWindows {
     throw new WindowCapError('At most 8 AIB windows');
   }
 
-  async open(req: OpenRequest, _from: string): Promise<{ w: string; existed: boolean }> {
+  async open(req: OpenRequest, from: string): Promise<{ w: string; existed: boolean }> {
     const there = this.windows.find((x) => showsAlready(x, req));
     if (there) {
       this.focus(there.w);
@@ -74,8 +81,8 @@ export class FakeDesktopWindows implements DesktopWindows {
     this.made++;
     if ('project' in req) this.#add({ w, kind: 'project', project: req.project.key }, `AIB · ${cleanTitle(req.project.name)}`);
     else if ('chat' in req) {
-      this.#add({ w, kind: 'chat', chat: req.chat.key, project: req.chat.project }, `${cleanTitle(req.chat.title) || 'Chat'} · AIB`);
-    } else this.#add({ w, kind: 'doc', project: req.doc.project, name: req.doc.name }, `${cleanTitle(req.doc.name)} · AIB`);
+      this.#add({ w, kind: 'chat', chat: req.chat.key, project: req.chat.project }, `${cleanTitle(req.chat.title) || 'Chat'} · AIB`).from = from;
+    } else this.#add({ w, kind: 'doc', project: req.doc.project, name: req.doc.name }, `${cleanTitle(req.doc.name)} · AIB`).from = from;
     this.focus(w);
     return { w, existed: false };
   }
@@ -108,13 +115,14 @@ export class FakeDesktopWindows implements DesktopWindows {
   }
 
   list(): WindowInfo[] {
-    return this.windows.map(({ w, kind, project, chat, doc, visible }) => ({
+    return this.windows.map(({ w, kind, project, chat, doc, visible, from }) => ({
       w,
       kind,
       project,
       chat,
       doc: doc ? { ...doc } : null,
       visible,
+      from: from ?? null,
     }));
   }
 

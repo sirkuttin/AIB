@@ -46,6 +46,9 @@ import {
   restorePlan,
   WINDOWS_FILE,
 } from '../../outputs/agent-studio/server/desktop/windows.ts';
+import { withPopFrom } from '../../outputs/agent-studio/server/web/server.ts';
+
+type Json = Record<string, unknown>;
 import { findOwnWindow } from '../../outputs/agent-studio/server/desktop/foreground_win.ts';
 import { presence as folderPresence } from '../../outputs/agent-studio/server/desktop/folder_presence.ts';
 import { orphanCommand } from '../../outputs/agent-studio/server/host/studio.ts';
@@ -1802,6 +1805,45 @@ Deno.test('multi-window B1/B6/K6: a notification goes to the pop-out, then the p
   } finally {
     await m.done();
   }
+});
+
+Deno.test('multi-window Phase 3: a pop-out keeps the window it was moved out of (from) across a restart; bad values dropped', async () => {
+  const m = await makeMulti();
+  try {
+    await m.load('m');
+    const dw = m.app.desktopWindows;
+    await dw.open({ project: PROJ }, 'm');
+    assertEquals(await dw.open({ chat: CHAT }, 'w2'), { w: 'w3', existed: false });
+    assertEquals(await dw.open({ doc: { project: 'p:budget', name: 'Plan' } }, 'm'), { w: 'w4', existed: false });
+    assertEquals(dw.list().map((i) => [i.w, i.from]), [['m', null], ['w2', null], ['w3', 'w2'], ['w4', 'm']], 'project windows have none');
+    const saved = await m.savedNow();
+    assertEquals(saved.windows.map((w: Json) => [w.id, w.from ?? null]), [['m', null], ['w2', null], ['w3', 'w2'], ['w4', 'm']]);
+    // the presence answer carries it for the pop-outs (the page that moved it takes it back after a restart)
+    const ans = withPopFrom({ ok: true, windows: [{ w: 'm', kind: 'main' }, { w: 'w3', kind: 'chat' }, { w: 'w4', kind: 'doc' }] }, dw);
+    assertEquals((ans.windows as Json[]).map((v) => v.from ?? null), [null, 'w2', 'm']);
+    assertEquals(withPopFrom({ ok: true, windows: [{ w: 'w3', kind: 'chat' }] }, null).windows, [{ w: 'w3', kind: 'chat' }], 'serve mode');
+    // restart: the restored pop-out still knows where it came from
+    const n = await makeMulti({}, saved);
+    try {
+      assertEquals(n.app.desktopWindows.list().map((i) => [i.w, i.kind, i.from]), [['m', 'main', null], ['w2', 'project', null], ['w3', 'chat', 'w2'], ['w4', 'doc', 'm']]);
+    } finally {
+      await n.done();
+    }
+  } finally {
+    await m.done();
+  }
+  // K1 read: only a valid other window id, only on a pop-out
+  const list = cleanSavedList({
+    v: 1,
+    windows: [
+      { id: 'm', kind: 'main', width: 900, height: 700, from: 'w2' },
+      { id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700, from: 'm' },
+      { id: 'w3', kind: 'chat', chat: CHAT, width: 480, height: 720, from: 'w3' },
+      { id: 'w4', kind: 'chat', chat: { ...CHAT, key: 'claude:b' }, width: 480, height: 720, from: '../x' },
+      { id: 'w5', kind: 'chat', chat: { ...CHAT, key: 'claude:c' }, width: 480, height: 720, from: 'w2' },
+    ],
+  });
+  assertEquals(list.windows.map((w) => [w.id, w.from ?? null]), [['m', null], ['w2', null], ['w3', null], ['w4', null], ['w5', 'w2']]);
 });
 
 Deno.test('multi-window K4 route: the pop-out, then the project window, then main (made if needed); the caller itself gets "self"', async () => {

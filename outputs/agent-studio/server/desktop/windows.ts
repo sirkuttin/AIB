@@ -61,6 +61,9 @@ export interface SavedWindow extends SavedGeometry {
   project?: ProjectRef;
   chat?: ChatRef;
   doc?: DocRef;
+  /** A chat or doc pop-out: the window it was moved out of (Phase 3). Saved so that, after a restart, that window still knows the
+   * pop-out is its own and takes the tab back when the pop-out closes (its own record of the move is per-window memory). */
+  from?: string;
 }
 
 export interface SavedList {
@@ -115,6 +118,7 @@ export function cleanSavedWindow(raw: unknown): SavedWindow | null {
   } catch {
     return null;
   }
+  if ((kind === 'chat' || kind === 'doc') && typeof o.from === 'string' && WINDOW_ID.test(o.from) && o.from !== o.id) out.from = o.from;
   return out;
 }
 
@@ -320,6 +324,8 @@ export interface AppWindow {
   project?: ProjectRef;
   chat?: ChatRef;
   doc?: DocRef;
+  /** A pop-out: the window it was moved out of (SavedWindow.from). */
+  from?: string;
   handle: WindowHandle;
   /** K0: its own keyed URL (the key only in the fragment). */
   url: string;
@@ -426,6 +432,7 @@ export class WindowList {
       chat: e.kind === 'chat' ? e.chat?.key ?? null : null,
       doc: e.kind === 'doc' && e.doc ? { ...e.doc } : null,
       visible: e.handle.isVisible?.() !== false,
+      from: (e.kind === 'chat' || e.kind === 'doc') && e.from ? e.from : null,
     }));
   }
 
@@ -451,6 +458,7 @@ export class WindowList {
         if (e.project) w.project = { ...e.project };
         if (e.chat) w.chat = { ...e.chat };
         if (e.doc) w.doc = { ...e.doc };
+        if (e.from && (e.kind === 'chat' || e.kind === 'doc')) w.from = e.from;
         if (e.geometry.x !== undefined && e.geometry.y !== undefined) {
           w.x = e.geometry.x;
           w.y = e.geometry.y;
@@ -507,6 +515,7 @@ export class AppWindows implements DesktopWindows {
       : 'chat' in req
       ? { id, kind: 'chat', chat: req.chat, ...DEFAULT_CHAT_SIZE }
       : { id, kind: 'doc', doc: req.doc, ...DEFAULT_DOC_SIZE };
+    if (saved.kind !== 'project' && WINDOW_ID.test(from) && from !== id) saved.from = from; // the window it moved out of
     const e = this.host.makeWindow(saved, from);
     this.host.focusWindow(e, 'opened');
     return Promise.resolve({ w: e.id, existed: false });

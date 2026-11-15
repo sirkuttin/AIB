@@ -5,8 +5,12 @@
  *   1. AIB starts with one project (Alpha). The page asks for "Alpha in a new window" (POST /api/live/desktop/windows, K3):
  *      two AIB windows, the second titled "AIB · Alpha" (the app owns window titles, B13). Asking again focuses it: still two.
  *      desktop-windows.json (K1) lists both.
- *   2. AIB is killed (as an update restart or a crash would end it): the next start brings both windows back (D3a), each at its
- *      saved size, the second on its own URL (?w=w2&kind=project).
+ *   1b. Phase 3: a chat popped out of the project window (K3 op 'popout' from w2): a third, small window titled "<chat> · AIB" on
+ *      its own URL (kind=chat, the chat's lasting key); desktop-windows.json keeps it with from: 'w2'. Opening that chat from the
+ *      main window (K3 op 'route', the same pop-out-first chooser a notification click uses, B6) goes to the pop-out.
+ *   2. AIB is killed (as an update restart or a crash would end it): the next start brings all three windows back (D3a), each at
+ *      its saved size, the second on its own URL (?w=w2&kind=project), the pop-out on its chat. The project window takes the
+ *      restored pop-out back as its own (its from), and WM_CLOSE on the pop-out clears that (the tab would come back there).
  *   3. WM_CLOSE on the main window while the project window is open: AIB keeps running and the project window stays (B5); the
  *      saved list drops the main window.
  *   4. WM_CLOSE on the last window with nothing working: AIB exits; the list still has that window (G8).
@@ -147,6 +151,22 @@ async function run(
   const alpha = `${fx.root}\\projects\\Alpha`;
   Deno.mkdirSync(alpha, { recursive: true });
   const added = { [projectKey(alpha)]: { path: alpha, at: 1 } };
+  // one saved chat in Alpha (a Claude transcript): the chat the pop-out shows (its lasting key claude:s-alpha)
+  const stamp = new Date(Date.now() - 60_000).toISOString();
+  Deno.mkdirSync(`${fx.root}\\claude\\enc`, { recursive: true });
+  Deno.writeTextFileSync(
+    `${fx.root}\\claude\\enc\\s-alpha.jsonl`,
+    [
+      { type: "user", sessionId: "s-alpha", cwd: alpha, timestamp: stamp, message: { role: "user", content: "Work on the CSV import" } },
+      {
+        type: "assistant",
+        sessionId: "s-alpha",
+        cwd: alpha,
+        timestamp: stamp,
+        message: { role: "assistant", model: "fixture", content: [{ type: "text", text: "Done." }] },
+      },
+    ].map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
   Deno.writeTextFileSync(
     `${fx.state}\\studio-added-projects.json`,
     JSON.stringify({ version: 1, savedAt: 1, start: "fresh", added }),
@@ -248,31 +268,91 @@ async function run(
     "desktop-windows.json lists both",
     20,
   );
+  // ---- 1b. a chat popped out of the project window
+  const CHAT_KEY = "claude:s-alpha";
+  await until(
+    () => cdpEval("w2", `AgentWorkspaceUI._items().some((c) => c.key === ${JSON.stringify(CHAT_KEY)})`),
+    "the saved chat listed in the project window",
+    30,
+  );
+  const pop = await cdpEval(
+    "w2",
+    `StudioChat.post('desktop/windows', { op: 'popout', from: 'w2', chat: { key: ${
+      JSON.stringify(CHAT_KEY)
+    }, project: ${JSON.stringify(key)}, title: 'CSV import' } })`,
+  ) as Json;
+  assertEquals([pop.w, pop.existed], ["w3", false]);
+  await until(
+    () =>
+      aibWindows(pid).some((w) => w.title === "CSV import · AIB") ? true : null,
+    'the pop-out titled "CSV import · AIB"',
+    30,
+  );
+  const popKey = () =>
+    cdpEval("w3", `window.AgentWorkspaceUI ? AgentWorkspaceUI.popoutKey() : ''`);
+  await until(
+    async () => (await popKey()) === CHAT_KEY ? true : null,
+    "the pop-out page on its chat",
+    60,
+  );
+  await until(
+    () => {
+      try {
+        const w3 = list().windows.find((w: Json) => w.id === "w3");
+        return w3 && w3.kind === "chat" && w3.from === "w2" &&
+            (w3.chat as Json).key === CHAT_KEY
+          ? true
+          : null;
+      } catch {
+        return null;
+      }
+    },
+    "desktop-windows.json keeps the pop-out with from: w2",
+    20,
+  );
+  const routed = await cdpEval(
+    "m",
+    `StudioChat.post('desktop/windows', { op: 'route', from: 'm', target: { chat: ${
+      JSON.stringify(CHAT_KEY)
+    }, project: ${JSON.stringify(key)} } })`,
+  ) as Json;
+  assertEquals(routed.to, "w3", "opening a popped-out chat goes to its pop-out");
+  await new Promise((r) => setTimeout(r, 1000));
+  assertEquals(await popKey(), CHAT_KEY, "the pop-out still shows its chat");
+  assertEquals(aibWindows(pid).length, 3, "three windows");
+
   // measured the same way before and after (this test process's GetWindowRect may be DPI-scaled: compare like with like)
   const before = aibWindows(pid);
   const rectBefore = {
     m: rectOf(before.find((w) => w.title === "AIB")!),
     w2: rectOf(before.find((w) => w.title === "AIB · Alpha")!),
+    w3: rectOf(before.find((w) => w.title === "CSV import · AIB")!),
   };
 
-  // ---- 2. killed (an update restart, a crash): both come back
+  // ---- 2. killed (an update restart, a crash): all three come back
   Deno.kill(pid, "SIGKILL");
   await until(() => exited(pid), "AIB gone", 30);
   await new Promise((r) => setTimeout(r, 1500));
   pid = spawn();
   PORT = await ownerPort(fx.state, 90);
   await until(
-    () => aibWindows(pid).length === 2 ? true : null,
-    "both windows back",
+    () => aibWindows(pid).length === 3 ? true : null,
+    "all three windows back",
     120,
   );
   await until(() => ready("w2"), "the project window back on its own URL", 60);
   await until(() => ready("m"), "the main window back", 60);
   const back = aibWindows(pid);
   const main = back.find((w) => w.title === "AIB")!,
-    proj = back.find((w) => w.title === "AIB · Alpha")!;
-  assert(main && proj, `titles: ${back.map((w) => w.title)}`);
-  for (const [w, id] of [[main, "m"], [proj, "w2"]] as const) {
+    proj = back.find((w) => w.title === "AIB · Alpha")!,
+    popWin = back.find((w) => w.title === "CSV import · AIB")!;
+  assert(main && proj && popWin, `titles: ${back.map((w) => w.title)}`);
+  await until(
+    async () => (await popKey()) === CHAT_KEY ? true : null,
+    "the pop-out back on its chat",
+    60,
+  );
+  for (const [w, id] of [[main, "m"], [proj, "w2"], [popWin, "w3"]] as const) {
     const [width, height] = rectOf(w);
     const [bw, bh] = rectBefore[id];
     assert(
@@ -280,6 +360,45 @@ async function run(
       `${id}: ${width}x${height} after, ${bw}x${bh} before`,
     );
   }
+
+  // the project window takes the restored pop-out back as its own (its sessionStorage record died with the old process)
+  const pops = () =>
+    cdpEval(
+      "w2",
+      `JSON.stringify(AgentWorkspaceUI._pops().map((p) => [p.key, p.w, p.seen]))`,
+    );
+  await until(
+    async () =>
+      (await pops()) === JSON.stringify([[CHAT_KEY, "w3", true]]) ? true : null,
+    "the project window takes the restored pop-out back",
+    30,
+  );
+  // closing the pop-out: the tab comes back in the project window
+  assert(desk.post(popWin, WM_CLOSE), "WM_CLOSE to the pop-out");
+  await until(
+    () => aibWindows(pid).length === 2 ? true : null,
+    "the pop-out closed",
+    30,
+  );
+  await until(
+    async () => (await pops()) === "[]" ? true : null,
+    "the project window let go of it",
+    30,
+  );
+  await until(
+    () =>
+      cdpEval(
+        "w2",
+        `Object.values(AgentWorkspaceUI._state().tabs || {}).some((t) => (t || []).includes(${JSON.stringify(CHAT_KEY)}))`,
+      ),
+    "the tab back in the project window",
+    20,
+  );
+  await until(
+    () => list().windows.map((w: Json) => w.id).join() === "m,w2" ? true : null,
+    "the pop-out left the saved list",
+    20,
+  );
 
   // ---- 3. closing the main window while the project window is open: AIB stays
   assert(desk.post(main, WM_CLOSE), "WM_CLOSE to the main window");
