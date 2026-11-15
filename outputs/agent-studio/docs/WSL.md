@@ -466,7 +466,7 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   `force=1`). Only the Start and check click adds `start=1`. A not-ready peek answer never fills the new-chat panel's cache.
 - Links: the new-chat panel's "not installed in Ubuntu" state has **Set up Ubuntu in Settings** (opens the section with that
   card in view); Settings > About has "WSL distros: details and agent installs in AIB Linking (WSL)".
-- Later phases (not drawn): Repair AIB helper, Beta agents and the "AIB in Ubuntu" card with Remove.
+- Later phases (not drawn): Repair AIB helper and Beta agents. The "AIB in Ubuntu" card with Remove: phase 3 below.
 - Tests: `work/test_wsl_settings.js` (fake routes of the contract: every phase 1 state, no start on open, the namespaces).
 
 ### Phase 2 (page; design section 12)
@@ -510,6 +510,40 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
 - Tests: `work/test_wsl_settings.js` (the drop-down rules, the switch with rollback, the five Node.js states, git/curl, the Node.js
   terminal's address, sign-in and `start=1`, uninstall, limits, no `start` on open); `work/test_wsl_ui.js` (signinUrl keeps
   `distro` for a distro setup step).
+
+### Phase 3 (page; design section 13): "AIB in Ubuntu" and Remove
+
+- **AIB in Ubuntu**: the last card of a ready distro's group (a distro that is not ready shows only its status card, with Start
+  Ubuntu and check). It reads `GET /api/live/wsl/aib?distro&peek=1` (again after a minute, `force=1` on its **Refresh**; never
+  `start`).
+- The card: "Everything AIB keeps in Ubuntu, in <root> on this PC", the disk use by part (`usage.parts`: label and size, the
+  part's folder on hover; the agents of `usage.agents` with their versions under the agents part; "In all" = `totalBytes`).
+- Then the lines "AIB versions installed: <current> (current), <older>", "Chat copies: 3, 1 with unsaved changes" (none / none with
+  unsaved changes), "Chats working now: N".
+- **Other AIB data folders in Ubuntu** (`dataFolders` where not `mine`): name, size, an "in use" chip when `keeperAlive`; read-only,
+  with "These belong to another AIB build or data folder. Remove here never touches them."
+- `usage: null` (not ready): the answer's line, no buttons. A read error: the reason, Remove and Refresh.
+- **Remove AIB from Ubuntu** opens an in-page dialog in delete-project-ui.js's look (`.dp-dialog`, role alertdialog, Cancel
+  focused, Escape and the backdrop cancel, focus kept inside) and posts `wsl/aib/remove {distro, mode: 'check'}` (deletes
+  nothing).
+- The dialog lists `wouldRemove` grouped by `what` (size per group and in all, each path under it), `kept` with each `why`, and
+  always "Your projects, ~/.claude, ~/.codex, nvm and asdf are not touched." and "Chat branches stay in your repos."
+- `blocked`: "AIB cannot be removed from Ubuntu now:" and each reason verbatim on its own line; the Remove button is off, the
+  others are Close and **Check again** (a new check).
+- Confirm: a second click on "Remove AIB from Ubuntu" (the first shows "Choose Remove AIB from Ubuntu again to delete these. This
+  cannot be undone."); when the card's `usage.chatsWorking` is above 0 the tick "I understand chats running in Ubuntu will stop"
+  replaces the second click. No other gate.
+- Apply: `{distro, mode: 'apply', confirm: true}`; the button reads "Removing…", every dialog button is off, the card's Remove and
+  Refresh are off with "Removing AIB from Ubuntu…". Nothing changes on the page before the answer.
+- `ok: true`: the dialog closes; the group shows "AIB is not set up in Ubuntu." with **Set up again** (the Start and check request,
+  `agents?peek=1&start=1`, which clears the server's removed flag); no other cards; the overview chip reads "Not set up".
+- `ok: false` with `blocked` (refused when it ran again): the reasons as above, nothing removed. `ok: false` without (partial):
+  "AIB could not remove everything from Ubuntu.", `message`, "Left in Ubuntu:" (`left` verbatim) and "Removed:"; only Close; the
+  not-set-up card keeps the message and the left list until Set up again. A failed request: its message, Remove can be tried again.
+- `status.distros[].removed` (with state `off`) draws the same not-set-up state after a reload; the distro stays in the drop-down.
+- Tests: `work/test_wsl_settings.js` (phase 3: the card's parts, versions, copies, other folders; peek only on open; the dialog
+  from check, grouping, kept, blocked; the second click and the tick; success, partial and refused applies; the removed flag after
+  a reload; buttons off while it runs; each distro's own card through the drop-down).
 
 ## Building and testing
 
