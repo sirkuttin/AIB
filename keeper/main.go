@@ -50,8 +50,8 @@ type keeper struct {
 	// orphanSince: --orphan-grace only: when the current stretch with live work and no client began (zero: none). In keeper.json.
 	orphanSince time.Time
 	clientLeft  time.Time // when an authenticated client last left (a client that came and went between two monitor looks)
-	stopping bool
-	changed  chan struct{}
+	stopping    bool
+	changed     chan struct{}
 
 	spawnMu  sync.Mutex
 	indexMu  sync.Mutex

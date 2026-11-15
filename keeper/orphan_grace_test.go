@@ -94,7 +94,7 @@ func TestOrphanGraceRestartsWithEachClient(t *testing.T) {
 	time.Sleep(1300 * time.Millisecond)
 	// a hold comes and stays past the grace: never stopped while it is there
 	hold := newClient(t, rawDial(t, k))
-	hold.must("hello",map[string]any{"token": k.info["token"], "min": 1, "max": 1, "client": holdClient}, nil)
+	hold.must("hello", map[string]any{"token": k.info["token"], "min": 1, "max": 1, "client": holdClient}, nil)
 	if k.waitExit(2500 * time.Millisecond) {
 		t.Fatal("the keeper stopped while a hold was connected")
 	}
