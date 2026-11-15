@@ -89,6 +89,12 @@ export interface HelperMethods {
   'fs.stat': { params: { path: string }; result: { exists: boolean; isDir: boolean; isFile: boolean; size: number; mtimeMs: number } };
   'fs.listDirs': { params: { path: string; limit?: number }; result: { path: string; parent: string | null; dirs: { name: string; isGit: boolean }[]; truncated: boolean } };
   'folder.check': { params: { path: string }; result: { ok: boolean; reason?: string; isGit: boolean; realPath: string } };
+  /** Linking (WSL) phase 2 (docs/wsl/linking-design.md section 12). What the distro has for running agents; never installs anything. */
+  'env.prereqs': { params: { force?: boolean }; result: EnvPrereqs };
+  /** Remove one AIB-installed agent (<root>/agents/<id>/<ver>); refused while a chat runs from it. Never touches the user's own installs. */
+  'agents.uninstall': { params: { id: string }; result: { ok: boolean; removed: string[]; message?: string; blocked?: string } };
+  /** Is each agent signed in inside the distro (reads credential files' presence/validity only, never their content). */
+  'agents.signinStatus': { params: { ids?: string[] }; result: { agents: { id: string; state: 'signed_in' | 'signed_out' | 'unknown'; account?: string; note?: string }[] } };
   'folder.project': { params: { path: string; name?: string }; result: Record<string, unknown> };
   'folder.createProject': { params: { path: string; name?: string; gitInit?: boolean }; result: Record<string, unknown> };
   'git.init': { params: { path: string }; result: { ok: boolean; message?: string } };
@@ -319,3 +325,23 @@ export interface BridgePreamble {
 
 /** Linux-side layout, relative to $HOME (never passed with `~`). */
 export const WSL_ROOT_DIR = '.aib-server'; // tests override with the AIB_WSL_ROOT env var (an absolute Linux path)
+
+/** The distro's prerequisites for AIB-managed agents (design section 12). */
+export interface EnvPrereqs {
+  /** Node.js >= 22.19 with npm is the one hard prerequisite. 'shim_unset': a version manager's shim (asdf/mise) with no version set. */
+  node: { state: 'ok' | 'missing' | 'old' | 'shim_unset' | 'broken'; version?: string; path?: string; manager?: 'asdf' | 'mise' | 'nvm' | 'system' | 'aib' | ''; note?: string };
+  npm: { state: 'ok' | 'missing'; version?: string };
+  git: { state: 'ok' | 'missing'; version?: string };
+  curl: { state: 'ok' | 'missing' };
+  /** Free space in the distro's home filesystem, MB (null: unknown). */
+  diskFreeMB: number | null;
+  arch: string;
+  loginShell: string;
+  /** How the login environment was captured: -lic, -lc, or not at all (a version manager in an interactive-only profile is then missed). */
+  envMode: 'login-interactive' | 'login' | 'plain';
+  /** nvm is present in the user's home (so the Node install button can say it will use it). */
+  nvm: { present: boolean };
+  /** Whether AIB may offer the nvm install button (never when the node found is a shim, or nvm is blocked); the reason otherwise. */
+  canInstallNode: boolean;
+  nodeInstallBlocked?: string;
+}
