@@ -64,6 +64,7 @@ import {
   versionAib,
 } from './aibdoc.ts';
 import * as Y from 'yjs';
+import { fsOf, isRemotePath, pathKey, sepOf } from './doc_fs.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const NAME = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$/;
@@ -198,7 +199,8 @@ export async function docId(
   projectRoot: string,
   name: string,
 ): Promise<string> {
-  const key = (Deno.build.os === 'windows' ? projectRoot.toLowerCase() : projectRoot) + '\n' + name;
+  // a WSL project's ref keeps its Linux path's case (doc_fs.ts pathKey); a Windows folder folds it, as before
+  const key = pathKey(projectRoot) + '\n' + name;
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)));
   return [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -264,21 +266,13 @@ export interface StoreOptions {
   history?: DocHistory | null;
 }
 
-async function readText(path: string): Promise<string | null> {
-  try {
-    return await Deno.readTextFile(path);
-  } catch {
-    return null;
-  }
+/** A project file's text, or null when it cannot be read (doc_fs.ts: this PC's files, or a WSL project's through its helper). */
+function readText(path: string): Promise<string | null> {
+  return fsOf(path).readText(path);
 }
 
 async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
+  return (await fsOf(path).stat(path)) !== null;
 }
 
 /** Did AIB write this Markdown file (its first line is AIB's note)? Only such a file can be a doc's copy. */
@@ -290,21 +284,20 @@ async function aibWritten(path: string): Promise<boolean> {
 /** A path inside the project, project-relative with forward slashes. */
 function relTo(projectRoot: string, path: string): string {
   const root = projectRoot.replace(/[\\/]+$/, '');
-  const inside = pathKey(path).startsWith(pathKey(root + sep)) ? path.slice(root.length + 1) : path;
+  const inside = pathKey(path).startsWith(pathKey(root + sepOf(root))) ? path.slice(root.length + 1) : path;
   return inside.replace(/\\/g, '/');
 }
 
 /** The files a doc owns: doc.aibdoc, its pages' copies (`copies`: their paths), its assets folder and every file in it. */
 async function ownedPaths(projectRoot: string, dir: string, copies: string[]): Promise<OwnedPaths> {
+  const sep = sepOf(dir), fs = fsOf(dir);
   const owned = [`${dir}${sep}${AIBDOC}`, ...copies];
   const walk = async (folder: string) => {
-    try {
-      for await (const e of Deno.readDir(folder)) {
-        const path = `${folder}${sep}${e.name}`;
-        if (e.isDirectory) await walk(path);
-        else owned.push(path);
-      }
-    } catch { /* no assets */ }
+    for (const e of (await fs.readDir(folder)) ?? []) { // null: no assets
+      const path = `${folder}${sep}${e.name}`;
+      if (e.isDirectory) await walk(path);
+      else owned.push(path);
+    }
   };
   if (await exists(`${dir}${sep}assets`)) {
     owned.push(`${dir}${sep}assets`);
@@ -315,7 +308,7 @@ async function ownedPaths(projectRoot: string, dir: string, copies: string[]): P
 
 /** Each page's Markdown copy: NN-<title slug>.md in page order. */
 function copyPaths(dir: string, titles: string[]): string[] {
-  return titles.map((t, k) => `${dir}${sep}${String(k + 1).padStart(2, '0')}-${slugOf(t)}.md`);
+  return titles.map((t, k) => `${dir}${sepOf(dir)}${String(k + 1).padStart(2, '0')}-${slugOf(t)}.md`);
 }
 
 /** A node without agentEdit marks (a duplicated page is the user's). */
@@ -331,11 +324,7 @@ export function withoutAgentMarks(node: PMJson): PMJson {
 }
 
 async function isFile(path: string): Promise<boolean> {
-  try {
-    return (await Deno.stat(path)).isFile;
-  } catch {
-    return false;
-  }
+  return (await fsOf(path).stat(path))?.isFile ?? false;
 }
 
 export class DocStore {
@@ -353,7 +342,9 @@ export class DocStore {
     if (this.#poll !== null) return;
     const poll = setInterval(() => {
       for (const d of this.docs.values()) {
-        void this.syncMirror(d).catch(() => {});
+        // a WSL doc whose last write did not get through (its distro was away): written again, which syncs its files first
+        if (d.dirty && d.timer === null && isRemotePath(d.dir)) void this.flush(d).catch(() => {});
+        else void this.syncMirror(d).catch(() => {});
       }
     }, this.options.pollMs ?? 1000);
     Deno.unrefTimer(poll);
@@ -365,12 +356,12 @@ export class DocStore {
   }
 
   #docsDir(projectRoot: string): string {
-    return `${projectRoot}${sep}${this.options.mirrorFolder ?? DOCS_FOLDER}`;
+    return `${projectRoot}${sepOf(projectRoot)}${this.options.mirrorFolder ?? DOCS_FOLDER}`;
   }
 
   /** Where docs of the old layouts are (docs/): only read to move them into aib-docs/. */
   #oldDir(projectRoot: string): string {
-    return `${projectRoot}${sep}${OLD_FOLDER}`;
+    return `${projectRoot}${sepOf(projectRoot)}${OLD_FOLDER}`;
   }
 
   #moved = new Map<string, Promise<void>>();
@@ -380,6 +371,8 @@ export class DocStore {
    * copy paths move with the folder. Anything else in docs/ is the project's own and never touched.
    */
   #moveOld(projectRoot: string): Promise<void> {
+    // a WSL project has no docs of the old layouts (they predate WSL projects): its docs/ is never looked at
+    if (isRemotePath(projectRoot)) return Promise.resolve();
     const key = pathKey(projectRoot);
     let p = this.#moved.get(key);
     if (!p) {
@@ -437,38 +430,42 @@ export class DocStore {
 
   /** aib-docs/README.md, once: with the first doc (`first`: only when aib-docs/ did not exist before), never over a file. */
   async #writeReadme(projectRoot: string, first: boolean): Promise<void> {
-    const path = `${this.#docsDir(projectRoot)}${sep}README.md`;
+    const path = `${this.#docsDir(projectRoot)}${sepOf(projectRoot)}README.md`;
     if (!first && (await exists(path))) return;
     if (await exists(path)) return;
+    const fs = fsOf(path);
     try {
-      await Deno.mkdir(this.#docsDir(projectRoot), { recursive: true });
-      await Deno.writeTextFile(path, DOCS_README, { createNew: true });
+      await fs.mkdir(this.#docsDir(projectRoot));
+      await fs.writeNew(path, DOCS_README);
     } catch { /* there is one already */ }
   }
 
   /** The files and folders in aib-docs/ that are not docs (nor AIB's README): they show as plain files in Files. */
   async others(projectRoot: string): Promise<string[]> {
     await this.#moveOld(projectRoot);
-    const dir = this.#docsDir(projectRoot), out: string[] = [];
-    try {
-      for await (const e of Deno.readDir(dir)) {
-        if (e.isDirectory && (await isFile(`${dir}${sep}${e.name}${sep}${AIBDOC}`))) continue;
-        if (e.isFile && e.name === 'README.md') continue;
-        out.push(`${this.options.mirrorFolder ?? DOCS_FOLDER}/${e.name}`);
-      }
-    } catch { /* no aib-docs yet */ }
+    const dir = this.#docsDir(projectRoot), out: string[] = [], sep = sepOf(dir);
+    for (const e of (await fsOf(dir).readDir(dir)) ?? []) { // null: no aib-docs yet
+      if (e.isDirectory && (await isFile(`${dir}${sep}${e.name}${sep}${AIBDOC}`))) continue;
+      if (e.isFile && e.name === 'README.md') continue;
+      out.push(`${this.options.mirrorFolder ?? DOCS_FOLDER}/${e.name}`);
+    }
     return out.sort();
   }
 
   /** The doc's folder. */
   docDir(projectRoot: string, name: string): string {
-    return `${this.#docsDir(projectRoot)}${sep}${name}`;
+    return `${this.#docsDir(projectRoot)}${sepOf(projectRoot)}${name}`;
+  }
+
+  /** Is there a file or folder of this name in aib-docs/ (a doc or not)? */
+  async folderExists(projectRoot: string, name: string): Promise<boolean> {
+    return await exists(this.docDir(projectRoot, name));
   }
 
   /** The first page's Markdown copy of a doc (before it is open: page 1 of the folder). */
   mirrorPath(projectRoot: string, name: string): string {
     const open = [...this.docs.values()].find((d) => d.name === name && sameRoot(d.projectRoot, projectRoot));
-    return open?.mirrorPath ?? `${this.docDir(projectRoot, name)}${sep}01-page-1.md`;
+    return open?.mirrorPath ?? `${this.docDir(projectRoot, name)}${sepOf(projectRoot)}01-page-1.md`;
   }
 
   /** A doc of the old layout (docs/<name>.md, state in <stateDir>/docs/<old id>/) whose name gives this folder name. */
@@ -477,6 +474,7 @@ export class DocStore {
     name: string,
   ): Promise<{ title: string; md: string | null; state: string | null; keepMd?: boolean } | null> {
     let found: { title: string; md: string | null; state: string | null; keepMd?: boolean } | null = null;
+    if (isRemotePath(projectRoot)) return null; // no old layouts in a WSL project (#moveOld)
     try {
       for await (const e of Deno.readDir(this.#oldDir(projectRoot))) {
         if (!e.isFile || !e.name.toLowerCase().endsWith('.md')) continue;
@@ -514,7 +512,7 @@ export class DocStore {
     const id = await docId(projectRoot, name);
     if (this.docs.has(id)) return true;
     await this.#moveOld(projectRoot);
-    if (await isFile(`${this.docDir(projectRoot, name)}${sep}${AIBDOC}`)) return true;
+    if (await isFile(`${this.docDir(projectRoot, name)}${sepOf(projectRoot)}${AIBDOC}`)) return true;
     return (await this.#legacy(projectRoot, name)) !== null;
   }
 
@@ -577,26 +575,25 @@ export class DocStore {
       { title: string; file: string; pages?: number; legacy?: true; titles?: string[]; pageList?: { id: string; title: string }[] }
     >();
     await this.#moveOld(projectRoot);
-    const docs = this.#docsDir(projectRoot), oldDocs = this.#oldDir(projectRoot);
-    try {
-      for await (const e of Deno.readDir(docs)) {
-        if (e.isDirectory) {
-          const file = `${docs}${sep}${e.name}${sep}${AIBDOC}`;
-          const text = await readText(file);
-          if (text === null) continue;
-          let title = e.name, pages: number | undefined, titles: string[] = [], pageList: { id: string; title: string }[] = [];
-          try {
-            const aib = parseAib(text);
-            title = aib.title || e.name;
-            pages = aib.pages.length;
-            titles = aib.pages.map((p) => p.title);
-            pageList = aib.pages.map((p) => ({ id: p.id, title: p.title }));
-          } catch { /* listed; opening it says what is wrong */ }
-          found.set(e.name, { title, file, titles, pageList, ...(pages ? { pages } : {}) });
-        }
+    const docs = this.#docsDir(projectRoot), oldDocs = this.#oldDir(projectRoot), psep = sepOf(projectRoot);
+    for (const e of (await fsOf(docs).readDir(docs)) ?? []) { // null: no aib-docs folder
+      if (e.isDirectory) {
+        const file = `${docs}${psep}${e.name}${psep}${AIBDOC}`;
+        const text = await readText(file);
+        if (text === null) continue;
+        let title = e.name, pages: number | undefined, titles: string[] = [], pageList: { id: string; title: string }[] = [];
+        try {
+          const aib = parseAib(text);
+          title = aib.title || e.name;
+          pages = aib.pages.length;
+          titles = aib.pages.map((p) => p.title);
+          pageList = aib.pages.map((p) => ({ id: p.id, title: p.title }));
+        } catch { /* listed; opening it says what is wrong */ }
+        found.set(e.name, { title, file, titles, pageList, ...(pages ? { pages } : {}) });
       }
-    } catch { /* no aib-docs folder */ }
-    try {
+    }
+    // the old layouts (none in a WSL project: #moveOld)
+    if (!isRemotePath(projectRoot)) try {
       // docs of the layout before pages: docs/<name>.md that AIB wrote (moved into aib-docs/ when opened)
       for await (const e of Deno.readDir(oldDocs)) {
         if (!e.isFile || !e.name.toLowerCase().endsWith('.md') || !NAME.test(e.name.slice(0, -3))) continue;
@@ -605,7 +602,7 @@ export class DocStore {
         if (!found.has(name)) found.set(name, { title, file: `${oldDocs}${sep}${e.name}`, legacy: true });
       }
     } catch { /* no docs folder */ }
-    try {
+    if (!isRemotePath(projectRoot)) try {
       for await (const e of Deno.readDir(`${this.stateDir}${sep}docs`)) {
         if (!e.isDirectory || e.name === 'cache') continue;
         try {
@@ -632,10 +629,9 @@ export class DocStore {
         } catch { /* never opened here */ }
       }
       if (!edited) {
-        try {
-          const st = await Deno.stat(found.get(name)!.file);
-          if (st.mtime) edited = { at: st.mtime.getTime() / 1000, by: null };
-        } catch { /* no file */ }
+        const file = found.get(name)!.file;
+        const st = await fsOf(file).stat(file); // null: no file
+        if (st?.mtime) edited = { at: st.mtime.getTime() / 1000, by: null };
       }
       const { titles, ...f } = found.get(name)!;
       const dir = this.docDir(projectRoot, name);
@@ -686,7 +682,7 @@ export class DocStore {
     by?: string,
   ): Promise<OpenDoc> {
     const dir = this.docDir(projectRoot, name);
-    const file = `${dir}${sep}${AIBDOC}`;
+    const file = `${dir}${sepOf(dir)}${AIBDOC}`;
     if (create !== undefined && !(await exists(this.#docsDir(projectRoot)))) await this.#writeReadme(projectRoot, true);
     let live: LiveDoc;
     let meta: CacheMeta | null = null;
@@ -737,6 +733,8 @@ export class DocStore {
             dirty = true;
           }
           docTitle = meta.title ?? parsed?.title ?? title;
+          // a WSL doc whose last write did not reach the distro: its cache holds edits the files lack, so they are written now
+          if (isRemotePath(dir) && aib.rev !== live.rev) dirty = true;
         } else {
           if (problem) throw problem;
           // a git pull, a branch switch, a hand edit, another machine: the doc is rebuilt from the file
@@ -823,7 +821,7 @@ export class DocStore {
     if (doc.dirty) await this.flush(doc);
     if (doc.legacy.length) {
       // the new files are written: the old layout's files go
-      for (const path of doc.legacy.splice(0)) await Deno.remove(path, { recursive: true }).catch(() => {});
+      for (const path of doc.legacy.splice(0)) await fsOf(path).remove(path, true).catch(() => {});
     }
     if (!doc.artifactId) this.snapshot(doc, 'created');
     return doc;
@@ -880,7 +878,7 @@ export class DocStore {
   #pagePaths(doc: OpenDoc): Map<string, string> {
     const out = new Map<string, string>();
     doc.live.pageList().forEach((p, k) => {
-      out.set(p.id, `${doc.dir}${sep}${String(k + 1).padStart(2, '0')}-${slugOf(p.title)}.md`);
+      out.set(p.id, `${doc.dir}${sepOf(doc.dir)}${String(k + 1).padStart(2, '0')}-${slugOf(p.title)}.md`);
     });
     return out;
   }
@@ -910,17 +908,29 @@ export class DocStore {
     return next;
   }
 
+  /** WSL docs whose write did not reach the distro: the rev their state was last kept in the cache at. */
+  #keptRev = new WeakMap<OpenDoc, number>();
+
   /** Take in edits made to the doc's files, then write them all from the doc. */
   flush(doc: OpenDoc): Promise<void> {
     if (doc.timer !== null) clearTimeout(doc.timer), doc.timer = null;
     return this.#serial(doc, async () => {
-      await this.#sync(doc);
-      await this.#write(doc);
+      try {
+        await this.#sync(doc);
+        await this.#write(doc);
+      } catch (error) {
+        // a WSL doc whose distro is away: the edits are kept in AIB's cache (with the files' last written state, so the next open
+        // knows they are not on disk yet) and written when it is back (the poll, or the next open)
+        if (isRemotePath(doc.dir) && this.#keptRev.get(doc) !== doc.live.rev) {
+          await this.#saveState(doc).then(() => this.#keptRev.set(doc, doc.live.rev), () => {}); // once per change, not every poll
+        }
+        throw error;
+      }
     });
   }
 
   async #write(doc: OpenDoc): Promise<void> {
-    await Deno.mkdir(doc.dir, { recursive: true });
+    await fsOf(doc.dir).mkdir(doc.dir);
     fixChartIds(doc.live); // before the copies link their pictures
     const paths = this.#pagePaths(doc);
     const lossy: string[] = [];
@@ -933,7 +943,7 @@ export class DocStore {
       const text = MD_NOTE + m.eol + m.eol + w.text;
       const onDisk = await readText(path);
       if (text !== onDisk) {
-        await writeAtomic(path, text);
+        await fsOf(path).writeAtomic(path, text);
         doc.dirty = true;
       }
       if (text !== m.text || path !== m.path) doc.dirty = true;
@@ -953,14 +963,14 @@ export class DocStore {
     const aib = exportAib(doc.live, doc.title, doc.ids);
     const text = stringifyAib(aib);
     if (text !== doc.aib.text || (await readText(doc.file)) !== text) {
-      await writeAtomic(doc.file, text);
+      await fsOf(doc.file).writeAtomic(doc.file, text);
       doc.dirty = true;
     }
     doc.aib = { text, doc: aib, rev: doc.live.rev };
     // renamed, moved or deleted pages: their old copies go, now that the new ones are written (never a file a page writes now)
     const now = new Set([...paths.values()].map(pathKey));
     for (const path of old) {
-      if (!now.has(pathKey(path))) await Deno.remove(path).catch(() => {});
+      if (!now.has(pathKey(path))) await fsOf(path).remove(path).catch(() => {});
     }
     if (!doc.dirty) return;
     doc.dirty = false;
@@ -1574,7 +1584,7 @@ export class DocStore {
     this.docs.delete(doc.id);
     doc.agents.destroy();
     doc.live.destroy();
-    await Deno.remove(doc.dir, { recursive: true }).catch(() => {});
+    await fsOf(doc.dir).remove(doc.dir, true).catch(() => {});
     await Deno.remove(this.#cacheDir(doc.id), { recursive: true }).catch(() => {});
   }
 
@@ -1698,10 +1708,6 @@ function lf(s: string): string {
   return s.replace(/\r\n?/g, '\n');
 }
 
-function pathKey(path: string): string {
-  return Deno.build.os === 'windows' ? path.toLowerCase() : path;
-}
-
 /** A block key (JSON) as Markdown, for the skipped-edit record. */
 function jsonMarkdown(key: string): string {
   if (!key) return '';
@@ -1720,7 +1726,7 @@ function blocksSource(
 
 function sameRoot(a: unknown, b: string): boolean {
   if (typeof a !== 'string') return false;
-  return Deno.build.os === 'windows' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  return pathKey(a) === pathKey(b); // Windows folders fold case; a WSL ref's path does not (doc_fs.ts)
 }
 
 interface Pair {

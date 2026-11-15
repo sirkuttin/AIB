@@ -442,6 +442,28 @@ Deno.test({
 });
 
 Deno.test({
+  name: "a second AIB whose running helper's ready line left its record (much traffic since) starts a new helper and works",
+  ...T,
+  async fn() {
+    await using lab = new Lab();
+    const first = lab.host();
+    await first.call('which', { name: 'flood' }); // over 1 MiB of output after the ready line (docs' file reads do this)
+    first.stop();
+    const second = lab.host();
+    await second.start();
+    assertEquals(second.state, 'ready', second.note);
+    assertEquals(await second.call('which', { name: 'b' }), { path: '/usr/bin/b' }, 'a new helper answers');
+    const client = await lab.linuxClient();
+    try {
+      const helpers = async () => (await client.list()).filter((c) => c.live && isAibInternalLabel(c.label));
+      await until(async () => (await helpers()).length === 1, 'the old helper stopped, one left');
+    } finally {
+      client.close();
+    }
+  },
+});
+
+Deno.test({
   name: 'the keep-alive: one wsl-hold channel in the Windows keeper (adopted, never doubled); quit keeps it only for live agents',
   ...T,
   async fn() {

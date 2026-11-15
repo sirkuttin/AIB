@@ -39,6 +39,7 @@ import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { DocStore } from '../docs/store.ts';
 import { ArtifactHistory } from '../docs/history.ts';
+import { installWslDocFs } from '../wsl/docs.ts';
 import { type AccessOptions, PhoneAccess } from '../remote/access.ts';
 import { Presence } from '../attention/presence.ts';
 import type { DeviceStore } from '../remote/devices.ts';
@@ -624,6 +625,7 @@ export function makeContext(
     pageKey?: string | null;
   },
 ): WebContext {
+  installWslDocFs(); // the docs of WSL projects: their files through the distro's helper (wsl/docs.ts)
   const ctx: WebContext = {
     token: newToken(),
     pageAccess: new PageAccess(options.stateDir, options.pageKey ?? null),

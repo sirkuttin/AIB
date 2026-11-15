@@ -174,8 +174,7 @@
       .filter(Boolean);
   }
   const projectPathNow = () => (W() && W().currentProjectPath ? W().currentProjectPath() : '');
-  // A scope in a WSL project (wsl-ui.js): no docs in phase 1; pictures and pages preview as in any project.
-  const WSL_DOCS_OFF = 'Docs are not available for WSL projects yet';
+  // A scope in a WSL project (wsl-ui.js): docs, pictures and pages work as in any project (the docs' files are in the distro).
   function wslScope(scope) {
     const A = root.AIBWsl;
     if (!A || !scope || scope.root === 'outside') return false;
@@ -248,7 +247,7 @@
   // folder or docs/ is listed again.
   function docsOf(scope) {
     const D = DL();
-    if (!D || !scope || scope.root === 'outside' || scope.root === 'project' || wslScope(scope)) return null;
+    if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return null;
     const now = D.cached(scope.id, scope.root);
     if (!now) loadDocs(scope, false);
     if (!now || scope.root !== 'chat') return now;
@@ -269,7 +268,7 @@
   }
   function loadDocs(scope, force) {
     const D = DL();
-    if (!D || !scope || scope.root === 'outside' || scope.root === 'project' || wslScope(scope)) return Promise.resolve([]);
+    if (!D || !scope || scope.root === 'outside' || scope.root === 'project') return Promise.resolve([]);
     // A chat's copy lists the project's docs, which are in the main folder: asked again together (docsOf merges them).
     const both = scope.root === 'chat' ? D.listFor(scope.id, 'main', force) : Promise.resolve();
     return Promise.all([D.listFor(scope.id, scope.root, force), both]).then(([docs]) => {
@@ -786,8 +785,7 @@
         artifacts: arts,
         showIgnored,
         docs,
-        newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project' && !wslScope(scope),
-        docsOff: wslScope(scope) ? WSL_DOCS_OFF : '',
+        newDoc: !!DL() && scope.root !== 'outside' && scope.root !== 'project',
         localNote: F().localNote(t.lo),
       });
     return { rows, scope, tree: t, changes };

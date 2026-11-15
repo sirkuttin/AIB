@@ -4,7 +4,8 @@ Speaks the helper protocol of server/wsl/contract.ts: JSON-RPC 2.0 lines on stdi
 env.get, which and fs.stat; `which` of the name "open-url" also sends a `browser.open` notification with params.url, the name
 "slow" is never answered, and fs.stat always fails with data.code "not_found". The version in helper.ready is argv[1] (or "fake").
 With argv[2] == "mcp" it also has the MCP tunnel: `mcp: {socket}` in helper.ready, the mcp.* methods (always ok), and `which` of the
-name "mcp-request" sends an `mcp.request` notification with params.rid.
+name "mcp-request" sends an `mcp.request` notification with params.rid. `which` of the name "flood" first sends about 4 MB of
+notifications AIB ignores (its ready line then leaves the keeper's 1 MiB record).
 """
 import json
 import os
@@ -41,6 +42,9 @@ def main():
             if name == 'mcp-request':
                 send({'jsonrpc': '2.0', 'method': 'mcp.request',
                       'params': {'rid': params.get('rid', ''), 'headers': {'X-Studio-Conversation-Id': 'c'}, 'body': '{}'}})
+            if name == 'flood':
+                for _ in range(4000):
+                    send({'jsonrpc': '2.0', 'method': 'noise', 'params': {'x': 'x' * 1000}})
             if name == 'open-url':
                 send({'jsonrpc': '2.0', 'method': 'browser.open', 'params': {'url': params.get('url', '')}})
             send({'jsonrpc': '2.0', 'id': rid, 'result': {'path': '/usr/bin/' + name}})
