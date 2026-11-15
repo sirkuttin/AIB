@@ -9,8 +9,11 @@
   distro sits in the same inbox and sidebar as your Windows chats. It all stays on your PC: AIB copies two programs (about 110 MB, once
   per version) into `~/.aib-server` in the distro and talks to them through `wsl.exe`, with no network port opened. An agent's
   sign-in page opens in your Windows browser; any other link from the distro asks first. Quitting AIB keeps WSL agents working, as it does for Windows chats, and the
-  next AIB picks them up; ended WSL chats stay listed and can be continued. Not in WSL projects yet: worktrees, live sync, merge,
-  Docs and file previews; AIB tools there are limited to artifacts. While a WSL project is open or a WSL chat runs, the distro
+  next AIB picks them up; ended WSL chats stay listed and can be continued. In a WSL project the Files tab previews
+  pictures and pages like any project, and opens files a chat wrote outside the project folder. Delete project can move the folder to
+  the trash in Ubuntu (the "Move folder to trash in Ubuntu" tick box; never a permanent delete, and it refuses your home folder,
+  other projects and folders on a Windows drive). A WSL chat's Codex usage limits show up in the chip, read from the distro's
+  `~/.codex`. Not in WSL projects yet: worktrees, live sync, merge and Docs; AIB tools there are limited to artifacts. While a WSL project is open or a WSL chat runs, the distro
   keeps running (VmmemWSL memory in Task Manager).
 
 ## 0.1.0-beta.9 (beta)

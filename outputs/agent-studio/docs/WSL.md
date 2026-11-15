@@ -17,8 +17,11 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
 - AIB tools in a WSL chat are limited to artifacts (publish, list, update), reached through WSL interop; docs, merge and the swarm
   helper tools are not available yet, and the chat says so.
-- Chats work in the project folder (no worktree, no live sync, no merge button). The Docs tab is off. Images and binaries have no
-  preview. Delete project only removes it from AIB. VS Code and Cursor open it with `--remote wsl+Ubuntu`.
+- Chats work in the project folder (no worktree, no live sync, no merge button). The Docs tab is off. The Files tab previews
+  pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
+  (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
+  as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
+  Cursor open the project with `--remote wsl+Ubuntu`.
 - Ended WSL chats are listed with the project's other saved chats (Claude Code transcripts in the distro's `~/.claude/projects`),
   their history opens, and Continue resumes them in the distro.
 - Quitting AIB with a WSL agent working leaves it running, as for Windows chats; the next AIB takes it over.
@@ -26,7 +29,8 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 Side effects: the distro stays running while a WSL project is open or WSL chats run (VmmemWSL memory); `wsl.exe` processes appear
 under AIB and AIB-keeper in Task Manager; `~/.aib-server` appears in the Linux home; the first use after a Windows start takes a
 few seconds. Saved sessions started outside AIB are listed only once AIB has used the distro since it started; background-task
-output and Codex usage limits are missing for WSL chats.
+output is missing for WSL chats. Codex usage limits are read from the distro's `~/.codex` (a chat's chip is keyed per distro; a
+distro that is not running is not started for it).
 
 ## How it works
 
@@ -40,7 +44,7 @@ Per distro in use AIB keeps one **host** (`wsl/hosts.ts`, made on first use, so 
 | --- | --- | --- |
 | Linux keeper | in the distro, `~/.aib-server/data-<12 hex of the Windows data folder>/` | the same Go keeper, built for Linux; holds the WSL agents, terminals and the helper |
 | Transport | `wsl.exe --distribution D --cd ~ --exec .aib-server/<ver>/AIB-keeper bridge --data …`, AIB's child | keeper frames over its stdin/stdout (`keeper/PROTOCOL.md` section 10); ends with AIB; reconnected with backoff if it dies |
-| Helper | a channel in the Linux keeper, label `{"aib":"wsl-helper","v":ver}` | `AIB-wsl-helper` (a `deno compile` of `server/wsl/helper_main.ts`): JSON-RPC lines for Files, Changes, folder checks, agent detection, `which`, the login environment and saved sessions (`wsl/contract.ts` HelperMethods) |
+| Helper | a channel in the Linux keeper, label `{"aib":"wsl-helper","v":ver}` | `AIB-wsl-helper` (a `deno compile` of `server/wsl/helper_main.ts`): JSON-RPC lines for Files, Changes, folder checks, agent detection, `which`, the login environment, saved sessions, files outside the project, project delete and Codex limits (`wsl/contract.ts` HelperMethods) |
 | Keep-alive | a channel in the **Windows** keeper, label `{"aib":"wsl-hold","distro":d}` | `wsl.exe … bridge --hold`: keeps the distro and its agents alive while AIB is away; exits by itself once the distro has no work |
 
 `<ver>` is the app version plus the first 8 hex of the SHA-256 of both Linux programs. `wsl/install.ts` copies them over `wsl.exe`
@@ -62,6 +66,26 @@ the keep-alive the same way.
 **Transport loss:** when the transport `wsl.exe` dies, the link suspends its channels, reconnects (0.5 to 8 s steps, 30 s in all),
 re-attaches each from its last record and only reports a chat as stopped when the Linux keeper's `list` says it ended. After
 `wsl --shutdown` the chats end with "Ubuntu stopped (Windows restart or `wsl --shutdown`), so this agent stopped."
+
+## Previews, outside files, delete, Codex limits
+
+- **Previews.** The Files read asks the helper for the file's bytes (`files.read`, base64, capped at 1 MB); for a picture or page the
+  bytes go into a read-only ticket held in memory (`web/file_tickets.ts issueBytes`, at most 48 MB of WSL bytes in all, 15 minutes)
+  and the artifact origin serves `/f/<ticket>/<name>` from them: no Windows path is read, and the phone's artifact port serves no
+  tickets. Markdown opens rendered, as for Windows files. Over 1 MB there is no preview, as on Windows.
+- **Outside files** (`GET /api/live/files/outside` for a live WSL chat). AIB first checks that the chat's own events name the path,
+  by Linux rules (case kept; `worktrees/outside_files.ts mentions(…, posix)`); the helper's `files.outside` then runs `checkShape`,
+  `resolveOutside`, `readOutside` and `folderLabel` natively and refuses AIB's own folders in the distro (the root, the data
+  folder, the helper's folder). Saved (not live) WSL chats are not covered: their transcripts are in the distro.
+- **Delete project.** `project.inspect` (what the dialog shows) and `project.trash` (`wsl/helper/trash.ts`). The Windows delete's
+  refusals run natively (home folder and its parents, Documents/Desktop/Downloads, a folder holding or inside another project, AIB's
+  own folders), plus a Windows drive (`/mnt/<x>`) and a top-level folder (`/home`, `/tmp`). Then `gio trash`; without `gio`, the
+  freedesktop trash by hand (`$XDG_DATA_HOME/Trash`: `info/<name>.trashinfo` created first, then one rename into `files/`, a number
+  appended on a name clash) when the folder is on the same disk; otherwise a refusal. There is no recursive remove in that path: a
+  folder that cannot go to a trash is not deleted, and the dialog says why. "Remove from AIB" never needs the distro.
+- **Codex limits.** `codex.limits` reads the newest `rate_limits` of the distro's `~/.codex/sessions` (`CODEX_HOME` of the login
+  environment wins) with the Windows reader (`agents/codex_limits.ts`). A WSL chat has its own account key (`wsl:<distro>|codex`);
+  there is no app-server fallback in the distro. Under test the folder is `<AIB_WSL_ROOT>/home/.codex`.
 
 ## Building and testing
 
@@ -88,15 +112,16 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_terminal_e2e` | the login shell in the Linux folder, resize |
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
+| `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
 
-Worktrees, live sync and merge inside the distro; the docs store; the full AIB tools tunnel; background-task output, ownership
-checks and Codex limits for WSL chats; file previews and outside files; AIB-managed agent installs in the distro.
+Worktrees, live sync and merge inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
+checks for WSL chats; AIB-managed agent installs in the distro.
