@@ -77,6 +77,42 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: 'wsl e2e: Continue of a chat whose agent still runs in the distro (the take-over at start never asked) takes it over, no second agent',
+  ...T,
+  async fn() {
+    const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-continue-e2e-' });
+    await prepareRoot();
+    const studios: Studio[] = [];
+    try {
+      await readyHost();
+      const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
+      const a = studioIn(state);
+      studios.push(a);
+      const c = await a.connect('claude', ref);
+      const pid = c.process?.pid;
+      newAib(); // a crash: the Linux keeper keeps the agent
+      a.reconnectStop.set();
+      for (const conn of a.connections.values()) conn.sessionLease?.release();
+      studios.pop();
+      const b = studioIn(state);
+      studios.push(b);
+      b.store!.forgetConversation('claude', c.sessionId!); // not on the recovery list: the start never asks the distro
+      assertEquals(await b.adoptKeeper(), 0);
+      const r = await b.connect('claude', ref, c.sessionId);
+      assertEquals(r.id, c.id, 'the running chat, taken over');
+      assert(r.ready && !r.closed);
+      if (pid !== undefined) assertEquals(r.process?.pid, pid);
+      const client = (await linkOf(await readyHost()).client(false))!;
+      assertEquals(liveUserChannels(await client.list()).length, 1, 'one agent in the distro, never a second');
+    } finally {
+      for (const s of studios) await s.close().catch(() => {});
+      await cleanRoot();
+      Deno.removeSync(state, { recursive: true });
+    }
+  },
+});
+
 /** A Windows keeper for one test's data folder, with fast idle and orphan rules and an orphan command that only leaves a mark. */
 function windowsKeeper(state: string, marker: string): KeeperLink {
   const mark = `Deno.writeTextFileSync(${JSON.stringify(marker)}, 'ran\n', { append: true })`;
@@ -137,6 +173,8 @@ Deno.test({
       newAib(withWindowsKeeper(linkB));
       const b = studioIn(state, linkB);
       studios.push(b);
+      // the recovery list lost the chat (an AIB without WSL support forgot it): the live keep-alive alone names the distro to ask
+      assert(b.store!.forgetConversation('claude', c.sessionId!), 'it was on the recovery list');
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       assert(r?.ready && !r.closed, 'the chat was taken over');

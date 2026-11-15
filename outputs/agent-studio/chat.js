@@ -926,7 +926,11 @@
     recoveryWarning = live.recoveryWarning || '';
     const matched = new Set(),
       known = new Set(),
-      recoveredBy = new Map(recoveredList.map((r) => [r.provider + ':' + r.sessionId, r]));
+      recoveredBy = new Map(recoveredList.map((r) => [r.provider + ':' + r.sessionId, r])),
+      // chats the automatic reconnect gave up on: the row and the header say why (a Continue tries again)
+      failedBy = new Map(
+        (Array.isArray(live.reconnectFailed) ? live.reconnectFailed : []).map((r) => [r.provider + ':' + r.sessionId, r.error || '']),
+      );
     conversations = [];
     syncNames(live);
     window.AgentOrganizeUI?.sync(live.conversationRevision);
@@ -949,7 +953,9 @@
       if (owned) matched.add(owned.id);
       known.add(c.provider + ':' + c.id);
       const recovered = owned ? undefined : recoveredBy.get(c.provider + ':' + c.id);
-      if (c.hasMessages || owned || recovered) conversations.push({ ...c, live: owned, recovered });
+      const reconnectError = owned ? undefined : failedBy.get(c.provider + ':' + c.id);
+      if (c.hasMessages || owned || recovered)
+        conversations.push({ ...c, live: owned, recovered, ...(reconnectError !== undefined ? { reconnectError } : {}) });
     }
     for (const c of live.connections) {
       if (!c.closed && !matched.has(c.id)) {
@@ -1346,6 +1352,7 @@
         queueNote: queueLineNote(connected ? snapshot.queue : null, busy),
         hint: ownershipHints[selected.provider + ':' + selected.id],
         recovered: !!selected.recovered,
+        reconnectError: selected.reconnectError, // the reopen after a restart gave up: the header says why
         reconnecting: !!(selected.recovered?.reconnecting || selected.live?.reconnecting),
         // The steady verdict (conversation.elsewhere, set by annotateElsewhere) is what the sidebar card reads too, so the
         // header and the card say the same words; the raw facts below only count while there is no steady verdict.
@@ -4439,6 +4446,13 @@
         : 'This conversation was open in AIB before the server restarted. AIB has no local transcript for it. Send a message to ask the agent to load it again.'
       : 'The agent listed this conversation, but AIB has no local transcript for it. Continue it to ask the agent to load its history; nothing is sent until you send a message.';
   }
+  function reconnectFailedTitle(reason) {
+    return (
+      'AIB could not reopen this chat after the restart' +
+      (reason ? ': ' + String(reason).slice(0, 300) : '') +
+      '. Send a message or Continue to try again.'
+    );
+  }
   function rowStatus(c) {
     const box = text('small', '', 'connection-state');
     if (c.live) {
@@ -4457,6 +4471,15 @@
           c.recovered.reconnecting ? ' AIB is reconnecting it' : ' Was open in AIB before restart',
           'status-detail',
         ),
+      );
+      return box;
+    }
+    if (c.reconnectError !== undefined) {
+      // AIB tried to reopen it after the restart and gave up: say so (the reason on hover), never just "Saved"
+      box.title = reconnectFailedTitle(c.reconnectError);
+      box.append(
+        text('span', 'Not running', 'badge badge-recovered'),
+        text('span', ' Could not reopen after the restart', 'status-detail'),
       );
       return box;
     }

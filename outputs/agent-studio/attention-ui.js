@@ -102,7 +102,7 @@
     if (!m.connected || !snap)
       return done(
         { kind: 'saved', short: 'Saved conversation', text: 'Saved conversation — Continue to talk to it' },
-        { recovered: !!m.recovered },
+        { recovered: !!m.recovered, ...(typeof m.reconnectError === 'string' ? { reconnectError: m.reconnectError } : {}) },
       );
     facts.connected = true;
     const pending = pendingGroups(snap, m.names, snap.sessionId);

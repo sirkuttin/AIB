@@ -26,6 +26,11 @@
   could not take it over right away, for example because Ubuntu was slow to start, reopening the chat now picks up that running
   agent instead of starting a second one for the same conversation. The chat keeps its history and its running turn, and it is
   listed once.
+- WSL chats no longer get stuck as "Not running" after a restart or update. If their agent is still running in the distro, AIB now
+  picks it up even when its list of open chats lost the chat, and continuing such a chat picks up that same agent instead of starting
+  a second one for the same conversation (Codex refused that second one with "session is in use by another Codex client"). A distro
+  whose AIB helper was being replaced is started again instead of counting as not ready. A chat AIB could not reopen after a restart
+  now says "Not running · could not reopen", with the reason when you hover, and sending a message tries again.
 
 - AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
   merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
