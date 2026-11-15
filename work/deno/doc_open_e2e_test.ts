@@ -120,8 +120,7 @@ e2e('Open doc on the card opens the doc in the Artifacts viewer, in the full edi
   })()`);
   assert(Number(fit.w) > 200, `frame width ${fit.w}`);
   assert(Number(fit.scroll) <= Number(fit.client) + 1, `no sideways scroll: ${fit.scroll} > ${fit.client}`);
-  // the column widens for a doc (920 px by default, less on a small window): below 900 px the pages are a header picker
-  assert(Number(fit.w) >= 600, `the column widened for the doc: ${fit.w}`);
+  // the right column keeps its one width for a doc (owner 2026-11-15); below 900 px the pages are a header picker
   if (Number(fit.w) < 900) assert(fit.picker === true, `pages as a header picker below 900 px: ${JSON.stringify(fit)}`);
   await page.shot('doc-in-artifacts');
   chat.end();

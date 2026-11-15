@@ -2039,7 +2039,7 @@
       note(
         always
           ? 'The colour-blind safe theme always shows them.'
-          : 'Off by default. Draws ◔ Working, ▲ Needs you, ✓ Done, ○ Idle and ✕ Failed in place of the coloured dots.',
+          : 'Off by default. Draws ◔ Working, ▲ Needs you, ✓ Done, ○ Ready and ✕ Failed in place of the coloured dots.',
       ),
     );
   }

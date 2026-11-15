@@ -135,7 +135,7 @@
     unread: 'Finished, not viewed yet',
     working: 'Working',
     opening: 'Opening',
-    idle: 'Idle',
+    idle: 'Ready',
     saved: 'Ready',
   };
   // The same dot classes as the card phrase (status-words.js dotClass), so a project heading and its cards agree.

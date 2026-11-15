@@ -854,6 +854,7 @@
   let win = root,
     doc = typeof document !== 'undefined' ? document : null;
   const S = {
+    lastSel: new Map(),
     chat: { id: '', busy: false, cwd: '' },
     list: [],
     extras: {},
@@ -1079,8 +1080,11 @@
       busy = !!(ctx && ctx.busy),
       changed = id !== S.chat.id,
       ended = S.chat.busy && !busy;
+    const prevId = S.chat.id;
     S.chat = { id, busy, cwd: (ctx && ctx.cwd) || '' };
     if (changed) {
+      // the artifact each chat last showed (this run of the app): back on that chat, the viewer shows it again once the list loads
+      if (prevId && S.selId) S.lastSel.set(prevId, { selId: S.selId, userPicked: S.userPicked });
       S.listSeq++;
       S.loading = false;
       S.list = [];
@@ -1101,6 +1105,11 @@
       S.confirmPurge = '';
       dropDoc();
       closePop();
+      const back = id ? S.lastSel.get(id) : null;
+      if (back) {
+        S.selId = back.selId;
+        S.userPicked = back.userPicked;
+      }
       paintCount();
       paintAll();
       refreshCards();

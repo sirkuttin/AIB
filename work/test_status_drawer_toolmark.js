@@ -1,6 +1,6 @@
 'use strict';
 /* Three app bugs from the styling review (B1-B3):
-   1. A chat's sidebar card said "Elsewhere · Idle" while the header said "Elsewhere · Working": the header read the raw
+   1. A chat's sidebar card said "Elsewhere · Ready" while the header said "Elsewhere · Working": the header read the raw
       ownership facts, the card the steady conversation.elsewhere verdict. Both must read the same verdict.
    2. At <=1100 px the open chat-list drawer drew under the Activity strip and the scrim: the plain `body > aside` rule
       (z-index 5) came after the narrow-width block and beat its z-index 40.
@@ -46,10 +46,10 @@ const words = (page, c) => {
   };
 };
 
-test('header, turn line and sidebar card agree on Elsewhere · Idle / Working across the transition', () => {
+test('header, turn line and sidebar card agree on Elsewhere · Ready / Working across the transition', () => {
   const { page, c } = elsewherePage();
   let w = words(page, c);
-  assert.equal(w.card, 'Elsewhere · Idle');
+  assert.equal(w.card, 'Elsewhere · Ready');
   assert.equal(w.header, w.card, 'header must not run ahead of the card on the raw facts');
   assert.equal(w.line, 'elsewhere-idle');
   c.elsewhere = { ...c.elsewhere, working: true }; // the steady verdict catches up
@@ -60,7 +60,7 @@ test('header, turn line and sidebar card agree on Elsewhere · Idle / Working ac
   c.elsewhere = { ...c.elsewhere, working: false };
   page.state.ownershipHints = { 'omp:s1': { verdict: 'owned_elsewhere', reasons: [] } };
   w = words(page, c);
-  assert.equal(w.header, 'Elsewhere · Idle');
+  assert.equal(w.header, 'Elsewhere · Ready');
   assert.equal(w.header, w.card);
 });
 
@@ -140,7 +140,7 @@ test('Elsewhere · Working chat: the last call without a result is running, olde
   assert.deepEqual(savedRows(true), ['pending', 'ok', 'running']);
 });
 
-test('Elsewhere · Idle or a plain saved chat: a call without a result is pending (•), never blank', () => {
+test('Elsewhere · Ready or a plain saved chat: a call without a result is pending (•), never blank', () => {
   assert.deepEqual(savedRows(false), ['pending', 'ok', 'pending']);
   assert.deepEqual(savedRows(undefined), ['pending', 'ok', 'pending']);
 });

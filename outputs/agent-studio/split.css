@@ -243,10 +243,32 @@ body.split-resizing-y {
   padding: 8px 16px 16px;
   scrollbar-width: thin;
 }
-.mirror-comp {
+/* The other pane keeps its bottom bar: the turn line and the message box at the height the real bar had for that chat
+   (split-ui.js sizeMirror), so a focus switch moves nothing. Quiet: the focused pane is the one with the accent line on top. */
+.mirror-head {
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.mirror-foot {
   flex: none;
-  margin: 6px 16px 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0.72;
+  padding-bottom: 8px;
+}
+.mirror-foot .mirror-turn {
+  flex: none;
+}
+.mirror-foot:not([style]) .mirror-comp {
   min-height: 66px;
+}
+.mirror-comp {
+  flex: 1 1 auto;
+  margin: 6px 16px 0;
+  min-height: 0;
   padding: 8px 12px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
@@ -258,7 +280,6 @@ body.split-resizing-y {
   white-space: pre-wrap;
   text-overflow: ellipsis;
   cursor: text;
-  max-height: 120px;
 }
 .mirror-comp.has-draft {
   color: var(--text-7);

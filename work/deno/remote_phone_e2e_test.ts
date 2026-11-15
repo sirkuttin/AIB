@@ -2289,7 +2289,7 @@ Deno.test({
       blog.busy = false;
       blog.attention = { state: "idle", needs: 0, turnEndedAt: new Date().toISOString(), busySince: null };
       await page.waitFor(
-        'document.querySelector(\'.ph-card[data-chat="blog"] .ph-state\')?.textContent === "Idle"',
+        'document.querySelector(\'.ph-card[data-chat="blog"] .ph-state\')?.textContent === "Ready"',
         15000,
         "blog finished on its card",
       );
