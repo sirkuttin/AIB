@@ -181,6 +181,75 @@ function isFileSync(path: string): boolean {
   }
 }
 
+/**
+ * `node_modules/<rel>` as Node resolves it from an adapter's entry file (nested first, then hoisted), only inside the adapter's own
+ * node_modules tree (up to its outermost node_modules), or null. `test` says whether a candidate counts (default: a file).
+ */
+export function inAdapterTree(script: string, rel: string[], test: (path: string) => boolean = isFileSync): string | null {
+  const parts = script.split(/[\\/]/);
+  const top = parts.findIndex((part) => part.toLowerCase() === 'node_modules'); // the outermost node_modules of the adapter
+  if (top <= 0) return null;
+  const stop = parts.slice(0, top).join(WIN ? '\\' : '/') || '/';
+  let folder = parentDir(script);
+  for (let i = 0; i < 40; i++) {
+    const base = folder.slice(Math.max(folder.lastIndexOf('/'), folder.lastIndexOf('\\')) + 1).toLowerCase();
+    if (base !== 'node_modules') {
+      const candidate = pathOf(folder, 'node_modules', ...rel);
+      if (test(candidate)) return candidate;
+    }
+    if (folder.length <= stop.length) break;
+    const up = parentDir(folder);
+    if (up === folder) break;
+    folder = up;
+  }
+  return null;
+}
+
+/** The `@openai/codex` CLI the Codex adapter ships (its own dependency), as [the adapter's node, codex.js], or null. */
+export function bundledCodexCli(adapterArgv: string[] | null): string[] | null {
+  if (!adapterArgv || adapterArgv.length < 2) return null;
+  const [name, entry] = CODEX_CLI_PACKAGE;
+  const found = inAdapterTree(adapterArgv[1], [...name.split('/'), ...entry.split('/')]);
+  return found ? [adapterArgv[0], found] : null;
+}
+
+function isDirSync(path: string): boolean {
+  try {
+    return Deno.statSync(path).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The Claude Code program the Claude adapter ships, or null: its `@anthropic-ai/claude-agent-sdk` (found as Node resolves it from the
+ * adapter's entry) with the SDK's `cli.js` (older SDKs) or a platform package `@anthropic-ai/claude-agent-sdk-<platform>` holding the
+ * `claude` binary (newer SDKs), next to the SDK or inside it.
+ */
+export function bundledClaudeCli(adapterArgv: string[] | null): string | null {
+  if (!adapterArgv || adapterArgv.length < 2) return null;
+  const sdk = inAdapterTree(adapterArgv[1], ['@anthropic-ai', 'claude-agent-sdk'], (path) => isFileSync(pathOf(path, 'package.json')));
+  if (!sdk) return null;
+  if (isFileSync(pathOf(sdk, 'cli.js'))) return pathOf(sdk, 'cli.js');
+  for (const scope of [parentDir(sdk), pathOf(sdk, 'node_modules', '@anthropic-ai')]) {
+    if (!isDirSync(scope)) continue;
+    let items: Deno.DirEntry[];
+    try {
+      items = [...Deno.readDirSync(scope)];
+    } catch {
+      continue;
+    }
+    for (const item of items) {
+      if (!item.name.startsWith('claude-agent-sdk-')) continue;
+      for (const program of ['claude', 'claude.exe']) {
+        const candidate = pathOf(scope, item.name, program);
+        if (isFileSync(candidate)) return candidate;
+      }
+    }
+  }
+  return null;
+}
+
 export interface CodexCliOptions {
   which?: (name: string) => string | null | undefined;
 }
@@ -192,27 +261,8 @@ export interface CodexCliOptions {
  * `codex.exe` (Windows) / `codex` on PATH. Windows .cmd/.bat shims are skipped: they cannot be started directly.
  */
 export function findCodexCli(adapterArgv: string[] | null, options: CodexCliOptions = {}): Promise<string[] | null> {
-  const [name, entry] = CODEX_CLI_PACKAGE;
-  if (adapterArgv && adapterArgv.length >= 2) {
-    const script = adapterArgv[1];
-    const parts = script.split(/[\\/]/);
-    const top = parts.findIndex((part) => part.toLowerCase() === 'node_modules'); // the outermost node_modules of the adapter
-    if (top > 0) {
-      const stop = parts.slice(0, top).join(WIN ? '\\' : '/') || '/';
-      let folder = parentDir(script);
-      for (let i = 0; i < 40; i++) {
-        const base = folder.slice(Math.max(folder.lastIndexOf('/'), folder.lastIndexOf('\\')) + 1).toLowerCase();
-        if (base !== 'node_modules') {
-          const candidate = pathOf(folder, 'node_modules', ...name.split('/'), ...entry.split('/'));
-          if (isFileSync(candidate)) return Promise.resolve([adapterArgv[0], candidate]);
-        }
-        if (folder.length <= stop.length) break;
-        const up = parentDir(folder);
-        if (up === folder) break;
-        folder = up;
-      }
-    }
-  }
+  const bundled = bundledCodexCli(adapterArgv);
+  if (bundled) return Promise.resolve(bundled);
   const look = options.which ?? which;
   for (const program of WIN ? ['codex.exe'] : ['codex']) {
     const found = look(program);

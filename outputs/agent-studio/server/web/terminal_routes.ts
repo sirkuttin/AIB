@@ -11,9 +11,10 @@
  *   GET  /api/live/terminal?signin=claude&arg=..&arg=..  a built-in agent's terminal sign-in (a chat's "Sign in" card): the agent's own
  *                                                   launcher (Settings / Studio install / global, as a chat starts it) with the args
  *                                                   of the terminal method the agent advertised (ACP terminal auth). Plain words only.
- *   GET  /api/live/terminal?signin=<agent>&distro=<distro>[&arg=..]&cols=&rows=  an agent's own login inside a WSL distro (design section 8 item 4):
+ *   GET  /api/live/terminal?signin=<agent>&distro=<distro>[&arg=..][&start=1]&cols=&rows=  an agent's own login inside a WSL distro (design section 8 item 4):
  *                                                   a distro terminal in the Linux home running the agent's login command (the
- *                                                   sign-in card's advertised args when given); for the next
+ *                                                   sign-in card's advertised args when given). A distro AIB is not using is
+ *                                                   refused, never started, unless start=1 (the user's click starts it and waits); for the next
  *                                                   5 minutes the login page it asks for opens on Windows without asking (wsl/open_urls.ts)
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
@@ -32,7 +33,7 @@ import type { ShellSpec } from '../platform/pty.ts';
 import { remoteSetupCommand } from '../remote/install.ts';
 import type { WsLink } from '../platform/websocket.ts';
 import { refOf } from '../platform/location.ts';
-import { distroName, notReady, wslHost } from '../wsl/access.ts';
+import { distroName, hostWhenReady, notReady, peekState, peekWslHost } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { BUILTIN_NAMES } from '../agents/agent_registry.ts';
 
@@ -84,8 +85,9 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const signin = q.get('signin');
   const setup = q.get('setup');
   const distro = q.get('distro');
-  if (signin !== null && distro) void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'), q.getAll('arg'));
-  else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
+  if (signin !== null && distro) {
+    void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'), q.getAll('arg'), q.get('start') === '1');
+  } else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
   else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
   else {ctx.terminals.attach(
       link,
@@ -186,13 +188,24 @@ async function attachSetup(ctx: WebContext, link: WsLink, agentId: string, step:
 
 /**
  * The login an agent installed in a WSL distro runs, as [file, args] in that distro, or a one-line reason. Claude: its adapter's own
- * `--cli auth login --claudeai` (as on Windows, agents/signin.ts); Codex: `codex login` (the CLI found with the helper's `which`).
+ * `--cli auth login --claudeai` (as on Windows, agents/signin.ts); Codex: `codex login` with the CLI the adapter ships (agents.detect
+ * `signin`: also through an asdf / mise shim), else `codex` found with the helper's `which`. `start`: the user clicked, so a distro AIB
+ * is not using yet is started and waited for; without it such a distro is refused and left alone.
  */
-export async function wslSigninCommand(agentId: string, distro: string, args: unknown = []): Promise<ShellSpec | string> {
-  const host = wslHost(distro);
+export async function wslSigninCommand(agentId: string, distro: string, args: unknown = [], start = false): Promise<ShellSpec | string> {
+  const name = distroName(distro);
+  // Only the user's click (`start`) may start the distro; otherwise a distro AIB is not using is answered, never started.
+  let host = peekWslHost(distro);
+  if (start && (!host || host.state !== 'ready')) {
+    try {
+      host = await hostWhenReady(distro);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (peekState(host) === 'off') return `${name} is not running. Start it in Settings > AIB Linking (WSL), then sign in.`;
   const why = notReady(host, distro);
   if (why) return why;
-  const name = distroName(distro);
   const label = BUILTIN_NAMES[agentId] ?? agentId;
   if (agentId !== 'claude' && agentId !== 'codex') return `Signing in to ${label} inside ${name} is not available yet.`;
   if (agentId === 'codex') {
@@ -223,12 +236,13 @@ async function attachWslSignin(
   cols: unknown,
   rows: unknown,
   args: string[] = [],
+  start = false,
 ): Promise<void> {
   let command: ShellSpec | string;
   let home = '';
   try {
-    command = await wslSigninCommand(agentId, distro, args);
-    if (typeof command !== 'string') home = (await wslHost(distro)!.env()).HOME || '';
+    command = await wslSigninCommand(agentId, distro, args, start);
+    if (typeof command !== 'string') home = (await peekWslHost(distro)!.env()).HOME || '';
   } catch (error) {
     command = `The sign-in could not start: ${(error as Error).message}`;
   }

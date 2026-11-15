@@ -1,13 +1,18 @@
 /**
  * WSL projects on the page (docs/wsl/design.md sections 4 and 8; Deno only: routes.ts DENO_ONLY). Every route needs the Studio token, like
  * the Files routes, and reaches a distro only through wsl/access.ts.
- *   GET  /api/live/wsl/status                      {available, distros: [{name, key, state, line, home, helper, problem, alwaysAllow}],
- *                                                   openRequests: [{id, distro, name, url, at}]}: the Location choice, the distro state
- *                                                   line, Settings > About, and the URLs waiting for "Open" (wsl/open_urls.ts)
+ *   GET  /api/live/wsl/status                      {available, distros: [{name, key, state, line, home, helper, problem, alwaysAllow,
+ *                                                   isDefault}], openRequests: [{id, distro, name, url, at}], wsl: {exe, problem},
+ *                                                   skipped: [{name, why}]}: the Location choice, the distro state line, Settings > About
+ *                                                   and AIB Linking (WSL), and the URLs waiting for "Open" (wsl/open_urls.ts). The
+ *                                                   registry only (never wsl.exe), never starts a distro
  *   GET  /api/live/wsl/dirs?distro&path            the New / Add project folder browser: fs.listDirs in the distro ('' = its home)
- *   GET  /api/live/wsl/agents?distro[&force=1]     the agent picker: which agents the distro has, the install command of the others, and
- *                                                   AIB's own install of Claude Code / Codex (installable, pinned, update, job,
- *                                                   installBlock + nodeInstall when Node.js is missing; force: look for Node.js again)
+ *   GET  /api/live/wsl/agents?distro[&force=1][&peek=1[&start=1]]  the agent picker: which agents the distro has, the install
+ *                                                   command of the others, and AIB's own install of Claude Code / Codex (installable,
+ *                                                   pinned, update, job, installBlock + nodeInstall when Node.js is missing; force: look
+ *                                                   for Node.js again; bundledCli: the adapter's own vendor program was found). peek=1
+ *                                                   (Settings) never starts the distro: not ready -> {distro, name, state, line,
+ *                                                   agents: []}, ready -> the same plus state 'ready'; start=1 with it starts it
  *   GET  /api/live/wsl/agents/install?distro&agent  the install job in the distro (wsl/agent_install.ts; the job runs in its helper)
  *   POST /api/live/wsl/agents/install {distro, agent}         "Install in Ubuntu" / "Update in Ubuntu": start (or join) the job
  *   POST /api/live/wsl/agents/install/cancel {distro, agent}  Cancel: the job's npm is killed and its half-made folder removed
@@ -21,7 +26,7 @@ import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { WslHelperError, type WslHost } from '../wsl/contract.ts';
 import { refOf, type WslLoc } from '../platform/location.ts';
-import { distroName, hostWhenReady, notReady, peekWslHost, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
+import { distroName, hostWhenReady, notReady, peekState, peekWslHost, WSL_INSTALL, wslHost, wslOverview } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
@@ -84,12 +89,12 @@ function lineOf(distro: string): string {
 /** GET /api/live/wsl/status: also the page's poll for URLs waiting to be opened. */
 export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Record<string, unknown>> {
   urlGate.configure(ctx.stateDir ? String(ctx.stateDir) : null);
-  const found = await wsl2Distros();
+  const overview = await wslOverview(); // the registry only: never wsl.exe
   const distros = [];
-  for (const d of found) {
+  for (const d of overview.distros) {
     const key = d.name.toLowerCase();
     const host = peekWslHost(key); // the poll never starts a distro
-    const state = host ? host.state : 'off'; // 'off': on this PC, but AIB has not used it since it started
+    const state = peekState(host); // 'off': on this PC, but AIB has not used it since it started
     let home: string | null = null;
     let helper: string | null = null;
     let problem = '';
@@ -106,17 +111,20 @@ export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Reco
       name: d.name,
       key,
       state,
-      line: host ? lineOf(key) : '',
+      line: state === 'off' ? '' : lineOf(key),
       home,
       helper,
       problem,
       alwaysAllow: urlGate.alwaysAllowed(key),
+      isDefault: d.isDefault === true,
     });
   }
   return {
     available: distros.length > 0,
     distros,
     openRequests: urlGate.waiting().map((r) => ({ ...r, name: distroName(r.distro) })),
+    wsl: { exe: overview.exe, problem: overview.problem },
+    skipped: overview.skipped,
   };
 }
 
@@ -152,24 +160,38 @@ export function wslRoutes(): Map<string, Handler> {
   guarded('GET', '/api/live/wsl/agents', async (_ctx, args) => {
     const distro = one(args, 'distro');
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
+    // peek=1 (Settings): a distro that is not ready is answered as it is, never started; start=1 with it is the "Start Ubuntu and
+    // check" click. Without peek (the agent picker of a WSL project) the distro is started and waited for, as before.
+    const peek = one(args, 'peek') === '1' && one(args, 'start') !== '1';
+    const key = distro.toLowerCase();
     let host: WslHost;
-    try {
-      host = await hostWhenReady(distro); // the first set-up waits here instead of answering 'setting up'
-    } catch (error) {
-      return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+    if (peek) {
+      const seen = peekWslHost(key);
+      const state = peekState(seen);
+      if (!seen || state !== 'ready') {
+        return [200, { distro: key, name: distroName(distro), state, line: state === 'off' ? '' : lineOf(key), agents: [] }];
+      }
+      host = seen;
+    } else {
+      try {
+        host = await hostWhenReady(distro); // the first set-up waits here instead of answering 'setting up'
+      } catch (error) {
+        return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+      }
     }
     const found = await host.call('agents.detect', { ids: [...BUILTIN_IDS] });
     const name = distroName(distro);
-    const facts = await installFacts(host, distro.toLowerCase(), name, found.agents, one(args, 'force') === '1');
+    const facts = await installFacts(host, key, name, found.agents, one(args, 'force') === '1');
     const agents = found.agents.map((a) => ({
       id: a.id,
       found: !!a.found,
       ...(a.version ? { version: a.version } : {}),
       ...(a.note ? { note: a.note } : {}),
       ...(!a.found && WSL_INSTALL[a.id] ? { install: WSL_INSTALL[a.id] } : {}),
+      ...(typeof a.bundledCli === 'boolean' ? { bundledCli: a.bundledCli } : {}),
       ...(facts[a.id] ?? {}),
     }));
-    return [200, { distro: distro.toLowerCase(), name, agents }];
+    return [200, one(args, 'peek') === '1' ? { distro: key, name, state: 'ready', line: '', agents } : { distro: key, name, agents }];
   });
   // AIB's own install of an agent in the distro: the job runs in the distro's helper, so it goes on while AIB restarts
   const install = async (distro: string, action: 'start' | 'cancel' | 'status', agent: unknown): Promise<Reply> => {

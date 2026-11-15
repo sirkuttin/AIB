@@ -278,13 +278,8 @@ export function findNpmCli(node: string): string {
  * The program a node command really runs (`process.execPath`), or ''. Version managers put a shim script on PATH (asdf, mise, volta),
  * so npm is not next to the `node` found there but next to the real one. macOS / Linux only: Windows never needs it.
  */
-export async function nodeExecPath(node: string): Promise<string> {
-  try {
-    const out = (await adapters.runCapture([node, '-p', 'process.execPath'], { timeout: 15 })).stdout.trim();
-    return out.startsWith('/') && !out.includes('\n') && isFile(out) ? out : '';
-  } catch {
-    return '';
-  }
+export function nodeExecPath(node: string): Promise<string> {
+  return adapters.nodeExecPath(node);
 }
 
 /** findNpmCli, and on macOS / Linux, when `node` is a version manager's shim, npm next to the node it really runs. */
