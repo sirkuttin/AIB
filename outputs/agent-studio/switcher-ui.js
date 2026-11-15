@@ -423,6 +423,14 @@
       landFocus();
       return;
     }
+    // a chat another AIB window owns opens there (workspace-ui.js routeOpen); here, as before, otherwise
+    const W = root.AgentWorkspaceUI;
+    if (W && W.routeConversation) {
+      W.routeConversation(r.c, () => {
+        Promise.resolve(host.open(r.c)).then(landFocus, landFocus);
+      });
+      return;
+    }
     Promise.resolve(host.open(r.c)).then(landFocus, landFocus);
   }
   // The bar closed and the page redrew under it: the element it would hand focus back to is often gone, which leaves focus

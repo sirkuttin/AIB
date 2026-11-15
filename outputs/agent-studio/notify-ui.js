@@ -92,6 +92,15 @@
     seq: 0,
     blocked: false,
     testNote: null, // the desktop app's answer to the last test: {text, warn}
+    chimes: 0, // how many chimes this window played (tests: only the sound owner chimes)
+  };
+  // Several AIB windows (window-context.js, multi-window D1/D2): only the sound owner chimes (and, in a browser, shows the desktop
+  // notification); chats open in ANY window stay out of this window's toasts. Without window-context.js or a fresh presence
+  // answer this window acts as the only one (today's behaviour).
+  const Win = () => root.AibWindow || null;
+  const soundMine = () => {
+    const W = Win();
+    return !W || W.soundMine();
   };
 
   function loadPrefs() {
@@ -145,6 +154,7 @@
     try {
       const Ctx = root.AudioContext || root.webkitAudioContext;
       if (!Ctx) return;
+      S.chimes++;
       S.audio = S.audio || new Ctx();
       if (S.audio.state === 'suspended' && S.audio.resume) S.audio.resume();
       const t = S.audio.currentTime;
@@ -169,12 +179,14 @@
   }
 
   // The desktop app: its notification was clicked and the window is in front again (server/desktop/window.ts
-  // openFromNotification). True once the page is ready to open it; the app tries again while the page still loads. A
-  // {type: 'inbox', key} target opens the inbox on that chat's request, highlighted: the chat on screen does not change.
+  // openFromNotification). K6: 'mine' once this window opened it, 'no' when the chat is not this window's (another window owns
+  // its project or shows it popped out: the app tries the next window), false while the page still loads (the app tries again).
+  // A {type: 'inbox', key} target opens the inbox on that chat's request, highlighted: the chat on screen does not change.
   function openFromDesktop(target) {
     if (!S.host) return false;
+    if (target && target.type === 'chat' && typeof S.host.mayOpen === 'function' && !S.host.mayOpen(target.key)) return 'no';
     if (target && (target.type === 'chat' || target.type === 'inbox')) openTarget(target);
-    return true;
+    return 'mine';
   }
 
   function closeShown() {
@@ -615,8 +627,9 @@
       // desktopReady() is the same for every event of a batch, so either all of them want a notification or none do.
       const r = addToGroup(S.group, batch, t);
       S.group = r.group;
-      if (batch.some((b) => b.desktop)) showDesktop(r.group);
-      if (r.sound) chime(r.sound);
+      const mine = soundMine(); // D1: one window chimes, not every window in the background
+      if (mine && batch.some((b) => b.desktop)) showDesktop(r.group);
+      if (mine && r.sound) chime(r.sound);
     }
     return events;
   }
@@ -817,15 +830,31 @@
       return [];
     }
   }
+  // K2: every report also says which window it is (w, kind, its project; a pop-out its chat) and whether it is visible.
   function presenceNow() {
-    return { focused: !away(), idleMs: Math.max(0, Date.now() - P.lastInput), open: openNow() };
+    const d = doc(),
+      W = Win();
+    const base = { focused: !away(), idleMs: Math.max(0, Date.now() - P.lastInput), open: openNow() };
+    if (!W) return base;
+    let project = null;
+    try {
+      project = S.host && typeof S.host.windowProject === 'function' ? S.host.windowProject() : null;
+    } catch {
+      project = null;
+    }
+    return Object.assign(W.presenceFields(project), base, { visible: !d || d.visibilityState !== 'hidden' });
   }
   function reportPresence(force) {
     if (!S.host || typeof S.host.presence !== 'function') return null;
     const now = Date.now(),
       body = presenceNow(),
       open = body.open.join('\n');
-    if (!force && body.focused === P.focused && open === P.open && now - P.sent < PRESENCE_MS) return null;
+    // with other windows open, the answer (their open chats, the sound owner) is kept fresh: it counts for 10 s only
+    const W = Win(),
+      a = W && W.answer && W.answer(),
+      stale = !!(a && W.others().length && now - a.at > 6000);
+    if (!force && !stale && body.focused === P.focused && open === P.open && now - P.sent < PRESENCE_MS) return null;
+    const openChanged = P.open !== null && open !== P.open;
     P.focused = body.focused;
     P.open = open;
     P.sent = now;
@@ -835,7 +864,11 @@
       P.open = null;
     };
     try {
-      Promise.resolve(S.host.presence(body)).then((ok) => ok === false && failed(), failed);
+      Promise.resolve(S.host.presence(body)).then((ans) => {
+        if (ans === false) return failed();
+        if (W && ans && typeof ans === 'object') W.noteAnswer(ans, body.open);
+      }, failed);
+      if (W && openChanged) W.hint('open'); // the other windows ask for a fresh answer at once
     } catch {
       failed();
     }
@@ -845,7 +878,8 @@
     P.lastInput = Date.now();
   }
 
-  // host: {openChat(key), openInbox(), mutedProjects() -> [{key, name}], unmute(key), presence?(body), openKeys?() -> [chat keys]}
+  // host: {openChat(key), openInbox(), mutedProjects() -> [{key, name}], unmute(key), presence?(body) -> answer|false,
+  //        openKeys?() -> [chat keys open in THIS window], windowProject?() -> {key, name}|null, mayOpen?(chatKey) -> boolean}
   function init(host) {
     S.host = host;
     loadPrefs();
@@ -857,8 +891,28 @@
     }, 1000);
     const changed = () => reportPresence(true);
     doc().addEventListener('visibilitychange', changed);
-    root.addEventListener('focus', changed);
+    root.addEventListener('focus', () => {
+      const W = Win();
+      if (W) W.hint('focus'); // I am the sound owner now (the server's answer says so too)
+      changed();
+    });
     root.addEventListener('blur', changed);
+    const W = Win();
+    if (W) {
+      // another window's hint (focus, its open chats changed, it went away): ask for a fresh answer
+      let soon = 0;
+      W.onHint(() => {
+        if (soon) return;
+        soon = root.setTimeout(() => {
+          soon = 0;
+          reportPresence(true);
+        }, 60);
+      });
+      // what other windows show changed: the toasts for chats now open there go
+      W.onChange(() => reconcile());
+      const D = root.AibDesktop;
+      if (D && D.pageToken) D.pageToken().catch(() => {}); // for the pagehide "left" report (window-context.js leave)
+    }
     for (const type of ['keydown', 'pointerdown', 'wheel', 'touchstart'])
       doc().addEventListener(type, noteInput, { passive: true, capture: true });
     root.setInterval(() => reportPresence(false), 5000);

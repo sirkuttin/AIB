@@ -365,10 +365,67 @@
     host.open(c);
     return true;
   }
+  /* ---- routeOpen (multi-window D3, A1; design section 9) ----
+     Every way of opening a chat or project (the inbox, a toast, a notification, Ctrl+K, a sidebar row, a project switch) asks
+     here first. No desktop app (serve): open here, as before. This window may show it (the main window: no other window owns
+     its project and it is not popped out, or the windows list is not known yet; a project window: its own project): open here,
+     no server call. Else the server's route (K3 op 'route') picks the window: {to:'self'} opens here, {to:w}: that window
+     opened it and nothing changes here. A failed route shows the usual notice (this window may not show it). */
+  const pinnedProject = () => {
+    const W = Win();
+    return W && W.pinned() ? W.pinnedProject() : '';
+  };
+  function mayShowHere(t) {
+    const W = Win();
+    if (!W || !W.canRoute()) return true;
+    if (W.pinned()) return W.mayShowHere(t);
+    return !W.known() || W.mayShowHere(t);
+  }
+  const mayShowProject = (pk) => mayShowHere({ project: pk });
+  // target {chat?, project}; openHere() opens it in this window. Returns true when it was opened here or handed on.
+  function routeOpen(target, openHere) {
+    const W = Win(),
+      t = target || {};
+    if (mayShowHere(t) || !host || !host.postJson || !t.project) return openHere() !== false;
+    W.route(t, (path, body) => host.postJson(path, body)).then(
+      (r) => {
+        if (r.to === 'self') openHere();
+        else closeOverlays();
+      },
+      () => {
+        if (host && host.notice) host.notice('That chat could not be opened in its window. Try again in a moment.');
+      },
+    );
+    return true;
+  }
+  function routeKey(key) {
+    const it = itemOf(key);
+    if (!it) return openKey(key);
+    return routeOpen({ chat: key, project: it.projectKey }, () => openKey(key));
+  }
+  // For other modules (Ctrl+K, a sidebar row): a conversation, opened by openHere() when it belongs here.
+  function routeConversation(c, openHere) {
+    if (!c || !host) return openHere ? openHere() : false;
+    const key = keyOf(c);
+    const it = itemOf(key);
+    return routeOpen({ chat: key, project: it ? it.projectKey : projectKeyOf(c) }, openHere);
+  }
   // While a project switch opens that project's chat: its files come back as they were (files-ui.js projectShown), instead of
   // the chat being forced to the front as when you open a chat.
   let switchingProject = false;
   function selectProject(pk) {
+    // a project another window owns (or, in a project window, any other project) opens there (A1, D3)
+    if (pk && pk !== St().ALL && !mayShowProject(pk)) {
+      routeOpen({ project: pk }, () => {
+        switchingProject = true;
+        try {
+          selectProjectNow(pk);
+        } finally {
+          switchingProject = false;
+        }
+      });
+      return;
+    }
     switchingProject = true;
     try {
       selectProjectNow(pk);
@@ -677,9 +734,19 @@
       visible: !d || d.visibilityState !== 'hidden',
     });
   }
+  /* Several AIB windows (window-context.js, D2): a chat open in ANY window is in front of you, so this window's inbox, badge,
+     title and toasts leave it out too. One window (or no fresh presence answer): the chats open here, as before. */
+  const Win = () => root.AibWindow || null;
+  function frontKeys() {
+    const mine = openChatKeys(),
+      W = Win();
+    if (!W) return mine;
+    const more = W.othersOpen().filter((k) => mine.indexOf(k) < 0);
+    return more.length ? mine.concat(more) : mine;
+  }
   function inboxView() {
     const IR = root.AgentInboxRules,
-      open = openChatKeys();
+      open = frontKeys();
     return St()
       .inbox(items)
       .filter((r) => {
@@ -1392,7 +1459,7 @@
         break;
       case 'open-chat':
         e.preventDefault();
-        if (row) openKey(row.key);
+        if (row) routeKey(row.key);
         break;
       case 'close-inbox': {
         e.preventDefault();
@@ -1503,13 +1570,13 @@
       b.append(l1, l2);
       b.title = what.textContent + '\n' + r.title + ' · ' + r.projectName;
       b.setAttribute('aria-label', what.textContent + ', ' + r.title + ', ' + r.projectName + ', ' + wait.text);
-      b.onclick = () => openKey(r.key);
+      b.onclick = () => routeKey(r.key);
       wrap.append(b);
       // Clicking anywhere on the card that is not a control opens the chat too.
       wrap.onclick = (e) => {
         const t = e && e.target;
         if (t && t.closest && t.closest('button, textarea, .ws-inbox-detail')) return;
-        openKey(r.key);
+        routeKey(r.key);
       };
       // The read-only detail under line 1: the diff, the full command, or (risky) the command and what it does.
       const diff = pa && pa.diff,
@@ -2457,7 +2524,7 @@
     const N = root.AgentNotifyUI;
     if (!N || !N.observeItems || !root.AgentNotifyRules) return;
     const R = root.AgentNotifyRules; // the same rules as the server's notifications (notify-rules.js)
-    const open = openChatKeys();
+    const open = frontKeys();
     N.observeItems(
       items.map((i) => {
         const f = R.flags(
@@ -2482,7 +2549,7 @@
           yourTurnAt: i.yourTurnAt,
           eligible: f.eligible,
           muted: f.muted,
-          selected: open.indexOf(i.key) >= 0, // open in the window: no toast, desktop notification or sound for it
+          selected: open.indexOf(i.key) >= 0, // open in a window: no toast, desktop notification or sound for it
         };
       }),
     );
@@ -2540,7 +2607,11 @@
     // One project at a time: "All chats" (kept by older versions) and projects that are gone move to the open chat's project,
     // else the most recent one, else the first in the dropdown. While folder kinds are pending, a saved project with open tabs
     // stays: its chats may only be filed under it once they answer.
-    if ((items.length || projects.length) && !(settling() && St().tabsOf(ws, ws.active).length))
+    // A project window (A1, G6) stays on its own project: it never falls back through pickActive (also not while the list loads).
+    const pin = pinnedProject();
+    if (pin) {
+      if (ws.active !== pin) commit(St().setActive(ws, pin));
+    } else if ((items.length || projects.length) && !(settling() && St().tabsOf(ws, ws.active).length))
       commit(
         St().pickActive(
           ws,
@@ -2656,7 +2727,7 @@
     draft = null;
     commit(St().openTab(ws, pk, key, prev && projectKeyOf(prev) === pk ? keyOf(prev) : undefined));
     commit(St().rememberLast(ws, pk, key));
-    if (!keep) commit(St().activeAfterOpen(ws, pk));
+    if (!keep && !pinnedProject()) commit(St().activeAfterOpen(ws, pk)); // a project window never moves off its project (A1)
     if (splitReady()) S().noteOpened(key, ws.active);
     if (switchingProject) {
       if (FU() && FU().projectShown) FU().projectShown();
@@ -3004,9 +3075,17 @@
     drawStrip();
     if (root.AgentNotifyUI && root.AgentNotifyUI.init)
       root.AgentNotifyUI.init({
-        openChat: (key) => {
-          if (!openKey(key)) return false;
-          return true;
+        openChat: (key) => routeKey(key),
+        // K6: a chat whose project another window owns (or that is popped out) is not this window's to open
+        mayOpen: (key) => {
+          const W = Win(),
+            it = itemOf(key);
+          return !W || !W.canRoute() || !it || W.mayShowHere({ chat: key, project: it.projectKey });
+        },
+        windowProject: () => {
+          const pk = pinnedProject() || (ws && ws.active !== St().ALL ? ws.active : '');
+          const p = pk ? projectOfKey(pk) : null;
+          return pk ? { key: pk, name: p ? p.name : '' } : null;
         },
         openInbox: (key) => openInboxOn(key),
         // the toast's card and its answers (notify-ui.js): the same row and the same routes as the inbox
@@ -3023,10 +3102,34 @@
             }),
         unmute: (key) => setPrefOf(key, { muted: false }),
         // whether AIB is in front and when you last used it: the server's notifications and phone pushes skip you then
-        openKeys: openChatKeys,
+        openKeys: openChatKeys, // this window's own: the server makes the union (K2 openAll)
+        // resolves with the server's answer (K2: soundOwner, openAll, windows), or false when it was not delivered
         presence: (body) =>
-          host.postJson ? Promise.resolve(host.postJson('presence', body)).then(() => true, () => false) : false,
+          host.postJson
+            ? Promise.resolve(host.postJson('presence', body)).then((a) => (a && typeof a === 'object' ? a : true), () => false)
+            : false,
       });
+    const W = Win();
+    if (W) {
+      // what the other windows show changed (their open chats, a window came or went): the badge, inbox, title and toasts follow
+      W.onChange(() => refresh());
+      // A sidebar row of a chat another window owns (its project's window, or popped out) opens there, not here (A1, D3).
+      d.addEventListener(
+        'click',
+        (e) => {
+          const t = e.target,
+            row = t && t.closest ? t.closest('button.connection[data-key]') : null;
+          if (!row || e.button !== 0) return;
+          const key = row.dataset.key,
+            it = itemOf(key);
+          if (!it || mayShowHere({ chat: key, project: it.projectKey })) return;
+          e.preventDefault();
+          e.stopPropagation();
+          routeKey(key);
+        },
+        true,
+      );
+    }
   }
 
   // Saved project order (dropdown order, hidden ones included) and the per-project menu, for the "All chats" groups.
@@ -3135,8 +3238,13 @@
     openDrawer: () => {
       if (root.matchMedia && root.matchMedia('(max-width:1100px)').matches) setListOpen(true);
     },
-    // The chats open in this window (inbox-rules.js openKeys): the page's presence report and the window title leave them out.
-    openKeys: openChatKeys,
+    // The chats in front of you (inbox-rules.js openKeys): this window's, plus those open in another AIB window; the window title
+    // leaves them out. The presence report sends this window's own (openChatKeys).
+    openKeys: frontKeys,
+    // One router for every way of opening a chat or project (design section 9): here, or in the window that owns it.
+    routeOpen,
+    routeConversation,
+    mayShowProject,
     _state: () => ws,
     _items: () => items,
     _draft: () => draft,
