@@ -25,7 +25,7 @@ import { resolveBeta } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
 import { UsageLimitsStore } from '../state/usage_limits.ts';
-import { LimitsFeed } from './usage_limits_feed.ts';
+import { LimitsFeed, REFRESH_SECONDS } from './usage_limits_feed.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
@@ -319,6 +319,7 @@ export class Studio {
   readonly #probes = new Map<string, Promise<void>>();
   readonly #probeFailed = new Map<string, number>();
   #heartbeat: ReturnType<typeof setInterval> | null = null;
+  #limitsTimer: ReturnType<typeof setInterval> | null = null;
   #closed = false;
   /** Agents run in the keeper and chats are rebuilt from its record after a restart; null: agents are children. */
   readonly keeper: KeeperLink | null;
@@ -362,6 +363,12 @@ export class Studio {
     this.settings = stores.settings ?? new SettingsStore(dir);
     this.agentOptions = new AgentOptionsCache(dir);
     this.limits = new LimitsFeed(new UsageLimitsStore(dir));
+    // The usage checker also runs on its own, once a minute for every open chat (not only when a chat opens or a turn ends)
+    this.#limitsTimer = setInterval(() => {
+      if (this.#closed) return;
+      for (const c of this.connections.values()) if (!c.closed) void this.limits.refresh(c);
+    }, REFRESH_SECONDS * 1000);
+    Deno.unrefTimer(this.#limitsTimer);
     const manager = this.hasStateDir ? new wt.Manager(this.stateDir) : null; // worktree per chat (hidden flag)
     this.worktrees = manager;
     this.ready = (async () => {
@@ -1972,6 +1979,8 @@ export class Studio {
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
+    if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
+    this.#limitsTimer = null;
     this.reconnectStop.set();
     if (this.recovery) this.recovery.shuttingDown = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -2018,6 +2027,8 @@ export class Studio {
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
+    if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
+    this.#limitsTimer = null;
     this.reconnectStop.set();
     if (this.recovery) this.recovery.shuttingDown = true;
     // A reconnect that is opening right now finishes (or fails) first, so its connection is closed below too. Bounded: an agent
