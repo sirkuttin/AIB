@@ -9,10 +9,9 @@ Status: design only, 2026-11-14 (branch `wsl/linking`). Mockup: `outputs/wsl-lin
    when the PC has no WSL (it then explains how to get it). It is not folded into "AIB Linking": that page describes Windows
    programs, and putting several distros into the same cards would mix two PATHs, two accounts and two sets of installs in one row.
    A separate section keeps "AIB Linking" as it is and lets the WSL page use **the same agent cards** ("like normal").
-2. **One group per usable distro** (a `.st-group` heading, as the search results use), each with five cards: the distro's status,
-   "What Ubuntu needs", "Agents in Ubuntu", "Beta agents in Ubuntu", "AIB in Ubuntu" (disk use and removal). A first card, "WSL on
-   this PC", lists every distro in one line each, including the ones AIB cannot use (WSL1, musl distros such as `docker-desktop`)
-   with the reason. The section is designed for one or two distros; three or more just stack.
+2. **One group per usable distro** (a `.st-group` heading, as search results use) with five cards (section 4). A first card,
+   "WSL on this PC", lists every distro, including the ones AIB cannot use (WSL1, musl such as `docker-desktop`) with the reason.
+   Designed for one or two distros; more just stack.
 3. **The agent rows are `settings-ui.js agentRow`**, fed from the distro instead of Windows: the same status chip (Ready, Needs
    sign-in, Not installed, Install failed), Install / Update / Cancel / Retry, progress bar, Sign in, Check again, Uninstall, the
    "Needs first:" list, the Copy line for doing it yourself. Only the wording names the distro ("Install in Ubuntu").
@@ -32,19 +31,15 @@ Status: design only, 2026-11-14 (branch `wsl/linking`). Mockup: `outputs/wsl-lin
    New project Location choice and is marked "WSL default" in the first card.
 9. **Codex limits** for a distro are shown on that distro's Codex row (read from its `~/.codex`, the existing `codex.limits`),
    never merged with Windows'.
-10. **Prior art** agrees on the split: the UI stays on Windows, the tools install per environment, sign-in is per environment.
-    VS Code installs a server in the distro and marks Windows-only extensions with an "Install in WSL: Ubuntu" button
-    ([VS Code: Developing in WSL](https://code.visualstudio.com/docs/remote/wsl),
-    [Remote extensions](https://code.visualstudio.com/api/advanced-topics/remote-extensions)). Claude Code's VS Code extension
-    bundles its CLI but tells WSL users to install inside the distro
-    ([Claude Code in VS Code](https://code.claude.com/docs/en/vs-code)). The Codex extension has one Windows switch,
-    `chatgpt.runCodexInWindowsSubsystemForLinux` ([Codex IDE settings](https://developers.openai.com/codex/ide/settings)). Zed runs
-    a headless server per remote and leaves agent auth to each agent, "locally, remotely, or through their own sign-in flow"
-    ([Zed remote development](https://zed.dev/docs/remote-development), [Zed external agents](https://zed.dev/docs/ai/external-agents)).
-    JetBrains runs the IDE backend in WSL and installs functional plugins on that backend
-    ([JetBrains remote development](https://www.jetbrains.com/help/idea/remote-development-overview.html)). AIB copies VS Code's
-    visible "Install in Ubuntu" per environment and goes past all of them on one point: one page shows every agent of every
-    environment side by side.
+10. **Prior art:** UI on Windows, tools and sign-in per environment. VS Code puts a server in the distro and offers "Install in
+    WSL: Ubuntu" per extension ([Developing in WSL](https://code.visualstudio.com/docs/remote/wsl),
+    [Remote extensions](https://code.visualstudio.com/api/advanced-topics/remote-extensions)); Claude Code's extension bundles its
+    CLI yet tells WSL users to install in the distro ([Claude Code in VS Code](https://code.claude.com/docs/en/vs-code)); Codex has
+    one switch, `chatgpt.runCodexInWindowsSubsystemForLinux` ([Codex IDE settings](https://developers.openai.com/codex/ide/settings));
+    Zed runs a server per remote and leaves auth to each agent ([Zed remote](https://zed.dev/docs/remote-development),
+    [external agents](https://zed.dev/docs/ai/external-agents)); JetBrains installs plugins on the WSL backend
+    ([JetBrains remote](https://www.jetbrains.com/help/idea/remote-development-overview.html)). AIB takes VS Code's per-environment
+    Install and adds one page with every agent of every environment side by side.
 
 ## 2. What each agent needs inside a distro (evidence)
 
@@ -81,10 +76,9 @@ The helper answers all rows in one call (`env.prereqs`, below), re-reading the l
 | `claude` command | optional: Claude Code in your own terminal | on PATH (with version) | "Not needed for AIB chats: AIB's Claude Code includes it." + the vendor's command (Copy) and docs link |
 | `codex` command | optional | on PATH | same, for Codex |
 
-Checksums policy: AIB's own installs keep `npm ci` with the reviewed lockfile (every download has an integrity hash). The nvm
-command pins a tag; nvm itself checks the Node tarball against nodejs.org's `SHASUMS256.txt`. Build step: AIB ships the SHA-256 of
-the pinned `install.sh` and the command becomes `curl -fsSLo "$t" <url> && echo "<sha256>  $t" | sha256sum -c && bash "$t"`, so a
-changed script never runs. Vendor installers (Cursor, Goose, Vibe) run as their docs give them, behind the Beta label.
+Checksums: AIB's installs stay `npm ci` with the reviewed lockfile. nvm is pinned to a tag and checks Node's tarball against
+`SHASUMS256.txt`; AIB also ships the SHA-256 of the pinned `install.sh` and runs `curl -fsSLo "$t" <url> && echo "<sha256>  $t" |
+sha256sum -c && bash "$t"`, so a changed script never runs. Vendor installers run as their docs give them, behind the Beta label.
 
 ## 4. Settings layout
 
@@ -119,23 +113,17 @@ with that distro's agent card in view, like `openAgent`). The Install button the
 
 ## 5. States
 
-| Where | State | What shows |
-| --- | --- | --- |
-| Distro | off (not used since AIB started) | chip "Not running"; "AIB starts it when a WSL project needs it."; Start Ubuntu and check |
-| | starting / installing | chip "Starting"; "Starting Ubuntu…" / "Setting up AIB in Ubuntu (first time, ~100 MB)" |
-| | ready | chip "Ready"; helper version |
-| | reconnecting | chip "Starting"; "Reconnecting to Ubuntu…" |
-| | stopped | chip "Stopped"; "Ubuntu stopped (Windows restart or `wsl --shutdown`)."; Reconnect |
-| | unavailable | chip "Problem"; the host's note (helper failed its checksum, wsl.exe missing); Repair AIB helper |
-| | not supported | chip "Not supported"; WSL1 or musl reason; no group |
-| Agent | missing, installable | "Not installed" + Install in Ubuntu |
-| | blocked by Node | Install off, "Needs first:" Node.js row with its button |
-| | installing / updating | progress bar, stage line, Cancel |
-| | failed | "Install failed" + npm's line + Retry |
-| | update due | Ready + Update in Ubuntu + pinned line |
-| | found, own install | "Your own install"; no Uninstall |
-| | needs sign-in / ready / not checked | as on Windows; Sign in runs in a distro terminal |
-| Page | distro gone from `wsl -l` | its group is dropped; open chats show their existing line |
+| State | Chip and line |
+| --- | --- |
+| Distro off (unused since AIB started) | "Not running" · "AIB starts it when a WSL project needs it." · Start Ubuntu and check |
+| starting / installing / reconnecting | "Starting" · the host's line ("Setting up AIB in Ubuntu (first time, ~100 MB)") |
+| ready | "Ready" · helper version |
+| stopped | "Stopped" · "Ubuntu stopped (Windows restart or `wsl --shutdown`)." · Reconnect |
+| unavailable | "Problem" · the host's note (checksum, wsl.exe) · Repair AIB helper |
+| not supported (WSL1, musl) | "Not supported" · the reason · no group |
+| Agent missing / blocked by Node | "Not installed" · Install in Ubuntu, off under "Needs first:" while Node.js is missing |
+| installing, failed, update due | progress + Cancel · "Install failed" + npm's line + Retry · Ready + Update in Ubuntu + pinned line |
+| own install / sign-in states | "Your own install", no Uninstall · Needs sign-in / Ready / Not checked as on Windows |
 
 ## 6. Copy list
 
@@ -147,8 +135,6 @@ with that distro's agent card in view, like `openAgent`). The Install button the
   in an administrator PowerShell, then restart Windows:" `wsl --install`
 - Vendor CLI row: "Not needed for AIB chats: AIB's Claude Code includes it. Install the `claude` command only to use Claude Code in
   your own terminal."
-- Install title: "AIB installs Claude Code 0.102.0 into its own folder in Ubuntu (~/.aib-server/agents). Nothing else in Ubuntu
-  changes."
 - Node button note: "This runs nvm's installer in Ubuntu. It adds nvm to your home folder and shell start-up file."
 - Codex limits: "Usage limits of Ubuntu's Codex sign-in: 5 h 32% used · week 10% used (4 min ago). Same ChatGPT account as on
   Windows means the same limits."
@@ -159,17 +145,14 @@ with that distro's agent card in view, like `openAgent`). The Install button the
   chat copies and its programs. Your projects, ~/.claude, ~/.codex and anything you installed yourself stay."
 - Remove refusal: "2 chat copies in Ubuntu have changes that are not committed: app · Fix login, api · Add tests. Merge or discard
   them first."
-- WSL1: "Ubuntu runs on WSL 1. AIB needs WSL 2. Convert it in PowerShell (takes a few minutes): `wsl --set-version Ubuntu 2`"
 - musl: "docker-desktop is Docker's own distro; AIB cannot run there."
 
 ## 7. Build plan
 
-New routes (Studio token, never start a distro unless the body says `start: true`): `GET /api/live/wsl/setup?distro[&force=1]`
-(prereqs, built-in and Beta agent rows with install, sign-in and limits facts, folder usage), `POST /api/live/wsl/agents/uninstall
-{distro, agent, check?}`, `POST /api/live/wsl/agents/signin/check`, `POST /api/live/wsl/repair`, `POST /api/live/wsl/remove
-{distro, check?}`. Helper methods (`contract.ts`): `env.prereqs`, `agents.uninstall` (installer.ts `uninstall`, open-chat count
-from AIB), `agents.signinStatus` (signin.ts status rules run natively), `aib.usage`, `aib.remove`; Beta: `agents.detect` with the
-catalog's Linux commands, `agents.install` for Beta npm packages.
+Routes (never start a distro unless the body says `start: true`): `GET /api/live/wsl/setup?distro[&force=1]` (all rows of one
+distro), `POST /api/live/wsl/agents/uninstall`, `.../agents/signin/check`, `/wsl/repair`, `/wsl/remove` (each with `check`).
+Helper methods: `env.prereqs`, `agents.uninstall` (installer.ts `uninstall`), `agents.signinStatus` (signin.ts rules, natively),
+`aib.usage`, `aib.remove`, Beta rows in `agents.detect` / `agents.install`.
 
 | Phase | What | Files (owner) | Days |
 | --- | --- | --- | --- |
@@ -181,12 +164,11 @@ catalog's Linux commands, `agents.install` for Beta npm packages.
 Total 15-20 days of work; with three builders (A Linux helper, B Windows routes, C page) about 7-9 calendar days. Contracts
 (helper method shapes, route JSON) frozen on day 1; C builds on a FakeWslHost.
 
-Tests: page `node --test work/test_wsl_settings.js` (every state of the mockup, the search index, no Uninstall on an own install,
-Settings never calls a start route by itself); Deno unit `wsl_setup_test` (FakeWslHost: prereq rows, refusals, remove keeps other
-`data-*`); real WSL `wsl_linking_e2e` with `AIB_WSL_E2E=Ubuntu` and `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>`: stub node/npm on a
-stand-in login PATH (missing, too old, found), install then uninstall into the temp root, sign-in status through a stub agent,
-`aib.remove` in the temp root with a second fake `data-*` left alone and a dirty worktree refused, and a check that nothing outside
-the temp root changed. Never the owner's `~/.aib-server`, `~/.claude` or `~/.codex`; never `wsl --shutdown`.
+Tests: page `work/test_wsl_settings.js` (every mockup state, search, no Uninstall on an own install, no start call unless
+clicked); Deno `wsl_setup_test` (FakeWslHost: rows, refusals, remove keeps other `data-*`); real WSL `wsl_linking_e2e`
+(`AIB_WSL_E2E=Ubuntu`, `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>`): stub node/npm on a stand-in login PATH (missing, old, found),
+install then uninstall, sign-in status through a stub agent, remove with a second fake `data-*` kept and a dirty worktree refused,
+nothing outside the temp root changed. Never the owner's `~/.aib-server`, `~/.claude`, `~/.codex`; never `wsl --shutdown`.
 
 ## 8. Open questions for the owner
 
@@ -207,3 +189,21 @@ the temp root changed. Never the owner's `~/.aib-server`, `~/.claude` or `~/.cod
    them as optional rows with the vendor's command to copy and its docs link. (b) An Install button that runs the vendor's
    installer in a terminal panel: one click, but a second copy that updates itself, outside AIB's folder, and that AIB would have
    to explain next to its own. Recommendation: (a).
+
+## 9. Owner words audit
+
+1. "we don't have any place in the setting specific to WSL ACP connections ... how we organize that": a Settings section of its
+   own, one group per distro, five cards each (decisions 1-2, section 4).
+2. "on windows we add an AIB Linking (WSL) tab. and handle the installs and all that like normal": that exact name, Windows only,
+   under AIB Linking; the agent rows are the Windows `agentRow` with the same Install / Update / Uninstall / Sign in / Check again
+   and the same "Needs first:" help (decision 3); Node's button mirrors the Windows winget button (decision 5).
+3. "what if the user doesn't even have claude cli or codex cli? ... prereqs for some of these ACPs that need special connectors":
+   checked on a real install, the adapters carry both CLIs, so they are not prerequisites; the checklist says so in its own rows
+   and offers the commands as optional; the real prerequisite (Node.js 22+ and npm) gets one-click help (sections 2-3).
+
+Added beyond the owner's words (flagged): the "WSL on this PC" overview with unsupported distros; the no-WSL card with
+`wsl --install`; the WSL1 convert command; git, curl and free-space rows; the optional standalone CLI rows; Repair AIB helper;
+"Start Ubuntu and check" (Settings never starts a distro by itself); the "AIB in Ubuntu" card with disk use and Remove AIB from
+Ubuntu; old-version clean-up; the Codex limits line per distro; sign-in status checks in the distro and the Codex `--device-auth`
+fallback; the SHA-256 pin of nvm's installer; the new-chat "Set up Ubuntu in Settings" link and the About link; WSL's default distro
+listed first in New project (no new setting).
