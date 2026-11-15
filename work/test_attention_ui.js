@@ -19,7 +19,7 @@ test('status line: every state', () => {
   assert.equal(d({ connectionIssue: true }).text, 'Connection lost · reconnecting');
   assert.equal(d({ opening: true }).text, 'Opening conversation…');
   assert.equal(d({ connected: false }).text, 'Saved conversation — Continue to talk to it');
-  assert.equal(d({ connected: true, snapshot: { busy: false, permissions: [], elicitations: [] } }).text, 'Idle');
+  assert.equal(d({ connected: true, snapshot: { busy: false, permissions: [], elicitations: [] } }).text, 'Ready');
   assert.equal(
     d({ connected: true, yourTurn: true, snapshot: { busy: false, permissions: [], elicitations: [] } }).text,
     'Your turn',
@@ -48,7 +48,7 @@ test('a chat reconnecting after a restart says Reconnecting… until it is conne
     d({ reconnecting: true, current: 'c', connected: true, snapshot: { ready: false } }).line,
     'Reconnecting…',
   );
-  assert.equal(d({ reconnecting: true, connected: true, snapshot: { ready: true, closed: false } }).line, 'Idle');
+  assert.equal(d({ reconnecting: true, connected: true, snapshot: { ready: true, closed: false } }).line, 'Ready');
 });
 
 test('turn start ignores user events before the last turn end', () => {

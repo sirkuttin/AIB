@@ -657,3 +657,22 @@ test('local docs: a doc is one row "2 pages changed" (its files are not listed),
   assert.equal(pane(t).querySelector('.cg-confirm'), null);
   assert.equal(C.mergeQuestion(0, 'main', docs), 'Merge the doc Release plan (2 pages changed) into main? Edits the chat has not committed yet are committed first.');
 });
+
+test('each chat keeps its right-column tab: back on a chat, the tab you left it on shows again (owner 2026-11-15)', async () => {
+  const t = setup();
+  const C = require(path.join(APP_DIR, 'changes-ui.js'));
+  const pane = t.ids.subagentsPane;
+  t.ui().show('changes');
+  await flush();
+  assert.ok(pane.classList.contains('tab-changes'));
+  C.sync({ id: 'chat2', busy: false }); // another chat: it starts on Activity
+  await flush();
+  assert.ok(!pane.classList.contains('tab-changes') && !pane.classList.contains('tab-artifacts'), 'a new chat shows Activity');
+  t.ui().show('artifacts');
+  C.sync({ id: 'chat1', busy: false });
+  await flush();
+  assert.ok(pane.classList.contains('tab-changes'), 'chat1 is back on Changes');
+  C.sync({ id: 'chat2', busy: false });
+  await flush();
+  assert.ok(pane.classList.contains('tab-artifacts'), 'chat2 is back on Artifacts');
+});

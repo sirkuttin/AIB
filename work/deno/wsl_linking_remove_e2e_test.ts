@@ -94,7 +94,7 @@ async function startHeld(script: string, args: string[], pidFile: string): Promi
   };
 }
 
-const FAKE_KEEPER = 'import socket,sys\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1])\ns.listen(8)\nwhile True:\n  c,_=s.accept()\n  c.close()\n';
+const FAKE_KEEPER = 'import socket,sys\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1])\ns.listen(8)\nwhile True:\n  c,_=s.accept()\n  c.close()\n'; // port-guard: not bound (listen(8) is the backlog of a Unix socket)
 
 async function survivors(): Promise<void> {
   for (const path of [`${CANARY}/keep.txt`, `${HOME}/.claude/sentinel`, `${HOME}/.codex/sentinel`, `${REPO}/a.txt`]) {

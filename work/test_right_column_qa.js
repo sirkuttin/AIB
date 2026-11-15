@@ -130,6 +130,12 @@ test('QA m1: a menu wider than the room right of its button moves left, inside t
   assert.equal(A.placeLeft(150, 400, 300), 4, 'wider than the column: from its left edge');
 });
 
+test("the viewer's ⋯ menu in a narrow column (one right-column width, no 920 px viewer) stays inside the column's left edge", () => {
+  assert.equal(A.placeRight(8, 210, 900), 8, 'room enough: under its button');
+  assert.equal(A.placeRight(207, 210, 279), 65, 'pulled right so its left edge is 4 px inside the column');
+  assert.equal(A.placeRight(0, 210, 900), 4, 'never closer than 4 px to the right edge');
+});
+
 test("Open in Artifacts (Files view): registerFile in another chat shows that artifact here, reveals the Artifacts tab, keeps it out of this chat's list", async () => {
   const shell = page({ ids: ['artifactsView'] });
   const w = shell.window;
@@ -311,7 +317,7 @@ test('Edit helpers: which word button, and the block at a scroll fraction', () =
   assert.equal(A.blockAt([], 0.4), '');
 });
 
-/* Right column: 920 px (or wider if it already was) while a doc or artifact shows (beta.8). */
+/* Right column width while a doc or artifact shows. */
 const RZ = require(path.join(APP, 'resize-ui.js'));
 function column(width) {
   const shell = page({ width });
@@ -340,31 +346,34 @@ function column(width) {
 /* Chat column cap (resize-ui.js MAX_CHAT 1310): on a 1920 window Activity grows so the chat stops at 1310, i.e. 370 px, not the stored
    280 default. The viewer (920 or the user's own width) is wider than that, so the cap never narrows it. */
 const NORMAL_1920 = 370;
-test('right column: 920 px on doc or artifact open, back to your width on close or tab switch', () => {
+/* Owner, 2026-11-15: the right column has ONE width. A doc or artifact showing, a tab switch or a chat switch never changes it;
+   only your own drag does. */
+test('right column: a doc or artifact showing, or going back to Activity, never changes its width', () => {
   const c = column(1920);
   assert.equal(c.act(), NORMAL_1920);
   c.viewing(true);
-  assert.equal(c.act(), 920);
+  assert.equal(c.act(), NORMAL_1920, 'an artifact showing keeps the width');
   c.viewing(false);
-  assert.equal(c.act(), NORMAL_1920);
+  assert.equal(c.act(), NORMAL_1920, 'back on Activity: the same width');
 });
-test('right column: a keyboard resize while viewing is remembered as the viewer width, normal width stays apart', () => {
+test('right column: a resize while viewing is the one width, kept on Activity too', () => {
   const c = column(1920);
   c.viewing(true);
   const h = c.handle();
   for (const f of h.listeners.keydown || []) f({ key: 'ArrowLeft', shiftKey: true, preventDefault() {} });
-  assert.equal(c.act(), 984);
+  const w = c.act();
+  assert.ok(w > NORMAL_1920, String(w));
   c.viewing(false);
-  assert.equal(c.act(), NORMAL_1920, 'the normal width is untouched');
+  assert.equal(c.act(), w, 'Activity keeps the width you set while viewing');
   c.viewing(true);
-  assert.equal(c.act(), 984, 'the viewer width is remembered');
-  assert.equal(JSON.parse(c.w.localStorage.getItem('studio-layout-v1:>=1800')).viewer, 984);
+  assert.equal(c.act(), w);
+  assert.equal(JSON.parse(c.w.localStorage.getItem('studio-layout-v1:>=1800')).activity, w);
 });
 test('right column: on a narrow window the chat keeps its 420 px minimum', () => {
   const c = column(1150);
   c.viewing(true);
   assert.ok(1150 - 200 - c.act() >= 420 || 1150 - parseInt(c.props['--side-w'], 10) - c.act() >= 420, String(c.act()));
-  assert.ok(c.act() >= 220 && c.act() < 920);
+  assert.ok(c.act() >= 220);
 });
 test('artifacts viewer sets body.ar-viewing only while it is visible and showing something', () => {
   const { UI, shell } = viewer();

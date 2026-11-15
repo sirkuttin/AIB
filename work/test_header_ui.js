@@ -15,7 +15,7 @@ const chips = require(path.join(dir, 'composer-chips.js'));
 test('pill text per turn state', () => {
   const d = (m) => attention.describe({ now: 1e7, connected: true, ...m });
   const idle = { busy: false, permissions: [], elicitations: [] };
-  assert.equal(d({ snapshot: idle }).pill, 'Idle', 'connected, nothing pending, no finished turn on record');
+  assert.equal(d({ snapshot: idle }).pill, 'Ready', 'connected, nothing pending, no finished turn on record');
   assert.equal(
     d({
       snapshot: idle,
@@ -35,16 +35,16 @@ test('pill text per turn state', () => {
         { kind: 'user', time: 3 },
       ],
     }).pill,
-    'Idle',
+    'Ready',
     'the user spoke after it',
   );
   assert.equal(
     d({ snapshot: idle, events: [{ kind: 'turn_end', time: 2 }], handledAt: 2 }).pill,
-    'Idle',
+    'Ready',
     'Mark handled hides that turn end',
   );
   assert.equal(d({ snapshot: idle, yourTurn: true }).pill, 'Your turn', 'the conversation flag wins');
-  assert.equal(d({ snapshot: idle, yourTurn: false, events: [{ kind: 'turn_end', time: 2 }] }).pill, 'Idle');
+  assert.equal(d({ snapshot: idle, yourTurn: false, events: [{ kind: 'turn_end', time: 2 }] }).pill, 'Ready');
   const working = d({ snapshot: { busy: true, permissions: [], elicitations: [] }, busySince: 1e7 - 4 * 60000 - 5000 });
   assert.equal(working.pill, 'Working · 4m');
   assert.equal(working.line, 'Working · 4m');
@@ -61,7 +61,7 @@ test('pill text per turn state', () => {
     d({ connected: false, hint: { verdict: 'possibly_active' }, elsewhereWorking: true }).pill,
     'Elsewhere · Working',
   );
-  assert.equal(d({ connected: false, hint: { verdict: 'owned_elsewhere' } }).pill, 'Elsewhere · Idle');
+  assert.equal(d({ connected: false, hint: { verdict: 'owned_elsewhere' } }).pill, 'Elsewhere · Ready');
   assert.equal(d({ connectionIssue: true }).pill, 'Reconnecting…');
   assert.equal(attention.shortElapsed(45000), '45s');
   assert.equal(attention.shortElapsed(3900000), '1h 05m');

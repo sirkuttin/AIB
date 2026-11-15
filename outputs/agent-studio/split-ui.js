@@ -28,6 +28,12 @@
     insEl = null,
     ghost = null;
   let shapeSig = '';
+  // The real view's header and bottom bar (turn line, message box, chips) as each chat last had them in the focused pane:
+  // {top, bottom} px from the pane body's edges to its message list. A pane's copy takes its chat's sizes, so the list keeps
+  // the same height and place when focus moves (owner, 2026-11-15: switching focus made the chat jump).
+  const barSizes = new Map();
+  let lastBar = null,
+    barObs = null;
   const panes = new Map(); // group id -> { id, el, strip, body, mirror, mirrorKey, group }
   let drag = null,
     divDrag = null,
@@ -286,7 +292,27 @@
     // More or fewer panes across: the chat list and Activity give way so every pane keeps its minimum width (resize-ui.js).
     if (reshaped && root.ResizeUI && typeof root.ResizeUI.layout === 'function') root.ResizeUI.layout();
   }
+  function measureBar() {
+    if (!active() || !L) return;
+    const fp = panes.get(L.focus),
+      m = doc().getElementById('messages');
+    if (!fp || !fp.body || !m || !fp.body.contains(m)) return;
+    const b = fp.body.getBoundingClientRect(),
+      r = m.getBoundingClientRect();
+    if (!r.height || !b.height) return;
+    const v = { top: Math.max(0, r.top - b.top), bottom: Math.max(0, b.bottom - r.bottom) };
+    lastBar = v;
+    const k = selectedKey();
+    if (k) barSizes.set(k, v);
+  }
+  function sizeMirror(p, key) {
+    const s = (key && barSizes.get(key)) || lastBar;
+    if (!s || !p.mirror) return;
+    p.mirror.head.style.height = s.top + 'px';
+    p.mirror.foot.style.height = s.bottom + 'px';
+  }
   function update() {
+    measureBar();
     const keep = saveScroll();
     let move = false;
     order = T().groups(L.tree);
@@ -327,6 +353,8 @@
         line = el('div', 'hd-line'),
         acts = el('div', 'header-actions');
       const msgs = el('div', 'mirror-msgs'),
+        foot = el('div', 'mirror-foot'),
+        turn = el('div', 'mirror-turn turn-line'),
         comp = el('div', 'mirror-comp');
       msgs.dataset.mirror = key;
       comp.setAttribute('role', 'textbox');
@@ -335,9 +363,10 @@
       main_.append(line);
       acts.append(status);
       head.append(main_, acts);
-      rootEl.append(head, msgs, comp);
+      foot.append(turn, comp);
+      rootEl.append(head, msgs, foot);
       p.body.replaceChildren(rootEl);
-      p.mirror = { root: rootEl, title, status, msgs, comp };
+      p.mirror = { root: rootEl, head, title, status, msgs, foot, turn, comp };
       p.mirrorKey = key;
       // The chat that just left focus: its pane keeps the rows the real view drew (no empty copy while they are fetched again).
       const left = key && host.mirror && host.mirror.take ? host.mirror.take(key) : null;
@@ -353,6 +382,9 @@
     m.status.textContent = st ? st.text : '';
     m.status.dataset.tone = st ? st.tone : 'idle';
     m.status.hidden = !st;
+    m.turn.textContent = st ? st.text : '';
+    m.turn.hidden = !st;
+    sizeMirror(p, key);
     const draft = key ? host.draftOf(key) : '';
     m.comp.textContent = draft || (c ? 'Message ' + host.agentName(c) + '… click to reply' : '');
     m.comp.classList.toggle('has-draft', !!draft);
@@ -495,6 +527,7 @@
       .groups(L.tree)
       .find((x) => x.id === gid);
     if (!g) return;
+    measureBar();
     if (host.mirror && host.mirror.stash) host.mirror.stash(selectedKey());
     L = T().focusGroup(L, gid);
     persist();
@@ -835,6 +868,13 @@
     d.addEventListener('pointercancel', onCancel);
     d.addEventListener('keydown', onKeyDown, true);
     root.addEventListener('resize', onResize);
+    // The bar grows (a long draft, a chip, a queued message): the copies of other panes keep their own chat's size, and the
+    // focused chat's size is remembered for when it leaves focus.
+    const msgs = d.getElementById('messages');
+    if (msgs && typeof root.ResizeObserver === 'function') {
+      barObs = new root.ResizeObserver(() => measureBar());
+      barObs.observe(msgs);
+    }
   }
 
   const api = {

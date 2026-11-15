@@ -210,3 +210,58 @@ splitTest('SF2 split view: a focus switch keeps each chat where you read it', as
   a.end();
   b.end();
 });
+
+/** Every frame of a focus switch: each pane's message list (the real one or the copy) keeps its exact box and its place. */
+function startGeom(page: Page) {
+  return page.eval(`(() => {
+    const w = (window.__geom = { frames: 0, bad: [], first: null, on: true });
+    const snap = () => {
+      const out = {};
+      for (const p of document.querySelectorAll('#splitStage .pane')) {
+        const list = p.querySelector('#messages') || p.querySelector('.mirror-msgs');
+        if (!list) { out[p.dataset.g] = null; continue; }
+        const r = list.getBoundingClientRect(), top = r.top;
+        let text = '';
+        for (const e of list.children) { const q = e.getBoundingClientRect(); if (q.height && q.bottom > top + 1) { text = e.textContent.replace(/\s+/g, ' ').slice(0, 50); break; } }
+        out[p.dataset.g] = { top: Math.round(r.top), bottom: Math.round(r.bottom), text, gap: Math.round(list.scrollHeight - list.scrollTop - list.clientHeight) };
+      }
+      return out;
+    };
+    const tick = () => {
+      if (!w.on) return;
+      w.frames++;
+      const s = snap();
+      if (!w.first) w.first = s;
+      else for (const g of Object.keys(w.first)) {
+        const a = w.first[g], b = s[g];
+        if (!a || !b || a.top !== b.top || a.bottom !== b.bottom || a.text !== b.text || (a.gap <= 1) !== (b.gap <= 1))
+          w.bad.push('frame ' + w.frames + ' pane ' + g + ': ' + JSON.stringify(a) + ' -> ' + JSON.stringify(b));
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  })()`);
+}
+
+splitTest('SF3 split view: switching focus never moves either pane (the bottom bar stays in both)', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  for (let i = 0; i < 6; i++) await wheel(page, -150, 'messages'); // A read midway, B at the bottom
+  await settle(900);
+  // the other pane shows its bar too: the turn line with the chat's status and the quiet message box
+  const bar = await page.eval<{ turn: string; comp: boolean }>(`(() => { const p = document.querySelector('#splitStage .pane:not(.foc)');
+    return { turn: p.querySelector('.mirror-turn')?.textContent || '', comp: !!p.querySelector('.mirror-foot .mirror-comp') }; })()`);
+  assert(bar.turn && bar.comp, `the other pane's bottom bar: ${JSON.stringify(bar)}`);
+  for (const want of ['BETAEND', 'ALPHA', 'BETAEND']) {
+    await startGeom(page);
+    await settle(300);
+    await page.click('#splitStage .pane:not(.foc) .mirror-head');
+    await page.waitFor(`document.getElementById('messages').textContent.includes(${JSON.stringify(want)})`, 15000, 'focused');
+    await settle(2500);
+    const w = await page.eval<{ frames: number; bad: string[] }>(`(() => { const w = window.__geom; w.on = false; return w; })()`);
+    assert(w.frames > 20, `frames watched: ${w.frames}`);
+    assert(!w.bad.length, `a pane moved during the focus switch (${w.bad.length} of ${w.frames} frames):\n${w.bad.slice(0, 6).join('\n')}`);
+  }
+  a.end();
+  b.end();
+});
