@@ -66,7 +66,18 @@ async function openWindow(lab: Lab, query: string): Promise<Page> {
   return page;
 }
 
+/** The view preferences a page just changed have reached the server (it seeds chat.html from them at the next load). */
+async function prefsSent(page: Page): Promise<void> {
+  await page.waitFor(
+    `!window.AibViewPrefs || !AibViewPrefs.init() || Object.keys(AibViewPrefs.init().pending()).length === 0`,
+    5000,
+    "prefs sent",
+  );
+  await settle(600);
+}
+
 async function reload(page: Page): Promise<void> {
+  await prefsSent(page);
   await page.send("Page.reload", {});
   await settle(300);
   await page.waitFor(
