@@ -55,7 +55,8 @@ import { betaAgent } from '../agents/beta_catalog.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
-import { descendants, refreshDescendants } from '../platform/descendants.ts';
+import { type Descendant, descendants, refreshDescendants } from '../platform/descendants.ts';
+import { refreshWslDescendants, wslDescendants } from '../wsl/procs.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
@@ -2584,8 +2585,7 @@ export class Connection {
    */
   backgroundShellsRunning(): boolean {
     if (this.closed || !this.#bgShells.size) return false;
-    const pid = this.process?.pid;
-    const now = pid ? descendants(pid) : null;
+    const now = this.#descendants();
     if (now) {
       const live = new Set(now.map((d) => d.pid));
       for (const [task, pids] of [...this.#bgShells]) {
@@ -2603,14 +2603,46 @@ export class Connection {
     return this.backgroundShellsRunning() ? [...this.#bgShells.keys()] : [];
   }
 
+  /**
+   * The agent's processes now (platform/descendants.ts), or null when they cannot be listed. A WSL chat's agent is a Linux process:
+   * its distro's helper lists them (wsl/procs.ts), from a snapshot a few seconds old at most, else null while a new one is fetched.
+   * `fresh`: a Windows snapshot taken now; a WSL snapshot asked for from now on (so null at first: see #afterWslTree).
+   */
+  #descendants(fresh = false): Descendant[] | null {
+    const pid = this.process?.pid;
+    if (!pid) return null;
+    if (this.wsl) return wslDescendants(this.wsl.distro, pid, fresh ? Date.now() : 0);
+    if (fresh) refreshDescendants();
+    return descendants(pid);
+  }
+
+  /** A WSL chat: `then` with a process snapshot of its distro asked for from now on, once the helper answered (null: it did not). */
+  #afterWslTree(then: (now: Descendant[] | null) => void): void {
+    const pid = this.process?.pid;
+    if (!this.wsl || !pid) return;
+    const asked = Date.now();
+    const distro = this.wsl.distro;
+    void refreshWslDescendants(distro, pid).then(() => {
+      if (!this.closed) then(wslDescendants(distro, pid, asked));
+    });
+  }
+
   /** The agent's processes now, as the turn begins (an MCP server, the PowerShell tool's own shell): see #markBackground. */
   #noteTurnProcesses(): void {
     this.#turnProcesses = null;
     const pid = this.process?.pid;
     if (this.#replaying || !pid) return;
-    refreshDescendants();
-    const now = descendants(pid);
+    const now = this.#descendants(true);
     if (now) this.#turnProcesses = new Set(now.map((d) => d.pid));
+    else if (this.wsl) {
+      // the snapshot comes a moment later: only processes that were already running when the turn began count as the turn's
+      const seq = this.promptSeq;
+      const began = Date.now() / 1000;
+      this.#afterWslTree((later) => {
+        if (!later || this.promptSeq !== seq || this.#turnProcesses !== null) return;
+        this.#turnProcesses = new Set(later.filter((d) => d.started !== null && d.started < began).map((d) => d.pid));
+      });
+    }
   }
 
   /**
@@ -2672,14 +2704,28 @@ export class Connection {
   #markBackground(id: string, task: string, onlyIfRunning = false): void {
     if (this.#bgShells.has(task) || this.#bgTools.has(id)) return;
     const since = this.#shellCalls.get(id) ?? this.#tools.get(id)?.since ?? this.#now() - 10;
-    const pid = this.process?.pid;
-    refreshDescendants(); // the command started a moment ago: a snapshot from before it would not have it
-    const now = pid ? descendants(pid) : null;
+    const now = this.#descendants(true); // the command started a moment ago: a snapshot from before it would not have it
     const before = this.#turnProcesses;
-    const mine = now ? now.filter((d) => !before?.has(d.pid) && (d.started === null || d.started >= since - 2)) : null;
-    const taken = new Set([...this.#bgTools.values()].filter((t) => t.state === 'running').flatMap((t) => t.procs ?? []).map((p) => p.pid));
-    const pids = mine ? mine.filter((d) => !taken.has(d.pid)) : null;
+    const commandOf = (list: Descendant[] | null) => {
+      const turn = this.#turnProcesses ?? before; // a WSL turn's own snapshot may have come in meanwhile
+      const mine = list ? list.filter((d) => !turn?.has(d.pid) && (d.started === null || d.started >= since - 2)) : null;
+      const taken = new Set([...this.#bgTools.values()].filter((t) => t.state === 'running').flatMap((t) => t.procs ?? []).map((p) => p.pid));
+      return mine ? mine.filter((d) => !taken.has(d.pid)) : null;
+    };
+    const pids = commandOf(now);
     const at = this.#now();
+    if (this.wsl && pids === null) {
+      // A WSL chat's snapshot comes a moment later from its distro: until then the command counts as running (pids unknown); then
+      // its processes are noted, or, with none, it is done (as when a Windows snapshot finds none). Stop is not offered (no Stop in WSL).
+      this.#afterWslTree((later) => {
+        const found = commandOf(later);
+        if (found === null || this.#bgShells.get(task) !== null || this.#bgTools.get(id)?.state !== 'running') return;
+        if (found.length) {
+          this.#bgShells.set(task, found.map((d) => d.pid));
+          log.info('chat %s: background tool %s runs as processes %s', this.id, id, found.map((d) => d.pid).join(', '));
+        } else this.#backgroundEnded(id, this.#bgTools.get(id)!, 'done');
+      });
+    }
     if (pids && !pids.length) {
       if (onlyIfRunning) return;
       this.#bgTools.set(id, { task, state: 'done', procs: null, stoppable: false, since, at, endedAt: at });
@@ -2697,7 +2743,8 @@ export class Connection {
       (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
     );
     const known = pids !== null && before !== null && pids.every((d) => d.started !== null);
-    const stoppable = shell && known && !others;
+    // A WSL chat's processes are the distro's: AIB does not stop them (stopBackgroundTool refuses), so it never offers Stop there
+    const stoppable = shell && known && !others && !this.wsl;
     const procs = stoppable ? pids!.map((d) => ({ pid: d.pid, started: d.started as number })) : null;
     this.#bgTools.set(id, { task, state: 'running', procs, stoppable, since, at, endedAt: null });
     this.#trimBackground();
@@ -2831,6 +2878,8 @@ export class Connection {
       throw new NotStoppable("AIB can't stop a helper by itself: it runs inside the agent's own process. Ask the agent to stop it.");
     }
     if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
+    // its pids are the distro's; never killVerified here, which reads and kills Windows processes
+    if (this.wsl) throw new NotStoppable("AIB can't stop a command in a WSL chat yet. Ask the agent to stop it.");
     if (!background.stoppable || !background.procs?.length) {
       throw new NotStoppable('AIB cannot tell which processes belong to this command, so it cannot stop it.');
     }
@@ -2918,8 +2967,10 @@ export class Connection {
         const unknown = [...this.#bgShells].find(([, pids]) => pids === null);
         if (unknown) this.#bgShells.delete(unknown[0]);
         // ...and a row marked running in the background whose processes are gone is done now, not at the next snapshot (the process
-        // list is cached for a second): Claude Code sends nothing else for the command (recording C1)
-        refreshDescendants();
+        // list is cached for a second): Claude Code sends nothing else for the command (recording C1); a WSL chat's, once its
+        // distro answered
+        if (this.wsl) this.#afterWslTree(() => this.toolBackground());
+        else refreshDescendants();
         this.toolBackground();
       }
       if (this.autonomous) return this.#endAutonomous('end_turn');

@@ -3733,6 +3733,11 @@
         box.append(copyLine);
       }
       link('Open ' + name + ' terminal', openShell, 'A terminal in ' + name + ' to install ' + agentName);
+      // Settings > AIB Linking (WSL) with this distro's card of the agent in view (wsl-settings-ui.js)
+      const provider = newDraft.provider;
+      if (window.AIBWslSettings)
+        link('Set up ' + name + ' in Settings', () => window.AIBWslSettings.open(p.key, provider),
+          'Settings > AIB Linking (WSL): the agents in ' + name + ', their installs and updates');
     } else {
       line.textContent =
         agentName + ' in ' + name + (row.version ? ' (' + row.version + ')' : '') + (row.managed ? ', installed by AIB' : '') + '.';
@@ -4752,7 +4757,7 @@
     }
     if (c.recovered) {
       box.append(
-        text('span', c.recovered.reconnecting ? 'Reconnecting…' : 'Not running', 'badge badge-recovered'),
+        text('span', c.recovered.reconnecting ? 'Reconnecting…' : 'Ready', 'badge badge-recovered'),
         text(
           'span',
           c.recovered.reconnecting ? ' AIB is reconnecting it' : ' Was open in AIB before restart',
@@ -4765,7 +4770,7 @@
       // AIB tried to reopen it after the restart and gave up: say so (the reason on hover), never just "Saved"
       box.title = reconnectFailedTitle(c.reconnectError);
       box.append(
-        text('span', 'Not running', 'badge badge-recovered'),
+        text('span', "Couldn't reopen", 'badge badge-recovered'),
         text('span', ' Could not reopen after the restart', 'status-detail'),
       );
       return box;
@@ -5212,7 +5217,7 @@
       m.rows = liveRows(next.sessionId, entry.loaded(), next, false, readingSeq(paneCtl), entry.edge);
     } else if (isPseudoKey(c.key)) {
       m.histKey = '';
-      m.rows = [{ role: 'notice', label: 'Not running', value: pseudoNote(c) }];
+      m.rows = [{ role: 'notice', label: 'Ready', value: pseudoNote(c) }];
     } else {
       const w = await pollHistory(c.key);
       m.histKey = c.key;

@@ -1,0 +1,1936 @@
+<!doctype html>
+<html lang="en" data-theme="teal-dark">
+<head>
+<meta charset="utf-8">
+<title>Mockup: Settings > AIB Linking (WSL)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ---- theme.css (derived tokens + AIB teal dark), copied from outputs/agent-studio/theme.css ---- */
+:root,
+[data-theme] {
+  --text-2: color-mix(in srgb, var(--text) 87%, var(--text-faint)); /* Chip, tab and vendor-label text */
+  --text-3: color-mix(in srgb, var(--text) 65%, var(--muted)); /* Secondary labels: sidebar summaries, inbox button */
+  --text-4: color-mix(in srgb, var(--text) 85%, var(--muted)); /* Pane headings on hover, file-group scope */
+  --text-5: color-mix(in srgb, var(--text) 65%, var(--muted)); /* Link-like body text in the activity and changes panes */
+  --text-6: var(--text); /* Artifact list titles and picker text */
+  --text-7: color-mix(in srgb, var(--text) 67%, var(--muted)); /* Artifact version and next-step recap text */
+  --text-dim: color-mix(in srgb, var(--text) 41%, var(--text-faint)); /* Activity strip and sub-agent card text */
+  --text-muted: color-mix(in srgb, var(--muted) 72%, var(--text-faint)); /* Qualifiers, timestamps, toggles */
+  --text-muted-2: var(--muted); /* Plan step qualifiers (former idle status colour) */
+  --text-faint-2: var(--text-faint); /* Message times, turn dividers */
+  --text-faint-3: var(--text-faint); /* Artifact shortcuts and counts */
+  --bg-inset: color-mix(in srgb, var(--bg) 68%, var(--bg-field)); /* Small inset fields: project filter, rename input, kbd chips */
+  --code-bg-inline: color-mix(in srgb, var(--panel-2) 59%, var(--code-bg)); /* Inline code, table heads, diff summaries */
+  --bg-popover: var(--bg-field); /* Toasts and popovers */
+  --bg-composer: color-mix(in srgb, var(--bg-field) 73%, var(--code-bg)); /* Prompt form and small popups */
+  --bg-control: var(--bg-field); /* Copy controls and menus */
+  --bg-row: color-mix(in srgb, var(--panel) 67%, var(--code-bg)); /* Turn lines, message notes, queue rows on hover */
+  --bg-card-hover: color-mix(in srgb, var(--panel) 33%, var(--panel-2)); /* Activity cards and strip on hover */
+  --hover-2: color-mix(in srgb, var(--line-strong) 35%, var(--code-bg)); /* Hover fill for sub-agent cards and activity buttons */
+  --hover-overlay: color-mix(in srgb, var(--text) 8%, transparent); /* Translucent white hover wash on header icon buttons */
+  --line-control: color-mix(in srgb, var(--line) 82%, var(--text-faint)); /* Button and badge borders */
+  --line-card: color-mix(in srgb, var(--line) 8%, var(--line-strong)); /* Thumbnail and queue-row borders */
+  --line-field: color-mix(in srgb, var(--hover) 36%, var(--line-strong)); /* Input and popup borders */
+  --on-accent-disabled: color-mix(in srgb, var(--accent) 55%, var(--text)); /* Text on a disabled primary button (on --accent-wash-2) */
+  --link-underline: color-mix(in srgb, var(--link) 50%, transparent); /* Link underline at rest */
+  --accent-halo: color-mix(in srgb, var(--accent) 20%, transparent); /* Soft accent glow (drop target) */
+  --accent-wash-2: color-mix(in srgb, var(--accent-wash) 93%, var(--text)); /* Stronger teal hover fill */
+  --accent-wash-3: color-mix(in srgb, var(--accent-line) 35%, var(--code-bg)); /* Artifacts pane teal fill */
+  --accent-wash-4: color-mix(in srgb, var(--accent-line) 31%, var(--bg)); /* Sub-agent command chips, pane badges, agent letters */
+  --accent-wash-5: color-mix(in srgb, var(--accent-line) 30%, var(--bg)); /* Selected sub-agent and command card fill */
+  --danger-text: color-mix(in srgb, var(--danger) 84%, var(--text)); /* Ownership and error-note text */
+  --danger-fill: color-mix(in srgb, var(--danger) 87%, var(--code-bg)); /* Destructive primary button fill and border */
+  --ok-text: color-mix(in srgb, var(--ok) 77%, var(--text)); /* Idle status text and notify-on button */
+  --ok-bright: var(--ok); /* Copied tick, added tokens, ok marks */
+  --ok-text-2: var(--ok); /* Completed tool status and added diff lines */
+  --warn-text: color-mix(in srgb, var(--warn) 66%, var(--text)); /* Hold note and held-chat text */
+  --warn-text-2: color-mix(in srgb, var(--warn) 69%, var(--text)); /* Recovered and possibly-active badges */
+  --warn-bg: color-mix(in srgb, var(--warn) 15%, var(--bg)); /* Former approval and needs-you fill; kept for code on other branches */
+  --warn-line: color-mix(in srgb, var(--warn) 63%, var(--line-strong)); /* Held and edited queue rows, mismatched setting chips */
+  --status-working-track: color-mix(in srgb, var(--status-working) 25%, transparent); /* Working spinner track (the spinner's head is --status-working) */
+  --status-working-line: var(--status-working); /* Working borders: turn line, elsewhere chip */
+  --status-needs-line: var(--status-needs); /* Needs-you borders and row outline */
+  --status-needs-halo: color-mix(in srgb, var(--status-needs) 30%, transparent); /* Halo around the needs-you dot */
+  --status-done-line: var(--status-done); /* Your-turn turn-line border, unread row outline */
+  --plan-dot: var(--text); /* Plan step dots */
+  --shadow-strong: color-mix(in srgb, var(--shadow-ink) 67%, transparent); /* Toast, switcher and popover drop shadow */
+  --shadow-med: color-mix(in srgb, var(--shadow-ink) 60%, transparent); /* Menu shadow and switcher backdrop */
+  --shadow-soft: color-mix(in srgb, var(--shadow-ink) 53%, transparent); /* Chip popover shadow */
+  --accent-ink: var(--on-accent); /* Text on a solid accent button (Start new session, Try again) */
+  --bad-fill: color-mix(in srgb, var(--danger) 15%, var(--bg)); /* "Didn't start" shell chip fill */
+  --bad-line: color-mix(in srgb, var(--danger) 44%, var(--bg)); /* "Didn't start" shell chip border */
+  --hd-work: var(--status-working);
+  --hd-turn: var(--status-done);
+  --hd-need: var(--status-needs);
+  --hd-idle: var(--status-idle);
+  --hd-fail: var(--danger);
+  --need: var(--status-needs);
+  --ws-bg: var(--bg);
+  --sel: var(--accent-wash);
+  --button-bg: var(--bg-field); /* button {background}; .ws-qa {background}; .st-close:hover {background} */
+  --label-text: color-mix(in srgb, var(--text) 48%, var(--muted)); /* label {color} */
+  --error-bg: color-mix(in srgb, var(--danger) 18%, var(--code-bg)); /* #error {background} */
+  --bubble-bg: color-mix(in srgb, var(--bg) 32%, var(--bg-field)); /* .bubble {background}; .pane:not(.foc) .ws-tab.on {background} */
+  --bubble-head-line: color-mix(in srgb, var(--panel-2) 89%, var(--text-faint)); /* .bubble-head {border-bottom}; .msg-note-body {border-top} */
+  --bubble-head-text: color-mix(in srgb, var(--text) 33%, var(--muted)); /* .bubble-head {color}; .tool-toggle {color}; .msg-note-toggle {color} */
+  --card-line: color-mix(in srgb, var(--bg) 43%, var(--line-strong)); /* .connection {border} */
+  --card-bg: color-mix(in srgb, var(--line-strong) 15%, var(--code-bg)); /* .connection {background}; .command-card {background}; .switcher-open kbd,.switcher-foot kbd {background} */
+  --owned-status-text: color-mix(in srgb, var(--ok) 86%, var(--text)); /* .connection .owned-status {color}; .badge-live {color} */
+  --menu-bg: color-mix(in srgb, var(--line-strong) 43%, var(--code-bg)); /* #connectionMenu[open] button {background}; #connectionMenu[open] .menu-panel {background}; .organize-menu {background} */
+  --rename-chat-text: color-mix(in srgb, var(--text) 17%, var(--muted)); /* .rename-chat {color} */
+  --subagents-pane-bg: color-mix(in srgb, var(--panel) 33%, var(--code-bg)); /* #subagentsPane,#subchatPane {background}; #subagentsPane {background}; .cg-file {background} */
+  --subagent-card-meta-text: color-mix(in srgb, var(--accent-line) 64%, var(--text)); /* .subagent-card small {color} */
+  --subagent-card-desc-text: color-mix(in srgb, var(--muted) 36%, var(--text-faint)); /* .subagent-card p {color} */
+  --backdrop: color-mix(in srgb, var(--bg) 70%, transparent); /* #renameDialog::backdrop {background} */
+  --command-card-line: var(--line); /* .command-card {border} */
+  --command-error-text: var(--danger); /* .command-error {color} */
+  --command-details-text: color-mix(in srgb, var(--text) 64%, var(--muted)); /* #commandDetails {color}; .attachment-card span {color}; .image-viewer-caption {color} */
+  --attachment-remove-bg: color-mix(in srgb, var(--bg) 38%, var(--line-strong)); /* .attachment-card .attachment-remove {background} */
+  --attachment-remove-text: color-mix(in srgb, var(--danger-bright) 86%, var(--text)); /* .attachment-card .attachment-remove {color} */
+  --message-image-bg: color-mix(in srgb, var(--bg) 46%, var(--code-bg)); /* .bubble .message-image {background}; .tool-thumbs .tool-thumb {background} */
+  --tool-failed-bg: color-mix(in srgb, var(--danger) 21%, var(--bg)); /* .tool-status.status-failed {background} */
+  --diff-removed-text: var(--danger); /* .diff-removed {color}; .diff-del .diff-sign {color} */
+  --diff-add-bg: color-mix(in srgb, var(--ok) 18%, transparent); /* .diff-add {background} */
+  --diff-del-bg: color-mix(in srgb, var(--danger) 18%, transparent); /* .diff-del {background} */
+  --strip-notice-severity-warning-text: color-mix(in srgb, var(--warn) 46%, var(--text)); /* .strip-notice.severity-warning {color} */
+  --danger-line: color-mix(in srgb, var(--danger) 51%, var(--bg)); /* .danger {border-color}; .cg-discard {border-color} */
+  --primary-danger-text: color-mix(in srgb, var(--bg) 73%, var(--code-bg)); /* .primary.danger {color} */
+  --badge-live-bg: color-mix(in srgb, var(--ok) 16%, var(--bg)); /* .badge-live {background} */
+  --badge-live-line: color-mix(in srgb, var(--ok) 43%, var(--bg)); /* .badge-live {border-color} */
+  --badge-saved-bg: color-mix(in srgb, var(--bg) 29%, var(--line)); /* .badge-saved {background} */
+  --badge-saved-text: color-mix(in srgb, var(--text) 30%, var(--muted)); /* .badge-saved {color} */
+  --badge-recovered-bg: color-mix(in srgb, var(--warn) 15%, var(--bg)); /* .badge-recovered {background}; .badge-ownership-possibly_active {background} */
+  --badge-recovered-line: color-mix(in srgb, var(--warn) 45%, var(--bg-field)); /* .badge-recovered {border-color}; .badge-ownership-possibly_active {border-color}; .ownership-prompt {border} */
+  --badge-agent-bg: color-mix(in srgb, var(--info) 9%, var(--bg-field)); /* .badge-agent {background} */
+  --badge-agent-text: color-mix(in srgb, var(--info) 63%, var(--text)); /* .badge-agent {color}; aside .connection .row-status.tone-info .row-phrase {color} */
+  --badge-agent-line: color-mix(in srgb, var(--info) 40%, var(--panel-2)); /* .badge-agent {border-color} */
+  --local: color-mix(in srgb, var(--info) 78%, var(--text)); /* .fx-local {color}; .fx-localdot {background}: local-only paths in Files */
+  --local-bg: color-mix(in srgb, var(--info) 13%, var(--bg-field)); /* .fx-local {background} */
+  --stop-subagent-line: color-mix(in srgb, var(--danger) 52%, var(--code-bg)); /* #stopSubagent {border-color} */
+  --file-badge-ext-text: color-mix(in srgb, var(--accent) 20%, var(--text)); /* .file-badge-ext {color} */
+  --file-badge-size-text: var(--muted); /* .file-badge-size {color}; .attachment-card > span {color}; .file-card-meta {color} */
+  --icon-btn-line: color-mix(in srgb, var(--line-strong) 59%, var(--text-faint)); /* .attachment-card .attachment-remove {border}; .image-viewer button {border} */
+  --icon-btn-bg: color-mix(in srgb, var(--bg-field) 18%, var(--line)); /* .attachment-card .attachment-remove {background}; .image-viewer button {background} */
+  --image-viewer-bg: color-mix(in srgb, var(--bg) 90%, transparent); /* .image-viewer {background} */
+  --ownership-hint-text: color-mix(in srgb, var(--text) 10%, var(--muted)); /* .ownership-hint {color} */
+  --badge-ownership-ownedelsewhere-bg: color-mix(in srgb, var(--danger) 16%, var(--bg)); /* .badge-ownership-owned_elsewhere {background} */
+  --badge-ownership-ownedelsewhere-line: color-mix(in srgb, var(--danger) 43%, var(--bg)); /* .badge-ownership-owned_elsewhere {border-color}; .ownership-prompt-blocked {border-color} */
+  --ownership-prompt-bg: color-mix(in srgb, var(--warn) 12%, var(--bg)); /* .ownership-prompt {background} */
+  --ownership-prompt-blocked-bg: color-mix(in srgb, var(--danger) 10%, var(--bg)); /* .ownership-prompt-blocked {background} */
+  --ownership-note-text: color-mix(in srgb, var(--text) 49%, var(--muted)); /* .ownership-note,.ownership-advice {color} */
+  --organize-menu-shadow: color-mix(in srgb, var(--bg) 40%, transparent); /* .organize-menu {box-shadow}; .ws-scrim:not([hidden]) {background}; .ar-pop {box-shadow} */
+  --menu-danger-text: color-mix(in srgb, var(--danger) 70%, var(--text)); /* .organize-menu button.danger {color} */
+  --copy-btn-text: color-mix(in srgb, var(--text) 64%, var(--muted)); /* .copy-ctl button {color}; .run-term {color} */
+  --copy-btn-hover-bg: color-mix(in srgb, var(--hover) 87%, var(--text-faint)); /* .copy-ctl button:hover,.copy-ctl button:focus-visible {background} */
+  --copy-menu-line: color-mix(in srgb, var(--line) 24%, var(--line-strong)); /* .copy-menu {border}; .copy-manual {border} */
+  --copy-menu-item-bg: color-mix(in srgb, var(--bg-field) 27%, var(--line-strong)); /* .copy-menu-item:hover,.copy-menu-item:focus-visible {background} */
+  --copy-manual-note-text: color-mix(in srgb, var(--warn) 64%, var(--text)); /* .copy-manual-note {color} */
+  --tool-error-text: var(--danger); /* .tool-result-error > summary {color} */
+  --syn-add-bg: color-mix(in srgb, var(--ok) 12%, var(--bg)); /* .tok-add {background} */
+  --syn-del-text: var(--danger); /* .tok-del {color}; .tool-line.failed .tool-line-text {color} */
+  --syn-del-bg: color-mix(in srgb, var(--danger) 13%, var(--bg)); /* .tok-del {background} */
+  --mark-failed-text: var(--danger); /* .mark-failed {color} */
+  --turn-lost-text: color-mix(in srgb, var(--danger) 77%, var(--text)); /* .turn-line[data-kind='lost'] {color}; .q-note {color} */
+  --turn-lost-line: color-mix(in srgb, var(--danger) 38%, var(--bg)); /* .turn-line[data-kind='lost'] {border-color} */
+  --kbd-text: color-mix(in srgb, var(--text) 75%, var(--muted)); /* .switcher-open kbd,.switcher-foot kbd {color} */
+  --project-head-bg: color-mix(in srgb, var(--panel-2) 71%, var(--bg-field)); /* .project-head:hover {background} */
+  --st-opening-line: color-mix(in srgb, var(--line-strong) 11%, var(--muted)); /* .st-opening {border} */
+  --chip-v-text: color-mix(in srgb, var(--warn) 69%, var(--text)); /* .chip-pending .chip-v {color}; .chip-warn {color}; .config-queued {color} */
+  --studio-notice-line: color-mix(in srgb, var(--warn) 34%, var(--bg)); /* .studio-notice {border} */
+  --studio-notice-bg: color-mix(in srgb, var(--warn) 11%, var(--bg)); /* .studio-notice {background} */
+  --studio-notice-text: color-mix(in srgb, var(--warn) 42%, var(--text)); /* .studio-notice {color} */
+  --update-btn-line: var(--accent); /* .upd-btn {border-color} */
+  --update-btn-text: var(--on-accent); /* .upd-btn {color} */
+  --update-btn-bg: var(--accent); /* .upd-btn {background} */
+  --update-btn-hover-bg: color-mix(in srgb, var(--accent) 85%, var(--text)); /* .upd-btn:hover {background} */
+  --activity-dot-bg: color-mix(in srgb, var(--line) 58%, var(--text-faint)); /* .sa-dot {background}; .ac-dot {background} */
+  --activity-dot-failed-bg: color-mix(in srgb, var(--danger) 84%, var(--bg)); /* .sa-failed .sa-dot,.proc-failed .sa-dot {background} */
+  --activity-failed-text: color-mix(in srgb, var(--danger-bright) 94%, var(--bg)); /* .sa-failed .sa-title {color}; .proc-failed .proc-title {color} */
+  --proc-title-text: color-mix(in srgb, var(--text) 42%, var(--muted)); /* .proc-title {color} */
+  --activity-chip-sep-text: color-mix(in srgb, var(--line-strong) 50%, var(--text-faint)); /* .ac-chip + .ac-chip::before {color} */
+  --ws-tab-bg: color-mix(in srgb, var(--panel) 82%, var(--line)); /* .ws-tab {background}; .find-chat {background} */
+  --header-status-line: color-mix(in srgb, var(--ok) 30%, var(--bg)); /* .header-actions #status,header #status {border} */
+  --select-option-bg: color-mix(in srgb, var(--panel) 67%, var(--panel-2)); /* .chip-agent-select option {background}; .st-agent {background} */
+  --ws-newproj-line: color-mix(in srgb, var(--line) 61%, var(--text-faint)); /* .ws-newproj {border} */
+  --ws-menu-item-text: color-mix(in srgb, var(--line-strong) 47%, var(--muted)); /* .ws-menu-item:disabled {color}; .status-dot.d-off {border} */
+  --kbd-text-2: color-mix(in srgb, var(--text) 75%, var(--muted)); /* .find-chat kbd {color}; .side-settings kbd {color}; .st-kbd kbd {color} */
+  --row-chip-bg: color-mix(in srgb, var(--hover) 75%, var(--line-strong)); /* aside .connection .row-chip {background} */
+  --row-ok-text: color-mix(in srgb, var(--ok) 92%, var(--text)); /* aside .connection .row-status.tone-ok .row-phrase {color}; .np-hint.ok {color} */
+  --row-project-text: color-mix(in srgb, var(--text) 35%, var(--muted)); /* aside .connection .row-line3 .row-project {color} */
+  --np-dialog-shadow: color-mix(in srgb, var(--bg) 80%, transparent); /* .np-dialog {box-shadow} */
+  --field-invalid-line: color-mix(in srgb, var(--danger) 74%, var(--bg)); /* .np-form input[aria-invalid='true'] {border-color} */
+  --note-warn-text: color-mix(in srgb, var(--warn) 70%, var(--muted)); /* .ws-notify-body .note.warn {color} */
+  --count-turn-text: var(--bg); /* .status-count.count-turn {color} */
+  --unknown-send-line-text: color-mix(in srgb, var(--warn) 73%, var(--muted)); /* .unknown-send-line {color}; .unknown-send-btn {color}; .unknown-send-btn:hover {border-color} */
+  --unknown-send-btn-line: color-mix(in srgb, var(--warn) 38%, var(--bg-field)); /* .unknown-send-btn {border-color} */
+  --title-hover-bg: color-mix(in srgb, var(--text) 5%, transparent); /* header .hd-line h1:hover {background} */
+  --ownership-bar-bg: var(--bg); /* .ownership-bar {background} */
+  --cancel-line: color-mix(in srgb, var(--danger) 48%, var(--bg)); /* #cancel {border-color} */
+  --cancel-text: color-mix(in srgb, var(--danger) 52%, var(--text)); /* #cancel {color} */
+  --composer-attach-line: color-mix(in srgb, var(--line) 75%, var(--text-faint)); /* #promptForm .composer-actions .composer-attach {border} */
+  --composer-attach-bg: color-mix(in srgb, var(--bg-field) 69%, var(--line-strong)); /* #promptForm .composer-actions .composer-attach:hover,#promptForm .composer-actions .composer-attach:focus-visible {background} */
+  --ws-qa-choice-ok-bg: color-mix(in srgb, var(--ok) 43%, var(--bg)); /* .ws-qa-choice.ok {background} */
+  --ws-qa-choice-no-text: color-mix(in srgb, var(--danger) 77%, var(--text)); /* .ws-qa-choice.no {color}; .switcher-sub.warn {color} */
+  --ws-reply-box-bg: color-mix(in srgb, var(--bg-field) 34%, var(--code-bg)); /* .ws-reply-box {background}; .art-card {background}; .plan-dock {background} */
+  --kbd-text-3: color-mix(in srgb, var(--text) 66%, var(--muted)); /* .switcher-key kbd,.sheet-rows kbd {color}; .q-row {color} */
+  --danger-active-bg: color-mix(in srgb, var(--danger) 17%, var(--bg)); /* .switcher-item.danger.active {background} */
+  --queue-paused-text: color-mix(in srgb, var(--warn) 55%, var(--text)); /* .q-head.q-paused {color} */
+  --q-row-line: color-mix(in srgb, var(--line-strong) 48%, var(--text-faint)); /* .q-row:hover,.q-row:focus-within {border-color} */
+  --q-btn-bg: color-mix(in srgb, var(--hover) 91%, var(--text-faint)); /* .q-btn:hover,.q-btn:focus-visible {background}; .q-text-btn:hover,.q-text-btn:focus-visible {background} */
+  --side-settings-bg: color-mix(in srgb, var(--hover) 75%, var(--code-bg)); /* .side-settings:hover,.side-settings:focus-visible {background}; .st-section:hover {background} */
+  --st-note-bad-text: color-mix(in srgb, var(--danger) 74%, var(--text)); /* .st-note.bad,.st-error,.st-hint.warn {color}; .st-status.bad {color}; .st-danger {color} */
+  --st-hint-warn-text: color-mix(in srgb, var(--warn) 66%, var(--text)); /* .st-hint.warn {color}; .st-notify .note.warn {color} */
+  --st-agent-line: color-mix(in srgb, var(--hover) 89%, var(--line-strong)); /* .st-agent {border}; #startPage .sp-stuck {border} */
+  --st-status-bad-line: color-mix(in srgb, var(--danger) 36%, var(--bg)); /* .st-status.bad {border-color} */
+  --st-command-text: color-mix(in srgb, var(--text) 47%, var(--muted)); /* .st-command {color} */
+  --st-line: color-mix(in srgb, var(--bg-field) 94%, var(--muted)); /* .st-line {border-top}; .st-keys li {border-bottom} */
+  --pane-tab-bg: color-mix(in srgb, var(--text) 3%, transparent); /* .pane-tab:hover {background} */
+  --cg-file-open-line: color-mix(in srgb, var(--bg-field) 81%, var(--line-strong)); /* .cg-file.open {border-bottom-color}; .cg-hunk {border-top}; .cg-hunk {border-bottom} */
+  --git-modified-text: color-mix(in srgb, var(--warn) 83%, var(--text)); /* .st-M {color} */
+  --git-renamed-text: color-mix(in srgb, var(--info) 65%, var(--text)); /* .st-R {color} */
+  --git-conflict-text: var(--danger); /* .st-C {color}; .cg-conflict {color} */
+  --git-conflict-bg: color-mix(in srgb, var(--danger) 13%, transparent); /* .cg-conflict {background} */
+  --cg-hunk-bg: color-mix(in srgb, var(--bg-field) 87%, var(--code-bg)); /* .cg-hunk {background} */
+  --cg-no-text: var(--text-faint); /* .cg-no {color} */
+  --cg-sign-text: var(--text-faint); /* .cg-sign {color} */
+  --cg-text: color-mix(in srgb, var(--text) 74%, var(--muted)); /* .cg-text {color}; .ar-pre {color} */
+  --cg-add-bg: color-mix(in srgb, var(--ok) 12%, var(--bg)); /* .cg-row.cg-add {background} */
+  --cg-add-no-bg: color-mix(in srgb, var(--ok) 17%, var(--bg)); /* .cg-row.cg-add .cg-no {background} */
+  --cg-add-no-text: color-mix(in srgb, var(--ok) 70%, var(--text)); /* .cg-row.cg-add .cg-no {color} */
+  --cg-del-bg: color-mix(in srgb, var(--danger) 13%, var(--bg)); /* .cg-row.cg-del {background} */
+  --cg-del-no-bg: color-mix(in srgb, var(--danger) 20%, var(--bg)); /* .cg-row.cg-del .cg-no {background} */
+  --cg-del-no-text: color-mix(in srgb, var(--danger) 70%, var(--text)); /* .cg-row.cg-del .cg-no {color} */
+  --cg-discard-text: color-mix(in srgb, var(--danger-bright) 90%, var(--bg)); /* .cg-discard {color}; .cg-foot-note.err {color} */
+  --cg-discard-bg: color-mix(in srgb, var(--danger) 11%, var(--bg)); /* .cg-discard:hover:not(:disabled) {background} */
+  --ar-pick-bg: color-mix(in srgb, var(--panel-2) 41%, var(--bg-field)); /* .ar-pick,.ar-ver,.ar-ico {background}; .ar-pop {background}; .split-ghost {background} */
+  --ar-ver-old-text: color-mix(in srgb, var(--warn) 74%, var(--text)); /* .ar-ver.old {color}; .ar-avail {color} */
+  --ar-ver-old-line: color-mix(in srgb, var(--warn) 40%, var(--panel)); /* .ar-ver.old {border-color} */
+  --ar-avail-bg: color-mix(in srgb, var(--warn) 18%, var(--bg)); /* .ar-avail {background} */
+  --ar-avail-line: color-mix(in srgb, var(--warn) 33%, var(--bg)); /* .ar-avail {border-bottom} */
+  --ar-switch-text: color-mix(in srgb, var(--warn) 54%, var(--text)); /* .ar-switch {color} */
+  --ar-sep-bg: color-mix(in srgb, var(--hover) 68%, var(--line-strong)); /* .ar-sep {background} */
+  --plan-text-underline: color-mix(in srgb, var(--line) 34%, var(--text-faint)); /* .plan-completed .plan-text {text-decoration-color} */
+  --plan-spin-line: color-mix(in srgb, color-mix(in srgb, var(--text) 83%, var(--muted)) 25%, transparent); /* .plan-spin::before {border} */
+  --nextstep-btn-primary-line: color-mix(in srgb, var(--line-strong) 61%, var(--text-faint)); /* .nextstep-btn.primary {border-color} */
+  --split-hint-bg: color-mix(in srgb, var(--accent) 22%, transparent); /* .split-hint {background} */
+  --split-ghost-shadow: color-mix(in srgb, var(--bg) 45%, transparent); /* .split-ghost {box-shadow} */
+  --pv-body-bg: var(--bg); /* .pv-body {background} */
+  --heading-tint-text: var(--text-6); /* .brand {color}; .elicitation-heading {color} */
+  --tab-selected-text: var(--text-6); /* .provider-tabs button[aria-selected='true'] {color}; .textsize-badge {color}; .split-hint .lbl {color} */
+  --title-active-text: var(--text-6); /* .sa-working .sa-title {color}; .pane-tab.active {color} */
+  --clamp-toggle-text: var(--text-6); /* .clamp-toggle:hover,.clamp-toggle:focus-visible {color} */
+  --plan-active-text: var(--text-6); /* .plan-in_progress .plan-text {color} */
+  --option-selected-bg: var(--accent-wash); /* .connection.selected {background}; .slash-option.selected {background} */
+  --clamp-toggle-bg: var(--accent-wash); /* .clamp-toggle:hover,.clamp-toggle:focus-visible {background} */
+  --st-section-active-bg: var(--accent-wash); /* .st-section.active {background}; .st-flash {background} */
+  --bubble-user-bg: var(--panel-2); /* .bubble.user {background} */
+  --approval-bg: var(--panel-2); /* .approval {background} */
+  --elicitation-card-bg: var(--panel-2); /* .elicitation-card {background} */
+  --bubble-user-line: var(--line-card); /* .bubble.user {border-color} */
+  --tab-selected-bg: var(--accent-wash-2); /* .provider-tabs button[aria-selected='true'] {background} */
+  --elicitation-url-host-bg: var(--accent-wash-2); /* .elicitation-url-host {background} */
+  --menu-hover-bg: var(--accent-wash-2); /* .organize-menu button:hover,.organize-menu button:focus {background} */
+  --subagent-card-selected-line: var(--accent-line); /* .subagent-card.selected {border-color}; .command-card.selected {border-color}; .ws-qa-reply {border-color} */
+  --rename-dialog-line: var(--accent-line); /* #renameDialog {border} */
+  --divider-active-bg: var(--accent-line); /* .dv:hover,.dv.on {background} */
+  --message-image-line: var(--accent); /* .bubble .message-image:hover {border-color}; .tool-thumbs .tool-thumb:hover,.tool-thumbs .tool-thumb:focus-visible {border-color} */
+  --np-primary-bg: var(--accent); /* .np-primary {background} */
+  --np-primary-line: var(--accent); /* .np-primary {border-color} */
+  --ws-qa-send-primary-bg: var(--accent); /* .ws-qa-send.primary {background} */
+  --elicitation-url-bg: var(--code-bg); /* .elicitation-url {background} */
+  --elicitation-url-line: var(--line-field); /* .elicitation-url {border}; .auth-method {border} */
+  --activity-when-text: var(--text-dim); /* .sa-working .sa-when,.proc-running .sa-when {color} */
+  --row-agent-text: var(--text-dim); /* aside .connection .row-agent {color} */
+  --chip-icon-bg: var(--accent-wash-4); /* .chip-agent .chip-icon {background} */
+  --st-letter-bg: var(--accent-wash-4); /* .st-letter {background} */
+  --clamp-toggle-line: var(--line-control); /* .clamp-toggle {border} */
+  --else-status-text: var(--hd-idle); /* #status[data-tone='else'],#turnStatus[data-tone='else'] {color}; #status[data-tone='else']::before,#turnStatus[data-tone='else']::before {border}; .mirror-status[data-tone='else'] {color} (+1 more) */
+  --question-line: var(--status-needs-line); /* .elicitation-card {border}; .connection.attn-needs_you {border-color} */
+  --card-needs-line: var(--status-needs-line); /* aside .connection.selected.attn-needs_you {box-shadow}; aside .connection.attn-needs_you:not(.selected) {box-shadow} */
+  --tool-done-text: var(--status-done); /* .tool-status.status-completed {color} */
+  --mark-ok-text: var(--status-done); /* .mark-ok {color} */
+  --st-unread-bg: var(--status-done); /* .st-unread {background} */
+  --st-status-ok-text: var(--status-done); /* .st-status.ok {color} */
+  --tool-working-text: var(--status-working); /* .tool-status.status-in_progress {color} */
+  --turn-working-text: var(--status-working); /* .turn-line[data-kind='working'] {color} */
+  --ws-working-bg: var(--status-working); /* .ws-working {background} */
+  --turn-idle-line: var(--status-done-line); /* .turn-line[data-kind='idle'] {border-color} */
+  --turn-needs-text: var(--status-needs); /* .turn-line[data-kind='needs'] {color} */
+  --st-needs-bg: var(--status-needs); /* .st-needs_you {background}; .status-count {background} */
+  --st-status-warn-text: var(--status-needs); /* .st-status.warn {color} */
+  --st-needs-halo: var(--status-needs-halo); /* .st-needs_you {box-shadow} */
+  --hd-need-halo: var(--status-needs-halo); /* #status[data-tone='need']::before,#turnStatus[data-tone='need']::before {box-shadow} */
+  --st-idle-line: var(--status-idle); /* .st-idle {border} */
+  --st-count-text: var(--status-needs-bg); /* .status-count {color} */
+  --count-needs-text: var(--status-needs-bg); /* .status-count {color} */
+  --ws-badge-text: var(--status-needs-bg); /* .ws-badge {color} */
+  --st-status-warn-line: var(--status-needs-bg); /* .st-status.warn {border-color} */
+  --chip-icon-text: var(--link); /* .chip-agent .chip-icon {color}; .st-letter {color} */
+  --clamp-toggle-text-rest: var(--link); /* .clamp-toggle {color} */
+  --np-primary-text: var(--on-accent); /* .np-primary {color} */
+  --jump-new-text: var(--on-accent); /* .jump-new {color} */
+  --ws-qa-send-primary-text: var(--on-accent); /* .ws-qa-send.primary {color} */
+  --st-primary-text: var(--on-accent); /* .st-agent-head .st-primary {color} */
+  --st-status-ok-line: var(--status-done-bg); /* .st-status.ok {border-color} */
+  --else-phrase-text: var(--muted); /* .tone-else .row-phrase {color} */
+  --sel-bar: var(--accent); /* aside .connection.selected::before {background} */
+  --else-dot-line: var(--status-idle); /* .status-dot.d-else {border} */
+  --primary-disabled-bg: var(--accent-wash-2); /* .primary:disabled {background} */
+  --primary-disabled-line: var(--accent-line); /* .primary:disabled {border-color} */
+  --artifact-frame-bg: #ffffff; /* Behind an artifact page or image: always white, as a web page expects (theme-independent) */
+  --focus-ring: var(--accent); /* Keyboard focus ring (outline) round buttons, fields, cards and tabs */
+  --chip-working-bg: var(--status-working-bg); /* Working chip fill (header, split pane, settings) */
+  --chip-working-line: var(--status-working-bg); /* Working chip border */
+  --chip-needs-bg: var(--status-needs-bg); /* Needs-you chip fill */
+  --chip-needs-line: var(--status-needs-bg); /* Needs-you chip border */
+  --chip-done-bg: var(--status-done-bg); /* Done / Your-turn chip fill */
+  --chip-done-line: var(--status-done-bg); /* Done chip border */
+  --chip-idle-bg: var(--status-idle-bg); /* Idle chip fill */
+  --chip-idle-line: var(--status-idle-bg); /* Idle chip border */
+  --term-cursor: var(--term-fg); /* xterm cursor */
+  --term-black: color-mix(in srgb, var(--term-dim) 45%, var(--term-bg)); /* xterm black */
+  --term-white: color-mix(in srgb, var(--term-fg) 85%, var(--term-dim)); /* xterm white */
+  --term-bright-red: var(--term-red); /* xterm bright red */
+  --term-bright-green: var(--term-green); /* xterm bright green */
+  --term-bright-yellow: var(--term-yellow); /* xterm bright yellow */
+  --term-bright-blue: var(--term-blue); /* xterm bright blue */
+  --term-bright-magenta: var(--term-magenta); /* xterm bright magenta */
+  --term-bright-cyan: var(--term-cyan); /* xterm bright cyan */
+  --term-bright-white: var(--term-fg); /* xterm bright white */
+  /* status symbols (not colours): shown in place of the status dot when Settings > Appearance > Show status symbols is on,
+     and always in the colour-blind safe theme */
+  --status-working-glyph: "◔"; /* Working */
+  --status-needs-glyph: "▲"; /* Needs you */
+  --status-done-glyph: "✓"; /* Done / Your turn */
+  --status-error-glyph: "✕"; /* Failed */
+  --status-idle-glyph: "○"; /* Idle, not running, elsewhere */
+  /* the doc page (docs.css): agents' presence, highlights (never teal or blue), callouts, charts, comment anchors, Compare */
+  --agent-a: var(--accent);
+  --agent-b: var(--info);
+  --tint-a: color-mix(in srgb, var(--agent-a) 15%, transparent);
+  --tint-b: color-mix(in srgb, var(--agent-b) 15%, transparent);
+  /* highlights: never teal or blue (the agents' colours) */
+  --hl-yellow: color-mix(in srgb, var(--warn) 30%, var(--bg));
+  --hl-green: color-mix(in srgb, var(--ok) 24%, var(--bg));
+  --hl-pink: color-mix(in srgb, var(--danger) 20%, var(--bg));
+  --hl-purple: color-mix(in srgb, var(--syn-keyword) 22%, var(--bg));
+  --hl-grey: color-mix(in srgb, var(--muted) 22%, var(--bg));
+  --co-info-bg: color-mix(in srgb, var(--info) 9%, var(--bg));
+  --co-info-line: color-mix(in srgb, var(--info) 30%, var(--bg));
+  --co-warn-bg: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  --co-warn-line: color-mix(in srgb, var(--warn) 32%, var(--bg));
+  --co-ok-bg: color-mix(in srgb, var(--ok) 9%, var(--bg));
+  --co-ok-line: color-mix(in srgb, var(--ok) 30%, var(--bg));
+  --chart-1: var(--accent);
+  --chart-2: var(--syn-number);
+  --chart-3: var(--syn-keyword);
+  --chart-4: var(--info);
+  --chart-5: var(--ok);
+  --chart-6: var(--danger);
+  --anchor-bg: color-mix(in srgb, var(--warn) 22%, transparent);
+  --anchor-act-bg: color-mix(in srgb, var(--warn) 36%, transparent);
+  --anchor-line: color-mix(in srgb, var(--warn) 70%, transparent);
+  --ins-bg: var(--cg-add-bg);
+  --del-bg: var(--cg-del-bg);
+  --ins-text: color-mix(in srgb, var(--ok) 70%, var(--text));
+  --del-text: color-mix(in srgb, var(--danger) 70%, var(--text));
+  --oldbar-bg: color-mix(in srgb, var(--warn) 15%, var(--bg));
+  --oldbar-text: color-mix(in srgb, var(--warn) 74%, var(--text));
+  --oldbar-line: color-mix(in srgb, var(--warn) 33%, var(--bg));
+}
+
+/* AIB teal (dark): the default theme. Bay teal accent, the icon's agent lights for status. */
+:root:not([data-theme]),
+[data-theme='teal-dark'] {
+  color-scheme: dark;
+  /* core */
+  --bg: #121318; /* Page background: the chat column and the deepest wells */
+  --panel: #1b1c23; /* Sidebar, switcher and dialog panels */
+  --panel-2: #23242c; /* Raised blocks: your prompts, approval and question cards, dialogs, attachment cards */
+  --bg-field: #1f2028; /* Inputs, slash popup, open tool rows */
+  --hover: #272830; /* Hover fill for sidebar rows, tabs, buttons */
+  --line: #2c2d36; /* Default hairline border */
+  --line-strong: #40414b; /* Panel, form and card borders */
+  --text: #edeae2; /* Default text on the page */
+  --text-bright: #ffffff; /* Strongest text: hovered and selected controls, the ring round a focused primary button */
+  --muted: #a9a497; /* Muted text: meta lines, agent names, secondary labels */
+  --text-faint: #918d80; /* Faintest readable text: placeholders, composer notes, context state */
+  --code-bg: #16171d; /* Code blocks, diffs, resource links */
+  --accent: #2bb3a3; /* The one accent: primary button fill, focus rings, selection bars, accent borders */
+  --on-accent: #0b1f1d; /* Text on an --accent fill */
+  --link: #33bcab; /* Links and accent-coloured text */
+  --accent-wash: #17332f; /* Active chat, selected rows, accent hover and active fill */
+  --accent-line: #2a7c72; /* Selected-card and dialog accent borders (meaningful: 3:1) */
+  --danger: #f08a8a; /* Failure dot and new-line marker */
+  --danger-bright: #ffbac6; /* Error text and failed tool status */
+  --ok: #7ad19c; /* Additions, change counts, ok marks */
+  --warn: #f0b23e; /* Stars, file warnings, held chats */
+  --info: #5aa9ff; /* Neutral information blue (agent badges, renamed files) */
+  --status-working: #ffc247; /* Working: text, dot and spinner head */
+  --status-working-bg: #3a2e14; /* Working chip fill */
+  --status-needs: #ff7a59; /* Needs you: text, dot and badges */
+  --status-needs-bg: #3d1f18; /* Needs-you chip, turn-line and toast fill; text on a needs-you badge */
+  --status-done: #2bb3a3; /* Done / Your turn / unread: text and dot */
+  --status-done-bg: #12302c; /* Done chip fill */
+  --status-idle: #c9c5bb; /* Idle and unknown: grey text and dot ring */
+  --status-idle-bg: #26272f; /* Idle chip fill */
+  --syn-keyword: #c79bff; /* Code: keywords */
+  --syn-string: #9bd88f; /* Code: strings */
+  --syn-number: #f0a96b; /* Code: numbers and literals */
+  --syn-comment: #8a8679; /* Code: comments */
+  --syn-key: #7cc4ff; /* Code: object keys and headings */
+  --term-bg: #0e0f13; /* Terminal panel and xterm background */
+  --term-fg: #edeae2; /* xterm text and cursor */
+  --term-sel: #1f4a44; /* xterm selection */
+  --term-red: #f19999; /* xterm red */
+  --term-green: #7ad19c; /* xterm green */
+  --term-yellow: #e6c27a; /* xterm yellow */
+  --term-blue: #7cb7ff; /* xterm blue */
+  --term-magenta: #c79bff; /* xterm magenta */
+  --term-cyan: #7fd3d8; /* xterm cyan */
+  --term-dim: #8a8679; /* xterm bright black (prompts, dim text) */
+  --shadow-ink: #000000; /* Colour of drop shadows and backdrops (used with transparency) */
+  /* derived tokens pinned in this theme */
+  --hover-overlay: #ffffff14;
+  --on-accent-disabled: #8fd9cf;
+  --link-underline: #33bcab80;
+  --accent-halo: #2bb3a333;
+  --accent-wash-2: #1f423d;
+  --accent-wash-3: #173a36;
+  --accent-wash-4: #16302d;
+  --accent-wash-5: #1a3834;
+  --danger-fill: #d96b82;
+  --ok-bright: #8be28b;
+  --ok-text-2: #8be3ad;
+  --status-working-track: #ffc24740;
+  --status-working-line: #ffc247;
+  --status-needs-line: #ff7a59;
+  --status-needs-halo: #ff7a594d;
+  --status-done-line: #2bb3a3;
+  --bad-fill: #3a1820;
+  --bad-line: #7a3a48;
+  --error-bg: #40242e;
+  --subagent-card-meta-text: #9a92ae;
+  --command-error-text: #ff9ba9;
+  --attachment-remove-bg: #3b2934;
+  --tool-failed-bg: #4a1d27;
+  --diff-removed-text: #ff9aa9;
+  --diff-add-bg: #34a8642e;
+  --diff-del-bg: #dc465a2e;
+  --strip-notice-severity-warning-text: #ffd79a;
+  --danger-line: #8f3b4d;
+  --primary-danger-text: #1d0d12;
+  --badge-live-bg: #16342a;
+  --badge-live-line: #2c6b52;
+  --stop-subagent-line: #8a4a56;
+  --badge-ownership-ownedelsewhere-bg: #3a1f22;
+  --badge-ownership-ownedelsewhere-line: #7a3a41;
+  --menu-danger-text: #ff9fb0;
+  --copy-manual-note-text: #ffd479;
+  --syn-add-bg: #1a2e1f;
+  --syn-del-text: #ff9b9b;
+  --syn-del-bg: #33191d;
+  --mark-failed-text: #ff6b6b;
+  --studio-notice-text: #f0d9a0;
+  --activity-dot-failed-bg: #d9666e;
+  --field-invalid-line: #c25f5f;
+  --count-turn-text: #0e1f17;
+  --title-hover-bg: #ffffff0d;
+  --ws-qa-choice-ok-bg: #2f6f4c;
+  --st-status-bad-line: #6b3434;
+  --pane-tab-bg: #ffffff08;
+  --git-renamed-text: #8fb8ff;
+  --git-conflict-text: #ff9f6e;
+  --git-conflict-bg: #ff9f6e22;
+  --cg-add-bg: #17301f;
+  --cg-del-bg: #35191d;
+  --cg-discard-text: #f0a0b0;
+  --ar-switch-text: #ffd98a;
+}
+
+/* AIB teal (light): the same direction on warm paper. Teal stays saturated; status colours keep 3:1 as dots and 4.5:1 as text. */
+/* ---- base element rules, copied from outputs/agent-studio/chat.css ---- */
+:root { font-family: Segoe UI, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+* { box-sizing: border-box; }
+button, input, textarea, select { font: inherit; }
+button { border: 1px solid var(--line-control); background: var(--button-bg); color: var(--text); padding: 9px 14px; border-radius: 6px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.primary:disabled { opacity: 1; background: var(--primary-disabled-bg); border-color: var(--primary-disabled-line); color: var(--on-accent-disabled); }
+input, select, textarea { background: var(--bg-field); color: var(--text); border: 1px solid var(--line-field); border-radius: 6px; padding: 11px; min-width: 0; }
+input::placeholder { color: var(--text-faint); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+[hidden] { display: none !important; }
+aside { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; }
+/* ---- settings.css, copied from outputs/agent-studio/settings.css ---- */
+/* Settings page: covers the chat area only (the chat list stays visible). */
+main {
+  position: relative;
+}
+.side-settings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  width: 100%;
+  height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+.side-settings:hover,
+.side-settings:focus-visible {
+  background: var(--side-settings-bg);
+  color: var(--text);
+}
+.side-settings span:nth-child(2) {
+  flex: 1;
+}
+.side-settings kbd {
+  font:
+    12px Consolas,
+    monospace;
+  border: 1px solid var(--line-control);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--kbd-text-2);
+  background: var(--bg-inset);
+}
+body.settings-open .side-settings {
+  color: var(--link);
+}
+
+/* The page covers the chat column and the Activity column; the chat list stays. It is zoomed with the rest of the interface
+   (textsize.css, Interface size), so its left edge, already the scaled --side-w, is divided by that zoom, and it keeps no
+   Activity margin: the settings get the whole width instead of being squeezed between the panels. */
+.st-page {
+  position: absolute;
+  inset: 0 0 0 var(--side-w, 240px);
+  margin-right: 0 !important;
+  z-index: 40;
+  display: flex;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 0;
+  container-type: inline-size;
+}
+html[data-ui-scaled] .st-page {
+  left: calc(var(--side-w, 240px) / var(--ui-scale, 1));
+}
+.st-page[hidden] {
+  display: none;
+}
+@media (max-width: 1100px) {
+  .st-page,
+  html[data-ui-scaled] .st-page {
+    left: 0;
+  }
+}
+.st-frame {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+.st-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 12px;
+  border-right: 1px solid var(--line);
+  background: var(--bg-inset);
+}
+.st-search {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.st-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.st-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: left;
+}
+.st-section:hover {
+  background: var(--side-settings-bg);
+}
+.st-section.active {
+  background: var(--st-section-active-bg);
+  color: var(--text-bright);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.st-section.empty {
+  opacity: 0.45;
+}
+.st-section:focus-visible,
+.st-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.st-count {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg-field);
+  border-radius: 9px;
+  padding: 0 7px;
+}
+.st-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.st-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 28px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.st-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.st-close {
+  margin: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.st-close:hover {
+  background: var(--button-bg);
+  color: var(--text-bright);
+}
+.st-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 28px 40px;
+  max-width: 860px;
+  width: 100%;
+}
+.st-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-row);
+  padding: 14px 16px;
+  margin: 0 0 14px;
+}
+.st-card-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.st-group {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.st-note {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.st-note.bad,
+.st-error,
+.st-hint.warn {
+  color: var(--st-note-bad-text);
+}
+.st-hint.warn {
+  color: var(--st-hint-warn-text);
+}
+.st-note.dim {
+  opacity: 0.8;
+}
+.st-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.st-agent {
+  border: 1px solid var(--st-agent-line);
+  border-radius: 8px;
+  background: var(--select-option-bg);
+  padding: 10px 12px;
+  margin: 0 0 10px;
+}
+.st-agent.off {
+  opacity: 0.65;
+}
+.st-agent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.st-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--st-letter-bg);
+  color: var(--chip-icon-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-tag {
+  font-size: 11px;
+  color: var(--muted);
+}
+.st-status {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-control);
+}
+.st-status.dim {
+  color: var(--status-idle);
+  background: var(--chip-idle-bg);
+  border-color: var(--chip-idle-line);
+}
+.st-status.ok {
+  color: var(--st-status-ok-text);
+  background: var(--chip-done-bg);
+  border-color: var(--st-status-ok-line);
+}
+.st-status.bad {
+  color: var(--st-note-bad-text);
+  border-color: var(--st-status-bad-line);
+}
+.st-status.warn {
+  color: var(--st-status-warn-text);
+  background: var(--chip-needs-bg);
+  border-color: var(--st-status-warn-line);
+}
+.st-command {
+  display: block;
+  margin: 6px 0 0;
+  font:
+    12px Consolas,
+    monospace;
+  color: var(--st-command-text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.st-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.st-actions button,
+.st-card > button,
+.st-facts + button {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.st-danger {
+  color: var(--st-note-bad-text);
+}
+.st-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.st-toggle input {
+  margin: 0;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
+.st-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.st-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.st-field .st-label {
+  color: var(--text-3);
+}
+.st-field input,
+.st-field textarea,
+.st-field select {
+  width: 100%;
+  max-width: none;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.st-field textarea {
+  display: block;
+  resize: vertical;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.st-env-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  padding: 4px 0;
+  border-top: 0;
+}
+.st-env-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.st-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.st-form .primary,
+.st-add {
+  width: auto;
+  margin: 0;
+}
+.st-line {
+  display: grid;
+  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px 0;
+  border-top: 1px solid var(--st-line);
+}
+.st-line:first-of-type {
+  border-top: 0;
+}
+.st-line-name {
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-line button {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.st-add-project {
+  margin-top: 10px;
+  max-width: 320px;
+  width: 100%;
+  padding: 8px;
+}
+.st-keys {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+.st-keys li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--st-line);
+  font-size: 13px;
+}
+.st-kbd {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+}
+.st-kbd kbd {
+  font:
+    11px Consolas,
+    monospace;
+  border: 1px solid var(--line-control);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--kbd-text-2);
+  background: var(--bg-inset);
+}
+.st-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 18px;
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.st-facts dt {
+  color: var(--muted);
+}
+.st-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: Consolas, monospace;
+}
+/* Label on the left, its control beside it, like the other sections (the page's plain `label` rule is a centred column). */
+.st-notify .notify-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  text-align: left;
+  gap: 12px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.st-notify .notify-row > span {
+  flex: 0 1 260px;
+}
+.st-notify select {
+  max-width: 240px;
+}
+.st-notify .notify-muted {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.st-notify .notify-muted button,
+.st-notify > button {
+  margin: 6px 0 0;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.st-notify .note {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.st-notify .note.warn {
+  color: var(--st-hint-warn-text);
+}
+.st-flash {
+  position: fixed;
+  right: 24px;
+  bottom: 20px;
+  background: var(--st-section-active-bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .st-frame {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .st-nav {
+    flex-direction: column;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
+  }
+  .st-sections {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .st-section {
+    width: auto;
+  }
+  .st-content {
+    padding: 14px 16px 30px;
+  }
+  .st-line {
+    grid-template-columns: 1fr 1fr;
+  }
+  .st-line-name {
+    grid-column: 1/-1;
+  }
+}
+.st-agent-head button {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.st-agent-head .st-primary {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--st-primary-text);
+  font-weight: 600;
+}
+.st-agent-head .st-primary:hover {
+  background: var(--accent-wash-2);
+  color: var(--text-bright);
+}
+/* An Install that cannot run yet (a prerequisite is missing): the app's disabled primary (chat.css .primary:disabled), a solid
+   teal wash with readable text, not the half-transparent default. */
+.st-agent-head .st-primary:disabled,
+.st-agent-head .st-primary:disabled:hover {
+  opacity: 1;
+  background: var(--primary-disabled-bg);
+  box-shadow: inset 0 0 0 1px var(--primary-disabled-line);
+  color: var(--on-accent-disabled);
+  cursor: default;
+}
+.st-agent-head .st-cancel {
+  margin-left: auto;
+}
+.st-progress {
+  height: 6px;
+  margin: 10px 0 0;
+  border-radius: 3px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.st-progress-bar {
+  height: 6px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.st-note .st-link,
+.st-agent-head .st-link,
+.st-beta-install .st-link,
+.st-beta-term-head .st-link,
+.st-beta-key .st-link {
+  margin: 0 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.st-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+}
+.st-radios .st-radio {
+  margin: 0;
+}
+/* Theme picker: a grid of choices, each with a small preview painted in that theme's own tokens (data-theme on .st-swatch). */
+.st-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+.st-theme-group {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.st-theme {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  color: var(--text);
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.st-theme:hover {
+  background: var(--hover);
+}
+.st-theme:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.st-theme:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.st-theme input {
+  margin: 0;
+}
+.st-theme-name {
+  font-size: 13px;
+}
+.st-swatch-pair {
+  display: inline-flex;
+  flex: none;
+}
+.st-swatch-pair .st-swatch {
+  width: 26px;
+}
+.st-swatch-pair .st-swatch-side {
+  display: none;
+}
+.st-swatch {
+  display: inline-flex;
+  flex: none;
+  width: 52px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.st-swatch-side {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 16px;
+  padding: 4px 2px;
+  background: var(--panel);
+}
+.st-swatch-row {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.st-swatch-row.sel {
+  background: var(--accent-wash);
+  box-shadow: inset 2px 0 0 var(--sel-bar);
+}
+.st-swatch-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+}
+.st-swatch-line {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text);
+}
+.st-swatch-line.short {
+  width: 60%;
+  background: var(--muted);
+}
+.st-swatch-dots {
+  display: flex;
+  gap: 2px;
+}
+.st-swatch-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.st-swatch-dot.working {
+  background: var(--status-working);
+}
+.st-swatch-dot.needs {
+  background: var(--status-needs);
+}
+.st-swatch-dot.done {
+  background: var(--status-done);
+}
+.st-swatch-btn {
+  width: 14px;
+  height: 5px;
+  margin-top: auto;
+  border-radius: 2px;
+  background: var(--accent);
+}
+/* Updates card (updates-ui.js): its buttons sit apart, in the settings' own button size. */
+.st-updates .st-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.st-updates .st-row button {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+/* Too narrow for the section list beside the settings (a big Interface size in a small window): the list goes above them, as
+   one wrapping row. Last in the file, so it wins over the rules above. */
+@container (max-width: 640px) {
+  .st-frame {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .st-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
+    max-height: calc(40vh / var(--ui-scale, 1));
+  }
+  .st-sections {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .st-section {
+    width: auto;
+    gap: 6px;
+  }
+  .st-content {
+    padding: 14px 16px 32px;
+  }
+  .st-head {
+    padding: 12px 16px 8px;
+  }
+}
+
+/* ---- Beta agents (settings-ui.js renderAgentsBeta): the card's lead line, each agent's cost line, the install command when the
+   agent is missing, the API key box, and the sign-in terminal panel (ACP terminal auth; an xterm from terminal-ui.js runSignin). */
+.st-beta-lead {
+  margin: 0 0 10px;
+}
+.st-beta-cost {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.st-beta-install {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.st-beta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+.st-beta-row button {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.st-beta-command .st-command {
+  margin: 2px 0 0;
+  user-select: all;
+}
+.st-beta-docs,
+.st-beta-keylink {
+  font-size: 12px;
+}
+.st-beta-keylink {
+  align-self: flex-start;
+}
+/* Links that start their own line sit on the same left edge as the hint lines and commands (no leading 4px). A Copy that wraps
+   inside a command row starts at the row's edge too: the row's gap spaces it otherwise. */
+.st-beta-key .st-beta-keylink,
+.st-beta-install .st-beta-docs,
+.st-beta-row .st-link {
+  margin-left: 0;
+}
+/* "Install uv first": its own line under the card's header, so Install and the status badge keep their place. */
+.st-beta-blocked {
+  margin: 4px 0 0;
+}
+.st-beta-needs {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.st-beta-needs-list {
+  margin: 2px 0 0;
+  padding: 0 0 0 18px;
+}
+.st-beta-need {
+  margin: 2px 0;
+}
+.st-beta-need.bad .st-beta-need-text {
+  font-weight: 600;
+}
+.st-beta-blocked {
+  font-size: 12px;
+}
+.st-beta-key {
+  margin: 8px 0 0;
+}
+.st-beta-url {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+.st-beta-url .st-label {
+  color: var(--text-3);
+}
+.st-beta-key .st-beta-row input {
+  min-width: 220px;
+  flex: 1 1 220px;
+}
+.st-beta-term {
+  margin: 8px 0 0;
+  border: 1px solid var(--st-agent-line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.st-beta-term-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.st-beta-term-title {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  font:
+    12px Consolas,
+    monospace;
+}
+.st-beta-term-view {
+  height: 220px;
+  background: var(--term-bg);
+  padding: 4px;
+}
+.st-beta-term > .st-note {
+  margin: 4px 8px 6px;
+}
+
+/* Settings > Remote control (devices-ui.js): phone access, the four setup steps, pairing and the paired phones. */
+.dv-sub {
+  margin: 14px 0 6px;
+  font-size: 13px;
+}
+.dv-off {
+  opacity: 0.6;
+  cursor: default;
+}
+.dv-checks {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.dv-checks li {
+  margin: 0 0 10px;
+}
+.dv-check-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.dv-checks li > .st-note,
+.dv-checks li > .st-actions {
+  margin-left: 22px;
+}
+.dv-mark {
+  width: 14px;
+  flex: none;
+  text-align: center;
+  color: var(--muted);
+}
+.dv-checks li.ok .dv-mark {
+  color: var(--st-status-ok-text);
+}
+.dv-command {
+  flex: 1 1 260px;
+  margin: 0;
+}
+.dv-approve,
+.dv-pair {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-control);
+  border-radius: 8px;
+  background: var(--select-option-bg);
+}
+.dv-approve {
+  border-color: var(--st-status-warn-line);
+}
+.dv-check-words {
+  font-size: 15px;
+}
+.dv-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+/* the page's plain label rule adds 18 px above and below: switches sit close together */
+.dv-scopes .st-toggle {
+  margin: 0;
+}
+/* a paired phone's switches: one wrapping line under its name */
+.dv-device .dv-scopes {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+/* Start new chats: a child of Send, on its own line indented under it (greyed out while Send is off) */
+.dv-child-row {
+  flex-basis: 100%;
+  padding-left: 24px;
+}
+.dv-child-row .st-toggle {
+  margin: 0;
+}
+.dv-child-row .st-toggle:has(input:disabled) {
+  opacity: 0.55;
+}
+.dv-child-note {
+  margin: 2px 0 0;
+}
+.dv-pair-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+.dv-qr {
+  width: 176px;
+  height: 176px;
+  flex: none;
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+.dv-pair-side {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.dv-words {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.dv-phone-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv-list {
+  margin: 0 0 4px;
+}
+.dv-activity {
+  max-height: 240px;
+  overflow: auto;
+  margin: 10px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+/* The "Open" link of a checklist step: an external link that looks like the neighbouring buttons. */
+.dv-checks .dv-open {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: var(--button-bg);
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+.dv-checks .dv-open:hover {
+  border-color: var(--accent);
+}
+
+/* Remote control's setup steps: a number (a check when done, ! on an error), the step's notes, progress, confirm and buttons
+   indented under its title; a step that comes later shows its title only, dimmed. */
+.dv-steps li.later > .dv-check-head {
+  opacity: 0.6;
+}
+.dv-steps li.err .dv-mark {
+  color: var(--st-note-bad-text);
+}
+.dv-steps li.now .dv-mark,
+.dv-steps li.wait .dv-mark {
+  color: var(--accent);
+}
+.dv-checks li > .dv-progress,
+.dv-checks li > .dv-confirm,
+.dv-checks li > .dv-details,
+.dv-checks li > .dv-term {
+  margin-left: 22px;
+}
+.dv-progress {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv-checks .dv-progress li {
+  margin: 0 0 4px;
+}
+.dv-progress li.now {
+  color: var(--text);
+}
+.dv-confirm {
+  padding: 8px 10px;
+  border: 1px solid var(--st-status-warn-line);
+  border-radius: 6px;
+  color: var(--text);
+}
+.dv-details {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.dv-steps .dv-open {
+  align-self: center;
+  font-size: 12px;
+}
+.dv-good {
+  color: var(--st-status-ok-text);
+}
+.dv-changes {
+  margin: 12px 0 0;
+}
+.dv-changes summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dv-changes .st-command {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.dv-remind {
+  margin: 4px 0 8px;
+}
+.dv-remind .st-toggle {
+  margin: 0;
+}
+
+/* ---- mockup frame only (not part of the design) ---- */
+body { margin: 0; height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.mk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-inset); border-bottom: 1px dashed var(--line-strong); font-size: 12px; color: var(--muted); }
+.mk-bar button { padding: 4px 10px; font-size: 12px; }
+.mk-bar button.on { border-color: var(--accent); color: var(--text-bright); background: var(--accent-wash); }
+.mk-app { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 0; }
+.mk-app aside { display: flex; flex-direction: column; padding: 0; }
+.mk-side-top { flex: 1; padding: 18px 14px; font-size: 13px; color: var(--muted); }
+.mk-side-top .mk-brand { color: var(--heading-tint-text); font-size: 18px; margin: 0 0 16px; }
+.mk-side-top .mk-proj { padding: 6px 8px; border-radius: 6px; }
+.mk-side-top .mk-badge { font-size: 10px; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line-control); border-radius: 4px; }
+main { position: relative; min-height: 0; --side-w: 0px; }
+/* ---- NEW for this section (proposed additions to settings.css) ---- */
+.wl-lead { margin: 0 0 10px; }
+.wl-distro .st-tag { margin-left: 2px; }
+.wl-facts { margin: 4px 0 8px; }
+.wl-checks { margin: 4px 0 0; }
+.wl-checks li { margin: 0 0 8px; }
+.wl-checks .dv-check-head { font-size: 13px; }
+.wl-checks .wl-state { margin-left: auto; font-size: 12px; color: var(--muted); }
+.wl-checks li.bad .dv-mark, .wl-checks li.bad .wl-state { color: var(--st-note-bad-text); }
+.wl-checks li.ok .wl-state { color: var(--st-status-ok-text); }
+.wl-checks li.opt .dv-mark { color: var(--muted); }
+.wl-checks li > .st-beta-row, .wl-checks li > .st-command { margin-left: 22px; }
+.wl-limits { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.wl-limits b { color: var(--text); font-weight: 600; }
+.wl-usage { display: grid; grid-template-columns: max-content max-content; gap: 4px 18px; margin: 4px 0 10px; font-size: 12px; }
+.wl-usage dt { color: var(--muted); }
+.wl-usage dd { margin: 0; font-family: Consolas, monospace; text-align: right; }
+.wl-foot { margin: 10px 0 0; }
+.wl-term-line { color: var(--term-fg); font: 12px Consolas, monospace; white-space: pre; margin: 0; padding: 2px 4px; }
+</style>
+</head>
+<body>
+<div class="mk-bar" role="toolbar" aria-label="Mockup state">
+  <span>Mockup state (not part of the design):</span>
+  <span id="mkStates"></span>
+</div>
+<div class="mk-app">
+  <aside>
+    <div class="mk-side-top">
+      <p class="mk-brand">AIB</p>
+      <div class="mk-proj">app <span class="mk-badge">Ubuntu</span></div>
+      <div class="mk-proj">api <span class="mk-badge">Ubuntu</span></div>
+      <div class="mk-proj">site</div>
+    </div>
+    <button class="side-settings" type="button"><span>⚙</span><span>Settings</span><kbd>Ctrl+,</kbd></button>
+  </aside>
+  <main>
+    <section class="st-page" role="dialog" aria-label="Settings">
+      <div class="st-frame">
+        <nav class="st-nav" aria-label="Settings sections">
+          <input class="st-search" type="search" placeholder="Search settings" aria-label="Search settings">
+          <div class="st-sections" id="mkNav"></div>
+        </nav>
+        <div class="st-main">
+          <header class="st-head"><h2>AIB Linking (WSL)</h2><button class="st-close" type="button" aria-label="Close settings">×</button></header>
+          <div class="st-content" id="mkContent"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+(function () {
+  'use strict';
+  var el = function (tag, text, cls) {
+    var n = document.createElement(tag);
+    if (text != null && text !== '') n.textContent = String(text);
+    if (cls) n.className = cls;
+    return n;
+  };
+  var add = function (parent) {
+    for (var i = 1; i < arguments.length; i++) if (arguments[i]) parent.append(arguments[i]);
+    return parent;
+  };
+  var button = function (text, cls, disabled, title) {
+    var b = el('button', text, cls || '');
+    b.type = 'button';
+    if (disabled) b.disabled = true;
+    if (title) b.title = title;
+    return b;
+  };
+  var note = function (text, cls) { return el('p', text, 'st-note' + (cls ? ' ' + cls : '')); };
+  var card = function (title, note0) {
+    var c = el('section', null, 'st-card');
+    c.append(el('h3', title, 'st-card-title'));
+    if (note0) c.append(note(note0));
+    return c;
+  };
+  var status = function (text, cls) { return el('span', text, 'st-status ' + cls); };
+  var code = function (text) { return el('code', text, 'st-command'); };
+  var copyRow = function (cmd, extra) {
+    var row = el('div', null, 'st-beta-row st-beta-command');
+    row.append(code(cmd), button('Copy', 'st-link'));
+    if (extra) row.append(extra);
+    return row;
+  };
+  var facts = function (rows) {
+    var dl = el('dl', null, 'st-facts wl-facts');
+    rows.forEach(function (r) { dl.append(el('dt', r[0]), el('dd', r[1])); });
+    return dl;
+  };
+  var actions = function () {
+    var a = el('div', null, 'st-actions');
+    for (var i = 0; i < arguments.length; i++) if (arguments[i]) a.append(arguments[i]);
+    return a;
+  };
+
+  var SECTIONS = ['AIB Linking', 'AIB Linking (WSL)', 'Defaults', 'Notifications', 'Remote control', 'Allow rules', 'Editors', 'Keyboard', 'Appearance', 'AIB server'];
+  var nav = document.getElementById('mkNav');
+  SECTIONS.forEach(function (s) {
+    var b = el('button', null, 'st-section' + (s === 'AIB Linking (WSL)' ? ' active' : ''));
+    b.type = 'button';
+    b.append(el('span', s));
+    if (s === 'AIB Linking (WSL)') b.setAttribute('aria-current', 'page');
+    nav.append(b);
+  });
+
+  var LEAD = 'Run Claude Code, Codex and the other ACP agents inside your WSL distros, next to your Windows agents, all on this PC. AIB installs them into its own folder in each distro (~/.aib-server), with the versions it reviewed.';
+  var KEEP = 'A distro keeps running while a WSL project is open or a WSL chat works, also after you quit AIB. When nothing works, AIB lets go and WSL stops it by its own rules.';
+  var BETA_NOTE = "These connect the same way but haven't been tested by us yet. Tell us what breaks.";
+  var NVM = 'curl -fsSLo "$t" https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh && echo "<sha256>  $t" | sha256sum -c && bash "$t" && . "$HOME/.nvm/nvm.sh" && nvm install --lts';
+
+  // ---- one distro's state for a mockup state -----------------------------------------------------------------------
+  function ubuntu(over) {
+    var d = {
+      name: 'Ubuntu', letter: 'U', linux: 'Ubuntu 24.04.4 LTS · x86_64', isDefault: true, state: 'ready',
+      helper: '0.1.0-beta.10', folder: '1.4 GB', home: '/home/kirk',
+      node: { state: 'ok', text: 'Node.js 24.22.1 with npm 11.6' },
+      git: 'ok', curl: 'ok', free: '803 GB free',
+      claudeCmd: '2.1.302 (your own install)', codexCmd: '0.166.0 (your own install)',
+      claude: { kind: 'ready', version: '0.102.0', by: 'aib', signin: 'Ready' },
+      codex: { kind: 'ready', version: '2.6.0', by: 'aib', signin: 'Ready' },
+      omp: { kind: 'missing' },
+    };
+    for (var k in over || {}) d[k] = over[k];
+    return d;
+  }
+
+  // ---- cards -------------------------------------------------------------------------------------------------------
+  function overview(distros, extra) {
+    var c = card('WSL on this PC');
+    c.append(note(LEAD, 'wl-lead'));
+    distros.concat(extra || []).forEach(function (d) {
+      var row = el('div', null, 'st-agent wl-distro');
+      var head = el('div', null, 'st-agent-head');
+      head.append(el('span', d.letter, 'st-letter'), el('strong', d.name));
+      head.append(el('span', d.tag || ('WSL 2 · ' + d.linux.split(' · ')[0].replace(' LTS', '') + (d.isDefault ? ' · WSL default' : '')), 'st-tag'));
+      var st = { ready: ['Ready', 'ok'], off: ['Not running', 'dim'], stopped: ['Stopped', 'bad'], starting: ['Starting', 'warn'], unsupported: ['Not supported', 'dim'] }[d.state];
+      head.append(status(st[0], st[1]));
+      row.append(head);
+      if (d.why) row.append(note(d.why, 'dim'));
+      c.append(row);
+    });
+    c.append(note(KEEP));
+    return c;
+  }
+
+  function distroCard(d) {
+    var c = card(d.name);
+    if (d.state === 'ready') {
+      c.append(facts([
+        ['State', 'Ready'],
+        ['Linux', d.linux],
+        ['AIB helper', d.helper + ' · checked'],
+        ['AIB folder', '~/.aib-server · ' + d.folder],
+        ['Home', d.home],
+      ]));
+      c.append(actions(button('Open ' + d.name + ' terminal'), button('Repair AIB helper', '', false, 'Check the AIB programs in ' + d.name + ' against their checksums and copy them again')));
+    } else if (d.state === 'stopped') {
+      c.append(facts([['State', 'Stopped'], ['Linux', d.linux], ['AIB helper', d.helper + ' (not running)']]));
+      c.append(note(d.name + ' stopped (Windows restart or wsl --shutdown). Chats in ' + d.name + ' stopped with it; their history is kept.', 'bad'));
+      c.append(actions(button('Reconnect', 'primary', false, 'Start ' + d.name + ' and connect AIB to it again')));
+    } else if (d.state === 'off') {
+      c.append(facts([['State', 'Not running'], ['Linux', d.linux]]));
+      c.append(note(d.name + ' is not running. AIB starts it when a WSL project needs it. Its checklist and agents show once it runs.'));
+      c.append(actions(button('Start ' + d.name + ' and check', 'primary')));
+    }
+    return c;
+  }
+
+  function check(cls, mark, title, state, extra) {
+    var li = el('li', null, cls);
+    var head = el('div', null, 'dv-check-head');
+    head.append(el('span', mark, 'dv-mark'), el('span', title), el('span', state, 'wl-state'));
+    li.append(head);
+    (extra || []).forEach(function (n) { li.append(n); });
+    return li;
+  }
+
+  function needsCard(d) {
+    var c = card('What ' + d.name + ' needs', 'AIB looks in ' + d.name + "'s login shell, the way your terminal there sees it.");
+    var ul = el('ul', null, 'dv-checks wl-checks');
+    if (d.node.state === 'ok') ul.append(check('ok', '✓', 'Node.js 22 or newer, with npm', d.node.text));
+    else {
+      ul.append(check('bad', '!', 'Node.js 22 or newer, with npm', d.node.text, [
+        note('Needed to install Claude Code, Codex and the npm Beta agents in ' + d.name + '. Install runs nvm, the way nodejs.org offers it for Linux, in a terminal here. It adds nvm to your home folder and shell start-up file; it needs no password.'),
+        copyRow(NVM),
+        actions(button('Install Node.js 24 (LTS) in ' + d.name, 'primary'), button('Open ' + d.name + ' terminal'), button('Check again', 'st-link')),
+      ]));
+    }
+    ul.append(check('ok', '✓', 'curl', 'found'));
+    if (d.git === 'ok') ul.append(check('ok', '✓', 'git', 'found 2.43.0'));
+    else ul.append(check('bad', '!', 'git', 'missing', [note('Needed for a chat\'s own copy, Changes and Merge. Until then chats work in the project folder. It needs your password, so run it yourself:'), copyRow('sudo apt install git'), actions(button('Open ' + d.name + ' terminal'), button('Check again', 'st-link'))]));
+    ul.append(check('ok', '✓', 'Free space in your home folder', d.free));
+    var cmdNote = function (agent, cmd, docs) {
+      return [note('Not needed for AIB chats: AIB\'s ' + agent + ' includes it. Install the ' + cmd + ' command only to use ' + agent + ' in your own terminal.', 'dim'), docs ? copyRow(docs) : null].filter(Boolean);
+    };
+    if (d.claudeCmd) ul.append(check('opt ok', '✓', 'claude command (optional)', d.claudeCmd));
+    else ul.append(check('opt', '–', 'claude command (optional)', 'not installed', cmdNote('Claude Code', 'claude', 'curl -fsSL https://claude.ai/install.sh | bash')));
+    if (d.codexCmd) ul.append(check('opt ok', '✓', 'codex command (optional)', d.codexCmd));
+    else ul.append(check('opt', '–', 'codex command (optional)', 'not installed', cmdNote('Codex', 'codex', 'npm install -g @openai/codex')));
+    c.append(ul);
+    return c;
+  }
+
+  function agentRow(d, id, a) {
+    var NAMES = { claude: ['Claude Code', 'C', '0.102.0', 'about 420 MB', 'node ~/.aib-server/agents/claude/', '/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'], codex: ['Codex', 'X', '2.6.0', 'about 300 MB', 'node ~/.aib-server/agents/codex/', '/node_modules/@agentclientprotocol/codex-acp/dist/index.js'], omp: ['OMP', 'O'] };
+    var n = NAMES[id];
+    var row = el('div', null, 'st-agent');
+    var head = el('div', null, 'st-agent-head');
+    head.append(el('span', n[1], 'st-letter'), el('strong', n[0]));
+    if (a.by === 'aib') head.append(el('span', 'Installed by AIB', 'st-tag'));
+    else if (a.by === 'own') head.append(el('span', 'Your own install', 'st-tag'));
+    row.append(head);
+    var nodeMissing = d.node.state !== 'ok';
+    if (a.kind === 'missing' && id === 'omp') {
+      head.append(status('Not installed', 'warn'));
+      row.append(note('AIB does not install OMP. Install it in ' + d.name + ' as its docs say, then choose Check again.', 'dim'));
+      row.append(actions(toggle(true), button('Open ' + d.name + ' terminal'), button('Check again', 'st-link')));
+      return row;
+    }
+    if (a.kind === 'missing') {
+      head.append(status('Not installed', 'warn'));
+      var go = button(a.failed ? 'Retry' : 'Install in ' + d.name, 'st-primary', nodeMissing, nodeMissing ? 'Needs Node.js in ' + d.name + ' first' : 'AIB installs ' + n[0] + ' ' + n[2] + ' into its own folder in ' + d.name + ' (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in ' + d.name + ' changes.');
+      head.append(go);
+      if (nodeMissing) {
+        row.append(note('Install Node.js first', 'dim st-beta-blocked'));
+        var needs = el('div', null, 'st-beta-needs');
+        needs.append(el('span', 'Needs first:', 'st-hint'));
+        var ul = el('ul', null, 'st-beta-needs-list');
+        var li = el('li', null, 'st-beta-need bad');
+        li.append(el('span', 'Node.js 22 or newer: missing', 'st-beta-need-text'), ' ', button('Install Node.js 24 (LTS)', 'st-link'));
+        ul.append(li);
+        needs.append(ul);
+        row.append(needs);
+      } else if (a.failed) {
+        row.append(note(a.failed, 'bad'));
+      } else {
+        row.append(note('One click: AIB installs ' + n[0] + ' ' + n[2] + ' (' + n[3] + ') into ~/.aib-server. It comes with ' + n[0] + '\'s own program, so nothing else is needed in ' + d.name + '.'));
+      }
+      var how = el('div', null, 'st-beta-install');
+      how.append(el('span', 'Or install it yourself in ' + d.name + ':', 'st-hint'), copyRow(id === 'claude' ? 'npm i -g @agentclientprotocol/claude-agent-acp' : 'npm i -g @agentclientprotocol/codex-acp'));
+      row.append(how);
+      row.append(actions(toggle(true), button('Open ' + d.name + ' terminal')));
+      return row;
+    }
+    if (a.kind === 'installing') {
+      head.append(button('Cancel', 'st-cancel'));
+      var bar = el('div', null, 'st-progress');
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-valuenow', String(a.percent));
+      var fill = el('div', null, 'st-progress-bar');
+      fill.style.width = a.percent + '%';
+      bar.append(fill);
+      row.append(bar, note('Installing ' + n[0] + ' in ' + d.name + '… Downloading and unpacking… about 40 seconds. It goes on if you close Settings or restart AIB.'));
+      row.append(actions(toggle(true)));
+      return row;
+    }
+    // found
+    head.append(status(a.signin, a.signin === 'Ready' ? 'ok' : 'warn'));
+    if (a.signin === 'Needs sign-in') head.append(button('Sign in', 'st-primary'));
+    head.append(button('Check again', 'st-link'));
+    if (a.update) head.append(button('Update in ' + d.name, 'st-primary'));
+    row.append(el('span', 'Launcher', 'st-hint'), code(a.by === 'aib' ? n[4] + a.version + n[5] : a.launcher));
+    if (a.update) row.append(note('AIB now uses ' + n[0] + ' ' + n[2] + '; ' + d.name + ' has ' + a.version + '. The old copy keeps working until the new one is complete; chats that use it keep it until they end.'));
+    if (id === 'codex' && a.signin === 'Ready') {
+      var lim = el('p', null, 'wl-limits');
+      lim.append('Usage limits of ' + d.name + '\'s Codex sign-in: ', el('b', '5 h 32% used'), ' · ', el('b', 'week 10% used'), ' (4 min ago). Same ChatGPT account as on Windows means the same limits.');
+      row.append(lim);
+    }
+    if (a.signin === 'Needs sign-in') row.append(note('Sign in runs ' + n[0] + '\'s own sign-in in a ' + d.name + ' terminal here; its page opens in your Windows browser. ' + d.name + ' signs in separately from Windows. AIB does not see your password or sign-in details.'));
+    row.append(actions(toggle(true), a.by === 'aib' ? button('Uninstall', 'st-danger', false, 'Delete the copy AIB installed in ' + d.name + '. Your sign-in stays.') : null));
+    return row;
+  }
+  function toggle(on) {
+    var l = el('label', null, 'st-toggle'), cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = on;
+    l.append(cb, el('span', on ? 'On' : 'Off'));
+    return l;
+  }
+
+  function agentsCard(d) {
+    var c = card('Agents in ' + d.name);
+    c.append(agentRow(d, 'claude', d.claude), agentRow(d, 'codex', d.codex), agentRow(d, 'omp', d.omp));
+    var f = note('"Found" means the program exists in ' + d.name + '. Sign-in state comes from a quick status check AIB runs in ' + d.name + ' when Settings opens and after an install or sign-in. Your Windows agents are in ', 'wl-foot');
+    f.append(button('AIB Linking', 'st-link'), '.');
+    c.append(f);
+    return c;
+  }
+
+  function betaCard(d) {
+    var c = card('Beta agents in ' + d.name);
+    c.append(note(BETA_NOTE, 'st-beta-lead'));
+    var rows = [
+      ['G', 'GitHub Copilot CLI', 'Needs a GitHub Copilot plan (the Free plan works)', 'npm install -g @github/copilot', 'npm'],
+      ['Q', 'Qwen Code', "Free CLI · model use is billed by your API key's provider", 'npm install -g @qwen-code/qwen-code', 'npm'],
+      ['C', 'Cursor CLI', 'Paid plan', 'curl https://cursor.com/install -fsS | bash', 'terminal'],
+    ];
+    rows.forEach(function (r) {
+      var row = el('div', null, 'st-agent off');
+      var head = el('div', null, 'st-agent-head');
+      head.append(el('span', r[0], 'st-letter'), el('strong', r[1]), status('Not installed', 'warn'), button('Install', 'st-primary', d.node.state !== 'ok' && r[4] === 'npm'));
+      row.append(head, el('p', r[2], 'st-beta-cost'));
+      var how = el('div', null, 'st-beta-install');
+      how.append(el('span', r[4] === 'npm' ? 'Or install it yourself in ' + d.name + ':' : 'Install runs this in a terminal here, in ' + d.name + ' (it installs into ~/.local/bin):', 'st-hint'), copyRow(r[3]));
+      row.append(how, actions(toggle(false)));
+      c.append(row);
+    });
+    c.append(actions(button('Show all 10 Beta agents')));
+    return c;
+  }
+
+  function aibCard(d, refused) {
+    var c = card('AIB in ' + d.name);
+    c.append(note('What AIB keeps in ' + d.name + ', all in ~/.aib-server. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it.'));
+    var dl = el('dl', null, 'wl-usage');
+    [['AIB programs (keeper, helper)', '190 MB'], d.claude.version ? ['Claude Code ' + d.claude.version, '425 MB'] : null, d.codex.version ? ['Codex ' + d.codex.version, '457 MB'] : null, d.claude.version ? ['npm download cache', '210 MB'] : null, ['Chat copies of this AIB (3)', '96 MB'], ['In all', d.folder]].filter(Boolean).forEach(function (r) {
+      dl.append(el('dt', r[0]), el('dd', r[1]));
+    });
+    c.append(dl);
+    if (refused) c.append(note('2 chat copies in ' + d.name + ' have changes that are not committed: app · Fix login, api · Add tests. Merge or discard them first.', 'bad'));
+    c.append(actions(button('Remove AIB from ' + d.name, 'st-danger', false, 'Stops AIB\'s helper in ' + d.name + ' and deletes ~/.aib-server. The next WSL project sets AIB up again.')));
+    return c;
+  }
+
+  function group(d, refused) {
+    var out = [el('h4', d.name, 'st-group'), distroCard(d)];
+    if (d.state !== 'ready') return out;
+    return out.concat([needsCard(d), agentsCard(d), betaCard(d), aibCard(d, refused)]);
+  }
+
+  var DOCKER = { name: 'docker-desktop', letter: 'D', tag: 'WSL 2', state: 'unsupported', why: "docker-desktop is Docker's own distro; AIB cannot run there.", linux: '' };
+
+  var STATES = {
+    good: { label: 'All good', make: function () { var u = ubuntu(); return [overview([u], [DOCKER])].concat(group(u)); } },
+    node: { label: 'Missing Node.js', make: function () {
+      var u = ubuntu({ node: { state: 'bad', text: 'missing' }, claudeCmd: '', codexCmd: '', claude: { kind: 'missing' }, codex: { kind: 'missing' }, folder: '290 MB' });
+      return [overview([u])].concat(group(u)); } },
+    claude: { label: 'Missing claude CLI', make: function () {
+      var u = ubuntu({ claudeCmd: '', codexCmd: '', claude: { kind: 'missing' } });
+      return [overview([u])].concat(group(u)); } },
+    installing: { label: 'Installing', make: function () {
+      var u = ubuntu({ claudeCmd: '', claude: { kind: 'installing', percent: 46 } });
+      return [overview([u])].concat(group(u)); } },
+    update: { label: 'Update available', make: function () {
+      var u = ubuntu({ claude: { kind: 'ready', version: '0.98.1', by: 'aib', signin: 'Ready', update: true }, codex: { kind: 'ready', version: '2.6.0', by: 'aib', signin: 'Needs sign-in' } });
+      return [overview([u])].concat(group(u)); } },
+    error: { label: 'Error', make: function () {
+      var u = ubuntu({ codex: { kind: 'missing', failed: 'The install failed: npm could not reach registry.npmjs.org (ETIMEDOUT). Check the network in Ubuntu, then Retry. Nothing was left behind.' }, git: 'bad' });
+      return [overview([u])].concat(group(u, true)); } },
+    stopped: { label: 'Distro stopped', make: function () {
+      var u = ubuntu({ state: 'stopped' });
+      return [overview([u])].concat(group(u)); } },
+    nowsl: { label: 'No WSL on this PC', make: function () {
+      var c = card('WSL on this PC');
+      c.append(note('WSL is not installed on this PC. With it, AIB runs agents in Linux on this PC, in projects inside a distro, next to your Windows agents. Install it in an administrator PowerShell, then restart Windows:'));
+      c.append(copyRow('wsl --install'));
+      var links = el('div', null, 'st-actions');
+      var a = el('a', 'How to install WSL (Microsoft)', 'st-link st-beta-docs');
+      a.href = 'https://learn.microsoft.com/windows/wsl/install';
+      links.append(a, button('Check again', 'st-link'));
+      c.append(links);
+      return [c]; } },
+    two: { label: 'Two distros', make: function () {
+      var u = ubuntu();
+      var deb = { name: 'Debian', letter: 'D', linux: 'Debian 12 · x86_64', isDefault: false, state: 'off' };
+      var w1 = { name: 'Ubuntu-20.04', letter: 'U', tag: 'WSL 1', state: 'unsupported', why: 'Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2. Convert it in PowerShell (takes a few minutes; back it up first): wsl --set-version Ubuntu-20.04 2', linux: '' };
+      return [overview([u, deb], [w1, DOCKER])].concat(group(u), group(deb)); } },
+  };
+
+  var content = document.getElementById('mkContent');
+  var bar = document.getElementById('mkStates');
+  function show(id) {
+    content.replaceChildren.apply(content, STATES[id].make());
+    Array.prototype.forEach.call(bar.children, function (b) { b.classList.toggle('on', b.dataset.state === id); });
+  }
+  Object.keys(STATES).forEach(function (id) {
+    var b = button(STATES[id].label);
+    b.dataset.state = id;
+    b.addEventListener('click', function () { show(id); });
+    bar.append(b);
+  });
+  show('good');
+})();
+</script>
+</body>
+</html>

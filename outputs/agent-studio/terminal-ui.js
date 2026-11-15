@@ -1276,16 +1276,19 @@
 
   /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
   // step: '' for the sign-in; 'install' or 'prereq:<id>' for a setup terminal (the server picks the command from its catalog).
-  // distro: a WSL distro key; the sign-in then runs the agent's login inside that distro (wsl-ui.js, a WSL chat's sign-in card).
+  // distro: a WSL distro key; the sign-in then runs the agent's login inside that distro (wsl-ui.js, a WSL chat's sign-in card), and
+  // a setup step runs in that distro (Settings > AIB Linking (WSL): setup=wsl-node, the Node.js install).
   // args: a built-in agent's advertised sign-in args (a chat's sign-in card); the server adds the program.
-  function signinUrl(loc, agentId, cols, rows, step, distro, args) {
+  // start: a WSL sign-in may start a distro that is not running (only from a click that says so); never for anything else.
+  function signinUrl(loc, agentId, cols, rows, step, distro, args, start) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
     const q = new URLSearchParams(
       step
         ? { setup: agentId, step, cols: String(cols || 80), rows: String(rows || 24) }
         : { signin: agentId, cols: String(cols || 80), rows: String(rows || 24) },
     );
-    if (distro && !step) q.set('distro', distro);
+    if (distro) q.set('distro', distro);
+    if (distro && !step && start) q.set('start', '1');
     // A built-in agent's terminal sign-in (a chat's sign-in card): the advertised method's args; the server adds the program.
     if (!step && Array.isArray(args)) args.forEach((a) => q.append('arg', String(a)));
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
@@ -1343,7 +1346,7 @@
           // h.url(cols, rows): another socket address for the same panel (a distro's own shell, "Open Ubuntu terminal").
           const url = h.url
             ? h.url(root.location, term.cols, term.rows)
-            : signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.distro || '', h.args);
+            : signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.distro || '', h.args, !!h.start);
           const ws = new WS(url, protocols(token));
           ws.binaryType = 'arraybuffer';
           run.ws = ws;

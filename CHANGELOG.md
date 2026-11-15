@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- AIB Linking (WSL): each distro has its own On/Off switch per agent. Turning Claude Code off in Ubuntu no longer depends on, or
+  touches, its Windows switch: a new chat (or Continue) in a WSL project with an agent turned off for that distro says so ("Claude Code
+  is turned off for Ubuntu in Settings > AIB Linking (WSL)"), and Windows chats never read the distro switch.
+- AIB Linking (WSL): the agent rows of a distro now carry its sign-in state, whether AIB installed it (so it can be uninstalled), and
+  for Codex the usage limits of the distro's own sign-in (never mixed with Windows').
+- AIB Linking (WSL): Uninstall removes the copy of Claude Code or Codex that AIB installed in a distro; it refuses while that agent's
+  install or sign-in runs or a chat uses it, and never touches your own installs or your sign-in.
+- AIB Linking (WSL): a prerequisites check per distro (Node.js, npm, git, curl, free space), read without ever starting the distro.
+- AIB Linking (WSL): "Install Node.js in Ubuntu" runs nvm's installer in a terminal panel inside the distro, showing every command
+  first; the installer script is checked against a pinned checksum before it runs, then nvm installs the Node.js LTS. No sudo.
+- Node.js via nvm: one pinned nvm version everywhere AIB offers it (Beta agents on Linux and macOS, the distro copy line, the WSL
+  button), and the installer script is now checked against its SHA-256 before it runs.
 - WSL projects: work on code that lives in Linux without leaving AIB. New project and Add project offer "WSL: Ubuntu" (any WSL2
   distro) next to Windows. Claude Code, Codex, OMP and your custom agents, installed in the distro, run there, in the Linux folder,
   with the distro's own git, node and login environment, so nothing crosses the slow `\\wsl$` share and no Windows tool touches a
@@ -21,6 +33,51 @@
   install keeps going if AIB restarts. When AIB moves to a newer reviewed version, the panel offers "Update in Ubuntu". The distro needs
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
+- WSL projects: background commands. The Activity pane of a WSL chat now lists the commands Claude Code runs in the background in
+  the distro (a long test run, a dev server) and its subagents, with how many are still running and each command's latest output, as
+  for a Windows chat. While such a command runs, the chat counts as still working in the background, so quitting or updating AIB
+  warns you instead of cutting it off. If Ubuntu is not running, the pane says "Command updates unavailable: Ubuntu stopped.
+  Reconnect" instead of "No commands running". AIB cannot stop a WSL background command itself yet (no Stop button there; ask the
+  agent).
+- WSL projects: no second agent on one conversation. Before continuing a saved WSL chat, AIB now checks inside the distro whether
+  another program already has that conversation open (for example `claude --resume` in a VS Code terminal in Ubuntu) and refuses with
+  "This claude conversation is already open in another agent process (PID …)", exactly as for Windows chats. A chat written to
+  moments ago by another app asks before continuing. AIB's own agents in the distro never count, and the chat list's "Elsewhere"
+  hints now cover WSL chats too.
+
+- WSL projects: Codex found behind asdf and mise. Codex installed in a distro under its current npm name
+  (`@agentclientprotocol/codex-acp`, the one AIB's install hint gives) is now found, also when Node.js comes from a version manager
+  such as asdf or mise, and its sign-in uses the Codex program that ships with it, so no separate `codex` command is needed.
+
+- WSL projects: checking a distro's agents no longer starts it. The routes behind the coming Settings > AIB Linking (WSL) page read
+  WSL's distro list from the registry only (with WSL's default distro and the distros AIB cannot use, and why) and answer
+  "not running" for a distro AIB has not used yet, instead of starting it; only your click starts one.
+
+- AIB Linking (WSL): every agent in every distro on one Settings page. A new Settings section, right under AIB Linking (Windows
+  only), lists the WSL distros on this PC: which one is WSL's default, which ones AIB cannot use and why (a WSL 1 distro gets the
+  command that converts it), and how to get WSL when the PC has none. Each usable distro has its own cards: its state (Ready, Not
+  running with "Start Ubuntu and check", Stopped with Reconnect) and "Agents in Ubuntu" with the same agent cards as on Windows:
+  Install in Ubuntu, Update in Ubuntu, progress with Cancel, Retry after a failure, and the Node.js line when the distro has none.
+  Each card says whether AIB installed it or it is your own install. Opening Settings never starts a distro: only the Start button
+  does, and it says it copies AIB's helper there (about 100 MB).
+  The new-chat panel's "not installed in Ubuntu" line gets a "Set up Ubuntu in Settings" link, and Settings > About links here.
+
+- AIB Linking (WSL): pick a distro, see what it needs, and manage its agents in one place. A drop-down at the top of the page lists
+  every distro on this PC (WSL's default marked, the ones AIB cannot use greyed out with the reason) and shows that distro's cards;
+  AIB remembers your pick, and opens on the distro of the WSL project you have open. A new "What Ubuntu needs" card checks Node.js
+  (22.19 or newer, with where it comes from), npm, git, curl and free space the way your Ubuntu terminal sees them. When Node.js is
+  missing or too old, "Install Node.js in Ubuntu" runs nvm's official installer in a terminal right on the card, and the agents can
+  be installed as soon as it finishes. If your Node.js comes from asdf or mise with no version set, the card gives you that tool's
+  own command instead, and git or curl get the `sudo apt install` line to copy (AIB never runs sudo). Each agent now has its own
+  "Use in Ubuntu" switch, separate from Windows, so Claude Code can be on in Ubuntu and off on Windows. Agent cards show whether
+  you are signed in there (and as whom), with a Sign in button that runs the agent's own sign-in in a terminal on the card;
+  Uninstall removes only AIB's own copy in the distro, never your installs or sign-in files; and Codex shows the usage limits of
+  its Ubuntu sign-in.
+
+- Ready and Couldn't reopen: clear words for a chat with no agent. A saved chat that has no agent running now says Ready instead of
+  Not running (it opens read-only with its saved messages, and an agent starts when you send a message), in the sidebar, the chat
+  header and on the phone. A chat AIB tried to reopen after a restart and could not now says Couldn't reopen, with the
+  reason when you hover; sending a message tries again.
 
 - Live sync no longer holds back a file you save right after a commit or a Merge. A save made in the moment after the project's
   branch moved (your own commit, or Merge landing a chat) could wait for the chat's next message before reaching its copy; it now
@@ -30,11 +87,11 @@
   could not take it over right away, for example because Ubuntu was slow to start, reopening the chat now picks up that running
   agent instead of starting a second one for the same conversation. The chat keeps its history and its running turn, and it is
   listed once.
-- WSL chats no longer get stuck as "Not running" after a restart or update. If their agent is still running in the distro, AIB now
+- WSL chats no longer get stuck showing Ready (no agent) after a restart or update. If their agent is still running in the distro, AIB now
   picks it up even when its list of open chats lost the chat, and continuing such a chat picks up that same agent instead of starting
   a second one for the same conversation (Codex refused that second one with "session is in use by another Codex client"). A distro
   whose AIB helper was being replaced is started again instead of counting as not ready. A chat AIB could not reopen after a restart
-  now says "Not running · could not reopen", with the reason when you hover, and sending a message tries again.
+  now says "Couldn't reopen", with the reason when you hover, and sending a message tries again.
 
 - AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
   merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in

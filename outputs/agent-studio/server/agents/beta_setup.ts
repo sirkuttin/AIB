@@ -19,6 +19,7 @@ import * as adapters from './adapters.ts';
 import { type BetaAgent, betaAgent, type BetaSetupStep, type OsName } from './beta_catalog.ts';
 import { pathCandidates } from './beta_agents.ts';
 import { MIN_NODE_MAJOR } from './installer.ts';
+import { nvmInstallLine } from './nvm.ts';
 import type { ShellSpec } from '../platform/pty.ts';
 import { isFile } from '../platform/pypath.ts';
 import { pathOf } from '../state/paths.ts';
@@ -53,12 +54,12 @@ export interface PrereqSpec {
   readonly install: (os: OsName, hasWinget: boolean) => PrereqInstall;
 }
 
-const NVM_INSTALL = 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh | bash && ' +
-  '\\. "$HOME/.nvm/nvm.sh" && nvm install --lts';
+/** nvm.ts: the pinned tag, its install.sh checked by SHA-256 before it runs (Linux and macOS). */
+const NVM_INSTALL = nvmInstallLine({ portable: true });
 
 export const PREREQS: Readonly<Record<string, PrereqSpec>> = {
-  // Node.js: nodejs.org/en/download (read 2026-11-11) gives nvm for macOS and Linux (nvm v0.41.0, then `nvm install <major>`; AIB asks
-  // for --lts). Windows: winget's OpenJS.NodeJS.LTS (github.com/microsoft/winget-pkgs manifests/o/OpenJS/NodeJS/LTS, 26.13.1 on
+  // Node.js: nodejs.org/en/download (read 2026-11-11) gives nvm for macOS and Linux (nvm.ts NVM_VERSION, then `nvm install <major>`;
+  // AIB asks for --lts, and checks install.sh's SHA-256 first). Windows: winget's OpenJS.NodeJS.LTS (github.com/microsoft/winget-pkgs manifests/o/OpenJS/NodeJS/LTS, 26.13.1 on
   // 2026-11-11). Without winget: the download page.
   node: {
     id: 'node',

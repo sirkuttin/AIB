@@ -292,7 +292,7 @@ Deno.test({
     assertEquals(second.recovered(), []);
     assertEquals(second.store!.conversations.size, 0, 'dropped from the durable list');
     assertEquals(attempts, [false, false, false], 'three tries, ownership check never bypassed');
-    // the chat says why it is not running (the page shows "Not running · could not reopen" with the reason), until it runs again
+    // the chat says why it is not running (the page shows "Couldn't reopen" with the reason), until it runs again
     const failed = (await second.liveList()).reconnectFailed as Json[];
     assertEquals(failed.map((f) => [f.provider, f.sessionId, f.error]), [['omp', 'fake-session', 'agent failed to load the conversation']]);
     assert(second.forgetRecovered('omp', 'fake-session'), 'Forget clears it');

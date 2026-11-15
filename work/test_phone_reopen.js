@@ -8,14 +8,14 @@ const test = require('node:test'),
   path = require('node:path');
 const P = require(path.join(APP, 'phone.js'));
 
-test('not running: "Not running · agent · last active …"', () => {
+test('not running: "Ready · agent · last active …"', () => {
   const now = Date.parse('2026-11-12T12:00:00Z');
   assert.equal(
     P.savedWords({ agent: 'Claude Code', lastActive: '2026-11-12T09:00:00Z' }, now),
-    'Not running · Claude Code · last active 3 h ago',
+    'Ready · Claude Code · last active 3 h ago',
   );
-  assert.equal(P.savedWords({ agent: 'Codex', lastActive: '2026-11-12T11:59:50Z' }, now), 'Not running · Codex · last active just now');
-  assert.equal(P.savedWords({ agent: 'OMP', lastActive: '' }, now), 'Not running · OMP');
+  assert.equal(P.savedWords({ agent: 'Codex', lastActive: '2026-11-12T11:59:50Z' }, now), 'Ready · Codex · last active just now');
+  assert.equal(P.savedWords({ agent: 'OMP', lastActive: '' }, now), 'Ready · OMP');
 });
 
 test('read on the PC: only when visible, at the end, something newer, and READ_MS since the last one', () => {

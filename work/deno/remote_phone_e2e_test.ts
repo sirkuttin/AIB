@@ -1313,7 +1313,7 @@ Deno.test({
 Deno.test({
   ...OPTS,
   name:
-    'phone page at 375 px: "Not running" chats on home, one opens read only with Continue this chat (hidden when Send is off), continues into the live chat, which is then marked read on the PC; no sideways scroll',
+    'phone page at 375 px: "Ready" chats on home, one opens read only with Continue this chat (hidden when Send is off), continues into the live chat, which is then marked read on the PC; no sideways scroll',
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
@@ -1361,14 +1361,14 @@ Deno.test({
       await serveFor(page, s, { on: true });
       await signInPage(page, phone.token, phone.id);
       await page.waitFor(`!!document.querySelector('.ph-card.nr[data-saved="claude:s-long"]')`, 15000, "the not-running chats");
-      // in the same list by time (the live chat started 4 min ago, s-two 10 min ago, s-long 2 h ago), lighter, "Not running"
+      // in the same list by time (the live chat started 4 min ago, s-two 10 min ago, s-long 2 h ago), lighter, "Ready"
       assertEquals(
         await page.eval<string[]>('[...document.querySelectorAll(".ph-card")].map((c) => c.dataset.chat || c.dataset.saved)'),
         ["main", "claude:s-two", "claude:s-long"],
       );
       assertEquals(
         await page.eval(`document.querySelector('.ph-card.nr[data-saved="claude:s-long"] .ph-r2').textContent`),
-        "shop · Claude Code · Not running",
+        "shop · Claude Code · Ready",
       );
       assertEquals(await page.eval(`document.querySelector('.ph-card[data-saved="claude:s-long"] .ph-time').textContent`), "2h");
       const looks = await page.eval<string[]>(

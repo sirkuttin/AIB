@@ -60,6 +60,8 @@ Deno.test({
       newAib();
       a.reconnectStop.set();
       for (const conn of a.connections.values()) conn.sessionLease?.release();
+      // a crashed AIB's files are closed by the OS (Windows cannot delete a file a live handle holds): its history stores too
+      await a.historyClient()?.shutdown().catch(() => {});
       studios.pop();
       const b = studioIn(state);
       studios.push(b);
@@ -94,6 +96,7 @@ Deno.test({
       newAib(); // a crash: the Linux keeper keeps the agent
       a.reconnectStop.set();
       for (const conn of a.connections.values()) conn.sessionLease?.release();
+      await a.historyClient()?.shutdown().catch(() => {}); // the OS closes a crashed AIB's files (its history stores)
       studios.pop();
       const b = studioIn(state);
       studios.push(b);

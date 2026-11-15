@@ -1,6 +1,6 @@
 'use strict';
 const { APP: APP_DIR } = require('./_paths');
-// The shared status vocabulary: Working · <time>, Your turn, Needs you, Idle, Not running, Elsewhere · Working / Idle, Reconnecting….
+// The shared status vocabulary: Working · <time>, Your turn, Needs you, Idle, Ready, Elsewhere · Working / Idle, Reconnecting….
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const path = require('node:path');
@@ -20,7 +20,7 @@ test('every state has the agreed words, a tone and a dot', () => {
     [{ connected: true, yourTurn: true }, 'your-turn', 'Your turn', 'turn', 'd-turn'],
     [{ connected: true, needs: 1 }, 'needs', 'Needs you', 'need', 'd-need'],
     [{ connected: true }, 'idle', 'Idle', 'idle', 'd-idle'],
-    [{}, 'not-running', 'Not running', 'off', 'd-off'],
+    [{}, 'not-running', 'Ready', 'off', 'd-off'],
     [
       { verdict: 'owned_elsewhere', elsewhereWorking: true },
       'elsewhere-working',
@@ -38,11 +38,11 @@ test('every state has the agreed words, a tone and a dot', () => {
   }
 });
 
-test('Not running carries the agreed tooltip, and the old word Saved is gone', () => {
+test('Ready carries the agreed tooltip, and the old word Saved is gone', () => {
   assert.equal(s({}).title, 'No agent is attached. Send a message to start it again.');
   assert.equal(W.NOT_RUNNING_TITLE, 'No agent is attached. Send a message to start it again.');
   for (const f of [{}, { recovered: true }, { recent: true }, { agentList: true }])
-    assert.equal(s(f).label, 'Not running');
+    assert.equal(s(f).label, 'Ready');
   assert.ok(s({ recovered: true }).title.includes('restarted'));
   assert.ok(s({ recent: true }).title.includes('not confirmed to be running'));
 });
@@ -58,7 +58,7 @@ test('Reconnecting shows while a recovered chat is being reconnected, and stops 
   }
   assert.equal(s({ reconnecting: true, connected: true }).label, 'Idle');
   assert.equal(s({ reconnecting: true, connected: true, yourTurn: true }).label, 'Your turn');
-  assert.equal(s({ recovered: true }).label, 'Not running');
+  assert.equal(s({ recovered: true }).label, 'Ready');
 });
 
 test('Working shows minutes only from one minute, then hours and minutes', () => {
@@ -159,12 +159,21 @@ test('helpers or a background command still running after the reply: Working (·
   assert.equal(W.statusOf({ connected: true, needs: 1, helpers: 2 }).label, 'Needs you', 'a request still wins');
 });
 
-test('a chat the reopen after a restart gave up on says so, with the reason in the tooltip (still Not running, still Continue)', () => {
+test('a chat the reopen after a restart gave up on says so, with the reason in the tooltip (not Ready, still Continue)', () => {
   const r = s({ recovered: false, reconnectError: 'Ubuntu stopped. Reconnect' });
-  assert.deepEqual([r.kind, r.label, r.tone], ['not-running', 'Not running · could not reopen', 'off']);
+  assert.deepEqual([r.kind, r.label, r.tone], ['not-running', "Couldn't reopen", 'off']);
   assert.ok(r.title.includes('could not reopen it after the restart: Ubuntu stopped. Reconnect'), r.title);
   assert.ok(r.title.includes('Send a message to try again'), r.title);
   assert.ok(s({ reconnectError: '' }).title.startsWith('AIB could not reopen it after the restart.'));
   assert.equal(s({ connected: true, reconnectError: 'x' }).label, 'Idle', 'a running chat is not "could not reopen"');
-  assert.equal(s({}).label, 'Not running', 'no reason, no change');
+  assert.equal(s({}).label, 'Ready', 'no reason, no change');
+});
+
+test('the three not-live words: saved chat Ready, gave up Couldn\'t reopen (reason on hover), reconnecting Reconnecting…', () => {
+  assert.equal(s({ recovered: true }).label, 'Ready');
+  const failed = s({ recovered: true, reconnectError: 'Ubuntu stopped' });
+  assert.equal(failed.label, "Couldn't reopen");
+  assert.ok(failed.title.includes('Ubuntu stopped') && failed.title.includes('Send a message to try again'), failed.title);
+  assert.equal(s({ recovered: true, reconnecting: true }).label, 'Reconnecting…');
+  for (const f of [{}, { recovered: true }, { reconnectError: 'x' }]) assert.ok(!/Not running/.test(s(f).label), s(f).label);
 });

@@ -11,17 +11,19 @@ import { APP_ROOT } from '../core/app.ts';
 import { isDict } from '../core/py.ts';
 import { agentName } from '../agents/agent_registry.ts';
 import { ALLOW_LIST, loadAllowList, MIN_NODE_MAJOR } from '../agents/installer.ts';
+import { nvmInstallLine } from '../agents/nvm.ts';
 import { WslHelperError, type WslHost, type WslInstallParams, type WslInstallView } from './contract.ts';
 
 /** The agents AIB installs into a distro (helper/agent_install.ts WSL_MANAGED). */
 export const WSL_MANAGED: readonly string[] = ['claude', 'codex'];
 
 /**
- * How to get Node.js into a distro without root: nvm, the way nodejs.org's download page offers it for Linux. The user runs it in the
- * distro's terminal; AIB only shows it. nvm puts node on the login shell's PATH (.bashrc), which the helper reads.
+ * How to get Node.js into a distro without root: nvm, the way nodejs.org's download page offers it for Linux (agents/nvm.ts: the one
+ * pinned tag, install.sh checked by its SHA-256 before it runs, then the Node.js LTS). The copy line of the agent rows; the Node.js
+ * button of Settings > AIB Linking (WSL) runs the same steps in a distro terminal (wsl/node_setup.ts). nvm puts node on the login
+ * shell's PATH (its start-up file), which the helper reads.
  */
-export const NODE_INSTALL =
-  `curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && . "$HOME/.nvm/nvm.sh" && nvm install ${MIN_NODE_MAJOR}`;
+export const NODE_INSTALL = nvmInstallLine();
 
 /** The helper's installCheck codes, as the one line the agent panel shows ('' when installs can run). */
 export function nodeBlockLine(code: string, agent: string, distro: string, nodeVersion = ''): string {
@@ -132,6 +134,41 @@ export async function wslInstallCall(host: WslHost, key: string, name: string, a
     // The helper is restarting: a status read answers the last progress it sent, so the page keeps its bar instead of an error
     const last = action === 'status' ? lastProgress(key, agent) : null;
     if (last) return [200, { ...last, ok: true, stale: true }];
+    return [400, { error: error.message, code: error.code }];
+  }
+}
+
+/**
+ * Uninstall AIB's own install of `agent` in the distro of `host` (POST /api/live/wsl/agents/uninstall): the helper's agents.uninstall
+ * answer, {ok, removed, message?, blocked?}. Refused here first (ok false, `blocked` the reason) while the agent's install job runs in
+ * that distro (the job state the install routes read: agents.installStatus, else the last progress the helper sent) or its sign-in
+ * terminal runs (`signinRunning`); the helper's own refusals (a chat of any AIB runs from that folder, nothing of AIB's to remove) come
+ * back verbatim, whether it answers them or throws them.
+ */
+export async function wslUninstallCall(host: WslHost, key: string, name: string, agent: unknown, signinRunning = false): Promise<Reply> {
+  if (typeof agent !== 'string' || !WSL_MANAGED.includes(agent)) return [400, { error: 'AIB cannot uninstall that agent in WSL.', code: 'install_refused' }];
+  const label = agentName(agent);
+  const refused = (blocked: string): Reply => [200, { ok: false, removed: [], blocked }];
+  const params = installParams(agent);
+  let running = false;
+  if (params) {
+    try {
+      running = (await host.call('agents.installStatus', params, { timeoutMs: 10_000 })).state === 'running';
+    } catch {
+      running = lastProgress(key, agent)?.state === 'running';
+    }
+  }
+  if (running) return refused(`${label} is being installed in ${name} right now. Wait for it to finish, or cancel it, then uninstall.`);
+  if (signinRunning) return refused(`A sign-in to ${label} in ${name} is running. Finish or cancel it, then uninstall.`);
+  try {
+    const answer = await host.call('agents.uninstall', { id: agent }, { timeoutMs: 90_000 });
+    return [200, { ...answer, ok: answer.ok === true, removed: Array.isArray(answer.removed) ? answer.removed : [] }];
+  } catch (error) {
+    if (!(error instanceof WslHelperError)) throw error;
+    if (error.code === 'unknown_method' || error.code === 'no_method') {
+      return [409, { error: `The AIB helper in ${name} is too old to uninstall agents. Restart AIB.`, code: 'install_refused' }];
+    }
+    if (/refused|blocked/.test(error.code)) return refused(error.message);
     return [400, { error: error.message, code: error.code }];
   }
 }

@@ -454,7 +454,7 @@ const phraseOf = (c, opts, ctx = setup({ stored: { 'studio-sidebar-epoch': '1' }
 const att = (state, extra = {}) => live({ attention: Object.assign({ state, needs: 0 }, extra) });
 
 test('phrase: live states use the shared status words', () => {
-  assert.equal(phraseOf(conv('a', 'C:\\x'), {}).text, 'Not running');
+  assert.equal(phraseOf(conv('a', 'C:\\x'), {}).text, 'Ready');
   assert.equal(phraseOf(conv('a', 'C:\\x'), {}).title, 'No agent is attached. Send a message to start it again.');
   assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('idle') })).text, 'Idle');
   assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('opening') })).text, 'Opening\u2026');
@@ -499,7 +499,7 @@ test('phrase: the conversation yourTurn flag, when present, decides Your turn', 
   );
   assert.equal(
     phraseOf(conv('a', 'C:\\x', { yourTurn: true })).text,
-    'Not running',
+    'Ready',
     'the mark does not matter without an agent',
   );
 });
@@ -555,19 +555,19 @@ test('phrase: ownership verdicts become Elsewhere; Studio ownership hides them',
     'Elsewhere \u00B7 Idle',
     'an explicit working flag wins',
   );
-  assert.equal(phraseOf(conv('a', 'C:\\x'), { hint: { verdict: 'no_evidence', reasons: [] } }).text, 'Not running');
+  assert.equal(phraseOf(conv('a', 'C:\\x'), { hint: { verdict: 'no_evidence', reasons: [] } }).text, 'Ready');
   assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('idle') }), { hint: owned }).text, 'Idle');
 });
 
 test('phrase: restart, failure, reconnecting, agent list and just-written saves', () => {
   const restart = phraseOf(conv('a', 'C:\\x', { recovered: { sessionId: 'a' } }));
-  assert.equal(restart.text, 'Not running');
+  assert.equal(restart.text, 'Ready');
   assert.ok(restart.title.includes('before the server restarted'));
   const failed = conv('a', 'C:\\x', { live: Object.assign(att('idle'), { error: 'spawn failed' }) });
   assert.deepEqual([phraseOf(failed).text, phraseOf(failed).tone], ['Failed', 'bad']);
   assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('working') }), { issue: true }).text, 'Reconnecting\u2026');
-  assert.equal(phraseOf(conv('a', 'C:\\x', { source: 'agent' })).text, 'Not running');
-  assert.equal(phraseOf(conv('a', 'C:\\x', { modified: Date.now() / 1000 - 20 })).text, 'Not running');
+  assert.equal(phraseOf(conv('a', 'C:\\x', { source: 'agent' })).text, 'Ready');
+  assert.equal(phraseOf(conv('a', 'C:\\x', { modified: Date.now() / 1000 - 20 })).text, 'Ready');
   assert.ok(
     phraseOf(conv('a', 'C:\\x', { modified: Date.now() / 1000 - 20 })).title.includes('not confirmed to be running'),
   );
@@ -756,7 +756,7 @@ test('QA m6 + c6: a project heading uses the card dot classes; its unread count 
   const needs = heads([conv('n', 'C:\\r', { live: live({ attention: { state: 'needs_you', needs: 1 } }) })])[0];
   assert.equal(needs.find('status-count')[0].className, 'status-count');
   assert.equal(needs.find('status-dot')[0].className, 'status-dot d-need');
-  assert.equal(ctx.ui.summarize([conv('s', 'C:\\p')]).label, 'Not running');
+  assert.equal(ctx.ui.summarize([conv('s', 'C:\\p')]).label, 'Ready');
 });
 
 test('QA m10: the card tooltip leads with the full title and uses the card status words', () => {
@@ -781,7 +781,7 @@ test('QA m10: the card tooltip leads with the full title and uses the card statu
     'C:\\Repos\\App',
     'session-id',
   ]);
-  assert.equal(ctx.ui.statusOf(conv('z', 'C:\\x')).label, 'Not running');
+  assert.equal(ctx.ui.statusOf(conv('z', 'C:\\x')).label, 'Ready');
 });
 
 test('QA c2: the hold line keeps "· held 2h" as its own item and shows the whole line as a tooltip', () => {
