@@ -19,6 +19,7 @@ import { aibInternalKind, isAibInternalLabel, KeeperLink, liveUserChannels } fro
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 import {
   acceptableUrl,
+  bridgeServeArgs,
   type TransportProcess,
   type TransportSpawner,
   WslHostImpl,
@@ -252,6 +253,13 @@ Deno.test("internal labels: the WSL keep-alive and helper are AIB's own channels
     { ...base, channel: 'e', live: false },
   ];
   assertEquals(liveUserChannels(listed).map((c) => c.channel), ['a', 't']);
+});
+
+Deno.test('bridgeServeArgs: AIB_WSL_ORPHAN_GRACE (a plain Go duration) reaches the Linux keeper the bridge starts; nothing else does', () => {
+  assertEquals(bridgeServeArgs(''), [], 'unset: the bridge gives its own 2 h');
+  assertEquals(bridgeServeArgs('20s'), ['--', '--orphan-grace', '20s']);
+  assertEquals(bridgeServeArgs('2h'), ['--', '--orphan-grace', '2h']);
+  for (const no of ['0s', '-5s', '20', '1h30m', '20s --x', '', 's']) assertEquals(bridgeServeArgs(no), [], no);
 });
 
 Deno.test('acceptableUrl: http and https only, at most 2 KiB, no spaces or control characters', () => {

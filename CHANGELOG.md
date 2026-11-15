@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
+  AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
+  chats working in WSL; the next AIB within those 2 hours takes every one of them over. Each time an AIB (or the keep-alive)
+  connects, the 2 hours start again. After 2 hours with nothing connected, the agents stop and the keeper's log says so.
+
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.

@@ -71,6 +71,16 @@ keeper's lifetime rules, PROTOCOL.md section 6). The next AIB starts the distros
 chats from the Linux keeper (`Studio.adoptWslKeeper`) and claims the keep-alive. A crashed AIB leaves its WSL agents running under
 the keep-alive the same way.
 
+**AIB away with no keep-alive** (an older AIB build stopped it as an unknown channel, the Windows keeper died, the keeper is off):
+the Linux keeper keeps every WSL agent for its **orphan grace, 2 hours** with no client of any kind (keeper 1.6.0 `--orphan-grace`,
+which the bridge gives the keeper it starts; `keeper/PROTOCOL.md` section 6). Any AIB transport or keep-alive that connects in that
+time finds every agent running and takes the chats over as above; the next stretch alone starts the 2 hours from zero. Only after 2
+hours alone does it stop them (reason `orphaned`). Before 1.6.0 that took about 35 s. Its `keeper.log` tells the story:
+`no client: keeping N live channels; they stop after 2h0m0s without a client`, `a client is back after …`, or
+`no client for 2h0m0s: stopping N channels and exiting`. This holds while the distro runs: a distro that WSL itself stops
+(`wsl --shutdown`, a Windows restart, WSL stopping a distro nothing keeps open) ends its agents. Tests pass a short grace with
+`AIB_WSL_ORPHAN_GRACE` (`wsl/hosts.ts bridgeServeArgs`).
+
 **One agent per chat:** before AIB starts an agent for a saved chat (the auto-reconnect, Continue), it asks the keeper that agent
 would run in (a WSL chat: its distro's Linux keeper) for a live channel of that session and takes it over instead
 (`Studio.#runningInKeeper`). So a take-over at start that gave up (the distro answered after `adoptWslKeeper`'s 120 s) or a link that
@@ -664,6 +674,7 @@ keeps one failure from hiding the others' results.
 | `wsl_install_e2e` | copy, checksums, modes, a second run copies nothing, old versions cleaned |
 | `wsl_bridge_e2e` | magic line and preamble, two bridges share one keeper, no TCP listener, every helper method, the shim, `--hold` |
 | `wsl_reconnect_e2e` | killing the transport `wsl.exe`: re-attached, no record lost or doubled, the agent never started twice |
+| `wsl_keeper_grace_e2e` | with a 45 s grace: the transport and the keep-alive dropped the way an older build did, the agent still runs past the old 35 s and a new AIB takes the same chat over; then, alone for the whole grace, the agent stops (`orphaned`) and the Linux keeper exits with its log line |
 | `wsl_agent_e2e` | a fake agent in the distro; a crashed AIB's chat taken over; Quit AIB with the agent working keeps it (keep-alive + hold, no tray restart) and the next AIB takes it and the keep-alive over once |
 | `wsl_files_changes_e2e` | Files and Changes from the distro (`Foo` and `foo`, exec bit, untracked, diff) |
 | `wsl_terminal_e2e` | the login shell in the Linux folder, resize |

@@ -331,6 +331,8 @@ export interface BridgePreamble {
   home: string;
   uid: number;
   arch: string;
+  /** Keeper 1.6.0: its live channels had no client and stop at this time (Unix ms) unless one comes; absent otherwise. */
+  orphanStopAt?: number;
 }
 
 /** Linux-side layout, relative to $HOME (never passed with `~`). */
