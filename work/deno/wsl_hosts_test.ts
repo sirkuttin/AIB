@@ -149,6 +149,7 @@ class Lab {
       helper: `/tmp/aib-wsl-test/${version}/AIB-wsl-helper`,
       data: '/tmp/aib-wsl-test/data-000000000000',
       copied: [],
+      reused: [],
       removed: [],
     };
   }

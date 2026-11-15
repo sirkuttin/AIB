@@ -488,13 +488,13 @@ export const HISTORY_FLUSH_MS = 200;
 /** Each live helper's newest events kept in RAM after a take-over (the rest are read from the store when asked). */
 export const HISTORY_HELPER_TAIL = 200;
 /**
- * The `aib-history-v2` switch, server side: OFF by default for now (AIB_HISTORY_V2=1 turns it on). Off: no store is opened and
- * snapshots carry the history in chunk notes as in beta.10. Off because a mid-turn crash take-over (keeper_crash_e2e) still fails
- * now and then under load with the store on; see fix/history-2a-followup.
+ * The `aib-history-v2` switch, server side: ON by default (AIB_HISTORY_V2=0 turns it off, for one release). Off: new chats get no
+ * store and snapshots carry the history in chunk notes as in beta.10 (a chat that already has a store keeps it: see
+ * Studio.historyClient). On since fix/history-store-on: the mid-turn crash take-over (keeper_crash_e2e) holds under parallel load.
  */
 export function historyV2(): boolean {
   try {
-    return Deno.env.get('AIB_HISTORY_V2') === '1';
+    return Deno.env.get('AIB_HISTORY_V2') !== '0';
   } catch {
     return false;
   }
@@ -5830,12 +5830,14 @@ export class Connection {
         ? 'closed'
         : this.elicitations.size || this.permissions.size || this.auth
         ? 'input_needed'
-        : !this.ready
+        : !this.ready || rebuilding
         ? 'opening'
         : this.busy
         ? 'working'
         : 'ready',
-      ready: !!(this.ready && !this.closed),
+      // Not ready until the rebuild has replayed the whole record: a restored snapshot sets `ready` before the records after it
+      // (a running turn's prompt among them) are replayed, so a page (or test) asking in between would see an idle chat mid-turn.
+      ready: !!(this.ready && !this.closed && !rebuilding),
       subagents: Object.fromEntries(
         [...this.subagents].map(([k, v]) => [k, { ...v }]),
       ),

@@ -14,7 +14,18 @@ import { FakeWslHost } from './_wsl_fake.ts';
 import { pause } from './_connection.ts';
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { setDistroSource, setWslHostResolver, wslLoc } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { installWsl, runWsl, type WslRunner } from '../../outputs/agent-studio/server/wsl/install.ts';
+import {
+  CLEANUP_SCRIPT,
+  COPY_SCRIPT,
+  HELPER_FILE,
+  installWsl,
+  KEEPER_FILE,
+  PROBE_SCRIPT,
+  REUSE_SCRIPT,
+  runWsl,
+  type WslRunner,
+} from '../../outputs/agent-studio/server/wsl/install.ts';
+import { createHash } from 'node:crypto';
 import { wslExePath } from '../../outputs/agent-studio/server/wsl/detect.ts';
 import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
 import { rootFor } from '../../outputs/agent-studio/server/web/files_routes.ts';
@@ -60,6 +71,95 @@ Deno.test('the first set-up probe without AIB_WSL_ROOT passes "-" (never an empt
   assert(!argv.includes(''), JSON.stringify(argv.filter((a) => a.length < 40)));
   const script = argv[2];
   assert(script.includes('[ "$root" != "-" ] || root=""'), 'the script reads the sentinel as "no root given"');
+});
+
+// ---- 1b. a new app version with the same Linux programs copies nothing over wsl.exe ----------------------------------------------
+/**
+ * A distro's files as a Map, and a WslRunner that answers the install's fixed scripts the way they behave in a distro (the real
+ * scripts in a distro: wsl_install_e2e_test.ts). Every run that sends bytes over wsl.exe's stdin is counted.
+ */
+function fakeDistro(root: string) {
+  const files = new Map<string, Uint8Array>();
+  const sent: string[] = [];
+  const reusedFrom: string[] = [];
+  const hex = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
+  const ENC = new TextEncoder();
+  const out = (text: string) => ({ code: 0, stdout: ENC.encode(text), stderr: '' });
+  const run: WslRunner = (_distro, argv, options = {}) => {
+    const [script, args] = [argv[2], argv.slice(4)];
+    if (script === PROBE_SCRIPT) {
+      const [, version, wantK, wantH, sizeK, sizeH] = args;
+      let text = `home=/home/u\nuid=1000\nuser=u\nshell=/bin/bash\narch=x86_64\nglibc=1\nroot=${root}\n`;
+      for (const [name, want, size] of [[KEEPER_FILE, wantK, sizeK], [HELPER_FILE, wantH, sizeH]]) {
+        const f = `${root}/${version}/${name}`;
+        const s = files.has(f) ? hex(files.get(f)!) : '';
+        let reuse = '';
+        if (want && s !== want) {
+          for (const [c, bytes] of [...files].sort()) {
+            if (c !== f && c.startsWith(`${root}/`) && c.endsWith(`/${name}`) && String(bytes.length) === size && hex(bytes) === want) {
+              reuse = c;
+              break;
+            }
+          }
+        }
+        text += `sha=${s}\nreuse=${reuse}\n`;
+      }
+      return Promise.resolve(out(text));
+    }
+    if (script === COPY_SCRIPT) {
+      sent.push(args[0]);
+      files.set(args[0], options.stdin!);
+      return Promise.resolve(out(hex(options.stdin!)));
+    }
+    if (script === REUSE_SCRIPT) {
+      reusedFrom.push(args[0]);
+      files.set(args[1], files.get(args[0])!);
+      return Promise.resolve(out(hex(files.get(args[1])!)));
+    }
+    if (script === CLEANUP_SCRIPT) return Promise.resolve(out(''));
+    throw new Error('an unexpected script');
+  };
+  return { files, sent, reusedFrom, run };
+}
+
+Deno.test('wsl install: a new app version whose Linux programs are identical copies them inside the distro, never over wsl.exe', async () => {
+  const root = '/tmp/aib-wsl-test-reuse';
+  const distro = fakeDistro(root);
+  const ENC = new TextEncoder();
+  const programs = { keeper: ENC.encode('keeper v1'), helper: ENC.encode('helper v1'), from: 'test' };
+  const first = await installWsl('Ubuntu', { stateDir: 'unused', programs, run: distro.run, root, appVersion: '0.1.0-test.23', arch: 'x86_64' });
+  assertEquals([first.copied.length, first.reused.length], [2, 0], 'the first install sends both');
+  // test build 24: another version string, the same programs (the owner's log: 2ee7a713 for both builds)
+  const second = await installWsl('Ubuntu', { stateDir: 'unused', programs, run: distro.run, root, appVersion: '0.1.0-test.24', arch: 'x86_64' });
+  assert(second.version !== first.version);
+  assertEquals(second.copied, [], 'nothing went over wsl.exe');
+  assertEquals(second.reused, [second.keeper, second.helper]);
+  assertEquals(distro.reusedFrom, [first.keeper, first.helper]);
+  assertEquals(distro.files.get(second.keeper), programs.keeper);
+  // one program changed: only that one is sent; the other is reused
+  const changed = { ...programs, keeper: ENC.encode('keeper v2') };
+  const third = await installWsl('Ubuntu', { stateDir: 'unused', programs: changed, run: distro.run, root, appVersion: '0.1.0-test.25', arch: 'x86_64' });
+  assertEquals(third.copied, [third.keeper]);
+  assertEquals(third.reused, [third.helper]);
+  // the same version again: nothing at all
+  const again = await installWsl('Ubuntu', { stateDir: 'unused', programs: changed, run: distro.run, root, appVersion: '0.1.0-test.25', arch: 'x86_64' });
+  assertEquals([again.copied, again.reused], [[], []]);
+  assertEquals(distro.sent.length, 3, 'test.23 twice, test.25 once');
+});
+
+Deno.test('wsl install: a same-size file with other bytes is never reused; a failed in-distro copy falls back to wsl.exe', async () => {
+  const root = '/tmp/aib-wsl-test-reuse2';
+  const distro = fakeDistro(root);
+  const ENC = new TextEncoder();
+  distro.files.set(`${root}/0.0.9-aaaaaaaa/${KEEPER_FILE}`, ENC.encode('keeper vX')); // same size as 'keeper v1', other bytes
+  const programs = { keeper: ENC.encode('keeper v1'), helper: ENC.encode('helper v1'), from: 'test' };
+  const a = await installWsl('Ubuntu', { stateDir: 'unused', programs, run: distro.run, root, appVersion: '1', arch: 'x86_64' });
+  assertEquals([a.copied.length, a.reused.length], [2, 0]);
+  const failing: WslRunner = (d, argv, o) =>
+    argv[2] === REUSE_SCRIPT ? Promise.resolve({ code: 1, stdout: new Uint8Array(), stderr: 'cp: no space' }) : distro.run(d, argv, o);
+  const b = await installWsl('Ubuntu', { stateDir: 'unused', programs, run: failing, root, appVersion: '2', arch: 'x86_64' });
+  assertEquals([b.copied.length, b.reused.length], [2, 0], 'sent over wsl.exe after all');
+  assertEquals(distro.files.get(b.helper), programs.helper);
 });
 
 // ---- 2. New project dialog in a distro ------------------------------------------------------------------------------------------

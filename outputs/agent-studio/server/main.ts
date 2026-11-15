@@ -121,7 +121,27 @@ function usage(message: string): never {
   Deno.exit(2);
 }
 
+/**
+ * The start's phases with their times (ms since the process started: performance.timeOrigin), so studio.log shows where a slow
+ * start went: what ran before the log could be written is logged once it can be.
+ */
+const startup = {
+  marks: [] as [string, number][],
+  logged: false,
+  mark(phase: string): void {
+    const at = Math.round(performance.now());
+    if (this.logged) log.announce('studio', 'startup: %s at %s ms', phase, at);
+    else this.marks.push([phase, at]);
+  },
+  flush(): void {
+    this.logged = true;
+    const started = new Date(performance.timeOrigin).toISOString();
+    log.announce('studio', 'startup: process started %s; %s', started, this.marks.map(([p, at]) => `${p} at ${at} ms`).join(', '));
+  },
+};
+
 export async function main(argv: string[]): Promise<void> {
+  startup.mark('main');
   // A `deno desktop` runtime sets DENO_SERVE_ADDRESS, which makes Deno.serve ignore the port it is given (spike 2026-11-10). AIB
   // binds its own ports in every mode (the page and the artifact origin on port + 1, the agent host's port), so drop it first. Its
   // port is kept: in window mode it redirects to our page (desktop/serve_address.ts). In a desktop binary the listeners are not
@@ -152,6 +172,7 @@ export async function main(argv: string[]): Promise<void> {
   // (`serve` of the built app too: an update keeps the arguments, so a served app updates the same way.)
   // Again a few times after: the update helper runs from the old files until this version has confirmed its start.
   if (isDesktopApp() && !argv.includes('--stop-host')) (await import('./desktop/update_helper.ts')).removeUpdateLeftoversSoon();
+  startup.mark('update leftovers scheduled');
   let options: Options;
   try {
     options = parseOptions(args);
@@ -162,6 +183,7 @@ export async function main(argv: string[]): Promise<void> {
   const mcpServers = loadMcp(options, usage); // studio.finish_agent_options: an invalid --mcp-config is a usage error
   await applyStatePaths(options as never, usage, APP_ROOT, !options.stopHost);
   const stateDir = String(options.stateDir);
+  startup.mark('data folder ready');
   // One AIB per data folder, whatever the mode: a second desktop launch shows the running app's window and exits; anything else
   // that finds the folder taken says so and exits with code 2 (desktop/single_instance.ts). Before the log, the host or any state.
   const folderLock = options.stopHost ? null : await guardDataFolder(stateDir, {
@@ -173,10 +195,13 @@ export async function main(argv: string[]): Promise<void> {
       await nativeNotice(message);
     },
   });
+  startup.mark('single-instance lock');
   // The desktop app logs at INFO unless a level was asked for (window navigations, the keeper, the redirect: evidence for bugs).
   const levelGiven = args.some((a) => a.startsWith('--log-level')) || !!Deno.env.get(log.ENV_LEVEL);
   log.setup('studio', { level: desktop && !levelGiven ? 'INFO' : options.logLevel, stateDir, filename: 'studio.log' });
   if (!Deno.env.get(log.ENV_LEVEL)) Deno.env.set(log.ENV_LEVEL, String(options.logLevel)); // a host this server starts logs alike
+  startup.mark('logging');
+  if (!options.stopHost) startup.flush();
   if (options.stopHost) {
     const result = await stopHost(stateDir, options.force, 20, `AIB --stop-host${options.force ? ' --force' : ''} (pid ${Deno.pid})`);
     console.log(result.message);
@@ -208,6 +233,7 @@ export async function main(argv: string[]): Promise<void> {
   // agents as children of this process); Settings > About shows the reason. AIB_KEEPER=0 (tests, debugging) turns it off.
   // A split host that still runs for the folder (an older version such as beta.3) is stopped when idle, else drained.
   const keeperOn = await decideKeeper(stateDir);
+  startup.mark('keeper decided');
   let merged = !options.inProcess && keeperOn && !hostRunning(await readInfo(stateDir));
   if (!options.inProcess && keeperOn && !merged) {
     merged = await leaveSplitHost(stateDir, (line) => {
@@ -314,6 +340,7 @@ export async function main(argv: string[]): Promise<void> {
   await folderLock?.setPort(port);
   if (desktop) saveLastPort(stateDir, port);
   log.announce('studio', 'AIB %s on %s (pid %s, %s, data %s)', APP_VERSION, url, Deno.pid, desktop ? 'desktop app' : 'server', stateDir);
+  startup.mark('server listening');
   if (desktop && runtimePort && runtimePort !== port) startRedirect(runtimePort, `${url}/`);
   server.gate.artifactPorts.add(ctx.artifacts.start(port)); // the artifact origin is same-site, never the page
   // Phone access (Settings > Remote control), when it is on: the phone port for Tailscale Serve, on its own fixed port (remote/access.ts).
@@ -336,8 +363,15 @@ export async function main(argv: string[]): Promise<void> {
     ].filter(Boolean),
   });
   if (studio) {
-    await studio.adoptKeeper(); // the take-over started above: chats whose agents still run in the keeper go on where they are
-    studio.startAutoReconnect();
+    // The take-over started above (chats whose agents still run in the keeper go on where they are) runs on in the background: the
+    // window opens now, with those chats Reconnecting… until theirs is done (liveState waits for it). The automatic reconnect of
+    // the rest starts once the Windows keeper's chats are taken over; a WSL chat's waits for its distro's take-over (studio.ts).
+    const s = studio;
+    void s.adoptKeeperWindows().then((n) => {
+      startup.mark(`take-over done (${n} chat(s) from the keeper)`);
+      if (!closing) s.startAutoReconnect();
+    });
+    void s.adoptKeeper().then(() => startup.mark('WSL ready (take-over of the WSL keepers done)'));
   }
   try { // artifact tool: agents re-read this when Studio restarts on another port (json.dumps spacing, like studio.py)
     await Deno.writeTextFile(`${stateDir}${sep}artifact-web.json`, `{"url": ${JSON.stringify(url)}, "pid": ${Deno.pid}}`);
@@ -449,6 +483,7 @@ export async function main(argv: string[]): Promise<void> {
     });
     ctx.desktopNotify = app.notifications; // POST /api/live/desktop/notify: the page's notifications, shown by this process
     await app.start(); // the window navigates now: the server already listens
+    startup.mark('window opened');
     await watchSignal(stateDir, () => void app.showWindow());
     void ensureStartMenuShortcut(Deno.execPath());
     return;

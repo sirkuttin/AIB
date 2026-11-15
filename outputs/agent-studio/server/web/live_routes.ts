@@ -8,6 +8,11 @@ import { modelInUse } from '../transcripts/store.ts';
 import { refuseNetworkPath } from './security.ts';
 import { assertWindowsLocal, locOf } from '../platform/location.ts';
 import type { WebContext } from './server.ts';
+
+/** True while the take-over from the keeper at start runs (an in-process Studio; a split agent host never says so). */
+function takingOver(ctx: WebContext): boolean {
+  return !!(ctx.host as { takingOver?: () => boolean }).takingOver?.();
+}
 import { afterConnect, discoverAdded } from './project_routes.ts';
 
 /** Studio.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to Python's set. */
@@ -50,6 +55,11 @@ export function liveRoutes(): Map<string, LiveHandler> {
   const routes = new Map<string, LiveHandler>();
   routes.set('GET /api/live/state', async (ctx, url) => {
     const state = await ctx.host.liveState(arg(url, 'id'), pyInt(arg(url, 'after', '0'))) as Json | null;
+    if (state === null && takingOver(ctx)) {
+      // The take-over at start is still on its way after liveState's wait (a distro booting): the page keeps the chat and asks
+      // again quietly (chat.js taking_over), never "no longer available".
+      return [503, { error: 'AIB is still starting this chat.', code: 'taking_over' }];
+    }
     if (state === null) {
       return [404, {
         error: 'This AIB connection is no longer available. Your saved conversation can be continued again.',
@@ -68,6 +78,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
       if (v !== null && v !== '') query[k] = k === 'session' ? v : pyInt(v);
     }
     const found = await ctx.host.liveEvents(arg(url, 'id'), query) as Json | null;
+    if (found === null && takingOver(ctx)) return [503, { error: 'AIB is still starting this chat.', code: 'taking_over' }];
     if (found === null) return [404, { error: 'This AIB connection is no longer available.', code: 'connection_not_found' }];
     return [200, found];
   });

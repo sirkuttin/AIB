@@ -22,7 +22,7 @@ import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts'
 import { HistoryStore } from '../../outputs/agent-studio/server/history/store.ts';
 
 type Json = Record<string, unknown>;
-Deno.env.set('AIB_HISTORY_V2', '1'); // the store path is off by default for now
+Deno.env.set('AIB_HISTORY_V2', '1'); // the default; set so a switch-off in the environment does not change these tests
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -216,9 +216,11 @@ Deno.test({
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
     const firstEvents = shape(c.events);
     await lab.crash(a);
-    // the older build: no store, opens the chat without its older history, writes chunked snapshots
+    // the older build (no store code at all; this build with the switch off would keep the chat's store: see the next test):
+    // opens the chat without its older history, writes chunked snapshots
     const old = await withV2Off(async () => {
       const b = lab.studio();
+      b.historyClient = () => null;
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       await until(() => !r.replaying, 'the older build took over', 10);
@@ -236,6 +238,45 @@ Deno.test({
     assertEquals(shape(r.events).slice(0, firstEvents.length), firstEvents, 'the history from before the rollback is kept');
     assertEquals(shape(r.events).slice(-all.length), all, 'and what the older build made follows it');
     assertEquals(lab.peek(r.id).last, r.sequence, 'the store has everything');
+  },
+});
+
+Deno.test({
+  name: 'history 2A: switch off after a store-on run: a chat whose store exists keeps using it; the take-over shows its whole history',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    // A store-on build: two turns, a checkpoint (chunk-less sv:2 note), the journal truncated before it.
+    const a = lab.studio();
+    const c = await a.connect('omp', lab.work);
+    await turn(a, c, 4, 'm1');
+    await turn(a, c, 4, 'm2');
+    await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint at the turn end', 10);
+    assertEquals(c.snapshotChunkBytes, 0, 'no chunk notes: the store is the only copy of the history');
+    const ckpt = c.historyCkpt!;
+    const before = shape(c.events);
+    assert(before.length > 10, `a real history (${before.length} events)`);
+    await lab.crash(a);
+    // The next build has the switch off (AIB_HISTORY_V2=0, or a default-off build).
+    await withV2Off(async () => {
+      const b = lab.studio();
+      assertEquals(b.historyClient(), null, 'a new chat gets no store with the switch off');
+      assertEquals(await b.adoptKeeper(), 1);
+      const r = b.connections.get(c.id)!;
+      await until(() => r.historyState === 'claimed' || r.historyState === 'dead', 'the store claimed', 10);
+      await r.historySettled();
+      assertEquals(r.rebuildError, '');
+      assertEquals(r.historyState, 'claimed', 'the chat keeps its store');
+      assertEquals(r.attachedFrom, ckpt.record + 1, 'the journal before the checkpoint is gone: attached from it');
+      assertEquals(shape(r.events), before, 'the whole history, same numbers, read from the store');
+      const tail = await b.liveEvents(c.id, {}) as Json;
+      assertEquals(tail.first, 1, 'the page reaches back to the first event');
+      // it goes on with its store
+      await turn(b, r, 2, 'm3');
+      await until(() => r.historyCkpt !== null && r.historyCkpt.record > ckpt.record && !r.busy, 'the next checkpoint', 10);
+      assertEquals(lab.peek(c.id).last, r.sequence, 'the store has everything');
+    });
   },
 });
 
