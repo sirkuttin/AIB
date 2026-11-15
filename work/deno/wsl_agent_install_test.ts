@@ -242,7 +242,8 @@ Deno.test('nodeBlockLine: one plain line per case, naming the distro', () => {
   assertEquals(nodeBlockLine('', 'claude', 'Ubuntu'), '');
   assertEquals(nodeBlockLine('node_missing', 'claude', 'Ubuntu'), 'Node.js 22 or newer is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js.');
   assertEquals(nodeBlockLine('node_old', 'codex', 'Debian', '18.19.1'), 'Node.js 22 or newer is needed in Debian to install Codex; Debian has Node.js 18.19.1.');
-  assert(NODE_INSTALL.includes('nvm install 22') && !NODE_INSTALL.includes('sudo'), 'no root, no system package');
+  assert(NODE_INSTALL.includes('nvm install --lts') && !NODE_INSTALL.includes('sudo') && !NODE_INSTALL.includes('apt'), 'no root, no system package');
+  assert(NODE_INSTALL.includes('sha256sum -c -'), 'install.sh is checked before it runs');
 });
 
 Deno.test('wslInstallCall and installFacts: start, status, a Node.js refusal with its command, update when AIB pins a newer version', T, async () => {

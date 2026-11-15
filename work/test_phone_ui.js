@@ -43,7 +43,7 @@ test('rows: prompts, merged agent messages, one fold per run of steps, notices; 
   assert.equal(P.liveLine({ busy: false }, rows), '');
 });
 
-test('status words match the PC: Needs you, Working, Your turn, Idle, Not running', () => {
+test('status words match the PC: Needs you, Working, Your turn, Idle, Ready', () => {
   const now = Date.parse('2026-11-12T12:00:00Z');
   assert.deepEqual(P.stateWords({ needs: 1, state: 'needs_you' }, now), { text: 'Needs you', tone: 'need' });
   assert.deepEqual(P.stateWords({ needs: 0, state: 'working', busySince: '2026-11-12T11:56:00Z' }, now), {
@@ -52,7 +52,7 @@ test('status words match the PC: Needs you, Working, Your turn, Idle, Not runnin
   });
   assert.equal(P.stateWords({ needs: 0, state: 'idle', yourTurn: true, turnEndedAt: '2026-11-12T11:48:00Z' }, now).text, 'Your turn');
   assert.equal(P.stateWords({ needs: 0, state: 'idle', turnEndedAt: null }, now).text, 'Idle');
-  assert.deepEqual(P.stateWords({ notRunning: true }, now), { text: 'Not running', tone: 'nr' });
+  assert.deepEqual(P.stateWords({ notRunning: true }, now), { text: 'Ready', tone: 'nr' });
   assert.equal(P.helperWord('running'), 'working');
   assert.equal(P.helperWord('completed'), 'done');
 });

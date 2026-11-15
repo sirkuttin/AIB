@@ -54,7 +54,7 @@ function card(o) {
     `<span class="connection-title">Add rate limiting to the API and more</span>` +
     `<small class="connection-state"><span class="badge badge-saved">Saved</span></small>` +
     `<span class="row-age">${esc(o.age || '1d')}</span>` +
-    `<span class="row-status tone-${o.tone || 'off'}"><span class="row-phrase">${esc(o.phrase || 'Not running')}</span>` +
+    `<span class="row-status tone-${o.tone || 'off'}"><span class="row-phrase">${esc(o.phrase || 'Ready')}</span>` +
     `<span class="row-agent"> · Claude Code</span></span>${line3}${branch}` +
     (o.pin ? '<span class="row-pin" role="img" aria-label="Pinned"></span>' : '') +
     `</button><button class="rename-chat" type="button" aria-label="Actions">⋯</button></div>`

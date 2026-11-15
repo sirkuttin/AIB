@@ -320,7 +320,7 @@ Deno.test({
   ...T,
   async fn() {
     // The owner's case: a build without WSL support gave up on the WSL chats (three tries, dropped from the recovery list), so the
-    // next AIB never asked the distro's keeper and the chats stayed Not running while their agents ran on.
+    // next AIB never asked the distro's keeper and the chats stayed Ready while their agents ran on.
     await keeperBinary();
     await using lab = new WslLab();
     const a = lab.studio();

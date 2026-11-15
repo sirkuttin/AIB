@@ -26,9 +26,10 @@ import {
 } from '../../outputs/agent-studio/server/agents/beta_setup.ts';
 import { Installer } from '../../outputs/agent-studio/server/agents/installer.ts';
 import type { ShellSpec } from '../../outputs/agent-studio/server/platform/pty.ts';
+import { nvmInstallLine } from '../../outputs/agent-studio/server/agents/nvm.ts';
 
-const NVM =
-  'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh | bash && \\. "$HOME/.nvm/nvm.sh" && nvm install --lts';
+// the one pinned nvm command (nvm.ts): install.sh checked by its SHA-256 before it runs
+const NVM = nvmInstallLine({ portable: true });
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
 /** A probe: this OS, this environment, this node (with this --version), and fixed --version answers per program. */

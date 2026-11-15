@@ -55,7 +55,7 @@ test('pill text per turn state', () => {
   assert.equal(q.pill, 'Needs you');
   assert.equal(q.status.detail, 'question');
   assert.equal(d({ snapshot: { busy: false, permissions: [{ params: {} }], elicitations: [] } }).pill, 'Needs you');
-  assert.equal(d({ connected: false }).pill, 'Not running');
+  assert.equal(d({ connected: false }).pill, 'Ready');
   assert.equal(d({ connected: false }).status.title, 'No agent is attached. Send a message to start it again.');
   assert.equal(
     d({ connected: false, hint: { verdict: 'possibly_active' }, elsewhereWorking: true }).pill,

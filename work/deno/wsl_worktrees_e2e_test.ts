@@ -82,6 +82,8 @@ Deno.test({
       newAib();
       a.reconnectStop.set();
       for (const conn of a.connections.values()) conn.sessionLease?.release();
+      // a crashed AIB's files are closed by the OS (Windows cannot delete a file a live handle holds): its history stores too
+      await a.historyClient()?.shutdown().catch(() => {});
       studios.pop();
       const b = studioIn(state);
       studios.push(b);

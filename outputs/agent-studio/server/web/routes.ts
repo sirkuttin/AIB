@@ -34,6 +34,9 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/wsl/agents/install         WSL projects: AIB's own install of an agent in a distro (the job's state)
  *   POST /api/live/wsl/agents/install         WSL projects: "Install in Ubuntu" / "Update in Ubuntu"
  *   POST /api/live/wsl/agents/install/cancel  WSL projects: Cancel that install
+ *   POST /api/live/wsl/agents/enabled         AIB Linking (WSL): a distro's own On/Off switch of an agent
+ *   POST /api/live/wsl/agents/uninstall       AIB Linking (WSL): remove AIB's own install of an agent in a distro
+ *   GET  /api/live/wsl/prereqs                AIB Linking (WSL): what a distro has for AIB's agents (Node.js, npm, git, curl)
  *   POST /api/live/wsl/reconnect              WSL projects: Reconnect on a stopped distro
  *   POST /api/live/wsl/open-url               WSL projects: the answer to "<distro> wants to open <url>"
  *   POST /api/live/worktree/merge-request     the Changes tab's Merge button: a one-shot merge permission, then the chat is asked to merge
@@ -131,6 +134,9 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/wsl/agents/install', 'read', 'get'],
   ['POST', '/api/live/wsl/agents/install', 'write', 'body'],
   ['POST', '/api/live/wsl/agents/install/cancel', 'write', 'body'],
+  ['POST', '/api/live/wsl/agents/enabled', 'write', 'body'],
+  ['POST', '/api/live/wsl/agents/uninstall', 'write', 'body'],
+  ['GET', '/api/live/wsl/prereqs', 'read', 'get'],
   ['POST', '/api/live/wsl/reconnect', 'write', 'body'],
   ['POST', '/api/live/wsl/open-url', 'write', 'body'],
   ['POST', '/api/live/docs/open', 'write', 'body'],

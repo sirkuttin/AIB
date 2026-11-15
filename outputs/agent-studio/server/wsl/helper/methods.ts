@@ -26,10 +26,13 @@ import { worktreeMethods } from './worktrees.ts';
 import { mergeMethods } from './merge.ts';
 import { HelperSync, syncMethods } from './sync.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
-import { findCodexCli } from '../../agents/signin.ts';
+import { bundledClaudeCli, bundledCodexCli, findCodexCli } from '../../agents/signin.ts';
 import { installMethods } from './agent_install.ts';
 import { docsMethods } from './docs.ts';
 import { docRows } from '../../docs/rows.ts';
+import { bgtaskMethods } from './bgtasks.ts';
+import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
+import { signinStatus } from './signin_status.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -58,6 +61,10 @@ export interface HelperContext {
   notify?(method: string, params: Record<string, unknown>): void;
   /** Reads the login shell's PATH again (a Node.js installed since the helper started). */
   refreshPath?(): Promise<void>;
+  /** How the login environment was captured (env.prereqs envMode); 'plain' when not said. */
+  envMode?(): EnvMode;
+  /** Tests: env.prereqs' program runner and file checks (helper/prereqs.ts PrereqDeps). */
+  prereqDeps?: Partial<PrereqDeps>;
 }
 
 /** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
@@ -146,7 +153,16 @@ function packageVersion(entry: string): string | undefined {
   return undefined;
 }
 
-type AgentRow = { id: string; found: boolean; command?: string[]; version?: string; note?: string; source?: string; signin?: string[] };
+type AgentRow = {
+  id: string;
+  found: boolean;
+  command?: string[];
+  version?: string;
+  note?: string;
+  source?: string;
+  signin?: string[];
+  bundledCli?: boolean;
+};
 
 async function agentRow(id: string, row: LaunchRow): Promise<AgentRow> {
   const out: AgentRow = { id, found: row.found, source: row.source };
@@ -156,6 +172,9 @@ async function agentRow(id: string, row: LaunchRow): Promise<AgentRow> {
     const cli = await findCodexCli(row.argv);
     if (cli) out.signin = cli;
   }
+  // the vendor's own program the adapter ships was found (the page then says the standalone command is not needed)
+  if (id === 'codex') out.bundledCli = row.found && bundledCodexCli(row.argv) !== null;
+  if (id === 'claude') out.bundledCli = row.found && bundledClaudeCli(row.argv) !== null;
   const version = row.found && row.path && row.source !== 'path' ? packageVersion(row.path) : undefined;
   if (version) out.version = version;
   const note = row.problem || row.text;
@@ -169,6 +188,9 @@ export function makeMethods(ctx: HelperContext): Handlers {
   const methods = {
     ...phaseOne(ctx),
     ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
+    // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
+    ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
+    ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
   };
@@ -178,6 +200,36 @@ export function makeMethods(ctx: HelperContext): Handlers {
       return await handler(p);
     }]),
   );
+}
+
+/** env.prereqs (helper/prereqs.ts) and agents.signinStatus (helper/signin_status.ts): read-only looks at the distro. */
+function linkingMethods(ctx: HelperContext): Handlers {
+  return {
+    'env.prereqs': async (p) => {
+      if (p.force === true && ctx.refreshPath) await ctx.refreshPath().catch(() => {});
+      const login = await ctx.env();
+      return {
+        ...await envPrereqs({
+          env: login.env,
+          home: login.home || login.env.HOME || '',
+          arch: login.arch,
+          loginShell: login.shell,
+          envMode: ctx.envMode?.() ?? 'plain',
+          ...(ctx.root ? { root: ctx.root } : {}),
+          ...ctx.prereqDeps,
+        }),
+      };
+    },
+
+    'agents.signinStatus': async (p) => {
+      const ids = p.ids === undefined ? DEFAULT_AGENTS : p.ids;
+      if (!Array.isArray(ids) || ids.length > 50 || ids.some((x) => typeof x !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(x))) {
+        throw new RpcError('ids must be a list of agent ids', BAD_PARAMS);
+      }
+      const login = await ctx.env();
+      return { agents: signinStatus(ids as string[], login.env, login.home || login.env.HOME || '') };
+    },
+  };
 }
 
 function phaseOne(ctx: HelperContext): Handlers {

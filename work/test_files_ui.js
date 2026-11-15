@@ -205,7 +205,7 @@ test('Ctrl+Shift+E toggles Chats and Files; the mode is remembered', () => {
   assert.equal(t.shell.body.querySelector('#filesPane').hidden, true);
 });
 
-test('the tree is lazy: one folder per request; ignored entries are one dimmed row that does not open until Show ignored', async () => {
+test('the tree is lazy: one folder per request; ignored entries are one dimmed row that still opens', async () => {
   const t = setup();
   t.FU.setMode('files');
   await flush();
@@ -220,10 +220,10 @@ test('the tree is lazy: one folder per request; ignored entries are one dimmed r
   assert.equal(nm.querySelector('.fx-tag').textContent, 'ignored');
   nm.click();
   await flush();
-  assert.ok(!t.calls.some((c) => c.q && c.q.dir === 'node_modules'), 'an ignored folder is not listed');
+  assert.ok(t.calls.some((c) => c.q && c.q.dir === 'node_modules'), 'an ignored folder opens too (owner), still dimmed');
   rowOf(t, 'scripts').click();
   await flush();
-  assert.deepEqual(t.calls.filter((c) => c.path === '/api/live/files/list').map((c) => c.q.dir), ['', 'scripts']);
+  assert.deepEqual(t.calls.filter((c) => c.path === '/api/live/files/list').map((c) => c.q.dir), ['', 'node_modules', 'scripts']);
   assert.ok(rowOf(t, 'scripts/load_sales.py'), 'opened folder shows its files');
   assert.equal(rowOf(t, 'scripts/load_sales.py').style['--d'], '1', 'indented one level');
   const show = t.shell.body.querySelector('.fx-foot-link');
@@ -288,7 +288,7 @@ test('arrow keys move and open folders, Enter opens a file', () => {
   assert.deepEqual(FS.keyMove(r, 'scripts', 'ArrowLeft'), { sel: 'scripts', close: 'scripts' });
   assert.deepEqual(FS.keyMove(r, 'scripts/load_sales.py', 'ArrowLeft'), { sel: 'scripts' });
   assert.deepEqual(FS.keyMove(r, 'README.md', 'Enter'), { sel: 'README.md', activate: 'README.md' });
-  assert.deepEqual(FS.keyMove(r, 'node_modules', 'ArrowRight'), { sel: 'node_modules' }, 'an ignored folder does not open');
+  assert.deepEqual(FS.keyMove(r, 'node_modules', 'ArrowRight'), { sel: 'node_modules', open: 'node_modules' }, 'an ignored folder opens too (owner)');
 });
 
 test('scope follows the open chat (its own copy when it has one); the menu lists copies and Follow, and unticking pins', async () => {
@@ -1027,7 +1027,7 @@ test('files-state: local rows are never dim and open without Show ignored, at an
   const by = Object.fromEntries(out.map((r) => [r.path, r]));
   assert.equal(out[0].kind, 'localnote');
   assert.equal(out[0].text, 'note');
-  assert.equal(by['node_modules'].canOpen, false, 'ignored stays closed');
+  assert.equal(by['node_modules'].canOpen, true, 'ignored folders open too (owner)');
   assert.equal(by['node_modules'].ignored, true);
   assert.equal(by['private'].canOpen, true);
   assert.equal(by['private'].open, true);

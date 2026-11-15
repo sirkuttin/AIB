@@ -57,10 +57,23 @@ export interface HelperMethods {
   /**
    * The agents the distro has, AIB's own install (<root>/agents/<id>/<version>) first. `source` is adapters.ts LaunchRow.source
    * ('studio' = AIB's own install); `signin` is Codex's own CLI as an argv (the one next to the adapter, else `codex` on PATH).
+   * `bundledCli` (Claude Code and Codex rows; older helpers leave it out): the vendor program the adapter ships was found in the
+   * adapter's own node_modules (Codex: @openai/codex/bin/codex.js; Claude Code: the SDK's cli.js or its platform `claude` binary).
    */
   'agents.detect': {
     params: { ids?: string[] };
-    result: { agents: { id: string; found: boolean; command?: string[]; version?: string; note?: string; source?: string; signin?: string[] }[] };
+    result: {
+      agents: {
+        id: string;
+        found: boolean;
+        command?: string[];
+        version?: string;
+        note?: string;
+        source?: string;
+        signin?: string[];
+        bundledCli?: boolean;
+      }[];
+    };
   };
   /**
    * AIB-managed agent installs in the distro (helper/agent_install.ts: agents/installer.ts run natively into <root>/agents/<id>/<version>,
@@ -76,6 +89,12 @@ export interface HelperMethods {
   'fs.stat': { params: { path: string }; result: { exists: boolean; isDir: boolean; isFile: boolean; size: number; mtimeMs: number } };
   'fs.listDirs': { params: { path: string; limit?: number }; result: { path: string; parent: string | null; dirs: { name: string; isGit: boolean }[]; truncated: boolean } };
   'folder.check': { params: { path: string }; result: { ok: boolean; reason?: string; isGit: boolean; realPath: string } };
+  /** Linking (WSL) phase 2 (docs/wsl/linking-design.md section 12). What the distro has for running agents; never installs anything. */
+  'env.prereqs': { params: { force?: boolean }; result: EnvPrereqs };
+  /** Remove one AIB-installed agent (<root>/agents/<id>/<ver>); refused while a chat runs from it. Never touches the user's own installs. */
+  'agents.uninstall': { params: { id: string }; result: { ok: boolean; removed: string[]; message?: string; blocked?: string } };
+  /** Is each agent signed in inside the distro (reads credential files' presence/validity only, never their content). */
+  'agents.signinStatus': { params: { ids?: string[] }; result: { agents: { id: string; state: 'signed_in' | 'signed_out' | 'unknown'; account?: string; note?: string }[] } };
   'folder.project': { params: { path: string; name?: string }; result: Record<string, unknown> };
   'folder.createProject': { params: { path: string; name?: string; gitInit?: boolean }; result: Record<string, unknown> };
   'git.init': { params: { path: string }; result: { ok: boolean; message?: string } };
@@ -163,6 +182,38 @@ export interface HelperMethods {
     params: { provider: 'claude' | 'codex'; key: string; args?: Record<string, string>; claudeDir?: string };
     result: { status: number; body: unknown };
   };
+  /**
+   * The viewer's background-task reads of one saved session, answered by the helper's transcripts/monitor.ts handleGet (helper/
+   * bgtasks.ts): `path` is '/api/agents' (the chat and its subagents, each with runningCommands), '/api/commands' (args.running '1':
+   * only running ones) or '/api/command' (args.id; with the task's output, read only from Claude Code's own task folder under
+   * `tempDir`, else the distro's `$TMPDIR/claude-<uid>` and `$TMPDIR/claude`). Keys and ids are the helper store's (no `wsl.` prefix).
+   */
+  'transcripts.query': {
+    params: { provider: 'claude' | 'codex'; path: '/api/agents' | '/api/commands' | '/api/command'; key: string; args?: Record<string, string>; claudeDir?: string; tempDir?: string };
+    result: { status: number; body: unknown };
+  };
+  /**
+   * The ownership check of a saved session before AIB continues it (helper/bgtasks.ts: ownership/probe.ts OwnershipProbe and
+   * ownership.ts findExternalOwner run natively over the distro's /proc and Claude transcripts). `owner`: the pid of a `claude`/`omp`
+   * process whose command line names the session (the strong check AIB refuses with); `assessment`: probe.assess (skipCmdline, fresh)
+   * without the owner registry, which AIB adds on Windows. `exclude`: pids of AIB's own agent channels in this distro (they and their
+   * descendants never count; the helper's own process tree never does either). `releasedAgo`: seconds since AIB released the session
+   * (its own transcript writes before then are not evidence).
+   */
+  'ownership.check': {
+    params: { provider: string; sessionId: string; cwd?: string; projectRoot?: string; exclude?: number[]; claudeDir?: string; releasedAgo?: number };
+    result: { owner: number | null; assessment: Record<string, unknown> };
+  };
+  /** The conversation list's ownership hints of the distro's sessions (probe.hints, no registry) and its list certainty. */
+  'ownership.hints': {
+    params: { exclude?: number[]; claudeDir?: string };
+    result: { hints: Record<string, { verdict: string; reasons: Record<string, unknown>[] }>; certainty: 'unknown' | 'checked' };
+  };
+  /**
+   * The processes below each root pid (platform/descendants.ts run natively, `ps`): busy-children detection of WSL chats (a background
+   * shell still runs). Rows are [pid, parentPid, depth, age in seconds or null]; a root whose processes cannot be listed is null.
+   */
+  'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
   /**
    * The MCP tunnel (phase 2; helper/mcp_tunnel.ts, wsl/mcp_tunnel.ts). A forwarder's message arrives as the notification
    * HelperMcpRequest; AIB first takes it with `mcp.accept` (ok false: the helper already gave up on it, so AIB must not run it), runs it
@@ -274,3 +325,23 @@ export interface BridgePreamble {
 
 /** Linux-side layout, relative to $HOME (never passed with `~`). */
 export const WSL_ROOT_DIR = '.aib-server'; // tests override with the AIB_WSL_ROOT env var (an absolute Linux path)
+
+/** The distro's prerequisites for AIB-managed agents (design section 12). */
+export interface EnvPrereqs {
+  /** Node.js >= 22.19 with npm is the one hard prerequisite. 'shim_unset': a version manager's shim (asdf/mise) with no version set. */
+  node: { state: 'ok' | 'missing' | 'old' | 'shim_unset' | 'broken'; version?: string; path?: string; manager?: 'asdf' | 'mise' | 'nvm' | 'system' | 'aib' | ''; note?: string };
+  npm: { state: 'ok' | 'missing'; version?: string };
+  git: { state: 'ok' | 'missing'; version?: string };
+  curl: { state: 'ok' | 'missing' };
+  /** Free space in the distro's home filesystem, MB (null: unknown). */
+  diskFreeMB: number | null;
+  arch: string;
+  loginShell: string;
+  /** How the login environment was captured: -lic, -lc, or not at all (a version manager in an interactive-only profile is then missed). */
+  envMode: 'login-interactive' | 'login' | 'plain';
+  /** nvm is present in the user's home (so the Node install button can say it will use it). */
+  nvm: { present: boolean };
+  /** Whether AIB may offer the nvm install button (never when the node found is a shim, or nvm is blocked); the reason otherwise. */
+  canInstallNode: boolean;
+  nodeInstallBlocked?: string;
+}

@@ -171,6 +171,53 @@
         });
     return rec.value;
   }
+  /**
+   * Settings > AIB Linking (WSL): the distro's agents without starting it (peek=1). A distro that is not running answers
+   * {state, line, agents: []}; only o.start (the "Start Ubuntu and check" click) asks the server to start it. A ready answer also
+   * refreshes the new-chat panel's cache; a not-ready one never touches it (the panel would read "not installed" from it).
+   */
+  function peekAgents(key, o) {
+    const k = String(key).toLowerCase(),
+      opts = o || {};
+    if (!host || !host.getJson) return Promise.reject(Error('Not ready'));
+    const params = { distro: k, peek: '1' };
+    if (opts.start) params.start = '1';
+    if (opts.force) params.force = '1';
+    return Promise.resolve(host.getJson('/api/live/wsl/agents', params)).then((r) => {
+      const value = r && typeof r === 'object' ? r : {};
+      if (!Array.isArray(value.agents)) value.agents = [];
+      const ready = (!value.state || value.state === 'ready') && value.agents.length > 0;
+      if (ready) agentCache.set(k, { at: Date.now(), busy: false, value });
+      return value;
+    });
+  }
+  /**
+   * Settings > AIB Linking (WSL), "What Ubuntu needs": {distro, name, state, line, prereqs: EnvPrereqs | null} (null while the
+   * distro is not ready). peek=1 always: never starts a distro; o.force lets the distro read its login PATH again.
+   */
+  function peekPrereqs(key, o) {
+    const opts = o || {};
+    if (!host || !host.getJson) return Promise.reject(Error('Not ready'));
+    const params = { distro: String(key).toLowerCase(), peek: '1' };
+    if (opts.force) params.force = '1';
+    return Promise.resolve(host.getJson('/api/live/wsl/prereqs', params)).then((r) => (r && typeof r === 'object' ? r : { prereqs: null }));
+  }
+  /** The distro's own On/Off switch of one agent: {ok, enabled}. */
+  function setAgentEnabled(key, id, enabled) {
+    return post('wsl/agents/enabled', { distro: String(key).toLowerCase(), id, enabled: !!enabled });
+  }
+  /** Remove AIB's own copy of an agent in a distro: {ok, removed, message?, blocked?}. */
+  function uninstallAgent(key, id) {
+    return post('wsl/agents/uninstall', { distro: String(key).toLowerCase(), id }).then((r) => {
+      forget(key);
+      return r || {};
+    });
+  }
+  /** The distro key of the open project or chat ('' when it is not a WSL one). */
+  function currentKey() {
+    const p = parse(host && host.currentPath ? host.currentPath() : '');
+    return p ? p.key : '';
+  }
   /** One agent's row in a distro, or null while unknown. */
   function agentIn(key, id, again) {
     const list = agents(key, again);
@@ -193,12 +240,31 @@
   function installJob(key, id) {
     return jobs.get(jobKey(key, id)) || null;
   }
+  const jobListeners = []; // Settings > AIB Linking (WSL) repaints from the same store: there is no second one
   function setJob(key, id, job) {
     const k = jobKey(key, id);
     if (job) jobs.set(k, job);
     else jobs.delete(k);
     const paint = painters.get(k);
     if (paint) paint();
+    for (const fn of jobListeners) {
+      try {
+        fn(String(key).toLowerCase(), id, job || null);
+      } catch {
+        /* a listener's problem stays its own */
+      }
+    }
+  }
+  function onJob(fn) {
+    if (typeof fn === 'function') jobListeners.push(fn);
+  }
+  /** A job the agent list reports (running or failed, e.g. after a reload): kept in the store and, while it runs, polled. */
+  function trackJob(key, id, job, done) {
+    const k = jobKey(key, id);
+    if (!jobs.has(k) && job && (job.state === 'running' || job.state === 'failed')) jobs.set(k, job);
+    const now = jobs.get(k);
+    if (now && now.state === 'running' && !jobTimers.has(k)) pollJob(key, id, done);
+    return now || null;
   }
   /** Look at the distro's agents again (an install finished, or Node.js may be there now). */
   function forget(key) {
@@ -452,14 +518,22 @@
     listDirs,
     agents,
     agentIn,
+    peekAgents,
+    peekPrereqs,
+    setAgentEnabled,
+    uninstallAgent,
+    currentKey,
     forget,
     installBox,
     installJob,
+    trackJob,
+    onJob,
     startInstall,
     cancelInstall,
     redraw: draw,
     status: () => status,
     available: () => !!status.available,
+    loaded: () => loaded,
     distros: () => (status.distros || []).slice(),
     _set(s) {
       loaded = true;

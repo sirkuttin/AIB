@@ -2,7 +2,8 @@
  * Where the agent programs are on this computer (adapters.py). No owner-machine paths: everything is looked up.
  *
  *   Claude Code   the installed `@agentclientprotocol/claude-agent-acp` package (dist/index.js, run with node)
- *   Codex         the installed `@zed-industries/codex-acp` package (bin/codex-acp.js, run with node) or `codex-acp` on PATH
+ *   Codex         the installed `@zed-industries/codex-acp` or `@agentclientprotocol/codex-acp` package (run with node) or `codex-acp`
+ *                 on PATH (on macOS / Linux an asdf / mise shim or npm bin link of the package is run as [node, entry])
  *   OMP           `omp` on PATH; on Windows also %LOCALAPPDATA%\omp\omp.exe
  *
  * Lookup order for Claude Code and Codex: the command-line flag, then a launcher saved in Settings, then Studio's own install
@@ -28,11 +29,15 @@ const SEP = WIN ? '\\' : '/';
 export type Package = readonly [name: string, entry: string, bin?: string];
 export const CLAUDE_PACKAGE: Package = ['@agentclientprotocol/claude-agent-acp', 'dist/index.js'];
 export const CODEX_PACKAGE: Package = ['@zed-industries/codex-acp', 'bin/codex-acp.js'];
+/** Codex's adapter under its current npm name (the one CODEX_INSTALL names); its package.json `bin` says `dist/index.js`. */
+export const CODEX_ACP_PACKAGE: Package = ['@agentclientprotocol/codex-acp', 'dist/index.js'];
+/** The global npm installs of Codex's adapter AIB looks for: the old name first (as it always did), then the current one. */
+export const CODEX_GLOBAL_PACKAGES: readonly Package[] = [CODEX_PACKAGE, CODEX_ACP_PACKAGE];
 /** Studio's own installs: the package names that may sit in <version>/node_modules/, current name first, each with the known entry
  * file that is used only when its package.json has no usable `bin`. */
 export const STUDIO_PACKAGES: Readonly<Record<string, readonly Package[]>> = {
   claude: [CLAUDE_PACKAGE],
-  codex: [['@agentclientprotocol/codex-acp', 'dist/index.js'], ['@zed-industries/codex-acp', 'bin/codex-acp.js']],
+  codex: [CODEX_ACP_PACKAGE, CODEX_PACKAGE],
 };
 /** The Beta agents that ship on npm (beta_catalog.ts): installed into the same folders as the built-ins; `bin` says which of the
  * package's programs runs. Kept apart from STUDIO_PACKAGES, which stays the built-in list (sign-in checks, the Python port). */
@@ -77,6 +82,7 @@ export const adapterHooks: {
   findNode?: (configured?: string) => string;
   codexOnPath?: () => string;
   codexPresent?: () => boolean;
+  nodeExecPath?: (node: string) => Promise<string>;
 } = {};
 
 /** One way to start an agent: {argv, source, path, found, problem, text}. */
@@ -283,6 +289,71 @@ export async function globalRoots(node?: string, npmRoot?: NpmRoot): Promise<str
   if (WIN && appdata) add(pathOf(appdata, 'npm', 'node_modules'));
   if (!WIN) { for (const fixed of ['/usr/local/lib/node_modules', '/opt/homebrew/lib/node_modules', '/usr/lib/node_modules']) add(fixed); }
   return out;
+}
+
+/**
+ * The program a node command really runs (`process.execPath`), or ''. Version managers put a shim script on PATH (asdf, mise, volta),
+ * so npm and the global packages are not next to the `node` found there but next to the real one. macOS / Linux only: Windows never
+ * needs it. (installer.ts nodeExecPath is this one.)
+ */
+export async function nodeExecPath(node: string): Promise<string> {
+  if (adapterHooks.nodeExecPath) return await adapterHooks.nodeExecPath(node);
+  try {
+    const out = (await runCapture([node, '-p', 'process.execPath'], { timeout: 15 })).stdout.trim();
+    return out.startsWith('/') && !out.includes('\n') && isFile(out) ? out : '';
+  } catch {
+    return '';
+  }
+}
+
+/** A version manager's shim: a small shell script (asdf, mise / rtx, nodenv, nodebrew) that runs the real program. */
+export function isVersionManagerShim(path: string): boolean {
+  try {
+    const info = Deno.statSync(path);
+    if (!info.isFile || info.size > 64 * 1024) return false;
+    const text = new TextDecoder().decode(Deno.readFileSync(path).subarray(0, 4096));
+    if (!text.startsWith('#!') || /^#![^\n]*\bnode\b/.test(text)) return false;
+    return /\/shims\//.test(path.replaceAll('\\', '/')) || /\b(asdf|mise|rtx|nodenv|nodebrew)\b/.test(text);
+  } catch {
+    return false;
+  }
+}
+
+export interface NodeScriptOptions {
+  nodeCommand?: string;
+  npmRoot?: NpmRoot;
+}
+
+/**
+ * [real node, entry] for an adapter found on PATH that is really one of `packages` run by node, or null. Two kinds: an npm bin link
+ * (nvm, a prefix install: the link's target is the package's entry file), and a version manager's shim (asdf, mise: a shell script
+ * that runs the program through the manager; the package is then looked up next to the node the shim's `node` really runs). The node
+ * is the one `node -p process.execPath` names, so the argv starts the same program and an adapter's own node_modules can be walked
+ * (signin.ts findCodexCli finds the Codex CLI the adapter ships). Never on Windows (no shims there; the caller checks).
+ */
+export async function nodeScriptLaunch(
+  program: string,
+  packages: readonly Package[],
+  options: NodeScriptOptions = {},
+): Promise<string[] | null> {
+  let real: string;
+  try {
+    real = realpath(program);
+  } catch {
+    return null;
+  }
+  const node = findNode(options.nodeCommand ?? '');
+  if (!node || !isFile(real)) return null;
+  const slashed = real.replaceAll('\\', '/');
+  if (packages.some(([name]) => slashed.includes(`/node_modules/${name}/`))) return [(await nodeExecPath(node)) || node, real];
+  if (!isVersionManagerShim(real)) return null;
+  const realNode = await nodeExecPath(node);
+  if (!realNode) return null;
+  for (const pkg of packages) {
+    const entry = await findPackageFile(pkg, realNode, options.npmRoot);
+    if (entry) return [realNode, entry];
+  }
+  return null;
 }
 
 /** The entry file of a globally installed npm package, or ''. */
@@ -533,10 +604,16 @@ export async function resolveCodex(options: ResolveCodexOptions = {}): Promise<L
   const { flag = '', saved = '', nodeCommand = '', npmRoot, stateDir } = options;
   if (flag) return scriptLaunch('flag', flag, nodeCommand);
   if (saved) return scriptLaunch('settings', saved, nodeCommand);
-  const found = studioLaunch('codex', nodeCommand, stateDir) ?? await installedLaunch(CODEX_PACKAGE, nodeCommand, npmRoot);
+  let found = studioLaunch('codex', nodeCommand, stateDir);
+  for (const pkg of CODEX_GLOBAL_PACKAGES) found ??= await installedLaunch(pkg, nodeCommand, npmRoot);
   if (found) return found;
   const path = (options.onPath ?? codexOnPath)();
-  if (path) return row([path], 'path', path, '', `codex-acp on PATH: ${path}`);
+  if (path) {
+    // macOS / Linux: an asdf / mise shim or an npm bin link is run as [node, entry], so the Codex CLI the adapter ships is found
+    const viaNode = WIN ? null : await nodeScriptLaunch(path, CODEX_GLOBAL_PACKAGES, { nodeCommand, npmRoot });
+    if (viaNode) return row(viaNode, 'installed', viaNode[1], '', `Installed adapter: ${viaNode[1]} (run with node, found as ${path})`);
+    return row([path], 'path', path, '', `codex-acp on PATH: ${path}`);
+  }
   const present = (options.codexPresent ?? adapterHooks.codexPresent ?? (() => codexLooksInstalled()))();
   const problem = present ? CODEX_NEEDS_ADAPTER : 'Not installed. Install the adapter with: ' + CODEX_INSTALL;
   return row([], 'missing', '', problem, 'Not installed');

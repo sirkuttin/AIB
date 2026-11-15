@@ -17,6 +17,7 @@ import { HELPER_PROTOCOL, WSL_ROOT_DIR } from './contract.ts';
 import { agentEnv, captureLoginEnv, cleanPath, loginShell } from './helper/env.ts';
 import { type Handlers, lineWriter, serveLines } from './helper/rpc.ts';
 import { makeMethods } from './helper/methods.ts';
+import { type EnvMode, envModeOf } from './helper/prereqs.ts';
 import { serveOpenFifo, shimScript } from './helper/browser.ts';
 import { worktreeStartup } from './helper/worktrees.ts';
 import { HelperSync } from './helper/sync.ts';
@@ -187,7 +188,9 @@ async function helperMain(args: string[]): Promise<number> {
     console.error(`AIB-wsl-helper: could not write ${shim} (${error instanceof Error ? error.message : error})`);
   }
   const shell = loginShell(base, readOr('/etc/passwd'), me);
+  let mode: EnvMode = 'plain'; // how the login environment was captured (env.prereqs)
   const captured = captureLoginEnv(shell, base).then((c) => {
+    mode = envModeOf(c.how);
     const env = agentEnv(c.env, { browser: shim, ...(open ? { openFifo: open.path } : {}) });
     for (const [k, v] of Object.entries(env)) Deno.env.set(k, v); // git, which and the module's own spawns use it from here on
     for (const k of Object.keys(base)) if (!(k in env)) Deno.env.delete(k);
@@ -202,9 +205,15 @@ async function helperMain(args: string[]): Promise<number> {
     const login = await captured;
     const again = await captureLoginEnv(shell, base);
     if (again.how === 'none') return;
+    mode = envModeOf(again.how);
     const path = agentEnv(again.env).PATH;
     login.env.PATH = path;
     Deno.env.set('PATH', path);
+    // nvm's folder too, so env.prereqs sees an nvm installed since this start
+    if (again.env.NVM_DIR) {
+      login.env.NVM_DIR = again.env.NVM_DIR;
+      Deno.env.set('NVM_DIR', again.env.NVM_DIR);
+    }
   };
   const own = makeMethods({
     env: () => captured,
@@ -214,6 +223,7 @@ async function helperMain(args: string[]): Promise<number> {
     root, // AIB's own agent installs: <root>/agents/<id>/<version>
     notify: (method, params) => void send({ jsonrpc: '2.0', method, params }).catch(() => {}),
     refreshPath,
+    envMode: () => mode,
   });
   // The MCP tunnel: only with a keeper program to run the relay (one that knows `mcp-relay`; an older one exits at once: no tunnel).
   const keeper = argValue(args, '--keeper') || (exeDir ? `${exeDir}/${KEEPER_NAME}` : '');
