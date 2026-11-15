@@ -350,6 +350,8 @@ export interface RemoveDeps {
   prune(project: string): Promise<boolean>;
   /** The chat copies of this data folder (the worktree registry): their folder and project. */
   worktrees(): { path: string; project: string; branch?: string; session?: string }[];
+  /** The pid an agent install's lock names (agents/<id>/install.lock), else undefined (tests). */
+  lockPid?(path: string): unknown;
   /** The walk's limits (tests). */
   budget?: () => Budget;
 }
@@ -423,7 +425,8 @@ export async function planRemoval(d: RemoveDeps): Promise<Plan> {
   const inData = others(data);
   if (inData.length) plan.blocked.push(`A program works in this AIB's data folder (${describe(inData)}). End it, then remove.`);
   for (const [id, name] of Object.entries(AGENTS)) {
-    const pid = (readJson(`${root}/agents/${id}/${LOCK_NAME}`) ?? {}).pid;
+    const lock = `${root}/agents/${id}/${LOCK_NAME}`;
+    const pid = d.lockPid ? d.lockPid(lock) : (readJson(lock) ?? {}).pid;
     if (typeof pid === 'number' && pid !== d.self && rows.some((r) => r.pid === pid)) {
       plan.blocked.push(`${name} is being installed in this distro right now. Wait for it to finish, or cancel it, then remove.`);
     }
