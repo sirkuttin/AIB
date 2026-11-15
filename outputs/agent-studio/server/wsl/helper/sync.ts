@@ -162,6 +162,7 @@ export class HelperSync {
   /** What is watched (tests and diagnostics): the chats and, per project, whether its folder watcher runs and how many events it saw. */
   status(): Record<string, unknown> {
     return {
+      poll: this.live.poll,
       chats: [...this.chats.values()].map((c) => ({ chat: c.id, cwd: c.cwd })),
       projects: [...this.live.projects.values()].map((p) => ({
         project: p.project,

@@ -116,7 +116,7 @@ export interface HelperMethods {
   'sync.resume': { params: { project: string }; result: { resumed: boolean } };
   'sync.status': {
     params: Record<string, never>;
-    result: { chats: { chat: string; cwd: string }[]; projects: { project: string; watching: boolean; events: number }[] };
+    result: { poll: number; chats: { chat: string; cwd: string }[]; projects: { project: string; watching: boolean; events: number }[] };
   };
   /**
    * Saved sessions of the distro user's agents (~/.claude/projects, ~/.codex/sessions; CLAUDE_CONFIG_DIR / CODEX_HOME of the login
