@@ -206,7 +206,14 @@ func TestBridgeStartsTheKeeperWithTheOrphanGrace(t *testing.T) {
 		if g := c.must("status", nil, nil).h["orphanGrace"]; g != tc.want {
 			t.Fatalf("bridge %v: status orphanGrace %v, want %v", tc.extra, g, tc.want)
 		}
+		c.must("spawn", map[string]any{"channel": "agent", "command": agentBin, "args": []string{"sleep"}}, nil)
 		c.nc.Close()
+		// no client now (a bridge that has not said hello is none): the next bridge's preamble says when the agent would stop
+		time.Sleep(300 * time.Millisecond)
+		pre := startBridge(t, data).preamble(t)
+		if at, _ := pre["orphanStopAt"].(float64); at < float64(time.Now().UnixMilli()) {
+			t.Fatalf("bridge %v: preamble orphanStopAt %v", tc.extra, pre["orphanStopAt"])
+		}
 	}
 }
 
