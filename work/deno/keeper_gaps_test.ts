@@ -110,6 +110,12 @@ class Lab {
   }
 }
 
+/** The chunked-history path of beta.10 (kept behind the aib-history-v2 switch for one release): these tests are about its chunk notes. */
+function historyV1(): Disposable {
+  Deno.env.set('AIB_HISTORY_V2', '0');
+  return { [Symbol.dispose]: () => Deno.env.delete('AIB_HISTORY_V2') };
+}
+
 const prompts = (lines: Json[]) => lines.filter((m) => m.method === 'session/prompt');
 const answers = (lines: Json[], id: string) => lines.filter((m) => m.id === id && !m.method);
 const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kind, e.data]));
@@ -400,9 +406,10 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'snapshots: the keeper drops journal segments before a snapshot; a rebuild of the truncated record still works',
+  name: 'snapshots: the keeper drops journal segments before a snapshot; a rebuild of the truncated record still works (old path: AIB_HISTORY_V2=0)',
   ...T,
   async fn() {
+    using _v1 = historyV1();
     await keeperBinary();
     await using lab = new Lab(['--segment-bytes', '2048']);
     const a = lab.studio();
@@ -470,9 +477,10 @@ function journalBytes(state: string, id: string): number {
 const jsonBytes = (value: unknown) => ENC.encode(JSON.stringify(value)).length;
 
 Deno.test({
-  name: 'snapshots: a chat with 50 MB of history writes small snapshots; a take-over has every event, the question once and the queue',
+  name: 'snapshots: a chat with 50 MB of history writes small snapshots; a take-over has every event, the question once and the queue (old path: AIB_HISTORY_V2=0)',
   ...T,
   async fn() {
+    using _v1 = historyV1();
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
