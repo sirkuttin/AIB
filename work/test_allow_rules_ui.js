@@ -163,3 +163,27 @@ test('the desktop banner shows while the rules file was changed outside AIB, wit
   ctx.AllowRulesUI.banner(false);
   assert.equal(bar.hidden, true);
 });
+
+test('chat.js: an auto-allowed request is one "Allowed by rule" line with Stop allowing this', async () => {
+  const { makePage, flat } = require('./chat_harness.js');
+  const removed = [];
+  const p = makePage({
+    scripts: ['allow-rules-ui.js'],
+    routes: { '/api/live/allow/remove': (_q, body) => (removed.push(body.ruleId), { body: { ok: true } }) },
+  });
+  const events = [
+    { seq: 4, kind: 'permission_auto', time: 1, data: { label: 'npm test', ruleId: 'r9', params: { toolCall: { rawInput: { command: 'npm test' } } } } },
+    { seq: 5, kind: 'permission_auto', time: 2, data: { label: 'Safe reads', ruleId: 'builtin:safe-reads', flagged: true, params: { toolCall: { rawInput: { command: 'ls' } } } } },
+  ];
+  const rows = p.run("liveRows('s', " + JSON.stringify(events) + ", { sessionId: 's' }, true)");
+  const auto = Array.from(rows).filter((r) => r.ask === 'auto');
+  assert.deepEqual(auto.map((r) => r.value), ['npm test · Allowed by rule · npm test', 'ls · Allowed by rule · Safe reads · Claude asked in bypass']);
+  const line = p.run('answeredLine(' + JSON.stringify(auto[0]) + ')');
+  assert.match(flat(line), /Allowed by rule · npm test/);
+  const stop = line.children.find((n) => n.className === 'answered-rule');
+  assert.equal(stop.textContent, 'Stop allowing this');
+  await stop.onclick();
+  assert.deepEqual(removed, ['r9']);
+  const builtin = p.run('answeredLine(' + JSON.stringify(auto[1]) + ')').children.find((n) => n.className === 'answered-rule');
+  assert.equal(builtin.textContent, 'Allow rules…');
+});

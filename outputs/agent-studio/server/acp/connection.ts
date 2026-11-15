@@ -4633,6 +4633,7 @@ export class Connection {
       time: Date.now(),
     });
     this.recordedEvent('permission_auto', {
+      sessionId: get(params, 'sessionId'),
       params: { sessionId: get(params, 'sessionId'), toolCall: get(params, 'toolCall') },
       ruleId: result.ruleId,
       label: result.label,
@@ -4706,6 +4707,7 @@ export class Connection {
         swept: true,
       });
       this.recordedEvent('permission_auto', {
+        sessionId: get(pending.params, 'sessionId'),
         params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
         ruleId: result.ruleId,
         label: result.label,

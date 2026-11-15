@@ -2057,6 +2057,7 @@
           key: 'auto:' + event.seq,
           rid,
           autoText: what + ' · Allowed by rule · ' + (event.data?.label || 'rule') + (event.data?.flagged ? ' · Claude asked in bypass' : ''),
+          ruleId: String(event.data?.ruleId || ''),
           value: '',
           time: event.replay ? 0 : event.time,
         });
@@ -2170,6 +2171,24 @@
     line.append(text('span', '✓', 'answered-mark'), text('span', row.value, 'answered-text'));
     const when = window.StreamUI?.shortTime?.(row.time);
     if (when) line.append(text('time', when));
+    if (row.ask === 'auto' && row.ruleId) {
+      /* Allow rules: stop the rule from here (an owner rule), or open Settings > Allow rules (a built-in one). */
+      const own = !row.ruleId.startsWith('builtin:');
+      const stop = text('button', own ? 'Stop allowing this' : 'Allow rules…', 'answered-rule');
+      stop.type = 'button';
+      stop.onclick = async () => {
+        if (!own) return window.AgentSettingsUI?.open?.('allow');
+        stop.disabled = true;
+        try {
+          await post('allow/remove', { ruleId: row.ruleId });
+          stop.textContent = 'Rule removed';
+        } catch (e) {
+          stop.disabled = false;
+          fail(e);
+        }
+      };
+      line.append(stop);
+    }
     return line;
   }
   // Messages whose delivery is unknown after a restart: shown as a bubble with one amber line (unknown-send.js), cleared once the agent shows them.
@@ -5695,6 +5714,7 @@
   window.StudioChat = {
     DraftStore,
     renderApprovals,
+    answeredLine,
     paintActivityTabBadge,
     setActCounts: (c) => (actCounts = c),
     headerYourTurn,

@@ -4037,3 +4037,4 @@ span.chip-static:hover {
 .allow-banner { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--bad, #e5534b); margin-bottom: 8px; }
 .allow-rule { display: block; margin: 4px 0; }
 .allow-master { display: block; margin: 6px 0 10px; }
+.answered-line .answered-rule { margin-left: 8px; font-size: .85em; }
