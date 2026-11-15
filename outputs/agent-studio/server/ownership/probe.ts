@@ -761,7 +761,7 @@ export interface ProbeOptions {
   inspectProcesses?: boolean;
 }
 
-const SUMMARIES: Record<Exclude<Verdict, 'owned_by_studio'>, string> = {
+export const SUMMARIES: Record<Exclude<Verdict, 'owned_by_studio'>, string> = {
   owned_elsewhere: 'Another app is running this conversation. AIB will not continue it from here.',
   possibly_active: 'Another app may be using this conversation. AIB cannot be sure either way.',
   no_evidence: NO_EVIDENCE_NOTE,
@@ -841,6 +841,11 @@ export class OwnershipProbe {
       const oldest = [...this.#released].sort((a, b) => a[1] - b[1]).slice(0, this.#released.size - 256);
       for (const [key] of oldest) this.#released.delete(key);
     }
+  }
+
+  /** When this probe last noted the conversation released (its clock, seconds), or null: a WSL chat's check passes it to the distro. */
+  releasedAt(provider: string, sessionId: string): number | null {
+    return this.#released.get(claimKey(provider, sessionId)) ?? null;
   }
 
   // -- transcripts -------------------------------------------------------------------------

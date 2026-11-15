@@ -6,7 +6,7 @@ import { ValueError } from '../core/py.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { modelInUse } from '../transcripts/store.ts';
 import { refuseNetworkPath } from './security.ts';
-import { assertWindowsLocal } from '../platform/location.ts';
+import { assertWindowsLocal, locOf } from '../platform/location.ts';
 import type { WebContext } from './server.ts';
 import { afterConnect, discoverAdded } from './project_routes.ts';
 
@@ -62,7 +62,8 @@ export function liveRoutes(): Map<string, LiveHandler> {
     let cwd: string;
     try {
       cwd = refuseNetworkPath(arg(url, 'cwd'));
-      assertWindowsLocal(cwd, 'folder'); // ownership is a Windows transcript check (phase 1: not for WSL chats)
+      // a WSL project's folder is checked in its distro (Studio.ownershipQuery); anything else foreign is refused
+      if (locOf(cwd)?.kind !== 'wsl') assertWindowsLocal(cwd, 'folder');
     } catch (error) {
       throw new ValueError((error as Error).message);
     }

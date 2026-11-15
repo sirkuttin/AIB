@@ -175,13 +175,28 @@ export function tempDir(): string {
   return '/tmp';
 }
 
-/** Read only a known Claude task output location, never a transcript-supplied path. */
-export async function commandOutput(session: string, task: Task, tmp = tempDir()): Promise<string> {
+/**
+ * Read only a known Claude task output location, never a transcript-supplied path. `folders`: the names under `tmp` Claude Code
+ * keeps its task folders in, tried in order ('claude' on Windows; Linux Claude Code uses `claude-<uid>`, see wsl/helper/bgtasks.ts).
+ */
+export async function commandOutput(session: string, task: Task, tmp = tempDir(), folders: readonly string[] = ['claude']): Promise<string> {
   let output = (Object.hasOwn(task, 'output') ? task.output : '') as Json;
+  for (const folder of folders) {
+    const found = await taskOutput(session, task, tmp, folder);
+    if (found !== null) {
+      output = found;
+      break;
+    }
+  }
+  return clipped(output);
+}
+
+async function taskOutput(session: string, task: Task, tmp: string, folder: string): Promise<string | null> {
+  let output: string | null = null;
   if (session.startsWith('claude/') && /^[A-Za-z0-9_-]+$/.test(pyStr(truthy(task.jobId) ? task.jobId : ''))) {
     const relative = purePath(session.split('/').slice(1).join('/'), false);
     if (relative.parts.length + (relative.root ? 1 : 0) === 2) {
-      const base = await resolveLoose(join(tmp, 'claude'));
+      const base = await resolveLoose(join(tmp, folder));
       const candidate = join(base, relative.parts[0], stem(name(relative.parts[1])), 'tasks', concat('', task.jobId) + '.output');
       const resolved = await resolveLoose(candidate);
       if (isRelativeTo(resolved, base) && (await isFile(resolved))) {
@@ -199,7 +214,7 @@ export async function commandOutput(session: string, task: Task, tmp = tempDir()
       }
     }
   }
-  return clipped(output);
+  return output;
 }
 
 // Every route this server answers and the scope it needs (see security.authorize). Unknown /api/ routes are refused.
