@@ -22,6 +22,11 @@
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
+- One agent per chat after a restart. When AIB restarts while a chat's agent is still running (on Windows or in a WSL distro) and
+  could not take it over right away, for example because Ubuntu was slow to start, reopening the chat now picks up that running
+  agent instead of starting a second one for the same conversation. The chat keeps its history and its running turn, and it is
+  listed once.
+
 - AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
   merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
   `~/.aib-server`, and the helper passes it to AIB over the connection AIB already keeps. No network port is opened, nothing on
