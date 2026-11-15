@@ -25,6 +25,7 @@ import { fileReadOf, WSL_NO_PREVIEW, wslFiles, wslStatus } from '../../outputs/a
 import { handle } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { branchOf, changesFolder, changesResponse, repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
 import { distroSessions, wslSessionKey } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
+import { wslSigninCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -273,4 +274,35 @@ Deno.test('mcp restricted (a WSL chat): only publish, update and list, and publi
   assert(result.isError === true && String(((result.content as Json[])[0]).text).includes('publish by `content`'));
   const full = await handle({ jsonrpc: '2.0', id: 4, method: 'tools/list' }, { ...ctx, restricted: false }) as Json;
   assert(((full.result as Json).tools as Json[]).some((t) => t.name === 'doc_create'), 'a Windows chat keeps every tool');
+});
+
+Deno.test('mcp restricted: a WSL chat never gets the swarm helper tools, even marked main; a Windows main chat does', async () => {
+  const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, main: true, cwd: null, roots: () => [] };
+  const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list']);
+  const call = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'start_helper', arguments: {} } }, ctx) as Json;
+  assertEquals((call.error as Json).code, -32602);
+  const main = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, { ...ctx, restricted: false, worktree: true }) as Json;
+  assert(((main.result as Json).tools as Json[]).some((t) => t.name === 'start_helper'), 'a Windows main chat keeps the swarm tools');
+});
+
+Deno.test("wsl sign-in: Claude's login runs in the distro with the sign-in card's advertised args, else the Claude.ai login", async () => {
+  const host = new FakeWslHost('unused', 'Ubuntu');
+  withHost(host);
+  try {
+    const adapter = ['/usr/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'];
+    assertEquals(await wslSigninCommand('claude', 'ubuntu'), { file: '/usr/bin/node', args: [...adapter, '--cli', 'auth', 'login', '--claudeai'] });
+    assertEquals(
+      await wslSigninCommand('claude', 'ubuntu', ['--cli', 'auth', 'login', '--console']),
+      { file: '/usr/bin/node', args: [...adapter, '--cli', 'auth', 'login', '--console'] },
+    );
+    // words the page may not send (a shell character) are never run: the default login instead
+    assertEquals(
+      await wslSigninCommand('claude', 'ubuntu', ['--cli', 'x;rm']),
+      { file: '/usr/bin/node', args: [...adapter, '--cli', 'auth', 'login', '--claudeai'] },
+    );
+    assertEquals(await wslSigninCommand('codex', 'ubuntu', ['--x']), { file: '/usr/bin/codex', args: ['login'] });
+  } finally {
+    setWslHostResolver(null);
+  }
 });

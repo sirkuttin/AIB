@@ -14,8 +14,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   Ubuntu…", "Setting up AIB in Ubuntu (first time, ~100 MB)"; after a `wsl --shutdown`: "Ubuntu stopped. Reconnect").
 - Chats start the agent as the distro has it (`claude-agent-acp`, `codex-acp` installed with npm in the distro). A missing one shows
   its install command and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
-- AIB tools in a WSL chat are limited to artifacts (publish, list, update), reached through WSL interop; docs and merge are not
-  available yet, and the chat says so.
+  A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
+- AIB tools in a WSL chat are limited to artifacts (publish, list, update), reached through WSL interop; docs, merge and the swarm
+  helper tools are not available yet, and the chat says so.
 - Chats work in the project folder (no worktree, no live sync, no merge button). The Docs tab is off. Images and binaries have no
   preview. Delete project only removes it from AIB. VS Code and Cursor open it with `--remote wsl+Ubuntu`.
 - Ended WSL chats are listed with the project's other saved chats (Claude Code transcripts in the distro's `~/.claude/projects`),
