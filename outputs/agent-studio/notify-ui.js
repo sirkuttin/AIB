@@ -185,6 +185,13 @@
   function openFromDesktop(target) {
     if (!S.host) return false;
     if (target && target.type === 'chat' && typeof S.host.mayOpen === 'function' && !S.host.mayOpen(target.key)) return 'no';
+    // a routed project or doc (K3 route): this window opens it, or says it is not its own (a pop-out, another window's project)
+    if (target && target.type === 'project')
+      return typeof S.host.openProject === 'function' && S.host.openProject(String(target.key || '')) ? 'mine' : 'no';
+    if (target && target.type === 'doc')
+      return typeof S.host.openDoc === 'function' && S.host.openDoc(String(target.project || ''), String(target.name || ''))
+        ? 'mine'
+        : 'no';
     if (target && (target.type === 'chat' || target.type === 'inbox')) openTarget(target);
     return 'mine';
   }

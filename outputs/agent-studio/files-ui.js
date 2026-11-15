@@ -1873,6 +1873,29 @@
     return out;
   }
   const showingFile = () => view === 'file' && !!tabsHere().active;
+  // The doc tab on screen, or null (Ctrl+K "Pop out this doc", multi-window 2.5A).
+  function shownDocTab() {
+    if (!showingFile()) return null;
+    const h = tabsHere();
+    const t = h.tabs.find((x) => x.id === h.active);
+    return t && t.kind === 'doc' && t.doc && t.doc.name ? t : null;
+  }
+  // Pop the doc on screen out into its own window (doc-links.js popOut; its tab closes here). False when no doc is showing.
+  function popOutShownDoc() {
+    const tab = shownDocTab();
+    if (!tab || !DL() || !DL().popOut) return false;
+    DL().popOut({
+      project: projectKey(),
+      name: tab.doc.name,
+      title: tab.doc.title || tab.name,
+      scope: Object.assign({}, tab.scope, { path: (tab.scope && tab.scope.path) || projectPathNow() }),
+      closeHere: () => {
+        closeFileTab(tab.id);
+        paint();
+      },
+    });
+    return true;
+  }
   function closeActive() {
     const t = tabsHere();
     if (!t.active) return false;
@@ -2858,6 +2881,8 @@
     search: searchFiles,
     openDoc,
     restoreDocTab,
+    shownDocTab,
+    popOutShownDoc,
     openNotes,
     attachDocFrame,
     startNewDoc,

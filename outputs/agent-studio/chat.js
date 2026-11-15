@@ -1182,6 +1182,7 @@
         window.AgentSidebarUI?.rowSig(c),
         c.last?.text?.length || 0,
         !!window.AibTerminal?.hasSession(aliasKey(c)),
+        !!window.AgentWorkspaceUI?.chatPoppedOut?.(aliasKey(c)),
       ]),
       org ? org.signature() : '',
     ]);
@@ -1214,7 +1215,15 @@
     );
     const termIcon = window.AibTerminal?.rowIcon(aliasKey(c));
     if (termIcon) button.querySelector('.connection-title')?.append(termIcon);
-    button.title = c.cwd + '\n' + c.id;
+    // popped out into its own window (multi-window 2.5A): a quiet ↗; a click brings that window forward (workspace-ui.js routes it)
+    const popped = !!window.AgentWorkspaceUI?.chatPoppedOut?.(aliasKey(c));
+    if (popped) {
+      const arrow = text('span', '↗', 'ws-chatpop');
+      arrow.setAttribute('aria-label', 'In its own window');
+      button.querySelector('.connection-title')?.append(arrow);
+      button.classList.add('popped');
+    }
+    button.title = c.cwd + '\n' + c.id + (popped ? '\nIn its own window. Click: bring it forward' : '');
     button.onclick = () => {
       window.AgentWorkspaceUI?.closeDrawer?.(); // choosing the chat that is already open still closes the narrow drawer
       openConversation(c);
@@ -4481,6 +4490,14 @@
         return;
       }
       const key = sessionStorage.getItem('studio-selected') || sessionStorage.getItem('studio-saved');
+      // a chat pop-out (multi-window 2.5A) always opens its own chat, found by its lasting key (never a live id)
+      const popKey = window.AgentWorkspaceUI?.popoutKey?.() || '';
+      if (popKey) {
+        const own = conversations.find((c) => aliasKey(c) === popKey);
+        if (own) await openConversation(own);
+        else window.AgentWorkspaceUI?.popoutMissing?.();
+        return;
+      }
       const prior = conversations.find((c) => c.key === key) || window.AgentWorkspaceUI?.restoreTarget?.();
       if (prior) {
         window.AgentWorkspaceUI?.keepProjectFor?.(prior); // reopening it keeps the project you had in the sidebar
@@ -5126,6 +5143,7 @@
     conversations: () => conversations,
     setName: (c, v) => renameChat(c, v),
     handoff: (c) => handoffFor(c),
+    menuExtras: (c) => window.AgentWorkspaceUI?.chatMenuItems?.(c) || [],
     getSelected: () => selected,
     fail,
     rerender: () => {

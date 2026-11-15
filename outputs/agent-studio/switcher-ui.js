@@ -86,6 +86,12 @@
       d.openProjectWindow = (p) => W.openProjectWindow(p.key);
       d.offersProjectWindow = (p) => !!W.offersProjectWindow(p.key);
     }
+    // multi-window 2.5A: "Pop out this chat" / "Pop out this doc" (desktop app only, never inside a pop-out)
+    const pop = chat && W && typeof W.chatMenuItems === 'function' ? W.chatMenuItems(chat).find((x) => x.id === 'popout') : null;
+    if (pop) d.popOutChat = () => pop.run();
+    const FU = root.AgentFilesUI;
+    if (FU && typeof FU.shownDocTab === 'function' && FU.shownDocTab() && W && W.canOpenWindows && W.canOpenWindows() && !(W.popoutKey && W.popoutKey()))
+      d.popOutDoc = () => FU.popOutShownDoc();
     if (W && typeof W.openProjectMenu === 'function') d.switchProject = () => W.openProjectMenu({ filter: true });
     if (W && typeof W.toggleInbox === 'function') d.openInbox = () => W.toggleInbox(true);
     if (R && typeof R.toggleSide === 'function') d.toggleSide = () => R.toggleSide();
