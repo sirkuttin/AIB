@@ -194,6 +194,22 @@ func TestBridgeStartsAKeeperAndCarriesFrames(t *testing.T) {
 	}
 }
 
+// keeper 1.6.0: a keeper the bridge starts keeps live channels 2 h without a client (--orphan-grace); extra serve flags override it.
+func TestBridgeStartsTheKeeperWithTheOrphanGrace(t *testing.T) {
+	for _, tc := range []struct {
+		extra []string
+		want  float64
+	}{{nil, 7200}, {[]string{"--", "--orphan-grace", "5s"}, 5}} {
+		data := shortTemp(t)
+		startBridge(t, data, tc.extra...).preamble(t)
+		c := dialData(t, data)
+		if g := c.must("status", nil, nil).h["orphanGrace"]; g != tc.want {
+			t.Fatalf("bridge %v: status orphanGrace %v, want %v", tc.extra, g, tc.want)
+		}
+		c.nc.Close()
+	}
+}
+
 func TestBridgesShareOneKeeper(t *testing.T) {
 	data := shortTemp(t)
 	pids := make([]float64, 4)
