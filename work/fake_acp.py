@@ -228,6 +228,29 @@ def raw(text):
     print(text, flush=True)
 
 
+allow_count = [0]
+
+
+def allow_prompt(key, params):
+    """Allow rules: 'allow:<command>' asks like claude-agent-acp's Bash (a tool_call naming the tool, then request_permission with
+    Yes / Always / No); 'allowcodex:<command>' asks like codex-acp (kind execute, rawInput.command, no tool name)."""
+    text = next((b.get('text', '') for b in params.get('prompt', []) if b.get('type') == 'text'), '')
+    if not (text.startswith('allow:') or text.startswith('allowcodex:')):
+        return False
+    claude = text.startswith('allow:')
+    command = text.split(':', 1)[1]
+    allow_count[0] += 1
+    tool = 'allow-tool-%d' % allow_count[0]
+    rid = 'allow-%d' % allow_count[0]
+    waiting[rid] = key
+    call = {'toolCallId': tool, 'kind': 'execute', 'title': command, 'rawInput': {'command': command}, 'status': 'pending'}
+    if claude:
+        update({'sessionUpdate': 'tool_call', **call, '_meta': {'claudeCode': {'toolName': 'Bash'}}})
+    options = [{'optionId': 'yes', 'name': 'Yes', 'kind': 'allow_once'}, {'optionId': 'always', 'name': 'Yes, always', 'kind': 'allow_always'}, {'optionId': 'no', 'name': 'No', 'kind': 'reject_once'}]
+    emit({'id': rid, 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': call, 'options': options}})
+    return True
+
+
 def malformed_prompt(key, params):
     # Each line below violates (or extends) ACP v1 in one specific way; see work/test_conformance.py.
     text = next((b.get('text', '') for b in params['prompt'] if b.get('type') == 'text'), '')
@@ -845,6 +868,14 @@ for line in sys.stdin:
     key = message.get('id')
     params = message.get('params', {})
     if args.malformed and method == 'session/prompt' and malformed_prompt(key, params):
+        continue
+    if method == 'session/prompt' and allow_prompt(key, params):
+        continue
+    if method is None and isinstance(key, str) and key.startswith('allow-') and key in waiting:
+        # allow rules: report what AIB answered, then end the turn
+        outcome = message.get('result', {}).get('outcome', {})
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'allow outcome=%s;' % (outcome.get('optionId') or outcome.get('outcome'))}})
+        result(waiting.pop(key), {'stopReason': 'end_turn'})
         continue
     if args.malformed and method is None and key in ('bad-perm', 'nope'):
         emit({'method': 'session/update', 'params': {'sessionId': SID(), 'update': {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture reply %s: %s' % (key, message.get('error', {}).get('code'))}}}})

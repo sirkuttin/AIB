@@ -5222,7 +5222,7 @@ export class Connection {
       permissions: light ? [] : [...this.permissions].map(([k, v]) => ({
         key: k,
         params: v.params,
-        allow: this.#allowRemember(k, v),
+        ...(this.allowGate ? { allow: this.#allowRemember(k, v) } : {}),
         route: this.route(isDict(v.params) ? get(v.params, 'sessionId') : null),
       })),
       elicitations: [...this.elicitations].map(([k, v]) => ({

@@ -5693,6 +5693,7 @@
    `state` for the few variables they set up or check. Nothing else from this file is reachable from outside. */
   window.StudioChat = {
     DraftStore,
+    renderApprovals,
     paintActivityTabBadge,
     setActCounts: (c) => (actCounts = c),
     headerYourTurn,

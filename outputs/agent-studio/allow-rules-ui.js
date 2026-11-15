@@ -3,7 +3,7 @@
    the page only picks the scope. */
 (function (root) {
   'use strict';
-  const doc = () => root.document;
+  const doc = () => root.document || globalThis.document;
   const el = (tag, content, cls) => {
     const n = doc().createElement(tag);
     if (content != null && content !== '') n.textContent = String(content);
@@ -32,6 +32,7 @@
       o.value = value;
       scope.append(o);
     }
+    scope.value = 'project';
     const preview = el('p', '', 'allow-preview');
     const draw = () => {
       const d = allow[scope.value] || allow.project;
@@ -45,7 +46,7 @@
     scope.onchange = draw;
     box.append(label, scope, preview);
     draw();
-    return { element: box, ticked: () => tick.checked && !tick.disabled, scope: () => scope.value };
+    return { element: box, ticked: () => tick.checked && !tick.disabled, scope: () => (scope.value === 'global' ? 'global' : 'project') };
   }
 
   /* Answer + save in one call. Returns what the note shows: {rules, alsoAllowed} or {elsewhere, save()}. */

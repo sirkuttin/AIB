@@ -26,12 +26,6 @@
   // Every searchable setting. label + keywords are what the search box matches; `title` is the heading drawn on its card.
   const INDEX = [
     {
-      id: 'allow-rules',
-      section: 'allow',
-      label: 'Allow rules: what AIB approves for you',
-      keywords: ['allow', 'always', 'approve', 'approval', 'permission', 'rule', 'safe reads', 'scratch', 'syntax'],
-    },
-    {
       id: 'agents-list',
       section: 'agents',
       label: 'Agents AIB knows',
@@ -161,6 +155,12 @@
         'reminders',
         'notification',
       ],
+    },
+    {
+      id: 'allow-rules',
+      section: 'allow',
+      label: 'Allow rules: what AIB approves for you',
+      keywords: ['allow', 'always', 'approve', 'approval', 'permission', 'rule', 'safe reads', 'scratch', 'syntax'],
     },
     {
       id: 'editors',
