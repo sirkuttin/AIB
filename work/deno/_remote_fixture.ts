@@ -6,6 +6,8 @@
 import { PAGE_KEY } from './_page_key.ts';
 import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
+import { stateSource } from '../../outputs/agent-studio/server/host/host_proxy.ts';
+import { fullEvent, page, pageQuery } from '../../outputs/agent-studio/server/acp/event_pages.ts';
 import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
 import { openSource, type Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
@@ -293,6 +295,15 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
         reset: false,
       });
     },
+    // history loading: the same page rules the agent host uses, over this chat's events (host_proxy's older-host path)
+    liveEvents: async (id: string, query: Json = {}) => {
+      const state = await host.liveState(id, 0) as Json | null;
+      return state ? page(stateSource(state), pageQuery(query)) : null;
+    },
+    liveEvent: async (id: string, seq: number) => {
+      const state = await host.liveState(id, 0) as Json | null;
+      return state ? fullEvent(stateSource(state), seq) : null;
+    },
     liveWrites: () => Promise.resolve({}),
     liveCall: (name: string, body: Json) => {
       liveCalls.push([name, body]);
@@ -383,7 +394,9 @@ export async function pairPhone(
   scopes?: string[],
 ): Promise<{ token: string; cookie: string; id: string }> {
   const port = s.phonePort();
-  const [, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
+  const [pairStatus, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
+  // say why when there is no code (e.g. 409 not_ready: the phone port did not listen), not a TypeError on `words`
+  if (!Array.isArray(code.words)) throw new Error(`pair: ${pairStatus} ${JSON.stringify(code)} (phone port ${port})`);
   const words = (code.words as string[]).join(' ');
   const claim = await raw(
     port,

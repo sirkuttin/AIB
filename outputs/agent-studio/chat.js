@@ -54,7 +54,6 @@
     cursor = 0,
     /* The server's id for the open chat's event numbering: another id means its events must be fetched again from the start. */
     eventsId = '',
-    events = [],
     conversations = [],
     agents = [],
     subSelection = null,
@@ -265,6 +264,11 @@
      main list and split panes come next). A list's controller is attached the first time something is drawn into it. */
   /* The main list too, unless localStorage['aib-scroll-v2'] is '0': a one-release switch back to the old main-list code (the
      blocks marked "old main-list scroll code" below), kept until the next beta has shipped with the controller. */
+  /* ---- Live chats' events: chat-cache.js keeps them, one entry per connection id, shared by the main list, side panes and the
+     subagent view. The arrays live only there: read them through the entry's named calls (work/test_event_readers.js). */
+  const chatCache = window.ChatCache.create();
+  const liveCache = (id = current) => chatCache.entry(id || '');
+  const liveLoaded = () => liveCache().loaded();
   const SCROLL_V2 = (() => {
     if (!window.ScrollController) return false;
     try {
@@ -273,6 +277,17 @@
       return true;
     }
   })();
+  /* History loading (design 5.3): a live chat opens with its newest page (/api/live/events), older pages load near the top.
+     Needs scroll-v2; localStorage['aib-history-v2'] = '0' is a one-release switch back to the full /api/live/state download. */
+  const HISTORY_V2 =
+    SCROLL_V2 &&
+    (() => {
+      try {
+        return localStorage.getItem('aib-history-v2') !== '0';
+      } catch {
+        return true;
+      }
+    })();
   const SCROLL_ROLES = SCROLL_V2 ? { messages: 'main', submessages: 'sub', commandDetails: 'command' } : {};
   function managed(box) {
     if (!box || !window.ScrollController || !SCROLL_ROLES[box.id]) return null;
@@ -281,7 +296,7 @@
         role: SCROLL_ROLES[box.id],
         clamp: box.id === 'submessages' || box.id === 'messages',
         onLost: (place, how) => scrollPlaceLost(box, how),
-        ...(box.id === 'messages' ? { onChange: mainScrollChanged } : {}),
+        ...(box.id === 'messages' ? { onChange: mainScrollChanged, nearTop: { get px() { return 2 * (box.clientHeight || 400); }, fn: () => mainNearTop() } } : {}),
       });
     return box._scrollCtl;
   }
@@ -354,7 +369,10 @@
     if (current && snapshot)
       showRows(
         $('messages'),
-        withUnknownSends(liveRows(snapshot.sessionId, events, snapshot, viewOf() !== 'full', readingSeq(mainCtl())), snapshot.unknownReceipts),
+        withUnknownSends(
+          liveRows(snapshot.sessionId, liveLoaded(), snapshot, viewOf() !== 'full', mainKeepFrom(), liveCache().edge),
+          snapshot.unknownReceipts,
+        ),
         'main',
         liveExtra(),
       );
@@ -390,7 +408,24 @@
       return { working: false, find };
     }
     const waiting = (snapshot.permissions || []).length + (snapshot.elicitations || []).length > 0;
-    return { working, live: liveOf(CV.liveStatus(events, 'live', snapshot.sessionId), curKey(), { waiting }), find };
+    return { working, live: liveOf(liveStatusOf(liveCache(), snapshot.sessionId), curKey(), { waiting }), find };
+  }
+  /* The live line's facts for a live chat: from the loaded events, or, when the turn's prompt is older than what is loaded (a turn
+     longer than one page), from the opening page's turn facts (since, steps before the loaded range) plus the loaded steps. */
+  function liveStatusOf(entry, sid) {
+    const CV = window.ChatViews;
+    if (!CV || !entry) return null;
+    const own = CV.liveStatus(entry.loaded(), 'live', sid);
+    if (own || !entry.promptMissing()) return own;
+    const t = entry.turn,
+      prompt = { seq: t.promptSeq, kind: 'user', time: (t.since || 0) / 1000, data: { text: '(your message)' } };
+    const s = CV.liveStatus([prompt, ...entry.loaded()], 'live', sid);
+    if (!s) return null;
+    if (entry.stepBase == null) {
+      const tools = s.n - (s.step && s.step.kind === 'thinking' ? 1 : 0);
+      entry.stepBase = Math.max(0, (Number(t.steps) || 0) - tools);
+    }
+    return { ...s, n: s.n + entry.stepBase, since: t.since || s.since };
   }
   /* A saved chat another app is working on: the step is read from the saved transcript; no step number, "working elsewhere". */
   function savedExtra(key, w) {
@@ -1227,7 +1262,9 @@
     snapshot = null;
     cursor = 0;
     eventsId = '';
-    events = [];
+    mainKeep = 0;
+    /* a cached chat opened again keeps only the seqs up to its stable point; the rest is read again (chat-cache.js trust) */
+    for (const id of chatCache.ids()) chatCache.peek(id).reopened = true;
     historyLimit = 120;
     rowExtra.main = 0;
     rowExtra.sub = 0;
@@ -1345,7 +1382,8 @@
         current,
         connected,
         snapshot,
-        events,
+        events: liveLoaded(),
+        turn: liveCache().turn,
         names: Object.fromEntries([...children].map(([id, agent]) => [id, agent.name])),
         yourTurn: headerYourTurn(),
         handledAt: handledAt.get(aliasKey(selected)),
@@ -1755,12 +1793,14 @@
         showRows(box, rows, signatureKey, extra);
         if (!ctl) box.scrollTop = box.scrollHeight - h + y; // old main-list scroll code (aib-scroll-v2 = '0')
       };
-      fragment.append(
-        proj
-          ? window.ChatViewsUI.earlierButton(win.hidden, win.reveal, more)
-          : window.StreamUI.earlierButton(win.hidden, win.reveal, more),
-      );
-    }
+      if (HISTORY_V2 && ctl && box.id === 'messages') box._grow = more; // drawn when you scroll near the top (mainNearTop)
+      else
+        fragment.append(
+          proj
+            ? window.ChatViewsUI.earlierButton(win.hidden, win.reveal, more)
+            : window.StreamUI.earlierButton(win.hidden, win.reveal, more),
+        );
+    } else if (box.id === 'messages') box._grow = null;
     let flat = shown;
     /* every drawn row carries its stable id (data-rid, tagRow); main list rows also their index in rows (data-ri) */
     const index = signatureKey === 'main' ? new Map(rows.map((r, i) => [r, i])) : null,
@@ -1981,13 +2021,42 @@
       (c.elsewhere && c.elsewhere.working)
     );
   }
-  function liveRows(session, evs = events, snap = snapshot, uncapped = false, keepFrom = 0) {
+  /* edge (history loading): the server's boundary state when evs does not start at the chat's first event (server/acp/
+     event_pages.ts edgeAt): the turn index and per-call use counts there, the calls opened before it that these events update (drawn
+     at the top with the call's own id until the older page arrives and the call joins its place), and withdrawn ask keys. */
+  function liveRows(session, evs = liveLoaded(), snap = snapshot, uncapped = false, keepFrom = 0, edge = null) {
     const rows = [],
       tools = new Map(), // toolCallId -> {row, turn}
       uses = new Map(), // toolCallId -> how many calls used it
       asks = new Map(); // approval / question key -> its record row
     let turn = 0,
       at = -1;
+    if (edge) {
+      turn = Number(edge.turn) || 0;
+      for (const [k, n] of Object.entries(edge.uses || {})) uses.set(k, n);
+      const touched = new Set();
+      for (const e of evs) {
+        const u = e.kind === 'update' && (e.data?.sessionId || snap?.sessionId) === session ? e.data.update || {} : {};
+        if (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update') touched.add(u.toolCallId);
+      }
+      for (const t of edge.tools || []) {
+        if (!touched.has(t.key)) continue;
+        const raw = t.raw || {},
+          row = {
+            role: 'tool',
+            label: (raw.title || t.key) + ' · ' + (raw.status || 'started'),
+            value: JSON.stringify(raw, null, 2).slice(0, 40000),
+            time: t.time,
+            raw,
+            rid: 'L:' + t.seq,
+          };
+        if (t.uses > 1) row.uid = t.key + '#' + t.uses;
+        if (t.rev) row.rev = t.rev;
+        tools.set(t.key, { row, turn: t.turn });
+        rows.push(row);
+      }
+    }
+    const gone = new Set((edge && edge.withdrawn) || []);
     for (const event of evs) {
       at++;
       /* every row carries a stable id: 'L:' + the event number of its first event (a merged message keeps its first chunk's,
@@ -2085,6 +2154,7 @@
             params: event.data.params || {},
             time: event.replay ? 0 : event.time,
           };
+          if (gone.has(key)) row.withdrawn = true;
           asks.set(key, row);
           rows.push(row);
         }
@@ -2207,7 +2277,7 @@
     const U = window.UnknownSend;
     if (!U || !unknown?.length) return rows;
     const seen = new Set(
-      events.filter((e) => e.kind === 'user' && e.data?.clientMessageId).map((e) => e.data.clientMessageId),
+      liveLoaded().filter((e) => e.kind === 'user' && e.data?.clientMessageId).map((e) => e.data.clientMessageId),
     );
     const items = U.plan(
       unknown,
@@ -2246,7 +2316,27 @@
   function collectChildren() {
     /* helpers AIB marked as going on in the background after a steer (the server's tool_call_update with background.helper) */
     const inBackground = new Map();
-    events.forEach((e) => {
+    /* helpers the opening page told about (their events are not loaded until one is opened: design 4.4) */
+    const told = liveCache().helpers;
+    if (told)
+      for (const [id, h] of Object.entries(told)) {
+        if (!id || id === snapshot.sessionId || children.has(id)) continue;
+        children.set(id, {
+          key: id,
+          name: h.title || 'Subagent ' + id.slice(0, 8),
+          description: h.description || '',
+          capabilities: {},
+          live: true,
+          created: h.created || h.lastTime || 0,
+          state: h.state || 'Available',
+          model: h.model || '',
+          tokens: h.used || 0,
+          activity: h.activity || '',
+          agentType: h.agentType || '',
+        });
+        if (h.background) inBackground.set(id, true);
+      }
+    liveLoaded().forEach((e) => {
       if (e.kind !== 'update') return;
       const u = e.data.update || {};
       if (u.sessionUpdate === 'tool_call_update' && u.background && typeof u.background.helper === 'string')
@@ -2285,7 +2375,7 @@
     });
     for (const [id, child] of children) child.background = inBackground.get(id) === true;
     // Model, tokens and what each helper is doing now (subagents-ui.js details); a part not known now keeps what was known before.
-    const facts = window.SubagentsUI?.details?.(events, snapshot.sessionId);
+    const facts = window.SubagentsUI?.details?.(liveLoaded(), snapshot.sessionId);
     if (facts)
       for (const [id, d] of facts) {
         const c = children.get(id);
@@ -2637,7 +2727,25 @@
     renderSubagentControls();
     renderSubHead();
     if (subSelection.live) {
-      showRows($('submessages'), liveRows(target, events, snapshot, false, readingSeq(managed($('submessages')))), 'sub');
+      /* a helper's events are not in the opening page (design 4.4): fetched when it is opened, then its deltas ride the poll */
+      const entry = liveCache(),
+        id = current;
+      if (HISTORY_V2 && hostPages === true && !entry.helperLoaded(target)) {
+        let pg = { events: [] };
+        try {
+          pg = await get('/api/live/events', { id, session: target, bytes: OPEN_BYTES });
+        } catch (error) {
+          if (error?.code === 'connection_not_found') throw error;
+        }
+        if (current !== id || subSelection?.key !== target) return;
+        entry.helperPage(target, pg);
+        collectChildren();
+      }
+      showRows(
+        $('submessages'),
+        liveRows(target, entry.loaded(), snapshot, false, readingSeq(managed($('submessages'))), entry.helperEdge(target)),
+        'sub',
+      );
       return;
     }
     const working = window.SubagentsUI?.classify(subSelection).group === 'working';
@@ -2673,27 +2781,205 @@
     });
     return pollRun;
   }
+  /* ---- History loading: one read of a live chat into its cache entry, shared by the main list and side panes ----
+     The first read of a chat takes its newest page (/api/live/events: the chat's own events by bytes, with the turn and helper
+     facts), back to your saved place when that is older; every read after takes the deltas (/api/live/state after the cursor).
+     An older host without /api/live/events (or aib-history-v2 off): today's full state. Reads of one chat never overlap, and a
+     side pane takes a read made in the last second instead of its own (one poll stream per chat). */
+  const OPEN_BYTES = 1024 * 1024,
+    PLACE_PAGES = 8; // at most this many older pages to reach a saved place on open
+  let hostPages = null; // null: not known yet; true: the host answers /api/live/events; false: an older host
+  const pulls = new Map(); // connection id -> the read in flight
+  /* The saved place of the open chat's main list as an event number ('L:<seq>'), 0 when following or another kind of row. */
+  function openPlace() {
+    const s = mainCtl()?.state;
+    return s && s.mode === 'anchor' && typeof s.rid === 'string' && s.rid.startsWith('L:') ? Number(s.rid.slice(2)) || 0 : 0;
+  }
+  /* An older host answers a route it does not know with 404 (no connection_not_found code) or 405/501. */
+  const pagesMissing = (error) =>
+    !!error && (error.status === 404 || error.status === 405 || error.status === 501) && error.code !== 'connection_not_found';
+  function pullLive(id, { place = 0, fresh = 1000 } = {}) {
+    if (pulls.has(id)) return pulls.get(id);
+    const entry = chatCache.entry(id);
+    if (fresh && entry.snap && entry.opened && Date.now() - entry.pulledAt < fresh)
+      return Promise.resolve({ state: entry.snap, added: [] });
+    const run = (async () => {
+      let added = [];
+      if (!entry.opened && HISTORY_V2 && hostPages !== false) {
+        try {
+          const pg = await get('/api/live/events', { id, bytes: OPEN_BYTES });
+          if (!pg || pg.rebuilding || !Array.isArray(pg.events)) throw Object.assign(Error('rebuilding'), { rebuilding: true });
+          hostPages = true;
+          entry.open(pg);
+          added = pg.events.slice();
+          for (let n = 0; place > 0 && entry.more && entry.from > place && n < PLACE_PAGES; n++) {
+            const older = await get('/api/live/events', { id, before: entry.from, bytes: OPEN_BYTES });
+            if (!entry.older(older)) break;
+            added = [...older.events, ...added];
+          }
+        } catch (error) {
+          if (error && error.code === 'connection_not_found') throw error;
+          if (pagesMissing(error)) hostPages = false;
+        }
+      }
+      if (entry.opened && entry.reopened) entry.trust();
+      entry.reopened = false;
+      let state = await get('/api/live/state', { id, after: entry.opened ? entry.cursor : 0 });
+      if (state.eventsId && entry.eventsId && state.eventsId !== entry.eventsId && entry.cursor) {
+        /* The chat was rebuilt with another event numbering (AIB restarted on an older record): start again. */
+        entry.reset(state.eventsId);
+        state = await get('/api/live/state', { id, after: 0 });
+        entry.full(state);
+        return { state, added: state.events || [] };
+      }
+      if (!entry.opened) {
+        entry.full(state);
+        return { state, added: state.events || [] };
+      }
+      entry.delta(state);
+      return { state, added: [...added, ...(state.events || [])] };
+    })().finally(() => pulls.delete(id));
+    pulls.set(id, run);
+    return run;
+  }
+  /* A chat's newest seq without its events: the cache's cursor, else an empty page after the end (/api/live/events); null on an
+     older host. A state read from a cursor carries only what came after it (after=MAX_SAFE_INTEGER is past the end, which the
+     host answers with every event). */
+  async function liveCursor(id) {
+    const e = chatCache.peek(id);
+    if (e && e.opened) return e.cursor;
+    if (!HISTORY_V2 || hostPages === false) return null;
+    try {
+      const pg = await get('/api/live/events', { id, after: Number.MAX_SAFE_INTEGER, bytes: 4096 });
+      hostPages = true;
+      return Math.max(0, Math.trunc(Number(pg && pg.cursor) || 0));
+    } catch (error) {
+      if (pagesMissing(error)) hostPages = false;
+      else throw error;
+      return null;
+    }
+  }
+  /* The chat's state (busy, queue...) without its history. */
+  async function lightState(id) {
+    const at = await liveCursor(id);
+    return get('/api/live/state', { id, after: at == null ? Number.MAX_SAFE_INTEGER : at });
+  }
+  /* Events that reach your newest message: the chat's own newest page, or the page around the turn's prompt when that is older;
+     on an older host the newest 400 events of the state (and all of them when no message of yours is among those). */
+  async function lastPromptEvents(id) {
+    const hasUser = (list) => list.some((e) => e && e.kind === 'user');
+    if (HISTORY_V2 && hostPages !== false) {
+      try {
+        const pg = await get('/api/live/events', { id, bytes: OPEN_BYTES });
+        hostPages = true;
+        let list = pg.events || [];
+        if (!hasUser(list) && pg.more && pg.turn && pg.turn.promptSeq > 0)
+          list = (await get('/api/live/events', { id, around: pg.turn.promptSeq, bytes: 64 * 1024 })).events || [];
+        return list;
+      } catch (error) {
+        if (!pagesMissing(error)) throw error;
+        hostPages = false;
+      }
+    }
+    const top = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
+    const cursor = Math.max(0, Math.trunc(Number(top && top.cursor) || 0));
+    let list = (await get('/api/live/state', { id, after: Math.max(1, cursor - 400) }))?.events || [];
+    if (!hasUser(list) && cursor > 400) list = (await get('/api/live/state', { id, after: 1 }))?.events || [];
+    return list;
+  }
+  /* While you read, the main list's rows reach back to the oldest event the near-top rule took in (mainKeep), not only to the
+     row you read: older rows loaded or fetched near the top stay drawn (liveRows' keepFrom; its hard cap still holds). */
+  let mainKeep = 0;
+  function mainKeepFrom() {
+    const r = readingSeq(mainCtl());
+    return mainKeep > 0 && r > 0 ? Math.min(r, mainKeep) : r;
+  }
+  /* A page that does not fill the main list (a short first page, a few big rows): the next older one at once, the way the
+     near-top rule would once you could scroll (only once the list is laid out). */
+  function fillMain() {
+    const box = $('messages');
+    if (!HISTORY_V2 || !current || !box || olderRun || !(box.clientHeight > 0)) return;
+    if (box.scrollHeight > box.clientHeight + 1) return;
+    const e = liveCache();
+    if (typeof box._grow === 'function' || (e.opened && e.more && hostPages === true)) mainNearTop();
+  }
+  /* The oldest loaded events past the keep (trimEvents' rule): never from a row a reader is on. */
+  function trimLive(entry, ...readers) {
+    const list = entry.loaded(),
+      kept = trimEvents(list, ...readers);
+    if (kept !== list) entry.dropOldest(list.length - kept.length);
+  }
+  /* Near the top of the main list (2 screens): first draw more of the loaded rows, then fetch the next older page; the rows you
+     see stay put (anchorTop before, the controller re-applies the place before paint). A thin "Loading earlier…" line while it
+     lands. A saved transcript loads its next older page the same way (no "Load earlier messages" button). */
+  let olderRun = null;
+  function mainNearTop() {
+    const box = $('messages'),
+      ctl = mainCtl();
+    if (!box || !ctl || !HISTORY_V2) return;
+    if (typeof box._grow === 'function') {
+      const grow = box._grow;
+      box._grow = null;
+      grow();
+      fillMain();
+      return;
+    }
+    if (!current) {
+      const w = selected ? historyWindows.get(selected.key) : null;
+      if (w && w.start > 0 && !w.busy) loadEarlier(selected.key, 'main');
+      return;
+    }
+    const entry = liveCache();
+    if (olderRun || !entry.opened || hostPages !== true || window.CopyUI?.holdRender?.(box)) return;
+    if (entry.from > 0 && mainKeep !== entry.from && !ctl.following) {
+      // loaded rows older than the drawn ones (liveRows keeps only the newest while you read): draw them first
+      mainKeep = entry.from;
+      ctl.anchorTop('earlier');
+      mainSignature = '';
+      repaintMain();
+      ctl.afterRedraw();
+      setTimeout(fillMain, 0);
+      return;
+    }
+    if (!entry.more) return;
+    const id = current;
+    const line = text('p', 'Loading earlier…', 'loading-earlier');
+    box.prepend(line);
+    olderRun = (async () => {
+      try {
+        const older = await get('/api/live/events', { id, before: entry.from, bytes: OPEN_BYTES });
+        if (current !== id || !entry.older(older)) return;
+        // the place is taken with the line still there (it takes no room: stream.css), and the redraw drops it
+        mainKeep = entry.from;
+        ctl.anchorTop('earlier');
+        mainSignature = '';
+        repaintMain();
+        line.remove();
+        ctl.afterRedraw();
+        setTimeout(fillMain, 0); // once this run is done (olderRun cleared)
+      } catch (error) {
+        if (error?.code !== 'connection_not_found') fail(error);
+      } finally {
+        line.remove();
+        olderRun = null;
+      }
+    })();
+  }
   async function refreshOnce() {
     if (!selected) return;
     const key = selected.key;
     try {
       if (current) {
         const requested = current;
-        let next = await get('/api/live/state', { id: current, after: cursor });
+        const pulled = await pullLive(current, { place: openPlace(), fresh: 0 });
         if (current !== requested) return;
-        if (next.eventsId && eventsId && next.eventsId !== eventsId && cursor) {
-          /* The chat was rebuilt with another event numbering (AIB restarted on an older record): fetch it all again. */
-          next = await get('/api/live/state', { id: current, after: 0 });
-          if (current !== requested) return;
-          events = [];
-        }
-        if (next.eventsId) eventsId = next.eventsId;
+        const next = pulled.state,
+          entry = liveCache();
+        eventsId = entry.eventsId;
         snapshot = next;
-        if (next.reset) events = [];
-        events.push(...next.events);
-        events = trimEvents(events, mainCtl(), managed($('submessages'))); // never from the row you read in the chat or a helper's view
-        cursor = next.cursor;
-        window.AgentArtifactsUI?.onEvents(next.events, current);
+        trimLive(entry, mainCtl(), managed($('submessages'))); // never from the row you read in the chat or a helper's view
+        cursor = entry.cursor;
+        window.AgentArtifactsUI?.onEvents(pulled.added, current);
         collectChildren();
         renderSettings();
         renderApprovals();
@@ -2702,10 +2988,14 @@
         liveHistoryNote(next);
         showRows(
           $('messages'),
-          withUnknownSends(liveRows(next.sessionId, events, snapshot, viewOf() !== 'full', readingSeq(mainCtl())), next.unknownReceipts),
+          withUnknownSends(
+            liveRows(next.sessionId, entry.loaded(), snapshot, viewOf() !== 'full', mainKeepFrom(), entry.edge),
+            next.unknownReceipts,
+          ),
           'main',
           liveExtra(),
         );
+        fillMain();
       } else if (isPseudoKey(key)) {
         agents = [];
         if (mainSignature !== key) {
@@ -3114,7 +3404,6 @@
     // Nothing from the chat we just left may show in Activity: a draft has no subagents or processes.
     children.clear();
     agents = [];
-    events = [];
     actCounts = { subagents: 0, working: 0, failed: 0 };
     paintActivityTabBadge();
     const folder = AgentChoice.resolveFolder({
@@ -3792,9 +4081,10 @@
   }
   function headerYourTurn() {
     const listed = typeof selected.yourTurn === 'boolean' ? selected.yourTurn : selected.live?.yourTurn;
-    if (listed !== false || !Array.isArray(events)) return listed;
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
+    const evs = liveLoaded();
+    if (listed !== false) return listed;
+    for (let i = evs.length - 1; i >= 0; i--) {
+      const e = evs[i];
       if (!e || e.kind === 'user') return listed;
       if (e.kind === 'turn_end')
         return typeof e.time === 'number' && e.time * 1000 > listedAt - 15000 ? undefined : listed;
@@ -3866,7 +4156,7 @@
     const clientMessageId = attemptId(key, value, '');
     let snap = c.live;
     try {
-      snap = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
+      snap = await lightState(id);
     } catch {}
     const route = window.AgentInboxReply ? window.AgentInboxReply.sendRoute(snap, value) : 'prompt';
     await post(route, { id, text: value, clientMessageId, attachments: [] });
@@ -3886,16 +4176,13 @@
   async function retryLast(c) {
     const id = c && c.live && !c.live.closed ? c.live.id : '';
     if (!id) throw Error('This chat is not running. Use Open chat.');
-    let events = [];
+    let evs = [];
     try {
-      const top = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
-      const cursor = Math.max(0, Math.trunc(Number(top && top.cursor) || 0));
-      events = (await get('/api/live/state', { id, after: Math.max(1, cursor - 400) }))?.events || [];
-      if (!events.some((e) => e && e.kind === 'user') && cursor > 400) events = (await get('/api/live/state', { id, after: 1 }))?.events || [];
+      evs = await lastPromptEvents(id);
     } catch {
       throw Error('Your last message could not be read. Use Open chat.');
     }
-    const last = window.AgentInboxReply ? window.AgentInboxReply.lastUserText(events, c.live.sessionId) : { text: '' };
+    const last = window.AgentInboxReply ? window.AgentInboxReply.lastUserText(evs, c.live.sessionId) : { text: '' };
     if (!last.text) throw Error('There is no message of yours to send again. Use Open chat.');
     const res = await quickPrompt(c, last.text);
     return { ...res, attachments: !!last.attachments };
@@ -4608,7 +4895,8 @@
   }
   function syncLoadEarlier(box, key, w, which) {
     const existing = box.querySelector('.load-history');
-    if (w.start <= 0 || box.querySelector('.show-earlier')) {
+    /* history-v2: the main list loads the older page near its top (mainNearTop), no button */
+    if (w.start <= 0 || box.querySelector('.show-earlier') || (HISTORY_V2 && which === 'main' && managed(box))) {
       existing?.remove();
       return;
     }
@@ -4661,7 +4949,10 @@
     }
   }
   function liveHistoryNote(next) {
-    historyNoticeOn = events.length >= 6000 || !!next?.reset;
+    /* older history the server no longer keeps: its oldest kept seq (first) is past the chat's first event; on an older host
+       (the full state, no first) the 6,000-event cap as before */
+    const e = liveCache();
+    historyNoticeOn = (hostPages === true ? e.first > 1 : e.size() >= 6000) || !!next?.reset;
     const note = $('historyNote');
     if (note) note.hidden = true;
     syncChatView();
@@ -4903,7 +5194,7 @@
   function mirrorEntry(key) {
     let m = mirrorState.get(key);
     if (!m) {
-      m = { id: '', cursor: 0, events: [], rows: null };
+      m = { id: '', rows: null };
       mirrorState.set(key, m);
       while (mirrorState.size > 12) mirrorState.delete(mirrorState.keys().next().value);
     }
@@ -4913,28 +5204,17 @@
     const key = aliasKey(c),
       m = mirrorEntry(key);
     if (c.live && !c.live.closed) {
-      if (m.id !== c.live.id) {
-        m.id = c.live.id;
-        m.cursor = 0;
-        m.events = [];
-        m.eventsId = '';
-      }
-      let next = await get('/api/live/state', { id: m.id, after: m.cursor });
-      if (next.eventsId && m.eventsId && next.eventsId !== m.eventsId && m.cursor) {
-        next = await get('/api/live/state', { id: m.id, after: 0 });
-        m.events = [];
-      }
-      if (next.eventsId) m.eventsId = next.eventsId;
+      /* the chat's cache entry, shared with the main list (one read stream per chat: a read made in the last second is reused) */
+      m.id = c.live.id;
+      const next = (await pullLive(m.id)).state,
+        entry = chatCache.entry(m.id);
       m.histKey = '';
-      if (next.reset) m.events = [];
-      m.events.push(...next.events);
       // a side pane you read keeps its place's events and rows too (trimEvents)
       const pane = [...document.querySelectorAll('.mirror-msgs')].find((b) => b.dataset.mirror === key),
         paneCtl = pane ? pane._scrollCtl : null;
-      m.events = trimEvents(m.events, paneCtl);
-      m.cursor = next.cursor;
+      trimLive(entry, paneCtl, ...(m.id === current ? [mainCtl(), managed($('submessages'))] : []));
       m.sid = next.sessionId;
-      m.rows = liveRows(next.sessionId, m.events, next, false, readingSeq(paneCtl));
+      m.rows = liveRows(next.sessionId, entry.loaded(), next, false, readingSeq(paneCtl), entry.edge);
     } else if (isPseudoKey(c.key)) {
       m.histKey = '';
       m.rows = [{ role: 'notice', label: 'Ready', value: pseudoNote(c) }];
@@ -4965,7 +5245,7 @@
     if (!CV || !c) return { working: false, live: null };
     if (c.live && !c.live.closed) {
       const working = !!c.live.busy;
-      return { working, live: working ? liveOf(CV.liveStatus(m?.events, 'live', m?.sid), key, {}) : null };
+      return { working, live: working && m?.id ? liveOf(liveStatusOf(chatCache.entry(m.id), m.sid), key, {}) : null };
     }
     if (!savedWorking(c.key)) return { working: false, live: null };
     const w = m?.histKey ? historyWindows.get(m.histKey) : null;
@@ -5107,6 +5387,27 @@
     const hist = m.histKey ? historyWindows.get(m.histKey) : null;
     if (hist && window.StreamUI.needOlderPage(st.winStart, hist.start, st.loading || hist.busy))
       loadOlderForPane(box, m, hist);
+    else if (!hist && m.id && HISTORY_V2 && hostPages === true && !st.loading) olderLiveForPane(box, m);
+  }
+  async function olderLiveForPane(box, m) {
+    const st = box._mirrorWin,
+      entry = chatCache.entry(m.id);
+    if (!entry.opened || !entry.more) return;
+    st.loading = true;
+    try {
+      const older = await get('/api/live/events', { id: m.id, before: entry.from, bytes: OPEN_BYTES });
+      if (!entry.older(older) || !box.isConnected || box._mirrorWin !== st) return;
+      m.rows = liveRows(m.sid, entry.loaded(), entry.snap, false, readingSeq(box._scrollCtl), entry.edge);
+      st.grow = true;
+      paintMirror(box, m.rows);
+      if (m.id === current) {
+        mainSignature = '';
+        repaintMain();
+      }
+    } catch {
+    } finally {
+      st.loading = false;
+    }
   }
   async function loadOlderForPane(box, m, hist) {
     const st = box._mirrorWin;
@@ -5867,7 +6168,7 @@
   const handledAt = new Map();
   $('markHandled').onclick = () => {
     if (!selected) return;
-    const last = [...events].reverse().find((e) => e.kind === 'turn_end');
+    const last = [...liveLoaded()].reverse().find((e) => e.kind === 'turn_end');
     handledAt.set(aliasKey(selected), last && typeof last.time === 'number' ? last.time : Date.now() / 1000);
     try {
       window.AgentWorkspaceUI?.markHandled?.(selected);
@@ -5952,6 +6253,13 @@
     seenAtOf,
     mirrorWorking,
     mirrorState,
+    chatCache,
+    pullLive,
+    mainNearTop,
+    fillMain,
+    lightState,
+    lastPromptEvents,
+    liveStatusOf,
     openHit,
     setFindQuery,
     runFind,
@@ -6016,10 +6324,10 @@
         return drafts;
       },
       get events() {
-        return events;
+        return liveLoaded();
       },
       set events(v) {
-        events = v;
+        liveCache().replace(v);
       },
       get listedAt() {
         return listedAt;
@@ -6029,6 +6337,9 @@
       },
       get historyWindows() {
         return historyWindows;
+      },
+      get chatCache() {
+        return chatCache;
       },
       get instanceId() {
         return instanceId;

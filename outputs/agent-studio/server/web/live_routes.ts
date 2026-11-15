@@ -58,6 +58,24 @@ export function liveRoutes(): Map<string, LiveHandler> {
     }
     return [200, { ...state, inUse: await inUse(ctx, state) }];
   });
+  // History loading (event_pages.ts): one page of a chat's events. Open: no before/after/around (the tail by bytes, plus turn and
+  // helper facts); before=<seq> pages back; after=<seq> deltas; around=<seq> a saved place; session=<helper id> a helper's events;
+  // bytes=<page budget>; clip=<characters per tool string, 0 for none>.
+  routes.set('GET /api/live/events', async (ctx, url) => {
+    const query: Record<string, unknown> = {};
+    for (const k of ['session', 'before', 'after', 'around', 'bytes', 'clip']) {
+      const v = url.searchParams.get(k);
+      if (v !== null && v !== '') query[k] = k === 'session' ? v : pyInt(v);
+    }
+    const found = await ctx.host.liveEvents(arg(url, 'id'), query) as Json | null;
+    if (found === null) return [404, { error: 'This AIB connection is no longer available.', code: 'connection_not_found' }];
+    return [200, found];
+  });
+  routes.set('GET /api/live/event', async (ctx, url) => {
+    const found = await ctx.host.liveEvent(arg(url, 'id'), pyInt(arg(url, 'seq'))) as Json | null;
+    if (found === null) return [404, { error: 'That event is no longer kept.', code: 'event_not_found' }];
+    return [200, found];
+  });
   routes.set('GET /api/live/ownership', async (ctx, url) => {
     let cwd: string;
     try {

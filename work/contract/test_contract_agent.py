@@ -28,8 +28,9 @@ def masked(value, server):
     if server.effective_kind() in ('deno', 'deno-split'):
         value = drop_inbox(drop_steer(value))
         if isinstance(value, dict):
-            # Deno-only (phone UI v2): the chat names' revision in the list answer (phone renames reach the PC page); the reference has none
-            value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames', 'allowRulesTampered')}
+            # Deno-only (phone UI v2): the chat names' revision in the list answer (phone renames reach the PC page); the reference has none.
+            # reconnectFailed (chats never stuck Not running: the chats whose reconnect failed, and why) is Deno-only too.
+            value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames', 'allowRulesTampered', 'reconnectFailed')}
         value = drop_allow(value)
     return strip(value)
 

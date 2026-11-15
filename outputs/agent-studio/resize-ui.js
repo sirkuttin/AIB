@@ -11,6 +11,7 @@
     COMPOSER_GROW = 200,
     SPLIT_MIN = 96;
   const MAX_CHAT = 1310; // the conversation stops at 1250 px (chat.css) plus its side padding: wider windows give Activity the rest
+  // (only when the chat has the middle to itself: with split panes or files beside the chat the floor is above MIN_CHAT, see splitFloor)
   const MIN_CHAT = 420,
     SNAP = 40,
     STEP = 16,
@@ -87,8 +88,9 @@
       }
     }
     /* The chat column never grows past MAX_CHAT next to Activity: the divider stops there and Activity takes the rest (owner). Not
-       with split panes side by side (they share the column), and only as far as Activity may grow. */
-    if (actOn && !(minChat > MIN_CHAT)) {
+       with split panes side by side (they share the column), nor with files beside the chat (minChat counts the file pane), nor
+       while the middle shows a file or doc tab (`nocap`: the cap is the conversation's), and only as far as Activity may grow. */
+    if (actOn && !o.nocap && !(minChat > MIN_CHAT)) {
       const floor = vw - side - sc(MAX_CHAT, k);
       if (floor > act) act = Math.min(floor, aMax);
     }
@@ -252,6 +254,8 @@
         expand: body.classList.contains('changes-wide'),
         scale: k,
         minChat: splitFloor(),
+        /* a file or doc tab fills the middle (files-ui.js): the conversation's cap does not apply to it */
+        nocap: body.classList.contains('sf-file-on'),
       });
       const set = (k, v) => {
         if (rootEl.style.getPropertyValue(k) !== v) rootEl.style.setProperty(k, v);
@@ -276,14 +280,18 @@
       }
       syncHandles();
     }
-    /* Split panes side by side: the chat column keeps room for every pane across (split-ui.js says how much). */
+    /* Split panes side by side: the chat column keeps room for every pane across (split-ui.js says how much). Files beside the
+       chat count the same way (files-ui.js: the file pane's minimum and the chat's). Either one also turns the MAX_CHAT cap off:
+       the cap is the chat pane's own width, so it never widens Activity at the cost of a file pane or a split. */
     function splitFloor() {
-      try {
-        const S = win.AgentSplitUI;
-        return S && typeof S.minWidth === 'function' ? Number(S.minWidth()) || 0 : 0;
-      } catch (e) {
-        return 0;
-      }
+      const ask = (o, fn) => {
+        try {
+          return o && typeof o[fn] === 'function' ? Number(o[fn]()) || 0 : 0;
+        } catch (e) {
+          return 0;
+        }
+      };
+      return Math.max(ask(win.AgentSplitUI, 'minWidth'), ask(win.AgentFilesUI, 'besideMinWidth'));
     }
     function splitTotal() {
       const a = $('subagentList'),

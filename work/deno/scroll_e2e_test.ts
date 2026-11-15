@@ -74,6 +74,13 @@ function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number
   });
 }
 
+/** The one-release switch back to the full-download data path with its "Show earlier" button (chat.js HISTORY_V2). */
+async function oldHistoryPath(lab: Lab) {
+  await lab.page.eval(`localStorage.setItem('aib-history-v2', '0')`);
+  await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+}
+
 /** Enough history to scroll: n agent messages, each followed by one finished step. */
 function seed(chat: Chat, n = 30, tag = 'Seed') {
   for (let i = 0; i < n; i++) {
@@ -529,6 +536,7 @@ scrollTest('4d "Show steps" in the Chat view at the bottom: the fold stays where
 
 scrollTest('5 "Show earlier" adds older rows above without moving the row you are looking at', async (lab) => {
   const page = lab.page;
+  await oldHistoryPath(lab); // the button lives on only behind aib-history-v2 = '0' (history_page_e2e_test.ts h2 covers near-top loading)
   const chat = await lab.chat();
   await chat.start();
   for (let i = 0; i < 90; i++) {
@@ -1099,6 +1107,7 @@ function seedCode(chat: Chat, n: number, tag: string) {
 // MutationObserver runs after), so the row you read jumps for a few frames until the 60 ms timer puts it back.
 scrollTest('B4a "Show earlier" over long code blocks: the row under the button never moves, not even for a frame', async (lab) => {
   const page = lab.page;
+  await oldHistoryPath(lab); // the button lives on only behind aib-history-v2 = '0' (history_page_e2e_test.ts h2 covers near-top loading)
   const chat = await lab.chat();
   await chat.start();
   seedCode(chat, 90, 'Early');
@@ -1189,7 +1198,7 @@ scrollTest('B5 pictures in steps above you load as you scroll up: the row you re
 
 // B6 (stream-ui.js patchChildren ~421, chat.js syncLoadEarlier ~3818): every redraw removes the "Load earlier messages" button and
 // puts it back after the scroll position was restored, so the text dips by the button's height until the 60 ms timer.
-scrollTest('B6 saved chat with "Load earlier": a redraw while you read never dips the text, not even for a frame', async (lab) => {
+scrollTest('B6 saved chat with older pages: a redraw while you read never dips the text, not even for a frame', async (lab) => {
   const page = lab.page;
   const s = lab.savedChat('saved-dip-1');
   s.user('Please look at the code');
@@ -1198,7 +1207,13 @@ scrollTest('B6 saved chat with "Load earlier": a redraw while you read never dip
   await page.waitFor(`!!document.querySelector('button.connection[data-key="${s.key}"]')`, 20000, 'saved chat in the sidebar');
   await lab.select(s);
   await shown(page, 'SAVEDDIPEND', 'messages', 20000);
-  await page.waitFor('!!document.querySelector("#messages .load-history")', 8000, 'the Load earlier button');
+  // older transcript pages exist (history loading: they load near the top as you scroll; there is no "Load earlier" button now)
+  await page.waitFor(
+    `[...window.StudioChat.state.historyWindows.values()].some((w) => w.start > 0)`,
+    8000,
+    'older transcript pages',
+  );
+  assert(!(await page.eval<boolean>('!!document.querySelector("#messages .load-history")')), 'no Load earlier button');
   await settle(2000);
   await wheel(page, -800);
   await settle(400);
@@ -1209,6 +1224,17 @@ scrollTest('B6 saved chat with "Load earlier": a redraw while you read never dip
   await settle(2500);
   const drawn = rowFramesProblems(await stopRowFrames(page), before!, 1);
   assert(!drawn, drawn);
+  // near the top the older transcript page loads by itself, and the row at the top stays where it is in every frame
+  const startOf = () => page.eval<number>(`Math.min(...[...window.StudioChat.state.historyWindows.values()].map((w) => w.start))`);
+  const start0 = await startOf();
+  await page.eval(`(() => { const b = ${BOX}('messages'); b.scrollTop = 0; })()`);
+  const top = await anchor(page);
+  await startRowFrames(page, top!.text);
+  await page.waitFor(`Math.min(...[...window.StudioChat.state.historyWindows.values()].map((w) => w.start)) < ${start0}`, 8000, 'the older page');
+  await settle(1000);
+  const loaded = rowFramesProblems(await stopRowFrames(page), top!, 1);
+  assert(!loaded, `older page: ${loaded}`);
+  assert((await startOf()) < start0, 'the older page loaded');
 });
 
 // B7 (chat.js showRows ~1416-1418 / ~1497): open <details> are opened again by their index after each redraw; kept rows keep their
@@ -1557,6 +1583,7 @@ scrollTest('R7 split view: click into the other pane three times, both keep thei
 // The owner's call: "Show earlier" while a reply streams stops following (you are reading older rows now); ↓ Latest brings you back.
 scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest" brings you back to following', async (lab) => {
   const page = lab.page;
+  await oldHistoryPath(lab); // the button lives on only behind aib-history-v2 = '0'
   const chat = await lab.chat();
   await chat.start();
   seed(chat, 90);

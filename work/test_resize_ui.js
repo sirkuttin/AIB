@@ -170,4 +170,10 @@ test('the chat column stops at 1310 px next to Activity: the divider gives Activ
   assert.equal(L({ vw: 1400 }).activity, 280, 'a normal window keeps your width');
   assert.equal(L({ minChat: 900 }).activity, 280, 'split panes side by side are not capped');
   assert.equal(L({ actOn: false }).activity, 0, 'Activity hidden: nothing to give the room to');
+  // Files beside the chat count as the middle's floor (file pane 360 + chat 420): no cap, Activity keeps your width.
+  assert.equal(L({ minChat: 780 }).activity, 280, 'a file beside the chat: the cap is off, Activity keeps its width');
+  assert.equal(L({ nocap: true }).activity, 280, 'a file or doc tab in the middle: the cap is off');
+  // The floor of a file beside the chat squeezes the chat list and Activity before the middle (as split panes do).
+  const tight = L({ vw: 1300, side: 300, activity: 360, minChat: 780 });
+  assert.equal(tight.side + tight.activity + 780, 1300, 'side panels give way so the file pane and the chat keep their minimums');
 });

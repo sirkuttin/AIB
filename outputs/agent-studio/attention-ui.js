@@ -51,13 +51,19 @@
     return parts.join(', ');
   }
 
-  function turnStart(events, now, fallback) {
+  function turnStart(events, now, fallback, turn) {
     // The newest user message that no later turn_end follows; otherwise when we first saw the agent busy.
+    let ended = false;
     for (let i = (events || []).length - 1; i >= 0; i--) {
       const e = events[i];
-      if (e.kind === 'turn_end') break;
+      if (e.kind === 'turn_end') {
+        ended = true;
+        break;
+      }
       if (e.kind === 'user' && typeof e.time === 'number') return Math.min(now, e.time * 1000);
     }
+    // a turn longer than the loaded page: its prompt is older than the events, the server's turn facts have its time
+    if (!ended && turn && turn.promptSeq > 0 && !turn.endSeq && turn.since > 0) return Math.min(now, turn.since);
     return fallback == null ? now : fallback;
   }
 
@@ -125,7 +131,7 @@
         { opening: true },
       );
     if (snap.busy) {
-      const start = turnStart(m.events, now, m.busySince);
+      const start = turnStart(m.events, now, m.busySince, m.turn);
       return done(
         { kind: 'working', short: 'Working', text: 'Agent is working… (' + formatElapsed(now - start) + ')', start },
         { busy: true, busySince: start },
