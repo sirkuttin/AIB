@@ -383,7 +383,9 @@ export async function pairPhone(
   scopes?: string[],
 ): Promise<{ token: string; cookie: string; id: string }> {
   const port = s.phonePort();
-  const [, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
+  const [pairStatus, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
+  // say why when there is no code (e.g. 409 not_ready: the phone port did not listen), not a TypeError on `words`
+  if (!Array.isArray(code.words)) throw new Error(`pair: ${pairStatus} ${JSON.stringify(code)} (phone port ${port})`);
   const words = (code.words as string[]).join(' ');
   const claim = await raw(
     port,
