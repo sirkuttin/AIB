@@ -108,6 +108,12 @@
         'helper',
         'wsl --install',
         'not supported',
+        'nvm',
+        'prerequisites',
+        'git',
+        'uninstall',
+        'sign in',
+        'limits',
       ],
     },
     {

@@ -46,9 +46,21 @@
   command that converts it), and how to get WSL when the PC has none. Each usable distro has its own cards: its state (Ready, Not
   running with "Start Ubuntu and check", Stopped with Reconnect) and "Agents in Ubuntu" with the same agent cards as on Windows:
   Install in Ubuntu, Update in Ubuntu, progress with Cancel, Retry after a failure, and the Node.js line when the distro has none.
-  Each card says whether AIB installed it or it is your own install. Your Windows on/off switch for an agent covers its distro copies
-  too. Opening Settings never starts a distro: only the Start button does, and it says it copies AIB's helper there (about 100 MB).
+  Each card says whether AIB installed it or it is your own install. Opening Settings never starts a distro: only the Start button
+  does, and it says it copies AIB's helper there (about 100 MB).
   The new-chat panel's "not installed in Ubuntu" line gets a "Set up Ubuntu in Settings" link, and Settings > About links here.
+
+- AIB Linking (WSL): pick a distro, see what it needs, and manage its agents in one place. A drop-down at the top of the page lists
+  every distro on this PC (WSL's default marked, the ones AIB cannot use greyed out with the reason) and shows that distro's cards;
+  AIB remembers your pick, and opens on the distro of the WSL project you have open. A new "What Ubuntu needs" card checks Node.js
+  (22.19 or newer, with where it comes from), npm, git, curl and free space the way your Ubuntu terminal sees them. When Node.js is
+  missing or too old, "Install Node.js in Ubuntu" runs nvm's official installer in a terminal right on the card, and the agents can
+  be installed as soon as it finishes. If your Node.js comes from asdf or mise with no version set, the card gives you that tool's
+  own command instead, and git or curl get the `sudo apt install` line to copy (AIB never runs sudo). Each agent now has its own
+  "Use in Ubuntu" switch, separate from Windows, so Claude Code can be on in Ubuntu and off on Windows. Agent cards show whether
+  you are signed in there (and as whom), with a Sign in button that runs the agent's own sign-in in a terminal on the card;
+  Uninstall removes only AIB's own copy in the distro, never your installs or sign-in files; and Codex shows the usage limits of
+  its Ubuntu sign-in.
 
 - Ready and Couldn't reopen: clear words for a chat with no agent. A saved chat that has no agent running now says Ready instead of
   Not running (it opens read-only with its saved messages, and an agent starts when you send a message), in the sidebar, the chat
