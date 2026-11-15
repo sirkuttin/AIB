@@ -91,6 +91,18 @@ export interface HelperMethods {
   'worktree.remove': { params: { key: string; confirmed?: boolean }; result: { outcome: 'removed' | 'pending' | 'gone' } };
   'worktree.hasChanges': { params: { key: string }; result: { changes: boolean } };
   /**
+   * Merge of a WSL chat's worktree (helper/merge.ts: worktrees/merge.ts run natively over the same `<data>` as worktree.*; its repo
+   * lock, worktree lock and clash records live there). Offered with worktree.*. AIB sends the chat's public state (`state`, its `cwd`
+   * the worktree's Linux path) instead of being asked for it; what merge.ts would post to the chat (conflict prompts, the "Merged into"
+   * note, the clash note and prompt, the Merge button's queued message) comes back in `actions`, in order, and AIB posts them.
+   * A refusal is an answer, not an error: `refused` {message, code, status, extra} is merge.ts's Refused.
+   */
+  'merge.status': { params: { chat: string; state: Record<string, unknown> }; result: { result: Record<string, unknown> } };
+  'merge.run': { params: { chat: string; state: Record<string, unknown>; title?: string; fromTool?: boolean }; result: WslMergeAnswer };
+  'merge.request': { params: { chat: string; state: Record<string, unknown>; blocked?: string }; result: WslMergeAnswer };
+  'merge.resolveClash': { params: { chat: string; state: Record<string, unknown>; action: string; fromTool?: boolean }; result: WslMergeAnswer };
+  'merge.clashStatus': { params: { project: string }; result: { result: Record<string, unknown> } };
+  /**
    * Saved sessions of the distro user's agents (~/.claude/projects, ~/.codex/sessions; CLAUDE_CONFIG_DIR / CODEX_HOME of the login
    * environment win), as transcripts/store.ts lists them on Windows: items with key, sessionId, cwd (a Linux path), title, mtime.
    */
@@ -112,6 +124,17 @@ export interface WorktreePlanJson {
   path: string;
   folderBranch: string;
   note: string;
+}
+
+/**
+ * What a merge.* call did. `actions`: the live calls merge.ts made (op 'prompt' | 'worktree-note' | 'queue', payload as merge.ts built
+ * it). `must`: AIB refuses with `fail` + the chat's error when the call is not accepted (the conflict prompts, as merge.ts does);
+ * the others are posted as merge.ts posts them (a failure is only logged).
+ */
+export interface WslMergeAnswer {
+  result?: Record<string, unknown>;
+  refused?: { message: string; code: string; status: number; extra: Record<string, unknown> };
+  actions: { op: string; payload: Record<string, unknown>; must?: boolean; fail?: string }[];
 }
 
 /** Notification (no id) from the helper: a URL some process in the distro wants opened on Windows. http/https only, at most 2048 bytes. */

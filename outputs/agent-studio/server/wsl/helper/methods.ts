@@ -23,6 +23,7 @@ import { distroTrash, inspectInDistro, trashInDistro } from './trash.ts';
 import { Refused } from '../../desktop/project_delete.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
 import { worktreeMethods } from './worktrees.ts';
+import { mergeMethods } from './merge.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
@@ -141,7 +142,7 @@ function agentRow(id: string, row: LaunchRow): { id: string; found: boolean; com
 
 /** Every method waits for the login environment first: until then PATH is wsl.exe's, with Windows' folders in it. */
 export function makeMethods(ctx: HelperContext): Handlers {
-  const methods = { ...phaseOne(ctx), ...(ctx.data ? worktreeMethods(ctx.data) : {}) };
+  const methods = { ...phaseOne(ctx), ...(ctx.data ? { ...worktreeMethods(ctx.data), ...mergeMethods(ctx.data) } : {}) };
   return Object.fromEntries(
     Object.entries(methods).map(([name, handler]) => [name, async (p: Record<string, unknown>) => {
       await ctx.env();

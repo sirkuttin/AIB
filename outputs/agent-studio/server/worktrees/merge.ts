@@ -484,7 +484,8 @@ function newId(): string {
   return crypto.randomUUID().replaceAll('-', '');
 }
 
-function payloadError(payload: unknown, fallback: string): string {
+/** The chat's own error line from a live call's payload (clipped), else `fallback`. */
+export function payloadError(payload: unknown, fallback: string): string {
   return clip(pyStr(isDict(payload) && 'error' in payload ? payload.error : fallback), 160);
 }
 
@@ -1188,7 +1189,7 @@ export async function unresolved(stateDir: string, project: string): Promise<Unr
 /** What the amber line shows for a project folder: {unresolved, line, files, stash} plus syncPaused/syncLine. Read only. */
 export async function clashStatus(studio: { stateDir: string }, project: unknown): Promise<Record<string, unknown>> {
   if (typeof project !== 'string' || !project) return { unresolved: false };
-  if (project.startsWith('wsl://')) return { unresolved: false }; // a WSL project: no live sync or merge yet (nothing is read here)
+  if (project.startsWith('wsl://')) return { unresolved: false }; // a WSL project: its clashes are in the distro (wsl/merge.ts asks there)
   const found = await unresolved(studio.stateDir, project);
   const paused = pausedStatus(studio.stateDir, project);
   if (!found) return { unresolved: false, ...paused };
@@ -1386,7 +1387,11 @@ export async function requestMerge(studio: MergeStudio, chatId: unknown, options
   if (status !== 200) {
     throw new Refused('Could not ask the chat to merge: ' + payloadError(payload, 'it did not accept the message'), 'prompt_failed');
   }
-  const queued = isDict(payload) && payload.queued === true;
+  return requestedResult(isDict(payload) && payload.queued === true);
+}
+
+/** The Merge button's answer once the chat took the message (`queued`: it waits for the turn to end). */
+export function requestedResult(queued: boolean): MergeResult {
   return {
     ok: true,
     state: 'requested',
