@@ -592,3 +592,52 @@ Deno.test({
     assert(win.scratchDir && win.scratchDir.startsWith(lab.state), String(win.scratchDir));
   },
 });
+
+Deno.test({
+  name: 'start: Windows chats are taken over without waiting for a slow distro; its chat says Reconnecting… and requests answer at once',
+  ...T,
+  async fn() {
+    // The owner's start (test build 24): the distro's take-over waited ~9 s for the Linux programs' install, and the Windows chats and
+    // the window waited with it. Now the distro's part runs after the Windows keeper's, in the background (main.ts opens the window).
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const w = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', REF);
+    assert(w.channel && c.channel && w.keeper !== lab.host.link, 'one chat in each keeper');
+    lab.crash(a);
+    // The distro is slow to start (a boot, an install of the Linux programs): its helper is ready only when the test says so.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    lab.host.state = 'starting';
+    lab.host.start = async () => {
+      await gate;
+      lab.host.state = 'ready';
+    };
+    const b = lab.studio();
+    let allDone = false;
+    const all = b.adoptKeeper().then((n) => {
+      allDone = true;
+      return n;
+    });
+    assertEquals(await b.adoptKeeperWindows(), 1, 'the Windows chat');
+    assert(b.connections.get(w.id)?.ready, 'the Windows chat is live');
+    await pause(300);
+    assert(!allDone, 'the distro is still on its way');
+    // Meanwhile: the Windows chat answers at once, the WSL chat is Reconnecting… (never Not running), the list answers.
+    let t0 = performance.now();
+    const state = await b.liveState(w.id) as Json | null;
+    assert(state && performance.now() - t0 < 1000, `liveState took ${Math.round(performance.now() - t0)} ms`);
+    t0 = performance.now();
+    await b.liveList();
+    assert(performance.now() - t0 < 1000, 'liveList answers');
+    const waiting = b.recovered().find((r) => (r as Json).sessionId === c.sessionId) as Json | undefined;
+    assertEquals(waiting?.reconnecting, true, JSON.stringify(waiting));
+    assert(b.takingOver(), 'the state route answers taking_over (quiet on the page), never connection_not_found');
+    release();
+    assertEquals(await all, 2, 'the WSL chat once its distro is ready');
+    assert(!b.takingOver());
+    assert(b.connections.get(c.id)?.ready, 'the WSL chat is live');
+    assertEquals(b.recovered().find((r) => (r as Json).sessionId === c.sessionId), undefined);
+  },
+});

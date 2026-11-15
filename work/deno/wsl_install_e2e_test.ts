@@ -65,6 +65,15 @@ Deno.test({
       });
       assertEquals([again.copied, again.removed, again.version], [[], [], a.version], 'a second run is a no-op');
 
+      // A new app version with the same programs (a test build): both are copied inside the distro, nothing over wsl.exe; then
+      // the older version's folder is cleaned.
+      const same = await installWsl(DISTRO, { stateDir, programs: first, root, appVersion: '0.9.0-test2' });
+      assert(same.version !== a.version);
+      assertEquals([same.copied, same.reused, same.removed], [[], [same.keeper, same.helper], [a.version]]);
+      assertEquals(await sh('"$1"', same.keeper), 'keeper', 'the reused copy runs');
+      assertEquals(await sh('stat -c %a "$1"', same.helper), '755');
+      assertEquals(await sh('ls -A "$1/$2"', root, same.version), `${KEEPER_FILE}\n${HELPER_FILE}`, 'no .part left behind');
+
       await sh('mkdir -p "$1/0.0.1-deadbeef" "$1/data-123456789abc" "$1/notes" && touch "$1/0.0.1-deadbeef/x"', root);
       const second = await installWsl(DISTRO, {
         stateDir,
@@ -73,7 +82,7 @@ Deno.test({
         appVersion: '0.9.1-test',
       });
       assertEquals(second.copied.length, 2);
-      assertEquals(second.removed.sort(), ['0.0.1-deadbeef', a.version].sort());
+      assertEquals(second.removed.sort(), ['0.0.1-deadbeef', same.version].sort());
       assertEquals((await sh('ls -A "$1"', root)).split('\n').sort(), [second.version, 'data-123456789abc', 'notes'].sort());
     } finally {
       await sh('case "$1" in /tmp/aib-wsl-test-*) rm -rf -- "$1";; esac', root)
