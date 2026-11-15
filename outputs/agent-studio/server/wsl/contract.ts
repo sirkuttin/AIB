@@ -57,10 +57,23 @@ export interface HelperMethods {
   /**
    * The agents the distro has, AIB's own install (<root>/agents/<id>/<version>) first. `source` is adapters.ts LaunchRow.source
    * ('studio' = AIB's own install); `signin` is Codex's own CLI as an argv (the one next to the adapter, else `codex` on PATH).
+   * `bundledCli` (Claude Code and Codex rows; older helpers leave it out): the vendor program the adapter ships was found in the
+   * adapter's own node_modules (Codex: @openai/codex/bin/codex.js; Claude Code: the SDK's cli.js or its platform `claude` binary).
    */
   'agents.detect': {
     params: { ids?: string[] };
-    result: { agents: { id: string; found: boolean; command?: string[]; version?: string; note?: string; source?: string; signin?: string[] }[] };
+    result: {
+      agents: {
+        id: string;
+        found: boolean;
+        command?: string[];
+        version?: string;
+        note?: string;
+        source?: string;
+        signin?: string[];
+        bundledCli?: boolean;
+      }[];
+    };
   };
   /**
    * AIB-managed agent installs in the distro (helper/agent_install.ts: agents/installer.ts run natively into <root>/agents/<id>/<version>,

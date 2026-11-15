@@ -26,7 +26,7 @@ import { worktreeMethods } from './worktrees.ts';
 import { mergeMethods } from './merge.ts';
 import { HelperSync, syncMethods } from './sync.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
-import { findCodexCli } from '../../agents/signin.ts';
+import { bundledClaudeCli, bundledCodexCli, findCodexCli } from '../../agents/signin.ts';
 import { installMethods } from './agent_install.ts';
 import { docsMethods } from './docs.ts';
 import { docRows } from '../../docs/rows.ts';
@@ -146,7 +146,16 @@ function packageVersion(entry: string): string | undefined {
   return undefined;
 }
 
-type AgentRow = { id: string; found: boolean; command?: string[]; version?: string; note?: string; source?: string; signin?: string[] };
+type AgentRow = {
+  id: string;
+  found: boolean;
+  command?: string[];
+  version?: string;
+  note?: string;
+  source?: string;
+  signin?: string[];
+  bundledCli?: boolean;
+};
 
 async function agentRow(id: string, row: LaunchRow): Promise<AgentRow> {
   const out: AgentRow = { id, found: row.found, source: row.source };
@@ -156,6 +165,9 @@ async function agentRow(id: string, row: LaunchRow): Promise<AgentRow> {
     const cli = await findCodexCli(row.argv);
     if (cli) out.signin = cli;
   }
+  // the vendor's own program the adapter ships was found (the page then says the standalone command is not needed)
+  if (id === 'codex') out.bundledCli = row.found && bundledCodexCli(row.argv) !== null;
+  if (id === 'claude') out.bundledCli = row.found && bundledClaudeCli(row.argv) !== null;
   const version = row.found && row.path && row.source !== 'path' ? packageVersion(row.path) : undefined;
   if (version) out.version = version;
   const note = row.problem || row.text;
