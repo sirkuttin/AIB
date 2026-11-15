@@ -493,20 +493,19 @@ Deno.test({
     const a = lab.studio();
     const first = await a.connect('claude', REF);
     const session = first.sessionId!;
-    lab.crash(a);
-    // An earlier AIB that could not see the running agent (its keeper did not answer) started a second one for the same session.
-    const b = lab.studio();
-    const link = lab.host.link;
-    const client = link.client.bind(link);
-    let blind = true;
-    link.client = (start = true) => (!start && blind ? (blind = false, Promise.resolve(null)) : client(start));
-    const second = await b.connect('claude', REF, session);
+    // An OLDER AIB build that could not see the running agent started a second one for the same session. This build's connect()
+    // refuses to (it takes the running agent over), so the second channel is made the way that build did: a Connection started
+    // straight in the distro keeper with the first one's launch options, loading the same session.
+    const made = lab.made[0];
+    const second = a.connectionFactory(made.command, made.cwd, 'claude', made.options as never);
+    await second.setup(session);
+    assertEquals(second.sessionId, session);
     assert(second.id !== first.id, 'a second agent');
     assertEquals((await liveChats(lab)).length, 2);
     // the second one is working (a question waits) when that AIB goes away too
-    assertEquals((await b.liveCall('prompt', { id: second.id, text: 'stream:4:20', clientMessageId: 'm1' }))[0], 200);
+    assertEquals((await second.prompt('stream:4:20', 'm1', [])).duplicate, false);
     await until(() => second.permissions.size === 1, 'the question', 15);
-    lab.crash(b);
+    lab.crash(a);
     const c = lab.studio();
     await c.adoptKeeper();
     const open = openFor(c, session);
