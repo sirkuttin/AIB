@@ -2,7 +2,7 @@
  * Real WSL (AIB_WSL_E2E=<distro>; see _wsl_e2e.ts): the AIB tools tunnel (docs/wsl/design.md sections 4, 6, 11; wsl/mcp_tunnel.ts).
  *   - A WSL chat's `studio_artifact` entry is the distro's own keeper program, `mcp-forward --helper-socket <data>/helper/mcp.sock`.
  *     Run inside the distro the way the agent runs it, a tools/list goes forwarder -> helper relay -> helper channel -> AIB's endpoint
- *     (with this chat's key) and the answer comes back: the WSL tool list (artifacts, no docs).
+ *     (with this chat's key) and the answer comes back: the WSL tool list (artifacts and docs, no helper chats).
  *   - The same with WSL interop switched off for the forwarder alone (`unshare -rm`: a user and mount namespace of its own with
  *     /run/WSL hidden and no WSL_INTEROP, so no Windows program can start in it; nothing outside that process changes), so the tunnel
  *     does not depend on interop; a wrong key is refused and nothing runs. This test's AIB has no Windows keeper, so it publishes no
@@ -103,7 +103,7 @@ Deno.test({
       assertEquals(((run.answers.get(1)?.result as Json)?.serverInfo as Json)?.name, 'studio_artifact', JSON.stringify([...run.answers]));
       const names = toolNames(run.answers.get(2));
       assert(names.includes('publish') && names.includes('archive'), names.join());
-      assert(!names.includes('doc_create') && !names.includes('start_helper'), 'docs and helper chats stay off in WSL');
+      assert(names.includes('doc_create') && !names.includes('start_helper'), 'the doc tools are on in WSL; helper chats stay off');
       if (c.worktree) assert(names.includes('merge_into_project'), 'a chat in its own copy can merge');
 
       // interop off for the forwarder alone: no Windows program can start there, and the tunnel still answers

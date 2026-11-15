@@ -170,24 +170,27 @@ export function windowsPathInWsl(path: string): string | null {
 
 /** Phase 1 without the interop MCP entry: what the chat says instead of failing silently (design section 8, item 5). */
 export const WSL_TOOLS_NOTICE = 'AIB tools (docs, artifacts, merge) are not available in WSL projects yet.';
-/** With the interop MCP entry: the artifact tools that need no project file (section 11 decision), and merge for a chat in its own copy. */
-export const WSL_TOOLS_LIMITED = "In WSL projects, AIB tools are limited to artifacts (publish, list, update) and merging a chat's own copy; docs are not available yet.";
+/** With the interop MCP entry: the artifact tools that need no project file (section 11 decision), docs, and merge for a chat in its own copy. */
+export const WSL_TOOLS_LIMITED = "In WSL projects, AIB tools are limited to artifacts (publish, list, update), docs and merging a chat's own copy.";
+
+const MERGE_TOOLS = "merging a chat's own copy";
 
 /**
  * What a WSL chat with AIB tools says about them (tunnel or interop: the same tools), worded from mcp.ts WSL_TOOL_GROUPS so a group
  * switched on there shows here too. With today's groups: "In WSL projects, AIB tools cover artifacts (publish by content, list,
- * update, archive) and merging a chat's own copy; docs and helper chats are not available yet."
+ * update, archive), docs and merging a chat's own copy; helper chats are not available yet."
  */
 export function wslToolsNotice(groups: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 'docs', boolean>> = WSL_TOOL_GROUPS): string {
   const on: string[] = [];
   const off: string[] = [];
   (groups.artifacts ? on : off).push(groups.artifacts ? 'artifacts (publish by content, list, update, archive)' : 'artifacts');
-  (groups.merge ? on : off).push("merging a chat's own copy");
   (groups.docs ? on : off).push('docs');
+  (groups.merge ? on : off).push(MERGE_TOOLS);
   (groups.swarm ? on : off).push('helper chats');
   const list = (items: string[]) => items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
   if (!on.length) return WSL_TOOLS_NOTICE;
-  return `In WSL projects, AIB tools cover ${list(on)}${off.length ? `; ${list(off)} ${off.length > 1 ? 'are' : 'is'} not available yet` : ''}.`;
+  const verb = off.length === 1 && off[0] === MERGE_TOOLS ? 'is' : 'are'; // "helper chats are", "merging ... is"
+  return `In WSL projects, AIB tools cover ${list(on)}${off.length ? `; ${list(off)} ${verb} not available yet` : ''}.`;
 }
 
 /** Install commands the agent picker shows for an agent missing in a distro (the user runs them; AIB never runs npm in phase 1). */

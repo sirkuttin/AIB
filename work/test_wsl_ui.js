@@ -1,6 +1,6 @@
 'use strict';
 // WSL projects on the page (docs/wsl/design.md section 8), in the fake DOM: wsl-ui.js (names, paths, the distro state line and the
-// "Ubuntu wants to open" question), the New project dialog's Location and Linux folder browser, the delete dialog (Remove from AIB, or move the folder to the distro's trash), the editor menu (VS Code / Cursor / Reveal), the Files tree's greyed Docs row, and the terminal's sign-in socket.
+// "Ubuntu wants to open" question), the New project dialog's Location and Linux folder browser, the delete dialog (Remove from AIB, or move the folder to the distro's trash), the editor menu (VS Code / Cursor / Reveal), files-state's greyed Docs row option, and the terminal's sign-in socket.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { page, load } = require('./fake_dom.js');
@@ -305,7 +305,7 @@ test('Open in editor for a WSL project: VS Code and Cursor (Remote-WSL) and Reve
   assert.ok(win.includes('Open in Windsurf') && win.includes('Open terminal here'), 'Windows projects keep every entry');
 });
 
-test('Files tree of a WSL project: the Docs row is there but greyed, closed, with the reason as its tooltip', () => {
+test('files-state docsOff (no longer used for WSL projects: their docs work, test_doc_links.js): a greyed, closed Docs row with the reason', () => {
   const shell = page();
   const ctx = load(shell, ['files-state.js']);
   const F = ctx.AgentFilesState;

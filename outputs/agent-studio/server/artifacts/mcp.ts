@@ -274,8 +274,9 @@ export interface ToolContext {
   worktree: boolean;
   /**
    * A chat in a WSL project (docs/wsl/design.md sections 4 and 11): only the tool groups WSL_TOOL_GROUPS switches on, and publish only
-   * by content (AIB on Windows cannot read the distro's files). Today: the artifact tools, and the merge tools when it works in its own
-   * worktree (the merge runs in the distro's helper); no doc, drawing or swarm tools.
+   * by content (AIB on Windows cannot read the distro's files). Today: the artifact tools, the doc and drawing tools (the docs' files
+   * are read and written by the distro's helper), and the merge tools when it works in its own worktree (the merge runs in the
+   * distro's helper); no swarm tools.
    */
   restricted?: boolean;
   /** Swarm: a main chat, offered the helper tools. */
@@ -738,13 +739,14 @@ const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
  *   - merge: merge_into_project and resolve_edit_clash, for a chat in its own worktree (run in the distro's helper: wsl/merge.ts).
  *   - swarm: the helper tools (start_helper, ...). Off: helper chats are not made in WSL projects yet (Studio gives a WSL chat no
  *     main role while this is off).
- *   - docs: the doc and drawing tools. Off: the docs store does not run for WSL projects yet.
+ *   - docs: the doc and drawing tools. On: the open doc lives in AIB as for a Windows project, its files in the project folder in the
+ *     distro, read and written by the helper (docs/doc_fs.ts, wsl/docs.ts); the answers name Linux paths.
  */
 export const WSL_TOOL_GROUPS: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 'docs', boolean>> = {
   artifacts: true,
   merge: true,
   swarm: false,
-  docs: false,
+  docs: true,
 };
 
 /** The artifact tools a WSL chat gets with the `artifacts` group on. */

@@ -28,6 +28,8 @@ import { HelperSync, syncMethods } from './sync.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
 import { findCodexCli } from '../../agents/signin.ts';
 import { installMethods } from './agent_install.ts';
+import { docsMethods } from './docs.ts';
+import { docRows } from '../../docs/rows.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -166,6 +168,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
   const data = ctx.data;
   const methods = {
     ...phaseOne(ctx),
+    ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
   };
@@ -356,7 +359,15 @@ function phaseOne(ctx: HelperContext): Handlers {
 
     'files.gitInfo': async (p) => await files.gitInfo(absPath(p, 'root')),
 
-    'changes.get': async (p) => await getChanges(absPath(p, 'folder'), str(p, 'base', true) || null, int(p, 'offset', 0)),
+    'changes.get': async (p) => {
+      const result = await getChanges(absPath(p, 'folder'), str(p, 'base', true) || null, int(p, 'offset', 0));
+      if (result.git && Array.isArray(result.files)) {
+        // a doc's files show as one row "2 pages changed", as chat_folders.ts does for a Windows project (docs/rows.ts)
+        const docs = docRows(String(result.root), (result.files as { path: string }[]).map((f) => f.path));
+        if (docs.length) (result as unknown as Record<string, unknown>).docs = docs;
+      }
+      return result;
+    },
 
     'changes.diff': async (p) => await getFileDiff(absPath(p, 'folder'), p.path, str(p, 'base', true) || null),
 

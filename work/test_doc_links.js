@@ -68,8 +68,13 @@ function setup(o) {
   const find = shell.make('button', 'findChat');
   shell.body.insertBefore(find, shell.byId.connections);
   find.append(shell.make('span'));
-  const ctx = D.load(shell, SCRIPTS);
+  const ctx = D.load(shell, opts.wsl ? ['wsl-ui.js', ...SCRIPTS] : SCRIPTS);
   ctx.location = { origin: 'http://127.0.0.1:9' };
+  if (opts.wsl) {
+    // a WSL project (wsl-ui.js): Ubuntu ready
+    const status = { available: true, openRequests: [], distros: [{ name: 'Ubuntu', key: 'ubuntu', state: 'ready', line: '', home: '/home/u', helper: '1', problem: '', alwaysAllow: false }] };
+    ctx.AIBWsl.init({ getJson: async (p) => (p === '/api/live/wsl/status' ? status : {}), postJson: async () => ({ ok: true }), currentPath: () => opts.root });
+  }
   const calls = [],
     posts = [],
     notices = [];
@@ -493,6 +498,25 @@ test('Files: aib-docs expands to one row per doc (title, page count, badge, no c
   assert.equal(rows(t)[0].dataset.kind, 'doc');
   const s = await t.FU.search('md');
   assert.deepEqual(s.matches.map((m) => m.path), ['docs/README.md']);
+});
+
+test('Files of a WSL project: aib-docs works as in any project (doc rows, "+ New doc", not greyed, no "not available" tooltip)', async () => {
+  const WSL = 'wsl://ubuntu/home/u/app';
+  const t = setup({ wsl: true, root: WSL, list: [conv('a1', WSL), conv('a2', WSL)] });
+  t.FU.setMode('files');
+  await flush();
+  const folder = rowOf(t, 'aib-docs');
+  assert.ok(folder, 'the aib-docs row');
+  assert.ok(!folder.className.includes('fx-off'), 'not greyed');
+  assert.notEqual(folder.getAttribute('aria-disabled'), 'true');
+  assert.ok(!String(folder.title || '').includes('not available'), folder.title);
+  folder.click();
+  await flush();
+  const inside = rows(t).filter((r) => r.dataset.path.startsWith('aib-docs/'));
+  assert.deepEqual(inside.map((r) => r.dataset.kind).sort(), ['doc', 'file', 'file', 'newdoc'], 'its doc, its other files and New doc');
+  assert.equal(inside.at(-1).dataset.kind, 'newdoc', 'New doc last');
+  assert.equal(docRowOf(t, 'release-plan').querySelector('.fx-name').textContent, 'Release plan');
+  assert.ok(t.calls.some((c) => c.path === '/api/live/docs/list'), 'the docs are listed from the server (the distro)');
 });
 
 test('Files: the aib-docs row has the accent doc icon (not the folder outline), keeps its caret, and says "2 docs · 2 changed" (the doc count muted)', async () => {

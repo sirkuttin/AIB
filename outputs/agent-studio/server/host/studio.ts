@@ -771,7 +771,7 @@ export class Studio {
 
   /**
    * The `studio_artifact` entry of a WSL chat (design sections 4 and 11). Either way the endpoint gives such a chat the tool groups of
-   * mcp.ts WSL_TOOL_GROUPS (artifacts by content, merge in its own worktree; no docs or swarm tools yet).
+   * mcp.ts WSL_TOOL_GROUPS (artifacts by content, docs, merge in its own worktree; no swarm tools yet).
    *   - The tunnel (phase 2), when the distro's helper has one: the Linux keeper program as forwarder
    *     (`<root>/<ver>/AIB-keeper mcp-forward --helper-socket <data>/helper/mcp.sock`), the key in its environment; each message goes
    *     through the helper channel to this Studio (wslToolCall). Needs no WSL interop and opens no port.
