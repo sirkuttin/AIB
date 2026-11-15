@@ -107,7 +107,12 @@ export const runWsl: WslRunner = async (distro, argv, options = {}) => {
 // ---- the fixed scripts ------------------------------------------------------------------------------------------------------
 // Arguments only as "$1", "$2"; no request text ever becomes script text.
 
-/** $1 = the root ('' = $HOME/.aib-server), $2 = <ver>. Prints key=value lines. */
+/**
+ * $1 = the root ('' = $HOME/.aib-server), $2 = <ver>; optional $3 $4 = the SHA-256 the keeper and the helper must have, $5 $6
+ * their sizes. Prints key=value lines: per program a sha= line (what <ver> has) and a reuse= line: an identical file (same size,
+ * then same SHA-256) in another <ver> folder, so a new app version whose Linux programs did not change copies them inside the
+ * distro instead of sending them over wsl.exe again.
+ */
 export const PROBE_SCRIPT = `set -u
 root="$1"
 [ "$root" != "-" ] || root=""
@@ -119,9 +124,39 @@ printf 'shell=%s\\n' "$(getent passwd "$(id -u)" | cut -d: -f7)"
 printf 'arch=%s\\n' "$(uname -m)"
 if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then printf 'glibc=1\\n'; else printf 'glibc=0\\n'; fi
 printf 'root=%s\\n' "$root"
-for f in "$root/$2/${KEEPER_FILE}" "$root/$2/${HELPER_FILE}"; do
-  if [ -f "$f" ] && [ ! -L "$f" ]; then printf 'sha=%s\\n' "$(sha256sum "$f" | cut -d' ' -f1)"; else printf 'sha=\\n'; fi
+for name in ${KEEPER_FILE} ${HELPER_FILE}; do
+  f="$root/$2/$name"
+  if [ "$name" = ${KEEPER_FILE} ]; then want="\${3:-}"; size="\${5:-}"; else want="\${4:-}"; size="\${6:-}"; fi
+  s=""
+  if [ -f "$f" ] && [ ! -L "$f" ]; then s=$(sha256sum "$f" | cut -d' ' -f1); fi
+  printf 'sha=%s\\n' "$s"
+  reuse=""
+  if [ -n "$want" ] && [ "$s" != "$want" ] && [ -d "$root" ]; then
+    for c in "$root"/*/"$name"; do
+      [ -f "$c" ] && [ ! -L "$c" ] && [ "$c" != "$f" ] || continue
+      [ "$(stat -c %s "$c" 2>/dev/null)" = "$size" ] || continue
+      [ "$(sha256sum "$c" | cut -d' ' -f1)" = "$want" ] || continue
+      reuse="$c"
+      break
+    done
+  fi
+  printf 'reuse=%s\\n' "$reuse"
 done
+`;
+
+/** $1 = an identical program in another <ver> folder (PROBE_SCRIPT's reuse=), $2 = the destination. Prints the copy's SHA-256. */
+export const REUSE_SCRIPT = `set -eu
+src="$1"
+dest="$2"
+dir=$(dirname "$dest")
+root=$(dirname "$dir")
+umask 077
+mkdir -p "$dir"
+chmod 0700 "$root" "$dir"
+cp "$src" "$dest.part"
+chmod 0755 "$dest.part"
+mv -f "$dest.part" "$dest"
+sha256sum "$dest" | cut -d' ' -f1
 `;
 
 /** $1 = the destination file (<root>/<ver>/<name>); the bytes come on stdin. Prints the SHA-256 of what was written. */
@@ -222,8 +257,10 @@ export interface WslInstall {
   helper: string;
   /** The keeper data folder for this Windows state folder: `<root>/data-<12 hex of SHA-256(stateDir)>`. */
   data: string;
-  /** What this run copied (empty: it was already there). */
+  /** What this run copied over wsl.exe (empty: it was already there). */
   copied: string[];
+  /** What this run copied inside the distro from an identical file of another version (no bytes over wsl.exe). */
+  reused: string[];
   /** Older <ver> folders removed. */
   removed: string[];
 }
@@ -240,17 +277,19 @@ export function dataDirName(stateDir: string): string {
   return 'data-' + createHash('sha256').update(stateDir.replaceAll('/', '\\').replace(/\\+$/, '').toLowerCase()).digest('hex').slice(0, 12);
 }
 
-function parseLines(stdout: Uint8Array): { values: Map<string, string>; shas: string[] } {
+function parseLines(stdout: Uint8Array): { values: Map<string, string>; shas: string[]; reuse: string[] } {
   const values = new Map<string, string>();
   const shas: string[] = [];
+  const reuse: string[] = [];
   for (const line of DEC.decode(stdout).split(/\r?\n/)) {
     const at = line.indexOf('=');
     if (at <= 0) continue;
     const key = line.slice(0, at), value = line.slice(at + 1);
     if (key === 'sha') shas.push(value);
+    else if (key === 'reuse') reuse.push(value);
     else values.set(key, value);
   }
-  return { values, shas };
+  return { values, shas, reuse };
 }
 
 /** What `uname -m` must say for programs built for this Windows build's arch. */
@@ -276,11 +315,22 @@ export async function installWsl(distro: string, options: InstallOptions): Promi
   const programs = options.programs ?? findPrograms();
   const version = versionOf(programs, options.appVersion);
   const override = options.root === undefined ? rootOverride() : options.root;
-  const probe = await run(distro, ['/bin/sh', '-c', PROBE_SCRIPT, 'sh', override ?? '-', version], { timeoutMs: PROBE_TIMEOUT_MS });
+  const wants = [sha256(programs.keeper), sha256(programs.helper)];
+  const probe = await run(distro, [
+    '/bin/sh',
+    '-c',
+    PROBE_SCRIPT,
+    'sh',
+    override ?? '-',
+    version,
+    ...wants,
+    String(programs.keeper.length),
+    String(programs.helper.length),
+  ], { timeoutMs: PROBE_TIMEOUT_MS });
   if (probe.code !== 0) {
     throw new WslInstallError(`${distro} did not answer (${probe.stderr.trim().slice(0, 300) || `exit ${probe.code}`})`, 'wsl_failed');
   }
-  const { values, shas } = parseLines(probe.stdout);
+  const { values, shas, reuse } = parseLines(probe.stdout);
   const home = values.get('home') ?? '';
   const root = values.get('root') ?? '';
   if (!home.startsWith('/') || !root.startsWith('/') || /[\0\r\n]/.test(root)) {
@@ -306,15 +356,28 @@ export async function installWsl(distro: string, options: InstallOptions): Promi
     helper: `${dir}/${HELPER_FILE}`,
     data: `${root}/${dataDirName(options.stateDir)}`,
     copied: [],
+    reused: [],
     removed: [],
   };
-  const files: [string, Uint8Array, string | undefined][] = [
-    [result.keeper, programs.keeper, shas[0]],
-    [result.helper, programs.helper, shas[1]],
+  const files: [string, Uint8Array, string | undefined, string, string | undefined][] = [
+    [result.keeper, programs.keeper, shas[0], wants[0], reuse[0]],
+    [result.helper, programs.helper, shas[1], wants[1], reuse[1]],
   ];
-  for (const [dest, bytes, there] of files) {
-    const want = sha256(bytes);
+  for (const [dest, bytes, there, want, same] of files) {
     if (there === want) continue;
+    if (same && same.startsWith(`${root}/`) && !/[\0\r\n]/.test(same)) {
+      // The same program under another version's folder: copied inside the distro (fast), checked like a copy over wsl.exe.
+      try {
+        const local = await run(distro, ['/bin/sh', '-c', REUSE_SCRIPT, 'sh', same, dest], { timeoutMs: COPY_TIMEOUT_MS });
+        if (local.code === 0 && (DEC.decode(local.stdout).trim().split(/\s+/).pop() ?? '') === want) {
+          result.reused.push(dest);
+          continue;
+        }
+        log.warning('wsl: %s: reusing %s failed (%s); copying it over', distro, same, local.stderr.trim().slice(0, 200) || `exit ${local.code}`);
+      } catch (error) {
+        log.warning('wsl: %s: reusing %s failed (%s); copying it over', distro, same, error instanceof Error ? error.message : error);
+      }
+    }
     const copy = await run(distro, ['/bin/sh', '-c', COPY_SCRIPT, 'sh', dest], {
       stdin: bytes,
       timeoutMs: COPY_TIMEOUT_MS,
@@ -337,12 +400,13 @@ export async function installWsl(distro: string, options: InstallOptions): Promi
   } catch (error) {
     log.warning('wsl: cleaning up old AIB versions in %s failed: %s', distro, error instanceof Error ? error.message : error);
   }
-  if (result.copied.length || result.removed.length) {
+  if (result.copied.length || result.reused.length || result.removed.length) {
     log.info(
-      'wsl: %s: installed %s (%s copied, %s old removed) from %s',
+      'wsl: %s: installed %s (%s copied, %s identical reused, %s old removed) from %s',
       distro,
       version,
       result.copied.length,
+      result.reused.length,
       result.removed.length,
       programs.from,
     );

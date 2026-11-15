@@ -624,7 +624,7 @@ export class Studio {
         ...item,
         unknownMessages: this.store.unknownCount(item.provider, item.sessionId),
         unknownReceipts: this.store.unknownReceipts(item.provider, item.sessionId),
-        reconnecting: this.reconnectPending.has(key),
+        reconnecting: this.reconnectPending.has(key) || this.#takeOverPending(item.cwd),
       });
     }
     return result;
@@ -1322,20 +1322,53 @@ export class Studio {
    * is stopped.
    */
   adoptKeeper(): Promise<number> {
-    this.#adopting ??= this.#adoptKeeper().catch((error) => {
-      log.exception(error, 'keeper: taking chats over failed');
-      return 0;
-    }).finally(() => (this.#adoptDone = true));
+    if (!this.#adopting) {
+      // The Windows keeper first (its keep-alives name the distros to ask), then each distro's Linux keeper. The WSL part (it may
+      // have to boot the distro and install the Linux programs) never holds up the Windows chats: adoptKeeperWindows() resolves
+      // as soon as they are taken over, and the app's window never waits for either (main.ts).
+      const windows = (this.keeper ? this.#adoptFrom(this.keeper, null) : Promise.resolve(0)).catch((error) => {
+        log.exception(error, 'keeper: taking chats over failed');
+        return 0;
+      }).finally(() => (this.#windowsAdoptDone = true));
+      this.#adoptingWindows = windows;
+      this.#adopting = windows.then(async (n) => n + await this.#adoptWsl()).catch((error) => {
+        log.exception(error, 'keeper: taking chats over failed');
+        return 0;
+      }).finally(() => (this.#adoptDone = true));
+    }
     return this.#adopting;
   }
 
+  /** True while the take-over at start (the Windows keeper's or a distro's) still runs. */
+  takingOver(): boolean {
+    return !!this.#adopting && !this.#adoptDone;
+  }
+
+  /** The take-over from the Windows keeper only (started by adoptKeeper()): the WSL distros' may still be on their way. */
+  adoptKeeperWindows(): Promise<number> {
+    void this.adoptKeeper();
+    return this.#adoptingWindows!;
+  }
+
+  /**
+   * True while the take-over at start may still rebuild the chat of this folder (the page shows it as Reconnecting…, never as
+   * Not running, until its keeper has been asked).
+   */
+  #takeOverPending(cwd: string): boolean {
+    if (!this.#adopting || this.#adoptDone) return false;
+    const loc = wslLoc(cwd);
+    return loc ? !this.#wslAsked.has(loc.distro) : !this.#windowsAdoptDone;
+  }
+
   #adoptDone = false;
+  #windowsAdoptDone = false;
 
   /** The take-over from the keeper while it runs (liveState waits for it: an open page keeps its chat meanwhile). */
   #adopting: Promise<number> | null = null;
+  #adoptingWindows: Promise<number> | null = null;
 
-  async #adoptKeeper(): Promise<number> {
-    let adopted = this.keeper ? await this.#adoptFrom(this.keeper, null) : 0;
+  async #adoptWsl(): Promise<number> {
+    let adopted = 0;
     for (const distro of this.#wslDistrosToAdopt()) {
       try {
         adopted += await this.adoptWslKeeper(distro);
@@ -1465,6 +1498,7 @@ export class Studio {
     const started = performance.now();
     const listed = await client.list();
     if (distro) this.#wslAsked.add(distro);
+    let rebuilt = 0;
     for (const info of listed) {
       try {
         if (info.kind !== 'pipe') continue;
@@ -1492,6 +1526,10 @@ export class Studio {
         // A chat whose link to this channel was given up (the keeper could not be reached for a while) while its agent kept running
         // is rebuilt under its own id; any other chat this AIB has (open, or closed by the user) keeps the channel as it is.
         if (known && !(check && known.closed && known.channel?.lost)) continue;
+        // Between chats, the page's requests get their turn: a big chat's note parse and replay are synchronous work, and the
+        // window is open while this runs (main.ts).
+        if (rebuilt++) await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!check) await testTakeOverDelay();
         const done = await this.#rebuildChat(info, note, keeper, distro, timer);
         if (done) {
           const rebuilt = this.connections.get(note.id);
@@ -2649,6 +2687,15 @@ export function orphanCommand(args: string[] = Deno.args, desktop = isDesktopApp
 function newToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+/**
+ * Tests of whole AIBs (AGENT_STUDIO_TEST=1) may slow the take-over at start down: AIB_TEST_TAKEOVER_DELAY_MS before each chat is
+ * rebuilt (a big chat's note and replay), to prove the server and the window do not wait for it. Nothing outside a test.
+ */
+function testTakeOverDelay(): Promise<void> {
+  const ms = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_TAKEOVER_DELAY_MS')) : NaN;
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, Math.min(ms, 60_000))) : Promise.resolve();
 }
 
 /** True for a pair key's provider/session (exported for tests that look at reconnectPending). */

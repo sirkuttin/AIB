@@ -2958,7 +2958,7 @@
         ctl.afterRedraw();
         setTimeout(fillMain, 0); // once this run is done (olderRun cleared)
       } catch (error) {
-        if (error?.code !== 'connection_not_found') fail(error);
+        if (error?.code !== 'connection_not_found' && error?.code !== 'taking_over') fail(error);
       } finally {
         line.remove();
         olderRun = null;
@@ -3036,6 +3036,10 @@
             'The AIB server no longer has this connection. Your draft is saved. Continue only after checking that the chat is not still running elsewhere.',
           ),
         );
+      } else if (error.code === 'taking_over') {
+        /* AIB has just started and is still taking this chat over from the keeper (a distro booting): no error, the list says
+           Reconnecting… and the next poll asks again. */
+        renderHeader();
       } else {
         connectionIssue = true;
         renderHeader();
