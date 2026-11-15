@@ -77,6 +77,20 @@ export interface HelperMethods {
   'changes.branchEntries': { params: { folder: string; base?: string }; result: unknown };
   'chat.repoBranch': { params: { folder: string }; result: { repo: string | null; branch: string | null } };
   /**
+   * The worktree per chat of WSL projects (helper/worktrees.ts: worktrees/worktrees.ts Manager run natively, rooted at
+   * `<data>/worktrees`, registry `<data>/studio-worktrees.json`). Linux paths only. Offered only by a helper started with `--data`.
+   * Errors: 'fallback' (create: the chat works in place, the message says why), 'gone' (ensure: folder and branch are both gone).
+   */
+  'worktree.plan': { params: { project: string; kind?: 'chat' | 'helper'; key?: string }; result: { plan: WorktreePlanJson | null; reason: string } };
+  'worktree.create': { params: { plan: WorktreePlanJson }; result: { note: string } };
+  'worktree.discard': { params: { key: string }; result: { ok: boolean } };
+  'worktree.setSession': { params: { key: string; provider: string; sessionId: string }; result: { ok: boolean } };
+  'worktree.find': { params: { path?: string; session?: string }; result: { record: (Record<string, unknown> & { key: string }) | null } };
+  'worktree.isRemoved': { params: { workspace: string; session?: string }; result: { removed: boolean } };
+  'worktree.ensure': { params: { key: string }; result: { path: string } };
+  'worktree.remove': { params: { key: string; confirmed?: boolean }; result: { outcome: 'removed' | 'pending' | 'gone' } };
+  'worktree.hasChanges': { params: { key: string }; result: { changes: boolean } };
+  /**
    * Saved sessions of the distro user's agents (~/.claude/projects, ~/.codex/sessions; CLAUDE_CONFIG_DIR / CODEX_HOME of the login
    * environment win), as transcripts/store.ts lists them on Windows: items with key, sessionId, cwd (a Linux path), title, mtime.
    */
@@ -86,6 +100,18 @@ export interface HelperMethods {
     params: { provider: 'claude' | 'codex'; key: string; args?: Record<string, string>; claudeDir?: string };
     result: { status: number; body: unknown };
   };
+}
+
+/** A worktree plan on the helper channel (worktrees.ts Plan, Linux paths): `path` is always <data>/worktrees/<repo hash>/<slug>. */
+export interface WorktreePlanJson {
+  project: string;
+  base: string;
+  key: string;
+  slug: string;
+  branch: string;
+  path: string;
+  folderBranch: string;
+  note: string;
 }
 
 /** Notification (no id) from the helper: a URL some process in the distro wants opened on Windows. http/https only, at most 2048 bytes. */

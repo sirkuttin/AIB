@@ -1054,6 +1054,9 @@ export async function rescueStrays(record: WorktreeRecord): Promise<boolean> {
 // ---- the manager -------------------------------------------------------------------------------------------------
 export type RemoveOutcome = 'removed' | 'pending' | 'gone';
 
+/** planWithReason's reason for a WSL ref handed to the Windows manager (a missed route: Studio asks the distro's helper instead). */
+export const WSL_PLANNED_THERE = "a WSL project's worktree is made in its distro";
+
 export class Manager {
   readonly registry: Registry;
 
@@ -1068,10 +1071,11 @@ export class Manager {
 
   /** plan() plus, when the chat works in place, why ('' when it gets a worktree). */
   async planWithReason(projectIn: string, key?: string | null, kind: 'chat' | 'helper' = 'chat'): Promise<{ plan: Plan | null; reason: string }> {
-    // A WSL project (its ref, wsl://...) works in place in phase 1: no git runs on Windows for it, no sync is ever made.
+    // A WSL project (its ref, wsl://...) gets its worktree from its distro's helper (Studio routes it to wsl/worktrees.ts, where this
+    // same Manager runs natively); this Windows manager never runs git for it and never records it.
     if (String(projectIn).startsWith(WSL_REF_PREFIX)) {
-      say(`Worktree: ${projectIn} works in place: wsl`);
-      return { plan: null, reason: 'wsl' };
+      say(`Worktree: ${projectIn} is planned in its distro, not here`);
+      return { plan: null, reason: WSL_PLANNED_THERE };
     }
     const project = pathStr(String(projectIn));
     let reason: string;

@@ -947,13 +947,15 @@ Deno.test('local only: defaults are written only by a real Studio, or for projec
   assert(localStrays.defaultsAllowed('', box.project));
 });
 
-Deno.test('planWithReason: a WSL project (its ref) works in place with reason "wsl"; no git runs on Windows for it', async () => {
+Deno.test('planWithReason: the Windows manager never plans a WSL project (its ref); no git runs on Windows for it', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-wsl-plan-' });
   try {
     const manager = new wt.Manager(dir);
-    assertEquals(await manager.planWithReason('wsl://ubuntu/home/u/app'), { plan: null, reason: 'wsl' });
+    // Studio routes WSL projects to their distro's helper (wsl/worktrees.ts); a missed route is refused here, not run
+    assertEquals(await manager.planWithReason('wsl://ubuntu/home/u/app'), { plan: null, reason: wt.WSL_PLANNED_THERE });
     assertEquals(await manager.plan('wsl://ubuntu/home/u/app'), null);
-    assertEquals(wt.inPlaceNote('wsl'), ''); // the chat's own notice says it (the AIB tools note), not a worktree note
+    assertEquals(Object.keys(manager.registry.all()), []);
+    assertEquals(wt.inPlaceNote(wt.WSL_PLANNED_THERE), '');
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }

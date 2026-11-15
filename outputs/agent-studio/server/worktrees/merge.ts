@@ -1188,6 +1188,7 @@ export async function unresolved(stateDir: string, project: string): Promise<Unr
 /** What the amber line shows for a project folder: {unresolved, line, files, stash} plus syncPaused/syncLine. Read only. */
 export async function clashStatus(studio: { stateDir: string }, project: unknown): Promise<Record<string, unknown>> {
   if (typeof project !== 'string' || !project) return { unresolved: false };
+  if (project.startsWith('wsl://')) return { unresolved: false }; // a WSL project: no live sync or merge yet (nothing is read here)
   const found = await unresolved(studio.stateDir, project);
   const paused = pausedStatus(studio.stateDir, project);
   if (!found) return { unresolved: false, ...paused };

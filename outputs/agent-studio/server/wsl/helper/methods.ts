@@ -22,6 +22,8 @@ import { handleGet } from '../../transcripts/monitor.ts';
 import { distroTrash, inspectInDistro, trashInDistro } from './trash.ts';
 import { Refused } from '../../desktop/project_delete.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
+import { worktreeMethods } from './worktrees.ts';
+import { ProjectResolver } from '../../worktrees/worktrees.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -34,6 +36,11 @@ export interface HelperContext {
   env(): Promise<{ env: Record<string, string>; shell: string; home: string; arch: string }>;
   /** AIB's own folders in the distro (its root, its data folder, the helper's folder): never shown or deleted. Default: ~/.aib-server. */
   own?: readonly string[];
+  /**
+   * The Linux keeper's data folder of this Windows AIB (`--data`): the worktree registry and root live there (helper/worktrees.ts).
+   * Without it the helper offers no worktree.* method, and AIB keeps WSL chats in the project folder.
+   */
+  data?: string;
 }
 
 /** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
@@ -62,7 +69,14 @@ async function sessionStore(ctx: HelperContext, p: Record<string, unknown>): Pro
   const dir = asked || login.env.CLAUDE_CONFIG_DIR || osp.join(login.home || login.env.HOME || '/', '.claude');
   const root = osp.join(osp.normpath(dir), 'projects');
   let store = stores.get(root);
-  if (!store) stores.set(root, store = await Store.open(root));
+  if (!store) {
+    stores.set(root, store = await Store.open(root));
+    // a chat that ran in its own worktree is filed under its project (projectRoot, worktree), as the Windows store does
+    if (ctx.data) {
+      const resolver = new ProjectResolver(ctx.data);
+      store.projectResolver = (cwd: string) => resolver.resolve(cwd);
+    }
+  }
   return store;
 }
 
@@ -127,7 +141,7 @@ function agentRow(id: string, row: LaunchRow): { id: string; found: boolean; com
 
 /** Every method waits for the login environment first: until then PATH is wsl.exe's, with Windows' folders in it. */
 export function makeMethods(ctx: HelperContext): Handlers {
-  const methods = phaseOne(ctx);
+  const methods = { ...phaseOne(ctx), ...(ctx.data ? worktreeMethods(ctx.data) : {}) };
   return Object.fromEntries(
     Object.entries(methods).map(([name, handler]) => [name, async (p: Record<string, unknown>) => {
       await ctx.env();

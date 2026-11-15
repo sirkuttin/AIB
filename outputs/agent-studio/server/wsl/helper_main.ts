@@ -4,8 +4,9 @@
  *
  *   AIB-wsl-helper [--data <linux data folder>]   JSON-RPC 2.0 lines on stdin/stdout; the first line is `helper.ready`
  *
+ * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
  * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts). It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
- * can be written by group or others. It holds no state: AIB may kill and respawn it at any time.
+ * can be written by group or others. It holds no state in memory (the worktree registry is a file): AIB may kill and respawn it at any time.
  */
 import { APP_VERSION } from '../core/app.ts';
 import { HELPER_PROTOCOL, WSL_ROOT_DIR } from './contract.ts';
@@ -13,6 +14,7 @@ import { agentEnv, captureLoginEnv, cleanPath, loginShell } from './helper/env.t
 import { lineWriter, serveLines } from './helper/rpc.ts';
 import { makeMethods } from './helper/methods.ts';
 import { serveOpenFifo, shimScript } from './helper/browser.ts';
+import { worktreeStartup } from './helper/worktrees.ts';
 
 const COMPILED = !/^deno(\.exe)?$/i.test(Deno.execPath().replace(/^.*[\\/]/, ''));
 const SHIM_NAME = 'aib-open';
@@ -160,7 +162,10 @@ async function helperMain(args: string[]): Promise<number> {
     for (const k of Object.keys(base)) if (!(k in env)) Deno.env.delete(k);
     return { env, shell, home: env.HOME ?? base.HOME ?? '', arch: Deno.build.arch === 'x86_64' ? 'amd64' : 'arm64' };
   });
-  const methods = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])] });
+  // worktrees only with the data folder named (one per Windows AIB): `<data>/worktrees`, its registry `<data>/studio-worktrees.json`
+  const named = argValue(args, '--data').startsWith('/') ? data : '';
+  const methods = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])], ...(named ? { data: named } : {}) });
+  if (named) void captured.then(() => worktreeStartup(named)).catch(() => {}); // git needs the login PATH first
   if (COMPILED && exeDir) {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);
     setTimeout(() => void cleanOldVersions(root, keep, Deno.execPath()).catch(() => {}), 30_000);

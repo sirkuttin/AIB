@@ -19,7 +19,8 @@
  * Needs the Studio token, like the Changes routes.
  *
  * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
- * distro's helper (wsl_routes.ts wslFiles); there is no main folder apart from it (no worktrees), no local-only paths, no preview
+ * distro's helper (wsl_routes.ts wslFiles); a chat in its own worktree (made in the distro, wsl/worktrees.ts) has the project as its
+ * main folder, from its record there; no local-only paths, no preview
  * link of its own (the read's bytes from the helper go into a ticket, file_tickets.ts issueBytes), and exclude / strays refuse. Outside files
  * of a WSL chat come from the distro's helper (files.outside), after the same "the chat named it" guard.
  * The /api/live/wsl/* routes ride along in this table (wsl_routes.ts).
@@ -43,6 +44,7 @@ import { hostWhenReady, wslLoc } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { refOf } from '../platform/location.ts';
 import { wslFiles, wslRoutes, wslViewUrl } from './wsl_routes.ts';
+import { wslRecord } from '../wsl/worktrees.ts';
 
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
@@ -82,7 +84,13 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   }
   if (!cwd || isNetworkPath(cwd) || (isForeignPath(cwd) && !wslLoc(cwd))) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const which = one(args, 'root', 'chat');
-  if (wslLoc(cwd)) return which === 'main' || which === 'chat' ? cwd : [400, { error: 'Unknown folder', code: 'bad_root' }];
+  if (wslLoc(cwd)) {
+    if (which === 'chat') return cwd;
+    if (which !== 'main') return [400, { error: 'Unknown folder', code: 'bad_root' }];
+    // a chat in its own worktree: the main folder is the project its record (in the distro) names; otherwise the chat's folder
+    const record = await wslRecord(cwd).catch(() => null);
+    return record ? record.project : cwd;
+  }
   if (which === 'main') {
     const record = recordForPath(ctx.stateDir ?? null, cwd);
     const project = record && isStr(record.project) ? record.project : '';
@@ -98,7 +106,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
 export async function scopeFor(ctx: WebContext, args: Record<string, string[]>): Promise<{ root: string; main: string } | Reply> {
   const root = await rootFor(ctx, args);
   if (typeof root !== 'string') return root;
-  if (one(args, 'root', 'chat') !== 'chat' || wslLoc(root)) return { root, main: root }; // a WSL chat works in place
+  if (one(args, 'root', 'chat') !== 'chat' || wslLoc(root)) return { root, main: root }; // a WSL chat: no local-only paths, so no main folder to lay over it
   // A chat's own copy: the main folder is the project its worktree record names (never mainFolderOf: for a project that is itself a
   // user-made worktree that would be the user's other checkout). No record: the chat works in its folder itself.
   const record = recordForPath(ctx.stateDir ?? null, root);

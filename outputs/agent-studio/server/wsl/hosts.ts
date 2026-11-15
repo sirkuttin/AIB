@@ -378,7 +378,7 @@ export class WslHostImpl implements WslHost {
         {
           channel: `wsl-helper-${crypto.randomUUID().slice(0, 12)}`,
           ...(this.options.helperCommand?.(install) ??
-            { command: install.helper, args: [] }),
+            { command: install.helper, args: ['--data', install.data] }), // the data folder: open.fifo, worktrees
           cwd: install.home,
           env: (this.options.helperEnv ?? helperEnv)(install),
           label,

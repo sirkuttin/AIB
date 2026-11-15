@@ -5,7 +5,7 @@
  * The transcripts are inside the distro (`~/.claude/projects`), so the helper reads them with transcripts/store.ts natively and answers
  * the same items Store.sessions() gives on Windows (`transcripts.sessions`); opening one reads its pages there too (`transcripts.read`,
  * the helper's own /api/transcript answer). A helper without the methods lists nothing. Given the user's WSL project refs, a session
- * whose folder is none of them is left out. Under test the helper is told the Claude folder inside AIB_WSL_ROOT (wslTestHomeEnv), so
+ * whose project is none of them is left out (a chat that ran in a WSL worktree is filed under its project, as the helper's store says). Under test the helper is told the Claude folder inside AIB_WSL_ROOT (wslTestHomeEnv), so
  * a test never lists the owner's own sessions.
  */
 import type { WslHost } from './contract.ts';
@@ -58,12 +58,16 @@ export async function distroSessions(host: WslHost, distro: string, projects: Re
     }
     for (const item of listed) {
       const cwd = typeof item.cwd === 'string' && item.cwd.startsWith('/') ? refOf({ kind: 'wsl', distro, linuxPath: item.cwd }) : '';
-      if (!cwd || (projects && !projects.has(cwd))) continue;
+      // a chat that ran in its own worktree: the helper's store names its project (projectRoot, a Linux path) and branch
+      const root = typeof item.projectRoot === 'string' && item.projectRoot.startsWith('/')
+        ? refOf({ kind: 'wsl', distro, linuxPath: item.projectRoot })
+        : cwd;
+      if (!cwd || (projects && !projects.has(root))) continue;
       rememberCwd(provider, item, cwd);
       out.push({
         ...item,
         cwd,
-        projectRoot: cwd,
+        projectRoot: root,
         key: wslSessionKey(distro, provider, String(item.key ?? item.sessionId ?? '')),
         provider,
         providerName: NAMES[provider],

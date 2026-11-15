@@ -831,7 +831,8 @@ export class Connection {
   /** The folder the agent itself works in: cwd, or the Linux path of a WSL chat (ACP session/new and session/load get this one). */
   agentCwd: string;
   /** Set for a chat in a WSL project (its distro and Linux folder). */
-  readonly wsl: WslSpawn | null;
+  /** Set once; only retarget() replaces it (a WSL worktree that could not be made: the project's Linux folder). */
+  wsl: WslSpawn | null;
   /** {branch, base} of a chat that runs in its own git worktree. */
   worktree: Record<string, string> | null = null;
   /** The project this chat belongs to; a worktree chat's cwd differs from it. */
@@ -1092,7 +1093,8 @@ export class Connection {
     this.cwd = String(cwd);
     this.agentCwd = this.wsl ? this.wsl.linuxPath : this.cwd;
     if (this.wsl && !this.keeper) throw new ValueError('A WSL chat runs in its distro, and AIB has no connection to it');
-    // a chat in any app's git worktree belongs to the main checkout (a WSL chat works in place: no Windows lookup for its ref)
+    // a chat in any app's git worktree belongs to the main checkout (a WSL chat: no Windows lookup for its ref; Studio sets
+    // projectRoot to the project's ref when the chat has a worktree in the distro)
     const found = this.wsl ? null : projectOfWorktree(this.cwd);
     this.projectRoot = found ? found.project : this.cwd;
     this.writes = this.wsl ? new NoWrites(cwd) : new WriteTracker(cwd);
@@ -1122,12 +1124,23 @@ export class Connection {
     else if (options.start ?? true) this.startProcess();
   }
 
-  /** Change the folder of an agent that has not started yet (a worktree that could not be made: the chat works in place). */
-  retarget(cwd: string): void {
+  /**
+   * Change the folder of an agent that has not started yet (a worktree that could not be made: the chat works in place). A WSL chat
+   * gets the project's ref as `cwd` and its Linux folder as `linuxPath` (the agent's cwd).
+   */
+  retarget(cwd: string, linuxPath?: string): void {
     if (this.process !== null) {
       throw new RuntimeError('The agent already started');
     }
-    if (this.wsl) throw new RuntimeError('A WSL chat always works in its project folder');
+    if (this.wsl) {
+      if (!linuxPath || !linuxPath.startsWith('/')) throw new RuntimeError('A WSL chat moves to a Linux folder');
+      this.wsl = { ...this.wsl, linuxPath };
+      this.cwd = String(cwd);
+      this.agentCwd = linuxPath;
+      (this.caps as { workspace: string }).workspace = linuxPath;
+      this.writes = new NoWrites(this.cwd);
+      return;
+    }
     this.cwd = String(cwd);
     this.agentCwd = this.cwd;
     (this.caps as { workspace: string }).workspace = this.cwd;

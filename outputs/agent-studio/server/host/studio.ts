@@ -73,6 +73,19 @@ import {
   wslLoc,
 } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
+import {
+  isWslRecord,
+  wslCreate,
+  wslDiscard,
+  wslEnsure,
+  wslHasChanges,
+  wslIsRemoved,
+  WslPlan,
+  wslPlanWithReason,
+  wslRecord,
+  wslRemove,
+  wslSetSession,
+} from '../wsl/worktrees.ts';
 import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
 
@@ -969,18 +982,31 @@ export class Studio {
     await this.ready;
     this.evictClosed();
     if (!isStr(cwd)) throw new TypeError(`expected str, bytes or os.PathLike object, not ${cwd === null ? 'NoneType' : typeof cwd}`);
-    // A WSL project (design section 2): its ref is the chat's folder; nothing about it is looked up on Windows, it never has a worktree,
-    // and its agent starts in the distro's Linux keeper (wslLaunch).
-    const wsl = wslLoc(cwd);
+    // A WSL project (design section 2): its ref is the chat's folder; nothing about it is looked up on Windows, its worktree (if any)
+    // is made and kept by its distro's helper (wsl/worktrees.ts), and its agent starts in the distro's Linux keeper (wslLaunch).
+    let wsl = wslLoc(cwd);
     let workspace = wsl ? refOf({ kind: 'wsl', ...wsl }) : realpath(expandUser(cwd));
     if (!wsl && this.worktrees && this.worktrees.isRemoved(workspace, resume ? `${provider}:${resume}` : null)) {
       throw new wt.WorktreeGone(wt.GONE_MESSAGE); // discarded (or being removed): readable, not continuable
     }
-    const record = !wsl && this.worktrees ? this.worktrees.forChat(provider, resume, workspace) : null; // a chat that has a worktree keeps it
+    let record: (wt.WorktreeRecord & { key: string }) | null = !wsl && this.worktrees ? this.worktrees.forChat(provider, resume, workspace) : null; // a chat that has a worktree keeps it
     if (record) workspace = realpath(await this.worktrees!.ensure(record)); // made again from its branch if deleted
     if (!wsl && !isdir(workspace)) throw new ValueError('Choose an existing workspace folder');
     if (!agentRegistry.isProvider(provider)) throw new ValueError('Choose an agent');
     const launch = wsl ? await this.wslLaunch(provider, wsl, !resume) : null;
+    if (launch && this.worktrees) {
+      // the same two lookups in the distro: a discarded worktree is not continued; a chat that has one keeps it (made again if deleted)
+      const session = resume ? `${provider}:${resume}` : null;
+      if (await wslIsRemoved(workspace, session)) throw new wt.WorktreeGone(wt.GONE_MESSAGE);
+      const found = await wslRecord(workspace, session);
+      if (found) {
+        const linuxPath = await wslEnsure(found);
+        wsl = { distro: found.distro, linuxPath };
+        workspace = refOf({ kind: 'wsl', ...wsl });
+        launch.spawn = { ...launch.spawn, linuxPath };
+        record = found;
+      }
+    }
     if (launch) {
       const stat = await readyHost(wsl!.distro).call('fs.stat', { path: wsl!.linuxPath });
       if (!stat.isDir) throw new ValueError('Choose an existing workspace folder');
@@ -1002,7 +1028,8 @@ export class Studio {
     if (asHelper && resume) throw new ValueError('A helper is a new chat');
     if (asHelper && !this.worktrees) throw new ValueError('Helpers need a worktree: this AIB has no state folder');
     if (resume === null && this.worktrees && (this.settings.worktreePerChat() || asHelper)) {
-      const planned = await this.worktrees.planWithReason(workspace, null, asHelper ? 'helper' : 'chat'); // no plan: works in place
+      const kind = asHelper ? 'helper' : 'chat';
+      const planned = wsl ? await wslPlanWithReason(workspace, kind) : await this.worktrees.planWithReason(workspace, null, kind); // no plan: works in place
       plan = planned.plan;
       startNote = wt.inPlaceNote(planned.reason);
       // a helper never works in the project folder (review break 5)
@@ -1025,7 +1052,8 @@ export class Studio {
       if (Object.keys(env).length) connectionOptions.env = env;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
-        connectionOptions.wsl = launch.spawn;
+        // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
+        connectionOptions.wsl = plan instanceof WslPlan ? { ...launch.spawn, linuxPath: plan.linuxPath } : launch.spawn;
       } else if (this.keeper && this.keeperForNew && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
@@ -1040,7 +1068,7 @@ export class Studio {
       c.sessionLease = lease;
       if (asHelper) c.swarm = { role: 'helper', helperId: asHelper.helperId, parent: asHelper.parent };
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
-      else if (c.worktree) c.swarm = { role: 'main' };
+      else if (c.worktree && !wsl) c.swarm = { role: 'main' }; // a WSL chat has no swarm tools (restricted AIB tools)
       let toolsNotice = '';
       if (launch) {
         const tools = await this.wslMcpServers(c.id); // restricted tools: no merge, doc or swarm tools in a WSL chat
@@ -1065,7 +1093,9 @@ export class Studio {
           if (plan) await this.#makeWorktree(c, plan, workspace);
           c.localOnly = this.#localOnlyFor(c, local);
           await c.setup(resume || null);
-          if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
+          if (plan instanceof WslPlan) {
+            if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
+          } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
           const note = plan && c.worktree ? plan.note : startNote;
           if (note) c.recordedEvent('studio_note', { message: note, sessionId: c.sessionId });
           if (toolsNotice) c.recordedEvent('studio_note', { message: toolsNotice, sessionId: c.sessionId }); // a WSL chat's tools
@@ -1094,7 +1124,7 @@ export class Studio {
           log.exception(error, 'Opening the conversation failed');
           c.error = errorText(error);
           await c.close();
-          if (plan && !c.sessionId) await this.worktrees!.discard(plan.key).catch(() => {}); // the chat never began
+          if (plan && !c.sessionId) await this.#discardPlan(plan).catch(() => {}); // the chat never began
           if (c.sessionLease === null && lease) lease.release();
           if (!background) throw error;
         } finally {
@@ -1326,7 +1356,7 @@ export class Studio {
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
       : null;
-    c.swarm = helper ? { role: 'helper', helperId: helper.id, parent: helper.parent.live } : c.worktree ? { role: 'main' } : null;
+    c.swarm = helper ? { role: 'helper', helperId: helper.id, parent: helper.parent.live } : c.worktree && !wsl ? { role: 'main' } : null;
     c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
     c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;
     c.recovery = this.recovery as never;
@@ -1479,20 +1509,28 @@ export class Studio {
 
   async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<void> {
     try {
-      await this.worktrees!.create(plan);
+      if (plan instanceof WslPlan) await wslCreate(plan); // made in the distro by its helper
+      else await this.worktrees!.create(plan);
     } catch (error) {
       if (!(error instanceof wt.Fallback)) throw error;
       // a helper never falls back to the project folder (review break 5): the chat closes and the swarm marks it Failed
       if (connection.swarm?.role === 'helper') throw new ValueError(`The helper's worktree could not be made: ${error.message}`);
-      connection.retarget(project);
+      if (plan instanceof WslPlan) connection.retarget(project, plan.raw.project);
+      else connection.retarget(project);
       connection.projectRoot = project;
       connection.worktree = null;
     }
     if (connection.closed) {
-      await this.worktrees!.discard(plan.key);
+      await this.#discardPlan(plan);
       throw new Error('The chat was closed while it was starting');
     }
     connection.startProcess();
+  }
+
+  /** Forget a plan's worktree: the Windows registry's, or (a WSL plan) the distro's. */
+  async #discardPlan(plan: wt.Plan): Promise<void> {
+    if (plan instanceof WslPlan) await wslDiscard(plan);
+    else await this.worktrees!.discard(plan.key);
   }
 
   /** Swarm: a main chat is any open chat in its own worktree that the helper registry does not list (review option C). */
@@ -1682,12 +1720,21 @@ export class Studio {
   }
 
   // ---- worktree removal (Discard, archive, delete) ------------------------------------------------------------------------
-  #worktreeRecord(path: string | null = null, session: string | null = null) {
-    return this.worktrees ? this.worktrees.registry.find(path, session) : null;
+  /** The worktree record of a chat folder (or saved session): a WSL ref's is asked of its distro's helper (wsl/worktrees.ts). */
+  async #worktreeRecord(path: string | null = null, session: string | null = null): Promise<(wt.WorktreeRecord & { key: string }) | null> {
+    if (!this.worktrees) return null;
+    if (path && wslLoc(path)) return await wslRecord(path, session, true);
+    return this.worktrees.registry.find(path, session);
   }
 
   #connectionsIn(path: string): Connection[] {
-    return [...this.connections.values()].filter((c) => !c.closed && wt.same(c.cwd, path));
+    // a WSL ref is compared as the ref it is (never resolved on Windows)
+    const here = wslLoc(path) ? (c: Connection) => c.cwd === path : (c: Connection) => wt.same(c.cwd, path);
+    return [...this.connections.values()].filter((c) => !c.closed && here(c));
+  }
+
+  async #removeWorktree(record: wt.WorktreeRecord & { key: string }, confirmed: boolean): Promise<wt.RemoveOutcome> {
+    return isWslRecord(record) ? await wslRemove(record, confirmed) : await this.worktrees!.remove(record.key, confirmed);
   }
 
   #connection(body: Json): Connection {
@@ -1705,11 +1752,11 @@ export class Studio {
   async worktreeDiscard(body: Json): Promise<Json> {
     if (body.confirm !== true) throw new ValueError('Discarding needs the confirmation first; nothing was removed');
     const connection = this.#connection(body);
-    const record = this.#worktreeRecord(connection.cwd);
+    const record = await this.#worktreeRecord(connection.cwd);
     if (!record) throw new ValueError('This chat has no worktree of its own');
     await connection.close(); // closes the connection, kills the agent's process tree and any client terminals
     connection.tree?.kill();
-    const outcome = await this.worktrees!.remove(record.key, true);
+    const outcome = await this.#removeWorktree(record, true);
     return { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
   }
 
@@ -1721,12 +1768,13 @@ export class Studio {
     const { provider, sessionId } = body;
     const session = isStr(provider) && isStr(sessionId) && sessionId ? `${provider}:${sessionId}` : null;
     const path = isStr(body.cwd) && body.cwd ? body.cwd : null;
-    const record = this.#worktreeRecord(path, session);
+    const record = await this.#worktreeRecord(path, session);
     if (!record) return { ok: true, worktree: null };
     const branch = record.branch ?? '';
     if (this.#connectionsIn(String(record.path)).length) return { ok: true, worktree: { branch, removed: false, live: true } };
-    if (await this.worktrees!.hasChanges(record)) return { ok: true, worktree: { branch, removed: false, keptChanges: true } };
-    const outcome = await this.worktrees!.remove(record.key, false);
+    const changed = isWslRecord(record) ? await wslHasChanges(record) : await this.worktrees!.hasChanges(record);
+    if (changed) return { ok: true, worktree: { branch, removed: false, keptChanges: true } };
+    const outcome = await this.#removeWorktree(record, false);
     return { ok: true, worktree: { branch, removed: outcome === 'removed', pending: outcome === 'pending' } };
   }
 

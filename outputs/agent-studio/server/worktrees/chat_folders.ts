@@ -181,18 +181,32 @@ export async function changesResponse(
 
 /**
  * The Changes view of a WSL chat (design section 4): the same answers, from worktrees/changes.ts running in the distro's helper
- * (`changes.get`, `changes.diff`). Phase 1 chats work in place, so only the uncommitted scope exists and no Discard is offered.
+ * (`changes.get`, `changes.diff`). A chat in its own worktree (its record is in the distro: `worktree.find`) gets the branch view
+ * against its diff base and Discard, as on Windows; `worktree.merge: false` keeps the Merge button away until WSL merge exists.
  */
 async function wslChanges(ref: string, path: string, scope: string, args: Record<string, string[] | undefined>): Promise<[number, unknown]> {
   const wsl = wslLoc(ref)!;
-  if (scope === 'branch') return [400, { error: 'This chat has no branch of its own.', code: 'bad_scope' }];
   const host = wslHost(wsl.distro);
   const why = notReady(host, wsl.distro);
   if (why) return [409, { error: why, code: 'wsl_unavailable' }];
+  let record: Record<string, unknown> | null = null;
   try {
-    if (path === '/api/live/changes/file') return [200, await host!.call('changes.diff', { folder: wsl.linuxPath, path: first(args, 'path', '') })];
+    record = (await host!.call('worktree.find', { path: wsl.linuxPath })).record;
+  } catch { /* a helper without worktrees: the chat works in place */ }
+  const base = worktrees.diffBase(record);
+  if (scope === 'branch' && !base) return [400, { error: 'This chat has no branch of its own.', code: 'bad_scope' }];
+  try {
+    if (path === '/api/live/changes/file') {
+      return [200, await host!.call('changes.diff', { folder: wsl.linuxPath, path: first(args, 'path', ''), ...(base ? { base } : {}) })];
+    }
     const offset = first(args, 'offset', '0');
-    return [200, await host!.call('changes.get', { folder: wsl.linuxPath, offset: /^\d+$/.test(offset) ? Number(offset) : 0 })];
+    const result = await host!.call('changes.get', {
+      folder: wsl.linuxPath,
+      offset: /^\d+$/.test(offset) ? Number(offset) : 0,
+      ...(base ? { base } : {}),
+    }) as Record<string, unknown>;
+    if (record && result && result.git) result.worktree = { branch: isStr(record.branch) ? record.branch : '', merge: false }; // Discard, no Merge yet
+    return [200, result];
   } catch (error) {
     if (error instanceof WslHelperError) return [400, { error: error.message, code: error.code }];
     throw error;
