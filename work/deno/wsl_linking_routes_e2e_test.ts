@@ -29,10 +29,17 @@ async function sh(script: string, args: string[] = [], stdin?: string): Promise<
   return done.out;
 }
 
-async function route(settings: SettingsStore | undefined, method: 'GET' | 'POST', path: string, query = '', body: Json | null = null): Promise<[number, Json]> {
+async function route(
+  settings: SettingsStore | undefined,
+  method: 'GET' | 'POST',
+  path: string,
+  query = '',
+  body: Json | null = null,
+  terminals: { key: string }[] = [],
+): Promise<[number, Json]> {
   const handler = wslRoutes().get(`${method} ${path}`)!;
   const url = new URL(`http://127.0.0.1${path}${query ? '?' + query : ''}`);
-  const ctx = { token: 't', stateDir: null, settings, terminals: { list: () => [] } } as unknown as WebContext;
+  const ctx = { token: 't', stateDir: null, settings, terminals: { list: () => terminals } } as unknown as WebContext;
   const [status, out] = await handler(ctx, url, body, new Request(url, { headers: { 'X-Studio-Token': 't' } }));
   return [status, out as Json];
 }
@@ -115,7 +122,20 @@ exec /bin/sh -c "$1"
 
       const [code, removed] = await route(settings, 'POST', '/api/live/wsl/agents/uninstall', '', { distro: KEY, id: 'claude' });
       if (methods.includes('agents.uninstall')) {
-        assertEquals([code, removed.ok, removed.removed], [200, false, []], JSON.stringify(removed));
+        // nothing of AIB's installed in the test root: the helper answers ok with nothing removed (idempotent, the design)
+        assertEquals([code, removed.ok, removed.removed], [200, true, []], JSON.stringify(removed));
+        // its sign-in terminal runs: refused before the helper is asked
+        const [busyCode, busy] = await route(settings, 'POST', '/api/live/wsl/agents/uninstall', '', { distro: KEY, id: 'claude' }, [
+          { key: `signin:claude@${KEY}` },
+        ]);
+        assertEquals([busyCode, busy.ok, busy.removed], [200, false, []], JSON.stringify(busy));
+        assert(String(busy.blocked).includes('A sign-in to Claude Code'), JSON.stringify(busy));
+        // another agent's or another distro's sign-in does not block it
+        const [, other] = await route(settings, 'POST', '/api/live/wsl/agents/uninstall', '', { distro: KEY, id: 'claude' }, [
+          { key: `signin:codex@${KEY}` },
+          { key: 'signin:claude@other' },
+        ]);
+        assertEquals([other.ok, other.removed], [true, []], JSON.stringify(other));
       } else {
         assertEquals([code, removed.error], [409, `The AIB helper in ${host.distro} is too old to uninstall agents. Restart AIB.`]);
       }

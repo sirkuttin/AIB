@@ -2483,6 +2483,7 @@ export class Studio {
     await this.#quitWsl();
     if (options.hold) await holdKeeper(this.keeper); // last thing before leaving (a no-op when main.ts already said it)
     this.keeper?.disconnect(); // the keeper keeps the agents; whoever connects next (the update helper, then the new AIB) is its client
+    await this.#stopHistory(); // the next AIB opens the kept chats' stores (Windows cannot delete or reopen a file a live handle holds)
     announce(
       'studio',
       'released %s chat(s) to the keeper; %s closed%s',
@@ -2531,6 +2532,11 @@ export class Studio {
     if (this.wslSync) await this.wslSync.finish(); // every chat was stopped: the helpers stop watching them
     await this.#quitWsl(3000); // every chat was just stopped: give their channels a moment to end
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
+    await this.#stopHistory();
+  }
+
+  /** The history Worker's last writes run, then every store closes and the Worker stops (close and release). */
+  async #stopHistory(): Promise<void> {
     const history = this.#history;
     this.#history = null;
     if (history) {
