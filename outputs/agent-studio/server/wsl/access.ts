@@ -80,6 +80,14 @@ export function peekWslHost(distro: string): WslHost | null {
 }
 
 /**
+ * The state the page shows for a host from peekWslHost, never starting it: 'off' when there is none or nothing has asked it to start
+ * yet (on this PC, but AIB has not used it since it started), else the host's own state.
+ */
+export function peekState(host: WslHost | null): WslHost['state'] | 'off' {
+  return !host || (host as WslHost & { begun?: boolean }).begun === false ? 'off' : host.state;
+}
+
+/**
  * The host of a distro once it is ready, starting it when needed and waiting up to `timeoutMs` (the first start after a Windows
  * boot, or the first-time set-up, takes a while). ValueError with the line the user sees when it does not get ready.
  */
@@ -124,6 +132,48 @@ export async function wsl2Distros(): Promise<DistroInfo[]> {
   const two = found.filter((d) => d && typeof d.name === 'string' && d.version === 2);
   for (const d of two) names.set(d.name.toLowerCase(), d.name);
   return two;
+}
+
+/**
+ * WSL on this PC for Settings (GET /api/live/wsl/status): whether wsl.exe is there, why nothing is offered ('' when something is),
+ * the WSL2 distros AIB can use (WSL's default first, `isDefault`) and the ones left out with why (WSL1, another app's distro, not fully
+ * installed). From the registry only (wsl/detect.ts): never runs wsl.exe, never starts a distro. Never throws.
+ */
+export async function wslOverview(): Promise<{
+  exe: boolean;
+  problem: string;
+  distros: DistroInfo[];
+  skipped: { name: string; why: string }[];
+}> {
+  if (distroSource) {
+    // tests: a distro list; the WSL1 ones are what the registry would leave out
+    let found: DistroInfo[] = [];
+    try {
+      found = (await distroSource()).filter((d) => d && typeof d.name === 'string');
+    } catch {
+      found = [];
+    }
+    const distros = found.filter((d) => d.version === 2);
+    for (const d of distros) names.set(d.name.toLowerCase(), d.name);
+    const skipped = found.filter((d) => d.version !== 2).map((d) => ({
+      name: d.name,
+      why: 'it is a WSL1 distro; convert it with `wsl --set-version <name> 2`',
+    }));
+    return { exe: true, problem: distros.length ? '' : skipped.length ? 'No WSL2 distro AIB can use' : 'No WSL distro', distros, skipped };
+  }
+  let seen: ReturnType<typeof detectWsl>;
+  try {
+    seen = detectWsl();
+  } catch (error) {
+    return { exe: false, problem: `WSL could not be checked (${error instanceof Error ? error.message : error})`, distros: [], skipped: [] };
+  }
+  for (const d of seen.distros) names.set(d.name.toLowerCase(), d.name);
+  return {
+    exe: !!seen.wslExe,
+    problem: seen.problem,
+    distros: seen.distros.filter((d) => d.version === 2),
+    skipped: seen.skipped.map((s) => ({ name: s.name, why: s.why })),
+  };
 }
 
 /** The distro as the user named it ("Ubuntu"), from its host or the last distro list; else the key itself. */
