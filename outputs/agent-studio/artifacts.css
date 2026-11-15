@@ -530,6 +530,13 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.art-card-err {
+  color: var(--text-6);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .art-card-actions {
   flex: 0 0 auto;
   display: flex;

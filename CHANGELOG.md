@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Artifacts: a failed publish or update card now shows the tool's own reason on a line under "The publish did not finish" (for
+  example "In a WSL project, publish by `content` ..."), in every chat, as plain text.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.
