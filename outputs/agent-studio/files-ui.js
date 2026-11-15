@@ -1346,6 +1346,7 @@
   }
   function openFile(scope, path, opts) {
     const o = opts || {};
+    followProject();
     if (o.beside) {
       beside = F().openTab(beside, scope, path, { keep: true, line: o.line });
       setBeside(true);
@@ -1518,7 +1519,37 @@
       listDir(scope, DF);
     } else loadDocs(scope, true);
   }
+  // Each project keeps its own file view: the files beside the chat and whether the middle shows a file tab. Switching projects
+  // puts the one we leave away and brings back the other's, so nothing of one project's files stays on screen in another.
+  const besideBy = {}, // project key -> beside tabs
+    viewBy = {}; // project key -> 'chat' | 'file'
+  let shownPk = null;
+  function followProject() {
+    const pk = projectKey();
+    if (shownPk === null) {
+      shownPk = pk;
+      return false;
+    }
+    if (pk === shownPk) return false;
+    besideBy[shownPk] = beside;
+    viewBy[shownPk] = view;
+    shownPk = pk;
+    beside = besideBy[pk] || F().emptyTabs();
+    view = viewBy[pk] === 'file' && tabsHere().active ? 'file' : 'chat';
+    const b = doc().body;
+    if (b) b.classList.toggle('sf-file-on', view === 'file');
+    drawMain();
+    if (beside.active) setBeside(true);
+    drawBeside();
+    return true;
+  }
+  // workspace-ui.js, after a project switch opened that project's chat: the project's files as they were (a file tab that was
+  // showing shows again).
+  function projectShown() {
+    if (followProject() && W() && W().refresh) W().refresh();
+  }
   function showFile() {
+    followProject();
     view = tabsHere().active ? 'file' : 'chat';
     const b = doc().body;
     if (b) b.classList.toggle('sf-file-on', view === 'file');
@@ -1526,6 +1557,7 @@
     if (W() && W().refresh) W().refresh();
   }
   function showChat() {
+    followProject();
     if (view === 'chat') return false;
     view = 'chat';
     const b = doc().body;
@@ -1585,6 +1617,13 @@
       act = b.classList.contains('activity-off') || (root.innerWidth || 0) < 1100 ? 0 : cssPx('--activity-w');
     return Math.max(0, w - side - act);
   }
+  // The middle's floor while files show beside the chat (resize-ui.js): the pane's minimum and the chat's. The chat list and
+  // Activity give way for it as they do for split panes, and the chat's 1250 px cap then stays off (it is the chat pane's own
+  // width, not the middle's): Activity keeps its own width.
+  const besideMinWidth = () => {
+    const b = doc().body;
+    return b && b.classList.contains('sf-beside-on') && F().opensBeside(root.innerWidth || 0) ? BESIDE_MIN + BESIDE_CHAT_MIN : 0;
+  };
   const besideBounds = (room) => ({ min: BESIDE_MIN, max: Math.max(BESIDE_MIN, Math.round(room - BESIDE_CHAT_MIN)) });
   function paneWidth(room, frac) {
     const bd = besideBounds(room);
@@ -1748,6 +1787,7 @@
   }
   // File tabs for the main strip, after the chat tabs.
   function stripNodes() {
+    followProject();
     const t = tabsHere();
     if (!t.tabs.length) return [];
     const out = [el('span', null, 'sf-tabsep')];
@@ -2621,6 +2661,7 @@
     lastChangeSig = '';
   function sync(selected) {
     if (!host) return;
+    followProject();
     const info = selected ? chatInfo(selected) : null;
     const changedChat = (info ? info.key : '') !== lastChatKey;
     chat = info;
@@ -2726,6 +2767,8 @@
     stripNodes,
     showingFile,
     showChat,
+    projectShown,
+    besideMinWidth,
     closeActive,
     linkPaths,
     openFile,
@@ -2757,6 +2800,9 @@
       docViewEl = null;
       tabsByProject = {};
       beside = F().emptyTabs();
+      for (const k of Object.keys(besideBy)) delete besideBy[k];
+      for (const k of Object.keys(viewBy)) delete viewBy[k];
+      shownPk = null;
       view = 'chat';
       following = true;
       pinned = null;
