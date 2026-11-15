@@ -14,11 +14,14 @@ import { setRemoteDocFs } from '../docs/doc_fs.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
 import type { DocFsOp, WslHost } from './contract.ts';
 import { hostWhenReady, notReady, wslHost, wslLoc, wslTestHomeEnv } from './access.ts';
+import { textHash } from './helper/docs.ts';
 
 type Json = Record<string, unknown>;
 
 /** Characters per piece of a big atomic write (a helper request line is at most 4 MiB, and JSON may grow text up to 6 times). */
 export const DOC_CHUNK = 512 * 1024;
+/** What a distro's layer keeps of the files' texts for `known` reads (the oldest go first). */
+const KNOWN_CHARS = 32 * 1024 * 1024, KNOWN_FILES = 4000;
 const WAIT_STATES = new Set<string>(['starting', 'installing', 'reconnecting']);
 
 /** The host of a distro for doc work: waited for while it starts; refused (never started again) when it stopped. */
@@ -84,9 +87,34 @@ class WslDocFs implements DocFs {
     return r;
   }
 
+  /**
+   * The texts this layer last read or wrote, by Linux path, with their hash: a read sends the hash and an unchanged file comes back
+   * `same`, without its text (the store polls every second; the helper's answers stay in its bounded record in the keeper).
+   */
+  #known = new Map<string, { hash: string; text: string }>();
+  #knownChars = 0;
+
+  async #remember(linux: string, text: string | null): Promise<void> {
+    const old = this.#known.get(linux);
+    if (old) this.#knownChars -= old.text.length, this.#known.delete(linux);
+    if (text === null) return;
+    this.#known.set(linux, { hash: await textHash(text), text });
+    this.#knownChars += text.length;
+    for (const [key, v] of this.#known) { // the oldest go first
+      if (this.#knownChars <= KNOWN_CHARS && this.#known.size <= KNOWN_FILES) break;
+      this.#known.delete(key);
+      this.#knownChars -= v.text.length;
+    }
+  }
+
   async readText(path: string): Promise<string | null> {
-    const r = await this.#one({ op: 'read', path: this.#linux(path) });
-    return typeof r.text === 'string' ? r.text : null;
+    const linux = this.#linux(path);
+    const known = this.#known.get(linux);
+    const r = await this.#one({ op: 'read', path: linux, ...(known ? { known: known.hash } : {}) });
+    if (r.same === true && known) return known.text;
+    const text = typeof r.text === 'string' ? r.text : null;
+    await this.#remember(linux, text);
+    return text;
   }
 
   async stat(path: string): Promise<DocFsStat | null> {
@@ -106,6 +134,7 @@ class WslDocFs implements DocFs {
   }
 
   async writeNew(path: string, text: string): Promise<boolean> {
+    this.#forget(this.#linux(path));
     return (await this.#one({ op: 'writeNew', path: this.#linux(path), text })).created === true;
   }
 
@@ -115,27 +144,38 @@ class WslDocFs implements DocFs {
 
   async writeAtomic(path: string, text: string): Promise<void> {
     const linux = this.#linux(path);
+    await this.#remember(linux, null); // until the write is known to have landed
     if (text.length <= DOC_CHUNK) {
       await this.#one({ op: 'writeAtomic', path: linux, text });
-      return;
+    } else {
+      // a big file: its pieces into one temp file, then one rename (the file is the old one or the new one, never half)
+      const token = crypto.randomUUID().replace(/-/g, '');
+      for (let at = 0; at < text.length; at += DOC_CHUNK) {
+        await this.#one({ op: 'chunk', path: linux, token, text: text.slice(at, at + DOC_CHUNK), first: at === 0 });
+      }
+      await this.#one({ op: 'writeAtomic', path: linux, token });
     }
-    // a big file: its pieces into one temp file, then one rename (the file is the old one or the new one, never half)
-    const token = crypto.randomUUID().replace(/-/g, '');
-    for (let at = 0; at < text.length; at += DOC_CHUNK) {
-      await this.#one({ op: 'chunk', path: linux, token, text: text.slice(at, at + DOC_CHUNK), first: at === 0 });
+    await this.#remember(linux, text);
+  }
+
+  #forget(linux: string, recursive = false): void {
+    for (const [key, v] of this.#known) {
+      if (key === linux || (recursive && key.startsWith(linux + '/'))) this.#known.delete(key), this.#knownChars -= v.text.length;
     }
-    await this.#one({ op: 'writeAtomic', path: linux, token });
   }
 
   async rename(from: string, to: string): Promise<void> {
+    this.#forget(this.#linux(from), true), this.#forget(this.#linux(to), true);
     await this.#one({ op: 'rename', path: this.#linux(from), to: this.#linux(to) });
   }
 
   async remove(path: string, recursive = false): Promise<void> {
+    this.#forget(this.#linux(path), true);
     await this.#one({ op: 'remove', path: this.#linux(path), recursive });
   }
 
   async copyFile(from: string, to: string): Promise<void> {
+    this.#forget(this.#linux(to));
     await this.#one({ op: 'copy', path: this.#linux(from), to: this.#linux(to) });
   }
 }

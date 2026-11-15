@@ -3,7 +3,9 @@
  * end of docs/doc_fs.ts. AIB keeps each open doc (its Y.Doc, the live editing, comments, history and its cache) on Windows, as for a
  * Windows project, and does every read and write of the doc's files in the project folder through `docs.fs` here, natively in the
  * distro. A write is atomic as on Windows: a temp file next to the target, then one rename. A big file comes in chunks (a request
- * line is at most 4 MiB): `chunk` ops fill the temp file, then `writeAtomic` with the same `token` renames it into place.
+ * line is at most 4 MiB): `chunk` ops fill the temp file, then `writeAtomic` with the same `token` renames it into place. A `read`
+ * with `known` (the hash of the text AIB already has) is answered `same` without the text when the file did not change: the store
+ * polls every second, and every answer stays in the helper's bounded record in the keeper.
  *
  * Only a project's aib-docs/ folder is reachable: every path must have an `aib-docs` part below some folder (the project), and the
  * real path of the nearest folder that exists must stay inside that project's real path (no symlink out). A recursive remove and a
@@ -41,6 +43,12 @@ function place(path: unknown): { root: string; path: string; depth: number } {
   const at = parts.lastIndexOf(DOCS_FOLDER);
   if (at < 1) throw new RpcError('Only a project\'s aib-docs folder is reachable here', undefined, { code: 'outside_docs' });
   return { root: '/' + parts.slice(0, at).join('/'), path: '/' + parts.join('/'), depth: parts.length - at - 1 };
+}
+
+/** The hex SHA-256 of a text's UTF-8 bytes (docs.fs `read` with `known`; wsl/docs.ts computes the same). */
+export async function textHash(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+  return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -96,7 +104,10 @@ export function docsMethods(ctx: HelperContext, opts: DocsHelperOptions = {}): H
     switch (op.op) {
       case 'read': {
         try {
-          return { text: await Deno.readTextFile(await local(op.path)) };
+          const text = await Deno.readTextFile(await local(op.path));
+          // `known`: the SHA-256 of the text AIB holds; the same file is answered without its text (the 1 s poll stays small)
+          if (typeof op.known === 'string' && op.known === await textHash(text)) return { same: true };
+          return { text };
         } catch (error) {
           if (error instanceof RpcError) throw error;
           return { text: null }; // missing or unreadable, as on Windows

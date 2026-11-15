@@ -26,8 +26,15 @@
   merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
   `~/.aib-server`, and the helper passes it to AIB over the connection AIB already keeps. No network port is opened, nothing on
   Windows is exposed to Linux, and each chat's own key is checked as before. It keeps working where interop is switched off, and a
-  tool call made while AIB is closed says so at once instead of hanging. Docs and helper chats are still not available in WSL
-  projects; the chat's note says which tools it has.
+  tool call made while AIB is closed says so at once instead of hanging. Helper chats are still not available in WSL projects; the
+  chat's note says which tools it has.
+- WSL projects: Docs. Docs and drawings work in WSL projects as they do on Windows. The aib-docs row in Files lists the project's
+  docs with "+ New doc"; a doc opens in its tab with live editing, pages, comments, charts, drawings, history and Restore; and the
+  chat's agent in the distro gets the doc tools (doc_create, doc_read, doc_edit and the rest), so you and the agent can write the
+  same doc at the same time without losing each other's words. The doc lives in the project, inside the distro:
+  `aib-docs/<doc>/doc.aibdoc` and its readable `.md` page copies sit next to your code, ready to commit, and an edit an agent's file
+  tools make to them there is taken in. Every save is atomic (a temp file, then one rename, in the distro). If the distro stops while
+  a doc is open, AIB keeps your edits and writes them once it is back. Move doc to trash uses the distro's trash.
 
 ## 0.1.0-beta.9 (beta)
 

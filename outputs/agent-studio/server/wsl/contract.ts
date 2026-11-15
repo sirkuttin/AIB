@@ -195,6 +195,8 @@ export interface DocFsOp {
   first?: boolean;
   recursive?: boolean;
   kind?: string;
+  /** read: the SHA-256 (hex, of the UTF-8 text) AIB holds; an unchanged file answers {same: true} without its text. */
+  known?: string;
   /** trash, trashKind: XDG_DATA_HOME (tests: inside AIB_WSL_ROOT); viaGio false skips gio. */
   dataHome?: string;
   viaGio?: boolean;
