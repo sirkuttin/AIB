@@ -21,7 +21,7 @@ import {
 import { cleanUrl, RATE_PER_MINUTE, SIGNIN_WINDOW_MS, urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
 import { isAibInternalLabel } from '../../outputs/agent-studio/server/keeper/link.ts';
 import { insideLinux } from '../../outputs/agent-studio/server/acp/wsl_caps.ts';
-import { fileReadOf, WSL_NO_PREVIEW, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
+import { fileReadOf, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
 import { handle } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { branchOf, changesFolder, changesResponse, repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
 import { distroSessions, wslSessionKey } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
@@ -156,20 +156,20 @@ Deno.test('wsl client terminals: the cwd stays inside the Linux folder by POSIX 
   assertEquals(insideLinux('/etc', '/home/u/app'), null);
 });
 
-Deno.test('wsl files read: text from the helper bytes; images and binary files say there is no preview', () => {
+Deno.test('wsl files read: text from the helper bytes; images and binary files carry no text', () => {
   const b64 = (text: string) => btoa(text);
   const text = fileReadOf('/home/u/app', 'src/a.ts', { bytesB64: b64('one\ntwo\n'), size: 8, truncated: false, mtimeMs: 5000 });
-  assertEquals([text.text, text.lines, text.abs, text.binary, text.preview], ['one\ntwo\n', 2, '/home/u/app/src/a.ts', false, undefined]);
+  assertEquals([text.text, text.lines, text.abs, text.binary], ['one\ntwo\n', 2, '/home/u/app/src/a.ts', false]);
   const image = fileReadOf('/home/u/app', 'logo.png', { bytesB64: b64('\x89PNG\x00'), size: 5, truncated: false, mtimeMs: 0 });
-  assertEquals([image.image, image.text, image.preview], [true, null, WSL_NO_PREVIEW]);
+  assertEquals([image.image, image.text], [true, null]);
   const binary = fileReadOf('/home/u/app', 'a.bin', { bytesB64: b64('ab\x00cd'), size: 5, truncated: false, mtimeMs: 0 });
-  assertEquals([binary.binary, binary.text, binary.preview], [true, null, WSL_NO_PREVIEW]);
+  assertEquals([binary.binary, binary.text], [true, null]);
   const big = fileReadOf('/home/u/app', 'big.log', { bytesB64: b64('x'), size: 5 * 1024 * 1024, truncated: true, mtimeMs: 0 });
   assertEquals([big.tooBig, big.text], [true, null]);
 });
 
 Deno.test({
-  name: 'wsl files routes: list / search / read go to the distro helper with the Linux root; no preview link; not ready -> 409',
+  name: 'wsl files routes: list / search / read go to the distro helper with the Linux root; no preview link without an origin; not ready -> 409',
   ...T,
   async fn() {
     const host = new FakeWslHost('unused', 'Ubuntu');

@@ -174,7 +174,7 @@
       .filter(Boolean);
   }
   const projectPathNow = () => (W() && W().currentProjectPath ? W().currentProjectPath() : '');
-  // A scope in a WSL project (wsl-ui.js): no docs, no image or binary preview in phase 1.
+  // A scope in a WSL project (wsl-ui.js): no docs in phase 1; pictures and pages preview as in any project.
   const WSL_DOCS_OFF = 'Docs are not available for WSL projects yet';
   function wslScope(scope) {
     const A = root.AIBWsl;
@@ -1981,10 +1981,10 @@
       f.title = 'Preview of ' + d.name + ' (view only)';
       f.src = d.viewUrl;
       body.append(f);
-    } else if (wslScope(tab.scope) && (d.binary || (d.image && d.text == null)) && !d.tooBig) {
-      // WSL projects (phase 1): no image or binary preview (the artifact origin serves Windows files only)
+    } else if (wslScope(tab.scope) && (d.binary || d.text == null) && !d.tooBig) {
+      // a WSL project's file that is no picture or page: no text to show, and no editor on this PC opens a path inside the distro
       const note = el('div', null, 'fx-note');
-      note.append(el('p', 'Not available for WSL projects yet'));
+      note.append(el('p', 'This is a binary file: it cannot be shown as text.'));
       body.append(note);
     } else if (d.tooBig || d.binary || d.text == null) {
       const note = el('div', null, 'fx-note');

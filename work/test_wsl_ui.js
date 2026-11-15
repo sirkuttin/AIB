@@ -1,7 +1,6 @@
 'use strict';
 // WSL projects on the page (docs/wsl/design.md section 8), in the fake DOM: wsl-ui.js (names, paths, the distro state line and the
-// "Ubuntu wants to open" question), the New project dialog's Location and Linux folder browser, the delete dialog (Remove from AIB
-// only), the editor menu (VS Code / Cursor / Reveal), the Files tree's greyed Docs row, and the terminal's sign-in socket.
+// "Ubuntu wants to open" question), the New project dialog's Location and Linux folder browser, the delete dialog (Remove from AIB, or move the folder to the distro's trash), the editor menu (VS Code / Cursor / Reveal), the Files tree's greyed Docs row, and the terminal's sign-in socket.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { page, load } = require('./fake_dom.js');
@@ -203,7 +202,7 @@ test('New project: a \\\\wsl.localhost pick in the system dialog selects that di
 });
 
 // ---- delete, editors, files, terminal --------------------------------------------------------------------------------------
-test('Delete project of a WSL project: only "Remove from AIB", no disk choice, no folder check', async () => {
+test('Delete project of a WSL project: "Remove from AIB" by default; the tick box moves the folder to the trash in Ubuntu', async () => {
   const t = wslPage(STATUS, ['delete-project-ui.js']);
   await settle();
   let checked = 0;
@@ -215,7 +214,7 @@ test('Delete project of a WSL project: only "Remove from AIB", no disk choice, n
     running: 0,
     check: () => {
       checked++;
-      return Promise.resolve({ exists: true, refusal: '', trash: 'gio' });
+      return Promise.resolve({ exists: true, refusal: '', trash: 'gio', worktreeOf: '' });
     },
     confirm: (c) => {
       choices.push(plain(c));
@@ -223,16 +222,54 @@ test('Delete project of a WSL project: only "Remove from AIB", no disk choice, n
     },
   });
   await settle();
-  assert.equal(checked, 0);
-  assert.equal(ui.box.querySelector('.dp-disk').hidden, true);
-  assert.equal(ui.box.querySelector('.dp-note').hidden, true);
+  assert.equal(checked, 1, 'the distro is asked what a folder delete would do');
+  const disk = ui.box.querySelector('#dpDisk');
+  assert.equal(ui.box.querySelector('.dp-disk').hidden, false);
+  assert.equal(ui.box.querySelector('.dp-disk').textContent, 'Move folder to trash in Ubuntu');
+  assert.equal(disk.checked, false, 'unticked by default');
+  assert.equal(disk.disabled, false);
   assert.equal(
     ui.box.querySelector('.dp-main').textContent,
     'Removes app from AIB. Its 2 chats move to Recently deleted. The folder Ubuntu: /home/u/app stays in Ubuntu.',
   );
   const yes = ui.box.querySelector('.dp-ok');
   assert.equal(yes.textContent, 'Remove from AIB');
+  disk.checked = true;
+  disk.dispatch('change');
+  assert.equal(yes.textContent, 'Remove and move folder to trash');
+  assert.equal(
+    ui.box.querySelector('.dp-warn').textContent,
+    'This moves the folder Ubuntu: /home/u/app and everything in it to the trash in Ubuntu, so you can still get it back from there.',
+  );
+  assert.ok(!/permanent/.test(ui.box.querySelector('.dp-warn').textContent));
   yes.click();
+  await settle();
+  assert.deepEqual(choices, [{ disk: true, expect: 'gio' }]);
+});
+
+test('Delete project of a WSL project: a refusal from the distro disables the tick box and says why; Remove from AIB still works', async () => {
+  const t = wslPage(STATUS, ['delete-project-ui.js']);
+  await settle();
+  const choices = [];
+  const ui = t.ctx.AgentDeleteProjectUI.show({
+    name: 'app',
+    path: 'wsl://ubuntu/home/u/app',
+    chats: 0,
+    running: 0,
+    check: () =>
+      Promise.resolve({ exists: true, refusal: 'This distro has no trash AIB can use for this folder', trash: 'permanent', worktreeOf: '' }),
+    confirm: (c) => {
+      choices.push(plain(c));
+      return Promise.resolve();
+    },
+  });
+  await settle();
+  assert.equal(ui.box.querySelector('#dpDisk').disabled, true);
+  assert.equal(
+    ui.box.querySelector('.dp-note').textContent,
+    'Deleting the folder is not possible: This distro has no trash AIB can use for this folder',
+  );
+  ui.box.querySelector('.dp-ok').click();
   await settle();
   assert.deepEqual(choices, [{ disk: false, expect: '' }]);
 });

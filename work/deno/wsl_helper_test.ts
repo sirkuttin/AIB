@@ -461,7 +461,7 @@ Deno.test('Windows path rules are unchanged; on POSIX a backslash and a colon ar
 
 // ---- methods ----------------------------------------------------------------------------------------------------------------
 
-Deno.test('the ready line can list every phase 1 method of the contract', () => {
+Deno.test('the ready line can list every method of the contract', () => {
   const names: (keyof HelperMethods)[] = [
     'env.get',
     'which',
@@ -474,6 +474,12 @@ Deno.test('the ready line can list every phase 1 method of the contract', () => 
     'files.search',
     'files.read',
     'files.gitInfo',
+    'files.outside',
+    'codex.limits',
+    'project.inspect',
+    'project.trash',
+    'folder.project',
+    'folder.createProject',
     'changes.get',
     'changes.diff',
     'changes.branchEntries',

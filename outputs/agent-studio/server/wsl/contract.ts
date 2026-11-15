@@ -55,6 +55,22 @@ export interface HelperMethods {
   'files.list': { params: { root: string; rel?: string; offset?: number; limit?: number }; result: unknown };
   'files.search': { params: { root: string; query: string; limit?: number }; result: unknown };
   'files.read': { params: { root: string; rel: string; maxBytes?: number }; result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number } };
+  /**
+   * A file outside the project folder (worktrees/outside_files.ts, run natively: checkShape, resolveOutside, readOutside, folderLabel).
+   * AIB has already checked that the chat named the path; the helper adds the shape rules and refuses its own data folder
+   * (~/.aib-server). `bytesB64` is there for a picture or page that fits the 1 MB read cap and is not a peek.
+   */
+  'files.outside': { params: { path: string; peek?: boolean }; result: { read: Record<string, unknown>; outside: Record<string, unknown>; bytesB64?: string } };
+  /** The newest Codex rate limits in the distro's ~/.codex session files (agents/codex_limits.ts latestRolloutLimits); `codexDir` wins (tests). */
+  'codex.limits': { params: { codexDir?: string }; result: { found: { rateLimits: Record<string, unknown>; at: number } | null } };
+  /**
+   * Project delete inside the distro: `project.inspect` is what the dialog needs (project_delete.ts Inspection: exists, refusal, trash
+   * 'gio' | 'xdg', worktreeOf), `project.trash` moves the folder to the distro's trash ('gio' | 'xdg' | 'missing'; error code
+   * 'refused' with the reason). `projects` are the other projects' Linux paths in this distro; `dataHome` is XDG_DATA_HOME (tests); `viaGio: false` skips gio and uses the freedesktop trash (tests).
+   * Never a permanent delete: with no usable trash it refuses.
+   */
+  'project.inspect': { params: { path: string; projects?: string[]; dataHome?: string; viaGio?: boolean }; result: { exists: boolean; refusal: string; trash: string; worktreeOf: string } };
+  'project.trash': { params: { path: string; projects?: string[]; dataHome?: string; viaGio?: boolean }; result: { disk: 'gio' | 'xdg' | 'missing' } };
   'files.gitInfo': { params: { root: string }; result: unknown };
   'changes.get': { params: { folder: string; offset?: number; base?: string }; result: unknown };
   'changes.diff': { params: { folder: string; path: string; base?: string }; result: unknown };

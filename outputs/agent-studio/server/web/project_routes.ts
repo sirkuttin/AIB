@@ -27,6 +27,9 @@ import {
 } from '../desktop/project_delete.ts';
 import type { ConversationState } from '../state/store.ts';
 import type { AddedProjects } from '../desktop/added_projects.ts';
+import { wslLocOf } from '../platform/location.ts';
+import { distroName, hostWhenReady, wslTestHomeEnv } from '../wsl/access.ts';
+import { WslHelperError } from '../wsl/contract.ts';
 import { ensureDefault } from '../worktrees/local_only.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 
@@ -58,12 +61,16 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
   const path = isStr(body.path) ? body.path.trim() : '';
   if (!path || path.length > 1024 || !projectKey(path)) throw new ValueError('Choose a project folder');
   const projects = otherProjects(ctx, body, path);
+  const wsl = wslLocOf(path);
   const guard = ctx.guard ? ctx.guard(projects) : defaultGuard(ctx.stateDir, projects);
-  if (body.check === true) return [200, { ok: true, ...(await inspect(path, guard, ctx.trashLayer)) }];
+  if (body.check === true) {
+    if (wsl) return [200, { ok: true, ...await wslCheck(wsl, projects) }];
+    return [200, { ok: true, ...(await inspect(path, guard, ctx.trashLayer)) }];
+  }
   let disk: string = 'kept';
   if (body.disk === true) {
     try {
-      disk = await deleteFolder(path, guard, body.expect, ctx.trashLayer);
+      disk = wsl ? await wslTrash(wsl, projects) : await deleteFolder(path, guard, body.expect, ctx.trashLayer);
     } catch (error) {
       if (error instanceof Refused) return [409, { error: error.message, code: 'refused' }];
       return [500, { error: `The folder could not be deleted: ${(error as Error).message}`, code: 'delete_failed' }];
@@ -72,6 +79,43 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
   await ctx.removedProjects.remove(path);
   if (ctx.addedProjects) await ctx.addedProjects.remove(path);
   return [200, { ok: true, disk, removed: ctx.removedProjects.public().removed }];
+}
+
+type WslRef = { distro: string; linuxPath: string };
+
+/** What the delete dialog needs for a folder in a distro (the helper's project.inspect). A distro that is not ready is a refusal line. */
+async function wslCheck(wsl: WslRef, projects: string[]): Promise<Json> {
+  try {
+    const host = await hostWhenReady(wsl.distro);
+    return { ...await host.call('project.inspect', wslArgs(wsl, projects)) };
+  } catch (error) {
+    return { exists: true, refusal: error instanceof Error ? error.message : String(error), trash: 'permanent', worktreeOf: '' };
+  }
+}
+
+/** "Move folder to trash in Ubuntu": the helper's project.trash (never a permanent delete). Refused when it says no. */
+async function wslTrash(wsl: WslRef, projects: string[]): Promise<string> {
+  const host = await hostWhenReady(wsl.distro).catch((error) => {
+    throw new Refused(error instanceof Error ? error.message : `${distroName(wsl.distro)} is not available to AIB.`);
+  });
+  try {
+    return (await host.call('project.trash', wslArgs(wsl, projects))).disk;
+  } catch (error) {
+    if (error instanceof WslHelperError && error.code === 'refused') throw new Refused(error.message);
+    throw error;
+  }
+}
+
+/** The helper's params: the folder's Linux path, the other projects of the same distro, and (under test) the trash inside AIB_WSL_ROOT. */
+function wslArgs(wsl: WslRef, projects: string[]): { path: string; projects: string[]; dataHome?: string } {
+  const others = projects.map((p) => wslLocOf(p)).filter((l): l is NonNullable<typeof l> => !!l && l.distro === wsl.distro).map((l) => l.linuxPath);
+  let dataHome: string | undefined;
+  try {
+    dataHome = wslTestHomeEnv().XDG_DATA_HOME; // under test: never the owner's own trash
+  } catch {
+    throw new Refused('Test guard: a WSL delete under test needs AIB_WSL_ROOT');
+  }
+  return { path: wsl.linuxPath, projects: others, ...(dataHome ? { dataHome } : {}) };
 }
 
 /** A new chat started in a folder adds it as a project (a worktree chat adds its main checkout), and brings a removed one back. */

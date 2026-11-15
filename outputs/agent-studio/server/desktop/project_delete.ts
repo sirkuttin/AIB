@@ -139,8 +139,8 @@ export class RemovedProjects extends JsonFileStore {
 }
 
 // ---- the OS trash layer (mockable) ------------------------------------------------------------------------------------------
-/** recycle: Windows Recycle Bin; trash: macOS Trash; gio: Linux `gio trash`; permanent: no trash, the folder is deleted for good. */
-export type TrashKind = 'recycle' | 'trash' | 'gio' | 'permanent';
+/** recycle: Windows Recycle Bin; trash: macOS Trash; gio: Linux `gio trash`; xdg: the freedesktop trash folder moved into by hand (the WSL helper, wsl/helper/trash.ts); permanent: no trash, the folder is deleted for good. */
+export type TrashKind = 'recycle' | 'trash' | 'gio' | 'xdg' | 'permanent';
 export interface TrashLayer {
   kind(path: string): Promise<TrashKind>;
   /** Move to the trash kind() named (never called for 'permanent'). Throws with a readable message when it fails. */

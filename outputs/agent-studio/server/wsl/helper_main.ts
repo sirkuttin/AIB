@@ -160,7 +160,7 @@ async function helperMain(args: string[]): Promise<number> {
     for (const k of Object.keys(base)) if (!(k in env)) Deno.env.delete(k);
     return { env, shell, home: env.HOME ?? base.HOME ?? '', arch: Deno.build.arch === 'x86_64' ? 'amd64' : 'arm64' };
   });
-  const methods = makeMethods({ env: () => captured });
+  const methods = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])] });
   if (COMPILED && exeDir) {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);
     setTimeout(() => void cleanOldVersions(root, keep, Deno.execPath()).catch(() => {}), 30_000);

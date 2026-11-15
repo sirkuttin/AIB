@@ -11,10 +11,11 @@
  * Plus the Files view of a WSL project (wslFiles, called by files_routes.ts): list, search and read through the distro's helper.
  */
 import { tokenMatches } from './security.ts';
+import { issueBytes } from './file_tickets.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { WslHelperError, type WslHost } from '../wsl/contract.ts';
-import { refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
+import { refOf, type WslLoc } from '../platform/location.ts';
 import { distroName, hostWhenReady, notReady, peekWslHost, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
@@ -26,8 +27,16 @@ type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => P
 const one = (args: Record<string, string[]>, name: string, fallback = '') => (Object.hasOwn(args, name) ? args[name][0] : fallback);
 const DISTRO = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** What a WSL Files read says instead of a preview (design section 8 item 8). */
-export const WSL_NO_PREVIEW = 'Not available for WSL projects yet';
+/**
+ * The preview link of a file inside a distro (images, pages, markdown): the bytes the helper sent go into a ticket the artifact origin
+ * serves read only (file_tickets.ts issueBytes), exactly as for a Windows file; '' when there is no origin or nothing to show.
+ */
+export function wslViewUrl(origin: string, ref: string, read: FileRead, bytesB64: string | undefined): string {
+  const viewable = (read.image && !read.tooBig) || (read.page && !read.binary && !read.tooBig);
+  if (!origin || !viewable || !bytesB64) return '';
+  const bytes = Uint8Array.from(atob(bytesB64), (c) => c.charCodeAt(0));
+  return origin + '/f/' + issueBytes(ref, bytes) + '/' + encodeURIComponent(read.name) + (/\.(md|markdown)$/i.test(read.name) ? '?view=1' : '');
+}
 
 /**
  * The New project dialog's folder check and create for a WSL path: the helper runs the same functions a Windows project uses, with
@@ -176,6 +185,7 @@ export async function wslFiles(
   ref: string,
   wsl: { distro: string; linuxPath: string },
   args: Record<string, string[]>,
+  origin = '',
 ): Promise<Reply> {
   let host: WslHost;
   try {
@@ -197,21 +207,22 @@ export async function wslFiles(
     }
     const rel = one(args, 'path').replace(/^\/+/, '');
     const read = await host.call('files.read', { root: wsl.linuxPath, rel, maxBytes: LIMITS.readBytes });
-    return [200, { root: ref, ...fileReadOf(wsl.linuxPath, rel, read), viewUrl: '', wsl: true }];
+    const out = fileReadOf(wsl.linuxPath, rel, read);
+    return [200, { root: ref, ...out, viewUrl: wslViewUrl(origin, refOf({ kind: 'wsl', distro: wsl.distro, linuxPath: out.abs }), out, read.bytesB64), wsl: true }];
   } catch (error) {
     return failed(error);
   }
 }
 
-/** files.readFile's answer from the helper's bytes (the same rules: binary, too big, image, page). Never a preview link. */
+/** files.readFile's answer from the helper's bytes (the same rules: binary, too big, image, page); the preview link is wslViewUrl's. */
 export function fileReadOf(
   linuxRoot: string,
   rel: string,
   read: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number },
-): FileRead & { preview?: string } {
+): FileRead {
   const name = rel.slice(rel.lastIndexOf('/') + 1), ext = extOf(name);
   const bytes = Uint8Array.from(atob(read.bytesB64 || ''), (c) => c.charCodeAt(0));
-  const out: FileRead & { preview?: string } = {
+  const out: FileRead = {
     path: rel,
     abs: `${linuxRoot.replace(/\/+$/, '')}/${rel}`,
     name,
@@ -228,6 +239,5 @@ export function fileReadOf(
     out.text = new TextDecoder().decode(bytes);
     out.lines = out.text ? out.text.split('\n').length - (out.text.endsWith('\n') ? 1 : 0) : 0;
   }
-  if (out.binary || out.image) out.preview = WSL_NO_PREVIEW;
   return out;
 }

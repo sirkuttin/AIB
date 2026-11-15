@@ -82,7 +82,12 @@ export function resolveOutside(path: string, dataDirs: (string | null | undefine
 
 // ---- the transcript-mention guard -----------------------------------------------------------------------------------------------
 /** Every spelling of `path` a record may hold: as given, with the other slash, and JSON-escaped. Lower case on Windows. */
-export function spellings(path: string): string[] {
+export function spellings(path: string, posix = false): string[] {
+  if (posix) {
+    // a Linux path (a WSL chat's): case kept, only the forward slash and its JSON-escaped form
+    const p = '/' + path.split('/').filter((x) => x !== '' && x !== '.').join('/');
+    return [...new Set([p, p.replaceAll('/', '\\/')])];
+  }
   const p = osp.normpath(path);
   const fwd = p.replaceAll('\\', '/'), back = p.replaceAll('/', '\\');
   const out = new Set([p, fwd, back, back.replaceAll('\\', '\\\\'), fwd.replaceAll('/', '\\/')]);
@@ -106,10 +111,10 @@ export function endsPath(after: string): boolean {
 }
 
 /** True when one of `texts` names `path` as a whole path (not as the start of a longer name). */
-export function mentions(texts: Iterable<string>, path: string): boolean {
-  const wanted = spellings(path);
+export function mentions(texts: Iterable<string>, path: string, posix = false): boolean {
+  const wanted = spellings(path, posix);
   for (const raw of texts) {
-    const t = osp.WIN ? raw.toLowerCase() : raw;
+    const t = osp.WIN && !posix ? raw.toLowerCase() : raw;
     for (const w of wanted) {
       let at = t.indexOf(w);
       while (at >= 0) {

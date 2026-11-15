@@ -12,11 +12,15 @@ import * as osp from '../../platform/ospath.ts';
 import { which } from '../../platform/pypath.ts';
 import { branchEntries, commitExists, getChanges, getFileDiff, locate } from '../../worktrees/changes.ts';
 import * as files from '../../worktrees/files.ts';
+import * as outside from '../../worktrees/outside_files.ts';
 import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
 import { repoBranch } from '../../worktrees/chat_folders.ts';
 import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
+import { latestRolloutLimits } from '../../agents/codex_limits.ts';
 import { Store } from '../../transcripts/store.ts';
 import { handleGet } from '../../transcripts/monitor.ts';
+import { distroTrash, inspectInDistro, trashInDistro } from './trash.ts';
+import { Refused } from '../../desktop/project_delete.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
@@ -28,6 +32,16 @@ export const DEFAULT_AGENTS = ['claude', 'codex', 'omp'];
 export interface HelperContext {
   /** The login environment (env.get), once captured. */
   env(): Promise<{ env: Record<string, string>; shell: string; home: string; arch: string }>;
+  /** AIB's own folders in the distro (its root, its data folder, the helper's folder): never shown or deleted. Default: ~/.aib-server. */
+  own?: readonly string[];
+}
+
+/** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
+async function ownFolders(ctx: HelperContext): Promise<string[]> {
+  if (ctx.own?.length) return [...ctx.own];
+  const login = await ctx.env();
+  const own = Deno.env.get('AIB_WSL_ROOT');
+  return [own && own.startsWith('/') ? own : osp.join(login.home || login.env.HOME || '/', '.aib-server')];
 }
 
 /** One transcripts Store per folder, kept for the helper's life (its summary and transcript caches). */
@@ -50,6 +64,19 @@ async function sessionStore(ctx: HelperContext, p: Record<string, unknown>): Pro
   let store = stores.get(root);
   if (!store) stores.set(root, store = await Store.open(root));
   return store;
+}
+
+/** The guard and the trash for a project delete: this user's home, AIB's folder in the distro, and the other projects' Linux paths. */
+async function trashSetup(ctx: HelperContext, p: Record<string, unknown>) {
+  const login = await ctx.env();
+  const home = login.home || login.env.HOME || '/';
+  const projects = Array.isArray(p.projects) ? p.projects.filter((x): x is string => typeof x === 'string' && osp.isabs(x)).slice(0, 500) : [];
+  const dataHome = str(p, 'dataHome', true);
+  if (dataHome && !osp.isabs(dataHome)) throw new RpcError('dataHome must be an absolute path', BAD_PARAMS);
+  return {
+    guard: { home, own: await ownFolders(ctx), projects },
+    layer: distroTrash({ home, dataHome: dataHome || login.env.XDG_DATA_HOME || undefined, gio: p.viaGio === false ? null : undefined }),
+  };
 }
 
 /** An absolute path param, normalised; relative, NUL and over-long paths are refused. */
@@ -244,6 +271,44 @@ function phaseOne(ctx: HelperContext): Handlers {
         path,
         abs,
       };
+    },
+
+    'files.outside': async (p) => {
+      // AIB's own folders in the distro (~/.aib-server, or AIB_WSL_ROOT under test) are never shown
+      const peek = p.peek === true;
+      const real = outside.resolveOutside(outside.checkShape(str(p, 'path')), await ownFolders(ctx));
+      const read = outside.readOutside(real, peek);
+      const viewable = !peek && !read.tooBig && (read.image || (read.page && !read.binary));
+      return {
+        read: { ...read },
+        outside: { ...outside.folderLabel(real) },
+        ...(viewable ? { bytesB64: encodeBase64(Deno.readFileSync(real)) } : {}),
+      };
+    },
+
+    'codex.limits': async (p) => {
+      const asked = str(p, 'codexDir', true);
+      if (asked && (!osp.isabs(asked) || asked.length > 4096)) throw new RpcError('codexDir must be an absolute path', BAD_PARAMS);
+      const login = await ctx.env();
+      const dir = asked || login.env.CODEX_HOME || osp.join(login.home || login.env.HOME || '/', '.codex');
+      return { found: latestRolloutLimits(osp.normpath(dir)) };
+    },
+
+    // Project delete in the distro: the same refusals as a Windows delete, then the distro's trash (gio, else the freedesktop trash).
+    // Never a permanent delete: with no usable trash the answer is a refusal.
+    'project.inspect': async (p) => {
+      const { guard, layer } = await trashSetup(ctx, p);
+      return { ...await inspectInDistro(absPath(p, 'path'), guard, layer) };
+    },
+
+    'project.trash': async (p) => {
+      const { guard, layer } = await trashSetup(ctx, p);
+      try {
+        return { disk: await trashInDistro(absPath(p, 'path'), guard, layer) };
+      } catch (error) {
+        if (error instanceof Refused) throw new RpcError(error.message, undefined, { code: 'refused' });
+        throw error;
+      }
     },
 
     'files.gitInfo': async (p) => await files.gitInfo(absPath(p, 'root')),

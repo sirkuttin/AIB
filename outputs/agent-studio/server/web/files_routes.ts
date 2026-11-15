@@ -20,7 +20,8 @@
  *
  * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
  * distro's helper (wsl_routes.ts wslFiles); there is no main folder apart from it (no worktrees), no local-only paths, no preview
- * link (read says `preview: 'Not available for WSL projects yet'` for images and binary files), and exclude / strays / outside refuse.
+ * link of its own (the read's bytes from the helper go into a ticket, file_tickets.ts issueBytes), and exclude / strays refuse. Outside files
+ * of a WSL chat come from the distro's helper (files.outside), after the same "the chat named it" guard.
  * The /api/live/wsl/* routes ride along in this table (wsl_routes.ts).
  */
 import { isStr } from '../core/py.ts';
@@ -38,8 +39,10 @@ import { chatStudioOf, savedFolders } from './studio_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
 import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';
-import { wslLoc } from '../wsl/access.ts';
-import { wslFiles, wslRoutes } from './wsl_routes.ts';
+import { hostWhenReady, wslLoc } from '../wsl/access.ts';
+import { WslHelperError } from '../wsl/contract.ts';
+import { refOf } from '../platform/location.ts';
+import { wslFiles, wslRoutes, wslViewUrl } from './wsl_routes.ts';
 
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
@@ -144,7 +147,7 @@ export function filesRoutes(): Map<string, Handler> {
       const wsl = wslLoc(scope.root);
       if (wsl) {
         const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
-        return await wslFiles(kind, scope.root, wsl, args);
+        return await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
       }
       return guarded(() => work(ctx, scope.root, args, scope.main));
     });
@@ -247,9 +250,8 @@ export function filesRoutes(): Map<string, Handler> {
     const args = parseQs(url.search.slice(1));
     const id = one(args, 'id');
     if (!id || id.length > 600) return Promise.resolve([400, { error: 'Choose a chat', code: 'bad_chat' }]);
-    if (ctx.host && wslChat(ctx, id)) {
-      return Promise.resolve([409, { error: 'Files outside the project are not available for WSL projects yet.', code: 'wsl_unsupported' }]);
-    }
+    const wsl = ctx.host ? wslChatLoc(ctx, id) : null;
+    if (wsl) return wslOutside(ctx, id, wsl.distro, one(args, 'path'), one(args, 'peek') === '1');
     return guarded(async () => {
       const given = outside.checkShape(one(args, 'path'));
       // The guard first, so an unnamed path never tells whether it exists.
@@ -268,10 +270,37 @@ export function filesRoutes(): Map<string, Handler> {
   return routes;
 }
 
-/** True when `id` is a live WSL chat of this process (the outside route never reads a Windows path on its behalf). */
-function wslChat(ctx: WebContext, id: string): boolean {
+/** The {distro, linuxPath} of a live WSL chat of this process (the outside route never reads a Windows path on its behalf), or null. */
+function wslChatLoc(ctx: WebContext, id: string): { distro: string; linuxPath: string } | null {
   const live = (ctx.host as unknown as { connections?: Map<string, { cwd?: string }> }).connections?.get(id);
-  return !!live && !!wslLoc(live.cwd);
+  return live ? wslLoc(live.cwd) : null;
+}
+
+/**
+ * A file outside a WSL chat's folder: the same guard (the chat's own record names the path, compared by Linux rules), then the
+ * distro's helper runs outside_files.ts natively (its shape rules, its own data folder refused) and sends the bytes of a picture or
+ * page for the preview ticket.
+ */
+async function wslOutside(ctx: WebContext, id: string, distro: string, path: string, peek: boolean): Promise<Reply> {
+  if (!path || path.length > 1024 || path.includes('\0') || !path.startsWith('/')) return [400, { error: 'Use a full path', code: 'bad_path' }];
+  if (!(await mentionedBy(ctx, id, path, true))) return [403, { error: 'This chat never named that file', code: 'not_mentioned' }];
+  let host;
+  try {
+    host = await hostWhenReady(distro);
+  } catch (error) {
+    return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+  }
+  try {
+    const got = await host.call('files.outside', { path, peek });
+    const read = got.read as unknown as files.FileRead;
+    const ref = refOf({ kind: 'wsl', distro, linuxPath: read.abs });
+    const viewUrl = peek ? '' : wslViewUrl(ctx.artifacts?.store.origin ?? '', ref, read, got.bytesB64);
+    return [200, { root: '', ...read, viewUrl, outside: got.outside, wsl: true }];
+  } catch (error) {
+    if (!(error instanceof WslHelperError)) throw error;
+    const status = error.code === 'not_found' ? 404 : error.code === 'hidden' ? 403 : 400;
+    return [status, { error: error.message, code: error.code }];
+  }
 }
 
 /** AIB's own data folder(s): never shown through the outside route. */
@@ -285,8 +314,8 @@ function dataDirs(ctx: WebContext): string[] {
 
 const mentioned = new Map<string, boolean>(); // chat id + path -> named (records only grow, so a yes stays a yes)
 /** True when the chat's own record (live events, saved transcript and its subagents) names `path`. */
-async function mentionedBy(ctx: WebContext, id: string, path: string): Promise<boolean> {
-  const key = id + '|' + osp.normcase(osp.normpath(path));
+async function mentionedBy(ctx: WebContext, id: string, path: string, posix = false): Promise<boolean> {
+  const key = id + '|' + (posix ? 'wsl:' + path : osp.normcase(osp.normpath(path)));
   if (mentioned.get(key)) return true;
   const stores = (ctx.transcripts as unknown as { stores?: Map<string, { root: string }> }).stores;
   const texts = await outside.chatTexts({
@@ -296,7 +325,7 @@ async function mentionedBy(ctx: WebContext, id: string, path: string): Promise<b
       return store ? await findSessionFile(provider, store.root, sessionId) : null;
     },
   }, id);
-  const yes = outside.mentions(texts, path);
+  const yes = outside.mentions(texts, path, posix);
   if (yes) {
     if (mentioned.size > 2000) mentioned.clear();
     mentioned.set(key, true);

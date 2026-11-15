@@ -14,7 +14,7 @@ import { PY_SPACE, pyRepr, pyStrip } from '../core/py.ts';
 import { pathOf } from '../state/paths.ts';
 import { decodeReplace, pureName, pureStem, pureSuffix } from './artifacts.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
-import { lookup as ticketFile, TICKET_PATH } from '../web/file_tickets.ts';
+import { lookup as ticketFile, lookupBytes as ticketBytes, TICKET_PATH } from '../web/file_tickets.ts';
 import { LIB_PREFIX, libAsset, rewriteLibBytes } from './libs.ts';
 
 const WIN = Deno.build.os === 'windows';
@@ -547,8 +547,12 @@ function serveTicket(id: string, query: Record<string, string[]>, send: Send): R
   if (!path) return send(404, 'Not found');
   let data: Uint8Array;
   try {
-    if (!Deno.statSync(path).isFile) return send(404, 'Not found');
-    data = Deno.readFileSync(path);
+    const held = ticketBytes(id); // a file inside a WSL distro: the bytes the helper sent, never a Windows path
+    if (held) data = held;
+    else {
+      if (!Deno.statSync(path).isFile) return send(404, 'Not found');
+      data = Deno.readFileSync(path);
+    }
   } catch {
     return send(404, 'Not found');
   }
