@@ -95,6 +95,16 @@ export interface HelperMethods {
   'agents.uninstall': { params: { id: string }; result: { ok: boolean; removed: string[]; message?: string; blocked?: string } };
   /** Is each agent signed in inside the distro (reads credential files' presence/validity only, never their content). */
   'agents.signinStatus': { params: { ids?: string[] }; result: { agents: { id: string; state: 'signed_in' | 'signed_out' | 'unknown'; account?: string; note?: string }[] } };
+  /**
+   * Linking (WSL) phase 3 (docs/wsl/linking-design.md section 13; helper/aib_remove.ts). `aib.usage`: what AIB takes in the distro
+   * (read-only, a bounded walk that never follows a link; `partial` when it was cut short). `aib.remove`: 'check' lists what Remove
+   * would delete and keep and every refusal, deleting nothing; 'apply' runs the refusals again and deletes this AIB's data folder
+   * (all but its keeper/ and helper/ run folders, which the keeper and helper still use) and, only when nothing else uses them, the
+   * shared parts. `final` (apply, an addition) says what AIB's last step may delete after the keeper and helper have ended.
+   * Offered only by a helper started with `--data`.
+   */
+  'aib.usage': { params: Record<string, never>; result: AibUsage };
+  'aib.remove': { params: { mode: 'check' | 'apply' }; result: AibRemoveResult };
   'folder.project': { params: { path: string; name?: string }; result: Record<string, unknown> };
   'folder.createProject': { params: { path: string; name?: string; gitInit?: boolean }; result: Record<string, unknown> };
   'git.init': { params: { path: string }; result: { ok: boolean; message?: string } };
@@ -325,6 +335,43 @@ export interface BridgePreamble {
 
 /** Linux-side layout, relative to $HOME (never passed with `~`). */
 export const WSL_ROOT_DIR = '.aib-server'; // tests override with the AIB_WSL_ROOT env var (an absolute Linux path)
+
+/** What AIB takes in a distro (design section 13, GET /api/live/wsl/aib `usage`). Sizes are disk use in bytes. */
+export interface AibUsage {
+  root: string;
+  totalBytes: number;
+  /** This AIB's <ver> (the folder its helper and keeper run from). */
+  current: string;
+  parts: { key: 'versions' | 'agents' | 'npmCache' | 'data' | 'worktrees' | 'logs' | 'other'; label: string; bytes: number; path: string }[];
+  versions: string[];
+  agents: { id: string; versions: string[]; bytes: number }[];
+  dataFolders: { name: string; mine: boolean; keeperAlive: boolean; bytes: number }[];
+  /** dirty: chat copies with uncommitted changes, new (untracked) files included. */
+  worktrees: { count: number; dirty: number };
+  /** WSL chats of this AIB working now (AIB fills it in; the helper says 0). */
+  chatsWorking: number;
+  /** Addition: the walk was cut short (time or entry limit), so the sizes are at least these. */
+  partial?: boolean;
+}
+
+/** The answer of `aib.remove` and POST /api/live/wsl/aib/remove (design section 13). */
+export interface AibRemoveResult {
+  ok: boolean;
+  mode: 'check' | 'apply';
+  /** Why Remove cannot run now, one plain line each (verbatim on the page). */
+  blocked: string[];
+  wouldRemove: { path: string; what: string; bytes: number }[];
+  kept: { path: string; why: string }[];
+  removed: string[];
+  left: string[];
+  message?: string;
+  /**
+   * Helper-only addition (never sent to the page): what AIB's last step (wsl/remove.ts FINAL_CLEANUP_SCRIPT) may delete after the
+   * keeper and the helper have ended: the data folder's name, the current <ver> (null: kept) and whether the root may go when empty;
+   * `copies`: the chat copies deleted (AIB remembers them, so their chats read as "workspace removed": wsl/removed.ts).
+   */
+  final?: { data: string; version: string | null; root: boolean; copies: { path: string; project: string; branch: string; session: string }[] };
+}
 
 /** The distro's prerequisites for AIB-managed agents (design section 12). */
 export interface EnvPrereqs {
