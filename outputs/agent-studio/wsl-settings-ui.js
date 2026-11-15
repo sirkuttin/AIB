@@ -642,7 +642,7 @@
         );
       c.append(ul);
       const mode = ENV_MODES[p.envMode] || ENV_MODES.plain;
-      const shell = p.loginShell ? String(p.loginShell).replace(/^.*\//, '') + ' ' : '';
+      const shell = p.loginShell && p.envMode !== 'plain' ? String(p.loginShell).replace(/^.*\//, '') + ' ' : '';
       const how = note(
         'Checked with: ' + shell + mode + '.' +
           (p.envMode === 'plain' ? ' A version manager set up only in your shell profile is not seen this way.' : '') + ' ',
@@ -810,7 +810,12 @@
         return !!j && j.state === 'running';
       },
       statusText: (a) => statusText(d, a),
-      canSignIn: (a) => !!a.found && !!a.signin && a.signin.state !== 'signed_in' && !panelRunning(cardKey(d, a)),
+      // signed out; or not known for an agent whose sign-in AIB runs (Claude Code, Codex)
+      canSignIn: (a) =>
+        !!a.found &&
+        !!a.signin &&
+        (a.signin.state === 'signed_out' || (a.signin.state === 'unknown' && !!SIGNIN_FILES[a.id])) &&
+        !panelRunning(cardKey(d, a)),
       startSignin: (a) => signIn(d, a),
       showCheck: (a) => a.found || !a.installable,
       checkAgain: () => fetchList(d.key, { force: true }),
