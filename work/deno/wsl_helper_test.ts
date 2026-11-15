@@ -491,6 +491,8 @@ Deno.test('the ready line can list every method of the contract', () => {
     'ownership.check',
     'ownership.hints',
     'proc.tree',
+    'env.prereqs',
+    'agents.signinStatus',
   ];
   assertEquals(Object.keys(methods).sort(), [...names].sort());
 });
