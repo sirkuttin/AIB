@@ -862,6 +862,19 @@ body > main {
 .ws-prow.cur .ws-prow-name {
   font-weight: 600;
 }
+/* A project with its own AIB window (multi-window 2B, workspace-ui.js projectRow): one small glyph in the muted row-icon colour. */
+.ws-prow-win {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+}
+.ws-window-note {
+  max-width: 280px;
+}
+.ws-window-note .ws-menu-head {
+  white-space: normal;
+}
 /* A WSL project's distro after its name (workspace-ui.js projectRow): the header's branch chip size (.vend.hd-branch). */
 .vend.ws-distro {
   height: 18px;

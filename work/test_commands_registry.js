@@ -306,3 +306,21 @@ test('QA M1: an archived title match beats scattered letters and path matches, e
   // search() (the chats-only switcher) follows the same rule.
   assert.equal(C.search(chats, 'parser')[0].title, 'Old spike: try the legacy parser');
 });
+
+test('multi-window 2B: "Open <project> in new window" only where the page offers it, per project, dynamic', () => {
+  assert.ok(!ids(C.buildActions(baseCtx())).some((i) => i.startsWith('new-window:')), 'no window opener: none');
+  const opened = [];
+  const ctx = baseCtx();
+  ctx.do.openProjectWindow = (p) => opened.push(p.key);
+  ctx.do.offersProjectWindow = (p) => p.key !== 'a'; // 'a' is this window's own project
+  const all = C.buildActions(ctx);
+  const win = all.filter((x) => x.id.startsWith('new-window:'));
+  assert.deepEqual(ids(win), ['new-window:b']);
+  assert.equal(win[0].title, 'Open Beta in new window');
+  assert.equal(win[0].dynamic, true);
+  assert.equal(win[0].common, false);
+  win[0].run();
+  assert.deepEqual(opened, ['b']);
+  assert.ok(ids(all).includes('new-in:a'), 'the new-chat actions stay');
+  assert.ok(!ids(C.compose({ actions: all }, '', 'all')).some((i) => String(i).startsWith('new-window:')), 'not in the empty list');
+});
