@@ -197,6 +197,8 @@ export class WslHostImpl implements WslHost {
   #transport: TransportProcess | null = null;
   #helper: KeeperChannel | null = null;
   #ready: Promise<Ready> | null = null;
+  /** Why the last helper went (#awaitReady: a helper that went before its ready line was awaited). */
+  #lastGone: WslHelperError | null = null;
   #readyResolve: ((ready: Ready) => void) | null = null;
   #readyReject: ((error: Error) => void) | null = null;
   #readyValue: Ready | null = null;
@@ -367,11 +369,8 @@ export class WslHostImpl implements WslHost {
     return this.#helperStarting;
   }
 
-  async #startHelper(): Promise<Ready> {
-    const install = this.#install!;
-    const client = await this.link.check();
-    const label = JSON.stringify({ ...WSL_HELPER_LABEL, v: install.version });
-    const listed = await client.list();
+  /** A new pending ready line (the helper's helper.ready resolves it). */
+  #expectReady(): void {
     this.#ready = new Promise<Ready>((resolve, reject) => {
       this.#readyResolve = resolve;
       this.#readyReject = reject;
@@ -379,6 +378,14 @@ export class WslHostImpl implements WslHost {
     this.#ready.catch(() => {});
     this.#readyValue = null;
     this.#lineBuffer = new Uint8Array(0);
+  }
+
+  async #startHelper(): Promise<Ready> {
+    const install = this.#install!;
+    const client = await this.link.check();
+    const label = JSON.stringify({ ...WSL_HELPER_LABEL, v: install.version });
+    const listed = await client.list();
+    this.#expectReady();
     this.#helperLive = false; // an adopted helper's replay may start arriving during the loop below
     let adopted: KeeperChannel | null = null;
     for (const info of listed) {
@@ -397,7 +404,18 @@ export class WslHostImpl implements WslHost {
     if (adopted) {
       this.#helper = adopted;
       await adopted.claim();
-    } else {
+      try {
+        return await this.#awaitReady();
+      } catch (error) {
+        if (!(error instanceof WslHelperError && error.code === 'helper_restart')) throw error;
+        // its ready line had left its bounded record (a lot of traffic since, docs' files above all): it is being stopped
+        // (#helperListener), and a new helper takes its place, as on any start
+        log.info('wsl: %s: the running helper could not be taken over; starting a new one', this.distro);
+        this.#expectReady();
+        this.#helperLive = true;
+      }
+    }
+    {
       this.#helper = this.link.spawn(
         {
           channel: `wsl-helper-${crypto.randomUUID().slice(0, 12)}`,
@@ -413,7 +431,13 @@ export class WslHostImpl implements WslHost {
         WSL_KEEPER_NEEDS,
       );
     }
+    return await this.#awaitReady();
+  }
+
+  /** The helper's ready line, within READY_TIMEOUT_MS; a helper that went meanwhile rejects with why it went. */
+  async #awaitReady(): Promise<Ready> {
     const ready = this.#ready;
+    if (!ready) throw this.#lastGone ?? new WslHelperError(`The AIB helper in ${this.distro} is not running`, 'helper_gone');
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -435,21 +459,24 @@ export class WslHostImpl implements WslHost {
   }
 
   #helperListener(adopted: boolean): KeeperChannelListener {
+    let dropped = false; // an adopted helper given up on: nothing more from its channel counts (a new helper has taken its place)
     return {
-      record: (record) => this.#helperRecord(record),
+      record: (record) => !dropped && this.#helperRecord(record),
       live: () => {
+        if (dropped) return;
         this.#helperLive = true; // from here on, records are new
-        // An adopted helper whose ready line is no longer in its (bounded) record cannot be used: start a new one.
+        // An adopted helper whose ready line is no longer in its (bounded) record cannot be used: start a new one (#startHelper).
         if (adopted && !this.#readyValue) {
+          dropped = true;
           void this.#helper?.kill();
           this.#helperGone(new WslHelperError('the running helper was too old to take over', 'helper_restart'));
         }
       },
       gap: () => {
-        this.#lineBuffer = new Uint8Array(0); // a partial line before a gap is not a line
+        if (!dropped) this.#lineBuffer = new Uint8Array(0); // a partial line before a gap is not a line
       },
-      lost: (error) => this.#helperGone(error ?? new WslHelperError(`${this.distro} stopped`, 'stopped')),
-      spawnFailed: (error) => this.#helperGone(error),
+      lost: (error) => !dropped && this.#helperGone(error ?? new WslHelperError(`${this.distro} stopped`, 'stopped')),
+      spawnFailed: (error) => !dropped && this.#helperGone(error),
       writeFailed: (error) => log.warning('wsl: writing to the helper in %s failed: %s', this.distro, error.message),
     };
   }
@@ -543,6 +570,7 @@ export class WslHostImpl implements WslHost {
 
   #helperGone(error: Error): void {
     const reason = error instanceof WslHelperError ? error : new WslHelperError(error.message, 'helper_gone');
+    this.#lastGone = reason;
     this.#helper = null;
     this.#ready = null;
     this.#readyValue = null;
