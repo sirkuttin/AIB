@@ -7,6 +7,13 @@
  * CLAUDE_CONFIG_DIR and CODEX_HOME go inside it: wsl/access.ts wslTestHomeEnv), the fake agent work/fake_acp.py copied over stdin and
  * run with the distro's python3. Never `wsl --shutdown` or `--terminate`, never the owner's ~/.claude or ~/.codex, never a real agent.
  * wsl.exe runs with piped stdio and a minimal environment (it inherits this process's hidden console: no window).
+ *
+ * One process, several files: the state they share is this module's (ROOT, STATE, AIB_WSL_ROOT, the keeper and helper paths) and
+ * wsl/hosts.ts's configured hosts. Every test ends with cleanRoot(), which shuts its Linux keeper down, drops the hosts (newAib) and
+ * removes ROOT, and the next test's prepareRoot() and first host start make them again, so files can share a process (checked with
+ * wsl_fixes, wsl_sessions, wsl_worktrees and wsl_merge in one `deno test`). wsl_sync_e2e is the exception that looked like shared
+ * state: it also fails alone, intermittently, waiting for "m.txt pending" after its Merge step (7 of 8 runs on 2026-11-14 failed, with and
+ * without that day's Studio changes), so run it in its own process and treat a failure there as that flake until it is fixed.
  */
 import { detectWsl } from '../../outputs/agent-studio/server/wsl/detect.ts';
 import type { WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';

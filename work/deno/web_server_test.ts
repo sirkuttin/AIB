@@ -147,7 +147,7 @@ Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
 Deno.test('the phone port routes are not page routes, and the page port does not serve them', () => {
   const page = new Set(ROUTE_LIST.map(([m, p]) => `${m} ${p}`));
   for (const [m, p] of REMOTE_ROUTES) assertEquals(page.has(`${m} ${p}`), false, `${m} ${p}`);
-  for (const [m, p] of REMOTE_ROUTES) if (p.startsWith('/api/')) assertEquals(p.startsWith('/api/remote/'), true, p);
+  for (const [, p] of REMOTE_ROUTES) if (p.startsWith('/api/')) assertEquals(p.startsWith('/api/remote/'), true, p);
   // the phone page's scripts and styles are plain page files the page port also has (no secrets in them); phone.html and the
   // phone API are only on the phone port
   // The service worker and the app icons are on the phone port only (pwa/ and icons/ are not page files).
