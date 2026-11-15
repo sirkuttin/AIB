@@ -201,10 +201,16 @@ async function open() {
   };
   session = {
     evaluate,
-    close() {
+    async close() {
       c.close();
+      // The browser holds its profile until it has exited (under load that takes a while): wait for the exit, then remove the
+      // temp folder; a file still locked is left for the OS temp cleanup instead of failing the run after the tests passed.
+      const exited = proc.exitCode !== null ? Promise.resolve() : new Promise((r) => proc.once('exit', r));
       proc.kill();
-      setTimeout(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 }), 500).unref();
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 5000).unref())]);
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      } catch { /* still locked: left in the OS temp folder */ }
     },
   };
   return session;

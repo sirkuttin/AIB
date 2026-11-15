@@ -5830,12 +5830,14 @@ export class Connection {
         ? 'closed'
         : this.elicitations.size || this.permissions.size || this.auth
         ? 'input_needed'
-        : !this.ready
+        : !this.ready || rebuilding
         ? 'opening'
         : this.busy
         ? 'working'
         : 'ready',
-      ready: !!(this.ready && !this.closed),
+      // Not ready until the rebuild has replayed the whole record: a restored snapshot sets `ready` before the records after it
+      // (a running turn's prompt among them) are replayed, so a page (or test) asking in between would see an idle chat mid-turn.
+      ready: !!(this.ready && !this.closed && !rebuilding),
       subagents: Object.fromEntries(
         [...this.subagents].map(([k, v]) => [k, { ...v }]),
       ),
