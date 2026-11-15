@@ -42,10 +42,12 @@ Deno.test({
       return route(c, url, body, request);
     });
     const presence: Json[] = [];
-    const report = s.ctx.presence.report.bind(s.ctx.presence);
-    s.ctx.presence.report = (focused, idleMs) => {
-      presence.push({ focused, idleMs });
-      report(focused, idleMs);
+    // every report, with or without a window id (K2: the page now says which window it is)
+    const report = s.ctx.presence.reportWindow.bind(s.ctx.presence);
+    s.ctx.presence.reportWindow = (body) => {
+      const b = (body ?? {}) as Json;
+      presence.push({ w: b.w, focused: b.focused, idleMs: b.idleMs });
+      return report(body);
     };
     s.chats.push({
       id: 'c1',
