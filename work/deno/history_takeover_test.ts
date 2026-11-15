@@ -22,7 +22,7 @@ import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts'
 import { HistoryStore } from '../../outputs/agent-studio/server/history/store.ts';
 
 type Json = Record<string, unknown>;
-Deno.env.set('AIB_HISTORY_V2', '1'); // the store path is off by default for now
+Deno.env.set('AIB_HISTORY_V2', '1'); // the default; set so a switch-off in the environment does not change these tests
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
