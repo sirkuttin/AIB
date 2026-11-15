@@ -81,6 +81,9 @@ class Lab {
 }
 
 const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kind, e.data]));
+/** As shape, but a question's key left out: a turn replayed from the journal (above the checkpoint) asks with a new key. */
+const replayShape = (events: Json[]) =>
+  events.map((e) => JSON.stringify([e.seq, e.kind, e.kind === 'permission' ? { ...(e.data as Json), key: '' } : e.data]));
 
 async function turn(studio: Studio, c: Connection, n: number, messageId: string): Promise<void> {
   assertEquals((await studio.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
@@ -156,7 +159,7 @@ for (const step of ['flush', 'note', 'commit'] as const) {
       c.historyStopAfter = step;
       await turn(a, c, 3, 'm2');
       await until(() => c.historyState === 'dead', `the checkpoint stopped after ${step}`, 10);
-      const before = shape(c.events);
+      const before = c.events.slice();
       const sequence = c.sequence;
       await lab.crash(a);
       await pause(200);
@@ -166,7 +169,7 @@ for (const step of ['flush', 'note', 'commit'] as const) {
       const { r } = await adopted(lab, c.id);
       assertEquals(r.rebuildError, '');
       assertEquals(r.sequence, sequence);
-      assertEquals(shape(r.events), before, 'every event, same numbers');
+      assertEquals(replayShape(r.events), replayShape(before), 'every event, same numbers');
       assertEquals(r.historyState, 'claimed');
       // after a crash between note and commit, the take-over commits the checkpoint the note describes
       if (step === 'note') assertEquals(r.historyCkpt!.sequence, sequence);
@@ -267,6 +270,7 @@ Deno.test({
     await turn(a, c, 2, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
     const before = shape(c.events);
+    const sequence = c.sequence;
     await lab.crash(a);
     await pause(200);
     // fake: the store says it covers far more of the record than the journal holds
@@ -277,7 +281,10 @@ Deno.test({
     store.close();
     const { r } = await adopted(lab, c.id);
     assertEquals(r.attachedFrom, 0, 'not attached from the stale checkpoint');
-    assertEquals(r.rebuildError, '');
-    assertEquals(shape(r.events).slice(-before.length), before.slice(-r.events.length));
+    assertEquals(r.rebuildError, '', 'the chat goes on (its older history is gone with the store)');
+    assertEquals(r.sequence, sequence, 'same numbering from the snapshot in the journal');
+    assertEquals(before.length > 0, true);
+    const seen = lab.peek(c.id);
+    assert(!seen.ckpt || seen.ckpt.record < ckpt.record + 100000, 'the stale checkpoint is gone');
   },
 });

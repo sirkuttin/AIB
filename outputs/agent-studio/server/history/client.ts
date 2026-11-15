@@ -29,6 +29,9 @@ export class HistoryClient {
   #next = 1;
   #pending = new Map<number, Pending>();
   #ready: Promise<unknown>;
+  #stopped = false;
+  /** A call the Worker never answers fails after this long (no caller waits for ever). */
+  static callTimeoutMs = 30_000;
 
   constructor(dir: string, options: Omit<StoreOptions, 'now'> = {}) {
     this.#worker = new Worker(new URL('./store_worker.ts', import.meta.url).href, { type: 'module' });
@@ -49,9 +52,17 @@ export class HistoryClient {
   }
 
   #call(message: Record<string, unknown>): Promise<unknown> {
+    if (this.#stopped) return Promise.reject(new HistoryError('closed', 'history worker stopped'));
     const id = this.#next++;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        if (!this.#pending.delete(id)) return;
+        reject(new HistoryError('timeout', `history worker: no answer to ${String(message.op)} in ${HistoryClient.callTimeoutMs} ms`));
+      }, HistoryClient.callTimeoutMs);
+      this.#pending.set(id, {
+        resolve: (v) => (clearTimeout(timer), resolve(v)),
+        reject: (e) => (clearTimeout(timer), reject(e)),
+      });
       this.#worker.postMessage({ ...message, id });
     });
   }
@@ -124,9 +135,11 @@ export class HistoryClient {
 
   /** Close every store and stop the Worker. */
   async shutdown(): Promise<void> {
+    if (this.#stopped) return;
     try {
       await this.#op({ op: 'closeAll' });
     } finally {
+      this.#stopped = true;
       this.#worker.terminate();
       for (const p of this.#pending.values()) p.reject(new HistoryError('closed', 'history worker stopped'));
       this.#pending.clear();

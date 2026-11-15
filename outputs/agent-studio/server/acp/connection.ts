@@ -1808,6 +1808,7 @@ export class Connection {
     if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
       throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
     }
+    this.#restoredSnapshot = snapshot;
     const stored = snapshot ? await this.#historyRestoreEvents(snapshot.note) : null;
     if (snapshot) this.#restoreSnapshot(snapshot.note, chunks, stored);
     this.replayedFrom = snapshot ? snapshot.seq : 0;
@@ -2023,7 +2024,10 @@ export class Connection {
   async #writeSnapshot(): Promise<void> {
     const channel = this.channel;
     if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
+    // A new chat's store may still be opening (the Worker starts with the first chat): its first flush claims it.
+    if (this.historyState === 'open' && channel.epoch > 0) await this.#historyFlush();
     if (this.historyState === 'claimed') return this.#writeCheckpoint(channel);
+    if (this.historyState === 'open') return; // not ours yet: the next quiet point checkpoints (no chunk notes meanwhile)
     let plan: SnapshotPlan | null;
     try {
       plan = this.#snapshotPlan();
@@ -2212,7 +2216,6 @@ export class Connection {
     const h = this.#history;
     const opened = this.#historyOpened;
     if (!h || this.historyState !== 'open' || !opened) return null;
-    this.#restoredSnapshot = this.#replaySnapshot ?? null;
     const s = note.state as Json;
     const sequence = isInt(s.sequence) ? s.sequence : 0;
     const from = isInt(s.eventsFrom) ? s.eventsFrom : sequence + 1;
