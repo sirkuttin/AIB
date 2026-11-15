@@ -78,8 +78,11 @@ class PhoneFixture extends Fixture {
   readonly answers = this.root + SEP + "tailscale.json";
   readonly phonePort = pickPort();
   readonly artifactPort = pickPort();
-  constructor(options: { funnel?: boolean } = {}) {
+  readonly ownSession: boolean;
+  /** ownSession: the fake agent answers a resumed chat under that chat's own session id, as a real agent does (fake_acp.py SID). */
+  constructor(options: { funnel?: boolean; ownSession?: boolean } = {}) {
     super();
+    this.ownSession = !!options.ownSession;
     Deno.writeTextFileSync(
       this.state + SEP + "remote-port.json",
       JSON.stringify({
@@ -103,6 +106,7 @@ class PhoneFixture extends Fixture {
   override get env(): Record<string, string> {
     return {
       ...super.env,
+      ...(this.ownSession ? { AIB_FAKE_OWN_SESSION: "1" } : {}),
       AIB_TAILSCALE_CLI: JSON.stringify([
         DENO,
         "run",
@@ -534,7 +538,9 @@ Deno.test({
   name:
     "end to end: a saved chat that is not running is on home, reads read only, Continue makes it live with its saved agent; a message reaches the agent; reading clears the PC's unread; Send off and open elsewhere refused",
   async fn() {
-    await using fx = new PhoneFixture();
+    // the chat is resumed: its replies must carry its own session id, or the phone (history loading: helper events stay off the
+    // phone) takes them for a helper's
+    await using fx = new PhoneFixture({ ownSession: true });
     const claude = fx.root + SEP + "claude";
     writeSavedChat(claude, fx.workspace, {
       sessionId: "s-saved",
@@ -633,11 +639,18 @@ Deno.test({
     // a plain message reaches the agent
     const sent = await post("/api/remote/prompt", { id, text: "hello", clientMessageId: "phone-r1" });
     assertEquals(sent.status, 200, sent.text);
+    let lastChat: Json = {};
     const done = await until(async () => {
       const c = await chat();
+      lastChat = c.json;
       const text = JSON.stringify(c.json.events);
       return !c.json.busy && text.includes('"text":"hello"') && text.includes("# Rich reply") ? c : null;
-    }, "the agent's answer", 60);
+    }, "the agent's answer", 60).catch((e) => {
+      throw new Error(`${e.message}: busy ${lastChat.busy}, ${((lastChat.events as Json[]) || []).length} events: ${JSON.stringify(lastChat.events).slice(-300)}`);
+    }).catch(async (e) => {
+      const st = await web.state(id);
+      throw new Error(`${e.message} || state sid ${st.sessionId}: ${JSON.stringify((st.events as Json[]).filter((x) => (x.seq as number) > 6).map((x) => [x.seq, x.kind, (x.data as Json)?.sessionId]))}`);
+    });
 
     // the turn ended after the PC last looked: unread on the PC until the phone shows the end
     const ended = await until(async () => {

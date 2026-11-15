@@ -81,8 +81,10 @@ EDIT_IDS = itertools.count(1)  # a fresh tool call id for every edit: the page k
 
 
 def SID():
-    """The session id agent messages carry: always 'fake-session' (what the tests expect), except with --demo, where it is the loaded chat's own id."""
-    return session_name if args.demo else 'fake-session'
+    """The session id agent messages carry: always 'fake-session' (what the tests expect), except with --demo or with
+    AIB_FAKE_OWN_SESSION=1 in the environment, where it is the loaded chat's own id (what a real agent does: the page and the
+    phone treat events of any other session id as a helper's)."""
+    return session_name if args.demo or os.environ.get('AIB_FAKE_OWN_SESSION') == '1' else 'fake-session'
 
 
 config_options = [
