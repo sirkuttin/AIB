@@ -487,14 +487,15 @@ export const HISTORY_FLUSH_MS = 200;
 /** Each live helper's newest events kept in RAM after a take-over (the rest are read from the store when asked). */
 export const HISTORY_HELPER_TAIL = 200;
 /**
- * The `aib-history-v2` switch, server side: on unless AIB_HISTORY_V2=0. Off: no store is opened and snapshots carry the history in
- * chunk notes as in beta.10 (kept for one release).
+ * The `aib-history-v2` switch, server side: OFF by default for now (AIB_HISTORY_V2=1 turns it on). Off: no store is opened and
+ * snapshots carry the history in chunk notes as in beta.10. Off because a mid-turn crash take-over (keeper_crash_e2e) still fails
+ * now and then under load with the store on; see fix/history-2a-followup.
  */
 export function historyV2(): boolean {
   try {
-    return Deno.env.get('AIB_HISTORY_V2') !== '0';
+    return Deno.env.get('AIB_HISTORY_V2') === '1';
   } catch {
-    return true;
+    return false;
   }
 }
 /** Where a test stops the quiet-point checkpoint, to act out a crash right after that step (design 3.2). */
@@ -1697,7 +1698,15 @@ export class Connection {
     } catch (error) {
       return this.#rebuildFailed(error);
     }
-    await this.#historyTakeOver();
+    // The store catches up in the background: the chat is live at once (a slow or stuck store never holds the rebuild back).
+    // Events made meanwhile are queued; nothing is written before the take-over has claimed the store and dropped what it replaces.
+    if (this.historyState === 'open') {
+      this.#historyAdopting = true;
+      this.#historyAdopt = this.#historyTakeOver().finally(() => {
+        this.#historyAdopting = false;
+        if (this.#historyQueue.length && this.historyState === 'claimed') this.#historySchedule();
+      });
+    }
     this.#replaying = false;
     this.#clock = null;
     try {
@@ -1777,6 +1786,15 @@ export class Connection {
         const ours = this.#storeSnapshot;
         if (ours && (note.upTo as number) <= (ours.note.upTo as number)) {
           if (this.#replaySnapshot === ours && record.seq > ours.seq) ours.seq = record.seq;
+          return;
+        }
+        // This build's note whose events never reached the store (a crash between the note and the flush): not a state to restore.
+        // The journal still holds every record after the store's checkpoint (truncate waits for the commit), so the replay rebuilds
+        // them; only when nothing else covers the record (no checkpoint and the journal was truncated) is it used, without history.
+        const st = note.state as Json;
+        const storeNote = note.sv === 2 && isInt(st.sequence) && st.eventsFrom === st.sequence + 1 && !(Array.isArray(note.events) && note.events.length);
+        const opened = this.#historyOpened;
+        if (storeNote && opened && this.historyState === 'open' && (st.sequence as number) > opened.writtenSeq && (ours || !this.#replayGapNext)) {
           return;
         }
         if (note.sv === 2 && Array.isArray(note.events) && note.events.length) {
@@ -2107,7 +2125,7 @@ export class Connection {
     if (!h) return false;
     await this.#historyOpening;
     const channel = this.channel;
-    if (this.historyState === 'open' && !this.#replaying && channel && channel.epoch > 0) { // a new chat: its spawn's epoch
+    if (this.historyState === 'open' && !this.#replaying && !this.#historyAdopting && channel && channel.epoch > 0) { // a new chat
       try {
         await h.claim(this.id, channel.epoch);
         this.historyState = 'claimed';
@@ -2117,7 +2135,7 @@ export class Connection {
       }
     }
     if (this.historyState !== 'claimed') {
-      if (this.historyState === 'open' && this.#historyQueue.length && !this.#replaying) this.#historySchedule();
+      if (this.historyState === 'open' && this.#historyQueue.length && !this.#replaying && !this.#historyAdopting) this.#historySchedule();
       return false;
     }
     const batch = this.#historyQueue;
@@ -2139,6 +2157,9 @@ export class Connection {
   }
 
   #historyFenced = false;
+  /** A take-over is claiming the store (no write and no claim by the 200 ms writer until it is done). */
+  #historyAdopting = false;
+  #historyAdopt: Promise<void> = Promise.resolve();
 
   #historyFailed(error: unknown): void {
     if ((error as { code?: unknown })?.code === 'fenced') {
@@ -2167,8 +2188,9 @@ export class Connection {
   }
 
   /** The store's write chain has run (tests). */
-  historySettled(): Promise<void> {
-    return this.#historyChain.then(() => {});
+  async historySettled(): Promise<void> {
+    await this.#historyAdopt.catch(() => {});
+    await this.#historyChain;
   }
 
   /**
@@ -2255,7 +2277,6 @@ export class Connection {
       const opened = await h.open(this.id, { eventsId: this.eventsId, mainSession: this.sessionId });
       this.#historyOpened = opened;
       await h.claim(this.id, channel.epoch);
-      this.historyState = 'claimed';
       if (opened.eventsIdChanged || this.#storeReset) {
         await h.reset(this.id, this.eventsId);
         this.#storeTrusted = 0;
@@ -2264,6 +2285,8 @@ export class Connection {
       for (const e of this.events) if ((e.seq as number) > this.#storeTrusted) bySeq.set(e.seq as number, this.#historyItem(e));
       for (const e of this.#historyQueue) if ((e.seq as number) > this.#storeTrusted) bySeq.set(e.seq as number, e);
       this.#historyQueue = [...bySeq.values()].sort((a, b) => (a.seq as number) - (b.seq as number));
+      if (this.historyState !== 'open') return; // closed or deleted meanwhile
+      this.historyState = 'claimed'; // only now: nothing is appended before the provisional events are gone
     } catch (error) {
       this.#historyFailed(error);
       return;
@@ -2289,18 +2312,21 @@ export class Connection {
   }
 
   /**
-   * The quiet-point checkpoint, in this order (design 3.2): flush the queued events, write the keeper's sv:2 note (no chunks:
-   * eventsFrom = sequence + 1) and get its seq, commit ckpt = {state, sequence, record, noteSeq}, then truncate the journal before
-   * ckpt.record + 1 (never awaited: a reconnecting WSL bridge holds operations back, and the store writer never waits on it).
+   * The quiet-point checkpoint (design 3.2): the keeper's sv:2 note (no chunks: eventsFrom = sequence + 1) is sent at the quiet
+   * moment itself, before anything AIB writes after it (as the old snapshot was: a prompt sent right after a turn end never makes
+   * the checkpoint wait for the next quiet point); then the queued events are flushed, ckpt = {state, sequence, record, noteSeq}
+   * is committed once both are done, and the journal is truncated before ckpt.record + 1 (never awaited: a reconnecting WSL bridge
+   * holds operations back, and the store writer never waits on it).
+   *
+   * Crash safety: until the commit, the old ckpt stands and the journal still holds every record after it. A take-over uses a
+   * newer note only when the store has its events (written_seq >= note.state.sequence, see #bufferReplay); otherwise it replays
+   * from the old ckpt as if the note were not there.
    */
   async #writeCheckpoint(channel: KeeperChannel): Promise<void> {
     const h = this.#history!;
+    if (channel.lost || !this.#quiet() || this.historyState !== 'claimed') return;
     const upTo = this.#lastSeq;
     const sequence = this.sequence;
-    if (!(await this.#historyFlush()) || this.historyWrittenSeq < sequence) return; // tried again at the next quiet point
-    if (this.historyStopAfter === 'flush') return this.#historyStop();
-    if (channel.lost || !this.#quiet() || this.#lastSeq !== upTo || this.sequence !== sequence) return;
-    if (this.historyState !== 'claimed') return;
     const state = this.#snapshotState();
     state.eventsFrom = sequence + 1; // the history is in the store (an older build opens the chat without it, and works)
     const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo, chat: this.#chatNote(), state, events: [] };
@@ -2309,14 +2335,20 @@ export class Connection {
       log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
       return;
     }
-    const noteSeq = await channel.snapshot(note);
+    const noted = channel.snapshot(note); // sent now, in order with everything AIB writes
+    if (this.historyStopAfter === 'note') {
+      await noted;
+      return this.#historyStop();
+    }
+    const [flushed, noteSeq] = await Promise.all([this.#historyFlush(), noted]);
     if (!noteSeq) return;
     this.snapshots += 1;
     this.snapshotBytes = bytes;
     this.snapshotChunkBytes = 0;
     this.#eventsSaved = sequence;
     this.#eventChunks = [];
-    if (this.historyStopAfter === 'note') return this.#historyStop();
+    if (!flushed || this.historyWrittenSeq < sequence) return; // committed at the next quiet point
+    if (this.historyStopAfter === 'flush') return this.#historyStop();
     const ckpt: Checkpoint = { state, sequence, record: upTo, noteSeq };
     try {
       if (!(await h.setCheckpoint(this.id, ckpt))) return;

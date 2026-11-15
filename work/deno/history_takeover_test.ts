@@ -1,6 +1,6 @@
 /**
  * History loading phase 2A (design v2 3.2-3.5): a keeper chat writes its events to its history store, checkpoints at quiet points
- * in the order flush -> keeper note -> commit -> truncate, and a take-over starts at the store's checkpoint (attach from
+ * in the order keeper note (at the quiet moment) -> flush -> commit -> truncate, and a take-over starts at the store's checkpoint (attach from
  * ckpt.record + 1) instead of rebuilding the history from chunk notes. With the real keeper, the fake ACP agent and temp folders.
  *
  *   - take-over from the checkpoint: only the records after it are replayed; every event, same numbers; the journal was truncated
@@ -22,6 +22,7 @@ import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts'
 import { HistoryStore } from '../../outputs/agent-studio/server/history/store.ts';
 
 type Json = Record<string, unknown>;
+Deno.env.set('AIB_HISTORY_V2', '1'); // the store path is off by default for now
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -103,7 +104,7 @@ async function adopted(lab: Lab, id: string): Promise<{ studio: Studio; r: Conne
 
 function withV2Off<T>(fn: () => Promise<T>): Promise<T> {
   Deno.env.set('AIB_HISTORY_V2', '0');
-  return fn().finally(() => Deno.env.delete('AIB_HISTORY_V2'));
+  return fn().finally(() => Deno.env.set('AIB_HISTORY_V2', '1'));
 }
 
 Deno.test({
@@ -172,7 +173,11 @@ for (const step of ['flush', 'note', 'commit'] as const) {
       assertEquals(replayShape(r.events), replayShape(before), 'every event, same numbers');
       assertEquals(r.historyState, 'claimed');
       // after a crash between note and commit, the take-over commits the checkpoint the note describes
-      if (step === 'note') assertEquals(r.historyCkpt!.sequence, sequence);
+      // After note + flush (stopped before the commit) the take-over commits the checkpoint the note describes. After the note alone
+      // it does so only if the 200 ms writer had already stored every event; otherwise the old checkpoint stands and the replay
+      // rebuilt the turn (either way the events above are right).
+      if (step === 'flush') assertEquals(r.historyCkpt!.sequence, sequence);
+      if (step === 'note') assert([first.sequence, sequence].includes(r.historyCkpt!.sequence), `ckpt ${r.historyCkpt!.sequence}`);
     },
   });
 }
