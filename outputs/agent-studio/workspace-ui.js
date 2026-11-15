@@ -298,7 +298,19 @@
     host.open(c);
     return true;
   }
+  // While a project switch opens that project's chat: its files come back as they were (files-ui.js projectShown), instead of
+  // the chat being forced to the front as when you open a chat.
+  let switchingProject = false;
   function selectProject(pk) {
+    switchingProject = true;
+    try {
+      selectProjectNow(pk);
+    } finally {
+      switchingProject = false;
+    }
+    if (FU() && FU().projectShown) FU().projectShown();
+  }
+  function selectProjectNow(pk) {
     commit(St().setActive(ws, pk));
     // A split project opens on the chat of its focused pane.
     const paneKey = splitReady() ? S().focusTarget(pk) : '';
@@ -2563,7 +2575,9 @@
     commit(St().rememberLast(ws, pk, key));
     if (!keep) commit(St().activeAfterOpen(ws, pk));
     if (splitReady()) S().noteOpened(key, ws.active);
-    if (FU() && FU().showChat) FU().showChat();
+    if (switchingProject) {
+      if (FU() && FU().projectShown) FU().projectShown();
+    } else if (FU() && FU().showChat) FU().showChat();
     lastSig = '';
     // The narrow drawer closes when you go to another chat. The page also starts the chat it already shows again (its live
     // connection came up, a reconnect): that is not navigation, and it must not take the drawer away from a Files action in it.
