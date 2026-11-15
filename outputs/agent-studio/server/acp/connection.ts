@@ -32,7 +32,9 @@ import {
   withModelsOption,
 } from './breadth.ts';
 import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
-import { arraySource, type Ev, type EventSource } from './event_pages.ts';
+import { arraySource, type Ev, type EventSource, page, type Page, type PageQuery } from './event_pages.ts';
+import type { HistoryClient } from '../history/client.ts';
+import type { Checkpoint, OpenInfo, StoredEvent, StoreEvent } from '../history/store.ts';
 import { MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
 import { killVerified, type ProcId } from '../platform/kill_verified.ts';
 import { type AuthMethod, describeAuthMethods, isAuthRequired, PromptStateUnknown, RpcError } from './rpc_errors.ts';
@@ -445,6 +447,8 @@ export interface ConnectionOptions {
   rebuild?: ChannelInfo | null;
   /** A chat in a WSL project (needs `keeper`: the distro's Linux keeper). Studio resolves it through the distro's WSL host. */
   wsl?: WslSpawn | null;
+  /** The agent host's history Worker (needs `keeper`): this chat's events go into its store; take-over starts at its checkpoint. */
+  history?: HistoryClient | null;
 }
 
 /**
@@ -477,6 +481,24 @@ class NoWrites extends WriteTracker {
 export const SNAPSHOT_VERSION = 2;
 /** A snapshot note larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
 export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+
+/** History store writes (history-loading design 3.1): queued events are committed this often (written_seq only). */
+export const HISTORY_FLUSH_MS = 200;
+/** Each live helper's newest events kept in RAM after a take-over (the rest are read from the store when asked). */
+export const HISTORY_HELPER_TAIL = 200;
+/**
+ * The `aib-history-v2` switch, server side: on unless AIB_HISTORY_V2=0. Off: no store is opened and snapshots carry the history in
+ * chunk notes as in beta.10 (kept for one release).
+ */
+export function historyV2(): boolean {
+  try {
+    return Deno.env.get('AIB_HISTORY_V2') !== '0';
+  } catch {
+    return true;
+  }
+}
+/** Where a test stops the quiet-point checkpoint, to act out a crash right after that step (design 3.2). */
+export type CheckpointStep = 'flush' | 'note' | 'commit';
 /** Events per chunk note, in UTF-8 bytes (several chunks when a snapshot has more new events, e.g. after a session/load). */
 export const EVENT_CHUNK_BYTES = 4 * 1024 * 1024;
 
@@ -1078,6 +1100,29 @@ export class Connection {
   replayedRecords = 0;
   /** performance.now() at the take-over's steps (studio.ts logs each chat's take-over timing from them); 0: not reached. */
   rebuildTimes = { adopt: 0, live: 0, replayed: 0, settled: 0 };
+  // ---- the history store (design 3.1-3.5) ----
+  #history: HistoryClient | null = null;
+  /** off: no store; open: opened, not yet ours (a take-over before claim); claimed: written; dead: fenced, full or failed. */
+  historyState: 'off' | 'open' | 'claimed' | 'dead' = 'off';
+  #historyQueue: Json[] = [];
+  #historyTimer: ReturnType<typeof setTimeout> | null = null;
+  #historyChain: Promise<unknown> = Promise.resolve();
+  #historyOpening: Promise<unknown> = Promise.resolve();
+  #historyOpened: OpenInfo | null = null;
+  /** The store's checkpoint this chat last committed or started from. */
+  historyCkpt: Checkpoint | null = null;
+  /** The newest seq committed to the store (written_seq). */
+  historyWrittenSeq = 0;
+  /** A take-over: the store's checkpoint as the snapshot the replay starts from (kept across a gap; newer keeper notes win). */
+  #storeSnapshot: { note: Json; seq: number } | null = null;
+  /** A take-over: events up to here came from the store (the rest were rebuilt and are appended). */
+  #storeTrusted = 0;
+  /** A take-over: the store is not this numbering's (another eventsId): it is started again from the rebuilt events. */
+  #storeReset = false;
+  /** A take-over: the record the keeper was attached from (ckpt.record + 1, or 0). */
+  attachedFrom = 0;
+  /** Tests: stop the next checkpoint right after this step (a crash there). */
+  historyStopAfter: CheckpointStep | null = null;
   traceback = '';
   exitCode: number | null = null;
   #stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -1134,8 +1179,15 @@ export class Connection {
     // command is always a list (never a shell string).
     this.command = command;
     this.env = options.env ?? null;
+    if (this.keeper && options.history) {
+      this.#history = options.history;
+      this.historyState = 'open';
+    }
     if (options.rebuild && this.keeper) this.#adoptChannel(options.rebuild);
-    else if (options.start ?? true) this.startProcess();
+    else {
+      if (this.#history) this.#historyOpening = this.#historyOpenNew();
+      if (options.start ?? true) this.startProcess();
+    }
   }
 
   /**
@@ -1225,7 +1277,8 @@ export class Connection {
     this.rebuilt.catch(() => {});
     this.#settleRebuild = settle;
     this.rebuildTimes.adopt = performance.now();
-    this.#useChannel(this.keeper!.adopt(info, this.#keeperListener()));
+    const from = this.#history ? () => this.#historyAdoptFrom(info) : 0;
+    this.#useChannel(this.keeper!.adopt(info, this.#keeperListener(), from));
   }
 
   #settleRebuild: [() => void, (error: Error) => void] | null = null;
@@ -1287,7 +1340,7 @@ export class Connection {
         if (this.#replaying && !this.#replayLive) { // truncated after a snapshot: fine when a snapshot covers it (checked at live)
           this.#replayGapNext = next;
           this.#replayBuffer = [];
-          this.#replaySnapshot = null;
+          this.#replaySnapshot = this.#storeSnapshot; // the store's checkpoint still covers what came before (or nothing does)
           this.#replayChunks.clear();
           return;
         }
@@ -1300,6 +1353,7 @@ export class Connection {
         this.#enqueue(() => {
           this.#stdinBroken = true;
           this.error = 'Another AIB took over this chat; this window no longer sends anything to it.';
+          this.#historyEnd('close'); // the new owner writes the store now
         }),
       lost: (error: Error | null) => this.#enqueue(() => this.#onLost(error)),
       spawnFailed: (error: Error) =>
@@ -1374,7 +1428,10 @@ export class Connection {
       await this.#flushLines();
       this.exitCode = code;
       this.#exitResolve?.();
-      if (!this.#replaying) void this.channel?.remove(); // the agent is gone: its record is no longer needed
+      if (!this.#replaying) {
+        void this.channel?.remove(); // the agent is gone: its record is no longer needed
+        this.#historyEnd('delete'); // and its store with it (the chat is a saved chat now, read from the agent's transcript)
+      }
       this.#readerEnded('');
     }
   }
@@ -1640,6 +1697,7 @@ export class Connection {
     } catch (error) {
       return this.#rebuildFailed(error);
     }
+    await this.#historyTakeOver();
     this.#replaying = false;
     this.#clock = null;
     try {
@@ -1715,6 +1773,12 @@ export class Connection {
         return;
       }
       if (note?.t === 'snapshot' && (note.sv === 1 || note.sv === 2) && isDict(note.state) && isInt(note.upTo)) {
+        // The store's checkpoint covers this note (the note written for it, or an older one): used only for the skip rule.
+        const ours = this.#storeSnapshot;
+        if (ours && (note.upTo as number) <= (ours.note.upTo as number)) {
+          if (this.#replaySnapshot === ours && record.seq > ours.seq) ours.seq = record.seq;
+          return;
+        }
         if (note.sv === 2 && Array.isArray(note.events) && note.events.length) {
           this.#replayChunks.set(record.seq, note.events.filter(isDict) as Json[]);
         }
@@ -1744,7 +1808,9 @@ export class Connection {
     if (this.#replayGapNext && (!snapshot || (snapshot.note.upTo as number) < this.#replayGapNext - 1)) {
       throw new Error(`the record before ${this.#replayGapNext} is no longer kept and no snapshot covers it`);
     }
-    if (snapshot) this.#restoreSnapshot(snapshot.note, chunks);
+    this.#restoredSnapshot = snapshot;
+    const stored = snapshot ? await this.#historyRestoreEvents(snapshot.note) : null;
+    if (snapshot) this.#restoreSnapshot(snapshot.note, chunks, stored);
     this.replayedFrom = snapshot ? snapshot.seq : 0;
     for (const record of records) {
       if (this.rebuildError || this.#ended) return;
@@ -1756,7 +1822,7 @@ export class Connection {
   }
 
   /** The state a snapshot note carries, put back exactly (what the replay of everything before `upTo` would have rebuilt). */
-  #restoreSnapshot(note: Json, chunks: Map<number, Json[]>): void {
+  #restoreSnapshot(note: Json, chunks: Map<number, Json[]>, stored: Json[] | null = null): void {
     const s = note.state as Json;
     const entries = (value: unknown) => (Array.isArray(value) ? value.filter((e) => Array.isArray(e) && e.length === 2) : []);
     this.initial = s.initial ?? {};
@@ -1775,6 +1841,12 @@ export class Connection {
     if (note.sv === 1) { // beta.8 and before: the whole history inside the note; the next snapshot stores it in chunks
       this.events = Array.isArray(s.events) ? s.events.filter(isDict) as Json[] : [];
       this.#eventsSaved = 0;
+      this.#eventChunks = [];
+    } else if (stored) { // the history store: its events up to the note's history start, then the chunks' (an older build's note)
+      const from = isInt(s.eventsFrom) ? s.eventsFrom : this.sequence + 1;
+      const last = stored.length ? stored.at(-1)!.seq as number : 0;
+      this.events = [...stored, ...this.#chunkEvents(chunks, Math.max(from, last + 1))];
+      this.#eventsSaved = this.sequence;
       this.#eventChunks = [];
     } else {
       this.events = this.#chunkEvents(chunks, isInt(s.eventsFrom) ? s.eventsFrom : this.sequence + 1);
@@ -1952,6 +2024,10 @@ export class Connection {
   async #writeSnapshot(): Promise<void> {
     const channel = this.channel;
     if (!channel || channel.lost || !this.#quiet() || !this.#lastSeq) return;
+    // A new chat's store may still be opening (the Worker starts with the first chat): its first flush claims it.
+    if (this.historyState === 'open' && channel.epoch > 0) await this.#historyFlush();
+    if (this.historyState === 'claimed') return this.#writeCheckpoint(channel);
+    if (this.historyState === 'open') return; // not ours yet: the next quiet point checkpoints (no chunk notes meanwhile)
     let plan: SnapshotPlan | null;
     try {
       plan = this.#snapshotPlan();
@@ -1979,6 +2055,352 @@ export class Connection {
     // Records after upTo are still needed (they may come before the note), and so are the chunks the kept history is in.
     const after = (plan.note.upTo as number) + 1;
     await channel.truncate(this.#eventChunks.length ? Math.min(this.#eventChunks[0][0], after) : after);
+  }
+
+  // ---- the history store (history-loading design 3.1-3.5) -------------------------------------------------------------------
+  /** The event as the store keeps it: whose it is (null: the chat's own; a helper's session id). */
+  #historyItem(item: Json): Json {
+    const data = item.data;
+    const sid = isDict(data) && isStr(data.sessionId) && data.sessionId ? data.sessionId : null;
+    return { ...item, session: sid && this.sessionId && sid !== this.sessionId ? sid : null };
+  }
+
+  #historyQueueEvent(item: Json): void {
+    this.#historyQueue.push(this.#historyItem(item));
+    this.#historySchedule();
+  }
+
+  #historySchedule(): void {
+    if (this.#historyTimer !== null) return;
+    const timer = setTimeout(() => {
+      this.#historyTimer = null;
+      void this.#historyFlush();
+    }, HISTORY_FLUSH_MS);
+    Deno.unrefTimer(timer as unknown as number);
+    this.#historyTimer = timer;
+  }
+
+  /** A new chat: a store of its own (a leftover file under this id is removed first); claimed once the spawn has an epoch. */
+  async #historyOpenNew(): Promise<void> {
+    const h = this.#history!;
+    try {
+      await h.delete(this.id);
+      this.#historyOpened = await h.open(this.id, { eventsId: this.eventsId, mainSession: this.sessionId });
+    } catch (error) {
+      this.#historyFailed(error);
+    }
+  }
+
+  /** Commit the queued events (moves written_seq only). True when everything queued is in the store. Writes run one at a time. */
+  #historyFlush(): Promise<boolean> {
+    const run = this.#historyChain.then(() => this.#historyFlushNow());
+    this.#historyChain = run.catch(() => {});
+    return run;
+  }
+
+  async #historyFlushNow(): Promise<boolean> {
+    if (this.#historyTimer !== null) {
+      clearTimeout(this.#historyTimer);
+      this.#historyTimer = null;
+    }
+    const h = this.#history;
+    if (!h) return false;
+    await this.#historyOpening;
+    const channel = this.channel;
+    if (this.historyState === 'open' && !this.#replaying && channel && channel.epoch > 0) { // a new chat: its spawn's epoch
+      try {
+        await h.claim(this.id, channel.epoch);
+        this.historyState = 'claimed';
+      } catch (error) {
+        this.#historyFailed(error);
+        return false;
+      }
+    }
+    if (this.historyState !== 'claimed') {
+      if (this.historyState === 'open' && this.#historyQueue.length && !this.#replaying) this.#historySchedule();
+      return false;
+    }
+    const batch = this.#historyQueue;
+    this.#historyQueue = [];
+    if (!batch.length) return true;
+    try {
+      const result = await h.append(this.id, batch as unknown as StoreEvent[]);
+      this.historyWrittenSeq = result.writtenSeq;
+      if (result.stopped) {
+        log.warning('history: %s: the disk is full; the store stopped writing (the chat goes on)', this.id);
+        this.#historyEnd('close');
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.#historyFailed(error);
+      return false;
+    }
+  }
+
+  #historyFenced = false;
+
+  #historyFailed(error: unknown): void {
+    if ((error as { code?: unknown })?.code === 'fenced') {
+      this.#historyFenced = true;
+      log.warning('history: %s: another owner took the store; this one stops writing', this.id);
+    } else log.warning('history: %s: the store stopped: %s', this.id, errorText(error));
+    this.#historyEnd('close');
+  }
+
+  /** Stop writing: close the store, or delete it (the chat's channel is gone). A fenced writer never deletes the new owner's store. */
+  #historyEnd(how: 'close' | 'delete'): void {
+    const h = this.#history;
+    if (!h || this.historyState === 'off') return;
+    if (this.#historyTimer !== null) {
+      clearTimeout(this.#historyTimer);
+      this.#historyTimer = null;
+    }
+    this.#historyQueue = [];
+    const was = this.historyState;
+    this.historyState = 'dead';
+    if (how === 'delete' && !this.#historyFenced) {
+      this.#historyChain = this.#historyChain.then(() => h.delete(this.id)).catch((error) =>
+        log.warning('history: %s: deleting the store failed: %s', this.id, errorText(error))
+      );
+    } else if (was !== 'dead') this.#historyChain = this.#historyChain.then(() => h.close(this.id)).catch(() => {});
+  }
+
+  /** The store's write chain has run (tests). */
+  historySettled(): Promise<void> {
+    return this.#historyChain.then(() => {});
+  }
+
+  /**
+   * A take-over: open the store and attach the keeper from its checkpoint (ckpt.record + 1), with the checkpoint's state as the
+   * snapshot the replay starts from. A checkpoint past the end of the journal (a reset WSL distro, another keeper) is not this
+   * record's: that store is deleted and the chat is rebuilt from its journal. 0: from the start.
+   */
+  async #historyAdoptFrom(info: ChannelInfo): Promise<number> {
+    const h = this.#history!;
+    try {
+      let opened = await h.open(this.id, {});
+      if (opened.ckpt && isInt(info.last) && opened.ckpt.record > info.last) {
+        log.warning(
+          'history: %s: the store checkpoint (record %s) is past the end of the journal (%s); it is not this record\'s and is dropped',
+          this.id,
+          opened.ckpt.record,
+          info.last,
+        );
+        await h.delete(this.id);
+        opened = await h.open(this.id, {});
+      }
+      this.#historyOpened = opened;
+      const ckpt = opened.ckpt;
+      if (!ckpt || !isDict(ckpt.state)) return this.attachedFrom = 0;
+      this.historyCkpt = ckpt;
+      this.#storeSnapshot = { note: { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo: ckpt.record, state: ckpt.state }, seq: ckpt.noteSeq };
+      this.#replaySnapshot = this.#storeSnapshot;
+      return this.attachedFrom = ckpt.record + 1;
+    } catch (error) {
+      log.warning('history: %s: the store could not be read; rebuilding from the journal: %s', this.id, errorText(error));
+      this.historyState = 'dead';
+      return this.attachedFrom = 0;
+    }
+  }
+
+  /** The snapshot the take-over restored (the store's checkpoint, or a newer keeper note). */
+  #restoredSnapshot: { note: Json; seq: number } | null = null;
+
+  /**
+   * A take-over: the events a restored state's history has in the store: the chat's own newest (MAX_EVENTS) and each live helper's
+   * tail, up to min(state.sequence, eventsFrom - 1) (an older build's note keeps the rest in its chunks). null: the store has none
+   * (or another numbering): the chunks alone, as before.
+   */
+  async #historyRestoreEvents(note: Json): Promise<Json[] | null> {
+    const h = this.#history;
+    const opened = this.#historyOpened;
+    if (!h || this.historyState !== 'open' || !opened) return null;
+    const s = note.state as Json;
+    const sequence = isInt(s.sequence) ? s.sequence : 0;
+    const from = isInt(s.eventsFrom) ? s.eventsFrom : sequence + 1;
+    if (opened.eventsId && isStr(s.eventsId) && s.eventsId && opened.eventsId !== s.eventsId && opened.last) {
+      this.#storeReset = true; // another numbering: the store starts again from what this rebuild makes
+      return null;
+    }
+    const limit = Math.max(0, Math.min(sequence, from - 1));
+    this.#storeTrusted = limit;
+    if (!opened.last || limit < 1) return null;
+    try {
+      const rows: StoredEvent[] = [];
+      rows.push(...(await h.before(this.id, limit + 1, { session: null, limit: MAX_EVENTS, bytes: MAX_EVENT_IMAGE_BYTES })).events);
+      const live = Array.isArray(s.liveHelpers) ? s.liveHelpers.filter(isStr) : [];
+      for (const sid of live) {
+        rows.push(...(await h.helper(this.id, sid, { before: limit + 1, limit: HISTORY_HELPER_TAIL, bytes: MAX_EVENT_IMAGE_BYTES })).events);
+      }
+      rows.sort((a, b) => a.seq - b.seq);
+      return rows.map((r) => JSON.parse(r.data) as Json);
+    } catch (error) {
+      log.warning('history: %s: reading the store failed; the history starts after the restart: %s', this.id, errorText(error));
+      this.#storeTrusted = 0;
+      return null;
+    }
+  }
+
+  /**
+   * A take-over has caught up and claimed the channel: claim the store with the same epoch, delete its provisional events (above
+   * what the restore took from it), append what the replay rebuilt, and commit a newer keeper note's checkpoint (a crash between
+   * note and commit, or an older build's note: its history is in the store from now on).
+   */
+  async #historyTakeOver(): Promise<void> {
+    const h = this.#history;
+    const channel = this.channel;
+    if (!h || this.historyState !== 'open' || !channel) return;
+    try {
+      const opened = await h.open(this.id, { eventsId: this.eventsId, mainSession: this.sessionId });
+      this.#historyOpened = opened;
+      await h.claim(this.id, channel.epoch);
+      this.historyState = 'claimed';
+      if (opened.eventsIdChanged || this.#storeReset) {
+        await h.reset(this.id, this.eventsId);
+        this.#storeTrusted = 0;
+      } else await h.dropProvisional(this.id, this.#storeTrusted);
+      const bySeq = new Map<number, Json>();
+      for (const e of this.events) if ((e.seq as number) > this.#storeTrusted) bySeq.set(e.seq as number, this.#historyItem(e));
+      for (const e of this.#historyQueue) if ((e.seq as number) > this.#storeTrusted) bySeq.set(e.seq as number, e);
+      this.#historyQueue = [...bySeq.values()].sort((a, b) => (a.seq as number) - (b.seq as number));
+    } catch (error) {
+      this.#historyFailed(error);
+      return;
+    }
+    if (!(await this.#historyFlush())) return;
+    try {
+      const { writtenSeq, ckpt } = await h.getCheckpoint(this.id);
+      this.historyWrittenSeq = writtenSeq;
+      this.historyCkpt = ckpt;
+      const restored = this.#restoredSnapshot;
+      const s = restored && isDict(restored.note.state) ? restored.note.state as Json : null;
+      if (restored && s && restored !== this.#storeSnapshot && isInt(s.sequence) && s.sequence <= writtenSeq) {
+        const record = restored.note.upTo as number;
+        if (!ckpt || record > ckpt.record) {
+          const state = { ...s, eventsFrom: s.sequence + 1 }; // its history is in the store now
+          const next: Checkpoint = { state, sequence: s.sequence, record, noteSeq: restored.seq };
+          if (await h.setCheckpoint(this.id, next)) this.historyCkpt = next;
+        }
+      }
+    } catch (error) {
+      log.warning('history: %s: committing the take-over checkpoint failed: %s', this.id, errorText(error));
+    }
+  }
+
+  /**
+   * The quiet-point checkpoint, in this order (design 3.2): flush the queued events, write the keeper's sv:2 note (no chunks:
+   * eventsFrom = sequence + 1) and get its seq, commit ckpt = {state, sequence, record, noteSeq}, then truncate the journal before
+   * ckpt.record + 1 (never awaited: a reconnecting WSL bridge holds operations back, and the store writer never waits on it).
+   */
+  async #writeCheckpoint(channel: KeeperChannel): Promise<void> {
+    const h = this.#history!;
+    const upTo = this.#lastSeq;
+    const sequence = this.sequence;
+    if (!(await this.#historyFlush()) || this.historyWrittenSeq < sequence) return; // tried again at the next quiet point
+    if (this.historyStopAfter === 'flush') return this.#historyStop();
+    if (channel.lost || !this.#quiet() || this.#lastSeq !== upTo || this.sequence !== sequence) return;
+    if (this.historyState !== 'claimed') return;
+    const state = this.#snapshotState();
+    state.eventsFrom = sequence + 1; // the history is in the store (an older build opens the chat without it, and works)
+    const note: Json = { t: 'snapshot', sv: SNAPSHOT_VERSION, upTo, chat: this.#chatNote(), state, events: [] };
+    const bytes = ENCODER.encode(JSON.stringify(note)).length;
+    if (bytes > MAX_SNAPSHOT_BYTES - 1024) {
+      log.warning('keeper: %s: the snapshot would be larger than %s bytes; not written', this.id, MAX_SNAPSHOT_BYTES);
+      return;
+    }
+    const noteSeq = await channel.snapshot(note);
+    if (!noteSeq) return;
+    this.snapshots += 1;
+    this.snapshotBytes = bytes;
+    this.snapshotChunkBytes = 0;
+    this.#eventsSaved = sequence;
+    this.#eventChunks = [];
+    if (this.historyStopAfter === 'note') return this.#historyStop();
+    const ckpt: Checkpoint = { state, sequence, record: upTo, noteSeq };
+    try {
+      if (!(await h.setCheckpoint(this.id, ckpt))) return;
+    } catch (error) {
+      this.#historyFailed(error);
+      return;
+    }
+    this.historyCkpt = ckpt;
+    if (this.historyStopAfter === 'commit') return this.#historyStop();
+    void channel.truncate(upTo + 1);
+  }
+
+  /** Tests: the checkpoint stopped at historyStopAfter (a crash right there): nothing more reaches the store from this host. */
+  #historyStop(): void {
+    this.historyStopAfter = null;
+    this.#historyFenced = true; // and it never deletes it either
+    this.#historyEnd('close');
+  }
+
+  /**
+   * One page of events from the store (history pages older than RAM, a finished helper's events): the same Page as event_pages.ts
+   * page(), with `more` and `first` from the store. null: no store.
+   */
+  async storePage(query: PageQuery): Promise<Page | null> {
+    const h = this.#history;
+    if (!h || (this.historyState !== 'claimed' && this.historyState !== 'open')) return null;
+    const main = this.sessionId ?? '';
+    const session = !query.session || query.session === 'main' || query.session === main ? null : String(query.session);
+    const bytes = Math.max(4096, Math.min(8 * 1024 * 1024, Math.trunc(Number(query.bytes) || 1024 * 1024)));
+    const options = { session, bytes, limit: 100_000 };
+    try {
+      let rows: StoredEvent[];
+      let more: boolean;
+      let newer = false;
+      if (query.around !== undefined) {
+        const older = await h.before(this.id, query.around + 1, { ...options, bytes: bytes / 2 });
+        const later = await h.after(this.id, query.around, { ...options, bytes: bytes / 2 });
+        rows = [...older.events, ...later.events];
+        more = older.more;
+        newer = later.more;
+      } else if (query.after !== undefined) {
+        const p = await h.after(this.id, query.after, options);
+        rows = p.events;
+        more = (await h.before(this.id, (p.from ?? query.after + 1), { ...options, limit: 1, bytes: 1 })).events.length > 0;
+        newer = p.more;
+      } else {
+        const p = query.before !== undefined ? await h.before(this.id, query.before, options) : await h.tail(this.id, options);
+        rows = p.events;
+        more = p.more;
+        if (query.before !== undefined && p.to !== null) newer = true;
+      }
+      const events = rows.map((r) => JSON.parse(r.data) as Ev);
+      const result = page(arraySource(events, { eventsId: this.eventsId, cursor: this.sequence, stable: this.stableSeq, mainSession: main }), {
+        ...query,
+        bytes: Number.MAX_SAFE_INTEGER,
+        before: undefined,
+        after: undefined,
+        around: undefined,
+      });
+      const info = await h.info(this.id) as { first?: number | null };
+      result.more = more;
+      result.newer = newer;
+      if (session === null && typeof info?.first === 'number') result.first = info.first;
+      if (query.before !== undefined || query.after !== undefined || query.around !== undefined) {
+        delete result.turn;
+        delete result.helpers;
+      }
+      return result;
+    } catch (error) {
+      log.warning('history: %s: reading a page from the store failed: %s', this.id, errorText(error));
+      return null;
+    }
+  }
+
+  /** One event whole from the store (one RAM no longer keeps), or null. */
+  async storeEvent(seq: number): Promise<Ev | null> {
+    const h = this.#history;
+    if (!h || (this.historyState !== 'claimed' && this.historyState !== 'open')) return null;
+    try {
+      const row = await h.event(this.id, seq);
+      return row ? JSON.parse(row.data) as Ev : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The record cannot be rebuilt by this code: keep showing the chat, never write to it. */
@@ -2058,6 +2480,7 @@ export class Connection {
     }
     this.events.push(item);
     this.eventImageBytes += eventImageSize(item);
+    if (this.historyState === 'open' || this.historyState === 'claimed') this.#historyQueueEvent(item);
     if (kind === 'update') this.#trackSubagent(data);
     while (
       this.eventImageBytes > MAX_EVENT_IMAGE_BYTES && this.events.length > 1
@@ -5182,6 +5605,7 @@ export class Connection {
       await this.#waitExit(3000);
     }
     if (this.channel) void this.channel.remove(); // closed by the person: its record is not needed any more
+    if (this.channel) this.#historyEnd('delete');
     this.closed = true;
     if (this.closedAt === null) this.closedAt = now();
     this.ready = false;

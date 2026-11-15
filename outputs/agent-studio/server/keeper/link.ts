@@ -534,8 +534,12 @@ export class KeeperLink {
     return channel;
   }
 
-  /** Take over a channel an earlier AIB started: attach from the start (replay); claim() makes it writable. */
-  adopt(info: ChannelInfo, listener: KeeperChannelListener): KeeperChannel {
+  /**
+   * Take over a channel an earlier AIB started: attach from `from` (the start, or the history store's ckpt.record + 1: only the
+   * records after the last checkpoint are replayed; a function is awaited first, so the caller can read its store); claim() makes
+   * it writable.
+   */
+  adopt(info: ChannelInfo, listener: KeeperChannelListener, from: number | (() => Promise<number>) = 0): KeeperChannel {
     const channel = new KeeperChannel(info.channel, listener);
     channel.pid = info.pid;
     this.channels.set(channel.id, channel);
@@ -543,7 +547,8 @@ export class KeeperLink {
       const client = await this.client(false);
       if (!client) throw new KeeperError('closed', 'no keeper runs');
       channel.client = client;
-      await client.attach(channel.id, 0, channel.relay());
+      const start = typeof from === 'function' ? await from() : from;
+      await client.attach(channel.id, Math.max(0, Math.trunc(start) || 0), channel.relay());
     }, false);
     return channel;
   }
