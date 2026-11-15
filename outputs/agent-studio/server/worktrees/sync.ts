@@ -11,8 +11,8 @@
  *   candidates `git status --porcelain -z -uall` in the project folder (GIT_OPTIONAL_LOCKS=0). `.env*` files are listed by a small walk.
  *   stability  a changed file is synced when its size and mtime are the same in two consecutive scans. Editor temp files, symlinks,
  *              files over 20 MB, unmerged files and files with conflict markers are skipped; a locked file is retried.
- *   no echoes  nothing happens while Merge holds the project's "sync paused" flag; a scan whose project HEAD moved only takes a new
- *              baseline; more than 200 changed files in one scan pause the project until the user presses Resume (worktree-sync.json).
+ *   no echoes  nothing happens while Merge holds the project's "sync paused" flag; a scan whose project HEAD moved takes a new
+ *              baseline and catches the chats up (dirty files only, so a save just after the move is not lost in the baseline); more than 200 changed files in one scan pause the project until the user presses Resume (worktree-sync.json).
  *
  * Per chat worktree, under its worktree lock (a cross-process lock file shared with Python's worktrees.worktree_lock, so a Python host
  * and a Deno process never write into the same worktree at once): a changed file the chat has not touched is written through a temp
@@ -867,19 +867,26 @@ export class ProjectSync {
     }
     const head = pyStrip((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], project, { check: false })).stdout);
     const current = await this.listing();
+    let caughtUp = false;
     if (this.wasPaused) { // Resume: the chats catch up on what happened meanwhile, then the baseline restarts
       this.wasPaused = false;
       this.ensureNotifier();
       await live.catchUpProject(project, this.stop, this.lock);
       this.reset = true;
+      caughtUp = true;
     }
     await live.retryStale(this.lock);
     if (this.reset || this.head === null || head !== this.head) {
+      const moved = this.head !== null && head !== this.head;
       this.head = head;
       this.files = current;
       this.seen = new Map();
       this.reset = false;
       this.baselined.set();
+      // HEAD moved (a commit, Merge landing a chat): a save made since the last scan is in this baseline and would never show as a
+      // change, so the chats catch up now (against U, dirty files only: what the commit brought is not copied). A save after the
+      // listing above is a change against this baseline and goes the usual way at the next scan.
+      if (moved && !caughtUp) await live.catchUpProject(project, this.stop, this.lock);
       return;
     }
     let changed = new Map<string, Sig | null>();

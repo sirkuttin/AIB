@@ -22,6 +22,10 @@
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
+- Live sync no longer holds back a file you save right after a commit or a Merge. A save made in the moment after the project's
+  branch moved (your own commit, or Merge landing a chat) could wait for the chat's next message before reaching its copy; it now
+  arrives within a second or two like any other save, on Windows and in WSL projects.
+
 - One agent per chat after a restart. When AIB restarts while a chat's agent is still running (on Windows or in a WSL distro) and
   could not take it over right away, for example because Ubuntu was slow to start, reopening the chat now picks up that running
   agent instead of starting a second one for the same conversation. The chat keeps its history and its running turn, and it is

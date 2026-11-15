@@ -294,8 +294,8 @@ cd outputs/agent-studio
 for f in ../../work/deno/wsl_*_e2e_test.ts; do AIB_WSL_E2E=Ubuntu deno test -A "$f"; done   # one process per file
 ```
 
-Several files can share one process (each test removes its root and drops its hosts; see `work/deno/_wsl_e2e.ts`), but
-`wsl_sync_e2e` sometimes fails on its own at "m.txt pending", so a run per file keeps that flake from hiding other results.
+Several files can share one process (each test removes its root and drops its hosts; see `work/deno/_wsl_e2e.ts`); a run per file
+keeps one failure from hiding the others' results.
 
 | Test | Checks |
 | --- | --- |
