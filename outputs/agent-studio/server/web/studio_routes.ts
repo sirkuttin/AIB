@@ -27,6 +27,7 @@ import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
 import { Swarm } from '../swarm/service.ts';
 import * as wslMerge from '../wsl/merge.ts';
+import { wslResumeSync } from '../wsl/sync.ts';
 
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
@@ -259,7 +260,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
   });
   routes.set('POST /api/live/worktree/clash', async (ctx, _url, body) => {
     if (body?.action === 'resume-sync') {
-      if (wslLocOf(body.project)) return [200, { ok: true, resumed: false }]; // no live sync in a WSL project: nothing is paused
+      if (wslLocOf(body.project)) return [200, { ok: true, resumed: await wslResumeSync(body.project) }]; // in its distro's helper
       return [200, { ok: true, resumed: await merge.resumeSync(ctx.stateDir, body.project) }];
     }
     const action = typeof body?.action === 'string' ? body.action : '';

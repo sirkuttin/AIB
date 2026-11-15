@@ -87,6 +87,7 @@ import {
   wslSetSession,
 } from '../wsl/worktrees.ts';
 import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
+import { WslSync, wslSyncChat } from '../wsl/sync.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
 
 const log = getLogger('studio');
@@ -304,6 +305,8 @@ export class Studio {
   readonly settings: SettingsStore;
   readonly worktrees: wt.Manager | null;
   readonly liveSync: LiveSync | null;
+  /** Live sync of WSL chats' worktrees: the engine runs in each distro's helper (wsl/sync.ts); null without worktrees. */
+  readonly wslSync: WslSync | null;
   /** Callable returning the web server's base URL for the artifact tool; set by the agent host. */
   artifactUrlProvider: (() => string) | null = null;
   autoReconnect: boolean;
@@ -395,6 +398,7 @@ export class Studio {
     })();
     // live sync of the user's saved edits into chat worktrees; watchers start only for open worktree chats
     this.liveSync = this.worktrees ? new LiveSync(this) : null;
+    this.wslSync = this.worktrees ? new WslSync(this) : null;
     if (this.hasStateDir) artifactKeys.configure(this.stateDir);
     if (this.hasStateDir) urlGate.configure(this.stateDir); // "Always allow" of a distro's URLs is kept with AIB's data
     // The command-line flag can only turn it off; the Settings page can too, read here, so a change applies at the next start.
@@ -442,7 +446,9 @@ export class Studio {
   async turnEnded(connection: Connection): Promise<void> {
     if (this.liveSync && connection.worktree) {
       try {
-        await this.liveSync.turnEnded(connection); // the lost-update guard and the merge of files both sides changed
+        // the lost-update guard and the merge of files both sides changed (a WSL chat's: in its distro's helper)
+        if (this.wslSync && wslSyncChat(connection)) await this.wslSync.turnEnded(connection);
+        else await this.liveSync.turnEnded(connection);
       } catch (error) {
         log.exception(error, 'Merging the user edits at the end of the turn failed');
       }
@@ -507,6 +513,7 @@ export class Studio {
     if (this.liveSync) {
       this.liveSync.refresh().catch((error) => log.exception(error, 'Stopping live sync failed')); // the last chat of a project closed
     }
+    if (this.wslSync) void this.wslSync.refresh(); // a WSL chat's helper stops watching it (no-op without WSL chats)
     if (connection.sessionId) {
       this.probe.noteReleased(connection.provider, connection.sessionId);
       if (this.owners) this.owners.withdraw(connection.provider, connection.sessionId);
@@ -1119,7 +1126,7 @@ export class Studio {
             } catch (error) {
               log.exception(error, 'Starting live sync failed');
             }
-          }
+          } else if (this.wslSync && wsl) await this.wslSync.chatOpened(c); // the same, in its distro's helper (never throws)
         } catch (error) {
           log.exception(error, 'Opening the conversation failed');
           c.error = errorText(error);
@@ -1159,9 +1166,10 @@ export class Studio {
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     if (this.liveSync) {
       const sync = this.liveSync;
-      c.onTurnStart = (conn) => sync.turnStarted(conn);
-      c.contextForPrompt = (conn) => sync.contextFor(conn);
-      c.contextSent = (conn, token) => sync.contextSent(conn, token);
+      const wsl = this.wslSync!; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
+      c.onTurnStart = (conn) => wslSyncChat(conn) ? wsl.turnStarted(conn) : sync.turnStarted(conn);
+      c.contextForPrompt = (conn) => wslSyncChat(conn) ? wsl.contextFor(conn) : sync.contextFor(conn);
+      c.contextSent = (conn, token) => wslSyncChat(conn) ? wsl.contextSent(conn, token) : sync.contextSent(conn, token);
     }
     const caps = c.caps as { configure?: (terminal: boolean, fs: 'read' | 'readwrite' | null) => void };
     caps.configure?.(!!this.options.enableClientTerminal, this.options.enableClientFs ?? null);
@@ -1387,7 +1395,8 @@ export class Studio {
         if (saved.length) await c.queueContinue(saved); // the turn never stopped, so neither does its queue
       }
       this.announce(c, 'ready');
-      if (this.liveSync) {
+      if (this.wslSync && wsl) await this.wslSync.chatOpened(c); // its distro's helper watches it (never throws)
+      else if (this.liveSync) {
         try {
           await this.liveSync.chatOpened(c);
         } catch (error) {
@@ -2025,6 +2034,7 @@ export class Studio {
     if (this.#closed) return 0;
     this.#closed = true;
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
+    this.wslSync?.stopAll(); // the helpers go on syncing the WSL chats that keep running
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
     if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
@@ -2073,6 +2083,7 @@ export class Studio {
       }
     }
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
+    this.wslSync?.stopAll(); // the helpers go on syncing the WSL chats that keep running
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
     if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
@@ -2093,6 +2104,7 @@ export class Studio {
     if (this.owners) this.owners.withdrawAll();
     if (this.store) this.store.markWorkingUnknown();
     if (this.#mcpHttp) await this.#mcpHttp.close();
+    if (this.wslSync) await this.wslSync.finish(); // every chat was stopped: the helpers stop watching them
     await this.#quitWsl(3000); // every chat was just stopped: give their channels a moment to end
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
   }
