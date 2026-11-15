@@ -649,7 +649,10 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
         await shim.close();
       }
     }
-    assertEquals(replies[1].map((l) => maskDenoOnly(masked(l))), replies[0], JSON.stringify([url, extra, key, conversation]));
+    // The OS reason for a hang-up is a race (the close lands before or after the request is sent: "Remote end closed connection
+    // without response" or WinError 10053), in either tool; the sentence around it must match.
+    const reason = (l: string) => l.replace(/Could not reach AIB \((?:Remote end closed connection without response|\[WinError 1005[34]\][^)]*)\)/, 'Could not reach AIB (hang-up)');
+    assertEquals(replies[1].map((l) => reason(maskDenoOnly(masked(l)))), replies[0].map(reason), JSON.stringify([url, extra, key, conversation]));
   }
 });
 
