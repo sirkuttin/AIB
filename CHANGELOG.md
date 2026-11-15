@@ -22,6 +22,14 @@
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
+- WSL projects: Codex found behind asdf and mise. Codex installed in a distro under its current npm name
+  (`@agentclientprotocol/codex-acp`, the one AIB's install hint gives) is now found, also when Node.js comes from a version manager
+  such as asdf or mise, and its sign-in uses the Codex program that ships with it, so no separate `codex` command is needed.
+
+- WSL projects: checking a distro's agents no longer starts it. The routes behind the coming Settings > AIB Linking (WSL) page read
+  WSL's distro list from the registry only (with WSL's default distro and the distros AIB cannot use, and why) and answer
+  "not running" for a distro AIB has not used yet, instead of starting it; only your click starts one.
+
 - Ready and Couldn't reopen: clear words for a chat with no agent. A saved chat that has no agent running now says Ready instead of
   Not running (it opens read-only with its saved messages, and an agent starts when you send a message), in the sidebar, the chat
   header and on the phone. A chat AIB tried to reopen after a restart and could not now says Couldn't reopen, with the

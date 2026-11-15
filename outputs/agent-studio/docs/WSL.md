@@ -279,6 +279,31 @@ the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/h
   chat may still use one); the Beta agents are not offered in the distro.
 - Tests: `wsl_agent_install_test` (fake npm, fake host), `test_wsl_ui.js` (the panel), `wsl_agent_install_e2e` (real distro).
 
+## Settings > AIB Linking (WSL): what the routes give it
+
+Design: `docs/wsl/linking-design.md` (section 11 overrides the rest). Opening Settings never starts a distro:
+
+- `GET /api/live/wsl/status` (the registry only, never `wsl.exe`, never a start) adds, next to every earlier field:
+  `wsl: {exe, problem}` (wsl.exe is there; why nothing is offered, '' when something is), `skipped: [{name, why}]` (WSL1,
+  another app's distro such as `docker-desktop`, not fully installed, a name AIB does not accept: `wsl/detect.ts`) and per distro
+  `isDefault` (WSL's `DefaultDistribution`). A distro AIB has not started since it started reads `state: 'off'`, `line: ''`.
+- `GET /api/live/wsl/agents?distro=<d>&peek=1`: a distro that is not ready answers `200 {distro, name, state, line, agents: []}`
+  (`state` 'off', 'starting', 'stopped', ...; `line` the host's line, '' when off) and is not started; a ready one answers the
+  rows plus `state: 'ready'`, `line: ''`. `peek=1&start=1` is the "Start Ubuntu and check" click: it starts the distro (copies
+  ~100 MB the first time, starts the keeper, helper and keep-alive) and waits, as the route without `peek` always did (the
+  agent picker of a WSL project keeps that).
+- The WSL sign-in terminal (`/api/live/terminal?signin=<agent>&distro=<d>`) refuses a distro AIB is not using ("Ubuntu is not
+  running. Start it in Settings > AIB Linking (WSL), then sign in.") unless `start=1` is given (the user's click).
+- Every Claude Code and Codex row of `agents.detect` and `/wsl/agents` has `bundledCli`: true only when the vendor program the
+  adapter ships was found in the adapter's own node_modules (Codex: `@openai/codex/bin/codex.js`; Claude Code: the SDK's `cli.js` or
+  its platform `claude` binary). The page says "the standalone command is not needed" only then.
+- Codex in a distro is found under both npm names (`@zed-industries/codex-acp`, the current `@agentclientprotocol/codex-acp`, the
+  one the install hint names). A `codex-acp` on PATH that is an asdf / mise shim (or an npm bin link) is run as
+  `[real node, entry]` (the node `node -p process.execPath` names), so the Codex CLI the adapter ships is found and its sign-in
+  runs `codex login` from it; `codex` on the distro's PATH only when the adapter has none. Windows is unchanged.
+- Tests: `wsl_linking_test` (no distro: zero start calls on a counting FakeWslHost, the status fields, shim and bundled-CLI
+  detection in temp folders), `wsl_linking_e2e` (real distro).
+
 ## Building and testing
 
 ```
@@ -315,12 +340,13 @@ keeps one failure from hiding the others' results.
 | `wsl_fixes_e2e` | the set-up probe with `-` for no `AIB_WSL_ROOT` answers `$HOME/.aib-server` (read-only); the New project dialog's check and create in the distro (new, existing, missing parent, with and without a name and git init) |
 | `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
+| `wsl_linking_e2e` | Settings' peek before AIB used the distro makes no host; with a stand-in login shell and asdf's layout (shims for node, npm, codex-acp; a fake `@agentclientprotocol/codex-acp` with its `@openai/codex`): detect resolves the shim to `[real node, entry]`, `signin` and `bundledCli` name the bundled CLI, the peek row says so, the Codex sign-in runs it |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `wsl_linking_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)

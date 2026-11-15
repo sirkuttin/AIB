@@ -165,7 +165,8 @@ export async function wslOverview(): Promise<{
   try {
     seen = detectWsl();
   } catch (error) {
-    return { exe: false, problem: `WSL could not be checked (${error instanceof Error ? error.message : error})`, distros: [], skipped: [] };
+    const problem = `WSL could not be checked (${error instanceof Error ? error.message : error})`;
+    return { exe: false, problem, distros: [], skipped: [] };
   }
   for (const d of seen.distros) names.set(d.name.toLowerCase(), d.name);
   return {

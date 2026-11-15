@@ -87,8 +87,7 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const distro = q.get('distro');
   if (signin !== null && distro) {
     void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'), q.getAll('arg'), q.get('start') === '1');
-  }
-  else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
+  } else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
   else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
   else {ctx.terminals.attach(
       link,

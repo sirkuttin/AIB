@@ -331,7 +331,11 @@ export interface NodeScriptOptions {
  * is the one `node -p process.execPath` names, so the argv starts the same program and an adapter's own node_modules can be walked
  * (signin.ts findCodexCli finds the Codex CLI the adapter ships). Never on Windows (no shims there; the caller checks).
  */
-export async function nodeScriptLaunch(program: string, packages: readonly Package[], options: NodeScriptOptions = {}): Promise<string[] | null> {
+export async function nodeScriptLaunch(
+  program: string,
+  packages: readonly Package[],
+  options: NodeScriptOptions = {},
+): Promise<string[] | null> {
   let real: string;
   try {
     real = realpath(program);
