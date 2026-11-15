@@ -68,6 +68,7 @@ export const runWsl: WslRunner = async (distro, argv, options = {}) => {
   const exe = wslExePath();
   if (!exe) throw new Error('WSL is not installed on this PC');
   if (!validDistro(distro)) throw new RangeError(`Not a WSL distro name: ${distro}`);
+  if (argv.includes('')) throw new RangeError('wsl.exe cannot take an empty argument (it fails with E_INVALIDARG)');
   const child = new Deno.Command(exe, {
     args: ['--distribution', distro, '--cd', '~', '--exec', ...argv],
     env: wslEnv(),
@@ -109,6 +110,7 @@ export const runWsl: WslRunner = async (distro, argv, options = {}) => {
 /** $1 = the root ('' = $HOME/.aib-server), $2 = <ver>. Prints key=value lines. */
 export const PROBE_SCRIPT = `set -u
 root="$1"
+[ "$root" != "-" ] || root=""
 [ -n "$root" ] || root="$HOME/${WSL_ROOT_DIR}"
 printf 'home=%s\\n' "$HOME"
 printf 'uid=%s\\n' "$(id -u)"
@@ -274,7 +276,7 @@ export async function installWsl(distro: string, options: InstallOptions): Promi
   const programs = options.programs ?? findPrograms();
   const version = versionOf(programs, options.appVersion);
   const override = options.root === undefined ? rootOverride() : options.root;
-  const probe = await run(distro, ['/bin/sh', '-c', PROBE_SCRIPT, 'sh', override ?? '', version], { timeoutMs: PROBE_TIMEOUT_MS });
+  const probe = await run(distro, ['/bin/sh', '-c', PROBE_SCRIPT, 'sh', override ?? '-', version], { timeoutMs: PROBE_TIMEOUT_MS });
   if (probe.code !== 0) {
     throw new WslInstallError(`${distro} did not answer (${probe.stderr.trim().slice(0, 300) || `exit ${probe.code}`})`, 'wsl_failed');
   }

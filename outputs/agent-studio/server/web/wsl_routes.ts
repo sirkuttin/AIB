@@ -13,8 +13,8 @@
 import { tokenMatches } from './security.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
-import { WslHelperError } from '../wsl/contract.ts';
-import { distroName, notReady, peekWslHost, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
+import { WslHelperError, type WslHost } from '../wsl/contract.ts';
+import { distroName, hostWhenReady, notReady, peekWslHost, WSL_INSTALL, wsl2Distros, wslHost } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
@@ -96,21 +96,27 @@ export function wslRoutes(): Map<string, Handler> {
   guarded('GET', '/api/live/wsl/dirs', async (_ctx, args) => {
     const distro = one(args, 'distro');
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
-    const host = wslHost(distro);
-    const why = notReady(host, distro);
-    if (why) return [409, { error: why, code: 'wsl_unavailable' }];
+    let host: WslHost;
+    try {
+      host = await hostWhenReady(distro); // the first set-up waits here instead of answering 'setting up'
+    } catch (error) {
+      return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+    }
     let path = one(args, 'path');
     if (path.includes('\0') || path.length > 1024 || (path && !path.startsWith('/'))) return [400, { error: 'Type an absolute Linux path', code: 'bad_path' }];
-    if (!path) path = (await host!.call('env.get', {})).home || '/';
-    return [200, await host!.call('fs.listDirs', { path, limit: 500 })];
+    if (!path) path = (await host.call('env.get', {})).home || '/';
+    return [200, await host.call('fs.listDirs', { path, limit: 500 })];
   });
   guarded('GET', '/api/live/wsl/agents', async (_ctx, args) => {
     const distro = one(args, 'distro');
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
-    const host = wslHost(distro);
-    const why = notReady(host, distro);
-    if (why) return [409, { error: why, code: 'wsl_unavailable' }];
-    const found = await host!.call('agents.detect', { ids: [...BUILTIN_IDS] });
+    let host: WslHost;
+    try {
+      host = await hostWhenReady(distro); // the first set-up waits here instead of answering 'setting up'
+    } catch (error) {
+      return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+    }
+    const found = await host.call('agents.detect', { ids: [...BUILTIN_IDS] });
     const agents = found.agents.map((a) => ({
       id: a.id,
       found: !!a.found,
