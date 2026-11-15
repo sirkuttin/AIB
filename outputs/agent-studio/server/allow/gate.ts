@@ -66,7 +66,7 @@ export class AllowGate {
     try {
       return { ...ctx, facts: claudeFacts(ctx.cwd) };
     } catch {
-      return { ...ctx, facts: { askPrograms: new Set(['*']), riskyEnv: '' } }; // unreadable: ask (fail closed)
+      return { ...ctx, facts: { askPrograms: new Set(['*']), askTools: new Set(['edit', 'fetch', 'mcp:*']), riskyEnv: '' } }; // unreadable: ask
     }
   }
 }

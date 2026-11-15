@@ -26,6 +26,8 @@ export function parseBash(source: string): Parsed {
   if (source.length > 4000) return fail('command too long');
   // deno-lint-ignore no-control-regex -- refusing control characters is the point
   if (/[\x00-\x08\x0b-\x1f\x7f]/.test(source)) return fail('control characters');
+  // deno-lint-ignore no-control-regex -- refusing what another shell could read differently is the point (review H10)
+  if (/[^\x09\x0a\x20-\x7e]/.test(source)) return fail('non-ASCII characters (another shell could read them differently)');
   const parts: Part[] = [];
   let words: string[] = [];
   let globs: boolean[] = [];

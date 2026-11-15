@@ -8,7 +8,8 @@
  * The decision log (allow-decisions/<chat>.jsonl) records each auto-answer before it is written to the agent, so a keeper replay
  * reads it and never runs the matcher again (review 6.1).
  */
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { DPAPI_PREFIX, dpapiProtect, dpapiUnprotect } from '../state/secrets.ts';
 import { join } from 'node:path';
 import { writeJsonAtomic } from '../core/fs.ts';
 import type { AllowRule, Builtins } from './matcher.ts';
@@ -58,7 +59,28 @@ export class AllowStore {
     this.#hash = hash(text);
     this.#mtime = this.#statMtime();
     this.#data = parse(text);
-    if (sig !== this.#hash) this.tampered = true;
+    // A missing or wrong signature, or a key AIB can't open, is tampering (review H5).
+    const key = this.#key(false);
+    if (!key || !sig || !equal(sig, sign(key, text))) this.tampered = true;
+  }
+
+  /**
+   * The signing key: 32 random bytes in allow-rules.key, sealed with DPAPI for this Windows account (other systems: the plain key
+   * in a 0600 file). Held in memory once read. `create` makes a new key when there is none or it can't be opened.
+   */
+  #keyBytes: Uint8Array | null = null;
+  #key(create: boolean): Uint8Array | null {
+    if (this.#keyBytes) return this.#keyBytes;
+    const file = join(this.stateDir, 'allow-rules.key');
+    try {
+      const stored = Deno.readTextFileSync(file).trim();
+      const opened = openKey(stored);
+      if (opened) return (this.#keyBytes = opened);
+    } catch { /* none yet */ }
+    if (!create) return null;
+    const fresh = crypto.getRandomValues(new Uint8Array(32));
+    writeJsonAtomic(file, null, { text: sealKey(fresh), prefix: '.allow-key-' });
+    return (this.#keyBytes = fresh);
   }
 
   #statMtime(): number {
@@ -92,7 +114,7 @@ export class AllowStore {
     const text = JSON.stringify(this.#data, null, 1);
     writeJsonAtomic(this.path, null, { text, prefix: '.allow-rules-' });
     this.#hash = hash(text);
-    writeJsonAtomic(this.sigPath, null, { text: this.#hash, prefix: '.allow-sig-' });
+    writeJsonAtomic(this.sigPath, null, { text: sign(this.#key(true)!, text), prefix: '.allow-sig-' });
     this.#mtime = this.#statMtime();
   }
 
@@ -174,6 +196,41 @@ export class AllowStore {
     this.#data.enabled = true;
     this.#save();
   }
+}
+
+function sign(key: Uint8Array, text: string): string {
+  return createHmac('sha256', key).update(text).digest('hex');
+}
+
+function equal(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+const unb64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+
+function sealKey(key: Uint8Array): string {
+  if (Deno.build.os === 'windows') return DPAPI_PREFIX + b64(dpapiProtect(new Uint8Array(key)));
+  return 'file:v1:' + b64(key);
+}
+
+function openKey(stored: string): Uint8Array | null {
+  try {
+    if (stored.startsWith(DPAPI_PREFIX)) {
+      if (Deno.build.os !== 'windows') return null;
+      const plain = dpapiUnprotect(unb64(stored.slice(DPAPI_PREFIX.length)));
+      return plain && plain.length === 32 ? plain : null;
+    }
+    // a plain key is accepted only where DPAPI doesn't exist: on Windows an agent could have written it
+    if (stored.startsWith('file:v1:') && Deno.build.os !== 'windows') {
+      const key = unb64(stored.slice(8));
+      return key.length === 32 ? key : null;
+    }
+  } catch { /* damaged */ }
+  return null;
 }
 
 function parse(text: string): RulesFile {

@@ -17,7 +17,7 @@ import {
   scratchWrite,
   syntaxCheck,
 } from './catalogue.ts';
-import { checkPath, inside, realish } from './paths.ts';
+import { checkPath, fromGitBash, inside, realish } from './paths.ts';
 import { pinHash } from './pin.ts';
 import { parseBash, parsePwsh, type Part, unwrapCodexPowershell } from './shell.ts';
 
@@ -74,7 +74,7 @@ export interface MatchContext {
   /** Time limit in ms (default 150). */
   limitMs?: number;
   /** What the agent's own settings say (agent_config.ts): its ask rules and a risky env block. */
-  facts?: { askPrograms: Set<string>; riskyEnv: string } | null;
+  facts?: { askPrograms: Set<string>; askTools?: Set<string>; riskyEnv: string } | null;
 }
 
 export type Request =
@@ -139,8 +139,20 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
   if (isStr(invocation.server) && isStr(invocation.tool)) return { kind: 'mcp', server: invocation.server, tool: invocation.tool };
   if (call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') {
     if (call.kind !== 'edit') return { kind: 'unknown', reason: `${call.kind} requests have no rules yet` };
-    const changes = isDict(raw.changes) ? Object.keys(raw.changes) : [];
-    const paths = [...new Set([...locations, ...changes])];
+    const changes = isDict(raw.changes) ? raw.changes : {};
+    const moves: string[] = [];
+    for (const change of Object.values(changes)) {
+      if (!isDict(change)) return { kind: 'unknown', reason: 'unreadable change' };
+      const type = String(change.type ?? change.kind ?? '');
+      if (type === 'delete' || 'delete' in change) return { kind: 'unknown', reason: 'deletes files' };
+      for (const key of ['move_path', 'movePath']) {
+        if (change[key] !== undefined && change[key] !== null) {
+          if (!isStr(change[key])) return { kind: 'unknown', reason: 'unreadable move target' };
+          moves.push(change[key] as string);
+        }
+      }
+    }
+    const paths = [...new Set([...locations, ...Object.keys(changes), ...moves])];
     return paths.length ? { kind: 'edit', paths } : { kind: 'unknown', reason: 'no file path' };
   }
   if (call.kind === 'fetch' && isStr(raw.url)) return fetchOf(raw.url);
@@ -161,6 +173,8 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
     const inner = unwrapCodexPowershell(command);
     if (inner !== null) return { kind: 'shell', shell: 'pwsh', command: inner, cwd, escalation };
     if (/^\s*"?[^\s"]*(powershell|pwsh|cmd)(\.exe)?"?\s/i.test(command)) return { kind: 'unknown', reason: 'a shell inside a shell' };
+    // On Windows Codex runs commands through PowerShell: a string without its wrapper can't be read as bash (review H10).
+    if (Deno.build.os === 'windows' && !Array.isArray(raw.command)) return { kind: 'unknown', reason: 'Codex command without its shell' };
     return { kind: 'shell', shell: 'bash', command, cwd, escalation };
   }
   return { kind: 'unknown', reason: `AIB can't read ${ctx.provider || 'this agent'}'s requests yet` };
@@ -192,6 +206,18 @@ export type MatchResult = { allow: true; ruleId: string; label: string; flagged:
 
 class TooSlow extends Error {}
 
+/** A Claude ask rule for Edit/Write, WebFetch or this MCP tool (agent_config.ts askTools), or ''. */
+function toolAsked(req: Request, ctx: MatchContext): string {
+  const tools = ctx.facts?.askTools;
+  if (!tools || !tools.size) return '';
+  if (req.kind === 'edit' && tools.has('edit')) return 'your Claude settings ask before edits';
+  if (req.kind === 'fetch' && tools.has('fetch')) return 'your Claude settings ask before web fetches';
+  if (req.kind === 'mcp' && (tools.has('mcp:*') || tools.has(`mcp:${req.server}`) || tools.has(`mcp:${req.server}__${req.tool}`))) {
+    return 'your Claude settings ask before this tool';
+  }
+  return '';
+}
+
 /** One request against the rules. */
 export function match(params: unknown, ctx: MatchContext, rules: AllowRule[], builtins: Builtins): MatchResult {
   const deadline = Date.now() + (ctx.limitMs ?? 150);
@@ -217,6 +243,8 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
   if (req.kind === 'special' || req.kind === 'unknown') {
     return { allow: false, reason: req.kind === 'special' ? 'answered by you' : req.reason };
   }
+  const askedTool = toolAsked(req, ctx);
+  if (askedTool) return { allow: false, reason: askedTool };
   if (req.kind === 'mcp') {
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
     const r = here.find((x) => x.kind === 'mcp' && x.server === req.server && x.tool === req.tool);
@@ -290,7 +318,8 @@ function matchPart(
   return null;
 }
 
-const RISKY_FLAG = /shell|node-options|prefix|require|import|loader|exec|config|registry|userconfig|globalconfig|cwd|dir=/i;
+const RISKY_FLAG =
+  /shell|node-options|prefix|require|import|loader|exec|config|registry|userconfig|globalconfig|cwd|dir|pack|extcmd|template|tool|hook|script|plugin|preload|eval|^-x$/i;
 
 /** '' when a command rule covers this part. */
 export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, ctx: MatchContext): string {
@@ -299,9 +328,13 @@ export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, 
   if (programName(part.words[0]) !== programName(words[0])) return 'other program';
   for (let i = 1; i < words.length; i++) if (part.words[i] !== words[i]) return 'other subcommand';
   if (part.globs.slice(0, words.length).some(Boolean)) return 'glob';
+  if (words.length < 2) return 'a one-word rule covers too much';
+  const name = programName(words[0]);
+  if (CODE_ARGS.has(name)) return `${name} runs its arguments as code`;
   const program = programProblem(part.words[0], pctx) || batArgProblem(part.words[0], part.words.slice(1));
   if (program) return program;
   const script = projectScript(words);
+  if (!script && (PACKAGE_MANAGERS.has(name) || name === 'git' || name === 'deno')) return 'only project scripts';
   if (script) {
     const key = resolve(ctx.project);
     const pin = Object.entries(r.pins ?? {}).find(([k]) => sameFolder(k, key))?.[1];
@@ -315,13 +348,96 @@ export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, 
       continue;
     }
     if (!afterDashDash && a.startsWith('-')) {
-      if (RISKY_FLAG.test(a)) return `flag ${a}`;
+      // the flag's name and any value joined to it (--x=v, -X:v, -Xv): risky names ask, a value that looks like a path is checked
+      const m = /^(--?[A-Za-z][\w-]*)(?:[=:](.*))?$/s.exec(a);
+      if (!m) return `flag ${a}`;
+      if (RISKY_FLAG.test(m[1])) return `flag ${m[1]}`;
+      const value = m[2] ?? (/^-[A-Za-z]./.test(a) && !a.startsWith('--') ? a.slice(2) : '');
+      if (value && /[\\/:~]/.test(value)) {
+        const v = checkPath(value, pctx.cwd, pctx.root);
+        if (!v.ok) return `${a}: ${v.reason}`;
+      }
+      if ((MESSAGE_FLAGS[words.join(' ')] ?? []).includes(m[1]) && m[2] === undefined && i + 1 < part.words.length) i++; // its text
       continue;
     }
+    if (!looksLikePath(a, pctx.cwd)) return `"${a}" is not a file in the project`;
     const v = checkPath(a, pctx.cwd, pctx.root, { glob: part.globs[i] });
     if (!v.ok) return v.reason;
   }
   return '';
+}
+
+/** Programs that run their arguments as code: never an owner rule (review H3). */
+const CODE_ARGS = new Set([
+  'sed',
+  'awk',
+  'gawk',
+  'find',
+  'make',
+  'xargs',
+  'docker',
+  'podman',
+  'gh',
+  'kubectl',
+  'helm',
+  'ssh',
+  'vim',
+  'vi',
+  'nvim',
+  'emacs',
+  'less',
+  'more',
+  'man',
+  'tar',
+  'zip',
+  'unzip',
+  'rsync',
+  'git-lfs',
+  'npx',
+  'perl',
+  'ruby',
+  'node',
+  'python',
+  'python3',
+  'deno',
+  'bun',
+  'tsx',
+  'ts-node',
+  'cmake',
+  'ninja',
+  'mvn',
+  'gradle',
+  'cargo',
+  'go',
+  'dotnet',
+  'msbuild',
+  'invoke-command',
+  'foreach-object',
+  'where-object',
+  'start-job',
+  'new-object',
+  'add-type',
+  'invoke-item',
+  'set-alias',
+  'new-alias',
+]);
+const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+/** Flags whose next word is free text, per rule (git commit -m "message"). */
+const MESSAGE_FLAGS: Record<string, string[]> = { 'git commit': ['-m', '--message'] };
+
+/** A word counts as a path only when it exists, or its folder exists and it looks like a file name (review H3). */
+function looksLikePath(word: string, cwd: string): boolean {
+  const full = resolve(cwd, fromGitBash(word));
+  try {
+    Deno.statSync(full);
+    return true;
+  } catch { /* not there */ }
+  if (!/^[^\s]*\.[A-Za-z0-9]{1,8}$/.test(word.replace(/[\\/]+$/, ''))) return false;
+  try {
+    return Deno.statSync(resolve(full, '..')).isDirectory;
+  } catch {
+    return false;
+  }
 }
 
 // ---- drafting the rule an "Always allow" saves --------------------------------------------------------------------------------
@@ -362,6 +478,8 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   const base = { scope, ...(scope === 'project' ? { project: resolve(ctx.project) } : {}) } as const;
   if (req.kind === 'special') return { ...no(''), offer: false, hideAgentAlways: false };
   if (ctx.facts?.riskyEnv) return no(`Not available: allow rules are off for this chat because ${ctx.facts.riskyEnv}.`);
+  const askedTool = toolAsked(req, ctx);
+  if (askedTool) return no(`Not available: ${askedTool}.`);
   if (req.kind === 'unknown') {
     // Decision 2a hides the agent's own always on command, file-edit, MCP and fetch cards, even when AIB can't read them yet.
     const call = callOf(params);
@@ -456,10 +574,19 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     if (/^(cd|pushd|popd|set-location|sl|chdir)$/i.test(programName(part.words[0]))) {
       return no('Not available: the command changes folder.');
     }
+    const program = programName(part.words[0]);
+    if (CODE_ARGS.has(program)) return no(`Not available: ${program} can run its arguments as code.`);
     const script = projectScript(part.words);
     const second = part.words[1];
-    const words = script ??
-      (second && /^[a-z][a-z0-9-]*$/.test(second) ? [programName(part.words[0]), second] : [programName(part.words[0])]);
+    if (!script && PACKAGE_MANAGERS.has(program)) {
+      return no(`Not available: only ${program} test and ${program} run <script> can become rules.`);
+    }
+    if (!script && (program === 'git' || program === 'deno')) return no(`Not available: this ${program} command can't become a rule.`);
+    // Never a one-word rule (review H1): the second word must be a plain subcommand, not a flag or a path.
+    if (!script && !(second && /^[a-z][a-z0-9-]*$/.test(second))) {
+      return no('Not available: a rule needs a subcommand, and this command has none (it would allow every use of the program).');
+    }
+    const words = script ?? [program, second];
     if (rules.some((r) => JSON.stringify(r.words) === JSON.stringify(words))) continue;
     const label = `${words.join(' ')}${script ? '' : ' + paths, flags'}`;
     rules.push({

@@ -11,11 +11,14 @@ import { join } from 'node:path';
 export interface AgentConfigFacts {
   /** Programs Claude ask rules name ('*' = every shell command). */
   askPrograms: Set<string>;
+  /** Other tools Claude ask rules name: 'edit', 'fetch', 'mcp:*', 'mcp:<server>', 'mcp:<server>__<tool>' (review H11). */
+  askTools: Set<string>;
   /** Why rules are off for this chat ('' = they aren't). */
   riskyEnv: string;
 }
 
-const RISKY = /^(PATH|NODE_OPTIONS|BASH_ENV|ENV|AIB_.*|GIT_.*)$/i;
+const RISKY =
+  /^(PATH|PATHEXT|NODE_OPTIONS|NODE_PATH|BASH_ENV|ENV|AIB_.*|GIT_.*|CLAUDE_CODE_SHELL.*|npm_config_.*|YARN_.*|PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|PSModulePath|PERL5OPT|PERL5LIB|RUBYOPT|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*|COMSPEC|SHELL|PROMPT_COMMAND|ZDOTDIR)$/i;
 
 const cache = new Map<string, { mtime: number; json: Record<string, unknown> | null }>();
 
@@ -61,6 +64,7 @@ export function claudeFacts(cwd: string): AgentConfigFacts {
     managedSettings(),
   ].filter(Boolean);
   const askPrograms = new Set<string>();
+  const askTools = new Set<string>();
   let riskyEnv = '';
   for (const file of files) {
     const json = readJson(file);
@@ -72,11 +76,16 @@ export function claudeFacts(cwd: string): AgentConfigFacts {
     const ask = Array.isArray(perms.ask) ? perms.ask : [];
     for (const rule of ask) {
       if (typeof rule !== 'string') continue;
-      const m = /^(Bash|PowerShell)(?:\((.*)\))?$/.exec(rule.trim());
+      const text = rule.trim();
+      if (/^(Edit|Write|MultiEdit|NotebookEdit)\b/.test(text)) askTools.add('edit');
+      if (/^WebFetch\b/.test(text)) askTools.add('fetch');
+      const mcp = /^mcp__([^_(][^(]*?)(?:__([^(]+))?(?:\(.*\))?$/.exec(text);
+      if (mcp) askTools.add(mcp[2] && mcp[2] !== '*' ? `mcp:${mcp[1]}__${mcp[2]}` : mcp[1] === '*' ? 'mcp:*' : `mcp:${mcp[1]}`);
+      const m = /^(Bash|PowerShell)(?:\((.*)\))?$/.exec(text);
       if (!m) continue;
       const first = (m[2] ?? '').trim().split(/[\s:(]/)[0];
       askPrograms.add(first && first !== '*' ? first.toLowerCase() : '*');
     }
   }
-  return { askPrograms, riskyEnv };
+  return { askPrograms, askTools, riskyEnv };
 }

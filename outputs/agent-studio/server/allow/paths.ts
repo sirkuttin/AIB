@@ -9,7 +9,19 @@ import { isAbsolute, join, normalize, resolve } from 'node:path';
 const WINDOWS = Deno.build.os === 'windows';
 
 /** Folder names agents must never write into (hooks, agent configs): compared after case-folding and stripping dots/spaces. */
-export const PROTECTED_NAMES = new Set(['.git', '.husky', '.claude', '.codex', '.gemini', '.cursor', '.githooks']);
+export const PROTECTED_NAMES = new Set([
+  '.git',
+  '.husky',
+  '.claude',
+  '.codex',
+  '.gemini',
+  '.cursor',
+  '.githooks',
+  'node_modules',
+  '.yarn',
+  '.vscode',
+  '.idea',
+]);
 
 /** One path segment as Windows really opens it: trailing dots and spaces stripped, case-folded. */
 export function canonicalName(segment: string): string {
@@ -100,7 +112,21 @@ export function checkPath(raw: string, cwd: string, root: string, opts: { write?
   if (opts.write && segmentsBelow(real, realRoot).some((s) => PROTECTED_NAMES.has(s))) {
     return { ok: false, reason: 'a protected folder (.git, .claude, hooks)' };
   }
+  if (opts.glob && folderHasLinks(real)) return { ok: false, reason: 'a glob over a folder that holds links' };
   return { ok: true, real };
+}
+
+/** The folder a glob expands in holds a symlink or junction: a match could lead outside the project (review H7). */
+function folderHasLinks(dir: string): boolean {
+  try {
+    let n = 0;
+    for (const e of Deno.readDirSync(dir)) {
+      if (e.isSymlink || ++n > 5000) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 /** Names of files that hold secrets (floor when outside the project). */

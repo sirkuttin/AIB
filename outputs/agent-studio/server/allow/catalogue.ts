@@ -31,7 +31,11 @@ const resolved = new Map<string, string | null>();
 export function resolveProgram(name: string): string | null {
   if (resolved.has(name)) return resolved.get(name)!;
   let found: string | null = null;
-  const dirs = (Deno.env.get('PATH') ?? '').split(Deno.build.os === 'windows' ? ';' : ':').filter(Boolean);
+  // Network folders on PATH are skipped: a stat there can block well past the matcher's time limit (review H12). A program found
+  // only there counts as not found. Path arguments are checked by form first (UNC asks before any stat); a slow mapped drive letter
+  // can still block one stat; the time limit is checked between steps, so such a request may take longer, then asks.
+  const dirs = (Deno.env.get('PATH') ?? '').split(Deno.build.os === 'windows' ? ';' : ':')
+    .filter((d) => d && !d.startsWith('\\\\') && !d.startsWith('//'));
   const exts = Deno.build.os === 'windows' ? ['.exe', '.cmd', '.bat', '.com', ''] : [''];
   outer: for (const dir of dirs) {
     for (const ext of exts) {
@@ -99,7 +103,7 @@ const SAFE: Record<string, Spec> = {
   echo: { letters: 'neE', args: 'any' },
   printf: { args: 'any' },
   grep: {
-    letters: 'rRniIlLcvwxEFohHsqZ',
+    letters: 'rniIlLcvwxEFohHsqZ',
     valued: ['-A', '-B', '-C', '-m', '-e', '--include', '--exclude', '--exclude-dir', '--color'],
     flags: ['--color', '--line-number', '--recursive', '--ignore-case', '--files-with-matches', '--count', '--fixed-strings', '-P'],
     args: 'pattern+paths',
@@ -128,7 +132,7 @@ const SAFE: Record<string, Spec> = {
   cut: { valued: ['-d', '-f', '-c'], args: 'paths' },
   diff: { letters: 'urqNwbBi', flags: ['--stat', '--brief'], valued: ['-U'], args: 'paths', maxPaths: 2 },
   cmp: { letters: 's', args: 'paths', maxPaths: 2 },
-  jq: { letters: 'rcSensj', valued: ['--arg', '--argjson', '--indent'], args: 'pattern+paths' },
+  jq: { letters: 'rcSesj', valued: ['--arg', '--argjson', '--indent'], args: 'pattern+paths' },
 };
 
 const GIT_SAFE: Record<string, Spec> = {
@@ -357,6 +361,9 @@ export function safeRead(part: Part, ctx: PartContext): string {
   }
   const spec = SAFE[name];
   if (!spec) return `${name} is not a safe read`;
+  if (name === 'jq' && args.some((a) => /env|\$__|input_filename|import|include|getpath|\$ENV|halt|debug|stderr|input/i.test(a))) {
+    return 'jq filter that reads the environment or other files';
+  }
   const bat = batArgProblem(first, args);
   if (bat) return bat;
   return checkSpec(spec, args, part.globs.slice(1), ctx);
@@ -429,7 +436,7 @@ export function syntaxCheck(part: Part, ctx: PartContext): string {
   const [first, ...args] = part.words;
   if (part.globs.some(Boolean)) return 'glob';
   const name = programName(first);
-  const prob = programProblem(first, ctx);
+  const prob = programProblem(first, ctx) || batArgProblem(first, args);
   if (prob) return prob;
   const file = (p: string | undefined) => {
     if (!p) return 'no file';
@@ -609,6 +616,55 @@ const NETWORK = new Set([
   'certutil',
   'bitsadmin',
 ]);
+/** git flags that run a program or rewrite config, matched as prefixes. */
+const GIT_DANGER = /^(--upload-pack|--receive-pack|--exec|--extcmd|--config-env|--template|--tool|-x$|-c$|-c.+=|--config)/;
+/** git subcommands that run programs, hooks or fetched code (review H1). */
+const GIT_RUNS = new Set([
+  'difftool',
+  'mergetool',
+  'submodule',
+  'bisect',
+  'filter-repo',
+  'filter-branch',
+  'fetch',
+  'pull',
+  'clone',
+  'ls-remote',
+  'archive',
+  'daemon',
+  'instaweb',
+  'send-email',
+  'request-pull',
+  'remote-ext',
+  'credential',
+  'config',
+  'hook',
+  'am',
+  'apply',
+  'web--browse',
+  'help',
+  'p4',
+  'svn',
+  'cvsimport',
+  'fast-import',
+  'bundle',
+]);
+/** Package-manager subcommands that fetch or publish code. */
+const PM_RUNS = new Set([
+  'exec',
+  'x',
+  'dlx',
+  'publish',
+  'unpublish',
+  'create',
+  'init',
+  'login',
+  'adduser',
+  'token',
+  'owner',
+  'access',
+  'deprecate',
+]);
 const KILLS = new Set(['kill', 'taskkill', 'stop-process', 'spps', 'pkill', 'killall', 'tskill']);
 const PROTECTED_PATH = /(^|[\\/])(\.claude|\.codex|\.gemini|\.cursor)([\\/]|$)|agentstudio|allow-rules|\.git[\\/](config|hooks)/i;
 
@@ -629,7 +685,11 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
   }
   if (SYSTEM.has(name)) return floor('system, registry, firewall and admin commands');
   if (name === 'git') {
-    const sub = args.find((a) => !a.startsWith('-')) ?? '';
+    // Dangerous flags anywhere, as prefixes (--upload-pack=calc, --exec=..., -x on rebase): floor (review H2).
+    if (args.some((a) => GIT_DANGER.test(a))) return floor('git options that run programs');
+    if (args[0] !== undefined && args[0].startsWith('-')) return never('git options before the subcommand');
+    const sub = args[0] ?? '';
+    if (GIT_RUNS.has(sub)) return never(`git ${sub} (can run programs or fetch code)`);
     if (sub === 'push') {
       const rest = args.slice(args.indexOf('push') + 1);
       if (rest.some((a) => /^(-f|--force.*|--mirror|--delete|-d|--tags|--all|--prune)$/.test(a) || a.startsWith('+'))) {
@@ -675,7 +735,8 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
     return never('killing processes');
   }
   if (NETWORK.has(name)) return never('network');
-  if (FETCH_RUN.has(name) || (['pnpm', 'yarn', 'bun'].includes(name) && args[0] === 'dlx') || (name === 'pipx' && args[0] === 'run')) {
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(name) && args.some((a) => PM_RUNS.has(a))) return never(`${name} exec, dlx or publish`);
+  if (FETCH_RUN.has(name) || (name === 'pipx' && args[0] === 'run')) {
     return never('fetch-and-run (npx, dlx, uvx)');
   }
   if (INTERPRETERS.has(name)) return never('inline code or interpreters');
@@ -708,7 +769,8 @@ export function projectScript(words: string[]): string[] | null {
   const name = programName(words[0]);
   const sub = words[1];
   if (['npm', 'pnpm', 'yarn', 'bun'].includes(name)) {
-    if (sub === 'test' || sub === 't' || sub === 'start') return [name, sub];
+    // bun test runs Bun's own test runner, not the package.json script: never a pinned rule (review H4)
+    if ((sub === 'test' || sub === 't' || sub === 'start') && name !== 'bun') return [name, sub];
     if ((sub === 'run' || sub === 'run-script') && words[2] && !words[2].startsWith('-')) return [name, sub, words[2]];
     return null;
   }
