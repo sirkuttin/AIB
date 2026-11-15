@@ -19,6 +19,7 @@ import http from 'node:http';
 import { type Duplex, Readable } from 'node:stream';
 import { isDesktopApp } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
+import { noteRequestTime } from '../core/timing.ts';
 import { completeNodeUpgrade, registerNodeUpgrade } from './websocket.ts';
 
 const log = getLogger('http_serve');
@@ -53,7 +54,23 @@ export function implementation(): 'node' | 'deno' {
 }
 
 export function serve(options: ServeOptions, handler: ServeHandler): Server {
-  return implementation() === 'node' ? nodeServe(options, handler) : denoServe(options, handler);
+  const timed = timedHandler(handler);
+  return implementation() === 'node' ? nodeServe(options, timed) : denoServe(options, timed);
+}
+
+/** The handler, with a log line for any request it takes SLOW_REQUEST_MS or more to answer (core/timing.ts; path only). */
+export function timedHandler(handler: ServeHandler): ServeHandler {
+  return async (request, info) => {
+    const start = performance.now();
+    let status: number | null = null;
+    try {
+      const response = await handler(request, info);
+      status = response.status;
+      return response;
+    } finally {
+      noteRequestTime(request.method, request.url, performance.now() - start, status);
+    }
+  };
 }
 
 function denoServe(options: ServeOptions, handler: ServeHandler): Server {

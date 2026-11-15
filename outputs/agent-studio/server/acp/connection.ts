@@ -1075,6 +1075,8 @@ export class Connection {
   /** A rebuild: the seq of the snapshot it started from (0: the start of the record) and how many records it replayed after it. */
   replayedFrom = 0;
   replayedRecords = 0;
+  /** performance.now() at the take-over's steps (studio.ts logs each chat's take-over timing from them); 0: not reached. */
+  rebuildTimes = { adopt: 0, live: 0, replayed: 0, settled: 0 };
   traceback = '';
   exitCode: number | null = null;
   #stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -1221,6 +1223,7 @@ export class Connection {
     this.rebuilt = new Promise<void>((resolve, reject) => (settle = [resolve, reject]));
     this.rebuilt.catch(() => {});
     this.#settleRebuild = settle;
+    this.rebuildTimes.adopt = performance.now();
     this.#useChannel(this.keeper!.adopt(info, this.#keeperListener()));
   }
 
@@ -1275,6 +1278,7 @@ export class Connection {
         this.#enqueue(() => this.#onRecord(record));
       },
       live: () => {
+        if (this.#replaying && !this.rebuildTimes.live) this.rebuildTimes.live = performance.now();
         this.#replayLive = true;
         this.#enqueue(() => this.#caughtUp());
       },
@@ -1628,6 +1632,7 @@ export class Connection {
     } catch (error) {
       return this.#rebuildFailed(error);
     }
+    this.rebuildTimes.replayed = performance.now();
     if (this.rebuildError || this.#ended) return;
     try {
       await this.channel!.claim();
@@ -1656,6 +1661,7 @@ export class Connection {
       const answered = this.#answerDeferred(message);
       if (answered instanceof Promise) answered.catch((error) => log.exception(error, 'Client capability request failed'));
     }
+    this.rebuildTimes.settled = performance.now();
     this.#settleRebuild?.[0]();
     this.#settleRebuild = null;
   }

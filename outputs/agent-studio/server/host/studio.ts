@@ -45,6 +45,7 @@ import {
 } from '../keeper/link.ts';
 import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
+import { PhaseTimer, rebuildPhases } from '../core/timing.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
 import { HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
@@ -1397,6 +1398,7 @@ export class Studio {
     }
     if (!distro && !check) noteKeeperTakeoverProblem('');
     let adopted = 0;
+    const started = performance.now();
     const listed = await client.list();
     if (distro) this.#wslAsked.add(distro);
     for (const info of listed) {
@@ -1413,7 +1415,9 @@ export class Studio {
           if (!check && info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
           continue;
         }
+        const timer = new PhaseTimer();
         const note = await keeper.firstNote(client, info.channel);
+        timer.mark('note');
         if (!note || note.t !== 'chat' || !isStr(note.id) || !isStr(note.provider) || !isStr(note.cwd)) {
           if (check) continue; // only the start stops a channel without a chat record
           announce('studio', 'keeper: stopping channel %s: it has no chat record', info.channel);
@@ -1424,17 +1428,21 @@ export class Studio {
         // A chat whose link to this channel was given up (the keeper could not be reached for a while) while its agent kept running
         // is rebuilt under its own id; any other chat this AIB has (open, or closed by the user) keeps the channel as it is.
         if (known && !(check && known.closed && known.channel?.lost)) continue;
-        if (await this.#rebuildChat(info, note, keeper, distro)) {
+        const done = await this.#rebuildChat(info, note, keeper, distro, timer);
+        if (done) {
           const rebuilt = this.connections.get(note.id);
           if (!rebuilt || !await this.#dropDuplicate(rebuilt)) adopted++;
+          timer.mark('duplicate check');
         }
+        const session = this.connections.get(note.id)?.sessionId ?? (isStr(note.resume) ? note.resume : '');
+        timer.log(`${note.provider} ${session || '-'} ${note.id}${done ? '' : ' (not taken over)'}`);
       } catch (error) {
         log.exception(error, 'keeper: taking over channel failed');
       }
     }
     if (!check) await this.#dropOrphanTerminals(client, listed, keeper);
     if (adopted) {
-      announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
+      announce('studio', 'keeper: %s chat(s) taken over from the keeper in %s ms', adopted, Math.round(performance.now() - started));
       // Their artifact tool is the keeper's forwarder: it needs this Studio's HTTP endpoint and its published address.
       const forwarded = [...this.connections.values()].some((c) => c.channel && !c.closed && c.mcpServers.some(isForwardEntry));
       if (forwarded && !this.options.noArtifactTool) {
@@ -1496,7 +1504,13 @@ export class Studio {
     return loser === c;
   }
 
-  async #rebuildChat(info: ChannelInfo, note: Json, keeper: KeeperLink, distro: string | null): Promise<boolean> {
+  async #rebuildChat(
+    info: ChannelInfo,
+    note: Json,
+    keeper: KeeperLink,
+    distro: string | null,
+    timer = new PhaseTimer(),
+  ): Promise<boolean> {
     const command = Array.isArray(note.command) ? note.command.map(String) : [];
     const cwd = String(note.cwd);
     const provider = String(note.provider);
@@ -1532,9 +1546,11 @@ export class Studio {
     c.recovery = this.recovery as never;
     this.connections.set(c.id, c);
     const label = `${provider} ${c.sessionId ?? ''} in ${cwd}`.replace('  ', ' ');
+    timer.mark('setup');
     try {
       await c.rebuilt;
     } catch { /* read-only (rebuildError says why) or the keeper went away */ }
+    rebuildPhases(timer, c.rebuildTimes);
     try {
       if (c.closed) return false;
       if (c.rebuildError) {
@@ -1551,12 +1567,14 @@ export class Studio {
       } catch (error) {
         log.warning('keeper: no session lease for %s: %s', label, errorText(error));
       }
+      timer.mark('lease');
       if (this.recovery) {
         this.recovery.connectionReady(c);
         const saved = this.recovery.queues?.get(provider, c.sessionId) ?? [];
         if (saved.length) await c.queueContinue(saved); // the turn never stopped, so neither does its queue
       }
       this.announce(c, 'ready');
+      timer.mark('queue and announce');
       if (this.wslSync && wsl) await this.wslSync.chatOpened(c); // its distro's helper watches it (never throws)
       else if (this.liveSync) {
         try {
@@ -1565,6 +1583,7 @@ export class Studio {
           log.exception(error, 'Starting live sync failed');
         }
       }
+      timer.mark('live sync');
       announce('studio', 'keeper: rebuilt %s (%s)', label, c.busy ? 'turn running' : 'idle');
       console.error(`Keeper: continued ${label}`);
       return true;
