@@ -125,6 +125,8 @@ export function helperEnv(install: WslInstall): Record<string, string> {
     LANG: 'C.UTF-8',
     AIB_WSL_ROOT: install.root,
     AIB_WSL_VERSION: install.version,
+    // under test the helper's Remove refuses anything but a /tmp/aib-wsl-test-* root (helper/aib_remove.ts rootProblem)
+    ...(Deno.env.get('AGENT_STUDIO_TEST') === '1' ? { AIB_WSL_TEST: '1' } : {}),
   };
 }
 
@@ -788,6 +790,11 @@ export class WslHostImpl implements WslHost {
     }
   }
 
+  /** Start the keep-alive again (a Remove that was refused at the last moment had stopped it). Never throws. */
+  keepAlive(): void {
+    if (this.#state === 'ready') void this.#ensureHold();
+  }
+
   /** Kill the keep-alive (quit with nothing running in the distro). */
   async releaseHold(): Promise<void> {
     if (this.#holdTimer !== null) clearTimeout(this.#holdTimer);
@@ -801,6 +808,51 @@ export class WslHostImpl implements WslHost {
       await hold.kill();
     } catch (error) {
       log.warning('wsl: could not stop the keep-alive for %s: %s', this.distro, error instanceof Error ? error.message : error);
+    }
+  }
+
+  /**
+   * Remove AIB from the distro (wsl/remove.ts), after the helper did its part: end this AIB's helper (and any other helper channel of
+   * this keeper), then shut the Linux keeper down WITHOUT force, so a chat or terminal that is live refuses it (ok false, live > 0)
+   * instead of being killed. Waits up to `timeoutMs` for the helper's channel to end. Never throws.
+   */
+  async shutdownKeeper(timeoutMs = 10_000): Promise<{ ok: boolean; live: number; message: string }> {
+    const why = (error: unknown) => `the keeper in ${this.distro} did not stop: ${error instanceof Error ? error.message : error}`;
+    let client: KeeperClient | null;
+    try {
+      client = await this.link.client(false);
+    } catch (error) {
+      return { ok: false, live: 0, message: why(error) };
+    }
+    if (!client) return { ok: true, live: 0, message: '' }; // no keeper runs
+    try {
+      const listed = await client.list();
+      const live = liveUserChannels(listed).length;
+      if (live) return { ok: false, live, message: `${live} chat(s) or terminal(s) still run in ${this.distro}` };
+      // from here the host never reconnects: a dropped transport must not start a keeper (and AIB) again
+      this.#stopped = true;
+      if (this.#holdTimer !== null) clearTimeout(this.#holdTimer);
+      this.#holdTimer = null;
+      const helper = this.#helper;
+      this.#helperGone(new WslHelperError('AIB was removed from this distro', 'stopped'));
+      if (helper) await helper.kill().catch(() => {});
+      for (const info of listed) {
+        if (!info.live || aibInternalKind(info.label) !== WSL_HELPER_LABEL.aib || info.channel === helper?.id) continue;
+        await this.link.stopUnknown(client, info.channel).catch(() => {});
+      }
+      for (const until = Date.now() + timeoutMs;;) {
+        try {
+          await client.shutdown(false);
+          return { ok: true, live: 0, message: '' };
+        } catch (error) {
+          const busy = error instanceof KeeperError && error.code === 'busy';
+          const now = busy ? liveUserChannels(await client.list()).length : 0;
+          if (!busy || now || Date.now() > until) return { ok: false, live: now, message: why(error) };
+          await new Promise((r) => setTimeout(r, 200)); // the helper's channel is ending
+        }
+      }
+    } catch (error) {
+      return { ok: false, live: 0, message: why(error) };
     }
   }
 
@@ -845,6 +897,16 @@ export class WslHosts {
     const host = new WslHostImpl({ ...this.options, distro: name });
     this.#hosts.set(key, host);
     return host;
+  }
+
+  /**
+   * Forget a distro's host (Remove AIB from it stopped the host for good): the next get() makes a new one, which installs AIB again
+   * on its first start ("Set up again"). The host is stopped first if it was not.
+   */
+  drop(distro: string): void {
+    const key = String(distro ?? '').toLowerCase();
+    this.#hosts.get(key)?.stop();
+    this.#hosts.delete(key);
   }
 
   /** The host of a distro if one was made. */
@@ -907,6 +969,11 @@ export function configureWslHosts(options: WslHostsOptions | null, replace = tru
   if (!replace && sharedOptions) return;
   sharedOptions = options;
   shared = null;
+}
+
+/** The Windows state folder the hosts were set up with (null: none); wsl/removed.ts keeps its flags there. */
+export function wslStateDir(): string | null {
+  return sharedOptions?.stateDir ?? null;
 }
 
 /** This AIB's hosts (made on first use), or null when AIB was not configured for WSL (no data folder: unit tests, the helper). */

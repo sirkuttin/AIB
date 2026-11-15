@@ -160,7 +160,9 @@ Deno.test({
       assertEquals(status.skipped, [{ name: 'Legacy', why: 'it is a WSL1 distro; convert it with `wsl --set-version <name> 2`' }]);
       const distros = status.distros as Json[];
       assertEquals(distros.map((d) => [d.name, d.isDefault]), [['Debian', false], ['Ubuntu', true]]);
-      assertEquals(Object.keys(distros[1]), ['name', 'key', 'state', 'line', 'home', 'helper', 'problem', 'alwaysAllow', 'isDefault']);
+      // phase 3 (linking-design section 13) adds `removed`
+      assertEquals(Object.keys(distros[1]), ['name', 'key', 'state', 'line', 'home', 'helper', 'problem', 'alwaysAllow', 'isDefault', 'removed']);
+      assertEquals(distros[1].removed, false);
       assertEquals([distros[1].state, distros[1].home, distros[1].helper], ['ready', '/home/u', '0.0.0-fake']);
 
       setDistroSource(() => Promise.resolve([{ name: 'Legacy', version: 1 }]));

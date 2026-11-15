@@ -114,6 +114,9 @@
         'uninstall',
         'sign in',
         'limits',
+        'remove',
+        'disk space',
+        'aib-server',
       ],
     },
     {

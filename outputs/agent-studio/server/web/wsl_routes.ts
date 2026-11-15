@@ -2,10 +2,18 @@
  * WSL projects on the page (docs/wsl/design.md sections 4 and 8; Deno only: routes.ts DENO_ONLY). Every route needs the Studio token, like
  * the Files routes, and reaches a distro only through wsl/access.ts.
  *   GET  /api/live/wsl/status                      {available, distros: [{name, key, state, line, home, helper, problem, alwaysAllow,
- *                                                   isDefault}], openRequests: [{id, distro, name, url, at}], wsl: {exe, problem},
+ *                                                   isDefault, removed}], openRequests: [{id, distro, name, url, at}], wsl: {exe, problem},
  *                                                   skipped: [{name, why}]}: the Location choice, the distro state line, Settings > About
  *                                                   and AIB Linking (WSL), and the URLs waiting for "Open" (wsl/open_urls.ts). The
- *                                                   registry only (never wsl.exe), never starts a distro
+ *                                                   registry only (never wsl.exe), never starts a distro. removed: AIB removed itself
+ *                                                   from that distro (state 'off' until the next explicit start: wsl/removed.ts)
+ *   GET  /api/live/wsl/aib?distro[&peek=1[&start=1]][&force=1]  "AIB in <distro>" (phase 3, linking-design section 13): not ready
+ *                                                   -> {distro, name, state, line, usage: null}; ready -> {distro, name, state: 'ready',
+ *                                                   line: '', usage: AibUsage} (helper aib.usage; chatsWorking from Studio's busy chats)
+ *   POST /api/live/wsl/aib/remove {distro, mode: 'check'|'apply', confirm?}  Remove AIB from the distro (wsl/remove.ts): {ok, mode,
+ *                                                   blocked, wouldRemove, kept, removed, left, message?}; 'apply' needs confirm: true
+ *                                                   (400 confirm_needed). Never starts the distro (409 wsl_unavailable)
+ *   Every start=1 (and Reconnect) is also "Set up again": it clears the removed flag, so the distro's next start installs AIB again
  *   GET  /api/live/wsl/dirs?distro&path            the New / Add project folder browser: fs.listDirs in the distro ('' = its home)
  *   GET  /api/live/wsl/agents?distro[&force=1][&peek=1[&start=1]]  the agent picker: which agents the distro has, the install
  *                                                   command of the others, and AIB's own install of Claude Code / Codex (installable,
@@ -40,15 +48,18 @@ import { tokenMatches } from './security.ts';
 import { issueBytes } from './file_tickets.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
-import { WslHelperError, type WslHost } from '../wsl/contract.ts';
+import { type AibUsage, WslHelperError, type WslHost } from '../wsl/contract.ts';
 import { refOf, type WslLoc } from '../platform/location.ts';
-import { distroName, hostWhenReady, notReady, peekState, peekWslHost, WSL_INSTALL, wslHost, wslOverview } from '../wsl/access.ts';
+import { distroName, hostWhenReady, notReady, peekState, peekWslHost, WSL_INSTALL, wslHost, wslLoc, wslOverview } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
 import { installFacts, wslInstallCall, wslUninstallCall } from '../wsl/agent_install.ts';
 import { distroAgentId, type SettingsStore } from '../state/settings.ts';
 import { wslCodexLimits } from '../host/usage_limits_feed.ts';
+import { wslHostsInUse } from '../wsl/hosts.ts';
+import { removeAib, realSteps } from '../wsl/remove.ts';
+import { clearDistroRemoved, isDistroRemoved } from '../wsl/removed.ts';
 
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
@@ -114,6 +125,7 @@ async function reach(
   args: Record<string, string[]>,
 ): Promise<{ host: WslHost } | { off: { distro: string; name: string; state: string; line: string } } | { reply: Reply }> {
   const key = distro.toLowerCase();
+  if (one(args, 'start') === '1') setUpAgain(key); // the click: a distro AIB was removed from gets AIB again
   if (one(args, 'peek') === '1' && one(args, 'start') !== '1') {
     const seen = peekWslHost(key);
     const state = peekState(seen);
@@ -125,6 +137,16 @@ async function reach(
   } catch (error) {
     return { reply: [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }] };
   }
+}
+
+/**
+ * "Set up again" (an explicit start of a distro AIB removed itself from): the 'removed' flag goes and the stopped host is forgotten,
+ * so the next wslHost() makes a fresh one that installs AIB again. Nothing happens for a distro that was not removed.
+ */
+function setUpAgain(key: string): void {
+  if (!isDistroRemoved(key)) return;
+  clearDistroRemoved(key);
+  wslHostsInUse()?.drop(key);
 }
 
 /** A distro's own switch for an agent (on when nothing is saved, or when the context has no settings: tests). */
@@ -188,6 +210,7 @@ export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Reco
       problem,
       alwaysAllow: urlGate.alwaysAllowed(key),
       isDefault: d.isDefault === true,
+      removed: isDistroRemoved(key), // AIB removed itself from it (state 'off' until the next explicit start)
     });
   }
   return {
@@ -309,10 +332,48 @@ export function wslRoutes(): Map<string, Handler> {
   guarded('POST', '/api/live/wsl/reconnect', async (_ctx, _args, body) => {
     const distro = typeof body.distro === 'string' ? body.distro : '';
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
+    setUpAgain(distro.toLowerCase()); // Reconnect is a click too
     const host = wslHost(distro);
     if (!host) return [404, { error: `${distroName(distro)} is not available to AIB.`, code: 'wsl_unavailable' }];
     await host.reconnect().catch(() => {}); // a failure is the host's state and note, answered below
     return [200, { ok: true, state: host.state, line: lineOf(distro) }];
+  });
+  // "AIB in <distro>" (Linking (WSL) phase 3, docs/wsl/linking-design.md section 13): disk use, and Remove AIB from the distro
+  guarded('GET', '/api/live/wsl/aib', async (ctx, args) => {
+    const distro = one(args, 'distro');
+    if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
+    const key = distro.toLowerCase();
+    const reached = await reach(distro, args);
+    if ('reply' in reached) return reached.reply;
+    if ('off' in reached) return [200, { ...reached.off, usage: null }];
+    const name = distroName(distro);
+    let usage: AibUsage;
+    try {
+      usage = await reached.host.call('aib.usage', {}, { timeoutMs: 60_000 });
+    } catch (error) {
+      if (!(error instanceof WslHelperError)) throw error;
+      const old = ['unknown_method', 'no_method'].includes(error.code);
+      const line = old ? `The AIB helper in ${name} is too old to show this. Restart AIB.` : `AIB could not measure its folder in ${name}: ${error.message}`;
+      return [200, { distro: key, name, state: 'ready', line, usage: null }];
+    }
+    const busy = await ctx.host?.busyConnections().catch(() => []) ?? [];
+    usage.chatsWorking = (busy as { cwd?: unknown }[]).filter((c) => wslLoc(c?.cwd)?.distro === key).length;
+    return [200, { distro: key, name, state: 'ready', line: '', usage }];
+  });
+  guarded('POST', '/api/live/wsl/aib/remove', async (ctx, _args, body) => {
+    const distro = bodyDistro(body);
+    if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
+    const mode = body.mode;
+    if (mode !== 'check' && mode !== 'apply') return [400, { error: "mode must be 'check' or 'apply'", code: 'bad_mode' }];
+    if (mode === 'apply' && body.confirm !== true) return [400, { error: 'Confirm the removal first', code: 'confirm_needed' }];
+    const key = distro.toLowerCase();
+    const host = peekWslHost(key); // the button is only on a ready distro's card: never started for it
+    const why = peekState(host) === 'off' ? `${distroName(distro)} is not running.` : notReady(host, key);
+    if (why || !host) return [409, { error: why || `${distroName(distro)} is not running.`, code: 'wsl_unavailable' }];
+    const busy = await ctx.host?.busyConnections().catch(() => []) ?? [];
+    const terminals = ctx.terminals?.list() ?? [];
+    const steps = realSteps(host, { key, name: distroName(distro), busy: busy as { cwd?: unknown }[], terminals });
+    return [200, await removeAib(steps, mode)];
   });
   guarded('POST', '/api/live/wsl/open-url', (ctx, _args, body) => {
     urlGate.configure(ctx.stateDir ? String(ctx.stateDir) : null);

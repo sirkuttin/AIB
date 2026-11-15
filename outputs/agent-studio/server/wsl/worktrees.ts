@@ -11,6 +11,7 @@ import * as wt from '../worktrees/worktrees.ts';
 import { refOf } from '../platform/location.ts';
 import { hostWhenReady, wslLoc } from './access.ts';
 import { type WorktreePlanJson, type WslHost, WslHelperError } from './contract.ts';
+import { worktreeRemovedByRemove } from './removed.ts';
 
 /** A WSL chat's plan: path and project are refs (what Studio uses); `linuxPath` is the worktree folder the agent gets. */
 export class WslPlan extends wt.Plan {
@@ -125,6 +126,8 @@ export async function wslRecord(ref: string, session: string | null = null, stri
 export async function wslIsRemoved(ref: string, session: string | null = null): Promise<boolean> {
   const wsl = wslLoc(ref);
   if (!wsl) return false;
+  // a chat copy "Remove AIB from <distro>" deleted (with its registry): known on Windows, and asked before the distro is
+  if (worktreeRemovedByRemove(wsl.distro, wsl.linuxPath, session)) return true;
   try {
     return (await (await host(wsl.distro)).call('worktree.isRemoved', { workspace: wsl.linuxPath, ...(session ? { session } : {}) })).removed;
   } catch (error) {

@@ -79,31 +79,28 @@ export async function savedFolders(ctx: WebContext, ident: string): Promise<Map<
 
 /** How long the Merge/Changes poll waits for a chat's worktree status before it answers "still checking" (the page gives up at 30 s). */
 export const WORKTREE_STATUS_WAIT_MS = 20_000;
-/** A finished status is reused this long: several views of one chat poll it at once. */
-export const WORKTREE_STATUS_REUSE_MS = 1_500;
 const statusRuns = new Map<string, Promise<Record<string, unknown>>>();
-const statusDone = new Map<string, { at: number; value: Record<string, unknown> }>();
 
 /**
- * One chat's worktree status for GET /api/live/worktree: concurrent requests for the same chat share one run, a fresh answer is
- * reused briefly, and a run that takes longer than WORKTREE_STATUS_WAIT_MS is answered as "still checking" while it goes on
- * (the next poll gets its result), so a slow git can never hold the page past its own time-out.
+ * One chat's worktree status for GET /api/live/worktree: concurrent requests for the same chat share one run, and a run that takes
+ * longer than WORKTREE_STATUS_WAIT_MS is answered as "still checking" while it goes on (the next poll joins it and gets its result),
+ * so a slow git can never hold the page past its own time-out.
+ * A finished answer is never reused: the Merge button asks again only when something changed (a turn ended, files changed, a merge
+ * ran), so an answer from before that change would stay on the button ("Nothing to merge" after the chat committed its work).
  */
 export async function worktreeStatus(
   id: string,
   run: () => Promise<Record<string, unknown>>,
   waitMs = WORKTREE_STATUS_WAIT_MS,
 ): Promise<Record<string, unknown>> {
-  const done = statusDone.get(id);
-  if (done && Date.now() - done.at < WORKTREE_STATUS_REUSE_MS) return done.value;
   let pending = statusRuns.get(id);
   if (!pending) {
-    pending = run();
-    statusRuns.set(id, pending);
-    pending.then((value) => {
-      if (statusDone.size > 200) statusDone.clear();
-      statusDone.set(id, { at: Date.now(), value });
-    }, () => {}).finally(() => statusRuns.delete(id));
+    const started = run();
+    pending = started;
+    statusRuns.set(id, started);
+    started.catch(() => {}).finally(() => {
+      if (statusRuns.get(id) === started) statusRuns.delete(id);
+    });
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
@@ -113,6 +110,11 @@ export async function worktreeStatus(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** A merge, merge request or clash action changed this chat's worktree: the next status starts a fresh run (a run already going may predate it). */
+export function forgetWorktreeStatus(id: unknown): void {
+  if (typeof id === 'string') statusRuns.delete(id);
 }
 
 const changesRuns = new Map<string, Promise<Reply>>();
@@ -306,13 +308,21 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('POST /api/live/worktree/merge', async (ctx, _url, body) => {
     const title = typeof body?.title === 'string' ? body.title : '';
     const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
-    return refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, title) : merge.merge(studio, body?.id, title));
+    try {
+      return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, title) : merge.merge(studio, body?.id, title));
+    } finally {
+      forgetWorktreeStatus(body?.id);
+    }
   });
   // The Changes tab's Merge button: a one-shot merge permission for this chat, then the chat is asked to merge (merge_request.ts).
   routes.set('POST /api/live/worktree/merge-request', async (ctx, _url, body) => {
     const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
-    if (wsl) return refusedReply(() => wslMerge.wslRequestMerge(studio, wsl, requestBlockedHere(ctx, wsl.state)));
-    return refusedReply(() => merge.requestMerge(studio, body?.id, { blocked: (state) => requestBlockedHere(ctx, state) }));
+    try {
+      if (wsl) return await refusedReply(() => wslMerge.wslRequestMerge(studio, wsl, requestBlockedHere(ctx, wsl.state)));
+      return await refusedReply(() => merge.requestMerge(studio, body?.id, { blocked: (state) => requestBlockedHere(ctx, state) }));
+    } finally {
+      forgetWorktreeStatus(body?.id);
+    }
   });
   routes.set('POST /api/live/worktree/clash', async (ctx, _url, body) => {
     if (body?.action === 'resume-sync') {
@@ -321,7 +331,11 @@ export function studioRoutes(): Map<string, StudioHandler> {
     }
     const action = typeof body?.action === 'string' ? body.action : '';
     const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
-    return refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action) : merge.resolveClash(studio, body?.id, action));
+    try {
+      return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action) : merge.resolveClash(studio, body?.id, action));
+    } finally {
+      forgetWorktreeStatus(body?.id);
+    }
   });
   // ---- swarm phase 1: the merge line's Undo / Merge again, and a chat's helpers (page only; never the agent key) ----
   routes.set('POST /api/live/swarm/undo', (ctx, _url, body) => swarmOf(ctx).undo(body?.helper));
@@ -449,8 +463,12 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
       return [403, { error: 'Helpers are merged by their main chat: report back instead', code: 'helper' }];
     }
     const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, conversation); // a WSL chat: its distro's helper merges
-    if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, '', true) : merge.mergeFromTool(studio, conversation));
-    return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action, true) : merge.resolveClash(studio, conversation, action, true));
+    try {
+      if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, '', true) : merge.mergeFromTool(studio, conversation));
+      return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action, true) : merge.resolveClash(studio, conversation, action, true));
+    } finally {
+      forgetWorktreeStatus(conversation);
+    }
   }
   if (path === '/api/live/swarm/tool') { // swarm phase 1: the key is bound to the body's conversation; the role is checked in the service
     const [body, bad] = await ownGateBody(request, 200000);

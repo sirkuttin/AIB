@@ -466,7 +466,7 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   `force=1`). Only the Start and check click adds `start=1`. A not-ready peek answer never fills the new-chat panel's cache.
 - Links: the new-chat panel's "not installed in Ubuntu" state has **Set up Ubuntu in Settings** (opens the section with that
   card in view); Settings > About has "WSL distros: details and agent installs in AIB Linking (WSL)".
-- Later phases (not drawn): Repair AIB helper, Beta agents and the "AIB in Ubuntu" card with Remove.
+- Later phases (not drawn): Repair AIB helper and Beta agents. The "AIB in Ubuntu" card with Remove: phase 3 below.
 - Tests: `work/test_wsl_settings.js` (fake routes of the contract: every phase 1 state, no start on open, the namespaces).
 
 ### Phase 2 (page; design section 12)
@@ -511,6 +511,136 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   terminal's address, sign-in and `start=1`, uninstall, limits, no `start` on open); `work/test_wsl_ui.js` (signinUrl keeps
   `distro` for a distro setup step).
 
+## Remove AIB from a distro (Linking (WSL) phase 3: server and helper)
+
+Design: `docs/wsl/linking-design.md` section 13 (the contract and the REMOVE RULES). Helper: `server/wsl/helper/aib_remove.ts`;
+Windows: `server/wsl/remove.ts` (the order and the last step), `server/wsl/removed.ts` (the flag), `server/web/wsl_routes.ts`.
+
+**Routes** (the page token, as every WSL route):
+
+- `GET /api/live/wsl/aib?distro=<d>&peek=1[&start=1]`: not ready -> `{distro, name, state, line, usage: null}` (never started);
+  ready -> `{distro, name, state: 'ready', line: '', usage: AibUsage}`. `AibUsage` (contract.ts) = `{root, totalBytes, current,
+  parts: [{key, label, bytes, path}], versions, agents: [{id, versions, bytes}], dataFolders: [{name, mine, keeperAlive, bytes}],
+  worktrees: {count, dirty}, chatsWorking, partial?}`. Part keys in order: `versions` (every `<ver>/`), `agents` (agents/ without
+  the cache), `npmCache` (`agents/.npm-cache`), `data` (this AIB's `data-<hash>/` without its worktrees and keeper), `worktrees`
+  (`<data>/worktrees`), `logs` (`<data>/keeper`: the keeper's chat journals and log), `other` (other data folders, an old
+  root-level `helper/`, anything else). `chatsWorking` is Studio's busy chats in that distro (`LiveBackend.busyConnections`).
+  `partial: true` when the walk ran out of time (10 s) or entries (1,000,000): the sizes are then at least these. An older helper:
+  `usage: null` with "The AIB helper in Ubuntu is too old to show this. Restart AIB."
+- `POST /api/live/wsl/aib/remove {distro, mode: 'check'|'apply', confirm?: boolean}` -> 200 `{ok, mode, blocked: string[],
+  wouldRemove: [{path, what, bytes}], kept: [{path, why}], removed: string[], left: string[], message?}`. 400 `bad_mode`; 'apply'
+  without `confirm: true`: 400 `confirm_needed`. Never starts a distro: 409 `wsl_unavailable` when it is not ready (and while it is
+  removed). `blocked` lines are for the page verbatim. 'check' changes nothing.
+- `GET /api/live/wsl/status` distros gain `removed: boolean`; such a distro reads `state: 'off'`.
+- "Set up again" is the existing start: any `start=1` (agents, prereqs, aib) or `POST /api/live/wsl/reconnect` on a removed distro
+  clears the flag and forgets the stopped host, so the next start installs AIB again (copies the programs, a new data folder).
+
+**Helper methods** (offered only with `--data`): `aib.usage {}` -> `AibUsage` (chatsWorking 0; AIB fills it in);
+`aib.remove {mode}` -> the result above plus, for 'apply', the helper-only `final: {data, version, root, copies}` (what the last
+step may delete; the chat copies deleted), which never reaches the page.
+
+**What goes, what stays.** Only this AIB's `data-<hash>/` (its chat copies, worktree registry, sync and merge files, keeper
+journals and log, helper sockets). The shared parts, `agents/` (with `agents/.npm-cache`), every `<ver>/` and an old root-level
+`helper/`, go only when there is no other `data-*` folder at all (a stopped one counts too: that AIB build needs them again; a live
+one is found by connecting to its `keeper/keeper.sock`) and no program other than this AIB's own runs from, works in or names them
+(`/proc` read by sh: exe, cwd and arguments; this AIB's own are the ones started with `--data <its data folder>` and the MCP relay
+on `<data>/helper/mcp.sock`). Otherwise they are kept and listed with why. The root itself goes only with `rmdir` (when empty), and
+only when nothing in it was kept; anything in the root AIB did not make is kept. `~/.claude`, `~/.codex`, nvm, asdf and the projects
+are never inside the root, so never named; `kept` lists `~/.claude`, `~/.codex` and each project for the confirm dialog. Chat
+branches stay (`git worktree prune` only).
+
+**Refused** (`blocked`, nothing deleted): a chat of this AIB in the distro is working; the distro's Linux keeper has a live chat or
+terminal (AIB's own channels left out); a sign-in or Node.js set-up terminal for it is open; an agent install runs (Windows'
+progress, or a live pid in `agents/<id>/install.lock`); a chat copy has uncommitted changes (`git status --porcelain
+--untracked-files=all`: untracked files count, ignored files do not) or cannot be checked (its project is gone); a program works
+in this data folder (a shell in a chat copy); the process list cannot be read; a guard below fails.
+
+**Guards** (helper, `aib_remove.ts`; every one unit-tested in `wsl_linking_remove_helper_test`): the root is a plain absolute
+path (no `.`, `..`, `//` or trailing `/`), at least two folders deep, named `.aib-server` or `aib-wsl-test-*`, not on `/mnt/<drive>`,
+not the home folder nor above it, a real folder (not a link) whose real path is itself; the data folder is exactly
+`<root>/data-<12 hex>`, a real folder. Deletion walks the tree with Deno's `lstat` / `realPath` / `readDir` / `remove` (one name
+at a time, never recursive): a link is unlinked as a name inside the root and its target never touched, a folder's real path must be
+itself before its entries are read and again before each entry goes (a folder swapped for a link mid-walk stops the walk), the
+parent's real path must be itself, nothing outside the root is ever named, and another file system (a mount point) is never entered.
+
+**Test guard** (three layers): under `AGENT_STUDIO_TEST=1` AIB passes `AIB_WSL_TEST=1` to the helper (hosts.ts helperEnv), whose
+root must then be `/tmp/aib-wsl-test-*` and never `$HOME/.aib-server`; the Windows side refuses a real host whose root is not the
+test's own `AIB_WSL_ROOT` (`remove.ts testGuard`, before the helper is asked anything); the last step gets the flag too and
+refuses anything but `/tmp/aib-wsl-test-<name>` (no deeper folder). So no test can touch the owner's real root.
+
+**The apply order** (`remove.ts removeAib`, its order asserted step by step in `wsl_linking_remove_test`):
+
+1. AIB's refusals + helper `aib.remove {mode:'check'}`; any refusal: `ok: false`, nothing changes.
+2. The `removed` flag (`<state folder>/wsl-removed.json`, survives a restart): from here `wslHost()` and `peekWslHost()` give no
+   host for the distro, so nothing (a chat, the take-over at start, Files, a sign-in terminal) can start it or install AIB again;
+   they say "AIB was removed from Ubuntu. To use it there again, open Settings > AIB Linking (WSL) and click Set up again."
+   AIB's own refusals run once more right after it (a chat that went live just before the flag): any, and the flag is undone.
+3. The keep-alive in the Windows keeper is stopped (`releaseHold`).
+4. Helper `aib.remove {mode:'apply'}`: the refusals run again (any: the flag is cleared and the keep-alive comes back; nothing was
+   deleted); then the chat copies are deleted, `git worktree prune` runs in each of their projects (while the helper still runs;
+   prune is a no-op until the copies are gone, so it comes right after them), then the rest of the data folder but `keeper/` and
+   `helper/`, then the shared parts that may go, except the current `<ver>/`.
+5. The helper's channel is ended and the Linux keeper shut down WITHOUT force (`hosts.ts shutdownKeeper`): a chat that went live
+   meanwhile refuses it, and the folder is then left and reported. From this step the host never reconnects.
+6. The host stops for good (state 'off' with the flag; never half-started) and is forgotten (`WslHosts.drop`).
+7. **The last step (the self-deletion problem).** The keeper's socket, lock and journals (`<data>/keeper/`), the helper's sockets
+   (`<data>/helper/`) and the current `<ver>/` (the programs both run from) cannot go while they run, and the helper is gone by now.
+   So one hidden `wsl.exe -d <distro> --cd ~ --exec /bin/sh -c FINAL_CLEANUP_SCRIPT sh <root> <data-name> <ver or -> <root may go>
+   <test>` (fixed script text; the five values only as `"$1".."$5"`, every one non-empty, checked on Windows (`finalArgs`) and again
+   in the script with the same root guards) waits up to 15 s for every process that runs from, works in or names the data folder
+   (keeper, bridges, relay) to end, then deletes it with `rm -rf --one-file-system --` (GNU rm never follows a link and does not
+   cross into a mount), then the `<ver>/` (only when the helper said so, after up to 10 s more for programs running from it), then
+   `rmdir` on the root (only when the helper said it may go; rmdir fails on a folder that is not empty). It prints
+   `removed=`, `left=<path>: <why>`, `gone=` or `error=` lines.
+8. The chat copies deleted are remembered (`wsl-removed.json` `worktrees`), so their chats read as "workspace removed"
+   (`wsl/worktrees.ts wslIsRemoved` answers before asking the distro; kept after Set up again, the copies stay gone).
+9. The report: `removed`, `left` and `message`; `ok` only when nothing was left and every step ran. A helper that fails in the middle
+   of step 4: everything is stopped (flag kept) and the last step never runs blind ("Some of AIB may be left: click Set up again,
+   then Remove again").
+
+Idempotent: Remove on a distro with nothing left is fine (a root that is not there: "nothing to remove"); after Set up again it
+removes the new install the same way.
+
+**Tests:** `wsl_linking_remove_helper_test` (an in-memory Linux file system with links, a mount and a mid-walk swap: every guard,
+links to a canary outside the root unlinked with the canary intact, every refusal deleting nothing in check and apply, what stays
+with another data folder, a program in `agents/`, nothing else; usage), `wsl_linking_remove_test` (FakeWslHost: route shapes, peek,
+409 without a start, the exact apply order, the flag and Set up again, refusals and failures, the test guard, the last step's
+arguments), `wsl_linking_remove_e2e` (real distro, below).
+
+### Phase 3 (page; design section 13): "AIB in Ubuntu" and Remove
+
+- **AIB in Ubuntu**: the last card of a ready distro's group (a distro that is not ready shows only its status card, with Start
+  Ubuntu and check). It reads `GET /api/live/wsl/aib?distro&peek=1` (again after a minute, `force=1` on its **Refresh**; never
+  `start`).
+- The card: "Everything AIB keeps in Ubuntu, in <root> on this PC", the disk use by part (`usage.parts`: label and size, the
+  part's folder on hover; the agents of `usage.agents` with their versions under the agents part; "In all" = `totalBytes`).
+- Then the lines "AIB versions installed: <current> (current), <older>", "Chat copies: 3, 1 with unsaved changes" (none / none with
+  unsaved changes), "Chats working now: N".
+- **Other AIB data folders in Ubuntu** (`dataFolders` where not `mine`): name, size, an "in use" chip when `keeperAlive`; read-only,
+  with "These belong to another AIB build or data folder. Remove here never touches them."
+- `usage: null` (not ready): the answer's line, no buttons. A read error: the reason, Remove and Refresh.
+- **Remove AIB from Ubuntu** opens an in-page dialog in delete-project-ui.js's look (`.dp-dialog`, role alertdialog, Cancel
+  focused, Escape and the backdrop cancel, focus kept inside) and posts `wsl/aib/remove {distro, mode: 'check'}` (deletes
+  nothing).
+- The dialog lists `wouldRemove` grouped by `what` (size per group and in all, each path under it), `kept` with each `why`, and
+  always "Your projects, ~/.claude, ~/.codex, nvm and asdf are not touched." and "Chat branches stay in your repos."
+- `blocked`: "AIB cannot be removed from Ubuntu now:" and each reason verbatim on its own line; the Remove button is off, the
+  others are Close and **Check again** (a new check).
+- Confirm: a second click on "Remove AIB from Ubuntu" (the first shows "Choose Remove AIB from Ubuntu again to delete these. This
+  cannot be undone."); when the card's `usage.chatsWorking` is above 0 the tick "I understand chats running in Ubuntu will stop"
+  replaces the second click. No other gate.
+- Apply: `{distro, mode: 'apply', confirm: true}`; the button reads "Removing…", every dialog button is off, the card's Remove and
+  Refresh are off with "Removing AIB from Ubuntu…". Nothing changes on the page before the answer.
+- `ok: true`: the dialog closes; the group shows "AIB is not set up in Ubuntu." with **Set up again** (the Start and check request,
+  `agents?peek=1&start=1`, which clears the server's removed flag); no other cards; the overview chip reads "Not set up".
+- `ok: false` with `blocked` (refused when it ran again): the reasons as above, nothing removed. `ok: false` without (partial):
+  "AIB could not remove everything from Ubuntu.", `message`, "Left in Ubuntu:" (`left` verbatim) and "Removed:"; only Close; the
+  not-set-up card keeps the message and the left list until Set up again. A failed request: its message, Remove can be tried again.
+- `status.distros[].removed` (with state `off`) draws the same not-set-up state after a reload; the distro stays in the drop-down.
+- Tests: `work/test_wsl_settings.js` (phase 3: the card's parts, versions, copies, other folders; peek only on open; the dialog
+  from check, grouping, kept, blocked; the second click and the tick; success, partial and refused applies; the removed flag after
+  a reload; buttons off while it runs; each distro's own card through the drop-down).
+
 ## Building and testing
 
 ```
@@ -550,13 +680,14 @@ keeps one failure from hiding the others' results.
 | `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends |
 | `wsl_linking_routes_e2e` | phase 2 routes: peek, Uninstall and the Node.js terminal make no host before AIB used the distro; with the real helper and a stand-in login shell, `prereqs?start=1`, the rows' `enabled` / `signin` / `canUninstall` / `limits`, Uninstall and the Node.js terminal (the "too old" answers while the helper lacks the phase 2 methods); the Node.js script run with bash in the distro against a stand-in install.sh (`file://`): checksum gate, PROFILE per login shell, the 22.19 minimum, every command printed |
 | `wsl_linking_helper_e2e` | `env.prereqs` on the distro as it is (asdf shim: ok, npm found next to the real node, no nvm offer); with a stand-in login shell: Node.js missing, too old, an asdf shim with no version, each after `force`; `agents.uninstall` refused while a test process runs from the fake agent folder, then removing only it, a linked `agents/<id>` left alone; `agents.signinStatus` over fake credential files, the fake token never in the answer |
+| `wsl_linking_remove_e2e` | "AIB in <distro>" and Remove, all under `/tmp` (the root asserted first; a canary folder, a temp HOME with `.claude` / `.codex` sentinels and the project outside the root): usage with a second fake data folder whose stand-in keeper listens; a dirty chat copy refused (nothing deleted); with that keeper alive only this AIB's data folder goes (agents, every `<ver>`, the root kept), the copy pruned, the branch kept, no process of it left, status removed + off, a second apply 409; Set up again with a stand-in program in `agents/`: agents kept, both `<ver>` gone; then everything incl. the root; again after Set up again; the last step's guards on temp folders; links inside the root to the canary and the temp HOME unlinked only |
 | `wsl_linking_e2e` | Settings' peek before AIB used the distro makes no host; with a stand-in login shell and asdf's layout (shims for node, npm, codex-acp; a fake `@agentclientprotocol/codex-acp` with its `@openai/codex`): detect resolves the shim to `[real node, entry]`, `signin` and `bundledCli` name the bundled CLI, the peek row says so, the Codex sign-in runs it |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_linking_helper_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_linking_helper_test`, `wsl_linking_remove_test`, `wsl_linking_remove_helper_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)

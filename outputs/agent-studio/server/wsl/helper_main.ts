@@ -224,6 +224,8 @@ async function helperMain(args: string[]): Promise<number> {
     notify: (method, params) => void send({ jsonrpc: '2.0', method, params }).catch(() => {}),
     refreshPath,
     envMode: () => mode,
+    // read from the start environment: the login environment replaces it (aib.remove's test guard must not get lost)
+    aibStart: { version: base.AIB_WSL_VERSION ?? '', test: base.AIB_WSL_TEST === '1' },
   });
   // The MCP tunnel: only with a keeper program to run the relay (one that knows `mcp-relay`; an older one exits at once: no tunnel).
   const keeper = argValue(args, '--keeper') || (exeDir ? `${exeDir}/${KEEPER_NAME}` : '');

@@ -13,6 +13,7 @@ import { ValueError } from '../core/py.ts';
 import { urlGate } from './open_urls.ts';
 import { mcpTunnelGate } from './mcp_tunnel.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { isDistroRemoved } from './removed.ts';
 
 /** A distro of this PC as the page and the routes see it (wsl/detect.ts WslDistro). */
 export type DistroInfo = Pick<WslDistro, 'name' | 'version'> & Partial<WslDistro>;
@@ -53,6 +54,7 @@ export function isWslPath(path: unknown): boolean {
  */
 export function wslHost(distro: string): WslHost | null {
   const key = String(distro).toLowerCase();
+  if (isDistroRemoved(key)) return null; // AIB removed itself from it: nothing starts it (or installs AIB) until "Set up again"
   let host: WslHost | null = null;
   try {
     host = resolver ? resolver(key) : wslHosts()?.get(key) ?? null;
@@ -72,6 +74,7 @@ export function wslHost(distro: string): WslHost | null {
 /** The host of a distro only if this AIB already uses it (status lines, saved sessions): never makes or starts one. */
 export function peekWslHost(distro: string): WslHost | null {
   const key = String(distro).toLowerCase();
+  if (isDistroRemoved(key)) return null; // removed: reads as 'off'
   try {
     return resolver ? resolver(key) : wslHostsInUse()?.peek(key) ?? null;
   } catch {
@@ -188,9 +191,15 @@ export function linkOf(host: WslHost): KeeperLink {
   return host.link as KeeperLink;
 }
 
+/** What a WSL chat, Files view or terminal says while AIB is removed from its distro (wsl/removed.ts). */
+export function removedLine(name: string): string {
+  return `AIB was removed from ${name}. To use it there again, open Settings > AIB Linking (WSL) and click Set up again.`;
+}
+
 /** '' when the host can take work now, else the line the user sees (its note, or what the state means). */
 export function notReady(host: WslHost | null, distro: string): string {
   const name = distroName(distro);
+  if (!host && isDistroRemoved(distro)) return removedLine(name);
   if (!host) return `${name} is not available to AIB.`;
   if (host.state === 'ready') return '';
   if (host.note) return host.note;

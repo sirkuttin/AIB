@@ -33,6 +33,7 @@ import { docRows } from '../../docs/rows.ts';
 import { bgtaskMethods } from './bgtasks.ts';
 import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
 import { signinStatus } from './signin_status.ts';
+import { aibMethods, type RemoveDeps } from './aib_remove.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -65,6 +66,10 @@ export interface HelperContext {
   envMode?(): EnvMode;
   /** Tests: env.prereqs' program runner and file checks (helper/prereqs.ts PrereqDeps). */
   prereqDeps?: Partial<PrereqDeps>;
+  /** Tests: aib.usage / aib.remove's file system, process list and checks (helper/aib_remove.ts RemoveDeps). */
+  aibDeps?: Partial<RemoveDeps>;
+  /** The helper's start environment for aib.* (this AIB's <ver>, the test guard): read before the login environment replaces it. */
+  aibStart?: { version?: string; test?: boolean };
 }
 
 /** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
@@ -193,6 +198,10 @@ export function makeMethods(ctx: HelperContext): Handlers {
     ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
+    // Linking (WSL) phase 3: disk use and Remove AIB from this distro (helper/aib_remove.ts), only with both folders known
+    ...(ctx.root && data
+      ? aibMethods({ root: ctx.root, data, env: ctx.env, ...(ctx.aibStart ? { start: ctx.aibStart } : {}), ...(ctx.aibDeps ? { deps: ctx.aibDeps } : {}) })
+      : {}),
   };
   return Object.fromEntries(
     Object.entries(methods).map(([name, handler]) => [name, async (p: Record<string, unknown>) => {
