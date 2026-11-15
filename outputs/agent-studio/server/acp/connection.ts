@@ -606,15 +606,16 @@ export const ARTIFACT_PROMPT =
   'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING;
 
 /**
- * The same for a chat in a WSL project (design section 11: phase 1 offers only the artifact tools that need no project file). AIB
- * runs on Windows and cannot read files inside the distro, so publish takes the content; there are no doc or merge tools.
+ * The same for a chat in a WSL project (design section 11: the artifact tools that need no project file). AIB runs on Windows and
+ * cannot read files inside the distro, so publish takes the content; there are no doc or helper tools. A chat in its own copy also
+ * gets the merge tools (WORKTREE_PROMPT says so; the merge runs in the distro).
  */
 export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
   'mean this viewer and its studio_artifact tool. This project is in WSL: AIB runs on Windows and cannot open files inside the ' +
   'distro, so when you make something the user should look at rather than source code (an HTML page, one-off report, chart, ' +
   'diagram or SVG), publish it with the studio_artifact publish tool by passing its content (never a file path) and mention it ' +
-  'in your reply as the Markdown link the tool returns; use update with the new content to change it. AIB docs and merge tools ' +
+  'in your reply as the Markdown link the tool returns; use update with the new content to change it. AIB docs and helper tools ' +
   'are not available in WSL projects. ' + TOOLS_LOADING;
 
 export const WORKTREE_PROMPT =

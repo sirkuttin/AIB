@@ -167,8 +167,8 @@ export function windowsPathInWsl(path: string): string | null {
 
 /** Phase 1 without the interop MCP entry: what the chat says instead of failing silently (design section 8, item 5). */
 export const WSL_TOOLS_NOTICE = 'AIB tools (docs, artifacts, merge) are not available in WSL projects yet.';
-/** Phase 1 with the interop MCP entry: only the artifact tools that need no project file (section 11 decision). */
-export const WSL_TOOLS_LIMITED = 'In WSL projects, AIB tools are limited to artifacts (publish, list, update); docs and merge are not available yet.';
+/** With the interop MCP entry: the artifact tools that need no project file (section 11 decision), and merge for a chat in its own copy. */
+export const WSL_TOOLS_LIMITED = "In WSL projects, AIB tools are limited to artifacts (publish, list, update) and merging a chat's own copy; docs are not available yet.";
 
 /** Install commands the agent picker shows for an agent missing in a distro (the user runs them; AIB never runs npm in phase 1). */
 export const WSL_INSTALL: Readonly<Record<string, string>> = {

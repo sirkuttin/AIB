@@ -233,7 +233,7 @@ export class ArtifactMcpHttp {
       key,
       conversation,
       worktree: !!open?.worktree,
-      restricted: !!open?.restricted, // a WSL chat: publish / update / list by content only
+      restricted: !!open?.restricted, // a WSL chat: publish / update / list by content only (and merge, in its own worktree)
       main: !!open?.main && !open?.restricted, // swarm helper tools: never in a restricted (WSL) chat
       cwd: open && !open.restricted ? open.cwd : null,
       roots: () => [studio.baseUrl(), urlFromFile(studio.urlFile)],

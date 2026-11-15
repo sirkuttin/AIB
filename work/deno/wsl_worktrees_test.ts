@@ -5,7 +5,7 @@
  *   - Studio with a FakeWslHost (work/deno/_wsl_fake.ts): a new WSL chat gets its worktree from the helper (cwd = the worktree's
  *     ref, the agent's cwd its Linux folder, projectRoot the project's ref, `loc` in its chat note), a crashed AIB rebuilds it there,
  *     Discard removes it through the helper; a fallback, and a helper without worktrees, keep the chat in the project folder;
- *   - the Changes view of a WSL worktree chat: the branch view against its diff base, Discard, and no Merge yet.
+ *   - the Changes view of a WSL worktree chat: the branch view against its diff base, Discard and Merge (wsl_merge_test.ts).
  * Never a real distro, never the owner's homes.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -254,7 +254,7 @@ Deno.test({ name: 'wsl studio: a worktree that cannot be made, or a helper witho
   }
 } });
 
-Deno.test({ name: 'wsl changes: a worktree chat gets the branch view against its diff base and Discard, but no Merge yet', ...T, async fn() {
+Deno.test({ name: 'wsl changes: a worktree chat gets the branch view against its diff base, Discard and Merge', ...T, async fn() {
   const host = new FakeWslHost(Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-changes-' }));
   host.handlers['worktree.find'] = (p) => ({ record: p.path === WT_LINUX ? { key: 'k1', path: WT_LINUX, project: '/home/u/app', branch: 'studio/chat-abcd1234', diffBase: 'u0' } : null });
   host.handlers['changes.get'] = (p) => ({ git: true, root: p.folder, scope: p.base ? 'branch' : 'uncommitted', files: [] });
@@ -264,7 +264,7 @@ Deno.test({ name: 'wsl changes: a worktree chat gets the branch view against its
     const [s1, own] = await changesResponse(studio, '/api/live/changes', { id: ['wt'] }, { 'X-Studio-Token': 't' }) as [number, Json];
     assertEquals(s1, 200);
     assertEquals(own.scope, 'branch');
-    assertEquals(own.worktree, { branch: 'studio/chat-abcd1234', merge: false });
+    assertEquals(own.worktree, { branch: 'studio/chat-abcd1234' }); // Discard and Merge, as on Windows
     assertEquals(host.calls.find(([m]) => m === 'changes.get')![1].base, 'u0');
     const [, plain] = await changesResponse(studio, '/api/live/changes', { id: ['main'] }, { 'X-Studio-Token': 't' }) as [number, Json];
     assertEquals([plain.scope, plain.worktree], ['uncommitted', undefined]);

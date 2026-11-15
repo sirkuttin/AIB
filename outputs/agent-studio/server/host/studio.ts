@@ -756,7 +756,7 @@ export class Studio {
    * The `studio_artifact` entry of a WSL chat (design section 11, phase 1): the Windows keeper's MCP forwarder run through WSL interop
    * (`/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address file>`), so the agent in the distro reaches AIB's HTTP tool endpoint on
    * Windows loopback without a tunnel. WSLENV hands MCP_FORWARD_HEADERS over to the Windows process. The endpoint gives such a chat
-   * only publish / update / list by content (mcp.ts RESTRICTED_TOOLS). No entry when the forwarder cannot be had: the chat then says
+   * only publish / update / list by content (mcp.ts RESTRICTED_TOOLS), and the merge tools in its own worktree (wsl/merge.ts). No entry when the forwarder cannot be had: the chat then says
    * the tools are missing instead of failing silently. The user's own --mcp-config entries are Windows commands and are not passed.
    */
   async wslMcpServers(conversationId: string): Promise<{ servers: McpServer[]; notice: string }> {
@@ -1071,7 +1071,7 @@ export class Studio {
       else if (c.worktree && !wsl) c.swarm = { role: 'main' }; // a WSL chat has no swarm tools (restricted AIB tools)
       let toolsNotice = '';
       if (launch) {
-        const tools = await this.wslMcpServers(c.id); // restricted tools: no merge, doc or swarm tools in a WSL chat
+        const tools = await this.wslMcpServers(c.id); // restricted tools: artifacts, merge in its own worktree; no doc or swarm tools
         c.mcpServers = tools.servers;
         toolsNotice = tools.notice;
       } else {

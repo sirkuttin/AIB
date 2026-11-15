@@ -2,7 +2,7 @@
  * Real WSL (AIB_WSL_E2E=<distro>; see _wsl_e2e.ts): the worktree per chat of a WSL project, made by the distro's helper.
  *   - a new chat in a temp git repo gets its own worktree and branch under the Linux data folder (<data>/worktrees, never /mnt);
  *     its agent works there, AIB keys it by the worktree's ref, and it stays under its project;
- *   - the Changes view shows the chat's branch against its diff base (Discard, no Merge); a restarted AIB re-adopts the chat on the
+ *   - the Changes view shows the chat's branch against its diff base (Discard and Merge); a restarted AIB re-adopts the chat on the
  *     same worktree from the distro's keeper;
  *   - Discard stops the agent and removes the worktree and its branch in the distro; a plan pointing outside the root is refused;
  *   - a folder that is not a git repository keeps the chat in place.
@@ -64,7 +64,7 @@ Deno.test({
       assertEquals([record.project, record.branch, record.status], [ref, branch, 'ready']);
       assert(String(record.session).startsWith('claude:'), 'the session is on the record (a later Continue finds the worktree)');
 
-      // a turn, then the chat's work in its copy: the Changes view shows its branch against its diff base, Discard but no Merge
+      // a turn, then the chat's work in its copy: the Changes view shows its branch against its diff base, Discard and Merge
       await a.liveCall('prompt', { id: c.id, text: 'stream:2:5', clientMessageId: 'm1' });
       await until(() => c.permissions.size === 1, 'the question', 30);
       await a.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
@@ -75,7 +75,7 @@ Deno.test({
       const [status, changes] = await changesResponse(view, '/api/live/changes', { id: [c.id] }, { 'X-Studio-Token': 't' }) as [number, Json];
       assertEquals(status, 200);
       assertEquals(changes.scope, 'branch');
-      assertEquals(changes.worktree, { branch, merge: false });
+      assertEquals(changes.worktree, { branch });
       assertEquals((changes.files as Json[]).map((f) => f.path), ['new.txt']);
 
       // an AIB restart (a crash): the next one takes the chat over on the same worktree

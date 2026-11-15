@@ -182,7 +182,7 @@ export async function changesResponse(
 /**
  * The Changes view of a WSL chat (design section 4): the same answers, from worktrees/changes.ts running in the distro's helper
  * (`changes.get`, `changes.diff`). A chat in its own worktree (its record is in the distro: `worktree.find`) gets the branch view
- * against its diff base and Discard, as on Windows; `worktree.merge: false` keeps the Merge button away until WSL merge exists.
+ * against its diff base, Discard and Merge, as on Windows (the merge runs in the helper too: wsl/merge.ts).
  */
 async function wslChanges(ref: string, path: string, scope: string, args: Record<string, string[] | undefined>): Promise<[number, unknown]> {
   const wsl = wslLoc(ref)!;
@@ -205,7 +205,7 @@ async function wslChanges(ref: string, path: string, scope: string, args: Record
       offset: /^\d+$/.test(offset) ? Number(offset) : 0,
       ...(base ? { base } : {}),
     }) as Record<string, unknown>;
-    if (record && result && result.git) result.worktree = { branch: isStr(record.branch) ? record.branch : '', merge: false }; // Discard, no Merge yet
+    if (record && result && result.git) result.worktree = { branch: isStr(record.branch) ? record.branch : '' }; // Discard and Merge
     return [200, result];
   } catch (error) {
     if (error instanceof WslHelperError) return [400, { error: error.message, code: error.code }];

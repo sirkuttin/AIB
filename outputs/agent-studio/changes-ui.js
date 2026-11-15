@@ -205,7 +205,7 @@
   let askSeq = 0;
   const canDiscard = (data) =>
     !!(data && data.git && data.worktree && data.worktree.branch && (data.files || []).length);
-  /* Merge is offered for a chat's own branch, except a WSL chat's (the server sends worktree.merge: false until WSL merge exists). */
+  /* Merge is offered for a chat's own branch (a WSL chat's too); a server that sends worktree.merge: false keeps it away. */
   const canMerge = (data) => !!(data && data.worktree && data.worktree.branch && data.worktree.merge !== false);
   /* The footer of the Changes tab, one row: status line (left), Discard…, then Merge (right). Returns the parts; merge-ui.js drives the line and the button. */
   function footer(doc) {
@@ -913,7 +913,7 @@
           busy: chat.busy,
           files: data && data.git ? shownCount(data) : 0,
           branchView: !!(data && data.scope === 'branch'),
-          worktree: canMerge(data), // a WSL chat's worktree has Discard but no Merge yet
+          worktree: canMerge(data),
           blocked: chat.mergeBlocked || '',
         });
     }

@@ -274,7 +274,8 @@ export interface ToolContext {
   worktree: boolean;
   /**
    * A chat in a WSL project (docs/wsl/design.md section 11): only publish, update and list, and only by content (AIB on Windows cannot
-   * read the distro's files); no doc, drawing, archive or merge tools.
+   * read the distro's files), plus the merge tools when it works in its own worktree (the merge runs in the distro's helper); no doc,
+   * drawing, archive or swarm tools.
    */
   restricted?: boolean;
   /** Swarm: a main chat, offered the helper tools. */
@@ -729,7 +730,7 @@ const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
   [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES].map((name) => [name, (ctx, args) => docTool(ctx, name, args)]),
 );
 
-/** The tools a restricted (WSL) chat gets. */
+/** The tools a restricted (WSL) chat gets (and the merge tools, in its own worktree). */
 export const RESTRICTED_TOOLS: ReadonlySet<string> = new Set(['publish', 'update', 'list']);
 
 const SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
@@ -737,7 +738,9 @@ const SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
 );
 
 function handlers(ctx: ToolContext): Record<string, Handler> {
-  if (ctx.restricted) return Object.fromEntries(Object.entries(HANDLERS).filter(([name]) => RESTRICTED_TOOLS.has(name)));
+  if (ctx.restricted) {
+    return { ...Object.fromEntries(Object.entries(HANDLERS).filter(([name]) => RESTRICTED_TOOLS.has(name))), ...(ctx.worktree ? WORKTREE_HANDLERS : {}) };
+  }
   return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...(ctx.main ? SWARM_HANDLERS : {}), ...DOC_HANDLERS };
 }
 
@@ -775,7 +778,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
   }
   if (method === 'ping') return ok({});
   if (method === 'tools/list') {
-    if (ctx.restricted) return ok({ tools: TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))) });
+    if (ctx.restricted) return ok({ tools: [...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))), ...(ctx.worktree ? WORKTREE_TOOLS : [])] });
     return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...(ctx.main ? SWARM_TOOLS : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
   }
   if (method === 'tools/call') {

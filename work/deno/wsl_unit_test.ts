@@ -276,6 +276,18 @@ Deno.test('mcp restricted (a WSL chat): only publish, update and list, and publi
   assert(((full.result as Json).tools as Json[]).some((t) => t.name === 'doc_create'), 'a Windows chat keeps every tool');
 });
 
+Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge tools (the merge runs in the distro)', async () => {
+  const ctx = { key: 'k', conversation: 'c', worktree: true, restricted: true, main: true, cwd: null, roots: () => [] };
+  const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash']);
+  const call = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'merge_into_project', arguments: {} } }, ctx) as Json;
+  assert(call.result && !call.error, 'the tool is there (it fails here only because no AIB answers)');
+  for (const name of ['doc_create', 'start_helper', 'archive']) {
+    const refused = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: {} } }, ctx) as Json;
+    assertEquals((refused.error as Json).code, -32602, name);
+  }
+});
+
 Deno.test('mcp restricted: a WSL chat never gets the swarm helper tools, even marked main; a Windows main chat does', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, main: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
