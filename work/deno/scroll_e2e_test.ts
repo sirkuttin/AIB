@@ -74,6 +74,13 @@ function scrollTest(name: string, fn: (lab: Lab) => Promise<void>, size: [number
   });
 }
 
+/** The one-release switch back to the full-download data path with its "Show earlier" button (chat.js HISTORY_V2). */
+async function oldHistoryPath(lab: Lab) {
+  await lab.page.eval(`localStorage.setItem('aib-history-v2', '0')`);
+  await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+}
+
 /** Enough history to scroll: n agent messages, each followed by one finished step. */
 function seed(chat: Chat, n = 30, tag = 'Seed') {
   for (let i = 0; i < n; i++) {
@@ -529,6 +536,7 @@ scrollTest('4d "Show steps" in the Chat view at the bottom: the fold stays where
 
 scrollTest('5 "Show earlier" adds older rows above without moving the row you are looking at', async (lab) => {
   const page = lab.page;
+  await oldHistoryPath(lab); // the button lives on only behind aib-history-v2 = '0' (history_page_e2e_test.ts h2 covers near-top loading)
   const chat = await lab.chat();
   await chat.start();
   for (let i = 0; i < 90; i++) {
@@ -1099,6 +1107,7 @@ function seedCode(chat: Chat, n: number, tag: string) {
 // MutationObserver runs after), so the row you read jumps for a few frames until the 60 ms timer puts it back.
 scrollTest('B4a "Show earlier" over long code blocks: the row under the button never moves, not even for a frame', async (lab) => {
   const page = lab.page;
+  await oldHistoryPath(lab); // the button lives on only behind aib-history-v2 = '0' (history_page_e2e_test.ts h2 covers near-top loading)
   const chat = await lab.chat();
   await chat.start();
   seedCode(chat, 90, 'Early');
@@ -1557,6 +1566,7 @@ scrollTest('R7 split view: click into the other pane three times, both keep thei
 // The owner's call: "Show earlier" while a reply streams stops following (you are reading older rows now); ↓ Latest brings you back.
 scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest" brings you back to following', async (lab) => {
   const page = lab.page;
+  await oldHistoryPath(lab); // the button lives on only behind aib-history-v2 = '0'
   const chat = await lab.chat();
   await chat.start();
   seed(chat, 90);

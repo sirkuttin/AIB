@@ -370,7 +370,7 @@
       showRows(
         $('messages'),
         withUnknownSends(
-          liveRows(snapshot.sessionId, liveLoaded(), snapshot, viewOf() !== 'full', readingSeq(mainCtl()), liveCache().edge),
+          liveRows(snapshot.sessionId, liveLoaded(), snapshot, viewOf() !== 'full', mainKeepFrom(), liveCache().edge),
           snapshot.unknownReceipts,
         ),
         'main',
@@ -1262,6 +1262,7 @@
     snapshot = null;
     cursor = 0;
     eventsId = '';
+    mainKeep = 0;
     /* a cached chat opened again keeps only the seqs up to its stable point; the rest is read again (chat-cache.js trust) */
     for (const id of chatCache.ids()) chatCache.peek(id).reopened = true;
     historyLimit = 120;
@@ -2841,6 +2842,67 @@
     pulls.set(id, run);
     return run;
   }
+  /* A chat's newest seq without its events: the cache's cursor, else an empty page after the end (/api/live/events); null on an
+     older host. A state read from a cursor carries only what came after it (after=MAX_SAFE_INTEGER is past the end, which the
+     host answers with every event). */
+  async function liveCursor(id) {
+    const e = chatCache.peek(id);
+    if (e && e.opened) return e.cursor;
+    if (!HISTORY_V2 || hostPages === false) return null;
+    try {
+      const pg = await get('/api/live/events', { id, after: Number.MAX_SAFE_INTEGER, bytes: 4096 });
+      hostPages = true;
+      return Math.max(0, Math.trunc(Number(pg && pg.cursor) || 0));
+    } catch (error) {
+      if (pagesMissing(error)) hostPages = false;
+      else throw error;
+      return null;
+    }
+  }
+  /* The chat's state (busy, queue...) without its history. */
+  async function lightState(id) {
+    const at = await liveCursor(id);
+    return get('/api/live/state', { id, after: at == null ? Number.MAX_SAFE_INTEGER : at });
+  }
+  /* Events that reach your newest message: the chat's own newest page, or the page around the turn's prompt when that is older;
+     on an older host the newest 400 events of the state (and all of them when no message of yours is among those). */
+  async function lastPromptEvents(id) {
+    const hasUser = (list) => list.some((e) => e && e.kind === 'user');
+    if (HISTORY_V2 && hostPages !== false) {
+      try {
+        const pg = await get('/api/live/events', { id, bytes: OPEN_BYTES });
+        hostPages = true;
+        let list = pg.events || [];
+        if (!hasUser(list) && pg.more && pg.turn && pg.turn.promptSeq > 0)
+          list = (await get('/api/live/events', { id, around: pg.turn.promptSeq, bytes: 64 * 1024 })).events || [];
+        return list;
+      } catch (error) {
+        if (!pagesMissing(error)) throw error;
+        hostPages = false;
+      }
+    }
+    const top = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
+    const cursor = Math.max(0, Math.trunc(Number(top && top.cursor) || 0));
+    let list = (await get('/api/live/state', { id, after: Math.max(1, cursor - 400) }))?.events || [];
+    if (!hasUser(list) && cursor > 400) list = (await get('/api/live/state', { id, after: 1 }))?.events || [];
+    return list;
+  }
+  /* While you read, the main list's rows reach back to the oldest event the near-top rule took in (mainKeep), not only to the
+     row you read: older rows loaded or fetched near the top stay drawn (liveRows' keepFrom; its hard cap still holds). */
+  let mainKeep = 0;
+  function mainKeepFrom() {
+    const r = readingSeq(mainCtl());
+    return mainKeep > 0 && r > 0 ? Math.min(r, mainKeep) : r;
+  }
+  /* A page that does not fill the main list (a short first page, a few big rows): the next older one at once, the way the
+     near-top rule would once you could scroll (only once the list is laid out). */
+  function fillMain() {
+    const box = $('messages');
+    if (!HISTORY_V2 || !current || !box || olderRun || !(box.clientHeight > 0)) return;
+    if (box.scrollHeight > box.clientHeight + 1) return;
+    const e = liveCache();
+    if (typeof box._grow === 'function' || (e.opened && e.more && hostPages === true)) mainNearTop();
+  }
   /* The oldest loaded events past the keep (trimEvents' rule): never from a row a reader is on. */
   function trimLive(entry, ...readers) {
     const list = entry.loaded(),
@@ -2859,6 +2921,7 @@
       const grow = box._grow;
       box._grow = null;
       grow();
+      fillMain();
       return;
     }
     if (!current) {
@@ -2867,7 +2930,18 @@
       return;
     }
     const entry = liveCache();
-    if (olderRun || !entry.opened || !entry.more || hostPages !== true || window.CopyUI?.holdRender?.(box)) return;
+    if (olderRun || !entry.opened || hostPages !== true || window.CopyUI?.holdRender?.(box)) return;
+    if (entry.from > 0 && mainKeep !== entry.from && !ctl.following) {
+      // loaded rows older than the drawn ones (liveRows keeps only the newest while you read): draw them first
+      mainKeep = entry.from;
+      ctl.anchorTop('earlier');
+      mainSignature = '';
+      repaintMain();
+      ctl.afterRedraw();
+      setTimeout(fillMain, 0);
+      return;
+    }
+    if (!entry.more) return;
     const id = current;
     const line = text('p', 'Loading earlier…', 'loading-earlier');
     box.prepend(line);
@@ -2875,11 +2949,14 @@
       try {
         const older = await get('/api/live/events', { id, before: entry.from, bytes: OPEN_BYTES });
         if (current !== id || !entry.older(older)) return;
-        line.remove();
+        // the place is taken with the line still there (it takes no room: stream.css), and the redraw drops it
+        mainKeep = entry.from;
         ctl.anchorTop('earlier');
         mainSignature = '';
         repaintMain();
+        line.remove();
         ctl.afterRedraw();
+        setTimeout(fillMain, 0); // once this run is done (olderRun cleared)
       } catch (error) {
         if (error?.code !== 'connection_not_found') fail(error);
       } finally {
@@ -2912,12 +2989,13 @@
         showRows(
           $('messages'),
           withUnknownSends(
-            liveRows(next.sessionId, entry.loaded(), snapshot, viewOf() !== 'full', readingSeq(mainCtl()), entry.edge),
+            liveRows(next.sessionId, entry.loaded(), snapshot, viewOf() !== 'full', mainKeepFrom(), entry.edge),
             next.unknownReceipts,
           ),
           'main',
           liveExtra(),
         );
+        fillMain();
       } else if (isPseudoKey(key)) {
         agents = [];
         if (mainSignature !== key) {
@@ -4073,7 +4151,7 @@
     const clientMessageId = attemptId(key, value, '');
     let snap = c.live;
     try {
-      snap = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
+      snap = await lightState(id);
     } catch {}
     const route = window.AgentInboxReply ? window.AgentInboxReply.sendRoute(snap, value) : 'prompt';
     await post(route, { id, text: value, clientMessageId, attachments: [] });
@@ -4095,10 +4173,7 @@
     if (!id) throw Error('This chat is not running. Use Open chat.');
     let evs = [];
     try {
-      const top = await get('/api/live/state', { id, after: Number.MAX_SAFE_INTEGER });
-      const cursor = Math.max(0, Math.trunc(Number(top && top.cursor) || 0));
-      evs = (await get('/api/live/state', { id, after: Math.max(1, cursor - 400) }))?.events || [];
-      if (!evs.some((e) => e && e.kind === 'user') && cursor > 400) evs = (await get('/api/live/state', { id, after: 1 }))?.events || [];
+      evs = await lastPromptEvents(id);
     } catch {
       throw Error('Your last message could not be read. Use Open chat.');
     }
@@ -6176,6 +6251,9 @@
     chatCache,
     pullLive,
     mainNearTop,
+    fillMain,
+    lightState,
+    lastPromptEvents,
     liveStatusOf,
     openHit,
     setFindQuery,

@@ -85,11 +85,16 @@
 .show-earlier:focus-visible {
   background: var(--hover-2);
 }
-/* history loading: shown at the top of a chat while its next older page lands (one fixed-height line) */
+/* history loading: shown at the top of a chat while its next older page lands (one fixed-height line). It takes no room
+   (the negative margin), so putting it in or taking it out never moves the rows you read. */
 .loading-earlier {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   height: 24px;
-  margin: 0 0 8px;
+  margin: 0 0 -24px;
   line-height: 24px;
+  background: var(--bg, transparent);
   font-size: 12px;
   text-align: center;
   color: var(--muted, var(--link));

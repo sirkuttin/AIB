@@ -160,3 +160,36 @@ test('opening a cached chat again reads from its stable point (seqs above it may
   assert.equal(callsTo(calls, '/api/live/events').length, 1, 'no new page');
   assert.equal(entry.loaded().at(-1).seq, all.length);
 });
+
+test('quick reply / retry read the state from the cursor (never after=MAX_SAFE_INTEGER, which answers every event)', async () => {
+  const all = bigChat();
+  const { page, bytes, calls } = await hostPage(all);
+  const st = await page.hook.lightState('c1');
+  assert.equal(st.busy, true);
+  assert.equal(bytes.state, 2, 'no events in the state read');
+  assert.equal(callsTo(calls, '/api/live/state')[0].query.after, String(all.length));
+  const evs = await page.hook.lastPromptEvents('c1');
+  assert.ok(evs.some((e) => e.kind === 'user' && e.data.text === 'do the long thing'), 'reaches your newest message');
+  assert.ok(bytes.events < 1.2 * 1024 * 1024, 'pages only: ' + bytes.events);
+});
+
+test('a page that does not fill the list: the next older page loads without waiting for a scroll', async () => {
+  const all = bigChat();
+  const { page, calls } = await hostPage(all);
+  await page.hook.pullLive('c1', { fresh: 0 });
+  page.run("snapshot={sessionId:'s',busy:false,unknownReceipts:[]}");
+  const box = page.element('messages');
+  page.hook.repaintMain();
+  page.hook.mainCtl();
+  box._grow = null;
+  box.clientHeight = 800;
+  box.scrollHeight = 600; // short: nothing to scroll
+  const n = callsTo(calls, '/api/live/events').length;
+  page.hook.fillMain(); // (while you read, the loaded rows are drawn first, then the next page is asked for)
+  for (let k = 0; k < 100 && callsTo(calls, '/api/live/events').length === n; k++) await new Promise((r) => setTimeout(r, 2));
+  assert.equal(callsTo(calls, '/api/live/events').length, n + 1, 'one older page asked for');
+  assert.ok(callsTo(calls, '/api/live/events').at(-1).query.before, 'an older page');
+  box.scrollHeight = 5000; // that page filled the list: no more
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(callsTo(calls, '/api/live/events').length, n + 1);
+});
