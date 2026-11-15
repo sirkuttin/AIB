@@ -545,6 +545,11 @@ export class DocStore {
     if (create === undefined && !(await this.exists(projectRoot, name))) {
       throw new DocRefusal('no_doc', `No doc named "${name}" in this project. doc_list shows the docs; doc_create makes one.`);
     }
+    // One file, one live doc. A load of this doc that finished during the awaits above has already left #opening: it is the
+    // doc (loading it again would put a second copy in `docs`, and a page socket attached to the first would edit a copy AIB
+    // no longer saves). The check of `docs` and of #opening below run with no await between them.
+    const loaded = this.docs.get(id);
+    if (loaded) return loaded;
     let pending = this.#opening.get(id);
     if (!pending) {
       pending = this.#load(id, projectRoot, name, title, create, create !== undefined ? by : undefined).finally(() => this.#opening.delete(id));

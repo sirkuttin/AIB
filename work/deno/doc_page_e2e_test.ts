@@ -757,7 +757,19 @@ Deno.test({
           await p.eval(
             `document.querySelector('#rail .composer textarea').focus()`,
           );
-          await p.type('Make this three short bullets.');
+          await p.type('Make this three');
+          // any change to the doc or who is in it re-renders the rail: the words being typed, the focus and the caret stay
+          // (they were lost when a render landed between the typing and the click: the Comment click then sent nothing)
+          assertEquals(
+            await p.eval(`(() => {
+              const old = document.querySelector('#rail .composer textarea');
+              window.AIBDoc.emit('state', new Set(['threads']));
+              const b = document.querySelector('#rail .composer textarea');
+              return [b !== old, b.value, document.activeElement === b, b.selectionStart];
+            })()`),
+            [true, 'Make this three', true, 'Make this three'.length],
+          );
+          await p.type(' short bullets.');
           await p.click('#rail .composer .thr-add');
           const doc = await live(s, 'cm');
           await until(
