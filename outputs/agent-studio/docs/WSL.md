@@ -21,8 +21,10 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
   Windows project; a folder that is not git, has no commits yet, or cannot get a copy keeps the chat in the project folder, with the
   same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the
-  copy and its branch, and Merge lands the chat's own commits on main as for a Windows project (see Merge below). There is no live
-  sync for WSL copies yet. The Docs tab is off. The Files tab previews
+  copy and its branch, and Merge lands the chat's own commits on main as for a Windows project (see Merge below). Live sync works
+  as for a Windows project: a file the user saves in the main folder reaches the chat's copy within a second or two, the chat's
+  next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
+  storm of changes pauses with "Resume" (see Live sync below). The Docs tab is off. The Files tab previews
   pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
   (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
   as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
@@ -109,10 +111,38 @@ cwd is a WSL ref goes to the helper, every other chat to merge.ts as before.
   subagent in the copy, a lock file or a merge/rebase in the main checkout refuse; the user's uncommitted edits in the main checkout
   are stashed by SHA and re-applied, never overwritten (a clash keeps them in the named stash; the amber line and "Keep my version"
   read and act in the distro); nothing is ever forced.
-- Live sync does not run for WSL chats, so nothing moves the user base between merges; merge.ts's tree landing still applies after a
-  merge that took in the user's unsaved edits, exactly as on Windows. Resume on the amber line is a no-op for a WSL project.
+- Live sync (below) moves the user base between merges, as on Windows, so a merge lands only what the chat changed since the user's
+  last synced edit; merge.ts holds the "sync paused" lock while it stashes, in the distro, so live sync never copies meanwhile.
 - The button's state never starts a distro (a distro that is not ready says why); the clash line is read only from a distro AIB
   already uses. Quit AIB waits for a running WSL merge, as for a Windows one (`wslMergesRunning`).
+
+## Live sync
+
+The live sync engine (`worktrees/sync.ts`) runs whole in the helper too (`wsl/helper/sync.ts`, the `sync.*` methods) over the same
+`<data>` folder: a Windows watcher on a `\\wsl.localhost` path gets no change events, so the watching, the scans, the copies,
+the 3-way merges and the lost-update guard all run in the distro, with Linux git on Linux paths. The helper's LiveSync is made with
+`watchHere`, so `Deno.watchFs` (inotify) wakes a project's scan; the 2 s poll runs next to it as on Windows (`watchHere` stays off
+everywhere else, so Windows is unchanged). There are no per-file calls between AIB and the distro.
+
+- AIB (`wsl/sync.ts`, wired in `Studio`) sends each distro's helper the whole set of open WSL chats in their own copy (`sync.chats`,
+  one call at a time per distro) when a chat opens, is taken over from the keeper or closes, and every 10 s while there are any. The
+  turn hooks go to the helper with the chat's public state (no message text): `sync.turnStarted`, `sync.contextFor` (the
+  `<studio-context>` note for the prompt or a steer), `sync.contextSent`, `sync.turnEnded`. A Windows chat never goes there.
+- What live sync shows comes back the Windows way: the note in the chat's next prompt; the clash line ("Waiting for the chat to resolve
+  a clash with your edits in …") from the records, through `merge.status`; the storm line ("Lots of files changed in …; live sync
+  paused. Resume?") through `merge.clashStatus`, and its Resume (`POST /api/live/worktree/clash`, `resume-sync`) is `sync.resume`.
+- Every Windows rule holds: only files the chat has not touched are copied (through a temp file and a rename, under the chat's
+  worktree lock); a file both changed waits and is merged with `git merge-file` at a turn boundary, never over the chat's or the
+  user's edit; a clash leaves conflict markers in the chat's copy only, and the user's file in the main folder is never written;
+  `.env*` files are copied only into a chat that has not changed them; nothing is copied while Merge stashes or while the main folder
+  is on another branch.
+- The open chats are kept in `<data>/wsl-sync-chats.json`. A helper that restarts (it crashed, was killed, or a new AIB version
+  replaced it) watches them again at its start and catches the chats up on what changed meanwhile; if it died with nothing calling it,
+  AIB's next periodic set starts a new one. The helper keeps syncing while AIB is away and the chats keep running in the keeper; when
+  AIB closes and stops the chats, it sends each helper the empty set. Live sync never starts a distro: a distro that is not ready is
+  skipped, and a helper without `sync.*` means no live sync, as before.
+- Big projects: inotify needs one watch per folder (`node_modules` included). When the distro's `fs.inotify.max_user_watches` runs
+  out, the watcher fails, the helper logs it and the 2 s poll carries on.
 
 ## Previews, outside files, delete, Codex limits
 
@@ -160,6 +190,7 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_sync_e2e` | live sync with the helper's poll stretched to 5 minutes, so only inotify wakes a scan: events counted, a user edit and a new file in the copy within seconds, the prompt's note naming them, the helper killed and a new one catching up, Merge after sync landing only the chat's change, an edit both made merged at the next turn, a clash kept with its markers and the clash line until the chat resolves it |
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 
@@ -167,10 +198,10 @@ Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
 
-Live sync inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
+The docs store; the full AIB tools tunnel; background-task output and ownership
 checks for WSL chats; AIB-managed agent installs in the distro.
