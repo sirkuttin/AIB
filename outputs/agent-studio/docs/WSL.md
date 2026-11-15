@@ -16,7 +16,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   `codex-acp` installed with npm in the distro. A missing Claude Code or Codex gets an "Install in Ubuntu" button (the npm command
   stays, for doing it yourself) and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
-- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive), the doc and drawing tools and, for a
+- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive: the publish and update descriptions a
+  WSL chat gets have no `path` and say up front that only `content` works there, and that a PNG or other binary file must be
+  embedded in an HTML page as an inline base64 `<img>` or opened by the user; the refusal of a `path` repeats it), the doc and drawing tools and, for a
   chat in its own copy, the merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro
   (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a

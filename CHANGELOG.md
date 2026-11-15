@@ -4,6 +4,9 @@
 
 - Artifacts: a failed publish or update card now shows the tool's own reason on a line under "The publish did not finish" (for
   example "In a WSL project, publish by `content` ..."), in every chat, as plain text.
+- WSL chats: the agent is told up front that publish and update take only `content` there (no file `path`), and that a PNG or other
+  binary file has to be embedded in an HTML page as an inline base64 image or opened by the user; a `path` refusal says the same.
+  Windows chats' tools are unchanged.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.
