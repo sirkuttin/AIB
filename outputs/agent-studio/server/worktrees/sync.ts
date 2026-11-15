@@ -867,19 +867,26 @@ export class ProjectSync {
     }
     const head = pyStrip((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], project, { check: false })).stdout);
     const current = await this.listing();
+    let caughtUp = false;
     if (this.wasPaused) { // Resume: the chats catch up on what happened meanwhile, then the baseline restarts
       this.wasPaused = false;
       this.ensureNotifier();
       await live.catchUpProject(project, this.stop, this.lock);
       this.reset = true;
+      caughtUp = true;
     }
     await live.retryStale(this.lock);
     if (this.reset || this.head === null || head !== this.head) {
+      const moved = this.head !== null && head !== this.head;
       this.head = head;
       this.files = current;
       this.seen = new Map();
       this.reset = false;
       this.baselined.set();
+      // HEAD moved (a commit, Merge landing a chat): a save made since the last scan is in this baseline and would never show as a
+      // change, so the chats catch up now (against U, dirty files only: what the commit brought is not copied). A save after the
+      // listing above is a change against this baseline and goes the usual way at the next scan.
+      if (moved && !caughtUp) await live.catchUpProject(project, this.stop, this.lock);
       return;
     }
     let changed = new Map<string, Sig | null>();

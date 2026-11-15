@@ -274,6 +274,34 @@ Deno.test('catch-up after a HEAD move syncs only what is dirty now', async () =>
   assert(!exists(pathOf(ctx.wts[0], 'other.txt')), 'what the commit brought is not an edit of the user');
 });
 
+// A HEAD move (a commit, Merge landing a chat) makes the next scan take a new baseline. A save made after the move but before that
+// scan used to go into the baseline unseen and wait for the chat's next turn (with inotify and a long poll, the WSL helper: forever).
+Deno.test('a save right after a HEAD move is synced, not swallowed by the new baseline', async () => {
+  using box = new Sandbox();
+  const ctx = await setup(box);
+  commit(box.project, 'other.txt', 'committed by the user\n', 'user commit');
+  write(box.project, 'f.txt', USER_EDIT);
+  await ctx.settle();
+  assertEquals(text(ctx.wts[0], 'f.txt'), USER_EDIT);
+  assert(!exists(pathOf(ctx.wts[0], 'other.txt')), 'what the commit brought is not an edit of the user');
+  assertEquals(ctx.record().syncedPaths, ['f.txt']);
+  assertEquals(await touched(ctx), 0);
+});
+
+Deno.test('a save right after a HEAD move of a file the chat changed is pending, the chat\'s edit kept', async () => {
+  using box = new Sandbox();
+  const ctx = await setup(box);
+  write(ctx.wts[0], 'f.txt', CHAT_EDIT);
+  commit(box.project, 'other.txt', 'committed by the user\n', 'user commit');
+  write(box.project, 'f.txt', USER_EDIT);
+  await ctx.settle();
+  assertEquals(text(ctx.wts[0], 'f.txt'), CHAT_EDIT);
+  assertEquals(ctx.record().pendingSync, ['f.txt']);
+  await ctx.live.turnStarted(ctx.conns[0]);
+  assertEquals(text(ctx.wts[0], 'f.txt'), BOTH);
+  assertEquals(text(box.project, 'f.txt'), USER_EDIT, "the user's file is untouched");
+});
+
 Deno.test('catch-up at turn start', async () => {
   using box = new Sandbox();
   const ctx = await setup(box);
