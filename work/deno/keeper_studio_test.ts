@@ -283,6 +283,28 @@ Deno.test({
 });
 
 Deno.test({
+  name: 'keeper studio: a reconnect of a chat whose agent still runs in the keeper (the take-over at start failed) takes it over, never a second agent',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new KeeperStudioLab();
+    const a = lab.studio();
+    const c = await a.connect('omp', lab.work);
+    const [session, pid] = [c.sessionId!, c.process!.pid];
+    lab.crash(a);
+    // the next Studio's take-over did not run (or failed): only the auto-reconnect of the recovery list
+    const b = lab.studio();
+    assertEquals(b.startAutoReconnect(1, 0, 1, 0), 1);
+    await Promise.all(b.reconnectWorkers);
+    const open = [...b.connections.values()].filter((x) => !x.closed && x.sessionId === session);
+    assertEquals(open.map((x) => [x.id, x.process!.pid]), [[c.id, pid]]); // the same chat, the same agent
+    const client = (await b.keeper!.client(false))!;
+    assertEquals((await client.list()).filter((ch) => ch.live).map((ch) => ch.channel), [`chat-${c.id}`]);
+    assertEquals(lab.received().filter((m) => m.method === 'session/load').length, 0); // nothing was loaded again
+  },
+});
+
+Deno.test({
   name: 'keeper studio: release() for an update leaves the chat running in the keeper; the next Studio takes it over under the same ids',
   ...T,
   async fn() {

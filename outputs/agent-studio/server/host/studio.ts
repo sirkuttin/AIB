@@ -273,6 +273,8 @@ export interface StudioConstruct {
   keeperForNew?: boolean;
   /** Shared stores (an --in-process web server passes its own, so both read and write one instance). */
   stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
+  /** How often the usage checker runs on its own for the open chats, in ms (tests pass a short one). Default REFRESH_SECONDS. */
+  limitsEveryMs?: number;
 }
 
 const defaultFactory: ConnectionFactory = (command, cwd, provider, options) => new Connection(command, cwd, provider, options ?? {});
@@ -391,7 +393,7 @@ export class Studio {
     this.#limitsTimer = setInterval(() => {
       if (this.#closed) return;
       for (const c of this.connections.values()) if (!c.closed) void this.limits.refresh(c);
-    }, REFRESH_SECONDS * 1000);
+    }, construct.limitsEveryMs ?? REFRESH_SECONDS * 1000);
     Deno.unrefTimer(this.#limitsTimer);
     const manager = this.hasStateDir ? new wt.Manager(this.stateDir) : null; // worktree per chat (hidden flag)
     this.worktrees = manager;
@@ -1057,6 +1059,13 @@ export class Studio {
         return connection;
       }
     }
+    // A saved chat whose agent still runs in the keeper it would start in (a WSL chat: its distro's) is taken over, never started twice
+    const keeperOfChat = launch ? launch.link : this.keeper;
+    const running = resume && keeperOfChat ? await this.#runningInKeeper(provider, resume, keeperOfChat, launch ? wsl!.distro : null) : null;
+    if (running) {
+      if (!running.ready) throw new OwnershipConflict('This conversation is already opening in AIB. Wait for it to finish.');
+      return running;
+    }
     let plan: wt.Plan | null = null;
     let startNote = ''; // a new chat's start note: where it started when that is not the obvious, or why it works in place
     // Swarm: a helper is one from its first moment (helperOf) or because the registry lists it (reopened after a restart, a Continue).
@@ -1285,12 +1294,41 @@ export class Studio {
     return await this.#adoptFrom(link, distro);
   }
 
-  /** Take over the chats of one keeper: the Windows keeper (distro null) or a distro's Linux keeper. */
-  async #adoptFrom(keeper: KeeperLink, distro: string | null): Promise<number> {
+  /** One take-over at a time (the start's, and the check before a saved chat's agent starts): a channel is never rebuilt twice. */
+  readonly #adoptGate = new Mutex();
+
+  /**
+   * Take over the chats of one keeper: the Windows keeper (distro null) or a distro's Linux keeper. `check`: the look before a saved
+   * chat's agent starts (#runningInKeeper): only live chat channels this AIB holds no chat for are rebuilt; nothing is stopped or
+   * removed, and a keeper that cannot be asked throws instead of counting as empty.
+   */
+  #adoptFrom(keeper: KeeperLink, distro: string | null, check = false): Promise<number> {
+    return this.#adoptGate.run(() => this.#adoptFromNow(keeper, distro, check));
+  }
+
+  /**
+   * Before a saved chat's agent starts: is that session's agent still running in the keeper it would start in? Then that chat is
+   * taken over (rebuilt from its channel) and returned instead, so one session never runs as two agents. This covers a take-over
+   * at start that failed or timed out (a distro slow to answer), and a keeper link that was given up while its agents kept running.
+   * null: no agent of that session runs there. A distro's keeper that cannot be asked is an error (starting blind could make a
+   * second agent; the auto-reconnect tries again); the Windows keeper's is logged and the chat starts as before.
+   */
+  async #runningInKeeper(provider: string, sessionId: string, keeper: KeeperLink, distro: string | null): Promise<Connection | null> {
+    try {
+      await this.#adoptFrom(keeper, distro, true);
+    } catch (error) {
+      if (distro) throw new Error(`AIB could not ask ${distroName(distro)} whether this chat still runs there: ${errorText(error)}`);
+      log.warning('keeper: could not ask the keeper whether %s %s still runs: %s', provider, sessionId, errorText(error));
+    }
+    return [...this.connections.values()].find((c) => c.provider === provider && c.sessionId === sessionId && !c.closed) ?? null;
+  }
+
+  async #adoptFromNow(keeper: KeeperLink, distro: string | null, check: boolean): Promise<number> {
     let client;
     try {
       client = await keeper.client(false); // only a keeper that already runs: nothing to take over otherwise
     } catch (error) {
+      if (check) throw error;
       log.warning('keeper: could not reach the keeper: %s', errorText(error));
       // A keeper that answers but refuses this AIB (another protocol): its chats keep running there; the page says so.
       if (!distro && error instanceof KeeperError && error.code !== 'closed') {
@@ -1305,10 +1343,10 @@ export class Studio {
       // nothing in it is stopped.
       const why = `the running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')}`;
       announce('studio', 'keeper: not taking chats over: %s', why);
-      if (!distro) noteKeeperTakeoverProblem(why); // a distro's keeper version is wsl/hosts.ts's business (it replaces or adopts)
+      if (!distro && !check) noteKeeperTakeoverProblem(why); // a distro's keeper version is wsl/hosts.ts's business (it replaces or adopts)
       return 0;
     }
-    if (!distro) noteKeeperTakeoverProblem('');
+    if (!distro && !check) noteKeeperTakeoverProblem('');
     let adopted = 0;
     const listed = await client.list();
     for (const info of listed) {
@@ -1316,17 +1354,22 @@ export class Studio {
         if (info.kind !== 'pipe') continue;
         if (info.channel.startsWith(CLIENT_TERMINAL_PREFIX)) continue; // an agent's client terminal: its chat takes it over
         if (isAibInternalLabel(info.label)) continue; // AIB's own WSL hold or helper: never a chat, never stopped as an orphan
+        if (keeper.channels.has(info.channel)) continue; // one of this AIB's own (a chat it runs, or one starting right now)
         if (!info.live) {
-          if (info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
+          if (!check && info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
           continue;
         }
         const note = await keeper.firstNote(client, info.channel);
         if (!note || note.t !== 'chat' || !isStr(note.id) || !isStr(note.provider) || !isStr(note.cwd)) {
+          if (check) continue; // only the start stops a channel without a chat record
           announce('studio', 'keeper: stopping channel %s: it has no chat record', info.channel);
           await keeper.stopUnknown(client, info.channel);
           continue;
         }
-        if (this.connections.has(note.id)) continue;
+        const known = this.connections.get(note.id);
+        // A chat whose link to this channel was given up (the keeper could not be reached for a while) while its agent kept running
+        // is rebuilt under its own id; any other chat this AIB has (open, or closed by the user) keeps the channel as it is.
+        if (known && !(check && known.closed && known.channel?.lost)) continue;
         if (await this.#rebuildChat(info, note, keeper, distro)) {
           const rebuilt = this.connections.get(note.id);
           if (!rebuilt || !await this.#dropDuplicate(rebuilt)) adopted++;
@@ -1335,7 +1378,7 @@ export class Studio {
         log.exception(error, 'keeper: taking over channel failed');
       }
     }
-    await this.#dropOrphanTerminals(client, listed, keeper);
+    if (!check) await this.#dropOrphanTerminals(client, listed, keeper);
     if (adopted) {
       announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
       // Their artifact tool is the keeper's forwarder: it needs this Studio's HTTP endpoint and its published address.
