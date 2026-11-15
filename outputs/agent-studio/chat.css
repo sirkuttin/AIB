@@ -4026,3 +4026,14 @@ span.chip-static:hover {
 #newChatForm {
   max-width: 1250px;
 }
+
+/* Allow rules (allow-rules-ui.js): the Always choice on an approval card, the rule-added note, Settings > Allow rules. */
+.allow-always { margin: 8px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.allow-always-label { display: inline-flex; align-items: center; gap: 6px; }
+.allow-always.unavailable .allow-always-label, .allow-always.unavailable .allow-scope { opacity: .55; }
+.allow-preview { flex-basis: 100%; margin: 0; font-size: .9em; color: var(--muted, #8a8a93); }
+.allow-toast { margin: 6px 0; padding: 6px 10px; border-radius: 6px; background: var(--panel, rgba(127,127,127,.12)); }
+.answered-line.answered-auto .answered-mark { color: var(--ok, #2bb3a3); }
+.allow-banner { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--bad, #e5534b); margin-bottom: 8px; }
+.allow-rule { display: block; margin: 4px 0; }
+.allow-master { display: block; margin: 6px 0 10px; }

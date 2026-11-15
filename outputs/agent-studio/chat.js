@@ -2043,6 +2043,23 @@
              show it, so it gets no row of its own (it was a raw "Delegation" block). */
           continue;
         } else continue;
+      } else if (event.kind === 'permission_auto') {
+        /* Allow rules: AIB answered this request by one of the owner's rules; the line names the rule (server/allow). */
+        const call = event.data?.params?.toolCall || {},
+          raw = call.rawInput || {},
+          what = String(raw.command || raw.file_path || raw.url || call.title || call.kind || 'a tool')
+            .replace(/\s+/g, ' ')
+            .slice(0, 120);
+        rows.push({
+          role: 'answered',
+          ask: 'auto',
+          key: 'auto:' + event.seq,
+          rid,
+          autoText: what + ' · Allowed by rule · ' + (event.data?.label || 'rule') + (event.data?.flagged ? ' · Claude asked in bypass' : ''),
+          value: '',
+          time: event.replay ? 0 : event.time,
+        });
+        rows[rows.length - 1].value = rows[rows.length - 1].autoText;
       } else if (event.kind === 'permission' || event.kind === 'elicitation') {
         /* An approval or a question: once it is answered its card goes, and this compact line stays in the chat. */
         const key = event.data?.key;
@@ -2131,6 +2148,7 @@
   /* What you chose on an approval or a question card, by request key (this page only; another window's answer reads "Answered"). */
   const answerChoice = new Map();
   function answeredText(r) {
+    if (r.ask === 'auto') return r.autoText;
     const p = r.params || {},
       chose = answerChoice.get(r.key);
     if (r.ask === 'permission') {
@@ -2146,7 +2164,7 @@
     return 'Question · ' + what + ' · ' + (chose || 'Answered');
   }
   function answeredLine(row) {
-    const line = text('div', '', 'answered-line');
+    const line = text('div', '', 'answered-line' + (row.ask === 'auto' ? ' answered-auto' : ''));
     line.setAttribute('role', 'note');
     line.append(text('span', '✓', 'answered-mark'), text('span', row.value, 'answered-text'));
     const when = window.StreamUI?.shortTime?.(row.time);
@@ -2874,6 +2892,14 @@
     out.push(raw);
     return out;
   }
+  /* "Rule added: npm test in shop-web. Also allowed 2 waiting requests. Undo" under the cards, for a few seconds. */
+  function showAllowToast(saved) {
+    const box = $('approvals');
+    if (!box || !window.AllowRulesUI) return;
+    const toast = window.AllowRulesUI.toast(saved, (ruleId) => post('allow/remove', { ruleId }));
+    box.parentNode.insertBefore(toast, box.nextSibling);
+    setTimeout(() => toast.remove(), 15000);
+  }
   function renderApprovals() {
     const list = snapshot.permissions || [],
       names = Object.fromEntries([...children].map(([id, agent]) => [id, agent.name])),
@@ -2900,11 +2926,26 @@
         }
       }
       card.append(...approvalDetail(p.params));
+      const always = window.AllowRulesUI ? window.AllowRulesUI.choice(p.allow) : null;
+      if (always) card.append(always.element);
+      const hideAgentAlways = !!p.allow?.project?.hideAgentAlways;
       for (const option of [...(p.params.options || []), { name: 'Cancel request', optionId: null }]) {
+        if (hideAgentAlways && option.kind === 'allow_always') continue; // decision 2a: AIB's own Always replaces it on this card
         const button = text('button', option.name || option.optionId);
         button.onclick = async () => {
           button.disabled = true;
           try {
+            if (always && always.ticked() && option.kind === 'allow_once') {
+              const chat = current;
+              const saved = await window.AllowRulesUI.answer(
+                (body) => post('allow/answer', { id: chat, key: p.key, option: option.optionId, ...body }),
+                always.scope(),
+              );
+              if (saved) showAllowToast(saved);
+              answerChoice.set(p.key, String(option.name || option.optionId) + ' · always');
+              await refresh();
+              return;
+            }
             await post('permission', { id: current, key: p.key, option: option.optionId });
             answerChoice.set(p.key, option.optionId === null ? 'Cancelled' : String(option.name || option.optionId));
             await refresh();

@@ -17,6 +17,7 @@
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
+    { id: 'allow', label: 'Allow rules' },
     { id: 'editors', label: 'Editors' },
     { id: 'keyboard', label: 'Keyboard' },
     { id: 'appearance', label: 'Appearance' },
@@ -24,6 +25,12 @@
   ];
   // Every searchable setting. label + keywords are what the search box matches; `title` is the heading drawn on its card.
   const INDEX = [
+    {
+      id: 'allow-rules',
+      section: 'allow',
+      label: 'Allow rules: what AIB approves for you',
+      keywords: ['allow', 'always', 'approve', 'approval', 'permission', 'rule', 'safe reads', 'scratch', 'syntax'],
+    },
     {
       id: 'agents-list',
       section: 'agents',
@@ -2131,6 +2138,8 @@
     notifications: renderNotifications,
     'devices-access': (box) => renderDevices('access', box),
     'devices-phones': (box) => renderDevices('phones', box),
+    'allow-rules': (box) =>
+      root.AllowRulesUI ? root.AllowRulesUI.renderSettings(box, S.host) : box.append(note('This part could not be drawn: allow-rules-ui.js is missing.', 'bad')),
     editors: renderEditors,
     keyboard: renderKeyboard,
     theme: renderTheme,
