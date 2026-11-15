@@ -1517,7 +1517,7 @@ export class Studio {
     const command = Array.isArray(note.command) ? note.command.map(String) : [];
     const cwd = String(note.cwd);
     const provider = String(note.provider);
-    const options: ConnectionOptions = { keeper, id: String(note.id), rebuild: info, start: false, history: this.historyClient() };
+    const options: ConnectionOptions = { keeper, id: String(note.id), rebuild: info, start: false, history: this.historyClient(String(note.id)) };
     // A distro's keeper holds only that distro's chats: the note's loc (or its ref) says where the agent works; it starts nothing.
     const loc = isDict(note.loc) && note.loc.kind === 'wsl' && isStr(note.loc.linuxPath) ? note.loc : null;
     const wsl = distro ? (loc ? { distro, linuxPath: String(loc.linuxPath) } : wslLoc(cwd)) : null;
@@ -1824,22 +1824,34 @@ export class Studio {
 
   #history: HistoryClient | null | undefined;
   /**
-   * The history Worker (history-loading 2A): one SQLite store per keeper chat in <state>/history. null without a state folder or with
-   * the aib-history-v2 switch off (AIB_HISTORY_V2=0): snapshots then carry the history in chunk notes, as in beta.10.
+   * The history Worker (history-loading 2A): one SQLite store per keeper chat in <state>/history. With the aib-history-v2 switch
+   * off (AIB_HISTORY_V2=0) new chats get no store (snapshots carry the history in chunk notes, as in beta.10), but a chat taken over
+   * from the keeper whose store an earlier store-on build wrote (`chatId` given, `<state>/history/<id>.sqlite` there) keeps using
+   * it: that build's snapshot notes carry no chunks and its journal was truncated after them, so the store is the only copy of the
+   * history AIB has (without it the rebuilt chat would show no history at all).
    */
-  historyClient(): HistoryClient | null {
-    if (this.#history === undefined) {
-      let dir: string | null = null;
-      if (this.hasStateDir && historyV2() && !this.#closed) {
-        try {
-          dir = `${this.stateDir}/history`;
-          Deno.mkdirSync(dir, { recursive: true });
-        } catch (error) {
-          log.warning('history: no store folder (%s); chats keep their history in the keeper notes', errorText(error));
-          dir = null;
-        }
+  historyClient(chatId?: string): HistoryClient | null {
+    if (!this.hasStateDir || this.#closed) return null;
+    const dir = `${this.stateDir}/history`;
+    if (!historyV2()) {
+      if (!chatId) return null;
+      try {
+        // store.ts storePath() (not imported: it loads node:sqlite, which stays in the Worker)
+        if (!/^[A-Za-z0-9._-]{1,128}$/.test(chatId) || chatId.startsWith('.')) return null;
+        if (!Deno.statSync(`${dir}/${chatId}.sqlite`).isFile) return null;
+      } catch {
+        return null; // no store for this chat (or not a chat id)
       }
-      this.#history = dir ? new HistoryClient(dir) : null;
+      log.info('history: %s has a store from a store-on build; it keeps using it (the switch is off)', chatId);
+    }
+    if (this.#history === undefined) {
+      try {
+        Deno.mkdirSync(dir, { recursive: true });
+        this.#history = new HistoryClient(dir);
+      } catch (error) {
+        log.warning('history: no store folder (%s); chats keep their history in the keeper notes', errorText(error));
+        this.#history = null;
+      }
     }
     return this.#history;
   }
