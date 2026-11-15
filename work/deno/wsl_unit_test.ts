@@ -23,6 +23,8 @@ import { isAibInternalLabel } from '../../outputs/agent-studio/server/keeper/lin
 import { insideLinux } from '../../outputs/agent-studio/server/acp/wsl_caps.ts';
 import { fileReadOf, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
 import { handle } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
+import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
+import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
 import { branchOf, changesFolder, changesResponse, repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
 import { distroSessions, wslSessionKey } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
 import { wslSigninCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
@@ -263,12 +265,12 @@ Deno.test('wsl saved sessions: a helper with transcripts.sessions lists them wit
   assertEquals([items[0].key, items[0].cwd, items[0].provider], [wslSessionKey('ubuntu', 'claude', 'p/abc'), 'wsl://ubuntu/home/u/app', 'claude']);
 });
 
-Deno.test('mcp restricted (a WSL chat): only the artifact tools (publish, update, list, archive), and publish by content only', async () => {
+Deno.test('mcp restricted (a WSL chat): the artifact tools (publish by content only) and the doc and drawing tools', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
-  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive']);
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
   const doc = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'doc_create', arguments: {} } }, ctx) as Json;
-  assertEquals((doc.error as Json).code, -32602);
+  assert(doc.result && !doc.error, 'the doc tool is there (it fails here only because no AIB answers)');
   const byPath = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'publish', arguments: { title: 'x', path: 'outputs/a.html' } } }, ctx) as Json;
   const result = byPath.result as Json;
   assert(result.isError === true && String(((result.content as Json[])[0]).text).includes('publish by `content`'));
@@ -279,10 +281,19 @@ Deno.test('mcp restricted (a WSL chat): only the artifact tools (publish, update
 Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge tools (the merge runs in the distro)', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: true, restricted: true, main: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
-  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', 'merge_into_project', 'resolve_edit_clash']);
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), [
+    'publish',
+    'update',
+    'list',
+    'archive',
+    'merge_into_project',
+    'resolve_edit_clash',
+    ...DOC_TOOL_NAMES,
+    ...DRAWING_TOOL_NAMES,
+  ]);
   const call = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'merge_into_project', arguments: {} } }, ctx) as Json;
   assert(call.result && !call.error, 'the tool is there (it fails here only because no AIB answers)');
-  for (const name of ['doc_create', 'drawing_create', 'start_helper']) {
+  for (const name of ['start_helper']) {
     const refused = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: {} } }, ctx) as Json;
     assertEquals((refused.error as Json).code, -32602, name);
   }
@@ -291,7 +302,7 @@ Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge to
 Deno.test('mcp restricted: a WSL chat never gets the swarm helper tools, even marked main; a Windows main chat does', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, main: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
-  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive']);
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
   const call = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'start_helper', arguments: {} } }, ctx) as Json;
   assertEquals((call.error as Json).code, -32602);
   const main = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, { ...ctx, restricted: false, worktree: true }) as Json;

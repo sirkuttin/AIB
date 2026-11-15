@@ -908,6 +908,9 @@ export class DocStore {
     return next;
   }
 
+  /** WSL docs whose write did not reach the distro: the rev their state was last kept in the cache at. */
+  #keptRev = new WeakMap<OpenDoc, number>();
+
   /** Take in edits made to the doc's files, then write them all from the doc. */
   flush(doc: OpenDoc): Promise<void> {
     if (doc.timer !== null) clearTimeout(doc.timer), doc.timer = null;
@@ -918,7 +921,9 @@ export class DocStore {
       } catch (error) {
         // a WSL doc whose distro is away: the edits are kept in AIB's cache (with the files' last written state, so the next open
         // knows they are not on disk yet) and written when it is back (the poll, or the next open)
-        if (isRemotePath(doc.dir)) await this.#saveState(doc).catch(() => {});
+        if (isRemotePath(doc.dir) && this.#keptRev.get(doc) !== doc.live.rev) {
+          await this.#saveState(doc).then(() => this.#keptRev.set(doc, doc.live.rev), () => {}); // once per change, not every poll
+        }
         throw error;
       }
     });
