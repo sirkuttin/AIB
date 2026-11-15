@@ -8,9 +8,9 @@
  * merge.ts asks its MergeStudio for the chat's state and posts to the chat through it. Here the state is what AIB sent with the call
  * (its `cwd` the worktree's Linux path), and the posts are recorded and handed back to AIB in order (`actions`), which posts them to
  * the chat exactly as merge.ts would on Windows. A conflict prompt merge.ts must get accepted is marked `must`, with the line AIB
- * refuses with when the chat does not take it. Live sync does not run for WSL chats: the user base stays the snapshot until a merge
- * moves it, so a merge lands the chat's own commits, and the user's uncommitted edits in the main checkout are stashed and put back
- * as on Windows (never overwritten; a clash keeps them in the named stash).
+ * refuses with when the chat does not take it. Live sync (helper/sync.ts) runs here too, over the same records and locks: it moves the
+ * user base between merges as on Windows, and merge.ts holds its "sync paused" lock while it stashes. The user's uncommitted edits in
+ * the main checkout are stashed and put back as on Windows (never overwritten; a clash keeps them in the named stash).
  */
 import * as osp from '../../platform/ospath.ts';
 import * as merge from '../../worktrees/merge.ts';

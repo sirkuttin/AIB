@@ -103,6 +103,22 @@ export interface HelperMethods {
   'merge.resolveClash': { params: { chat: string; state: Record<string, unknown>; action: string; fromTool?: boolean }; result: WslMergeAnswer };
   'merge.clashStatus': { params: { project: string }; result: { result: Record<string, unknown> } };
   /**
+   * Live sync of WSL chats' worktrees (helper/sync.ts: worktrees/sync.ts run natively over the same `<data>`, its folder watcher
+   * inotify). Offered with worktree.*. `sync.chats` is the whole set of open WSL chats in their own copy (cwd: the worktree's Linux
+   * path), sent in order; the helper keeps it in `<data>/wsl-sync-chats.json` and watches them again after a restart. The turn hooks
+   * carry the chat's public state as merge.* do (an unknown chat is added). `context` is sync.ts contextFor's [text, token] or null.
+   */
+  'sync.chats': { params: { chats: { chat: string; cwd: string }[] }; result: { chats: number; added: string[]; removed: string[] } };
+  'sync.turnStarted': { params: { chat: string; state: Record<string, unknown> }; result: { ok: boolean } };
+  'sync.turnEnded': { params: { chat: string; state: Record<string, unknown> }; result: { ok: boolean } };
+  'sync.contextFor': { params: { chat: string; state: Record<string, unknown> }; result: { context: [string, unknown] | null } };
+  'sync.contextSent': { params: { chat: string; state: Record<string, unknown>; token: unknown }; result: { ok: boolean } };
+  'sync.resume': { params: { project: string }; result: { resumed: boolean } };
+  'sync.status': {
+    params: Record<string, never>;
+    result: { chats: { chat: string; cwd: string }[]; projects: { project: string; watching: boolean; events: number }[] };
+  };
+  /**
    * Saved sessions of the distro user's agents (~/.claude/projects, ~/.codex/sessions; CLAUDE_CONFIG_DIR / CODEX_HOME of the login
    * environment win), as transcripts/store.ts lists them on Windows: items with key, sessionId, cwd (a Linux path), title, mtime.
    */

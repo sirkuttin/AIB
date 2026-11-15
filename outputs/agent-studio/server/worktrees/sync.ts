@@ -5,8 +5,9 @@
  * one watcher task:
  *
  *   trigger    Deno.watchFs (recursive; ReadDirectoryChangesW underneath on Windows, where Python used ctypes) pokes the task; a 2 s
- *              poll runs as well, and is the only trigger elsewhere (as in Python, the folder watcher is used on Windows only). A burst
- *              of events is debounced for 400 ms.
+ *              poll runs as well, and is the only trigger elsewhere (as in Python, the folder watcher is used on Windows only), except
+ *              in the WSL helper, whose LiveSync is made with watchHere (inotify underneath: wsl/helper/sync.ts). A burst of events is
+ *              debounced for 400 ms.
  *   candidates `git status --porcelain -z -uall` in the project folder (GIT_OPTIONAL_LOCKS=0). `.env*` files are listed by a small walk.
  *   stability  a changed file is synced when its size and mtime are the same in two consecutive scans. Editor temp files, symlinks,
  *              files over 20 MB, unmerged files and files with conflict markers are skipped; a locked file is retried.
@@ -688,6 +689,8 @@ export class DirWatcher {
   #stopped = false;
   done: Promise<void> | null = null;
   alive = false;
+  /** Change events seen so far (a status for the WSL helper's tests: inotify events do arrive). */
+  events = 0;
 
   constructor(readonly folder: string, readonly poke: (name: string) => void) {}
 
@@ -715,6 +718,7 @@ export class DirWatcher {
             continue;
           }
           if (event.kind === 'access') continue; // Python's filter: names, size, last write, creation
+          this.events++;
           for (const path of event.paths) this.poke(relative(path));
         }
       } catch (error) {
@@ -776,7 +780,7 @@ export class ProjectSync {
 
   /** The folder watcher runs only while the project is being synced (not after stop, not while paused). */
   ensureNotifier(): void {
-    if (!WIN || !this.live.watchFolders) return;
+    if (!this.live.watchHere || !this.live.watchFolders) return;
     if (this.stop.isSet() || (this.notifier !== null && this.notifier.alive)) return;
     this.notifier = new DirWatcher(this.project, this.poke);
     this.notifier.start();
@@ -972,11 +976,14 @@ export class LiveSync {
   readonly stale = new Set<string>(); // chat keys that could not take a sync (a merge in progress, a lock): caught up later
   closed = false;
   readonly hooks = new Mutex(); // the turn hooks run under it; stopAll waits for the ones in flight
+  /** Whether the folder watcher is used on this OS: Windows only (as in Python), unless told (the WSL helper: inotify). */
+  readonly watchHere: boolean;
 
-  constructor(readonly studio: SyncStudio, settle = settings.SETTLE, poll = settings.POLL, watchFolders = true) {
+  constructor(readonly studio: SyncStudio, settle = settings.SETTLE, poll = settings.POLL, watchFolders = true, watchHere = WIN) {
     this.settle = settle;
     this.poll = poll;
     this.watchFolders = watchFolders;
+    this.watchHere = watchHere;
   }
 
   // -- who is watched

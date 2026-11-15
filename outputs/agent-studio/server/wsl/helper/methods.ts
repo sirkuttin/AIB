@@ -24,6 +24,7 @@ import { Refused } from '../../desktop/project_delete.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
 import { worktreeMethods } from './worktrees.ts';
 import { mergeMethods } from './merge.ts';
+import { HelperSync, syncMethods } from './sync.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
@@ -42,6 +43,8 @@ export interface HelperContext {
    * Without it the helper offers no worktree.* method, and AIB keeps WSL chats in the project folder.
    */
   data?: string;
+  /** Live sync of the WSL chats' worktrees over `data` (helper/sync.ts); made here when not given. Only with `data`. */
+  sync?: HelperSync;
 }
 
 /** AIB's own folders in the distro for the Files-outside and project-delete refusals. */
@@ -142,7 +145,11 @@ function agentRow(id: string, row: LaunchRow): { id: string; found: boolean; com
 
 /** Every method waits for the login environment first: until then PATH is wsl.exe's, with Windows' folders in it. */
 export function makeMethods(ctx: HelperContext): Handlers {
-  const methods = { ...phaseOne(ctx), ...(ctx.data ? { ...worktreeMethods(ctx.data), ...mergeMethods(ctx.data) } : {}) };
+  const data = ctx.data;
+  const methods = {
+    ...phaseOne(ctx),
+    ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
+  };
   return Object.fromEntries(
     Object.entries(methods).map(([name, handler]) => [name, async (p: Record<string, unknown>) => {
       await ctx.env();

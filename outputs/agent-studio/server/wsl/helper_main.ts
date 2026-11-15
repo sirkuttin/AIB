@@ -6,7 +6,8 @@
  *
  * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
  * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts). It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
- * can be written by group or others. It holds no state in memory (the worktree registry is a file): AIB may kill and respawn it at any time.
+ * can be written by group or others. Its state is in files (the worktree registry, the live sync records and the list of chats live sync
+ * watches, helper/sync.ts): AIB may kill and respawn it at any time, and a new helper watches the same chats again at its start.
  */
 import { APP_VERSION } from '../core/app.ts';
 import { HELPER_PROTOCOL, WSL_ROOT_DIR } from './contract.ts';
@@ -15,9 +16,16 @@ import { lineWriter, serveLines } from './helper/rpc.ts';
 import { makeMethods } from './helper/methods.ts';
 import { serveOpenFifo, shimScript } from './helper/browser.ts';
 import { worktreeStartup } from './helper/worktrees.ts';
+import { HelperSync } from './helper/sync.ts';
 
 const COMPILED = !/^deno(\.exe)?$/i.test(Deno.execPath().replace(/^.*[\\/]/, ''));
 const SHIM_NAME = 'aib-open';
+
+/** AIB_WSL_SYNC_POLL (seconds, 0.1 to 3600) from the helper's fixed environment: only AIB's tests set it (to prove inotify wakes the scan). */
+export function syncPoll(value: string | undefined): { poll?: number } {
+  const poll = Number(value);
+  return value && Number.isFinite(poll) && poll >= 0.1 && poll <= 3600 ? { poll } : {};
+}
 
 function argValue(args: string[], flag: string): string {
   const i = args.indexOf(flag);
@@ -164,8 +172,16 @@ async function helperMain(args: string[]): Promise<number> {
   });
   // worktrees only with the data folder named (one per Windows AIB): `<data>/worktrees`, its registry `<data>/studio-worktrees.json`
   const named = argValue(args, '--data').startsWith('/') ? data : '';
-  const methods = makeMethods({ env: () => captured, own: [root, data, ...(exeDir ? [exeDir] : [])], ...(named ? { data: named } : {}) });
-  if (named) void captured.then(() => worktreeStartup(named)).catch(() => {}); // git needs the login PATH first
+  // live sync of the WSL chats' worktrees (helper/sync.ts), over the same data folder; its poll can be stretched by AIB's tests only
+  const sync = named ? new HelperSync(named, syncPoll(base.AIB_WSL_SYNC_POLL)) : null;
+  const methods = makeMethods({
+    env: () => captured,
+    own: [root, data, ...(exeDir ? [exeDir] : [])],
+    ...(named ? { data: named } : {}),
+    ...(sync ? { sync } : {}),
+  });
+  // git needs the login PATH first; then the chats the last helper synced are watched again and caught up
+  if (named) void captured.then(() => worktreeStartup(named)).then(() => sync?.resumeSaved()).catch(() => {});
   if (COMPILED && exeDir) {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);
     setTimeout(() => void cleanOldVersions(root, keep, Deno.execPath()).catch(() => {}), 30_000);
