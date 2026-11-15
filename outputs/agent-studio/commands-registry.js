@@ -383,6 +383,26 @@
   ];
   // "New chat in <project>" exists once per project the dropdown lists.
   function projectActions(ctx) {
+    return newChatActions(ctx).concat(windowActions(ctx));
+  }
+  // multi-window 2B: "Open <project> in new window", only where the page can open one (the desktop app) and not for the project
+  // this window is already pinned to. Dynamic like "New chat in", so it shows when you type, not in the empty list.
+  function windowActions(ctx) {
+    if (!can(ctx, 'openProjectWindow') || !can(ctx, 'offersProjectWindow')) return [];
+    return (ctx.projects || [])
+      .filter((p) => ctx.do.offersProjectWindow(p))
+      .map((p) => ({
+        id: 'new-window:' + p.key,
+        group: 'Moving around',
+        dynamic: true,
+        title: 'Open ' + p.name + ' in new window',
+        keywords: ['new window', 'window', 'open', 'monitor', 'separate'],
+        shortcut: '',
+        when: () => true,
+        run: (c) => c.do.openProjectWindow(p),
+      }));
+  }
+  function newChatActions(ctx) {
     if (!can(ctx, 'newChat')) return [];
     return (ctx.projects || []).map((p) => ({
       id: 'new-in:' + p.key,

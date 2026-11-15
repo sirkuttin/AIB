@@ -410,6 +410,109 @@
     const it = itemOf(key);
     return routeOpen({ chat: key, project: it ? it.projectKey : projectKeyOf(c) }, openHere);
   }
+
+  /* ---- a project in its own window (multi-window Phase 2B; design section 3, K3; owner decision 1a) ----
+     "Open in new window" (the project menu), Ctrl+K "Open <project> in new window" and Ctrl+click on a project row all send
+     K3 op 'open'. A project that already has a window: the server brings that window forward ({existed: true}). Only in the
+     desktop app (window-context.js app()); in a browser (serve) the entry points are not offered, and a 501 {browser} from the
+     server says why. At the cap (409) a quiet note says so. In the project list, the row of a project with its own window
+     shows a small ↗; clicking the row brings that window forward (selectProject's route, K3 op 'route'; focusProjectWindow
+     sends op 'focus' directly). One window: nothing changes on screen. */
+  const canOpenWindows = () => {
+    const W = Win();
+    return !!(W && W.app() && host && host.postJson);
+  };
+  // The window (not this one) pinned to project pk, or ''.
+  function windowOfProject(pk) {
+    const W = Win();
+    if (!W || !pk || !W.app()) return '';
+    const w = W.others().find((x) => x.kind === 'project' && x.project === pk);
+    return w ? w.w : '';
+  }
+  // The menu item and Ctrl+K action: not for the project this window is already pinned to, and only with a folder.
+  function offersProjectWindow(pk) {
+    const p = projectOfKey(pk);
+    return canOpenWindows() && !!p && !!p.path && pinnedProject() !== pk;
+  }
+  let windowNote = null;
+  function closeWindowNote() {
+    if (!windowNote) return;
+    clearTimeout(windowNote._t);
+    windowNote.remove();
+    windowNote = null;
+  }
+  // A quiet note in the menu's own look, where the menu was (or beside the project list); it goes after a few seconds.
+  function showWindowNote(text, at) {
+    closeWindowNote();
+    const n = el('div', null, 'ws-menu ws-window-note');
+    n.setAttribute('role', 'status');
+    n.append(el('div', text, 'ws-menu-head'));
+    doc().body.append(n);
+    let x = at && typeof at.x === 'number' ? at.x : 0,
+      y = at && typeof at.y === 'number' ? at.y : 0;
+    if (!at) {
+      const b = projBtn();
+      const r = b && b.getBoundingClientRect ? b.getBoundingClientRect() : { left: 8, bottom: 48 };
+      x = r.left;
+      y = r.bottom + 4;
+    }
+    placeFixed(n, x, y);
+    n.onclick = closeWindowNote;
+    n._t = setTimeout(closeWindowNote, 5000);
+    windowNote = n;
+    return n;
+  }
+  const BROWSER_NOTE = 'Opening a project in its own window needs the AIB desktop app.';
+  // at: {x, y} for the note, if one is needed. Resolves {w, existed} or null.
+  function openProjectWindow(pk, at) {
+    const W = Win(),
+      p = projectOfKey(pk);
+    if (!p || !p.path || !host || !host.postJson) return Promise.resolve(null);
+    if (!W || !W.app()) {
+      showWindowNote(BROWSER_NOTE, at);
+      return Promise.resolve(null);
+    }
+    closeCtx(false);
+    const body = {
+      op: 'open',
+      from: W.id(),
+      project: { key: pk, name: String(p.name || '').slice(0, 80), path: p.path },
+    };
+    return Promise.resolve(host.postJson('desktop/windows', body)).then(
+      (r) => {
+        closeWindowNote();
+        refresh(); // the ↗ mark follows once that window reports itself
+        return r && typeof r === 'object' ? r : null;
+      },
+      (e) => {
+        const status = e && e.status;
+        if (status === 409) showWindowNote('AIB has 8 windows open, the most it can. Close one to open another.', at);
+        else if (status === 501) showWindowNote(BROWSER_NOTE, at);
+        else if (host.notice) host.notice('That project could not be opened in a new window. Try again in a moment.');
+        return null;
+      },
+    );
+  }
+  // The ↗ mark's click: bring the project's window forward.
+  function focusProjectWindow(pk) {
+    const w = windowOfProject(pk);
+    if (!w || !canOpenWindows()) return Promise.resolve(false);
+    return Promise.resolve(host.postJson('desktop/windows', { op: 'focus', w })).then(
+      () => true,
+      () => {
+        refresh(); // that window is gone: the mark goes with the next presence answer
+        return false;
+      },
+    );
+  }
+  // Ctrl+click (Cmd+click) on a project row, in the desktop app: open it in its own window instead. True when it did.
+  function projectClickOpensWindow(e, pk) {
+    if (!e || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || !offersProjectWindow(pk)) return false;
+    if (e.preventDefault) e.preventDefault();
+    if (e.stopPropagation) e.stopPropagation();
+    openProjectWindow(pk, { x: e.clientX || 0, y: (e.clientY || 0) + 8 });
+    return true;
+  }
   // While a project switch opens that project's chat: its files come back as they were (files-ui.js projectShown), instead of
   // the chat being forced to the front as when you open a chat.
   let switchingProject = false;
@@ -2048,12 +2151,21 @@
       b.setAttribute('aria-hidden', 'true');
       main.append(b);
     }
-    main.onclick = () => {
+    // its own AIB window: a small ↗ (clicking the row brings that window forward through the route)
+    if (windowOfProject(p.key)) {
+      const mark = el('span', '↗', 'ws-prow-win');
+      mark.title = 'Open in another window';
+      mark.setAttribute('aria-hidden', 'true');
+      main.append(mark);
+      main.setAttribute('aria-label', main.getAttribute('aria-label') + ', open in another window');
+    }
+    main.onclick = (e) => {
       if (suppressClick) {
         suppressClick = false;
         return;
       }
       closeProjMenu(false);
+      if (projectClickOpensWindow(e, p.key)) return;
       selectProject(p.key);
     };
     main.addEventListener('pointerdown', (e) => startDrag(e, row, p.key, canMove));
@@ -2276,6 +2388,7 @@
       setPrefOf(pk, { muted: !mutedProject(pk) }),
     );
     item('Copy folder path', () => copyText(p.path || ''), !p.path);
+    if (offersProjectWindow(pk)) item('Open in new window', () => openProjectWindow(pk, { x, y }));
     addEditorItems(m, p, pk, item, () => ctx === m && openCtxMenu(pk, x, y, returnTo));
     if (root.AgentDeleteProjectUI && p.path) {
       const sep = el('div', null, 'ws-menu-sep');
@@ -3195,6 +3308,13 @@
     deleteProject,
     projectOrder,
     openProjectCtx,
+    // multi-window Phase 2B: a project in its own window
+    canOpenWindows,
+    offersProjectWindow,
+    openProjectWindow,
+    windowOfProject,
+    focusProjectWindow,
+    projectClickOpensWindow,
     init,
     sync,
     syncPrefs,
