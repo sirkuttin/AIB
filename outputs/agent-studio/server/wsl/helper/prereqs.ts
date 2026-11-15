@@ -135,11 +135,11 @@ export function whichOn(name: string, path: string, isExe: (p: string) => boolea
 /** Who manages the node at `path` (as found on PATH, then the program it really is). */
 export function managerOf(path: string, env: Record<string, string>, home: string, root = ''): Manager {
   const p = path.replaceAll('\\', '/');
-  if (root && (p === root || p.startsWith(root.replace(/\/+$/, '') + '/'))) return 'aib';
   if (/\/\.?asdf\//.test(p) || (env.ASDF_DATA_DIR && p.startsWith(env.ASDF_DATA_DIR.replace(/\/+$/, '') + '/'))) return 'asdf';
   if (/\/(mise|rtx)\//.test(p) || (env.MISE_DATA_DIR && p.startsWith(env.MISE_DATA_DIR.replace(/\/+$/, '') + '/'))) return 'mise';
   const nvmDir = (env.NVM_DIR || (home ? `${home}/.nvm` : '')).replace(/\/+$/, '');
   if ((nvmDir && p.startsWith(nvmDir + '/')) || /\/\.nvm\//.test(p)) return 'nvm';
+  if (root && (p === root || p.startsWith(root.replace(/\/+$/, '') + '/'))) return 'aib';
   return 'system';
 }
 

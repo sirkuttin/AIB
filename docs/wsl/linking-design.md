@@ -240,3 +240,15 @@ listed first in New project (no new setting).
 - contract.ts (helper methods `env.prereqs`, `agents.uninstall`, `agents.signinStatus`, type `EnvPrereqs`) is FROZEN as committed; additions only.
 
 **First task for the helper builder (item 8 of the architect review): VERIFY, do not assume, whether AIB's own pinned Claude Code install (agent_versions.json + agent_locks/claude.package-lock.json: claude-agent-acp 0.102.0 + SDK) carries its own `claude` program inside its node_modules when installed with `npm ci --ignore-scripts` on Linux; and whether it can be signed in with it (`claude auth login`-style command exists in that bundled program: check `--help`, do not log in). Do it ONCE in a temp root under /tmp/aib-wsl-test-* in the distro (needs ~1-2 GB free: check with df first; network allowed for this single install; delete afterwards). Record the result in WSL.md and the design doc (what is bundled, sizes, the exact sign-in command). If the bundled program is missing, say so: the 'standalone command is not needed' copy must then change.**
+
+**Verified 2026-11-15 (helper builder; one real `agents.install` of each pinned entry in `/tmp/aib-wsl-test-<random>` on this PC's
+Ubuntu 24.04 x86_64, Node 24.22.1 via asdf; only `--help` run, with a throwaway HOME; nothing signed in; the temp root removed and
+checked gone). Both vendor programs ARE bundled in AIB's own installs, so "The standalone claude command is not needed" holds:**
+- Claude Code 0.102.0 (`npm ci --ignore-scripts`, 31 s, 404 MB): `@anthropic-ai/claude-agent-sdk-linux-x64/claude`, a 342 MB glibc
+  ELF (Claude Code 2.1.321; package 327 MB). The linux-x64 optionalDependency was installed with scripts off; no musl and no other
+  platform package was fetched. Sign-in: `claude auth login` (`--claudeai` default, `--console`, `--sso`, `--email <email>`), status
+  `claude auth status`, `claude auth logout`; AIB's route stays `node dist/index.js --cli auth login --claudeai` (not re-run here).
+- Codex 2.6.0 (25 s, 457 MB): `@openai/codex` 0.166.0 `bin/codex.js` with `@openai/codex-linux-x64` (436 MB: a static musl `codex`
+  plus its own `bwrap` and `rg`; the package ships only that musl build, which runs on glibc). Sign-in: `codex login`, with
+  `--device-auth` listed (also `--with-api-key`, `--with-access-token`); status `codex login status`.
+- Corrects section 2: the sizes above are AIB's pinned installs (not the owner's global 0.107.1); npm's cache took 330 MB more.
