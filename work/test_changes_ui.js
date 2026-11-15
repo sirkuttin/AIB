@@ -497,6 +497,16 @@ test('the header line names the chat changes for a worktree chat and Uncommitted
   );
 });
 
+test('a WSL chat in its own worktree gets Discard but no Merge yet (worktree.merge: false); a Windows one gets both', () => {
+  const files = [{ path: 'a.txt' }];
+  const wsl = { git: true, files, worktree: { branch: 'studio/chat-1', merge: false } };
+  assert.equal(C.canDiscard(wsl), true);
+  assert.equal(C.canMerge(wsl), false);
+  assert.equal(C.canMerge({ git: true, files, worktree: { branch: 'studio/chat-1' } }), true);
+  assert.equal(C.canMerge({ git: true, files }), false);
+  assert.equal(C.canMerge(null), false);
+});
+
 test('Discard exists only for a chat with its own branch that has changes, and asks once in the agreed words', () => {
   const files = [{ path: 'a.txt' }];
   assert.equal(C.canDiscard({ git: true, files, worktree: { branch: 'studio/x' } }), true);

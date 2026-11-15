@@ -821,12 +821,11 @@
     const live = scope && scope.branch ? projectChats().find((c) => c.key === scope.chatKey) : null;
     const lab = F().scopeLabel(live ? Object.assign({}, scope, { title: live.title }) : scope);
     els.scopeBtn.replaceChildren(el('span', lab.lbl, 'lbl'), el('b', lab.name), el('span', '▾', 'fx-caretdown'));
-    // A WSL project has no copies (phase 1): the pill says it works in place, with the folder as "Ubuntu: /home/u/app".
-    els.scopeBtn.title = wslScope(scope)
-      ? 'WSL projects work in the project folder\n' + root.AIBWsl.tooltip(scope.path || projectPathNow())
-      : (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No project folder') +
-        (tree && tree.root ? '\n' + tree.root : '') +
-        '\nChoose which copy of the project to show';
+    // A WSL project's folders (its own, or a chat's copy in the distro) read "Ubuntu: /home/u/app", never as a raw wsl:// ref.
+    const wslTip = wslScope(scope) ? root.AIBWsl.tooltip((tree && tree.root) || scope.path || projectPathNow()) : '';
+    els.scopeBtn.title = (scope ? (scope.branch ? "This chat's own copy on branch " + scope.branch : 'The project folder') : 'No project folder') +
+      (wslTip ? '\n' + wslTip : tree && tree.root ? '\n' + tree.root : '') +
+      '\nChoose which copy of the project to show';
     els.scopeBtn.setAttribute('aria-label', 'Showing files of: ' + lab.lbl + ' ' + lab.name + '. Change');
     const nChanged = changes ? changes.size : tree ? changedFromListing(tree).length : 0;
     els.changed.textContent = 'Changed ' + nChanged;

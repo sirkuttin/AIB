@@ -1314,3 +1314,22 @@ test('a WSL project: a picture previews from its link, a binary file says it can
   assert.ok(!view.querySelectorAll('.fx-note .fx-btn').length, 'no Open in editor: the editor cannot open a path inside the distro');
   assert.ok(!/Not available for WSL/.test(view.textContent));
 });
+
+test('a WSL project: a chat in its own copy says so on the scope pill (no "works in the project folder"); the folder reads "Ubuntu: …"', async () => {
+  const wt = conv('w1', ROOT + '/wt/chat-1', { projectRoot: ROOT, worktree: { branch: 'studio/chat-1' }, title: 'Fix login' });
+  const t = setup({ list: [wt, conv('a1', ROOT)] });
+  const wsl = { isWsl: () => true, tooltip: (p) => 'Ubuntu: ' + p, distroName: () => 'Ubuntu', parse: () => ({ key: 'ubuntu' }) };
+  t.ctx.AIBWsl = new Proxy(wsl, { get: (o, k) => (k in o ? o[k] : () => '') });
+  t.FU.setMode('files');
+  await flush();
+  const first = t.calls.find((c) => c.path === '/api/live/files/list');
+  assert.deepEqual([first.q.id, first.q.root], ['claude:w1', 'chat'], "the chat's own copy in the distro");
+  const btn = t.shell.body.querySelector('.fx-scope');
+  assert.equal(btn.textContent, 'CopyFix login▾');
+  assert.match(btn.title, /^This chat's own copy on branch studio\/chat-1\nUbuntu: /);
+  assert.ok(!/work in the project folder/.test(btn.title));
+  btn.click();
+  t.shell.body.querySelector('.fx-menu').querySelectorAll('.fx-menu-it')[1].click(); // Main folder
+  await flush();
+  assert.match(t.shell.body.querySelector('.fx-scope').title, /^The project folder\nUbuntu: /);
+});
