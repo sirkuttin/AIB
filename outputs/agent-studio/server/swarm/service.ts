@@ -22,7 +22,7 @@ import { type Helper, helperOf, newHelperId, readHelpers, Registry, RUNNING_STAT
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
 import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE } from './rules.ts';
 import { applyChange, changedFiles } from './undo.ts';
-import { claudeHelpers } from './settings.ts';
+import { claudeHelpers, swarmEnabled } from './settings.ts';
 
 const log = getLogger('swarm');
 
@@ -106,6 +106,9 @@ export class Swarm {
   /** POST /api/live/swarm/tool {conversationId, action, args}: [status, payload]. The key was checked by the route. */
   async tool(conversationId: unknown, action: unknown, args: unknown): Promise<Reply> {
     try {
+      if (!swarmEnabled(this.ctx.stateDir)) {
+        return [403, { ok: false, code: 'swarm-off', error: 'Helpers from other agents are turned off. Turn them on in Settings (Helpers from other agents, experimental), then start a new chat.' }];
+      }
       const caller = await this.mainChat(conversationId);
       const a = obj(args);
       if (action === 'helper_providers') return [200, this.providers(caller)];

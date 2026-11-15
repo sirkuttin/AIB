@@ -20,6 +20,27 @@ export function claudeHelpers(stateDir: string | null): boolean {
   return CLAUDE_HELPERS_DEFAULT;
 }
 
+/** Swarm phase 1 is off by default for the public beta (it is still being finished): the main agent is offered no helper tools. */
+export const SWARM_ENABLED_DEFAULT = false;
+
+function readAll(stateDir: string): Record<string, unknown> {
+  try {
+    const [status, raw] = readJsonFile(pathOf(stateDir, FILE));
+    if (status === 'ok' && isDict(raw)) return { ...raw };
+  } catch { /* unreadable: start clean */ }
+  return {};
+}
+
+export function swarmEnabled(stateDir: string | null): boolean {
+  if (!stateDir) return SWARM_ENABLED_DEFAULT;
+  const v = readAll(stateDir).enabled;
+  return typeof v === 'boolean' ? v : SWARM_ENABLED_DEFAULT;
+}
+
+export function setSwarmEnabled(stateDir: string, on: boolean): void {
+  saveJson(pathOf(stateDir, FILE), { ...readAll(stateDir), enabled: on }, '.swarm-settings-');
+}
+
 export function setClaudeHelpers(stateDir: string, on: boolean): void {
-  saveJson(pathOf(stateDir, FILE), { claudeHelpers: on }, '.swarm-settings-');
+  saveJson(pathOf(stateDir, FILE), { ...readAll(stateDir), claudeHelpers: on }, '.swarm-settings-');
 }

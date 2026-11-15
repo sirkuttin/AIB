@@ -90,6 +90,12 @@
       ],
     },
     {
+      id: 'swarm-helpers',
+      section: 'agents',
+      label: 'Helpers from other agents (experimental)',
+      keywords: ['helper', 'helpers', 'swarm', 'subagent', 'other providers', 'experimental', 'start_helper'],
+    },
+    {
       id: 'wsl-linking',
       section: 'wsl',
       label: 'Agents in your WSL distros',
@@ -2185,6 +2191,16 @@
     if (typeof running === 'boolean')
       box.append(note('The agent host that is running now started with this ' + (running ? 'on' : 'off') + '.'));
   }
+  function renderSwarmHelpers(box) {
+    const on = !!(S.data && S.data.swarm && S.data.swarm.enabled);
+    box.append(toggle('Helpers from other agents (experimental)', on, (v) => saveQuiet({ swarm: { enabled: v } })));
+    box.append(
+      note(
+        "Lets a chat's agent start helper agents from other providers. Off by default while it's being finished.",
+      ),
+    );
+    box.append(note('Applies to chats started or reopened after you change it.'));
+  }
   function renderKeepAwake(box) {
     const on = !!(S.data && S.data.settings.server && S.data.settings.server.keepAwake);
     box.append(toggle('Keep this PC awake while AIB runs', on, (v) => saveQuiet({ server: { keepAwake: v } })));
@@ -2310,6 +2326,7 @@
     'text-size': renderTextSize,
     'default-view': renderDefaultView,
     'auto-reconnect': renderAutoReconnect,
+    'swarm-helpers': renderSwarmHelpers,
     'keep-awake': renderKeepAwake,
     'server-info': renderServerInfo,
     updates: renderUpdates,
@@ -2331,6 +2348,7 @@
     'text-size': 'Text size',
     'default-view': 'Default chat view',
     'auto-reconnect': 'Reconnect after a restart',
+    'swarm-helpers': 'Helper agents',
     'keep-awake': 'Keep the PC awake',
     'server-info': 'About AIB',
     updates: 'Updates',

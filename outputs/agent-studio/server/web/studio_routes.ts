@@ -26,6 +26,7 @@ import { bringBack, restoreFolders } from './project_routes.ts';
 import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
 import { Swarm } from '../swarm/service.ts';
+import { setSwarmEnabled, swarmEnabled } from '../swarm/settings.ts';
 import * as wslMerge from '../wsl/merge.ts';
 import { wslResumeSync } from '../wsl/sync.ts';
 
@@ -184,11 +185,20 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('GET /api/live/settings', async (ctx, url) => [200, {
     ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1')),
     keepAwake: ctx.keepAwake.status(),
+    swarm: { enabled: swarmEnabled(ctx.stateDir) },
   }]);
   routes.set('POST /api/live/settings', async (ctx, _url, body) => {
-    await ctx.settings.update(body);
+    // swarm.enabled lives in swarm-settings.json (swarm/settings.ts), not in Settings: split it off before the Settings patch
+    let rest = body;
+    if (isDict(body) && 'swarm' in body) {
+      const { swarm, ...others } = body;
+      if (!isDict(swarm) || typeof swarm.enabled !== 'boolean') return [400, { error: 'swarm.enabled must be true or false' }];
+      setSwarmEnabled(ctx.stateDir, swarm.enabled);
+      rest = others;
+    }
+    if (!isDict(rest) || Object.keys(rest).length) await ctx.settings.update(rest);
     ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
-    return [200, { ...(await settingsView(studioOf(ctx))), keepAwake: ctx.keepAwake.status(), ok: true }];
+    return [200, { ...(await settingsView(studioOf(ctx))), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
   });
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);
