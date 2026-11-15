@@ -32,7 +32,7 @@ const turnEnd = (time) => ({ role: 'turn-end', label: 'Turn finished', value: 'e
 test('chat.js puts exactly these things on window: the image check tool-views.js uses, the GET helper, the view hooks and the test hook', () => {
   const page = makePage();
   const exported = Object.keys(page.context.window)
-    .filter((name) => name !== 'addEventListener')
+    .filter((name) => name !== 'addEventListener' && name !== 'ChatCache') // ChatCache: chat-cache.js's own, loaded before chat.js
     .sort();
   assert.deepEqual(exported, ['AgentChatView', 'AgentStudioGet', 'StudioChat', 'safeImageBlock']);
   assert.equal(page.context.window.safeImageBlock({ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }), true);
