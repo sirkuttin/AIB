@@ -146,6 +146,8 @@ export class AgentHost {
       detach: (a) => this.opDetach(a),
       list: () => studio.liveListSync(),
       state: (a) => studio.liveState(need(a, 'id'), a.after ?? 0),
+      events: (a) => studio.liveEvents(need(a, 'id'), a.query ?? {}), // history loading: one page (event_pages.ts)
+      event: (a) => studio.liveEvent(need(a, 'id'), need(a, 'seq')),
       live: async (a) => [...await studio.liveCall(need(a, 'name') as string, a.body ?? null)],
       ownership: (a) => studio.ownershipQuery(str(a.provider), str(a.id), str(a.cwd)),
       artifact: (a) => studio.emitArtifact(need(a, 'conversationId'), need(a, 'data')),

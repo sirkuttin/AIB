@@ -15,6 +15,10 @@ export interface LiveBackend {
   liveInfo(): Promise<Live>;
   liveList(): Promise<Live>;
   liveState(connectionId: string, after?: number): Promise<unknown>;
+  /** One page of a chat's events (server/acp/event_pages.ts PageQuery); null when the connection is gone. */
+  liveEvents(connectionId: string, query?: Record<string, unknown>): Promise<unknown>;
+  /** One event whole by seq; null when it is not kept. */
+  liveEvent(connectionId: string, seq: number): Promise<unknown>;
   liveWrites(): Promise<unknown>;
   emitArtifact(conversationId: string, data: unknown): Promise<boolean>;
   liveCall(name: string, body: unknown): Promise<[number, unknown]>;

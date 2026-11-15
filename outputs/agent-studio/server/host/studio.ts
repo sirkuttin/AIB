@@ -15,6 +15,7 @@ import { Connection, type ConnectionOptions, errorText, NotStoppable, ThreadEven
 import { sessionOp } from '../acp/breadth.ts';
 import type { McpServer } from '../acp/breadth.ts';
 import { PromptStateUnknown } from '../acp/rpc_errors.ts';
+import { fullEvent, page, type PageQuery, pageQuery } from '../acp/event_pages.ts';
 import { QueueStore } from '../acp/msgqueue.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
 import * as adapters from '../agents/adapters.ts';
@@ -1817,6 +1818,34 @@ export class Studio {
     if (Number.isNaN(cursor)) return Promise.reject(new ValueError(`invalid literal for int() with base 10: ${pyRepr(after)}`));
     if (cursor === 0) void this.limits.refresh(connection); // a page opened this chat (at most once a minute per account)
     return Promise.resolve({ ...connection.public(cursor), limits: this.limits.view(connection) });
+  }
+
+  /**
+   * One page of a chat's events (history loading, event_pages.ts): the tail by bytes, before= / after= / around= a seq, or one
+   * helper's events (session=<its id>), with the page's boundary state. null when the connection is gone. While the chat is being
+   * rebuilt from the keeper's record: an empty page with rebuilding: true (the page asks again, as with liveState).
+   */
+  liveEvents(connectionId: unknown, query: unknown = {}, wait = true): Promise<Json | null> {
+    const connection = isStr(connectionId) ? this.connections.get(connectionId) : undefined;
+    if (connection === undefined) {
+      if (wait && this.#adopting && !this.#adoptDone && isStr(connectionId)) {
+        return this.#afterAdopting().then(() => this.liveEvents(connectionId, query, false));
+      }
+      return Promise.resolve(null);
+    }
+    const q: PageQuery = pageQuery(isDict(query) ? query : {});
+    if (connection.replaying && !connection.rebuildError && !connection.closed) {
+      return Promise.resolve({ rebuilding: true, events: [], cursor: connection.sequence, eventsId: connection.eventsId });
+    }
+    return Promise.resolve(page(connection.pageSource(), q) as unknown as Json);
+  }
+
+  /** One event whole by seq (a clipped tool output's "Show full output"); null when the connection or the event is gone. */
+  liveEvent(connectionId: unknown, seq: unknown): Promise<Json | null> {
+    const connection = isStr(connectionId) ? this.connections.get(connectionId) : undefined;
+    const n = Math.trunc(Number(seq));
+    if (connection === undefined || !Number.isFinite(n)) return Promise.resolve(null);
+    return Promise.resolve(fullEvent(connection.pageSource(), n) as Json | null);
   }
 
   /** Artifact created / new version: push {"type":"artifact",...} to the page as a normal conversation event (kind 'artifact'). */

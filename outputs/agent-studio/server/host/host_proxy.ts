@@ -20,6 +20,7 @@ import {
 } from './host_client.ts';
 
 import type { Live, LiveBackend } from './backend.ts';
+import { arraySource, type Ev, fullEvent, page, pageQuery } from '../acp/event_pages.ts';
 export type { Live };
 
 export interface HostProxyOptions {
@@ -46,6 +47,20 @@ export interface HostProxyOptions {
 
 const isPermanent = (error: HostUnavailable) => ['host_stopped', 'host_incompatible', 'host_waiting'].includes(error.code);
 const softErrors = (error: unknown) => error instanceof HostUnavailable || error instanceof HostValueError || error instanceof HostOSError || error instanceof Error;
+
+/** An agent host that does not know the operation (an older version still running): its RPC answers 404 "Unknown operation". */
+export const olderHost = (error: unknown) =>
+  error instanceof Error && !(error instanceof HostUnavailable) && /^Unknown operation$/.test(error.message);
+
+/** A full liveState answer as an event_pages.ts source (the older-host fallback). */
+export function stateSource(state: Live) {
+  return arraySource((Array.isArray(state.events) ? state.events : []) as Ev[], {
+    eventsId: typeof state.eventsId === 'string' ? state.eventsId : '',
+    cursor: Number(state.cursor) || 0,
+    stable: 0, // an older host says nothing about its snapshots: trust no seq across a restart
+    mainSession: typeof state.sessionId === 'string' ? state.sessionId : '',
+  });
+}
 
 export class HostProxy implements LiveBackend {
   readonly hostMode = 'split';
@@ -254,6 +269,32 @@ export class HostProxy implements LiveBackend {
 
   liveState(connectionId: string, after = 0): Promise<unknown> {
     return this.call('state', { id: connectionId, after: Math.trunc(Number(after)) }, 20);
+  }
+
+  /**
+   * One page of a chat's events. An agent host from before history loading has no 'events' op ("Unknown operation"): then the
+   * full state, with the same page rules applied here (oldHost: true), so the page and the phone need one path only.
+   */
+  async liveEvents(connectionId: string, query: Record<string, unknown> = {}): Promise<unknown> {
+    try {
+      return await this.call('events', { id: connectionId, query }, 20);
+    } catch (error) {
+      if (!olderHost(error)) throw error;
+    }
+    const state = await this.liveState(connectionId, 0) as Live | null;
+    if (!state) return null;
+    if (state.rebuilding) return { rebuilding: true, events: [], cursor: state.cursor, eventsId: state.eventsId ?? '' };
+    return { ...page(stateSource(state), pageQuery(query)), oldHost: true };
+  }
+
+  async liveEvent(connectionId: string, seq: number): Promise<unknown> {
+    try {
+      return await this.call('event', { id: connectionId, seq: Math.trunc(Number(seq)) }, 20);
+    } catch (error) {
+      if (!olderHost(error)) throw error;
+    }
+    const state = await this.liveState(connectionId, 0) as Live | null;
+    return state ? fullEvent(stateSource(state), Math.trunc(Number(seq))) : null;
   }
 
   async liveWrites(): Promise<unknown> {

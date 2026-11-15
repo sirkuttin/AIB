@@ -6,6 +6,8 @@
 import { PAGE_KEY } from './_page_key.ts';
 import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
 import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
+import { stateSource } from '../../outputs/agent-studio/server/host/host_proxy.ts';
+import { fullEvent, page, pageQuery } from '../../outputs/agent-studio/server/acp/event_pages.ts';
 import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
 import { openSource, type Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
@@ -292,6 +294,15 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
         cursor: c.events.length ? c.events.at(-1)!.seq : 0,
         reset: false,
       });
+    },
+    // history loading: the same page rules the agent host uses, over this chat's events (host_proxy's older-host path)
+    liveEvents: async (id: string, query: Json = {}) => {
+      const state = await host.liveState(id, 0) as Json | null;
+      return state ? page(stateSource(state), pageQuery(query)) : null;
+    },
+    liveEvent: async (id: string, seq: number) => {
+      const state = await host.liveState(id, 0) as Json | null;
+      return state ? fullEvent(stateSource(state), seq) : null;
     },
     liveWrites: () => Promise.resolve({}),
     liveCall: (name: string, body: Json) => {
