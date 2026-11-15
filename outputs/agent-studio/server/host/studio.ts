@@ -11,7 +11,8 @@
  * Python `with self.lock:` block does no blocking work, so it is a stretch of synchronous code here.
  */
 import { AddedProjects } from '../desktop/added_projects.ts';
-import { Connection, type ConnectionOptions, errorText, NotStoppable, ThreadEvent } from '../acp/connection.ts';
+import { Connection, type ConnectionOptions, errorText, historyV2, NotStoppable, ThreadEvent } from '../acp/connection.ts';
+import { HistoryClient } from '../history/client.ts';
 import { sessionOp } from '../acp/breadth.ts';
 import type { McpServer } from '../acp/breadth.ts';
 import { PromptStateUnknown } from '../acp/rpc_errors.ts';
@@ -1123,6 +1124,7 @@ export class Studio {
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
         connectionOptions.wsl = plan instanceof WslPlan ? { ...launch.spawn, linuxPath: plan.linuxPath } : launch.spawn;
       } else if (this.keeper && this.keeperForNew && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
+      if (connectionOptions.keeper) connectionOptions.history = this.historyClient();
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
@@ -1515,7 +1517,7 @@ export class Studio {
     const command = Array.isArray(note.command) ? note.command.map(String) : [];
     const cwd = String(note.cwd);
     const provider = String(note.provider);
-    const options: ConnectionOptions = { keeper, id: String(note.id), rebuild: info, start: false };
+    const options: ConnectionOptions = { keeper, id: String(note.id), rebuild: info, start: false, history: this.historyClient() };
     // A distro's keeper holds only that distro's chats: the note's loc (or its ref) says where the agent works; it starts nothing.
     const loc = isDict(note.loc) && note.loc.kind === 'wsl' && isStr(note.loc.linuxPath) ? note.loc : null;
     const wsl = distro ? (loc ? { distro, linuxPath: String(loc.linuxPath) } : wslLoc(cwd)) : null;
@@ -1820,6 +1822,28 @@ export class Studio {
     return Promise.resolve({ ...connection.public(cursor), limits: this.limits.view(connection) });
   }
 
+  #history: HistoryClient | null | undefined;
+  /**
+   * The history Worker (history-loading 2A): one SQLite store per keeper chat in <state>/history. null without a state folder or with
+   * the aib-history-v2 switch off (AIB_HISTORY_V2=0): snapshots then carry the history in chunk notes, as in beta.10.
+   */
+  historyClient(): HistoryClient | null {
+    if (this.#history === undefined) {
+      let dir: string | null = null;
+      if (this.hasStateDir && historyV2() && !this.#closed) {
+        try {
+          dir = `${this.stateDir}/history`;
+          Deno.mkdirSync(dir, { recursive: true });
+        } catch (error) {
+          log.warning('history: no store folder (%s); chats keep their history in the keeper notes', errorText(error));
+          dir = null;
+        }
+      }
+      this.#history = dir ? new HistoryClient(dir) : null;
+    }
+    return this.#history;
+  }
+
   /**
    * One page of a chat's events (history loading, event_pages.ts): the tail by bytes, before= / after= / around= a seq, or one
    * helper's events (session=<its id>), with the page's boundary state. null when the connection is gone. While the chat is being
@@ -1837,7 +1861,22 @@ export class Studio {
     if (connection.replaying && !connection.rebuildError && !connection.closed) {
       return Promise.resolve({ rebuilding: true, events: [], cursor: connection.sequence, eventsId: connection.eventsId });
     }
-    return Promise.resolve(page(connection.pageSource(), q) as unknown as Json);
+    const ram = page(connection.pageSource(), q);
+    // Older than RAM keeps, or a helper RAM no longer holds: read from the chat's history store.
+    const older = q.before !== undefined || q.around !== undefined || q.after !== undefined;
+    const helper = !!q.session && q.session !== 'main' && q.session !== connection.sessionId;
+    if (connection.historyState === 'claimed' && ((older && !ram.more && !ram.newer) || (helper && !ram.events.length) || (!older && !ram.more))) {
+      return connection.storePage(q).then((stored) => {
+        if (!stored) return ram as unknown as Json;
+        if (!older && !helper) { // the open page: RAM's, but the history reaches back as far as the store does
+          if (stored.first && (!ram.first || stored.first < ram.first)) ram.first = stored.first;
+          ram.more = ram.more || (!!ram.from && !!stored.first && stored.first < ram.from);
+          return ram as unknown as Json;
+        }
+        return (stored.events.length || !ram.events.length ? stored : ram) as unknown as Json;
+      });
+    }
+    return Promise.resolve(ram as unknown as Json);
   }
 
   /** One event whole by seq (a clipped tool output's "Show full output"); null when the connection or the event is gone. */
@@ -1845,7 +1884,9 @@ export class Studio {
     const connection = isStr(connectionId) ? this.connections.get(connectionId) : undefined;
     const n = Math.trunc(Number(seq));
     if (connection === undefined || !Number.isFinite(n)) return Promise.resolve(null);
-    return Promise.resolve(fullEvent(connection.pageSource(), n) as Json | null);
+    const kept = fullEvent(connection.pageSource(), n);
+    if (kept || connection.historyState !== 'claimed') return Promise.resolve(kept as Json | null);
+    return connection.storeEvent(n) as Promise<Json | null>;
   }
 
   /** Artifact created / new version: push {"type":"artifact",...} to the page as a normal conversation event (kind 'artifact'). */
@@ -2392,6 +2433,12 @@ export class Studio {
     if (this.wslSync) await this.wslSync.finish(); // every chat was stopped: the helpers stop watching them
     await this.#quitWsl(3000); // every chat was just stopped: give their channels a moment to end
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
+    const history = this.#history;
+    this.#history = null;
+    if (history) {
+      await Promise.all([...this.connections.values()].map((c) => c.historySettled().catch(() => {})));
+      await history.shutdown().catch((error) => log.warning('history: stopping the store worker failed: %s', errorText(error)));
+    }
   }
 
   /**
