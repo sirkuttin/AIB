@@ -376,7 +376,15 @@ export interface AibRemoveResult {
 /** The distro's prerequisites for AIB-managed agents (design section 12). */
 export interface EnvPrereqs {
   /** Node.js >= 22.19 with npm is the one hard prerequisite. 'shim_unset': a version manager's shim (asdf/mise) with no version set. */
-  node: { state: 'ok' | 'missing' | 'old' | 'shim_unset' | 'broken'; version?: string; path?: string; manager?: 'asdf' | 'mise' | 'nvm' | 'system' | 'aib' | ''; note?: string };
+  node: {
+    state: 'ok' | 'missing' | 'old' | 'shim_unset' | 'broken';
+    version?: string;
+    path?: string;
+    manager?: 'asdf' | 'mise' | 'nvm' | 'system' | 'aib' | '';
+    note?: string;
+    /** Added after the freeze (optional): the asdf/mise version ('0.18.0'), so the page shows that generation's commands. */
+    managerVersion?: string;
+  };
   npm: { state: 'ok' | 'missing'; version?: string };
   git: { state: 'ok' | 'missing'; version?: string };
   curl: { state: 'ok' | 'missing' };
@@ -386,6 +394,11 @@ export interface EnvPrereqs {
   loginShell: string;
   /** How the login environment was captured: -lic, -lc, or not at all (a version manager in an interactive-only profile is then missed). */
   envMode: 'login-interactive' | 'login' | 'plain';
+  /**
+   * Added after the freeze (optional; older helpers leave it out, read as 'apt'): the distro's package manager family, from
+   * /etc/os-release ID / ID_LIKE and the programs found, for the copy-only git and curl commands.
+   */
+  pkgManager?: 'apt' | 'dnf' | 'yum' | 'zypper' | 'pacman' | 'apk' | 'unknown';
   /** nvm is present in the user's home (so the Node install button can say it will use it). */
   nvm: { present: boolean };
   /** Whether AIB may offer the nvm install button (never when the node found is a shim, or nvm is blocked); the reason otherwise. */

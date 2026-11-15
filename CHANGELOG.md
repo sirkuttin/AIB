@@ -7,6 +7,10 @@
 - WSL chats: the agent is told up front that publish and update take only `content` there (no file `path`), and that a PNG or other
   binary file has to be embedded in an HTML page as an inline base64 image or opened by the user; a `path` refusal says the same.
   Windows chats' tools are unchanged.
+- AIB Linking (WSL): when asdf has no Node.js version set, the command to copy now matches the distro's asdf: `asdf set -u nodejs
+  latest` for asdf 0.16 or newer, `asdf global nodejs latest` for older asdf (both, labelled, when AIB could not read asdf's version).
+- AIB Linking (WSL): the git and curl install lines follow the distro's package manager (apt, dnf, yum, zypper, pacman or apk);
+  for a distro AIB does not recognise it says to install them with the distro's package manager. Still text to copy only.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.

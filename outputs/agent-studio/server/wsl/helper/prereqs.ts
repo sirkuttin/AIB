@@ -1,7 +1,8 @@
 /**
  * `env.prereqs` (docs/wsl/linking-design.md sections 3 and 12): what the distro has for AIB's agent installs, in one answer for the
- * Settings checklist. Read-only: it runs `node --version`, `node -p process.execPath`, `git --version` and `df -Pk` and looks at a few
- * files; it never installs or changes anything.
+ * Settings checklist. Read-only: it runs `node --version`, `node -p process.execPath`, `git --version`, `asdf --version` / `mise
+ * --version` (only when one manages node) and `df -Pk` and looks at a few files (/etc/os-release for the package manager family); it
+ * never installs or changes anything.
  *
  * - Node.js (>= 22.19) through the login PATH (Windows' /mnt folders are never on it). Who manages it comes from the path found:
  *   asdf / mise shims, nvm (~/.nvm or NVM_DIR), AIB's own folder, else the system. A shim that runs but has no version set is
@@ -152,12 +153,93 @@ export function profileFor(shell: string, env: Record<string, string>, home: str
   return '';
 }
 
-function shimHelp(manager: Manager): string {
+/** 'x.y.z' from `asdf --version` ("asdf version v0.18.0 (revision 2114f1e)", or 0.15's "v0.15.0-31e8c93") / `mise --version`. */
+export function managerVersionOf(text: string): string {
+  const m = /v?(\d+)\.(\d+)(?:\.(\d+))?/.exec(text);
+  return m ? `${m[1]}.${m[2]}.${m[3] ?? '0'}` : '';
+}
+
+/** asdf 0.16 (the Go rewrite) replaced `asdf global` with `asdf set -u` (asdf-vm.com/guide/upgrading-to-v0-16.html). */
+export function asdfIsModern(version: string): boolean | null {
+  const v = versionParts(version);
+  return v ? atLeast(v, [0, 16, 0]) : null;
+}
+
+function shimHelp(manager: Manager, managerVersion = ''): string {
   if (manager === 'mise') {
     return 'mise has a node shim but no Node.js version is set for your home folder. In a terminal run: mise use -g node@lts';
   }
-  return 'asdf has a node shim but no Node.js version is set for your home folder. In a terminal run: asdf install nodejs latest, ' +
-    'then asdf set -u nodejs latest (asdf older than 0.16: asdf global nodejs latest)';
+  const lead = 'asdf has a node shim but no Node.js version is set for your home folder. In a terminal run: asdf install nodejs latest, then ';
+  const modern = asdfIsModern(managerVersion);
+  if (modern === true) return lead + 'asdf set -u nodejs latest';
+  if (modern === false) return lead + 'asdf global nodejs latest';
+  return lead + 'asdf set -u nodejs latest (asdf older than 0.16: asdf global nodejs latest)';
+}
+
+type PkgManager = NonNullable<EnvPrereqs['pkgManager']>;
+const PKG_BY_ID: Record<string, PkgManager[]> = {
+  debian: ['apt'],
+  ubuntu: ['apt'],
+  fedora: ['dnf', 'yum'],
+  rhel: ['dnf', 'yum'],
+  centos: ['dnf', 'yum'],
+  suse: ['zypper'],
+  opensuse: ['zypper'],
+  arch: ['pacman'],
+  alpine: ['apk'],
+};
+const PKG_PROGRAM: Record<Exclude<PkgManager, 'unknown'>, string> = {
+  apt: 'apt-get',
+  dnf: 'dnf',
+  yum: 'yum',
+  zypper: 'zypper',
+  pacman: 'pacman',
+  apk: 'apk',
+};
+/** System program folders, also looked in when the login PATH lacks them (a package manager lives there even for a plain user). */
+const SYSTEM_BIN = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+/** The value of KEY in an os-release text (quotes taken off), or ''. */
+function osReleaseValue(text: string, key: string): string {
+  const m = new RegExp(`^${key}=(.*)$`, 'm').exec(text);
+  return m ? m[1].trim().replace(/^(["'])(.*)\1$/, '$2') : '';
+}
+
+/**
+ * The distro's package manager family, for the copy-only git/curl commands: from /etc/os-release ID and ID_LIKE (the first family
+ * whose program is found, else the first family named), else the first package manager program found on PATH, else 'unknown'.
+ */
+export function pkgManagerOf(osRelease: string | null, path: string, isExe: (p: string) => boolean = executable): PkgManager {
+  const look = `${path}:${SYSTEM_BIN}`;
+  const has = (pm: Exclude<PkgManager, 'unknown'>) => !!whichOn(PKG_PROGRAM[pm], look, isExe);
+  const ids = osRelease ? [osReleaseValue(osRelease, 'ID'), ...osReleaseValue(osRelease, 'ID_LIKE').split(/\s+/)] : [];
+  const named: PkgManager[] = [];
+  for (const id of ids.map((s) => s.toLowerCase()).filter(Boolean)) {
+    const key = id.startsWith('opensuse') || id.startsWith('sles') ? 'suse' : id === 'manjaro' || id === 'endeavouros' ? 'arch' : id;
+    for (const pm of PKG_BY_ID[key] ?? []) if (!named.includes(pm)) named.push(pm);
+  }
+  const found = named.find((pm) => pm !== 'unknown' && has(pm));
+  if (found) return found;
+  if (named.length) return named[0];
+  for (const pm of ['apt', 'dnf', 'yum', 'zypper', 'pacman', 'apk'] as const) if (has(pm)) return pm;
+  return 'unknown';
+}
+
+/** The copy-only install line for a system package (AIB never runs it: it needs the person's password); '' for 'unknown'. */
+export function pkgInstallLine(pm: PkgManager, pkg: string): string {
+  switch (pm) {
+    case 'apt':
+    case 'dnf':
+    case 'yum':
+    case 'zypper':
+      return `sudo ${pm} install ${pkg}`;
+    case 'pacman':
+      return `sudo pacman -S ${pkg}`;
+    case 'apk':
+      return `sudo apk add ${pkg}`;
+    default:
+      return '';
+  }
 }
 
 export async function envPrereqs(d: PrereqDeps): Promise<EnvPrereqs> {
@@ -179,13 +261,20 @@ export async function envPrereqs(d: PrereqDeps): Promise<EnvPrereqs> {
     node.path = nodePath;
     let manager = managerOf(nodePath, d.env, home, d.root);
     shim = (manager === 'asdf' || manager === 'mise') && (/\/shims\//.test(nodePath) || isShim(nodePath));
+    if (manager === 'asdf' || manager === 'mise') {
+      // the manager's own version (asdf 0.16 changed its commands): `asdf --version` / `mise --version`, read-only
+      const prog = whichOn(manager, `${path}:${SYSTEM_BIN}`, isExe);
+      const said = prog ? await run([prog, '--version']) : null;
+      const v = said && said.code === 0 ? managerVersionOf(said.stdout) : '';
+      if (v) node.managerVersion = v;
+    }
     const version = await run([nodePath, '--version']);
     const parts = version && version.code === 0 ? versionParts(version.stdout) : null;
     if (!parts) {
       const said = `${version?.stderr ?? ''}\n${version?.stdout ?? ''}`;
       if (shim && /no version|version is not set|not installed|no preset/i.test(said)) {
         node.state = 'shim_unset';
-        node.note = shimHelp(manager);
+        node.note = shimHelp(manager, node.managerVersion);
       } else {
         node.state = 'broken';
         node.note = `Node.js was found at ${nodePath} but did not start${version ? ` (exit code ${version.code})` : ''}.`;
@@ -220,6 +309,7 @@ export async function envPrereqs(d: PrereqDeps): Promise<EnvPrereqs> {
     if (m) git.version = m[1];
   }
   const curl: EnvPrereqs['curl'] = { state: whichOn('curl', path, isExe) ? 'ok' : 'missing' };
+  const pkgManager = pkgManagerOf(read('/etc/os-release') ?? read('/usr/lib/os-release'), path, isExe);
   let free: number | null = null;
   try {
     free = home ? await (d.diskFree ?? dfFree)(home) : null;
@@ -236,7 +326,7 @@ export async function envPrereqs(d: PrereqDeps): Promise<EnvPrereqs> {
   if (shim || node.manager === 'asdf' || node.manager === 'mise') {
     const tool = node.manager === 'mise' ? 'mise' : 'asdf';
     blocked = `Node.js here is managed by ${tool}. AIB does not install a second Node.js with nvm next to it; ` +
-      (node.state === 'shim_unset' ? shimHelp(node.manager as Manager) : `use ${tool} to install or update Node.js.`);
+      (node.state === 'shim_unset' ? shimHelp(node.manager as Manager, node.managerVersion) : `use ${tool} to install or update Node.js.`);
   } else if (!profile) {
     blocked =
       `Your login shell is ${shellName}. nvm's installer only sets itself up for bash and zsh, so install Node.js ${MIN_NODE_TEXT} ` +
@@ -245,7 +335,9 @@ export async function envPrereqs(d: PrereqDeps): Promise<EnvPrereqs> {
     blocked = `Your login shell is ${shellName} but ${profile} does not exist, so nvm would have nowhere to add itself. ` +
       `Create it (touch ${profile}) and check again.`;
   } else if (curl.state !== 'ok') {
-    blocked = "curl is needed to download nvm's installer. Install it with: sudo apt install curl";
+    const line = pkgInstallLine(pkgManager, 'curl');
+    blocked = "curl is needed to download nvm's installer. " +
+      (line ? `Install it with: ${line}` : "Install curl with your distro's package manager.");
   }
 
   return {
@@ -257,6 +349,7 @@ export async function envPrereqs(d: PrereqDeps): Promise<EnvPrereqs> {
     arch: d.arch,
     loginShell: d.loginShell,
     envMode: d.envMode,
+    pkgManager,
     nvm,
     canInstallNode: !blocked,
     ...(blocked ? { nodeInstallBlocked: blocked } : {}),

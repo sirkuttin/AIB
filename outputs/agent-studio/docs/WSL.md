@@ -354,7 +354,11 @@ The helper side of the Settings checklist, Uninstall and sign-in status (`docs/w
   `canInstallNode` is false, with `nodeInstallBlocked` saying why and what to do, when node is managed by asdf / mise, the login
   shell is not bash or zsh, its start-up file (`~/.bashrc`, `$ZDOTDIR/.zshrc` or `~/.zshrc`, the `PROFILE` nvm gets) does not exist,
   or curl is missing. `force: true` reads the login environment again first (PATH and `NVM_DIR`), so a Node.js installed in a
-  terminal since the helper started is seen. Never installs anything.
+  terminal since the helper started is seen. Never installs anything. Added after the freeze (optional): `node.managerVersion`
+  (`asdf --version` / `mise --version`, run only when one manages node: asdf 0.16+ sets a version with `asdf set -u`, older asdf
+  with `asdf global`) and `pkgManager` (`apt` / `dnf` / `yum` / `zypper` / `pacman` / `apk` / `unknown`, from `/etc/os-release`
+  `ID` and `ID_LIKE`, the family whose program is found first, else the first package manager program found on PATH or in the
+  system folders); the curl reason in `nodeInstallBlocked` uses that family's command.
 - **`agents.uninstall {id}` -> `{ok, removed, message?, blocked?}`** (`wsl/helper/agent_install.ts`). Only `claude` and `codex`;
   removes every `<root>/agents/<id>/<version>` with installer.ts `uninstall` (marker first, then the job files). Nothing installed:
   `{ok: true, removed: []}`. Refusals are answers with `ok: false` and one plain line: `blocked: 'installing'` (this helper's job
@@ -483,7 +487,9 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   and the WSL 1 command, the keep-alive line; the no-WSL card when there is no distro).
 - **What Ubuntu needs** (above the agents; `GET /api/live/wsl/prereqs?distro&peek=1`, `force=1` on Check again; never `start`):
   Remote control's check list (`.dv-checks`). Rows: Node.js 22.19 or newer (found with version, manager and path / missing / too
-  old / `shim_unset`: "asdf has no Node.js version set" with asdf's or mise's own command to copy and never nvm / broken), npm,
+  old / `shim_unset`: "asdf has no Node.js version set" with asdf's or mise's own command to copy and never nvm: `asdf install
+  nodejs latest && asdf set -u nodejs latest` for asdf 0.16+, `... && asdf global nodejs latest` for older asdf, both labelled
+  when the helper did not report asdf's version; `mise use -g node@lts` / broken), npm,
   git, curl, free space in the home folder, and "Checked with: zsh login shell (interactive)" (non-interactive; plain shell, which
   says a version manager in the profile is not seen). `prereqs: null` (not ready): the answer's line.
 - **Install Node.js in Ubuntu** only when `canInstallNode` (and never for `shim_unset`): the card's terminal panel (the Windows
@@ -491,7 +497,9 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   for a setup step now). Exit 0: prerequisites with `force=1`, then the agents with `force=1`; the panel closes once Node.js is
   seen. `canInstallNode` false: `nodeInstallBlocked` verbatim, **Open Ubuntu terminal** (the new-chat panel's `wsl-shell:<d>`
   terminal in the distro's home, in the card) and Check again.
-- git or curl missing: `sudo apt install git` / `sudo apt install curl` to copy only (AIB never runs them), Open Ubuntu terminal,
+- git or curl missing: the install line of the distro's package manager (`pkgManager`; absent = apt): `sudo apt install git`,
+  `sudo dnf install git`, `sudo yum install git`, `sudo zypper install git`, `sudo pacman -S git`, `sudo apk add git`, to copy only
+  (AIB never runs them); `unknown`: "Install git with your distro's package manager" and nothing to copy. Open Ubuntu terminal,
   Check again.
 - **Each distro has its own On/Off switch per agent** ("Use in Ubuntu", `rows[].enabled`, absent = on):
   `POST /api/live/wsl/agents/enabled {distro, id, enabled}`; drawn at once, put back with "The switch could not be saved…" when

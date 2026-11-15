@@ -10,11 +10,15 @@ import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/method
 import { installMethods, type ProcRow, procsUsing } from '../../outputs/agent-studio/server/wsl/helper/agent_install.ts';
 import { handleLine, type Handlers } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
 import {
+  asdfIsModern,
   atLeast,
   envModeOf,
   envPrereqs,
   managerOf,
+  managerVersionOf,
   parseDf,
+  pkgInstallLine,
+  pkgManagerOf,
   type PrereqDeps,
   profileFor,
   type RunResult,
@@ -49,6 +53,8 @@ function fakeDistro(o: {
   shell?: string;
   env?: Record<string, string>;
   free?: number | null;
+  /** The text of /etc/os-release (none: the file is missing). */
+  osRelease?: string;
 }): PrereqDeps {
   const files = new Set([...(o.files ?? []), ...o.exes]);
   return {
@@ -62,12 +68,14 @@ function fakeDistro(o: {
     isExecutable: (p) => o.exes.includes(p),
     findNpmCli: (node) => o.npm?.[node] ?? '',
     isShim: (p) => (o.shims ?? []).includes(p),
-    readText: (p) => (p.endsWith('/npm/package.json') ? JSON.stringify({ version: '11.6.0' }) : null),
+    readText: (p) =>
+      p.endsWith('/npm/package.json') ? JSON.stringify({ version: '11.6.0' }) : p === '/etc/os-release' ? o.osRelease ?? null : null,
     diskFree: () => Promise.resolve(o.free === undefined ? 5 * 1024 ** 3 : o.free),
   };
 }
 
 const ok = (stdout: string): RunResult => ({ code: 0, stdout, stderr: '' });
+const UBUNTU = 'PRETTY_NAME="Ubuntu 24.04.4 LTS"\nNAME="Ubuntu"\nVERSION_ID="24.04"\nID=ubuntu\nID_LIKE=debian\n';
 
 Deno.test('env.prereqs: helpers (df, versions, PATH lookup without /mnt, manager, profile file, env mode)', () => {
   assertEquals(parseDf('Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sdc 1000 10 2048 1% /\n'), 2048 * 1024);
@@ -158,11 +166,71 @@ Deno.test('env.prereqs: missing, old, shim with no version set, broken; nvm offe
     !noRc.canInstallNode && String(noRc.nodeInstallBlocked).includes(`${HOME}/.zshrc does not exist`),
     String(noRc.nodeInstallBlocked),
   );
-  const noCurl = await envPrereqs(fakeDistro({ path: '/usr/bin', exes: [], files: [`${HOME}/.zshrc`], free: null }));
+  const noCurl = await envPrereqs(fakeDistro({ path: '/usr/bin', exes: [], files: [`${HOME}/.zshrc`], free: null, osRelease: UBUNTU }));
   assertEquals([noCurl.curl.state, noCurl.canInstallNode, noCurl.diskFreeMB], ['missing', false, null]);
   assert(String(noCurl.nodeInstallBlocked).includes('sudo apt install curl'));
   const nvm = await envPrereqs(fakeDistro({ path: '/usr/bin', exes: ['/usr/bin/curl'], files: [`${HOME}/.zshrc`, `${HOME}/.nvm/nvm.sh`] }));
   assertEquals(nvm.nvm, { present: true });
+});
+
+Deno.test('env.prereqs: the package manager family from /etc/os-release ID / ID_LIKE and the programs found; copy-only lines per family', async () => {
+  const exe = (...ps: string[]) => (p: string) => ps.includes(p);
+  const rel = (id: string, like = '') => `NAME="x"\nID=${id}\n${like ? `ID_LIKE="${like}"\n` : ''}VERSION_ID="1"\n`;
+  assertEquals(pkgManagerOf(UBUNTU, '/usr/bin', exe('/usr/bin/apt-get')), 'apt');
+  assertEquals(pkgManagerOf(rel('debian'), '/usr/bin', exe()), 'apt', 'os-release alone is enough');
+  assertEquals(pkgManagerOf(rel('fedora'), '/usr/bin', exe('/usr/bin/dnf')), 'dnf');
+  assertEquals(pkgManagerOf(rel('almalinux', 'rhel centos fedora'), '/usr/bin', exe('/usr/bin/dnf')), 'dnf');
+  assertEquals(pkgManagerOf(rel('centos', 'rhel fedora'), '/usr/bin', exe('/usr/bin/yum')), 'yum', 'an old CentOS has only yum');
+  assertEquals(pkgManagerOf(rel('opensuse-tumbleweed', 'opensuse suse'), '/usr/bin', exe('/usr/bin/zypper')), 'zypper');
+  assertEquals(pkgManagerOf(rel('sles'), '/usr/bin', exe()), 'zypper');
+  assertEquals(pkgManagerOf(rel('archlinux', 'arch'), '/usr/bin', exe('/usr/bin/pacman')), 'pacman');
+  assertEquals(pkgManagerOf(rel('manjaro'), '/usr/bin', exe()), 'pacman');
+  assertEquals(pkgManagerOf(rel('alpine'), '/usr/bin', exe('/sbin/apk')), 'apk');
+  assertEquals(pkgManagerOf(rel('kali', 'debian'), '/usr/bin', exe()), 'apt', 'a derivative by its ID_LIKE');
+  assertEquals(pkgManagerOf(null, '/home/u/bin', exe('/usr/sbin/zypper')), 'zypper', 'no os-release: the program found (system folders too)');
+  assertEquals(pkgManagerOf(rel('nixos'), '/run/current-system/sw/bin', exe()), 'unknown');
+  assertEquals(pkgManagerOf(null, '/usr/bin', exe()), 'unknown');
+  assertEquals(
+    (['apt', 'dnf', 'yum', 'zypper', 'pacman', 'apk', 'unknown'] as const).map((pm) => pkgInstallLine(pm, 'git')),
+    ['sudo apt install git', 'sudo dnf install git', 'sudo yum install git', 'sudo zypper install git', 'sudo pacman -S git', 'sudo apk add git', ''],
+  );
+  // in the answer, and in the curl reason that blocks the nvm offer
+  const fedora = await envPrereqs(fakeDistro({ path: '/usr/bin', exes: ['/usr/bin/dnf'], files: [`${HOME}/.zshrc`], osRelease: rel('fedora') }));
+  assertEquals(fedora.pkgManager, 'dnf');
+  assert(String(fedora.nodeInstallBlocked).includes('sudo dnf install curl'), String(fedora.nodeInstallBlocked));
+  const nix = await envPrereqs(fakeDistro({ path: '/usr/bin', exes: [], files: [`${HOME}/.zshrc`], osRelease: rel('nixos') }));
+  assertEquals(nix.pkgManager, 'unknown');
+  assert(String(nix.nodeInstallBlocked).includes("Install curl with your distro's package manager"), String(nix.nodeInstallBlocked));
+  assertEquals((await envPrereqs(fakeDistro({ path: '/usr/bin', exes: ['/usr/bin/curl'], osRelease: UBUNTU }))).pkgManager, 'apt');
+});
+
+Deno.test("env.prereqs: asdf's own version picks its generation's command (0.16+ asdf set -u, older asdf global); unknown names both", async () => {
+  assertEquals(managerVersionOf('asdf version v0.18.0 (revision 2114f1e)\n'), '0.18.0');
+  assertEquals(managerVersionOf('v0.15.0-31e8c93\n'), '0.15.0');
+  assertEquals(managerVersionOf('2025.11.3 linux-x64 (2025-11-20)'), '2025.11.3');
+  assertEquals(managerVersionOf('nonsense'), '');
+  assertEquals([asdfIsModern('0.16.0'), asdfIsModern('0.18.0'), asdfIsModern('0.15.0'), asdfIsModern('')], [true, true, false, null]);
+  const unsetWith = (asdfSays: RunResult | null) =>
+    envPrereqs(fakeDistro({
+      path: `${HOME}/.asdf/shims:/usr/bin`,
+      exes: [ASDF_SHIM, '/usr/bin/curl', '/usr/local/bin/asdf'],
+      files: [`${HOME}/.zshrc`],
+      shims: [ASDF_SHIM],
+      runs: {
+        [`${ASDF_SHIM} --version`]: { code: 126, stdout: '', stderr: 'No version is set for command node\n' },
+        '/usr/local/bin/asdf --version': asdfSays,
+      },
+    }));
+  const modern = await unsetWith(ok('asdf version v0.18.0 (revision 2114f1e)\n'));
+  assertEquals([modern.node.state, modern.node.managerVersion], ['shim_unset', '0.18.0']);
+  assert(String(modern.node.note).endsWith('asdf set -u nodejs latest'), String(modern.node.note));
+  assert(!String(modern.node.note).includes('asdf global'), String(modern.node.note));
+  const legacy = await unsetWith(ok('v0.14.1-f00f00f\n'));
+  assertEquals(legacy.node.managerVersion, '0.14.1');
+  assert(String(legacy.node.note).endsWith('asdf global nodejs latest') && !String(legacy.node.note).includes('asdf set'), String(legacy.node.note));
+  const unknown = await unsetWith(null);
+  assertEquals('managerVersion' in unknown.node, false);
+  assert(String(unknown.node.note).includes('asdf set -u nodejs latest (asdf older than 0.16: asdf global nodejs latest)'), String(unknown.node.note));
 });
 
 Deno.test({
