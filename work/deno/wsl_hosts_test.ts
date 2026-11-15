@@ -378,6 +378,41 @@ Deno.test({
 });
 
 Deno.test({
+  name: "MCP tunnel: the ready line names the socket; tool calls reach onMcpRequest once, never again from an adopted helper's replay",
+  ...T,
+  async fn() {
+    await using lab = new Lab();
+    const withMcp = { helperCommand: (install: { version: string }) => ({ command: PYTHON, args: ['-u', HELPER, install.version, 'mcp'] }) };
+    const first = lab.host(withMcp);
+    await first.start();
+    assertEquals(first.mcpTunnel, {
+      forwarder: '/tmp/aib-wsl-test/t-1/AIB-keeper',
+      socket: '/tmp/aib-wsl-test/data-000000000000/helper/mcp.sock',
+    });
+    const seen: string[] = [];
+    first.onMcpRequest((r) => seen.push(r.rid));
+    await first.call('which', { name: 'mcp-request', rid: 'r1' } as never);
+    await until(() => seen.length === 1, 'the first tool call');
+    await first.mcpClosed(); // quit: the helper is told (and it does not throw)
+    first.stop(); // AIB quits; the helper keeps running in the keeper, with r1 in its record
+    const second = lab.host(withMcp);
+    const seen2: string[] = [];
+    second.onMcpRequest((r) => seen2.push(r.rid));
+    await second.start();
+    await second.call('which', { name: 'mcp-request', rid: 'r2' } as never);
+    await until(() => seen2.length >= 1, 'the second tool call');
+    await pause(200);
+    assertEquals(seen2, ['r2'], 'the replayed r1 is not run again');
+    assertEquals(seen, ['r1']);
+    // a helper without the tunnel: no entry for it (Studio falls back to the interop entry)
+    second.stop();
+    const plain = lab.host({}, 't-3');
+    await plain.start();
+    assertEquals(plain.mcpTunnel, null);
+  },
+});
+
+Deno.test({
   name: "a second AIB adopts the running helper of its version; another version's helper is replaced",
   ...T,
   async fn() {

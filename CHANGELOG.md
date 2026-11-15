@@ -22,6 +22,13 @@
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
+- AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
+  merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
+  `~/.aib-server`, and the helper passes it to AIB over the connection AIB already keeps. No network port is opened, nothing on
+  Windows is exposed to Linux, and each chat's own key is checked as before. It keeps working where interop is switched off, and a
+  tool call made while AIB is closed says so at once instead of hanging. Docs and helper chats are still not available in WSL
+  projects; the chat's note says which tools it has.
+
 ## 0.1.0-beta.9 (beta)
 
 - Removed the ⋯ menu at the bottom of the sidebar.

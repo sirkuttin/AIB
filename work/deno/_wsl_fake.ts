@@ -108,6 +108,20 @@ export class FakeWslHost implements WslHost {
     for (const h of [...this.#urls]) h(url);
   }
 
+  /** The helper's MCP tunnel (null: none, the interop entry is used); tests set it. */
+  mcpTunnel: { forwarder: string; socket: string } | null = null;
+  #mcp = new Set<(request: { rid: string; headers: Record<string, string>; body: string }) => void>();
+
+  onMcpRequest(handler: (request: { rid: string; headers: Record<string, string>; body: string }) => void): () => void {
+    this.#mcp.add(handler);
+    return () => this.#mcp.delete(handler);
+  }
+
+  /** An agent in the distro sent a tool call through the tunnel (the helper's mcp.request). */
+  mcpRequest(request: { rid: string; headers: Record<string, string>; body: string }): void {
+    for (const h of [...this.#mcp]) h(request);
+  }
+
   call<M extends keyof HelperMethods>(method: M, params: HelperMethods[M]['params']): Promise<HelperMethods[M]['result']> {
     this.calls.push([method, params as unknown as Json]);
     try {

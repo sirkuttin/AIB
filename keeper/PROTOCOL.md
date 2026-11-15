@@ -422,6 +422,8 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
 - keeper 1.4.0 (protocol still 1, no new feature names): the `AIB-keeper bridge` subcommand (section 10: stdio to the data folder's
   keeper, starting one when there is none; `--hold` keep-alive) and `serve --unix-only`; AIB's own WSL channels are not work for the
   lifetime rules (section 6).
+- keeper 1.5.0 (protocol still 1, no new feature names): the WSL MCP tunnel (section 11): `mcp-forward --helper-socket <socket>` and
+  the `AIB-keeper mcp-relay --socket <socket>` subcommand. Neither runs inside a serving keeper or adds to the wire protocol.
 
 ## 10. Bridge
 
@@ -458,3 +460,30 @@ so the path is relative to `--cd ~`, or absolute from `$HOME`) and speaks this p
 Exit codes: `0` stdin or the keeper ended, `1` no keeper could be reached or started (a message on stderr), `2` bad arguments.
 
 The keeper's unix socket is the only way in: `--unix-only` means no TCP listener, which WSL would forward to Windows `127.0.0.1`.
+
+## 11. MCP tunnel (WSL)
+
+```
+AIB-keeper mcp-forward --helper-socket <unix socket>      (env MCP_FORWARD_HEADERS, as for an address file)
+AIB-keeper mcp-relay --socket <unix socket>
+```
+
+For agents in a WSL distro, which cannot reach AIB's tool endpoint on Windows `127.0.0.1`. The WSL helper runs `mcp-relay` as its
+child (a compiled Deno program cannot listen on a unix socket chosen at run time); agents run `mcp-forward --helper-socket` as their
+MCP server. Both are plain subcommands of the same program and know nothing of keeper frames.
+
+- **Forwarder.** As for an address file (stdin lines in, answers out, several at once), but each message is one connection to the
+  socket: it writes `{"headers":{...},"body":"<message>"}` as one line and reads one answer line `{"status":N,"body":"..."}`
+  (status as HTTP: 200 with body, 202 nothing; another status with a body becomes a JSON-RPC error naming it). `{"status":503,
+  "error":"..."}` means AIB cannot take the message (not running, closed, or it never picked it up): answered at once, a `tools/call`
+  as a tool result with `isError`. Only a failed dial (no socket, or nothing listening) is retried, for up to 15 s; a connection that
+  ends without an answer line is an error and is never sent again.
+- **Relay.** The socket path must be absolute and shorter than 100 bytes. Its folder is made 0700 and the socket 0600; a socket file
+  already there is replaced (another file is refused, exit 1). On stdout it writes `{"ready":true,"socket":"<path>"}` once it
+  listens, then `{"c":N,"req":<the forwarder's line>}` per connection and `{"c":N,"gone":true}` when one closes before its answer.
+  On stdin it takes `{"c":N,"res":{...}}` and writes `res` to connection N as one line, then closes it. A line that is not a JSON
+  object gets `{"status":400,...}`, one over 16 MB `{"status":413,...}`, a 65th connection at once `{"status":503,...}`; none of
+  these is passed on. When stdin ends it closes every connection and removes the socket, unless another relay has replaced it.
+
+Exit codes: `0` stdin ended (relay) or stdin ended and every answer was written (forwarder), `1` the socket could not be listened on,
+`2` bad arguments.

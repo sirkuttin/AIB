@@ -21,6 +21,12 @@ package main
 //   - only loopback http URLs are used; no proxy.
 //
 // It never runs inside a serving keeper (the keeper itself still contains no HTTP), and the keeper's serve path never calls it.
+//
+// AIB-keeper mcp-forward --helper-socket <unix socket> (keeper 1.5.0, WSL): the same forwarder for an agent inside a WSL distro, where
+// Windows 127.0.0.1 cannot be reached. Each message goes to the WSL helper's tunnel socket instead (mcprelay.go serves it for the
+// helper, which hands it to AIB on Windows over its keeper channel): one connection per message, one request line
+// {"headers":{...},"body":"<message>"} and one answer line {"status":200,"body":"..."} ({"status":503,"error":"..."} when AIB cannot
+// take it: answered at once, as for a closed AIB). Retries, ids and errors work as above; only a failed dial is retried.
 
 import (
 	"bufio"
@@ -45,6 +51,7 @@ const (
 
 type forwarder struct {
 	addressFile string
+	socket      string // --helper-socket: the WSL helper's tunnel socket instead of an address file
 	headers     map[string]string
 	client      *http.Client
 	retryFor    time.Duration
@@ -57,17 +64,33 @@ func mcpForwardMain(args []string) int {
 		fmt.Println("mcp-forward 1")
 		return 0
 	}
-	if len(args) != 1 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper mcp-forward <address file>")
+	var f *forwarder
+	var err error
+	switch {
+	case len(args) == 2 && args[0] == "--helper-socket" && args[1] != "":
+		f, err = newSocketForwarder(args[1], os.Getenv("MCP_FORWARD_HEADERS"), os.Stdout)
+	case len(args) == 1 && args[0] != "" && !strings.HasPrefix(args[0], "--"):
+		f, err = newForwarder(args[0], os.Getenv("MCP_FORWARD_HEADERS"), os.Stdout)
+	default:
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper mcp-forward <address file> | mcp-forward --helper-socket <unix socket>")
 		return 2
 	}
-	f, err := newForwarder(args[0], os.Getenv("MCP_FORWARD_HEADERS"), os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "AIB-keeper mcp-forward:", err)
 		return 2
 	}
 	f.run(os.Stdin)
 	return 0
+}
+
+// newSocketForwarder: the WSL form, posting to the helper's tunnel socket.
+func newSocketForwarder(socket, headersJSON string, out io.Writer) (*forwarder, error) {
+	f, err := newForwarder("", headersJSON, out)
+	if err != nil {
+		return nil, err
+	}
+	f.socket = socket
+	return f, nil
 }
 
 func newForwarder(addressFile, headersJSON string, out io.Writer) (*forwarder, error) {
@@ -130,8 +153,17 @@ func (f *forwarder) write(line []byte) {
 // errAIBClosed: the address file says AIB was closed on purpose; no point waiting for it.
 var errAIBClosed = errors.New("AIB is closed")
 
+// aibAway: the helper's tunnel says AIB cannot take the message now (not running, closed, or it never picked it up). Final: the
+// helper already waited, and nothing was run.
+type aibAway struct{ message string }
+
+func (a *aibAway) Error() string { return a.message }
+
 // endpoint reads the address file: a loopback http URL, or an error (missing, unreadable, closed, or not loopback).
 func (f *forwarder) endpoint() (string, error) {
+	if f.socket != "" {
+		return f.socket, nil
+	}
 	raw, err := os.ReadFile(f.addressFile)
 	if err != nil {
 		return "", err
@@ -181,6 +213,13 @@ func (f *forwarder) forward(message []byte) []byte {
 					return rpcError(head.ID, fmt.Sprintf("AIB answered HTTP %d: %s", status, clip(string(body), 300)))
 				}
 			}
+			var away *aibAway
+			if errors.As(err, &away) { // the helper's tunnel: AIB cannot take it now, and nothing ran
+				if !isRequest {
+					return nil
+				}
+				return unavailable(head.ID, head.Method, away.message)
+			}
 			if !notDelivered(err) {
 				if !isRequest {
 					return nil
@@ -215,6 +254,9 @@ func unavailable(id json.RawMessage, method, message string) []byte {
 }
 
 func (f *forwarder) post(target string, message []byte) (int, []byte, error) {
+	if f.socket != "" {
+		return f.postSocket(target, message)
+	}
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(message))
 	if err != nil {
 		return 0, nil, err
@@ -234,6 +276,44 @@ func (f *forwarder) post(target string, message []byte) (int, []byte, error) {
 		return 0, nil, err
 	}
 	return resp.StatusCode, body, nil
+}
+
+// postSocket sends one message over the helper's tunnel socket: one request line, one answer line, then the connection ends.
+func (f *forwarder) postSocket(socket string, message []byte) (int, []byte, error) {
+	conn, err := net.DialTimeout("unix", socket, 3*time.Second)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer conn.Close()
+	line, err := json.Marshal(map[string]any{"headers": f.headers, "body": string(message)})
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, err := conn.Write(append(line, '\n')); err != nil {
+		return 0, nil, fmt.Errorf("the WSL helper's tunnel broke: %w", err)
+	}
+	answer, err := readLine(bufio.NewReaderSize(conn, 64<<10))
+	if len(bytes.TrimSpace(answer)) == 0 {
+		if err == nil || errors.Is(err, io.EOF) {
+			err = errors.New("the WSL helper's tunnel closed without an answer")
+		}
+		return 0, nil, err
+	}
+	var doc struct {
+		Status int    `json:"status"`
+		Body   string `json:"body"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(answer, &doc); err != nil || doc.Status == 0 {
+		return 0, nil, fmt.Errorf("the WSL helper's tunnel answered something else: %s", clip(string(answer), 200))
+	}
+	if doc.Status == http.StatusServiceUnavailable && doc.Error != "" {
+		return 0, nil, &aibAway{message: doc.Error}
+	}
+	if doc.Error != "" && doc.Body == "" {
+		doc.Body = doc.Error
+	}
+	return doc.Status, []byte(doc.Body), nil
 }
 
 // notDelivered: the message certainly never reached AIB (the connection could not be made), so sending it again is safe.

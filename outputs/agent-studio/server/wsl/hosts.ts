@@ -16,6 +16,10 @@
  * minimal Linux environment (never the Windows one). A helper of another <ver> is killed and started again (it holds no state in
  * phase 1). Request ids carry this run's random prefix, so the replay of an adopted helper never answers a new request.
  *
+ * MCP tunnel (phase 2): a helper whose ready line carries `mcp: {socket}` relays agents' tool calls (`mcp.request` notifications);
+ * mcpTunnel says what a chat's entry runs, onMcpRequest hands each call on (wsl/mcp_tunnel.ts answers it). A call read from an
+ * adopted helper's replay is never handed on (it belonged to an earlier AIB, and the helper has answered it already).
+ *
  * Version rules for the Linux keeper (KeeperLink options): it must offer WSL_KEEPER_NEEDS; an older or lacking keeper with no live
  * agent is shut down (the helper first) and the bridge starts this AIB's keeper; with live agents it is kept for them and the host
  * says why new chats cannot start there.
@@ -35,6 +39,7 @@ import {
 } from '../keeper/link.ts';
 import {
   type BridgePreamble,
+  type HelperMcpRequest,
   HELPER_PROTOCOL,
   type HelperMethods,
   WSL_HELPER_LABEL,
@@ -123,6 +128,12 @@ export function helperEnv(install: WslInstall): Record<string, string> {
   };
 }
 
+/** The tunnel socket of a helper.ready `mcp` member: an absolute Linux path, else ''. */
+export function tunnelSocket(mcp: unknown): string {
+  const socket = mcp && typeof mcp === 'object' ? (mcp as Record<string, unknown>).socket : null;
+  return typeof socket === 'string' && /^\/[^\0\n]+$/.test(socket) && socket.length < 100 ? socket : '';
+}
+
 /** A URL a distro may ask Windows to open (http/https, at most MAX_URL bytes, no spaces or control characters); never URL-parsed here. */
 export function acceptableUrl(url: unknown): url is string {
   if (
@@ -168,7 +179,12 @@ interface Ready {
   helper: string;
   protocol: number;
   methods: string[];
+  /** The MCP tunnel's socket (helper.ready `mcp.socket`), '' without one. */
+  mcpSocket: string;
 }
+
+/** The helper methods the MCP tunnel needs besides the ready line's socket. */
+export const MCP_TUNNEL_METHODS = ['mcp.accept', 'mcp.reply'] as const;
 
 export class WslHostImpl implements WslHost {
   readonly distro: string;
@@ -192,6 +208,9 @@ export class WslHostImpl implements WslHost {
   #env: Promise<Record<string, string>> | null = null;
   #urlHandlers = new Set<(url: string) => void>();
   #notifyHandlers = new Set<(method: string, params: Record<string, unknown>) => void>();
+  #mcpHandlers = new Set<(request: HelperMcpRequest['params']) => void>();
+  /** False while an adopted helper's journal replays (its old tool calls are not run again). */
+  #helperLive = false;
   #urlTimes: number[] = [];
   #hold: KeeperChannel | null = null;
   #holdTimer: ReturnType<typeof setTimeout> | null = null;
@@ -281,6 +300,8 @@ export class WslHostImpl implements WslHost {
     await this.#ensureHelper();
     this.#setState('ready', '');
     void this.#ensureHold();
+    // an AIB is here again: a helper an earlier AIB told "closed" (quit) answers its agents' tool calls again
+    if (this.mcpTunnel) void this.call('mcp.closed', { closed: false }).catch(() => {});
   }
 
   // ---- the transport ------------------------------------------------------------------------------------------------------
@@ -358,6 +379,7 @@ export class WslHostImpl implements WslHost {
     this.#ready.catch(() => {});
     this.#readyValue = null;
     this.#lineBuffer = new Uint8Array(0);
+    this.#helperLive = false; // an adopted helper's replay may start arriving during the loop below
     let adopted: KeeperChannel | null = null;
     for (const info of listed) {
       if (!info.live || aibInternalKind(info.label) !== WSL_HELPER_LABEL.aib) continue;
@@ -371,6 +393,7 @@ export class WslHostImpl implements WslHost {
         log.warning('wsl: could not stop the old helper %s: %s', info.channel, error instanceof Error ? error.message : error);
       }
     }
+    if (!adopted) this.#helperLive = true; // a new helper: every record is new
     if (adopted) {
       this.#helper = adopted;
       await adopted.claim();
@@ -379,7 +402,7 @@ export class WslHostImpl implements WslHost {
         {
           channel: `wsl-helper-${crypto.randomUUID().slice(0, 12)}`,
           ...(this.options.helperCommand?.(install) ??
-            { command: install.helper, args: ['--data', install.data] }), // the data folder: open.fifo, worktrees
+            { command: install.helper, args: ['--data', install.data, '--keeper', install.keeper] }), // data: open.fifo, worktrees; keeper: the MCP relay
           cwd: install.home,
           env: (this.options.helperEnv ?? helperEnv)(install),
           label,
@@ -415,6 +438,7 @@ export class WslHostImpl implements WslHost {
     return {
       record: (record) => this.#helperRecord(record),
       live: () => {
+        this.#helperLive = true; // from here on, records are new
         // An adopted helper whose ready line is no longer in its (bounded) record cannot be used: start a new one.
         if (adopted && !this.#readyValue) {
           void this.#helper?.kill();
@@ -471,6 +495,7 @@ export class WslHostImpl implements WslHost {
         helper: String(p.helper ?? ''),
         protocol: Number(p.protocol ?? 0),
         methods: Array.isArray(p.methods) ? p.methods.map(String) : [],
+        mcpSocket: tunnelSocket(p.mcp),
       };
       if (ready.protocol !== HELPER_PROTOCOL) {
         this.#readyReject?.(
@@ -484,6 +509,10 @@ export class WslHostImpl implements WslHost {
     }
     if (message.method === 'browser.open' && message.id === undefined) {
       this.#openUrl((message.params as Record<string, unknown> | undefined)?.url);
+      return;
+    }
+    if (message.method === 'mcp.request' && message.id === undefined) {
+      if (this.#helperLive) this.#mcpRequest(message.params);
       return;
     }
     if (message.id === undefined && typeof message.method === 'string') { // the helper's other notifications (agents.installProgress)
@@ -581,6 +610,40 @@ export class WslHostImpl implements WslHost {
     this.#env ??= this.call('env.get', {}).then((r) => ({ ...r.env }));
     this.#env.catch(() => (this.#env = null));
     return this.#env;
+  }
+
+  /** What a WSL chat's `studio_artifact` entry runs through the tunnel, or null (no tunnel in this helper: the interop entry). */
+  get mcpTunnel(): { forwarder: string; socket: string } | null {
+    const ready = this.#readyValue;
+    const install = this.#install;
+    if (!ready?.mcpSocket || !install || !MCP_TUNNEL_METHODS.every((m) => ready.methods.includes(m))) return null;
+    return { forwarder: install.keeper, socket: ready.mcpSocket };
+  }
+
+  onMcpRequest(handler: (request: HelperMcpRequest['params']) => void): () => void {
+    this.#mcpHandlers.add(handler);
+    return () => this.#mcpHandlers.delete(handler);
+  }
+
+  #mcpRequest(params: unknown): void {
+    const p = (params ?? {}) as Record<string, unknown>;
+    if (typeof p.rid !== 'string' || typeof p.body !== 'string' || !p.headers || typeof p.headers !== 'object') return;
+    const request = { rid: p.rid, headers: p.headers as Record<string, string>, body: p.body };
+    for (const handler of this.#mcpHandlers) {
+      try {
+        handler(request);
+      } catch (error) {
+        log.exception(error, 'A WSL MCP tunnel handler failed');
+      }
+    }
+  }
+
+  /** AIB quits: the helper answers tool calls with "AIB is closed" at once until an AIB talks to it again. Never throws. */
+  async mcpClosed(): Promise<void> {
+    if (!this.mcpTunnel || !this.#helper || this.#state !== 'ready') return;
+    try {
+      await this.call('mcp.closed', { closed: true }, { timeoutMs: 2000 });
+    } catch { /* the helper answers "AIB is not running" after its wait instead */ }
   }
 
   onOpenUrl(handler: (url: string) => void): () => void {
@@ -787,6 +850,7 @@ export class WslHosts {
         await new Promise((r) => setTimeout(r, 200));
         count = await host.liveCount();
       }
+      await host.mcpClosed(); // agents left running get "AIB is closed" from their tools at once
       if (count && host.holding) {
         live += count;
         held.push(host.distro);
