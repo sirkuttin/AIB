@@ -115,6 +115,18 @@ export async function worktreeStatus(
   }
 }
 
+const changesRuns = new Map<string, Promise<Reply>>();
+
+/** One run for identical concurrent requests: the first starts it, the rest wait for the same answer. */
+export function shared<T>(runs: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
+  let pending = runs.get(key);
+  if (!pending) {
+    pending = run().finally(() => runs.delete(key));
+    runs.set(key, pending);
+  }
+  return pending;
+}
+
 function mergeStudio(ctx: WebContext): merge.MergeStudio {
   return {
     stateDir: ctx.stateDir,
@@ -269,9 +281,13 @@ export function studioRoutes(): Map<string, StudioHandler> {
   });
   // ---- Changes view, branch, worktree Merge and clashes ----
   for (const path of ['/api/live/changes', '/api/live/changes/file']) {
-    routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
-      const args = argsOf(url);
-      return await changesResponse(chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))), path, args, request.headers);
+    routes.set(`GET ${path}`, (ctx, url, _body, request) => {
+      // identical requests at once (several views of one chat poll it) share one run of git; the token is part of the key
+      const key = `${request.headers.get('X-Studio-Token') ?? ''}|${path}|${url.search}`;
+      return shared(changesRuns, key, async () => {
+        const args = argsOf(url);
+        return await changesResponse(chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))), path, args, request.headers);
+      });
     });
   }
   routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper

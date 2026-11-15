@@ -117,3 +117,16 @@ Deno.test('worktree status: concurrent requests share one run; a slow run is ans
   // another chat runs on its own
   assertEquals((await worktreeStatus('chat-b', () => Promise.resolve({ worktree: false }), 100)).worktree, false);
 });
+
+Deno.test('changes route: identical concurrent requests share one run', async () => {
+  const { shared } = await import('../../outputs/agent-studio/server/web/studio_routes.ts');
+  const runs = new Map<string, Promise<number>>();
+  let started = 0;
+  const run = () => (started++, new Promise<number>((r) => setTimeout(() => r(started), 50)));
+  const answers = await Promise.all([1, 2, 3, 4, 5].map(() => shared(runs, 'k', run)));
+  assertEquals(started, 1);
+  assert(answers.every((a) => a === 1));
+  assertEquals(runs.size, 0, 'forgotten once answered');
+  await shared(runs, 'k', run);
+  assertEquals(started, 2, 'a later request runs again');
+});
