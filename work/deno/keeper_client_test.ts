@@ -99,6 +99,30 @@ Deno.test('keeper frames: encoded and read back across any chunking; bad lengths
   assert(refused);
 });
 
+Deno.test('keeper frames: big records read in a reused 64 KB buffer come back whole and in order', () => {
+  // A long chat's replay: history chunks of ~4 MB with small records between them, read the way #readLoop reads (one buffer reused)
+  const sizes = [4_193_266, 300, 3_607_877, 0, 70_000, 4_000_001];
+  const frames = sizes.map((n, i) => encodeFrame({ ev: 'record', seq: i }, new Uint8Array(n).map((_, k) => (k * 7 + i) & 255)));
+  const total = frames.reduce((s, f) => s + f.length, 0);
+  const stream = new Uint8Array(total);
+  frames.reduce((at, f) => (stream.set(f, at), at + f.length), 0);
+  const reader = new FrameReader();
+  const buffer = new Uint8Array(65536);
+  const got: [Record<string, unknown>, Uint8Array][] = [];
+  for (let i = 0, step = 1; i < total; i += step, step = step === 1 ? 65536 : step === 65536 ? 4097 : 1) {
+    const n = Math.min(step, total - i);
+    buffer.set(stream.subarray(i, i + n));
+    got.push(...reader.push(buffer.subarray(0, n)));
+    buffer.fill(0xee); // the next read overwrites it: the reader must have kept its own copy
+  }
+  assertEquals(got.map(([h]) => h.seq), sizes.map((_, i) => i));
+  got.forEach(([, body], i) => {
+    assertEquals(body.length, sizes[i]);
+    for (let k = 0; k < body.length; k += 9973) assertEquals(body[k], (k * 7 + i) & 255);
+    if (body.length) assertEquals(body[body.length - 1], ((body.length - 1) * 7 + i) & 255);
+  });
+});
+
 Deno.test({
   name: 'keeper client: hello, spawn with our id, replay then live, once-keys, notes, fencing, kill, removal',
   ...T,

@@ -136,14 +136,35 @@ export function encodeFrame(header: Json, body: Uint8Array = new Uint8Array(0)):
   return frame;
 }
 
-/** Collects bytes and yields whole frames. Throws on a frame the protocol forbids (the connection is then closed). */
+/**
+ * Collects bytes and yields whole frames. Throws on a frame the protocol forbids (the connection is then closed).
+ * A big record (a 4 MB history chunk of a long chat) arrives in ~64 reads of 64 KB: the reads are kept as a list and joined once
+ * the frame is whole, not copied into one growing buffer at every read (that was quadratic: ~380 ms for a 45 MB chat's replay).
+ */
 export class FrameReader {
   #buffer = new Uint8Array(0);
+  #parts: Uint8Array[] = [];
+  #partsLength = 0;
+  /** Bytes the frame being read needs in all (0: not known yet, its header is not complete). */
+  #need = 0;
 
   push(chunk: Uint8Array): [Json, Uint8Array][] {
-    const joined = new Uint8Array(this.#buffer.length + chunk.length);
+    if (this.#need && this.#buffer.length + this.#partsLength + chunk.length < this.#need) {
+      this.#parts.push(chunk.slice()); // the caller reuses its read buffer
+      this.#partsLength += chunk.length;
+      return [];
+    }
+    const joined = new Uint8Array(this.#buffer.length + this.#partsLength + chunk.length);
     joined.set(this.#buffer);
-    joined.set(chunk, this.#buffer.length);
+    let offset = this.#buffer.length;
+    for (const part of this.#parts) {
+      joined.set(part, offset);
+      offset += part.length;
+    }
+    joined.set(chunk, offset);
+    this.#parts = [];
+    this.#partsLength = 0;
+    this.#need = 0;
     const out: [Json, Uint8Array][] = [];
     let at = 0;
     while (true) {
@@ -155,7 +176,10 @@ export class FrameReader {
       const bodyLength = view.getUint32(4 + headLength, true);
       if (bodyLength > MAX_BODY) throw new RangeError(`bad keeper frame body length ${bodyLength}`);
       const end = at + 8 + headLength + bodyLength;
-      if (joined.length < end) break;
+      if (joined.length < end) {
+        this.#need = end - at;
+        break;
+      }
       const header = JSON.parse(DEC.decode(joined.subarray(at + 4, at + 4 + headLength)));
       if (!header || typeof header !== 'object' || Array.isArray(header)) throw new RangeError('keeper frame header is not an object');
       out.push([header as Json, joined.slice(at + 8 + headLength, end)]);

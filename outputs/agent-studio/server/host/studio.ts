@@ -101,6 +101,8 @@ export const ARTIFACT_URL_FILE = 'artifact-web.json'; // the web server writes i
 export const CLOSED_GRACE_SECONDS = 10 * 60; // a closed connection stays listed this long so the page can still show "disconnected"
 export const MAX_CLOSED_CONNECTIONS = 20; // ...and never more than this many closed ones are kept (oldest go first)
 export const RECONNECT_TRIES = 3;
+/** The longest a page's request for a chat waits while chats are taken over from the keeper (chat.js GET_TIMEOUT_MS is longer). */
+export const ADOPT_WAIT_MS = 20_000;
 
 /** Swarm lines in a main chat (studio_note kinds) and the buttons they may carry (swarm/service.ts). */
 const SWARM_NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail'];
@@ -1682,7 +1684,7 @@ export class Studio {
     const adopting = this.#adopting;
     if (!adopting) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([adopting.catch(() => 0), new Promise((resolve) => (timer = setTimeout(resolve, 20_000)))]);
+    await Promise.race([adopting.catch(() => 0), new Promise((resolve) => (timer = setTimeout(resolve, ADOPT_WAIT_MS)))]);
     clearTimeout(timer);
   }
 
