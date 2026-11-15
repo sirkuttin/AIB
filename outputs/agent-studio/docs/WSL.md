@@ -16,16 +16,16 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   `codex-acp` installed with npm in the distro. A missing Claude Code or Codex gets an "Install in Ubuntu" button (the npm command
   stays, for doing it yourself) and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
-- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive) and, for a chat in its own copy, the
-  merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro (see AIB tools below; WSL
-  interop is only the fallback); docs and the swarm helper tools are not available yet, and the chat says so.
+- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive), the doc and drawing tools and, for a
+  chat in its own copy, the merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro
+  (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
   Windows project; a folder that is not git, has no commits yet, or cannot get a copy keeps the chat in the project folder, with the
   same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the
   copy and its branch, and Merge lands the chat's own commits on main as for a Windows project (see Merge below). Live sync works
   as for a Windows project: a file the user saves in the main folder reaches the chat's copy within a second or two, the chat's
   next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
-  storm of changes pauses with "Resume" (see Live sync below). The Docs tab is off. The Files tab previews
+  storm of changes pauses with "Resume" (see Live sync below). Docs work as in a Windows project (see Docs below). The Files tab previews
   pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
   (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
   as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
@@ -70,6 +70,13 @@ nor stops them as orphaned. AIB's own channels never count as work in either kee
 keeper's lifetime rules, PROTOCOL.md section 6). The next AIB starts the distros of the chats on its recovery list, rebuilds those
 chats from the Linux keeper (`Studio.adoptWslKeeper`) and claims the keep-alive. A crashed AIB leaves its WSL agents running under
 the keep-alive the same way.
+
+**One agent per chat:** before AIB starts an agent for a saved chat (the auto-reconnect, Continue), it asks the keeper that agent
+would run in (a WSL chat: its distro's Linux keeper) for a live channel of that session and takes it over instead
+(`Studio.#runningInKeeper`). So a take-over at start that gave up (the distro answered after `adoptWslKeeper`'s 120 s) or a link that
+was given up while its agents kept running never leads to a second agent for the same session. A distro whose keeper cannot be
+asked refuses the start (the reconnect tries again). If a keeper still holds two agents for one session (from an older AIB), the
+take-over keeps the working one and stops the idle one.
 
 **Transport loss:** when the transport `wsl.exe` dies, the link suspends its channels, reconnects (0.5 to 8 s steps, 30 s in all),
 re-attaches each from its last record and only reports a chat as stopped when the Linux keeper's `list` says it ended. After
@@ -119,8 +126,8 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
   minutes is answered with an error. When AIB is quit with WSL agents running, the helper is told (`mcp.closed`) and answers "AIB is
   closed; try again later" at once; any call from the next AIB clears it.
 - **Limits.** A message is at most 8 MB (the relay refuses lines over 16 MB) and an answer at most 3 MB.
-- **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts` and `merge` on; `docs` (the docs store does not
-  run in WSL yet) and `swarm` (no helper chats in WSL projects yet) off. Switching a group on there changes the tool list, Studio's
+- **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts`, `docs` and `merge` on; `swarm` (no helper chats
+  in WSL projects yet) off. Switching a group on there changes the tool list, Studio's
   main-chat role (swarm) and the chat's note (`wsl/access.ts wslToolsNotice`). Publish takes `content` only: AIB on Windows cannot
   read the distro's files.
 - **Fallback.** A helper without the tunnel (an older one, or a keeper program without `mcp-relay`) gets the phase 1 interop entry
@@ -202,6 +209,44 @@ everywhere else, so Windows is unchanged). There are no per-file calls between A
   environment wins) with the Windows reader (`agents/codex_limits.ts`). A WSL chat has its own account key (`wsl:<distro>|codex`);
   there is no app-server fallback in the distro. Under test the folder is `<AIB_WSL_ROOT>/home/.codex`.
 
+## Docs
+
+**Decision: the open doc stays in AIB on Windows; only its files are in the distro.** A doc is a live Y.Doc that the page's editor
+socket, the agents' doc tools, comments, history and Restore all work on, in AIB's process. Running it in the helper would mean
+relaying every doc route and the editor socket (y-protocols sync and awareness) through the helper channel, and a second copy of
+the doc's state to keep right across helper restarts. So for a WSL project nothing about the open doc changes: the same `DocStore`,
+routes, socket and tools, the same cache (`<stateDir>/docs/cache`) and history (AIB's artifact store), all on Windows. What is in the
+distro is what is in the project on Windows: `aib-docs/<doc>/doc.aibdoc`, the pages' `NN-<title>.md` copies, `assets/` (drawings,
+charts' pictures) and `aib-docs/README.md`. Every read and write of those goes through one file layer, `docs/doc_fs.ts`: a Windows
+path is Deno's file calls exactly as before; a `wsl://` path goes to `wsl/docs.ts`, which sends it to the distro's helper as one
+`docs.fs` call (`wsl/helper/docs.ts`, contract.ts), done natively there.
+
+- **Concurrent edits** (the user typing, agents' tool calls, file edits) meet in the one Y.Doc in AIB, with the same guards as on
+  Windows: an agent's stale rewrite of a block the user changed is refused `guard_mismatch` and the user's words stay.
+- **Edits made in the distro** (an agent's file tools on a `.md` copy, a hand edit of doc.aibdoc, a `git pull`): the store's 1 s poll
+  reads the files through the helper and takes them in block by block, never over the user's newer words; the drawings' `.excalidraw`
+  files too. On open, AIB's cache is used only when doc.aibdoc is what it was saved with; otherwise the doc is rebuilt from the file.
+- **Atomic writes**: a temp file next to the target, then one rename, in the distro. A file over 512 K characters goes in pieces
+  (`chunk` ops into one temp file, then the rename), because a helper request line is at most 4 MiB.
+- **Nothing lost**: a distro that is starting is waited for (up to 60 s); one that stopped is never started by a docs call. The call
+  is refused `wsl_unavailable` with the line the user sees ("Ubuntu stopped. Reconnect"), so a doc is never taken as missing and a
+  new doc is never made over an old one. The edits stay in the open doc and in AIB's cache (saved with the files' last written
+  state); the poll writes them as soon as the distro answers again, and an AIB that quit meanwhile writes them when it next opens the
+  doc.
+- **Confined**: `docs.fs` reaches only `<some folder>/aib-docs/…` (no `.` or `..` parts, and the real path of the nearest existing
+  folder must stay inside that project's real path, so a symlink cannot lead out); a recursive remove or a trash takes only a doc
+  folder or something in one, never `aib-docs/` itself.
+- **What agents read**: a doc tool's `file` (doc_create, doc_read, doc_list...) and the "Send to agent" comment message name the
+  Linux path (`/home/u/app/aib-docs/plan/doc.aibdoc`), never AIB's ref. A worktree chat's docs are the project's (its main folder),
+  as on Windows.
+- **Move doc to trash**: the helper's trash (gio, else the freedesktop trash by hand: `wsl/helper/trash.ts`); with no trash it is
+  refused and nothing is removed. Under test it is the test's own trash inside AIB_WSL_ROOT, never gio.
+- **Changes** of a WSL chat show a doc's files as one doc row, as on Windows (the helper's `changes.get` adds `docs`).
+- **Not for WSL projects**: the layouts from before aib-docs/ (docs/<name>.md and docs/<doc>/) are not looked for (they predate WSL
+  projects). Export to Markdown writes to the Windows Downloads folder, as for any doc.
+- Tests: `wsl_docs_test` (no distro: the helper's docs.fs on a temp folder, the whole store through a FakeWslHost, the distro away and
+  back, the trash route), `test_doc_links.js` (the Files docs rows of a WSL project), `wsl_docs_e2e` (real distro).
+
 ## Agent installs in the distro
 
 The new-chat agent panel of a WSL project offers **Install in Ubuntu** for a missing Claude Code or Codex, and **Update in Ubuntu**
@@ -246,8 +291,11 @@ The real-WSL tests run only with `AIB_WSL_E2E=<distro>` (a WSL2 distro of the PC
 
 ```
 cd outputs/agent-studio
-AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
+for f in ../../work/deno/wsl_*_e2e_test.ts; do AIB_WSL_E2E=Ubuntu deno test -A "$f"; done   # one process per file
 ```
+
+Several files can share one process (each test removes its root and drops its hosts; see `work/deno/_wsl_e2e.ts`); a run per file
+keeps one failure from hiding the others' results.
 
 | Test | Checks |
 | --- | --- |
@@ -264,16 +312,17 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_tunnel_e2e` | the tunnel entry run inside the distro: a tools/list reaches AIB and the WSL tool list comes back, also with interop off for the forwarder (`unshare -rm`, `/run/WSL` hidden); a wrong key refused; a helper without the tunnel falls back to the interop entry, which cannot start with interop off |
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
+| `wsl_fixes_e2e` | the set-up probe with `-` for no `AIB_WSL_ROOT` answers `$HOME/.aib-server` (read-only); the New project dialog's check and create in the distro (new, existing, missing parent, with and without a name and git init) |
+| `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
 
-The docs store; background-task output and ownership
-checks for WSL chats.
+Background-task output and ownership checks for WSL chats.

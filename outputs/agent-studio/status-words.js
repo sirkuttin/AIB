@@ -24,6 +24,7 @@
   //   elsewhereWorking the other app is visibly working (recent writes, running subagents or processes)
   //   reconnecting     Studio is reloading this chat by itself after a restart (server-side fact)   -> Reconnecting…
   //   recovered, recent, agentList   why a chat is not attached (only changes the tooltip)
+  //   reconnectError   the automatic reopen after a restart gave up (string, the reason) -> Not running · could not reopen
   //   now              current time in ms
   const T = {
     working: { tone: 'work', dot: 'd-work' },
@@ -102,6 +103,14 @@
           );
     }
     let title = NOT_RUNNING_TITLE;
+    if (typeof f.reconnectError === 'string')
+      return make(
+        'not-running',
+        'Not running · could not reopen',
+        'AIB could not reopen it after the restart' +
+          (f.reconnectError ? ': ' + f.reconnectError.slice(0, 300) : '') +
+          '. Send a message to try again.',
+      );
     if (f.recovered) title = 'It was open in AIB before the server restarted. Send a message to reconnect it.';
     else if (f.recent) title = 'Written a moment ago; not confirmed to be running. ' + NOT_RUNNING_TITLE;
     else if (f.agentList) title = 'The agent listed this chat; AIB has not read it. ' + NOT_RUNNING_TITLE;

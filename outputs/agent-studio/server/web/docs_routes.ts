@@ -81,6 +81,8 @@ import { parseDoc } from '../docs/markdown.ts';
 import { TOKEN_PROTOCOL_PREFIX } from './terminal_routes.ts';
 import type { WebContext } from './server.ts';
 import { isDeleted } from '../artifacts/artifacts.ts';
+import { fsOf, isRemotePath } from '../docs/doc_fs.ts';
+import { linuxPath, linuxPaths } from '../wsl/docs.ts';
 
 export const DOCS_SOCKET = '/api/live/docs/socket';
 export const DOCS_PROTOCOL = 'aib-docs';
@@ -132,7 +134,11 @@ export function docsRoutes(): Map<string, Route> {
   routes.set('GET /api/live/docs/list', async (ctx, url) => {
     const root = await rootFor(ctx, { id: [url.searchParams.get('id') ?? ''], root: [url.searchParams.get('root') || 'main'] });
     if (typeof root !== 'string') return root;
-    return [200, { ok: true, docs: await ctx.docs.list(root), others: await ctx.docs.others(root) }];
+    try {
+      return [200, { ok: true, docs: await ctx.docs.list(root), others: await ctx.docs.others(root) }];
+    } catch (error) {
+      return refused(error); // a WSL project whose distro is away: wsl_unavailable with the line to show
+    }
   });
   // Edit on a Markdown artifact: it becomes a doc (one click, no dialog), linked to this chat.
   routes.set('POST /api/live/docs/from-artifact', async (ctx, _url, body) => {
@@ -362,7 +368,8 @@ async function duplicateDoc(ctx: WebContext, doc: OpenDoc, args: Json): Promise<
 
 /** "Move doc to trash": snapshot, tell the open pages, close it, then the folder to the system trash. */
 async function trashDoc(ctx: WebContext, doc: OpenDoc): Promise<Json> {
-  const layer = (ctx as unknown as { trashLayer?: TrashLayer }).trashLayer ?? osTrash;
+  // a WSL project's doc goes to the distro's trash (its helper: gio, else the freedesktop trash); a Windows one to the system's
+  const layer = (fsOf(doc.dir).trash as TrashLayer | undefined) ?? (ctx as unknown as { trashLayer?: TrashLayer }).trashLayer ?? osTrash;
   const folder = doc.dir;
   const kind = await layer.kind(folder);
   if (kind === 'permanent') throw new DocRefusal('no_trash', 'There is no trash on this drive, so AIB did not delete the doc.');
@@ -537,7 +544,7 @@ export async function sendComment(ctx: WebContext, doc: OpenDoc, thread: unknown
   await ctx.artifacts.refresh().catch(() => {});
   const connection = ctx.artifacts.connectionOf(chat);
   if (!connection) return [409, { error: 'That chat is not open: open it, then send again.', code: 'chat_not_open', chat }];
-  const text = commentMessage(doc.name, doc.file, view);
+  const text = commentMessage(doc.name, linuxPath(doc.file), view); // a WSL doc: the path the agent in the distro can open
   const clientMessageId = `doc-comment-${doc.id}-${view.thread}-${view.replies.length}`;
   const [status, payload] = await ctx.host.liveCall('queue', { id: connection, text, clientMessageId });
   if (status !== 200) return [status, payload];
@@ -589,16 +596,17 @@ export async function docsTool(ctx: WebContext, body: Json): Promise<Reply> {
   const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args as Json : {};
   const agent = chat.includes(':') ? chat.slice(0, chat.indexOf(':')) : 'agent';
   const [ok, result] = await runDocTool(ctx.docs, root, agent, tool, args, chat);
-  return [200, { ok, result }];
+  // an agent in a WSL project reads Linux paths (the doc's `file`), never AIB's wsl:// refs
+  return [200, { ok, result: isRemotePath(root) ? linuxPaths(result) : result }];
 }
 
 /** A folder of that name in aib-docs/ that is no doc (AIB never writes into it). */
 async function folderTaken(ctx: WebContext, root: string, name: string): Promise<boolean> {
   try {
     const { docName } = await import('../docs/store.ts');
-    await Deno.stat(ctx.docs.docDir(root, docName(name)));
-    return true;
-  } catch {
+    return await ctx.docs.folderExists(root, docName(name));
+  } catch (error) {
+    if (error instanceof DocRefusal && error.code === 'wsl_unavailable') throw error; // not "free": the distro did not answer
     return false;
   }
 }

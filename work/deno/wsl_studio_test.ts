@@ -51,7 +51,7 @@ class WslLab {
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
 
-  studio(): Studio {
+  studio(flags: string[] = []): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
     const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
@@ -59,7 +59,7 @@ class WslLab {
       this.made.push({ command, cwd, options: { ...(options ?? {}) } as Json });
       // The distro's agent is a Linux program; under test the fake agent stands in (the guard allows a work/ fixture).
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
-      return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
+      return new Connection(fake('--cancel-aware', '--breadth', ...flags), cwd, provider, { ...options, wsl });
     };
     this.studios.push(studio);
     return studio;
@@ -152,6 +152,10 @@ Deno.test({
     // ACP: the Linux folder, and the AIB tools through WSL interop
     const sessionNew = lab.received().find((m) => m.method === 'session/new')!;
     assertEquals((sessionNew.params as Json).cwd, '/home/u/app');
+    // no Windows scratch folder for an agent in a distro (Claude refused it: "additionalDirectories entries must be absolute paths")
+    assert(studio.allow !== null, 'the allow gate is on (it gives Windows chats their scratch folder)');
+    assertEquals(c.scratchDir, null);
+    assert(!JSON.stringify(sessionNew.params).includes(JSON.stringify(studio.allow!.scratchFor(c.id)).slice(1, -1)),'the scratch folder is not sent');
     const servers = (sessionNew.params as Json).mcpServers as Json[];
     if (servers.length) {
       const entry = servers[0];
@@ -213,7 +217,7 @@ Deno.test({
     await until(() => replies.length === 1, 'the reply', 10);
     assertEquals([replies[0].rid, replies[0].status], ['r1', 200]);
     const names = ((JSON.parse(String(replies[0].body)).result as Json).tools as Json[]).map((t) => t.name);
-    assert(names.includes('publish') && names.includes('archive') && !names.includes('doc_create') && !names.includes('start_helper'), names.join());
+    assert(names.includes('publish') && names.includes('archive') && names.includes('doc_create') && !names.includes('start_helper'), names.join());
 
     // A wrong key, or the key of a chat in another distro, is refused (401), and no tool runs.
     lab.host.mcpRequest({ rid: 'r2', headers: { ...headers, 'X-Studio-Artifact-Key': 'wrong' }, body });
@@ -290,6 +294,106 @@ Deno.test({
   },
 });
 
+/** A keep-alive in the Windows keeper as wsl/hosts.ts makes it (a sleeping stand-in for `wsl.exe ... bridge --hold`). */
+async function holdFor(studio: Studio): Promise<void> {
+  const hold = studio.keeper!.spawn(
+    {
+      channel: 'wsl-hold-ubuntu',
+      command: PYTHON,
+      args: ['-c', 'import time; time.sleep(60)'],
+      label: JSON.stringify({ aib: 'wsl-hold', distro: 'ubuntu' }),
+    },
+    { record() {} },
+  );
+  await hold.ready;
+}
+
+async function stopHold(studio: Studio): Promise<void> {
+  const client = await studio.keeper!.client(false);
+  if (client) await studio.keeper!.stopUnknown(client, 'wsl-hold-ubuntu').catch(() => {});
+}
+
+const chatChannels = (lab: WslLab) => lab.host.link.spawned.filter((s) => String(s.channel).startsWith('chat-')).length;
+
+Deno.test({
+  name: 'wsl chat: the recovery list lost it (an AIB without WSL forgot it), the keep-alive still runs: the next AIB takes it over',
+  ...T,
+  async fn() {
+    // The owner's case: a build without WSL support gave up on the WSL chats (three tries, dropped from the recovery list), so the
+    // next AIB never asked the distro's keeper and the chats stayed Not running while their agents ran on.
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const c = await a.connect('claude', REF);
+    await holdFor(a);
+    const pid = c.process!.pid;
+    lab.crash(a);
+    const b = lab.studio();
+    assert(b.store!.forgetConversation('claude', c.sessionId!), 'it was on the list');
+    try {
+      assertEquals(await b.adoptKeeper(), 1);
+      const r = b.connections.get(c.id)!;
+      assert(r && !r.closed && r.ready, 'rebuilt under the same id');
+      assertEquals(r.process!.pid, pid);
+      assert(r.keeper === lab.host.link);
+    } finally {
+      await stopHold(b);
+    }
+  },
+});
+
+Deno.test({
+  name: 'wsl chat: a Continue of a chat whose agent still runs in the distro keeper takes that agent over (never a second agent)',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const c = await a.connect('claude', REF);
+    const pid = c.process!.pid;
+    lab.crash(a);
+    const spawned = chatChannels(lab);
+    // the next AIB does not know the chat (not on its recovery list, no keep-alive): its take-over at start never asks the distro
+    const b = lab.studio();
+    b.store!.forgetConversation('claude', c.sessionId!);
+    assertEquals(await b.adoptKeeper(), 0);
+    const opened = await b.connect('claude', REF, c.sessionId);
+    assertEquals(opened.id, c.id, 'the running chat, taken over');
+    assertEquals(opened.process!.pid, pid);
+    assertEquals(chatChannels(lab), spawned, 'no second agent was started');
+    assertEquals([...b.connections.values()].filter((x) => !x.closed && x.sessionId === c.sessionId).length, 1);
+  },
+});
+
+Deno.test({
+  name: 'wsl chat: the take-over at start found the distro not ready; the auto-reconnect then takes the running agent over',
+  ...T,
+  async fn() {
+    // The wsl8 case: "ubuntu is not ready, so its chats were not taken over: the running helper was too old to take over", then the
+    // auto-reconnect started a second agent for every chat (claude: duplicates; codex: "session is in use by another Codex client").
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const c = await a.connect('claude', REF);
+    const pid = c.process!.pid;
+    lab.crash(a);
+    const spawned = chatChannels(lab);
+    const b = lab.studio();
+    lab.host.state = 'unavailable';
+    lab.host.note = 'the running helper was too old to take over';
+    assertEquals(await b.adoptKeeper(), 0);
+    lab.host.state = 'ready';
+    lab.host.note = '';
+    assertEquals(b.startAutoReconnect(1, 0, 1, 0), 1);
+    await until(() => b.reconnectPending.size === 0, 'the reconnect', 20);
+    const r = b.connections.get(c.id);
+    assert(r && !r.closed && r.ready, 'the running chat, taken over');
+    assertEquals(r.process!.pid, pid);
+    assertEquals(chatChannels(lab), spawned, 'no second agent was started');
+    assertEquals(b.reconnectFailed(), []);
+  },
+});
+
 Deno.test({
   name: 'wsl chat: a distro that is not ready and an agent the distro lacks are refused with the line the user sees',
   ...T,
@@ -363,5 +467,128 @@ Deno.test({
     assertEquals([refused.messages[0].code, refused.messages[0].message], ['wsl_unavailable', 'Ubuntu stopped. Reconnect']);
     lab.host.state = 'ready';
     await sessions.endAll();
+  },
+});
+
+// ---- one agent per session (keeper take-over, auto-reconnect), and no Windows folder for a distro's agent ---------------------
+
+/** The live chat channels of the distro's (fake) Linux keeper, by channel name. */
+async function liveChats(lab: WslLab): Promise<string[]> {
+  const client = await KeeperClient.connect(readKeeperInfo(lab.host.dataDir)!);
+  try {
+    return (await client.list()).filter((ch) => ch.live && ch.channel.startsWith('chat-')).map((ch) => ch.channel).sort();
+  } finally {
+    client.close();
+  }
+}
+
+const openFor = (studio: Studio, sessionId: string) => [...studio.connections.values()].filter((c) => !c.closed && c.sessionId === sessionId);
+
+Deno.test({
+  name: 'wsl keeper take-over: a session that runs twice in the distro keeper becomes one chat; the busy agent is kept, the idle one stopped',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const first = await a.connect('claude', REF);
+    const session = first.sessionId!;
+    // An OLDER AIB build that could not see the running agent started a second one for the same session. This build's connect()
+    // refuses to (it takes the running agent over), so the second channel is made the way that build did: a Connection started
+    // straight in the distro keeper with the first one's launch options, loading the same session.
+    const made = lab.made[0];
+    const second = a.connectionFactory(made.command, made.cwd, 'claude', made.options as never);
+    await second.setup(session);
+    assertEquals(second.sessionId, session);
+    assert(second.id !== first.id, 'a second agent');
+    assertEquals((await liveChats(lab)).length, 2);
+    // the second one is working (a question waits) when that AIB goes away too
+    assertEquals((await second.prompt('stream:4:20', 'm1', [])).duplicate, false);
+    await until(() => second.permissions.size === 1, 'the question', 15);
+    lab.crash(a);
+    const c = lab.studio();
+    await c.adoptKeeper();
+    const open = openFor(c, session);
+    assertEquals(open.map((o) => o.id), [second.id]); // listed once: the working one
+    assert(open[0].busy && open[0].permissions.size === 1, 'its turn and question go on');
+    await until(async () => (await liveChats(lab)).length === 1, 'the idle duplicate stopped', 10);
+    assertEquals(await liveChats(lab), [`chat-${second.id}`]);
+  },
+});
+
+Deno.test({
+  name: 'wsl auto-reconnect: when the take-over at start failed (the distro was not ready), the reconnect takes the running agent over',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const c = await a.connect('claude', REF);
+    await turn(a, c);
+    const [session, pid] = [c.sessionId!, c.process!.pid];
+    lab.crash(a);
+    // The next AIB starts while the distro is slow: its take-over gives up and the chat stays on the recovery list.
+    const b = lab.studio();
+    lab.host.state = 'starting';
+    assertEquals(await b.adoptKeeper(), 0);
+    assertEquals(openFor(b, session), []);
+    // The distro answers, and the auto-reconnect reopens the chat: the agent that still runs there is taken over, none is started.
+    lab.host.state = 'ready';
+    const spawnsBefore = lab.host.link.spawned.filter((s) => String(s.channel).startsWith('chat-')).length;
+    assertEquals(b.startAutoReconnect(1, 0, 1, 0), 1);
+    await Promise.all(b.reconnectWorkers);
+    const open = openFor(b, session);
+    assertEquals(open.length, 1);
+    assertEquals([open[0].id, open[0].process!.pid], [c.id, pid]); // the same chat and the same agent
+    assertEquals(lab.host.link.spawned.filter((s) => String(s.channel).startsWith('chat-')).length, spawnsBefore);
+    assertEquals(await liveChats(lab), [`chat-${c.id}`]);
+    // and it goes on live
+    assertEquals((await b.liveCall('prompt', { id: c.id, text: 'stream:2:20', clientMessageId: 'm2' }))[0], 200);
+    await until(() => open[0].permissions.size === 1, 'the question', 15);
+    await b.liveCall('permission', { id: c.id, key: [...open[0].permissions.keys()][0], option: 'yes' });
+    await until(() => !open[0].busy, 'turn end', 15);
+  },
+});
+
+Deno.test({
+  name: 'wsl: the link to the distro keeper is given up while its agent keeps running: the chat comes back on that agent, not a second one',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const studio = lab.studio();
+    const c = await studio.connect('claude', REF);
+    const [session, pid] = [c.sessionId!, c.process!.pid];
+    // the keeper connection ends (the bridge broke and was not restored in time), the Linux keeper and the agent go on
+    (await lab.host.link.client(false))!.close();
+    await until(() => c.closed, 'the chat interrupted', 10);
+    await until(() => openFor(studio, session).some((o) => o.ready), 'the chat back', 30);
+    const open = openFor(studio, session);
+    assertEquals([open.length, open[0].id, open[0].process!.pid], [1, c.id, pid]);
+    assertEquals(await liveChats(lab), [`chat-${c.id}`]);
+    assertEquals(lab.received().filter((m) => m.method === 'session/load').length, 0);
+  },
+});
+
+Deno.test({
+  name: 'wsl chat with allow rules: no Windows scratch folder, so session/new has no Windows additionalDirectories and the brief no Windows path',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const studio = lab.studio(['--extra-dirs']); // the agent takes additionalDirectories and a system prompt (as Claude's adapter does)
+    assert(studio.allow, 'allow rules are on');
+    const c = await studio.connect('claude', REF);
+    assertEquals(c.scratchDir, null);
+    assertEquals(c.extraFolders(), {});
+    const sessionNew = lab.received().find((m) => m.method === 'session/new')!;
+    const params = sessionNew.params as Json;
+    assertEquals(params.additionalDirectories, undefined);
+    const { mcpServers: _tools, ...rest } = params; // (the tools entry may name AIB's Windows forwarder: that is interop's business)
+    const text = JSON.stringify(rest);
+    assert(!text.includes(JSON.stringify(lab.state).slice(1, -1)) && !text.includes('scratch'), text.slice(0, 400));
+    // a Windows chat of the same AIB still gets its scratch folder
+    const win = await studio.connect('omp', lab.work);
+    assert(win.scratchDir && win.scratchDir.startsWith(lab.state), String(win.scratchDir));
   },
 });

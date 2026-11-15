@@ -99,6 +99,14 @@ export interface HelperMethods {
   'project.inspect': { params: { path: string; projects?: string[]; dataHome?: string; viaGio?: boolean }; result: { exists: boolean; refusal: string; trash: string; worktreeOf: string } };
   'project.trash': { params: { path: string; projects?: string[]; dataHome?: string; viaGio?: boolean }; result: { disk: 'gio' | 'xdg' | 'missing' } };
   'files.gitInfo': { params: { root: string }; result: unknown };
+  /**
+   * The docs' file work of a WSL project (helper/docs.ts; docs/doc_fs.ts on Windows): AIB holds the open doc, the helper reads and
+   * writes its files in <project>/aib-docs/ natively. Linux paths, only under some folder's aib-docs/ (real paths checked). One
+   * result per op, in order: {ok: true, ...} or {ok: false, error, code}. read -> text (null: missing), stat -> stat (null), list ->
+   * entries (null), writeNew -> created, trashKind -> kind, trash -> kind (code 'no_trash': none, nothing deleted). A big atomic write
+   * is `chunk` ops ({path, token, text, first}) then `writeAtomic` {path, token}.
+   */
+  'docs.fs': { params: { ops: DocFsOp[] }; result: { results: Record<string, unknown>[] } };
   'changes.get': { params: { folder: string; offset?: number; base?: string }; result: unknown };
   'changes.diff': { params: { folder: string; path: string; base?: string }; result: unknown };
   'changes.branchEntries': { params: { folder: string; base?: string }; result: unknown };
@@ -175,6 +183,23 @@ export interface HelperMethods {
 export interface HelperMcpRequest {
   method: 'mcp.request';
   params: { rid: string; headers: Record<string, string>; body: string };
+}
+
+/** One docs.fs operation (helper/docs.ts). `path` is a Linux path inside a project's aib-docs/. */
+export interface DocFsOp {
+  op: 'read' | 'stat' | 'list' | 'mkdir' | 'writeNew' | 'write' | 'chunk' | 'writeAtomic' | 'rename' | 'copy' | 'remove' | 'trashKind' | 'trash';
+  path: string;
+  to?: string;
+  text?: string;
+  token?: string;
+  first?: boolean;
+  recursive?: boolean;
+  kind?: string;
+  /** read: the SHA-256 (hex, of the UTF-8 text) AIB holds; an unchanged file answers {same: true} without its text. */
+  known?: string;
+  /** trash, trashKind: XDG_DATA_HOME (tests: inside AIB_WSL_ROOT); viaGio false skips gio. */
+  dataHome?: string;
+  viaGio?: boolean;
 }
 
 /** A worktree plan on the helper channel (worktrees.ts Plan, Linux paths): `path` is always <data>/worktrees/<repo hash>/<slug>. */

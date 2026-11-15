@@ -213,7 +213,9 @@ Deno.test({
     const ok = await server.tunneled('good', 'c1', list);
     assertEquals(ok.status, 200);
     const names = ((JSON.parse(ok.body).result as Json).tools as Json[]).map((t) => t.name);
-    assertEquals(names, ['publish', 'update', 'list', 'archive']);
+    assertEquals(names.slice(0, 4), ['publish', 'update', 'list', 'archive']);
+    for (const name of ['doc_create', 'doc_list', 'doc_read', 'doc_edit', 'doc_history', 'drawing_create']) assert(names.includes(name), name);
+    assert(!names.includes('start_helper') && !names.includes('merge_into_project'), 'no swarm tools; merge only in its own copy');
     assertEquals(await server.tunneled('good', 'c1', '{"jsonrpc":"2.0","method":"notifications/initialized"}'), { status: 202, body: '' });
     const entry = tunnelEntry('/r/v/AIB-keeper', '/r/data-x/helper/mcp.sock', 'good', 'c1');
     assert(isOwnForwardEntry(entry.command, entry.args as string[]));
@@ -225,11 +227,15 @@ Deno.test({
 Deno.test('wsl tools: the chat line is worded from WSL_TOOL_GROUPS; the ready line\'s socket must be a plain absolute path', () => {
   assertEquals(
     wslToolsNotice(),
-    "In WSL projects, AIB tools cover artifacts (publish by content, list, update, archive) and merging a chat's own copy; docs and helper chats are not available yet.",
+    "In WSL projects, AIB tools cover artifacts (publish by content, list, update, archive), docs and merging a chat's own copy; helper chats are not available yet.",
   );
-  assertEquals(wslToolsNotice({ ...WSL_TOOL_GROUPS, docs: true, swarm: true }).endsWith('docs and helper chats.'), true);
+  assertEquals(wslToolsNotice({ ...WSL_TOOL_GROUPS, swarm: true }).endsWith("merging a chat's own copy and helper chats."), true);
+  assertEquals(
+    wslToolsNotice({ ...WSL_TOOL_GROUPS, merge: false, swarm: true }),
+    "In WSL projects, AIB tools cover artifacts (publish by content, list, update, archive), docs and helper chats; merging a chat's own copy is not available yet.",
+  );
   assertEquals(wslToolsNotice({ artifacts: false, merge: false, swarm: false, docs: false }), WSL_TOOLS_NOTICE);
-  assertEquals([WSL_TOOL_GROUPS.docs, WSL_TOOL_GROUPS.swarm], [false, false], 'docs and helper chats stay off until they work in WSL');
+  assertEquals([WSL_TOOL_GROUPS.docs, WSL_TOOL_GROUPS.swarm], [true, false], 'docs work in WSL projects; helper chats stay off until they do');
   assertEquals(tunnelSocket({ socket: '/home/u/.aib-server/data-1/helper/mcp.sock' }), '/home/u/.aib-server/data-1/helper/mcp.sock');
   for (const bad of [null, {}, { socket: 'rel/mcp.sock' }, { socket: '/a\nb' }, { socket: '/' + 'x'.repeat(120) }, { socket: 3 }]) {
     assertEquals(tunnelSocket(bad), '', JSON.stringify(bad));

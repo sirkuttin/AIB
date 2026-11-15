@@ -5,7 +5,7 @@
  * of an agent spawn live here too. Nothing here touches Windows files for a WSL path.
  */
 import type { KeeperLink } from '../keeper/link.ts';
-import type { HelperMethods, WslHost } from './contract.ts';
+import { type HelperMethods, WslHelperError, type WslHost } from './contract.ts';
 import { wslHosts, wslHostsInUse } from './hosts.ts';
 import { detectWsl, type WslDistro } from './detect.ts';
 import { locOf } from '../platform/location.ts';
@@ -85,15 +85,32 @@ export function peekWslHost(distro: string): WslHost | null {
  */
 export async function hostWhenReady(distro: string, timeoutMs = 180_000): Promise<WslHost> {
   const host = wslHost(distro);
-  if (host && host.state !== 'ready') {
+  const deadline = Date.now() + timeoutMs;
+  // A start that failed only because the helper was being replaced (an earlier AIB's helper too old to take over, a helper that
+  // ended while it started) is tried again within the wait: the next start makes a fresh helper. Anything else is answered at once.
+  for (let attempt = 0; host && host.state !== 'ready' && attempt < START_TRIES; attempt++) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      host.start().catch(() => {}),
-      new Promise((resolve) => (timer = setTimeout(resolve, timeoutMs))),
+    const outcome = await Promise.race([
+      host.start().then(() => null, (error: unknown) => error ?? new Error('not ready')),
+      new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), Math.max(0, deadline - Date.now())))),
     ]);
     clearTimeout(timer);
+    if (outcome === null || outcome === 'timeout' || !retriableStart(outcome)) break;
+    const wait = Math.min(START_RETRY_MS * 2 ** attempt, deadline - Date.now());
+    if (wait <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
   return readyHost(distro);
+}
+
+/** How often hostWhenReady starts a distro whose helper was being replaced, and the first pause between starts (doubling). */
+const START_TRIES = 4;
+const START_RETRY_MS = 500;
+/** The helper failures a second start fixes (wsl/hosts.ts WslHelperError codes): the helper itself was replaced or ended. */
+const RETRIABLE_START = new Set(['helper_restart', 'helper_exited', 'helper_gone', 'helper_timeout']);
+
+function retriableStart(error: unknown): boolean {
+  return error instanceof WslHelperError && RETRIABLE_START.has(error.code);
 }
 
 /** The WSL2 distros of this PC (WSL1 is refused in phase 1). Never throws: none when WSL is missing or detection fails. */
@@ -170,24 +187,27 @@ export function windowsPathInWsl(path: string): string | null {
 
 /** Phase 1 without the interop MCP entry: what the chat says instead of failing silently (design section 8, item 5). */
 export const WSL_TOOLS_NOTICE = 'AIB tools (docs, artifacts, merge) are not available in WSL projects yet.';
-/** With the interop MCP entry: the artifact tools that need no project file (section 11 decision), and merge for a chat in its own copy. */
-export const WSL_TOOLS_LIMITED = "In WSL projects, AIB tools are limited to artifacts (publish, list, update) and merging a chat's own copy; docs are not available yet.";
+/** With the interop MCP entry: the artifact tools that need no project file (section 11 decision), docs, and merge for a chat in its own copy. */
+export const WSL_TOOLS_LIMITED = "In WSL projects, AIB tools are limited to artifacts (publish, list, update), docs and merging a chat's own copy.";
+
+const MERGE_TOOLS = "merging a chat's own copy";
 
 /**
  * What a WSL chat with AIB tools says about them (tunnel or interop: the same tools), worded from mcp.ts WSL_TOOL_GROUPS so a group
  * switched on there shows here too. With today's groups: "In WSL projects, AIB tools cover artifacts (publish by content, list,
- * update, archive) and merging a chat's own copy; docs and helper chats are not available yet."
+ * update, archive), docs and merging a chat's own copy; helper chats are not available yet."
  */
 export function wslToolsNotice(groups: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 'docs', boolean>> = WSL_TOOL_GROUPS): string {
   const on: string[] = [];
   const off: string[] = [];
   (groups.artifacts ? on : off).push(groups.artifacts ? 'artifacts (publish by content, list, update, archive)' : 'artifacts');
-  (groups.merge ? on : off).push("merging a chat's own copy");
   (groups.docs ? on : off).push('docs');
+  (groups.merge ? on : off).push(MERGE_TOOLS);
   (groups.swarm ? on : off).push('helper chats');
   const list = (items: string[]) => items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
   if (!on.length) return WSL_TOOLS_NOTICE;
-  return `In WSL projects, AIB tools cover ${list(on)}${off.length ? `; ${list(off)} ${off.length > 1 ? 'are' : 'is'} not available yet` : ''}.`;
+  const verb = off.length === 1 && off[0] === MERGE_TOOLS ? 'is' : 'are'; // "helper chats are", "merging ... is"
+  return `In WSL projects, AIB tools cover ${list(on)}${off.length ? `; ${list(off)} ${verb} not available yet` : ''}.`;
 }
 
 /** Install commands the agent picker shows for an agent missing in a distro (the user runs them; AIB never runs npm in phase 1). */

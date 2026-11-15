@@ -22,12 +22,33 @@
   Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
   "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
 
+- Live sync no longer holds back a file you save right after a commit or a Merge. A save made in the moment after the project's
+  branch moved (your own commit, or Merge landing a chat) could wait for the chat's next message before reaching its copy; it now
+  arrives within a second or two like any other save, on Windows and in WSL projects.
+
+- One agent per chat after a restart. When AIB restarts while a chat's agent is still running (on Windows or in a WSL distro) and
+  could not take it over right away, for example because Ubuntu was slow to start, reopening the chat now picks up that running
+  agent instead of starting a second one for the same conversation. The chat keeps its history and its running turn, and it is
+  listed once.
+- WSL chats no longer get stuck as "Not running" after a restart or update. If their agent is still running in the distro, AIB now
+  picks it up even when its list of open chats lost the chat, and continuing such a chat picks up that same agent instead of starting
+  a second one for the same conversation (Codex refused that second one with "session is in use by another Codex client"). A distro
+  whose AIB helper was being replaced is started again instead of counting as not ready. A chat AIB could not reopen after a restart
+  now says "Not running · could not reopen", with the reason when you hover, and sending a message tries again.
+
 - AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
   merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
   `~/.aib-server`, and the helper passes it to AIB over the connection AIB already keeps. No network port is opened, nothing on
   Windows is exposed to Linux, and each chat's own key is checked as before. It keeps working where interop is switched off, and a
-  tool call made while AIB is closed says so at once instead of hanging. Docs and helper chats are still not available in WSL
-  projects; the chat's note says which tools it has.
+  tool call made while AIB is closed says so at once instead of hanging. Helper chats are still not available in WSL projects; the
+  chat's note says which tools it has.
+- WSL projects: Docs. Docs and drawings work in WSL projects as they do on Windows. The aib-docs row in Files lists the project's
+  docs with "+ New doc"; a doc opens in its tab with live editing, pages, comments, charts, drawings, history and Restore; and the
+  chat's agent in the distro gets the doc tools (doc_create, doc_read, doc_edit and the rest), so you and the agent can write the
+  same doc at the same time without losing each other's words. The doc lives in the project, inside the distro:
+  `aib-docs/<doc>/doc.aibdoc` and its readable `.md` page copies sit next to your code, ready to commit, and an edit an agent's file
+  tools make to them there is taken in. Every save is atomic (a temp file, then one rename, in the distro). If the distro stops while
+  a doc is open, AIB keeps your edits and writes them once it is back. Move doc to trash uses the distro's trash.
 
 ## 0.1.0-beta.9 (beta)
 
