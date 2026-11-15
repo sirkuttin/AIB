@@ -497,6 +497,10 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   for a setup step now). Exit 0: prerequisites with `force=1`, then the agents with `force=1`; the panel closes once Node.js is
   seen. `canInstallNode` false: `nodeInstallBlocked` verbatim, **Open Ubuntu terminal** (the new-chat panel's `wsl-shell:<d>`
   terminal in the distro's home, in the card) and Check again.
+- Close on the Node.js panel and on an agent's sign-in panel also ends that program on the server (`POST /api/live/terminal/end`
+  with `setup:wsl-node@<d>` / `signin:<agent>@<d>`, `wsl-ui.js endTerminal`), as the Windows card's Close does; before, Close only
+  dropped the socket and the program kept running in the distro (and blocked Remove). The "Open Ubuntu terminal" panel's Close
+  does not end its shell (`wsl-shell:<d>` is shared with the new-chat panel).
 - git or curl missing: the install line of the distro's package manager (`pkgManager`; absent = apt): `sudo apt install git`,
   `sudo dnf install git`, `sudo yum install git`, `sudo zypper install git`, `sudo pacman -S git`, `sudo apk add git`, to copy only
   (AIB never runs them); `unknown`: "Install git with your distro's package manager" and nothing to copy. Open Ubuntu terminal,

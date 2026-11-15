@@ -202,6 +202,10 @@
     if (opts.force) params.force = '1';
     return Promise.resolve(host.getJson('/api/live/wsl/prereqs', params)).then((r) => (r && typeof r === 'object' ? r : { prereqs: null }));
   }
+  /** End a terminal on the server (POST /api/live/terminal/end): a distro's Node.js or sign-in terminal when its panel closes. */
+  function endTerminal(key) {
+    return post('terminal/end', { key: String(key) });
+  }
   /** The distro's own On/Off switch of one agent: {ok, enabled}. */
   function setAgentEnabled(key, id, enabled) {
     return post('wsl/agents/enabled', { distro: String(key).toLowerCase(), id, enabled: !!enabled });
@@ -546,6 +550,7 @@
     peekAgents,
     peekPrereqs,
     setAgentEnabled,
+    endTerminal,
     uninstallAgent,
     peekAib,
     removeAib,

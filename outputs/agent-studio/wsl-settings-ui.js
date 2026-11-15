@@ -476,7 +476,10 @@
   }
 
   // ---- terminal panels on the cards (the Windows card's setup panel: settings-ui.js startSetup) ----------------------------
-  function closePanel(key, paint) {
+  // paint: draw the page again. A panel with an `endKey` (the server's terminal key: setup:wsl-node@<d>, signin:<agent>@<d>) also
+  // ends that program on the server when it closes, as the Windows card's Close does (settings-ui.js closeTerminal): the server
+  // keeps a terminal running after its socket closes. `keep`: only the panel goes (openPanel replacing it: the next run resumes it).
+  function closePanel(key, paint, keep) {
     const entry = terms.get(key);
     if (!entry) return;
     terms.delete(key);
@@ -486,11 +489,13 @@
       /* already closed */
     }
     if (entry.node && entry.node.remove) entry.node.remove();
+    const Wsl = W();
+    if (entry.endKey && !keep && Wsl && Wsl.endTerminal) Promise.resolve().then(() => Wsl.endTerminal(entry.endKey)).catch(() => {});
     if (paint) redraw();
   }
-  /** A panel (title, Close, the terminal, a status line) under `key`; replaces the one there. */
-  function openPanel(key, title) {
-    closePanel(key);
+  /** A panel (title, Close, the terminal, a status line) under `key`; replaces the one there. `endKey`: see closePanel. */
+  function openPanel(key, title, endKey) {
+    closePanel(key, false, true);
     const node = el('div', null, 'st-beta-term');
     const head = el('div', null, 'st-beta-term-head');
     head.append(el('span', title, 'st-beta-term-title'), button('Close', () => closePanel(key, true), 'st-link'));
@@ -498,7 +503,7 @@
     const status = el('p', 'Starting…', 'st-note');
     status.setAttribute('role', 'status');
     node.append(head, view, status);
-    const entry = { node, view, status, run: null, running: true };
+    const entry = { node, view, status, run: null, running: true, endKey: endKey || '' };
     terms.set(key, entry);
     redraw();
     return entry;
@@ -543,7 +548,11 @@
       return redraw();
     }
     rowNotes.delete(key);
-    const entry = openPanel(key, 'Installing Node.js in ' + d.name + ': nvm\'s official installer, then nvm install --lts');
+    const entry = openPanel(
+      key,
+      'Installing Node.js in ' + d.name + ': nvm\'s official installer, then nvm install --lts',
+      'setup:wsl-node@' + d.key,
+    );
     entry.run = T.runSetup(entry.view, 'wsl-node', 'node', {
       distro: d.key,
       onReady: () => say(entry, 'Installing. Answer here if the installer asks something.'),
@@ -826,7 +835,7 @@
     rowNotes.delete(k);
     const now = W() && W().distro ? W().distro(d.key) : null;
     const start = !now || now.state !== 'ready';
-    const entry = openPanel(k, 'Signing in to ' + a.name + ' in ' + d.name);
+    const entry = openPanel(k, 'Signing in to ' + a.name + ' in ' + d.name, 'signin:' + a.id + '@' + d.key);
     entry.run = T.runSignin(entry.view, a.id, {
       distro: d.key,
       start,
@@ -1585,7 +1594,7 @@
       enabledWant.clear();
       rowNotes.clear();
       uninstalling.clear();
-      for (const k of Array.from(terms.keys())) closePanel(k);
+      for (const k of Array.from(terms.keys())) closePanel(k, false, true);
       if (removeBox) removeBox.close(false);
       aibs.clear();
       removing.clear();

@@ -11,6 +11,8 @@
   latest` for asdf 0.16 or newer, `asdf global nodejs latest` for older asdf (both, labelled, when AIB could not read asdf's version).
 - AIB Linking (WSL): the git and curl install lines follow the distro's package manager (apt, dnf, yum, zypper, pacman or apk);
   for a distro AIB does not recognise it says to install them with the distro's package manager. Still text to copy only.
+- AIB Linking (WSL): Close on the Node.js install panel or an agent's sign-in panel now also stops that program in the distro, as
+  on Windows; before, it kept running unseen (and Remove AIB from Ubuntu refused because of it).
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.

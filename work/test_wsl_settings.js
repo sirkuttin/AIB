@@ -904,6 +904,36 @@ test('Sign in: the distro sign-in terminal on the card (signin=codex&distro=ubun
   assert.ok(noStart(t));
 });
 
+test('Close on the Node.js and sign-in panels also ends that terminal on the server (terminal/end with its distro key)', async () => {
+  const ends = (t) => t.calls.posts.filter(([n]) => n === 'terminal/end').map(([, b]) => b.key);
+  const t = setup({
+    prereqs: (q) => needsOf(withNode({ state: 'missing' }), q.distro),
+    agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CODEX, { signin: { state: 'signed_out' } })] }),
+  });
+  await openWsl(t);
+  t.cardOf('What Ubuntu needs').querySelectorAll('button').find((b) => b.textContent === 'Install Node.js in Ubuntu').click();
+  await settle();
+  assert.deepEqual(ends(t), [], 'opening the panel ends nothing');
+  t.cardOf('What Ubuntu needs').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.equal(t.terms[0].closed, true);
+  assert.equal(t.cardOf('What Ubuntu needs').querySelector('.st-beta-term'), null);
+  assert.deepEqual(ends(t), ['setup:wsl-node@ubuntu']);
+  t.rowOf('wsl:ubuntu:codex').querySelectorAll('button').find((b) => b.textContent === 'Sign in').click();
+  await settle();
+  t.rowOf('wsl:ubuntu:codex').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.deepEqual(ends(t), ['setup:wsl-node@ubuntu', 'signin:codex@ubuntu']);
+  // "Open Ubuntu terminal" (the shared wsl-shell terminal) is not ended by its panel's Close
+  const s = setup({ prereqs: (q) => needsOf(withNode({ state: 'missing' }, { canInstallNode: false, nodeInstallBlocked: 'x' }), q.distro) });
+  await openWsl(s);
+  s.cardOf('What Ubuntu needs').querySelectorAll('button').find((b) => b.textContent === 'Open Ubuntu terminal').click();
+  await settle();
+  s.cardOf('What Ubuntu needs').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.deepEqual(ends(s), []);
+});
+
 test('Sign in for a distro that stopped running since the page was drawn: start=1, only on that click', async () => {
   const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CLAUDE, { signin: { state: 'signed_out' } })] }) });
   await openWsl(t);
