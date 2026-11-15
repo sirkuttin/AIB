@@ -34,6 +34,7 @@ import { ensureHiddenConsole } from './platform/console.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
 import { mergesRunning } from './worktrees/merge.ts';
+import { wslMergesRunning } from './wsl/merge.ts';
 import { startLocalBackups } from './worktrees/local_backup.ts';
 import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
@@ -431,7 +432,7 @@ export async function main(argv: string[]): Promise<void> {
       // notifications and pushes keep working; no idle quit in the tray; Quit AIB as always (owner's decision 2026-11-12).
       phoneOn: () => ctx.phone.on,
       terminalsBusy: () => ctx.terminals.busyCount(), // a command running in a terminal is work: left to the keeper, never cut off
-      mergesRunning, // Quit AIB lets a running merge finish before AIB exits
+      mergesRunning: () => mergesRunning() + wslMergesRunning(), // Quit AIB lets a running merge (a WSL chat's too) finish before AIB exits
       trayCounts: studio
         ? () => {
           // needs you: the inbox's one number (inbox-rules.js), the same as the page's badge and the phone's

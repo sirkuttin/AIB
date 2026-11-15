@@ -26,6 +26,7 @@ import { bringBack, restoreFolders } from './project_routes.ts';
 import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
 import { Swarm } from '../swarm/service.ts';
+import * as wslMerge from '../wsl/merge.ts';
 
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
@@ -235,19 +236,35 @@ export function studioRoutes(): Map<string, StudioHandler> {
     });
   }
   routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
-  routes.set('GET /api/live/worktree', async (ctx, url) => [200, await merge.status(mergeStudio(ctx), one(argsOf(url), 'id'))]);
-  routes.set('GET /api/live/worktree/clash', async (ctx, url) => [200, await merge.clashStatus(ctx, one(argsOf(url), 'project'))]);
-  routes.set('POST /api/live/worktree/merge', (ctx, _url, body) => {
+  // A WSL chat's merge runs in its distro's helper (wsl/merge.ts); every other chat's here (merge.ts).
+  routes.set('GET /api/live/worktree', async (ctx, url) => {
+    const studio = mergeStudio(ctx), id = one(argsOf(url), 'id');
+    const wsl = await wslMerge.wslMergeChat(studio, id);
+    return [200, wsl ? await wslMerge.wslMergeStatus(wsl) : await merge.status(studio, id)];
+  });
+  routes.set('GET /api/live/worktree/clash', async (ctx, url) => {
+    const project = one(argsOf(url), 'project');
+    return [200, wslLocOf(project) ? await wslMerge.wslClashStatus(project) : await merge.clashStatus(ctx, project)];
+  });
+  routes.set('POST /api/live/worktree/merge', async (ctx, _url, body) => {
     const title = typeof body?.title === 'string' ? body.title : '';
-    return refusedReply(() => merge.merge(mergeStudio(ctx), body?.id, title));
+    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
+    return refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, title) : merge.merge(studio, body?.id, title));
   });
   // The Changes tab's Merge button: a one-shot merge permission for this chat, then the chat is asked to merge (merge_request.ts).
-  routes.set('POST /api/live/worktree/merge-request', (ctx, _url, body) => {
-    return refusedReply(() => merge.requestMerge(mergeStudio(ctx), body?.id, { blocked: (state) => requestBlockedHere(ctx, state) }));
+  routes.set('POST /api/live/worktree/merge-request', async (ctx, _url, body) => {
+    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
+    if (wsl) return refusedReply(() => wslMerge.wslRequestMerge(studio, wsl, requestBlockedHere(ctx, wsl.state)));
+    return refusedReply(() => merge.requestMerge(studio, body?.id, { blocked: (state) => requestBlockedHere(ctx, state) }));
   });
   routes.set('POST /api/live/worktree/clash', async (ctx, _url, body) => {
-    if (body?.action === 'resume-sync') return [200, { ok: true, resumed: await merge.resumeSync(ctx.stateDir, body.project) }];
-    return refusedReply(() => merge.resolveClash(mergeStudio(ctx), body?.id, typeof body?.action === 'string' ? body.action : ''));
+    if (body?.action === 'resume-sync') {
+      if (wslLocOf(body.project)) return [200, { ok: true, resumed: false }]; // no live sync in a WSL project: nothing is paused
+      return [200, { ok: true, resumed: await merge.resumeSync(ctx.stateDir, body.project) }];
+    }
+    const action = typeof body?.action === 'string' ? body.action : '';
+    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
+    return refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action) : merge.resolveClash(studio, body?.id, action));
   });
   // ---- swarm phase 1: the merge line's Undo / Merge again, and a chat's helpers (page only; never the agent key) ----
   routes.set('POST /api/live/swarm/undo', (ctx, _url, body) => swarmOf(ctx).undo(body?.helper));
@@ -374,8 +391,9 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     if (action === 'merge' && swarmOf(ctx).isHelper(conversation)) {
       return [403, { error: 'Helpers are merged by their main chat: report back instead', code: 'helper' }];
     }
-    if (action === 'merge') return await refusedReply(() => merge.mergeFromTool(mergeStudio(ctx), conversation));
-    return await refusedReply(() => merge.resolveClash(mergeStudio(ctx), conversation, action, true));
+    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, conversation); // a WSL chat: its distro's helper merges
+    if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, '', true) : merge.mergeFromTool(studio, conversation));
+    return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action, true) : merge.resolveClash(studio, conversation, action, true));
   }
   if (path === '/api/live/swarm/tool') { // swarm phase 1: the key is bound to the body's conversation; the role is checked in the service
     const [body, bad] = await ownGateBody(request, 200000);
