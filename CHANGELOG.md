@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+- WSL projects: work on code that lives in Linux without leaving AIB. New project and Add project offer "WSL: Ubuntu" (any WSL2
+  distro) next to Windows. Claude Code, Codex, OMP and your custom agents, installed in the distro, run there, in the Linux folder,
+  with the distro's own git, node and login environment, so nothing crosses the slow `\\wsl$` share and no Windows tool touches a
+  Linux repo. Chats, the terminal (your login shell, titled "bash (Ubuntu)"), Files and Changes all work, and every agent in every
+  distro sits in the same inbox and sidebar as your Windows chats. It all stays on your PC: AIB copies two programs (about 110 MB, once
+  per version) into `~/.aib-server` in the distro and talks to them through `wsl.exe`, with no network port opened. An agent's
+  sign-in page opens in your Windows browser; any other link from the distro asks first. Quitting AIB keeps WSL agents working, as it does for Windows chats, and the
+  next AIB picks them up; ended WSL chats stay listed and can be continued. In a WSL project the Files tab previews
+  pictures and pages like any project, and opens files a chat wrote outside the project folder. Delete project can move the folder to
+  the trash in Ubuntu (the "Move folder to trash in Ubuntu" tick box; never a permanent delete, and it refuses your home folder,
+  other projects and folders on a Windows drive). A WSL chat's Codex usage limits show up in the chip, read from the distro's
+  `~/.codex`. A new chat in a WSL git project works in its own copy (a git worktree made inside the distro, next to AIB's other files in `~/.aib-server`), as on Windows: Files shows the copy or the main folder, Changes shows the chat's branch, Discard removes the copy and its branch, and the chat keeps its copy across AIB restarts. Merge works there too: the Merge button (or asking the chat) lands the chat's own commits on main, runs entirely inside the distro with Linux git, brings main into the copy first when it moved (conflicts go back to the chat), and sets your uncommitted edits in the project folder aside and puts them back, never overwriting them (if they clash, they stay in a named stash and "Keep my version" restores them). Live sync works there too: a file you save in the WSL project folder reaches the chat's copy within a second or two (AIB watches it from inside the distro, where Windows would miss the change), the chat's next message tells it which files you changed, a file you both edited is combined in the chat's copy at its next turn, and an edit on the same line is never overwritten: the chat's copy gets conflict markers, your file stays as you saved it, and the clash line shows until the chat resolves it. Not in WSL projects yet: Docs; AIB tools there are limited to artifacts and merge. While a WSL project is open or a WSL chat runs, the distro
+  keeps running (VmmemWSL memory in Task Manager).
+- WSL projects: Install in Ubuntu. When Claude Code or Codex is missing in the distro, the new-chat panel has an "Install in Ubuntu"
+  button instead of only a command to copy. AIB installs the same reviewed versions it uses on Windows into its own folder there
+  (`~/.aib-server/agents`; never a global npm install, nothing else in the distro changes), with a progress bar and Cancel, and the
+  install keeps going if AIB restarts. When AIB moves to a newer reviewed version, the panel offers "Update in Ubuntu". The distro needs
+  Node.js 22 or newer: if it has none, the panel says so, shows the command that installs it (no sudo needed) with Copy, and
+  "Check again" picks it up without restarting anything. Codex's sign-in in the distro now also works with AIB's install.
+
+- AIB tools in WSL projects no longer depend on WSL interop. A chat's artifact tools (publish, list, update and now archive) and its
+  merge tools reach AIB through AIB's own tunnel inside the distro: the agent's tool talks to AIB's helper over a private socket in
+  `~/.aib-server`, and the helper passes it to AIB over the connection AIB already keeps. No network port is opened, nothing on
+  Windows is exposed to Linux, and each chat's own key is checked as before. It keeps working where interop is switched off, and a
+  tool call made while AIB is closed says so at once instead of hanging. Docs and helper chats are still not available in WSL
+  projects; the chat's note says which tools it has.
+
 ## 0.1.0-beta.9 (beta)
 
 - Removed the ⋯ menu at the bottom of the sidebar.

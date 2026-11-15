@@ -15,6 +15,10 @@
  *   - carry X-Studio-Conversation-Id and that conversation's key in X-Studio-Artifact-Key (artifacts/keys.ts, the same key the stdio
  *     tool gets), checked before the body is read.
  * The tool then calls Studio's artifact routes with that key exactly as the stdio tool does, so the web server checks it again.
+ *
+ * WSL (phase 2 tunnel, wsl/mcp_tunnel.ts): a message from an agent in a distro arrives over the helper channel instead of a socket;
+ * `tunneled` answers it with the same key check, size limit and reply as a POST (only the loopback, Host and Origin checks, which are
+ * about the TCP request, do not apply).
  */
 import * as artifactKeys from './keys.ts';
 import { reply, SERVER_NAME, type ToolContext, urlFromFile } from './mcp.ts';
@@ -35,7 +39,7 @@ type Json = Record<string, unknown>;
 /** What the server needs from the Studio that runs it. */
 export interface McpHttpStudio {
   /** The conversation's session folder and whether it works in its own worktree; null for a conversation not open here. */
-  conversation(id: string): { cwd: string; worktree: boolean; main?: boolean } | null;
+  conversation(id: string): { cwd: string; worktree: boolean; restricted?: boolean; main?: boolean } | null;
   /** The web server's base URL ('' when unknown). */
   baseUrl(): string;
   /** Path of the URL file the web server rewrites when it restarts on another port (artifact-web.json). */
@@ -60,9 +64,17 @@ export function ownForwardFile(path: string): void {
   OWN_FORWARD_FILES.add(path);
 }
 
-/** True for a stdio entry `<keeper program> mcp-forward <file>` whose file is one this process publishes. */
+/** Tunnel sockets (in WSL distros) this process gave chats: an `mcp-forward --helper-socket <socket>` entry naming one is Studio's own. */
+const OWN_TUNNEL_SOCKETS = new Set<string>();
+
+/**
+ * True for a stdio entry `<keeper program> mcp-forward <file>` whose file is one this process publishes, or a WSL chat's
+ * `<keeper program> mcp-forward --helper-socket <socket>` whose socket this process handed out (tunnelEntry).
+ */
 export function isOwnForwardEntry(command: unknown, args: string[]): boolean {
-  return typeof command === 'string' && args.length === 2 && args[0] === 'mcp-forward' && OWN_FORWARD_FILES.has(args[1]);
+  if (typeof command !== 'string' || args[0] !== 'mcp-forward') return false;
+  if (args.length === 3 && args[1] === '--helper-socket') return OWN_TUNNEL_SOCKETS.has(args[2]);
+  return args.length === 2 && OWN_FORWARD_FILES.has(args[1]);
 }
 
 /**
@@ -76,6 +88,29 @@ export function forwardEntry(forwarder: string, addressFile: string, key: string
     args: ['mcp-forward', addressFile],
     env: [{ name: 'MCP_FORWARD_HEADERS', value: JSON.stringify({ [KEY_HEADER]: key, [CONVERSATION_HEADER]: conversationId }) }],
   };
+}
+
+/**
+ * The stdio entry of a WSL chat with the tunnel: the distro's keeper program as forwarder, posting each message to the WSL helper's
+ * tunnel socket (wsl/mcp_tunnel.ts), with the conversation's key in its environment (a Linux process; nothing crosses WSL interop).
+ */
+export function tunnelEntry(forwarder: string, socket: string, key: string, conversationId: string): Json {
+  OWN_TUNNEL_SOCKETS.add(socket);
+  return {
+    name: SERVER_NAME,
+    command: forwarder,
+    args: ['mcp-forward', '--helper-socket', socket],
+    env: [{ name: 'MCP_FORWARD_HEADERS', value: JSON.stringify({ [KEY_HEADER]: key, [CONVERSATION_HEADER]: conversationId }) }],
+  };
+}
+
+/** A WSL chat taken over from its keeper: its recorded tunnel entry (AIB wrote it) is Studio's own again. */
+export function ownTunnelEntry(entry: unknown): void {
+  const e = entry as { name?: unknown; args?: unknown };
+  const args = Array.isArray(e?.args) ? e.args : [];
+  if (e?.name === SERVER_NAME && args.length === 3 && args[0] === 'mcp-forward' && args[1] === '--helper-socket' && typeof args[2] === 'string') {
+    OWN_TUNNEL_SOCKETS.add(args[2]);
+  }
 }
 
 const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -208,8 +243,7 @@ export class ArtifactMcpHttp {
     }
     const key = headers.get(KEY_HEADER) ?? '';
     const conversation = headers.get(CONVERSATION_HEADER) ?? '';
-    const check = this.studio.check ?? artifactKeys.check;
-    if (!key || !conversation || !check(key, conversation)) {
+    if (!this.#keyOk(key, conversation)) {
       await drain(request);
       return refused(401, 'AIB refused the artifact key for this conversation');
     }
@@ -224,6 +258,30 @@ export class ArtifactMcpHttp {
     }
     const raw = await readLimited(request, MAX_BODY_BYTES);
     if (raw === null) return refused(413, 'Request too large');
+    return await this.#answer(key, conversation, raw);
+  }
+
+  #keyOk(key: string, conversation: string): boolean {
+    const check = this.studio.check ?? artifactKeys.check;
+    return !!key && !!conversation && check(key, conversation);
+  }
+
+  /**
+   * A message that came through the WSL tunnel (wsl/mcp_tunnel.ts): the same key check, size limit and reply as a POST, as an
+   * HTTP-like status and body.
+   */
+  async tunneled(key: string, conversation: string, body: string): Promise<{ status: number; body: string }> {
+    let response: Response;
+    if (!this.#keyOk(key, conversation)) response = refused(401, 'AIB refused the artifact key for this conversation');
+    else {
+      const raw = new TextEncoder().encode(body);
+      response = raw.length > MAX_BODY_BYTES ? refused(413, 'Request too large') : await this.#answer(key, conversation, raw);
+    }
+    return { status: response.status, body: response.status === 202 ? '' : await response.text() };
+  }
+
+  /** The reply to a checked request's body. */
+  async #answer(key: string, conversation: string, raw: Uint8Array): Promise<Response> {
     // Decoded as the stdio server decodes a line (replacement characters, a BOM kept), so the same bytes get the same reply.
     const text = pyStrip(new TextDecoder('utf-8', { ignoreBOM: true }).decode(raw));
     if (!text) return refused(400, 'Empty request');
@@ -233,8 +291,9 @@ export class ArtifactMcpHttp {
       key,
       conversation,
       worktree: !!open?.worktree,
-      main: !!open?.main,
-      cwd: open ? open.cwd : null,
+      restricted: !!open?.restricted, // a WSL chat: the tool groups of mcp.ts WSL_TOOL_GROUPS
+      main: !!open?.main, // swarm helper tools (a WSL chat: only while mcp.ts WSL_TOOL_GROUPS.swarm is on)
+      cwd: open && !open.restricted ? open.cwd : null,
       roots: () => [studio.baseUrl(), urlFromFile(studio.urlFile)],
     };
     let answer: Json | null;

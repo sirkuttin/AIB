@@ -94,7 +94,7 @@ function setup(o) {
       // a chat's own copy ('chat' root) is that chat's folder; the main folder is ROOT
       const own = q.root === 'chat' ? list.find((c) => 'claude:' + c.id === q.id) : null,
         base = own ? own.cwd : ROOT;
-      return { root: base, path: q.path, abs: base + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: opts.viewUrl && /\.(html?|svg|md)$/.test(q.path) ? '/view/' + q.path : '' };
+      return Object.assign({ root: base, path: q.path, abs: base + '/' + q.path, name: q.path.split('/').pop(), size: 20, binary: false, tooBig: false, image: false, page: /\.(html?|svg|md)$/.test(q.path), text: 'a = 1\nb = 2\n', lines: 2, viewUrl: opts.viewUrl && /\.(html?|svg|md)$/.test(q.path) ? '/view/' + q.path : '' }, (opts.reads || {})[q.path]);
     }
     if (path === '/api/live/files/outside') {
       const r = (opts.outside || {})[q.path];
@@ -1285,4 +1285,51 @@ test('path link: a page file named with a line opens on Source at that line; a f
   rowOf(t2, 'outputs/bar-charts.html').click();
   await settle();
   assert.equal(segPressed(t2), 'Source');
+});
+
+test('a WSL project: a picture previews from its link, a binary file says it cannot be shown as text (no editor button for a distro path)', async () => {
+  const reads = {
+    'outputs/logo.png': { image: true, text: null, binary: true, viewUrl: 'http://127.0.0.1:9/f/abc/logo.png' },
+    'data/sales-2026.csv': { binary: true, text: null, viewUrl: '' },
+  };
+  const t = setup({ width: 1000, reads });
+  // every path is a WSL ref here; what the stub does not name is a no-op
+  const wsl = { isWsl: () => true, tooltip: (p) => p, distroName: () => 'Ubuntu', parse: () => ({ key: 'ubuntu' }) };
+  t.ctx.AIBWsl = new Proxy(wsl, { get: (o, k) => (k in o ? o[k] : () => '') });
+  t.FU.setMode('files');
+  await settle();
+  rowOf(t, 'outputs').click();
+  await settle();
+  rowOf(t, 'outputs/logo.png').click();
+  await settle();
+  const img = t.shell.body.querySelector('#fileView').querySelector('img.sf-fv-img');
+  assert.ok(img, 'the picture shows');
+  assert.equal(img.src, 'http://127.0.0.1:9/f/abc/logo.png');
+  rowOf(t, 'data').click();
+  await settle();
+  rowOf(t, 'data/sales-2026.csv').click();
+  await settle();
+  const view = t.shell.body.querySelector('#fileView');
+  assert.equal(view.querySelector('.fx-note').textContent, 'This is a binary file: it cannot be shown as text.');
+  assert.ok(!view.querySelectorAll('.fx-note .fx-btn').length, 'no Open in editor: the editor cannot open a path inside the distro');
+  assert.ok(!/Not available for WSL/.test(view.textContent));
+});
+
+test('a WSL project: a chat in its own copy says so on the scope pill (no "works in the project folder"); the folder reads "Ubuntu: …"', async () => {
+  const wt = conv('w1', ROOT + '/wt/chat-1', { projectRoot: ROOT, worktree: { branch: 'studio/chat-1' }, title: 'Fix login' });
+  const t = setup({ list: [wt, conv('a1', ROOT)] });
+  const wsl = { isWsl: () => true, tooltip: (p) => 'Ubuntu: ' + p, distroName: () => 'Ubuntu', parse: () => ({ key: 'ubuntu' }) };
+  t.ctx.AIBWsl = new Proxy(wsl, { get: (o, k) => (k in o ? o[k] : () => '') });
+  t.FU.setMode('files');
+  await flush();
+  const first = t.calls.find((c) => c.path === '/api/live/files/list');
+  assert.deepEqual([first.q.id, first.q.root], ['claude:w1', 'chat'], "the chat's own copy in the distro");
+  const btn = t.shell.body.querySelector('.fx-scope');
+  assert.equal(btn.textContent, 'CopyFix login▾');
+  assert.match(btn.title, /^This chat's own copy on branch studio\/chat-1\nUbuntu: /);
+  assert.ok(!/work in the project folder/.test(btn.title));
+  btn.click();
+  t.shell.body.querySelector('.fx-menu').querySelectorAll('.fx-menu-it')[1].click(); // Main folder
+  await flush();
+  assert.match(t.shell.body.querySelector('.fx-scope').title, /^The project folder\nUbuntu: /);
 });

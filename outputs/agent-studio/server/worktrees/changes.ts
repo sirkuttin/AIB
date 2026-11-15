@@ -7,6 +7,7 @@
 import { clip } from '../core/py.ts';
 import { which } from '../platform/pypath.ts';
 import * as osp from '../platform/ospath.ts';
+import { assertWindowsLocal } from '../platform/location.ts';
 
 export const MAX_FILES = 300; // files listed per page (offset picks the page); totals count every file
 export const MAX_DIFF_BYTES = 200 * 1024; // per-file diff (and untracked file read) cap
@@ -70,6 +71,7 @@ export async function runGit(
 ): Promise<[Uint8Array, boolean, number | null]> {
   const git = gitPath();
   if (!git) return [new Uint8Array(), false, null];
+  assertWindowsLocal(cwd, 'folder'); // Windows git never runs on a WSL ref (the helper runs this natively)
   let child: Deno.ChildProcess;
   try {
     child = new Deno.Command(git, {
@@ -129,9 +131,12 @@ export async function runGit(
   return [data, false, waitKilled ? null : status.code];
 }
 
-/** True for a plain repository-relative path as git prints it (forward slashes, no '..', not absolute). */
+/** True for a plain repository-relative path as git prints it (forward slashes, no '..', not absolute). '\' is a name character on POSIX. */
 export function safeRelpath(path: unknown): path is string {
-  if (typeof path !== 'string' || !path || path.length > 1024 || path.includes('\0') || path.includes('\\') || path.startsWith('/')) {
+  if (
+    typeof path !== 'string' || !path || path.length > 1024 || path.includes('\0') || (osp.WIN && path.includes('\\')) ||
+    path.startsWith('/')
+  ) {
     return false;
   }
   if (osp.WIN && path.split('/')[0].includes(':')) return false; // ':' only means a drive on Windows

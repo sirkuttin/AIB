@@ -24,6 +24,7 @@
 import { FileLock, LOCK_TIMEOUT_MS, LockTimeout } from '../platform/lock.ts';
 import { basename, dirname, isabs, isdir, isfile, islink, join, normcase, normpath, SEP, splitdrive, WIN } from '../platform/ospath.ts';
 import { pathStr, which } from '../platform/pypath.ts';
+import { assertWindowsLocal } from '../platform/location.ts';
 import { pathOf, realpath } from '../state/paths.ts';
 import { entriesOf, put, readJsonFile, saveJson } from '../state/json.ts';
 import { clip, isDict, pyStrip, ValueError } from '../core/py.ts';
@@ -31,6 +32,7 @@ import { getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
 import { localOnlyOf } from './local_only.ts';
 import { moveStrays } from './local_strays.ts';
+import { WSL_REF_PREFIX } from '../wsl/contract.ts';
 
 const log = getLogger('worktrees');
 
@@ -128,6 +130,7 @@ async function runProcess(
   input: Uint8Array | null,
   timeoutMs: number | null,
 ): Promise<{ code: number; out: Uint8Array; err: Uint8Array }> {
+  assertWindowsLocal(cwd, 'folder'); // a missed WSL route throws here instead of running Windows git on C:\…
   const child = new Deno.Command(command, {
     args,
     cwd,
@@ -1051,6 +1054,9 @@ export async function rescueStrays(record: WorktreeRecord): Promise<boolean> {
 // ---- the manager -------------------------------------------------------------------------------------------------
 export type RemoveOutcome = 'removed' | 'pending' | 'gone';
 
+/** planWithReason's reason for a WSL ref handed to the Windows manager (a missed route: Studio asks the distro's helper instead). */
+export const WSL_PLANNED_THERE = "a WSL project's worktree is made in its distro";
+
 export class Manager {
   readonly registry: Registry;
 
@@ -1065,6 +1071,12 @@ export class Manager {
 
   /** plan() plus, when the chat works in place, why ('' when it gets a worktree). */
   async planWithReason(projectIn: string, key?: string | null, kind: 'chat' | 'helper' = 'chat'): Promise<{ plan: Plan | null; reason: string }> {
+    // A WSL project (its ref, wsl://...) gets its worktree from its distro's helper (Studio routes it to wsl/worktrees.ts, where this
+    // same Manager runs natively); this Windows manager never runs git for it and never records it.
+    if (String(projectIn).startsWith(WSL_REF_PREFIX)) {
+      say(`Worktree: ${projectIn} is planned in its distro, not here`);
+      return { plan: null, reason: WSL_PLANNED_THERE };
+    }
     const project = pathStr(String(projectIn));
     let reason: string;
     try {

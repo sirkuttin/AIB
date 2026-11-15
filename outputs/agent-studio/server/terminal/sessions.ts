@@ -26,13 +26,21 @@
  * The socket's query: key, cwd, cols, rows, shell=windows-powershell to use Windows PowerShell instead of the default shell, and
  * resume=1 to attach only to a shell that already runs (the page reconnecting after AIB restarted): none gives {type:'error',
  * code:'gone'} and starts nothing.
+ *
+ * A WSL project (cwd is its ref, wsl://<distro>/<path>; docs/wsl/design.md section 8 item 9): the shell is the distro user's login shell,
+ * started in the Linux folder as a PTY of that distro's Linux keeper with the distro's own environment, and named "bash (Ubuntu)". It
+ * never runs as a child of AIB. Its errors add code wsl_unavailable {line} when the distro is not ready.
  */
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import { clampSize, defaultShell, type Pty, type PtyOptions, type ShellSpec, spawnPty } from '../platform/pty.ts';
 import type { WsLink } from '../platform/websocket.ts';
 import { announce, getLogger } from '../core/log.ts';
 import type { KeeperLink } from '../keeper/link.ts';
 import { inputText, KeeperPty, parseTerminalLabel, TERMINAL_PREFIX, type TerminalLabel, terminalProblem } from './keeper_pty.ts';
+import { isAibInternalLabel } from '../keeper/link.ts';
+import { distroName, hostWhenReady, linkOf, shellTitle, wslHost, wslLoc } from '../wsl/access.ts';
+import type { WslHost } from '../wsl/contract.ts';
 
 const log = getLogger('terminal');
 
@@ -80,6 +88,7 @@ export function checkCwd(cwd: unknown): string {
   const text = typeof cwd === 'string' ? cwd.trim() : '';
   if (!text) throw new TerminalError('This chat has no folder to open a terminal in.', 'no_folder');
   if (isNetworkPath(text)) throw new TerminalError('Network and device folders are not supported.', 'bad_folder');
+  if (isForeignPath(text)) throw new TerminalError('This folder is inside WSL, not on this PC.', 'bad_folder'); // WSL: its own route
   const absolute = Deno.build.os === 'windows' ? /^[A-Za-z]:[\\/]/.test(text) : text.startsWith('/');
   if (!absolute) throw new TerminalError('The chat folder is not an absolute path.', 'bad_folder');
   let dir = false;
@@ -177,6 +186,8 @@ export class TerminalSession {
   lastActivity = Date.now();
   readonly links = new Set<WsLink>();
   readonly prompt: PromptWatch;
+  /** The name the page shows instead of the shell's own (a distro shell: "bash (Ubuntu)"). */
+  title: string | null = null;
   #replay: Uint8Array[] = [];
   #replaySize = 0;
   exitCode: number | null = null;
@@ -228,7 +239,7 @@ export class TerminalSession {
       id: this.id,
       cwd: this.cwd,
       shell: this.shell.file,
-      shellName: shellName(this.shell.file),
+      shellName: this.title ?? shellName(this.shell.file),
       pid: this.pty.pid,
       startedAt: this.startedAt,
       lastActivity: this.lastActivity,
@@ -252,7 +263,7 @@ export class TerminalSession {
       link.send(JSON.stringify({
         type: 'error',
         code: 'spawn_failed',
-        shellName: shellName(this.shell.file),
+        shellName: this.title ?? shellName(this.shell.file),
         message: keeper?.startError || 'The shell ended.',
       }));
       link.close(1000, 'refused');
@@ -315,6 +326,8 @@ export class TerminalSessions {
   /** Why new shells run inside AIB although the keeper is on ('' = they go to the keeper, or it is off). */
   keeperProblem = '';
   #closed = false;
+  /** Distros whose Linux keeper was already asked for shells an earlier AIB left running (once per distro). */
+  readonly #wslAdopted = new Map<string, Promise<number>>();
 
   constructor(options: SessionsOptions = {}) {
     this.#max = options.max ?? MAX_SESSIONS;
@@ -351,6 +364,7 @@ export class TerminalSessions {
     const k = checkKey(key);
     const running = this.#sessions.get(k);
     if (running) return { session: running, resumed: true };
+    if (wslLoc(cwd)) throw new TerminalError('A WSL terminal opens through openWsl.', 'bad_folder');
     const folder = checkCwd(cwd);
     if (this.#sessions.size >= this.#max) {
       throw new TerminalError(`${this.#max} terminals are already open.`, 'too_many', { max: this.#max, terminals: this.list() });
@@ -388,6 +402,8 @@ export class TerminalSessions {
     const session = new TerminalSession(key, cwd, shell, pty, (s) => {
       if (this.#sessions.get(s.key) === s) this.#sessions.delete(s.key);
     }, label ? { id: label.id, startedAt: label.startedAt } : null);
+    const wsl = wslLoc(cwd);
+    if (wsl) session.title = shellTitle(shell.file, wsl.distro);
     this.#sessions.set(key, session);
     if (pty instanceof KeeperPty) pty.start();
     return session;
@@ -408,6 +424,30 @@ export class TerminalSessions {
   async adoptKeeper(): Promise<number> {
     const link = this.keeper;
     if (!link || this.#closed) return 0;
+    return await this.#adoptFrom(link, null);
+  }
+
+  /**
+   * The shells a distro's Linux keeper still runs for this data folder (AIB restarted while they ran). Asked once per distro, the
+   * first time a page opens or reconnects a terminal of that distro; the distro must be ready (it is never started for this).
+   */
+  adoptWslKeeper(distro: string): Promise<number> {
+    const key = distro.toLowerCase();
+    let running = this.#wslAdopted.get(key);
+    if (!running) {
+      const host = wslHost(key);
+      if (!host || host.state !== 'ready' || this.#closed) return Promise.resolve(0);
+      running = this.#adoptFrom(linkOf(host), key).catch((error) => {
+        log.warning('terminal: taking over the shells of %s failed: %s', key, error instanceof Error ? error.message : error);
+        return 0;
+      });
+      this.#wslAdopted.set(key, running);
+    }
+    return running;
+  }
+
+  /** Take over the shells of one keeper: the Windows keeper (distro null), or a distro's Linux keeper (only that distro's shells). */
+  async #adoptFrom(link: KeeperLink, distro: string | null): Promise<number> {
     let client;
     try {
       client = await link.client(false);
@@ -425,8 +465,10 @@ export class TerminalSessions {
     let adopted = 0;
     for (const info of await client.list()) {
       if (info.kind !== 'pty' || !info.channel.startsWith(TERMINAL_PREFIX)) continue;
+      if (isAibInternalLabel(info.label)) continue; // AIB's own WSL hold or helper: never a terminal, never stopped
       const label = parseTerminalLabel(info.label);
       if (!label) continue;
+      if ((wslLoc(label.cwd)?.distro ?? null) !== distro) continue; // each keeper holds only its own side's shells
       try {
         if (!info.live) {
           await link.removeEnded(client, info.channel);
@@ -495,9 +537,98 @@ export class TerminalSessions {
     command: ShellSpec | null = null,
     resume = false,
   ): TerminalSession | null {
+    if (wslLoc(cwd) || (typeof key === 'string' && wslLoc(this.#sessions.get(key)?.cwd))) {
+      void this.attachWsl(link, key, cwd, cols, rows, command, resume);
+      return null;
+    }
     try {
       if (resume && !this.#sessions.has(checkKey(key))) throw new TerminalError('This terminal is no longer running.', 'gone');
       const { session, resumed } = this.open(key, cwd, cols, rows, shell, command);
+      session.attach(link, resumed);
+      if (resumed) {
+        const size = clampSize(cols, rows);
+        session.pty.resize(size.cols, size.rows);
+      }
+      return session;
+    } catch (error) {
+      const known = error instanceof TerminalError;
+      link.send(JSON.stringify({
+        type: 'error',
+        ...(known ? error.details : {}),
+        message: known ? error.message : 'Could not open the terminal.',
+        code: known ? error.code : 'failed',
+      }));
+      link.close(1000, 'refused');
+      return null;
+    }
+  }
+
+  /**
+   * The conversation's running shell, or a new one in a WSL project's folder (its ref): the distro's login shell, or `command` (an
+   * agent's sign-in in that distro), as a PTY of the distro's Linux keeper with the distro's environment.
+   */
+  async openWsl(
+    key: unknown,
+    cwd: unknown,
+    cols: unknown,
+    rows: unknown,
+    command: ShellSpec | null = null,
+  ): Promise<{ session: TerminalSession; resumed: boolean }> {
+    if (this.#closed) throw new TerminalError('AIB is closing.', 'closing');
+    const k = checkKey(key);
+    const running = this.#sessions.get(k);
+    if (running) return { session: running, resumed: true };
+    const wsl = wslLoc(cwd);
+    if (!wsl) throw new TerminalError('The chat folder is not in WSL.', 'bad_folder');
+    let host: WslHost;
+    try {
+      host = await hostWhenReady(wsl.distro, 120_000); // the first terminal after a Windows start waits for its distro
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      throw new TerminalError(why, 'wsl_unavailable', { line: why });
+    }
+    const stat = await host.call('fs.stat', { path: wsl.linuxPath }).catch(() => null);
+    if (!stat?.isDir) throw new TerminalError(`This chat's folder no longer exists: ${wsl.linuxPath}`, 'folder_missing', { cwd: String(cwd) });
+    const again = this.#sessions.get(k); // opened by another page while this one waited
+    if (again) return { session: again, resumed: true };
+    if (this.#sessions.size >= this.#max) {
+      throw new TerminalError(`${this.#max} terminals are already open.`, 'too_many', { max: this.#max, terminals: this.list() });
+    }
+    const env = await host.env();
+    const shell: ShellSpec = command ?? { file: env.SHELL || '/bin/bash', args: ['-l'] }; // the user's login shell
+    const size = clampSize(cols, rows);
+    const ref = String(cwd);
+    const options: PtyOptions = {
+      file: shell.file,
+      args: shell.args,
+      cwd: wsl.linuxPath,
+      ...size,
+      env: { ...env, ...(command?.env ?? {}), AIB_TERMINAL: '1' },
+    };
+    const label: TerminalLabel = { t: 'terminal', v: 1, key: k, id: crypto.randomUUID(), cwd: ref, shell, startedAt: Date.now() };
+    // never a child of AIB: a Linux shell cannot run on Windows
+    const pty = KeeperPty.spawn(linkOf(host), options, label, () => {
+      throw new Error(`The terminal could not start in ${distroName(wsl.distro)}.`);
+    }, true);
+    const session = this.#add(k, ref, { file: shell.file, args: shell.args }, pty, label);
+    return { session, resumed: false };
+  }
+
+  /** attach() for a WSL project's terminal: the same messages, once the distro has answered. */
+  async attachWsl(
+    link: WsLink,
+    key: unknown,
+    cwd: unknown,
+    cols: unknown,
+    rows: unknown,
+    command: ShellSpec | null = null,
+    resume = false,
+  ): Promise<TerminalSession | null> {
+    try {
+      const distro = wslLoc(cwd)?.distro;
+      if (distro && !(typeof key === 'string' && this.#sessions.has(key))) await this.adoptWslKeeper(distro); // shells from before
+      if (resume && !this.#sessions.has(checkKey(key))) throw new TerminalError('This terminal is no longer running.', 'gone');
+      const { session, resumed } = await this.openWsl(key, cwd, cols, rows, command);
       session.attach(link, resumed);
       if (resumed) {
         const size = clampSize(cols, rows);

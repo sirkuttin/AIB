@@ -119,9 +119,13 @@
     return loading;
   }
   // Workspace files that list the project: cached per path (null until the first answer).
-  const workspacesCached = (path) => (wsCache.has(path) ? wsCache.get(path) : null);
+  const workspacesCached = (path) => (wsCache.has(path) ? wsCache.get(path) : isWslPath(path) ? [] : null);
   function loadWorkspaces(path) {
     if (!host || !host.get || !path) return Promise.resolve([]);
+    if (isWslPath(path)) {
+      wsCache.set(path, []);
+      return Promise.resolve([]);
+    }
     if (wsLoading.has(path)) return wsLoading.get(path);
     const p = host
       .get('/api/live/editors', { project: path })
@@ -207,7 +211,20 @@
         : openFolder(path, item.editor);
     return Promise.resolve(null);
   }
+  // A WSL project (wsl-ui.js): only the editors that open a distro folder over Remote-WSL (VS Code, Cursor) and Reveal; no workspace
+  // files (they would be read from the distro) and no Windows terminal.
+  const WSL_EDITORS = ['code', 'code-insiders', 'cursor'];
+  const isWslPath = (path) => !!(root.AIBWsl && root.AIBWsl.isWsl(path));
   function menuModelFor(path, useWorkspace) {
+    if (isWslPath(path))
+      return {
+        editors: info.editors.filter(
+          (e) => (e.kind === 'editor' && WSL_EDITORS.includes(e.id)) || e.kind === 'explorer',
+        ),
+        defaultId: (defaultEditor() || {}).id || '',
+        workspaces: [],
+        useWorkspace: false,
+      };
     return {
       editors: info.editors,
       defaultId: (defaultEditor() || {}).id || '',

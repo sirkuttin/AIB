@@ -2822,14 +2822,19 @@
           }
         : null,
       // A built-in agent's terminal sign-in (Claude Code): the advertised method's args run after the agent's own launcher in an AIB
-      // terminal inside the card (a ConPTY, never a console window). The card asks for a retry when it exits 0.
+      // terminal inside the card (a ConPTY, never a console window). The card asks for a retry when it exits 0. A chat in a WSL
+      // project signs in where its agent runs: the login runs inside the chat's distro (distro terminal, Linux home).
       runTerminal:
         !terminal &&
         (snap.provider === 'claude' || snap.provider === 'codex') &&
         window.AibTerminal &&
         window.AibTerminal.runSignin
           ? (method, box, hooks) =>
-              window.AibTerminal.runSignin(box, snap.provider, Object.assign({}, hooks, { args: method.args }))
+              window.AibTerminal.runSignin(
+                box,
+                snap.provider,
+                Object.assign({}, hooks, { args: method.args, distro: (snap.wsl && snap.wsl.distro) || '' }),
+              )
           : null,
     };
   }
@@ -3290,18 +3295,164 @@
     if (!lists.loading || lists.model) if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
     if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
     if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
-    fillSelect($('ncAgent'), AgentChoice.menuRows(), newDraft.provider);
+    fillSelect($('ncAgent'), wslAgentRows(AgentChoice.menuRows(), f.cwd), newDraft.provider);
     $('ncSetup').hidden = !AgentChoice.UNAVAILABLE.length;
     fillSelect($('ncModel'), models, newDraft.model);
     fillSelect($('ncMode'), modes, newDraft.mode);
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
     $('ncFolder').textContent = f.cwd
-      ? f.cwd + (newBranch.cwd === f.cwd && newBranch.branch ? ' · ' + newBranch.branch : '')
+      ? (window.AIBWsl ? AIBWsl.displayPath(f.cwd) : f.cwd) + (newBranch.cwd === f.cwd && newBranch.branch ? ' · ' + newBranch.branch : '')
       : 'Add a project folder to start: type one below, or use New project (+ above the chat list).';
     const typing = f.source === 'none' || f.source === 'input';
     $('ncFolderInput').hidden = !typing;
     $('ncFolderInput').disabled = startingNew;
     if (typing && $('ncFolderInput').value !== $('cwd').value) $('ncFolderInput').value = $('cwd').value;
+    renderWslAgentNote(f);
+  }
+  /* A new chat in a WSL project: the agents are the ones found in that distro (GET /api/live/wsl/agents). One missing there gets
+     "<agent> is not installed in Ubuntu" in the menus, and under the folder line the command that installs it (with Copy) and
+     "Open Ubuntu terminal"; a found one offers "Sign in", its own login in a distro terminal. Both terminals open in this panel. */
+  const wslNew = { node: null, run: null, sig: '' };
+  function wslMissing(cwd, provider) {
+    const W = window.AIBWsl,
+      p = W && W.parse(cwd);
+    if (!p) return null;
+    const a = W.agentIn(p.key, provider, () => newDraft && !selected && renderNewChat());
+    return a && !a.found ? { key: p.key, a } : null;
+  }
+  function wslAgentRows(rows, cwd) {
+    const W = window.AIBWsl,
+      p = W && W.parse(cwd);
+    if (!p) return rows;
+    return rows.map((r) => {
+      const m = wslMissing(cwd, r.value);
+      return m && !r.reason ? Object.assign({}, r, { reason: 'Not installed in ' + W.distroName(p.key) }) : r;
+    });
+  }
+  function closeWslTerm() {
+    if (wslNew.run) wslNew.run.close();
+    wslNew.run = null;
+  }
+  function renderWslAgentNote(f) {
+    const W = window.AIBWsl,
+      p = W && W.parse(f.cwd),
+      anchor = $('ncFolder');
+    if (!anchor) return;
+    let box = $('ncWsl');
+    if (!p) {
+      if (box) box.hidden = true;
+      closeWslTerm();
+      wslNew.sig = '';
+      return;
+    }
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'ncWsl';
+      box.className = 'nc-wsl';
+      anchor.after(box);
+    }
+    const name = W.distroName(p.key),
+      agentName = nameOf(newDraft.provider),
+      row = W.agentIn(p.key, newDraft.provider, () => newDraft && !selected && renderNewChat());
+    const sig = JSON.stringify([p.key, newDraft.provider, row, name]);
+    box.hidden = !row;
+    if (sig === wslNew.sig) return;
+    wslNew.sig = sig;
+    closeWslTerm();
+    box.replaceChildren();
+    if (!row) return;
+    const line = document.createElement('p');
+    line.className = 'st-note' + (row.found ? '' : ' bad');
+    const actions = document.createElement('p');
+    actions.className = 'st-note';
+    const term = document.createElement('div');
+    term.className = 'st-beta-term';
+    term.hidden = true;
+    const view = document.createElement('div');
+    view.className = 'st-beta-term-view';
+    const termNote = document.createElement('p');
+    termNote.className = 'st-note';
+    termNote.setAttribute('role', 'status');
+    term.append(view, termNote);
+    const link = (label, fn, title) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'st-link';
+      b.textContent = label;
+      if (title) b.title = title;
+      b.onclick = fn;
+      actions.append(b);
+      return b;
+    };
+    const runTerm = (hooks) => {
+      closeWslTerm();
+      view.replaceChildren();
+      term.hidden = false;
+      termNote.textContent = 'Starting…';
+      wslNew.run = window.AibTerminal?.runSignin(view, newDraft.provider, Object.assign({
+        onReady: () => (termNote.textContent = hooks.ready),
+        onExit: (code) => {
+          termNote.textContent = code === 0 ? hooks.done : 'It ended with code ' + code + '.';
+          W._agentCache.delete(p.key); // installed or signed in meanwhile: look again
+        },
+        onError: (message) => (termNote.textContent = message),
+      }, hooks.extra));
+    };
+    const openShell = () => {
+      const d = W.distro(p.key),
+        home = (d && d.home) || '/';
+      runTerm({
+        ready: 'A terminal in ' + name + '. AIB does not see what you type here.',
+        done: 'The terminal ended.',
+        extra: {
+          url: (loc, cols, rows) =>
+            window.AibTerminal.socketUrl(loc, 'wsl-shell:' + p.key, W.refOf(p.key, home), cols, rows),
+        },
+      });
+    };
+    const rerender = () => newDraft && !selected && renderNewChat();
+    if (!row.found) {
+      line.textContent = agentName + ' is not installed in ' + name + '.' + (row.installable ? '' : row.note ? ' ' + row.note : '');
+      box.append(line);
+      // AIB installs Claude Code and Codex into its own folder in the distro (wsl-ui.js installBox); the npm command stays for a
+      // person who prefers to install it themselves.
+      if (row.installable) box.append(W.installBox({ key: p.key, id: newDraft.provider, agentName, row, done: rerender }));
+      if (row.install) {
+        const cmd = document.createElement('code');
+        cmd.className = 'nc-wsl-cmd';
+        cmd.textContent = row.install;
+        const copyLine = document.createElement('p');
+        copyLine.className = 'st-note' + (row.installable ? ' dim' : '');
+        copyLine.append((row.installable ? 'Or install it yourself in ' : 'Install it in ') + name + ': ', cmd, ' ');
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'st-link';
+        copy.textContent = 'Copy';
+        copy.onclick = () =>
+          Promise.resolve(navigator.clipboard && navigator.clipboard.writeText(row.install)).then(
+            () => (copy.textContent = 'Copied'),
+            () => {},
+          );
+        copyLine.append(copy);
+        box.append(copyLine);
+      }
+      link('Open ' + name + ' terminal', openShell, 'A terminal in ' + name + ' to install ' + agentName);
+    } else {
+      line.textContent =
+        agentName + ' in ' + name + (row.version ? ' (' + row.version + ')' : '') + (row.managed ? ', installed by AIB' : '') + '.';
+      box.append(line);
+      // AIB's own install, older than the version AIB pins now: "Update in Ubuntu" (the old one keeps working meanwhile)
+      if (row.update) box.append(W.installBox({ key: p.key, id: newDraft.provider, agentName, row, done: rerender }));
+      link('Sign in', () =>
+        runTerm({
+          ready: 'Finish the sign-in in this terminal. AIB does not see what you type here.',
+          done: 'The sign-in finished.',
+          extra: { distro: p.key },
+        }),
+        'Run ' + agentName + "'s own sign-in in a " + name + ' terminal',
+      );
+    }
+    box.append(actions, term);
   }
   function renderNewChat() {
     window.AibTerminal?.sync();
@@ -3325,7 +3476,7 @@
     $('prompt').disabled = startingNew;
     $('prompt').placeholder = 'Message ' + name + ' to start the chat… Enter to send';
     $('send').hidden = false;
-    $('send').disabled = startingNew || !has || !f.cwd;
+    $('send').disabled = startingNew || !has || !f.cwd || !!wslMissing(f.cwd, newDraft.provider);
     $('send').textContent = startingNew ? 'Starting…' : 'Send';
     $('cancel').hidden = true;
     if ($('provider').value !== newDraft.provider) $('provider').value = newDraft.provider;
@@ -3358,7 +3509,7 @@
         settings,
         agent: name,
         agentId: newDraft.provider,
-        agents: AgentChoice.menuRows().map((a) => ({
+        agents: wslAgentRows(AgentChoice.menuRows(), f.cwd).map((a) => ({
           id: a.value,
           name: a.name,
           group: a.group,
@@ -4640,6 +4791,17 @@
   });
 
   window.AgentReadState?.init({ get, post });
+  // WSL projects (wsl-ui.js): distro names, the distro state line and "Ubuntu wants to open …" over the open project's chats.
+  window.AIBWsl?.init({
+    getJson: get,
+    postJson: post,
+    currentPath: () => window.AgentWorkspaceUI?.currentProjectPath?.() || selected?.cwd || '',
+  });
+  window.AIBWsl?.onChange(() => {
+    sidebarSignature = '';
+    renderConversations();
+    if (newDraft && !selected) renderNewChat();
+  });
   window.AgentSidebarUI?.init({
     aliasKey,
     /* scrolled up in the open chat, or the chat is still opening (its "New" line is not placed yet): not "viewed" up to now */

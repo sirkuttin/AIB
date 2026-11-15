@@ -11,6 +11,10 @@
  *   GET  /api/live/terminal?signin=claude&arg=..&arg=..  a built-in agent's terminal sign-in (a chat's "Sign in" card): the agent's own
  *                                                   launcher (Settings / Studio install / global, as a chat starts it) with the args
  *                                                   of the terminal method the agent advertised (ACP terminal auth). Plain words only.
+ *   GET  /api/live/terminal?signin=<agent>&distro=<distro>[&arg=..]&cols=&rows=  an agent's own login inside a WSL distro (design section 8 item 4):
+ *                                                   a distro terminal in the Linux home running the agent's login command (the
+ *                                                   sign-in card's advertised args when given); for the next
+ *                                                   5 minutes the login page it asks for opens on Windows without asking (wsl/open_urls.ts)
  *   GET  /api/live/terminal/list                    {terminals: [TerminalInfo], max} (sessions.ts)
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
  */
@@ -27,6 +31,10 @@ import { defaultProbe, refreshWindowsPath, setupCommand } from '../agents/beta_s
 import type { ShellSpec } from '../platform/pty.ts';
 import { remoteSetupCommand } from '../remote/install.ts';
 import type { WsLink } from '../platform/websocket.ts';
+import { refOf } from '../platform/location.ts';
+import { distroName, notReady, wslHost } from '../wsl/access.ts';
+import { urlGate } from '../wsl/open_urls.ts';
+import { BUILTIN_NAMES } from '../agents/agent_registry.ts';
 
 export const TERMINAL_SOCKET = '/api/live/terminal';
 export const TERMINAL_PROTOCOL = 'aib-terminal';
@@ -75,7 +83,9 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
   const q = url.searchParams;
   const signin = q.get('signin');
   const setup = q.get('setup');
-  if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
+  const distro = q.get('distro');
+  if (signin !== null && distro) void attachWslSignin(ctx, link, signin, distro, q.get('cols'), q.get('rows'), q.getAll('arg'));
+  else if (signin !== null) void attachSignin(ctx, link, signin, q.get('cols'), q.get('rows'), q.getAll('arg'));
   else if (setup !== null) void attachSetup(ctx, link, setup, q.get('step') ?? '', q.get('cols'), q.get('rows'));
   else {ctx.terminals.attach(
       link,
@@ -91,7 +101,6 @@ export function terminalSocket(ctx: WebContext, request: Request, url: URL): { r
 }
 
 export const BUILTIN_SIGNIN_AGENTS = new Set(['claude', 'codex']);
-const BUILTIN_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
 
 /**
  * The program a built-in agent's terminal sign-in runs: its own launcher (as a chat starts it) plus the advertised method's args.
@@ -173,4 +182,62 @@ async function attachSetup(ctx: WebContext, link: WsLink, agentId: string, step:
   }
   const home = Deno.env.get(Deno.build.os === 'windows' ? 'USERPROFILE' : 'HOME') || Deno.cwd();
   ctx.terminals.attach(link, `setup:${agentId}`, home, cols, rows, '', command);
+}
+
+/**
+ * The login an agent installed in a WSL distro runs, as [file, args] in that distro, or a one-line reason. Claude: its adapter's own
+ * `--cli auth login --claudeai` (as on Windows, agents/signin.ts); Codex: `codex login` (the CLI found with the helper's `which`).
+ */
+export async function wslSigninCommand(agentId: string, distro: string, args: unknown = []): Promise<ShellSpec | string> {
+  const host = wslHost(distro);
+  const why = notReady(host, distro);
+  if (why) return why;
+  const name = distroName(distro);
+  const label = BUILTIN_NAMES[agentId] ?? agentId;
+  if (agentId !== 'claude' && agentId !== 'codex') return `Signing in to ${label} inside ${name} is not available yet.`;
+  if (agentId === 'codex') {
+    // the Codex CLI next to the adapter (AIB's own install in the distro has one), else `codex` on the distro's PATH
+    const row = (await host!.call('agents.detect', { ids: ['codex'] })).agents.find((a) => a.id === 'codex');
+    if (row?.signin?.length && row.signin[0].startsWith('/')) {
+      const [file, ...rest] = row.signin.map(String);
+      return { file, args: [...rest, 'login'] };
+    }
+    const codex = (await host!.call('which', { name: 'codex' })).path;
+    return codex ? { file: codex, args: ['login'] } : `The Codex CLI is not installed in ${name}.`;
+  }
+  const row = (await host!.call('agents.detect', { ids: ['claude'] })).agents.find((a) => a.id === 'claude');
+  if (!row?.found || !row.command?.length) return `${label} is not installed in ${name}.`;
+  const [file, ...rest] = row.command.map(String);
+  const program = file.includes('/') ? file : (await host!.call('which', { name: file })).path;
+  if (!program) return `${file} was not found in ${name}.`;
+  // A chat's sign-in card names the method Claude advertised (--cli auth login --claudeai / --console); else the Claude.ai login.
+  return { file: program, args: [...rest, ...(cleanTerminalArgs(args) ?? ['--cli', 'auth', 'login', '--claudeai'])] };
+}
+
+/** A sign-in terminal in a distro: key signin:<agent>@<distro>, in the Linux home; it ends when the login ends. */
+async function attachWslSignin(
+  ctx: WebContext,
+  link: WsLink,
+  agentId: string,
+  distro: string,
+  cols: unknown,
+  rows: unknown,
+  args: string[] = [],
+): Promise<void> {
+  let command: ShellSpec | string;
+  let home = '';
+  try {
+    command = await wslSigninCommand(agentId, distro, args);
+    if (typeof command !== 'string') home = (await wslHost(distro)!.env()).HOME || '';
+  } catch (error) {
+    command = `The sign-in could not start: ${(error as Error).message}`;
+  }
+  if (typeof command === 'string' || !home.startsWith('/')) {
+    link.send(JSON.stringify({ type: 'error', message: typeof command === 'string' ? command : 'The Linux home folder is unknown.', code: 'signin_unavailable' }));
+    link.close(1000, 'refused');
+    return;
+  }
+  urlGate.signInStarted(distro); // the user started it: the agent's login page may open directly for 5 minutes
+  const key = distro.toLowerCase();
+  void ctx.terminals.attachWsl(link, `signin:${agentId}@${key}`, refOf({ kind: 'wsl', distro: key, linuxPath: home }), cols, rows, command);
 }

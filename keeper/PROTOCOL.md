@@ -20,7 +20,8 @@ Clients must also ignore unknown events, unknown response fields and unknown rec
 ## 1. Starting the keeper and finding it
 
 ```
-AIB-keeper serve --data <AIB data folder> [--orphan-command <json>] [--port N]
+AIB-keeper serve --data <AIB data folder> [--orphan-command <json>] [--port N] [--unix-only]
+AIB-keeper bridge --data <data folder> [--hold]      (section 10)
 AIB-keeper version
 ```
 
@@ -36,6 +37,7 @@ AIB-keeper version
 | `--flush` | `200ms` | Journal flush and fsync interval. |
 | `--segment-bytes` | 16 MiB | Journal segment size. |
 | `--max-channel-bytes` | 2 GiB | Per-channel journal cap; past it the oldest segment is deleted (a runaway agent cannot fill the disk). |
+| `--unix-only` | off | Keeper 1.4.0: listen on the unix socket only, never TCP. Exits 1 where there is no unix socket (Windows) or its path would be 100 bytes or longer. The bridge (section 10) starts keepers this way. |
 
 Exit codes: `0` normal exit, `1` start-up error, `2` bad arguments, `3` another keeper already holds this data folder.
 
@@ -382,6 +384,10 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   connection counts as a client; one connecting resets the count.
 - **Hold:** after `hold` (section 4) neither of the two rules above runs until a client claims or spawns a channel; the exit rule
   (V2) still does once no channel is live.
+- **AIB's own channels** (keeper 1.4.0; spawn labels whose JSON has `"aib":"wsl-hold"` or `"aib":"wsl-helper"`, section 10) are not
+  work: a live channel in V1 means one that is neither, so a keep-alive or a WSL helper alone never runs the orphan command and is
+  never stopped as `orphaned`. For V2 a live `wsl-hold` still counts (it keeps a distro's agents alive and ends by itself once
+  they end); a `wsl-helper` does not. `live` in `status` still counts every live channel.
 - **Keeper crash:** the children die (Windows Job Objects). The next keeper adds an `exit` record with reason `keeper_lost`
   to every channel that was live. Nothing is ever resent.
 
@@ -413,3 +419,71 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   `orphaned` stop until a client claims or spawns a channel; `held` in `status` and `keeper.json`. `mcp-forward` answers at once when its
   address file says `{"closed":true}` (AIB was quit on purpose) and gives a `tools/call` it cannot deliver a tool result with
   `isError` instead of a JSON-RPC error.
+- keeper 1.4.0 (protocol still 1, no new feature names): the `AIB-keeper bridge` subcommand (section 10: stdio to the data folder's
+  keeper, starting one when there is none; `--hold` keep-alive) and `serve --unix-only`; AIB's own WSL channels are not work for the
+  lifetime rules (section 6).
+- keeper 1.5.0 (protocol still 1, no new feature names): the WSL MCP tunnel (section 11): `mcp-forward --helper-socket <socket>` and
+  the `AIB-keeper mcp-relay --socket <socket>` subcommand. Neither runs inside a serving keeper or adds to the wire protocol.
+
+## 10. Bridge
+
+```
+AIB-keeper bridge --data <data folder> [--hold] [--poll 2s] [--grace 10s] [-- <extra serve flags>]
+```
+
+For a keeper AIB cannot dial: one inside a WSL distro. AIB runs
+`wsl.exe --distribution D --cd ~ --exec .aib-server/<ver>/AIB-keeper bridge --data <linux data folder>` (`--exec` expands no `~`,
+so the path is relative to `--cd ~`, or absolute from `$HOME`) and speaks this protocol over that process's stdin and stdout.
+
+1. The bridge reads `<data>/keeper/keeper.json` and dials its unix socket. If the file is missing or the dial fails, it starts
+   `AIB-keeper serve --data <data> --unix-only [extra serve flags]` detached (`setsid`, so the keeper outlives the bridge and the
+   `wsl.exe` that started it) and polls for the file for up to 10 s. A keeper that exits with code 3 lost the start race to another
+   one: the bridge keeps polling for the winner's file.
+2. Before any frame it writes two lines to stdout:
+
+   ```
+   AIB-BRIDGE-1
+   {"ev":"bridge","bridge":1,"keeper":"1.4.0","pid":4242,"token":"9c1f…","home":"/home/u","uid":1000,"arch":"amd64"}
+   ```
+
+   Anything before the `AIB-BRIDGE-1` line (a `wsl.exe` notice) is not from the bridge; AIB skips it. `keeper` and `pid` are those
+   of the running keeper (from its `keeper.json`, so possibly an older version than the bridge's own), `token` is its hello token
+   (it reaches AIB only over this pipe, never in argv or env), `home` is `$HOME`, `uid` the Linux user id, `arch` Go's GOARCH.
+3. From then on the bytes are copied both ways unchanged: AIB sends `hello` with the token and so on, as over the socket. EOF on
+   either side ends the bridge (exit 0); the keeper and its channels stay.
+4. With `--hold` the bridge is a keep-alive, not a transport: after the two lines it sends `hello` itself (client `AIB WSL hold`) and
+   reads stdin until EOF. A connected hold is a client, so the orphan rules (section 6) do not run while it is there. Every `--poll`
+   it asks `list` and `status`, and it exits (code 0) once, for `--grace`, no channel is live except AIB's own (labels whose JSON has
+   `"aib":"wsl-helper"` or `"aib":"wsl-hold"`) and no client but holds is connected. Then the distro can idle out, and the keeper's
+   own rules stop what is left.
+
+Exit codes: `0` stdin or the keeper ended, `1` no keeper could be reached or started (a message on stderr), `2` bad arguments.
+
+The keeper's unix socket is the only way in: `--unix-only` means no TCP listener, which WSL would forward to Windows `127.0.0.1`.
+
+## 11. MCP tunnel (WSL)
+
+```
+AIB-keeper mcp-forward --helper-socket <unix socket>      (env MCP_FORWARD_HEADERS, as for an address file)
+AIB-keeper mcp-relay --socket <unix socket>
+```
+
+For agents in a WSL distro, which cannot reach AIB's tool endpoint on Windows `127.0.0.1`. The WSL helper runs `mcp-relay` as its
+child (a compiled Deno program cannot listen on a unix socket chosen at run time); agents run `mcp-forward --helper-socket` as their
+MCP server. Both are plain subcommands of the same program and know nothing of keeper frames.
+
+- **Forwarder.** As for an address file (stdin lines in, answers out, several at once), but each message is one connection to the
+  socket: it writes `{"headers":{...},"body":"<message>"}` as one line and reads one answer line `{"status":N,"body":"..."}`
+  (status as HTTP: 200 with body, 202 nothing; another status with a body becomes a JSON-RPC error naming it). `{"status":503,
+  "error":"..."}` means AIB cannot take the message (not running, closed, or it never picked it up): answered at once, a `tools/call`
+  as a tool result with `isError`. Only a failed dial (no socket, or nothing listening) is retried, for up to 15 s; a connection that
+  ends without an answer line is an error and is never sent again.
+- **Relay.** The socket path must be absolute and shorter than 100 bytes. Its folder is made 0700 and the socket 0600; a socket file
+  already there is replaced (another file is refused, exit 1). On stdout it writes `{"ready":true,"socket":"<path>"}` once it
+  listens, then `{"c":N,"req":<the forwarder's line>}` per connection and `{"c":N,"gone":true}` when one closes before its answer.
+  On stdin it takes `{"c":N,"res":{...}}` and writes `res` to connection N as one line, then closes it. A line that is not a JSON
+  object gets `{"status":400,...}`, one over 16 MB `{"status":413,...}`, a 65th connection at once `{"status":503,...}`; none of
+  these is passed on. When stdin ends it closes every connection and removes the socket, unless another relay has replaced it.
+
+Exit codes: `0` stdin ended (relay) or stdin ended and every answer was written (forwarder), `1` the socket could not be listened on,
+`2` bad arguments.

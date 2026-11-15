@@ -584,3 +584,72 @@ func TestManyClientsAndDroppedFrames(t *testing.T) {
 	owner.must("write", map[string]any{"channel": "m", "epoch": 1}, []byte("still here\n"))
 	owner.outputUntil("m", 5*time.Second, "out", `{"echo":"still here"}`)
 }
+
+// AIB's own WSL channels (labels {"aib":"wsl-helper"} and {"aib":"wsl-hold"}) are not work: alone they never run the orphan command
+// (a crashed AIB is not started again in the tray just because a keep-alive or a helper runs) and are never stopped as orphaned. A
+// helper alone lets the keeper exit when idle; a keep-alive keeps it (it holds a distro's agents and ends by itself when they do).
+func TestAibOwnChannelsAreNotWork(t *testing.T) {
+	data := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "orphan.txt")
+	oc, _ := json.Marshal(orphanCommand{Command: agentBin, Args: []string{"touch", marker}})
+	args := []string{"--orphan-command", string(oc), "--orphan-after", "200ms", "--orphan-retry", "200ms", "--orphan-tries", "2", "--exit-after", "1s"}
+	spawnLabelled := func(c *client, id, label string) {
+		t.Helper()
+		c.must("spawn", map[string]any{"channel": id, "command": agentBin, "args": []string{"echo"}, "cwd": t.TempDir(), "label": label}, nil)
+	}
+	noOrphanRun := func(what string) {
+		t.Helper()
+		if b, _ := os.ReadFile(marker); len(b) > 0 {
+			t.Fatalf("%s: the orphan command ran: %q", what, b)
+		}
+	}
+
+	// A helper alone: the idle exit, no orphan command.
+	k := startKeeper(t, data, args...)
+	c := dial(t, k)
+	spawnLabelled(c, "helper", `{"aib":"wsl-helper","v":"1.0.0-abcdef12"}`)
+	c.nc.Close()
+	if !k.waitExit(5 * time.Second) {
+		t.Fatal("a keeper with only a WSL helper did not exit when idle")
+	}
+	noOrphanRun("helper")
+
+	// A keep-alive: no orphan command and no orphaned stop, however long; the keeper stays while it runs and exits once it ended.
+	k = startKeeper(t, data, args...)
+	c = dial(t, k)
+	spawnLabelled(c, "hold", `{"aib":"wsl-hold","distro":"ubuntu"}`)
+	c.nc.Close()
+	if k.waitExit(2500 * time.Millisecond) {
+		t.Fatal("the keeper exited (or gave up) while a WSL keep-alive ran")
+	}
+	noOrphanRun("hold")
+	c = dial(t, k)
+	l := c.must("list", nil, nil).h["channels"].([]any)
+	for _, x := range l {
+		ch := x.(map[string]any)
+		if ch["channel"] == "hold" && ch["live"] != true {
+			t.Fatalf("the keep-alive was stopped: %v", ch)
+		}
+	}
+	c.must("closeStdin", map[string]any{"channel": "hold", "epoch": c.must("claim", map[string]any{"channel": "hold"}, nil).num("epoch")}, nil)
+	c.nc.Close()
+	if !k.waitExit(5 * time.Second) {
+		t.Fatal("the keeper did not exit once the keep-alive ended")
+	}
+	noOrphanRun("hold ended")
+}
+
+func TestInternalKind(t *testing.T) {
+	for label, want := range map[string]string{
+		`{"aib":"wsl-hold","distro":"ubuntu"}`: "wsl-hold",
+		`{"aib":"wsl-helper","v":"x"}`:         "wsl-helper",
+		`{"aib":"other"}`:                      "",
+		`{"chat":"c1"}`:                        "",
+		`not json`:                             "",
+		``:                                     "",
+	} {
+		if got := internalKind(label); got != want {
+			t.Errorf("internalKind(%q) = %q, want %q", label, got, want)
+		}
+	}
+}

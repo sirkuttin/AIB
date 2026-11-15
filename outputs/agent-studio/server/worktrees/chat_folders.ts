@@ -2,13 +2,18 @@
 import { docRows } from '../docs/rows.ts';
 import { clip, isDict, isStr, ValueError } from '../core/py.ts';
 import { isNetworkPath, tokenMatches } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import * as osp from '../platform/ospath.ts';
 import * as changes from './changes.ts';
 import * as worktrees from './worktrees.ts';
+import { WslHelperError } from '../wsl/contract.ts';
+import { notReady, wslHost, wslLoc } from '../wsl/access.ts';
+import { parseWslSessionKey, wslSessionCwd } from '../wsl/transcripts.ts';
 
 /** Name of the checked-out branch of the repository holding cwd, read from HEAD (no subprocess); '' when unknown. Detached: short id. */
 export function repoBranch(cwd: unknown): string {
-  if (!cwd || !isStr(cwd) || isNetworkPath(cwd)) return ''; // a UNC path would make Windows authenticate to that server
+  // a UNC path would make Windows authenticate to that server; a WSL ref is read by its distro's helper (branchOf), never here
+  if (!cwd || !isStr(cwd) || isNetworkPath(cwd) || isForeignPath(cwd) || wslLoc(cwd)) return '';
   try {
     const start = osp.realpath(cwd);
     const folders = [start];
@@ -39,6 +44,20 @@ export function repoBranch(cwd: unknown): string {
     return '';
   }
   return '';
+}
+
+/** repoBranch, and for a WSL project's ref the helper's `chat.repoBranch` in its distro ('' when unknown or the distro is not ready). */
+export async function branchOf(cwd: unknown): Promise<string> {
+  const wsl = wslLoc(cwd);
+  if (!wsl) return repoBranch(cwd);
+  const host = wslHost(wsl.distro);
+  if (notReady(host, wsl.distro)) return '';
+  try {
+    const found = await host!.call('chat.repoBranch', { folder: wsl.linuxPath });
+    return found.branch ? clip(found.branch, 80) : '';
+  } catch {
+    return '';
+  }
 }
 
 function readText(path: string): string {
@@ -87,14 +106,24 @@ export async function changesFolder(studio: ChatStudio, ident: unknown): Promise
     const at = ident.indexOf(':');
     cwd = lookup(ident.slice(0, at), ident.slice(at + 1)) || '';
   }
-  if (!cwd || !osp.isdir(cwd)) return null;
+  if (!cwd && /^(claude|codex):/.test(ident)) {
+    // A saved chat of a WSL project: its transcript is inside the distro, so the Windows lookup above finds nothing
+    const at = ident.indexOf(':');
+    cwd = await wslSessionCwd(ident.slice(0, at), ident.slice(at + 1)).catch(() => '');
+  }
+  const keyed = !cwd ? parseWslSessionKey(ident) : null; // the same chat named by its transcript key (wsl.<distro>.<provider>/<key>)
+  if (keyed) cwd = await wslSessionCwd(keyed.provider, keyed.key.replace(/\.jsonl$/, '').split('/').pop() ?? '').catch(() => '');
+  if (!cwd) return null;
+  if (wslLoc(cwd)) return cwd; // a WSL project's ref: its distro's helper checks the folder (Windows never stats it)
+  if (!osp.isdir(cwd)) return null;
   return cwd;
 }
 
 /** Project folder of a chat for artifacts (same rule as the Changes view); null when unknown. */
 export async function artifactFolder(studio: ChatStudio, ident: unknown): Promise<string | null> {
   try {
-    return await changesFolder(studio, ident);
+    const folder = await changesFolder(studio, ident);
+    return folder && wslLoc(folder) ? null : folder; // phase 1: no artifacts from a WSL project's files
   } catch (error) {
     if (error instanceof ValueError) return null;
     throw error;
@@ -128,6 +157,7 @@ export async function changesResponse(
   if (scope !== 'uncommitted' && scope !== 'branch') {
     return [400, { error: 'Only the uncommitted and branch scopes exist.', code: 'bad_scope' }];
   }
+  if (wslLoc(cwd)) return await wslChanges(cwd, path, scope, args);
   // A chat in its own Studio worktree always gets the branch view (its agent commits); every other chat keeps the uncommitted one.
   const record = worktrees.recordForPath(studio.stateDir ?? null, cwd);
   const base = worktrees.diffBase(record);
@@ -145,6 +175,40 @@ export async function changesResponse(
     return [200, result];
   } catch (error) {
     if (error instanceof changes.ChangesError) return [400, { error: error.message, code: error.code }];
+    throw error;
+  }
+}
+
+/**
+ * The Changes view of a WSL chat (design section 4): the same answers, from worktrees/changes.ts running in the distro's helper
+ * (`changes.get`, `changes.diff`). A chat in its own worktree (its record is in the distro: `worktree.find`) gets the branch view
+ * against its diff base, Discard and Merge, as on Windows (the merge runs in the helper too: wsl/merge.ts).
+ */
+async function wslChanges(ref: string, path: string, scope: string, args: Record<string, string[] | undefined>): Promise<[number, unknown]> {
+  const wsl = wslLoc(ref)!;
+  const host = wslHost(wsl.distro);
+  const why = notReady(host, wsl.distro);
+  if (why) return [409, { error: why, code: 'wsl_unavailable' }];
+  let record: Record<string, unknown> | null = null;
+  try {
+    record = (await host!.call('worktree.find', { path: wsl.linuxPath })).record;
+  } catch { /* a helper without worktrees: the chat works in place */ }
+  const base = worktrees.diffBase(record);
+  if (scope === 'branch' && !base) return [400, { error: 'This chat has no branch of its own.', code: 'bad_scope' }];
+  try {
+    if (path === '/api/live/changes/file') {
+      return [200, await host!.call('changes.diff', { folder: wsl.linuxPath, path: first(args, 'path', ''), ...(base ? { base } : {}) })];
+    }
+    const offset = first(args, 'offset', '0');
+    const result = await host!.call('changes.get', {
+      folder: wsl.linuxPath,
+      offset: /^\d+$/.test(offset) ? Number(offset) : 0,
+      ...(base ? { base } : {}),
+    }) as Record<string, unknown>;
+    if (record && result && result.git) result.worktree = { branch: isStr(record.branch) ? record.branch : '' }; // Discard and Merge
+    return [200, result];
+  } catch (error) {
+    if (error instanceof WslHelperError) return [400, { error: error.message, code: error.code }];
     throw error;
   }
 }

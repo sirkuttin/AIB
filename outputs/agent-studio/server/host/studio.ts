@@ -25,11 +25,13 @@ import { resolveBeta } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
 import { UsageLimitsStore } from '../state/usage_limits.ts';
-import { LimitsFeed } from './usage_limits_feed.ts';
+import { LimitsFeed, REFRESH_SECONDS } from './usage_limits_feed.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile } from '../artifacts/mcp_http.ts';
-import { forwarderOf } from '../keeper/client.ts';
+import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
+import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
+import { forwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -52,11 +54,42 @@ import { Recovery, StateStore } from '../state/recovery.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { builtinLaunch } from '../web/shared.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
+import type { WslSpawn } from '../acp/connection.ts';
+import { refOf } from '../platform/location.ts';
+import { isAibInternalLabel } from '../keeper/link.ts';
+import {
+  distroName,
+  hostWhenReady,
+  linkOf,
+  readyHost,
+  windowsPathInWsl,
+  WSL_TOOLS_NOTICE,
+  wslHost,
+  wslToolsNotice,
+  wslLoc,
+} from '../wsl/access.ts';
+import { urlGate } from '../wsl/open_urls.ts';
+import {
+  isWslRecord,
+  wslCreate,
+  wslDiscard,
+  wslEnsure,
+  wslHasChanges,
+  wslIsRemoved,
+  WslPlan,
+  wslPlanWithReason,
+  wslRecord,
+  wslRemove,
+  wslSetSession,
+} from '../wsl/worktrees.ts';
+import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
+import { WslSync, wslSyncChat } from '../wsl/sync.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
 import { AllowGate } from '../allow/gate.ts';
 
@@ -279,6 +312,8 @@ export class Studio {
   readonly settings: SettingsStore;
   readonly worktrees: wt.Manager | null;
   readonly liveSync: LiveSync | null;
+  /** Live sync of WSL chats' worktrees: the engine runs in each distro's helper (wsl/sync.ts); null without worktrees. */
+  readonly wslSync: WslSync | null;
   /** Callable returning the web server's base URL for the artifact tool; set by the agent host. */
   artifactUrlProvider: (() => string) | null = null;
   autoReconnect: boolean;
@@ -307,6 +342,7 @@ export class Studio {
   readonly #probes = new Map<string, Promise<void>>();
   readonly #probeFailed = new Map<string, number>();
   #heartbeat: ReturnType<typeof setInterval> | null = null;
+  #limitsTimer: ReturnType<typeof setInterval> | null = null;
   #closed = false;
   /** Agents run in the keeper and chats are rebuilt from its record after a restart; null: agents are children. */
   readonly keeper: KeeperLink | null;
@@ -317,6 +353,8 @@ export class Studio {
    */
   readonly keeperForNew: boolean;
   #mcpHttp: ArtifactMcpHttp | null = null;
+  /** Stops this Studio answering WSL agents' tool calls (wsl/mcp_tunnel.ts); null when it never did. */
+  #untunnel: (() => void) | null = null;
 
   constructor(options: StudioOptions, construct: StudioConstruct = {}) {
     this.options = options;
@@ -351,6 +389,12 @@ export class Studio {
     this.settings = stores.settings ?? new SettingsStore(dir);
     this.agentOptions = new AgentOptionsCache(dir);
     this.limits = new LimitsFeed(new UsageLimitsStore(dir));
+    // The usage checker also runs on its own, once a minute for every open chat (not only when a chat opens or a turn ends)
+    this.#limitsTimer = setInterval(() => {
+      if (this.#closed) return;
+      for (const c of this.connections.values()) if (!c.closed) void this.limits.refresh(c);
+    }, REFRESH_SECONDS * 1000);
+    Deno.unrefTimer(this.#limitsTimer);
     const manager = this.hasStateDir ? new wt.Manager(this.stateDir) : null; // worktree per chat (hidden flag)
     this.worktrees = manager;
     this.ready = (async () => {
@@ -364,7 +408,9 @@ export class Studio {
     })();
     // live sync of the user's saved edits into chat worktrees; watchers start only for open worktree chats
     this.liveSync = this.worktrees ? new LiveSync(this) : null;
+    this.wslSync = this.worktrees ? new WslSync(this) : null;
     if (this.hasStateDir) artifactKeys.configure(this.stateDir);
+    if (this.hasStateDir) urlGate.configure(this.stateDir); // "Always allow" of a distro's URLs is kept with AIB's data
     // The command-line flag can only turn it off; the Settings page can too, read here, so a change applies at the next start.
     this.autoReconnect = (options.autoReconnect ?? true) && this.settings.autoReconnect();
     this.keeper = construct.keeper !== undefined
@@ -377,6 +423,27 @@ export class Studio {
     if (this.keeper) {
       this.keeper.onLost = (channels) => this.#keeperLost(channels);
       this.keeper.onClient = () => saveKeeperInstance(this.stateDir, this.instanceId); // the ids now live as long as this keeper
+    }
+    // WSL projects (wsl/hosts.ts): one host per distro, made and started only when a WSL project needs it, so a PC without WSL pays
+    // nothing. The Windows keeper holds each distro's keep-alive; the Linux keeper is the same program, so it has the same version.
+    // The first Studio of the process sets this up (a test that set up its own hosts keeps them).
+    if (this.hasStateDir) {
+      const keeper = this.keeper;
+      let version: Promise<string | null> | null = null;
+      configureWslHosts({
+        stateDir: this.stateDir,
+        windowsLink: () => (this.#closed ? null : keeper),
+        keeperVersion: () =>
+          version ??= (async () => {
+            try {
+              return await programVersion(keeper?.options.binary ?? await keeperBinary(this.stateDir));
+            } catch {
+              return null;
+            }
+          })(),
+      }, false);
+      // WSL agents' tool calls through the tunnel (wsl/mcp_tunnel.ts) are answered by this Studio.
+      if (!this.options.noArtifactTool) this.#untunnel = mcpTunnelGate.set((request) => this.wslToolCall(request));
     }
     // The chats on the recovery list ran in the previous AIB of this data folder (an app restart, an update, or the split agent
     // host this process took over). Their transcript writes up to now are that AIB's own, not another app's: without this the
@@ -391,7 +458,9 @@ export class Studio {
   async turnEnded(connection: Connection): Promise<void> {
     if (this.liveSync && connection.worktree) {
       try {
-        await this.liveSync.turnEnded(connection); // the lost-update guard and the merge of files both sides changed
+        // the lost-update guard and the merge of files both sides changed (a WSL chat's: in its distro's helper)
+        if (this.wslSync && wslSyncChat(connection)) await this.wslSync.turnEnded(connection);
+        else await this.liveSync.turnEnded(connection);
       } catch (error) {
         log.exception(error, 'Merging the user edits at the end of the turn failed');
       }
@@ -456,6 +525,7 @@ export class Studio {
     if (this.liveSync) {
       this.liveSync.refresh().catch((error) => log.exception(error, 'Stopping live sync failed')); // the last chat of a project closed
     }
+    if (this.wslSync) void this.wslSync.refresh(); // a WSL chat's helper stops watching it (no-op without WSL chats)
     if (connection.sessionId) {
       this.probe.noteReleased(connection.provider, connection.sessionId);
       if (this.owners) this.owners.withdraw(connection.provider, connection.sessionId);
@@ -654,7 +724,9 @@ export class Studio {
       this.#mcpHttp = new ArtifactMcpHttp({
         conversation: (id) => {
           const c = this.connections.get(id);
-          return c && !c.closed ? { cwd: c.cwd, worktree: !!c.worktree && c.swarm?.role !== 'helper', main: this.#isMain(c) } : null;
+          return c && !c.closed
+            ? { cwd: c.cwd, worktree: !!c.worktree && c.swarm?.role !== 'helper', restricted: !!c.wsl, main: this.#isMain(c) }
+            : null;
         },
         baseUrl: () => this.artifactBaseUrl(),
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
@@ -697,6 +769,121 @@ export class Studio {
       return stdio;
     }
     return [httpEntry(url, key, conversationId) as unknown as McpServer, ...stdio];
+  }
+
+  /**
+   * The `studio_artifact` entry of a WSL chat (design sections 4 and 11). Either way the endpoint gives such a chat the tool groups of
+   * mcp.ts WSL_TOOL_GROUPS (artifacts by content, merge in its own worktree; no docs or swarm tools yet).
+   *   - The tunnel (phase 2), when the distro's helper has one: the Linux keeper program as forwarder
+   *     (`<root>/<ver>/AIB-keeper mcp-forward --helper-socket <data>/helper/mcp.sock`), the key in its environment; each message goes
+   *     through the helper channel to this Studio (wslToolCall). Needs no WSL interop and opens no port.
+   *   - Else the interop entry (phase 1): the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address
+   *     file>`, WSLENV handing MCP_FORWARD_HEADERS over to the Windows process.
+   *   - Else no entry, and the chat says the tools are missing instead of failing silently.
+   * The user's own --mcp-config entries are Windows commands and are not passed.
+   */
+  async wslMcpServers(conversationId: string, distro = ''): Promise<{ servers: McpServer[]; notice: string }> {
+    if (this.options.noArtifactTool || !this.hasStateDir) return { servers: [], notice: '' };
+    const key = artifactKeys.issue(conversationId);
+    if (!key) return { servers: [], notice: WSL_TOOLS_NOTICE };
+    const tunnel = distro ? wslHost(distro)?.mcpTunnel ?? null : null;
+    if (tunnel) {
+      return { servers: [tunnelEntry(tunnel.forwarder, tunnel.socket, key, conversationId) as unknown as McpServer], notice: wslToolsNotice() };
+    }
+    let forwarder: string | null = null;
+    try {
+      forwarder = await forwarderOf(this.keeper?.options.binary ?? null, this.stateDir);
+    } catch (error) {
+      log.warning('wsl: no MCP forwarder for interop (%s)', errorText(error));
+    }
+    const program = forwarder ? windowsPathInWsl(forwarder) : null;
+    if (!program) return { servers: [], notice: WSL_TOOLS_NOTICE };
+    const file = join(this.stateDir, FORWARD_FILE);
+    try {
+      this.artifactMcpHttp(); // listening, with its address published, before the agent starts the forwarder
+      ownForwardFile(file);
+    } catch (error) {
+      log.exception(error, 'Could not start the HTTP artifact tool for a WSL chat');
+      return { servers: [], notice: WSL_TOOLS_NOTICE };
+    }
+    const entry = forwardEntry(program, file, key, conversationId) as { env: { name: string; value: string }[] };
+    entry.env.push({ name: 'WSLENV', value: 'MCP_FORWARD_HEADERS' }); // the agent's variable crosses into the Windows forwarder
+    return { servers: [entry as unknown as McpServer], notice: wslToolsNotice() };
+  }
+
+  /**
+   * One tool call from an agent in a WSL distro, through the tunnel (wsl/mcp_tunnel.ts): only for a live chat of this AIB in that same
+   * distro, then the HTTP endpoint's own key check and reply (ArtifactMcpHttp.tunneled).
+   */
+  async wslToolCall(request: { distro: string; key: string; conversation: string; body: string }): Promise<TunnelAnswer> {
+    if (this.#closed) return { status: 503, body: '', error: 'AIB is closed, so this tool cannot answer now. Try again later, once AIB is open again.' };
+    const c = this.connections.get(request.conversation);
+    if (!c || c.closed || !c.wsl || c.wsl.distro.toLowerCase() !== request.distro.toLowerCase()) {
+      const refused = { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'AIB refused the artifact key for this conversation' } };
+      return { status: 401, body: JSON.stringify(refused) };
+    }
+    return await this.artifactMcpHttp().tunneled(request.key, request.conversation, request.body);
+  }
+
+  /**
+   * What a chat in a WSL project starts (design sections 4 and 5): the agent as the distro has it (the helper's `agents.detect`; a
+   * custom agent's command found with `which`), the distro's login environment, and the Linux keeper link it runs in. Throws
+   * ValueError with the line the user sees when the distro is not ready or the agent is not installed there.
+   */
+  async wslLaunch(
+    provider: string,
+    wsl: { distro: string; linuxPath: string },
+    fresh = false,
+  ): Promise<{ command: string[]; extra: Record<string, string>; spawn: WslSpawn; link: KeeperLink }> {
+    const host = await hostWhenReady(wsl.distro); // the first chat after a Windows start waits for its distro
+    const name = distroName(wsl.distro);
+    let command: string[];
+    let extra: Record<string, string> = {};
+    if (agentRegistry.isCustom(provider)) {
+      const agent = this.settings.customAgent(provider);
+      if (agent === null) throw new ValueError('That agent is not in Settings (it may have been removed)');
+      if (fresh && !agent.enabled) throw new ValueError(`${agent.name} is turned off in Settings`);
+      for (const e of agent.env) registerSecret(e.value);
+      command = [agent.command, ...agent.args];
+      extra = Object.fromEntries(agent.env.map((e) => [e.name, e.value]));
+    } else {
+      const label = isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.BUILTIN_NAMES[provider] ?? provider;
+      if (fresh && (agentRegistry.BUILTIN_IDS as readonly string[]).includes(provider) && !this.settings.builtinEnabled(provider)) {
+        throw new ValueError(`${label} is turned off in Settings`);
+      }
+      if (fresh && isBeta(provider) && !this.settings.betaEnabled(provider)) throw new ValueError(`${label} is turned off in Settings`);
+      const detected = await host.call('agents.detect', { ids: [provider] });
+      const row = detected.agents.find((a) => a.id === provider);
+      if (!row?.found || !row.command?.length) throw new ValueError(`${label} is not installed in ${name}`);
+      command = row.command.map(String);
+      if (isBeta(provider)) extra = this.betaEnv(provider);
+    }
+    const env = await host.env();
+    if (provider === 'claude') extra = { ...adapters.claudeEnv(env), ...extra };
+    const which = async (program: string) => (await host.call('which', { name: program })).path;
+    const program = command[0].includes('/') ? command[0] : await which(command[0]);
+    if (!program) throw new ValueError(`${command[0]} was not found in ${name}`);
+    const link = linkOf(host);
+    this.#followWslLink(link);
+    return {
+      command,
+      extra,
+      spawn: { distro: wsl.distro, linuxPath: wsl.linuxPath, env, program, caps: { env: () => host.env(), which } },
+      link,
+    };
+  }
+
+  /** The Linux keepers whose loss this Studio already follows (the same reconnect rule as the Windows keeper's). */
+  readonly #wslLinks = new WeakSet<KeeperLink>();
+
+  #followWslLink(link: KeeperLink): void {
+    if (this.#wslLinks.has(link)) return;
+    this.#wslLinks.add(link);
+    const before = link.onLost;
+    link.onLost = (channels) => {
+      before?.(channels);
+      this.#keeperLost(channels);
+    };
   }
 
   #artifactStdioEntry(conversationId: string, key: string, worktree: boolean, main = false): McpServer[] {
@@ -769,7 +956,8 @@ export class Studio {
     if (failedAt !== undefined && this.clock() - failedAt < PROBE_COOLDOWN_SECONDS) {
       return { agent, options: null, probed: false, probeError: 'tried recently' };
     }
-    if (this.hasStateDir && readSignIn(this.stateDir, agent).state === 'signin') {
+    // The sign-in cache is the Windows agents'; a WSL project's agent signs in inside its distro, so the probe there finds out itself.
+    if (this.hasStateDir && !wslLoc(cwd) && readSignIn(this.stateDir, agent).state === 'signin') {
       return { agent, options: null, probed: false, probeError: 'needs sign-in' };
     }
     let problem = '';
@@ -790,11 +978,24 @@ export class Studio {
   }
 
   async #probe(agent: string, cwd: string): Promise<void> {
-    const [command, env] = await this.agentLaunch(agent, true);
-    const folder = cwd && isdir(cwd) ? realpath(expandUser(cwd)) : home();
-    const probe = Object.keys(env).length
-      ? this.connectionFactory(command, folder, agent, { env })
-      : this.connectionFactory(command, folder, agent);
+    const wsl = wslLoc(cwd);
+    let probe: Connection;
+    let folder: string | null;
+    if (wsl) {
+      // A WSL project: the probe runs in its distro, like its chats (never as a Windows child in the Linux folder).
+      const launch = await this.wslLaunch(agent, wsl, true);
+      folder = refOf({ kind: 'wsl', ...wsl });
+      const options: ConnectionOptions = { keeper: launch.link, wsl: launch.spawn };
+      if (Object.keys(launch.extra).length) options.env = launch.extra;
+      probe = this.connectionFactory(launch.command, folder, agent, options);
+    } else {
+      const [command, env] = await this.agentLaunch(agent, true);
+      folder = cwd && isdir(cwd) ? realpath(expandUser(cwd)) : home();
+      probe = Object.keys(env).length
+        ? this.connectionFactory(command, folder, agent, { env })
+        : this.connectionFactory(command, folder, agent);
+      folder = cwd && isdir(cwd) ? cwd : null;
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const settings = await Promise.race([
@@ -803,7 +1004,7 @@ export class Studio {
           timer = setTimeout(() => reject(new ValueError('The agent did not answer in time')), PROBE_TIMEOUT_SECONDS * 1000);
         }),
       ]);
-      this.agentOptions.record(agent, cwd && isdir(cwd) ? cwd : null, settings, true);
+      this.agentOptions.record(agent, folder, settings, true);
       log.info('Read the model lists of %s with a quiet probe', agent);
     } finally {
       clearTimeout(timer);
@@ -822,15 +1023,36 @@ export class Studio {
     await this.ready;
     this.evictClosed();
     if (!isStr(cwd)) throw new TypeError(`expected str, bytes or os.PathLike object, not ${cwd === null ? 'NoneType' : typeof cwd}`);
-    let workspace = realpath(expandUser(cwd));
-    if (this.worktrees && this.worktrees.isRemoved(workspace, resume ? `${provider}:${resume}` : null)) {
+    // A WSL project (design section 2): its ref is the chat's folder; nothing about it is looked up on Windows, its worktree (if any)
+    // is made and kept by its distro's helper (wsl/worktrees.ts), and its agent starts in the distro's Linux keeper (wslLaunch).
+    let wsl = wslLoc(cwd);
+    let workspace = wsl ? refOf({ kind: 'wsl', ...wsl }) : realpath(expandUser(cwd));
+    if (!wsl && this.worktrees && this.worktrees.isRemoved(workspace, resume ? `${provider}:${resume}` : null)) {
       throw new wt.WorktreeGone(wt.GONE_MESSAGE); // discarded (or being removed): readable, not continuable
     }
-    const record = this.worktrees ? this.worktrees.forChat(provider, resume, workspace) : null; // a chat that has a worktree keeps it
+    let record: (wt.WorktreeRecord & { key: string }) | null = !wsl && this.worktrees ? this.worktrees.forChat(provider, resume, workspace) : null; // a chat that has a worktree keeps it
     if (record) workspace = realpath(await this.worktrees!.ensure(record)); // made again from its branch if deleted
-    if (!isdir(workspace)) throw new ValueError('Choose an existing workspace folder');
+    if (!wsl && !isdir(workspace)) throw new ValueError('Choose an existing workspace folder');
     if (!agentRegistry.isProvider(provider)) throw new ValueError('Choose an agent');
-    const [command, env] = await this.agentLaunch(provider, !resume);
+    const launch = wsl ? await this.wslLaunch(provider, wsl, !resume) : null;
+    if (launch && this.worktrees) {
+      // the same two lookups in the distro: a discarded worktree is not continued; a chat that has one keeps it (made again if deleted)
+      const session = resume ? `${provider}:${resume}` : null;
+      if (await wslIsRemoved(workspace, session)) throw new wt.WorktreeGone(wt.GONE_MESSAGE);
+      const found = await wslRecord(workspace, session);
+      if (found) {
+        const linuxPath = await wslEnsure(found);
+        wsl = { distro: found.distro, linuxPath };
+        workspace = refOf({ kind: 'wsl', ...wsl });
+        launch.spawn = { ...launch.spawn, linuxPath };
+        record = found;
+      }
+    }
+    if (launch) {
+      const stat = await readyHost(wsl!.distro).call('fs.stat', { path: wsl!.linuxPath });
+      if (!stat.isDir) throw new ValueError('Choose an existing workspace folder');
+    }
+    const [command, env] = launch ? [launch.command, launch.extra] : await this.agentLaunch(provider, !resume);
     for (const connection of this.connections.values()) {
       if (resume && connection.provider === provider && connection.sessionId === resume && !connection.closed) {
         if (!connection.ready) throw new OwnershipConflict('This conversation is already opening in AIB. Wait for it to finish.');
@@ -847,7 +1069,8 @@ export class Studio {
     if (asHelper && resume) throw new ValueError('A helper is a new chat');
     if (asHelper && !this.worktrees) throw new ValueError('Helpers need a worktree: this AIB has no state folder');
     if (resume === null && this.worktrees && (this.settings.worktreePerChat() || asHelper)) {
-      const planned = await this.worktrees.planWithReason(workspace, null, asHelper ? 'helper' : 'chat'); // no plan: works in place
+      const kind = asHelper ? 'helper' : 'chat';
+      const planned = wsl ? await wslPlanWithReason(workspace, kind) : await this.worktrees.planWithReason(workspace, null, kind); // no plan: works in place
       plan = planned.plan;
       startNote = wt.inPlaceNote(planned.reason);
       // a helper never works in the project folder (review break 5)
@@ -856,7 +1079,8 @@ export class Studio {
     const lease = resume ? await new SessionLease(this.stateDir, provider, resume).acquire() : null;
     let connection: Connection | null = null;
     try {
-      if (resume) {
+      // The ownership check reads Windows processes and transcripts; a WSL agent's are inside the distro (phase 1 skips it there).
+      if (resume && !wsl) {
         const owner = await this.ownerProbe(provider, resume, [Deno.pid]);
         if (owner !== null && owner !== undefined) {
           throw new OwnershipConflict(
@@ -867,7 +1091,11 @@ export class Studio {
       }
       const connectionOptions: ConnectionOptions = {};
       if (Object.keys(env).length) connectionOptions.env = env;
-      if (this.keeper && this.keeperForNew && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
+      if (launch) {
+        connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
+        // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
+        connectionOptions.wsl = plan instanceof WslPlan ? { ...launch.spawn, linuxPath: plan.linuxPath } : launch.spawn;
+      } else if (this.keeper && this.keeperForNew && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
@@ -881,10 +1109,17 @@ export class Studio {
       c.sessionLease = lease;
       if (asHelper) c.swarm = { role: 'helper', helperId: asHelper.helperId, parent: asHelper.parent };
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
-      else if (c.worktree) c.swarm = { role: 'main' };
-      const forwarder = c.keeper ? await this.#mcpForwarder() : null;
-      const helper = c.swarm?.role === 'helper'; // a helper gets neither the merge tools (review break 3) nor the swarm tools
-      c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree && !helper, forwarder, this.#isMain(c))];
+      else if (c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)) c.swarm = { role: 'main' }; // WSL: only once its swarm tools are on
+      let toolsNotice = '';
+      if (launch) {
+        const tools = await this.wslMcpServers(c.id, wsl!.distro); // the tunnel, else interop, else a notice (WSL_TOOL_GROUPS)
+        c.mcpServers = tools.servers;
+        toolsNotice = tools.notice;
+      } else {
+        const forwarder = c.keeper ? await this.#mcpForwarder() : null;
+        const helper = c.swarm?.role === 'helper'; // a helper gets neither the merge tools (review break 3) nor the swarm tools
+        c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree && !helper, forwarder, this.#isMain(c))];
+      }
       c.sessionId = resume || null;
       if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
@@ -895,13 +1130,17 @@ export class Studio {
       const finishSetup = async () => {
         try {
           // before the snapshot: the default /private exclude is in force, so a new copy never takes the main folder's private/
-          const local = await this.#localOnlyDefault(c.worktree ? c.projectRoot : workspace);
+          const local = wsl ? null : await this.#localOnlyDefault(c.worktree ? c.projectRoot : workspace);
           if (plan) await this.#makeWorktree(c, plan, workspace);
           c.localOnly = this.#localOnlyFor(c, local);
           await c.setup(resume || null);
-          if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
+          if (plan instanceof WslPlan) {
+            if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
+          } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
           const note = plan && c.worktree ? plan.note : startNote;
           if (note) c.recordedEvent('studio_note', { message: note, sessionId: c.sessionId });
+          if (toolsNotice) c.recordedEvent('studio_note', { message: toolsNotice, sessionId: c.sessionId }); // a WSL chat's tools
+
           if (!lease) {
             const newLease = await new SessionLease(this.stateDir, provider, c.sessionId!).acquire();
             if (c.closed) {
@@ -915,18 +1154,18 @@ export class Studio {
           void this.limits.refresh(c); // chat opened: Codex / Vibe limits (at most once a minute per account)
           if (this.recovery) this.recovery.connectionReady(c);
           this.announce(c, 'ready');
-          if (this.liveSync) {
+          if (this.liveSync && !wsl) {
             try {
               await this.liveSync.chatOpened(c); // watch its project, catch it up on the user's saved edits
             } catch (error) {
               log.exception(error, 'Starting live sync failed');
             }
-          }
+          } else if (this.wslSync && wsl) await this.wslSync.chatOpened(c); // the same, in its distro's helper (never throws)
         } catch (error) {
           log.exception(error, 'Opening the conversation failed');
           c.error = errorText(error);
           await c.close();
-          if (plan && !c.sessionId) await this.worktrees!.discard(plan.key).catch(() => {}); // the chat never began
+          if (plan && !c.sessionId) await this.#discardPlan(plan).catch(() => {}); // the chat never began
           if (c.sessionLease === null && lease) lease.release();
           if (!background) throw error;
         } finally {
@@ -955,7 +1194,7 @@ export class Studio {
   #wire(c: Connection): void {
     if (this.allow) {
       c.allowGate = this.allow;
-      c.scratchDir = this.allow.scratchFor(c.id);
+      if (!c.wsl) c.scratchDir = this.allow.scratchFor(c.id); // a Windows scratch folder is no folder for an agent in a distro (its additionalDirectories must be Linux paths)
     }
     c.onRelease = (conn) => {
       this.withdraw(conn);
@@ -965,9 +1204,10 @@ export class Studio {
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     if (this.liveSync) {
       const sync = this.liveSync;
-      c.onTurnStart = (conn) => sync.turnStarted(conn);
-      c.contextForPrompt = (conn) => sync.contextFor(conn);
-      c.contextSent = (conn, token) => sync.contextSent(conn, token);
+      const wsl = this.wslSync!; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
+      c.onTurnStart = (conn) => wslSyncChat(conn) ? wsl.turnStarted(conn) : sync.turnStarted(conn);
+      c.contextForPrompt = (conn) => wslSyncChat(conn) ? wsl.contextFor(conn) : sync.contextFor(conn);
+      c.contextSent = (conn, token) => wslSyncChat(conn) ? wsl.contextSent(conn, token) : sync.contextSent(conn, token);
     }
     const caps = c.caps as { configure?: (terminal: boolean, fs: 'read' | 'readwrite' | null) => void };
     caps.configure?.(!!this.options.enableClientTerminal, this.options.enableClientFs ?? null);
@@ -1005,15 +1245,57 @@ export class Studio {
   #adopting: Promise<number> | null = null;
 
   async #adoptKeeper(): Promise<number> {
-    const keeper = this.keeper;
-    if (!keeper) return 0;
+    let adopted = this.keeper ? await this.#adoptFrom(this.keeper, null) : 0;
+    for (const distro of this.#wslDistrosToAdopt()) {
+      try {
+        adopted += await this.adoptWslKeeper(distro);
+      } catch (error) {
+        log.warning('keeper: taking WSL chats over from %s failed: %s', distro, errorText(error));
+      }
+    }
+    return adopted;
+  }
+
+  /**
+   * The distros whose Linux keeper may still hold chats of this data folder: those of the chats on the recovery list (they ran when
+   * the previous AIB stopped). Only those are asked, so a start never boots a distro no chat of AIB ran in.
+   */
+  #wslDistrosToAdopt(): string[] {
+    const out = new Set<string>();
+    for (const item of this.store ? [...this.store.conversations.values()] : []) {
+      const loc = wslLoc(item.cwd);
+      if (loc) out.add(loc.distro);
+    }
+    return [...out];
+  }
+
+  /**
+   * Rebuild the chats a distro's Linux keeper still runs (an AIB restart or update while WSL agents worked; the hold kept them alive).
+   * Same rules as the Windows keeper's take-over. The distro is started for this (only distros a chat on the recovery list ran in are
+   * asked: #wslDistrosToAdopt). Returns how many were taken over.
+   */
+  async adoptWslKeeper(distro: string): Promise<number> {
+    let host;
+    try {
+      host = await hostWhenReady(distro, 120_000);
+    } catch (error) {
+      log.warning('keeper: %s is not ready, so its chats were not taken over: %s', distro, errorText(error));
+      return 0;
+    }
+    const link = linkOf(host);
+    this.#followWslLink(link);
+    return await this.#adoptFrom(link, distro);
+  }
+
+  /** Take over the chats of one keeper: the Windows keeper (distro null) or a distro's Linux keeper. */
+  async #adoptFrom(keeper: KeeperLink, distro: string | null): Promise<number> {
     let client;
     try {
       client = await keeper.client(false); // only a keeper that already runs: nothing to take over otherwise
     } catch (error) {
       log.warning('keeper: could not reach the keeper: %s', errorText(error));
       // A keeper that answers but refuses this AIB (another protocol): its chats keep running there; the page says so.
-      if (error instanceof KeeperError && error.code !== 'closed') {
+      if (!distro && error instanceof KeeperError && error.code !== 'closed') {
         noteKeeperTakeoverProblem(`the keeper refused this AIB: ${errorText(error)}`);
       }
       return 0;
@@ -1025,16 +1307,17 @@ export class Studio {
       // nothing in it is stopped.
       const why = `the running keeper (${client.keeperVersion || 'unknown version'}) lacks ${missing.join(', ')}`;
       announce('studio', 'keeper: not taking chats over: %s', why);
-      noteKeeperTakeoverProblem(why);
+      if (!distro) noteKeeperTakeoverProblem(why); // a distro's keeper version is wsl/hosts.ts's business (it replaces or adopts)
       return 0;
     }
-    noteKeeperTakeoverProblem('');
+    if (!distro) noteKeeperTakeoverProblem('');
     let adopted = 0;
     const listed = await client.list();
     for (const info of listed) {
       try {
         if (info.kind !== 'pipe') continue;
         if (info.channel.startsWith(CLIENT_TERMINAL_PREFIX)) continue; // an agent's client terminal: its chat takes it over
+        if (isAibInternalLabel(info.label)) continue; // AIB's own WSL hold or helper: never a chat, never stopped as an orphan
         if (!info.live) {
           if (info.ended && Date.now() - info.ended > 7 * 86400_000) await keeper.removeEnded(client, info.channel);
           continue;
@@ -1046,12 +1329,15 @@ export class Studio {
           continue;
         }
         if (this.connections.has(note.id)) continue;
-        if (await this.#rebuildChat(info, note)) adopted++;
+        if (await this.#rebuildChat(info, note, keeper, distro)) {
+          const rebuilt = this.connections.get(note.id);
+          if (!rebuilt || !await this.#dropDuplicate(rebuilt)) adopted++;
+        }
       } catch (error) {
         log.exception(error, 'keeper: taking over channel failed');
       }
     }
-    await this.#dropOrphanTerminals(client, listed);
+    await this.#dropOrphanTerminals(client, listed, keeper);
     if (adopted) {
       announce('studio', 'keeper: %s chat(s) taken over from the keeper', adopted);
       // Their artifact tool is the keeper's forwarder: it needs this Studio's HTTP endpoint and its published address.
@@ -1072,10 +1358,10 @@ export class Studio {
    * Client terminals whose chat is gone (it ended while no AIB ran, or could not be taken over): stopped and removed. Those of a chat
    * that was taken over were re-attached by it (Connection, from its clientTerminal notes) and are left alone.
    */
-  async #dropOrphanTerminals(client: KeeperClient, listed: ChannelInfo[]): Promise<void> {
-    const keeper = this.keeper!;
+  async #dropOrphanTerminals(client: KeeperClient, listed: ChannelInfo[], keeper: KeeperLink): Promise<void> {
     for (const info of listed) {
       if (!info.channel.startsWith(CLIENT_TERMINAL_PREFIX) || keeper.channels.has(info.channel)) continue;
+      if (isAibInternalLabel(info.label)) continue; // AIB's own WSL hold or helper
       let chat = '';
       try {
         chat = String(JSON.parse(info.label ?? '{}').chat ?? '');
@@ -1094,19 +1380,59 @@ export class Studio {
     }
   }
 
-  async #rebuildChat(info: ChannelInfo, note: Json): Promise<boolean> {
+  /**
+   * A keeper can hold two agents for one session (an earlier AIB that could not take its chat over started another one for it).
+   * Both would be listed as the same chat twice. Keep the one that is working, else the first; the other agent is stopped (the
+   * session's own transcript is shared, so nothing is lost). True when `c` was the one dropped.
+   */
+  async #dropDuplicate(c: Connection): Promise<boolean> {
+    if (!c.sessionId || c.closed) return false;
+    const other = [...this.connections.values()].find((o) =>
+      o !== c && !o.closed && o.provider === c.provider && o.sessionId === c.sessionId
+    );
+    if (!other) return false;
+    const loser = c.busy && !other.busy ? other : c;
+    announce('studio', 'keeper: %s %s was running twice; stopping the %s one (%s)', c.provider, c.sessionId, loser === c ? 'second' : 'first', loser.id);
+    try {
+      await loser.close();
+    } catch (error) {
+      log.warning('keeper: could not stop the duplicate chat %s: %s', loser.id, errorText(error));
+    }
+    return loser === c;
+  }
+
+  async #rebuildChat(info: ChannelInfo, note: Json, keeper: KeeperLink, distro: string | null): Promise<boolean> {
     const command = Array.isArray(note.command) ? note.command.map(String) : [];
     const cwd = String(note.cwd);
     const provider = String(note.provider);
-    const c = this.connectionFactory(command, cwd, provider, { keeper: this.keeper, id: String(note.id), rebuild: info, start: false });
+    const options: ConnectionOptions = { keeper, id: String(note.id), rebuild: info, start: false };
+    // A distro's keeper holds only that distro's chats: the note's loc (or its ref) says where the agent works; it starts nothing.
+    const loc = isDict(note.loc) && note.loc.kind === 'wsl' && isStr(note.loc.linuxPath) ? note.loc : null;
+    const wsl = distro ? (loc ? { distro, linuxPath: String(loc.linuxPath) } : wslLoc(cwd)) : null;
+    if (distro && !wsl) {
+      announce('studio', 'keeper: %s in %s has no WSL folder; not taken over', note.id, distro);
+      return false;
+    }
+    if (wsl) {
+      const host = wslHost(wsl.distro);
+      const which = async (name: string) => host ? (await host.call('which', { name })).path : null;
+      // the agent's later client terminals still run in the distro, with its environment
+      options.wsl = { distro: wsl.distro, linuxPath: wsl.linuxPath, ...(host ? { caps: { env: () => host.env(), which } } : {}) };
+    }
+    const c = this.connectionFactory(command, cwd, provider, options);
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     this.#wire(c);
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
       : null;
-    c.swarm = helper ? { role: 'helper', helperId: helper.id, parent: helper.parent.live } : c.worktree ? { role: 'main' } : null;
+    c.swarm = helper
+      ? { role: 'helper', helperId: helper.id, parent: helper.parent.live }
+      : c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)
+      ? { role: 'main' }
+      : null;
     c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
+    if (wsl) for (const entry of c.mcpServers) ownTunnelEntry(entry); // its tunnel entry is still AIB's own tool after a restart
     c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;
     c.recovery = this.recovery as never;
     this.connections.set(c.id, c);
@@ -1136,7 +1462,8 @@ export class Studio {
         if (saved.length) await c.queueContinue(saved); // the turn never stopped, so neither does its queue
       }
       this.announce(c, 'ready');
-      if (this.liveSync) {
+      if (this.wslSync && wsl) await this.wslSync.chatOpened(c); // its distro's helper watches it (never throws)
+      else if (this.liveSync) {
         try {
           await this.liveSync.chatOpened(c);
         } catch (error) {
@@ -1258,20 +1585,28 @@ export class Studio {
 
   async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<void> {
     try {
-      await this.worktrees!.create(plan);
+      if (plan instanceof WslPlan) await wslCreate(plan); // made in the distro by its helper
+      else await this.worktrees!.create(plan);
     } catch (error) {
       if (!(error instanceof wt.Fallback)) throw error;
       // a helper never falls back to the project folder (review break 5): the chat closes and the swarm marks it Failed
       if (connection.swarm?.role === 'helper') throw new ValueError(`The helper's worktree could not be made: ${error.message}`);
-      connection.retarget(project);
+      if (plan instanceof WslPlan) connection.retarget(project, plan.raw.project);
+      else connection.retarget(project);
       connection.projectRoot = project;
       connection.worktree = null;
     }
     if (connection.closed) {
-      await this.worktrees!.discard(plan.key);
+      await this.#discardPlan(plan);
       throw new Error('The chat was closed while it was starting');
     }
     connection.startProcess();
+  }
+
+  /** Forget a plan's worktree: the Windows registry's, or (a WSL plan) the distro's. */
+  async #discardPlan(plan: wt.Plan): Promise<void> {
+    if (plan instanceof WslPlan) await wslDiscard(plan);
+    else await this.worktrees!.discard(plan.key);
   }
 
   /** Swarm: a main chat is any open chat in its own worktree that the helper registry does not list (review option C). */
@@ -1454,7 +1789,7 @@ export class Studio {
       if (!agentRegistry.isProvider(provider) || !sessionId || pyLen(sessionId) > 512) {
         throw new ValueError('Choose a provider and a saved session ID');
       }
-      if (isNetworkPath(cwd)) throw new ValueError('Network and device paths are not supported');
+      if (isNetworkPath(cwd) || isForeignPath(cwd)) throw new ValueError('Network and device paths are not supported');
       return Promise.resolve(this.probe.assess(provider, sessionId, { cwd: cwd || null, fresh: true }));
     } catch (error) {
       return Promise.reject(error);
@@ -1462,12 +1797,21 @@ export class Studio {
   }
 
   // ---- worktree removal (Discard, archive, delete) ------------------------------------------------------------------------
-  #worktreeRecord(path: string | null = null, session: string | null = null) {
-    return this.worktrees ? this.worktrees.registry.find(path, session) : null;
+  /** The worktree record of a chat folder (or saved session): a WSL ref's is asked of its distro's helper (wsl/worktrees.ts). */
+  async #worktreeRecord(path: string | null = null, session: string | null = null): Promise<(wt.WorktreeRecord & { key: string }) | null> {
+    if (!this.worktrees) return null;
+    if (path && wslLoc(path)) return await wslRecord(path, session, true);
+    return this.worktrees.registry.find(path, session);
   }
 
   #connectionsIn(path: string): Connection[] {
-    return [...this.connections.values()].filter((c) => !c.closed && wt.same(c.cwd, path));
+    // a WSL ref is compared as the ref it is (never resolved on Windows)
+    const here = wslLoc(path) ? (c: Connection) => c.cwd === path : (c: Connection) => wt.same(c.cwd, path);
+    return [...this.connections.values()].filter((c) => !c.closed && here(c));
+  }
+
+  async #removeWorktree(record: wt.WorktreeRecord & { key: string }, confirmed: boolean): Promise<wt.RemoveOutcome> {
+    return isWslRecord(record) ? await wslRemove(record, confirmed) : await this.worktrees!.remove(record.key, confirmed);
   }
 
   /**
@@ -1554,11 +1898,11 @@ export class Studio {
   async worktreeDiscard(body: Json): Promise<Json> {
     if (body.confirm !== true) throw new ValueError('Discarding needs the confirmation first; nothing was removed');
     const connection = this.#connection(body);
-    const record = this.#worktreeRecord(connection.cwd);
+    const record = await this.#worktreeRecord(connection.cwd);
     if (!record) throw new ValueError('This chat has no worktree of its own');
     await connection.close(); // closes the connection, kills the agent's process tree and any client terminals
     connection.tree?.kill();
-    const outcome = await this.worktrees!.remove(record.key, true);
+    const outcome = await this.#removeWorktree(record, true);
     if (connection.scratchDir && this.allow) this.allow.removeScratch(connection.scratchDir); // allow rules: the scratch folder goes with it
     return { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
   }
@@ -1571,12 +1915,13 @@ export class Studio {
     const { provider, sessionId } = body;
     const session = isStr(provider) && isStr(sessionId) && sessionId ? `${provider}:${sessionId}` : null;
     const path = isStr(body.cwd) && body.cwd ? body.cwd : null;
-    const record = this.#worktreeRecord(path, session);
+    const record = await this.#worktreeRecord(path, session);
     if (!record) return { ok: true, worktree: null };
     const branch = record.branch ?? '';
     if (this.#connectionsIn(String(record.path)).length) return { ok: true, worktree: { branch, removed: false, live: true } };
-    if (await this.worktrees!.hasChanges(record)) return { ok: true, worktree: { branch, removed: false, keptChanges: true } };
-    const outcome = await this.worktrees!.remove(record.key, false);
+    const changed = isWslRecord(record) ? await wslHasChanges(record) : await this.worktrees!.hasChanges(record);
+    if (changed) return { ok: true, worktree: { branch, removed: false, keptChanges: true } };
+    const outcome = await this.#removeWorktree(record, false);
     return { ok: true, worktree: { branch, removed: outcome === 'removed', pending: outcome === 'pending' } };
   }
 
@@ -1827,9 +2172,13 @@ export class Studio {
   async release(options: { hold?: boolean } = {}): Promise<number> {
     if (this.#closed) return 0;
     this.#closed = true;
+    this.#untunnel?.();
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
+    this.wslSync?.stopAll(); // the helpers go on syncing the WSL chats that keep running
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
+    if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
+    this.#limitsTimer = null;
     this.reconnectStop.set();
     if (this.recovery) this.recovery.shuttingDown = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1848,6 +2197,7 @@ export class Studio {
     for (const c of kept) c.releaseLease(); // the next AIB takes the lease when it takes the chat
     if (this.owners) this.owners.withdrawAll();
     if (this.#mcpHttp) await this.#mcpHttp.close(!!options.hold); // hold: the forwarder answers "AIB is closed" at once
+    await this.#quitWsl();
     if (options.hold) await holdKeeper(this.keeper); // last thing before leaving (a no-op when main.ts already said it)
     this.keeper?.disconnect(); // the keeper keeps the agents; whoever connects next (the update helper, then the new AIB) is its client
     announce(
@@ -1864,6 +2214,7 @@ export class Studio {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    this.#untunnel?.();
     if (this.deliberateStop && this.store) {
       for (const c of this.connections.values()) {
         if (!c.sessionId) continue;
@@ -1873,8 +2224,11 @@ export class Studio {
       }
     }
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
+    this.wslSync?.stopAll(); // the helpers go on syncing the WSL chats that keep running
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
     this.#heartbeat = null;
+    if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
+    this.#limitsTimer = null;
     this.reconnectStop.set();
     if (this.recovery) this.recovery.shuttingDown = true;
     // A reconnect that is opening right now finishes (or fails) first, so its connection is closed below too. Bounded: an agent
@@ -1891,7 +2245,28 @@ export class Studio {
     if (this.owners) this.owners.withdrawAll();
     if (this.store) this.store.markWorkingUnknown();
     if (this.#mcpHttp) await this.#mcpHttp.close();
+    if (this.wslSync) await this.wslSync.finish(); // every chat was stopped: the helpers stop watching them
+    await this.#quitWsl(3000); // every chat was just stopped: give their channels a moment to end
     this.keeper?.disconnect(); // with no client and no live channel the keeper exits by itself
+  }
+
+  /**
+   * The WSL side of leaving (design section 11 item 1), before the Windows keeper link closes: per distro the keep-alive is stopped
+   * unless WSL agents or shells still run there, and the transports end. With some left running the Windows keeper is told `hold`,
+   * so it keeps the keep-alive (and with it those agents) until the next AIB takes them over. Never throws.
+   */
+  async #quitWsl(settleMs = 0): Promise<void> {
+    const hosts = wslHostsInUse();
+    if (!hosts) return;
+    try {
+      const { live, held } = await hosts.quit({ settleMs });
+      if (live > 0 && held.length) {
+        const holding = await holdKeeper(this.keeper);
+        announce('studio', 'wsl: %s agent(s) or shell(s) keep running in %s%s', live, held.join(', '), holding ? '; the keeper holds them' : '');
+      }
+    } catch (error) {
+      log.warning('wsl: leaving the distros failed: %s', errorText(error));
+    }
   }
 }
 

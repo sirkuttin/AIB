@@ -5,6 +5,7 @@
  */
 import { clip, isDict, pyIsPrintable, pyStr, pyStrip, ValueError } from '../core/py.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import {
   cleanPrompt,
   contentText,
@@ -150,7 +151,7 @@ export class Store {
   /** The transcript file for a key; ValueError('Unknown transcript') for anything else. */
   async resolve(key: Json): Promise<Resolved> {
     await this.ready();
-    if (typeof key !== 'string' || isNetworkPath(key) || pureAnchor(nativePath(key))) {
+    if (typeof key !== 'string' || isNetworkPath(key) || isForeignPath(key) || pureAnchor(nativePath(key))) {
       throw new ValueError('Unknown transcript'); // a UNC or absolute key would replace the root and make Windows contact that server
     }
     const path = await resolve(join(this.root, key));

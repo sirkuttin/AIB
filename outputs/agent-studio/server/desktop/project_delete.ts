@@ -12,13 +12,20 @@
 import { isDict, isStr, ValueError } from '../core/py.ts';
 import { APP_ROOT } from '../core/app.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath, wslLocOf } from '../platform/location.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from '../state/base.ts';
 import { entriesOf, now, quarantine, readJsonFile, saveJson } from '../state/json.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
 
 // ---- project keys (sidebar-ui.js pathKey, so the server and the page name a folder the same way) --------------------------
+/**
+ * A WSL ref keys as `p:wsl:/<distro>/<linux path>`: case-sensitive like any POSIX path (`Foo` and `foo` are two projects), with the
+ * distro folded. A canonical ref (refOf) gives the same key through the generic rule below, which is what the page's pathKey does.
+ */
 export function projectKey(cwd: unknown): string {
+  const wsl = wslLocOf(cwd);
+  if (wsl) return `p:wsl:/${wsl.distro}${wsl.linuxPath === '/' ? '' : wsl.linuxPath}`;
   let p = isStr(cwd) ? cwd.trim() : '';
   const raw = p;
   p = p.replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
@@ -132,8 +139,8 @@ export class RemovedProjects extends JsonFileStore {
 }
 
 // ---- the OS trash layer (mockable) ------------------------------------------------------------------------------------------
-/** recycle: Windows Recycle Bin; trash: macOS Trash; gio: Linux `gio trash`; permanent: no trash, the folder is deleted for good. */
-export type TrashKind = 'recycle' | 'trash' | 'gio' | 'permanent';
+/** recycle: Windows Recycle Bin; trash: macOS Trash; gio: Linux `gio trash`; xdg: the freedesktop trash folder moved into by hand (the WSL helper, wsl/helper/trash.ts); permanent: no trash, the folder is deleted for good. */
+export type TrashKind = 'recycle' | 'trash' | 'gio' | 'xdg' | 'permanent';
 export interface TrashLayer {
   kind(path: string): Promise<TrashKind>;
   /** Move to the trash kind() named (never called for 'permanent'). Throws with a readable message when it fails. */
@@ -279,10 +286,14 @@ export function defaultGuard(stateDir: string, projects: string[]): Guard {
   return { home, own: own.filter(Boolean), projects, remoteDrive };
 }
 
+/** What the delete dialog says for a WSL project: only "Remove from AIB" is offered (docs/wsl/design.md section 8 item 10). */
+export const WSL_REFUSAL = 'AIB does not delete folders inside WSL yet. Delete it in the distro if you mean to.';
+
 /** Why this folder may not be deleted from disk, or '' when it may. `path` is the real (resolved) folder. */
 export function refusal(path: string, guard: Guard): string {
   const p = path.trim();
   if (!p) return 'There is no folder to delete.';
+  if (isForeignPath(p)) return WSL_REFUSAL; // phase 1: AIB never deletes inside a distro
   if (isNetworkPath(p) || (WINDOWS && (guard.remoteDrive ?? remoteDrive)(driveRoot(p)))) {
     return 'AIB does not delete folders on a network drive. Delete it yourself if you mean to.';
   }
@@ -343,7 +354,9 @@ async function realDir(path: string): Promise<string | null> {
 
 /** What the dialog shows before you tick "Delete from disk as well". */
 export async function inspect(path: string, guard: Guard, layer: TrashLayer = osTrash): Promise<Inspection> {
-  if (isNetworkPath(path)) return { exists: false, refusal: refusal(path, guard), trash: 'permanent', worktreeOf: '' };
+  if (isNetworkPath(path) || isForeignPath(path)) {
+    return { exists: false, refusal: refusal(path, guard), trash: 'permanent', worktreeOf: '' };
+  }
   const real = await realDir(path);
   if (real === null) return { exists: false, refusal: '', trash: 'permanent', worktreeOf: '' };
   const refused = refusal(real, guard) || (same(real, path) ? '' : refusal(path, guard));
@@ -368,6 +381,7 @@ export async function deleteFolder(
   expect: unknown,
   layer: TrashLayer = osTrash,
 ): Promise<TrashKind | 'missing'> {
+  if (isForeignPath(path)) throw new Refused(WSL_REFUSAL); // never a Windows delete of a WSL ref (it would act on C:\…)
   const seen = await inspect(path, guard, layer);
   if (!seen.exists) return 'missing';
   if (seen.refusal) throw new Refused(seen.refusal);

@@ -11,6 +11,7 @@
  */
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import { repoBranch } from './chat_folders.ts';
 import { worktreeParent } from '../desktop/folders.ts';
 import { extOf, type FileRead, FilesError, IMAGE_EXT, LIMITS, PAGE_EXT, within } from './files.ts';
@@ -23,7 +24,7 @@ export const MAX_AGENT_FILES = 200;
 export function checkShape(path: unknown): string {
   if (typeof path !== 'string' || !path || path.length > 1024 || path.includes('\0')) throw new FilesError('Invalid path', 'bad_path');
   const text = path.trim();
-  if (isNetworkPath(text)) throw new FilesError('Network and device paths are not supported', 'bad_path');
+  if (isNetworkPath(text) || isForeignPath(text)) throw new FilesError('Network and device paths are not supported', 'bad_path');
   const winAbs = /^[A-Za-z]:[\\/]/.test(text), posixAbs = !osp.WIN && text.startsWith('/');
   if (!winAbs && !posixAbs) throw new FilesError('Use a full path', 'bad_path');
   if (osp.WIN && !winAbs) throw new FilesError('Use a full path', 'bad_path');
@@ -50,7 +51,7 @@ const realOr = (p: string): string => {
 /** True when `path` is AIB's own data folder or inside it. */
 export function inDataFolder(path: string, dataDirs: (string | null | undefined)[]): boolean {
   for (const d of dataDirs) {
-    if (!d || isNetworkPath(d)) continue;
+    if (!d || isNetworkPath(d) || isForeignPath(d)) continue;
     if (within(path, d) || within(path, realOr(d))) return true;
   }
   return false;
@@ -67,7 +68,7 @@ export function resolveOutside(path: string, dataDirs: (string | null | undefine
     throw new FilesError('Not found', 'not_found', 404);
   }
   if (real.startsWith('\\\\?\\')) real = real.slice(4);
-  if (isNetworkPath(real)) throw new FilesError('Network and device paths are not supported', 'bad_path');
+  if (isNetworkPath(real) || isForeignPath(real)) throw new FilesError('Network and device paths are not supported', 'bad_path');
   if (inDataFolder(real, dataDirs)) throw new FilesError('Not shown', 'hidden', 403);
   let st: Deno.FileInfo;
   try {
@@ -81,7 +82,12 @@ export function resolveOutside(path: string, dataDirs: (string | null | undefine
 
 // ---- the transcript-mention guard -----------------------------------------------------------------------------------------------
 /** Every spelling of `path` a record may hold: as given, with the other slash, and JSON-escaped. Lower case on Windows. */
-export function spellings(path: string): string[] {
+export function spellings(path: string, posix = false): string[] {
+  if (posix) {
+    // a Linux path (a WSL chat's): case kept, only the forward slash and its JSON-escaped form
+    const p = '/' + path.split('/').filter((x) => x !== '' && x !== '.').join('/');
+    return [...new Set([p, p.replaceAll('/', '\\/')])];
+  }
   const p = osp.normpath(path);
   const fwd = p.replaceAll('\\', '/'), back = p.replaceAll('/', '\\');
   const out = new Set([p, fwd, back, back.replaceAll('\\', '\\\\'), fwd.replaceAll('/', '\\/')]);
@@ -105,10 +111,10 @@ export function endsPath(after: string): boolean {
 }
 
 /** True when one of `texts` names `path` as a whole path (not as the start of a longer name). */
-export function mentions(texts: Iterable<string>, path: string): boolean {
-  const wanted = spellings(path);
+export function mentions(texts: Iterable<string>, path: string, posix = false): boolean {
+  const wanted = spellings(path, posix);
   for (const raw of texts) {
-    const t = osp.WIN ? raw.toLowerCase() : raw;
+    const t = osp.WIN && !posix ? raw.toLowerCase() : raw;
     for (const w of wanted) {
       let at = t.indexOf(w);
       while (at >= 0) {

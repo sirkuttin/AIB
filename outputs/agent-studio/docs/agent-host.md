@@ -210,6 +210,12 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   answered "The terminal was lost when AIB restarted" only for notes without a channel (a terminal inside AIB, or beta.4's notes).
   `release` writes a `clientTerminalReleased` note, kills the terminal and removes its channel; closing the chat does the same for all
   of them. Studio's takeover skips `ct-` channels and afterwards stops and removes those whose chat is gone.
+* **WSL projects** (`docs/WSL.md`). A WSL project's agents and terminals run in a second keeper, the Linux keeper inside the
+  distro, reached over a `wsl.exe … bridge` transport instead of a socket (`keeper/link.ts` `connector`, with transport-loss
+  reconnect); its chats are rebuilt from there after a restart (`Studio.adoptWslKeeper`). The Windows keeper holds one keep-alive
+  channel per distro (label `wsl-hold`) and the Linux keeper one helper channel (`wsl-helper`). Neither is a chat or work: Studio's
+  rebuild, orphan-terminal cleanup, live counts and keeper upgrades skip them, and in the keeper's lifetime rules alone they never
+  start AIB in the tray. Quit with WSL work running keeps the keep-alive and sends the Windows keeper `hold`.
 * **Not yet:** real runs on macOS and Linux (the keeper, the forwarder, the tray-only start, terminals in the keeper); snapshots
   during a long turn; client terminals' events in the record; Install now with two builds and a running terminal (covered by the
   unit test of `releaseAll` and the K9 crash e2e, not end to end).

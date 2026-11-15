@@ -17,6 +17,13 @@
  *   POST /api/live/files/exclude {id|project, root, path, action: 'add'|'undo', undo?}   "Git exclude" on a row, and its Undo
  *   POST /api/live/files/strays/move {id, root}   moves what a chat's copy holds under local-only paths into the main folder
  * Needs the Studio token, like the Changes routes.
+ *
+ * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
+ * distro's helper (wsl_routes.ts wslFiles); a chat in its own worktree (made in the distro, wsl/worktrees.ts) has the project as its
+ * main folder, from its record there; no local-only paths, no preview
+ * link of its own (the read's bytes from the helper go into a ticket, file_tickets.ts issueBytes), and exclude / strays refuse. Outside files
+ * of a WSL chat come from the distro's helper (files.outside), after the same "the chat named it" guard.
+ * The /api/live/wsl/* routes ride along in this table (wsl_routes.ts).
  */
 import { isStr } from '../core/py.ts';
 import { parseQs } from '../artifacts/origin.ts';
@@ -27,11 +34,17 @@ import * as local from '../worktrees/local_only.ts';
 import { mainCheckoutOf, recordForPath } from '../worktrees/worktrees.ts';
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath, tokenMatches } from './security.ts';
+import { isForeignPath } from '../platform/location.ts';
 import { issue } from './file_tickets.ts';
 import { chatStudioOf, savedFolders } from './studio_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
 import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';
+import { hostWhenReady, wslLoc } from '../wsl/access.ts';
+import { WslHelperError } from '../wsl/contract.ts';
+import { refOf } from '../platform/location.ts';
+import { wslFiles, wslRoutes, wslViewUrl } from './wsl_routes.ts';
+import { wslRecord } from '../wsl/worktrees.ts';
 
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
@@ -47,9 +60,10 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   // shown; nothing else from the request is ever a folder.
   if (one(args, 'root') === 'project') {
     const path = one(args, 'project');
-    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+    if (!path || path.length > 1024 || path.includes(String.fromCharCode(0)) || isNetworkPath(path) || (isForeignPath(path) && !wslLoc(path))) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
     const added = ctx.addedProjects?.public().added;
     const known = added && Object.hasOwn(added, projectKey(path)) ? added[projectKey(path)].path : '';
+    if (known && wslLoc(known)) return known; // a WSL project: its distro's helper checks the folder
     if (!known || !osp.isdir(known) || isNetworkPath(known)) return [404, { error: 'This project has no folder AIB knows.', code: 'unknown_folder' }];
     return known;
   }
@@ -68,13 +82,20 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
   } catch {
     return [400, { error: 'Choose a chat', code: 'bad_chat' }];
   }
-  if (!cwd || isNetworkPath(cwd)) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
+  if (!cwd || isNetworkPath(cwd) || (isForeignPath(cwd) && !wslLoc(cwd))) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const which = one(args, 'root', 'chat');
+  if (wslLoc(cwd)) {
+    if (which === 'chat') return cwd;
+    if (which !== 'main') return [400, { error: 'Unknown folder', code: 'bad_root' }];
+    // a chat in its own worktree: the main folder is the project its record (in the distro) names; otherwise the chat's folder
+    const record = await wslRecord(cwd).catch(() => null);
+    return record ? record.project : cwd;
+  }
   if (which === 'main') {
     const record = recordForPath(ctx.stateDir ?? null, cwd);
     const project = record && isStr(record.project) ? record.project : '';
     const main = project && osp.isdir(project) ? project : files.mainFolderOf(cwd, mainCheckoutOf);
-    if (isNetworkPath(main)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+    if (isNetworkPath(main) || isForeignPath(main)) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
     return main;
   }
   if (which !== 'chat') return [400, { error: 'Unknown folder', code: 'bad_root' }];
@@ -85,7 +106,7 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
 export async function scopeFor(ctx: WebContext, args: Record<string, string[]>): Promise<{ root: string; main: string } | Reply> {
   const root = await rootFor(ctx, args);
   if (typeof root !== 'string') return root;
-  if (one(args, 'root', 'chat') !== 'chat') return { root, main: root };
+  if (one(args, 'root', 'chat') !== 'chat' || wslLoc(root)) return { root, main: root }; // a WSL chat: no local-only paths, so no main folder to lay over it
   // A chat's own copy: the main folder is the project its worktree record names (never mainFolderOf: for a project that is itself a
   // user-made worktree that would be the user's other checkout). No record: the chat works in its folder itself.
   const record = recordForPath(ctx.stateDir ?? null, root);
@@ -131,6 +152,11 @@ export function filesRoutes(): Map<string, Handler> {
       const args = parseQs(url.search.slice(1));
       const scope = await scopeFor(ctx, args);
       if (Array.isArray(scope)) return scope;
+      const wsl = wslLoc(scope.root);
+      if (wsl) {
+        const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
+        return await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
+      }
       return guarded(() => work(ctx, scope.root, args, scope.main));
     });
   };
@@ -139,6 +165,10 @@ export function filesRoutes(): Map<string, Handler> {
       if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
       if (!body || typeof body !== 'object' || Array.isArray(body)) return [400, { error: 'Invalid request' }];
       try {
+        const scope = await scopeFor(ctx, bodyArgs(body as Record<string, unknown>));
+        if (!Array.isArray(scope) && wslLoc(scope.root)) {
+          return [409, { error: 'Local-only files are not available for WSL projects yet.', code: 'wsl_unsupported' }];
+        }
         return await work(ctx, body as Record<string, unknown>);
       } catch (error) {
         if (error instanceof files.FilesError) return [error.status, { error: error.message, code: error.code }];
@@ -228,6 +258,8 @@ export function filesRoutes(): Map<string, Handler> {
     const args = parseQs(url.search.slice(1));
     const id = one(args, 'id');
     if (!id || id.length > 600) return Promise.resolve([400, { error: 'Choose a chat', code: 'bad_chat' }]);
+    const wsl = ctx.host ? wslChatLoc(ctx, id) : null;
+    if (wsl) return wslOutside(ctx, id, wsl.distro, one(args, 'path'), one(args, 'peek') === '1');
     return guarded(async () => {
       const given = outside.checkShape(one(args, 'path'));
       // The guard first, so an unnamed path never tells whether it exists.
@@ -242,7 +274,41 @@ export function filesRoutes(): Map<string, Handler> {
       return { root: '', ...read, viewUrl, outside: outside.folderLabel(real) };
     });
   });
+  for (const [key, handler] of wslRoutes()) routes.set(key, handler);
   return routes;
+}
+
+/** The {distro, linuxPath} of a live WSL chat of this process (the outside route never reads a Windows path on its behalf), or null. */
+function wslChatLoc(ctx: WebContext, id: string): { distro: string; linuxPath: string } | null {
+  const live = (ctx.host as unknown as { connections?: Map<string, { cwd?: string }> }).connections?.get(id);
+  return live ? wslLoc(live.cwd) : null;
+}
+
+/**
+ * A file outside a WSL chat's folder: the same guard (the chat's own record names the path, compared by Linux rules), then the
+ * distro's helper runs outside_files.ts natively (its shape rules, its own data folder refused) and sends the bytes of a picture or
+ * page for the preview ticket.
+ */
+async function wslOutside(ctx: WebContext, id: string, distro: string, path: string, peek: boolean): Promise<Reply> {
+  if (!path || path.length > 1024 || path.includes('\0') || !path.startsWith('/')) return [400, { error: 'Use a full path', code: 'bad_path' }];
+  if (!(await mentionedBy(ctx, id, path, true))) return [403, { error: 'This chat never named that file', code: 'not_mentioned' }];
+  let host;
+  try {
+    host = await hostWhenReady(distro);
+  } catch (error) {
+    return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+  }
+  try {
+    const got = await host.call('files.outside', { path, peek });
+    const read = got.read as unknown as files.FileRead;
+    const ref = refOf({ kind: 'wsl', distro, linuxPath: read.abs });
+    const viewUrl = peek ? '' : wslViewUrl(ctx.artifacts?.store.origin ?? '', ref, read, got.bytesB64);
+    return [200, { root: '', ...read, viewUrl, outside: got.outside, wsl: true }];
+  } catch (error) {
+    if (!(error instanceof WslHelperError)) throw error;
+    const status = error.code === 'not_found' ? 404 : error.code === 'hidden' ? 403 : 400;
+    return [status, { error: error.message, code: error.code }];
+  }
 }
 
 /** AIB's own data folder(s): never shown through the outside route. */
@@ -256,8 +322,8 @@ function dataDirs(ctx: WebContext): string[] {
 
 const mentioned = new Map<string, boolean>(); // chat id + path -> named (records only grow, so a yes stays a yes)
 /** True when the chat's own record (live events, saved transcript and its subagents) names `path`. */
-async function mentionedBy(ctx: WebContext, id: string, path: string): Promise<boolean> {
-  const key = id + '|' + osp.normcase(osp.normpath(path));
+async function mentionedBy(ctx: WebContext, id: string, path: string, posix = false): Promise<boolean> {
+  const key = id + '|' + (posix ? 'wsl:' + path : osp.normcase(osp.normpath(path)));
   if (mentioned.get(key)) return true;
   const stores = (ctx.transcripts as unknown as { stores?: Map<string, { root: string }> }).stores;
   const texts = await outside.chatTexts({
@@ -267,7 +333,7 @@ async function mentionedBy(ctx: WebContext, id: string, path: string): Promise<b
       return store ? await findSessionFile(provider, store.root, sessionId) : null;
     },
   }, id);
-  const yes = outside.mentions(texts, path);
+  const yes = outside.mentions(texts, path, posix);
   if (yes) {
     if (mentioned.size > 2000) mentioned.clear();
     mentioned.set(key, true);

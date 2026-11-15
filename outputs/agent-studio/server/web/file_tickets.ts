@@ -7,7 +7,11 @@ export const TICKET_TTL_MS = 15 * 60_000;
 export const MAX_TICKETS = 400;
 export const TICKET_PATH = /^\/f\/([0-9a-f]{32})\/[^/\n]{1,255}$/;
 
-const tickets = new Map<string, { path: string; at: number }>();
+/** A ticket's file: on this PC's disk (`path`), or, for a WSL project, the bytes the distro's helper sent (`bytes`; `path` is then its ref). */
+type Ticket = { path: string; at: number; bytes?: Uint8Array };
+const tickets = new Map<string, Ticket>();
+/** The bytes of all WSL tickets together stay under this (each is at most the 1 MB read cap); the oldest go first. */
+export const MAX_WSL_BYTES = 48 * 1024 * 1024;
 
 function newId(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -26,6 +30,40 @@ export function issue(abs: string, now = Date.now()): string {
   const id = newId();
   tickets.set(id, { path: abs, at: now });
   return id;
+}
+
+/**
+ * A ticket for a file inside a distro (WSL project): the Files read already fetched its bytes through the helper, so the artifact
+ * origin serves those and never reads a Windows path for it. `ref` (the project's ref plus the file) names it; the same file keeps
+ * one live ticket, whose bytes are replaced.
+ */
+export function issueBytes(ref: string, bytes: Uint8Array, now = Date.now()): string {
+  let held = 0;
+  for (const [id, t] of tickets) {
+    if (now - t.at > TICKET_TTL_MS) tickets.delete(id);
+    else if (t.path === ref) {
+      t.at = now;
+      t.bytes = bytes;
+      return id;
+    } else held += t.bytes?.length ?? 0;
+  }
+  for (const [id, t] of tickets) {
+    if (held + bytes.length <= MAX_WSL_BYTES) break;
+    if (t.bytes) {
+      held -= t.bytes.length;
+      tickets.delete(id);
+    }
+  }
+  while (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value!);
+  const id = newId();
+  tickets.set(id, { path: ref, at: now, bytes });
+  return id;
+}
+
+/** The bytes a live WSL ticket holds, or null (a ticket for a file on this PC, an expired or unknown one). */
+export function lookupBytes(id: string, now = Date.now()): Uint8Array | null {
+  const t = tickets.get(id);
+  return t && t.bytes && now - t.at <= TICKET_TTL_MS ? t.bytes : null;
 }
 
 /** The file of a live ticket, or null. */

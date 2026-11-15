@@ -146,6 +146,13 @@
    * {prefix, last}: the text before the last name and the last name (drawn bold).
    */
   function shortPath(full) {
+    const W = root.AIBWsl;
+    if (W && W.isWsl(full)) {
+      // a WSL folder: "Ubuntu · ~/" + the last part, the Linux path's own separators
+      const short = W.shortPath(full),
+        at = short.lastIndexOf('/');
+      return { prefix: W.distroName(W.parse(full).key) + ' · ' + short.slice(0, at + 1), last: short.slice(at + 1) };
+    }
     const text = String(full || '');
     const sep = text.includes('\\') ? '\\' : '/';
     const home = text.match(/^([A-Za-z]:\\Users\\[^\\]+|\/Users\/[^/]+|\/home\/[^/]+)(?=$|[\\/])/);
@@ -1269,13 +1276,16 @@
 
   /** The socket address of a Beta agent's sign-in terminal: the server picks the program (the agent's own login), never the page. */
   // step: '' for the sign-in; 'install' or 'prereq:<id>' for a setup terminal (the server picks the command from its catalog).
-  function signinUrl(loc, agentId, cols, rows, step, args) {
+  // distro: a WSL distro key; the sign-in then runs the agent's login inside that distro (wsl-ui.js, a WSL chat's sign-in card).
+  // args: a built-in agent's advertised sign-in args (a chat's sign-in card); the server adds the program.
+  function signinUrl(loc, agentId, cols, rows, step, distro, args) {
     const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
     const q = new URLSearchParams(
       step
         ? { setup: agentId, step, cols: String(cols || 80), rows: String(rows || 24) }
         : { signin: agentId, cols: String(cols || 80), rows: String(rows || 24) },
     );
+    if (distro && !step) q.set('distro', distro);
     // A built-in agent's terminal sign-in (a chat's sign-in card): the advertised method's args; the server adds the program.
     if (!step && Array.isArray(args)) args.forEach((a) => q.append('arg', String(a)));
     return scheme + '//' + loc.host + '/api/live/terminal?' + q;
@@ -1330,7 +1340,11 @@
         return Promise.resolve(host.token()).then((token) => {
           if (run.closed) return;
           const WS = (host && host.WebSocket) || root.WebSocket;
-          const ws = new WS(signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.args), protocols(token));
+          // h.url(cols, rows): another socket address for the same panel (a distro's own shell, "Open Ubuntu terminal").
+          const url = h.url
+            ? h.url(root.location, term.cols, term.rows)
+            : signinUrl(root.location, agentId, term.cols, term.rows, h.step || '', h.distro || '', h.args);
+          const ws = new WS(url, protocols(token));
           ws.binaryType = 'arraybuffer';
           run.ws = ws;
           term.onData((data) => {

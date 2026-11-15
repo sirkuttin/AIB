@@ -14,8 +14,10 @@
   };
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
 
-  // What the dialog says; pure, so the tests read the same words.
+  const wslOf = (path) => (root.AIBWsl && root.AIBWsl.isWsl(path) ? root.AIBWsl : null);
+  // What the dialog says; pure, so the tests read the same words. A WSL project's folder is named as "Ubuntu: /home/u/app".
   function mainText(name, chats, path, disk) {
+    const W = wslOf(path);
     const moved =
       chats > 0
         ? ' Its ' + plural(chats, 'chat moves', 'chats move') + ' to Recently deleted.'
@@ -25,7 +27,11 @@
       name +
       ' from AIB.' +
       moved +
-      (disk ? '' : ' The folder ' + (path || '(none)') + ' stays on your disk.')
+      (disk
+        ? ''
+        : W
+          ? ' The folder ' + W.tooltip(path) + ' stays in ' + W.distroName(W.parse(path).key) + '.'
+          : ' The folder ' + (path || '(none)') + ' stays on your disk.')
     );
   }
   function runningText(running) {
@@ -38,10 +44,24 @@
     recycle: 'It goes to the Recycle Bin, so you can still get it back from there.',
     trash: 'It goes to the Trash, so you can still get it back from there.',
     gio: 'It goes to the trash, so you can still get it back from there.',
+    xdg: 'It goes to the trash, so you can still get it back from there.',
     permanent: 'There is no trash for this folder here, so it is deleted permanently. This cannot be undone.',
   };
   function warningText(path, info) {
     const i = info || {};
+    const W = wslOf(path);
+    if (W) {
+      // inside a distro: never a permanent delete; the folder goes to that distro's own trash (the server refuses when it has none)
+      let w =
+        'This moves the folder ' +
+        W.tooltip(path) +
+        ' and everything in it to the trash in ' +
+        W.distroName(W.parse(path).key) +
+        ', so you can still get it back from there.';
+      if (i.worktreeOf)
+        w += ' This folder is a git worktree of ' + i.worktreeOf + ': its branch and commits stay in that repository.';
+      return w;
+    }
     let t =
       'This deletes the folder ' + path + ' and everything in it. ' + (TRASH_WORDS[i.trash] || TRASH_WORDS.permanent);
     if (i.worktreeOf)
@@ -73,7 +93,11 @@
     disk.checked = false;
     disk.disabled = true; // until the server said what a disk delete would do
     disk.id = 'dpDisk';
-    diskRow.append(disk, el('span', 'Delete from disk as well'));
+    const W0 = wslOf(o.path);
+    diskRow.append(
+      disk,
+      el('span', W0 ? 'Move folder to trash in ' + W0.distroName(W0.parse(o.path).key) : 'Delete from disk as well'),
+    );
     const note = el('p', 'Checking the folder…', 'dp-note');
     note.setAttribute('role', 'status');
     const warn = el('p', null, 'dp-warn');
@@ -83,7 +107,9 @@
     error.hidden = true;
     const row = el('div', null, 'cg-confirm-row dp-row');
     const no = el('button', 'Cancel', 'cg-confirm-no dp-cancel');
-    const yes = el('button', 'Delete project', 'cg-confirm-yes cg-discard dp-ok');
+    // A WSL project's folder can only go to the distro's trash (never a permanent delete): the tick box says so, the button says what it does.
+    const wsl = !!wslOf(o.path);
+    const yes = el('button', wsl ? 'Remove from AIB' : 'Delete project', 'cg-confirm-yes cg-discard dp-ok');
     no.type = yes.type = 'button';
     row.append(no, yes);
     box.append(title, main, running, diskRow, note, warn, error, row);
@@ -96,7 +122,7 @@
       main.textContent = mainText(o.name, o.chats, o.path, on);
       warn.hidden = !on;
       warn.textContent = on ? warningText(o.path, info) : '';
-      yes.textContent = on ? 'Delete project and folder' : 'Delete project';
+      yes.textContent = on ? (wsl ? 'Remove and move folder to trash' : 'Delete project and folder') : wsl ? 'Remove from AIB' : 'Delete project';
       no.disabled = yes.disabled = busy;
     };
     function close(refocus) {
@@ -133,7 +159,7 @@
         if (!busy) close();
       } else if (e.key === 'Tab') {
         // Focus stays inside the question.
-        const list = [disk, no, yes].filter((b) => !b.disabled);
+        const list = [disk, no, yes].filter((b) => !b.disabled && !(b === disk && diskRow.hidden));
         const at = list.indexOf(d.activeElement);
         e.preventDefault();
         const to = list[(at + (e.shiftKey ? list.length - 1 : 1)) % list.length] || no;

@@ -757,3 +757,20 @@ Deno.test('own studio_artifact permission requests are approved without asking',
   c.mcpServers = [];
   assert(!c.ownArtifactTool(call('mcp__studio_artifact__publish')));
 });
+
+Deno.test('a WSL chat: the ref is its folder, the Linux path is where its agent works; no fs capabilities, no artifact writes, no Windows child', () => {
+  const keeper = {} as unknown as import('../../outputs/agent-studio/server/keeper/link.ts').KeeperLink; // never used: start false
+  const c = new Connection([PYTHON, FAKE], 'wsl://ubuntu/home/u/app', 'claude', {
+    keeper,
+    start: false,
+    enableFs: 'readwrite',
+    enableTerminal: true,
+    wsl: { distro: 'ubuntu', linuxPath: '/home/u/app' },
+  });
+  assertEquals([c.cwd, c.agentCwd, c.projectRoot], ['wsl://ubuntu/home/u/app', '/home/u/app', 'wsl://ubuntu/home/u/app']);
+  assertEquals(c.caps.capabilities(), { fs: { readTextFile: false, writeTextFile: false }, terminal: false }); // no helper hooks: no terminals
+  assertEquals(c.caps.workspace, '/home/u/app');
+  assertEquals(c.writes.observe({ update: { sessionUpdate: 'tool_call', kind: 'edit', locations: [{ path: 'C:/x.html' }] } }), []);
+  assertThrows(() => c.retarget('C:/elsewhere'));
+  assertThrows(() => new Connection([PYTHON, FAKE], 'wsl://ubuntu/home/u/app', 'claude', { wsl: { distro: 'ubuntu', linuxPath: '/home/u/app' } }));
+});

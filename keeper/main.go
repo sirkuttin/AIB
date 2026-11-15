@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,7 @@ type options struct {
 	segBytes        int64
 	maxChannelBytes int64
 	noSpawn         bool // fuzzing: never start a process
+	unixOnly        bool // WSL: never fall back to TCP (WSL forwards Linux loopback listeners to Windows)
 }
 
 type keeper struct {
@@ -65,6 +67,12 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp-forward" {
 		os.Exit(mcpForwardMain(os.Args[2:])) // design 3.7: never part of a serving keeper (mcpforward.go)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp-relay" {
+		os.Exit(mcpRelayMain(os.Args[2:])) // WSL: the MCP tunnel's socket, run by the WSL helper (mcprelay.go)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "bridge" {
+		os.Exit(bridgeMain(os.Args[2:])) // WSL: the stdio end of this distro's keeper (bridge.go)
+	}
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
@@ -82,6 +90,7 @@ func main() {
 	fs.DurationVar(&o.flushEvery, "flush", 200*time.Millisecond, "journal flush and fsync interval")
 	fs.Int64Var(&o.segBytes, "segment-bytes", 16<<20, "journal segment size")
 	fs.Int64Var(&o.maxChannelBytes, "max-channel-bytes", 2<<30, "per-channel journal cap; the oldest segment goes past it")
+	fs.BoolVar(&o.unixOnly, "unix-only", false, "listen on the unix socket only: exit 1 where there is none or its path is too long")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -182,7 +191,10 @@ func (k *keeper) logf(format string, args ...any) { k.log.Printf(format, args...
 
 func (k *keeper) listen() error {
 	sock := filepath.Join(k.dir, "keeper.sock")
-	if useUnixSocket && len(sock) < 100 {
+	if k.opts.unixOnly && (!useUnixSocket || len(sock) >= maxUnixSocketLen) {
+		return fmt.Errorf("--unix-only: no unix socket here, or %s is %d bytes (the limit is %d)", sock, len(sock), maxUnixSocketLen-1)
+	}
+	if useUnixSocket && len(sock) < maxUnixSocketLen {
 		os.Remove(sock) // stale: we hold the lock, so no keeper is using it
 		l, err := net.Listen("unix", sock)
 		if err != nil {
@@ -316,6 +328,43 @@ func (k *keeper) liveCount() int {
 	return n
 }
 
+// internalKind: "wsl-hold" or "wsl-helper" for AIB's own WSL channels (spawn label {"aib":"wsl-hold",...} / {"aib":"wsl-helper",...},
+// PROTOCOL.md section 10), "" for anything else (an agent, a terminal, no label).
+func internalKind(label string) string {
+	if !strings.HasPrefix(label, "{") {
+		return ""
+	}
+	var l struct {
+		Aib string `json:"aib"`
+	}
+	if json.Unmarshal([]byte(label), &l) != nil {
+		return ""
+	}
+	if l.Aib == "wsl-hold" || l.Aib == "wsl-helper" {
+		return l.Aib
+	}
+	return ""
+}
+
+// liveWork: the live channels that are work (agents, terminals), and the live WSL keep-alives. AIB's own channels are not work: a
+// keep-alive or a helper alone never starts AIB again (V1) nor is stopped as orphaned. A keep-alive still keeps the keeper from its
+// idle exit (V2), since it holds a distro's agents; it ends by itself once its distro has no work left (bridge --hold). A helper
+// alone keeps nothing: it holds no state.
+func (k *keeper) liveWork() (work, holds int) {
+	for _, ch := range k.channelList() {
+		if !ch.isLive() {
+			continue
+		}
+		switch internalKind(ch.label) {
+		case "":
+			work++
+		case "wsl-hold":
+			holds++
+		}
+	}
+	return work, holds
+}
+
 func (k *keeper) addConn(c *conn) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -428,18 +477,19 @@ func (k *keeper) monitor() {
 		if k.isStopping() {
 			continue
 		}
-		live, clients := k.liveCount(), k.clientCount()
+		live, holds := k.liveWork()
+		clients := k.clientCount()
 		if clients > 0 {
 			noClientSince, attempts = time.Time{}, 0
 		} else if noClientSince.IsZero() {
 			noClientSince = now
 		}
-		if live == 0 && clients == 0 {
+		if live == 0 && holds == 0 && clients == 0 {
 			if quietSince.IsZero() {
 				quietSince = now
 			}
 			if now.Sub(quietSince) >= k.opts.exitAfter {
-				k.logf("no live channel and no client for %v: exiting", k.opts.exitAfter)
+				k.logf("no live work and no client for %v: exiting", k.opts.exitAfter)
 				go k.stop("idle")
 				continue
 			}

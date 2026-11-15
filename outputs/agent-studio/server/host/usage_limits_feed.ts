@@ -5,7 +5,7 @@
  *   Claude Code  pushed: fromAgent('claude-rate-limit') on each usage_update that carries _claude/rateLimit. Never asked for.
  *   Qwen Code    pushed: fromAgent('qwen-quota') when a prompt fails with data.subscriptionQuota.
  *   Codex        read on chat open and after each turn, at most once a minute per account: the newest session file, else the
- *                app-server (server/agents/codex_limits.ts).
+ *                app-server (server/agents/codex_limits.ts). A WSL chat: the session files of the distro's ~/.codex, read by its helper.
  *   Mistral Vibe the ACP request _account/read on the same cadence (one billing read; never a prompt). An agent that does not
  *                know the request is not asked again in that chat.
  *
@@ -22,6 +22,7 @@ import {
   parseVibeAccount,
   type UsageLimitsStore,
 } from '../state/usage_limits.ts';
+import { peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
 import { TimeoutError } from '../acp/connection.ts';
 import { appServerCommand, appServerLimits, codexHome, latestRolloutLimits } from '../agents/codex_limits.ts';
 
@@ -38,6 +39,8 @@ export interface LimitsConnection {
   ready: boolean;
   closed: boolean;
   replaying?: boolean;
+  /** Set for a chat in a WSL project: its account lives in that distro (its own key; Codex's session files there are read through the distro's helper). */
+  wsl?: { distro: string } | null;
   request(method: string, params: Record<string, unknown>, timeout: number): Promise<unknown>;
 }
 
@@ -72,7 +75,8 @@ export class LimitsFeed {
   }
 
   key(c: LimitsConnection): string {
-    return accountKey(c.provider, c.env);
+    const key = accountKey(c.provider, c.env);
+    return key && c.wsl ? `wsl:${c.wsl.distro}|${key}` : key; // a distro's sign-in is another account than Windows'
   }
 
   /** The chat's account's latest snapshot, or null (no chip). */
@@ -123,12 +127,30 @@ export class LimitsFeed {
   }
 
   async #readCodex(c: LimitsConnection): Promise<LimitsSnapshot | null> {
+    // A WSL chat's ~/.codex is inside the distro: the helper reads its session files (codex.limits). The distro's app-server is a Linux
+    // program AIB does not start, and the Windows ones would show another account's limits, so there is no fallback.
+    if (c.wsl) return await this.#readWslCodex(c.wsl.distro);
     const found = latestRolloutLimits(this.#home(c));
     if (found) return parseCodexRollout(found.rateLimits, found.at);
     const command = this.#appServer(c);
     if (!command) return null;
     const result = await appServerLimits(command, c.env ? { ...Deno.env.toObject(), ...c.env } : null);
     return parseCodexAppServer(result, this.#now());
+  }
+
+  /** The newest Codex limits in a distro's ~/.codex through its helper; null when the distro is not running (never starts it). */
+  async #readWslCodex(distro: string): Promise<LimitsSnapshot | null> {
+    const host = peekWslHost(distro);
+    if (!host || host.state !== 'ready') return null;
+    let dirs: { codexDir?: string };
+    try {
+      const test = wslTestHomeEnv(); // under test: the folder inside AIB_WSL_ROOT, never the owner's own
+      dirs = test.CODEX_HOME ? { codexDir: test.CODEX_HOME } : {};
+    } catch {
+      return null;
+    }
+    const { found } = await host.call('codex.limits', dirs, { timeoutMs: 10_000 });
+    return found ? parseCodexRollout(found.rateLimits, found.at) : null;
   }
 
   async #readVibe(c: LimitsConnection): Promise<LimitsSnapshot | null> {

@@ -9,14 +9,21 @@
  * The picker: Python used tkinter in a child process. Deno has no GUI toolkit, so it is a platform dialog in a child process:
  * Windows: a hidden PowerShell running System.Windows.Forms.FolderBrowserDialog (it inherits the server's windowless console,
  * server/platform/console.ts); macOS: osascript `choose folder`; Linux: zenity, else kdialog. Same (status, payload) contract.
+ *
+ * WSL (docs/wsl/design.md sections 2 and 11): a folder picked in the WSL share (`\\wsl.localhost\Ubuntu\home\u\app`) comes back
+ * as the canonical ref `wsl://ubuntu/home/u/app` (or as `C:\…` for `/mnt/c/…`) when the distro is a WSL2 distro of this PC; the
+ * share itself is never read. The checks here are for Windows folders: a ref is answered with reason `wsl` (the WSL helper's
+ * `folder.check` checks it inside the distro), and nothing here stats, creates or runs git in one.
  */
 import { isDict, isStr, pyJsonDumps, pyLen, pyStrip } from '../core/py.ts';
 import { writeJsonAtomic } from '../core/fs.ts';
 import { isNetworkPath } from '../web/security.ts';
+import { assertWindowsLocal, fromWslUnc, isForeignPath, isWslRef, projectPathOf, wslLocOf } from '../platform/location.ts';
 import { which } from '../platform/pypath.ts';
 import * as osp from '../platform/ospath.ts';
 import { nativePath, pureParents, pureStr } from '../transcripts/purepath.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
+import { isWsl2Distro } from '../wsl/detect.ts';
 
 export const RESERVED: ReadonlySet<string> = new Set([
   'CON',
@@ -66,8 +73,10 @@ export function isScratch(path: unknown): boolean {
  */
 export function isWorktree(path: unknown): boolean {
   if (isNetworkPath(path)) return false; // never stat a UNC or device path: Windows would authenticate to that server
+  if (isWslRef(path)) return false; // a WSL ref: phase 1 makes no worktrees there, and Windows never reads a distro
   const text = String(path ?? '').replaceAll('\\', '/').toLowerCase();
   if ((text + '/').includes('/.claude/worktrees/') || (text + '/').includes('/.git/worktrees/')) return true;
+  if (isForeignPath(path)) return false; // /home/u on Windows: the text says all there is; nothing is read
   try {
     const marker = osp.join(pureStr(nativePath(String(path))), '.git');
     if (osp.isfile(marker)) {
@@ -93,6 +102,10 @@ export function folderKinds(paths: unknown, parents = false): Record<string, Fol
   const out: Record<string, FolderKind> = {};
   for (const raw of (Array.isArray(paths) ? paths : []).slice(0, MAX_KINDS)) {
     if (isStr(raw) && pyLen(raw) > 0 && pyLen(raw) <= MAX_PATH_CHARS && !isNetworkPath(raw)) {
+      if (isWslRef(raw)) { // never read: a valid WSL ref is a plain folder (no worktrees in phase 1); a bad one is left out
+        if (wslLocOf(raw)) out[raw] = { worktree: false, scratch: isScratch(raw) };
+        continue;
+      }
       const kind: FolderKind = { worktree: isWorktree(raw), scratch: isScratch(raw) };
       if (parents && kind.worktree) {
         const found = worktreeParent(raw);
@@ -109,14 +122,17 @@ const CLAUDE_WORKTREE = /^(.+?)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+(?:[\\/].*
 
 /** [main checkout, branch] of a worktree folder (any app's), or null. Network and device paths (UNC, \wsl$) are never read. */
 export function worktreeParent(path: string): [string, string] | null {
-  if (!isStr(path) || isNetworkPath(path)) return null;
+  if (!isStr(path) || isNetworkPath(path) || isForeignPath(path)) return null;
   try {
     const found = projectOfWorktree(path);
-    if (found && found.project && !isNetworkPath(found.project)) return [found.project, found.branch];
+    if (found && found.project && !isNetworkPath(found.project) && !isForeignPath(found.project)) return [found.project, found.branch];
   } catch { /* unreadable: no parent */ }
   const named = path.match(CLAUDE_WORKTREE); // gone, or not a git worktree any more: its place still names the repository
   return named ? [named[1], ''] : null;
 }
+
+/** checkPath's message for a WSL ref (reason `wsl`): the folder is checked inside its distro, not by Windows. */
+export const WSL_CHECKED_THERE = 'This folder is inside WSL; AIB checks it in the distro';
 
 /** Hook for a future allow-list of places projects may be created in. Throw FolderError to refuse. Allows all today. */
 export function checkLocation(_normalized: string): void {}
@@ -203,6 +219,8 @@ export function checkPath(raw: unknown, windows?: boolean | null): CheckResult {
     if (isNetworkPath(raw)) { // on every platform, before anything can look at the filesystem
       throw new FolderError('Network paths are not supported here, use a drive letter', 'relative');
     }
+    if (wslLocOf(raw)) throw new FolderError(WSL_CHECKED_THERE, 'wsl'); // checked in the distro (helper folder.check), never here
+    if (isForeignPath(raw)) throw new FolderError('Type the full path, starting with a drive such as C:\\', 'relative');
     [norm, parent, name] = validatePath(raw, windows);
   } catch (error) {
     if (!(error instanceof FolderError)) throw error;
@@ -274,7 +292,8 @@ export interface ProjectCheck extends CheckResult {
  * new (valid, exists false) or already there (valid, exists true). path is always the folder that becomes the project.
  */
 export function checkProject(rawFolder: unknown, rawName: unknown, windows?: boolean | null): ProjectCheck {
-  if (isNetworkPath(rawFolder)) return checkPath(rawFolder, windows); // refused before anything looks at the filesystem
+  // refused before anything looks at the filesystem (a WSL ref: reason `wsl`, for the caller to check it in the distro)
+  if (isNetworkPath(rawFolder) || isForeignPath(rawFolder)) return checkPath(rawFolder, windows);
   const win = isWindows(windows);
   const folder = normalizeFolder(rawFolder, win);
   const wanted = isStr(rawName) ? pyStrip(rawName) : '';
@@ -329,6 +348,7 @@ export async function runCommand(
   command: string[],
   options: { cwd?: string; timeout: number; env?: Record<string, string> },
 ): Promise<RunResult> {
+  if (options.cwd !== undefined) assertWindowsLocal(options.cwd, 'folder'); // Windows git must never run "in" a WSL ref
   const child = new Deno.Command(command[0], {
     args: command.slice(1),
     cwd: options.cwd,
@@ -484,6 +504,7 @@ export function startFolder(memory: FolderMemory | null, home?: string | null): 
 export function startDir(raw: unknown): string {
   const text = isStr(raw) ? pyStrip(raw) : '';
   if (!text || pyLen(text) > MAX_PATH_CHARS || hasControl(text)) return '';
+  if (isNetworkPath(text) || isForeignPath(text)) return ''; // the picker starts at its default; nothing stats a share or a ref
   const probe = nativePath(text);
   for (const candidate of [probe, ...pureParents(probe)]) {
     const path = pureStr(candidate);
@@ -657,6 +678,22 @@ export interface PickOptions {
   runner?: PickRunner;
   /** Which dialog to use; defaults to pickerPlan() for this platform. */
   plan?: (start: string) => PickerPlan | null;
+  /** Is this a WSL2 distro of this PC (Lxss)? Default: wsl/detect.ts. A pick in the WSL share of any other name stays as picked. */
+  knownDistro?: (name: string) => boolean;
+}
+
+/**
+ * A picked folder as AIB stores it: a folder in the WSL share of a known distro becomes its canonical ref (or `X:\…` for
+ * `/mnt/x/…`); anything else is returned unchanged (a share path then stays refused by the network-path gates). Pure: no disk read.
+ */
+export function pickedPath(path: string, knownDistro: (name: string) => boolean = isWsl2Distro): string {
+  const loc = fromWslUnc(path);
+  if (!loc) return path;
+  try {
+    return knownDistro(loc.distro) ? projectPathOf(loc) : path;
+  } catch {
+    return path;
+  }
 }
 
 let pickOpen = false;
@@ -681,7 +718,7 @@ export async function pickFolder(start: unknown, options: PickOptions = {}): Pro
     }
     const answer = plan.parse(done.code, done.stdout ?? '');
     if (!answer) return unavailable;
-    return [200, { path: answer.path }];
+    return [200, { path: answer.path === null ? null : pickedPath(answer.path, options.knownDistro) }];
   } finally {
     pickOpen = false;
   }
