@@ -107,7 +107,20 @@ const SAFE: Record<string, Spec> = {
   rg: {
     letters: 'niIlcwFSuHoUvx',
     valued: ['-g', '--glob', '-t', '--type', '-T', '--type-not', '-A', '-B', '-C', '-m', '-e', '--max-depth', '--color'],
-    flags: ['--hidden', '--no-ignore', '--files', '--json', '--line-number', '--no-heading', '--heading', '--count', '--fixed-strings', '--smart-case', '--ignore-case', '--files-with-matches'],
+    flags: [
+      '--hidden',
+      '--no-ignore',
+      '--files',
+      '--json',
+      '--line-number',
+      '--no-heading',
+      '--heading',
+      '--count',
+      '--fixed-strings',
+      '--smart-case',
+      '--ignore-case',
+      '--files-with-matches',
+    ],
     args: 'pattern+paths',
   },
   sort: { letters: 'nrufhVb', valued: ['-k', '-t'], args: 'paths' },
@@ -119,26 +132,86 @@ const SAFE: Record<string, Spec> = {
 };
 
 const GIT_SAFE: Record<string, Spec> = {
-  status: { letters: 'sbu', flags: ['--short', '--branch', '--porcelain', '--porcelain=v1', '--porcelain=v2', '--untracked-files=no', '--untracked-files=all', '--ignored'], args: 'paths' },
+  status: {
+    letters: 'sbu',
+    flags: [
+      '--short',
+      '--branch',
+      '--porcelain',
+      '--porcelain=v1',
+      '--porcelain=v2',
+      '--untracked-files=no',
+      '--untracked-files=all',
+      '--ignored',
+    ],
+    args: 'paths',
+  },
   diff: {
     letters: 'wRb',
-    flags: ['--stat', '--name-only', '--name-status', '--cached', '--staged', '--numstat', '--shortstat', '--no-color', '--color', '--word-diff', '--check', '--summary', '--'],
+    flags: [
+      '--stat',
+      '--name-only',
+      '--name-status',
+      '--cached',
+      '--staged',
+      '--numstat',
+      '--shortstat',
+      '--no-color',
+      '--color',
+      '--word-diff',
+      '--check',
+      '--summary',
+      '--',
+    ],
     pattern: /^-U\d+$|^--unified=\d+$|^--stat=\d+$/,
     args: 'any',
   },
   log: {
     letters: 'p',
-    flags: ['--oneline', '--stat', '--graph', '--decorate', '--all', '--name-only', '--name-status', '--no-merges', '--first-parent', '--reverse', '--no-color', '--'],
+    flags: [
+      '--oneline',
+      '--stat',
+      '--graph',
+      '--decorate',
+      '--all',
+      '--name-only',
+      '--name-status',
+      '--no-merges',
+      '--first-parent',
+      '--reverse',
+      '--no-color',
+      '--',
+    ],
     valued: ['-n', '--format', '--pretty', '--author', '--since', '--until', '--grep', '--max-count', '--date'],
     pattern: /^-\d+$/,
     args: 'any',
   },
-  show: { flags: ['--stat', '--name-only', '--name-status', '--oneline', '--no-color', '--'], valued: ['--format', '--pretty'], args: 'any' },
+  show: {
+    flags: ['--stat', '--name-only', '--name-status', '--oneline', '--no-color', '--'],
+    valued: ['--format', '--pretty'],
+    args: 'any',
+  },
   blame: { valued: ['-L'], letters: 'w', args: 'any' },
   'ls-files': { letters: 'modcs', flags: ['--others', '--exclude-standard', '--cached', '--modified', '--deleted', '--'], args: 'paths' },
-  'rev-parse': { flags: ['--show-toplevel', '--abbrev-ref', '--git-dir', '--short', '--verify', '--is-inside-work-tree', '--show-prefix', '--git-common-dir'], args: 'any' },
+  'rev-parse': {
+    flags: [
+      '--show-toplevel',
+      '--abbrev-ref',
+      '--git-dir',
+      '--short',
+      '--verify',
+      '--is-inside-work-tree',
+      '--show-prefix',
+      '--git-common-dir',
+    ],
+    args: 'any',
+  },
   remote: { flags: ['-v'], args: 'none' },
-  branch: { letters: 'arv', flags: ['--list', '--show-current', '-vv', '--all', '--remotes', '--merged', '--no-merged', '--contains'], args: 'none' },
+  branch: {
+    letters: 'arv',
+    flags: ['--list', '--show-current', '-vv', '--all', '--remotes', '--merged', '--no-merged', '--contains'],
+    args: 'none',
+  },
   grep: {
     letters: 'niIlLcvwEFhH',
     valued: ['-e', '-A', '-B', '-C', '-m'],
@@ -148,9 +221,20 @@ const GIT_SAFE: Record<string, Spec> = {
 };
 
 const PWSH_ALIASES: Record<string, string> = {
-  ls: 'get-childitem', dir: 'get-childitem', gci: 'get-childitem', cat: 'get-content', gc: 'get-content', type: 'get-content',
-  gi: 'get-item', sls: 'select-string', select: 'select-object', measure: 'measure-object', sort: 'sort-object', pwd: 'get-location',
-  gl: 'get-location', rvpa: 'resolve-path',
+  ls: 'get-childitem',
+  dir: 'get-childitem',
+  gci: 'get-childitem',
+  cat: 'get-content',
+  gc: 'get-content',
+  type: 'get-content',
+  gi: 'get-item',
+  sls: 'select-string',
+  select: 'select-object',
+  measure: 'measure-object',
+  sort: 'sort-object',
+  pwd: 'get-location',
+  gl: 'get-location',
+  rvpa: 'resolve-path',
 };
 
 interface PwshSpec {
@@ -168,7 +252,12 @@ const PWSH_SAFE: Record<string, PwshSpec> = {
     pathParams: ['path', 'literalpath'],
     positional: 'paths',
   },
-  'get-content': { switches: ['raw'], valued: ['path', 'literalpath', 'totalcount', 'tail', 'head', 'first', 'encoding'], pathParams: ['path', 'literalpath'], positional: 'paths' },
+  'get-content': {
+    switches: ['raw'],
+    valued: ['path', 'literalpath', 'totalcount', 'tail', 'head', 'first', 'encoding'],
+    pathParams: ['path', 'literalpath'],
+    positional: 'paths',
+  },
   'get-item': { switches: ['force'], valued: ['path', 'literalpath'], pathParams: ['path', 'literalpath'], positional: 'paths' },
   'test-path': { switches: [], valued: ['path', 'literalpath', 'pathtype'], pathParams: ['path', 'literalpath'], positional: 'paths' },
   'resolve-path': { switches: ['relative'], valued: ['path', 'literalpath'], pathParams: ['path', 'literalpath'], positional: 'paths' },
@@ -178,8 +267,18 @@ const PWSH_SAFE: Record<string, PwshSpec> = {
     pathParams: ['path', 'literalpath'],
     positional: 'pattern+paths',
   },
-  'select-object': { switches: ['unique'], valued: ['first', 'last', 'skip', 'property', 'expandproperty', 'index'], pathParams: [], positional: 'names' },
-  'measure-object': { switches: ['line', 'word', 'character', 'sum', 'average', 'maximum', 'minimum'], valued: ['property'], pathParams: [], positional: 'names' },
+  'select-object': {
+    switches: ['unique'],
+    valued: ['first', 'last', 'skip', 'property', 'expandproperty', 'index'],
+    pathParams: [],
+    positional: 'names',
+  },
+  'measure-object': {
+    switches: ['line', 'word', 'character', 'sum', 'average', 'maximum', 'minimum'],
+    valued: ['property'],
+    pathParams: [],
+    positional: 'names',
+  },
   'sort-object': { switches: ['descending', 'unique'], valued: ['property'], pathParams: [], positional: 'names' },
   'get-location': { switches: [], valued: [], pathParams: [], positional: 'none' },
 };
@@ -413,20 +512,102 @@ const DELETES = new Set(['rm', 'rmdir', 'del', 'erase', 'rd', 'remove-item', 'ri
 const INSTALLERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'cargo', 'go', 'gem', 'composer', 'uv']);
 const INSTALL_SUBS = new Set(['install', 'i', 'add', 'ci', 'uninstall', 'remove', 'rm', 'un', 'update', 'up', 'upgrade', 'link']);
 const SYSTEM = new Set([
-  'reg', 'regedit', 'netsh', 'sc', 'schtasks', 'sudo', 'runas', 'setx', 'bcdedit', 'diskpart', 'format', 'icacls', 'takeown',
-  'shutdown', 'winget', 'choco', 'scoop', 'apt', 'apt-get', 'brew', 'msiexec', 'set-executionpolicy', 'new-service', 'set-service',
-  'new-netfirewallrule', 'set-netfirewallrule', 'set-itemproperty', 'new-itemproperty', 'restart-computer', 'stop-computer',
-  'register-scheduledtask', 'new-scheduledtask', 'start-process', 'chmod', 'chown', 'mount', 'systemctl', 'launchctl', 'defaults',
+  'reg',
+  'regedit',
+  'netsh',
+  'sc',
+  'schtasks',
+  'sudo',
+  'runas',
+  'setx',
+  'bcdedit',
+  'diskpart',
+  'format',
+  'icacls',
+  'takeown',
+  'shutdown',
+  'winget',
+  'choco',
+  'scoop',
+  'apt',
+  'apt-get',
+  'brew',
+  'msiexec',
+  'set-executionpolicy',
+  'new-service',
+  'set-service',
+  'new-netfirewallrule',
+  'set-netfirewallrule',
+  'set-itemproperty',
+  'new-itemproperty',
+  'restart-computer',
+  'stop-computer',
+  'register-scheduledtask',
+  'new-scheduledtask',
+  'start-process',
+  'chmod',
+  'chown',
+  'mount',
+  'systemctl',
+  'launchctl',
+  'defaults',
 ]);
 const INTERPRETERS = new Set([
-  'node', 'python', 'python3', 'py', 'bash', 'sh', 'zsh', 'pwsh', 'powershell', 'cmd', 'deno', 'perl', 'ruby', 'php', 'lua',
-  'invoke-expression', 'iex', 'invoke-command', 'icm', 'wscript', 'cscript', 'mshta', 'rundll32', 'env', 'xargs', 'eval', 'exec',
-  'source', 'time', 'nohup', 'nice', 'timeout', 'watch', 'start', 'call',
+  'node',
+  'python',
+  'python3',
+  'py',
+  'bash',
+  'sh',
+  'zsh',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'deno',
+  'perl',
+  'ruby',
+  'php',
+  'lua',
+  'invoke-expression',
+  'iex',
+  'invoke-command',
+  'icm',
+  'wscript',
+  'cscript',
+  'mshta',
+  'rundll32',
+  'env',
+  'xargs',
+  'eval',
+  'exec',
+  'source',
+  'time',
+  'nohup',
+  'nice',
+  'timeout',
+  'watch',
+  'start',
+  'call',
 ]);
 const FETCH_RUN = new Set(['npx', 'bunx', 'uvx', 'pipx', 'dlx']);
 const NETWORK = new Set([
-  'curl', 'wget', 'invoke-webrequest', 'iwr', 'invoke-restmethod', 'irm', 'ssh', 'scp', 'sftp', 'ftp', 'nc', 'ncat', 'telnet',
-  'rsync', 'start-bitstransfer', 'certutil', 'bitsadmin',
+  'curl',
+  'wget',
+  'invoke-webrequest',
+  'iwr',
+  'invoke-restmethod',
+  'irm',
+  'ssh',
+  'scp',
+  'sftp',
+  'ftp',
+  'nc',
+  'ncat',
+  'telnet',
+  'rsync',
+  'start-bitstransfer',
+  'certutil',
+  'bitsadmin',
 ]);
 const KILLS = new Set(['kill', 'taskkill', 'stop-process', 'spps', 'pkill', 'killall', 'tskill']);
 const PROTECTED_PATH = /(^|[\\/])(\.claude|\.codex|\.gemini|\.cursor)([\\/]|$)|agentstudio|allow-rules|\.git[\\/](config|hooks)/i;
@@ -464,8 +645,10 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
     if (sub === 'clean') return never('deletes (git clean)');
     if (sub === 'branch' && args.some((a) => /^-[dD]$|^--delete$/.test(a))) return never('deletes a branch');
     if (sub === 'worktree' && args.includes('remove')) return floor("deletes a worktree in AIB's data folder");
-    if (['reset', 'rebase', 'checkout', 'restore', 'stash', 'filter-branch', 'update-ref', 'reflog', 'gc', 'prune'].includes(sub) &&
-      (sub !== 'reset' || args.includes('--hard'))) return never(`history or work rewrite (git ${sub})`);
+    if (
+      ['reset', 'rebase', 'checkout', 'restore', 'stash', 'filter-branch', 'update-ref', 'reflog', 'gc', 'prune'].includes(sub) &&
+      (sub !== 'reset' || args.includes('--hard'))
+    ) return never(`history or work rewrite (git ${sub})`);
     if (sub === 'config' || args.some((a) => a === '-c' || a.startsWith('--exec') || a === '--upload-pack')) return floor('git config');
   }
   if (DELETES.has(name)) {
@@ -473,7 +656,9 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
     for (const t of targets) {
       const real = pathFormProblem(t) ? null : realish(t, ctx.cwd);
       if (!real) return floor('deleting where AIB cannot resolve the path');
-      if (!inside(real, ctx.root) && !(ctx.scratch && inside(real, ctx.scratch))) return floor('deleting outside the project and its scratch folder');
+      if (!inside(real, ctx.root) && !(ctx.scratch && inside(real, ctx.scratch))) {
+        return floor('deleting outside the project and its scratch folder');
+      }
     }
     return never('deletes outside the scratch folder');
   }
@@ -484,7 +669,9 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
     return never('installs');
   }
   if (KILLS.has(name)) {
-    if (args.some((a) => /^(\/im|-im|-name|-n)$/i.test(a)) || name === 'pkill' || name === 'killall') return floor('killing processes by name');
+    if (args.some((a) => /^(\/im|-im|-name|-n)$/i.test(a)) || name === 'pkill' || name === 'killall') {
+      return floor('killing processes by name');
+    }
     return never('killing processes');
   }
   if (NETWORK.has(name)) return never('network');

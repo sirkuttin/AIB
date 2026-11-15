@@ -58,7 +58,11 @@ export function pinText(words: string[], cwd: string): string {
     const scripts = (pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {}) as Record<string, unknown>;
     const script = words[1] === 'run' || words[1] === 'run-script' ? words[2] : words[1] === 't' ? 'test' : words[1];
     for (const key of [`pre${script}`, script, `post${script}`]) parts.push(`${key}=${JSON.stringify(scripts[key] ?? null)}`);
-    parts.push(`.npmrc=${read(join(cwd, '.npmrc'))}`, `.yarnrc.yml=${read(join(cwd, '.yarnrc.yml'))}`, `.yarnrc=${read(join(cwd, '.yarnrc'))}`);
+    parts.push(
+      `.npmrc=${read(join(cwd, '.npmrc'))}`,
+      `.yarnrc.yml=${read(join(cwd, '.yarnrc.yml'))}`,
+      `.yarnrc=${read(join(cwd, '.yarnrc'))}`,
+    );
     parts.push(`packageManager=${JSON.stringify(pkg.packageManager ?? null)}`);
   } else if (name === 'deno') {
     for (const file of ['deno.json', 'deno.jsonc']) {

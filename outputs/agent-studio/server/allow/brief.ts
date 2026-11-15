@@ -4,7 +4,7 @@
  */
 export function houseRules(scratch: string): string {
   return [
-    'House rules from AIB (set by the owner; you can\'t change them):',
+    "House rules from AIB (set by the owner; you can't change them):",
     `- Scratch: put temporary files in ${scratch} . Never use C:\\tmp, /tmp or your home folder. Writing there, and deleting with Git Bash \`rm -r\` and the full path, needs no approval.`,
     "- These run without approval inside this folder: ls, cat, grep, rg, find -name, sed -n 'N,Mp', git status/diff/log/show, Get-ChildItem, Get-Content, Select-String. Join them with &&, ; or |. Don't use bash -c, $( ), braces {a,b}, or pipe into node/python.",
     '- To check syntax use `node --check file.js`, `tsc --noEmit` or `python -I -m py_compile file.py`, never `node -e` or `python -c`.',

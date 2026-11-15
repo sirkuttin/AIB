@@ -5,7 +5,7 @@
  * shows the same lines and never answers again. Real keeper (built from keeper/ with Go), temp state folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, fake, PYTHON, pause, until } from './_connection.ts';
+import { FAKE, fake, pause, PYTHON, until } from './_connection.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
@@ -90,7 +90,8 @@ const kinds = (c: Connection, kind: string) => c.events.filter((e) => e.kind ===
 const answersTo = (lines: Json[], id: string) => lines.filter((m) => m.id === id && !m.method);
 
 Deno.test({
-  name: 'allow rules e2e: safe read auto-allowed, Always on a card, next request allowed by the rule, floor greyed, replay never re-answers',
+  name:
+    'allow rules e2e: safe read auto-allowed, Always on a card, next request allowed by the rule, floor greyed, replay never re-answers',
   ...T,
   async fn() {
     await keeperBinary();

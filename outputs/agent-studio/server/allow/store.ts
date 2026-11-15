@@ -185,7 +185,9 @@ function parse(text: string): RulesFile {
       version: 1,
       enabled: v.enabled !== false,
       builtins: { safeReads: b.safeReads !== false, syntax: b.syntax !== false, scratch: b.scratch !== false },
-      rules: Array.isArray(v.rules) ? v.rules.filter((r: unknown) => r && typeof r === 'object' && typeof (r as AllowRule).id === 'string') : [],
+      rules: Array.isArray(v.rules)
+        ? v.rules.filter((r: unknown) => r && typeof r === 'object' && typeof (r as AllowRule).id === 'string')
+        : [],
     };
   } catch {
     return structuredClone(EMPTY);

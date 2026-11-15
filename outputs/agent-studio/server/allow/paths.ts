@@ -26,6 +26,7 @@ export function fromGitBash(path: string): string {
 /** Why this path form can't be checked safely, or '' when it can. */
 export function pathFormProblem(raw: string): string {
   if (!raw) return 'empty path';
+  // deno-lint-ignore no-control-regex -- refusing control characters is the point
   if (/[\x00-\x1f]/.test(raw)) return 'control characters in a path';
   if (raw.startsWith('\\\\') || raw.startsWith('//') || raw.startsWith('\\??\\')) return 'network or device path';
   if (raw.startsWith('~')) return 'home-folder path';
@@ -87,7 +88,9 @@ export function checkPath(raw: string, cwd: string, root: string, opts: { write?
   if (opts.glob) {
     const segs = raw.split(/[\\/]/);
     const last = segs.pop()!;
-    if (segs.some((s) => /[*?[]/.test(s)) || last.startsWith('.') || last.startsWith('[')) return { ok: false, reason: 'glob that could match ..' };
+    if (segs.some((s) => /[*?[]/.test(s)) || last.startsWith('.') || last.startsWith('[')) {
+      return { ok: false, reason: 'glob that could match ..' };
+    }
     path = segs.length ? segs.join('/') : '.';
   }
   const real = realish(path, cwd);
@@ -104,6 +107,7 @@ export function checkPath(raw: string, cwd: string, root: string, opts: { write?
 export function looksSecret(path: string): boolean {
   const p = fromGitBash(path).replaceAll('\\', '/').toLowerCase();
   return /(^|\/)(\.ssh|\.aws|\.gnupg|\.azure|\.kube|\.docker)(\/|$)/.test(p) ||
-    /(^|\/)(\.npmrc|\.pypirc|\.netrc|_netrc|\.git-credentials|credentials(\.json)?|id_[a-z0-9]+|[^/]*\.pem|[^/]*\.key|\.env(\.[^/]*)?)$/.test(p) ||
+    /(^|\/)(\.npmrc|\.pypirc|\.netrc|_netrc|\.git-credentials|credentials(\.json)?|id_[a-z0-9]+|[^/]*\.pem|[^/]*\.key|\.env(\.[^/]*)?)$/
+      .test(p) ||
     /\/(google\/chrome|microsoft\/edge|mozilla\/firefox|bravesoftware)\/.*(user data|profiles)/.test(p);
 }

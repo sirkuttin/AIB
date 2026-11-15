@@ -35,7 +35,11 @@ export class AllowGate {
   drafts(params: unknown, ctx: MatchContext): { project: Draft; global: Draft; off: string } {
     const pub = this.store.public();
     const builtins = pub.builtins as { safeReads: boolean; syntax: boolean; scratch: boolean };
-    const off = pub.tampered ? 'Allow rules are off: the rules file was changed outside AIB. Review them in Settings.' : pub.enabled ? '' : 'Allow rules are switched off in Settings.';
+    const off = pub.tampered
+      ? 'Allow rules are off: the rules file was changed outside AIB. Review them in Settings.'
+      : pub.enabled
+      ? ''
+      : 'Allow rules are switched off in Settings.';
     const full = this.#withFacts(ctx);
     return { project: ruleFor(params, full, 'project', builtins), global: ruleFor(params, full, 'global', builtins), off };
   }

@@ -5,11 +5,13 @@
  */
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import {
+  batArgProblem,
   downloadAndRun,
   looksDownloadAndRun,
   neverPart,
   type PartContext,
   programName,
+  programProblem,
   projectScript,
   safeRead,
   scratchWrite,
@@ -17,7 +19,7 @@ import {
 } from './catalogue.ts';
 import { checkPath, inside, realish } from './paths.ts';
 import { pinHash } from './pin.ts';
-import { type Part, parseBash, parsePwsh, unwrapCodexPowershell } from './shell.ts';
+import { parseBash, parsePwsh, type Part, unwrapCodexPowershell } from './shell.ts';
 
 type Json = Record<string, unknown>;
 const isDict = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -109,7 +111,9 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
   const tool = claudeToolName(params, ctx.toolName);
   if (tool && SPECIAL_TOOLS.has(tool)) return { kind: 'special', what: tool };
   if (call.kind === 'switch_mode') return { kind: 'special', what: 'mode' };
-  const locations = (Array.isArray(call.locations) ? call.locations : []).map((l) => (isDict(l) && isStr(l.path) ? l.path : '')).filter(Boolean);
+  const locations = (Array.isArray(call.locations) ? call.locations : []).map((l) => (isDict(l) && isStr(l.path) ? l.path : '')).filter(
+    Boolean,
+  );
   if (ctx.provider === 'claude' || tool) {
     if (tool === 'Bash' || tool === 'PowerShell') {
       if (!isStr(raw.command)) return { kind: 'unknown', reason: 'no command' };
@@ -143,7 +147,9 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
   if (ctx.provider === 'codex' && call.kind === 'execute') {
     const escalation = raw.additionalPermissions !== undefined && raw.additionalPermissions !== null
       ? 'asks for more permissions'
-      : isStr(raw.url) || isDict(raw.network) ? 'asks for network access' : '';
+      : isStr(raw.url) || isDict(raw.network)
+      ? 'asks for network access'
+      : '';
     const cwd = isStr(raw.cwd) ? raw.cwd : ctx.cwd;
     let command = '';
     if (isStr(raw.command)) command = raw.command;
@@ -208,7 +214,9 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
   const req = readRequest(params, ctx);
   const here = rulesHere(rules, ctx.project);
   const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
-  if (req.kind === 'special' || req.kind === 'unknown') return { allow: false, reason: req.kind === 'special' ? 'answered by you' : req.reason };
+  if (req.kind === 'special' || req.kind === 'unknown') {
+    return { allow: false, reason: req.kind === 'special' ? 'answered by you' : req.reason };
+  }
   if (req.kind === 'mcp') {
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
     const r = here.find((x) => x.kind === 'mcp' && x.server === req.server && x.tool === req.tool);
@@ -291,6 +299,8 @@ export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, 
   if (programName(part.words[0]) !== programName(words[0])) return 'other program';
   for (let i = 1; i < words.length; i++) if (part.words[i] !== words[i]) return 'other subcommand';
   if (part.globs.slice(0, words.length).some(Boolean)) return 'glob';
+  const program = programProblem(part.words[0], pctx) || batArgProblem(part.words[0], part.words.slice(1));
+  if (program) return program;
   const script = projectScript(words);
   if (script) {
     const key = resolve(ctx.project);
@@ -334,7 +344,13 @@ const projectName = (p: string) => basename(resolve(p)) || p;
 /** What "Always allow" would save for this request in this scope. */
 export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | 'global', builtins: Builtins): Draft {
   const no = (reason: string, floor = false, hide = true): Draft => ({
-    offer: true, hideAgentAlways: hide, available: false, reason, floor, rules: [], preview: '',
+    offer: true,
+    hideAgentAlways: hide,
+    available: false,
+    reason,
+    floor,
+    rules: [],
+    preview: '',
   });
   let req: Request;
   try {
@@ -352,14 +368,22 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   if (req.kind === 'mcp') {
     const label = `${req.server} · ${req.tool}`;
     return {
-      offer: true, hideAgentAlways: true, available: true, reason: '', floor: false,
+      offer: true,
+      hideAgentAlways: true,
+      available: true,
+      reason: '',
+      floor: false,
       rules: [{ ...base, kind: 'mcp', server: req.server, tool: req.tool, label }],
       preview: `Rule: MCP server ${req.server}, tool ${req.tool}, any input, ${where}.`,
     };
   }
   if (req.kind === 'fetch') {
     return {
-      offer: true, hideAgentAlways: true, available: true, reason: '', floor: false,
+      offer: true,
+      hideAgentAlways: true,
+      available: true,
+      reason: '',
+      floor: false,
       rules: [{ ...base, kind: 'fetch', host: req.host, label: `Web fetch · ${req.host}` }],
       preview: `Rule: web fetches from ${req.host}, ${where}.`,
     };
@@ -382,7 +406,11 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     const folder = common.join('/');
     const label = folder ? `Edits in ${folder}/` : 'Edits anywhere in the project';
     return {
-      offer: true, hideAgentAlways: true, available: true, reason: '', floor: false,
+      offer: true,
+      hideAgentAlways: true,
+      available: true,
+      reason: '',
+      floor: false,
       rules: [{ ...base, kind: 'edit', folder, label }],
       preview: `Rule: edits to files in ${folder ? folder + '/' : 'the project'} ${where} (never .git, .claude or hooks).`,
     };
@@ -393,10 +421,14 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   }
   const parsed = req.shell === 'bash' ? parseBash(req.command) : parsePwsh(req.command);
   if (!parsed.ok) {
-    if (looksDownloadAndRun(req.command)) return no('Not available: AIB never auto-allows running code downloaded from the internet.', true);
+    if (looksDownloadAndRun(req.command)) {
+      return no('Not available: AIB never auto-allows running code downloaded from the internet.', true);
+    }
     return no(`Not available: AIB can't read this command safely (${parsed.reason}).`, true);
   }
-  if (downloadAndRun(parsed.parts, req.shell)) return no('Not available: AIB never auto-allows running code downloaded from the internet.', true);
+  if (downloadAndRun(parsed.parts, req.shell)) {
+    return no('Not available: AIB never auto-allows running code downloaded from the internet.', true);
+  }
   const cwdOk = checkPath(req.cwd, ctx.cwd, ctx.cwd);
   if (!cwdOk.ok) return no('Not available: the command runs outside the chat folder.', true);
   const pctx = partContext(ctx, cwdOk.real, req.shell);
@@ -405,17 +437,22 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   for (const part of parsed.parts) {
     const asked = ctx.facts?.askPrograms;
     if (asked && (asked.has('*') || asked.has(programName(part.words[0])))) {
-      return no(`Not available: your Claude settings say to always ask before ${asked.has('*') ? 'shell commands' : programName(part.words[0])}.`);
+      return no(
+        `Not available: your Claude settings say to always ask before ${asked.has('*') ? 'shell commands' : programName(part.words[0])}.`,
+      );
     }
     if (builtins.scratch && !scratchWrite(part, pctx)) continue;
     if (builtins.syntax && !syntaxCheck(part, pctx)) continue;
     const never = neverPart(part, pctx);
     if (never) return no(`Not available: AIB never auto-allows ${never.reason}.`, never.floor);
     if (builtins.safeReads && !safeRead(part, pctx)) continue;
-    if (/^(cd|pushd|popd|set-location|sl|chdir)$/i.test(programName(part.words[0]))) return no('Not available: the command changes folder.');
+    if (/^(cd|pushd|popd|set-location|sl|chdir)$/i.test(programName(part.words[0]))) {
+      return no('Not available: the command changes folder.');
+    }
     const script = projectScript(part.words);
     const second = part.words[1];
-    const words = script ?? (second && /^[a-z][a-z0-9-]*$/.test(second) ? [programName(part.words[0]), second] : [programName(part.words[0])]);
+    const words = script ??
+      (second && /^[a-z][a-z0-9-]*$/.test(second) ? [programName(part.words[0]), second] : [programName(part.words[0])]);
     if (rules.some((r) => JSON.stringify(r.words) === JSON.stringify(words))) continue;
     const label = `${words.join(' ')}${script ? '' : ' + paths, flags'}`;
     rules.push({
@@ -427,13 +464,23 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     });
     previews.push(
       script
-        ? `${words.join(' ')} + file paths and flags inside the project (runs project code; asks again if the script, its pre/post scripts, .npmrc, .yarnrc.yml, the deno.json task or git hooks change)`
+        ? `${
+          words.join(' ')
+        } + file paths and flags inside the project (runs project code; asks again if the script, its pre/post scripts, .npmrc, .yarnrc.yml, the deno.json task or git hooks change)`
         : `${words.join(' ')} + file paths and flags inside the project`,
     );
     if (rules.length > 3) return no('Not available: too many different commands in one request.');
   }
   if (!rules.length) return no('Already covered by the built-in rules.', false);
-  return { offer: true, hideAgentAlways: true, available: true, reason: '', floor: false, rules, preview: `Rule: ${previews.join('; ')}, ${where}.` };
+  return {
+    offer: true,
+    hideAgentAlways: true,
+    available: true,
+    reason: '',
+    floor: false,
+    rules,
+    preview: `Rule: ${previews.join('; ')}, ${where}.`,
+  };
 }
 
 /** True when the path is absolute (tests). */

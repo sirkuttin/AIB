@@ -24,6 +24,7 @@ const fail = (reason: string): Parsed => ({ ok: false, reason });
 /** Bash: the parts of a command, or why it can't be read. */
 export function parseBash(source: string): Parsed {
   if (source.length > 4000) return fail('command too long');
+  // deno-lint-ignore no-control-regex -- refusing control characters is the point
   if (/[\x00-\x08\x0b-\x1f\x7f]/.test(source)) return fail('control characters');
   const parts: Part[] = [];
   let words: string[] = [];
@@ -95,7 +96,9 @@ export function parseBash(source: string): Parsed {
       continue;
     }
     if (c === '#' && !inWord) return fail('comment');
-    if ('$`(){}'.includes(c)) return fail(c === '$' ? 'expansion' : c === '`' ? 'backticks' : c === '{' || c === '}' ? 'braces' : 'subshell');
+    if ('$`(){}'.includes(c)) {
+      return fail(c === '$' ? 'expansion' : c === '`' ? 'backticks' : c === '{' || c === '}' ? 'braces' : 'subshell');
+    }
     if (c === '!' && !inWord) return fail('history or negation');
     if (c === '~' && !inWord) return fail('tilde');
     if (c === '\\') {
@@ -156,6 +159,7 @@ export function parseBash(source: string): Parsed {
 /** PowerShell (strict reader, see the file comment): the parts, or why it can't be read. */
 export function parsePwsh(source: string): Parsed {
   if (source.length > 4000) return fail('command too long');
+  // deno-lint-ignore no-control-regex -- refusing control characters is the point
   if (/[^\x09\x0a\x0d\x20-\x7e]/.test(source)) return fail('non-ASCII characters (PowerShell reads some as dashes or quotes)');
   const parts: Part[] = [];
   let words: string[] = [];
