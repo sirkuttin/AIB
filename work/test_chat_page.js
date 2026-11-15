@@ -264,7 +264,8 @@ const liveState = {
     },
   }),
 };
-const chatPollers = (page) => page.intervals.filter((i) => i.ms === 1500).map((i) => i.fn);
+// the chat poll ticks every 500 ms and polls at 1.5 s (5 s in a background window, multi-window Phase 3)
+const chatPollers = (page) => page.intervals.filter((i) => i.ms === 500).map((i) => i.fn);
 const listPoller = (page) => page.intervals.find((i) => i.ms === 5000).fn;
 
 test('while the tab is hidden the 1.5 s chat poll pauses and the conversation-list poll keeps running', async () => {

@@ -317,7 +317,8 @@ test('terminal-ui.js and run-terminal-ui.js use the same chat key (provider:sess
   // themes.js runs first and is not deferred (it only puts the theme on <html>); the deferred scripts follow in order
   const scripts = [...html.matchAll(/<script src="\/([^"]+)" defer/g)].map((m) => m[1]);
   assert.equal(scripts[0], 'view-prefs.js', 'view-prefs.js loads first (it fills localStorage for every other script)');
-  assert.equal(scripts[1], 'terminal-ui.js', 'terminal-ui.js loads first after it');
+  // multi-window: store-merge.js and window-context.js (no DOM work) sit between them; terminal-ui.js comes next
+  assert.deepEqual(scripts.slice(1, 4), ['store-merge.js', 'window-context.js', 'terminal-ui.js'], 'terminal-ui.js loads first after the window scripts');
   const md = scripts.indexOf('markdown.js');
   assert.ok(md > 0 && scripts[md + 1] === 'run-terminal-ui.js', 'run-terminal-ui.js right after markdown.js');
   assert.ok(scripts.indexOf('run-terminal-ui.js') < scripts.indexOf('copy-ui.js'));
