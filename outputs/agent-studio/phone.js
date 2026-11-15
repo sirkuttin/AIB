@@ -794,6 +794,12 @@
     if (x.latest) parts.push('latest');
     return parts.join(' · ');
   }
+  /* The agents New chat offers for a picked project: a WSL project brings its own list (its distro's On/Off switches, never the
+     Windows ones: GET /api/remote/new/options projects[].agents); any other project, or none picked, the PC's list (`all`). */
+  function projectAgents(project, all) {
+    const p = obj(project);
+    return Array.isArray(p.agents) ? p.agents : Array.isArray(all) ? all : [];
+  }
   /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed (or something is
      attached: `attached`, how many). */
   function newChatReady(nc, text, attached) {
@@ -964,6 +970,7 @@
     orderHome,
     homeProjects,
     reqOpen,
+    projectAgents,
     recordText,
     answerWords,
     subsWords,
@@ -1807,12 +1814,14 @@
       return;
     }
     nc.projects = Array.isArray(r.data.projects) ? r.data.projects : [];
-    nc.agents = Array.isArray(r.data.agents) ? r.data.agents : [];
+    nc.allAgents = Array.isArray(r.data.agents) ? r.data.agents : [];
+    nc.agents = nc.allAgents;
     draw();
   }
   function pickProject(p) {
     const nc = S.nc;
     nc.project = p.id;
+    nc.agents = projectAgents(p, nc.allAgents || nc.agents); // a WSL project: its distro's switches
     const def = nc.agents.find((a) => a.id === p.agent && a.ok) || nc.agents.find((a) => a.ok);
     nc.agent = def ? def.id : '';
     nc.error = '';
@@ -1919,6 +1928,7 @@
         nc.project = '';
         nc.agent = '';
         nc.lists = null;
+        nc.agents = nc.allAgents || nc.agents;
         draw();
       });
       change.id = 'phNcChange';

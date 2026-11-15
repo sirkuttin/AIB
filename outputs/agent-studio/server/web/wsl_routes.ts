@@ -37,7 +37,9 @@
  *                                                   read the login PATH again). peek=1 never starts the distro: not ready ->
  *                                                   {distro, name, state, line, prereqs: null}; ready -> {distro, name, state: 'ready',
  *                                                   line: '', prereqs: EnvPrereqs}. start=1 with it starts it (the click)
- *   GET  /api/live/wsl/agents/install?distro&agent  the install job in the distro (wsl/agent_install.ts; the job runs in its helper)
+ *   GET  /api/live/wsl/agents/install?distro&agent[&start=1]  the install job in the distro (wsl/agent_install.ts; the job runs in its
+ *                                                   helper). Never starts the distro without start=1: not ready -> {ok, state: 'idle',
+ *                                                   distro, name, distroState, line} (while AIB brings it back: the last progress, stale)
  *   POST /api/live/wsl/agents/install {distro, agent}         "Install in Ubuntu" / "Update in Ubuntu": start (or join) the job
  *   POST /api/live/wsl/agents/install/cancel {distro, agent}  Cancel: the job's npm is killed and its half-made folder removed
  *   POST /api/live/wsl/reconnect {distro}          "Reconnect" on a stopped distro's state line
@@ -54,7 +56,7 @@ import { distroName, hostWhenReady, notReady, peekState, peekWslHost, WSL_INSTAL
 import { urlGate } from '../wsl/open_urls.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
-import { installFacts, wslInstallCall, wslUninstallCall } from '../wsl/agent_install.ts';
+import { installFacts, lastProgress, wslInstallCall, wslUninstallCall } from '../wsl/agent_install.ts';
 import { distroAgentId, type SettingsStore } from '../state/settings.ts';
 import { wslCodexLimits } from '../host/usage_limits_feed.ts';
 import { wslHostsInUse } from '../wsl/hosts.ts';
@@ -316,9 +318,21 @@ export function wslRoutes(): Map<string, Handler> {
     return [200, { distro: distro.toLowerCase(), name: distroName(distro), state: 'ready', line: '', prereqs }];
   });
   // AIB's own install of an agent in the distro: the job runs in the distro's helper, so it goes on while AIB restarts
-  const install = async (distro: string, action: 'start' | 'cancel' | 'status', agent: unknown): Promise<Reply> => {
+  const install = async (distro: string, action: 'start' | 'cancel' | 'status', agent: unknown, start = false): Promise<Reply> => {
     if (!DISTRO.test(distro)) return [400, { error: 'Choose a distro', code: 'bad_distro' }];
     let host: WslHost;
+    if (action === 'status' && !start) {
+      // A status read never starts a distro: not ready -> no job, with the distro's state and line. While AIB itself is bringing
+      // the distro back (starting, installing, reconnecting) the last progress the helper sent keeps the page's bar.
+      const key = distro.toLowerCase();
+      const seen = peekWslHost(key);
+      const state = peekState(seen);
+      if (!seen || state !== 'ready') {
+        const last = typeof agent === 'string' && ['starting', 'installing', 'reconnecting'].includes(state) ? lastProgress(key, agent) : null;
+        if (last) return [200, { ...last, ok: true, stale: true }];
+        return [200, { ok: true, state: 'idle', distro: key, name: distroName(distro), distroState: state, line: state === 'off' ? '' : lineOf(key) }];
+      }
+    }
     try {
       host = await hostWhenReady(distro);
     } catch (error) {
@@ -326,7 +340,7 @@ export function wslRoutes(): Map<string, Handler> {
     }
     return await wslInstallCall(host, distro.toLowerCase(), distroName(distro), action, agent);
   };
-  guarded('GET', '/api/live/wsl/agents/install', (_ctx, args) => install(one(args, 'distro'), 'status', one(args, 'agent')));
+  guarded('GET', '/api/live/wsl/agents/install', (_ctx, args) => install(one(args, 'distro'), 'status', one(args, 'agent'), one(args, 'start') === '1'));
   guarded('POST', '/api/live/wsl/agents/install', (_ctx, _args, body) => install(bodyDistro(body), 'start', body.agent));
   guarded('POST', '/api/live/wsl/agents/install/cancel', (_ctx, _args, body) => install(bodyDistro(body), 'cancel', body.agent));
   guarded('POST', '/api/live/wsl/reconnect', async (_ctx, _args, body) => {

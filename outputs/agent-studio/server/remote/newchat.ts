@@ -35,6 +35,8 @@ import { projectId, projectsFor } from './projects.ts';
 import { projectKey } from '../desktop/project_delete.ts';
 import { agentLabel, MAX_TEXT, phoneAttachments, Refusal, REFUSALS, takesOf } from './actions.ts';
 import { getLogger } from '../core/log.ts';
+import { wslLocOf } from '../platform/location.ts';
+import { distroName } from '../wsl/access.ts';
 
 /** Phone-side failures go to studio.log (console output only reaches stderr, which the desktop app does not keep). */
 const plog = getLogger('phone_newchat');
@@ -59,6 +61,11 @@ export interface PhoneProjectChoice {
   chats: number;
   /** its default agent for a new chat (the PC's rule) */
   agent: string;
+  /**
+   * A WSL project only: the agents for a chat there, by that distro's own On/Off switch (Settings > AIB Linking (WSL),
+   * agentsByDistro), never the Windows one. The phone offers these instead of the top-level list for this project.
+   */
+  agents?: (Eligible & { why: string })[];
 }
 
 export interface OptionChoice {
@@ -157,6 +164,25 @@ export function folderOfProject(ctx: WebContext, id: unknown): string | null {
   return projectFolders(ctx).find((p) => p.id === id)?.path ?? null;
 }
 
+/**
+ * The agents a new chat in this folder can start with: the PC's list for a Windows folder; for a WSL project the same agents, each
+ * on or off by that distro's own switch (docs/wsl/linking-design.md section 12: a WSL chat reads only its distro's switch, as
+ * host/studio.ts wslLaunch does; whether the distro has the agent is said when the chat starts). `why` is the phone's words.
+ */
+export function agentsFor(ctx: WebContext, folder: string, agents: Eligible[]): (Eligible & { why: string })[] {
+  const wsl = wslLocOf(folder);
+  if (!wsl) return agents.map((a) => ({ ...a, why: reasonWords(a.reason) }));
+  const on = (id: string) => {
+    try {
+      return ctx.settings.distroAgentEnabled(wsl.distro, id);
+    } catch {
+      return true; // unknown: on, as an unset switch is
+    }
+  };
+  const off = `Turned off for ${distroName(wsl.distro)} in Settings on your PC (AIB Linking (WSL)).`;
+  return agents.map((a) => on(a.id) ? { ...a, ok: true, reason: '' as const, why: '' } : { ...a, ok: false, reason: 'Turned off in Settings' as const, why: off });
+}
+
 /** The default agent for a new chat in this folder (agent-choice.js loadChoice, without the PC browser's own memory). */
 export function defaultAgent(ctx: WebContext, folder: string, agents: Eligible[]): string {
   const ok = (id: unknown) => typeof id === 'string' && agents.some((a) => a.id === id && a.ok);
@@ -196,7 +222,15 @@ export async function newChatOptions(
   }
   const projects = folders.map((f) => {
     const p = project(f.path);
-    return { id: f.id, name: p.name, color: p.color, chats: stats.get(f.id)?.chats ?? 0, agent: defaultAgent(ctx, f.path, agents) };
+    const own = wslLocOf(f.path) ? agentsFor(ctx, f.path, agents) : null; // a WSL project: its distro's switches
+    return {
+      id: f.id,
+      name: p.name,
+      color: p.color,
+      chats: stats.get(f.id)?.chats ?? 0,
+      agent: defaultAgent(ctx, f.path, own ?? agents),
+      ...(own ? { agents: own } : {}),
+    };
   });
   projects.sort((a, b) => (stats.get(b.id)?.at ?? 0) - (stats.get(a.id)?.at ?? 0) || a.name.localeCompare(b.name));
   return { projects, agents: agents.map((a) => ({ ...a, why: reasonWords(a.reason) })) };
@@ -348,11 +382,11 @@ export class NewChats {
   ): Promise<{ id: string; agent: string; existing: boolean }> {
     const folder = folderOfProject(ctx, body.project);
     if (!folder) throw new Refusal(404, 'not_found', 'This project is no longer in AIB on your PC. Pick another one.');
-    const agents = await agentsNow(ctx);
+    const agents = agentsFor(ctx, folder, await agentsNow(ctx)); // a WSL project: its distro's switches
     const agent = agents.find((a) => a.id === body.agent);
     if (!agent) throw new Refusal(400, 'invalid', 'Pick an agent.');
     if (!agent.ok) {
-      throw new Refusal(403, 'agent_unavailable', `${agent.name} cannot start a chat now: ${reasonWords(agent.reason) || agent.reason}`);
+      throw new Refusal(403, 'agent_unavailable', `${agent.name} cannot start a chat now: ${agent.why || agent.reason}`);
     }
     const picks: Record<string, string> = {};
     for (const kind of ['model', 'mode'] as const) {

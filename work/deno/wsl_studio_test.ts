@@ -23,6 +23,8 @@ import { setWslHostResolver, WSL_TOOLS_NOTICE, wslToolsNotice } from '../../outp
 import { mcpTunnelGate } from '../../outputs/agent-studio/server/wsl/mcp_tunnel.ts';
 import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
 import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
+import { terminalRoutes } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
+import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -466,6 +468,40 @@ Deno.test({
     await until(() => refused.closed, 'refused', 5);
     assertEquals([refused.messages[0].code, refused.messages[0].message], ['wsl_unavailable', 'Ubuntu stopped. Reconnect']);
     lab.host.state = 'ready';
+    await sessions.endAll();
+  },
+});
+
+Deno.test({
+  name: 'wsl terminal end: POST /api/live/terminal/end takes the Node.js and sign-in keys and ends their PTY in the distro keeper',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    lab.host.link.programs.set('/bin/sh', { command: PYTHON, args: ['-u', '-c', 'import time\nprint("RUNNING", flush=True)\ntime.sleep(60)\n'] });
+    const sessions = new TerminalSessions({ keeper: null, spawn: () => { throw new Error('never a child of AIB'); } });
+    const end = terminalRoutes().get('POST /api/live/terminal/end')!;
+    const ctx = { terminals: sessions } as unknown as WebContext;
+    const livePtys = async () => {
+      const client = await KeeperClient.connect(readKeeperInfo(lab.host.dataDir)!);
+      try {
+        return (await client.list()).filter((ch) => ch.live && ch.channel.startsWith('pty-')).length;
+      } finally {
+        client.close();
+      }
+    };
+    for (const key of ['setup:wsl-node@ubuntu', 'signin:claude@ubuntu']) {
+      const link = new FakeLink();
+      await sessions.attachWsl(link, key, 'wsl://ubuntu/home/u', 80, 24, { file: '/bin/sh', args: ['-c', 'the steps'] });
+      await until(() => link.output.includes('RUNNING'), `${key} runs`, 15);
+      assertEquals(await livePtys(), 1, key);
+      const [status, body] = await end(ctx, new URL('http://x/api/live/terminal/end'), { key });
+      assertEquals([status, body], [200, { ok: true, ended: true }], key);
+      await until(async () => (await livePtys()) === 0, `${key}: the program in the distro ended`, 10);
+      assertEquals(sessions.list().length, 0);
+      const [, again] = await end(ctx, new URL('http://x/api/live/terminal/end'), { key });
+      assertEquals(again, { ok: true, ended: false }, 'a second end finds nothing');
+    }
     await sessions.endAll();
   },
 });

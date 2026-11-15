@@ -24,7 +24,7 @@ import { heldDistro, isAibInternalLabel } from '../../outputs/agent-studio/serve
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { insideLinux } from '../../outputs/agent-studio/server/acp/wsl_caps.ts';
 import { fileReadOf, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { handle } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
+import { handle, TOOLS } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
 import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
 import { branchOf, changesFolder, changesResponse, repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
@@ -278,6 +278,30 @@ Deno.test('mcp restricted (a WSL chat): the artifact tools (publish by content o
   assert(result.isError === true && String(((result.content as Json[])[0]).text).includes('publish by `content`'));
   const full = await handle({ jsonrpc: '2.0', id: 4, method: 'tools/list' }, { ...ctx, restricted: false }) as Json;
   assert(((full.result as Json).tools as Json[]).some((t) => t.name === 'doc_create'), 'a Windows chat keeps every tool');
+});
+
+Deno.test('mcp restricted: publish and update tell a WSL chat up front that only `content` works; a Windows chat sees them unchanged', async () => {
+  const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [] };
+  const tools = (((await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json).result as Json).tools as Json[]);
+  const windows = (((await handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { ...ctx, restricted: false }) as Json).result as Json).tools as Json[]);
+  for (const name of ['publish', 'update']) {
+    const t = tools.find((x) => x.name === name) as Json;
+    const schema = t.inputSchema as Json;
+    const props = schema.properties as Json;
+    assert(!('path' in props), `${name}: no path in a WSL chat's schema`);
+    assert((schema.required as string[]).includes('content'), `${name}: content is required`);
+    const words = String(t.description);
+    assert(!/`path`[^.]*\(an existing file|new `path`/.test(words), `${name}: path is not advertised: ${words}`);
+    assert(words.includes('only `content` works') && words.includes('`path` is not supported'), words);
+    assert(words.includes('PNG or other binary file') && words.includes('inline base64 <img>') && words.includes('ask the user to open the file'), words);
+    const win = windows.find((x) => x.name === name) as Json;
+    assertEquals(win, TOOLS.find((x) => x.name === name), `${name}: a Windows chat's tool is the shared definition`);
+    assert('path' in ((win.inputSchema as Json).properties as Json));
+    assert(!String(win.description).includes('only `content` works'));
+  }
+  const refused = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'update', arguments: { id: 'a', path: '/home/u/a.png' } } }, ctx) as Json;
+  const text = String((((refused.result as Json).content as Json[])[0]).text);
+  assert(text.startsWith('In a WSL project, publish by `content`') && text.includes('inline base64 <img>') && text.includes('ask the user to open the file'), text);
 });
 
 Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge tools (the merge runs in the distro)', async () => {

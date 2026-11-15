@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
+  AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
+  chats working in WSL; the next AIB within those 2 hours takes every one of them over. Each time an AIB (or the keep-alive)
+  connects, the 2 hours start again. After 2 hours with nothing connected, the agents stop and the keeper's log says so.
+
+
+- Artifacts: a failed publish or update card now shows the tool's own reason on a line under "The publish did not finish" (for
+  example "In a WSL project, publish by `content` ..."), in every chat, as plain text.
+- WSL chats: the agent is told up front that publish and update take only `content` there (no file `path`), and that a PNG or other
+  binary file has to be embedded in an HTML page as an inline base64 image or opened by the user; a `path` refusal says the same.
+  Windows chats' tools are unchanged.
+- AIB Linking (WSL): when asdf has no Node.js version set, the command to copy now matches the distro's asdf: `asdf set -u nodejs
+  latest` for asdf 0.16 or newer, `asdf global nodejs latest` for older asdf (both, labelled, when AIB could not read asdf's version).
+- AIB Linking (WSL): the git and curl install lines follow the distro's package manager (apt, dnf, yum, zypper, pacman or apk);
+  for a distro AIB does not recognise it says to install them with the distro's package manager. Still text to copy only.
+- AIB Linking (WSL): Close on the Node.js install panel or an agent's sign-in panel now also stops that program in the distro, as
+  on Windows; before, it kept running unseen (and Remove AIB from Ubuntu refused because of it).
+- Phone: New chat in a WSL project offers the agents by that distro's own On/Off switch (Settings > AIB Linking (WSL)), not the
+  Windows one, and says "Turned off for Ubuntu" for the ones switched off there. Windows projects are unchanged.
+- WSL: checking an agent install's progress no longer starts a distro that is not running; it answers "no install running" with
+  the distro's state instead.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.
