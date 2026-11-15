@@ -184,6 +184,34 @@ export function agentReplies(events: unknown): string[] {
   return out;
 }
 
+/** Transcript texts chatTexts read, by path, while their size and mtime stay the same (least recently used dropped past the cap). */
+const textCache = new Map<string, { sig: string; text: string; bytes: number }>();
+let textCacheBytes = 0;
+export const TEXT_CACHE_BYTES = 128 * 1024 * 1024;
+
+async function cachedText(path: string, size: number, mtime: number): Promise<string> {
+  const sig = `${size}:${mtime}`;
+  const hit = textCache.get(path);
+  if (hit && hit.sig === sig) {
+    textCache.delete(path);
+    textCache.set(path, hit);
+    return hit.text;
+  }
+  const text = new TextDecoder().decode(await Deno.readFile(path));
+  if (hit) {
+    textCache.delete(path);
+    textCacheBytes -= hit.bytes;
+  }
+  textCache.set(path, { sig, text, bytes: size });
+  textCacheBytes += size;
+  for (const [key, entry] of textCache) {
+    if (textCacheBytes <= TEXT_CACHE_BYTES || key === path) break;
+    textCache.delete(key);
+    textCacheBytes -= entry.bytes;
+  }
+  return text;
+}
+
 export async function chatTexts(source: ChatRecordSource, id: string): Promise<string[]> {
   const out: string[] = [];
   let provider = '', sessionId = '';
@@ -209,18 +237,20 @@ export async function chatTexts(source: ChatRecordSource, id: string): Promise<s
     }
     if (file) {
       let budget = MAX_SCAN_BYTES;
-      const read = (p: string) => {
+      // Read without blocking, and remembered by size and mtime: the Files view asks again every second or two, and reading up to
+      // 64 MB of transcripts synchronously per request held every other request of the server for over a second.
+      const read = async (p: string) => {
         if (budget <= 0) return;
         try {
-          const size = Deno.statSync(p).size;
-          if (size > budget) return;
-          budget -= size;
-          out.push(new TextDecoder().decode(Deno.readFileSync(p)));
+          const info = await Deno.stat(p);
+          if (info.size > budget) return;
+          budget -= info.size;
+          out.push(await cachedText(p, info.size, info.mtime?.getTime() ?? 0));
         } catch { /* gone meanwhile */ }
       };
-      read(file);
+      await read(file);
       const folder = file.replace(/\.jsonl$/i, '');
-      for (const p of jsonlBelow(folder, { files: MAX_AGENT_FILES })) read(p);
+      for (const p of jsonlBelow(folder, { files: MAX_AGENT_FILES })) await read(p);
     }
   }
   return out;

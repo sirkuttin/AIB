@@ -2245,10 +2245,16 @@ export class Studio {
     );
     try {
       if (action === 'check' && !agentId) {
+        // Every agent is asked at once (each check has its own timeout), so the answer takes as long as the slowest one, not the sum
+        // (one after another this took ~29 s). Beta agents: only the turned-on ones are asked (a check starts the agent once, hidden).
+        const signer = this.signer, beta = this.betaSigner;
+        const ids = [
+          ...Object.keys(adapters.STUDIO_PACKAGES).map((a) => [a, signer.check(a, !!force)] as const),
+          ...agentRegistry.BETA_IDS.filter((a) => this.settings.betaEnabled(a)).map((a) => [a, beta.check(a, !!force)] as const),
+        ];
+        const answers = await Promise.all(ids.map(([, done]) => done));
         const agents: Json = {};
-        for (const a of Object.keys(adapters.STUDIO_PACKAGES)) agents[a] = await this.signer.check(a, !!force);
-        // Beta agents: only the turned-on ones are asked (a check starts the agent once, hidden)
-        for (const a of agentRegistry.BETA_IDS) if (this.settings.betaEnabled(a)) agents[a] = await this.betaSigner.check(a, !!force);
+        ids.forEach(([a], i) => (agents[a] = answers[i]));
         return [200, { ok: true, agents }];
       }
       if (isBeta(agentId)) return await this.#betaSigninCall(action, agentId as string, force);

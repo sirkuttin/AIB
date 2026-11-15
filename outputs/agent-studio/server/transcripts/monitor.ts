@@ -11,7 +11,7 @@ import { RouteTable, SCOPE_IMAGE, SCOPE_READ } from '../web/security.ts';
 import { type Dict, type Event, type Json, TEXT_LIMIT } from './normalize.ts';
 import { casefold, clipped, concat, isOSError, isoTimestamp, parseQs, pyInt, PyTypeError, strCmp, truthy } from './pycompat.ts';
 import { isDir, isFile, isRelativeTo, join, name, purePath, resolveLoose, rglobTail, statSig, stem, withoutSuffix } from './purepath.ts';
-import { wslSavedSessions, wslTranscriptGet } from '../wsl/transcripts.ts';
+import { wslSavedSessionsQuick, wslTranscriptGet } from '../wsl/transcripts.ts';
 import { Catalog, COMMAND_LIST_TTL, now, QUIET_UNKNOWN_SECONDS, type Resolved, type Source, Store } from './store.ts';
 import { Mutex, readExactly, type Task, type Transcript } from './transcript.ts';
 
@@ -48,21 +48,35 @@ async function familySignature(source: Source, session: Json): Promise<string> {
  * COMMAND_LIST_TTL seconds, since idle times are clock based), so /api/agents and /api/commands in one poll share one pass. */
 export async function commandList(source: Source, session: Json): Promise<Task[]> {
   const key = typeof session === 'string' ? session : JSON.stringify(session);
+  // A request that arrives while another builds this chat's list shares that run (the page polls /api/agents and /api/commands
+  // together, and several views poll at once): re-checking a big family's files costs hundreds of stats per request.
+  const running = inFlight.get(source)?.get(key);
+  if (running) return [...(await running)];
   let lock = source.commandLocks.get(key);
   if (!lock) source.commandLocks.set(key, lock = new Mutex());
   if (source.commandLocks.size > 64) {
     source.commandLocks.clear();
     source.commandMemo.clear();
   }
-  return await lock.run(async () => {
+  let runs = inFlight.get(source);
+  if (!runs) inFlight.set(source, runs = new Map());
+  const run = lock.run(async () => {
     const signature = await familySignature(source, session);
     const memo = source.commandMemo.get(key);
-    if (memo && memo[0] === signature && now() - memo[1] < COMMAND_LIST_TTL) return [...memo[2]];
+    if (memo && memo[0] === signature && now() - memo[1] < COMMAND_LIST_TTL) return memo[2];
     const tasks = await buildCommandList(source, session);
     source.commandMemo.set(key, [signature, now(), tasks]);
-    return [...tasks];
+    return tasks;
   });
+  runs.set(key, run);
+  try {
+    return [...(await run)];
+  } finally {
+    if (runs.get(key) === run) runs.delete(key);
+  }
 }
+
+const inFlight = new WeakMap<Source, Map<string, Promise<Task[]>>>();
 
 function startedAt(task: Task): number {
   return isoTimestamp(pyStr(task.started).replaceAll('Z', '+00:00'));
@@ -302,9 +316,8 @@ export async function handleGet(source: Source, path: string, query: string, opt
     const wsl = await wslTranscriptGet(path, args); // a saved session of a WSL project: read in its distro
     if (wsl) return json(wsl.status, wsl.body);
     if (path === '/api/sessions') {
-      const sessions = await source.sessions();
-      // saved chats of WSL projects, read in their distro (wsl/transcripts.ts); none until a distro's helper lists them
-      const wsl = await wslSavedSessions();
+      // saved chats of WSL projects, read in their distro (wsl/transcripts.ts); none until a distro's helper lists them. Both at once.
+      const [sessions, wsl] = await Promise.all([source.sessions(), wslSavedSessionsQuick()]);
       if (wsl.length) sessions.push(...wsl);
       return json(200, { sessions, root: source.root, now: now() });
     }

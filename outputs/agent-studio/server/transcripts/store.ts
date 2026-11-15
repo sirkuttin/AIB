@@ -33,6 +33,7 @@ import {
   truthy,
 } from './pycompat.ts';
 import {
+  endsWithName,
   globTail,
   isDir,
   isFile,
@@ -46,6 +47,7 @@ import {
   resolve,
   resolveLoose,
   rglobTail,
+  samePath,
   statSig,
   stem,
   suffix,
@@ -59,6 +61,8 @@ export const QUIET_UNKNOWN_SECONDS = 4 * 3600;
 export const TRANSCRIPT_CACHE_BUDGET = 1536 * 1024 * 1024;
 // command_list results are reused while no transcript file changed, for at most this long (idle times are clock based).
 export const COMMAND_LIST_TTL = 3.0;
+// A chat's subagent count is re-checked at least this often even when its transcript did not change.
+export const SUBAGENT_RECHECK_MS = 30_000;
 const TITLE_ROW = /"type": ?"(?:ai-title|custom-title|title|summary)"/;
 const CWD_FIELD = /"cwd"[ \t\n\r\f\v]*:[ \t\n\r\f\v]*("(?:[^"\\]|\\[^\n])*")/g;
 const LATIN1 = new TextDecoder('latin1');
@@ -129,6 +133,7 @@ export class Store {
   summaryCache = new Map<string, [string, Dict]>();
   projectMemo = new Map<string, string>(); // transcript key -> project folder once found ('' = none)
   hintCache = new Map<string, [string, Dict]>();
+  countCache = new Map<string, { dirs: [string, number][]; count: number; chatSig: string; at: number }>(); // artifact folder -> walked folders' mtimes, count
   projectResolver: ProjectResolver | null = null;
   #rootReady: Promise<void>;
 
@@ -220,8 +225,8 @@ export class Store {
   }
 
   /** The cached card data; a chat whose cwd is a Studio-made worktree is filed under its project (not cached). */
-  async summary(path: string): Promise<Dict> {
-    let item = await this.#summary(path);
+  async summary(path: string, knownKey?: string): Promise<Dict> {
+    let item = await this.#summary(path, knownKey);
     const resolver = this.projectResolver;
     let found: ReturnType<ProjectResolver> = null;
     if (resolver !== null && truthy(item.cwd)) {
@@ -235,9 +240,9 @@ export class Store {
     return item;
   }
 
-  async #summary(path: string): Promise<Dict> {
+  async #summary(path: string, knownKey?: string): Promise<Dict> {
     const stat = await statSig(path);
-    const key = await this.key(path);
+    const key = knownKey ?? await this.key(path);
     const sig = `${stat.size}:${stat.mtimeNs}`;
     const cached = this.summaryCache.get(key);
     if (cached && cached[0] === sig) return cached[1];
@@ -309,32 +314,103 @@ export class Store {
     return item;
   }
 
-  async sessions(): Promise<Dict[]> {
-    await this.ready();
-    const result: Dict[] = [];
-    if (await isDir(this.root)) {
-      const folders: string[] = [];
-      for await (const entry of Deno.readDir(this.root)) folders.push(join(this.root, entry.name));
-      for (const folder of folders) {
-        if (!(await isDir(folder))) continue;
-        const real = await resolve(folder);
-        if (real === null || !isRelativeTo(real, this.root)) continue;
-        for (const path of await globTail(folder, '.jsonl')) {
-          try {
-            const item = { ...(await this.summary(path)) };
-            const artifactDir = withoutSuffix(path);
-            let count = 0;
-            if (await isDir(artifactDir)) { for (const child of await rglobTail(artifactDir, '.jsonl')) if (await isFile(child)) count++; }
-            item.subagentCount = count;
-            result.push(item);
-          } catch (error) {
-            if (isOSError(error) || error instanceof ValueError) continue;
-            throw error;
-          }
+  /**
+   * How many subagent transcripts sit under a chat's artifact folder. The walk is remembered with the mtime of every folder it read
+   * (a folder's mtime changes when an entry is added, removed or renamed in it), so a poll only stats those folders instead of
+   * listing them and stat-ing every file: /api/sessions is polled every few seconds over hundreds of chats.
+   */
+  async #subagentCount(artifactDir: string, chatSig: string): Promise<number> {
+    const cached = this.countCache.get(artifactDir);
+    // Claude Code writes the Agent call into the chat before a subagent starts, so an unchanged chat file means the same count;
+    // the folders are still re-checked every SUBAGENT_RECHECK_MS in case one was added another way.
+    if (cached && cached.chatSig === chatSig && Date.now() - cached.at < SUBAGENT_RECHECK_MS) return cached.count;
+    if (cached) {
+      let same = true;
+      for (const [dir, mtime] of cached.dirs) {
+        let now = -1;
+        try {
+          const info = await Deno.stat(dir);
+          now = info.isDirectory ? (info.mtime?.getTime() ?? 0) : -1;
+        } catch { /* gone */ }
+        if (now !== mtime) {
+          same = false;
+          break;
         }
       }
+      if (same) {
+        this.countCache.set(artifactDir, { ...cached, chatSig, at: Date.now() });
+        return cached.count;
+      }
     }
-    return sortSessions(result);
+    const dirs: [string, number][] = [];
+    let count = 0;
+    const walk = async (dir: string): Promise<void> => {
+      let mtime = -1;
+      try {
+        const info = await Deno.stat(dir);
+        mtime = info.isDirectory ? (info.mtime?.getTime() ?? 0) : -1;
+      } catch { /* missing */ }
+      dirs.push([dir, mtime]);
+      if (mtime < 0) return;
+      const subdirs: string[] = [];
+      try {
+        for await (const entry of Deno.readDir(dir)) {
+          if (entry.isDirectory && !entry.isSymlink) subdirs.push(join(dir, entry.name));
+          else if (endsWithName(entry.name, '.jsonl') && (entry.isFile || (entry.isSymlink && (await isFile(join(dir, entry.name)))))) count++;
+        }
+      } catch {
+        return;
+      }
+      for (const sub of subdirs) await walk(sub);
+    };
+    await walk(artifactDir);
+    if (this.countCache.size > 5000) this.countCache.clear();
+    this.countCache.set(artifactDir, { dirs, count, chatSig, at: Date.now() });
+    return count;
+  }
+
+  /** The session cards; concurrent calls share one pass (several views poll /api/sessions at once). */
+  sessions(): Promise<Dict[]> {
+    if (!this.#sessionsRun) {
+      this.#sessionsRun = this.#sessions().finally(() => (this.#sessionsRun = null));
+    }
+    return this.#sessionsRun.then((items) => items.map((item) => ({ ...item })));
+  }
+
+  #sessionsRun: Promise<Dict[]> | null = null;
+
+  async #sessions(): Promise<Dict[]> {
+    await this.ready();
+    if (!(await isDir(this.root))) return [];
+    const folders: string[] = [];
+    for await (const entry of Deno.readDir(this.root)) folders.push(join(this.root, entry.name));
+    // Folders and their chats are read concurrently (the file system answers many stats at once); order is kept for the sort.
+    const perFolder = await Promise.all(folders.map(async (folder) => {
+      if (!(await isDir(folder))) return [];
+      const real = await resolve(folder);
+      if (real === null || !isRelativeTo(real, this.root)) return [];
+      const lexical = samePath(real, folder) ? relativeParts(folder, this.root) : null;
+      const files: [string, string | undefined][] = [];
+      try {
+        for await (const entry of Deno.readDir(folder)) {
+          if (!endsWithName(entry.name, '.jsonl')) continue;
+          // a plain file in a plain folder under the root: its key is its relative path (no realPath per chat on every poll)
+          files.push([join(folder, entry.name), lexical && entry.isFile && !entry.isSymlink ? [...lexical, entry.name].join('/') : undefined]);
+        }
+      } catch { /* not a folder */ }
+      const items = await Promise.all(files.map(async ([path, key]) => {
+        try {
+          const item = { ...(await this.summary(path, key)) };
+          item.subagentCount = await this.#subagentCount(withoutSuffix(path), `${item.size}:${item.modified}`);
+          return item;
+        } catch (error) {
+          if (isOSError(error) || error instanceof ValueError) return null;
+          throw error;
+        }
+      }));
+      return items.filter((item): item is Dict => item !== null);
+    }));
+    return sortSessions(perFolder.flat());
   }
 
   /** Claude Code writes agent-<id>.meta.json next to a subagent transcript: description, agentType, finished. */

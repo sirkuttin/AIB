@@ -41,7 +41,8 @@ import { pathOf } from '../state/paths.ts';
 
 export const TERMINAL_NAME = 'signin-terminal.json';
 export const TERMINAL_MAX_AGE = 10 * 60; // seconds: the page opens the terminal right after asking
-export const CHECK_TIMEOUT = 40;
+// Seconds for the whole check (initialize + session/new together); then the agent is killed and the state is unknown.
+export const CHECK_TIMEOUT = 25;
 export const START_TIMEOUT = 25;
 export const AUTHENTICATE_TIMEOUT = 15 * 60;
 export const PROTOCOL_INIT = {
@@ -102,6 +103,8 @@ export class BetaSigner {
   readonly jobs = new Map<string, Job>();
   readonly #guard = new Mutex();
   readonly #locks = new Map<string, Mutex>();
+  /** The check running now per agent (a forced check joins only a forced one): concurrent callers share one agent start. */
+  readonly #checking = new Map<string, { force: boolean; done: Promise<{ agent: string; state: SignState; checkedAt: number; checked: boolean }> }>();
   readonly #baseEnv: () => Record<string, string>;
   readonly #checkTimeout: number;
 
@@ -150,8 +153,10 @@ export class BetaSigner {
     let shake: Handshake | null = null;
     try {
       shake = new Handshake(argv, this.#env(agentId));
+      const deadline = Date.now() + this.#checkTimeout * 1000; // one budget for both steps, so a slow agent cannot take it twice
       await shake.request('initialize', PROTOCOL_INIT, this.#checkTimeout);
-      const result = await shake.request('session/new', { cwd: folder, mcpServers: [] }, this.#checkTimeout);
+      const left = Math.max(1, (deadline - Date.now()) / 1000);
+      const result = await shake.request('session/new', { cwd: folder, mcpServers: [] }, left);
       if (isDict(result) && typeof result.sessionId === 'string' && result.sessionId) {
         try {
           await shake.request('session/close', { sessionId: result.sessionId }, 3);
@@ -174,9 +179,11 @@ export class BetaSigner {
     } catch (error) {
       return Promise.reject(error);
     }
+    const running = this.#checking.get(id);
+    if (running && (running.force || !force)) return running.done;
     let lock = this.#locks.get(id);
     if (!lock) this.#locks.set(id, lock = new Mutex());
-    return lock.run(async () => {
+    const done = lock.run(async () => {
       const cached = readCached(this.stateDir, id);
       const row = await this.launch(id);
       if (!row.found) {
@@ -188,6 +195,12 @@ export class BetaSigner {
       const state = await this.probe(id, row.argv);
       return { agent: id, state, checkedAt: this.#writeCache(id, state), checked: true };
     });
+    this.#checking.set(id, { force, done });
+    const clear = () => {
+      if (this.#checking.get(id)?.done === done) this.#checking.delete(id);
+    };
+    done.then(clear, clear);
+    return done;
   }
 
   status(agentId: unknown): { state: SignState; checkedAt: number; agent: string; job: JobView } {

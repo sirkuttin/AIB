@@ -30,7 +30,9 @@ import { which } from '../platform/pypath.ts';
 export const CACHE_NAME = 'signin.json';
 export const JOB_NAME = 'signin-job.json';
 export const CACHE_SECONDS = 60; // opening Settings again within a minute does not run the status command again
-export const STATUS_TIMEOUT = 20;
+// A status command that has not answered in this many seconds is killed and counts as unknown (it is normally under 2 s; the
+// all-agents check runs them side by side, so this is also about the longest the Settings check can take).
+export const STATUS_TIMEOUT = 10;
 export const HANDSHAKE_TIMEOUT = 40;
 export const AUTHENTICATE_TIMEOUT = 15 * 60; // an agent method: the user finishes it in the browser
 export const CONSOLE_TIMEOUT = 15 * 60;
@@ -451,6 +453,8 @@ export interface SignerOptions {
   systemIsWindows?: boolean;
   /** How the Codex CLI is found from the adapter's argv (findCodexCli). Injectable so tests use a fake codex. */
   codexCli?: (adapterArgv: string[]) => Promise<string[] | null>;
+  /** Seconds before a status command is killed (STATUS_TIMEOUT). */
+  statusTimeout?: number;
 }
 
 /**
@@ -465,9 +469,14 @@ export class Signer {
   readonly jobs = new Map<string, Job>();
   readonly #guard = new Mutex();
   readonly #checkLocks = new Map<string, Mutex>();
+  /** The check running now per agent: a second caller (a poll, another tab, a force) joins it instead of starting the CLI again. */
+  // (A forced check joins only a forced one: a plain one may answer from the cache.)
+  readonly #checking = new Map<string, { force: boolean; done: Promise<{ agent: string; state: SignState; checkedAt: number; checked: boolean }> }>();
+  readonly statusTimeout: number;
 
   constructor(stateDir: string, readonly launch: LaunchFn, options: SignerOptions = {}) {
     this.stateDir = pathOf(stateDir);
+    this.statusTimeout = options.statusTimeout ?? STATUS_TIMEOUT;
     this.spawnConsole = options.spawnConsole ?? spawnInNewConsole;
     this.windows = options.systemIsWindows ?? Deno.build.os === 'windows';
     this.codexCli = options.codexCli ?? ((argv) => findCodexCli(argv));
@@ -541,7 +550,7 @@ export class Signer {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const result = await Promise.race([
           child.status.catch(() => null),
-          new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), STATUS_TIMEOUT * 1000))),
+          new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), this.statusTimeout * 1000))),
         ]);
         clearTimeout(timer);
         if (result === 'timeout') {
@@ -575,7 +584,7 @@ export class Signer {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       child.output(), // logged out exits 1 and still prints the JSON
-      new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), STATUS_TIMEOUT * 1000))),
+      new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), this.statusTimeout * 1000))),
     ]);
     clearTimeout(timer);
     if (result === 'timeout') {
@@ -594,9 +603,11 @@ export class Signer {
     } catch (error) {
       return Promise.reject(error);
     }
+    const running = this.#checking.get(id);
+    if (running && (running.force || !force)) return running.done;
     let lock = this.#checkLocks.get(id);
     if (!lock) this.#checkLocks.set(id, lock = new Mutex());
-    return lock.run(async () => {
+    const done = lock.run(async () => {
       const cached = readCached(this.stateDir, id);
       const argv = await this.#argv(id);
       if (argv === null) { // not installed: nothing to check, and an old answer would be stale
@@ -611,6 +622,12 @@ export class Signer {
       const checkedAt = this.#writeCache(id, state);
       return { agent: id, state, checkedAt, checked: true };
     });
+    this.#checking.set(id, { force, done });
+    const clear = () => {
+      if (this.#checking.get(id)?.done === done) this.#checking.delete(id);
+    };
+    done.then(clear, clear);
+    return done;
   }
 
   status(agentId: unknown): { state: SignState; checkedAt: number; agent: string; job: JobView } {

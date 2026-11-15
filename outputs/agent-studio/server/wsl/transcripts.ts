@@ -49,13 +49,17 @@ export async function distroSessions(host: WslHost, distro: string, projects: Re
   } catch {
     return out; // under test without AIB_WSL_ROOT: never the owner's sessions
   }
-  for (const provider of WSL_SESSION_PROVIDERS) {
-    let listed: Dict[];
+  // both providers at once: each call may take up to its 10 s time-out
+  const lists = await Promise.all(WSL_SESSION_PROVIDERS.map(async (provider) => {
     try {
-      listed = (await host.call('transcripts.sessions', { provider, ...dirs }, { timeoutMs: 10_000 })).sessions ?? [];
+      return (await host.call('transcripts.sessions', { provider, ...dirs }, { timeoutMs: 10_000 })).sessions ?? [];
     } catch {
-      continue; // a helper without the method (it throws), or a read that failed: nothing from this provider
+      return null; // a helper without the method (it throws), or a read that failed: nothing from this provider
     }
+  }));
+  for (const [i, provider] of WSL_SESSION_PROVIDERS.entries()) {
+    const listed = lists[i];
+    if (!listed) continue;
     for (const item of listed) {
       const cwd = typeof item.cwd === 'string' && item.cwd.startsWith('/') ? refOf({ kind: 'wsl', distro, linuxPath: item.cwd }) : '';
       // a chat that ran in its own worktree: the helper's store names its project (projectRoot, a Linux path) and branch
@@ -88,6 +92,45 @@ export async function wslSavedSessions(projects: ReadonlySet<string> | null = nu
     }
   } catch { /* none */ }
   return out;
+}
+
+/** How long a poll's WSL session list is answered from the last listing without asking the helpers again. */
+export const WSL_SESSIONS_FRESH_MS = 3_000;
+let quick: { at: number; hosts: WslHost[]; value: Dict[] } | null = null;
+let quickRun: Promise<Dict[]> | null = null;
+
+/**
+ * wslSavedSessions for the page's /api/sessions poll: one listing at a time (concurrent polls share it), a listing younger than
+ * WSL_SESSIONS_FRESH_MS is reused, and an older one is answered at once while a fresh one is fetched for the next poll. Each helper
+ * call may take up to 10 s per provider, and the poll must never wait for that once a list is known. Only the first poll waits.
+ */
+export async function wslSavedSessionsQuick(): Promise<Dict[]> {
+  let hosts: WslHost[] = [];
+  try {
+    for (const d of await wsl2Distros()) {
+      const host = peekWslHost(d.name);
+      if (host && host.state === 'ready') hosts.push(host);
+    }
+  } catch {
+    hosts = [];
+  }
+  if (!hosts.length) return [];
+  const same = quick !== null && quick.hosts.length === hosts.length && quick.hosts.every((h, i) => h === hosts[i]);
+  const refresh = () => {
+    if (!quickRun) {
+      const started = Date.now();
+      quickRun = wslSavedSessions().then((value) => {
+        quick = { at: started, hosts, value };
+        return value;
+      }).finally(() => (quickRun = null));
+    }
+    return quickRun;
+  };
+  if (same && quick) {
+    if (Date.now() - quick.at >= WSL_SESSIONS_FRESH_MS) void refresh().catch(() => {});
+    return quick.value.map((item) => ({ ...item }));
+  }
+  return (await refresh()).map((item) => ({ ...item }));
 }
 
 /** {distro, provider, key} of a wslSessionKey, or null for any other key. */
