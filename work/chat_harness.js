@@ -26,6 +26,8 @@ function scopeOf(hook) {
 }
 
 function loadChat(context) {
+  // chat.html loads chat-cache.js (the live chats' event cache) just before chat.js
+  if (!(context.window && context.window.ChatCache)) vm.runInContext(fs.readFileSync(path.join(path.dirname(CHAT_JS), 'chat-cache.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(CHAT_JS, 'utf8'), context);
   const hook = context.window.StudioChat;
   if (!hook) throw new Error('chat.js did not set window.StudioChat');

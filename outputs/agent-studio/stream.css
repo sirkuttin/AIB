@@ -85,6 +85,15 @@
 .show-earlier:focus-visible {
   background: var(--hover-2);
 }
+/* history loading: shown at the top of a chat while its next older page lands (one fixed-height line) */
+.loading-earlier {
+  height: 24px;
+  margin: 0 0 8px;
+  line-height: 24px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--muted, var(--link));
+}
 .unknown-send .bubble {
   margin-bottom: 4px;
 }

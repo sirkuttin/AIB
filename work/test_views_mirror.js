@@ -94,12 +94,9 @@ test('the live line shows in a split pane for a working chat, and its clock is n
   const since = Date.now() / 1000 - 30;
   const ev = (kind, data, time) => ({ kind, time, data: { sessionId: 's', ...data } });
   const m = page.hook.mirrorState;
-  m.set('claude:a', {
-    id: 'c1',
-    sid: 's',
-    cursor: 0,
-    rows: null,
-    events: [
+  m.set('claude:a', { id: 'c1', sid: 's', rows: null });
+  // a live pane's events are the chat's cache entry (chat-cache.js), shared with the main list
+  page.hook.chatCache.entry('c1').replace([
       ev('user', { text: 'go' }, since),
       ev(
         'update',
@@ -115,8 +112,7 @@ test('the live line shows in a split pane for a working chat, and its clock is n
         },
         since + 1,
       ),
-    ],
-  });
+  ]);
   page.hook.viewStore.set('claude:a', 'chat');
   page.hook.paintMirror(box, [user('go', since)]);
   assert.equal(byClass(box, 'view-live').length, 1);
