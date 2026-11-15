@@ -9,6 +9,7 @@ import { FakeWslHost } from './_wsl_fake.ts';
 import {
   distroName,
   guardRealWslAgent,
+  hostWhenReady,
   notReady,
   setDistroSource,
   setWslHostResolver,
@@ -19,7 +20,8 @@ import {
   wslTestHomeEnv,
 } from '../../outputs/agent-studio/server/wsl/access.ts';
 import { cleanUrl, RATE_PER_MINUTE, SIGNIN_WINDOW_MS, urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
-import { isAibInternalLabel } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { heldDistro, isAibInternalLabel } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { insideLinux } from '../../outputs/agent-studio/server/acp/wsl_caps.ts';
 import { fileReadOf, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
 import { handle } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
@@ -321,4 +323,48 @@ Deno.test("wsl sign-in: Claude's login runs in the distro with the sign-in card'
   } finally {
     setWslHostResolver(null);
   }
+});
+
+Deno.test('hostWhenReady: a start that failed because the helper was being replaced is tried again; any other failure answers at once', async () => {
+  // wsl8 in the owner's log: "ubuntu is not ready, so its chats were not taken over: the running helper was too old to take over".
+  // The failed start had already stopped that helper, so a second start (a fresh helper) works.
+  const host = new FakeWslHost('unused', 'Ubuntu');
+  host.state = 'unavailable';
+  let starts = 0;
+  let failWith = 'helper_restart';
+  host.start = () => {
+    starts++;
+    if (starts === 1) {
+      host.note = 'the running helper was too old to take over';
+      return Promise.reject(new WslHelperError(host.note, failWith));
+    }
+    host.state = 'ready';
+    host.note = '';
+    return Promise.resolve();
+  };
+  setWslHostResolver((d) => (d === 'ubuntu' ? host : null));
+  try {
+    assert((await hostWhenReady('ubuntu', 10_000)) === host);
+    assertEquals(starts, 2);
+    // a distro that stopped (or is not set up) is not started again and again: the line the user sees, at once
+    starts = 0;
+    failWith = 'stopped';
+    host.state = 'stopped';
+    host.note = '';
+    const began = Date.now();
+    let message = '';
+    await hostWhenReady('ubuntu', 10_000).catch((e) => (message = e.message));
+    assertEquals([starts, message], [1, 'the running helper was too old to take over']);
+    assert(Date.now() - began < 2000);
+  } finally {
+    setWslHostResolver(null);
+  }
+});
+
+Deno.test('heldDistro: the distro of a WSL keep-alive label, else empty', () => {
+  assertEquals(heldDistro(JSON.stringify({ aib: 'wsl-hold', distro: 'Ubuntu' })), 'ubuntu');
+  assertEquals(heldDistro(JSON.stringify({ aib: 'wsl-helper', v: '1' })), '');
+  assertEquals(heldDistro(JSON.stringify({ aib: 'wsl-hold', distro: '../x y' })), '');
+  assertEquals(heldDistro('not json'), '');
+  assertEquals(heldDistro(null), '');
 });

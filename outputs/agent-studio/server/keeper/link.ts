@@ -63,6 +63,13 @@ export function isAibInternalLabel(label: unknown): boolean {
   return aibInternalKind(label) !== '';
 }
 
+/** The distro (folded key) a WSL keep-alive label names ({"aib":"wsl-hold","distro":d}), else ''. */
+export function heldDistro(label: unknown): string {
+  if (aibInternalKind(label) !== WSL_HOLD_LABEL.aib) return '';
+  const distro = JSON.parse(String(label)).distro;
+  return typeof distro === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(distro) ? distro.toLowerCase() : '';
+}
+
 /** The live channels that are real work (agents, terminals): every live one except AIB's own (isAibInternalLabel). */
 export function liveUserChannels(listed: readonly ChannelInfo[]): ChannelInfo[] {
   return listed.filter((c) => c.live && !isAibInternalLabel(c.label));

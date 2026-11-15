@@ -5,7 +5,7 @@
  * of an agent spawn live here too. Nothing here touches Windows files for a WSL path.
  */
 import type { KeeperLink } from '../keeper/link.ts';
-import type { HelperMethods, WslHost } from './contract.ts';
+import { type HelperMethods, WslHelperError, type WslHost } from './contract.ts';
 import { wslHosts, wslHostsInUse } from './hosts.ts';
 import { detectWsl, type WslDistro } from './detect.ts';
 import { locOf } from '../platform/location.ts';
@@ -85,15 +85,32 @@ export function peekWslHost(distro: string): WslHost | null {
  */
 export async function hostWhenReady(distro: string, timeoutMs = 180_000): Promise<WslHost> {
   const host = wslHost(distro);
-  if (host && host.state !== 'ready') {
+  const deadline = Date.now() + timeoutMs;
+  // A start that failed only because the helper was being replaced (an earlier AIB's helper too old to take over, a helper that
+  // ended while it started) is tried again within the wait: the next start makes a fresh helper. Anything else is answered at once.
+  for (let attempt = 0; host && host.state !== 'ready' && attempt < START_TRIES; attempt++) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      host.start().catch(() => {}),
-      new Promise((resolve) => (timer = setTimeout(resolve, timeoutMs))),
+    const outcome = await Promise.race([
+      host.start().then(() => null, (error: unknown) => error ?? new Error('not ready')),
+      new Promise<'timeout'>((resolve) => (timer = setTimeout(() => resolve('timeout'), Math.max(0, deadline - Date.now())))),
     ]);
     clearTimeout(timer);
+    if (outcome === null || outcome === 'timeout' || !retriableStart(outcome)) break;
+    const wait = Math.min(START_RETRY_MS * 2 ** attempt, deadline - Date.now());
+    if (wait <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
   return readyHost(distro);
+}
+
+/** How often hostWhenReady starts a distro whose helper was being replaced, and the first pause between starts (doubling). */
+const START_TRIES = 4;
+const START_RETRY_MS = 500;
+/** The helper failures a second start fixes (wsl/hosts.ts WslHelperError codes): the helper itself was replaced or ended. */
+const RETRIABLE_START = new Set(['helper_restart', 'helper_exited', 'helper_gone', 'helper_timeout']);
+
+function retriableStart(error: unknown): boolean {
+  return error instanceof WslHelperError && RETRIABLE_START.has(error.code);
 }
 
 /** The WSL2 distros of this PC (WSL1 is refused in phase 1). Never throws: none when WSL is missing or detection fails. */
