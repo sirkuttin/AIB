@@ -15,6 +15,8 @@
   on Windows; before, it kept running unseen (and Remove AIB from Ubuntu refused because of it).
 - Phone: New chat in a WSL project offers the agents by that distro's own On/Off switch (Settings > AIB Linking (WSL)), not the
   Windows one, and says "Turned off for Ubuntu" for the ones switched off there. Windows projects are unchanged.
+- WSL: checking an agent install's progress no longer starts a distro that is not running; it answers "no install running" with
+  the distro's state instead.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.

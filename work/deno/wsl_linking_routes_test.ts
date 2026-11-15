@@ -421,6 +421,45 @@ Deno.test(
   },
 );
 
+Deno.test(
+  'GET /api/live/wsl/agents/install: a status read never starts the distro (no job, with its state and line); start=1 does',
+  T,
+  async () => {
+    const host = new CountingHost('unused', 'Ubuntu');
+    phase2Helper(host);
+    host.handlers['agents.installStatus'] = (p) => ({ state: 'idle', agent: p.agent });
+    host.state = 'starting';
+    withHost(host);
+    const get = (q: string) => route(ctxOf(undefined), 'GET', '/api/live/wsl/agents/install', q);
+    try {
+      resetInstallProgress();
+      assertEquals(await get('distro=Ubuntu&agent=claude'), [200, { ok: true, state: 'idle', distro: 'ubuntu', name: 'Ubuntu', distroState: 'off', line: '' }]);
+      host.begun = true;
+      host.state = 'stopped';
+      host.note = 'Ubuntu stopped (Windows restart or `wsl --shutdown`).';
+      assertEquals(await get('distro=ubuntu&agent=claude'), [200, {
+        ok: true,
+        state: 'idle',
+        distro: 'ubuntu',
+        name: 'Ubuntu',
+        distroState: 'stopped',
+        line: 'Ubuntu stopped (Windows restart or `wsl --shutdown`).',
+      }]);
+      assertEquals([host.starts, host.calls.length], [0, 0], 'a status read started nothing and asked nothing');
+      // start=1 (a click): started, then the helper answers
+      const [status, out] = await get('distro=ubuntu&agent=claude&start=1');
+      assertEquals([status, out.state, out.ok], [200, 'idle', true]);
+      assertEquals([host.starts, host.calls.at(-1)?.[0]], [1, 'agents.installStatus']);
+      // ready: the helper's answer, still no start
+      await get('distro=ubuntu&agent=claude');
+      assertEquals([host.starts, host.calls.filter((c) => c[0] === 'agents.installStatus').length], [1, 2]);
+    } finally {
+      setWslHostResolver(null);
+      setDistroSource(null);
+    }
+  },
+);
+
 // ---- 5. the Node.js terminal ------------------------------------------------------------------------------------------------------
 
 Deno.test(

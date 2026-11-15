@@ -309,7 +309,9 @@ the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/h
 - The job's state is on disk (`install.json`, `install.lock` with the helper's pid, `install.log`), so it goes on while AIB restarts
   and the page picks it up again; a job whose helper died reads as interrupted. The page polls
   `GET /api/live/wsl/agents/install` once a second; each saved state also comes over the helper channel as the notification
-  `agents.installProgress`, which answers a status read while the helper restarts. Cancel kills npm's whole process group and
+  `agents.installProgress`, which answers a status read while the helper restarts. A status read never starts a distro (only
+  `start=1` does): a distro that is not ready answers `{ok, state: 'idle', distro, name, distroState, line}` (while AIB is bringing
+  it back, starting or reconnecting, the last progress, `stale`). Cancel kills npm's whole process group and
   removes the half-made folder.
 - Node.js 22+ and npm must be in the distro; AIB never installs system packages. Without them the panel says so ("Node.js 22 or newer
   is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js."), shows the command that installs it without root (nvm, as
