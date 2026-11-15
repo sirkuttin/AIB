@@ -29,8 +29,19 @@ def masked(value, server):
         value = drop_inbox(drop_steer(value))
         if isinstance(value, dict):
             # Deno-only (phone UI v2): the chat names' revision in the list answer (phone renames reach the PC page); the reference has none
-            value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames')}
+            value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames', 'allowRulesTampered')}
+        value = drop_allow(value)
     return strip(value)
+
+
+def drop_allow(value):
+    """Deno-only (allow rules, server/allow): a waiting card's "Always allow" draft (permissions[].allow); the reference has none."""
+    if isinstance(value, dict):
+        card = 'key' in value and 'params' in value and 'route' in value
+        return {k: drop_allow(v) for k, v in value.items() if not (card and k == 'allow')}
+    if isinstance(value, list):
+        return [drop_allow(v) for v in value]
+    return value
 
 
 # Deno-only (beta.9 steer-on-send): a connection snapshot's steer keys (work/deno/steer_*_test.ts cover them); the reference has none.
