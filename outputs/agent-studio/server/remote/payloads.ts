@@ -15,12 +15,15 @@ import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 import { type PhoneProject, projectsFor } from './projects.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
+import { clipEvent, type Ev, sessionOf } from '../acp/event_pages.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
 export const DEFAULT_TAIL = 200;
+/** The phone's open page budget (history loading: the tail is sized by bytes). */
+export const PHONE_PAGE_BYTES = 256 * 1024;
 export const MAX_TAIL = 1000;
 /** Image types the phone may load (never SVG: it can carry script). */
 export const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -546,9 +549,19 @@ export async function chatPayload(
   titles: TitleCache,
   artifactOrigin = '',
 ): Promise<ChatPayload | null> {
-  const state = await ctx.host.liveState(id, after) as Json | null;
+  // History loading: opening (after 0) reads one tail page by bytes (the chat's own events, huge tool output clipped) and then the
+  // state from that page's cursor, instead of all 6,000 events; deltas read the state after the phone's cursor as before. Either
+  // way helper events stay off the phone (its helpers list reads the facts) and tool output is clipped to the page's limit.
+  const pages = after <= 0 && typeof ctx.host.liveEvents === 'function'; // a test's stand-in host may not have it
+  const opened = pages ? await ctx.host.liveEvents(id, { bytes: PHONE_PAGE_BYTES }) as Json | null : null;
+  if (pages && !opened) return null;
+  const paged = !!opened && !opened.rebuilding && Array.isArray(opened.events);
+  const state = await ctx.host.liveState(id, paged ? Number(opened!.cursor) || 0 : after) as Json | null;
   if (!state) return null;
-  const all = Array.isArray(state.events) ? state.events : [];
+  const main = typeof state.sessionId === 'string' ? state.sessionId : '';
+  const own = (e: unknown) => sessionOf(e as Ev, main) === main;
+  const fresh = (Array.isArray(state.events) ? state.events : []).filter(own).map((e) => clipEvent(e as Ev));
+  const all = paged && !state.reset ? [...(opened!.events as unknown[]), ...fresh] : fresh; // reset: another numbering, all again
   const n = Math.max(1, Math.min(MAX_TAIL, Math.trunc(tail) || DEFAULT_TAIL));
   const events = all.slice(-n);
   const attention = obj(state.attention);
@@ -623,7 +636,7 @@ export async function chatPayload(
     cursor: Number(state.cursor) || 0,
     reset: !!state.reset,
     firstSeq: Number(obj(events[0]).seq) || 0,
-    truncated: all.length > events.length,
+    truncated: all.length > events.length || (paged && !!opened!.more),
     helpers: helpersOf(state.subagents),
     waiting,
     ready: !!state.ready && !state.readOnly && !state.rebuilding && !state.closed,

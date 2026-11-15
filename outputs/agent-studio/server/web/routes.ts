@@ -94,6 +94,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
+  ['GET', '/api/live/events', 'read', 'get'], // history loading: one page of a chat's events (event_pages.ts)
+  ['GET', '/api/live/event', 'read', 'get'], // one event whole (a clipped tool output's full text)
   ['POST', '/api/live/allow/answer', 'write', 'body'], // allow rules: page session only (server/allow; no MCP tool, no phone route)
   ['POST', '/api/live/allow/rules', 'write', 'body'],
   ['POST', '/api/live/allow/remove', 'write', 'body'],

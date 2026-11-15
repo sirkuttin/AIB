@@ -1981,13 +1981,42 @@
       (c.elsewhere && c.elsewhere.working)
     );
   }
-  function liveRows(session, evs = events, snap = snapshot, uncapped = false, keepFrom = 0) {
+  /* edge (history loading): the server's boundary state when evs does not start at the chat's first event (server/acp/
+     event_pages.ts edgeAt): the turn index and per-call use counts there, the calls opened before it that these events update (drawn
+     at the top with the call's own id until the older page arrives and the call joins its place), and withdrawn ask keys. */
+  function liveRows(session, evs = events, snap = snapshot, uncapped = false, keepFrom = 0, edge = null) {
     const rows = [],
       tools = new Map(), // toolCallId -> {row, turn}
       uses = new Map(), // toolCallId -> how many calls used it
       asks = new Map(); // approval / question key -> its record row
     let turn = 0,
       at = -1;
+    if (edge) {
+      turn = Number(edge.turn) || 0;
+      for (const [k, n] of Object.entries(edge.uses || {})) uses.set(k, n);
+      const touched = new Set();
+      for (const e of evs) {
+        const u = e.kind === 'update' && (e.data?.sessionId || snap?.sessionId) === session ? e.data.update || {} : {};
+        if (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update') touched.add(u.toolCallId);
+      }
+      for (const t of edge.tools || []) {
+        if (!touched.has(t.key)) continue;
+        const raw = t.raw || {},
+          row = {
+            role: 'tool',
+            label: (raw.title || t.key) + ' · ' + (raw.status || 'started'),
+            value: JSON.stringify(raw, null, 2).slice(0, 40000),
+            time: t.time,
+            raw,
+            rid: 'L:' + t.seq,
+          };
+        if (t.uses > 1) row.uid = t.key + '#' + t.uses;
+        if (t.rev) row.rev = t.rev;
+        tools.set(t.key, { row, turn: t.turn });
+        rows.push(row);
+      }
+    }
+    const gone = new Set((edge && edge.withdrawn) || []);
     for (const event of evs) {
       at++;
       /* every row carries a stable id: 'L:' + the event number of its first event (a merged message keeps its first chunk's,
@@ -2085,6 +2114,7 @@
             params: event.data.params || {},
             time: event.replay ? 0 : event.time,
           };
+          if (gone.has(key)) row.withdrawn = true;
           asks.set(key, row);
           rows.push(row);
         }

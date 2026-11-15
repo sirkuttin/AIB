@@ -32,6 +32,7 @@ import {
   withModelsOption,
 } from './breadth.ts';
 import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
+import { arraySource, type Ev, type EventSource } from './event_pages.ts';
 import { MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
 import { killVerified, type ProcId } from '../platform/kill_verified.ts';
 import { type AuthMethod, describeAuthMethods, isAuthRequired, PromptStateUnknown, RpcError } from './rpc_errors.ts';
@@ -2007,6 +2008,24 @@ export class Connection {
       return this.channel.sendNote(note).then(() => this.caps.dispatch(message));
     }
     return this.caps.dispatch(message);
+  }
+
+  /**
+   * History pages (event_pages.ts): seqs up to here keep their number across a host restart (saved with the last snapshot); above
+   * it a rebuild may number Studio's own events differently. A chat outside the keeper is not rebuilt: every seq is stable.
+   */
+  get stableSeq(): number {
+    return this.channel ? Math.min(this.#eventsSaved, this.sequence) : this.sequence;
+  }
+
+  /** This chat's events as an event_pages.ts source (the in-memory array today; the history store in phase 2). */
+  pageSource(): EventSource {
+    return arraySource(this.events as Ev[], {
+      eventsId: this.eventsId,
+      cursor: this.sequence,
+      stable: this.stableSeq,
+      mainSession: this.sessionId ?? '',
+    });
   }
 
   /** Returncode once the agent exited (Popen.poll()). */
