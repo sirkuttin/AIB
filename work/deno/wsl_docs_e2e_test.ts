@@ -13,7 +13,7 @@
  * Everything is inside AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>; the fake agent is work/fake_acp.py; never the owner's homes.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
+import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T, WSL_E2E } from './_wsl_e2e.ts';
 import { UserClient } from './_docs.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
@@ -30,7 +30,8 @@ type Json = Record<string, unknown>;
 type Entry = { command: string; args: string[]; env: { name: string; value: string }[] };
 
 const PROJECT = `${ROOT}/repo`;
-const REF = refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT });
+// Only built when the distro is there: refOf throws on the empty name the ignored run has.
+const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';
 
 function studioIn(state: string): Studio {
   const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null }, { keeper: null });
