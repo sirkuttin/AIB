@@ -18,7 +18,7 @@
 import * as osp from '../../platform/ospath.ts';
 import { commandList, commandOutput, handleGet } from '../../transcripts/monitor.ts';
 import type { Store } from '../../transcripts/store.ts';
-import { fetchProcesses, OwnershipProbe, type ProcInfo, ProcessSource } from '../../ownership/probe.ts';
+import { fetchProcesses, fetchProcessesPs, OwnershipProbe, type ProcInfo, ProcessSource } from '../../ownership/probe.ts';
 import { findExternalOwner } from '../../ownership/ownership.ts';
 import { descendants, refreshDescendants } from '../../platform/descendants.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
@@ -53,42 +53,57 @@ function readComm(pid: number): string {
   }
 }
 
-/** The distro's processes as the ownership probe reads them (probe.ts fetchProcesses over /proc), named by agentNamed. */
-export function distroProcesses(): ProcInfo[] {
-  return fetchProcesses().map((p) => agentNamed(p));
-}
-
-/** [[pid, name]] of the processes that have `path` open (their /proc/<pid>/fd links), or null when /proc cannot be read. */
-export function openHolders(path: string): [number, string][] | null {
-  let entries: Deno.DirEntry[];
+/** A fixed shell script run without a shell string (its inputs are "$@"); stdout, or null when it could not run. */
+function sh(script: string, args: string[]): string | null {
   try {
-    entries = [...Deno.readDirSync('/proc')];
+    const done = new Deno.Command('/bin/sh', { args: ['-c', script, 'sh', ...args], stdin: 'null', stdout: 'piped', stderr: 'null' }).outputSync();
+    return new TextDecoder().decode(done.stdout);
   } catch {
     return null;
   }
-  const out: [number, string][] = [];
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry.name)) continue;
-    let fds: Deno.DirEntry[];
-    try {
-      fds = [...Deno.readDirSync(`/proc/${entry.name}/fd`)];
-    } catch {
-      continue; // another user's process, or it ended
-    }
-    for (const fd of fds) {
-      let target = '';
-      try {
-        target = Deno.readLinkSync(`/proc/${entry.name}/fd/${fd.name}`);
-      } catch {
-        continue;
-      }
-      if (target === path) {
-        out.push([Number(entry.name), readComm(Number(entry.name)) || 'a process']);
-        break;
-      }
-    }
+}
+
+/**
+ * The distro's processes as the ownership probe reads them, named by agentNamed. The compiled helper may not read /proc itself (Deno
+ * wants --allow-all for /proc, and the helper is built without it: tools/build.ts helperCompileArgs), so this is probe.ts's `ps`
+ * reader (fetchProcessesPs: names, and the command lines of agent-like programs) plus, for those, their folder from
+ * /proc/<pid>/cwd read by `readlink` (one shell for all). In an unrestricted process (tests, `deno run -A`) /proc is read directly.
+ */
+export function distroProcesses(): ProcInfo[] {
+  let procs: ProcInfo[];
+  try {
+    procs = fetchProcesses();
+  } catch {
+    procs = fetchProcessesPs();
+    const wanted = procs.filter((p) => p.cmdline).map((p) => String(p.pid)).slice(0, 2000);
+    const out = wanted.length ? sh('for p; do printf "%s\\t%s\\n" "$p" "$(readlink "/proc/$p/cwd" 2>/dev/null)"; done', wanted) : '';
+    const cwd = new Map((out ?? '').split('\n').map((l) => l.split('\t')).filter((x) => x.length === 2 && x[1]).map(([p, c]) => [Number(p), c]));
+    procs = procs.map((p) => (cwd.has(p.pid) ? { ...p, cwd: cwd.get(p.pid)! } : p));
   }
-  return out;
+  return procs.map((p) => agentNamed(p));
+}
+
+/** `path` as a find(1) -lname pattern: the glob characters escaped. */
+function globLiteral(path: string): string {
+  return path.replace(/[\\*?[\]]/g, (c) => '\\' + c);
+}
+
+/**
+ * [[pid, name]] of the processes of this user that have `path` open (a /proc/<pid>/fd link to it), or null when that cannot be read.
+ * One `find` over /proc (see distroProcesses for why not Deno's own reads).
+ */
+export function openHolders(path: string): [number, string][] | null {
+  const out = sh(
+    'find /proc/[0-9]*/fd -maxdepth 1 -lname "$1" 2>/dev/null | while read -r f; do p=${f#/proc/}; p=${p%%/*}; printf "%s\\t%s\\n" "$p" "$(cat "/proc/$p/comm" 2>/dev/null)"; done',
+    [globLiteral(path)],
+  );
+  if (out === null) return null;
+  const seen = new Map<number, string>();
+  for (const line of out.split('\n')) {
+    const [pid, name] = line.split('\t');
+    if (/^\d+$/.test(pid ?? '') && !seen.has(Number(pid))) seen.set(Number(pid), (name ?? '').trim() || 'a process');
+  }
+  return [...seen];
 }
 
 function pidList(params: Record<string, unknown>, key: string, max: number): number[] {
