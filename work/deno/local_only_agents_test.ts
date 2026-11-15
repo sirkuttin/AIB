@@ -148,6 +148,7 @@ Deno.test({
     const made = host.received('session/new');
     assertEquals(made.length, 1);
     assertEquals(made[0].additionalDirectories, [privateDir, c.scratchDir], 'and the scratch folder of the chat (allow rules), outside the worktree');
+    assert(systemTexts(made[0]).some((t) => t.includes('House rules from AIB') && t.includes(c.scratchDir!)), 'the brief has the literal scratch path');
     const note = systemTexts(made[0]).at(-1)!;
     assert(note.includes(privateDir) && note.includes('not in this copy'), note);
     const sessionId = c.sessionId!;

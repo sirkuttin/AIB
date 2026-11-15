@@ -6,6 +6,7 @@
 import { join } from 'node:path';
 import { type Draft, match, type MatchContext, type MatchResult, ruleFor } from './matcher.ts';
 import { AllowStore, DecisionLog } from './store.ts';
+import { claudeFacts } from './agent_config.ts';
 
 export class AllowGate {
   readonly store: AllowStore;
@@ -27,7 +28,7 @@ export class AllowGate {
   decide(params: unknown, ctx: MatchContext): MatchResult {
     const active = this.store.active();
     if (!active) return { allow: false, reason: this.store.tampered ? 'rules changed outside AIB' : 'rules are off' };
-    return match(params, ctx, active.rules, active.builtins);
+    return match(params, this.#withFacts(ctx), active.rules, active.builtins);
   }
 
   /** The card's Always choice, for both scopes. */
@@ -35,6 +36,17 @@ export class AllowGate {
     const pub = this.store.public();
     const builtins = pub.builtins as { safeReads: boolean; syntax: boolean; scratch: boolean };
     const off = pub.tampered ? 'Allow rules are off: the rules file was changed outside AIB. Review them in Settings.' : pub.enabled ? '' : 'Allow rules are switched off in Settings.';
-    return { project: ruleFor(params, ctx, 'project', builtins), global: ruleFor(params, ctx, 'global', builtins), off };
+    const full = this.#withFacts(ctx);
+    return { project: ruleFor(params, full, 'project', builtins), global: ruleFor(params, full, 'global', builtins), off };
+  }
+
+  /** Claude chats: its own ask rules and env blocks (agent_config.ts). */
+  #withFacts(ctx: MatchContext): MatchContext {
+    if (ctx.facts !== undefined || ctx.provider !== 'claude') return ctx;
+    try {
+      return { ...ctx, facts: claudeFacts(ctx.cwd) };
+    } catch {
+      return { ...ctx, facts: { askPrograms: new Set(['*']), riskyEnv: '' } }; // unreadable: ask (fail closed)
+    }
   }
 }

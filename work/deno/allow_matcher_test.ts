@@ -230,3 +230,29 @@ Deno.test('allow: the decision log survives a restart', () => {
     Deno.removeSync(dir, { recursive: true });
   }
 });
+
+Deno.test('allow: Claude ask rules and a risky env block (review 4.2, 2.7)', async () => {
+  using l = lab();
+  const { claudeFacts } = await import('../../outputs/agent-studio/server/allow/agent_config.ts');
+  const home = join(l.base, 'claude-home');
+  Deno.mkdirSync(home);
+  Deno.writeTextFileSync(join(home, 'settings.json'), JSON.stringify({ permissions: { ask: ['Bash(git log:*)', 'Read(x)'] } }));
+  const before = Deno.env.get('CLAUDE_CONFIG_DIR');
+  Deno.env.set('CLAUDE_CONFIG_DIR', home);
+  try {
+    let facts = claudeFacts(l.project);
+    assert(facts.askPrograms.has('git') && facts.riskyEnv === '', JSON.stringify([...facts.askPrograms]));
+    assert(!match(bash('git log -n 3'), l.ctx({ facts }), [], ALL).allow, 'an ask rule names git');
+    assert(match(bash('ls src'), l.ctx({ facts }), [], ALL).allow, 'other programs still match');
+    const d = ruleFor(bash('git log -n 3 && npm test'), l.ctx({ facts }), 'project', ALL);
+    assert(!d.available && d.reason.includes('git'), d.reason);
+    Deno.mkdirSync(join(l.project, '.claude'));
+    Deno.writeTextFileSync(join(l.project, '.claude', 'settings.json'), JSON.stringify({ env: { PATH: 'C:\evil' } }));
+    facts = claudeFacts(l.project);
+    assert(facts.riskyEnv.includes('PATH'), facts.riskyEnv);
+    assert(!match(bash('ls src'), l.ctx({ facts }), [], ALL).allow, 'rules off for this chat');
+  } finally {
+    if (before === undefined) Deno.env.delete('CLAUDE_CONFIG_DIR');
+    else Deno.env.set('CLAUDE_CONFIG_DIR', before);
+  }
+});

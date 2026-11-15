@@ -9,6 +9,7 @@
  * JSON keys, event kinds and error messages are Python's word for word: they reach the page through the host RPC.
  */
 import type { AllowGate } from '../allow/gate.ts';
+import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
@@ -4535,7 +4536,8 @@ export class Connection {
   artifactPrompt(servers: unknown[] | null): Json {
     const own = (servers ?? []).some(isOwnArtifactEntry);
     const local = this.localOnlyText();
-    if (!own && !local) return {};
+    const brief = this.scratchDir ? houseRules(this.scratchDir) : ''; // allow rules: the house rules with the literal scratch path
+    if (!own && !local && !brief) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
     if (isDict(this.#sessionCaps()?.systemPrompt)) {
@@ -4548,6 +4550,7 @@ export class Connection {
             .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
+      if (brief) content.push({ type: 'text', text: brief });
       if (local) content.push({ type: 'text', text: local });
       out.systemPrompt = { mode: 'append', content };
     }

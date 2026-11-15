@@ -71,6 +71,8 @@ export interface MatchContext {
   stateDir: string | null;
   /** Time limit in ms (default 150). */
   limitMs?: number;
+  /** What the agent's own settings say (agent_config.ts): its ask rules and a risky env block. */
+  facts?: { askPrograms: Set<string>; riskyEnv: string } | null;
 }
 
 export type Request =
@@ -202,6 +204,7 @@ function partContext(ctx: MatchContext, cwd: string, shell: 'bash' | 'pwsh'): Pa
 }
 
 function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], builtins: Builtins, tick: () => void): MatchResult {
+  if (ctx.facts?.riskyEnv) return { allow: false, reason: `rules are off for this chat: ${ctx.facts.riskyEnv}` };
   const req = readRequest(params, ctx);
   const here = rulesHere(rules, ctx.project);
   const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
@@ -261,6 +264,8 @@ function matchPart(
   mode: { flagged: boolean; codexSandboxed: boolean },
   tick: () => void,
 ): { id: string; label: string } | null {
+  const asked = ctx.facts?.askPrograms;
+  if (asked && (asked.has('*') || asked.has(programName(part.words[0])))) return null; // the agent's own ask rule names it (review 4.2)
   if (builtins.scratch && !mode.codexSandboxed && !scratchWrite(part, pctx)) return BUILTIN.scratch;
   if (builtins.syntax && !mode.codexSandboxed && !syntaxCheck(part, pctx)) return BUILTIN.syntax;
   if (mode.flagged) return null; // bypass: only Scratch and Syntax checks may answer what Claude flagged
@@ -340,6 +345,7 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   const where = scope === 'project' ? `in ${projectName(ctx.project)}` : 'everywhere';
   const base = { scope, ...(scope === 'project' ? { project: resolve(ctx.project) } : {}) } as const;
   if (req.kind === 'special') return { ...no(''), offer: false, hideAgentAlways: false };
+  if (ctx.facts?.riskyEnv) return no(`Not available: allow rules are off for this chat because ${ctx.facts.riskyEnv}.`);
   if (req.kind === 'unknown') return no(`Not available: ${req.reason}.`, false, false);
   const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
   if (flagged) return no('Not available: Claude flagged this request in bypass mode; your rules never answer those.');
@@ -397,6 +403,10 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   const rules: Draft['rules'] = [];
   const previews: string[] = [];
   for (const part of parsed.parts) {
+    const asked = ctx.facts?.askPrograms;
+    if (asked && (asked.has('*') || asked.has(programName(part.words[0])))) {
+      return no(`Not available: your Claude settings say to always ask before ${asked.has('*') ? 'shell commands' : programName(part.words[0])}.`);
+    }
     if (builtins.scratch && !scratchWrite(part, pctx)) continue;
     if (builtins.syntax && !syntaxCheck(part, pctx)) continue;
     const never = neverPart(part, pctx);
