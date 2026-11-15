@@ -67,6 +67,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp-forward" {
 		os.Exit(mcpForwardMain(os.Args[2:])) // design 3.7: never part of a serving keeper (mcpforward.go)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp-relay" {
+		os.Exit(mcpRelayMain(os.Args[2:])) // WSL: the MCP tunnel's socket, run by the WSL helper (mcprelay.go)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "bridge" {
 		os.Exit(bridgeMain(os.Args[2:])) // WSL: the stdio end of this distro's keeper (bridge.go)
 	}

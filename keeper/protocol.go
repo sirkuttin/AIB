@@ -40,7 +40,8 @@ const (
 // 1.3.0: the `hold` op (feature `hold`): no orphan restart until a client claims or spawns; mcp-forward answers at once while
 // AIB is closed.
 // 1.4.0: the `bridge` subcommand (WSL: stdio to this data folder's keeper, `--hold` keep-alive) and `serve --unix-only`.
-var keeperVersion = "1.4.0"
+// 1.5.0: WSL MCP tunnel: `mcp-forward --helper-socket <socket>` and the `mcp-relay --socket <socket>` subcommand (no protocol change).
+var keeperVersion = "1.5.0"
 
 // features are advertised in hello. Additions only.
 var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels", "hold"}
