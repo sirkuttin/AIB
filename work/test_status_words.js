@@ -1,6 +1,6 @@
 'use strict';
 const { APP: APP_DIR } = require('./_paths');
-// The shared status vocabulary: Working · <time>, Your turn, Needs you, Idle, Ready, Elsewhere · Working / Idle, Reconnecting….
+// The shared status vocabulary: Working · <time>, Your turn, Needs you, Ready, Elsewhere · Working / Ready, Reconnecting….
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const path = require('node:path');
@@ -19,7 +19,7 @@ test('every state has the agreed words, a tone and a dot', () => {
     ],
     [{ connected: true, yourTurn: true }, 'your-turn', 'Your turn', 'turn', 'd-turn'],
     [{ connected: true, needs: 1 }, 'needs', 'Needs you', 'need', 'd-need'],
-    [{ connected: true }, 'idle', 'Idle', 'idle', 'd-idle'],
+    [{ connected: true }, 'idle', 'Ready', 'idle', 'd-idle'],
     [{}, 'not-running', 'Ready', 'off', 'd-off'],
     [
       { verdict: 'owned_elsewhere', elsewhereWorking: true },
@@ -28,7 +28,7 @@ test('every state has the agreed words, a tone and a dot', () => {
       'else-work',
       'd-else-work',
     ],
-    [{ verdict: 'possibly_active' }, 'elsewhere-idle', 'Elsewhere · Idle', 'else', 'd-else'],
+    [{ verdict: 'possibly_active' }, 'elsewhere-idle', 'Elsewhere · Ready', 'else', 'd-else'],
     [{ connected: true, issue: true }, 'reconnecting', 'Reconnecting…', 'idle', 'd-idle'],
   ];
   for (const [facts, kind, label, tone, dot] of rows) {
@@ -56,7 +56,7 @@ test('Reconnecting shows while a recovered chat is being reconnected, and stops 
     const r = s(f);
     assert.deepEqual([r.kind, r.label], ['reconnecting', 'Reconnecting…']);
   }
-  assert.equal(s({ reconnecting: true, connected: true }).label, 'Idle');
+  assert.equal(s({ reconnecting: true, connected: true }).label, 'Ready');
   assert.equal(s({ reconnecting: true, connected: true, yourTurn: true }).label, 'Your turn');
   assert.equal(s({ recovered: true }).label, 'Ready');
 });
@@ -142,7 +142,7 @@ test('conversation.elsewhere {working, confirmed, verdict} maps to Elsewhere wor
   );
   assert.equal(
     s({ elsewhere: { working: false, confirmed: true, verdict: 'owned_elsewhere' } }).label,
-    'Elsewhere \u00B7 Idle',
+    'Elsewhere \u00B7 Ready',
   );
   assert.equal(s({ connected: true, elsewhere: { working: true, verdict: 'owned_elsewhere' } }).kind, 'idle');
 });
@@ -165,7 +165,7 @@ test('a chat the reopen after a restart gave up on says so, with the reason in t
   assert.ok(r.title.includes('could not reopen it after the restart: Ubuntu stopped. Reconnect'), r.title);
   assert.ok(r.title.includes('Send a message to try again'), r.title);
   assert.ok(s({ reconnectError: '' }).title.startsWith('AIB could not reopen it after the restart.'));
-  assert.equal(s({ connected: true, reconnectError: 'x' }).label, 'Idle', 'a running chat is not "could not reopen"');
+  assert.equal(s({ connected: true, reconnectError: 'x' }).label, 'Ready', 'a running chat is not "could not reopen"');
   assert.equal(s({}).label, 'Ready', 'no reason, no change');
 });
 

@@ -1023,3 +1023,24 @@ test('panel: the Undo note stays 10 s (5 s without Undo) and is held while the p
   assert.equal(note.hidden, true);
   assert.equal(note.querySelector('.ar-note-undo').hidden, true);
 });
+
+test('panel: each chat keeps the artifact it showed; back on that chat the viewer shows it again (owner 2026-11-15)', async () => {
+  const p = panel({
+    '/api/live/artifacts?': (url) =>
+      url.includes('c1') ? { artifacts: [sum({ id: 'a', title: 'A', updatedAt: 2 }), sum({ id: 'b', title: 'B', updatedAt: 1 })] } : { artifacts: [] },
+    '/api/live/artifacts/item': { versions: [{ n: 1 }] },
+  });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.setVisible(true);
+  await p.flush();
+  assert.equal(p.UI.state().selId, 'a', 'the newest shows first');
+  await p.UI.open('b');
+  await p.flush();
+  assert.equal(p.UI.state().selId, 'b');
+  p.UI.sync({ id: 'c2', busy: false, cwd: '' });
+  await p.flush();
+  assert.equal(p.UI.state().selId, '');
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  await p.flush();
+  assert.equal(p.UI.state().selId, 'b', 'B, the one you left c1 on');
+});

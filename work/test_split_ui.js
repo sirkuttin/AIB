@@ -20,7 +20,7 @@ function setup({ width = 1400, store = {}, tabs = ['a', 'b'], selected = 'a' } =
     },
     convOf: (key) => (TITLES[key] ? { key, title: TITLES[key], provider: 'claude' } : null),
     titleOf: (c) => c.title,
-    statusText: () => ({ text: 'Idle', tone: 'idle' }),
+    statusText: () => ({ text: 'Ready', tone: 'idle' }),
     draftOf: () => '',
     agentName: () => 'Claude Code',
     dotFor: () => null,
@@ -105,7 +105,7 @@ test('the unfocused pane shows a read-only copy of its chat with title and statu
   assert.equal(mirrors.length, 1, 'one mirror, for the pane that is not focused');
   const title = mirrors[0].querySelector('.mirror-title').textContent;
   assert.ok(Object.values(TITLES).includes(title), title);
-  assert.equal(mirrors[0].querySelector('.mirror-status').textContent, 'Idle');
+  assert.equal(mirrors[0].querySelector('.mirror-status').textContent, 'Ready');
   assert.equal(t.S.mirrorTargets().length, 1);
 });
 

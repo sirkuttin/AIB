@@ -70,10 +70,11 @@
       aMin = sc(ACT.min, k),
       aMax = sc(ACT.max, k);
     let side = sideOn ? clamp(num(o.side) ? o.side : sc(DEF.side, k), sMin, sMax) : 0;
-    /* A doc or artifact showing in the right column: its own width (default 920, where a doc shows its page list), kept apart
-       from the normal one, and never narrower than the column you already had. */
+    /* One width for the right column, whatever it shows (Activity, Changes, a doc or an artifact) and whichever chat is open:
+       only your own drag changes it (owner, 2026-11-15: switching from a chat showing an artifact to one showing Activity made
+       the column narrower). o.viewer / o.viewerW are ignored; the 920 px viewer width is gone. */
     const normal = clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax),
-      user = o.viewer ? Math.max(normal, clamp(num(o.viewerW) ? o.viewerW : sc(DEF.viewer, k), aMin, aMax)) : normal;
+      user = normal;
     let act = actOn ? user : 0;
     const over = side + act + minChat - vw;
     if (over > 0) {
@@ -261,7 +262,7 @@
         if (rootEl.style.getPropertyValue(k) !== v) rootEl.style.setProperty(k, v);
       };
       set('--side-w', eff.side + 'px');
-      set('--activity-w', (actOn ? eff.activity : (viewing() ? sizes.viewer || sc(DEF.viewer, k) : sizes.activity || sc(DEF.activity, k))) + 'px');
+      set('--activity-w', (actOn ? eff.activity : sizes.activity || sc(DEF.activity, k)) + 'px');
       body.classList.toggle('side-off', wideSide() && sideHidden);
       const vh = win.innerHeight / chatK(),
         ch = num(sizes.composer) ? clampComposer(sizes.composer, vh) : null;
@@ -351,7 +352,7 @@
         inverted: true,
         collapsible: true,
         get def() {
-          return sc(viewing() ? DEF.viewer : DEF.activity, uiK());
+          return sc(DEF.activity, uiK());
         },
         min: () => sc(ACT.min, uiK()),
         max: () => maxActivity(win.innerWidth, eff.side, uiK(), splitFloor()),
@@ -362,12 +363,12 @@
           if (r.collapsed) setActHidden(true);
           else {
             setActHidden(false);
-            sizes[viewing() ? 'viewer' : 'activity'] = r.size;
+            sizes.activity = r.size;
           }
         },
         reset() {
           setActHidden(false);
-          sizes[viewing() ? 'viewer' : 'activity'] = null;
+          sizes.activity = null;
         },
         toggle: () => setActHidden(!actHidden()),
         available: () => wideAct() && (!actHidden() || !!(dragging && dragging.id === 'activity')),

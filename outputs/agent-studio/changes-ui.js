@@ -343,6 +343,9 @@
       MIN_GAP = 1200;
     let state = { tab: 'activity', expanded: false };
     let chat = { id: '', busy: false };
+    /* The tab each chat last showed (Activity / Changes / Artifacts), for this run of the app: coming back to a chat shows the tab
+       you left it on (owner, 2026-11-15: back from another chat, Artifacts had turned into Activity). */
+    const tabOf = new Map();
     let data = null,
       loadedFor = '',
       error = '',
@@ -1070,7 +1073,8 @@
         busy = !!(ctx && ctx.busy),
         discarded = !!(ctx && ctx.discarded),
         mergeBlocked = ctx && typeof ctx.mergeBlocked === 'string' ? ctx.mergeBlocked : '';
-      const changed = id !== chat.id,
+      const prevId = chat.id,
+        changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy),
         gone = discarded && !chat.discarded && !changed;
       chat = { id, busy, discarded, mergeBlocked };
@@ -1093,10 +1097,14 @@
         autoOpened = false;
         listSig = '';
         lastFetch = 0;
+        if (prevId) tabOf.set(prevId, state.tab);
+        const back = id ? tabOf.get(id) : '';
         state = tabState(state, { type: 'reset' });
+        if (back && back !== 'activity') state = tabState(state, { type: 'show', tab: back });
         apply();
         paintAll();
         if (id) load(true);
+        if (state.tab === 'artifacts' && AR()) AR().shown();
       } else if (ended && id) load(true);
       schedule();
     }

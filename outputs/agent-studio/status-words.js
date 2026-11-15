@@ -1,7 +1,9 @@
 (function (root) {
   'use strict';
   // The ONE status vocabulary (docs/design/review-decisions.html, "Status words, the same everywhere"):
-  //   Working · 4m   Your turn   Needs you   Idle   Ready   Elsewhere · Working / Elsewhere · Idle   Reconnecting…
+  //   Working · 4m   Your turn   Needs you   Ready   Elsewhere · Working / Elsewhere · Ready   Reconnecting…
+  // "Ready" is two kinds that share the word: connected with nothing pending (grey ring) and no agent attached (open dot);
+  // both mean "send a message". The kinds (idle / not-running) and dots stay apart.
   // statusOf(facts) maps what a caller knows about a conversation to {kind, label, tone, dotClass, title, detail}.
   // The header chip, the composer turn line and the sidebar card phrase all call it, so the words cannot drift.
   // Pure: no DOM, no clock except facts.now, no network.
@@ -88,7 +90,7 @@
         );
       if (f.background) return make('working', 'Working', 'The reply is done; a command it started still runs. You can send now.');
       if (f.yourTurn) return make('your-turn', 'Your turn', 'It finished and is waiting for you. Shows in the inbox.');
-      return make('idle', 'Idle', 'Connected, nothing pending.');
+      return make('idle', 'Ready', 'Connected and ready for your next message.');
     }
     if (f.opening) return make('opening', 'Opening…', 'AIB is starting the agent.');
     // conversation.elsewhere = {working, confirmed, verdict} (steady, set by the ownership code) beats raw verdict facts.
@@ -98,7 +100,7 @@
         ? make('elsewhere-working', 'Elsewhere · Working', 'Another app is running it. Read-only here.')
         : make(
             'elsewhere-idle',
-            'Elsewhere · Idle',
+            'Elsewhere · Ready',
             'Another app has this open but is not working right now. Read-only here.',
           );
     }
@@ -131,7 +133,7 @@
   }
 
   // Is the other app visibly working? hint.working (when the ownership code sets it) wins; otherwise recent transcript
-  // writes count as work. A hint with only weak or old evidence stays "Idle".
+  // writes count as work. A hint with only weak or old evidence stays "Ready".
   function elsewhereWorking(hint) {
     if (!hint) return false;
     if (typeof hint.working === 'boolean') return hint.working;

@@ -189,7 +189,7 @@ async function waitViewing(page: Page, on: boolean) {
 // Worse, the click on "Open" / the link was inside #messages, and its "you opened something near the bottom" check saw the gap
 // grow and paused following as if you had scrolled up.
 
-layoutTest('L1a following, click "Open doc" on a doc card: the right column widens and the chat stays at the bottom, following', async (lab) => {
+layoutTest('L1a following, click "Open doc" on a doc card: the right column keeps its width and the chat stays at the bottom, following', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab);
   await agentMakesDoc(lab, chat, 'Release plan');
@@ -200,7 +200,7 @@ layoutTest('L1a following, click "Open doc" on a doc card: the right column wide
   await clickHere(page, '#messages .doc-card .art-btn');
   await waitViewing(page, true);
   const w1 = await css(page, '--activity-w');
-  assert(w1 > w0 + 200, `the right column widened: ${w0} -> ${w1}`);
+  assert(Math.abs(w1 - w0) <= 1, `the right column keeps its width (owner 2026-11-15: one width): ${w0} -> ${w1}`);
   const after = await m(page);
   assert(!following(after), `after opening the doc: ${following(after)} (scrollTop ${before.top} -> ${after.top}, scrollHeight ${before.height} -> ${after.height})`);
   // and it keeps following: the next update stays in view
@@ -649,7 +649,9 @@ layoutTest('L4a chat list handle: drags within 200..480 px, the width survives a
   assert(!bad.length, bad.join('; '));
 });
 
-layoutTest('L4b right column handle: the chat keeps 420 px; the viewer width is kept apart from the normal one and survives a reload', async (lab) => {
+// Owner, 2026-11-15: the right column has ONE width. A doc or artifact showing, a tab switch or a chat switch never changes it;
+// only your drag does (the 1310 px chat cap may still widen it on a wide window).
+layoutTest('L4b right column handle: the chat keeps 420 px; one width for Activity and the viewer, kept after a reload', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab, 4);
   await dragHandle(page, 'rs-activity', -3000);
@@ -664,19 +666,43 @@ layoutTest('L4b right column handle: the chat keeps 420 px; the viewer width is 
   await clickHere(page, `#messages a.artifact-link[data-artifact-id="${id}"]`);
   await waitViewing(page, true);
   const v0 = await css(page, '--activity-w');
+  assert(Math.abs(v0 - normal) <= 1, `an artifact showing keeps the width: ${normal} -> ${v0}`);
   await dragHandle(page, 'rs-activity', v0 - 700);
   const v1 = await css(page, '--activity-w');
-  assert(Math.abs(v1 - 700) <= 3, `viewer dragged to 700: ${v0} -> ${v1}`);
+  assert(Math.abs(v1 - 700) <= 3, `dragged to 700 while viewing: ${v0} -> ${v1}`);
   await clickHere(page, '#paneTab-activity');
   await waitViewing(page, false);
   const back = await css(page, '--activity-w');
-  assert(Math.abs(back - normal) <= 1, `the normal width is untouched by the viewer drag: ${normal} -> ${back}`);
+  assert(Math.abs(back - v1) <= 1, `Activity keeps the width you set: ${v1} -> ${back}`);
   await reload(lab, chat);
+  const v2 = await css(page, '--activity-w');
+  assert(Math.abs(v2 - v1) <= 3, `the width is kept after a reload: ${v2}`);
+  chat.end();
+});
+
+layoutTest('L4e switching from a chat showing an artifact to one showing Activity (and back) never changes the right column width', async (lab) => {
+  const page = lab.page;
+  const b = await openSeeded(lab, 4);
+  const a = await openSeeded(lab, 4);
+  const id = await agentPublishes(lab, a, 'Switch page', 'SWITCHPAGE');
   await clickHere(page, `#messages a.artifact-link[data-artifact-id="${id}"]`);
   await waitViewing(page, true);
-  const v2 = await css(page, '--activity-w');
-  assert(Math.abs(v2 - 700) <= 3, `viewer width kept after a reload: ${v2}`);
-  chat.end();
+  const w0 = await css(page, '--activity-w');
+  const widths: number[] = [];
+  await page.eval(`(() => { const w = (window.__actW = []); const t = () => { w.push(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--activity-w')) || 0); if (w.length < 2000 && !window.__actStop) requestAnimationFrame(t); }; requestAnimationFrame(t); })()`);
+  await lab.select(b);
+  await settle(1500);
+  assert(!(await viewing(page)), 'the other chat shows Activity');
+  widths.push(await css(page, '--activity-w'));
+  await lab.select(a);
+  await settle(1500);
+  widths.push(await css(page, '--activity-w'));
+  const frames = await page.eval<number[]>(`(() => { window.__actStop = true; return window.__actW; })()`);
+  assert(widths.every((w) => Math.abs(w - w0) <= 1), `the width after each switch: ${w0} -> ${widths.join(', ')}`);
+  const off = frames.filter((w) => Math.abs(w - w0) > 1);
+  assert(!off.length, `frames with another width (${off.length} of ${frames.length}): ${[...new Set(off)].slice(0, 6).join(', ')}`);
+  a.end();
+  b.end();
 });
 
 // Fails today: dragging the message box up as far as it goes leaves the chat list 36 px tall (box 700 px in a 900 px window).

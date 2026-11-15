@@ -456,7 +456,7 @@ const att = (state, extra = {}) => live({ attention: Object.assign({ state, need
 test('phrase: live states use the shared status words', () => {
   assert.equal(phraseOf(conv('a', 'C:\\x'), {}).text, 'Ready');
   assert.equal(phraseOf(conv('a', 'C:\\x'), {}).title, 'No agent is attached. Send a message to start it again.');
-  assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('idle') })).text, 'Idle');
+  assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('idle') })).text, 'Ready');
   assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('opening') })).text, 'Opening\u2026');
   assert.equal(
     phraseOf(conv('a', 'C:\\x', { live: att('working') })).text,
@@ -471,7 +471,7 @@ test('phrase: live states use the shared status words', () => {
   );
   assert.equal(
     phraseOf(conv('a', 'C:\\x', { live: att('idle'), recovered: { sessionId: 'a' } })).text,
-    'Idle',
+    'Ready',
     'a live connection wins over a restart record',
   );
 });
@@ -489,7 +489,7 @@ test('phrase: the conversation yourTurn flag, when present, decides Your turn', 
         live: att('idle', { turnEndedAt: new Date(Date.now() + 1000).toISOString() }),
       }),
     ).text,
-    'Idle',
+    'Ready',
     'handled: not your turn any more',
   );
   assert.equal(
@@ -538,7 +538,7 @@ test('phrase: ownership verdicts become Elsewhere; Studio ownership hides them',
     reasons: [{ signal: 'announcement', text: 'Another app announced this conversation 43 seconds ago.' }],
   };
   const p = phraseOf(conv('a', 'C:\\x'), { hint: owned });
-  assert.equal(p.text, 'Elsewhere \u00B7 Idle');
+  assert.equal(p.text, 'Elsewhere \u00B7 Ready');
   assert.equal(p.tone, 'else');
   assert.ok(p.title.includes('43 seconds ago'), 'the evidence is in the tooltip');
   const writing = {
@@ -552,11 +552,11 @@ test('phrase: ownership verdicts become Elsewhere; Studio ownership hides them',
   );
   assert.equal(
     phraseOf(conv('a', 'C:\\x'), { hint: Object.assign({ working: false }, writing) }).text,
-    'Elsewhere \u00B7 Idle',
+    'Elsewhere \u00B7 Ready',
     'an explicit working flag wins',
   );
   assert.equal(phraseOf(conv('a', 'C:\\x'), { hint: { verdict: 'no_evidence', reasons: [] } }).text, 'Ready');
-  assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('idle') }), { hint: owned }).text, 'Idle');
+  assert.equal(phraseOf(conv('a', 'C:\\x', { live: att('idle') }), { hint: owned }).text, 'Ready');
 });
 
 test('phrase: restart, failure, reconnecting, agent list and just-written saves', () => {
@@ -581,7 +581,7 @@ test('phrase: restart, failure, reconnecting, agent list and just-written saves'
   });
   assert.equal(
     ctx.ui.phrase(conv('a', 'C:\\x')).text,
-    'Elsewhere \u00B7 Idle',
+    'Elsewhere \u00B7 Ready',
     'the page supplies hints through the host',
   );
 });
@@ -749,8 +749,8 @@ test('QA m6 + c6: a project heading uses the card dot classes; its unread count 
   const heads = (rows) =>
     ctx.ui.projectGroups(rows, () => ctx.document.createElement('div')).map((g) => g.all()[0].parentNode);
   const idle = heads([conv('a', 'C:\\p', { live: live() })])[0];
-  assert.equal(idle.find('status-dot')[0].className, 'status-dot d-idle', 'grey Idle ring like its card');
-  assert.equal(idle.find('status-dot')[0].attrs['aria-label'], 'Idle');
+  assert.equal(idle.find('status-dot')[0].className, 'status-dot d-idle', 'grey Ready ring like its card');
+  assert.equal(idle.find('status-dot')[0].attrs['aria-label'], 'Ready');
   const unread = heads([conv('u', 'C:\\q', { live: live({ attention: { state: 'idle', needs: 0, turnEndedAt: t0 } }) })])[0];
   assert.equal(unread.find('status-count')[0].className, 'status-count count-turn');
   const needs = heads([conv('n', 'C:\\r', { live: live({ attention: { state: 'needs_you', needs: 1 } }) })])[0];
@@ -777,7 +777,7 @@ test('QA m10: the card tooltip leads with the full title and uses the card statu
   ctx.ui.decorateRow(w, c, true);
   assert.deepEqual(b.title.split('\n'), [
     'A very long chat title that the card cuts off',
-    'Idle',
+    'Ready',
     'C:\\Repos\\App',
     'session-id',
   ]);

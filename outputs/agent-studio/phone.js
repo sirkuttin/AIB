@@ -3,7 +3,7 @@
    Owner-approved layout (phone prototypes round 3, aib-phone-prototypes.html):
    Home: ONE plain list of chat cards, newest change of state first (starts working, asks, finishes, you send; cards do not move for
    every step). No sections, no main chat. A card: title, unread dot, time, the project (its colour mark from the PC), agent, state
-   in the PC's words (Working, Needs you, Your turn, Idle, Ready), and the last line. Chats that are not running are in the
+   in the PC's words (Working, Needs you, Your turn, Ready), and the last line. Chats that are not running are in the
    same list by time, drawn lighter. "All projects ▾" filters by project (no grouping), remembered on this phone.
    Inbox (inbox prototype v3): an envelope at the top right of home, next to the project picker, with the count of chats that need
    you in every project (needs-you colour), or a teal dot when only "To review" chats wait. A tap switches between the chat list and
@@ -86,7 +86,7 @@
   }
 
   /* The status words for a chat card: {text, tone} (tone: need | work | turn | idle | nr). Same words as the PC: Needs you,
-     Working, Your turn, Idle, Ready. */
+     Working, Your turn, Ready (connected or not running). */
   function stateWords(c, now) {
     if (c && c.notRunning) return { text: 'Ready', tone: 'nr' };
     if (c.needs > 0 || c.state === 'needs_you') return { text: 'Needs you', tone: 'need' };
@@ -100,7 +100,7 @@
     }
     if (c.state === 'opening') return { text: 'Starting…', tone: 'idle' };
     if (c.phase ? c.phase === 'your_turn' : c.yourTurn) return { text: 'Your turn', tone: 'turn' };
-    return { text: 'Idle', tone: 'idle' };
+    return { text: 'Ready', tone: 'idle' };
   }
 
   /* The short time on a card: "now", "4m", "2h", "3d" since an ISO time, or ''. */
