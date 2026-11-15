@@ -407,9 +407,9 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   Settings never keeps a second), card keys are `wsl:<distro>:<agent>`, so a Windows and an Ubuntu install of Claude Code at once
   never share a job, a terminal or a card. Install / Update in Ubuntu, progress with Cancel, Install failed with Retry, and the
   Node.js line with its command to copy, all through the existing install routes. Tags: Installed by AIB (`managed`) or Your own
-  install. The chip says Found (no sign-in status yet).
-- One On/Off switch per agent, the Windows one: a distro card has no switch and says "On: uses the Windows switch in AIB Linking".
-  A Beta card in a distro (later phase) says it uses the Windows API key instead of a key box.
+  install. The chip: phase 2 below.
+- The On/Off switch: phase 2 below (each distro has its own). A Beta card in a distro (later phase) says it uses the Windows API
+  key instead of a key box.
 - Claude Code and Codex cards: when the row's `bundledCli` is true, "The standalone claude command is not needed"; otherwise the
   vendor's command to copy and its docs (owner decision 3a: AIB never installs it).
 - **Opening Settings never starts a distro**: the section reads the status poll (never starts one) and asks
@@ -417,9 +417,50 @@ drawn by `wsl-settings-ui.js` (settings-ui.js has the section, one INDEX entry `
   `force=1`). Only the Start and check click adds `start=1`. A not-ready peek answer never fills the new-chat panel's cache.
 - Links: the new-chat panel's "not installed in Ubuntu" state has **Set up Ubuntu in Settings** (opens the section with that
   card in view); Settings > About has "WSL distros: details and agent installs in AIB Linking (WSL)".
-- Later phases (not drawn): the prerequisites checklist, the Node.js panel, Uninstall, sign-in status, Codex limits, Repair AIB
-  helper, Open Ubuntu terminal, Beta agents and the "AIB in Ubuntu" card with Remove.
+- Later phases (not drawn): Repair AIB helper, Beta agents and the "AIB in Ubuntu" card with Remove.
 - Tests: `work/test_wsl_settings.js` (fake routes of the contract: every phase 1 state, no start on open, the namespaces).
+
+### Phase 2 (page; design section 12)
+
+- **The distro drop-down** at the top of the section (a Settings field, label "Distro"): the usable distros (WSL's default reads
+  "Ubuntu (WSL default)"), then the unusable ones, disabled, with their reason ("docker-desktop (not supported: …)"). It picks the
+  one distro whose group the page shows; one distro still gets the drop-down (one entry).
+- Which distro: the open project's distro when that changed since the last look (a WSL project or chat open in Debian: Debian),
+  else the one shown already, else the remembered choice, else WSL's default, else the first usable one. The choice is a view
+  preference (`aib-wsl-distro` in `view-prefs.js`: kept in the data folder). "Set up Ubuntu in Settings" picks that distro.
+- **WSL on this PC** stays, as the compact card under the drop-down (every distro with its chip, the skipped ones with the reason
+  and the WSL 1 command, the keep-alive line; the no-WSL card when there is no distro).
+- **What Ubuntu needs** (above the agents; `GET /api/live/wsl/prereqs?distro&peek=1`, `force=1` on Check again; never `start`):
+  Remote control's check list (`.dv-checks`). Rows: Node.js 22.19 or newer (found with version, manager and path / missing / too
+  old / `shim_unset`: "asdf has no Node.js version set" with asdf's or mise's own command to copy and never nvm / broken), npm,
+  git, curl, free space in the home folder, and "Checked with: zsh login shell (interactive)" (non-interactive; plain shell, which
+  says a version manager in the profile is not seen). `prereqs: null` (not ready): the answer's line.
+- **Install Node.js in Ubuntu** only when `canInstallNode` (and never for `shim_unset`): the card's terminal panel (the Windows
+  setup panel's look) with `/api/live/terminal?setup=wsl-node&step=node&distro=<d>` (`terminal-ui.js signinUrl` keeps `distro`
+  for a setup step now). Exit 0: prerequisites with `force=1`, then the agents with `force=1`; the panel closes once Node.js is
+  seen. `canInstallNode` false: `nodeInstallBlocked` verbatim, **Open Ubuntu terminal** (the new-chat panel's `wsl-shell:<d>`
+  terminal in the distro's home, in the card) and Check again.
+- git or curl missing: `sudo apt install git` / `sudo apt install curl` to copy only (AIB never runs them), Open Ubuntu terminal,
+  Check again.
+- **Each distro has its own On/Off switch per agent** ("Use in Ubuntu", `rows[].enabled`, absent = on):
+  `POST /api/live/wsl/agents/enabled {distro, id, enabled}`; drawn at once, put back with "The switch could not be saved…" when
+  the request fails or answers `ok: false`. The Windows switch is unchanged (agentRow's env takes `toggleLabel` and `onToggle`;
+  an env without `onToggle` never reaches Windows' save).
+- The chip: Install failed / Not installed / Update available / Signed in / Not signed in / Installed (AIB's copy) / Found.
+- Sign-in (`rows[].signin`): "Signed in to Claude Code in Ubuntu as <account>", "Not signed in … yet" with **Sign in**, or
+  "Sign-in in Ubuntu: unknown (<note>)". Sign in (signed out; or unknown for Claude Code and Codex) runs the WSL sign-in terminal
+  `signin=<agent>&distro=<d>` in a panel on the card; `start=1` only when the distro is not running at that click. Exit 0 reads
+  the agents again (`force=1`).
+- **Uninstall** only when `canUninstall`: a confirm question ("This deletes only the copy AIB installed there
+  (~/.aib-server/agents/claude). Your own installs of Claude Code and your sign-in in ~/.claude in Ubuntu stay."), then
+  `POST /api/live/wsl/agents/uninstall {distro, id}`; `blocked` (or `message`) shown verbatim on the card.
+- Codex: `rows[].limits` in the composer Limits chip's words (`composer-chips.js describeLimits`): "Usage limits of Ubuntu's
+  Codex sign-in: 5h 32% · wk 10% (updated 4 min ago). Same ChatGPT account as on Windows means the same limits."
+- An agent's Install says "Needs Node.js first" (off) while the prerequisites say Node.js is not ok; the row's own nvm line only
+  shows while the prerequisites are not known (an older server).
+- Tests: `work/test_wsl_settings.js` (the drop-down rules, the switch with rollback, the five Node.js states, git/curl, the Node.js
+  terminal's address, sign-in and `start=1`, uninstall, limits, no `start` on open); `work/test_wsl_ui.js` (signinUrl keeps
+  `distro` for a distro setup step).
 
 ## Building and testing
 

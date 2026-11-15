@@ -108,6 +108,12 @@
         'helper',
         'wsl --install',
         'not supported',
+        'nvm',
+        'prerequisites',
+        'git',
+        'uninstall',
+        'sign in',
+        'limits',
       ],
     },
     {
@@ -911,6 +917,8 @@
         terminal: nothing,
         toggle: false,
         toggleNote: () => '',
+        toggleLabel: null, // (a) => the switch's label; null: On / Off
+        onToggle: null, // (a, on): the env's own switch; required with toggle: true (never Windows' save)
         sharedKey: true,
         canUninstall: () => false,
         uninstall: nothing,
@@ -1047,7 +1055,9 @@
     const actions = el('div', null, 'st-actions');
     if (E.toggle)
       actions.append(
-        toggle(a.enabled ? 'On' : 'Off', a.enabled, (on) => {
+        toggle(E.toggleLabel ? E.toggleLabel(a) : a.enabled ? 'On' : 'Off', a.enabled, (on) => {
+          if (E.onToggle) return E.onToggle(a, on); // a distro's own switch (wsl-settings-ui.js), never the Windows one
+          if (E !== WIN_ENV) return;
           saveQuiet(togglePatch(a.id, on)); // on/off only: the agent's command, arguments and environment are never sent back
         }),
       );

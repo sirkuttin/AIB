@@ -191,6 +191,33 @@
       return value;
     });
   }
+  /**
+   * Settings > AIB Linking (WSL), "What Ubuntu needs": {distro, name, state, line, prereqs: EnvPrereqs | null} (null while the
+   * distro is not ready). peek=1 always: never starts a distro; o.force lets the distro read its login PATH again.
+   */
+  function peekPrereqs(key, o) {
+    const opts = o || {};
+    if (!host || !host.getJson) return Promise.reject(Error('Not ready'));
+    const params = { distro: String(key).toLowerCase(), peek: '1' };
+    if (opts.force) params.force = '1';
+    return Promise.resolve(host.getJson('/api/live/wsl/prereqs', params)).then((r) => (r && typeof r === 'object' ? r : { prereqs: null }));
+  }
+  /** The distro's own On/Off switch of one agent: {ok, enabled}. */
+  function setAgentEnabled(key, id, enabled) {
+    return post('wsl/agents/enabled', { distro: String(key).toLowerCase(), id, enabled: !!enabled });
+  }
+  /** Remove AIB's own copy of an agent in a distro: {ok, removed, message?, blocked?}. */
+  function uninstallAgent(key, id) {
+    return post('wsl/agents/uninstall', { distro: String(key).toLowerCase(), id }).then((r) => {
+      forget(key);
+      return r || {};
+    });
+  }
+  /** The distro key of the open project or chat ('' when it is not a WSL one). */
+  function currentKey() {
+    const p = parse(host && host.currentPath ? host.currentPath() : '');
+    return p ? p.key : '';
+  }
   /** One agent's row in a distro, or null while unknown. */
   function agentIn(key, id, again) {
     const list = agents(key, again);
@@ -492,6 +519,10 @@
     agents,
     agentIn,
     peekAgents,
+    peekPrereqs,
+    setAgentEnabled,
+    uninstallAgent,
+    currentKey,
     forget,
     installBox,
     installJob,

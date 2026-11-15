@@ -1081,3 +1081,49 @@ html[data-ui-scaled] .st-page {
 .wl-foot {
   margin: 10px 0 0;
 }
+/* the distro drop-down at the top: a Settings field, not as wide as the page */
+.wl-pick {
+  margin: 0 0 14px;
+  max-width: 360px;
+}
+/* "What Ubuntu needs": Remote control's check list, with each row's state at the right */
+.wl-checks {
+  margin: 4px 0 0;
+}
+.wl-checks li {
+  margin: 0 0 8px;
+}
+.wl-checks .wl-state {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wl-checks li.bad .dv-mark,
+.wl-checks li.bad .wl-state {
+  color: var(--st-note-bad-text);
+}
+.wl-checks li.ok .wl-state {
+  color: var(--st-status-ok-text);
+}
+.wl-checks li > .st-beta-row {
+  margin-left: 22px;
+}
+.wl-path {
+  margin: 0 0 0 22px;
+}
+/* Codex's usage limits in the distro */
+.wl-limits {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wl-limits b {
+  color: var(--text);
+  font-weight: 600;
+}
+.wl-limits.high b {
+  color: var(--st-status-warn-text);
+}
+.wl-limits.blocked b {
+  color: var(--st-note-bad-text);
+}

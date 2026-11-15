@@ -1,11 +1,15 @@
 (function (root) {
   'use strict';
-  // Settings > AIB Linking (WSL) (docs/wsl/linking-design.md, section 11 overrides it). Windows only (settings-ui.js hides the
-  // section elsewhere). Cards: "WSL on this PC" (every distro, the ones AIB cannot use with the reason, WSL's default marked; or how
-  // to get WSL), then per usable distro its status card and "Agents in <distro>", drawn with Settings' own agentRow and an env of
-  // the distro (job store: wsl-ui.js, the only one; card keys "wsl:<distro>:<agent>").
-  // Opening Settings never starts a distro: the status is the poll's (never starts one) and the agent list is asked with peek=1,
-  // only for a distro that is ready. Only "Start <distro> and check" asks with start=1.
+  // Settings > AIB Linking (WSL) (docs/wsl/linking-design.md; sections 11 and 12 override it). Windows only (settings-ui.js hides the
+  // section elsewhere). At the top a drop-down of every distro (the unusable ones listed, off, with the reason) picks the distro the
+  // page shows; under it "WSL on this PC" (every distro, the reasons, WSL's default marked; or how to get WSL), then the picked
+  // distro's group: its status card, "What <distro> needs" (env.prereqs: Node.js, npm, git, curl, free space; the Node.js install
+  // in a terminal panel on the card) and "Agents in <distro>", drawn with Settings' own agentRow and an env of the distro (job
+  // store: wsl-ui.js, the only one; card keys "wsl:<distro>:<agent>"; the distro's own On/Off switch per agent, sign-in state with
+  // Sign in in a terminal panel, Uninstall of AIB's own copy, Codex's usage limits).
+  // Opening Settings never starts a distro: the status is the poll's (never starts one), the agent list and the prerequisites are
+  // asked with peek=1, only for a distro that is ready. Only "Start <distro> and check" asks with start=1 (and a Sign in click
+  // while the distro is not running).
   const doc = () => root.document;
   const el = (tag, content, cls) => {
     const n = doc().createElement(tag);
@@ -41,12 +45,35 @@
     verifying: 'Checking the install…',
   };
   const STALE_MS = 60000;
+  // The distro the page shows: remembered in the data folder with the other view choices (view-prefs.js).
+  const PICK_KEY = 'aib-wsl-distro';
+  const MIN_NODE = '22.19';
+  const MANAGERS = { asdf: 'asdf', mise: 'mise', nvm: 'nvm', system: 'the system', aib: 'AIB' };
+  // A version manager's shim with no Node.js version set (owner rule: never offer nvm then): the manager's own commands, to copy.
+  const SHIM_FIX = {
+    asdf: 'asdf install nodejs latest && asdf set -u nodejs "$(asdf latest nodejs)"',
+    mise: 'mise use -g node@lts',
+  };
+  // Where each agent keeps its sign-in in the distro: Uninstall never touches these.
+  const SIGNIN_FILES = { claude: '~/.claude', codex: '~/.codex' };
+  const ENV_MODES = {
+    'login-interactive': 'login shell (interactive)',
+    login: 'login shell (non-interactive)',
+    plain: 'plain shell, without your login profile',
+  };
 
-  const lists = new Map(); // distro key -> {value, at, busy, error}: the last peek answer
+  const lists = new Map(); // distro key -> {value, at, busy, error}: the last peek answer of its agents
+  const needs = new Map(); // distro key -> {value, at, busy, error}: the last peek answer of its prerequisites
   const starting = new Map(); // distro key -> '' while "Start and check" runs, or the error it ended with
+  const enabledWant = new Map(); // card key -> the switch's new value while its save is on its way (drawn at once)
+  const rowNotes = new Map(); // card key -> {text, cls}: a switch that could not be saved, an uninstall refused
+  const uninstalling = new Set(); // card keys whose uninstall runs
+  const terms = new Map(); // panel key -> {node, status, run, running}: the terminal panels on the cards, kept across repaints
   let wired = false,
     lastSig = '',
-    focusWant = ''; // a card to bring into view once it is drawn ("Set up Ubuntu in Settings")
+    focusWant = '', // a card to bring into view once it is drawn ("Set up Ubuntu in Settings")
+    pick = '', // the distro shown now
+    projectSeen = null; // the open project's distro when the pick was last made from it
 
   // ---- small parts -----------------------------------------------------------------------------------------------------
   const note = (text, cls) => el('p', text, 'st-note' + (cls ? ' ' + cls : ''));
@@ -97,6 +124,8 @@
     return a;
   };
   const letterOf = (name) => String(name || '?').charAt(0).toUpperCase();
+  const cardKey = (d, a) => 'wsl:' + d.key + ':' + a.id;
+  const needsKey = (d) => 'wsl:' + d.key + ':needs';
 
   // ---- state and repaint -----------------------------------------------------------------------------------------------
   function redraw() {
@@ -112,6 +141,7 @@
       st.wsl || null,
     ]);
   }
+  const notReadyAnswer = (rec) => !!(rec && rec.value && rec.value.state && rec.value.state !== 'ready');
   function wire() {
     if (wired || !W()) return;
     wired = true;
@@ -121,8 +151,9 @@
       lastSig = sig;
       // a distro that became ready since its list was asked: ask again (still peek)
       for (const d of (st && st.distros) || []) {
-        const rec = lists.get(d.key);
-        if (d.state === 'ready' && rec && rec.value && rec.value.state && rec.value.state !== 'ready') fetchList(d.key);
+        if (d.state !== 'ready') continue;
+        if (notReadyAnswer(lists.get(d.key))) fetchList(d.key);
+        if (notReadyAnswer(needs.get(d.key))) fetchNeeds(d.key);
       }
       redraw();
     });
@@ -161,6 +192,39 @@
         redraw();
       });
   }
+  /** The distro's prerequisites (GET /api/live/wsl/prereqs, peek only); force: the distro reads its login PATH again. */
+  function fetchNeeds(key, opts) {
+    const o = opts || {};
+    const Wsl = W();
+    if (!Wsl || !Wsl.peekPrereqs) return Promise.resolve(null);
+    const rec = needs.get(key) || { value: null, at: 0, busy: false, error: '' };
+    if (rec.busy && !o.force) return Promise.resolve(rec.value);
+    rec.busy = true;
+    needs.set(key, rec);
+    return Wsl.peekPrereqs(key, { force: !!o.force })
+      .then(
+        (value) => {
+          rec.value = value;
+          rec.error = '';
+          return value;
+        },
+        (error) => {
+          rec.error = (error && error.message) || 'What this distro has could not be read.';
+          return null;
+        },
+      )
+      .finally(() => {
+        rec.busy = false;
+        rec.at = Date.now();
+        redraw();
+      });
+  }
+  /** Node.js in the distro: true (ok), false (missing, too old, no version set, broken) or null (not known yet). */
+  function nodeOk(key) {
+    const rec = needs.get(key);
+    const p = rec && rec.value && rec.value.prereqs;
+    return p && p.node ? p.node.state === 'ok' : null;
+  }
   function startDistro(d) {
     starting.set(d.key, '');
     redraw();
@@ -171,6 +235,66 @@
       const Wsl = W();
       return Promise.resolve(Wsl && Wsl.refresh ? Wsl.refresh() : null).then(redraw);
     });
+  }
+
+  // ---- which distro the page shows -------------------------------------------------------------------------------------
+  function readPick() {
+    try {
+      return String((root.localStorage && root.localStorage.getItem(PICK_KEY)) || '');
+    } catch {
+      return '';
+    }
+  }
+  function savePick(key) {
+    try {
+      if (root.localStorage) root.localStorage.setItem(PICK_KEY, key);
+    } catch {
+      /* not remembered: the page still shows it now */
+    }
+  }
+  // The open project's distro when it changed since the last look (a Debian project open: Debian); else the distro shown already,
+  // else the remembered choice, else WSL's default distro, else the first usable one.
+  function chosen(st) {
+    const usable = (st.distros || []).map((d) => d.key);
+    const Wsl = W();
+    const project = Wsl && Wsl.currentKey ? Wsl.currentKey() : '';
+    if (project !== projectSeen) {
+      projectSeen = project;
+      if (project && usable.includes(project)) pick = project;
+    }
+    if (pick && usable.includes(pick)) return pick;
+    const saved = readPick(),
+      def = (st.distros || []).find((d) => d.isDefault);
+    pick = usable.includes(saved) ? saved : def ? def.key : usable[0] || '';
+    return pick;
+  }
+  function choose(key) {
+    if (!key) return;
+    pick = key;
+    savePick(key);
+    focusWant = '';
+    redraw();
+  }
+  function picker(st, key) {
+    const wrap = el('label', null, 'st-field wl-pick');
+    const sel = el('select');
+    sel.setAttribute('aria-label', 'The distro this page shows');
+    for (const d of st.distros || []) {
+      const o = el('option', d.name + (d.isDefault ? ' (WSL default)' : ''));
+      o.value = d.key;
+      sel.append(o);
+    }
+    // the ones AIB cannot use: listed, off, with the reason (the overview card says the same, with the WSL 1 command)
+    for (const s of st.skipped || []) {
+      const o = el('option', s.name + ' (not supported' + (s.why ? ': ' + String(s.why).replace(/\.$/, '') : '') + ')');
+      o.value = '';
+      o.disabled = true;
+      sel.append(o);
+    }
+    sel.value = key;
+    sel.addEventListener('change', () => choose(sel.value));
+    wrap.append(el('span', 'Distro', 'st-label'), sel);
+    return wrap;
   }
 
   // ---- "WSL on this PC" ------------------------------------------------------------------------------------------------
@@ -188,6 +312,7 @@
   function overview(st) {
     const c = card('WSL on this PC');
     c.dataset.wsl = 'overview';
+    c.className += ' wl-overview';
     c.append(note(LEAD, 'wl-lead'));
     for (const d of st.distros || []) {
       const row = el('div', null, 'st-agent wl-distro');
@@ -292,18 +417,261 @@
     return c;
   }
 
-  // The distro's agent row in the shape agentRow reads (the Windows card's name, letter and On/Off: one switch per agent).
-  function toAgent(row) {
+  // ---- terminal panels on the cards (the Windows card's setup panel: settings-ui.js startSetup) ----------------------------
+  function closePanel(key, paint) {
+    const entry = terms.get(key);
+    if (!entry) return;
+    terms.delete(key);
+    try {
+      if (entry.run) entry.run.close();
+    } catch {
+      /* already closed */
+    }
+    if (entry.node && entry.node.remove) entry.node.remove();
+    if (paint) redraw();
+  }
+  /** A panel (title, Close, the terminal, a status line) under `key`; replaces the one there. */
+  function openPanel(key, title) {
+    closePanel(key);
+    const node = el('div', null, 'st-beta-term');
+    const head = el('div', null, 'st-beta-term-head');
+    head.append(el('span', title, 'st-beta-term-title'), button('Close', () => closePanel(key, true), 'st-link'));
+    const view = el('div', null, 'st-beta-term-view');
+    const status = el('p', 'Starting…', 'st-note');
+    status.setAttribute('role', 'status');
+    node.append(head, view, status);
+    const entry = { node, view, status, run: null, running: true };
+    terms.set(key, entry);
+    redraw();
+    return entry;
+  }
+  const say = (entry, text, cls) => {
+    entry.status.textContent = text;
+    entry.status.className = 'st-note' + (cls ? ' ' + cls : '');
+  };
+  const panelRunning = (key) => !!terms.get(key) && terms.get(key).running;
+  /** "Open Ubuntu terminal": a shell in the distro's home, in the card's panel (the new-chat panel's wsl-shell terminal). */
+  function canOpenShell(d) {
+    const T = root.AibTerminal;
+    return !!(T && T.runSignin && T.socketUrl && W() && W().refOf);
+  }
+  function openShell(d, key) {
+    const T = root.AibTerminal;
+    const entry = openPanel(key, 'A terminal in ' + d.name);
+    const home = d.home || '/';
+    entry.run = T.runSignin(entry.view, 'shell', {
+      url: (loc, cols, rows) => T.socketUrl(loc, 'wsl-shell:' + d.key, W().refOf(d.key, home), cols, rows),
+      onReady: () => say(entry, 'A terminal in ' + d.name + '. AIB does not see what you type here.'),
+      onExit: () => {
+        entry.running = false;
+        say(entry, 'The terminal ended.');
+        fetchNeeds(d.key, { force: true });
+      },
+      onError: (message) => {
+        entry.running = false;
+        say(entry, message, 'bad');
+      },
+    });
+  }
+  function shellButton(d) {
+    return canOpenShell(d) ? button('Open ' + d.name + ' terminal', () => openShell(d, needsKey(d))) : null;
+  }
+  /** "Install Node.js in Ubuntu": nvm's official installer, pinned by the server, in the card's panel (setup=wsl-node&distro=). */
+  function installNode(d) {
+    const T = root.AibTerminal,
+      key = needsKey(d);
+    if (!T || !T.runSetup) {
+      rowNotes.set(key, { text: 'The terminal is not available on this page.', cls: 'bad' });
+      return redraw();
+    }
+    rowNotes.delete(key);
+    const entry = openPanel(key, 'Installing Node.js in ' + d.name + ': nvm\'s official installer, then nvm install --lts');
+    entry.run = T.runSetup(entry.view, 'wsl-node', 'node', {
+      distro: d.key,
+      onReady: () => say(entry, 'Installing. Answer here if the installer asks something.'),
+      onExit: (code) => {
+        entry.running = false;
+        if (code !== 0) {
+          say(entry, 'Install failed. See the output above.', 'bad');
+          return redraw();
+        }
+        say(entry, 'Installed. Checking…');
+        return fetchNeeds(d.key, { force: true }).then(() => {
+          fetchList(d.key, { force: true }); // the agent rows: Install is offered now
+          if (nodeOk(d.key)) {
+            if (terms.get(key) === entry) closePanel(key, true);
+          } else {
+            say(
+              entry,
+              'The install finished, but AIB does not see Node.js in ' + d.name + ' yet. Choose Check again, or open a new ' +
+                d.name + ' terminal and look.',
+              'warn',
+            );
+            redraw();
+          }
+        });
+      },
+      onError: (message) => {
+        entry.running = false;
+        say(entry, message, 'bad');
+        redraw();
+      },
+    });
+  }
+
+  // ---- "What Ubuntu needs" -----------------------------------------------------------------------------------------------
+  function check(ok, title, state, extra) {
+    const li = el('li', null, ok ? 'ok' : 'bad');
+    const head = el('div', null, 'dv-check-head');
+    head.append(el('span', ok ? '✓' : '!', 'dv-mark'), el('span', title), el('span', state, 'wl-state'));
+    li.append(head);
+    for (const n of extra || []) if (n) li.append(n);
+    return li;
+  }
+  const againButton = (d) => button('Check again', () => fetchNeeds(d.key, { force: true }), 'st-link');
+  const sizeText = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1).replace(/\.0$/, '') + ' GB' : Math.round(mb) + ' MB');
+  function nodeCheck(d, p) {
+    const n = p.node || { state: 'missing' },
+      name = d.name;
+    const mgr = MANAGERS[n.manager] || '';
+    const via = mgr && n.manager !== 'system' ? ' (' + mgr + ')' : '';
+    const title = 'Node.js ' + MIN_NODE + ' or newer';
+    if (n.state === 'ok')
+      return check(true, title, 'found ' + (n.version || '') + via, [n.path ? note(n.path, 'dim wl-path') : null]);
+    const extra = [];
+    let state = 'missing';
+    if (n.state === 'shim_unset') {
+      // a version manager's shim with no version set: its own command, never nvm
+      const who = mgr || 'your version manager';
+      state = mgr ? mgr + ' has no Node.js version set' : 'no Node.js version set';
+      extra.push(
+        note(
+          'Node.js in ' + name + ' comes from ' + who + ', and ' + who + ' has no Node.js version set, so node does not run. ' +
+            'Set one in ' + name + ' (no password needed), then choose Check again:',
+        ),
+      );
+      if (SHIM_FIX[n.manager]) extra.push(copyRow(SHIM_FIX[n.manager], 'Copy the command that sets a Node.js version in ' + mgr));
+      if (n.note) extra.push(note(n.note, 'dim'));
+      if (p.nodeInstallBlocked) extra.push(note(p.nodeInstallBlocked, 'dim'));
+      extra.push(actions(shellButton(d), againButton(d)));
+      return check(false, title, state, extra);
+    }
+    if (n.state === 'old') state = 'too old' + (n.version ? ' (' + n.version + ')' : '');
+    else if (n.state === 'broken') state = 'found, but it does not run';
+    extra.push(
+      note(
+        n.state === 'old'
+          ? 'AIB needs Node.js ' + MIN_NODE + ' or newer in ' + name + ' to install Claude Code, Codex and the other npm agents.'
+          : n.state === 'broken'
+            ? 'The node program in ' + name + (n.path ? ' (' + n.path + ')' : '') + ' does not run.'
+            : 'Needed to install Claude Code, Codex and the other npm agents in ' + name + '.',
+      ),
+    );
+    if (n.note) extra.push(note(n.note, 'dim'));
+    if (p.canInstallNode) {
+      extra.push(
+        note(
+          'Install runs nvm\'s official installer in a terminal here, in ' + name + ', then installs the current LTS Node.js. ' +
+            'It adds nvm to your home folder and shell start-up file; it needs no password.' +
+            (p.nvm && p.nvm.present ? ' nvm is already in ' + name + '; it is used.' : ''),
+        ),
+      );
+      const go = button('Install Node.js in ' + name, () => installNode(d), 'primary');
+      go.disabled = panelRunning(needsKey(d));
+      extra.push(actions(go, againButton(d)));
+    } else {
+      if (p.nodeInstallBlocked) extra.push(note(p.nodeInstallBlocked, 'bad'));
+      extra.push(actions(shellButton(d), againButton(d)));
+    }
+    return check(false, title, state, extra);
+  }
+  // git and curl are system packages: the command to copy, never run by AIB (it would need the person's password).
+  function aptCheck(d, title, what, pkg, version) {
+    const ok = what.state === 'ok';
+    if (ok) return check(true, title, 'found' + (what.version ? ' ' + what.version : ''));
+    return check(false, title, 'missing', [
+      note(version + ' It needs your password, so AIB does not run it. Run it yourself in ' + d.name + ':'),
+      copyRow('sudo apt install ' + pkg, 'Copy the command that installs ' + pkg),
+      actions(shellButton(d), againButton(d)),
+    ]);
+  }
+  function needsCard(d) {
+    const c = card('What ' + d.name + ' needs');
+    c.dataset.needs = d.key;
+    let rec = needs.get(d.key);
+    const stale = !rec || (!rec.busy && Date.now() - rec.at > (notReadyAnswer(rec) ? 5000 : STALE_MS));
+    if (stale) {
+      fetchNeeds(d.key);
+      rec = needs.get(d.key);
+    }
+    const value = rec && rec.value;
+    const p = value && value.prereqs;
+    if (rec && rec.error && !value) {
+      const line = note('What ' + d.name + ' has could not be read: ' + rec.error, 'bad');
+      line.append(' ', againButton(d));
+      c.append(line);
+    } else if (!value) c.append(note('Looking at what ' + d.name + ' has…'));
+    else if (!p) c.append(note(value.line || d.name + ' is not ready yet.'));
+    else {
+      c.append(note('AIB looks in ' + d.name + '\'s login shell, the way your terminal there sees it. It installs nothing by itself.'));
+      const ul = el('ul', null, 'dv-checks wl-checks');
+      ul.append(nodeCheck(d, p));
+      const npm = p.npm || { state: 'missing' };
+      ul.append(
+        npm.state === 'ok'
+          ? check(true, 'npm', 'found' + (npm.version ? ' ' + npm.version : ''))
+          : check(false, 'npm', 'missing', [
+              note(
+                'npm was not found next to Node.js in ' + d.name + '. It comes with Node.js' +
+                  (p.canInstallNode ? ': Install Node.js above brings it.' : '.'),
+              ),
+            ]),
+      );
+      ul.append(
+        aptCheck(d, 'git', p.git || { state: 'missing' }, 'git', 'Needed for a chat\'s own copy, Changes and Merge; until then chats work in the project folder.'),
+        aptCheck(d, 'curl', p.curl || { state: 'missing' }, 'curl', 'Needed by nvm\'s installer and the vendors\' install scripts.'),
+      );
+      const mb = p.diskFreeMB;
+      if (typeof mb !== 'number') ul.append(check(true, 'Free space in your home folder', 'not known'));
+      else if (mb >= 1024) ul.append(check(true, 'Free space in your home folder', sizeText(mb) + ' free'));
+      else
+        ul.append(
+          check(false, 'Free space in your home folder', sizeText(mb) + ' free', [
+            note('Installs need room in ' + d.name + ': Claude Code about 1 GB, Codex about 600 MB.'),
+          ]),
+        );
+      c.append(ul);
+      const mode = ENV_MODES[p.envMode] || ENV_MODES.plain;
+      const shell = p.loginShell && p.envMode !== 'plain' ? String(p.loginShell).replace(/^.*\//, '') + ' ' : '';
+      const how = note(
+        'Checked with: ' + shell + mode + '.' +
+          (p.envMode === 'plain' ? ' A version manager set up only in your shell profile is not seen this way.' : '') + ' ',
+        'dim wl-checked',
+      );
+      how.append(againButton(d));
+      c.append(how);
+    }
+    const msg = rowNotes.get(needsKey(d));
+    if (msg) c.append(note(msg.text, msg.cls));
+    const t = terms.get(needsKey(d));
+    if (t) c.append(t.node);
+    return c;
+  }
+
+  // ---- "Agents in Ubuntu" ----------------------------------------------------------------------------------------------
+  // The distro's agent row in the shape agentRow reads (the Windows card's name and letter; the distro's own On/Off).
+  function toAgent(d, row) {
     const S = SET();
     const win = ((S && S.agentList && S.agentList()) || []).find((x) => x && x.id === row.id) || null;
     const known = NAMES[row.id] || [row.id, letterOf(row.id)];
+    const k = 'wsl:' + d.key + ':' + row.id;
     return {
       id: row.id,
       name: (win && win.name) || known[0],
       letter: (win && win.letter) || known[1],
       builtin: true,
       beta: false,
-      enabled: win ? !!win.enabled : true,
+      enabled: enabledWant.has(k) ? enabledWant.get(k) : row.enabled !== false,
       found: !!row.found,
       version: row.version || '',
       installable: !!(row.installable || row.canInstall),
@@ -315,7 +683,116 @@
       installCommand: row.install || '',
       wslNote: row.note || '',
       bundledCli: row.bundledCli === true,
+      signin: row.signin && typeof row.signin === 'object' ? row.signin : null,
+      canUninstall: row.canUninstall === true,
+      limits: row.limits || null,
     };
+  }
+  /** The distro's own switch: drawn at once, saved (POST /api/live/wsl/agents/enabled), put back with a line when it fails. */
+  function setEnabled(d, a, on) {
+    const k = cardKey(d, a),
+      Wsl = W();
+    enabledWant.set(k, !!on);
+    rowNotes.delete(k);
+    redraw();
+    return Promise.resolve()
+      .then(() => Wsl.setAgentEnabled(d.key, a.id, !!on))
+      .then((r) => {
+        if (!r || r.ok === false) throw Error((r && (r.message || r.error)) || '');
+        const rec = lists.get(d.key);
+        const row = rec && rec.value && (rec.value.agents || []).find((x) => x && x.id === a.id);
+        if (row) row.enabled = typeof r.enabled === 'boolean' ? r.enabled : !!on;
+      })
+      .catch((error) => {
+        const why = (error && error.message) || '';
+        rowNotes.set(k, {
+          text:
+            'The switch could not be saved' + (why ? ': ' + why.replace(/\.$/, '') : '') + '. ' + a.name + ' stays ' +
+            (on ? 'off' : 'on') + ' in ' + d.name + '.',
+          cls: 'bad',
+        });
+      })
+      .finally(() => {
+        enabledWant.delete(k);
+        redraw();
+      });
+  }
+  function uninstallQuestion(d, a) {
+    const files = SIGNIN_FILES[a.id];
+    return (
+      'Uninstall ' + a.name + ' from ' + d.name + '? This deletes only the copy AIB installed there (~/.aib-server/agents/' +
+      a.id + '). Your own installs of ' + a.name + ' and your sign-in' + (files ? ' in ' + files : ' files') + ' in ' + d.name +
+      ' stay. To use ' + a.name + ' in ' + d.name + ' again, install it again here.'
+    );
+  }
+  function uninstall(d, a) {
+    const k = cardKey(d, a),
+      Wsl = W();
+    rowNotes.delete(k);
+    const ok = typeof root.confirm === 'function' ? root.confirm(uninstallQuestion(d, a)) : false;
+    if (!ok) return redraw();
+    uninstalling.add(k);
+    redraw();
+    return Promise.resolve()
+      .then(() => Wsl.uninstallAgent(d.key, a.id))
+      .then(
+        (r) => {
+          if (!r || r.ok === false || r.blocked)
+            rowNotes.set(k, { text: (r && (r.blocked || r.message)) || a.name + ' could not be uninstalled.', cls: 'bad' });
+          return fetchList(d.key, { force: true });
+        },
+        (error) => rowNotes.set(k, { text: (error && error.message) || a.name + ' could not be uninstalled.', cls: 'bad' }),
+      )
+      .finally(() => {
+        uninstalling.delete(k);
+        redraw();
+      });
+  }
+  /** Sign in: the agent's own login in a distro terminal on its card (signin=<agent>&distro=<d>; start=1 only when not running). */
+  function signIn(d, a) {
+    const T = root.AibTerminal,
+      k = cardKey(d, a);
+    if (!T || !T.runSignin) {
+      rowNotes.set(k, { text: 'The terminal is not available on this page.', cls: 'bad' });
+      return redraw();
+    }
+    rowNotes.delete(k);
+    const now = W() && W().distro ? W().distro(d.key) : null;
+    const start = !now || now.state !== 'ready';
+    const entry = openPanel(k, 'Signing in to ' + a.name + ' in ' + d.name);
+    entry.run = T.runSignin(entry.view, a.id, {
+      distro: d.key,
+      start,
+      onReady: () =>
+        say(entry, 'Finish the sign-in in this terminal; its page opens in your Windows browser. AIB does not see what you type here.'),
+      onExit: (code) => {
+        entry.running = false;
+        if (code === 0) {
+          say(entry, 'The sign-in finished. Checking…');
+          fetchList(d.key, { force: true }).then(() => {
+            if (terms.get(k) === entry) closePanel(k, true);
+          });
+        } else {
+          say(entry, 'The sign-in did not finish (it ended with code ' + code + '). Try again.', 'bad');
+          redraw();
+        }
+      },
+      onError: (message) => {
+        entry.running = false;
+        say(entry, message, 'bad');
+        redraw();
+      },
+    });
+  }
+  function statusText(d, a) {
+    const job = W() ? W().installJob(d.key, a.id) : null;
+    if (job && job.state === 'failed') return { text: 'Install failed', cls: 'bad' };
+    if (!a.found) return { text: 'Not installed', cls: 'warn' };
+    if (a.update) return { text: 'Update available', cls: 'warn' };
+    const s = a.signin && a.signin.state;
+    if (s === 'signed_in') return { text: 'Signed in', cls: 'ok' };
+    if (s === 'signed_out') return { text: 'Not signed in', cls: 'warn' };
+    return a.managed ? { text: 'Installed', cls: 'ok' } : { text: 'Found', cls: 'ok' };
   }
   function envFor(d) {
     const S = SET(),
@@ -323,25 +800,29 @@
       name = d.name;
     const jobOf = (a) => (Wsl ? Wsl.installJob(d.key, a.id) : null);
     const verb = (a) => (a.update ? 'Updating ' : 'Installing ');
+    const needsNode = (a) => !!a.installBlock || nodeOk(d.key) === false;
     return S.makeEnv({
-      key: (a) => 'wsl:' + d.key + ':' + a.id,
+      key: (a) => cardKey(d, a),
       tag: (a) => (!a.found ? '' : a.managed ? 'Installed by AIB' : 'Your own install'),
       installOf: jobOf,
       installRunning: (a) => {
         const j = jobOf(a);
         return !!j && j.state === 'running';
       },
-      statusText: (a) => {
-        const j = jobOf(a);
-        if (j && j.state === 'failed') return { text: 'Install failed', cls: 'bad' };
-        return a.found ? { text: 'Found', cls: 'ok' } : { text: 'Not installed', cls: 'warn' };
-      },
+      statusText: (a) => statusText(d, a),
+      // signed out; or not known for an agent whose sign-in AIB runs (Claude Code, Codex)
+      canSignIn: (a) =>
+        !!a.found &&
+        !!a.signin &&
+        (a.signin.state === 'signed_out' || (a.signin.state === 'unknown' && !!SIGNIN_FILES[a.id])) &&
+        !panelRunning(cardKey(d, a)),
+      startSignin: (a) => signIn(d, a),
       showCheck: (a) => a.found || !a.installable,
       checkAgain: () => fetchList(d.key, { force: true }),
       recheck: () => fetchList(d.key, { force: true }),
       canInstall: (a) => a.installable && (!a.found || a.update),
       installLabel: (a) => (a.update ? 'Update in ' : 'Install in ') + name,
-      installOff: (a) => (a.installBlock ? 'Needs Node.js in ' + name + ' first' : ''),
+      installOff: (a) => (needsNode(a) ? 'Needs Node.js first' : ''),
       installTitle: (a) =>
         'AIB installs ' + a.name + (a.pinned ? ' ' + a.pinned : '') + ' into its own folder in ' + name +
         ' (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in ' + name + ' changes.',
@@ -353,19 +834,78 @@
         verb(a) + a.name + ' in ' + name + '… ' + (STAGES[job.stage] ? STAGES[job.stage] + ' ' : '') +
         'It goes on if you close Settings or restart AIB.',
       launcherLine: (a) => (a.found && a.version ? ['Version', a.version] : null),
-      toggle: false,
-      toggleNote: (a) => (a.enabled ? 'On' : 'Off') + ': uses the Windows switch in AIB Linking',
+      terminal: (a) => terms.get(cardKey(d, a)) || null,
+      toggle: true,
+      toggleLabel: () => 'Use in ' + name,
+      onToggle: (a, on) => setEnabled(d, a, on),
       sharedKey: true,
+      canUninstall: (a) => a.canUninstall && !uninstalling.has(cardKey(d, a)),
+      uninstall: (a) => uninstall(d, a),
       extraLines: (a, row, at) => extraLines(d, a, row, at),
     });
   }
+  // Codex's usage limits in this distro (its own ~/.codex, never Windows'), in the composer's Limits chip words.
+  function limitsLine(d, a) {
+    const C = root.AgentComposerChips;
+    const lim = a.limits && C && C.describeLimits ? C.describeLimits(a.limits, Date.now()) : null;
+    if (!lim) return null;
+    const line = el('p', null, 'wl-limits');
+    const ago = (lim.details || []).find((x) => /^Updated /.test(x));
+    line.append(
+      'Usage limits of ' + d.name + '\'s ' + a.name + ' sign-in: ',
+      el('b', lim.value),
+      (ago ? ' (' + ago.charAt(0).toLowerCase() + ago.slice(1) + ')' : '') +
+        '. Same ChatGPT account as on Windows means the same limits.',
+    );
+    line.title = (lim.details || []).join('\n');
+    if (lim.tone) line.className += ' ' + lim.tone;
+    return line;
+  }
+  function signinLine(d, a) {
+    const s = a.signin;
+    if (!s) return null;
+    if (s.state === 'signed_in')
+      return note('Signed in to ' + a.name + ' in ' + d.name + (s.account ? ' as ' + s.account : '') + '.', 'wl-signin');
+    if (s.state === 'signed_out')
+      return note(
+        'Not signed in to ' + a.name + ' in ' + d.name + ' yet. Sign in runs ' + a.name + '\'s own sign-in in a ' + d.name +
+          ' terminal here; its page opens in your Windows browser. ' + d.name + ' signs in separately from Windows. AIB does not ' +
+          'see your password or sign-in details.',
+        'wl-signin',
+      );
+    return note('Sign-in in ' + d.name + ': unknown' + (s.note ? ' (' + String(s.note).replace(/\.$/, '') + ')' : '') + '.', 'dim wl-signin');
+  }
   // The distro's own lines on an agent card, after its status lines.
   function extraLines(d, a, row, at) {
-    if (at.running) return;
+    const k = cardKey(d, a),
+      msg = rowNotes.get(k);
+    if (at.running) {
+      if (msg) row.append(note(msg.text, msg.cls));
+      return;
+    }
     const name = d.name,
       job = at.job,
-      failed = !!job && (job.state === 'failed' || job.state === 'refused');
-    if (a.installBlock && a.nodeInstall) {
+      failed = !!job && (job.state === 'failed' || job.state === 'refused'),
+      node = nodeOk(d.key);
+    if (a.found) {
+      const s = signinLine(d, a);
+      if (s) {
+        row.append(s);
+        if (a.signin.note && a.signin.state !== 'unknown') row.append(note(a.signin.note, 'dim'));
+      }
+      if (a.id === 'codex') {
+        const lim = limitsLine(d, a);
+        if (lim) row.append(lim);
+      }
+    }
+    if (uninstalling.has(k)) row.append(note('Uninstalling ' + a.name + ' from ' + name + '…', 'wl-busy'));
+    if (msg) row.append(note(msg.text, msg.cls));
+    // Node.js missing per the prerequisites while the row itself does not say it: point at the card above
+    if (node === false && !a.installBlock && a.installable && (!a.found || a.update) && !failed)
+      row.append(note('Needs Node.js first: see What ' + name + ' needs above.', 'dim'));
+    // the row's own nvm line only while the prerequisites are not known (the card above has the button, and never offers nvm to
+    // a version manager's shim)
+    if (a.installBlock && a.nodeInstall && node === null) {
       const how = el('div', null, 'st-beta-install');
       how.append(
         el('span', 'Install Node.js in ' + name + ' yourself (nvm, no sudo needed), then choose Check again:', 'st-hint'),
@@ -381,7 +921,7 @@
         ),
       );
     if (!a.found) {
-      if (a.installable && !a.installBlock && !failed)
+      if (a.installable && !a.installBlock && node !== false && !failed)
         row.append(
           note(
             'One click: AIB installs ' + a.name + (a.pinned ? ' ' + a.pinned : '') + ' into its own folder in ' + name +
@@ -437,8 +977,7 @@
     const S = SET();
     let rec = lists.get(d.key);
     // asked again after a minute, or after 5 s when the answer said the distro was not ready yet (the status now says it is)
-    const notReady = !!(rec && rec.value && rec.value.state && rec.value.state !== 'ready');
-    const stale = !rec || (!rec.busy && Date.now() - rec.at > (notReady ? 5000 : STALE_MS));
+    const stale = !rec || (!rec.busy && Date.now() - rec.at > (notReadyAnswer(rec) ? 5000 : STALE_MS));
     if (stale) {
       fetchList(d.key);
       rec = lists.get(d.key);
@@ -457,10 +996,11 @@
         .map((r, i) => ({ r, i, o: ORDER.includes(r.id) ? ORDER.indexOf(r.id) : ORDER.length }))
         .sort((x, y) => x.o - y.o || x.i - y.i)
         .map((x) => x.r);
-      for (const r of rows) c.append(S.agentRow(toAgent(r), {}, env));
+      for (const r of rows) c.append(S.agentRow(toAgent(d, r), { uninstall: true }, env));
     }
     const foot = note(
-      '"Found" means the program exists in ' + d.name + '; sign-in happens in a WSL chat. Your Windows agents are in ',
+      'Sign-in is checked in ' + d.name + ' each time this page reads its agents. "Use in ' + d.name + '" is ' + d.name +
+        '\'s own switch; the Windows one stays as it is. Your Windows agents are in ',
       'wl-foot',
     );
     foot.append(button('AIB Linking', () => S.goSection('agents'), 'st-link'), '.');
@@ -469,7 +1009,7 @@
   }
   function group(d) {
     const out = [el('h4', d.name, 'st-group'), distroCard(d)];
-    if (d.state === 'ready') out.push(agentsCard(d));
+    if (d.state === 'ready') out.push(needsCard(d), agentsCard(d));
     return out;
   }
 
@@ -495,8 +1035,10 @@
       box.append(noWslCard(st));
       return;
     }
-    box.append(overview(st));
-    for (const d of distros) box.append(...group(d));
+    const key = chosen(st);
+    box.append(picker(st, key), overview(st));
+    const d = distros.find((x) => x.key === key);
+    if (d) box.append(...group(d));
     if (focusWant) bringIntoView();
   }
   function bringIntoView() {
@@ -513,16 +1055,41 @@
       if (row || !d || d.state !== 'ready') focusWant = '';
     }, 0);
   }
-  /** "Set up Ubuntu in Settings" (the new-chat panel): this section, with the distro's card of that agent in view. */
+  /** "Set up Ubuntu in Settings" (the new-chat panel): this section with that distro picked, its card of that agent in view. */
   function open(key, agentId) {
     const S = SET();
     if (!S) return;
-    focusWant = 'wsl:' + String(key || '').toLowerCase() + ':' + String(agentId || '');
+    const k = String(key || '').toLowerCase();
+    if (k) {
+      pick = k;
+      savePick(k);
+      const Wsl = W();
+      projectSeen = Wsl && Wsl.currentKey ? Wsl.currentKey() : '';
+    }
+    focusWant = 'wsl:' + k + ':' + String(agentId || '');
     if (S.isOpen && S.isOpen()) S.goSection('wsl');
     else S.open('wsl');
   }
 
-  const api = { render, open, _lists: lists, _reset: () => (lists.clear(), starting.clear(), (lastSig = ''), (focusWant = '')) };
+  const api = {
+    render,
+    open,
+    _lists: lists,
+    _needs: needs,
+    _reset: () => {
+      lists.clear();
+      needs.clear();
+      starting.clear();
+      enabledWant.clear();
+      rowNotes.clear();
+      uninstalling.clear();
+      for (const k of Array.from(terms.keys())) closePanel(k);
+      lastSig = '';
+      focusWant = '';
+      pick = '';
+      projectSeen = null;
+    },
+  };
   root.AIBWslSettings = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
