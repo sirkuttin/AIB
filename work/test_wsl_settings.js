@@ -53,11 +53,13 @@ function setup(o = {}) {
       }
       if (p === '/api/live/wsl/prereqs') return answer(o.prereqs ? o.prereqs(params || {}) : needsOf(P_OK, (params || {}).distro));
       if (p === '/api/live/wsl/agents/install') return Promise.resolve(plain(o.installGet ? o.installGet(params) : { state: 'idle' }));
+      if (p === '/api/live/wsl/aib') return answer(o.aib ? o.aib(params || {}) : aibOf(USAGE, (params || {}).distro));
       return Promise.resolve({});
     },
     postJson: (name, body) => {
       calls.posts.push([name, plain(body)]);
       if (name === 'wsl/agents/enabled') return answer(o.enabled ? o.enabled(body) : { ok: true, enabled: body.enabled });
+      if (name === 'wsl/aib/remove') return answer(o.remove ? o.remove(body) : body.mode === 'check' ? CHECK_OK : APPLY_OK);
       if (name === 'wsl/agents/uninstall') return answer(o.uninstall ? o.uninstall(body) : { ok: true, removed: ['~/.aib-server/agents/' + body.id] });
       const r = o.install ? o.install(name, body) : { state: 'running', stage: 'preparing', percent: 2 };
       return r instanceof Error ? Promise.reject(r) : Promise.resolve(plain(r || {}));
@@ -103,6 +105,8 @@ function setup(o = {}) {
   const cardOf = (title) => content().querySelectorAll('.st-card').find((c) => c.querySelector('.st-card-title').textContent === title) || null;
   const agentCalls = () => calls.gets.filter(([p]) => p === '/api/live/wsl/agents').map(([, q]) => q);
   const needCalls = () => calls.gets.filter(([p]) => p === '/api/live/wsl/prereqs').map(([, q]) => q);
+  const aibCalls = () => calls.gets.filter(([p]) => p === '/api/live/wsl/aib').map(([, q]) => q);
+  const removeCalls = () => calls.posts.filter(([n]) => n === 'wsl/aib/remove').map(([, b]) => b);
   const picker = () => content().querySelector('.wl-pick').querySelector('select');
   const groups = () => content().querySelectorAll('.st-group').map((h) => h.textContent);
   const choose = async (key) => {
@@ -111,7 +115,7 @@ function setup(o = {}) {
     sel.dispatch('change');
     await settle();
   };
-  return { shell, ctx, UI, calls, settingsCalls, replies, content, nav, rowOf, cardOf, agentCalls, needCalls, picker, groups, choose, terms, set: (s) => (current = s) };
+  return { shell, ctx, UI, calls, settingsCalls, replies, content, nav, rowOf, cardOf, agentCalls, needCalls, aibCalls, removeCalls, picker, groups, choose, terms, set: (s) => (current = s) };
 }
 // GET /api/live/wsl/prereqs answers (section 12): EnvPrereqs of a ready distro, prereqs: null for one that is not.
 const P_OK = {
@@ -941,4 +945,381 @@ test('update available: the chip says Update available; the sign-in line stays',
   await openWsl(t);
   assert.equal(t.rowOf('wsl:ubuntu:claude').querySelector('.st-status').textContent, 'Update available');
   assert.ok(t.rowOf('wsl:ubuntu:claude').textContent.includes('Signed in to Claude Code in Ubuntu.'));
+});
+
+// ==== phase 3 (docs/wsl/linking-design.md section 13): "AIB in Ubuntu" and Remove ===============================================
+const MB = 1024 * 1024;
+const ROOT = '/home/u/.aib-server';
+const USAGE = {
+  root: ROOT,
+  totalBytes: 1489.5 * MB,
+  current: '0.1.0-ab12cd34',
+  parts: [
+    { key: 'versions', label: 'AIB programs (keeper, helper)', bytes: 190 * MB, path: ROOT + '/0.1.0-ab12cd34' },
+    { key: 'agents', label: 'Agents installed by AIB', bytes: 861 * MB, path: ROOT + '/agents' },
+    { key: 'npmCache', label: 'npm download cache', bytes: 330 * MB, path: ROOT + '/agents/.npm-cache' },
+    { key: 'data', label: "This AIB's data folder", bytes: 12 * MB, path: ROOT + '/data-1a2b3c4d' },
+    { key: 'worktrees', label: 'Chat copies of this AIB', bytes: 96 * MB, path: ROOT + '/data-1a2b3c4d/worktrees' },
+    { key: 'logs', label: 'Logs', bytes: 512 * 1024, path: ROOT + '/data-1a2b3c4d/logs' },
+  ],
+  versions: ['0.1.0-ab12cd34', '0.0.9-ffee0011'],
+  agents: [
+    { id: 'claude', versions: ['0.102.0'], bytes: 404 * MB },
+    { id: 'codex', versions: ['2.6.0'], bytes: 457 * MB },
+  ],
+  dataFolders: [
+    { name: 'data-1a2b3c4d', mine: true, keeperAlive: true, bytes: 108 * MB },
+    { name: 'data-9f8e7d6c', mine: false, keeperAlive: true, bytes: 40 * MB },
+    { name: 'data-55aa66bb', mine: false, keeperAlive: false, bytes: 3 * MB },
+  ],
+  worktrees: { count: 3, dirty: 1 },
+  chatsWorking: 0,
+};
+const aibOf = (usage, distro = 'ubuntu') => ({ distro, name: distro === 'debian' ? 'Debian' : 'Ubuntu', state: 'ready', line: '', usage });
+const KEPT = [
+  { path: ROOT + '/agents', why: 'Another AIB data folder (data-9f8e7d6c) is in use: its keeper is running.' },
+  { path: ROOT + '/0.1.0-ab12cd34', why: 'Another AIB data folder (data-9f8e7d6c) is in use: its keeper is running.' },
+];
+const CHECK_OK = {
+  ok: true,
+  mode: 'check',
+  blocked: [],
+  wouldRemove: [
+    { path: ROOT + '/data-1a2b3c4d', what: "This AIB's data folder", bytes: 12 * MB },
+    { path: ROOT + '/data-1a2b3c4d/worktrees/app/chat-1', what: 'Chat copies of this AIB', bytes: 64 * MB },
+    { path: ROOT + '/data-1a2b3c4d/worktrees/api/chat-2', what: 'Chat copies of this AIB', bytes: 32 * MB },
+    { path: ROOT + '/0.0.9-ffee0011', what: 'Old AIB programs', bytes: 95 * MB },
+  ],
+  kept: KEPT,
+  removed: [],
+  left: [],
+};
+const APPLY_OK = { ok: true, mode: 'apply', blocked: [], wouldRemove: [], kept: KEPT, removed: CHECK_OK.wouldRemove.map((x) => x.path), left: [] };
+const REMOVED = Object.assign({}, UBUNTU, { state: 'off', helper: null, removed: true });
+const dlg = (t) => t.shell.document.querySelector('.wl-remove');
+const dlgButton = (t, label) => dlg(t).querySelectorAll('button').find((b) => b.textContent === label && !b.hidden) || null;
+const aibButton = (t, label) => t.cardOf('AIB in Ubuntu').querySelectorAll('button').find((b) => b.textContent === label);
+async function openRemove(t) {
+  aibButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+}
+
+test('AIB in Ubuntu: at the bottom of the group; disk use by part with the agents under theirs and In all, versions, chat copies, chats working, other data folders', async () => {
+  const t = setup();
+  await openWsl(t);
+  const card = t.cardOf('AIB in Ubuntu');
+  assert.ok(card, 'drawn for a ready distro');
+  const cards = t.content().querySelectorAll('.st-card');
+  assert.equal(cards[cards.length - 1], card, 'the last card of the group');
+  assert.ok(card.textContent.includes('Everything AIB keeps in Ubuntu, in /home/u/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it.'));
+  const dl = card.querySelector('.wl-usage');
+  const pairs = dl.querySelectorAll('dt').map((n, i) => [n.textContent, dl.querySelectorAll('dd')[i].textContent]);
+  assert.deepEqual(pairs, [
+    ['AIB programs (keeper, helper)', '190 MB'],
+    ['Agents installed by AIB', '861 MB'],
+    ['Claude Code 0.102.0', '404 MB'],
+    ['Codex 2.6.0', '457 MB'],
+    ['npm download cache', '330 MB'],
+    ["This AIB's data folder", '12 MB'],
+    ['Chat copies of this AIB', '96 MB'],
+    ['Logs', '512 KB'],
+    ['In all', '1.5 GB'],
+  ]);
+  assert.equal(dl.querySelectorAll('dt')[0].title, ROOT + '/0.1.0-ab12cd34', 'the part\'s folder on hover');
+  assert.equal(dl.querySelectorAll('dt.wl-sub').length, 2, 'the agents sit under their part');
+  const lines = card.querySelectorAll('.wl-line').map((n) => n.textContent);
+  assert.deepEqual(lines, ['AIB versions installed: 0.1.0-ab12cd34 (current), 0.0.9-ffee0011', 'Chat copies: 3, 1 with unsaved changes', 'Chats working now: 0']);
+  const others = card.querySelector('.wl-others');
+  assert.equal(others.querySelector('.wl-others-title').textContent, 'Other AIB data folders in Ubuntu');
+  const rows = others.querySelectorAll('li');
+  assert.deepEqual(rows.map((r) => r.querySelector('code').textContent), ['data-9f8e7d6c', 'data-55aa66bb'], 'never this AIB\'s own');
+  assert.deepEqual(rows.map((r) => r.querySelector('.wl-size').textContent), ['40 MB', '3 MB']);
+  assert.equal(rows[0].querySelector('.st-status').textContent, 'in use', 'its keeper is alive');
+  assert.equal(rows[1].querySelector('.st-status'), null);
+  assert.ok(others.textContent.includes('These belong to another AIB build or data folder. Remove here never touches them.'));
+  assert.ok(!buttons(others).length, 'read-only');
+  assert.deepEqual(buttons(card), ['Remove AIB from Ubuntu', 'Refresh']);
+  assert.equal(aibButton(t, 'Remove AIB from Ubuntu').className, 'st-danger');
+});
+
+test('AIB in Ubuntu: no other data folders, no dirty copies, no copies: said plainly; the current version listed even if missing from versions', async () => {
+  const usage = Object.assign({}, USAGE, { dataFolders: [USAGE.dataFolders[0]], worktrees: { count: 2, dirty: 0 }, versions: [], chatsWorking: 2 });
+  const t = setup({ aib: () => aibOf(usage) });
+  await openWsl(t);
+  const card = t.cardOf('AIB in Ubuntu');
+  assert.equal(card.querySelector('.wl-others'), null);
+  assert.deepEqual(card.querySelectorAll('.wl-line').map((n) => n.textContent), ['AIB versions installed: 0.1.0-ab12cd34 (current)', 'Chat copies: 2, none with unsaved changes', 'Chats working now: 2']);
+  const n = setup({ aib: () => aibOf(Object.assign({}, USAGE, { worktrees: { count: 0, dirty: 0 } })) });
+  await openWsl(n);
+  assert.ok(n.cardOf('AIB in Ubuntu').querySelectorAll('.wl-line').some((x) => x.textContent === 'Chat copies: none'));
+});
+
+test('AIB in Ubuntu is read with peek=1 only on open (no start, no force); not drawn for a distro that is not running; Refresh adds force=1, never start', async () => {
+  const t = setup({ status: status([UBUNTU, DEBIAN]) });
+  await openWsl(t);
+  assert.deepEqual(t.aibCalls(), [{ distro: 'ubuntu', peek: '1' }]);
+  t.UI.close();
+  t.UI.open('wsl');
+  await settle();
+  assert.equal(t.aibCalls().length, 1, 'kept for a minute');
+  await t.choose('debian');
+  assert.equal(t.cardOf('AIB in Debian'), null, 'Debian is not running: nothing new beyond Start and check');
+  assert.ok(buttons(t.cardOf('Debian')).includes('Start Debian and check'));
+  assert.ok(t.aibCalls().every((q) => q.distro === 'ubuntu'), 'nothing asked of Debian');
+  await t.choose('ubuntu');
+  aibButton(t, 'Refresh').click();
+  await settle();
+  assert.deepEqual(t.aibCalls().pop(), { distro: 'ubuntu', peek: '1', force: '1' });
+  assert.ok(t.aibCalls().every((q) => !('start' in q)), 'never start');
+  assert.equal(t.removeCalls().length, 0, 'opening the page asks no removal question');
+});
+
+test('AIB in Ubuntu while the answer says not ready (usage: null): its line, no Remove; a read error: the reason with Refresh', async () => {
+  const t = setup({ aib: () => ({ distro: 'ubuntu', name: 'Ubuntu', state: 'starting', line: 'Starting Ubuntu…', usage: null }) });
+  await openWsl(t);
+  const card = t.cardOf('AIB in Ubuntu');
+  assert.ok(card.textContent.includes('Starting Ubuntu…'));
+  assert.deepEqual(buttons(card), []);
+  const e = setup({ aib: () => Error('Ubuntu did not answer.') });
+  await openWsl(e);
+  const ec = e.cardOf('AIB in Ubuntu');
+  assert.equal(ec.querySelector('.st-note.bad').textContent, 'What AIB keeps in Ubuntu could not be read: Ubuntu did not answer.');
+  assert.deepEqual(buttons(ec), ['Remove AIB from Ubuntu', 'Refresh']);
+});
+
+test('Remove: the check (deletes nothing) fills a dialog with what goes grouped with sizes, what is kept and why, and what is never touched; Cancel sends nothing more', async () => {
+  const t = setup();
+  await openWsl(t);
+  await openRemove(t);
+  assert.deepEqual(t.removeCalls(), [{ distro: 'ubuntu', mode: 'check' }]);
+  const box = dlg(t);
+  assert.ok(box, 'an in-page dialog, never window.confirm');
+  assert.equal(box.getAttribute('role'), 'alertdialog');
+  assert.ok(box.className.includes('dp-dialog'), 'the delete-project dialog look');
+  assert.ok(t.shell.document.querySelector('.dp-scrim'));
+  assert.equal(box.querySelector('.dp-title').textContent, 'Remove AIB from Ubuntu?');
+  const gone = box.querySelector('.wl-rm-gone');
+  assert.equal(gone.querySelector('.wl-rm-head').textContent, 'Deleted (203 MB in all):');
+  const items = gone.querySelectorAll('.wl-rm-item');
+  assert.deepEqual(items.map((li) => li.querySelector('.wl-rm-line').textContent), ["This AIB's data folder12 MB", 'Chat copies of this AIB (2)96 MB', 'Old AIB programs95 MB']);
+  assert.deepEqual(items[1].querySelectorAll('.wl-rm-path').map((c) => c.textContent), [ROOT + '/data-1a2b3c4d/worktrees/app/chat-1', ROOT + '/data-1a2b3c4d/worktrees/api/chat-2']);
+  const kept = box.querySelector('.wl-rm-kept');
+  assert.deepEqual(kept.querySelectorAll('li').map((li) => [li.querySelector('code').textContent, li.querySelector('.wl-rm-why').textContent]), KEPT.map((k) => [k.path, k.why]));
+  assert.ok(box.textContent.includes('Your projects, ~/.claude, ~/.codex, nvm and asdf are not touched.'));
+  assert.ok(box.textContent.includes('Chat branches stay in your repos.'));
+  assert.equal(dlgButton(t, 'Remove AIB from Ubuntu').disabled, false);
+  assert.equal(dlgButton(t, 'Remove AIB from Ubuntu').className, 'cg-confirm-yes cg-discard dp-ok');
+  assert.equal(dlgButton(t, 'Check again'), null, 'nothing blocks it');
+  assert.equal(t.shell.document.activeElement, dlgButton(t, 'Cancel'), 'Cancel has the focus');
+  assert.equal(box.querySelector('.dp-disk').hidden, true, 'no tick when no chat works');
+  dlgButton(t, 'Cancel').click();
+  await settle();
+  assert.equal(dlg(t), null);
+  assert.equal(t.shell.document.querySelector('.dp-scrim'), null);
+  assert.deepEqual(t.removeCalls(), [{ distro: 'ubuntu', mode: 'check' }], 'no apply');
+  await openRemove(t);
+  dlg(t).dispatch('keydown', { key: 'Escape' });
+  assert.equal(dlg(t), null, 'Escape cancels');
+});
+
+test('Remove blocked: each reason verbatim on its own line, the button off, only Close and Check again (which checks again)', async () => {
+  const reasons = ['A WSL chat is working in Ubuntu (app · Fix login). Wait for it or stop it first.', '1 chat copy has changes that are not committed: api · Add tests. Merge or discard them first.'];
+  let reply = Object.assign({}, CHECK_OK, { ok: false, blocked: reasons });
+  const t = setup({ remove: () => reply });
+  await openWsl(t);
+  await openRemove(t);
+  const box = dlg(t);
+  assert.equal(box.querySelector('.wl-rm-blocked').querySelector('p').textContent, 'AIB cannot be removed from Ubuntu now:');
+  assert.deepEqual(box.querySelectorAll('.wl-reason').map((p) => p.textContent), reasons);
+  assert.equal(box.querySelector('.wl-rm-head').textContent, 'Remove would delete (203 MB in all):', 'still lists what it would delete');
+  const yes = box.querySelectorAll('button').find((b) => b.textContent === 'Remove AIB from Ubuntu');
+  assert.equal(yes.disabled, true);
+  assert.deepEqual(box.querySelectorAll('button').filter((b) => !b.hidden && !b.disabled).map((b) => b.textContent), ['Close', 'Check again']);
+  yes.click();
+  yes.click();
+  await settle();
+  assert.ok(t.removeCalls().every((b) => b.mode === 'check'), 'never an apply');
+  reply = CHECK_OK;
+  dlgButton(t, 'Check again').click();
+  await settle();
+  assert.deepEqual(t.removeCalls(), [{ distro: 'ubuntu', mode: 'check' }, { distro: 'ubuntu', mode: 'check' }]);
+  assert.equal(dlg(t).querySelectorAll('.wl-reason').length, 0);
+  assert.equal(dlgButton(t, 'Remove AIB from Ubuntu').disabled, false, 'on once nothing blocks it');
+  assert.equal(dlgButton(t, 'Check again'), null);
+});
+
+test('Remove: a second click confirms; while it runs the dialog says Removing… and the card\'s buttons are off; nothing is claimed before the answer; then "AIB is not set up" with Set up again', async () => {
+  let release;
+  let t;
+  t = setup({
+    remove: (b) =>
+      b.mode === 'check'
+        ? CHECK_OK
+        : new Promise((r) => {
+            release = () => {
+              t.set(status([REMOVED]));
+              r(APPLY_OK);
+            };
+          }),
+  });
+  await openWsl(t);
+  await openRemove(t);
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+  assert.equal(t.removeCalls().length, 1, 'the first click only asks again');
+  assert.equal(dlg(t).querySelector('.dp-warn').textContent, 'Choose Remove AIB from Ubuntu again to delete these. This cannot be undone.');
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+  assert.deepEqual(t.removeCalls().pop(), { distro: 'ubuntu', mode: 'apply', confirm: true });
+  const yes = dlg(t).querySelectorAll('button').find((b) => b.textContent === 'Removing…');
+  assert.ok(yes && yes.disabled, 'Removing…');
+  assert.equal(dlgButton(t, 'Cancel').disabled, true);
+  dlg(t).dispatch('keydown', { key: 'Escape' });
+  assert.ok(dlg(t), 'Escape does not close it while it runs');
+  const card = t.cardOf('AIB in Ubuntu');
+  assert.ok(card, 'still the ready group: no success claimed yet');
+  assert.ok(buttons(card).length === 2 && card.querySelectorAll('button').every((b) => b.disabled), 'the card\'s buttons are off');
+  assert.ok(card.textContent.includes('Removing AIB from Ubuntu…'));
+  assert.ok(!t.content().textContent.includes('AIB is not set up'));
+  release();
+  await settle();
+  await settle();
+  assert.equal(dlg(t), null, 'closed on success');
+  assert.deepEqual(t.groups(), ['Ubuntu'], 'the distro stays selectable and shown');
+  const st = t.cardOf('Ubuntu');
+  assert.equal(st.dataset.removed, '1');
+  assert.ok(st.textContent.includes('AIB is not set up in Ubuntu.'));
+  assert.deepEqual(buttons(st), ['Set up again']);
+  assert.equal(t.cardOf('AIB in Ubuntu'), null);
+  assert.equal(t.cardOf('Agents in Ubuntu'), null);
+  assert.equal(t.cardOf('What Ubuntu needs'), null);
+  assert.equal(t.cardOf('WSL on this PC').querySelector('.st-status').textContent, 'Not set up');
+  // Set up again: the Start and check flow (peek=1&start=1); the next status clears the removed state
+  const before = t.aibCalls().length;
+  st.querySelector('button').click();
+  await settle();
+  assert.deepEqual(t.agentCalls().pop(), { distro: 'ubuntu', peek: '1', start: '1' });
+  t.ctx.AIBWsl._set(status([UBUNTU]));
+  await settle();
+  assert.ok(t.cardOf('AIB in Ubuntu'), 'set up again: the card is back');
+  assert.ok(t.aibCalls().length > before, 'and read again (peek)');
+  assert.ok(t.aibCalls().every((q) => !('start' in q)));
+  assert.ok(!t.content().textContent.includes('AIB is not set up'));
+});
+
+test('Remove while chats work in Ubuntu: the check shows the tick "I understand chats running in Ubuntu will stop"; the button stays off until it is ticked', async () => {
+  const t = setup({ aib: () => aibOf(Object.assign({}, USAGE, { chatsWorking: 1 })) });
+  await openWsl(t);
+  await openRemove(t);
+  const row = dlg(t).querySelector('.dp-disk');
+  assert.equal(row.hidden, false);
+  assert.equal(row.querySelector('span').textContent, 'I understand chats running in Ubuntu will stop');
+  assert.equal(dlgButton(t, 'Remove AIB from Ubuntu').disabled, true);
+  const tick = row.querySelector('input');
+  tick.checked = true;
+  tick.dispatch('change');
+  assert.equal(dlgButton(t, 'Remove AIB from Ubuntu').disabled, false);
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+  assert.deepEqual(t.removeCalls().pop(), { distro: 'ubuntu', mode: 'apply', confirm: true }, 'the tick replaces the second click');
+});
+
+test('Remove partly fails: the dialog says the message and the left list verbatim (and what went); the card keeps them after Close', async () => {
+  const left = [ROOT + '/data-1a2b3c4d/worktrees/app/chat-1: permission denied'];
+  const message = 'AIB could not delete 1 folder in Ubuntu. Delete it yourself, or try again after a restart of Ubuntu.';
+  let t;
+  t = setup({
+    remove: (b) => {
+      if (b.mode === 'check') return CHECK_OK;
+      t.set(status([REMOVED]));
+      return { ok: false, mode: 'apply', blocked: [], wouldRemove: [], kept: KEPT, removed: [ROOT + '/data-1a2b3c4d'], left, message };
+    },
+  });
+  await openWsl(t);
+  await openRemove(t);
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+  await settle();
+  const box = dlg(t);
+  assert.ok(box, 'stays open to say what happened');
+  assert.equal(box.querySelector('.dp-main').textContent, 'AIB could not remove everything from Ubuntu.');
+  assert.equal(box.querySelector('.wl-rm-message').textContent, message);
+  assert.deepEqual(box.querySelector('.wl-rm-left').querySelectorAll('li').map((li) => li.textContent), left);
+  assert.deepEqual(box.querySelector('.wl-rm-done').querySelectorAll('li').map((li) => li.textContent), [ROOT + '/data-1a2b3c4d']);
+  assert.deepEqual(box.querySelectorAll('button').filter((b) => !b.hidden).map((b) => b.textContent), ['Close']);
+  dlgButton(t, 'Close').click();
+  await settle();
+  const st = t.cardOf('Ubuntu');
+  assert.ok(st.textContent.includes('AIB is not set up in Ubuntu.'), 'the host is off with the removed flag');
+  assert.ok(st.querySelectorAll('.st-note.bad').some((n) => n.textContent === message));
+  assert.deepEqual(st.querySelector('.wl-left').querySelectorAll('li').map((li) => li.textContent), left);
+});
+
+test('Remove refused when it runs (apply answers blocked): the reasons, nothing removed, the group as it was; a failed request says its message', async () => {
+  const why = 'An install of Codex runs in Ubuntu. Wait for it or cancel it first.';
+  let apply = { ok: false, mode: 'apply', blocked: [why], wouldRemove: CHECK_OK.wouldRemove, kept: KEPT, removed: [], left: [] };
+  const t = setup({ remove: (b) => (b.mode === 'check' ? CHECK_OK : apply) });
+  await openWsl(t);
+  await openRemove(t);
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+  assert.deepEqual(dlg(t).querySelectorAll('.wl-reason').map((p) => p.textContent), [why]);
+  assert.equal(dlg(t).querySelectorAll('button').find((b) => b.textContent === 'Remove AIB from Ubuntu').disabled, true);
+  assert.ok(t.cardOf('AIB in Ubuntu'), 'still set up');
+  apply = Error('Ubuntu is not running.');
+  dlgButton(t, 'Check again').click();
+  await settle();
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  dlgButton(t, 'Remove AIB from Ubuntu').click();
+  await settle();
+  const err = dlg(t).querySelector('.dp-error');
+  assert.equal(err.hidden, false);
+  assert.equal(err.textContent, 'Ubuntu is not running.');
+  assert.equal(dlgButton(t, 'Remove AIB from Ubuntu').disabled, false, 'can be tried again');
+  assert.ok(t.cardOf('AIB in Ubuntu') && !t.content().textContent.includes('AIB is not set up'));
+});
+
+test('removed flag after a reload (status removed: true, state off): "AIB is not set up in Ubuntu" with Set up again, not Start and check; nothing asked of the distro', async () => {
+  const t = setup({ status: status([REMOVED]) });
+  await openWsl(t);
+  const st = t.cardOf('Ubuntu');
+  assert.ok(st.textContent.includes('AIB is not set up in Ubuntu.'));
+  assert.deepEqual(buttons(st), ['Set up again']);
+  assert.ok(!st.textContent.includes('Start Ubuntu and check'));
+  assert.deepEqual(t.aibCalls(), []);
+  assert.deepEqual(t.agentCalls(), []);
+  assert.deepEqual(t.picker().querySelectorAll('option').map((o) => o.textContent), ['Ubuntu (WSL default)'], 'still in the drop-down');
+});
+
+test('the drop-down: each distro shows its own AIB card and its own Remove', async () => {
+  const debianUsage = Object.assign({}, USAGE, { root: '/home/d/.aib-server', totalBytes: 300 * MB, dataFolders: [], worktrees: { count: 0, dirty: 0 } });
+  const t = setup({ status: status([UBUNTU, DEBIAN_READY]), agents: listOf, aib: (q) => (q.distro === 'debian' ? aibOf(debianUsage, 'debian') : aibOf(USAGE)) });
+  await openWsl(t);
+  assert.ok(t.cardOf('AIB in Ubuntu').textContent.includes('/home/u/.aib-server'));
+  await t.choose('debian');
+  const card = t.cardOf('AIB in Debian');
+  assert.ok(card.textContent.includes('in /home/d/.aib-server on this PC'));
+  assert.equal(card.querySelector('.wl-others'), null);
+  assert.equal(t.cardOf('AIB in Ubuntu'), null);
+  assert.deepEqual(t.aibCalls(), [{ distro: 'ubuntu', peek: '1' }, { distro: 'debian', peek: '1' }]);
+  card.querySelectorAll('button').find((b) => b.textContent === 'Remove AIB from Debian').click();
+  await settle();
+  assert.deepEqual(t.removeCalls(), [{ distro: 'debian', mode: 'check' }]);
+  assert.equal(dlg(t).querySelector('.dp-title').textContent, 'Remove AIB from Debian?');
+});
+
+test('bytesText and groupRemove', () => {
+  const t = setup();
+  const S = t.ctx.AIBWslSettings;
+  assert.equal(S.bytesText(0), '0 bytes');
+  assert.equal(S.bytesText(2048), '2 KB');
+  assert.equal(S.bytesText(5 * MB), '5 MB');
+  assert.equal(S.bytesText(1024 * MB), '1 GB');
+  assert.deepEqual(plain(S.groupRemove(CHECK_OK.wouldRemove)).map((g) => [g.what, g.bytes / MB, g.paths.length]), [
+    ["This AIB's data folder", 12, 1],
+    ['Chat copies of this AIB', 96, 2],
+    ['Old AIB programs', 95, 1],
+  ]);
 });

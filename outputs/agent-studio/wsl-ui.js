@@ -213,6 +213,31 @@
       return r || {};
     });
   }
+  /**
+   * Settings > AIB Linking (WSL), "AIB in Ubuntu": {distro, name, state, line, usage: AibUsage | null} (null while the distro is
+   * not ready; design section 13). peek=1 always, never start; o.force: the distro measures again (the card's Refresh).
+   */
+  function peekAib(key, o) {
+    const opts = o || {};
+    if (!host || !host.getJson) return Promise.reject(Error('Not ready'));
+    const params = { distro: String(key).toLowerCase(), peek: '1' };
+    if (opts.force) params.force = '1';
+    return Promise.resolve(host.getJson('/api/live/wsl/aib', params)).then((r) => (r && typeof r === 'object' ? r : { usage: null }));
+  }
+  /**
+   * Remove AIB from a distro: mode 'check' (never deletes) or 'apply' (confirm: true). {ok, mode, blocked, wouldRemove, kept,
+   * removed, left, message?}; the lists are always arrays here.
+   */
+  function removeAib(key, mode, confirm) {
+    const body = { distro: String(key).toLowerCase(), mode: mode === 'apply' ? 'apply' : 'check' };
+    if (body.mode === 'apply') body.confirm = confirm === true;
+    return post('wsl/aib/remove', body).then((r) => {
+      const v = r && typeof r === 'object' ? r : {};
+      for (const k of ['blocked', 'wouldRemove', 'kept', 'removed', 'left']) if (!Array.isArray(v[k])) v[k] = [];
+      if (body.mode === 'apply') forget(key);
+      return v;
+    });
+  }
   /** The distro key of the open project or chat ('' when it is not a WSL one). */
   function currentKey() {
     const p = parse(host && host.currentPath ? host.currentPath() : '');
@@ -522,6 +547,8 @@
     peekPrereqs,
     setAgentEnabled,
     uninstallAgent,
+    peekAib,
+    removeAib,
     currentKey,
     forget,
     installBox,
