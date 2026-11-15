@@ -722,6 +722,8 @@
 
   /* Left edge of a popover anchored at `left`: moved left as far as needed to stay inside a view `width` wide (4 px margins). */
   const placeLeft = (left, popWidth, width) => Math.max(4, Math.min(num(left), num(width) - num(popWidth) - 4));
+  // a right-anchored menu (the viewer's ⋯) in a narrow column: it never runs off the column's left edge either
+  const placeRight = (right, popWidth, width) => Math.max(4, Math.min(num(right), num(width) - num(popWidth) - 4));
 
   /* ---- unified diff -> hunks ------------------------------------------------------------------------------------------- */
   /* [{name, hunks:[{header, lines:[' ctx','+add','-del','\\ note']}]}] */
@@ -843,6 +845,7 @@
     outputsCardModel,
     writtenVersion,
     placeLeft,
+    placeRight,
     writeTarget,
     artifactEvent,
     eventHintsArtifact,
@@ -2035,7 +2038,7 @@
     ui.pop.style.top = top + 'px';
     if (right) {
       ui.pop.style.left = 'auto';
-      ui.pop.style.right = Math.max(4, (vr.right - ar.right) / k) + 'px';
+      ui.pop.style.right = placeRight((vr.right - ar.right) / k, ui.pop.offsetWidth, v.offsetWidth) + 'px';
     } else {
       ui.pop.style.right = 'auto';
       // QA m1: a menu wider than the room right of its button moves left, so it never runs off the column's edge

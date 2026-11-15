@@ -130,6 +130,12 @@ test('QA m1: a menu wider than the room right of its button moves left, inside t
   assert.equal(A.placeLeft(150, 400, 300), 4, 'wider than the column: from its left edge');
 });
 
+test("the viewer's ⋯ menu in a narrow column (one right-column width, no 920 px viewer) stays inside the column's left edge", () => {
+  assert.equal(A.placeRight(8, 210, 900), 8, 'room enough: under its button');
+  assert.equal(A.placeRight(207, 210, 279), 65, 'pulled right so its left edge is 4 px inside the column');
+  assert.equal(A.placeRight(0, 210, 900), 4, 'never closer than 4 px to the right edge');
+});
+
 test("Open in Artifacts (Files view): registerFile in another chat shows that artifact here, reveals the Artifacts tab, keeps it out of this chat's list", async () => {
   const shell = page({ ids: ['artifactsView'] });
   const w = shell.window;
