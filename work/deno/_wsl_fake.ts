@@ -7,7 +7,7 @@
  * Never a real distro, never the owner's homes: temp folders only.
  */
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import type { HelperMethods, WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import type { AibUsage, HelperMethods, WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { readKeeperInfo, KeeperClient } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
@@ -34,6 +34,33 @@ export class MappedKeeperLink extends KeeperLink {
 }
 
 type Handler = (params: Json) => unknown;
+
+/** The fake helper's AIB folder (never a real one: the fake touches no distro). */
+export const FAKE_AIB_ROOT = '/home/u/.aib-server';
+
+/** The fake helper's `aib.usage` answer (contract.ts AibUsage). */
+export function fakeAibUsage(): AibUsage {
+  const root = FAKE_AIB_ROOT, data = `${root}/data-0123456789ab`;
+  return {
+    root,
+    totalBytes: 600,
+    current: '0.1.0-0123abcd',
+    parts: [
+      { key: 'versions', label: 'AIB helper and keeper', bytes: 100, path: root },
+      { key: 'agents', label: 'Installed agents', bytes: 200, path: `${root}/agents` },
+      { key: 'npmCache', label: 'npm cache', bytes: 50, path: `${root}/agents/.npm-cache` },
+      { key: 'data', label: "This AIB's data", bytes: 50, path: data },
+      { key: 'worktrees', label: 'Chat copies (worktrees)', bytes: 100, path: `${data}/worktrees` },
+      { key: 'logs', label: 'Chat records and logs', bytes: 50, path: `${data}/keeper` },
+      { key: 'other', label: 'Other AIB data folders and files', bytes: 50, path: root },
+    ],
+    versions: ['0.1.0-0123abcd'],
+    agents: [{ id: 'claude', versions: ['0.102.0'], bytes: 200 }],
+    dataFolders: [{ name: 'data-0123456789ab', mine: true, keeperAlive: true, bytes: 200 }, { name: 'data-ba9876543210', mine: false, keeperAlive: false, bytes: 50 }],
+    worktrees: { count: 1, dirty: 0 },
+    chatsWorking: 0,
+  };
+}
 
 export class FakeWslHost implements WslHost {
   readonly distro: string;
@@ -155,6 +182,22 @@ export class FakeWslHost implements WslHost {
         info = win !== String(params.path) ? Deno.statSync(win) : null;
       } catch { /* missing */ }
       return { exists: !!info, isDir: !!info?.isDirectory, isFile: !!info?.isFile, size: info?.size ?? 0, mtimeMs: info?.mtime?.getTime() ?? 0 };
+    }
+    // Linking (WSL) phase 3: a small AIB folder and a Remove with nothing in the way (tests set handlers for other answers)
+    if (method === 'aib.usage') return fakeAibUsage();
+    if (method === 'aib.remove') {
+      const apply = params.mode === 'apply';
+      const data = `${FAKE_AIB_ROOT}/data-0123456789ab`;
+      return {
+        ok: true,
+        mode: params.mode,
+        blocked: [],
+        wouldRemove: [{ path: data, what: "this AIB's data folder", bytes: 4096 }],
+        kept: [{ path: '/home/u/.claude', why: "Claude Code's own settings and sign-in: AIB never touches them" }],
+        removed: apply ? [`${data}/studio-worktrees.json`] : [],
+        left: [],
+        ...(apply ? { final: { data: 'data-0123456789ab', version: null, root: false, copies: [] } } : {}),
+      };
     }
     throw new WslHelperError(`the fake helper has no ${method}`, 'no_method');
   }
