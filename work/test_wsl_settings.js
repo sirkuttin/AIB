@@ -38,10 +38,11 @@ const WIN = [
  * o.install(name, body) / o.installGet(params): the install routes; o.stateDir: bootstrap's state folder (Windows by default).
  */
 function setup(o = {}) {
-  const shell = page();
-  const ctx = load(shell, ['wsl-ui.js', 'settings-ui.js', 'wsl-settings-ui.js']);
+  const shell = page({ store: o.store || {} });
+  const ctx = load(shell, ['wsl-ui.js', 'terminal-ui.js', 'composer-chips.js', 'settings-ui.js', 'wsl-settings-ui.js']);
   const calls = { gets: [], posts: [] };
   let current = o.status || status([UBUNTU]);
+  const answer = (r) => (r instanceof Error ? Promise.reject(r) : r && typeof r.then === 'function' ? r : Promise.resolve(plain(r || {})));
   const wslHost = {
     getJson: (p, params) => {
       calls.gets.push([p, plain(params || {})]);
@@ -50,16 +51,33 @@ function setup(o = {}) {
         const r = o.agents ? o.agents(params || {}) : READY_AGENTS;
         return r instanceof Error ? Promise.reject(r) : Promise.resolve(plain(r));
       }
+      if (p === '/api/live/wsl/prereqs') return answer(o.prereqs ? o.prereqs(params || {}) : needsOf(P_OK, (params || {}).distro));
       if (p === '/api/live/wsl/agents/install') return Promise.resolve(plain(o.installGet ? o.installGet(params) : { state: 'idle' }));
       return Promise.resolve({});
     },
     postJson: (name, body) => {
       calls.posts.push([name, plain(body)]);
+      if (name === 'wsl/agents/enabled') return answer(o.enabled ? o.enabled(body) : { ok: true, enabled: body.enabled });
+      if (name === 'wsl/agents/uninstall') return answer(o.uninstall ? o.uninstall(body) : { ok: true, removed: ['~/.aib-server/agents/' + body.id] });
       const r = o.install ? o.install(name, body) : { state: 'running', stage: 'preparing', percent: 2 };
       return r instanceof Error ? Promise.reject(r) : Promise.resolve(plain(r || {}));
     },
-    currentPath: () => '',
+    currentPath: () => o.currentPath || '',
   };
+  // The terminal panels: what each run asked for (the socket address built by terminal-ui.js's own signinUrl), and its hooks to
+  // finish it with. Nothing is opened.
+  const terms = [];
+  const T = ctx.AibTerminal;
+  const record = (box, id, hooks) => {
+    const h = hooks || {};
+    const loc = { protocol: 'http:', host: '127.0.0.1:1' };
+    const url = h.url ? h.url(loc, 80, 24) : T.signinUrl(loc, id, 80, 24, h.step || '', h.distro || '', h.args, !!h.start);
+    const run = { id, hooks: h, url, closed: false, close() { run.closed = true; } };
+    terms.push(run);
+    return run;
+  };
+  T.runSignin = (box, id, hooks) => record(box, id, hooks);
+  T.runSetup = (box, id, step, hooks) => record(box, id, Object.assign({}, hooks, { step }));
   ctx.AIBWsl.init(wslHost);
   const settingsCalls = [];
   const replies = { winInstall: () => ({ state: 'running', stage: 'preparing', percent: 2 }), winStatus: () => ({ state: 'idle' }) };
@@ -84,8 +102,32 @@ function setup(o = {}) {
   const rowOf = (key) => content().querySelectorAll('.st-agent').find((r) => r.dataset.agent === key) || null;
   const cardOf = (title) => content().querySelectorAll('.st-card').find((c) => c.querySelector('.st-card-title').textContent === title) || null;
   const agentCalls = () => calls.gets.filter(([p]) => p === '/api/live/wsl/agents').map(([, q]) => q);
-  return { shell, ctx, UI, calls, settingsCalls, replies, content, nav, rowOf, cardOf, agentCalls, set: (s) => (current = s) };
+  const needCalls = () => calls.gets.filter(([p]) => p === '/api/live/wsl/prereqs').map(([, q]) => q);
+  const picker = () => content().querySelector('.wl-pick').querySelector('select');
+  const groups = () => content().querySelectorAll('.st-group').map((h) => h.textContent);
+  const choose = async (key) => {
+    const sel = picker();
+    sel.value = key;
+    sel.dispatch('change');
+    await settle();
+  };
+  return { shell, ctx, UI, calls, settingsCalls, replies, content, nav, rowOf, cardOf, agentCalls, needCalls, picker, groups, choose, terms, set: (s) => (current = s) };
 }
+// GET /api/live/wsl/prereqs answers (section 12): EnvPrereqs of a ready distro, prereqs: null for one that is not.
+const P_OK = {
+  node: { state: 'ok', version: '24.11.1', path: '/home/u/.nvm/versions/node/v24.11.1/bin/node', manager: 'nvm' },
+  npm: { state: 'ok', version: '11.6.2' },
+  git: { state: 'ok', version: '2.43.0' },
+  curl: { state: 'ok' },
+  diskFreeMB: 822000,
+  arch: 'x64',
+  loginShell: '/usr/bin/zsh',
+  envMode: 'login-interactive',
+  nvm: { present: true },
+  canInstallNode: true,
+};
+const withNode = (node, extra = {}) => Object.assign({}, P_OK, { node }, extra);
+const needsOf = (p, distro = 'ubuntu') => ({ distro, name: distro === 'debian' ? 'Debian' : 'Ubuntu', state: 'ready', line: '', prereqs: p });
 const buttons = (n) => n.querySelectorAll('button').map((b) => b.textContent);
 async function openWsl(t) {
   await settle();
@@ -134,6 +176,11 @@ test('opening Settings asks the ready distro with peek=1 only, never a distro th
   t.UI.open('wsl');
   await settle();
   assert.equal(t.agentCalls().length, 1);
+  assert.deepEqual(t.needCalls(), [{ distro: 'ubuntu', peek: '1' }], 'the prerequisites: peek too, never start');
+  // the drop-down shows one distro at a time: picking Debian (not running) asks it nothing
+  await t.choose('debian');
+  assert.equal(t.agentCalls().length, 1);
+  assert.equal(t.needCalls().length, 1);
   const deb = t.content().querySelectorAll('.st-card').find((c) => c.dataset.distro === 'debian');
   assert.equal(deb.querySelector('dd').textContent, 'Not running');
   assert.ok(deb.textContent.includes('Debian is not running. AIB starts it when a WSL project needs it.'));
@@ -180,7 +227,8 @@ test('all good: the overview lists Ubuntu (WSL default, Ready) and docker-deskto
   assert.deepEqual(agents.querySelectorAll('.st-agent').map((r) => r.dataset.agent), ['wsl:ubuntu:claude', 'wsl:ubuntu:codex', 'wsl:ubuntu:omp']);
   const claude = t.rowOf('wsl:ubuntu:claude');
   assert.equal(claude.querySelector('.st-tag').textContent, 'Installed by AIB');
-  assert.equal(claude.querySelector('.st-status').textContent, 'Found');
+  assert.equal(claude.querySelector('.st-status').textContent, 'Installed', 'AIB\'s own copy, no sign-in answer: Installed');
+  assert.equal(t.rowOf('wsl:ubuntu:codex').querySelector('.st-status').textContent, 'Found', 'your own install: Found');
   assert.equal(claude.querySelector('.st-command').textContent, '0.102.0');
   assert.ok(claude.textContent.includes('The standalone claude command is not needed'), 'bundledCli: true');
   assert.ok(!claude.textContent.includes('claude.ai/install.sh'));
@@ -199,17 +247,59 @@ test('all good: the overview lists Ubuntu (WSL default, Ready) and docker-deskto
   assert.ok(agents.querySelector('.wl-foot').textContent.includes('Your Windows agents are in AIB Linking.'));
 });
 
-test('distro rows have no On/Off switch: they say they follow the Windows switch (one switch per agent)', async () => {
-  const t = setup();
+test('each distro card has its own switch "Use in Ubuntu" from rows[].enabled, apart from the Windows one (Codex off on Windows, on in Ubuntu)', async () => {
+  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({ enabled: false }, CLAUDE), Object.assign({ enabled: true }, CODEX), OMP] }) });
   await openWsl(t);
   const claude = t.rowOf('wsl:ubuntu:claude');
-  assert.equal(claude.querySelectorAll('input').length, 0, 'no switch');
-  assert.equal(claude.querySelector('.st-actions').textContent, 'On: uses the Windows switch in AIB Linking');
+  const box = claude.querySelector('.st-actions').querySelector('input');
+  assert.equal(box.type, 'checkbox');
+  assert.equal(box.checked, false, 'off in Ubuntu although on in Windows');
+  assert.equal(claude.querySelector('.st-actions').querySelector('.st-toggle').textContent, 'Use in Ubuntu');
+  assert.ok(claude.className.includes('off'), 'drawn as off');
   const codex = t.rowOf('wsl:ubuntu:codex');
-  assert.equal(codex.querySelector('.st-actions').textContent, 'Off: uses the Windows switch in AIB Linking', 'Codex is off on Windows');
-  assert.ok(codex.className.includes('off'), 'drawn as off, as on Windows');
-  assert.ok(!buttons(t.cardOf('Agents in Ubuntu')).includes('Uninstall'), 'no Uninstall in phase 1');
-  assert.ok(!buttons(t.cardOf('Agents in Ubuntu')).includes('Sign in'), 'no Sign in in phase 1');
+  assert.equal(codex.querySelector('.st-actions').querySelector('input').checked, true, 'on in Ubuntu although off in Windows');
+  assert.ok(!codex.className.includes('off'));
+  assert.equal(t.rowOf('wsl:ubuntu:omp').querySelector('.st-actions').querySelector('input').checked, true, 'no saved value: on');
+  assert.ok(!t.content().textContent.includes('uses the Windows switch'), 'the phase 1 line is gone');
+});
+
+test('the distro switch: drawn at once, posts {distro, id, enabled}, never the Windows settings; kept after the answer', async () => {
+  let release;
+  const t = setup({ enabled: (b) => new Promise((r) => (release = () => r({ ok: true, enabled: b.enabled }))) });
+  await openWsl(t);
+  const box = t.rowOf('wsl:ubuntu:claude').querySelector('.st-actions').querySelector('input');
+  box.checked = false;
+  box.dispatch('change');
+  await settle();
+  assert.deepEqual(t.calls.posts.pop(), ['wsl/agents/enabled', { distro: 'ubuntu', id: 'claude', enabled: false }]);
+  assert.equal(t.rowOf('wsl:ubuntu:claude').querySelector('.st-actions').querySelector('input').checked, false, 'off before the answer');
+  assert.ok(t.rowOf('wsl:ubuntu:claude').className.includes('off'));
+  release();
+  await settle();
+  assert.equal(t.rowOf('wsl:ubuntu:claude').querySelector('.st-actions').querySelector('input').checked, false, 'still off after it');
+  assert.equal(t.settingsCalls.filter(([k, n]) => k === 'post' && /settings/.test(n)).length, 0, 'the Windows switch is not touched');
+  assert.ok(!t.rowOf('wsl:ubuntu:claude').querySelector('.st-note.bad'));
+});
+
+test('the distro switch fails: it goes back and the card says why; a refused answer (ok: false) too', async () => {
+  let reply = Error('The settings file could not be written.');
+  const t = setup({ enabled: () => reply });
+  await openWsl(t);
+  let box = t.rowOf('wsl:ubuntu:codex').querySelector('.st-actions').querySelector('input');
+  box.checked = false;
+  box.dispatch('change');
+  await settle();
+  let row = t.rowOf('wsl:ubuntu:codex');
+  assert.equal(row.querySelector('.st-actions').querySelector('input').checked, true, 'rolled back');
+  assert.equal(row.querySelector('.st-note.bad').textContent, 'The switch could not be saved: The settings file could not be written. Codex stays on in Ubuntu.');
+  reply = { ok: false };
+  box = row.querySelector('.st-actions').querySelector('input');
+  box.checked = false;
+  box.dispatch('change');
+  await settle();
+  row = t.rowOf('wsl:ubuntu:codex');
+  assert.equal(row.querySelector('.st-actions').querySelector('input').checked, true);
+  assert.equal(row.querySelector('.st-note.bad').textContent, 'The switch could not be saved. Codex stays on in Ubuntu.');
 });
 
 test('missing: Install in Ubuntu with what it does, the npm command for doing it yourself; Install starts the job in the distro', async () => {
@@ -285,6 +375,7 @@ test('error: a failed install shows Install failed, npm\'s line and Retry', asyn
 
 test('Node.js missing: Install is off with the reason, the line says why, the nvm command to copy, Check again asks again (peek, force)', async () => {
   const t = setup({
+    prereqs: () => Error('Not found'), // a server without the prerequisites route: the row's own nvm line stays
     agents: () => ({
       distro: 'ubuntu',
       name: 'Ubuntu',
@@ -295,7 +386,7 @@ test('Node.js missing: Install is off with the reason, the line says why, the nv
   const row = t.rowOf('wsl:ubuntu:claude');
   const go = row.querySelectorAll('button').find((b) => b.textContent === 'Install in Ubuntu');
   assert.equal(go.disabled, true);
-  assert.equal(go.title, 'Needs Node.js in Ubuntu first');
+  assert.equal(go.title, 'Needs Node.js first');
   assert.ok(row.textContent.includes('Ubuntu has no Node.js.'));
   assert.ok(row.querySelectorAll('code').some((c) => c.textContent === 'curl … | bash && nvm install 22'));
   row.querySelectorAll('button').find((b) => b.textContent === 'Check again').click();
@@ -360,9 +451,13 @@ test('two distros and a WSL 1 one: all listed, the WSL 1 one with the command th
   assert.equal(over.querySelectorAll('.wl-distro')[1].querySelector('.st-tag').textContent, 'WSL 2', 'not the default');
   assert.equal(over.querySelectorAll('.wl-distro')[1].querySelector('.st-status').textContent, 'Not running');
   assert.equal(over.querySelectorAll('.wl-distro')[3].querySelectorAll('code').length, 0, 'docker-desktop: no conversion');
-  assert.deepEqual(t.content().querySelectorAll('.st-group').map((h) => h.textContent), ['Ubuntu', 'Debian']);
+  assert.deepEqual(t.groups(), ['Ubuntu'], 'one distro at a time: the WSL default first');
   assert.ok(t.cardOf('Agents in Ubuntu'));
+  await t.choose('debian');
+  assert.deepEqual(t.groups(), ['Debian']);
   assert.equal(t.cardOf('Agents in Debian'), null, 'not running: no agents card and no question to it');
+  assert.equal(t.cardOf('What Debian needs'), null);
+  assert.ok(t.agentCalls().every((q) => q.distro === 'ubuntu'));
 });
 
 // ---- Windows rows unchanged, namespaces apart ------------------------------------------------------------------------------

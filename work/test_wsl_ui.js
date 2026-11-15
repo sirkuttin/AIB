@@ -325,7 +325,9 @@ test('terminal: the sign-in socket names the distro; folder tips read "Ubuntu ·
   const T = t.ctx.AibTerminal;
   const url = T.signinUrl({ protocol: 'http:', host: '127.0.0.1:1' }, 'claude', 80, 24, '', 'ubuntu');
   assert.ok(url.includes('signin=claude') && url.includes('distro=ubuntu'), url);
-  assert.ok(!T.signinUrl({ protocol: 'http:', host: 'h' }, 'claude', 80, 24, 'install', 'ubuntu').includes('distro='));
+  // a Windows setup step names no distro; a distro's setup step (Settings > AIB Linking (WSL): the Node.js install) keeps it
+  assert.ok(!T.signinUrl({ protocol: 'http:', host: 'h' }, 'claude', 80, 24, 'install', '').includes('distro='));
+  assert.ok(T.signinUrl({ protocol: 'http:', host: 'h' }, 'wsl-node', 80, 24, 'node', 'ubuntu').includes('distro=ubuntu'));
   // a WSL chat's sign-in card: the distro and the advertised method's args together
   const card = new URL(T.signinUrl({ protocol: 'http:', host: 'h' }, 'claude', 80, 24, '', 'ubuntu', ['--cli', 'auth', 'login', '--console']));
   assert.equal(card.searchParams.get('distro'), 'ubuntu');
