@@ -15,12 +15,14 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 - Chats start the agent as the distro has it (`claude-agent-acp`, `codex-acp` installed with npm in the distro). A missing one shows
   its install command and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
-- AIB tools in a WSL chat are limited to artifacts (publish, list, update), reached through WSL interop; docs, merge and the swarm
-  helper tools are not available yet, and the chat says so.
+- AIB tools in a WSL chat are limited to artifacts (publish, list, update) and, for a chat in its own copy, the merge tools
+  (merge_into_project, resolve_edit_clash), reached through WSL interop; docs and the swarm helper tools are not available yet, and
+  the chat says so.
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
   Windows project; a folder that is not git, has no commits yet, or cannot get a copy keeps the chat in the project folder, with the
-  same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, and Discard removes the
-  copy and its branch. There is no Merge button and no live sync for WSL copies yet. The Docs tab is off. The Files tab previews
+  same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the
+  copy and its branch, and Merge lands the chat's own commits on main as for a Windows project (see Merge below). There is no live
+  sync for WSL copies yet. The Docs tab is off. The Files tab previews
   pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
   (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
   as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
@@ -85,9 +87,32 @@ WSL worktree on Windows; `wsl/worktrees.ts` turns the helper's Linux paths into 
   branch `studio/<slug>`; removal keeps Manager's checks (real path inside the root, compared case-sensitively). A project or data
   folder under `/mnt/<drive>` never gets a worktree. At its start the helper removes half-made worktrees and retries pending
   removals, as a Windows AIB does at its start.
-- Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes sends
-  `worktree.merge: false`, so the page shows Discard but no Merge. A helper without the methods (older, or no `--data`) leaves
-  chats in the project folder.
+- Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes shows
+  Discard and Merge, as on Windows. A helper without the methods (older, or no `--data`) leaves chats in the project folder.
+
+## Merge
+
+The merge engine (`worktrees/merge.ts`) runs whole in the helper too (`wsl/helper/merge.ts`, the `merge.*` methods), unchanged, over
+the same `<data>` folder as the worktree registry: the repository lock, the chat's worktree lock, the "sync paused" lock and the clash
+records (`<data>/worktree-clashes.json`) are all in the distro, so they hold across AIB and helper restarts, and every git step
+(commit the copy's leftovers, bring main in, replay the chat's commits, stash and re-apply the user's edits in the main checkout,
+fast-forward main, reset the copy) is Linux git on Linux paths. The routes (`GET /api/live/worktree`, `POST /api/live/worktree/merge`,
+`merge-request`, `clash`, and the agent's `POST /api/live/worktree/tool`) ask `wsl/merge.ts wslMergeChat` first; a live chat whose
+cwd is a WSL ref goes to the helper, every other chat to merge.ts as before.
+
+- AIB sends the chat's public state with each call (its cwd as the worktree's Linux path; queued messages as empty items, so no
+  message text crosses). What merge.ts posts to the chat (the conflict prompt, the "Merged into main (n commits)" note, the clash note
+  with its two buttons and the clash prompt, the Merge button's queued message) comes back as ordered `actions` and AIB posts them,
+  each to that chat only; a conflict prompt the chat does not take is refused with merge.ts's line. A refusal comes back as merge.ts's
+  Refused (same message, code and status).
+- Every Windows rule holds: only the chat's own branch lands, on the project's main branch; a busy chat, a running terminal or
+  subagent in the copy, a lock file or a merge/rebase in the main checkout refuse; the user's uncommitted edits in the main checkout
+  are stashed by SHA and re-applied, never overwritten (a clash keeps them in the named stash; the amber line and "Keep my version"
+  read and act in the distro); nothing is ever forced.
+- Live sync does not run for WSL chats, so nothing moves the user base between merges; merge.ts's tree landing still applies after a
+  merge that took in the user's unsaved edits, exactly as on Windows. Resume on the amber line is a no-op for a WSL project.
+- The button's state never starts a distro (a distro that is not ready says why); the clash line is read only from a distro AIB
+  already uses. Quit AIB waits for a running WSL merge, as for a Windows one (`wslMergesRunning`).
 
 ## Previews, outside files, delete, Codex limits
 
@@ -135,16 +160,17 @@ AIB_WSL_E2E=Ubuntu deno test -A ../../work/deno/wsl_*_e2e_test.ts
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 
 Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead of `~/.aib-server`, the agents' `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_worktrees_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_gates_test`, `wsl_location_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)
 
-Live sync and merge inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
+Live sync inside the distro; the docs store; the full AIB tools tunnel; background-task output and ownership
 checks for WSL chats; AIB-managed agent installs in the distro.
