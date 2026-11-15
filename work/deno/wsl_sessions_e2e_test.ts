@@ -36,8 +36,9 @@ Deno.test({
       ];
       const folder = repo.replaceAll('/', '-');
       const made = await inDistro(
-        'mkdir -p "$1/home/.claude/projects/$2" && cat > "$1/home/.claude/projects/$2/$3.jsonl"',
-        [ROOT, folder, id],
+        // ended ten minutes ago: a transcript written moments ago by someone else would ask before Continue (the ownership check)
+        'mkdir -p "$1/home/.claude/projects/$2" && cat > "$1/home/.claude/projects/$2/$3.jsonl" && touch -d "@$4" "$1/home/.claude/projects/$2/$3.jsonl"',
+        [ROOT, folder, id, String(Math.floor(Date.now() / 1000) - 600)],
         new TextEncoder().encode(rows.map((r) => JSON.stringify(r)).join('\n') + '\n'),
       );
       assertEquals(made.code, 0, made.err);

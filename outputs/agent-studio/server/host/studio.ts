@@ -47,7 +47,8 @@ import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
-import { HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
+import { ACTIVE_WINDOW_SECONDS, type Assessment, HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
+import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
 import { home, isdir, join, realpath } from '../platform/ospath.ts';
 import { Recovery, StateStore } from '../state/recovery.ts';
@@ -483,8 +484,54 @@ export class Studio {
     return [...this.connections.values()].some((c) => c.provider === provider && c.sessionId === sessionId && !c.closed);
   }
 
+  /** Windows pids of this Studio's agents (a WSL chat's pid is the distro's: wslOwnPids). */
   #ownAgentPids(): number[] {
-    return [...this.connections.values()].filter((c) => !c.closed && c.process !== null).map((c) => c.process!.pid);
+    return [...this.connections.values()].filter((c) => !c.closed && c.process !== null && !c.wsl).map((c) => c.process!.pid);
+  }
+
+  /** The Linux pids of this Studio's open chats in a distro (wslOwnPids adds every agent channel its Linux keeper lists). */
+  #wslChatPids(distro: string): number[] {
+    return [...this.connections.values()]
+      .filter((c) => !c.closed && c.wsl?.distro === distro && c.process !== null)
+      .map((c) => c.process!.pid);
+  }
+
+  /** Owner announcements only (the Windows registry): what a WSL chat's check adds to its distro's answer. */
+  readonly #registryProbe = (): OwnershipProbe =>
+    new OwnershipProbe({
+      registry: this.owners,
+      ownedByStudio: (provider, sessionId) => this.#studioOwns(provider, sessionId),
+      inspectProcesses: false,
+      lockProbe: () => [],
+    });
+
+  /**
+   * The ownership check of a WSL chat (wsl/ownership.ts): the distro's helper looks for a process holding the session and for the weak
+   * signs, AIB adds the Windows owner announcements. `null` assessment from the distro: its helper could not answer.
+   */
+  async #wslAssess(provider: string, sessionId: string, wsl: { distro: string; linuxPath: string }, projectRoot: string | null) {
+    const host = readyHost(wsl.distro);
+    const released = this.probe.releasedAt(provider, sessionId);
+    const answer = await wslOwnerCheck(host, provider, sessionId, {
+      cwd: wsl.linuxPath,
+      ...(projectRoot && projectRoot !== wsl.linuxPath ? { projectRoot } : {}),
+      exclude: await wslOwnPids(host, this.#wslChatPids(wsl.distro)),
+      releasedAgo: released === null ? null : Math.max(0, this.probe.clock() - released),
+    });
+    if (!answer) log.warning('ownership: %s could not check %s %s in its distro', distroName(wsl.distro), provider, sessionId);
+    const registry = this.#registryProbe().assess(provider, sessionId, { deep: false });
+    return { owner: answer?.owner ?? null, assessment: mergeAssessment(answer?.assessment ?? null, registry, answer?.owner ?? null, distroName(wsl.distro)) };
+  }
+
+  /** Throw OwnershipConflict / OwnershipEvidence unless a WSL chat may be continued: the same rules and words as for a Windows chat. */
+  async #wslCheckOwnership(provider: string, sessionId: string, wsl: { distro: string; linuxPath: string }, projectRoot: string | null, continueAnyway: boolean): Promise<void> {
+    const { owner, assessment } = await this.#wslAssess(provider, sessionId, wsl, projectRoot);
+    if (owner !== null) {
+      throw new OwnershipConflict(
+        `This ${provider} conversation is already open in another agent process (PID ${owner}). Stop it in its current client before continuing here.`,
+      );
+    }
+    this.#refuseByVerdict(assessment, continueAnyway);
   }
 
   /** Strong, read-only check: a native agent process whose command line names this session. */
@@ -536,7 +583,10 @@ export class Studio {
 
   /** Throw OwnershipEvidence unless the conversation may be opened. The command-line probe has run already. */
   checkOwnership(provider: string, sessionId: string, cwd: string, continueAnyway = false, fresh = true): unknown {
-    const verdict = this.probe.assess(provider, sessionId, { cwd, skipCmdline: true, fresh });
+    return this.#refuseByVerdict(this.probe.assess(provider, sessionId, { cwd, skipCmdline: true, fresh }), continueAnyway);
+  }
+
+  #refuseByVerdict(verdict: Assessment, continueAnyway: boolean): Assessment {
     if (verdict.verdict === 'owned_elsewhere') {
       const strong = verdict.reasons.find((r) => r.strength === 'strong')!.text;
       throw new OwnershipEvidence(`${strong} Stop it in its current client before continuing here.`, 'session_in_use', verdict);
@@ -1104,8 +1154,11 @@ export class Studio {
     const lease = resume ? await new SessionLease(this.stateDir, provider, resume).acquire() : null;
     let connection: Connection | null = null;
     try {
-      // The ownership check reads Windows processes and transcripts; a WSL agent's are inside the distro (phase 1 skips it there).
-      if (resume && !wsl) {
+      // The ownership check reads Windows processes and transcripts; a WSL agent's are inside the distro, so its helper checks there.
+      if (resume && wsl) {
+        const project = record ? wslLoc(String(record.project ?? ''))?.linuxPath ?? null : null;
+        await this.#wslCheckOwnership(provider, resume, wsl, project, continueAnyway);
+      } else if (resume) {
         const owner = await this.ownerProbe(provider, resume, [Deno.pid]);
         if (owner !== null && owner !== undefined) {
           throw new OwnershipConflict(
@@ -1880,16 +1933,53 @@ export class Studio {
     try {
       if (!provider && !sessionId) {
         this.probe.refreshProcessesAsync();
-        return Promise.resolve({ hints: this.probe.hints(), certainty: this.probe.listCertainty() });
+        this.#refreshWslHints();
+        // a WSL session's hints come from its distro (session ids never repeat across systems), the Windows ones win a clash. The
+        // distro cannot tell AIB's own transcript writes: a chat this AIB runs, or released in the last two minutes, has none.
+        const wsl: Record<string, unknown> = {};
+        for (const [key, hint] of Object.entries(Object.assign({}, ...[...this.#wslHints.values()].map((h) => h.hints)))) {
+          const at = key.indexOf(':');
+          const [p, s] = [key.slice(0, at), key.slice(at + 1)];
+          const released = this.probe.releasedAt(p, s);
+          if (this.#studioOwns(p, s) || (released !== null && this.probe.clock() - released < ACTIVE_WINDOW_SECONDS)) continue;
+          wsl[key] = hint;
+        }
+        return Promise.resolve({ hints: { ...wsl, ...this.probe.hints() }, certainty: this.probe.listCertainty() });
       }
       if (!agentRegistry.isProvider(provider) || !sessionId || pyLen(sessionId) > 512) {
         throw new ValueError('Choose a provider and a saved session ID');
+      }
+      const wsl = wslLoc(cwd);
+      if (wsl) {
+        if (this.#studioOwns(provider, sessionId)) return Promise.resolve(this.probe.assess(provider, sessionId)); // owned_by_studio
+        return this.#wslAssess(provider, sessionId, wsl, null).then((answer) => answer.assessment);
       }
       if (isNetworkPath(cwd) || isForeignPath(cwd)) throw new ValueError('Network and device paths are not supported');
       return Promise.resolve(this.probe.assess(provider, sessionId, { cwd: cwd || null, fresh: true }));
     } catch (error) {
       return Promise.reject(error);
     }
+  }
+
+  /** The conversation list's ownership hints of each ready distro (`ownership.hints`), refreshed in the background every few seconds. */
+  readonly #wslHints = new Map<string, { at: number; hints: Record<string, unknown> }>();
+  #wslHintsRunning = false;
+
+  #refreshWslHints(): void {
+    if (this.#wslHintsRunning || this.#closed) return;
+    const hosts = (wslHostsInUse()?.all() ?? []).filter((h) => h.state === 'ready');
+    const now = Date.now();
+    for (const key of [...this.#wslHints.keys()]) if (!hosts.some((h) => h.distro.toLowerCase() === key)) this.#wslHints.delete(key);
+    const due = hosts.filter((h) => now - (this.#wslHints.get(h.distro.toLowerCase())?.at ?? 0) >= 5000);
+    if (!due.length) return;
+    this.#wslHintsRunning = true;
+    void (async () => {
+      for (const host of due) {
+        const key = host.distro.toLowerCase();
+        const hints = await wslOwnerHints(host, await wslOwnPids(host, this.#wslChatPids(key)));
+        this.#wslHints.set(key, { at: Date.now(), hints });
+      }
+    })().finally(() => (this.#wslHintsRunning = false));
   }
 
   // ---- worktree removal (Discard, archive, delete) ------------------------------------------------------------------------

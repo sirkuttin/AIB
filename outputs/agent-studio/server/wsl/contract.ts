@@ -164,6 +164,38 @@ export interface HelperMethods {
     result: { status: number; body: unknown };
   };
   /**
+   * The viewer's background-task reads of one saved session, answered by the helper's transcripts/monitor.ts handleGet (helper/
+   * bgtasks.ts): `path` is '/api/agents' (the chat and its subagents, each with runningCommands), '/api/commands' (args.running '1':
+   * only running ones) or '/api/command' (args.id; with the task's output, read only from Claude Code's own task folder under
+   * `tempDir`, else the distro's `$TMPDIR/claude-<uid>` and `$TMPDIR/claude`). Keys and ids are the helper store's (no `wsl.` prefix).
+   */
+  'transcripts.query': {
+    params: { provider: 'claude' | 'codex'; path: '/api/agents' | '/api/commands' | '/api/command'; key: string; args?: Record<string, string>; claudeDir?: string; tempDir?: string };
+    result: { status: number; body: unknown };
+  };
+  /**
+   * The ownership check of a saved session before AIB continues it (helper/bgtasks.ts: ownership/probe.ts OwnershipProbe and
+   * ownership.ts findExternalOwner run natively over the distro's /proc and Claude transcripts). `owner`: the pid of a `claude`/`omp`
+   * process whose command line names the session (the strong check AIB refuses with); `assessment`: probe.assess (skipCmdline, fresh)
+   * without the owner registry, which AIB adds on Windows. `exclude`: pids of AIB's own agent channels in this distro (they and their
+   * descendants never count; the helper's own process tree never does either). `releasedAgo`: seconds since AIB released the session
+   * (its own transcript writes before then are not evidence).
+   */
+  'ownership.check': {
+    params: { provider: string; sessionId: string; cwd?: string; projectRoot?: string; exclude?: number[]; claudeDir?: string; releasedAgo?: number };
+    result: { owner: number | null; assessment: Record<string, unknown> };
+  };
+  /** The conversation list's ownership hints of the distro's sessions (probe.hints, no registry) and its list certainty. */
+  'ownership.hints': {
+    params: { exclude?: number[]; claudeDir?: string };
+    result: { hints: Record<string, { verdict: string; reasons: Record<string, unknown>[] }>; certainty: 'unknown' | 'checked' };
+  };
+  /**
+   * The processes below each root pid (platform/descendants.ts run natively, `ps`): busy-children detection of WSL chats (a background
+   * shell still runs). Rows are [pid, parentPid, depth, age in seconds or null]; a root whose processes cannot be listed is null.
+   */
+  'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
+  /**
    * The MCP tunnel (phase 2; helper/mcp_tunnel.ts, wsl/mcp_tunnel.ts). A forwarder's message arrives as the notification
    * HelperMcpRequest; AIB first takes it with `mcp.accept` (ok false: the helper already gave up on it, so AIB must not run it), runs it
    * on its HTTP tool endpoint's checks, and answers with `mcp.reply` (status as HTTP: 200 with body, 202 none, else an error; 503 with

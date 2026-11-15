@@ -9,7 +9,7 @@
  * a test never lists the owner's own sessions.
  */
 import type { WslHost } from './contract.ts';
-import { distroName, hostWhenReady, peekWslHost, wsl2Distros, wslTestHomeEnv } from './access.ts';
+import { distroName, hostWhenReady, notReady, peekWslHost, wsl2Distros, wslTestHomeEnv } from './access.ts';
 import { refOf } from '../platform/location.ts';
 
 type Dict = Record<string, unknown>;
@@ -96,16 +96,74 @@ export function parseWslSessionKey(key: unknown): { distro: string; provider: 'c
   return match ? { distro: match[1], provider: match[2] as 'claude' | 'codex', key: match[3] } : null;
 }
 
+/** Under test: the folder the helper reads Claude Code's task output from (inside AIB_WSL_ROOT, never the distro's /tmp). */
+function testTempDir(): Record<string, string> {
+  const test = wslTestHomeEnv();
+  return test.HOME ? { tempDir: test.HOME.replace(/\/home$/, '') + '/tmp' } : {};
+}
+
+/**
+ * The background-task reads of a WSL session (/api/agents, /api/commands, /api/command): the helper runs monitor.ts handleGet on the
+ * transcripts in the distro (`transcripts.query`), and the store keys in its answer (the agents' `key`, the commands' `id` and
+ * `agentKey`) become WSL session keys, so the page reads a subagent's history and a command's output through here again. Polled, so a
+ * distro that is not running is never started for it: then, or with a helper that lacks the method, /api/agents answers no subagents
+ * and `unavailable` (the line the user sees), and /api/commands and /api/command a 400 with that line, which the page shows as
+ * "Command updates unavailable: …" instead of claiming that nothing runs.
+ */
+async function wslTaskGet(
+  path: '/api/agents' | '/api/commands' | '/api/command',
+  wsl: { distro: string; provider: 'claude' | 'codex'; key: string },
+  args: Map<string, string[]>,
+): Promise<{ status: number; body: unknown }> {
+  const prefix = wslSessionKey(wsl.distro, wsl.provider, '');
+  const unavailable = (why: string) =>
+    path === '/api/agents'
+      ? { status: 200, body: { agents: [], now: Date.now() / 1000, unavailable: why } }
+      : { status: 400, body: { error: why, code: 'wsl_unavailable' } };
+  const passed: Record<string, string> = {};
+  const running = args.get('running')?.[0];
+  if (running) passed.running = running;
+  if (path === '/api/command') {
+    const id = args.get('id')?.[0] ?? '';
+    if (!id.startsWith(prefix)) return { status: 400, body: { error: 'Unknown background command' } };
+    passed.id = id.slice(prefix.length);
+  }
+  const host = peekWslHost(wsl.distro);
+  const why = notReady(host, wsl.distro);
+  if (why) return unavailable(why);
+  let reply: { status: number; body: unknown };
+  try {
+    const test = wslTestHomeEnv();
+    reply = await host!.call('transcripts.query', {
+      provider: wsl.provider,
+      path,
+      key: wsl.key,
+      args: passed,
+      ...(test.CLAUDE_CONFIG_DIR ? { claudeDir: test.CLAUDE_CONFIG_DIR } : {}),
+      ...testTempDir(),
+    }, { timeoutMs: 20_000 });
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
+  const body = reply.body as Dict;
+  if (reply.status !== 200 || !body || typeof body !== 'object') return reply;
+  const keyed = (value: unknown) => (typeof value === 'string' && value ? prefix + value : value);
+  if (Array.isArray(body.agents)) body.agents = (body.agents as Dict[]).map((a) => ({ ...a, key: keyed(a.key) }));
+  const task = (t: Dict) => ({ ...t, id: keyed(t.id), agentKey: keyed(t.agentKey) });
+  if (Array.isArray(body.commands)) body.commands = (body.commands as Dict[]).map(task);
+  if (path === '/api/command') return { status: 200, body: task(body) };
+  return { status: 200, body };
+}
+
 /**
  * The viewer's GET for a saved WSL session (the page reads its history as for any saved chat): /api/transcript is answered by the
- * distro's helper; a WSL session lists no subagents or background commands in phase 1. null when the key is not a WSL one.
+ * distro's helper (the distro is started for it), the background-task reads by wslTaskGet. null when the key is not a WSL one.
  */
 export async function wslTranscriptGet(path: string, args: Map<string, string[]>): Promise<{ status: number; body: unknown } | null> {
   const key = args.get(path === '/api/transcript' ? 'key' : 'session')?.[0];
   const wsl = parseWslSessionKey(key);
   if (!wsl) return null;
-  if (path === '/api/agents') return { status: 200, body: { agents: [], now: Date.now() / 1000 } };
-  if (path === '/api/commands') return { status: 200, body: { commands: [], running: 0, total: 0 } };
+  if (path === '/api/agents' || path === '/api/commands' || path === '/api/command') return await wslTaskGet(path, wsl, args);
   if (path !== '/api/transcript') return { status: 400, body: { error: 'Not available for WSL sessions yet' } };
   try {
     const test = wslTestHomeEnv();

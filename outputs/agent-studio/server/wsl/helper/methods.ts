@@ -30,6 +30,7 @@ import { findCodexCli } from '../../agents/signin.ts';
 import { installMethods } from './agent_install.ts';
 import { docsMethods } from './docs.ts';
 import { docRows } from '../../docs/rows.ts';
+import { bgtaskMethods } from './bgtasks.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -169,6 +170,8 @@ export function makeMethods(ctx: HelperContext): Handlers {
   const methods = {
     ...phaseOne(ctx),
     ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
+    // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
+    ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
   };
