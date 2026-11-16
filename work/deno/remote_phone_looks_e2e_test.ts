@@ -183,7 +183,8 @@ Deno.test({
       }
       await size(page, 375);
       await page.eval('document.getElementById("phSubsGo").click()');
-      await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 2', 15000, 'subagents');
+      // the working one is listed; the finished one is folded into "1 finished" (the PC's Activity rule)
+      await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 1 && !!document.getElementById("phSubsDone")', 15000, 'subagents');
       const work = await token(page, '--hd-work');
       same(await css(page, '#phSubs li .ph-dot.work', 'backgroundColor'), work, 'working subagent dot');
       if (await page.eval('!!document.querySelector(".ph-live .ph-spin")')) {

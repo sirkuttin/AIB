@@ -117,6 +117,46 @@ test('subagents: the card and the shortcut under the title', () => {
     { id: 'a', title: 'Tests', state: 'running' },
     { id: 'b', title: 'Docs', state: 'completed' },
   ];
-  assert.deepEqual(P.subsWords(subs), { card: 'Subagents · 2 · 1 working', short: '1 subagent working' });
-  assert.deepEqual(P.subsWords([subs[1]]), { card: 'Subagents · 1 · all done', short: '1 subagent, done' });
+  assert.deepEqual(P.subsWords(subs), { card: 'Subagents · 1 working', short: '1 subagent working' });
+  assert.deepEqual(P.subsWords([subs[1]]), { card: 'Subagents · 1 finished', short: '1 subagent, done' });
+  assert.deepEqual(P.subsWords([subs[1]], 4), { card: 'Subagents · 5 finished', short: '5 subagents, done' });
+  assert.deepEqual(P.subsWords([{ id: 'f', title: 'x', state: 'failed' }]), { card: 'Subagents · 1 failed', short: '1 subagent failed' });
+});
+
+test('subagents follow the PC Activity rules: description first, working and failed on top, words never "idle"', () => {
+  const m = P.subsModel(
+    [
+      { id: 'a', title: 'general-purpose', description: 'Check page 1', state: 'idle', stopReason: 'end_turn' },
+      { id: 'b', title: 'general-purpose', description: 'Fix the test', state: 'failed' },
+      { id: 'c', title: 'Explore', description: 'Find routes', state: 'running', where: '' },
+      { id: 'd', title: 'general-purpose', description: 'Rename', state: 'idle', stopReason: 'cancelled', where: 'Own worktree', landing: 'Stopped — ask the agent to merge it' },
+      { id: 'e', title: 'general-purpose', description: 'Write tests', state: 'running', where: 'Own worktree', landing: 'Merged · 2 files' },
+      { id: 'f', title: '', state: 'idle', firstPrompt: 'Look at the logs\nand more' },
+      { id: '0123456789abcdef', title: '', state: 'idle' },
+      { id: 'g', title: 'general-purpose', description: 'Ask', state: 'needs_you' },
+    ],
+    { on: true, reason: '', readOnly: ['Explore'] },
+  );
+  assert.deepEqual(
+    m.top.map((i) => [i.title, i.type, i.word, i.wt]),
+    [
+      ['Ask', 'general-purpose', 'Needs you', ''],
+      ['Write tests', 'general-purpose', 'Working', 'Own worktree · Merged · 2 files'],
+      ['Find routes', 'Explore', 'Working', 'In your folder (read-only)'],
+      ['Fix the test', 'general-purpose', 'Failed', ''],
+    ],
+  );
+  assert.deepEqual(
+    m.done.map((i) => [i.title, i.word, i.wt]),
+    [
+      ['Subagent 01234567', 'Done', ''],
+      ['Look at the logs', 'Done', ''],
+      ['Rename', 'Stopped', 'Own worktree · Stopped — ask the agent to merge it'],
+      ['Check page 1', 'Done', ''],
+    ],
+  );
+  assert.equal(m.working, 3);
+  assert.equal(m.failed, 1);
+  // no worktree rule in the chat: no line
+  assert.equal(P.subsModel([{ id: 'x', title: 'general-purpose', description: 'X', state: 'running', where: 'Own worktree' }]).top[0].wt, '');
 });

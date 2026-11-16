@@ -108,6 +108,15 @@
     // background shell still running keep the chat working
     if (c.phase === 'failed') return { text: 'Failed', tone: 'need' };
     if (c.phase === 'asks') return { text: 'Needs you', tone: 'need' };
+    // the reply ended but its subagents still run: the PC header's words ("Working · 2 subagents"), never Ready (a chat's answer
+    // carries helpersRunning and its subagents; a home card has only the phase)
+    const subs =
+      c.state === 'working' ? 0 : Math.max(Number(c.helpersRunning) || 0, Array.isArray(c.helpers) && c.helpers.length ? subsModel(c.helpers).working : 0);
+    if (subs) {
+      const t = 'Working · ' + subs + (subs === 1 ? ' subagent' : ' subagents');
+      return { text: t, tone: 'work', chip: t };
+    }
+    if (c.state !== 'working' && c.background) return { text: 'Working', tone: 'work' };
     if (c.state === 'working' || c.phase === 'working') {
       const e = c.state === 'working' ? ago(c.busySince, now) : '';
       return { text: 'Working' + (e && e !== 'now' ? ' · ' + e : ''), tone: 'work' };
@@ -933,15 +942,79 @@
     return s.length > 160 ? s.slice(0, 159) + '…' : s;
   }
 
-  /* "Subagents · 3 · 1 working" and the shortcut under the title ("1 subagent working", "3 subagents, done"). */
-  function subsWords(helpers) {
-    const list = Array.isArray(helpers) ? helpers : [];
-    const working = list.filter((h) => helperWord(h.state) === 'working' || helperWord(h.state) === 'needs you').length;
+  /* A chat's subagents by the PC's Activity rules (subagents-ui.js: classify sorts working from finished, names puts the task's
+     description first with the type as the second label, then the first prompt, then the id; worktreeWords is the worktree line).
+     The phone's words: Working, Needs you, Done, Failed, Stopped (never the agent's "idle"). top = working then failed (always
+     shown), done = the other finished ones (folded into "N finished"), each newest first. */
+  const SA = () =>
+    root.SubagentsUI || (typeof module === 'object' && typeof require === 'function' ? require('./subagents-ui.js') : null);
+  const NEEDS = /^(needs[_ ]?you|needs[_ ]?input|needs)$/i;
+  function subsModel(helpers, iso) {
+    const U = SA();
+    if (!U) return { top: [], done: [], working: 0, failed: 0, total: 0 }; // subagents-ui.js did not load: no card rather than a crash
+    const items = (Array.isArray(helpers) ? helpers : []).map((h, i) => {
+      const raw = str(h.state);
+      const a = {
+        key: str(h.id),
+        agentId: str(h.id),
+        live: true,
+        title: str(h.title),
+        description: str(h.description),
+        firstPrompt: str(h.firstPrompt),
+        state: h.stopReason ? { state: raw, stopReason: str(h.stopReason) } : raw,
+      };
+      const c = U.classify(a),
+        n = U.names(a);
+      let group = c.group,
+        word = 'Done',
+        tone = 'turn';
+      if (NEEDS.test(raw)) {
+        group = 'working';
+        word = 'Needs you';
+        tone = 'need';
+      } else if (group === 'working') {
+        word = 'Working';
+        tone = 'work';
+      } else if (c.kind === 'failed') {
+        word = 'Failed';
+        tone = 'bad';
+      } else if (c.kind === 'stopped') {
+        word = 'Stopped';
+        tone = 'idle';
+      }
+      let wt = '';
+      if (iso && U.worktreeWords) {
+        const info = str(h.where) ? { where: str(h.where), landing: str(h.landing) } : null;
+        const w = U.worktreeWords(Object.assign({}, a, { agentType: n.type }), iso, info, 0);
+        if (w) wt = [w.where, w.landing].filter(Boolean).join(' · ');
+      }
+      return { id: a.key, at: i, title: n.title, type: n.type, word, tone, group, failed: word === 'Failed', wt };
+    });
+    const newest = (x, y) => y.at - x.at;
+    const working = items.filter((i) => i.group === 'working').sort(newest);
+    const failed = items.filter((i) => i.failed).sort(newest);
+    const done = items.filter((i) => i.group !== 'working' && !i.failed).sort(newest);
+    return { top: working.concat(failed), done, working: working.length, failed: failed.length, total: items.length };
+  }
+
+  /* "Subagents · 2 working · 1 failed" (or "Subagents · 30 finished") and the shortcut under the title ("2 subagents working",
+     "30 subagents, done"). `more`: ended subagents the PC did not send (they count as finished). */
+  function subsWords(helpers, more) {
+    const m = subsModel(helpers);
+    const extra = Number(more) || 0;
+    const fin = m.done.length + extra;
+    const parts = [];
+    if (m.working) parts.push(m.working + ' working');
+    if (m.failed) parts.push(m.failed + ' failed');
+    if (!parts.length) parts.push(fin + ' finished');
+    const all = m.total + extra;
     return {
-      card: 'Subagents · ' + list.length + (working ? ' · ' + working + ' working' : ' · all done'),
-      short: working
-        ? working + (working === 1 ? ' subagent' : ' subagents') + ' working'
-        : list.length + (list.length === 1 ? ' subagent, done' : ' subagents, done'),
+      card: 'Subagents · ' + parts.join(' · '),
+      short: m.working
+        ? m.working + (m.working === 1 ? ' subagent' : ' subagents') + ' working'
+        : m.failed
+          ? m.failed + (m.failed === 1 ? ' subagent' : ' subagents') + ' failed'
+          : all + (all === 1 ? ' subagent, done' : ' subagents, done'),
     };
   }
 
@@ -1188,6 +1261,7 @@
     recordText,
     answerWords,
     subsWords,
+    subsModel,
     elapsed,
     liveLine,
     helperWord,
@@ -3370,7 +3444,9 @@
       bar.append(go);
       parts.push(bar);
     }
-    const body = el('main', 'ph-home' + (S.offline ? ' ph-stale' : ''));
+    // + New chat floats over the list: the list ends with room for it (ph-fab-space, fitFab), so the last card scrolls fully above it
+    const fabOn = !!home && !S.offline && abilities(S.scopes).start;
+    const body = el('main', 'ph-home' + (S.offline ? ' ph-stale' : '') + (fabOn ? ' ph-fab-space' : ''));
     if (home && all.length) {
       const bar = el('div', 'ph-filter');
       const fb = button('ph-fb', '', () => {
@@ -3421,7 +3497,7 @@
     }
     parts.push(body);
     if (home && !S.offline) {
-      if (abilities(S.scopes).start) {
+      if (fabOn) {
         const fab = button('ph-fab', '+ New chat', openNew);
         fab.id = 'phNewChat';
         parts.push(fab);
@@ -3654,9 +3730,50 @@
     box.append(m);
   }
 
-  /* The Subagents card in the stream: each subagent's title and state (its own steps are on the PC). */
+  /* The Subagents card in the stream, by the PC's Activity rules (subsModel): working and failed ones listed, the other finished
+     ones folded into "N finished" (closed at first, remembered per chat on this phone). A row: dot, the subagent's name, its state;
+     under it (a working one) its type and, when AIB knows, the worktree line ("Own worktree", "Merged · 3 files"). Its own steps
+     are on the PC. */
+  const SUBS_DONE_KEY = 'aib-phone-subs-finished:';
+  const subsKey = (c) => SUBS_DONE_KEY + (str(c.savedKey) || str(c.id));
+  function subsDoneOpen(c) {
+    try {
+      return root.localStorage.getItem(subsKey(c)) === '1';
+    } catch (e) {
+      return false;
+    }
+  }
+  function subRow(c, h) {
+    const li = el('li');
+    li.dataset.sub = h.id;
+    const open = S.subOpen.has(h.id);
+    const b = button('ph-subrow', '', () => {
+      if (S.subOpen.has(h.id)) S.subOpen.delete(h.id);
+      else S.subOpen.add(h.id);
+      draw();
+    });
+    b.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const text = el('span', 'ph-sub-text');
+    text.append(el('span', 'ph-sub-title', h.title));
+    // as the PC's Activity card: a working one shows its type and worktree line, a finished one only its worktree line
+    const meta = [h.group === 'working' ? h.type : '', h.wt].filter(Boolean).join(' · ');
+    if (meta) text.append(el('span', 'ph-sub-meta', meta));
+    b.append(el('span', 'ph-dot ' + h.tone), text, el('span', 'ph-sw ' + h.tone, h.word));
+    li.append(b);
+    if (open)
+      li.append(
+        el(
+          'p',
+          'ph-more',
+          'A sub-task ' + (c.agent || 'the agent') + ' started in this chat. The phone shows its name and state; its own steps are on your PC.',
+        ),
+      );
+    return li;
+  }
   function subsCard(c) {
     const helpers = c.helpers || [];
+    const m = subsModel(helpers, c.subagentIsolation);
+    const more = Number(c.helpersMore) || 0;
     const wrap = el('div', 'ph-subs' + (S.subsOpen ? ' open' : ''));
     wrap.id = 'phSubs';
     const head = button('ph-fold', '', () => {
@@ -3664,32 +3781,32 @@
       draw();
     });
     head.setAttribute('aria-expanded', S.subsOpen ? 'true' : 'false');
-    head.append(el('span', 'ph-subs-mark', '⑂'), doc.createTextNode(subsWords(helpers).card), el('span', 'ph-chev2', '›'));
+    head.append(el('span', 'ph-subs-mark', '⑂'), doc.createTextNode(subsWords(helpers, more).card), el('span', 'ph-chev2', '›'));
     wrap.append(head);
     if (S.subsOpen) {
       const ul = el('ul', 'ph-sub-list');
       ul.setAttribute('aria-label', 'Subagents');
-      for (const h of helpers) {
-        const li = el('li');
-        li.dataset.sub = h.id;
-        const open = S.subOpen.has(h.id);
-        const b = button('ph-subrow', '', () => {
-          if (S.subOpen.has(h.id)) S.subOpen.delete(h.id);
-          else S.subOpen.add(h.id);
+      for (const h of m.top) ul.append(subRow(c, h));
+      const fin = m.done.length + more;
+      if (fin) {
+        const open = subsDoneOpen(c);
+        const li = el('li', 'ph-sub-fin');
+        const t = button('ph-subrow ph-sub-toggle', '', () => {
+          try {
+            root.localStorage.setItem(subsKey(c), open ? '0' : '1');
+          } catch (e) {}
           draw();
         });
-        b.setAttribute('aria-expanded', open ? 'true' : 'false');
-        b.append(el('span', 'ph-dot ' + helperTone(h.state)), el('span', 'ph-sub-title', h.title), el('span', 'ph-sw', helperWord(h.state)));
-        li.append(b);
-        if (open)
-          li.append(
-            el(
-              'p',
-              'ph-more',
-              'A sub-task ' + (c.agent || 'the agent') + ' started in this chat. The phone shows its title and state; its own steps are on your PC.',
-            ),
-          );
+        t.id = 'phSubsDone';
+        t.setAttribute('aria-expanded', open ? 'true' : 'false');
+        t.setAttribute('aria-label', fin + ' finished subagents, ' + (open ? 'hide' : 'show'));
+        t.append(el('span', 'ph-sub-caret', open ? '▾' : '▸'), el('span', 'ph-sub-title', fin + ' finished'));
+        li.append(t);
         ul.append(li);
+        if (open) {
+          for (const h of m.done) ul.append(subRow(c, h));
+          if (more) ul.append(el('li', 'ph-more ph-sub-more', more + ' more on your PC (Activity).'));
+        }
       }
       wrap.append(ul);
     }
@@ -4502,7 +4619,7 @@
     let extra = null;
     const helpers = (c && !c.gone && c.helpers) || [];
     if (helpers.length) {
-      extra = button('ph-subs-go', subsWords(helpers).short + ' ›', () => {
+      extra = button('ph-subs-go', subsWords(helpers, c.helpersMore).short + ' ›', () => {
         S.subsOpen = true;
         S.scrollTo = 'subs';
         draw();
@@ -4525,7 +4642,7 @@
         sub: project ? projectLine(project, [agent]) : agent,
         extra,
         tools: [arts],
-        chip: S.offline ? ['Offline', 'off'] : w && !c.cached ? [w.text.split(' · ')[0], w.tone] : null,
+        chip: S.offline ? ['Offline', 'off'] : w && !c.cached ? [w.chip || w.text.split(' · ')[0], w.tone] : null,
       }),
     ];
     if (S.offline) parts.push(offlineBox());
@@ -4707,6 +4824,20 @@
     for (const n of app.querySelectorAll('[data-rk]')) if (n.__sig) rowCache.set(n.getAttribute('data-rk'), n);
   }
 
+  /* The room under the chat list for + New chat: from where the button really sits (its size with the phone's text size, the
+     home bar, a browser's bottom toolbar), plus a 16 px gap. phone.css gives the same room for the usual size, so the first draw
+     does not move. Only the list's bottom padding changes, never anything above it. */
+  function fitFab() {
+    const fab = doc.getElementById('phNewChat');
+    const home = app.querySelector('.ph-home.ph-fab-space');
+    if (!fab || !home) return;
+    const r = fab.getBoundingClientRect();
+    if (!r.height) return;
+    const appPad = parseFloat(root.getComputedStyle(app).paddingBottom) || 0;
+    const v = Math.max(0, Math.ceil(root.innerHeight - r.top + 16 - appPad)) + 'px';
+    if (home.style.paddingBottom !== v) home.style.paddingBottom = v; // before the frame is painted: nothing jumps
+  }
+
   function draw() {
     const y = root.scrollY;
     const d = doc.documentElement;
@@ -4742,6 +4873,7 @@
     // the banner: only inside a chat, about another chat (never on the chat list)
     if (S.banner && inChat() && !S.offline) list.splice(1, 0, bannerEl());
     place(list, same);
+    fitFab();
     if (S.viewer && (S.screen === 'removed' || S.screen === 'pair')) closeArtifact(); // this phone may not see it any more
     app.dataset.screen = S.screen;
     if (focusId) {
@@ -5477,7 +5609,14 @@
     },
     { passive: true },
   );
-  root.addEventListener('resize', () => checkAbove(), { passive: true });
+  root.addEventListener(
+    'resize',
+    () => {
+      checkAbove();
+      fitFab();
+    },
+    { passive: true },
+  );
   doc.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && S.menu) closeMenu();
     else if (event.key === 'Escape' && S.viewer && S.viewer.drop) {

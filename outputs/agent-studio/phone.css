@@ -628,14 +628,52 @@ button {
   font-size: 14px;
   text-align: left;
 }
+.ph-sub-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 6px 0;
+}
 .ph-sub-title {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* the type and the worktree line under a subagent's name ("general-purpose · Own worktree"), as the PC's Activity card */
+.ph-sub-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ph-sw {
   flex: none;
   color: var(--muted);
   font-size: 13px;
+}
+.ph-sw.work {
+  color: var(--hd-work);
+}
+.ph-sw.need {
+  color: var(--hd-need);
+}
+.ph-sw.bad {
+  color: var(--hd-fail);
+}
+.ph-dot.bad {
+  background: var(--hd-fail);
+}
+/* "N finished": the fold of the finished subagents (closed at first, remembered per chat) */
+.ph-sub-toggle {
+  color: var(--muted);
+}
+.ph-sub-caret {
+  flex: 0 0 9px;
+  text-align: center;
 }
 .ph-more {
   margin: 0 8px 6px 27px;
@@ -1396,8 +1434,11 @@ html.ph-viewing body {
   font-weight: 700;
   box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-ink) 30%, transparent);
 }
-.ph-home:has(~ .ph-fab) {
-  padding-bottom: calc(88px + env(safe-area-inset-bottom));
+/* the room under the list for + New chat (16 px gap + 56 px button + 16 px gap, less the page's own 24 px bottom padding; the
+   safe-area inset is in both): the last card scrolls fully above the button. phone.js fitFab adds more when the button is taller
+   or sits higher (bigger text, a browser's bottom toolbar). A class, not :has(), so it holds on every browser. */
+.ph-home.ph-fab-space {
+  padding-bottom: 64px;
 }
 .ph-startoff {
   margin: 16px 0 0;

@@ -13,7 +13,7 @@ import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { addHandler, removeHandler, rootState, setLevel, WARNING } from '../../outputs/agent-studio/server/core/log.ts';
 import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { askOf, HOME_BUDGET, lineOf, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
+import { askOf, helpersOf, HELPERS_MAX, HOME_BUDGET, lineOf, plainLine, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
 import {
   type FakeChat,
   fakeTailscale,
@@ -380,6 +380,52 @@ Deno.test('card line: what it asks, the step it works on, else the last message'
   };
   assertEquals(lineOf({ busy: true, events: [say(1, 'Ok'), running] }), 'Working on: Edit a.ts');
   assertEquals(lineOf({ events: [say(1, 'x'.repeat(400))] }).length, 140);
+});
+
+Deno.test('card line is plain text: no Markdown marks, a link as its text, never starting mid-word', () => {
+  const say = (seq: number, text: string, sessionId = 'main') => ({
+    seq,
+    kind: 'update',
+    data: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+  });
+  assertEquals(plainLine('**Reply** and **×** see [Storybook](studio-artifact://7ec1aa) or `npm test`'), 'Reply and × see Storybook or npm test');
+  assertEquals(plainLine('\n\n## Done\nmore'), 'Done');
+  assertEquals(plainLine('```ts\nconst a = 1;\n```\n- [x] _shipped_ ~~old~~ ![shot](a.png)'), 'const a = 1;');
+  assertEquals(plainLine('> 1. Fix   the  [link](https://a.b/(c)) now'), 'Fix the link now');
+  assertEquals(plainLine('|---|---|\n| a | b |'), '| a | b |');
+  assertEquals(plainLine('snake_case_name and 2*3*4 stay'), 'snake_case_name and 2*3*4 stay');
+  // cut at its front: the next sentence of that paragraph, else the next paragraph, else from the next word after "…"
+  assertEquals(plainLine('ark handled" button. It has **Reply**.', true), 'It has Reply.');
+  assertEquals(plainLine('ark handled button\n\nNext part', true), 'Next part');
+  assertEquals(plainLine('ark handled button', true), '…handled button');
+  // the card reads after cursor - 80: a reply already going there starts at its next sentence; seq 1 is the chat's start
+  const events = [say(21, 'ark handled" button. It has **Reply** and a small **×**.'), say(22, ' More.')];
+  assertEquals(lineOf({ sessionId: 'main', events }, 20), 'It has Reply and a small ×. More.');
+  assertEquals(lineOf({ sessionId: 'main', events: [say(2, 'Whole **reply**.')] }, 1), 'Whole reply.');
+  // a reply whose start is in the window is whole; a subagent's own messages are not the chat's line
+  assertEquals(lineOf({ sessionId: 'main', events: [{ seq: 30, kind: 'user', data: { text: 'Go' } }, say(31, 'Mark handled')] }, 29), 'Mark handled');
+  assertEquals(lineOf({ sessionId: 'main', events: [say(31, 'Main says'), say(32, ' sub says', 'child')] }), 'Main says');
+});
+
+Deno.test('chat helpers: the facts the phone names them by, every running one kept past the cap', () => {
+  const subagents: Record<string, unknown> = {
+    a: { title: 'general-purpose', description: 'Check page', state: 'idle', stopReason: 'cancelled', capabilities: {} },
+    b: { title: 'Explore', state: 'running' },
+  };
+  assertEquals(helpersOf(subagents, { a: { where: 'Own worktree', landing: 'Stopped — ask the agent to merge it' } }), {
+    helpers: [
+      { id: 'a', title: 'general-purpose', description: 'Check page', state: 'idle', stopReason: 'cancelled', where: 'Own worktree', landing: 'Stopped — ask the agent to merge it' },
+      { id: 'b', title: 'Explore', state: 'running' },
+    ],
+    more: 0,
+  });
+  const many: Record<string, unknown> = { run: { title: 'x', state: 'running' } };
+  for (let i = 0; i < HELPERS_MAX + 20; i++) many['d' + i] = { title: 'x', state: 'idle' };
+  const out = helpersOf(many);
+  assertEquals(out.helpers.length, HELPERS_MAX);
+  assertEquals(out.more, 21);
+  assertEquals(out.helpers[0].id, 'run');
+  assertEquals(out.helpers.at(-1)!.id, 'd' + (HELPERS_MAX + 19)); // the newest ended ones
 });
 
 Deno.test('home ask (phone inbox card): the first approval with only once-only options, else the first question, else null', () => {

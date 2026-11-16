@@ -18,6 +18,7 @@
     '/phone-words.js',
     '/push-enable.js',
     '/markdown.js',
+    '/subagents-ui.js', // the PC's Activity rules for a chat's subagents (phone.js subsModel)
     '/themes.js',
     '/theme.css',
     '/manifest.webmanifest',

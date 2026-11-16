@@ -53,6 +53,14 @@ test('status words match the PC: Needs you, Working, Your turn, Ready (connected
   assert.equal(P.stateWords({ needs: 0, state: 'idle', yourTurn: true, turnEndedAt: '2026-11-12T11:48:00Z' }, now).text, 'Your turn');
   assert.equal(P.stateWords({ needs: 0, state: 'idle', turnEndedAt: null }, now).text, 'Ready');
   assert.deepEqual(P.stateWords({ notRunning: true }, now), { text: 'Ready', tone: 'nr' });
+  // the reply ended but subagents still run: the PC header's words, never Ready
+  const subs = { text: 'Working · 2 subagents', tone: 'work', chip: 'Working · 2 subagents' };
+  assert.deepEqual(P.stateWords({ needs: 0, state: 'idle', helpersRunning: 2 }, now), subs);
+  assert.deepEqual(P.stateWords({ needs: 0, state: 'idle', helpers: [{ id: 'a', state: 'running' }, { id: 'b', state: 'running' }, { id: 'c', state: 'idle' }] }, now), subs);
+  assert.equal(P.stateWords({ needs: 0, state: 'idle', helpersRunning: 1 }, now).text, 'Working · 1 subagent');
+  assert.deepEqual(P.stateWords({ needs: 0, state: 'idle', background: true }, now), { text: 'Working', tone: 'work' });
+  assert.equal(P.stateWords({ needs: 0, state: 'working', busySince: '2026-11-12T11:56:00Z', helpersRunning: 2 }, now).text, 'Working · 4m');
+  assert.equal(P.stateWords({ needs: 1, state: 'needs_you', helpersRunning: 2 }, now).text, 'Needs you');
   assert.equal(P.helperWord('running'), 'working');
   assert.equal(P.helperWord('completed'), 'done');
 });
