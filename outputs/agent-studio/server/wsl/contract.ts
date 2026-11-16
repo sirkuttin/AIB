@@ -112,6 +112,16 @@ export interface HelperMethods {
   'files.search': { params: { root: string; query: string; limit?: number }; result: unknown };
   'files.read': { params: { root: string; rel: string; maxBytes?: number }; result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number } };
   /**
+   * A whole file's bytes for an artifact published by path from a WSL chat (helper/methods.ts, wsl/artifact_read.ts): `rel` inside
+   * `root`, checked after links are resolved (code 'outside'); one piece of at most 1 MB at `offset` (`length`, default and cap 1 MB)
+   * with the file's `size` and `mtimeMs`, so AIB reads a big file in pieces and notices a change between them. Refusals by code:
+   * 'not_found', 'not_file' (a folder), 'too_large' (size over `maxBytes`, default 25 MB; nothing read), 'unreadable' (permission).
+   */
+  'files.readBytes': {
+    params: { root: string; rel: string; offset?: number; length?: number; maxBytes?: number };
+    result: { bytesB64: string; size: number; mtimeMs: number; offset: number; path: string; abs: string };
+  };
+  /**
    * A file outside the project folder (worktrees/outside_files.ts, run natively: checkShape, resolveOutside, readOutside, folderLabel).
    * AIB has already checked that the chat named the path; the helper adds the shape rules and refuses its own data folder
    * (~/.aib-server). `bytesB64` is there for a picture or page that fits the 1 MB read cap and is not a peek.
@@ -193,6 +203,15 @@ export interface HelperMethods {
     result: { status: number; body: unknown };
   };
   /**
+   * Does one saved session's own transcript (and its subagents' files) name `path` (an absolute Linux path, matched by Linux rules,
+   * worktrees/outside_files.ts mentions)? The outside-file guard of a saved WSL chat that is not running in AIB. Reads only the
+   * transcripts, never `path`.
+   */
+  'transcripts.mentions': {
+    params: { provider: 'claude' | 'codex'; sessionId: string; path: string; claudeDir?: string };
+    result: { mentioned: boolean };
+  };
+  /**
    * The viewer's background-task reads of one saved session, answered by the helper's transcripts/monitor.ts handleGet (helper/
    * bgtasks.ts): `path` is '/api/agents' (the chat and its subagents, each with runningCommands), '/api/commands' (args.running '1':
    * only running ones) or '/api/command' (args.id; with the task's output, read only from Claude Code's own task folder under
@@ -259,6 +278,34 @@ export interface HelperMethods {
   'localOnly.exclude': { params: { root: string; main: string; action: string; path?: string; undo?: string }; result: { status: number; body: Record<string, unknown> } };
   'localOnly.moveStrays': { params: { root: string; main: string }; result: { moved: [string, string][]; failed: string[] } };
   'localOnly.backup': { params: { projects?: string[] }; result: { results: Record<string, { status: string; files?: number }> } };
+  /**
+   * Allow rules in a WSL chat (helper/allow_facts.ts, allow/linux.ts; addition): what the matcher needs to know of the distro, read
+   * only. `paths` (at most 64 absolute Linux paths, taken as given: never normalised first): each resolved as the kernel walks it
+   * (links followed, `..` after a link physically, the missing tail kept; `real` null for a dangling or looping link, `..` in the
+   * missing tail, or any error), `exists`/`isDir` with links followed. `scans` (at most 16 folders): true when the folder holds a link
+   * among its entries, has over 5000 entries or can't be read. `pins` (at most 8): allow/pin.ts pinHash of project-script words in a
+   * folder. `base`: the folders on PATH (`pathEnv` when given, else the login PATH) each with its resolved path, AIB's own folders in
+   * the distro, and, with `claude`, Claude Code's settings facts (allow/agent_config.ts claudeFacts) read from `claude.dir` (else
+   * CLAUDE_CONFIG_DIR or ~/.claude of the login environment) and the project's .claude folder.
+   */
+  'allow.facts': {
+    params: {
+      paths?: string[];
+      scans?: string[];
+      pins?: { words: string[]; cwd: string }[];
+      base?: { pathEnv?: string; claude?: { cwd: string; dir?: string } };
+    };
+    result: {
+      paths: { real: string | null; exists: boolean; isDir: boolean }[];
+      scans: boolean[];
+      pins: (string | null)[];
+      base?: {
+        pathDirs: { dir: string; real: string | null }[];
+        own: string[];
+        claude: { askPrograms: string[]; askTools: string[]; riskyEnv: string } | null;
+      };
+    };
+  };
   'mcp.accept': { params: { rid: string }; result: { ok: boolean } };
   'mcp.reply': { params: { rid: string; status: number; body?: string; error?: string }; result: { ok: boolean } };
   'mcp.closed': { params: { closed: boolean }; result: { ok: boolean } };

@@ -54,9 +54,11 @@ function managedSettings(): string {
   return '/etc/claude-code/managed-settings.json';
 }
 
-/** The facts for a Claude chat in `cwd`. */
-export function claudeFacts(cwd: string): AgentConfigFacts {
-  const home = claudeHome();
+/**
+ * The facts for a Claude chat in `cwd`. `home`: Claude's config folder when the caller knows it (the WSL helper passes the agent's
+ * CLAUDE_CONFIG_DIR or ~/.claude in the distro); else this process's.
+ */
+export function claudeFacts(cwd: string, home: string = claudeHome()): AgentConfigFacts {
   const files = [
     home ? join(home, 'settings.json') : '',
     join(cwd, '.claude', 'settings.json'),

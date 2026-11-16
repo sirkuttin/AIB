@@ -16,9 +16,7 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   `codex-acp` installed with npm in the distro. A missing Claude Code or Codex gets an "Install in Ubuntu" button (the npm command
   stays, for doing it yourself) and "Open Ubuntu terminal"; sign-in runs in a distro terminal and its browser page opens on Windows.
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
-- AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive: the publish and update descriptions a
-  WSL chat gets have no `path` and say up front that only `content` works there, and that a PNG or other binary file must be
-  embedded in an HTML page as an inline base64 `<img>` or opened by the user; the refusal of a `path` repeats it), the doc and drawing tools and, for a
+- AIB tools in a WSL chat are the artifact tools (publish, list, update, archive; see "Publish a file from the distro" below), the doc and drawing tools and, for a
   chat in its own copy, the merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro
   (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
 - A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
@@ -29,11 +27,16 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
   storm of changes pauses with "Resume" (see Live sync below). Docs work as in a Windows project (see Docs below). The Files tab previews
   pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
-  (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
-  as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
+  (no editor on this PC opens a path inside the distro). A full Linux path in a reply or on an Edit/Write row that is inside the
+  project (or inside the chat's own copy) opens as a normal project file in the Files tab; Linux names are matched exactly
+  (`readme.md` never links to `README.md`). A file outside the project folder that the chat named opens read-only, as in Windows
+  projects, also for a saved chat that is not running (its distro must be running). Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
   Cursor open the project with `--remote wsl+Ubuntu`.
 - Ended WSL chats are listed with the project's other saved chats (Claude Code transcripts in the distro's `~/.claude/projects`),
   their history opens, and Continue resumes them in the distro.
+- "Find more chats via agent" never asks a WSL chat's Linux agent for the Windows list. Asked for a WSL project (`cwd` = its ref),
+  it asks only a running agent of that distro (with the Linux folder; the sessions' folders come back as refs) and otherwise answers
+  an empty list with a one-line `note`; it never starts an agent in a distro for it.
 - Quitting AIB with a WSL agent working leaves it running, as for Windows chats; the next AIB takes it over.
 
 Side effects: the distro stays running while a WSL project is open or WSL chats run (VmmemWSL memory); `wsl.exe` processes appear
@@ -296,14 +299,36 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
 - **Limits.** A message is at most 8 MB (the relay refuses lines over 16 MB) and an answer at most 3 MB.
 - **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts`, `docs` and `merge` on; `swarm` (no helper chats
   in WSL projects yet) off. Switching a group on there changes the tool list, Studio's
-  main-chat role (swarm) and the chat's note (`wsl/access.ts wslToolsNotice`). Publish takes `content` only: AIB on Windows cannot
-  read the distro's files.
+  main-chat role (swarm), the swarm service's own role check (`swarm/service.ts mainChat` refuses a WSL chat with code `wsl`,
+  "Helpers are not available in WSL projects yet") and the chat's note (`wsl/access.ts wslToolsNotice`). Publish and update take
+  `content` or a Linux `path` (see the next section).
 - **Fallback.** A helper without the tunnel (an older one, or a keeper program without `mcp-relay`) gets the phase 1 interop entry
   (the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address file>`, `WSLENV=MCP_FORWARD_HEADERS`);
   with neither, no entry and the chat's notice. Both entries reach the same tool list.
 - **Tests.** `wsl_mcp_tunnel_test` (no distro: the helper's end with a fake and with the real relay and forwarder, AIB's gate,
   `tunneled`, the switchboard), `wsl_hosts_test` (the ready line, no replayed call handed on), `wsl_studio_test` (the entry, a call
   answered, a wrong key and another distro refused), Go `mcprelay_test.go`; real WSL: `wsl_tunnel_e2e`.
+
+### Publish a file from the distro
+
+An agent in a WSL chat publishes a file (a PNG, a PDF, an HTML page, any kind a Windows chat can publish) by its Linux `path`:
+
+- **Where.** Relative paths start at the chat's folder (its copy, or the project folder); a file the copy does not have is looked
+  up in the project's main folder too (local-only files such as `private/`). Absolute paths only inside the chat's folder or its
+  project folder (`wsl/artifact_read.ts publishRoots` is the one list). `~`, Windows paths, `..` that climbs out and links that
+  lead out (the helper checks the real path in the distro) are refused.
+- **How.** Only the path travels through the tunnel. AIB reads the bytes through the distro's helper (`files.readBytes`, pieces of
+  at most 1 MB as base64 on the helper channel, the size and modification time checked on every piece) and publishes them as it
+  publishes a Windows file: the kind and name by the file name, the 25 MB limit, "identical content makes no new version", the
+  same file in the same chat is the same artifact, `fromDoc` as usual.
+- **Snapshot.** The artifact holds the bytes as they were when published (it keeps the file's `wsl://` ref as `wslSource`, no
+  `sourcePath`): no watcher follows the Linux file, and Delete never touches it. After changing the file, the agent calls
+  `update` with the same path.
+- **Refusals.** One line with the Linux path: file not found, a folder, too large (with its size and the limit), outside the
+  chat's folders, a kind AIB cannot show, permission denied, changed while AIB read it, the distro not reachable, or an older
+  helper without `files.readBytes` (reconnect the distro).
+- **Tests.** `wsl_publish_path_test` (fake helper: the PNG, versioning, every refusal, the helper method on a real temp folder),
+  real WSL: `wsl_publish_path_e2e` (a 3 MB PNG published through the real tunnel arrives byte-identical).
 
 ## Merge
 
@@ -366,7 +391,16 @@ everywhere else, so Windows is unchanged). There are no per-file calls between A
 - **Outside files** (`GET /api/live/files/outside` for a live WSL chat). AIB first checks that the chat's own events name the path,
   by Linux rules (case kept; `worktrees/outside_files.ts mentions(…, posix)`); the helper's `files.outside` then runs `checkShape`,
   `resolveOutside`, `readOutside` and `folderLabel` natively and refuses AIB's own folders in the distro (the root, the data
-  folder, the helper's folder). Saved (not live) WSL chats are not covered: their transcripts are in the distro.
+  folder, the helper's folder). A **saved** WSL chat that is not running (`id` = `claude:<sessionId>` or its
+  `wsl.<distro>.claude/<key>`, naming a Linux path): the distro comes from the saved-session listing (`wsl/transcripts.ts
+  wslSessionCwd`, ready distros only), the helper's `transcripts.mentions` checks the session's own transcript and its subagents'
+  files for the path (same Linux rules), then `files.outside` as above. A distro that is not running is never started for it: 409
+  `wsl_not_running`, "Ubuntu is not running". Any other chat id keeps the Windows answer.
+- **Path links on the page** (`files-ui.js`). A WSL chat's agent names files by Linux path, so the reply links and the Edit/Write
+  rows compare paths against the Linux folder of the chat's ref (`AIBWsl.parse`; a chat in its own copy: the copy's Linux folder),
+  never against the ref. Names compare case-sensitively for WSL listings (case is folded for Windows folders only). Ctrl+click on
+  an outside Linux path sends the editor route its ref, which answers as for an outside Windows file ("not inside a project
+  folder AIB knows").
 - **Delete project.** `project.inspect` (what the dialog shows) and `project.trash` (`wsl/helper/trash.ts`). The Windows delete's
   refusals run natively (home folder and its parents, Documents/Desktop/Downloads, a folder holding or inside another project, AIB's
   own folders), plus a Windows drive (`/mnt/<x>`) and a top-level folder (`/home`, `/tmp`). Then `gio trash`; without `gio`, the
@@ -833,6 +867,58 @@ arguments), `wsl_linking_remove_e2e` (real distro, below).
   from check, grouping, kept, blocked; the second click and the tick; success, partial and refused applies; the removed flag after
   a reload; buttons off while it runs; each distro's own card through the drop-down).
 
+## Allow rules in WSL chats
+
+Allow rules (server/allow/) answer a WSL chat's edits and commands with the same rules, built-ins and never-list as a Windows chat,
+but its paths are checked with **Linux rules against its Linux folder**, never on the Windows disk (`allow/linux.ts`; audit F1).
+
+- **Context.** `Connection.allowContext` of a WSL chat: `cwd` = the chat's Linux folder (`agentCwd`: the project folder or its copy
+  in the distro), `project` = the project's `wsl://` ref, `scratch` = none (a WSL chat has no scratch folder, so the Scratch folder
+  built-in never answers and the house-rules text is not sent), `stateDir` = none, and `linux` = a `LinuxView`.
+- **Facts from the distro.** The matcher stays synchronous; before AIB decides a live request it asks the distro's helper once or a
+  few times (`allow.facts`, `helper/allow_facts.ts`): the matcher first runs with a recording view that names every path it would
+  check, AIB asks for those (at most 64 paths, 16 folder scans, 8 pins per call, 3 s), and repeats until nothing new is named (at
+  most 4 rounds). The decision then uses only facts asked for after the request arrived (a monotonic clock, `factsNow`). The helper
+  is only asked when the distro is already running (`peekWslHost`; AIB never starts a distro for this). A chat's start also reads
+  its folder and the base facts once, so a check straight away has them. The card's "Always allow" draft uses the facts its request
+  fetched; a sweep after a saved rule fetches each waiting card's facts again.
+- **Paths.** A relative path is joined to the folder the command runs in; the helper resolves each path **as the kernel walks it**:
+  every existing part through its links, `..` after a resolved part taken physically (`out/..` with `out -> /etc` is `/`, not the
+  project folder), the missing tail kept. A dangling or looping link, `..` inside the missing tail, a part below a file and any other
+  error resolve to nothing (asks). Containment compares the resolved path with the resolved chat folder, **case-sensitively** with
+  `/`. So `/home/u/app/out/x` where `out` links to `/etc` is outside the project and asks; a link that stays inside counts as
+  inside. Path forms that ask without a look: empty, control characters, `~`, a leading `//`, any backslash, over 4096 characters.
+  Protected folder names (`.git`, `.claude`, `node_modules`, ...) are refused for writes as on Windows (case-folded, so more is
+  refused, never less). A glob is allowed only over a folder the helper says holds no link.
+- **Commands.** Bash only (a PowerShell request in a WSL chat has no rules). The command's folder must be inside the chat folder
+  ("the command runs outside the chat folder" otherwise). A bare program name is trusted when no folder on the agent's PATH (the
+  login PATH the agent got) is relative or, resolved, inside the chat folder: then wherever Linux finds it, it is outside the
+  project. Built-in Safe reads (`git status`, `ls`, `grep`, ...) and Syntax checks answer as on Windows; `.cmd` and Windows Store
+  checks do not apply. Project-script rules (`npm run lint`, `deno task test`, `git commit`) are pinned by `pin.ts` run in the
+  distro. AIB's own folders in the distro (`~/.aib-server` or `AIB_WSL_ROOT`, its data folder) are a floor, like AIB's data folder
+  on Windows.
+- **Claude settings (audit F9).** The ask rules and risky `env` of a WSL Claude chat come from the distro: the agent's
+  `CLAUDE_CONFIG_DIR` (else `$HOME/.claude`, as the agent got it; else the helper's login environment), the project's `.claude/`
+  in the distro and `/etc/claude-code/managed-settings.json`. Never the Windows `~/.claude`. When they can't be read, rules don't
+  answer that chat and the card says "AIB could not read the Claude settings in the distro".
+- **Unknown always asks.** No facts (helper not ready, an older helper without `allow.facts`, a time-out, a fact not asked) never
+  allow. A card whose draft failed only because a fact was missing says "AIB could not check this in the distro just now" and keeps
+  the agent's own "Always" button (it was hidden only because AIB could not match). Where AIB refuses on purpose (outside the
+  project, the never-list, the floor) the agent's own "Always" stays hidden, as on Windows.
+- **Rule keys (audit F3, F6).** Project rules and pins of a WSL project are saved under its ref (`wsl://ubuntu/home/u/app`), never
+  resolved against AIB's working folder, so they apply whatever folder AIB starts in; Settings lists them "in app". Refs compare
+  exactly (distro folded, path case-sensitive): `/home/u/App` and `/home/u/app` are two projects, and saving a rule in one never
+  answers waiting cards in the other. A project rule beta10 saved in a WSL chat under `<AIB's folder>\wsl:\ubuntu\...` is read as
+  its ref.
+- **Known limits.** Claude Code's Bash tool may change PATH through the user's shell profile after AIB read it (the same holds for
+  Git Bash on Windows). Facts are read just before AIB answers; a file changed in the distro between that read and the agent's own
+  action is not seen (as on Windows). A path that resolves outside the helper's 64-path budget for one request stays unknown (asks).
+- Tests: `allow_wsl_test` (the Linux matcher over a table of a Linux tree: inside, outside, `..`, links out, dangling links,
+  relative paths, `App`/`app`, commands, Safe reads, globs over links, pins, PATH in the project, Claude settings, no helper, stale
+  facts, the ref key after a working-folder change, `physicalRealish`), `allow_wsl_chat_test` (FakeWslHost: Always allow on an
+  edit, the next edit answered, outside asks, `git status`, the sweep into another WSL chat), `audit_wsl_allow_test` (the audit's
+  probes), `wsl_allow_e2e` (real distro).
+
 ## Building and testing
 
 ```
@@ -863,6 +949,7 @@ keeps one failure from hiding the others' results.
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_allow_e2e` | allow rules in a WSL chat with the real helper: "Always allow" on an edit in the chat's folder, the next edit answered without a card, `git status` answered by Safe reads, an edit through a link to a folder outside the project asks (and offers no Always allow) |
 | `wsl_local_only_e2e` | a repo with the user's own `/private/` exclude: a chat's copy gets `/private` in AIB's block first, no `private/` in the copy, `session/new` with `additionalDirectories` = the main folder's `private/` (Linux path) and the note; the agent writes there; Files' local-only part and a read of `private/review/x.png` from the main folder; Git exclude from the copy writes the repo's exclude file and moves the folder, Undo, `..` and a root outside the copies refused; sync and Merge leave `private/` out |
 
 | `wsl_import_e2e` | the one-off import over a temp repo: chats started in the project, in a subfolder, running (a process naming the id), in another tool's worktree, already imported, and a Codex one; a dirty main refuses apply and writes nothing; the dry run leaves every file as it was; the test guard; apply of one, then all, then a no-op re-run; one row per chat; Continue resumes in the copy (the agent's edit lands there), Changes shows the branch, Merge lands, Codex resumes in its copy; the same dry run through `--helper-bin` from `/mnt/c`; undo refuses the merged chat and restores the others (history back, no copy, no branch) |

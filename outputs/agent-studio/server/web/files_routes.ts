@@ -42,8 +42,9 @@ import { chatStudioOf, savedFolders } from './studio_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
 import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';
-import { hostWhenReady, wslLoc } from '../wsl/access.ts';
-import { WslHelperError } from '../wsl/contract.ts';
+import { distroName, hostWhenReady, peekState, peekWslHost, wslLoc, wslTestHomeEnv } from '../wsl/access.ts';
+import { parseWslSessionKey, wslSessionCwd } from '../wsl/transcripts.ts';
+import { WslHelperError, type WslHost } from '../wsl/contract.ts';
 import { refOf } from '../platform/location.ts';
 import { wslFiles, wslLocalPost, wslRoutes, wslViewUrl } from './wsl_routes.ts';
 import { wslRecord } from '../wsl/worktrees.ts';
@@ -268,19 +269,22 @@ export function filesRoutes(): Map<string, Handler> {
     if (!id || id.length > 600) return Promise.resolve([400, { error: 'Choose a chat', code: 'bad_chat' }]);
     const wsl = ctx.host ? wslChatLoc(ctx, id) : null;
     if (wsl) return wslOutside(ctx, id, wsl.distro, one(args, 'path'), one(args, 'peek') === '1');
-    return guarded(async () => {
-      const given = outside.checkShape(one(args, 'path'));
-      // The guard first, so an unnamed path never tells whether it exists.
-      if (!(await mentionedBy(ctx, id, given))) throw new files.FilesError('This chat never named that file', 'not_mentioned', 403);
-      const real = outside.resolveOutside(given, dataDirs(ctx));
-      const read = outside.readOutside(real, one(args, 'peek') === '1');
-      const origin = ctx.artifacts?.store.origin ?? '';
-      const viewable = !read.tooBig && (read.image || (read.page && !read.binary)) && one(args, 'peek') !== '1';
-      const viewUrl = viewable && origin
-        ? origin + '/f/' + issue(read.abs) + '/' + encodeURIComponent(read.name) + (/\.(md|markdown)$/i.test(read.name) ? '?view=1' : '')
-        : '';
-      return { root: '', ...read, viewUrl, outside: outside.folderLabel(real) };
-    });
+    // a saved WSL chat (not running in AIB) naming a Linux path: its distro's helper checks its transcript (wslSavedOutside)
+    return wslSavedChat(id, one(args, 'path')).then((saved) => saved
+      ? wslSavedOutside(ctx, id, saved, one(args, 'path'), one(args, 'peek') === '1')
+      : guarded(async () => {
+        const given = outside.checkShape(one(args, 'path'));
+        // The guard first, so an unnamed path never tells whether it exists.
+        if (!(await mentionedBy(ctx, id, given))) throw new files.FilesError('This chat never named that file', 'not_mentioned', 403);
+        const real = outside.resolveOutside(given, dataDirs(ctx));
+        const read = outside.readOutside(real, one(args, 'peek') === '1');
+        const origin = ctx.artifacts?.store.origin ?? '';
+        const viewable = !read.tooBig && (read.image || (read.page && !read.binary)) && one(args, 'peek') !== '1';
+        const viewUrl = viewable && origin
+          ? origin + '/f/' + issue(read.abs) + '/' + encodeURIComponent(read.name) + (/\.(md|markdown)$/i.test(read.name) ? '?view=1' : '')
+          : '';
+        return { root: '', ...read, viewUrl, outside: outside.folderLabel(real) };
+      }));
   });
   for (const [key, handler] of wslRoutes()) routes.set(key, handler);
   return routes;
@@ -306,6 +310,11 @@ async function wslOutside(ctx: WebContext, id: string, distro: string, path: str
   } catch (error) {
     return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
   }
+  return await wslRead(ctx, host, distro, path, peek);
+}
+
+/** The helper's files.outside answer for a WSL chat's outside file (after its guard): the route's reply. */
+async function wslRead(ctx: WebContext, host: WslHost, distro: string, path: string, peek: boolean): Promise<Reply> {
   try {
     const got = await host.call('files.outside', { path, peek });
     const read = got.read as unknown as files.FileRead;
@@ -317,6 +326,61 @@ async function wslOutside(ctx: WebContext, id: string, distro: string, path: str
     const status = error.code === 'not_found' ? 404 : error.code === 'hidden' ? 403 : 400;
     return [status, { error: error.message, code: error.code }];
   }
+}
+
+/**
+ * A saved WSL chat the page names by `provider:sessionId` (or its transcript key wsl.<distro>.<provider>/<key>), when it names a
+ * Linux path: its distro and session from the saved-session listing (wsl/transcripts.ts, ready distros only). null otherwise (the
+ * Windows branch answers as before).
+ */
+async function wslSavedChat(id: string, path: string): Promise<{ distro: string; provider: string; sessionId: string } | null> {
+  if (!path.startsWith('/') || path.startsWith('//')) return null;
+  const keyed = parseWslSessionKey(id);
+  const m = keyed ? null : /^(claude|codex):([^/\\]{1,128})$/.exec(id);
+  const provider = keyed ? keyed.provider : m?.[1] ?? '';
+  const sessionId = keyed ? (keyed.key.replace(/\.jsonl$/, '').split('/').pop() ?? '') : m?.[2] ?? '';
+  if (!provider || !sessionId) return null;
+  const cwd = await wslSessionCwd(provider, sessionId).catch(() => '');
+  const loc = wslLoc(cwd);
+  return loc ? { distro: loc.distro, provider, sessionId } : null;
+}
+
+/**
+ * A file outside a saved WSL chat's folder: the same guard as on Windows (the chat's own transcript names the path), asked of the
+ * distro's helper (transcripts.mentions), then its files.outside. A distro that is not running is never started for it.
+ */
+async function wslSavedOutside(
+  ctx: WebContext,
+  id: string,
+  saved: { distro: string; provider: string; sessionId: string },
+  path: string,
+  peek: boolean,
+): Promise<Reply> {
+  if (path.length > 1024 || path.includes('\0')) return [400, { error: 'Use a full path', code: 'bad_path' }];
+  const host = peekWslHost(saved.distro);
+  if (!host || peekState(host) !== 'ready') {
+    return [409, { error: `${distroName(saved.distro)} is not running`, code: 'wsl_not_running' }];
+  }
+  const key = id + '|wsl:' + path;
+  if (!mentioned.get(key)) {
+    let yes = false;
+    try {
+      const test = wslTestHomeEnv();
+      const answer = await host.call('transcripts.mentions', {
+        provider: saved.provider as 'claude' | 'codex',
+        sessionId: saved.sessionId,
+        path,
+        ...(test.CLAUDE_CONFIG_DIR ? { claudeDir: test.CLAUDE_CONFIG_DIR } : {}),
+      }, { timeoutMs: 30_000 });
+      yes = answer.mentioned === true;
+    } catch (error) {
+      if (!(error instanceof WslHelperError)) throw error; // an older helper without the method: not named, as before
+    }
+    if (!yes) return [403, { error: 'This chat never named that file', code: 'not_mentioned' }];
+    if (mentioned.size > 2000) mentioned.clear();
+    mentioned.set(key, true);
+  }
+  return await wslRead(ctx, host, saved.distro, path, peek);
 }
 
 /** AIB's own data folder(s): never shown through the outside route. */

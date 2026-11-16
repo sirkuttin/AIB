@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- WSL path links: full Linux paths open as project files. Clicking /home/u/app/src/main.ts in a WSL chat's reply, or the open-file
+  icon on an Edit/Write row, used to open it as "Outside this project", read-only. Now it opens in the Files tab like any project
+  file, with its Changes badge and Show in Files, also in a chat's own copy.
+- WSL path links: Linux names match exactly. In a WSL chat, readme.md no longer links to README.md (a click asked for a file that
+  is not there); Windows projects still ignore case.
+- WSL outside files: Ctrl+click on a Linux path outside the project now gets the same answer as an outside Windows file, instead of
+  "That path is not a folder of this PC".
+- WSL saved chats: outside-file links work when the chat is not running. A file outside the project that the saved chat's own
+  transcript names opens read-only, as for Windows chats; if Ubuntu is not running, AIB says so and does not start it.
+- Find more chats via agent: lists your Windows chats even with a WSL chat open. It used to ask the WSL chat's Linux agent and list
+  nothing.
+- Helpers stay off in WSL projects: AIB itself now refuses to start a helper for a WSL chat, not only the tool list.
+
+
+- Always allow works in WSL chats: in a WSL chat every edit and every command used to ask, every time. "Always allow" was greyed
+  out ("path could not be resolved", "the command runs outside the chat folder"), the agent's own Always button was hidden too, and
+  even `git status` or `ls` asked. Now AIB checks a WSL chat's files with Linux rules inside the distro: "Always allow" on an edit
+  makes a rule, and the next edits in that folder go through without a card; Safe reads such as `git status`, `ls` and `grep`
+  answer by themselves; command rules work as in Windows projects. A link inside the project that points outside it is treated as
+  outside and still asks. Project rules made in a WSL chat now stay with the project after AIB starts from another folder, and
+  `/home/u/App` and `/home/u/app` are two projects. Your Claude settings in the distro (ask rules) are respected, not the Windows
+  ones. When AIB cannot check something in the distro, the card says so and keeps the agent's own Always button.
 - Continue asks only on real evidence: a Claude Code or OMP process that merely runs in the chat's folder (for example VS Code's
   Claude Code panel) no longer brings up "Another app may be using this conversation" when the transcript has been quiet for 30
   minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
@@ -29,10 +51,12 @@
 
 
 - Artifacts: a failed publish or update card now shows the tool's own reason on a line under "The publish did not finish" (for
-  example "In a WSL project, publish by `content` ..."), in every chat, as plain text.
-- WSL chats: the agent is told up front that publish and update take only `content` there (no file `path`), and that a PNG or other
-  binary file has to be embedded in an HTML page as an inline base64 image or opened by the user; a `path` refusal says the same.
-  Windows chats' tools are unchanged.
+  example "File not found in Ubuntu: /home/u/app/chart.png ..."), in every chat, as plain text.
+- WSL chats: the agent can publish a file from the distro by its path, a PNG, PDF or HTML page included (up to 25 MB), as in a
+  Windows project. Paths are relative to the chat's folder, or absolute inside the chat's or the project's folder; AIB reads the
+  file through its helper in the distro and keeps a copy as it was then (after changing the file, the agent publishes it again
+  with update). A refusal names the Linux path and the reason (not found, a folder, too large, outside the project, unreadable,
+  changed while reading). Windows chats' tools are unchanged.
 - AIB Linking (WSL): when asdf has no Node.js version set, the command to copy now matches the distro's asdf: `asdf set -u nodejs
   latest` for asdf 0.16 or newer, `asdf global nodejs latest` for older asdf (both, labelled, when AIB could not read asdf's version).
 - AIB Linking (WSL): the git and curl install lines follow the distro's package manager (apt, dnf, yum, zypper, pacman or apk);

@@ -76,7 +76,7 @@ import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import type { WslSpawn } from '../acp/connection.ts';
-import { refOf } from '../platform/location.ts';
+import { normLinuxPath, refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
 import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
 import {
   distroName,
@@ -106,6 +106,7 @@ import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
 import { WslSync, wslSyncChat } from '../wsl/sync.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
 import { AllowGate } from '../allow/gate.ts';
+import { sameProject } from '../allow/matcher.ts';
 
 const log = getLogger('studio');
 
@@ -863,7 +864,7 @@ export class Studio {
 
   /**
    * The `studio_artifact` entry of a WSL chat (design sections 4 and 11). Either way the endpoint gives such a chat the tool groups of
-   * mcp.ts WSL_TOOL_GROUPS (artifacts by content, docs, merge in its own worktree; no swarm tools yet).
+   * mcp.ts WSL_TOOL_GROUPS (artifacts by content or Linux path, docs, merge in its own worktree; no swarm tools yet).
    *   - The tunnel (phase 2), when the distro's helper has one: the Linux keeper program as forwarder
    *     (`<root>/<ver>/AIB-keeper mcp-forward --helper-socket <data>/helper/mcp.sock`), the key in its environment; each message goes
    *     through the helper channel to this Studio (wslToolCall). Needs no WSL interop and opens no port.
@@ -1002,7 +1003,11 @@ export class Studio {
       throw new ValueError('Invalid session list cursor');
     }
     if (cwd !== null && cwd !== undefined && (!isStr(cwd) || pyLen(cwd) > 1024)) throw new ValueError('Invalid workspace filter');
-    const live = [...this.connections.values()].find((c) => c.provider === provider && c.ready && !c.closed);
+    // A WSL chat's agent lives in its distro and knows only that distro's sessions (Linux cwds): it never answers for Windows
+    // projects, and a WSL project is asked only of a running agent in its own distro (its sessions' cwds become refs again).
+    const wslLoc = wslLocOf(cwd);
+    if (wslLoc) return await this.#listWslSessions(provider, wslLoc, (cursor as string) || null);
+    const live = [...this.connections.values()].find((c) => c.provider === provider && c.ready && !c.closed && !c.wsl);
     if (live) return { ...(await live.listSessions((cwd as string) || null, (cursor as string) || null)), via: 'studio-connection' };
     const probe = this.connectionFactory(command, home(), provider);
     try {
@@ -1011,6 +1016,26 @@ export class Studio {
     } finally {
       await probe.close();
     }
+  }
+
+  /** "Find more chats via agent" for a WSL project: a running chat of the agent in that distro, else a clean empty answer. */
+  async #listWslSessions(provider: string, loc: WslLoc, cursor: string | null): Promise<Json> {
+    const live = [...this.connections.values()].find((c) =>
+      c.provider === provider && c.ready && !c.closed && c.wsl?.distro.toLowerCase() === loc.distro
+    );
+    if (!live) {
+      const note = `Open a ${provider === 'claude' ? 'Claude Code' : 'OMP'} chat in ${distroName(loc.distro)} first: ` +
+        'AIB asks a running agent there and never starts one to list chats.';
+      return { supported: true, sessions: [], nextCursor: null, via: 'none', note };
+    }
+    const answer = await live.listSessions(loc.linuxPath, cursor);
+    const sessions = Array.isArray(answer.sessions) ? answer.sessions : [];
+    for (const s of sessions as Json[]) {
+      const path = normLinuxPath(s.cwd);
+      s.cwd = path ? refOf({ kind: 'wsl', distro: loc.distro, linuxPath: path }) : '';
+    }
+    answer.sessions = (sessions as Json[]).filter((s) => s.cwd);
+    return { ...answer, via: 'studio-connection' };
   }
 
   // ---- model / mode / effort lists for new chats ---------------------------------------------------------------------------
@@ -1241,7 +1266,10 @@ export class Studio {
           if (plan) await this.#makeWorktree(c, plan, workspace);
           // a WSL chat: the main folder's local-only paths as Linux paths, from its distro's helper
           c.localOnly = wsl ? await wslChatLocalOnly(c.worktree ? c.projectRoot : c.cwd, !!c.worktree) : this.#localOnlyFor(c, local);
+          // allow rules of a WSL chat: its folder and the distro's base facts, read while the agent starts (allow/wsl_facts.ts)
+          const warming = wsl && this.allow ? c.allowWarm() : null;
           await c.setup(resume || null);
+          if (warming) await warming; // bounded by the helper call's own time limit; never throws
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
           } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
@@ -1653,6 +1681,7 @@ export class Studio {
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     this.#wire(c);
+    if (wsl && this.allow) void c.allowWarm(); // allow rules: the rebuilt WSL chat's distro facts (allow/wsl_facts.ts; never throws)
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
       : null;
@@ -2172,7 +2201,7 @@ export class Studio {
    *   allow-rules   the list for Settings; allow-remove / allow-restore {ruleId}; allow-review; allow-enable {on};
    *   allow-builtin {name, on}.
    */
-  #allowCall(name: string, body: Json): [number, unknown] {
+  async #allowCall(name: string, body: Json): Promise<[number, unknown]> {
     const gate = this.allow;
     if (!gate) return [404, { error: 'Allow rules need a state folder' }];
     const store = gate.store;
@@ -2221,10 +2250,11 @@ export class Studio {
     const saved = (draft.rules as Json[]).map((r) => store.add({ ...r, from: 'card' } as never));
     let also = 0;
     const project = c.projectRoot || c.cwd;
-    for (const other of this.connections.values()) {
-      if (scope === 'project' && (other.projectRoot || other.cwd).toLowerCase() !== project.toLowerCase()) continue;
+    for (const other of [...this.connections.values()]) {
+      // a WSL project's ref compares exactly: Linux paths are case-sensitive (audit F6)
+      if (scope === 'project' && !sameProject(other.projectRoot || other.cwd, project)) continue;
       try {
-        also += other.allowSweep();
+        also += other.wsl ? await other.allowSweepWsl() : other.allowSweep(); // a WSL chat reads its distro facts again first
       } catch (error) {
         log.exception(error, 'Allow rules: answering waiting cards failed');
       }

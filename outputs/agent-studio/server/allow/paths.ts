@@ -90,11 +90,37 @@ export function segmentsBelow(child: string, root: string): string[] {
 export type PathVerdict = { ok: true; real: string } | { ok: false; reason: string; outside?: boolean };
 
 /**
+ * The path rules the matcher checks with. WIN_OPS: this PC's own file system (the functions above, unchanged). A WSL chat gets a
+ * LinuxView (allow/linux.ts): Linux path rules over facts its distro's helper gave (never the Windows disk).
+ */
+export interface PathOps {
+  readonly linux: boolean;
+  formProblem(raw: string): string;
+  realish(path: string, cwd: string): string | null;
+  inside(child: string, root: string): boolean;
+  folderHasLinks(dir: string): boolean;
+}
+
+export const WIN_OPS: PathOps = {
+  linux: false,
+  formProblem: (raw) => pathFormProblem(raw),
+  realish: (path, cwd) => realish(path, cwd),
+  inside: (child, root) => inside(child, root),
+  folderHasLinks: (dir) => folderHasLinks(dir),
+};
+
+/**
  * A path argument checked against the chat's folder: form first, then resolved. `write` also refuses protected folder names.
  * Globs: allowed only in the last segment, never one starting with "." (".*" can match "..").
  */
-export function checkPath(raw: string, cwd: string, root: string, opts: { write?: boolean; glob?: boolean } = {}): PathVerdict {
-  const form = pathFormProblem(raw);
+export function checkPath(
+  raw: string,
+  cwd: string,
+  root: string,
+  opts: { write?: boolean; glob?: boolean } = {},
+  ops: PathOps = WIN_OPS,
+): PathVerdict {
+  const form = ops.formProblem(raw);
   if (form) return { ok: false, reason: form };
   let path = raw;
   if (opts.glob) {
@@ -105,14 +131,14 @@ export function checkPath(raw: string, cwd: string, root: string, opts: { write?
     }
     path = segs.length ? segs.join('/') : '.';
   }
-  const real = realish(path, cwd);
-  const realRoot = realish(root, root);
+  const real = ops.realish(path, cwd);
+  const realRoot = ops.realish(root, root);
   if (!real || !realRoot) return { ok: false, reason: 'path could not be resolved' };
-  if (!inside(real, realRoot)) return { ok: false, reason: 'outside the project', outside: true };
+  if (!ops.inside(real, realRoot)) return { ok: false, reason: 'outside the project', outside: true };
   if (opts.write && segmentsBelow(real, realRoot).some((s) => PROTECTED_NAMES.has(s))) {
     return { ok: false, reason: 'a protected folder (.git, .claude, hooks)' };
   }
-  if (opts.glob && folderHasLinks(real)) return { ok: false, reason: 'a glob over a folder that holds links' };
+  if (opts.glob && ops.folderHasLinks(real)) return { ok: false, reason: 'a glob over a folder that holds links' };
   return { ok: true, real };
 }
 

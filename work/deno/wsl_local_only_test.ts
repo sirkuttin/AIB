@@ -20,7 +20,7 @@ import { HAVE_GIT } from './_git_repo.ts';
 import { localOnlyMethods } from '../../outputs/agent-studio/server/wsl/helper/local_only.ts';
 import { RpcError } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
 import { BLOCK_START } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { wslDefaultsAllowed } from '../../outputs/agent-studio/server/wsl/local_only.ts';
+import { wslBackupRound, wslDefaultsAllowed } from '../../outputs/agent-studio/server/wsl/local_only.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
@@ -440,3 +440,32 @@ Deno.test({ name: 'wsl files local-only: list and exclude of a WSL chat copy go 
   const [refused] = await routes.get('POST /api/live/files/exclude')!(ctx, new URL('http://x/api/live/files/exclude'), { id: c.id, root: 'chat', action: 'add', path: 'x' }, new Request('http://x', { headers })) as [number, Json];
   assertEquals(refused, 409);
 } });
+
+Deno.test('wsl local-only backup round (audit F12): WSL projects go to their running distro\'s helper; a stopped distro and Windows projects are not asked', async () => {
+  const calls: [string, string, Json][] = [];
+  const host = (name: string, state: string) => ({
+    state,
+    call(method: string, params: Json) {
+      calls.push([name, method, params]);
+      const results: Record<string, Json> = {};
+      for (const p of params.projects as string[]) results[p] = { status: 'done' };
+      return Promise.resolve({ results });
+    },
+  });
+  const hosts: Record<string, unknown> = { ubuntu: host('ubuntu', 'ready'), debian: host('debian', 'stopped') };
+  setWslHostResolver(((d: string) => hosts[d] ?? null) as Parameters<typeof setWslHostResolver>[0]);
+  try {
+    const done = await wslBackupRound([
+      'wsl://ubuntu/home/u/app',
+      'wsl://Ubuntu/home/u/app', // the same project (distro folded): asked once
+      'wsl://ubuntu/home/u/web',
+      'wsl://debian/home/u/other', // not running: never started for a backup
+      'C:\\repo\\app', // Windows: local_backup.ts does it
+    ]);
+    assertEquals(calls, [['ubuntu', 'localOnly.backup', { projects: ['/home/u/app', '/home/u/web'] }]]);
+    assertEquals([...done.keys()], ['ubuntu']);
+    assertEquals(done.get('ubuntu')!['/home/u/app'].status, 'done');
+  } finally {
+    setWslHostResolver(null);
+  }
+});

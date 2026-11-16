@@ -473,6 +473,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'files.list',
     'files.search',
     'files.read',
+    'files.readBytes',
     'files.gitInfo',
     'files.outside',
     'codex.limits',
@@ -486,6 +487,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'chat.repoBranch',
     'transcripts.sessions',
     'transcripts.read',
+    'transcripts.mentions',
     'docs.fs',
     'transcripts.query',
     'ownership.check',
@@ -501,6 +503,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'localOnly.exclude',
     'localOnly.moveStrays',
     'localOnly.backup',
+    'allow.facts',
   ];
   assertEquals(Object.keys(methods).sort(), [...names].sort());
 });
