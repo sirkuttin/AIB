@@ -13,7 +13,8 @@ its own git worktree and lands like a helper's work; hooks off -> Codex subagent
                                          named; nothing in the main folder; nothing lands
     test_hooks_off_turns_subagents_off   features.hooks = false in the user's CODEX_CONFIG: no hooks; features.multi_agent = false
                                          merged into it (the model is offered no spawn_agent); the chat line says so; Activity off
-  Owner guard: the owner's ~/.codex config files keep their mtimes and no file there mentions the run; ~/.claude as in P1.
+  Owner guard: the owner's ~/.codex config files keep their mtimes and no new or changed file there mentions the run (no Claude runs
+  here; the owner's own live Claude sessions write ~/.claude.json, so P1's Claude guard is not used).
 
 Needs node, codex-acp (AIB_CODEX_ACP or a global npm install) and Go (keeper program; AIB_TEST_KEEPER_BIN names a built one), with
 no space in the temp folder's path (Codex runs a hook command through cmd.exe, program first, unquoted). Run with TEMP/TMP pointed
@@ -35,7 +36,7 @@ import server_under_test  # noqa: E402
 from _e2e_support import make_repo, run_git  # noqa: E402
 from test_worktree_e2e import Chat, E2EFixture, wait_for  # noqa: E402
 from test_folder_chat_listing_e2e import NODE, adapter  # noqa: E402
-from test_subagent_worktree_e2e import GO, OwnerUntouched, approve_all, dumped, keeper_program, scripted_stub, stub_text  # noqa: E402
+from test_subagent_worktree_e2e import GO, approve_all, dumped, keeper_program, scripted_stub, stub_text  # noqa: E402
 
 SERVER_KIND = server_under_test.server_kind()
 CODEX_ACP = adapter('AIB_CODEX_ACP', '@agentclientprotocol/codex-acp')
@@ -114,7 +115,6 @@ class AibCodex:
         self.mark = f'srcx{uuid.uuid4().hex[:6]}'
         self.project = make_repo(temp / self.mark)
         run_git(self.project, 'config', 'core.autocrlf', 'false')
-        OwnerUntouched(test, self.mark)
         CodexOwnerUntouched(test, self.mark)
         self.stub = scripted_stub(test, temp, rules(self.project) if callable(rules) else rules)
         keeper = keeper_program(temp)
@@ -189,7 +189,7 @@ class AibCodexSubagentTest(unittest.TestCase):
         ]
         aib = AibCodex(self, rules)
         p, chat = aib.project, aib.chat
-        self.assertEqual(chat.state().get('subagentIsolation'), {'on': True, 'reason': ''}, notes(chat))
+        self.assertEqual(chat.state().get('subagentIsolation'), {'on': True, 'reason': '', 'readOnly': []}, notes(chat))
         self.assertEqual(run_git(p, 'status', '--porcelain'), '', 'the main folder is clean before')
         aib.turn('CX-EDIT go')
         sent = dumped(aib.stub)
@@ -203,6 +203,9 @@ class AibCodexSubagentTest(unittest.TestCase):
             print(aib.report(), file=sys.stderr)
             raise
         self.assertEqual((p / 'sub-a.txt').read_text(encoding='utf-8-sig').strip(), 'from-sub')
+        # P3's Activity line, as for Claude's subagents: by the child's agent id (codex-acp's child session id)
+        seen = chat.state().get('subagentWorktrees') or {}
+        self.assertTrue([v for v in seen.values() if v.get('where') == 'Own worktree'], f'Activity line: {seen}')
         self.assertEqual(run_git(p, 'show', '--name-only', '--format=', 'HEAD').split(), ['sub-a.txt'])
         aib.wait('the merge line', lambda: any(n.startswith('Merged subagent “CX-SUB-A write the file”') for n in notes(chat)))
         aib.wait('its worktree to go', lambda: not [r for r in records(aib.fx.state).values() if r.get('description') == 'CX-SUB-A write the file'])

@@ -33,6 +33,7 @@ import { normcase, realpath, SEP } from '../platform/ospath.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { pathFormProblem } from '../allow/paths.ts';
 import { readHelpers } from '../swarm/registry.ts';
+import { claudeConfigDir, isForkSkill } from './claude_config.ts';
 
 const log = getLogger('subagents');
 
@@ -103,7 +104,7 @@ export interface SubagentChat {
   /** The project folder (worktrees go under <root>/<its repo hash>/, with the project's other copies). */
   project: string;
   /** Hooks were given to this chat: on, its read-only types, and whether the user's WorktreeCreate hook makes the worktrees. */
-  hooks: { readOnly: Set<string>; userWorktreeHook: boolean } | null;
+  hooks: { readOnly: Set<string>; userWorktreeHook: boolean; configDir?: string } | null;
 }
 
 export interface HookAnswer {
@@ -125,6 +126,9 @@ export const TEXTS = {
   cap: `This chat already has ${MAX_PER_CHAT} subagents with their own worktree running. Wait for one to finish.`,
   slow: 'AIB is still preparing a worktree for this subagent; try the subagent again in a moment.',
   unexpected: "AIB didn't expect this worktree",
+  forkSkill: (name: string) =>
+    `In AIB, skills that run as a forked subagent (context: fork) are off, because AIB can't give them their own worktree. ` +
+    `Do the steps of "${name}" yourself, or start a subagent (Agent tool) for them; AIB gives that one its own worktree.`,
 };
 
 /** Read-only types the chat listed: no worktree (the forwarder decides these too, AIB up or not). No isolation value is exempt. */
@@ -233,8 +237,15 @@ export class SubagentWorktrees {
     const tool = String(body.tool_name ?? '');
     if (tool === 'EnterWorktree') return deny(TEXTS.enterWorktree);
     if (tool === 'Workflow') return deny(TEXTS.workflow);
-    if (tool !== 'Agent' && tool !== 'Task') return pass();
     const input = isDict(body.tool_input) ? body.tool_input as Record<string, unknown> : {};
+    if (tool === 'Skill') { // P3 probe: a fork skill starts a subagent with no Agent call, in the folder: refused
+      const name = typeof input.skill === 'string' ? input.skill : '';
+      const configDir = chat.hooks!.configDir ?? claudeConfigDir(Deno.env.toObject());
+      return isForkSkill(name, chat.folder, configDir) || (chat.project !== chat.folder && isForkSkill(name, chat.project, configDir))
+        ? deny(TEXTS.forkSkill(name.slice(0, 120)))
+        : pass();
+    }
+    if (tool !== 'Agent' && tool !== 'Task') return pass();
     if (passesUnchanged(input, chat.hooks!.readOnly)) return pass();
     const toolUseId = typeof body.tool_use_id === 'string' ? body.tool_use_id.slice(0, 200) : '';
     const meta = {
@@ -584,6 +595,56 @@ export class SubagentWorktrees {
     await this.#patch(rec.id, { state: 'stopped', stoppedAt: now(), stoppedWhy: why });
   }
 
+  /**
+   * P3: the parent's ACP stream says subagent `agentId` ended (connection.ts onSubagentEnded / endedSubagents: the adapter's
+   * subagent_update, whose child session id is the agentId; the agent can't forge it). It settles what the SubagentStop hook would
+   * have, and what it can't: a hook that never reached AIB (AIB was down: the take-over replays the stream) and a subagent TaskStop
+   * killed. Finished ('end_turn'): done. Anything else (cancelled, error, an unexplained end, lost sight of): stopped, never landed by
+   * itself; that also turns a done one stopped (a killed subagent's SubagentStop came first), unless it was continued since.
+   */
+  async acpEnded(chatId: string, agentId: string, how: string | null): Promise<void> {
+    if (!agentId) return;
+    await this.#lockOf(chatId).run(async () => {
+      const rec = this.ofChat(chatId).find((r) => r.agentId === agentId);
+      if (!rec) return;
+      // null: it runs again after an end (a SendMessage continued it in its worktree; P0b R7): it lands at its next end
+      if (how === null) {
+        if (rec.state === 'done') await this.#patch(rec.id, { state: rec.userHook ? 'user-hook' : 'running', continuedAt: now() });
+        return;
+      }
+      await this.#settle(rec, how);
+    });
+  }
+
+  /** P3: at the parent's turn end and when AIB takes a chat over: every record of the chat the stream shows as ended is settled. */
+  async reconcileEnded(chatId: string, ended: Map<string, string>): Promise<void> {
+    if (!ended.size) return;
+    await this.#lockOf(chatId).run(async () => {
+      for (const rec of this.ofChat(chatId)) {
+        const how = rec.agentId ? ended.get(rec.agentId) : undefined;
+        if (how !== undefined) await this.#settle(rec, how);
+      }
+    });
+  }
+
+  async #settle(rec: SubagentRecord, how: string): Promise<void> {
+    const live = rec.state === 'running' || (rec.state === 'user-hook' && !!rec.adopted?.verified);
+    if (how === 'end_turn') {
+      if (live) await this.#patch(rec.id, { state: 'done', doneAt: now() });
+      return;
+    }
+    if (!live && rec.state !== 'done') return;
+    if (rec.state === 'done' && (rec.continuedAt ?? 0) > (rec.doneAt ?? 0)) return;
+    const why = how === 'cancelled'
+      ? 'it was cancelled'
+      : how === 'error'
+      ? 'it failed'
+      : how === 'unknown'
+      ? 'Claude Code lost track of it'
+      : 'it ended without saying why';
+    await this.#stop(rec, why);
+  }
+
   /** P2: the user stopped the parent's turn: what still runs is stopped (kept, never landed by itself). */
   async turnCancelled(chatId: string): Promise<void> {
     await this.#lockOf(chatId).run(async () => {
@@ -615,6 +676,34 @@ export class SubagentWorktrees {
   }
 
   // ---- what the rest of AIB asks ---------------------------------------------------------------------------------------------
+
+  /**
+   * P3, Activity: per subagent of the chat (by agentId, the adapter's child session id), where it works and how its work lands, as
+   * plain read-only words. From the chat's records (running, done, stopped) and the swarm's landing entries (merged, refused, stopped;
+   * the record is gone once landed). Cached a second (the page asks on every state poll).
+   */
+  activity(chatId: string): Record<string, SubagentActivity> {
+    const hit = this.#activity.get(chatId);
+    const t = Date.now();
+    if (hit && t - hit.at < 1000) return hit.value;
+    const out: Record<string, SubagentActivity> = {};
+    const entries = Object.values(readHelpers(this.stateDir)).filter((h) => h.kind === 'subagent' && h.parent?.live === chatId);
+    for (const h of entries) {
+      const id = h.sub?.agentId;
+      if (id) out[id] = { where: OWN_WORKTREE, landing: landingWords(h) };
+    }
+    for (const r of this.ofChat(chatId)) {
+      if (!r.agentId || (out[r.agentId] && r.state !== 'running')) continue;
+      const where = r.userHook && r.adopted && !r.adopted.verified ? `Not isolated: ${r.stoppedWhy || 'its worktree is not this project\'s'}` : OWN_WORKTREE;
+      if (r.state === 'running' || r.state === 'done' || (r.state === 'user-hook' && r.adopted?.verified)) {
+        out[r.agentId] = { where, landing: LANDS_AT_TURN_END };
+      } else if (r.state === 'stopped') out[r.agentId] = { where, landing: STOPPED_WORDS };
+    }
+    this.#activity.set(chatId, { at: t, value: out });
+    if (this.#activity.size > 100) this.#activity.delete(this.#activity.keys().next().value!);
+    return out;
+  }
+  readonly #activity = new Map<string, { at: number; value: Record<string, SubagentActivity> }>();
 
   /** The worktree a subagent of this chat works in, by the Agent call's tool_use_id (allow-rule parity, design 2.4). */
   worktreeOf(chatId: string, toolUseId: string): string | null {
@@ -680,6 +769,40 @@ export class SubagentWorktrees {
     }
     if (!own || !wt.lexists(rec.path)) await this.#update(rec.id, () => null);
   }
+}
+
+/** P3, Activity's words per subagent (fixed text; the owner: "Own worktree", never "Own copy"). */
+export interface SubagentActivity {
+  /** Where it works: "Own worktree", or "Not isolated: <reason>". Read-only types ("In your folder (read-only)") are the page's. */
+  where: string;
+  /** How its work lands: "Lands when the turn ends", "Merged · N files", "No changes", "Didn't land: <reason>", "Stopped — ...". */
+  landing: string;
+}
+export const OWN_WORKTREE = 'Own worktree';
+export const LANDS_AT_TURN_END = 'Lands when the turn ends';
+export const STOPPED_WORDS = 'Stopped — ask the agent to merge it';
+
+/** The landing words of one swarm subagent entry. */
+export function landingWords(h: { state: string; reason?: string; merge?: { undo?: unknown } | null; landing?: { waitsFor?: string; lastRefusal?: string } | null; sub?: { files?: number; empty?: boolean } }): string {
+  if (h.landing) return h.landing.waitsFor === 'touched-dirty' ? "Didn't land: files it changed have uncommitted edits" : LANDS_AT_TURN_END;
+  if (h.state === 'merged') {
+    if (h.sub?.empty) return 'No changes';
+    if (h.merge?.undo) return 'Merge undone';
+    const n = h.sub?.files ?? 0;
+    return `Merged · ${n} file${n === 1 ? '' : 's'}`;
+  }
+  if (h.state === 'stopped') return STOPPED_WORDS;
+  if (h.state === 'failed') {
+    const why = h.reason === 'protected'
+      ? 'it changed protected files'
+      : h.reason === 'conflicts'
+      ? 'it conflicts with the branch'
+      : h.reason === 'no branch'
+      ? "the folder isn't on a branch"
+      : h.reason || 'see the chat';
+    return `Didn't land: ${why}`;
+  }
+  return LANDS_AT_TURN_END;
 }
 
 /**

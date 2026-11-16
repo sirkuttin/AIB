@@ -229,7 +229,7 @@ class AibSubagentHooksTest(unittest.TestCase):
         self.assertEqual(status, 200, connection)
         chat = Chat(None, connection['id'], web)
         wait_for(lambda: chat.state().get('ready') or (chat.state().get('error') and self.fail(chat.state()['error'])), 'chat ready')
-        self.assertEqual(chat.state().get('subagentIsolation'), {'on': True, 'reason': ''})
+        self.assertEqual({k: chat.state().get('subagentIsolation', {}).get(k) for k in ('on', 'reason')}, {'on': True, 'reason': ''})
 
         code, _ = web.post('prompt', {'id': chat.id, 'text': 'SR-PARENT go', 'clientMessageId': uuid.uuid4().hex})
         self.assertEqual(code, 200)

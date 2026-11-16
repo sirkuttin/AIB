@@ -385,6 +385,24 @@
     const s = str(a.activity) || (a.live ? '' : str(a.last && (a.last.text || a.last.intent)));
     return s ? oneLine(s).slice(0, 200) : '';
   }
+  /* Subagent worktrees (P3): where a subagent works and how its work lands, as read-only words for its card's fixed line. `iso` is the
+     chat's subagentIsolation {on, reason, readOnly}, `info` the server's {where, landing} for this agentId (subagents/service.ts
+     activity). Read-only types work in the folder; a chat whose hooks are off says why. A working editing subagent AIB has no worktree
+     for after a few seconds is the backstop "Not isolated" (design 2.6). null: no line (not a chat with the rule). */
+  const READ_ONLY_WHERE = 'In your folder (read-only)';
+  function worktreeWords(a, iso, info, now) {
+    if (!iso || typeof iso !== 'object') return null;
+    if (info && typeof info === 'object' && str(info.where))
+      return { where: str(info.where), landing: str(info.landing) };
+    const type = str(a && a.agentType);
+    if (type && Array.isArray(iso.readOnly) && iso.readOnly.includes(type)) return { where: READ_ONLY_WHERE, landing: '' };
+    if (!iso.on) return { where: 'Not isolated: ' + (str(iso.reason) || 'hooks are off'), landing: '' };
+    const c = classify(a || {});
+    const age = now && Number(a && a.created) ? now - Number(a.created) : 0;
+    if (c.group === 'working' && a.live && type && age > 8)
+      return { where: 'Not isolated: AIB saw no worktree for it', landing: '' };
+    return { where: '', landing: '' }; // not known yet: the line keeps its place, empty
+  }
   /* The words of the background line: the send menu's one copy table (send-menu-ui.js), the same as on a command's row. */
   const BACKGROUND_TEXT = () =>
     (root.AgentSendMenu && root.AgentSendMenu.COPY && root.AgentSendMenu.COPY.bgRunning) || 'Still running in the background';
@@ -415,6 +433,8 @@
               : ago + ' ago'
             : '';
       const cmds = Math.max(0, Number(a.runningCommands) || 0);
+      const wt = a.worktree && typeof a.worktree === 'object' ? a.worktree : null,
+        wtText = wt ? [wt.where, wt.landing].filter(Boolean).join(' · ') : '';
       return {
         a,
         key: String(a.key),
@@ -433,9 +453,11 @@
           tokens && 'Tokens: ' + tokens.replace(/ tokens$/, ''),
           c.group === 'finished' && ran && 'Ran ' + ran + (when ? ', finished ' + when : ''),
           activity && 'Now: ' + activity,
+          wtText && 'Worktree: ' + wtText,
         ]
           .filter(Boolean)
           .join('\n'),
+        wt: wt ? wtText : null,
         when,
         ran,
         modelText,
@@ -577,16 +599,26 @@
         if (i.tokens) l2.append(el('span', 'sa-tokens', i.tokens));
         b.append(l2);
       }
+      if (i.wt !== null) b.append(wtLine(i.wt)); // a fixed slot: always there in a chat with the rule, so nothing moves when it fills
       if (i.activity) b.append(el('span', 'sa-line sa-l3 sa-doing', i.activity));
       if (i.background) b.append(el('span', 'sa-line sa-l3 sa-bg', BACKGROUND_TEXT()));
       return b;
     }
-    b.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
-    if (cmd) b.append(cmd);
-    if (i.outcome) b.append(el('span', 'sa-outcome', i.outcome));
-    if (i.modelText) b.append(el('span', 'sa-model', i.modelText));
-    if (i.ran) b.append(el('span', 'sa-when', i.ran));
+    const row = i.wt !== null ? el('span', 'sa-line sa-l1') : b;
+    row.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
+    if (cmd) row.append(cmd);
+    if (i.outcome) row.append(el('span', 'sa-outcome', i.outcome));
+    if (i.modelText) row.append(el('span', 'sa-model', i.modelText));
+    if (i.ran) row.append(el('span', 'sa-when', i.ran));
+    if (row !== b) {
+      b.classList.add('sa-big', 'sa-two');
+      b.append(row, wtLine(i.wt));
+    }
     return b;
+  }
+  /* The worktree line: one 16 px line, ellipsis; empty keeps its height (a no-break space). */
+  function wtLine(text) {
+    return el('span', 'sa-line sa-l2 sa-wt', text || ' ');
   }
   function render(ctx) {
     const m = model(ctx.rows, ctx.now, ctx.chatModel),
@@ -617,6 +649,7 @@
         i.activity,
         i.background,
         i.outcome,
+        i.wt,
       ]),
     ]);
     if (split) {
@@ -715,6 +748,7 @@
     activityOf,
     details,
     subtitle,
+    worktreeWords,
   };
   if (typeof module === 'object' && module.exports) module.exports = root.SubagentsUI;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -141,6 +141,49 @@ test('finished subagents are one line: outcome only when not Done, short model, 
   assert.equal(textIn(s, '.sa-when'), '5m');
   assert.match(box.querySelector('.sa-toggle').textContent, /2 finished/, 'the fold stays');
 });
+test('P3: each subagent of a chat with the worktree rule has a fixed read-only line: where it works, how its work lands', () => {
+  const { U, draw, box } = setup();
+  const iso = { on: true, reason: '', readOnly: ['Explore', 'Plan'] };
+  const words = (a, info) => ({ ...U.worktreeWords(a, iso, info, NOW) });
+  // the words
+  assert.deepEqual(words(working(), { where: 'Own worktree', landing: 'Lands when the turn ends' }), {
+    where: 'Own worktree',
+    landing: 'Lands when the turn ends',
+  });
+  assert.deepEqual(words(working({ agentType: 'Explore' })), { where: 'In your folder (read-only)', landing: '' });
+  assert.deepEqual({ ...U.worktreeWords(working(), { on: false, reason: 'hooks are off', readOnly: [] }, undefined, NOW) }, {
+    where: 'Not isolated: hooks are off',
+    landing: '',
+  });
+  assert.deepEqual(words(working({ created: NOW - 2 })), { where: '', landing: '' }, 'not known yet: empty, no guess');
+  assert.equal(words(working()).where, 'Not isolated: AIB saw no worktree for it', 'the backstop (design 2.6)');
+  assert.equal(U.worktreeWords(working(), null, undefined, NOW), null, 'no rule in this chat: no line');
+  // a working card: the slot is there while empty, and the same node place when it fills (no layout jump)
+  let c = cardOf(draw([working({ created: NOW - 2, worktree: { where: '', landing: '' } })]), 'w1');
+  const lines = () => [...c.querySelectorAll('.sa-line')].map((n) => n.className.replace(/^sa-line /, ''));
+  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l2 sa-wt', 'sa-l3 sa-doing']);
+  assert.equal(textIn(c, '.sa-wt'), ' ', 'an empty slot keeps its height');
+  c = cardOf(draw([working({ worktree: { where: 'Own worktree', landing: 'Lands when the turn ends' } })]), 'w1');
+  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l2 sa-wt', 'sa-l3 sa-doing']);
+  assert.equal(textIn(c, '.sa-wt'), 'Own worktree · Lands when the turn ends');
+  assert.match(c.title, /Worktree: Own worktree · Lands when the turn ends/);
+  assert.equal(c.querySelector('button'), null, 'read-only text: no buttons');
+  // finished: its usual line, then the worktree line
+  const done = (key, landing) => ({ key, live: true, state: 'idle', name: 'Done ' + key, created: NOW - 600, since: NOW - 300,
+    worktree: { where: 'Own worktree', landing } });
+  draw([done('m', 'Merged · 3 files'), done('x', "Didn't land: it changed protected files"), done('s', 'Stopped — ask the agent to merge it')]);
+  box.querySelector('.sa-toggle').onclick();
+  for (const [key, text] of [['m', 'Own worktree · Merged · 3 files'], ['x', "Own worktree · Didn't land: it changed protected files"], ['s', 'Own worktree · Stopped — ask the agent to merge it']]) {
+    const f = cardOf(box, key);
+    assert.ok(f.classList.contains('sa-two'), key);
+    assert.equal(textIn(f, '.sa-wt'), text);
+    assert.ok(f.querySelector('.sa-l1').contains(f.querySelector('.sa-when')), 'its usual line stays first');
+  }
+  // CSS: the slot is one fixed 16 px line
+  const css = fs.readFileSync(path.join(APP_DIR, 'activity.css'), 'utf8');
+  assert.match(css, /\.sa-wt \{[^}]*height: 16px;[^}]*white-space: nowrap;/);
+  assert.doesNotMatch(fs.readFileSync(path.join(APP_DIR, 'subagents-ui.js'), 'utf8'), /Own copy/);
+});
 function localStorage_open(box, draw, rows) {
   draw(rows);
   box.querySelector('.sa-toggle').onclick(); // open the "N finished" fold (it re-renders through ctx.rerender)

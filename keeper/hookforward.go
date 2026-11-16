@@ -4,7 +4,8 @@ package main
 //
 // AIB gives each Claude chat in a git project per-session settings (never ~/.claude) whose hooks run this program:
 //
-//	PreToolUse(Agent|Task|EnterWorktree|Workflow)  -> hook pre-tool        AIB answers hookSpecificOutput JSON (updatedInput or deny)
+//	PreToolUse(Agent|Task|EnterWorktree|Workflow|Skill) -> hook pre-tool   AIB answers hookSpecificOutput JSON (updatedInput or deny;
+//	                                               Skill: a deny for a `context: fork` skill, else {})
 //	WorktreeCreate                                 -> hook worktree-create AIB answers the worktree's bare path (text/plain)
 //	PostToolUse(Agent|Task)                        -> hook post-agent      a hint only
 //	SubagentStop                                   -> hook subagent-stop   a hint only

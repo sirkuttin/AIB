@@ -884,6 +884,21 @@ function isOwnArtifactEntry(entry: unknown): boolean {
   return entry.command === own.command && args.length === own.args.length && args.every((a, i) => a === own.args[i]);
 }
 
+/**
+ * How a child the adapter announced has ended (subagent worktrees P3), from its tracked subagent_update state: null while it runs (or
+ * was never said); else 'end_turn' (finished), 'cancelled', 'error', '' (idle with no reason: unexplained or a worker restart) or
+ * 'unknown' (the adapter lost sight of it).
+ */
+export function subagentEnd(entry: Json | undefined): string | null {
+  const state = entry && isStr(entry.state) ? entry.state.toLowerCase() : '';
+  if (state === 'idle') return isStr(entry!.stopReason) ? entry!.stopReason : '';
+  if (state === 'completed' || state === 'complete') return 'end_turn';
+  if (state === 'failed' || state === 'error') return 'error';
+  if (state === 'cancelled' || state === 'canceled') return 'cancelled';
+  if (state === 'unknown') return 'unknown';
+  return null;
+}
+
 export class Connection {
   readonly id: string;
   provider: string;
@@ -1066,6 +1081,34 @@ export class Connection {
   onTurnCancelled: Hook | null = null;
   /** Claude Code: one of the main agent's Agent / Task / SendMessage / TaskStop calls was seen or updated (subagent worktrees P2). */
   onClaudeTool: ((c: Connection, tool: string, toolUseId: string, input: Json, status: string, agentId: string) => void) | null = null;
+  /**
+   * Claude Code: the adapter said one of the main agent's subagents ended (subagent_update of child `agentId`, the RFD form: state
+   * idle with stopReason end_turn / cancelled / error, none, or unknown). The child's session id IS its agentId (claude-agent-acp
+   * native-subagents.js). Subagent worktrees P3: the stream's word, which the agent can't forge, settles records whose SubagentStop
+   * hook never reached AIB.
+   */
+  onSubagentEnded: ((c: Connection, agentId: string, how: string | null) => void) | null = null;
+
+  /** Subagent worktrees P3: Activity's words per subagent by agentId ({where, landing}); set by the Studio. */
+  subagentActivity: (() => Record<string, unknown>) | null = null;
+  #subagentActivitySafe(): Record<string, unknown> {
+    try {
+      return this.subagentActivity!();
+    } catch (error) {
+      log.exception(error, 'Subagent activity failed');
+      return {};
+    }
+  }
+
+  /** Subagent worktrees P3: the main agent's subagents the stream shows as ended, by agentId -> how (see onSubagentEnded). */
+  endedSubagents(): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [id, entry] of this.subagents) {
+      const how = subagentEnd(entry);
+      if (how !== null) out.set(id, how);
+    }
+    return out;
+  }
   /**
    * Studio hook: the agent sent subscription limit data on its own (server/host/usage_limits_feed.ts). kind 'claude-rate-limit'
    * (usage_update._meta._claude/rateLimit) or 'qwen-quota' (a prompt error's data.subscriptionQuota); at = when, in seconds.
@@ -2620,9 +2663,25 @@ export class Connection {
     if (isDict(get(update, 'capabilities'))) {
       entry.capabilities = update.capabilities;
     }
-    let state = get(update, 'state');
-    state = isDict(state) ? get(state, 'state') : state;
-    if (isStr(state)) entry.state = state;
+    const raw = get(update, 'state');
+    const state = isDict(raw) ? get(raw, 'state') : raw;
+    if (isStr(state)) {
+      const was = subagentEnd(entry);
+      entry.state = state;
+      const why = isDict(raw) ? get(raw, 'stopReason') : null;
+      if (isStr(why)) entry.stopReason = clip(why, 40);
+      else delete entry.stopReason;
+      const how = subagentEnd(entry);
+      // subagent worktrees P3: its end, once per end; and its start again after an end (a SendMessage continued it: in the RFD form
+      // that call is not shown as a tool call), as null
+      if ((how !== null) !== (was !== null) && this.onSubagentEnded) {
+        try {
+          this.onSubagentEnded(this, child, how);
+        } catch (error) {
+          log.exception(error, 'onSubagentEnded failed');
+        }
+      }
+    }
     while (this.subagents.size > 200) {
       this.subagents.delete(this.subagents.keys().next().value!);
     }
@@ -2739,6 +2798,20 @@ export class Connection {
       (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') &&
       !(isDict(claude) && get(claude, 'parentToolUseId'))
     ) this.#mainOutput();
+    // Subagent worktrees P3: in the adapter's subagents (RFD) form a launch's Agent/Task call and a SendMessage are never shown as tool
+    // calls; each becomes a session_message whose messageId is the call's tool_use_id, from the calling session to the child (its
+    // session id is its agentId; claude-agent-acp native-subagents.js linkedSessionMessages). That is the stream's word that the call
+    // was made, for that agent: the same as the Agent tool call's (onClaudeTool), which the agent can't forge.
+    if (kind === 'session_message' && this.onClaudeTool && !this.#replaying) {
+      const use = get(update, 'messageId'), to = get(update, 'recipientSessionId'), from = get(update, 'senderSessionId');
+      if (isStr(use) && /^toolu_/.test(use) && isStr(to) && to && isStr(from) && from && to !== this.sessionId && this.subagents.has(to)) {
+        try {
+          this.onClaudeTool(this, 'Agent', use, {}, '', to);
+        } catch (error) {
+          log.exception(error, 'onClaudeTool failed');
+        }
+      }
+    }
     if (kind === 'session_message' || kind === 'subagent_update') return this.#watchHelper(update, kind, main);
     if (kind !== 'tool_call' && kind !== 'tool_call_update') return;
     const id = get(update, 'toolCallId');
@@ -6025,7 +6098,13 @@ export class Connection {
       steerLane: this.queue.steerPublic(light),
       toolBackground: this.toolBackground(),
       // Subagent worktrees (P1; Activity's chips are P3): on, or why not ("hooks are off", "not a git project", "WSL, coming", ...)
-      ...(this.subagentHooks ? { subagentIsolation: { on: this.subagentIsolationOn(), reason: this.subagentHooks.off } } : {}),
+      // P3: plus the read-only types (they work in the folder) and, per subagent by agentId, where it works and how its work lands
+      ...(this.subagentHooks
+        ? {
+          subagentIsolation: { on: this.subagentIsolationOn(), reason: this.subagentHooks.off, readOnly: this.subagentHooks.readOnly },
+          ...(this.subagents.size && this.subagentActivity ? { subagentWorktrees: this.#subagentActivitySafe() } : {}),
+        }
+        : {}),
       pendingChanges: [...this.pendingChanges.values()].map((v) => ({ ...v })),
       changeFailures: this.changeFailures.map((v) => ({ ...v })),
       state: this.closed
