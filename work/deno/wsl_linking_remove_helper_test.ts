@@ -342,6 +342,29 @@ Deno.test('remove: another AIB data folder (keeper alive or not) keeps every sha
   }
 });
 
+Deno.test('remove: apply first tidies up what this AIB made in each project (its copies and the added ones), before the copies go', async () => {
+  const fs = distro();
+  const order: string[] = [];
+  const d = deps(fs, {
+    cleanup: (project) => {
+      order.push(`cleanup ${project} copy there: ${fs.has(`${COPY}/a.txt`) || fs.has(COPY)}`);
+      return Promise.resolve({ removed: [], left: {} });
+    },
+  });
+  assertEquals((await aibRemove(d, 'check', ['/home/u/other'])).ok, true);
+  assertEquals(order, [], 'check changes nothing');
+  const out = await aibRemove(d, 'apply', ['/home/u/missing', PROJECT]);
+  assertEquals(out.ok, true, JSON.stringify(out));
+  assertEquals(order, [`cleanup ${PROJECT} copy there: true`], 'once per project that exists, while the registry and copies are there');
+  assert(!fs.has(`${DATA}/worktrees`));
+  // a cleanup that fails keeps going, and says so
+  const fs2 = distro();
+  const failing = deps(fs2, { cleanup: () => Promise.reject(new Error('index.lock')) });
+  const out2 = await aibRemove(failing, 'apply');
+  assert(/could not tidy up its branches in \/home\/u\/app \(index.lock\); they are kept/.test(out2.message ?? ''), out2.message);
+  assert(!fs2.has(`${DATA}/worktrees`));
+});
+
 Deno.test('remove: a program running from agents/ keeps agents/ only; with nothing else, every shared part goes', async () => {
   const fs = distro();
   const agent: ProcRow = { pid: 77, exe: `${ROOT}/agents/claude/0.102.0/node`, cwd: '/home/u/other', args: ['node', 'x.js'] };

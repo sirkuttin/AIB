@@ -115,7 +115,7 @@ export interface HelperMethods {
    * Offered only by a helper started with `--data`.
    */
   'aib.usage': { params: Record<string, never>; result: AibUsage };
-  'aib.remove': { params: { mode: 'check' | 'apply' }; result: AibRemoveResult };
+  'aib.remove': { params: { mode: 'check' | 'apply'; projects?: string[] }; result: AibRemoveResult };
   'folder.project': { params: { path: string; name?: string }; result: Record<string, unknown> };
   'folder.createProject': { params: { path: string; name?: string; gitInit?: boolean }; result: Record<string, unknown> };
   'git.init': { params: { path: string }; result: { ok: boolean; message?: string } };
