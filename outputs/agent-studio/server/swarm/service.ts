@@ -20,6 +20,7 @@ import * as wt from '../worktrees/worktrees.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
 import { type Helper, helperOf, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
 import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
+import { CopyMergeQueue } from '../worktrees/merge_queue.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
 import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE } from './rules.ts';
 import { applyChange, changedFiles } from './undo.ts';
@@ -112,8 +113,12 @@ export class Swarm {
   clock: () => number = Date.now;
   openMs = OPEN_MS;
 
+  /** Own-copy chats' merges that wait for the chats in the project folder (build plan 2.3), run by the same watcher. */
+  readonly copyMerges: CopyMergeQueue;
+
   constructor(readonly ctx: SwarmHost) {
     this.registry = new Registry(ctx.stateDir);
+    this.copyMerges = new CopyMergeQueue(ctx.stateDir, ctx.host);
   }
 
   // ---- who is calling ------------------------------------------------------------------------------------------------------
@@ -809,6 +814,7 @@ export class Swarm {
     const loop = async () => {
       if (!this.#watching) return;
       await this.poll();
+      await this.copyMerges.poll(); // an Own-copy chat's merge that waits for the folder chats (worktrees/merge_queue.ts)
       if (this.#watching) this.#timer = setTimeout(loop, POLL_MS);
     };
     this.#timer = setTimeout(loop, 0);
@@ -818,6 +824,7 @@ export class Swarm {
     this.#watching = false;
     if (this.#timer !== null) clearTimeout(this.#timer);
     await this.#busy?.catch(() => {});
+    await this.copyMerges.poll().catch(() => {});
   }
 
   poll(): Promise<void> {

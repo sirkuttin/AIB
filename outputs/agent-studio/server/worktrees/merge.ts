@@ -1057,6 +1057,8 @@ export async function holdFolderChats(
   throw new Refused(
     `“${busy?.title || 'Another chat'}” is working in the project folder (${got.busy[1]}). This lands when it pauses: merge again then`,
     'folder_busy',
+    409,
+    { busy: busy?.title || '' },
   );
 }
 
@@ -1453,6 +1455,17 @@ async function note(chat: Chat, message: string): Promise<void> {
 }
 
 // ---- what the button shows ---------------------------------------------------------------------------------------
+/** merge_queue.ts's file: an Own-copy chat's merge that waits for the chats in the project folder (build plan 2.3). */
+export const COPY_MERGE_QUEUE_FILE = 'copy-merge-queue.json';
+
+/** The queued merge of the chat with worktree key `key`, or null (read only; merge_queue.ts writes it). */
+export function queuedCopyMerge(stateDir: string, key: string): Record<string, unknown> | null {
+  const [status, raw] = readJsonFile(pathOf(stateDir, COPY_MERGE_QUEUE_FILE));
+  if (status !== 'ok' || !isDict(raw)) return null;
+  const item = raw[key];
+  return isDict(item) ? item : null;
+}
+
 /** {worktree, enabled, state, message, base, label}: the Merge button's state for a chat. Read only. */
 export async function status(studio: MergeStudio, chatId: unknown): Promise<Record<string, unknown>> {
   let chat: Chat;
@@ -1469,6 +1482,11 @@ export async function status(studio: MergeStudio, chatId: unknown): Promise<Reco
   try {
     if (RUNNING.has(chat.key)) {
       return { ...out, enabled: false, state: 'merging', message: 'Merging…' };
+    }
+    const queued = queuedCopyMerge(studio.stateDir, chat.key);
+    if (queued) { // merge_queue.ts: merge_into_project waits for the chats in the project folder
+      const who = pyStr(queued.waitsFor || '') || 'the chat in the project folder';
+      return { ...out, enabled: false, state: 'queued', message: `Merges into ${chat.base} when “${who}” pauses` };
     }
     const recorded = Array.isArray(chat.record.mergeConflicts) ? (chat.record.mergeConflicts as string[]) : [];
     if ((await mergeInProgress(chat.wt)) || (recorded.length && (await checkResolution(chat, recorded)))) {

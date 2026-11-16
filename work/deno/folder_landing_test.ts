@@ -26,6 +26,7 @@ import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 import * as merge from '../../outputs/agent-studio/server/worktrees/merge.ts';
+import * as mergeQueue from '../../outputs/agent-studio/server/worktrees/merge_queue.ts';
 import { timing as landingTiming } from '../../outputs/agent-studio/server/worktrees/landing_lock.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 import '../../outputs/agent-studio/queue-ui.js';
@@ -579,6 +580,84 @@ Deno.test({
     await ask(folderChat, 'carry on');
     const told = box.prompts(folderChat).at(-1)!;
     assert(told.includes('While you were idle, the work of “Copy work” landed in this folder (files: feature.txt)'), told);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: "2.3: an Own-copy chat's merge_into_project while a folder chat works is queued (not refused) and lands when that chat pauses",
+  async fn() {
+    await using box = new Box();
+    const folderChat = await box.connect(box.project);
+    const copyChat = await box.connect(box.project, { ownCopy: true });
+    assert(copyChat.worktree);
+    write(copyChat.cwd, 'feature.txt', 'from the copy\n');
+    runGit(copyChat.cwd, 'add', '--', 'feature.txt');
+    runGit(copyChat.cwd, 'commit', '-q', '-m', 'copy work');
+    write(box.project, 'dirty.txt', 'the folder agent is mid-edit\n');
+    const release = await holdTurn(box, folderChat, 'busy');
+    const tip = runGit(box.project, 'rev-parse', 'main').trim();
+
+    // the tool: queued, with the line; nothing lands, nothing is stashed; the Merge status says it waits; calling again says the same
+    const studio = box.mergeStudio();
+    const queued = await mergeQueue.mergeFromToolQueued(studio, copyChat.id);
+    assertEquals(queued.state, 'queued', JSON.stringify(queued));
+    assert(String(queued.message).startsWith('Your work merges into main when “'), String(queued.message));
+    assert(notes(copyChat).some((n) => n.startsWith('Merge into main waits for “')), notes(copyChat).join('\n'));
+    assertEquals((await merge.status(studio, copyChat.id)).state, 'queued');
+    assertEquals((await mergeQueue.mergeFromToolQueued(studio, copyChat.id)).state, 'queued', 'asked again: still queued, once');
+    assertEquals(mergeQueue.readQueue(box.state).size, 1);
+    await box.swarm.copyMerges.poll();
+    assertEquals(runGit(box.project, 'rev-parse', 'main').trim(), tip, 'nothing lands while the folder chat works');
+    assertEquals(stashes(box.project), '');
+    assertEquals([...mergeQueue.readQueue(box.state).values()][0].stage, 'queued');
+
+    // the folder chat pauses: the next poll merges; the folder chat's edit is untouched, its lock let go, both chats are told
+    await release();
+    await box.swarm.copyMerges.poll();
+    assertEquals(mergeQueue.readQueue(box.state).size, 0, 'the queue entry is gone');
+    assertEquals(read(box.project, 'feature.txt'), 'from the copy\n');
+    assertEquals(read(box.project, 'dirty.txt'), 'the folder agent is mid-edit\n');
+    assertEquals(lsTree(box.project, 'main', 'dirty.txt'), '', "the folder agent's edit is not committed");
+    assertEquals(runGit(box.project, 'diff', '--name-only', tip, 'main').trim(), 'feature.txt');
+    assertEquals(stashes(box.project), '');
+    assertEquals(folderChat.landing, null, 'the lock was let go');
+    assert(notes(copyChat).some((n) => n.startsWith('Merged into main')), notes(copyChat).join('\n'));
+    await ask(folderChat, 'carry on');
+    assert(box.prompts(folderChat).at(-1)!.includes('landed in this folder (files: feature.txt)'), box.prompts(folderChat).at(-1));
+    await ask(copyChat, 'and now?');
+    const told = box.prompts(copyChat).at(-1)!;
+    assert(/While you were idle, your queued merge landed in main \(\d+ commits?\)\./.test(told), told);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2.3 (SF 3): a queued copy merge cut off after its branch moved is finished at the next poll; one cut off before goes back in the queue',
+  async fn() {
+    await using box = new Box();
+    const copyChat = await box.connect(box.project, { ownCopy: true });
+    const key = wt.recordForPath(box.state, copyChat.cwd)!.key;
+    const tip = runGit(box.project, 'rev-parse', 'main').trim();
+    write(box.project, 'landed.txt', 'x\n');
+    runGit(box.project, 'add', 'landed.txt');
+    runGit(box.project, 'commit', '-q', '-m', 'landed before the stop');
+    const landed = runGit(box.project, 'rev-parse', 'main').trim();
+    const entry = (stage: string, landedSha: string) => ({
+      chat: copyChat.id, lasting: '', title: '', base: 'main', queuedAt: Date.now() / 1000, stage, waitsFor: 'x', tries: 0, lastRefusal: '',
+      toldWait: false, toldTries: false, stashSha: '', stashName: '', stashFolder: '', landed: landedSha, tipBefore: tip,
+    });
+    const file = pathOf(box.state, mergeQueue.QUEUE_FILE);
+    Deno.writeTextFileSync(file, JSON.stringify({ [key]: entry('moved', landed) }));
+    await box.swarm.copyMerges.poll();
+    assertEquals(mergeQueue.readQueue(box.state).size, 0);
+    assert(notes(copyChat).includes('Merged into main (1 commit) · finished after a restart'), notes(copyChat).join('\n'));
+
+    Deno.writeTextFileSync(file, JSON.stringify({ [key]: entry('built', 'f'.repeat(40)) }));
+    const before = notes(copyChat).length;
+    await box.swarm.copyMerges.poll(); // rolled back into the queue, then tried: nothing to merge in this copy, so it is dropped and said
+    assertEquals(mergeQueue.readQueue(box.state).size, 0);
+    assert(notes(copyChat).slice(before).some((n) => n.startsWith("Couldn't merge into main: nothing to merge")), notes(copyChat).join('\n'));
   },
 });
 
