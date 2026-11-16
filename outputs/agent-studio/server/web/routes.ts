@@ -74,6 +74,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/remove             Settings > Remote control: Remove one phone
  *   POST /api/live/devices/remove-all         Settings > Remote control: Remove all phones
  *   POST /api/live/devices/scopes             Settings > Remote control: a paired phone's switches (Answer, Send, Approve once, Push)
+ *   POST /api/live/devices/kind               Settings > Devices: a paired device's Phone / Computer {id, kind}
  *   GET  /api/live/devices/activity           Settings > Remote control: Phone activity
  *   POST /api/live/devices/prefs              Settings > Remote control: a phone's Silent reminders {id, remind}
  *   POST /api/live/devices/tailscale/refresh  Settings > Remote control: re-read Tailscale (3 s while a step waits, 30 s otherwise)
@@ -174,6 +175,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/devices/remove', 'write', 'body'],
   ['POST', '/api/live/devices/remove-all', 'write', 'body'],
   ['POST', '/api/live/devices/scopes', 'write', 'body'],
+  ['POST', '/api/live/devices/kind', 'write', 'body'],
   ['GET', '/api/live/devices/activity', 'read', 'get'],
   ['POST', '/api/live/devices/prefs', 'write', 'body'],
   ['POST', '/api/live/devices/tailscale/refresh', 'write', 'body'],
