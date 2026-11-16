@@ -29,11 +29,16 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
   storm of changes pauses with "Resume" (see Live sync below). Docs work as in a Windows project (see Docs below). The Files tab previews
   pictures and pages (up to 1 MB, as for a Windows project); a binary file says it cannot be shown as text, with no "Open in editor"
-  (no editor on this PC opens a path inside the distro). A file outside the project folder that the chat named opens read-only,
-  as in Windows projects. Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
+  (no editor on this PC opens a path inside the distro). A full Linux path in a reply or on an Edit/Write row that is inside the
+  project (or inside the chat's own copy) opens as a normal project file in the Files tab; Linux names are matched exactly
+  (`readme.md` never links to `README.md`). A file outside the project folder that the chat named opens read-only, as in Windows
+  projects, also for a saved chat that is not running (its distro must be running). Delete project offers "Move folder to trash in Ubuntu" next to the default "Remove from AIB". VS Code and
   Cursor open the project with `--remote wsl+Ubuntu`.
 - Ended WSL chats are listed with the project's other saved chats (Claude Code transcripts in the distro's `~/.claude/projects`),
   their history opens, and Continue resumes them in the distro.
+- "Find more chats via agent" never asks a WSL chat's Linux agent for the Windows list. Asked for a WSL project (`cwd` = its ref),
+  it asks only a running agent of that distro (with the Linux folder; the sessions' folders come back as refs) and otherwise answers
+  an empty list with a one-line `note`; it never starts an agent in a distro for it.
 - Quitting AIB with a WSL agent working leaves it running, as for Windows chats; the next AIB takes it over.
 
 Side effects: the distro stays running while a WSL project is open or WSL chats run (VmmemWSL memory); `wsl.exe` processes appear
@@ -296,7 +301,8 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
 - **Limits.** A message is at most 8 MB (the relay refuses lines over 16 MB) and an answer at most 3 MB.
 - **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts`, `docs` and `merge` on; `swarm` (no helper chats
   in WSL projects yet) off. Switching a group on there changes the tool list, Studio's
-  main-chat role (swarm) and the chat's note (`wsl/access.ts wslToolsNotice`). Publish takes `content` only: AIB on Windows cannot
+  main-chat role (swarm), the swarm service's own role check (`swarm/service.ts mainChat` refuses a WSL chat with code `wsl`,
+  "Helpers are not available in WSL projects yet") and the chat's note (`wsl/access.ts wslToolsNotice`). Publish takes `content` only: AIB on Windows cannot
   read the distro's files.
 - **Fallback.** A helper without the tunnel (an older one, or a keeper program without `mcp-relay`) gets the phase 1 interop entry
   (the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address file>`, `WSLENV=MCP_FORWARD_HEADERS`);
@@ -366,7 +372,16 @@ everywhere else, so Windows is unchanged). There are no per-file calls between A
 - **Outside files** (`GET /api/live/files/outside` for a live WSL chat). AIB first checks that the chat's own events name the path,
   by Linux rules (case kept; `worktrees/outside_files.ts mentions(…, posix)`); the helper's `files.outside` then runs `checkShape`,
   `resolveOutside`, `readOutside` and `folderLabel` natively and refuses AIB's own folders in the distro (the root, the data
-  folder, the helper's folder). Saved (not live) WSL chats are not covered: their transcripts are in the distro.
+  folder, the helper's folder). A **saved** WSL chat that is not running (`id` = `claude:<sessionId>` or its
+  `wsl.<distro>.claude/<key>`, naming a Linux path): the distro comes from the saved-session listing (`wsl/transcripts.ts
+  wslSessionCwd`, ready distros only), the helper's `transcripts.mentions` checks the session's own transcript and its subagents'
+  files for the path (same Linux rules), then `files.outside` as above. A distro that is not running is never started for it: 409
+  `wsl_not_running`, "Ubuntu is not running". Any other chat id keeps the Windows answer.
+- **Path links on the page** (`files-ui.js`). A WSL chat's agent names files by Linux path, so the reply links and the Edit/Write
+  rows compare paths against the Linux folder of the chat's ref (`AIBWsl.parse`; a chat in its own copy: the copy's Linux folder),
+  never against the ref. Names compare case-sensitively for WSL listings (case is folded for Windows folders only). Ctrl+click on
+  an outside Linux path sends the editor route its ref, which answers as for an outside Windows file ("not inside a project
+  folder AIB knows").
 - **Delete project.** `project.inspect` (what the dialog shows) and `project.trash` (`wsl/helper/trash.ts`). The Windows delete's
   refusals run natively (home folder and its parents, Documents/Desktop/Downloads, a folder holding or inside another project, AIB's
   own folders), plus a Windows drive (`/mnt/<x>`) and a top-level folder (`/home`, `/tmp`). Then `gio trash`; without `gio`, the
