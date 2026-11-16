@@ -39,7 +39,6 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/wsl/prereqs                AIB Linking (WSL): what a distro has for AIB's agents (Node.js, npm, git, curl)
  *   POST /api/live/wsl/reconnect              WSL projects: Reconnect on a stopped distro
  *   POST /api/live/wsl/open-url               WSL projects: the answer to "<distro> wants to open <url>"
- *   POST /api/live/worktree/merge-request     the Changes tab's Merge button: a one-shot merge permission, then the chat is asked to merge
  *   POST /api/live/docs/open                  local docs: the page opens a doc (docs_routes.ts)
  *   GET  /api/live/docs/list                  local docs: the docs of a chat's project folder (Files, Ctrl+K, chips, picker)
  *   GET  /api/live/docs/info                  local docs: rev, skipped file edits, history of an open doc
@@ -97,7 +96,6 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
-  ['POST', '/api/live/worktree/merge-request', 'write', 'body'], // the Merge button asks the agent (merge_request.ts)
   ['GET', '/api/live/events', 'read', 'get'], // history loading: one page of a chat's events (event_pages.ts)
   ['GET', '/api/live/event', 'read', 'get'], // one event whole (a clipped tool output's full text)
   ['POST', '/api/live/allow/answer', 'write', 'body'], // allow rules: page session only (server/allow; no MCP tool, no phone route)
@@ -270,7 +268,6 @@ export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/update/check', 'write', 'body'],
   ['POST', '/api/live/update/install', 'write', 'body'],
   ['POST', '/api/live/worktree-archive', 'write', 'body'],
-  ['POST', '/api/live/worktree-discard', 'write', 'body'],
   ['POST', '/api/live/worktree/clash', 'write', 'body'],
   ['POST', '/api/live/worktree/merge', 'write', 'body'],
   ['POST', '/api/live/worktree/tool', 'worktree.tool', 'own-gate'],

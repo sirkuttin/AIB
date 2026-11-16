@@ -603,16 +603,15 @@ class MergeTests(Shared):
         self.assertRegex(said, r'^TOOL 40[13] ', said)
         self.assertEqual(git(project, 'rev-parse', 'main').strip(), main_before, 'nothing merged')
         self.assertEqual(mine.worktree_status()['state'], 'ready', 'the other chat is untouched')
-        # the Changes tab's Merge button still works (it asks the chat to merge); the merge tool no longer needs that press first
-        # (CHANGELOG, "Merge from the chat": the agent merges into main on its own, no button needed)
+        # no Merge button any more (owner, 2026-11-16): its request route is gone; the agent merges with its tool, no press needed
         code, asked = env.web.post('worktree/merge-request', {'id': mine.id})
-        self.assertEqual(code, 200, asked)
+        self.assertEqual(code, 404, asked)
         # another chat's key is still refused
         said = other.send(f'call-tool:merge:{mine.id}')
         self.assertRegex(said, r'^TOOL 40[13] ', said)
         self.assertEqual(git(project, 'rev-parse', 'main').strip(), main_before, 'nothing merged')
-        # its own key merges its own chat, even while its own turn runs (the turn the button's message starts)
-        said = mine.send('call-tool:merge', message_id='merge-request-e2e')
+        # its own key merges its own chat
+        said = mine.send('call-tool:merge', message_id='merge-e2e')
         self.assertTrue(said.startswith('TOOL 200 '), said)
         reply = json.loads(said[len('TOOL 200 '):])
         self.assertEqual((reply['state'], reply['message']), ('merged', 'Merged into main (1 commit)'))
@@ -630,30 +629,21 @@ class MergeTests(Shared):
 
 
 class DiscardArchiveTests(Shared):
-    def test_9a_discard_removes_the_worktree_and_branch_and_the_chat_is_read_only(self):
+    def test_9a_there_is_no_discard_any_more_and_nothing_is_removed(self):
+        # owner, 2026-11-16: no Discard (nor Merge) for any chat; an old copy chat's unmerged work is discarded only by the owner's
+        # one-off migration script (--discard), with AIB quit
         env = self.env
         project = self.make()
         chat = self.chat_in(project)
         chat.send('edit:work.txt|some work\\n')
-        wt, session = chat.cwd, chat.session
+        wt = chat.cwd
         self.assertEqual(len(env.branches(project)), 1)
-        code, refused = env.web.post('worktree-discard', {'id': chat.id})
-        self.assertEqual(code, 400, 'one confirmation is required')
+        for body in ({'id': chat.id}, {'id': chat.id, 'confirm': True}):
+            code, _ = env.web.post('worktree-discard', body)
+            self.assertEqual(code, 404, body)
         self.assertTrue(os.path.isdir(wt))
-        code, done = env.web.post('worktree-discard', {'id': chat.id, 'confirm': True})
-        self.assertEqual((code, done['result'], done['removed']), (200, 'removed', True), done)
-        wait_for(lambda: not os.path.exists(wt), 'the folder removed')
-        self.assertEqual(env.branches(project), [])
-        self.assertIsNone(env.record(wt))
-        self.assertNotIn(pathlib.Path(wt).name, git(project, 'worktree', 'list', '--porcelain'))
-        self.assertEqual(porcelain(project), '')
-        for folder in (wt, str(project)):   # also from the project folder: never continued in the main checkout
-            status, answer = env.web.post('connect', {'provider': 'claude', 'cwd': folder, 'resume': session})
-            self.assertEqual(status, 400, folder)
-            self.assertIn("This chat's workspace was removed; it can be read but not continued", answer['error'])
-        status, _ = env.web.post('prompt', {'id': chat.id, 'text': 'say:hi', 'clientMessageId': uuid.uuid4().hex})
-        self.assertGreaterEqual(status, 400, 'the discarded chat cannot be sent to')
-        self.assertFalse(any(c['id'] == chat.id and not c.get('closed') for c in env.web.listing()['connections']))
+        self.assertEqual(len(env.branches(project)), 1)
+        self.assertIsNotNone(env.record(wt))
 
     def archive(self, chat, action='archive'):
         provider, session = 'claude', chat.session

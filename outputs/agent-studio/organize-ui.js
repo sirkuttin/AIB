@@ -269,7 +269,7 @@
   // ---- actions ------------------------------------------------------------------------------
   /* One line in the archive flow for a chat whose worktree keeps unmerged changes. Archiving is never blocked and has no dialog. */
   const keptLine = (branch) =>
-    'This chat has unmerged changes on ' + branch + '; they\u2019re kept until you discard or merge them.';
+    'This chat has unmerged changes on ' + branch + '; they\u2019re kept until you ask its agent to merge them.';
   function showArchiveNote(text) {
     const box = $('archivedBox');
     if (!box || !box.parentNode) return;

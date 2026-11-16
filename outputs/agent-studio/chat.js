@@ -22,9 +22,9 @@
     }
   }
   const aliases = stored('studio-conversation-names', {});
-  /* QA M4: chats whose worktree was discarded from the Changes tab (provider:sessionId -> {at, row}). Such a chat stays in the list,
-     readable, but cannot be continued: the composer is off with a note, and it has no branch any more. The list row is kept here
-     (this browser) so the chat does not vanish when the agent has no saved transcript Studio can list. */
+  /* QA M4: chats whose worktree was discarded from the Changes tab before it lost its Discard button (owner, 2026-11-16)
+     (provider:sessionId -> {at, row}). Such a chat stays in the list, readable, but cannot be continued: the composer is off with a
+     note, and it has no branch any more. The list rows kept here (this browser) are only read now, so those chats do not vanish. */
   const DISCARDED_KEY = 'studio-discarded-chats-v1';
   const discardedChats = new Map(Object.entries(stored(DISCARDED_KEY, {}) || {}));
   /* Build plan 1b 4.4: the server's truth wins. An old copy chat that the owner's migration script moved to its project folder
@@ -38,21 +38,6 @@
   }
   function aliasKeyOf(c) {
     return c.provider + ':' + (c.sessionId || c.id || c.key);
-  }
-  function rememberDiscarded(c) {
-    const row = {
-      ...c,
-      discarded: true,
-      worktree: null,
-      live: c.live ? { ...c.live, closed: true, worktree: null } : c.live,
-    };
-    delete row.elsewhere;
-    discardedChats.set(aliasKeyOf(c), { at: Date.now() / 1000, row });
-    const keep = [...discardedChats.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, 50);
-    try {
-      localStorage.setItem(DISCARDED_KEY, JSON.stringify(Object.fromEntries(keep)));
-    } catch {}
-    return row;
   }
   const DISCARDED_NOTE = 'This chat\u2019s worktree was discarded: you can read it, but not continue it.';
   let token = '',
@@ -1364,23 +1349,13 @@
     renderConversations();
     await refresh();
   }
-  /* Why the Changes tab's Merge button may not ask this chat to merge (it never resumes a chat on its own), or ''. */
-  function mergeBlockedReason(c) {
-    if (!c) return '';
-    if (c.elsewhere && !current) return 'This chat is open in another app. Merge it there';
-    if (window.AgentOrganizeUI?.bucket?.(c) === 'archived')
-      return 'This chat is archived. Unarchive it to merge its work';
-    if (current && snapshot && snapshot.readOnly) return "This chat is read only, so it can't merge";
-    if (!current || (snapshot && snapshot.closed)) return 'This chat is closed. Continue it to merge its work';
-    return '';
-  }
   function renderHeader() {
     syncChatPanels();
     if (!selected) return;
     window.AgentBreadth?.sync(current ? snapshot : null, breadthContext());
     renderHeaderBody();
   }
-  // The panels that belong to the open chat (views, terminal, Files, Changes with its header chip and Merge / Discard,
+  // The panels that belong to the open chat (views, terminal, Files, Changes with its header chip,
   // Artifacts): fed on every header render, and when a New chat page replaces a chat, so none keeps the chat we left.
   function syncChatPanels() {
     window.ChatViewsUI?.sync();
@@ -1393,7 +1368,6 @@
             busy: !!(current && snapshot && !snapshot.closed && snapshot.busy),
             cwd: selected.cwd || '',
             discarded: isDiscarded(selected),
-            mergeBlocked: mergeBlockedReason(selected),
             folder: worksInFolder(selected),
           }
         : null,
@@ -3555,7 +3529,7 @@
     $('settings').replaceChildren();
     $('approvals').replaceChildren();
     clearError();
-    syncChatPanels(); // the chat we left: its Changes chip, Merge / Discard, Files and Artifacts go with it
+    syncChatPanels(); // the chat we left: its Changes chip, Files and Artifacts go with it
     renderConversations();
     renderNewChat();
     renderAgents();
@@ -5232,19 +5206,6 @@
     }
   };
   $('discoverSessions').onclick = discoverSessions;
-  // A chat's worktree was discarded from the Changes tab: its connection is closed now, so show the list and the chat as they are.
-  window.addEventListener('agent-studio:worktree-discarded', (e) => {
-    const id = e?.detail?.id || '';
-    if (selected && (id === current || id === aliasKey(selected) || !id)) {
-      selected = rememberDiscarded(selected);
-      renderHeader();
-    }
-    sidebarSignature = '';
-    Promise.resolve()
-      .then(() => refresh())
-      .then(() => listConversations())
-      .catch(fail);
-  });
   window.AgentEditors?.init({ get, post, fail, cwd: () => selected?.cwd || '' });
   window.AgentOrganizeUI?.init({
     get: (path) => get(path),

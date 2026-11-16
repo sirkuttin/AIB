@@ -4,7 +4,7 @@
  * ways and the cross-process locks. Real git in temp repos and temp state folders only.
  *
  * Skipped (they need a whole Studio, a live connection or the host-side live sync): the flag tests and connection.public() checks,
- * live_list sidebar roots, resume through Studio.connect, the worktree-discard / worktree-archive live ops and conversation_action
+ * live_list sidebar roots, resume through Studio.connect, the worktree-archive live op and conversation_action
  * (agent kill order, read-only chats, routes and tokens), changes_response, the live connection projectRoot mapping, the real-adapter
  * HOME isolation and state_paths checks. Their worktrees.py parts (plan, create, remove, retry_pending, is_removed, has_changes,
  * ensure, find, ProjectResolver) are covered here directly.

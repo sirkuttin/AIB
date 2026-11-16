@@ -21,9 +21,10 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
 - A new chat works in the project folder, as for a Windows project (owner decision 2026-11-16: no per-chat own copy). A WSL
   chat made before then in its own copy (a git worktree on branch `studio/chat-…`, made inside the distro) keeps it. The Files tab
-  shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the copy and its branch, and Merge
-  lands the chat's own commits on main as for a Windows project (see Merge below). Moving such old chats to the project folder is
-  done once, outside AIB, by a migration script run inside the distro with AIB quit (`work/migrate/folder_chats_migrate.ts`).
+  shows the chat's copy or the main folder; Changes shows the chat's branch, read only (no Merge or Discard button for any chat:
+  owner, 2026-11-16), and asking the chat's agent to merge lands its own commits on main as for a Windows project (see Merge
+  below). Moving such old chats to the project folder (or discarding one's unmerged work with `--discard`) is done once, outside
+  AIB, by a migration script run inside the distro with AIB quit (`work/migrate/folder_chats_migrate.ts`).
   Live sync works
   as for a Windows project: a file the user saves in the main folder reaches the chat's copy within a second or two, the chat's
   next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
@@ -100,7 +101,7 @@ WSL worktree on Windows; `wsl/worktrees.ts` turns the helper's Linux paths into 
   folder under `/mnt/<drive>` never gets a worktree. At its start the helper removes half-made worktrees and retries pending
   removals, as a Windows AIB does at its start.
 - Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes shows
-  Discard and Merge, as on Windows. A helper without the methods (older, or no `--data`) leaves chats in the project folder.
+  the branch view, read only, as on Windows. A helper without the methods (older, or no `--data`) leaves chats in the project folder.
 
 ## AIB tools (MCP tunnel)
 
@@ -151,7 +152,7 @@ cwd is a WSL ref goes to the helper, every other chat to merge.ts as before.
 
 - AIB sends the chat's public state with each call (its cwd as the worktree's Linux path; queued messages as empty items, so no
   message text crosses). What merge.ts posts to the chat (the conflict prompt, the "Merged into main (n commits)" note, the clash note
-  with its two buttons and the clash prompt, the Merge button's queued message) comes back as ordered `actions` and AIB posts them,
+  with its two buttons and the clash prompt) comes back as ordered `actions` and AIB posts them,
   each to that chat only; a conflict prompt the chat does not take is refused with merge.ts's line. A refusal comes back as merge.ts's
   Refused (same message, code and status).
 - Every Windows rule holds: only the chat's own branch lands, on the project's main branch; a busy chat, a running terminal or
@@ -671,10 +672,10 @@ keeps one failure from hiding the others' results.
 | `wsl_terminal_e2e` | the login shell in the Linux folder, resize |
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
-| `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, closing leaves the copy, a refused out-of-root plan, a non-git folder in place |
 | `wsl_sync_e2e` | live sync with the helper's poll stretched to 5 minutes, so only inotify wakes a scan: events counted, a user edit and a new file in the copy within seconds, the prompt's note naming them, the helper killed and a new one catching up, Merge after sync landing only the chat's change, an edit both made merged at the next turn, a clash kept with its markers and the clash line until the chat resolves it |
 | `wsl_tunnel_e2e` | the tunnel entry run inside the distro: a tools/list reaches AIB and the WSL tool list comes back, also with interop off for the forwarder (`unshare -rm`, `/run/WSL` hidden); a wrong key refused; a helper without the tunnel falls back to the interop entry, which cannot start with interop off |
-| `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
+| `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 | `wsl_fixes_e2e` | the set-up probe with `-` for no `AIB_WSL_ROOT` answers `$HOME/.aib-server` (read-only); the New project dialog's check and create in the distro (new, existing, missing parent, with and without a name and git init) |
 | `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |

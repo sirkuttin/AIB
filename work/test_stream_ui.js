@@ -234,7 +234,7 @@ test('mirrorShouldReset: shrink, Thinking toggle, other history window, evicted 
   assert.equal(S.mirrorShouldReset(prev, { ...prev, key: 'b' }), true);
 });
 
-// The Changes tab's Merge button sends this exact message (server/worktrees/merge_request.ts mergeRequestText).
+// The message the Changes tab's old Merge button sent (removed 2026-11-16): older chats still show it as a chip.
 const MERGE_REQUEST =
   "Merge this chat's work into main with AIB's merge tool (merge_into_project). If main has moved and there are conflicts, " +
   'resolve them in this worktree and call it again. Then say in one line what landed.';

@@ -9,7 +9,6 @@ import { commit, FakeStudio, read, runGit, Sandbox, write } from './_worktree_fi
 import { list, setup, text } from './_sync_fixtures.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 import * as m from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import * as mr from '../../outputs/agent-studio/server/worktrees/merge_request.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 
 const KEY = 'b'.repeat(32);
@@ -52,7 +51,6 @@ Deno.test('folder on another branch: the chat starts at main, and its merge into
   commit(plan.path, 'more.txt', 'more chat work\n', 'agent work two');
   const state = await m.status(studio, 'c1');
   assertEquals([state.base, state.label], ['main', 'Merge into main']);
-  assertEquals(mr.mergeRequestText(String(state.base)).includes('into main'), true);
   const result = await m.mergeFromTool(studio, 'c1');
   assertEquals([result.state, result.target, result.started, result.commits], ['merged', 'main', 'main', 2]);
   assertEquals(names(box.project, mainBefore, 'main'), ['more.txt', 'work.txt'], "only the chat's own changes reach main");

@@ -2,7 +2,7 @@
  * Split view, the right panel (owner, 2026-11-15, mockup v2): with two chats side by side, Activity, Changes and Artifacts list
  * BOTH chats in pane order, each under its own header, and look the same whichever pane has focus. Nothing in the panel moves
  * pane focus. Artifacts: one dropdown per chat, side by side when the panel has room, stacked when it is narrow. Changes: each
- * chat's own Discard / Merge row; Merge asks that chat. One chat (no split): none of it shows.
+ * chat's own read-only summary row, no Merge or Discard (owner, 2026-11-16). One chat (no split): none of it shows.
  *
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), two scripted live chats, headless Chrome or
  * Edge. Changes, the worktree status and the artifact lists are answered in the page (a fetch stub keyed by chat id), so the test
@@ -14,7 +14,7 @@
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
-import { assert } from './_assert.ts';
+import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';
 
 function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
@@ -37,7 +37,7 @@ function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
   });
 }
 
-/** Changes, worktree status, artifact and doc lists per chat id, B's processes, answered in the page; merge requests are recorded. */
+/** Changes, artifact and doc lists per chat id, B's processes, answered in the page. */
 function stub(page: Page, a: Chat, b: Chat) {
   const files = {
     [a.id]: [
@@ -63,18 +63,12 @@ function stub(page: Page, a: Chat, b: Chat) {
   };
   return page.eval(`(() => {
     const files = ${JSON.stringify(files)}, arts = ${JSON.stringify(arts)}, docs = ${JSON.stringify(docs)}, cmds = ${JSON.stringify(cmds)};
-    const merges = (window.__merges = []), real = window.fetch.bind(window);
+    const real = window.fetch.bind(window);
     const json = (o) => Promise.resolve(new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     window.fetch = (url, init) => {
       const u = new URL(String(url), location.href), id = u.searchParams.get('id') || u.searchParams.get('conversationId') || '';
       if (u.pathname === '/api/live/changes' && files[id])
         return json({ git: true, scope: 'branch', files: files[id], worktree: { branch: 'aib/' + id.slice(0, 6), base: 'main' } });
-      if (u.pathname === '/api/live/worktree' && files[id])
-        return json({ worktree: true, enabled: true, state: 'ready', base: 'main', label: 'Merge' });
-      if (u.pathname === '/api/live/worktree/merge-request') {
-        merges.push(JSON.parse(init.body).id);
-        return json({ message: 'Merge requested' });
-      }
       if (u.pathname === '/api/live/artifacts' && arts[id]) return json({ artifacts: arts[id] });
       if (u.pathname === '/api/live/docs/list' && docs[id]) return json({ docs: docs[id] });
       // a saved chat's session is its transcript path (".../feedsaved.jsonl"), the key "claude:feedsaved"
@@ -207,15 +201,11 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
     assert((await page.eval<string>(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab`)) === tab, `${tab} stays selected`);
   }
 
-  // Changes: pane order, per-chat headers and Merge rows; Merge asks its own chat
+  // Changes: pane order, per-chat headers and summary rows; no Merge or Discard anywhere (owner, 2026-11-16)
   await page.click('#paneTab-changes');
   assert(JSON.stringify(await keysOf(page, '#splitChanges .sp-grp')) === JSON.stringify([a.key, b.key]), 'Changes in pane order');
-  await page.waitFor(`[...document.querySelectorAll('#splitChanges .cg-merge-btn')].filter((n) => n.offsetParent && !n.disabled).length === 2`, 15000, 'two Merge buttons');
-  const focusNow = await focusedKey(page);
-  await page.click('#splitChanges .sp-grp:nth-child(2) .cg-merge-btn');
-  await page.waitFor(`window.__merges.length === 1`, 10000, 'merge request sent');
-  assert((await page.eval<string>(`window.__merges[0]`)) === b.id, 'Merge in the second section asks the second chat');
-  assert((await focusedKey(page)) === focusNow, 'Merge did not move focus');
+  await page.waitFor(`[...document.querySelectorAll('#splitChanges .sp-foot')].filter((n) => n.offsetParent && /file/.test(n.textContent)).length === 2`, 15000, 'two summary rows');
+  assertEquals(await page.eval<number>(`document.querySelectorAll('#changesPane button.cg-merge-btn, #changesPane button.cg-discard, #changesPane .cg-foot button').length`), 0, 'no Merge or Discard');
 
   // clicks anywhere in the panel never move focus
   for (const sel of ['#paneTab-activity', '#splitActivity .sp-grp:nth-child(2) .sp-head', '#splitActivity .sp-grp:nth-child(2) .subagent-card', '#paneTab-changes', '#splitChanges .sp-grp:nth-child(2) .sp-head', '#splitChanges .sp-grp:nth-child(2) .cg-file', '#paneTab-artifacts', '.ar-split .ar-sgrp:nth-child(2) .ar-spick']) {

@@ -170,12 +170,6 @@ Deno.test({
       assertEquals(await sh('git -C "$1" show main:four.txt', repo), 'four');
       assertEquals(await sh('cat "$1/a.txt" "$1/mine.txt"', repo), 'one\nuser\nmine', "the user's edits are back, not overwritten");
       assertEquals(await sh('git -C "$1" stash list | wc -l', repo), '0');
-
-      // ---- the Merge button: the fixed message is sent to the chat
-      await turn(b, r, `edit:five.txt|five${NL}`);
-      await turn(b, r, 'commit:five');
-      const [s9, asked] = await api2.post('/api/live/worktree/merge-request', { id: r.id });
-      assertEquals([s9, asked.state, asked.message], [200, 'requested', 'Merge requested. The chat is merging']);
     } finally {
       for (const s of studios) await s.close().catch(() => {});
       await cleanRoot();

@@ -6,6 +6,8 @@
  * Dry run changes nothing and prints the plan; --apply re-files the old copy chats without unmerged work (Claude moved + cwd
  * rewritten, Codex opened once in the project folder, backups kept), removes their copies, branches and refs, leaves helpers' copies
  * and lists the chat with unmerged work without touching it; a rerun changes nothing; with AIB (or its keeper) running it refuses.
+ * --discard "<chat title or id>" throws that chat's unmerged work away (its copy, branch and refs) and re-files the chat like the
+ * others; the dry run only says so; a rerun changes nothing; a name that matches nothing is said and changes nothing.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, PYTHON } from './_connection.ts';
@@ -155,7 +157,9 @@ Deno.test('folder-chats migration: the dry run prints the plan per project and c
   assert(out.includes('plan: claude chat sess-a') && out.includes('would move'), out);
   assert(out.includes('plan: codex chat cdx-1') && out.includes('open it once in the project folder'), out);
   assert(out.includes('plan: claude chat sess-d'), out);
-  assert(out.includes('NOT TOUCHED: chat') && out.includes('claude:sess-b') && out.includes('Merge or Discard it in AIB'), out);
+  assert(out.includes('NOT TOUCHED: chat') && out.includes('claude:sess-b'), out);
+  assert(out.includes('to discard that work, run this again with: --discard "') && out.includes("or ask the chat's agent to merge it"), out);
+  assert(!/Merge or Discard/.test(out), 'no Merge / Discard buttons to point at any more');
   assert(out.includes(`plan: remove empty folder ${s.emptyFolder}`), out);
   assert(!out.includes('sess-h'), 'helpers are not part of it');
   assertEquals(box.snapshot(), before, 'nothing changed');
@@ -248,4 +252,41 @@ Deno.test('folder-chats migration: refuses while AIB or its keeper runs, and cha
   }
   assertEquals(box.snapshot(), before, 'nothing changed');
   assertEquals(box.loads(), []);
+});
+
+Deno.test("folder-chats migration: --discard throws one chat's unmerged work away and re-files it; dry run first; a rerun changes nothing", async () => {
+  using box = new Box();
+  const s = await scene(box);
+  const e = await box.copy('claude', 'sess-e'); // a second chat with unmerged work: not named, so kept
+  write(e.path, 'keep.txt', 'mine\n');
+  box.transcript('sess-e', e.path);
+
+  // the dry run with --discard: the plan says what goes, nothing changes
+  const before = box.snapshot();
+  const dry = await box.run('--discard', 'claude:sess-b', '--discard', 'no such chat');
+  assertEquals(dry.code, 0, dry.out);
+  assert(dry.out.includes('plan: discard chat') && dry.out.includes('claude:sess-b') && dry.out.includes('then delete its copy with its unmerged work (1 file)'), dry.out);
+  assert(dry.out.includes('--discard "no such chat": no old copy chat with unmerged work has that title or id'), dry.out);
+  assert(dry.out.includes('NOT TOUCHED: chat') && dry.out.includes('claude:sess-e'), 'the chat not named stays listed');
+  assertEquals(box.snapshot(), before, 'the dry run changed nothing');
+
+  // --apply by the bare session id: copy, branch and refs go; the chat is re-filed under the project (backup kept)
+  const { code, out } = await box.run('--apply', '--discard', 'sess-b');
+  assertEquals(code, 0, out);
+  assert(!exists(s.b.path), out);
+  assert(!branchList(box).includes(s.b.branch), 'its branch is gone');
+  assertEquals(runGit(box.project, 'for-each-ref', `refs/studio/${s.b.branch.slice(7)}/`).trim(), '', 'its refs are gone');
+  assert(exists(filedUnder(box, box.project, 'sess-b')) && !exists(s.bFile), 'the chat carries on in the project folder');
+  assert(exists(pathOf(box.state, 'refiled', 'claude', 'sess-b.jsonl')), 'its transcript backup is kept');
+  assert(Object.keys(readMoved(box.state)).includes('claude:sess-b'));
+  assert(out.includes('discarded (--discard): 1'), out);
+  // the chat not named: untouched
+  assert(exists(e.path) && Deno.readTextFileSync(pathOf(e.path, 'keep.txt')) === 'mine\n' &&branchList(box).includes(e.branch));
+
+  // rerun with the same option: nothing left to discard, nothing changes
+  const after = box.snapshot();
+  const again = await box.run('--apply', '--discard', 'sess-b');
+  assertEquals(again.code, 0, again.out);
+  assert(again.out.includes('nothing to discard'), again.out);
+  assertEquals(box.snapshot(), after, 'the rerun changed nothing');
 });

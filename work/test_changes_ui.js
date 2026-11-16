@@ -295,9 +295,6 @@ function setup(opts) {
     calls.push(url);
     if (init && init.method === 'POST') posts.push([url, JSON.parse(init.body)]);
     if (url.includes('/bootstrap')) return ok({ token: 't' });
-    if (url.includes('/worktree-discard')) return ok({ ok: true, removed: true });
-    if (url.includes('/api/live/worktree?')) return ok(opts.status || { worktree: false });
-    if (url.includes('/worktree/merge')) return ok({ ok: true, state: 'merged' });
     if (opts.paged) {
       const off = Number((/offset=(\d+)/.exec(url) || [0, 0])[1]),
         all = opts.paged;
@@ -360,7 +357,6 @@ function setup(opts) {
     setInterval: () => 1,
     clearInterval() {},
   };
-  if (opts.status) win.AgentMergeUI = require(path.join(APP_DIR, 'merge-ui.js'));
   C.init(win);
   C.sync({ id: 'chat1', busy: false });
   return {
@@ -497,7 +493,7 @@ test('the header line names the chat changes for a worktree chat and Uncommitted
   );
 });
 
-test('a project-folder chat: the fixed header, no Merge or Discard, and the footer line that points at the agent (plan 1.4)', async () => {
+test('a project-folder chat: the fixed header and the footer line that points at the agent (plan 1.4)', async () => {
   const t = setup();
   C.sync({ id: 'chat1', busy: false, folder: true });
   const pane = t.ids.subagentsPane;
@@ -514,18 +510,55 @@ test('a project-folder chat: the fixed header, no Merge or Discard, and the foot
   assert.equal(line.hidden, false);
   assert.equal(line.textContent, C.FOLDER_FOOT);
   assert.ok(/from any chat/.test(C.FOLDER_FOOT), 'whose changes they are: in the footer, not the header');
-  assert.equal(pane.querySelector('.cg-discard').hidden, true, 'no Discard');
-  assert.equal(pane.querySelector('.cg-merge-btn').hidden, true, 'no Merge');
 });
-test('an own-copy chat keeps its branch header, Discard and no folder line even if the page thought it was a folder chat', async () => {
+/* Owner, 2026-11-16: no Merge and no Discard for any chat, ever ("these buttons will never exist for anything anymore"). */
+const noButtons = (pane) => {
+  assert.equal(pane.querySelector('.cg-merge-btn'), null, 'no Merge button');
+  assert.equal(pane.querySelector('.cg-discard'), null, 'no Discard button');
+  assert.equal(pane.querySelector('.cg-foot').querySelectorAll('button').length, 0, 'nothing to click in the footer');
+};
+test('no Merge or Discard for any chat kind: folder chat, old copy chat, helper, plain', async () => {
+  for (const [opts, ctx] of [
+    [{}, { folder: true }],
+    [{ scope: 'branch', branch: 'studio/chat-1' }, {}],
+    [{ scope: 'branch', branch: 'studio/helper-1' }, {}],
+    [{}, {}],
+  ]) {
+    const t = setup(opts);
+    C.sync({ id: 'chat1', busy: false, ...ctx });
+    t.ui().show('changes');
+    await flush();
+    noButtons(t.ids.subagentsPane);
+    assert.equal(rows(t).length, 3, 'what changed is still listed');
+    assert.ok(t.posts.every((p) => !/worktree|merge|discard/.test(p[0])), 'nothing merges or discards');
+  }
+});
+test('an old copy chat keeps its branch header (read only) and a footer line that points at its agent, even if the page thought it was a folder chat', async () => {
   const t = setup({ scope: 'branch', branch: 'studio/chat-1' });
   C.sync({ id: 'chat1', busy: false, folder: true });
   t.ui().show('changes');
   await flush();
   const pane = t.ids.subagentsPane;
   assert.equal(pane.querySelector('.cg-scope').textContent, "This chat's changes", "the server's data.worktree wins");
-  assert.equal(pane.querySelector('.cg-foot-folder').hidden, true);
-  assert.equal(pane.querySelector('.cg-discard').hidden, false, 'Discard as today');
+  const line = pane.querySelector('.cg-foot-folder');
+  assert.equal(line.hidden, false);
+  assert.equal(line.textContent, C.COPY_FOOT);
+  assert.match(C.COPY_FOOT, /ask its agent to merge it/);
+  assert.equal(pane.querySelector('.cg-foot').hidden, false);
+});
+test("a helper's branch view has no footer line (its work lands by itself), and nor has an old copy chat without changes", async () => {
+  const h = setup({ scope: 'branch', branch: 'studio/helper-1' });
+  h.ui().show('changes');
+  await flush();
+  assert.equal(h.ids.subagentsPane.querySelector('.cg-foot').hidden, true);
+  const e = setup({ scope: 'branch', branch: 'studio/chat-1', files: [] });
+  e.ui().show('changes');
+  await flush();
+  assert.equal(e.ids.subagentsPane.querySelector('.cg-foot').hidden, true);
+  assert.equal(C.isCopyView({ git: true, files: [{ path: 'a' }], worktree: { branch: 'studio/chat-1' } }), true);
+  assert.equal(C.isCopyView({ git: true, files: [{ path: 'a' }], worktree: { branch: 'studio/helper-1' } }), false);
+  assert.equal(C.isCopyView({ git: true, files: [{ path: 'a' }] }), false);
+  assert.equal(C.isCopyView(null), false);
 });
 test('isFolderView: folder chats only, never a discarded chat, a worktree, a non-git folder or an unknown one', () => {
   const f = { folder: true };
@@ -538,35 +571,7 @@ test('isFolderView: folder chats only, never a discarded chat, a worktree, a non
   assert.equal(C.isFolderView(f, { unknown: true }), false);
 });
 
-test('a chat in its own worktree (a WSL one too) gets Discard and Merge; worktree.merge: false keeps Merge away', () => {
-  const files = [{ path: 'a.txt' }];
-  const off = { git: true, files, worktree: { branch: 'studio/chat-1', merge: false } };
-  assert.equal(C.canDiscard(off), true);
-  assert.equal(C.canMerge(off), false);
-  assert.equal(C.canMerge({ git: true, files, worktree: { branch: 'studio/chat-1' } }), true, 'what the server sends for Windows and WSL chats');
-  assert.equal(C.canMerge({ git: true, files }), false);
-  assert.equal(C.canMerge(null), false);
-});
-
-test('Discard exists only for a chat with its own branch that has changes, and asks once in the agreed words', () => {
-  const files = [{ path: 'a.txt' }];
-  assert.equal(C.canDiscard({ git: true, files, worktree: { branch: 'studio/x' } }), true);
-  assert.equal(C.canDiscard({ git: true, files }), false, 'a chat without a worktree never gets the button');
-  assert.equal(
-    C.canDiscard({ git: true, files: [], worktree: { branch: 'studio/x' } }),
-    false,
-    'no changes: no button',
-  );
-  assert.equal(C.canDiscard(null), false);
-  assert.equal(
-    C.discardQuestion('studio/x'),
-    'Discard this chat’s changes? This deletes its branch studio/x and can’t be undone.',
-  );
-  assert.match(C.discardNote({ pending: true }), /the next time it starts/);
-  assert.match(C.discardNote({ removed: true }), /read it but not continue/);
-});
-
-/* ---- QA right column: paging, in-page confirmations, conflict badge, discarded chats ---- */
+/* ---- QA right column: paging, discarded chats ---- */
 const many = (n) =>
   Array.from({ length: n }, (_, i) => ({
     path: 'f' + String(i).padStart(4, '0') + '.txt',
@@ -598,43 +603,7 @@ test('QA M5: every file is reachable: "Show the last 61" lists the next page, an
   assert.equal(rows(t).length, 361, 'a refresh keeps the pages you opened');
 });
 
-test('QA m4: Discard asks in the page, never with window.confirm; Cancel posts nothing, Discard posts once', async () => {
-  const t = setup({ scope: 'branch', branch: 'studio/x' });
-  t.win.confirm = () => {
-    throw new Error('window.confirm must not be used');
-  };
-  t.ui().show('changes');
-  await flush();
-  const btn = pane(t).querySelector('.cg-discard');
-  assert.ok(btn && !btn.hidden);
-  btn.click();
-  await flush();
-  let box = pane(t).querySelector('.cg-confirm');
-  assert.ok(box, 'an in-page question');
-  assert.equal(box.attrs.role, 'alertdialog');
-  assert.match(box.textContent, /deletes its branch studio\/x/);
-  assert.ok(pane(t).querySelector('.cg-foot').classList.contains('asking'), 'Discard and Merge step aside');
-  box.querySelector('.cg-confirm-no').click();
-  await flush();
-  assert.equal(pane(t).querySelector('.cg-confirm'), null);
-  assert.equal(t.posts.length, 0);
-  btn.click();
-  await flush();
-  box = pane(t).querySelector('.cg-confirm');
-  box.key('Escape');
-  await flush();
-  assert.equal(t.posts.length, 0, 'Escape cancels');
-  btn.click();
-  await flush();
-  pane(t).querySelector('.cg-confirm-yes').click();
-  await flush();
-  assert.equal(t.posts.length, 1);
-  assert.deepEqual(t.posts[0], ['/api/live/worktree-discard', { id: 'chat1', confirm: true }]);
-  assert.match(pane(t).querySelector('.cg-foot-note').textContent, /read it but not continue/);
-  assert.match(pane(t).querySelector('.cg-note').textContent, /discarded with its branch/);
-});
-
-test('QA M4: a discarded chat: the Changes tab says so instead of "not available yet" and reads nothing more', async () => {
+test('QA M4: a chat discarded before the buttons went: the Changes tab says so instead of "not available yet" and reads nothing more', async () => {
   const t = setup({ scope: 'branch', branch: 'studio/x' });
   t.ui().show('changes');
   await flush();
@@ -646,38 +615,11 @@ test('QA M4: a discarded chat: the Changes tab says so instead of "not available
   assert.equal(t.calls.filter((u, i) => i >= before && u.includes('/api/live/changes?')).length, 0);
 });
 
-test('one click on Merge asks the chat at once (no confirmation); a conflicted file has a conflict badge', async () => {
-  const status = { worktree: true, base: 'main', label: 'Merge into main', enabled: true, state: 'ready', message: '' };
-  const t = setup({ scope: 'branch', branch: 'studio/x', status });
-  t.ui().show('changes');
-  await flush();
-  const merge = pane(t).querySelector('.cg-merge-btn');
-  assert.ok(merge && !merge.hidden);
-  merge.click();
-  await flush();
-  assert.equal(pane(t).querySelector('.cg-confirm'), null, 'no confirmation step');
-  const sent = t.posts.filter((p) => p[0].includes('/worktree/merge'));
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0][0].includes('/worktree/merge-request'), 'the request, never the direct merge');
-  const c = setup({
-    scope: 'branch',
-    branch: 'studio/x',
-    status: { ...status, enabled: false, state: 'conflicts', message: 'Waiting', files: ['src/b.js'] },
-  });
-  c.ui().show('changes');
-  await flush();
-  assert.deepEqual(
-    rows(c).map((r) => !!r.querySelector('.cg-conflict')),
-    [false, true, false],
-  );
-});
-
-test('local docs: a doc is one row "2 pages changed" (its files are not listed), the tab counts it once; Merge asks the chat with no confirmation', async () => {
+test('local docs: a doc is one row "2 pages changed" (its files are not listed), the tab counts it once', async () => {
   const docPaths = ['docs/plan/doc.aibdoc', 'docs/plan/01-overview.md', 'docs/plan/02-risks.md'];
   const files = docPaths.map((p) => ({ path: p, status: 'M', added: 2, removed: 1 })).concat([{ path: 'docs/README.md', status: 'M', added: 1, removed: 0 }]);
   const docs = [{ doc: 'plan', dir: 'docs/plan', title: 'Release plan', pages: 2, paths: docPaths }];
-  const status = { worktree: true, base: 'main', label: 'Merge into main', enabled: true, state: 'ready', message: '' };
-  const t = setup({ scope: 'branch', branch: 'studio/x', status, files, docs });
+  const t = setup({ scope: 'branch', branch: 'studio/x', files, docs });
   const opened = [];
   t.win.AgentDocLinks = { openDoc: (o) => opened.push(o) };
   t.ui().show('changes');
@@ -692,11 +634,7 @@ test('local docs: a doc is one row "2 pages changed" (its files are not listed),
   assert.equal(C.shownCount({ git: true, files, docs }), 2);
   rs[0].click();
   assert.deepEqual(opened.map((o) => [o.name, o.from]), [['plan', 'chat']]);
-  // Merge asks the chat at once (beta.7, merge via the agent): no confirmation, docs included
-  pane(t).querySelector('.cg-merge-btn').click();
-  await flush();
-  assert.equal(pane(t).querySelector('.cg-confirm'), null);
-  assert.equal(C.mergeQuestion(0, 'main', docs), 'Merge the doc Release plan (2 pages changed) into main? Edits the chat has not committed yet are committed first.');
+  noButtons(pane(t));
 });
 
 test('each chat keeps its right-column tab: back on a chat, the tab you left it on shows again (owner 2026-11-15)', async () => {

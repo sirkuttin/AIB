@@ -80,7 +80,7 @@
   const SYSTEM_NOTICE = /^\[SYSTEM NOTIFICATION - NOT USER INPUT\]/;
   const HANDBACK_NUDGE = /^\[handback-send-enforce\]/;
   const SKILL_LOAD = /^Base directory for this skill:/i;
-  /* The Changes tab's Merge button sends this exact message (merge_request.ts mergeRequestText): a "Merge requested" chip. */
+  /* The message the Changes tab's old Merge button sent (removed 2026-11-16): older chats still show it as a "Merge requested" chip. */
   const MERGE_REQUEST =
     /^Merge this chat's work into (\S+) with AIB's merge tool \(merge_into_project\)\. If \1 has moved and there are conflicts, resolve them in this worktree and call it again\. Then say in one line what landed\.$/;
   const COORDINATOR =

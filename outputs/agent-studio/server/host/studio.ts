@@ -150,7 +150,6 @@ export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
   'steer',
   'tool-stop',
   'dismiss-unknown',
-  'worktree-discard',
   'worktree-archive',
 ]);
 
@@ -2500,22 +2499,6 @@ export class Studio {
   }
 
   /**
-   * Discard: stop the chat's agent (its process tree and client terminals), then remove its worktree and branch. Needs
-   * body.confirm === true, the page's one confirmation; without it nothing happens. The only place --force is used.
-   */
-  async worktreeDiscard(body: Json): Promise<Json> {
-    if (body.confirm !== true) throw new ValueError('Discarding needs the confirmation first; nothing was removed');
-    const connection = this.#connection(body);
-    const record = await this.#worktreeRecord(connection.cwd);
-    if (!record) throw new ValueError('This chat has no worktree of its own');
-    await connection.close(); // closes the connection, kills the agent's process tree and any client terminals
-    connection.tree?.kill();
-    const outcome = await this.#removeWorktree(record, true);
-    if (connection.scratchDir && this.allow) this.allow.removeScratch(connection.scratchDir); // allow rules: the scratch folder goes with it
-    return { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
-  }
-
-  /**
    * Archive or delete of a chat that may have a worktree. Without changes against its diff base (and no live agent in it) the
    * worktree and branch are removed silently, without --force. With changes it is kept and the page says so.
    */
@@ -2706,7 +2689,6 @@ export class Studio {
       return [200, { chats }];
     }
     if (!LIVE_POST_OPS.has(name)) return [404, { error: 'Not found' }];
-    if (name === 'worktree-discard') return [200, await this.worktreeDiscard(body)];
     if (name === 'worktree-archive') return [200, await this.worktreeArchive(body)];
     if (name === 'dismiss-unknown') {
       let { provider, sessionId } = body;

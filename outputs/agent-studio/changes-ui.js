@@ -126,18 +126,6 @@
     n = num(n);
     return n ? (n > 999 ? '999+' : String(n)) : '';
   };
-  /* The one confirmation before Discard, and the line after it. The Discard button exists only for a chat with its own branch that has changes. */
-  const discardQuestion = (branch) =>
-    'Discard this chat\u2019s changes? This deletes its branch ' + branch + ' and can\u2019t be undone.';
-  /* The short confirmation before Merge: how many files go into the base branch, and each doc by its name (`docs`: the server's
-     doc rows; `files` then counts the other files only). */
-  const mergeQuestion = (files, base, docs) => {
-    const parts = [],
-      ds = Array.isArray(docs) ? docs : [];
-    if (num(files) || !ds.length) parts.push(num(files) === 1 ? 'the 1 changed file' : 'all ' + num(files) + ' changed files');
-    for (const d of ds) parts.push('the doc ' + (d.title || d.doc) + ' (' + docPagesText(d.pages) + ')');
-    return 'Merge ' + parts.join(' and ') + ' into ' + (base || 'main') + '? Edits the chat has not committed yet are committed first.';
-  };
   /* Local docs: a doc is ONE row, "2 pages changed" (GET /api/live/changes `docs`: {doc, dir, title, pages, paths}); its paths are
      not listed as files. */
   const docPagesText = (n) => Math.max(1, num(n)) + (Math.max(1, num(n)) === 1 ? ' page changed' : ' pages changed');
@@ -158,95 +146,39 @@
     const listed = ((data && data.files) || []).length;
     return Math.max(0, num(t.files) - (listed - s.files.length)) + s.docs.length;
   }
-  /* An in-page confirmation (never the blocking window.confirm, which freezes every chat's page work): a short question with two
-     buttons, shown inside `host`. Escape or Cancel answer false. Resolves once; the box removes itself. */
-  function askInPage(doc, host, o) {
-    return new Promise((resolve) => {
-      const box = doc.createElement('div');
-      box.className = 'cg-confirm';
-      box.setAttribute('role', 'alertdialog');
-      const q = doc.createElement('p');
-      q.className = 'cg-confirm-q';
-      q.textContent = o.text;
-      q.id = 'cgConfirmQ' + ++askSeq;
-      box.setAttribute('aria-describedby', q.id);
-      box.setAttribute('aria-label', o.label || 'Confirm');
-      const row = doc.createElement('div');
-      row.className = 'cg-confirm-row';
-      const no = doc.createElement('button'),
-        yes = doc.createElement('button');
-      no.type = yes.type = 'button';
-      no.className = 'cg-confirm-no';
-      no.textContent = o.cancel || 'Cancel';
-      yes.className = o.danger ? 'cg-confirm-yes cg-discard' : 'cg-confirm-yes primary';
-      yes.textContent = o.ok || 'OK';
-      row.append(no, yes);
-      box.append(q, row);
-      let done = false;
-      const finish = (v) => {
-        if (done) return;
-        done = true;
-        box.remove();
-        resolve(v);
-      };
-      no.addEventListener('click', () => finish(false));
-      yes.addEventListener('click', () => finish(true));
-      box.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          finish(false);
-        }
-      });
-      host.append(box);
-      (o.danger ? no : yes).focus && (o.danger ? no : yes).focus();
-    });
-  }
-  let askSeq = 0;
-  const canDiscard = (data) =>
-    !!(data && data.git && data.worktree && data.worktree.branch && (data.files || []).length);
-  /* Merge is offered for a chat's own branch (a WSL chat's too); a server that sends worktree.merge: false keeps it away. */
-  const canMerge = (data) => !!(data && data.worktree && data.worktree.branch && data.worktree.merge !== false);
-  /* A chat that works in the project folder (build plan 1.4): one fixed header line for every such chat (no condition, so nothing
-     toggles [SF 8]), no Merge and no Discard, and a status line that points at the chat (chat-first: no git buttons). Own-copy
-     chats and helpers (the server sends data.worktree) keep the branch view, Merge and Discard. chat.folder comes from chat.js
-     (an open chat without live.worktree that is not a helper). */
+  /* The Changes tab only shows what changed: no Merge, no Discard, for any chat (owner, 2026-11-16: "these buttons will never
+     exist for anything anymore"). Chat-first: a chat's work is merged by asking its agent (merge_into_project); a helper's lands on
+     its own at the main chat's turn end. A chat that works in the project folder (build plan 1.4) gets one fixed header line and
+     one fixed footer line (no condition, so nothing toggles [SF 8]). An old chat that still has its own copy (the server sends
+     data.worktree, a studio/chat-* branch) keeps the branch view and gets a footer line that points at its agent. chat.folder comes
+     from chat.js (an open chat without live.worktree that is not a helper). */
   const FOLDER_SCOPE = 'Project folder · uncommitted';
   const FOLDER_FOOT =
     "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.";
+  const COPY_FOOT = 'This chat works in its own copy. To bring its work into the project, ask its agent to merge it.';
   const isFolderView = (chat, data) =>
     !!(chat && chat.folder && !chat.discarded && !(data && (data.worktree || data.git === false || data.unknown)));
-  /* The footer of the Changes tab, one row: status line (left), Discard…, then Merge (right). Returns the parts; merge-ui.js drives the line and the button. */
+  /* An old copy chat (not a helper: a helper's work lands by itself) with changes in its branch view. */
+  const isCopyView = (data) =>
+    !!(data && data.git && data.worktree && /^studio\/(?!helper-)/.test(data.worktree.branch || '') && (data.files || []).length);
+  /* The footer of the Changes tab: one read-only status line (the folder line or the copy line). */
   function footer(doc) {
-    const make = (tag, cls, txt) => {
+    const make = (tag, cls) => {
       const n = doc.createElement(tag);
       n.className = cls;
-      if (txt != null) n.textContent = txt;
       return n;
     };
     const foot = make('div', 'cg-foot'),
       status = make('div', 'cg-foot-status'),
       note = make('span', 'cg-foot-note'),
-      folder = make('span', 'cg-foot-folder'),
-      mergeLine = make('span', 'cg-merge-line'),
-      discard = make('button', 'cg-discard', 'Discard…'),
-      merge = make('button', 'primary cg-merge-btn');
+      folder = make('span', 'cg-foot-folder');
     foot.hidden = true;
     status.setAttribute('role', 'status');
-    mergeLine.hidden = true;
     folder.hidden = true;
-    discard.type = 'button';
-    discard.title = 'Delete this chat’s worktree and branch';
-    merge.type = 'button';
-    merge.hidden = true;
-    status.append(note, folder, mergeLine);
-    foot.append(status, discard, merge);
-    return { foot, status, note, folder, mergeLine, discard, merge };
+    status.append(note, folder);
+    foot.append(status);
+    return { foot, status, note, folder };
   }
-  const discardNote = (result) =>
-    result && result.pending
-      ? 'The branch is marked for removal. A file is in use, so AIB finishes it the next time it starts.'
-      : 'Removed. The chat stays in the list; you can read it but not continue it.';
   /* Narrow strip chip. */
   const stripText = (n) => (num(n) ? num(n) + ' changed' : '');
   /* Notes shown above a diff when the picture is not the whole story. */
@@ -298,7 +230,6 @@
   const pure = {
     moreLeft,
     moreText,
-    mergeQuestion,
     docPagesText,
     splitDocFiles,
     shownCount,
@@ -369,7 +300,6 @@
       detailSeq = 0,
       autoOpened = false,
       token = '',
-      discarding = false,
       pages = 1,
       loadingMore = false;
     const editors = () => {
@@ -429,11 +359,9 @@
     note.hidden = true;
     const list = el('div', 'cg-files');
     list.setAttribute('role', 'list');
-    /* One footer row: the status line on the left, Discard\u2026 then Merge on the right (merge-ui.js drives the line and the button). */
+    /* One footer row: a read-only status line. */
     const parts = footer(doc),
-      foot = parts.foot,
-      discardBtn = parts.discard,
-      footNote = parts.note;
+      foot = parts.foot;
     view.append(bar, note, list, foot);
     const bodyEl = $('activityBody');
     bodyEl && bodyEl.nextSibling ? pane.insertBefore(view, bodyEl.nextSibling) : pane.append(view);
@@ -497,63 +425,6 @@
         throw e;
       }
       return body;
-    }
-    /* One in-page question at a time, in the footer; Discard and Merge step aside while it is open. */
-    let asking = false;
-    async function ask(o) {
-      if (asking) return false;
-      asking = true;
-      paintFoot();
-      try {
-        return await askInPage(doc, foot, o);
-      } finally {
-        asking = false;
-        paintFoot();
-      }
-    }
-    async function discard() {
-      const branch = data && data.worktree && data.worktree.branch;
-      if (!branch || !chat.id || discarding || asking) return;
-      const sure = await ask({
-        text: discardQuestion(branch),
-        ok: 'Discard',
-        danger: true,
-        label: 'Discard this chat',
-      });
-      if (!sure) {
-        if (!discardBtn.hidden) discardBtn.focus();
-        return;
-      }
-      const id = chat.id;
-      discarding = true;
-      footNote.textContent = '';
-      paintFoot();
-      try {
-        const t = await getToken(false);
-        const r = await win.fetch('/api/live/worktree-discard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Studio-Token': t },
-          body: JSON.stringify({ id, confirm: true }),
-        });
-        let body = {};
-        try {
-          body = await r.json();
-        } catch (e) {}
-        if (!r.ok) throw new Error(body.error || 'Request failed (' + r.status + ')');
-        footNote.textContent = discardNote(body);
-        footNote.classList.remove('err');
-        if (id === chat.id) chat = Object.assign({}, chat, { discarded: true, busy: false });
-        try {
-          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id } }));
-        } catch (e) {}
-      } catch (e) {
-        footNote.textContent = 'Could not discard: ' + (e.message || 'Request failed');
-        footNote.classList.add('err');
-      } finally {
-        discarding = false;
-      }
-      if (id === chat.id) load(true);
-      else paintFoot();
     }
     const q = (o) =>
       Object.entries(o)
@@ -721,20 +592,10 @@
       stripChip.hidden = !n;
     }
     function paintFoot() {
-      foot.classList.toggle('asking', asking);
-      const folderText = isFolderView(chat, data) ? FOLDER_FOOT : '';
-      parts.folder.textContent = folderText;
-      parts.folder.hidden = !folderText;
-      foot.hidden =
-        !asking &&
-        !canDiscard(data) &&
-        !footNote.textContent &&
-        !folderText &&
-        parts.merge.hidden &&
-        !parts.mergeLine.textContent;
-      discardBtn.hidden = !canDiscard(data);
-      discardBtn.disabled = discarding;
-      parts.status.hidden = !footNote.textContent && !folderText && !parts.mergeLine.textContent; // its own row only when it says something
+      const text = isFolderView(chat, data) ? FOLDER_FOOT : isCopyView(data) ? COPY_FOOT : '';
+      parts.folder.textContent = text;
+      parts.folder.hidden = !text;
+      foot.hidden = parts.status.hidden = !text;
     }
     function paintNote() {
       let msg = '';
@@ -774,10 +635,6 @@
       const caret = el('span', 'cg-caret', isOpen ? '\u25be' : '\u25b8');
       caret.setAttribute('aria-hidden', 'true');
       b.append(caret, el('span', 'cg-st ' + info.cls, info.letter), path);
-      if (conflicted().includes(f.path)) {
-        b.append(el('span', 'cg-conflict', 'conflict'));
-        b.title += '\nHas conflict markers: Merge waits until the chat resolves them';
-      }
       if (f.binary) b.append(el('span', 'cg-bin', 'binary'));
       else b.append(el('span', 'cg-add', addText(f)), el('span', 'cg-del', delText(f)));
       b.onclick = () => toggle(f);
@@ -786,8 +643,6 @@
       return item;
     }
     let listSig = '';
-    /* Files the Merge status names as conflicted (merge-ui.js). */
-    const conflicted = () => (mergeUi && mergeUi.conflicts ? mergeUi.conflicts() : []);
     /* A doc: one row, "2 pages changed". Clicked, the doc opens in the Artifacts tab; no diff in v1. */
     function rowForDoc(d) {
       const item = el('div', 'cg-item cg-doc');
@@ -804,10 +659,6 @@
       const caret = el('span', 'cg-caret', '');
       caret.setAttribute('aria-hidden', 'true');
       b.append(caret, el('span', 'cg-st cg-st-doc', 'doc'), path, el('span', 'cg-docpages', docPagesText(d.pages)));
-      if (d.paths.some((p) => conflicted().includes(p))) {
-        b.append(el('span', 'cg-conflict', 'conflict'));
-        b.title += '\nHas conflict markers: Merge waits until the chat resolves them';
-      }
       b.onclick = () => {
         const D = win.AgentDocLinks;
         if (D && D.openDoc) D.openDoc({ name: d.doc, title: d.title, chat: { id: chat.id, key: chat.key || '' }, from: 'chat' });
@@ -832,7 +683,6 @@
         force ? Math.random() : 0,
         moreLeft(data),
         loadingMore,
-        conflicted(),
         open,
         fs.map(fileSignature),
         fs.map((f) => {
@@ -927,33 +777,7 @@
       if ((detail.hunks || []).length) box.append(scroll);
       return box;
     }
-    /* Stage E: the Merge button (merge-ui.js) sits in the same footer row as Discard. */
-    let mergeUi = null;
-    function pushMerge() {
-      if (!mergeUi && win.AgentMergeUI)
-        mergeUi = win.AgentMergeUI.init({
-          win,
-          line: parts.mergeLine,
-          button: parts.merge,
-          reload: () => load(true),
-          onPaint: () => {
-            paintFoot();
-            paintList();
-          },
-          // no confirmation: one click asks the chat to merge (the permission is tied to the work at this click)
-        });
-      if (mergeUi)
-        mergeUi.update({
-          id: chat.id,
-          busy: chat.busy,
-          files: data && data.git ? shownCount(data) : 0,
-          branchView: !!(data && data.scope === 'branch'),
-          worktree: canMerge(data),
-          blocked: chat.mergeBlocked || '',
-        });
-    }
     function paintAll() {
-      pushMerge();
       paintBadges();
       paintBar();
       paintNote();
@@ -1046,7 +870,6 @@
       apply();
     });
     refresh.addEventListener('click', () => load(true));
-    discardBtn.addEventListener('click', discard);
     chip.addEventListener('click', () => reveal('changes'));
     stripChip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1105,20 +928,18 @@
       const id = ctx && typeof ctx.id === 'string' ? ctx.id : '',
         busy = !!(ctx && ctx.busy),
         discarded = !!(ctx && ctx.discarded),
-        mergeBlocked = ctx && typeof ctx.mergeBlocked === 'string' ? ctx.mergeBlocked : '',
         folder = !!(ctx && ctx.folder);
       const prevId = chat.id,
         changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy),
         gone = discarded && !chat.discarded && !changed,
         refiled = folder !== !!chat.folder && !changed;
-      chat = { id, busy, discarded, mergeBlocked, folder };
+      chat = { id, busy, discarded, folder };
       if (refiled && !gone) paintAll();
       if (gone) {
         data = null; // the branch is gone: the Changes view says so instead of "not available yet"
         paintAll();
       }
-      pushMerge();
       if (AR()) AR().sync(id ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '' } : null);
       if (changed) {
         seq++;
@@ -1126,7 +947,6 @@
         data = null;
         loadedFor = '';
         error = '';
-        footNote.textContent = '';
         open = [];
         cache = new Map();
         pages = 1;
@@ -1148,8 +968,8 @@
       } else if (ended && id) load(true);
       schedule();
     }
-    /* -- split view: both panes' chats, in pane order, each with its header, its files and its own Discard / Merge row (option B
-       of the approved mockup, owner 2026-11-15). Nothing here follows focus: each section reads its own chat's changes. -- */
+    /* -- split view: both panes' chats, in pane order, each with its header, its files and a read-only summary line (option B of
+       the approved mockup, owner 2026-11-15). Nothing here follows focus: each section reads its own chat's changes. -- */
     var SP = { keys: [], secs: new Map(), timer: 0 }; // var: paintBadges / apply may run before this line
     const spBox = el('div', 'sp-changes');
     spBox.id = 'splitChanges';
@@ -1173,10 +993,6 @@
       fp.foot.classList.add('sp-foot');
       rootEl.append(head, lst, none, fp.foot);
       s = { key, root: rootEl, head, list: lst, none, fp, data: null, err: '', open: [], cache: new Map(), seq: 0, id: '' };
-      s.mergeUi = win.AgentMergeUI
-        ? win.AgentMergeUI.init({ win, line: fp.mergeLine, button: fp.merge, reload: () => spLoad(s, true), onPaint: () => spFoot(s) })
-        : null;
-      fp.discard.addEventListener('click', () => spDiscard(s));
       SP.secs.set(key, s);
       return s;
     }
@@ -1195,11 +1011,9 @@
     function spFoot(s) {
       const fs = spFiles(s),
         fp = s.fp;
-      fp.discard.hidden = !canDiscard(s.data);
-      fp.discard.disabled = !!s.discarding;
-      if (!fp.note.dataset.msg) fp.note.textContent = fs.length ? spSumLine(s) : '';
-      // No Discard / Merge row for a chat with nothing changed (there is nothing to merge).
-      fp.foot.hidden = !fs.length && !s.asking && !fp.note.dataset.msg;
+      fp.note.textContent = fs.length ? spSumLine(s) : '';
+      // No summary row for a chat with nothing changed.
+      fp.foot.hidden = fp.status.hidden = !fs.length;
     }
     function spRow(s, f) {
       const info = statusInfo(f.status),
@@ -1283,15 +1097,6 @@
       }
       s.list.hidden = !fs.length;
       s.none.hidden = !!fs.length;
-      if (s.mergeUi)
-        s.mergeUi.update({
-          id: s.id,
-          busy: !!s.busy,
-          files: s.data && s.data.git ? shownCount(s.data) : 0,
-          branchView: !!(s.data && s.data.scope === 'branch'),
-          worktree: canMerge(s.data),
-          blocked: '',
-        });
       spFoot(s);
     }
     async function spLoad(s, force) {
@@ -1327,47 +1132,6 @@
       }
       spPaint(s);
       paintBadges();
-    }
-    async function spDiscard(s) {
-      const branch = s.data && s.data.worktree && s.data.worktree.branch;
-      if (!branch || !s.id || s.discarding || s.asking) return;
-      s.asking = true;
-      spFoot(s);
-      let sure = false;
-      try {
-        sure = await askInPage(doc, s.fp.foot, { text: discardQuestion(branch), ok: 'Discard', danger: true, label: 'Discard this chat' });
-      } finally {
-        s.asking = false;
-      }
-      if (!sure) {
-        spFoot(s);
-        return;
-      }
-      s.discarding = true;
-      spFoot(s);
-      const id = s.id;
-      try {
-        const t = await getToken(false);
-        const r = await win.fetch('/api/live/worktree-discard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Studio-Token': t },
-          body: JSON.stringify({ id, confirm: true }),
-        });
-        let b = {};
-        try {
-          b = await r.json();
-        } catch (e) {}
-        if (!r.ok) throw new Error(b.error || 'Request failed (' + r.status + ')');
-        s.fp.note.textContent = s.fp.note.dataset.msg = discardNote(b);
-        try {
-          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id } }));
-        } catch (e) {}
-      } catch (e) {
-        s.fp.note.textContent = s.fp.note.dataset.msg = 'Could not discard: ' + (e.message || 'Request failed');
-      } finally {
-        s.discarding = false;
-      }
-      spLoad(s, true);
     }
     function splitSync(keys) {
       SP.keys = keys.slice();
@@ -1429,15 +1193,12 @@
   }
   const api = {
     ...pure,
-    discardQuestion,
-    askInPage,
-    canDiscard,
-    canMerge,
     isFolderView,
+    isCopyView,
     FOLDER_SCOPE,
     FOLDER_FOOT,
+    COPY_FOOT,
     footer,
-    discardNote,
     init,
     sync: (ctx) => live && live.sync(ctx),
     show: (tab) => live && live.show(tab),

@@ -6,8 +6,8 @@
  *     the temp folders): a clean merge posts the "Merged into" note in the chat, a conflict prompts it (and a prompt the chat does not
  *     take is a refusal, as on Windows), the user's uncommitted edits in the main checkout are stashed and put back (a clash keeps
  *     them in the named stash, and the clash line and Keep my version work), a merge in progress in the main checkout is refused with
- *     the Windows line, the Merge button queues the fixed message;
- *   - the routes send a WSL chat to its helper and every other chat to merge.ts.
+ *     the Windows line (the Merge button and its queued message are gone: owner, 2026-11-16);
+ *   - the routes send a WSL chat to its helper and every other chat to merge.ts; the Merge button's request route is gone.
  * Never a real distro, never the owner's homes.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -75,12 +75,7 @@ Deno.test({ name: 'wsl helper merge.*: a conflict records it and hands back the 
   assertEquals([actions[0].op, actions[0].must, actions[0].fail], ['prompt', true, 'Could not ask the chat to resolve the conflicts: ']);
   assert(String((actions[0].payload as Json).text).startsWith('Bringing main into this branch left merge conflicts in: tracked.txt'));
   assertEquals(new wt.Registry(box.state).get(c.key)?.mergeConflicts, ['tracked.txt']);
-  // the request (Merge button): its queued message is an action; a reason from AIB refuses it
-  const request = await h['merge.request']({ chat: 'c1', state: ready(c.wt) }) as Json;
-  assertEquals((request.refused as Json | undefined)?.code, undefined);
-  assertEquals((request.actions as Json[]).map((a) => a.op), ['queue']);
-  const blocked = await h['merge.request']({ chat: 'c1', state: ready(c.wt), blocked: 'This chat is archived. Unarchive it to merge its work' }) as Json;
-  assertEquals([(blocked.refused as Json).code, (blocked.refused as Json).message], ['unavailable', 'This chat is archived. Unarchive it to merge its work']);
+  assertEquals((h as Record<string, unknown>)['merge.request'], undefined, 'the Merge button is gone: no request method');
   for (const bad of [{ chat: 'c1', state: ready('relative/wt') }, { chat: '', state: ready(c.wt) }, { chat: 'c1', state: 'x' }]) {
     await assertRejects(() => Promise.resolve(h['merge.run'](bad as Json)), RpcError);
   }
@@ -104,7 +99,7 @@ class MergeLab {
     this.host.folders.set(LINUX_BASE, box.base);
     this.helper = mergeMethods(box.state);
     const mapped = (p: Json) => ({ ...p, state: { ...(p.state as Json), cwd: this.host.windowsFor(String((p.state as Json).cwd)) } });
-    for (const name of ['merge.status', 'merge.run', 'merge.request', 'merge.resolveClash'] as const) {
+    for (const name of ['merge.status', 'merge.run', 'merge.resolveClash'] as const) {
       this.host.handlers[name] = (p) => this.helper[name](mapped(p));
     }
     this.host.handlers['merge.clashStatus'] = (p) => this.helper['merge.clashStatus']({ project: this.host.windowsFor(String(p.project)) });
@@ -241,22 +236,12 @@ Deno.test({ name: 'wsl merge: a merge in progress in the main checkout is refuse
   }
 } });
 
-Deno.test({ name: 'wsl merge: the Merge button queues the fixed message; a distro that is not ready or a helper without merge says so', ...T, async fn() {
+Deno.test({ name: 'wsl merge: a distro that is not ready or a helper without merge says so', ...T, async fn() {
   using box = new Sandbox();
   const c = await chatBox(box);
   using lab = new MergeLab(box);
   commit(c.wt, 'chat.txt', 'chat\n', 'chat work');
   const chat = await lab.chat('c1', c.wt);
-  lab.queued = true;
-  const asked = await wm.wslRequestMerge(lab.studio, chat);
-  assertEquals(asked, m.requestedResult(true));
-  assertEquals(lab.ops(), ['queue']);
-  assert(String(lab.calls[0][1].clientMessageId).startsWith('merge-request-'));
-  assertEquals(lab.calls[0][1].text, "Merge this chat's work into main with AIB's merge tool (merge_into_project). If main has moved and there are " +
-    'conflicts, resolve them in this worktree and call it again. Then say in one line what landed.');
-  lab.answer = [500, { error: 'gone' }];
-  const failed = await assertRejects(() => wm.wslRequestMerge(lab.studio, chat), m.Refused) as m.Refused;
-  assertEquals(failed.message, 'Could not ask the chat to merge: gone');
 
   lab.host.state = 'stopped';
   lab.host.note = 'Ubuntu stopped. Reconnect';
@@ -293,13 +278,12 @@ Deno.test({ name: 'wsl merge routes: a WSL chat goes to its helper, a Windows ch
   const [s1, status] = await get('/api/live/worktree?id=c1');
   assertEquals([s1, (status as Json).state, (status as Json).base], [200, 'ready', 'main']);
   assertEquals((await get('/api/live/worktree?id=win'))[1], { worktree: false });
+  assertEquals(routes.get('POST /api/live/worktree/merge-request'), undefined, "the Merge button's request route is gone");
   assertEquals((await get('/api/live/worktree/clash?project=' + encodeURIComponent(lab.ref(box.project))))[1], { unresolved: false });
   assertEquals(await post('/api/live/worktree/clash', { action: 'resume-sync', project: lab.ref(box.project) }), [200, { ok: true, resumed: false }]);
-  const [s2, asked] = await post('/api/live/worktree/merge-request', { id: 'c1' });
-  assertEquals([s2, (asked as Json).state], [200, 'requested']);
   const [s3, merged] = await post('/api/live/worktree/merge', { id: 'c1', title: 'T' });
   assertEquals([s3, (merged as Json).message], [200, 'Merged into main (1 commit)']);
   const [s4, again] = await post('/api/live/worktree/merge', { id: 'c1' });
   assertEquals([s4, (again as Json).code], [409, 'empty']);
-  assert(lab.host.calls.filter(([name]) => name.startsWith('merge.')).length >= 4);
+  assert(lab.host.calls.filter(([name]) => name.startsWith('merge.')).length >= 3);
 } });
