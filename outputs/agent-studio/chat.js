@@ -2538,7 +2538,7 @@
         working: 'Working',
         active: 'Active',
         busy: 'Working',
-        idle: 'Idle',
+        idle: 'Ready', // the owner's word for a chat that waits for you (2026-11-15)
         completed: 'Completed',
         complete: 'Completed',
         failed: 'Failed',
