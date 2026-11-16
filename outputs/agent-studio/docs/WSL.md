@@ -250,7 +250,13 @@ helper (`wsl/helper/bgtasks.ts`), unchanged, and AIB asks it through four method
     its current client before continuing here.", the PID is the Linux one): a `claude` or `omp` process in the distro whose command line
     names the session (`--resume <id>`, `--session-id <id>`), or a live owner announcement in AIB's Windows registry;
   - weak, asked first ("Another app may be using this conversation: …"): the transcript in the distro written in the last two minutes by
-    someone other than AIB, a process that has it open, or a Claude Code process running in the chat's folder;
+    someone other than AIB, a process that has it open, or a Claude Code process running in the chat's folder while the transcript was
+    written by someone other than AIB in the last 30 minutes (or cannot be found);
+  - folder only, continued without asking: a Claude Code process in the chat's folder that names no session (a VS Code panel, a
+    terminal session) is the only sign and the transcript has been quiet for 30 minutes or more (`probe.ts` QUIET_TRANSCRIPT_SECONDS,
+    folderOnlyEvidence; the helper's assessment carries `transcriptQuiet`). The chat gets one note: "Claude Code is also running in
+    this folder (PID 1234). AIB found nothing that says it holds this conversation." (at most three PIDs, then "and N more"). The same
+    rule applies to Windows chats. An older helper without `transcriptQuiet` asks as before;
   - never: AIB's own agents in that distro (every live pipe channel of this AIB's Linux keeper and the agents' client terminals, with
     all they started; AIB passes their pids as `exclude`) and the helper itself. Another AIB's agents (another Windows data folder) do
     count. A transcript write before AIB released the chat is AIB's own (`releasedAgo`).

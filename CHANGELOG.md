@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Continue asks only on real evidence: a Claude Code or OMP process that merely runs in the chat's folder (for example VS Code's
+  Claude Code panel) no longer brings up "Another app may be using this conversation" when the transcript has been quiet for 30
+  minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
+  recent transcript write by another app or another app's announcement still asks or refuses as before. Windows and WSL chats.
 - WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
   AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
