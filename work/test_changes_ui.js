@@ -513,7 +513,7 @@ test('a project-folder chat: the fixed header, no Merge or Discard, and the foot
   assert.equal(foot.hidden, false);
   assert.equal(line.hidden, false);
   assert.equal(line.textContent, C.FOLDER_FOOT);
-  assert.ok(/this chat's and anyone else's/.test(C.FOLDER_FOOT), 'whose changes they are: in the footer, not the header');
+  assert.ok(/from any chat/.test(C.FOLDER_FOOT), 'whose changes they are: in the footer, not the header');
   assert.equal(pane.querySelector('.cg-discard').hidden, true, 'no Discard');
   assert.equal(pane.querySelector('.cg-merge-btn').hidden, true, 'no Merge');
 });

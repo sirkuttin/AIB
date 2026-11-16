@@ -274,7 +274,7 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
   })()`);
   assertEquals(f, {
     scope: 'Project folder · uncommitted',
-    foot: "Works in the project folder · nothing to merge. The list holds this chat's and anyone else's uncommitted changes. Ask the agent to commit or undo them.",
+    foot: "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.",
     footShown: true,
     merge: false,
     discard: false,

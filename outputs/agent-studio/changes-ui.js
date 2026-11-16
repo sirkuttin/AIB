@@ -213,7 +213,7 @@
      (an open chat without live.worktree that is not a helper). */
   const FOLDER_SCOPE = 'Project folder · uncommitted';
   const FOLDER_FOOT =
-    "Works in the project folder · nothing to merge. The list holds this chat's and anyone else's uncommitted changes. Ask the agent to commit or undo them.";
+    "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.";
   const isFolderView = (chat, data) =>
     !!(chat && chat.folder && !chat.discarded && !(data && (data.worktree || data.git === false || data.unknown)));
   /* The footer of the Changes tab, one row: status line (left), Discard…, then Merge (right). Returns the parts; merge-ui.js drives the line and the button. */
