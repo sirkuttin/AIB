@@ -33,7 +33,17 @@ const sh = async (script: string, ...args: string[]) => (await inDistro(script, 
 /** tools/wsl-import.ts as the owner runs it (with --json), under the test guard. */
 async function tool(...args: string[]): Promise<{ code: number; report: Report | null; err: string }> {
   const out = await new Deno.Command(Deno.execPath(), {
-    args: ['run', '-A', decodeURIComponent(TOOL.pathname).replace(/^\/([A-Za-z]:)/, '$1'), '--distro', KEY, '--state-dir', STATE, '--json', ...args],
+    args: [
+      'run',
+      '-A',
+      decodeURIComponent(TOOL.pathname).replace(/^\/([A-Za-z]:)/, '$1'),
+      '--distro',
+      KEY,
+      '--state-dir',
+      STATE,
+      '--json',
+      ...args,
+    ],
     env: { AGENT_STUDIO_TEST: '1', AIB_WSL_ROOT: ROOT },
     stdin: 'null',
     stdout: 'piped',
@@ -96,7 +106,12 @@ Deno.test({
       const old = String(Math.floor(Date.now() / 1000) - 600);
       await sh('cd "$1" && git branch -M main && mkdir -p sub && echo two > sub/b.txt && git add -A && git commit -qm two', repo);
       await sh('git -C "$1/repo" worktree add -q -b orca "$1/elsewhere/orca"', ROOT); // another tool's worktree of the repo
-      for (const [id, cwd] of [[ID.plain, repo], [ID.sub, `${repo}/sub`], [ID.running, repo], [ID.other, `${ROOT}/elsewhere/orca`], [ID.first, repo]]) {
+      for (
+        const [id, cwd] of [[ID.plain, repo], [ID.sub, `${repo}/sub`], [ID.running, repo], [ID.other, `${ROOT}/elsewhere/orca`], [
+          ID.first,
+          repo,
+        ]]
+      ) {
         const made = await inDistro(CLAUDE_SCRIPT, [ROOT, encoded(cwd), id, cwd, old]);
         assertEquals(made.code, 0, made.err);
       }
@@ -112,13 +127,19 @@ Deno.test({
       await sh('cd "$1" && setsid -f python3 -c "import time,sys; time.sleep(900)" "$2" </dev/null >/dev/null 2>&1', ROOT, ID.running);
 
       const files = () =>
-        sh('find "$1/home" "$1/repo" "$1/elsewhere" "$1"/data-*/worktrees "$1"/data-*/studio-worktrees.json "$1/import-backup" -printf "%p %s %T@\\n" 2>/dev/null | sort', ROOT);
+        sh(
+          'find "$1/home" "$1/repo" "$1/elsewhere" "$1"/data-*/worktrees "$1"/data-*/studio-worktrees.json "$1/import-backup" -printf "%p %s %T@\\n" 2>/dev/null | sort',
+          ROOT,
+        );
 
       // ---- blockers: a dirty main checkout; nothing is written
       await sh('echo wip > "$1/notes.txt"', repo);
       const dirty = await tool('--project', repo);
       assertEquals(dirty.code, 2, dirty.err);
-      assert(dirty.report!.blockers.some((b) => b.startsWith('The main checkout has uncommitted work')), JSON.stringify(dirty.report!.blockers));
+      assert(
+        dirty.report!.blockers.some((b) => b.startsWith('The main checkout has uncommitted work')),
+        JSON.stringify(dirty.report!.blockers),
+      );
       const before = await files();
       const refused = await tool('--project', repo, '--apply');
       assertEquals([refused.code, refused.report?.refused], [2, 'Nothing was changed: fix the blockers above first']);
@@ -156,8 +177,19 @@ Deno.test({
       const stamp = applied.report!.stamp!;
       const plainWt = applied.report!.applied.find((a) => a.id === ID.plain)!.worktree!;
       assert(new RegExp(`^${ROOT}/data-[0-9a-f]{12}/worktrees/[0-9a-f]{10}/chat-a1111111$`).test(plainWt), plainWt);
-      assertEquals(await sh('test -f "$1/home/.claude/projects/$2/$3.jsonl" && test -f "$1/home/.claude/projects/$2/$3/subagents/agent-1.jsonl" && echo moved', ROOT, encoded(plainWt), ID.plain), 'moved');
-      assertEquals(await sh('test -e "$1/home/.claude/projects/$2/$3.jsonl" && echo there || echo gone', ROOT, encoded(repo), ID.plain), 'gone');
+      assertEquals(
+        await sh(
+          'test -f "$1/home/.claude/projects/$2/$3.jsonl" && test -f "$1/home/.claude/projects/$2/$3/subagents/agent-1.jsonl" && echo moved',
+          ROOT,
+          encoded(plainWt),
+          ID.plain,
+        ),
+        'moved',
+      );
+      assertEquals(
+        await sh('test -e "$1/home/.claude/projects/$2/$3.jsonl" && echo there || echo gone', ROOT, encoded(repo), ID.plain),
+        'gone',
+      );
       assertEquals(await sh('test -f "$1/import-backup/$2/claude/$3/$4.jsonl" && echo kept', ROOT, stamp, encoded(repo), ID.plain), 'kept');
       assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'the main checkout untouched');
       const rerun = await tool('--project', repo, '--apply');
@@ -183,12 +215,22 @@ Deno.test({
       await turn(a, c, `edit:new.txt|chat${NL}`);
       assertEquals(await sh('cat "$1/new.txt"', plainWt), 'chat', 'session/load got the copy as its cwd');
       const view = { token: 't', liveState: (id: string) => (id === c.id ? { cwd: c.cwd } : {}) };
-      const [status, changes] = await changesResponse(view, '/api/live/changes', { id: [c.id] }, { 'X-Studio-Token': 't' }) as [number, Json];
-      assertEquals([status, changes.scope, changes.worktree, (changes.files as Json[]).map((f) => f.path)], [200, 'branch', { branch: 'studio/chat-a1111111' }, ['new.txt']]);
+      const [status, changes] = await changesResponse(view, '/api/live/changes', { id: [c.id] }, { 'X-Studio-Token': 't' }) as [
+        number,
+        Json,
+      ];
+      assertEquals([status, changes.scope, changes.worktree, (changes.files as Json[]).map((f) => f.path)], [200, 'branch', {
+        branch: 'studio/chat-a1111111',
+      }, ['new.txt']]);
       await turn(a, c, 'commit:chat work');
       const ctx = { stateDir: a.stateDir, host: a, conversations: { public: () => ({ entries: {} }) } } as never;
       const merge = studioRoutes().get('POST /api/live/worktree/merge')!;
-      const [s1, merged] = await merge(ctx, new URL('http://127.0.0.1/api/live/worktree/merge'), { id: c.id, title: 'T' }, new Request('http://127.0.0.1/')) as [number, Json];
+      const [s1, merged] = await merge(
+        ctx,
+        new URL('http://127.0.0.1/api/live/worktree/merge'),
+        { id: c.id, title: 'T' },
+        new Request('http://127.0.0.1/'),
+      ) as [number, Json];
       assertEquals([s1, merged.state], [200, 'merged'], JSON.stringify(merged));
       assertEquals(await sh('git -C "$1" show main:new.txt', repo), 'chat');
       const x = await a.connect('codex', ref, ID.codex);
@@ -207,9 +249,21 @@ Deno.test({
       const by = Object.fromEntries(undo.report!.applied.map((r) => [r.id, r]));
       assertEquals([by[ID.sub].ok, by[ID.codex].ok, by[ID.plain].ok], [true, true, false], JSON.stringify(undo.report!.applied));
       assert(by[ID.plain].error!.includes('of its own'), by[ID.plain].error);
-      assertEquals(await sh('test -f "$1/home/.claude/projects/$2/$3.jsonl" && test -f "$1/home/.claude/projects/$2/$3/subagents/agent-1.jsonl" && echo back', ROOT, encoded(`${repo}/sub`), ID.sub), 'back');
+      assertEquals(
+        await sh(
+          'test -f "$1/home/.claude/projects/$2/$3.jsonl" && test -f "$1/home/.claude/projects/$2/$3/subagents/agent-1.jsonl" && echo back',
+          ROOT,
+          encoded(`${repo}/sub`),
+          ID.sub,
+        ),
+        'back',
+      );
       assertEquals(await sh('git -C "$1" branch --list "studio/chat-b2222222" "studio/chat-f6666666"', repo), '', 'branches gone');
-      assertEquals(await sh('ls "$1"/data-*/worktrees/*/ | sort | tr "\\n" " "', ROOT), 'chat-a1111111 chat-e5555555', 'only the kept copies remain');
+      assertEquals(
+        await sh('ls "$1"/data-*/worktrees/*/ | sort | tr "\\n" " "', ROOT),
+        'chat-a1111111 chat-e5555555',
+        'only the kept copies remain',
+      );
       const first = await tool('--project', repo, '--undo', one.report!.stamp!);
       assertEquals([first.code, first.report!.applied.map((r) => [r.id, r.ok])], [0, [[ID.first, true]]], first.err);
       assertEquals(await sh('test -f "$1/home/.claude/projects/$2/$3.jsonl" && echo back', ROOT, encoded(repo), ID.first), 'back');

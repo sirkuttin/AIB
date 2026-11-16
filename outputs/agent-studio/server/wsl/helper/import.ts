@@ -265,7 +265,8 @@ export function sessionList(value: string): string[] {
 
 function shOut(script: string, args: string[]): string | null {
   try {
-    const done = new Deno.Command('/bin/sh', { args: ['-c', script, 'sh', ...args], stdin: 'null', stdout: 'piped', stderr: 'null' }).outputSync();
+    const done = new Deno.Command('/bin/sh', { args: ['-c', script, 'sh', ...args], stdin: 'null', stdout: 'piped', stderr: 'null' })
+      .outputSync();
     return done.success ? new TextDecoder().decode(done.stdout) : null;
   } catch {
     return null;
@@ -393,7 +394,9 @@ function claudeSessions(claudeDir: string, project: string, aibRoot: string): (F
     const dir = osp.join(root, folder);
     let names: string[];
     try {
-      names = [...Deno.readDirSync(dir)].filter((e) => e.isFile && e.name.endsWith('.jsonl') && UUID.test(e.name.slice(0, -6))).map((e) => e.name).sort();
+      names = [...Deno.readDirSync(dir)].filter((e) => e.isFile && e.name.endsWith('.jsonl') && UUID.test(e.name.slice(0, -6))).map((e) =>
+        e.name
+      ).sort();
     } catch {
       continue;
     }
@@ -515,7 +518,11 @@ async function headBytes(project: string): Promise<number> {
   return total;
 }
 
-async function projectChecks(o: ImportOptions, project: string, d: ReturnType<typeof defaults>): Promise<{ checks: Checks; blockers: string[]; notes: string[] }> {
+async function projectChecks(
+  o: ImportOptions,
+  project: string,
+  d: ReturnType<typeof defaults>,
+): Promise<{ checks: Checks; blockers: string[]; notes: string[] }> {
   const blockers: string[] = [], notes: string[] = [];
   const checks: Checks = {
     projectReal: project,
@@ -571,7 +578,9 @@ async function projectChecks(o: ImportOptions, project: string, d: ReturnType<ty
     checks.clean = entries.length === 0;
     if (!checks.clean) {
       blockers.push(
-        `The main checkout has uncommitted work (${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}): commit, merge or remove it on ${checks.headBranch} first`,
+        `The main checkout has uncommitted work (${entries.length} ${
+          entries.length === 1 ? 'entry' : 'entries'
+        }): commit, merge or remove it on ${checks.headBranch} first`,
       );
     }
   }
@@ -580,7 +589,13 @@ async function projectChecks(o: ImportOptions, project: string, d: ReturnType<ty
   if (!checks.gitDirWritable) blockers.push(`The repository's .git folder (${checks.gitDir || 'unknown'}) cannot be written by this user`);
   const prune = await git(['worktree', 'prune', '--dry-run', '-v'], project);
   checks.prune = (prune.stdout + prune.stderr).split('\n').map((l) => l.trim()).filter(Boolean);
-  if (checks.prune.length) notes.push(`git worktree prune would drop ${checks.prune.length} stale worktree entr${checks.prune.length === 1 ? 'y' : 'ies'} (this tool does not prune)`);
+  if (checks.prune.length) {
+    notes.push(
+      `git worktree prune would drop ${checks.prune.length} stale worktree entr${
+        checks.prune.length === 1 ? 'y' : 'ies'
+      } (this tool does not prune)`,
+    );
+  }
   const [regStatus] = readJsonFile(new wt.Registry(o.data).path);
   if (regStatus !== 'ok' && regStatus !== 'missing') {
     checks.registry = regStatus;
@@ -589,7 +604,9 @@ async function projectChecks(o: ImportOptions, project: string, d: ReturnType<ty
   // agents running in the project folder: one of them may be one of these chats (AIB cannot tell which)
   const procs = d.processes();
   const own = ownTree(procs);
-  checks.agentsInProject = procs.filter((p) => !own.has(p.pid) && p.cwd && AGENTISH.test(p.cmdline) && inside(p.cwd, project) && !/\.claude\/worktrees\//.test(p.cwd));
+  checks.agentsInProject = procs.filter((p) =>
+    !own.has(p.pid) && p.cwd && AGENTISH.test(p.cmdline) && inside(p.cwd, project) && !/\.claude\/worktrees\//.test(p.cwd)
+  );
   if (checks.agentsInProject.length) {
     blockers.push(
       `${checks.agentsInProject.length} agent process${checks.agentsInProject.length === 1 ? '' : 'es'} run in the project folder (pid ${
@@ -606,7 +623,9 @@ export function pickSessions(asked: string[] | null | undefined, ids: string[]):
   const picked = new Set<string>();
   for (const want of asked) {
     const hits = ids.filter((id) => id === want || (want.length >= 8 && id.startsWith(want)));
-    if (hits.length !== 1) return { picked: null, error: hits.length ? `${want} matches more than one chat` : `No chat of this project has the id ${want}` };
+    if (hits.length !== 1) {
+      return { picked: null, error: hits.length ? `${want} matches more than one chat` : `No chat of this project has the id ${want}` };
+    }
     picked.add(hits[0]);
   }
   return { picked, error: '' };
@@ -751,14 +770,19 @@ export async function planImport(o: ImportOptions): Promise<Report> {
 /** Claude Code finds a session in the folder named after the agent's cwd: the worktree's, once the chat runs there. */
 function movesFor(claudeDir: string, f: Found, worktree: string): [string, string][] {
   const target = osp.join(claudeDir, 'projects', encoded(worktree));
-  return [[f.file, osp.join(target, osp.basename(f.file))], ...f.extra.map((x): [string, string] => [x, osp.join(target, osp.basename(x))])];
+  return [
+    [f.file, osp.join(target, osp.basename(f.file))],
+    ...f.extra.map((x): [string, string] => [x, osp.join(target, osp.basename(x))]),
+  ];
 }
 
 // ---- apply ---------------------------------------------------------------------------------------------------------
 export function stampOf(ms: number): string {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${
+    p(d.getUTCSeconds())
+  }`;
 }
 
 function saveManifest(path: string, manifest: Manifest): void {
@@ -797,7 +821,7 @@ export async function applyImport(o: ImportOptions, confirm: string | null): Pro
   const project = report.checks!.projectReal;
   let stamp = stampOf(d.now());
   let backup = osp.join(report.root, BACKUP_DIR, stamp);
-  for (let n = 1; lstat(backup); n++) backup = osp.join(report.root, BACKUP_DIR, (stamp = `${stampOf(d.now())}-${n}`));
+  for (let n = 1; lstat(backup); n++) backup = osp.join(report.root, BACKUP_DIR, stamp = `${stampOf(d.now())}-${n}`);
   Deno.mkdirSync(backup, { recursive: true, mode: 0o700 });
   report.stamp = stamp;
   report.backup = backup;
@@ -833,7 +857,9 @@ async function applyOne(
   // checked again just before: still where it was, still not running, still no record
   const info = stat(chat.file);
   if (!info) throw new Error(`its history ${chat.file} is gone`);
-  if (d.now() - (info.mtime?.getTime() ?? 0) < ACTIVE_MS) throw new Error('its history was written in the last two minutes: it may be running');
+  if (d.now() - (info.mtime?.getTime() ?? 0) < ACTIVE_MS) {
+    throw new Error('its history was written in the last two minutes: it may be running');
+  }
   const procs = d.processes();
   const own = ownTree(procs);
   if (procs.some((p) => !own.has(p.pid) && p.cmdline.includes(chat.id))) throw new Error('a process names it now: it may be running');
@@ -986,9 +1012,13 @@ async function undoOne(d: ReturnType<typeof defaults>, manager: wt.Manager, proj
   if (procs.some((p) => !own.has(p.pid) && p.cmdline.includes(entry.id))) throw new Error('a process names it: stop the chat first');
   for (const [, to] of entry.files) {
     const info = stat(to);
-    if (info?.isFile && d.now() - (info.mtime?.getTime() ?? 0) < ACTIVE_MS) throw new Error('its history was written in the last two minutes: stop the chat first');
+    if (info?.isFile && d.now() - (info.mtime?.getTime() ?? 0) < ACTIVE_MS) {
+      throw new Error('its history was written in the last two minutes: stop the chat first');
+    }
   }
-  if (procs.some((p) => !own.has(p.pid) && p.cwd && inside(p.cwd, entry.worktree))) throw new Error('a process works in its copy: stop the chat first');
+  if (procs.some((p) => !own.has(p.pid) && p.cwd && inside(p.cwd, entry.worktree))) {
+    throw new Error('a process works in its copy: stop the chat first');
+  }
   // nothing of its own in the copy since the import
   if (record && stat(entry.worktree)) {
     const branchHead = (await git(['rev-parse', '--verify', '-q', `refs/heads/${entry.branch}`], project)).stdout.trim();
@@ -1049,7 +1079,9 @@ export function formatReport(r: Report, command = 'AIB-wsl-helper import'): stri
     if (c.dirty.length > 30) out.push(`          ... and ${c.dirty.length - 30} more`);
     if (c.gitDir) out.push(`  ${c.gitDirWritable ? 'ok   ' : 'BLOCK'} ${c.gitDir} ${c.gitDirWritable ? 'is writable' : 'is not writable'}`);
     for (const f of c.free) out.push(`  disk ${fmtBytes(f.bytes)} free at ${f.path}`);
-    out.push(`  disk needs about ${fmtBytes(c.needBytes)} (backups ${fmtBytes(c.backupBytes)} + a ${fmtBytes(c.worktreeBytes)} checkout per copy)`);
+    out.push(
+      `  disk needs about ${fmtBytes(c.needBytes)} (backups ${fmtBytes(c.backupBytes)} + a ${fmtBytes(c.worktreeBytes)} checkout per copy)`,
+    );
     for (const p of c.agentsInProject) out.push(`  BLOCK agent pid ${p.pid} in ${p.cwd}: ${p.cmdline.slice(0, 120)}`);
     for (const p of c.prune.slice(0, 10)) out.push(`  note ${p}`);
   }
@@ -1063,7 +1095,9 @@ export function formatReport(r: Report, command = 'AIB-wsl-helper import'): stri
       const head = `${x.provider.padEnd(6)} ${x.id}  ${fmtBytes(x.bytes).padStart(8)}  ${when}`;
       if (x.status === 'eligible') {
         out.push(`  MOVE ${head}`);
-        out.push(`         copy ${x.worktree}  branch ${x.branch}${x.rel ? `  (it started in ${x.rel}/: it opens at the copy's root)` : ''}`);
+        out.push(
+          `         copy ${x.worktree}  branch ${x.branch}${x.rel ? `  (it started in ${x.rel}/: it opens at the copy's root)` : ''}`,
+        );
         for (const [from, to] of x.moves ?? []) out.push(`         move ${from}\n           -> ${to}`);
         if (x.provider === 'codex') out.push('         history stays where it is (Codex finds a session by its id)');
       } else {
@@ -1072,7 +1106,9 @@ export function formatReport(r: Report, command = 'AIB-wsl-helper import'): stri
     }
   }
   for (const a of r.applied) {
-    out.push(`  ${a.ok ? 'DONE' : 'FAIL'} ${a.provider} ${a.id}${a.ok ? (a.branch ? `  ${a.branch}  ${a.worktree}` : '') : `  ${a.error}`}`);
+    out.push(
+      `  ${a.ok ? 'DONE' : 'FAIL'} ${a.provider} ${a.id}${a.ok ? (a.branch ? `  ${a.branch}  ${a.worktree}` : '') : `  ${a.error}`}`,
+    );
   }
   if (r.refused) out.push(`REFUSED: ${r.refused}`);
   if (r.backup && r.mode === 'apply' && r.applied.length) {
@@ -1104,8 +1140,12 @@ export async function importMain(args: string[]): Promise<number> {
   }
   const data = flag(args, '--data'), project = flag(args, '--project');
   if (!data || !project || !osp.isabs(data) || !osp.isabs(project)) {
-    console.error('usage: AIB-wsl-helper import --data <AIB data folder> --project <project folder> [--apply --confirm-project <project folder>]');
-    console.error('       [--undo <stamp> --confirm-project <project folder>] [--sessions id,id] [--root <AIB folder>] [--claude-dir D] [--codex-dir D] [--json]');
+    console.error(
+      'usage: AIB-wsl-helper import --data <AIB data folder> --project <project folder> [--apply --confirm-project <project folder>]',
+    );
+    console.error(
+      '       [--undo <stamp> --confirm-project <project folder>] [--sessions id,id] [--root <AIB folder>] [--claude-dir D] [--codex-dir D] [--json]',
+    );
     return 1;
   }
   const home = Deno.env.get('HOME') ?? '/';

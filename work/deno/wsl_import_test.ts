@@ -42,8 +42,15 @@ Deno.test('import: test guard, confirmation-free pure helpers, argument parsing'
   assertEquals(launchCwd(['/r/x', '/r'], '-other'), '/r/x', 'else the first');
   assertEquals(launchCwd([], '-r'), '');
   const id = '01a1dcbb-883a-7a71-a25d-0ac36b4c0211';
-  assertEquals(rolloutMeta(`{"type":"session_meta","payload":{"id":"${id}","cwd":"/p"}}\n{}`, `rollout-2026-11-14T18-04-00-${id}.jsonl`), { id, cwd: '/p' });
-  assertEquals(rolloutMeta('{"type":"session_meta","payload":{"cwd":"/p", "instru', `rollout-x-${id}.jsonl`), { id, cwd: '/p' }, 'a cut-off first line');
+  assertEquals(rolloutMeta(`{"type":"session_meta","payload":{"id":"${id}","cwd":"/p"}}\n{}`, `rollout-2026-11-14T18-04-00-${id}.jsonl`), {
+    id,
+    cwd: '/p',
+  });
+  assertEquals(
+    rolloutMeta('{"type":"session_meta","payload":{"cwd":"/p", "instru', `rollout-x-${id}.jsonl`),
+    { id, cwd: '/p' },
+    'a cut-off first line',
+  );
   assertEquals(pickSessions(['01a1dcbb'], [id, 'ffffffff-0000-0000-0000-000000000000']).picked, new Set([id]));
   assert(pickSessions(['01a1'], [id]).error, 'prefixes need 8 characters');
   assert(pickSessions(['aaaaaaaa'], ['aaaaaaaa-1', 'aaaaaaaa-2']).error.includes('more than one'));
@@ -56,7 +63,10 @@ Deno.test('import: test guard, confirmation-free pure helpers, argument parsing'
   assert(typeof parseArgs(['--distro', 'Ubuntu', '--project', '/x', '--apply', '--undo', '1']) === 'string');
   assert(typeof parseArgs(['--distro', 'Ubuntu', '--project', '/x', '--force']) === 'string', 'unknown options are refused');
   const plain = parseArgs(['--distro', 'Ubuntu', '--project', '/x']) as Exclude<ReturnType<typeof parseArgs>, string>;
-  assertEquals(stateDirOf(plain, (n) => ({ LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' } as Record<string, string>)[n]), 'C:\\Users\\me\\AppData\\Local\\AgentStudio');
+  assertEquals(
+    stateDirOf(plain, (n) => ({ LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' } as Record<string, string>)[n]),
+    'C:\\Users\\me\\AppData\\Local\\AgentStudio',
+  );
   let threw = false;
   try {
     stateDirOf(plain, (n) => (n === 'AGENT_STUDIO_TEST' ? '1' : n === 'LOCALAPPDATA' ? 'C:\\x' : undefined));
@@ -108,8 +118,20 @@ class Fixture {
     const folder = osp.join(this.claude, 'projects', options.folder ?? encoded(cwd));
     Deno.mkdirSync(folder, { recursive: true });
     const rows = [
-      { type: 'user', sessionId: id, ...(options.noCwd ? {} : { cwd }), timestamp: '2026-11-14T10:00:00Z', message: { role: 'user', content: 'hello' } },
-      { type: 'assistant', sessionId: id, ...(options.noCwd ? {} : { cwd }), timestamp: '2026-11-14T10:00:05Z', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } },
+      {
+        type: 'user',
+        sessionId: id,
+        ...(options.noCwd ? {} : { cwd }),
+        timestamp: '2026-11-14T10:00:00Z',
+        message: { role: 'user', content: 'hello' },
+      },
+      {
+        type: 'assistant',
+        sessionId: id,
+        ...(options.noCwd ? {} : { cwd }),
+        timestamp: '2026-11-14T10:00:05Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+      },
     ];
     const file = osp.join(folder, `${id}.jsonl`);
     Deno.writeTextFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
@@ -193,10 +215,19 @@ Deno.test({
     assertEquals(f.snapshot(), before, 'the dry run changed nothing on disk');
     assertEquals(Deno.statSync(osp.join(f.repo, '.git', 'index')).mtime?.getTime(), indexBefore, 'not even the index was refreshed');
     assertEquals(report.blockers, []);
-    assertEquals([report.checks!.clean, report.checks!.headBranch, report.checks!.base, report.checks!.gitDirWritable], [true, 'main', 'main', true]);
+    assertEquals([report.checks!.clean, report.checks!.headBranch, report.checks!.base, report.checks!.gitDirWritable], [
+      true,
+      'main',
+      'main',
+      true,
+    ]);
 
     const c = byId(report);
-    assertEquals(Object.keys(c).sort(), [ID.plain, ID.sub, ID.running, ID.other, ID.noCwd, ID.fresh, ID.codex].sort(), 'a chat of another folder is not listed');
+    assertEquals(
+      Object.keys(c).sort(),
+      [ID.plain, ID.sub, ID.running, ID.other, ID.noCwd, ID.fresh, ID.codex].sort(),
+      'a chat of another folder is not listed',
+    );
     assertEquals([c[ID.plain].status, c[ID.plain].branch, c[ID.plain].rel], ['eligible', 'studio/chat-11111111', '']);
     const wtPath = c[ID.plain].worktree!;
     assertEquals(wtPath, osp.join(f.data, 'worktrees', wt.repoHash(f.repo), 'chat-11111111'));
@@ -221,7 +252,12 @@ Deno.test({
 
     // blockers: a dirty main checkout, an agent working in the project folder
     Deno.writeTextFileSync(osp.join(f.repo, 'notes.txt'), 'wip\n');
-    f.procs.push({ pid: 5151, ppid: 1, cwd: osp.join(f.repo, 'sub'), cmdline: 'node /usr/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js' });
+    f.procs.push({
+      pid: 5151,
+      ppid: 1,
+      cwd: osp.join(f.repo, 'sub'),
+      cmdline: 'node /usr/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js',
+    });
     const dirty = await planImport(f.options());
     assertEquals([dirty.checks!.clean, dirty.checks!.dirty], [false, ['?? notes.txt']]);
     assert(dirty.blockers.some((b) => b.startsWith('The main checkout has uncommitted work')), dirty.blockers.join('|'));
@@ -252,7 +288,10 @@ Deno.test({
     const codexFile = f.codexChat(ID.codex, f.repo);
 
     // outside a test the owner must type the project again; under test the folders must be aib-wsl-test-* ones
-    const unconfirmed = await applyImport(f.options({ env: (n) => (n === 'AIB_WSL_TEST' || n === 'AGENT_STUDIO_TEST' ? undefined : Deno.env.get(n)) }), null);
+    const unconfirmed = await applyImport(
+      f.options({ env: (n) => (n === 'AIB_WSL_TEST' || n === 'AGENT_STUDIO_TEST' ? undefined : Deno.env.get(n)) }),
+      null,
+    );
     assert(unconfirmed.refused?.includes('--confirm-project'), unconfirmed.refused);
     const notTest = await applyImport(f.options({ claudeDir: 'C:\\Users\\someone\\.claude' }), null);
     assert(notTest.refused?.startsWith('Test guard'), notTest.refused);
@@ -260,7 +299,10 @@ Deno.test({
 
     const report = await applyImport(f.options(), null);
     assertEquals(report.refused, undefined);
-    assertEquals(report.applied.map((a) => [a.id, a.ok, a.error ?? '']).sort(), [[ID.plain, true, ''], [ID.sub, true, ''], [ID.codex, true, '']].sort());
+    assertEquals(
+      report.applied.map((a) => [a.id, a.ok, a.error ?? '']).sort(),
+      [[ID.plain, true, ''], [ID.sub, true, ''], [ID.codex, true, '']].sort(),
+    );
     const registry = new wt.Registry(f.data);
     for (const [provider, id] of [['claude', ID.plain], ['claude', ID.sub], ['codex', ID.codex]]) {
       const record = registry.find(null, `${provider}:${id}`); // what Studio.connect's wslRecord asks the helper
@@ -291,7 +333,10 @@ Deno.test({
 
     // a second run: everything is imported already
     const again = await planImport(f.options());
-    assertEquals(again.chats.map((c) => [c.id, c.status, c.code]).sort(), [[ID.plain, 'skip', 'imported'], [ID.sub, 'skip', 'imported'], [ID.codex, 'skip', 'imported']].sort());
+    assertEquals(
+      again.chats.map((c) => [c.id, c.status, c.code]).sort(),
+      [[ID.plain, 'skip', 'imported'], [ID.sub, 'skip', 'imported'], [ID.codex, 'skip', 'imported']].sort(),
+    );
     assertEquals((await applyImport(f.options(), null)).applied, []);
 
     // undo: a chat with a commit of its own in its copy is refused; the others go back
@@ -310,7 +355,11 @@ Deno.test({
     assertEquals(registry.find(null, `claude:${ID.plain}`), null);
     assertEquals(registry.find(null, `codex:${ID.codex}`), null);
     assertEquals(git(f.repo, 'branch', '--list', 'studio/chat-11111111').trim(), '', 'branch deleted');
-    assertEquals(new wt.Manager(f.data).isRemoved(f.repo, `claude:${ID.plain}`), false, 'no "removed" note: the chat continues in the project folder');
+    assertEquals(
+      new wt.Manager(f.data).isRemoved(f.repo, `claude:${ID.plain}`),
+      false,
+      'no "removed" note: the chat continues in the project folder',
+    );
     assert(registry.find(null, `claude:${ID.sub}`), 'the chat with work of its own keeps its copy');
     // a second undo of the same run: done ones say so, nothing breaks
     const twice = await undoImport(f.options(), report.stamp!, null);

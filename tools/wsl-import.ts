@@ -80,7 +80,9 @@ export function parseArgs(argv: string[]): WrapperArgs | string {
   if (!validDistro(args.distro)) return 'Give the distro: --distro Ubuntu';
   if (!args.project.startsWith('/')) return 'Give the project as a Linux path: --project /home/<you>/<repo>';
   if (args.apply && args.undo) return 'Use --apply or --undo, not both';
-  for (const [name, v] of [['--data', args.data], ['--root', args.root], ['--claude-dir', args.claudeDir], ['--codex-dir', args.codexDir]]) {
+  for (
+    const [name, v] of [['--data', args.data], ['--root', args.root], ['--claude-dir', args.claudeDir], ['--codex-dir', args.codexDir]]
+  ) {
     if (v && !v.startsWith('/')) return `${name} must be a Linux path`;
   }
   return args;
@@ -119,7 +121,9 @@ async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
   const parsed = parseArgs(argv);
   if (typeof parsed === 'string') {
     console.error(parsed);
-    console.error('usage: deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> [--apply|--undo <stamp>] [--confirm-project <same path>]');
+    console.error(
+      'usage: deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> [--apply|--undo <stamp>] [--confirm-project <same path>]',
+    );
     return 1;
   }
   const args = parsed;
@@ -143,7 +147,7 @@ async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
     args.claudeDir ||= `${root}/home/.claude`;
     args.codexDir ||= `${root}/home/.codex`;
   }
-  const data = args.data ||`${root}/${dataDirName(stateDirOf(args, env))}`;
+  const data = args.data || `${root}/${dataDirName(stateDirOf(args, env))}`;
   let helper = '';
   if (args.helperBin) helper = mntPath(args.helperBin);
   else {
@@ -155,7 +159,9 @@ async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
         Deno.statSync(built);
         helper = mntPath(built);
       } catch {
-        console.error(`No AIB helper that knows "import" in ${args.distro} (${root}) and no ${built}: run deno run -A tools/build.ts --wsl-only first`);
+        console.error(
+          `No AIB helper that knows "import" in ${args.distro} (${root}) and no ${built}: run deno run -A tools/build.ts --wsl-only first`,
+        );
         return 1;
       }
     }
