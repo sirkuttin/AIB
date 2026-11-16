@@ -129,8 +129,17 @@ Deno.test('an empty repo works in place, and the start note says why', async () 
   runGit(empty, 'init', '-q', '-b', 'main');
   const planned = await new wt.Manager(box.state).planWithReason(empty);
   assertEquals([planned.plan, planned.reason], [null, 'the repository has no commits yet']);
-  assert(wt.inPlaceNote(planned.reason).includes('the repository has no commits yet'));
-  assertEquals(wt.inPlaceNote('not a git repository'), '', 'a plain folder gets no note');
+  assertEquals(
+    wt.inPlaceNote(planned.reason),
+    "Couldn't make an own copy for this chat, so it works in the project folder: the repository has no commits yet, so there is no " +
+      'branch to start from.',
+  );
+  // build plan 1b (P1): a chat that wanted its own copy is told every reason, a plain folder's too (folder_chats_test e2e 4)
+  assertEquals(
+    wt.inPlaceNote('not a git repository'),
+    "Couldn't make an own copy for this chat, so it works in the project folder: not a git repository.",
+  );
+  assertEquals(wt.inPlaceNote(''), '', 'no reason, no note');
 });
 
 Deno.test('a chat made before (started from another branch) still merges as it did', async () => {
