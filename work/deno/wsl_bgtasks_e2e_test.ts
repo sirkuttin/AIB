@@ -6,7 +6,9 @@
  *   - a Claude Code process in the chat's folder that names no session (a VS Code panel) with a quiet transcript: Continue proceeds and
  *     the chat gets one note; the same program with --resume <id> is refused;
  *   - a saved session's background command listed with its output (a temp transcript and task output inside AIB_WSL_ROOT);
- *   - a chat whose background shell runs in the distro is not idle until that shell ends.
+ *   - a chat whose background shell runs in the distro is not idle until that shell ends;
+ *   - Stop on a chat's background row ends that command in the distro, never the agent, its other children, a reused pid or an
+ *     unrelated process.
  * Everything is inside the test's /tmp/aib-wsl-test-<random>; the only processes signalled are the ones this test started there.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -261,12 +263,76 @@ Deno.test({
       assertEquals(studio.busyList().map((b) => b.state), ['background']);
       await new Promise((r) => setTimeout(r, FRESH_MS * 2)); // several snapshots of the distro later: still running
       assertEquals(studio.busyList().map((b) => b.state), ['background']);
-      assertEquals(Object.values(c.toolBackground()).map((t) => [t.state, t.stoppable]), [['running', false]]);
+      assertEquals(Object.values(c.toolBackground()).map((t) => [t.state, t.stoppable]), [['running', true]], 'Stop offered');
       assertEquals((await inDistro('touch "$1"', [gate])).code, 0); // the command ends
       await until(() => studio!.busyList().length === 0, 'the chat dropped out of the busy list');
       assertEquals(c.backgroundShells(), []);
     } finally {
       await studio?.close().catch(() => {});
+      await cleanRoot();
+      Deno.removeSync(state, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "wsl e2e: Stop on a WSL chat's background row ends its command in the distro; the agent, its own child and other processes run on",
+  ...T,
+  async fn() {
+    const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-bgstop-e2e-' });
+    await prepareRoot();
+    let studio: Studio | null = null;
+    let unrelated = 0;
+    let sleeper: Deno.ChildProcess | null = null;
+    const alive = async (pid: number) => (await inDistro('kill -0 "$1" 2>/dev/null', [String(pid)])).code === 0;
+    const pidOf = async (file: string) => Number((await inDistro('cat "$1" 2>/dev/null', [file])).out.trim());
+    try {
+      const repo = `${ROOT}/repo`;
+      const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
+      // an unrelated process of the same user in the distro (not below any agent), kept by its own wsl.exe as the first test's is
+      sleeper = new Deno.Command(`${SYSTEM_ROOT}\\System32\\wsl.exe`, {
+        args: ['--distribution', DISTRO, '--cd', '~', '--exec', 'sh', '-c', 'echo $$ > "$1/sleeper.pid"; exec sleep 600', 'sh', ROOT],
+        env: { SystemRoot: SYSTEM_ROOT, WSL_UTF8: '1', WSLENV: '' },
+        clearEnv: true,
+        stdin: 'null',
+        stdout: 'null',
+        stderr: 'null',
+      }).spawn();
+      await until(async () => (unrelated = await pidOf(`${ROOT}/sleeper.pid`)) > 0, 'the unrelated process');
+      assert(await alive(unrelated));
+      const host = await readyHost();
+      studio = studioWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn', '--child-pid-file', `${ROOT}/child`], '/usr/bin/python3');
+      const c = await studio.connect('claude', ref);
+      assertEquals((await studio.liveCall('prompt', { id: c.id, text: `bgshell:${ROOT}/gate`, clientMessageId: 'm1' }))[0], 200);
+      await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered (the distro named its processes)');
+      const [shell, child] = [await pidOf(`${ROOT}/child.shell`), await pidOf(`${ROOT}/child`)];
+      assert(shell > 0 && child > 0 && await alive(shell));
+
+      // straight to the helper: a pid that is not below the agent, and the shell's pid with another start time (a reused pid)
+      const agent = c.process!.pid;
+      const refused = await host.call('proc.stop', { root: agent, targets: [[unrelated, 0], [shell, 3600]] });
+      assertEquals([refused.listed, refused.killed, refused.skipped], [true, [], [unrelated, shell]]);
+      assert(await alive(shell) && await alive(unrelated));
+
+      const toolId = Object.keys(c.toolBackground())[0];
+      const [status, body] = await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId }) as [number, Json];
+      assertEquals([status, body.state, body.killed], [200, 'stopped', 1], JSON.stringify(body));
+      await until(async () => !(await alive(shell)), 'the stopped command is gone from the distro', 15);
+      assert(await alive(child), "the agent's own child (started before the turn) runs on");
+      assert(await alive(unrelated), 'an unrelated process runs on');
+      assert(!c.closed && (await inDistro('kill -0 "$1"', [String(agent)])).code === 0, 'the agent runs on');
+      assertEquals(Object.values(c.toolBackground())[0], { state: 'stopped', stoppable: false });
+      assertEquals((await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId }))[0], 409, 'no second stop');
+      await until(() => studio!.busyList().length === 0, 'the chat is idle');
+    } finally {
+      await studio?.close().catch(() => {});
+      if (unrelated > 0) await inDistro('kill "$1" 2>/dev/null; true', [String(unrelated)]); // only the one this test started
+      else {
+        try {
+          sleeper?.kill();
+        } catch { /* ended */ }
+      }
+      await sleeper?.status;
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

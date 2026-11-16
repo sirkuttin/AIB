@@ -125,8 +125,12 @@
   the distro (a long test run, a dev server) and its subagents, with how many are still running and each command's latest output, as
   for a Windows chat. While such a command runs, the chat counts as still working in the background, so quitting or updating AIB
   warns you instead of cutting it off. If Ubuntu is not running, the pane says "Command updates unavailable: Ubuntu stopped.
-  Reconnect" instead of "No commands running". AIB cannot stop a WSL background command itself yet (no Stop button there; ask the
-  agent).
+  Reconnect" instead of "No commands running".
+- WSL projects: Stop a background command from AIB. A command a WSL chat left running in the background (a dev server, a long
+  test run) now has the same Stop button on its "Still running in the background" row as in a Windows chat, so you no longer have
+  to ask the agent to end it. Stop ends that command and whatever it started inside the distro, and the row then reads "Stopped by
+  you". It only ever touches processes AIB saw that command start: another chat's commands, the agent itself and anything else in
+  Ubuntu keep running. The button appears a moment after the row does, once AIB has checked the command's processes in the distro.
 - WSL projects: no second agent on one conversation. Before continuing a saved WSL chat, AIB now checks inside the distro whether
   another program already has that conversation open (for example `claude --resume` in a VS Code terminal in Ubuntu) and refuses with
   "This claude conversation is already open in another agent process (PID …)", exactly as for Windows chats. A chat written to

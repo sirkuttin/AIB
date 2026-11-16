@@ -244,6 +244,16 @@ export interface HelperMethods {
    */
   'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
   /**
+   * Stop on a WSL chat's background command (platform/kill_verified.ts run natively): `targets` are [pid, age in seconds] of the
+   * processes AIB noted from `proc.tree` below the agent `root`. Each must still be `root`'s descendant with that start time (a reused
+   * pid is not); those and what they started since get TERM, then KILL after 2 s, leaf first. Nothing else is signalled. `listed`
+   * false: the processes could not be listed, nothing was sent. `killed`: [pid, age] of each process a TERM was sent to.
+   */
+  'proc.stop': {
+    params: { root: number; targets: [number, number][] };
+    result: { listed: boolean; killed: [number, number][]; skipped: number[] };
+  };
+  /**
    * The MCP tunnel (phase 2; helper/mcp_tunnel.ts, wsl/mcp_tunnel.ts). A forwarder's message arrives as the notification
    * HelperMcpRequest; AIB first takes it with `mcp.accept` (ok false: the helper already gave up on it, so AIB must not run it), runs it
    * on its HTTP tool endpoint's checks, and answers with `mcp.reply` (status as HTTP: 200 with body, 202 none, else an error; 503 with

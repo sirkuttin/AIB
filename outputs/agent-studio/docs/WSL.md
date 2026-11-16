@@ -42,8 +42,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 Side effects: the distro stays running while a WSL project is open or WSL chats run (VmmemWSL memory); `wsl.exe` processes appear
 under AIB and AIB-keeper in Task Manager; `~/.aib-server` appears in the Linux home; the first use after a Windows start takes a
 few seconds. Saved sessions started outside AIB are listed only once AIB has used the distro since it started. A WSL chat's
-background commands are listed with their output, but AIB cannot stop one (there is no Stop on its row; ask the agent). Codex usage limits are read from the distro's `~/.codex` (a chat's chip is keyed per distro; a
-distro that is not running is not started for it).
+background commands are listed with their output, and Stop on a "Still running in the background" row ends the command in the
+distro, as in a Windows chat (the Stop shows up a moment after the row, once the distro named the command's processes). Codex usage
+limits are read from the distro's `~/.codex` (a chat's chip is keyed per distro; a distro that is not running is not started for it).
 
 ## How it works
 
@@ -416,8 +417,8 @@ everywhere else, so Windows is unchanged). There are no per-file calls between A
 ## Background tasks and ownership
 
 A WSL chat's transcripts, its agents' task output and its processes are all inside the distro, so the Windows code runs there, in the
-helper (`wsl/helper/bgtasks.ts`), unchanged, and AIB asks it through four methods (contract.ts): `transcripts.query`, `ownership.check`,
-`ownership.hints` and `proc.tree`.
+helper (`wsl/helper/bgtasks.ts`), unchanged, and AIB asks it through five methods (contract.ts): `transcripts.query`, `ownership.check`,
+`ownership.hints`, `proc.tree` and `proc.stop`.
 
 - **Background commands.** The page's `/api/agents`, `/api/commands` and `/api/command` for a WSL session (`wsl.<distro>.claude/…`)
   go to `transcripts.query`, which runs `transcripts/monitor.ts` (handleGet, commandList, commandOutput) on the distro's transcripts.
@@ -432,9 +433,17 @@ helper (`wsl/helper/bgtasks.ts`), unchanged, and AIB asks it through four method
   `wsl/procs.ts`, which keeps a per-distro snapshot of the processes below the WSL agents (`proc.tree`: `platform/descendants.ts`, i.e.
   `ps`, in the distro) at most 3 s old and fetches a new one in the background. Until an answer is in, or while the helper is away, the
   answer is "cannot be listed", which already means "still running": a WSL chat is never taken for idle while its command may run.
-  A command's processes are noted from the first snapshot after it went to the background. **Stop is not offered** for a WSL chat's
-  background command (its pids are the distro's; AIB's Stop kills Windows processes), and the route refuses it with "AIB can't stop a
-  command in a WSL chat yet. Ask the agent to stop it."
+  A command's processes are noted from the first snapshot after it went to the background (the processes the agent already had when
+  the turn began, from the turn's own snapshot, never count: all of that snapshot when it came before the turn's first shell call,
+  since the distro's start times are whole seconds; otherwise those that started before the turn).
+- **Stop.** Once that snapshot named the command's processes, its row offers Stop on the Windows terms (a shell command, no other
+  shell command running or started since, every start time known); until then, or without them, there is no Stop. Stop
+  (`/api/live/tool-stop`, `Connection.stopBackgroundTool`) goes to `wsl/procs.ts wslKillVerified`, which calls the helper's
+  `proc.stop` with the agent's Linux pid and the noted processes as [pid, age]. The helper runs `platform/kill_verified.ts` natively:
+  each target must still be the agent's descendant with the same start time (ages turned into the distro's clock, so a Windows clock
+  that differs never matters; a reused pid fails), then those and what they started since get TERM, then KILL after 2 s, leaf first.
+  No other pid is signalled. The row then shows "Stopped by you", or "Finished in the background" when the command had already
+  ended. A helper that is away or too old answers "AIB cannot list the processes right now. Try again." and nothing is sent.
 - **Ownership.** Before a saved WSL chat is continued (Continue, the auto-reconnect), AIB asks the distro whether another agent process
   holds it (`ownership.check`: `ownership/probe.ts` OwnershipProbe and `ownership.ts` findExternalOwner run natively). Inside a distro
   that means:
@@ -962,7 +971,7 @@ keeps one failure from hiding the others' results.
 | `wsl_fixes_e2e` | the set-up probe with `-` for no `AIB_WSL_ROOT` answers `$HOME/.aib-server` (read-only); the New project dialog's check and create in the distro (new, existing, missing parent, with and without a name and git init) |
 | `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
-| `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends |
+| `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends; Stop on one chat's background row ends its command in the distro while another chat's command, the agent's own child and an unrelated process run on |
 | `wsl_linking_routes_e2e` | phase 2 routes: peek, Uninstall and the Node.js terminal make no host before AIB used the distro; with the real helper and a stand-in login shell, `prereqs?start=1`, the rows' `enabled` / `signin` / `canUninstall` / `limits`, Uninstall and the Node.js terminal (the "too old" answers while the helper lacks the phase 2 methods); the Node.js script run with bash in the distro against a stand-in install.sh (`file://`): checksum gate, PROFILE per login shell, the 22.19 minimum, every command printed |
 | `wsl_linking_helper_e2e` | `env.prereqs` on the distro as it is (asdf shim: ok, npm found next to the real node, no nvm offer); with a stand-in login shell: Node.js missing, too old, an asdf shim with no version, each after `force`; `agents.uninstall` refused while a test process runs from the fake agent folder, then removing only it, a linked `agents/<id>` left alone; `agents.signinStatus` over fake credential files, the fake token never in the answer |
 | `wsl_linking_remove_e2e` | "AIB in <distro>" and Remove, all under `/tmp` (the root asserted first; a canary folder, a temp HOME with `.claude` / `.codex` sentinels and the project outside the root): usage with a second fake data folder whose stand-in keeper listens; a dirty chat copy refused (nothing deleted); with that keeper alive only this AIB's data folder goes (agents, every `<ver>`, the root kept), the copy pruned, the branch kept, no process of it left, status removed + off, a second apply 409; Set up again with a stand-in program in `agents/`: agents kept, both `<ver>` gone; then everything incl. the root; again after Set up again; the last step's guards on temp folders; links inside the root to the canary and the temp HOME unlinked only |
@@ -977,6 +986,5 @@ over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `ws
 
 ## Not done yet (phase 2)
 
-- Stopping a WSL chat's background command from AIB (no Stop on its row; the agent can stop it).
 - Background commands of Codex sessions in WSL (Codex keeps no saved-session list AIB reads, as on Windows) and ownership hints of
   OMP sessions in a distro (AIB reads only the distro's Claude Code folder).

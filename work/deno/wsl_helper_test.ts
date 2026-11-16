@@ -493,6 +493,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'ownership.check',
     'ownership.hints',
     'proc.tree',
+    'proc.stop',
     'env.prereqs',
     'agents.signinStatus',
     'localOnly.ensure',
