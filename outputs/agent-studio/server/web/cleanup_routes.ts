@@ -19,7 +19,10 @@ import * as cleanup from '../worktrees/cleanup.ts';
 import { wslCleanupApply, wslCleanupScan } from '../wsl/worktrees.ts';
 
 type Json = Record<string, unknown>;
-type Lister = { liveList(): Promise<Record<string, unknown>> | Record<string, unknown> };
+type Lister = {
+  liveList(): Promise<Record<string, unknown>> | Record<string, unknown>;
+  liveCall?(op: string, body: Record<string, unknown>): Promise<[number, unknown]> | [number, unknown];
+};
 
 /** Folders and provider:sessionId of the chats that run now. */
 export async function liveOf(host: Lister | undefined | null): Promise<string[]> {
@@ -127,6 +130,13 @@ export async function runOneTimeCleanup(ctx: CleanupContext): Promise<void> {
     });
   } catch (error) {
     cleanup.logLine(ctx.stateDir, `one-time cleanup failed: ${error instanceof Error ? error.message : error}`);
+  }
+  // P4b + P5-refile, after the take-over too: merged copies of closed chats go, and old copy chats move to their project folder
+  // (the agent host does it: it knows which chats run anywhere). Every start; the orphan part runs once.
+  try {
+    if (ctx.host.liveCall) await ctx.host.liveCall('worktree-retire', {});
+  } catch (error) {
+    cleanup.logLine(ctx.stateDir, `re-file pass failed: ${error instanceof Error ? error.message : error}`);
   }
 }
 

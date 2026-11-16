@@ -27,7 +27,15 @@
      (this browser) so the chat does not vanish when the agent has no saved transcript Studio can list. */
   const DISCARDED_KEY = 'studio-discarded-chats-v1';
   const discardedChats = new Map(Object.entries(stored(DISCARDED_KEY, {}) || {}));
-  const isDiscarded = (c) => !!c && (c.discarded || discardedChats.has(aliasKeyOf(c)));
+  /* Build plan 1b 4.4: the server's truth wins. A chat whose copy was removed and that carries on in the project folder
+     (movedToFolder, from the saved-chat list or the Discard answer) is continuable in every window, whatever this browser kept. */
+  const isDiscarded = (c) => !!c && !c.movedToFolder && (c.discarded || discardedChats.has(aliasKeyOf(c)));
+  function forgetDiscarded(key) {
+    if (!discardedChats.delete(key)) return;
+    try {
+      localStorage.setItem(DISCARDED_KEY, JSON.stringify(Object.fromEntries(discardedChats)));
+    } catch {}
+  }
   function aliasKeyOf(c) {
     return c.provider + ':' + (c.sessionId || c.id || c.key);
   }
@@ -1080,9 +1088,10 @@
         });
       }
     /* A discarded chat keeps its place: its saved transcript row if the agent wrote one, else the row remembered at Discard. */
-    for (const [key, d] of discardedChats) {
+    for (const [key, d] of [...discardedChats]) {
       const have = conversations.find((c) => aliasKey(c) === key);
-      if (have) {
+      if (have && have.movedToFolder) forgetDiscarded(key); // it carries on in the project folder now
+      else if (have) {
         have.discarded = true;
         have.worktree = null;
       } else if (d && d.row && d.row.provider) {
@@ -5226,8 +5235,12 @@
   // A chat's worktree was discarded from the Changes tab: its connection is closed now, so show the list and the chat as they are.
   window.addEventListener('agent-studio:worktree-discarded', (e) => {
     const id = e?.detail?.id || '';
+    const moved = e?.detail?.movedToFolder || '';
     if (selected && (id === current || id === aliasKey(selected) || !id)) {
-      selected = rememberDiscarded(selected);
+      // carries on in the project folder (its copy is gone): continuable, its folder is the project's
+      selected = moved
+        ? { ...selected, cwd: moved, projectRoot: moved, worktree: null, movedToFolder: moved, live: selected.live ? { ...selected.live, closed: true, worktree: null } : selected.live }
+        : rememberDiscarded(selected);
       renderHeader();
     }
     sidebarSignature = '';

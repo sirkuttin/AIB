@@ -22,6 +22,7 @@ import { Artifacts } from './artifact_wiring.ts';
 import type { Launcher } from '../desktop/editors.ts';
 import { FolderMemory } from '../desktop/folders.ts';
 import { Refused } from '../worktrees/merge.ts';
+import { readMoved } from '../worktrees/refile.ts';
 import { EditorError } from '../desktop/editors.ts';
 import type { UpdateService } from '../desktop/updater.ts';
 import { cleanNotifyRequest, type DesktopNotifications } from '../desktop/notify.ts';
@@ -581,6 +582,13 @@ export class WebServer {
             const listed = reply.body as { sessions?: unknown };
             if (Array.isArray(listed.sessions)) {
               listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+              // build plan 4.4: a chat whose copy is gone carries on in the project folder (the server's truth, for every window)
+              const moved = readMoved(pathStr(this.ctx.stateDir));
+              for (const item of listed.sessions as Record<string, unknown>[]) {
+                const id = item && typeof item === 'object' ? String(item.sessionId ?? item.id ?? '') : '';
+                const hit = id ? moved[`${item.provider}:${id}`] : undefined;
+                if (hit) item.movedToFolder = hit.project;
+              }
             }
           }
           if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
