@@ -487,6 +487,10 @@ Deno.test({
         `the link works before Remove: ${before.text}`,
       );
 
+      // its own layout (phase 1b's per-device view prefs) goes with it
+      const layout = `${s.state}${sep}studio-view.device-${laptop.id}.json`;
+      await Deno.writeTextFile(layout, "{}");
+
       const t0 = performance.now();
       assertEquals(
         (await pc(s, "POST", "/api/live/devices/remove", { id: laptop.id }))[0],
@@ -509,6 +513,13 @@ Deno.test({
       const again = await openSocket(s, path, laptop.token);
       assertEquals(again.state.status, 401);
       await again.close();
+      let layoutKept = true;
+      try {
+        await Deno.stat(layout);
+      } catch {
+        layoutKept = false;
+      }
+      assert(!layoutKept, "the device's layout file is removed");
       // the push subscription and the artifact link went with it
       assert(
         !s.ctx.phone.devices.pushTargets().some((t) => t.id === laptop.id),

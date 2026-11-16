@@ -282,7 +282,10 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/authenticate': never('Signing an agent in is done on the PC only'),
   'POST /api/live/agent-options': rule(null, agentOptionsVerdict),
   // ---- artifacts ----
-  'GET /api/live/artifacts': AGENT_KEY, // scope artifacts.tool
+  // a chat's artifact list (the Artifacts tab): scope artifacts.tool on the page port, where an agent's key also reaches it; the bridge
+  // refuses every agent key, so for a computer it is only ever the page's list with its REMOTE_PC principal (phase 1b; the phone
+  // gets the same list from /api/remote/artifacts)
+  'GET /api/live/artifacts': scope(R),
   'GET /api/live/artifacts/diff': scope(R),
   'GET /api/live/artifacts/item': scope(R),
   'GET /api/live/artifacts/source': scope(R),

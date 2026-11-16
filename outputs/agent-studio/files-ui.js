@@ -1238,7 +1238,8 @@
       };
       items.push(b);
     }
-    if (row && scope && (row.kind === 'file' || row.kind === 'dir')) {
+    // Git exclude writes into the repo: not from another computer (Files there is see and download)
+    if (!REMOTE() && row && scope && (row.kind === 'file' || row.kind === 'dir')) {
       const it = F().excludeItem(row, scope);
       const b = btn(null, 'ws-menu-item fx-menu-it fx-menu-excl');
       b.setAttribute('role', 'menuitem');
@@ -1253,6 +1254,10 @@
           gitExclude(scope, row.path);
         };
       items.push(b);
+    }
+    if (!items.length) {
+      m.remove();
+      return;
     }
     m.append(...items);
     doc().body.append(m);
@@ -1990,7 +1995,7 @@
       };
       m.append(b);
     };
-    if (ED() && ED().showInExplorer) add('Show in Explorer', () => ED().showInExplorer(dirAbs(abs)));
+    if (!REMOTE() && ED() && ED().showInExplorer) add('Show in Explorer', () => ED().showInExplorer(dirAbs(abs)));
     add('Copy path', () => copyText(abs));
     doc().body.append(m);
     menu = m;
@@ -2006,7 +2011,29 @@
       /* no clipboard */
     }
   }
-  function editorBtn(abs, line, cls) {
+  // Another computer (remote-auth.js): no editor on the PC opens for it; the file downloads to this computer instead.
+  const REMOTE = () => (root.AIBRemote && root.AIBRemote.kind === 'pc' ? root.AIBRemote : null);
+  /* `tab`: the file's tab; a file in a chat's folder or a project (not one outside it) downloads through the PC's download route. */
+  function downloadBtn(d, cls, tab) {
+    const R = REMOTE();
+    const b = btn('Download', 'fx-btn ' + (cls || ''));
+    const fromPc = !!(R.downloadFile && tab && tab.scope && !tab.scope.abs && tab.path);
+    const ok = !!(d && d.name && (d.text != null || fromPc));
+    b.disabled = !ok;
+    b.title = ok ? 'Download ' + d.name + ' to this computer' : 'This file can be downloaded on ' + R.pcName() + ' only.';
+    b.onclick = () => {
+      Promise.resolve(
+        R.downloadText && d.text != null
+          ? R.downloadText(d.name, d.text)
+          : R.downloadFile(Object.assign({}, F().scopeArgs(tab.scope), { path: tab.path, name: d.name })),
+      ).then((problem) => {
+        if (problem) b.title = problem;
+      }, () => {});
+    };
+    return b;
+  }
+  function editorBtn(abs, line, cls, d, tab) {
+    if (REMOTE()) return downloadBtn(d, cls, tab);
     const E = ED(),
       e = E && E.fileEditor ? E.fileEditor() : null;
     const b = btn('Open in ' + (e ? e.name : 'editor') + ' ↗', 'fx-btn ' + (cls || ''));
@@ -2096,8 +2123,8 @@
       tools.append(a);
     }
     tools.append(el('span', null, 'fx-spacer'));
-    tools.append(editorBtn(d && d.abs, tab.line));
-    const more = btn('⋯', 'fx-icobtn', 'More: Show in Explorer, Copy path');
+    tools.append(editorBtn(d && d.abs, tab.line, '', d, tab));
+    const more = btn('⋯', 'fx-icobtn', REMOTE() ? 'More: Copy path' : 'More: Show in Explorer, Copy path');
     more.setAttribute('aria-haspopup', 'menu');
     more.disabled = !(d && d.abs);
     more.onclick = () => moreMenu(more, d.abs);
@@ -2128,7 +2155,7 @@
       const note = el('div', null, 'fx-note');
       note.append(
         el('p', d.tooBig ? 'This file is ' + kb(d.size) + ': too big to show here (over 1 MB).' : 'This is a binary file: it cannot be shown as text.'),
-        editorBtn(d.abs, 0),
+        editorBtn(d.abs, 0, '', d, tab),
       );
       body.append(note);
     } else body.append(codeView(d.text, tab, r));
@@ -2603,7 +2630,7 @@
     const sc = scopeOfLink(a);
     if (!(sc && sc.root === 'outside')) add('Show in Files', () => showInFiles(sc, a.dataset.filePath));
     add('Copy path', () => copyText(a.dataset.abs || a.dataset.filePath));
-    if (ED() && ED().showInExplorer && a.dataset.abs) add('Show in Explorer', () => ED().showInExplorer(dirAbs(a.dataset.abs)));
+    if (!REMOTE() && ED() && ED().showInExplorer && a.dataset.abs) add('Show in Explorer', () => ED().showInExplorer(dirAbs(a.dataset.abs)));
     doc().body.append(m);
     menu = m;
     m.style.left = Math.max(8, Math.round(x)) + 'px';

@@ -42,9 +42,10 @@ export class ViewPrefs extends JsonFileStore {
 
   prefs: Record<string, string> = {};
 
-  constructor(stateDir: string | null = null) {
+  /** `file`: another file than the PC's own (a paired computer's layout: remote/pc_page.ts DeviceViewPrefs). */
+  constructor(stateDir: string | null = null, file: string = ViewPrefs.FILE) {
     super();
-    this.path = stateDir ? inDir(stateDir, ViewPrefs.FILE) : null;
+    this.path = stateDir ? inDir(stateDir, file) : null;
     this.reload();
   }
 

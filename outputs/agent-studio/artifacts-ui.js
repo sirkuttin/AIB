@@ -2208,12 +2208,12 @@
       const acts = el('div', 'ar-del-acts');
       acts.append(
         btn('ar-btn-plain', 'Restore', 'restore', () => doUndelete(it.id)),
-        btn('ar-btn-plain ar-btn-dng', 'Delete now', 'purge', () => {
+        ...(win.AIBRemote && win.AIBRemote.kind === 'pc' ? [] : [btn('ar-btn-plain ar-btn-dng', 'Delete now', 'purge', () => {
           S.confirmPurge = it.id;
           repaintPicker();
           const k = ui.pop.querySelector('[data-key="keep:' + it.id + '"]');
           if (k) k.focus({ preventScroll: true });
-        }),
+        })]), // "Delete now" (for good) is the PC's: another computer only restores
       );
       box.append(acts);
     }

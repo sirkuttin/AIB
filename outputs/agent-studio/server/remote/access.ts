@@ -22,6 +22,7 @@ import { artifactServeCommand, readTailscale, type Runner, serveCommand, type Ta
 import { defaultEnv, funnelText, type SetupEnv, type SetupHost, TailscaleSetup } from './setup.ts';
 import { hex } from './words.ts';
 import { DeviceSockets, type SocketKind } from './pc_sockets.ts';
+import { DeviceViewPrefs } from './pc_page.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
 /** A phone's switches as Settings > Remote control names them (for the activity log). */
@@ -326,6 +327,11 @@ export class PhoneAccess implements SetupHost {
     return SOCKET_NEEDS[kind].every((s) => (d.scopes as string[]).includes(s));
   }
 
+  /** A removed computer's own layout file goes too (phase 1b's per-device view prefs), also while the phone port is down. */
+  #forgetLayout(id: string): void {
+    (this.server?.pcPrefs ?? new DeviceViewPrefs(this.stateDir, () => this.ctx.viewPrefs)).forget(id);
+  }
+
   async #down(): Promise<void> {
     this.sockets.closeAll(); // the port is going away: a computer's open terminal or doc goes with it
     const server = this.server;
@@ -435,7 +441,7 @@ export class PhoneAccess implements SetupHost {
   /**
    * Remove one device: everything is cut in this one step (design v2 section 6). The token (its next call gets 401 not_paired), its
    * push subscription (it is part of the record), its artifact links (each is checked against the store), its open terminal and doc
-   * sockets (closed here, at once), its rate-limit bucket. Previews (phase 7) will add their forward here.
+   * sockets (closed here, at once), its rate-limit bucket, its own layout file. Previews (phase 7) will add their forward here.
    */
   async remove(id: unknown): Promise<boolean> {
     if (typeof id !== 'string') return false;
@@ -444,6 +450,7 @@ export class PhoneAccess implements SetupHost {
     if (removed) {
       const closed = this.sockets.closeDevice(id);
       this.server?.bridge.limit.forget(id);
+      this.#forgetLayout(id);
       this.audit.write({
         device: id,
         name: device?.name ?? '',
@@ -481,6 +488,7 @@ export class PhoneAccess implements SetupHost {
     for (const id of ids) {
       this.ctx.presence.leavePhone(id, 'removed');
       this.server?.bridge.limit.forget(id);
+      this.#forgetLayout(id);
     }
     this.pairing.cancel();
     await this.vapid.rotate();

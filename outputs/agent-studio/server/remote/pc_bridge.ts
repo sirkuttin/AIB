@@ -57,10 +57,20 @@ export const REFUSED_HEADERS: readonly string[] = [
   'X-Agent-Host-Token', // the agent host's own token (host/host_client.ts)
 ];
 
-/** Rate limit per device (design v2 section 7): bursts of 20, 10 per second sustained. */
+/**
+ * Rate limit per device (design v2 section 7). Phase 1b tuned it to the computer page: its first load and opening a chat send a
+ * burst of page requests at once (13 in the busiest second with one chat and no tabs; several tabs and split panes multiply that),
+ * then it polls 2-4 a second. Bursts of 60, 20 per second sustained: a page never waits, a runaway tab still cannot starve AIB.
+ */
+export const RATE_BURST = 60;
+export const RATE_PER_SECOND = 20;
 export class RateLimit {
   #buckets = new Map<string, { tokens: number; at: number }>();
-  constructor(readonly burst = 20, readonly perSecond = 10, readonly clock: () => number = () => performance.now()) {}
+  constructor(
+    readonly burst = RATE_BURST,
+    readonly perSecond = RATE_PER_SECOND,
+    readonly clock: () => number = () => performance.now(),
+  ) {}
 
   take(device: string): boolean {
     const now = this.clock();
@@ -99,6 +109,8 @@ export interface BridgeHost {
   audit?: Audit;
   /** The answer with the phone port's headers. */
   json(status: number, body: unknown, extra?: Record<string, string>): Response;
+  /** Phase 1b: an answer's loopback artifact links as this device's links on the phone's artifact port (remote/pc_page.ts). */
+  artifactLinks?(text: string, deviceId: string): string;
 }
 
 export class PcBridge {
@@ -220,7 +232,19 @@ export class PcBridge {
     const answer = await ctx.dispatchAs(principal, method as 'GET' | 'POST', url, request, body);
     if (path === '/api/live/terminal/list' && answer.status === 200) return await this.#terminalList(answer);
     if (answer.status === 200) this.#logDone(device, path, url, body);
-    return answer;
+    return await this.#remoteLinks(answer, device);
+  }
+
+  /** Phase 1b: a JSON answer naming the loopback artifact origin gets this device's links on the artifact port instead (the
+   * computer cannot reach, and is never told, the PC's loopback addresses). */
+  async #remoteLinks(answer: Response, device: Device): Promise<Response> {
+    const links = this.host.artifactLinks;
+    if (!links || !(answer.headers.get('Content-Type') ?? '').includes('application/json')) return answer;
+    const text = await answer.text();
+    // the phone port's own headers (its CSP names the artifact port, never the loopback artifact origin)
+    const headers = new Headers(this.host.json(answer.status, null).headers);
+    headers.set('Content-Type', answer.headers.get('Content-Type')!);
+    return new Response(links(text, device.id), { status: answer.status, headers });
   }
 
   /** A Device activity line (never message text, terminal input or file contents). */
