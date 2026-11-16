@@ -10,7 +10,7 @@
 import * as wt from '../worktrees/worktrees.ts';
 import { refOf } from '../platform/location.ts';
 import { hostWhenReady, wslLoc } from './access.ts';
-import { type WorktreePlanJson, type WslHost, WslHelperError } from './contract.ts';
+import { type WorktreePlanJson, type WslCleanupScan, type WslHost, WslHelperError } from './contract.ts';
 import { worktreeRemovedByRemove } from './removed.ts';
 
 /** A WSL chat's plan: path and project are refs (what Studio uses); `linuxPath` is the worktree folder the agent gets. */
@@ -152,4 +152,61 @@ export async function wslRemove(record: WslRecord, confirmed: boolean): Promise<
 
 export async function wslHasChanges(record: WslRecord): Promise<boolean> {
   return (await (await host(record.distro)).call('worktree.hasChanges', { key: record.key }, { timeoutMs: 120_000 })).changes;
+}
+
+// ---- decision 6 cleanup (worktrees/cleanup.ts, run in the distro: worktree.cleanupScan / worktree.cleanupApply) ----------------
+/** A distro's Scan with refs for the project and the copies' paths (ids stay the helper's: they go back to it unchanged). */
+function scanRefs(distro: string, scan: WslCleanupScan): WslCleanupScan {
+  const ref = (p: unknown) => (typeof p === 'string' && p.startsWith('/') ? refOf({ kind: 'wsl', distro, linuxPath: p }) : p);
+  return { ...scan, project: String(ref(scan.project)), items: scan.items.map((i) => ({ ...i, path: ref(i.path) })) };
+}
+
+/** Linux paths and provider:sessionId of the running chats in this distro (their copies are never touched). */
+function liveIn(distro: string, live: Iterable<string>): string[] {
+  const out: string[] = [];
+  for (const x of live) {
+    const loc = wslLoc(x);
+    if (loc) {
+      if (loc.distro === distro) out.push(loc.linuxPath);
+    } else if (!/^[a-zA-Z]:[\/]/.test(x) && x.includes(':')) out.push(x);
+  }
+  return out;
+}
+
+/** What this AIB made in a WSL project (null: the distro is not ready or its helper predates protocol 2). */
+export async function wslCleanupScan(projectRef: string, live: Iterable<string> = []): Promise<WslCleanupScan | null> {
+  const wsl = wslLoc(projectRef);
+  if (!wsl) return null;
+  try {
+    const answer = await (await host(wsl.distro)).call('worktree.cleanupScan', { project: wsl.linuxPath, live: liveIn(wsl.distro, live) }, {
+      timeoutMs: 120_000,
+    });
+    return scanRefs(wsl.distro, answer.scan);
+  } catch (error) {
+    wt.say(`Cleanup: ${projectRef} was not scanned: ${text(error)}`);
+    return null;
+  }
+}
+
+/** Remove this AIB's leftovers in a WSL project without unmerged work, plus `ticked` (none with `silentOnly`). null: not reachable. */
+export async function wslCleanupApply(
+  projectRef: string,
+  ticked: string[],
+  silentOnly: boolean,
+  live: Iterable<string> = [],
+  only?: string[],
+): Promise<{ scan: WslCleanupScan; removed: string[]; left: Record<string, string> } | null> {
+  const wsl = wslLoc(projectRef);
+  if (!wsl) return null;
+  try {
+    const answer = await (await host(wsl.distro)).call(
+      'worktree.cleanupApply',
+      { project: wsl.linuxPath, ticked: silentOnly ? [] : ticked, live: liveIn(wsl.distro, live), ...(only ? { only } : {}) },
+      { timeoutMs: 600_000 },
+    );
+    return { ...answer, scan: scanRefs(wsl.distro, answer.scan) };
+  } catch (error) {
+    wt.say(`Cleanup: ${projectRef} was not cleaned up: ${text(error)}`);
+    return null;
+  }
 }

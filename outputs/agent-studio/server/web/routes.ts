@@ -122,6 +122,9 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/update/notes', 'write', 'body'],
   ['POST', '/api/live/project-remove', 'write', 'body'],
   ['POST', '/api/live/project-add', 'write', 'body'],
+  ['GET', '/api/live/cleanup/card', 'read', 'get'], // decision 6: the one-time cleanup's card (cleanup_routes.ts)
+  ['POST', '/api/live/cleanup/card', 'write', 'body'],
+  ['POST', '/api/live/cleanup/all', 'write', 'body'], // "Remove AIB's data from my repos" (Settings; an uninstaller's call)
   ['GET', '/api/live/folders/gone', 'read', 'get'], // folders that no longer exist (folder_presence.ts)
   ['GET', '/api/live/files/list', 'read', 'get'],
   ['GET', '/api/live/files/search', 'read', 'get'],

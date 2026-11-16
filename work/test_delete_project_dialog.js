@@ -46,7 +46,7 @@ test('by default only the project leaves AIB: unticked, the folder stays, Cancel
   assert.equal(t.q('dp-warn').hidden, true);
   t.q('dp-ok').click();
   await flush();
-  assert.deepEqual(JSON.parse(JSON.stringify(t.calls)), [{ disk: false, expect: '' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(t.calls)), [{ disk: false, expect: '', cleanup: { remove: [] } }]);
   assert.equal(t.box.parentNode, null, 'closed after the work is done');
 });
 
@@ -73,7 +73,7 @@ test('ticking "Delete from disk as well" shows the warning and switches the butt
   disk.dispatch('change');
   t.q('dp-ok').click();
   await flush();
-  assert.deepEqual(JSON.parse(JSON.stringify(t.calls)), [{ disk: true, expect: 'recycle' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(t.calls)), [{ disk: true, expect: 'recycle', cleanup: { remove: [] } }]);
 });
 
 test('no trash: the warning says "permanently" before you confirm', async () => {
@@ -219,4 +219,87 @@ test('a removed project stays gone after a chat list reload, and comes back when
   await W.syncPrefs('0');
   W.sync(list, null);
   assert.deepEqual([...W.paletteProjects().map((p) => p.name)].sort(), ['alpha', 'beta']);
+});
+
+// ---- decision 6 (build plan 1b e2e 26): unmerged chat copies and another install's items, only when they exist ----------------
+test('26: no unmerged work and nothing of another install: the dialog is unchanged (no list)', async () => {
+  const t = dialog({
+    check: () => Promise.resolve({ exists: true, refusal: '', trash: 'recycle', worktreeOf: '', cleanup: { items: [], silent: 3 } }),
+  });
+  await flush();
+  assert.equal(t.q('dp-cleanup').hidden, true);
+  assert.equal(t.box.querySelectorAll('.dp-cleanup-item').length, 0);
+  t.q('dp-ok').click();
+  await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(t.calls)), [{ disk: false, expect: '', cleanup: { remove: [] } }]);
+});
+
+test('26: unmerged copies are listed ticked, another install\'s items unticked; the ticked ids go with the confirm', async () => {
+  const items = [
+    { id: 'copy:a', kind: 'copy', own: true, unmerged: true, files: 4, title: 'Fix login', helper: false, clash: false },
+    { id: 'copy:b', kind: 'copy', own: true, unmerged: true, files: 12, title: 'Refactor api', helper: false, clash: false },
+    { id: 'branch:studio/helper-x', kind: 'branch', own: true, unmerged: true, files: 0, title: 'Add tests', helper: true, clash: false },
+    { id: 'branch:studio/chat-zz', kind: 'branch', own: false, unmerged: false, files: 0, title: 'studio/chat-zz', helper: false, clash: false },
+  ];
+  const t = dialog({
+    check: () => Promise.resolve({ exists: true, refusal: '', trash: 'recycle', worktreeOf: '', cleanup: { items, silent: 1 } }),
+  });
+  await flush();
+  assert.equal(t.q('dp-cleanup').hidden, false);
+  assert.equal(
+    t.q('dp-cleanup-text').textContent,
+    '3 chat copies have work that was never merged: "Fix login" (4 files), "Refactor api" (12 files), helper "Add tests". ' +
+      "Removing the project deletes this work; restoring a chat from Recently deleted won't bring it back. " +
+      'Another AIB install on this repository made 1 item here. They stay unless you tick them.',
+  );
+  const rows = Array.from(t.box.querySelectorAll('.dp-cleanup-item'));
+  assert.deepEqual(
+    rows.map((r) => r.querySelector('span').textContent),
+    ['"Fix login" (4 files)', '"Refactor api" (12 files)', 'helper "Add tests"', '"studio/chat-zz" (made by another AIB install)'],
+  );
+  assert.deepEqual(
+    rows.map((r) => r.querySelector('input').checked),
+    [true, true, true, false],
+  );
+  rows[1].querySelector('input').checked = false; // keep "Refactor api"
+  rows[3].querySelector('input').checked = true; // and remove the other install's branch
+  t.q('dp-ok').click();
+  await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(t.calls))[0].cleanup, { remove: ['copy:a', 'branch:studio/helper-x', 'branch:studio/chat-zz'] });
+});
+
+test('26: a kept clash stash is listed unticked, in plain words', async () => {
+  const items = [{ id: 'stash:1', kind: 'stash', own: true, unmerged: true, files: 0, title: 'studio-merge-chat-ab-1', helper: false, clash: true }];
+  const t = dialog({ check: () => Promise.resolve({ exists: true, refusal: '', trash: 'recycle', worktreeOf: '', cleanup: { items } }) });
+  await flush();
+  assert.equal(
+    t.q('dp-cleanup-text').textContent,
+    '1 git stash entry holds your edits that AIB set aside when a merge clashed. They stay unless you tick them.',
+  );
+  const row = t.box.querySelector('.dp-cleanup-item');
+  assert.equal(row.querySelector('span').textContent, 'Your edits kept in the stash studio-merge-chat-ab-1');
+  assert.equal(row.querySelector('input').checked, false);
+});
+
+test('18: the one-time cleanup card: the server text, Keep is the default, an answer disables both buttons', async () => {
+  const shell = D.page({});
+  const ctx = D.load(shell, ['delete-project-ui.js']);
+  const asked = [];
+  const card = ctx.AgentDeleteProjectUI.cleanupCard(
+    { text: 'AIB found 2 old chat copies with work that was never merged: "Fix login" (4 files), helper "Add tests".', items: [{}, {}] },
+    (action) => {
+      asked.push(action);
+      return Promise.resolve();
+    },
+  );
+  assert.equal(card.querySelector('.ws-cleanup-text').textContent, 'AIB found 2 old chat copies with work that was never merged: "Fix login" (4 files), helper "Add tests".');
+  const keep = card.querySelector('.ws-cleanup-keep'), remove = card.querySelector('.ws-cleanup-remove');
+  assert.equal(keep.textContent, 'Keep them');
+  assert.equal(remove.textContent, 'Remove them');
+  assert.ok(keep.className.includes('def'), 'Keep is the default');
+  remove.click();
+  await flush();
+  assert.deepEqual(asked, ['remove']);
+  assert.equal(remove.disabled && keep.disabled, true);
+  assert.equal(remove.textContent, 'Removing…');
 });

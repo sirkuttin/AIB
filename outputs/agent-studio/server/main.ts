@@ -14,6 +14,7 @@
  * old app) already running for the state folder is recognised and taken over once no chat works there (host_client.ts findHost);
  * this program never starts one.
  */
+import { runOneTimeCleanup } from './web/cleanup_routes.ts';
 import { APP_ROOT, APP_VERSION, isCompiled, isDesktopApp, launchDir, selfCommand } from './core/app.ts';
 import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
@@ -372,7 +373,14 @@ export async function main(argv: string[]): Promise<void> {
       startup.mark(`take-over done (${n} chat(s) from the keeper)`);
       if (!closing) s.startAutoReconnect();
     });
-    void s.adoptKeeper().then(() => startup.mark('WSL ready (take-over of the WSL keepers done)'));
+    void s.adoptKeeper().then(() => {
+      startup.mark('WSL ready (take-over of the WSL keepers done)');
+      // Decision 6: the one-time cleanup of AIB's old git leftovers, at the first start after the update, once every chat the keeper
+      // held is taken over (their copies are in the live list then, so they are never touched). Silent unless unmerged work is found.
+      if (!closing) void runOneTimeCleanup(ctx);
+    });
+  } else {
+    void runOneTimeCleanup(ctx); // the split agent host took its chats over before it answered
   }
   try { // artifact tool: agents re-read this when Studio restarts on another port (json.dumps spacing, like studio.py)
     await Deno.writeTextFile(`${stateDir}${sep}artifact-web.json`, `{"url": ${JSON.stringify(url)}, "pid": ${Deno.pid}}`);

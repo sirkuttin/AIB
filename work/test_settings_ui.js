@@ -455,3 +455,10 @@ test('restart note: the app says quit and start again; a source run names the de
   assert.match(source, /deno run -A outputs\/agent-studio\/server\/main\.ts deploy/);
   for (const text of [app, source]) assert.doesNotMatch(text, /\.py\b|python/i);
 });
+
+test('decision 6: "Remove AIB\'s data from my repos" is found by uninstall and cleanup searches (what an uninstaller runs)', () => {
+  const ids = (q) => S.filterIndex(S.INDEX, q).map((e) => e.id);
+  assert.ok(ids('uninstall').includes('repo-cleanup'));
+  assert.ok(ids('worktrees').includes('repo-cleanup'));
+  assert.equal(S.INDEX.find((e) => e.id === 'repo-cleanup').section, 'server');
+});
