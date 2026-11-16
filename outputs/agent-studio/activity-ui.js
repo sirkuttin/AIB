@@ -266,7 +266,7 @@
     h.append(n);
     return h;
   }
-  const isSplit = (doc) => !!(doc || document).body && (doc || document).body.classList.contains('split-on');
+  const isSplit = (doc) => !!(doc || document).body && (doc || document).body.classList.contains('split-panel');
   const api = {
     splitCounts,
     splitHead,
