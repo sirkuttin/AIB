@@ -10,17 +10,35 @@
  *
  * <entry.js> is the adapter's script (run with this node). The environment is passed through unchanged: the caller sets the
  * temp CLAUDE_CONFIG_DIR / CODEX_HOME / HOME and the stub URL. Permission requests are refused. Exit 1 with {"error"} on failure.
+ *
+ * Options (before <entry.js>):
+ *   --meta FILE     a JSON file sent as `_meta` on session/new and session/load (e.g. {"claudeCode": {"options": {"settings": ...}}})
+ *   --allow         answer permission requests with the first allow option instead of refusing
+ *   --events FILE   append every session/update and agent-to-client request as one JSON line, for tool_call / _meta checks
+ *   --args JSON     a JSON array of extra arguments for the adapter process (e.g. ["-c", "features.multi_agent=false"])
  */
 'use strict';
 const { spawn } = require('node:child_process');
 
-const [entry, op, ...rest] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const flags = { meta: null, allow: false, events: null, args: [] };
+while (argv[0] && argv[0].startsWith('--')) {
+  const name = argv.shift();
+  if (name === '--allow') flags.allow = true;
+  else if (name === '--meta') flags.meta = JSON.parse(require('node:fs').readFileSync(argv.shift(), 'utf8'));
+  else if (name === '--events') flags.events = argv.shift();
+  else if (name === '--args') flags.args = JSON.parse(argv.shift());
+}
+const [entry, op, ...rest] = argv;
+const record = (line) => {
+  if (flags.events) require('node:fs').appendFileSync(flags.events, JSON.stringify({ at: Date.now(), ...line }) + '\n');
+};
 if (!entry || !op) {
   process.stdout.write(JSON.stringify({ error: 'usage: acp_probe.js <entry.js> new|list|load ...' }) + '\n');
   process.exit(2);
 }
 
-const child = spawn(process.execPath, [entry], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+const child = spawn(process.execPath, [entry, ...flags.args], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 let stderr = '';
 child.stderr.on('data', (c) => {
   stderr = (stderr + c.toString()).slice(-4000);
@@ -55,14 +73,19 @@ function onMessage(msg) {
   }
   if (msg.method === 'session/update') {
     const u = msg.params && msg.params.update;
+    record({ update: msg.params });
     if (u && (u.sessionUpdate === 'agent_message_chunk' || u.sessionUpdate === 'user_message_chunk') && u.content && u.content.type === 'text') {
       text += u.content.text;
     }
     return;
   }
   if (msg.id !== undefined && msg.method) {
-    // An agent-to-client request: refuse permissions, answer anything else with an error.
-    if (msg.method === 'session/request_permission') send({ id: msg.id, result: { outcome: { outcome: 'cancelled' } } });
+    // An agent-to-client request: refuse permissions (or allow with --allow), answer anything else with an error.
+    record({ request: msg.method, params: msg.params });
+    const allowOpt = flags.allow && msg.params && (msg.params.options || []).find((o) => /^allow/.test(o.kind || ''));
+    if (msg.method === 'session/request_permission' && allowOpt) {
+      send({ id: msg.id, result: { outcome: { outcome: 'selected', optionId: allowOpt.optionId } } });
+    } else if (msg.method === 'session/request_permission') send({ id: msg.id, result: { outcome: { outcome: 'cancelled' } } });
     else send({ id: msg.id, error: { code: -32601, message: `probe does not support ${msg.method}` } });
   }
 }
@@ -90,7 +113,8 @@ function finish(result, code = 0) {
 
 async function prompt(sessionId, words) {
   text = '';
-  await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: words }] }, 120);
+  const r = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: words }] }, 240);
+  record({ promptResult: r });
   return text;
 }
 
@@ -103,7 +127,7 @@ async function main() {
   const caps = (init && init.agentCapabilities) || {};
   if (op === 'new') {
     const [cwd, words] = rest;
-    const s = await request('session/new', { cwd, mcpServers: [] });
+    const s = await request('session/new', { cwd, mcpServers: [], ...(flags.meta ? { _meta: flags.meta } : {}) });
     const reply = await prompt(s.sessionId, words);
     finish({ sessionId: s.sessionId, reply });
   } else if (op === 'list') {
@@ -115,7 +139,7 @@ async function main() {
   } else if (op === 'load') {
     const [cwd, sessionId, words] = rest;
     text = '';
-    await request('session/load', { sessionId, cwd, mcpServers: [] }, 120);
+    await request('session/load', { sessionId, cwd, mcpServers: [], ...(flags.meta ? { _meta: flags.meta } : {}) }, 120);
     const history = text;
     const reply = words ? await prompt(sessionId, words) : null;
     finish({ loaded: true, history, reply });
