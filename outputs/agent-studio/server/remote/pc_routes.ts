@@ -165,7 +165,7 @@ function connectVerdict(ask: Ask): Verdict {
   if (isStr(cwd) && cwd) {
     guardPath(cwd, ask.ctx.stateDir);
     if (!insideProjects(cwd, projectFolders(ask.ctx))) {
-      guardNewProject(cwd, ask.ctx.stateDir);
+      guardNewFolder(cwd, ask.ctx);
       need.push(P);
     }
   }
@@ -216,8 +216,19 @@ function projectRemoveVerdict(ask: Ask): Verdict {
 function projectAddVerdict(ask: Ask): Verdict {
   const body = obj(ask.body);
   const paths = Array.isArray(body.paths) ? body.paths : [body.path];
-  for (const p of paths) if (isStr(p)) guardNewProject(p, ask.ctx.stateDir);
+  for (const p of paths) if (isStr(p)) guardNewFolder(p, ask.ctx);
   return { need: [P] };
+}
+
+/** A new project folder from a computer: the folder sent, and the folder AIB would really add (AddedProjects.add maps a folder inside
+ * a git worktree to that repo's main checkout), both pass the new-project guard. */
+function guardNewFolder(path: string, ctx: WebContext): void {
+  guardNewProject(path, ctx.stateDir);
+  let real = path;
+  try {
+    real = ctx.addedProjects.projectFolder(path);
+  } catch { /* not a folder AIB can map: the guard above decides */ }
+  if (real && real !== path) guardNewProject(real, ctx.stateDir);
 }
 
 /** POST /api/live/agent-options: the lists a new chat offers; with probe it starts the agent in `cwd`: a project folder, or a new one
@@ -227,7 +238,7 @@ function agentOptionsVerdict(ask: Ask): Verdict {
   if (!isStr(cwd) || !cwd) return { need: [ST] };
   guardPath(cwd, ask.ctx.stateDir);
   if (insideProjects(cwd, projectFolders(ask.ctx))) return { need: [ST] };
-  guardNewProject(cwd, ask.ctx.stateDir);
+  guardNewFolder(cwd, ask.ctx);
   return { need: [ST, P] };
 }
 
@@ -520,7 +531,7 @@ export async function decide(entry: RemoteEntry, ask: Ask): Promise<Verdict> {
           if (value === null || value === undefined || value === '') continue;
           if (spot.rule === 'blocked') guardPath(value, ask.ctx.stateDir);
           else if (spot.rule === 'project') guardProjectPath(value, ask.ctx.stateDir, projectFolders(ask.ctx));
-          else guardNewProject(value, ask.ctx.stateDir);
+          else guardNewFolder(String(value), ask.ctx);
         }
       }
       return { need: entry.need };
