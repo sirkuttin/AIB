@@ -36,6 +36,7 @@ import * as worktrees from './worktrees/worktrees.ts';
 import { mergesRunning } from './worktrees/merge.ts';
 import { wslMergesRunning } from './wsl/merge.ts';
 import { startLocalBackups } from './worktrees/local_backup.ts';
+import { startWslLocalBackups } from './wsl/local_only.ts';
 import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
@@ -362,6 +363,10 @@ export async function main(argv: string[]): Promise<void> {
       ...Object.values(new worktrees.Registry(stateDir).all()).map((r) => String(r.project ?? '')),
     ].filter(Boolean),
   });
+  // the same for WSL projects: each running distro's helper zips them into its own data folder (and adds its chat copies' projects)
+  const wslBackups = startWslLocalBackups(() =>
+    Object.values(ctx.addedProjects.public().added).map((a) => String((a as { path?: unknown }).path ?? '')).filter(Boolean)
+  );
   if (studio) {
     // The take-over started above (chats whose agents still run in the keeper go on where they are) runs on in the background: the
     // window opens now, with those chats Reconnecting… until theirs is done (liveState waits for it). The automatic reconnect of
@@ -407,6 +412,7 @@ export async function main(argv: string[]): Promise<void> {
     for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
     backups.stop();
+    wslBackups.stop();
     await ctx.artifacts.stop().catch(() => {});
     await attention.stop().catch(() => {});
     await swarm.stopWatching().catch(() => {});

@@ -112,6 +112,57 @@ WSL worktree on Windows; `wsl/worktrees.ts` turns the helper's Linux paths into 
 - Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes shows
   Discard and Merge, as on Windows. A helper without the methods (older, or no `--data`) leaves chats in the project folder.
 
+## Local-only folders
+
+Local-only paths are AIB's block of the repository's `.git/info/exclude` (`worktrees/local_only.ts`), the same as for a Windows
+project: they live only in the project's main folder, and git never copies them into a chat's copy. The helper runs the Windows
+modules natively (`wsl/helper/local_only.ts`, the `localOnly.*` methods), with Linux paths and Linux git:
+
+- **Default `/private`.** Before a chat's copy is made (and when a WSL project is added), the helper adds `/private` to AIB's block
+  (`localOnly.ensure`, `ensureDefault`): only when the block does not exist yet, the project does not commit `private/` and no
+  `.gitignore` negates it. The user's own exclude lines (for example their own `/private/`) are kept byte for byte. A test or demo
+  AIB (state folder under the Windows temp folder) only does this for projects under the distro's `/tmp`
+  (`wsl/local_only.ts wslDefaultsAllowed`), never in a real repository.
+- **A chat in its own copy** (`localOnly.chat`, `chatLocalOnly`): its agent gets the main folder's existing local-only folders as
+  ACP `additionalDirectories` (writable, Linux paths, for example `/home/u/app/private`), when the agent advertises it, on
+  `session/new` and on `session/load`. The start note (the system prompt line, Windows wording) says where they are and that they
+  must not be made in the copy. The main folder's `private/` is made (empty) so it can be granted from the first message. The copy
+  itself never holds them. A chat working in the project folder gets the `private/` line only. No Windows scratch folder is added.
+- **Everything else git ignores** (owner, WSL only; `worktrees/ignored_overlay.ts`). A chat in its own copy is also granted every
+  other top-level folder git ignores in the main folder (`git status --ignored`: git collapses nested ones to the highest ignored
+  folder, so `game/review/`, `importer/node_modules/`, a user-excluded `scratch/`), and the start note names those folders and the
+  top-level ignored files (`.env`, `.claude/settings.local.json`: additionalDirectories takes folders only) by their Linux paths, saying
+  they are shared with the main folder: an edit there is live at once and is not part of the copy or its branch. Left out, always:
+  `.git`; any ignored folder holding or inside another worktree of the repository (`git worktree list`, for example
+  `.claude/worktrees/`); AIB's own folders in the distro (the data folder with its chat copies, and the AIB root unless the project
+  is inside it, as tests are). At most 60 folders and 60 files. Windows chats are unchanged (a few lines in `files_routes.ts` and
+  `studio.ts`: one call for the list, a read fallback, one for the grant, would turn the same on for them).
+- **Permissions.** ACP `additionalDirectories` is what the Claude Code and Codex adapters take to widen where the agent may read
+  and write (assumed from the adapters' documented session capability, which the Windows flow already uses; not re-verified against
+  each adapter's sandbox here). An absolute path outside both the copy and the granted folders (an ignored file) goes through the
+  agent's normal permission prompt. AIB adds no guard of its own: WSL chats have no write tracker, the backup only reads, and Merge
+  and sync never touch ignored files.
+- **Files.** List, search and read of a chat's copy lay the main folder's local-only paths over it (`localOnly.list`, `.search`,
+  `.read`; `files.listLocal`, `excludeHints`, `findStrays`, `localFiles`); a local-only file is read from the main folder.
+  `localOnly.main` in the replies is the main folder's Linux path, so rows' tooltips show the path the agent uses. "Git exclude"
+  and its Undo (`localOnly.exclude`: `addEntry`, which moves the copy's file into the main folder first, and `undoEntry`) and the
+  stray row's Move (`localOnly.moveStrays`) work as on Windows. The helper only writes the exclude file of the main folder's own
+  repository, refuses paths out of the folder (`..`), `.git`, `node_modules`, `aib-docs` and tracked files, and refuses a root that
+  is neither the main folder nor one of its own chat copies (under `<data>/worktrees`). It never writes a `.gitignore`.
+  Beyond Windows: in a chat's copy every ignored entry of the main folder the copy lacks is listed too (`from: 'main'`), a folder
+  the copy lacks is listed from the main folder when the main folder ignores it, and a file the copy lacks is read there, so
+  `game/review/` and `.env` are visible, traversable and openable from a copy. Rows excluded through `.git/info/exclude` (AIB's
+  block or the user's own lines) read in normal colour (`excluded`); `.gitignore` ones stay dimmed. Search still leaves ignored
+  files out, as on Windows.
+- **Live sync and merge** run `worktrees/sync.ts` and `merge.ts` in the helper, which read the same local-only list natively: sync
+  never copies the main folder's local-only files into a copy, and Merge never lands a local-only file from a copy.
+- **Backup.** Once an hour AIB asks each running distro's helper (`localOnly.backup`; a distro that is not running is never
+  started for it) to zip its WSL projects' local-only files into `<data>/local-only-backups/<repo hash>.zip`, once a day when they
+  changed, as `local_backup.ts` does on Windows (the projects AIB names, plus the projects it keeps chat copies of). Only AIB's
+  local-only folders are backed up, as on Windows; other ignored folders are not. There is no restore button (Windows has none
+  either): the zip is unpacked by hand.
+- An older helper without `localOnly.*` leaves WSL projects as before: no local-only part, and Git exclude says the helper is too old.
+
 ## AIB tools (MCP tunnel)
 
 An agent in the distro cannot reach AIB's tool endpoint on Windows `127.0.0.1` (WSL2 NAT), and AIB never opens a port for it. So a
@@ -707,6 +758,7 @@ keeps one failure from hiding the others' results.
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_local_only_e2e` | a repo with the user's own `/private/` exclude: a chat's copy gets `/private` in AIB's block first, no `private/` in the copy, `session/new` with `additionalDirectories` = the main folder's `private/` (Linux path) and the note; the agent writes there; Files' local-only part and a read of `private/review/x.png` from the main folder; Git exclude from the copy writes the repo's exclude file and moves the folder, Undo, `..` and a root outside the copies refused; sync and Merge leave `private/` out |
 | `wsl_sync_e2e` | live sync with the helper's poll stretched to 5 minutes, so only inotify wakes a scan: events counted, a user edit and a new file in the copy within seconds, the prompt's note naming them, the helper killed and a new one catching up, Merge after sync landing only the chat's change, an edit both made merged at the next turn, a clash kept with its markers and the clash line until the chat resolves it |
 | `wsl_tunnel_e2e` | the tunnel entry run inside the distro: a tools/list reaches AIB and the WSL tool list comes back, also with interop off for the forwarder (`unshare -rm`, `/run/WSL` hidden); a wrong key refused; a helper without the tunnel falls back to the interop entry, which cannot start with interop off |
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |
@@ -724,7 +776,7 @@ Isolation: everything goes to `AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>` instead 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are inside it (`wslTestHomeEnv`), the agent is `work/fake_acp.py` run with the distro's
 python3, and the Linux keeper a test started is shut down at its end. The tests never run `wsl --shutdown` or `--terminate` and
 never read the owner's `~/.claude` or `~/.codex`. Unit tests without a distro: `wsl_unit_test`, `wsl_studio_test` (a FakeWslHost
-over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_linking_helper_test`, `wsl_linking_remove_test`, `wsl_linking_remove_helper_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
+over a real keeper), `wsl_hosts_test`, `wsl_helper_test`, `wsl_phase2_test`, `wsl_docs_test`, `wsl_worktrees_test`, `wsl_local_only_test`, `wsl_merge_test`, `wsl_sync_test`, `wsl_bgtasks_test`, `wsl_linking_test`, `wsl_linking_routes_test`, `wsl_linking_helper_test`, `wsl_linking_remove_test`, `wsl_linking_remove_helper_test`, `wsl_gates_test`, `wsl_location_test`, `wsl_fixes_test`, `keeper_stream_test`; Go:
 `TestAibOwnChannelsAreNotWork`, `bridge_test.go` (Linux).
 
 ## Not done yet (phase 2)

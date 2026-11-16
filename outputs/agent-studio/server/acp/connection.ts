@@ -665,6 +665,13 @@ export const LOCAL_ONLY_WORKTREE_PROMPT = 'Local-only files (git never commits t
   'copy: {paths}. Read and write them there by their full path. Never create those paths in this copy: ' +
   'files there are not shared with other chats.';
 export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for local-only notes.';
+/**
+ * A WSL chat in its own copy (wsl/local_only.ts): the main folder's other git-ignored folders and files, granted like the local-only
+ * folders. Windows chats never get it (Connection.localOnly.ignored is only set for WSL chats).
+ */
+export const IGNORED_SHARED_WORKTREE = 'These folders and files git ignores are in the main project folder too, not in this copy: ' +
+  '{paths}. Read and edit them there by their full path: they are shared with the main folder, so an edit there is live at once ' +
+  "and is not part of this copy or its branch.";
 /** The same for a chat that works in the project folder itself. */
 export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of this project for local-only notes: git never commits it.';
 
@@ -877,7 +884,8 @@ export class Connection {
    * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's private/ when git
    * really ignores it (`private`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
    */
-  localOnly: { entries: string[]; dirs: string[]; private: string } | null = null;
+  /** `ignored`: a WSL chat in its own copy also gets the main folder's other ignored folders and files (wsl/local_only.ts). */
+  localOnly: { entries: string[]; dirs: string[]; private: string; ignored?: { dirs: string[]; files: string[] } } | null = null;
   /** Allow rules (server/allow): the host's gate and this chat's scratch folder (outside its worktree). */
   allowGate: AllowGate | null = null;
   scratchDir: string | null = null;
@@ -5192,9 +5200,12 @@ export class Connection {
     const lo = this.localOnly;
     if (!lo) return '';
     if (!this.worktree) return lo.private ? LOCAL_ONLY_PROMPT : '';
-    if (!lo.entries.length) return '';
+    const shared = lo.ignored ? [...lo.ignored.dirs, ...lo.ignored.files] : [];
+    const sharedText = shared.length ? IGNORED_SHARED_WORKTREE.replace('{paths}', shared.join(', ')) : '';
+    if (!lo.entries.length) return sharedText;
     const text = LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', lo.entries.join(', '));
-    return lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
+    const own = lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
+    return sharedText ? `${own} ${sharedText}` : own;
   }
 
   /**
@@ -5203,7 +5214,8 @@ export class Connection {
    * main folder itself. {} otherwise.
    */
   extraFolders(): Json {
-    const dirs = [...(this.worktree ? this.localOnly?.dirs ?? [] : []), ...(this.scratchDir ? [this.scratchDir] : [])];
+    const own = this.worktree ? [...(this.localOnly?.dirs ?? []), ...(this.localOnly?.ignored?.dirs ?? [])] : [];
+    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : [])];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };
   }
