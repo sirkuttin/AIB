@@ -693,7 +693,11 @@ export async function merge(
       throw new Refused("AIB is busy with this chat's workspace; try Merge again", 'busy');
     }
     try {
-      return await mergeRounds(chat, title);
+      const result = await mergeRounds(chat, title);
+      // Build plan 1b, P4b (owner 2026-11-16: every chat works in the project folder): a merged copy is removed once its chat is
+      // closed and it has nothing new since (host/studio.ts retireMerged); a chat then carries on in the project folder.
+      if (result.state === 'merged') await chat.registry.update(chat.key, { mergedAt: Date.now() / 1000 });
+      return result;
     } finally {
       lock.release();
     }

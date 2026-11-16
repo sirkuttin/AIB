@@ -410,7 +410,22 @@ export class Store {
       }));
       return items.filter((item): item is Dict => item !== null);
     }));
-    return sortSessions(perFolder.flat());
+    const all = perFolder.flat();
+    this.#forgetGone(new Set(all.map((item) => String(item.key))));
+    return sortSessions(all);
+  }
+
+  /**
+   * Build plan 1b SF 7: a transcript re-filed under the project folder (worktrees/refile.ts) has a new key (its path); the old key's
+   * card and project memo go, so nothing keeps answering for a file that is no longer there. Only chat cards (folder/file.jsonl;
+   * subagent transcripts sit deeper and are not listed here); pinned (in use) ones are kept.
+   */
+  #forgetGone(listed: Set<string>): void {
+    for (const map of [this.summaryCache, this.projectMemo] as Map<string, unknown>[]) {
+      for (const key of [...map.keys()]) {
+        if (key.split('/').length === 2 && !listed.has(key) && !this.pins.has(key)) map.delete(key);
+      }
+    }
   }
 
   /** Claude Code writes agent-<id>.meta.json next to a subagent transcript: description, agentType, finished. */

@@ -62,13 +62,16 @@ import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease 
 import { ACTIVE_WINDOW_SECONDS, type Assessment, HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
 import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
-import { home, isdir, join, normcase, realpath } from '../platform/ospath.ts';
+import { home, isdir, isfile, join, normcase, realpath } from '../platform/ospath.ts';
 import { Recovery, StateStore } from '../state/recovery.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { builtinLaunch } from '../web/shared.ts';
 import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
+import * as refile from '../worktrees/refile.ts';
+import { dropChatRefs } from '../worktrees/cleanup.ts';
+import { testHomeEnv } from '../acp/connection.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { helperOf, readHelpers } from '../swarm/registry.ts';
@@ -1134,10 +1137,14 @@ export class Studio {
     // is made and kept by its distro's helper (wsl/worktrees.ts), and its agent starts in the distro's Linux keeper (wslLaunch).
     let wsl = wslLoc(cwd);
     let workspace = wsl ? refOf({ kind: 'wsl', ...wsl }) : realpath(expandUser(cwd));
-    if (!wsl && this.worktrees && this.worktrees.isRemoved(workspace, resume ? `${provider}:${resume}` : null)) {
+    // Build plan 1b, 4.4 (MF 4): a chat whose copy is gone (merged and closed, discarded, deleted) carries on in the project folder.
+    // The durable mapping is read first, so a page that still sends the copy path (the transcript's old cwd) lands there too.
+    const movedTo = !wsl && resume && this.hasStateDir ? refile.movedTo(this.stateDir, provider, resume) : null;
+    if (movedTo && isdir(movedTo)) workspace = realpath(movedTo);
+    else if (!wsl && this.worktrees && this.worktrees.isRemoved(workspace, resume ? `${provider}:${resume}` : null)) {
       throw new wt.WorktreeGone(wt.GONE_MESSAGE); // discarded (or being removed): readable, not continuable
     }
-    let record: (wt.WorktreeRecord & { key: string }) | null = !wsl && this.worktrees ? this.worktrees.forChat(provider, resume, workspace) : null; // a chat that has a worktree keeps it
+    let record: (wt.WorktreeRecord & { key: string }) | null = !wsl && this.worktrees && !movedTo ? this.worktrees.forChat(provider, resume, workspace) : null; // a chat that has a worktree keeps it
     if (record) workspace = realpath(await this.worktrees!.ensure(record)); // made again from its branch if deleted
     if (!wsl && !isdir(workspace)) throw new ValueError('Choose an existing workspace folder');
     if (!agentRegistry.isProvider(provider)) throw new ValueError('Choose an agent');
@@ -2283,7 +2290,206 @@ export class Studio {
   }
 
   async #removeWorktree(record: wt.WorktreeRecord & { key: string }, confirmed: boolean): Promise<wt.RemoveOutcome> {
-    return isWslRecord(record) ? await wslRemove(record, confirmed) : await this.worktrees!.remove(record.key, confirmed);
+    if (isWslRecord(record)) return await wslRemove(record, confirmed);
+    const outcome = await this.worktrees!.remove(record.key, confirmed);
+    // decision 6 (5.3): every refs/studio/<slug>/* of the chat's branch goes with it (the U pin and anything later added there)
+    if (outcome === 'removed' && record.project && isdir(String(record.project))) {
+      await dropChatRefs(String(record.project), String(record.branch ?? '')).catch((error) => log.exception(error, 'Dropping refs failed'));
+    }
+    return outcome;
+  }
+
+  // ---- after a copy is gone: the chat carries on in the project folder (build plan 1b 4.3-4.5; owner 2026-11-16) ------------
+  /** True when the saved chat (or a copy folder) is a helper's: helper transcripts are never moved, helpers never move to the folder. */
+  #isHelperCopy(record: wt.WorktreeRecord): boolean {
+    if (String(record.branch ?? '').startsWith('studio/helper-')) return true;
+    if (!this.hasStateDir) return false;
+    return !!helperOf(readHelpers(this.stateDir), { lasting: String(record.session ?? '') || null, path: String(record.path ?? '') || null });
+  }
+
+  /** True while the saved chat runs anywhere: a chat of this host, a keeper channel or another agent process (VS Code, a terminal). */
+  async #openAnywhere(provider: string, sessionId: string, path: string): Promise<boolean> {
+    for (const c of this.connections.values()) {
+      if (c.closed) continue;
+      if (c.provider === provider && c.sessionId === sessionId) return true;
+      if (path && wt.same(c.cwd, path)) return true;
+    }
+    if (this.takingOver()) return true; // its agent may still be in the keeper, about to be taken over
+    try {
+      const owner = await this.ownerProbe(provider, sessionId, [Deno.pid]);
+      if (owner !== null && owner !== undefined) return true;
+    } catch {
+      return true; // cannot tell: not now
+    }
+    return false;
+  }
+
+  /**
+   * The agents' own config folders, where re-filing works: Claude Code's projects/ and CODEX_HOME (under test: the throwaway home real
+   * agents get, never the owner's). Replaceable (tests), like ownerProbe.
+   */
+  agentHomes: () => { claudeProjects: string | null; codexHome: string | null } = () => {
+    const env = testHomeEnv(['agent']);
+    return {
+      claudeProjects: refile.claudeProjectsRoot(env, this.options.claudeProjects ?? null),
+      codexHome: refile.codexHome(env, home()),
+    };
+  };
+
+  /**
+   * A main chat's copy is gone for good: map the saved chat to the project folder (Continue opens it there) and re-file its
+   * transcript so the agent's own resume listing for the project has it. Helpers: nothing. Never throws; logged in refile.log.
+   */
+  async moveChatToFolder(record: wt.WorktreeRecord, why: string): Promise<void> {
+    if (!this.hasStateDir || isWslRecord(record as never)) return;
+    const session = String(record.session ?? '');
+    const at = session.indexOf(':');
+    const project = String(record.project ?? '');
+    const from = String(record.path ?? '');
+    if (at < 1 || !project || this.#isHelperCopy(record)) return;
+    const provider = session.slice(0, at), sessionId = session.slice(at + 1);
+    try {
+      const entry: refile.MovedChat = { project, from, why, at: Date.now() / 1000, refiled: '', backup: '' };
+      await refile.recordMoved(this.stateDir, provider, sessionId, entry);
+      const done = await this.#refileTranscript(provider, sessionId, from, project);
+      if (done) {
+        if (done.outcome === 'moved' || done.outcome === 'already') entry.refiled = done.path;
+        entry.backup = done.backup;
+        await refile.recordMoved(this.stateDir, provider, sessionId, entry);
+        refile.logLine(this.stateDir, `${why}: ${session} ${done.outcome}${done.message ? ` (${done.message})` : ''} ${from} -> ${project}`);
+      }
+    } catch (error) {
+      refile.logLine(this.stateDir, `${why}: ${session} failed: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  /** Re-file one closed chat's transcript (Claude: move + cwd rewrite; Codex: open once in the project folder). null: not this agent. */
+  async #refileTranscript(provider: string, sessionId: string, from: string, project: string): Promise<refile.RefileResult | null> {
+    const homes = this.agentHomes();
+    const refused: refile.RefileResult = { outcome: 'refused', message: 'open somewhere', path: '', backup: '', fromFolder: '' };
+    if (provider === 'claude') {
+      if (!homes.claudeProjects) return null;
+      if (await this.#openAnywhere(provider, sessionId, from)) return refused;
+      const done = refile.refileClaude({ stateDir: this.stateDir, projectsRoot: homes.claudeProjects, sessionId, from, to: project });
+      const folder = done.fromFolder ? done.fromFolder.split(/[\\/]/).pop() ?? '' : '';
+      if (done.outcome === 'moved' && this.worktrees && refile.isCopyNamed(folder, this.worktrees.registry.root)) {
+        try {
+          Deno.removeSync(done.fromFolder); // only when empty (not recursive): a folder with memory/ or any file stays
+        } catch { /* kept */ }
+      }
+      return done;
+    }
+    if (provider === 'codex') {
+      if (!homes.codexHome) return null;
+      if (await this.#openAnywhere(provider, sessionId, from)) return refused;
+      return await refile.refileCodex({
+        stateDir: this.stateDir,
+        codexHome: homes.codexHome,
+        sessionId,
+        load: async () => { // the mapping is written: connect opens it in the project folder (session/load, no prompt), then closes
+          const c = await this.connect(provider, project, sessionId, { background: false });
+          await c.close();
+        },
+      });
+    }
+    return null;
+  }
+
+  #retiring: Promise<string[]> | null = null;
+
+  /**
+   * P4b (decision 6, 5.3; MF 5): the copies of merged chats and helpers whose chat is closed (not open anywhere) and that hold
+   * nothing new since the merge are removed (worktree, branch, refs, git's record); a main chat then carries on in the project folder
+   * (moveChatToFolder). A copy with work after its merge is kept: unmerged work is never removed silently. Runs when a chat is
+   * closed, after a merge, and once the take-over at start is done. Returns the keys removed.
+   */
+  retireMerged(): Promise<string[]> {
+    if (this.#retiring) return this.#retiring.then(() => this.retireMerged());
+    const run = this.#retireMerged().finally(() => (this.#retiring = null));
+    this.#retiring = run;
+    return run;
+  }
+
+  async #retireMerged(): Promise<string[]> {
+    const done: string[] = [];
+    if (!this.worktrees) return done;
+    for (const [key, record] of Object.entries(this.worktrees.registry.all())) {
+      if (record.status !== 'ready' || !record.mergedAt) continue;
+      const path = String(record.path ?? '');
+      const session = String(record.session ?? '');
+      const at = session.indexOf(':');
+      if (this.#connectionsIn(path).length) continue; // its chat is open here
+      if (at > 0 && (await this.#openAnywhere(session.slice(0, at), session.slice(at + 1), path))) continue;
+      if (at < 0 && this.takingOver()) continue;
+      try {
+        if (await this.worktrees.hasChanges(record)) continue; // work since the merge: kept until merged or discarded
+        const outcome = await this.#removeWorktree({ ...record, key }, false);
+        if (outcome !== 'removed') continue;
+        done.push(key);
+        await this.moveChatToFolder(record, 'merged');
+      } catch (error) {
+        log.exception(error, 'Removing the merged copy %s failed', path);
+      }
+    }
+    return done;
+  }
+
+  /**
+   * The one-time re-file pass (build plan 4.3 / 5.6; SF 6), after the keeper take-over: old copy chats whose copies are already gone
+   * (this install's removed-notes) are mapped to their project and re-filed; then empty copy-named folders in Claude Code's
+   * projects/ are removed (plain rmdir). Helpers, chats open anywhere and chats whose project folder is gone are skipped. Runs once
+   * (refile-once.json; again at the next start while a chat was skipped for being open); returns what it did, null when it already ran.
+   */
+  async refilePass(force = false): Promise<{ moved: string[]; skipped: string[]; retried: string[]; folders: string[] } | null> {
+    const out = { moved: [] as string[], skipped: [] as string[], retried: [] as string[], folders: [] as string[] };
+    if (!this.worktrees || !this.hasStateDir) return null;
+    const moved = refile.readMoved(this.stateDir);
+    // every start: chats mapped to the folder whose transcript could not be re-filed then (open somewhere, a file in use)
+    for (const [session, entry] of Object.entries(moved)) {
+      if (entry.refiled || entry.why === 'helper') continue;
+      const at = session.indexOf(':');
+      if (at < 1 || !isdir(entry.project)) continue;
+      const done = await this.#refileTranscript(session.slice(0, at), session.slice(at + 1), entry.from, entry.project).catch(() => null);
+      if (!done || (done.outcome !== 'moved' && done.outcome !== 'already')) continue;
+      await refile.recordMoved(this.stateDir, session.slice(0, at), session.slice(at + 1), { ...entry, refiled: done.path, backup: done.backup || entry.backup });
+      refile.logLine(this.stateDir, `retry: ${session} ${done.outcome} ${entry.from} -> ${entry.project}`);
+      out.retried.push(session);
+    }
+    const onceFile = join(this.stateDir, 'refile-once.json');
+    if (!force && isfile(onceFile)) return out;
+    let open = 0;
+    const current = new Set(Object.values(this.worktrees.registry.all()).map((r) => String(r.session ?? '')).filter(Boolean));
+    for (const [path, note] of Object.entries(this.worktrees.registry.removed())) {
+      const session = String(note.session ?? '');
+      const project = String(note.project ?? '');
+      if (!session || !project || Object.hasOwn(moved, session) || current.has(session)) continue;
+      const record = { ...note, path: String(note.path ?? '') || path, session };
+      const at = session.indexOf(':');
+      if (at < 1 || this.#isHelperCopy(record) || !isdir(project)) {
+        out.skipped.push(session);
+        continue;
+      }
+      if (await this.#openAnywhere(session.slice(0, at), session.slice(at + 1), path)) {
+        out.skipped.push(session); // still running somewhere: tried again at the next start
+        open++;
+        continue;
+      }
+      await this.moveChatToFolder(record, 'orphan');
+      out.moved.push(session);
+    }
+    const homes = this.agentHomes();
+    if (homes.claudeProjects) {
+      const [removed, kept] = refile.cleanEmptyCopyFolders(homes.claudeProjects, this.worktrees.registry.root);
+      out.folders = removed;
+      for (const dir of kept) refile.logLine(this.stateDir, `one-time pass: kept ${dir} (it still holds files, e.g. memory/)`);
+    }
+    refile.logLine(this.stateDir, `one-time pass: ${out.moved.length} moved, ${out.skipped.length} skipped, ${out.folders.length} empty folder(s) removed`);
+    if (!open) {
+      try {
+        Deno.writeTextFileSync(onceFile, JSON.stringify({ version: 1, doneAt: Date.now() / 1000 }));
+      } catch { /* runs again at the next start */ }
+    }
+    return out;
   }
 
   /**
@@ -2376,7 +2582,14 @@ export class Studio {
     connection.tree?.kill();
     const outcome = await this.#removeWorktree(record, true);
     if (connection.scratchDir && this.allow) this.allow.removeScratch(connection.scratchDir); // allow rules: the scratch folder goes with it
-    return { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
+    const out: Json = { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
+    // owner 2026-11-16: the chat carries on in the project folder (its transcript re-filed there); a helper's does not
+    if (outcome === 'removed' && !isWslRecord(record) && !this.#isHelperCopy(record)) {
+      await this.moveChatToFolder(record, 'discarded');
+      const moved = connection.sessionId ? refile.movedTo(this.stateDir, connection.provider, connection.sessionId) : null;
+      if (moved) out.movedToFolder = moved;
+    }
+    return out;
   }
 
   /**
@@ -2394,6 +2607,7 @@ export class Studio {
     const changed = isWslRecord(record) ? await wslHasChanges(record) : await this.worktrees!.hasChanges(record);
     if (changed) return { ok: true, worktree: { branch, removed: false, keptChanges: true } };
     const outcome = await this.#removeWorktree(record, false);
+    if (outcome === 'removed' && !isWslRecord(record)) await this.moveChatToFolder(record, 'deleted'); // restored later: the folder
     return { ok: true, worktree: { branch, removed: outcome === 'removed', pending: outcome === 'pending' } };
   }
 
@@ -2550,6 +2764,11 @@ export class Studio {
       if (name === 'landing-renew') return [200, { ok: connection.landingRenew(lock, ttl) }];
       return [200, { ok: connection.landingRelease(lock) }];
     }
+    if (name === 'worktree-retire') { // P4b: merged copies of closed chats; then the re-file pass (web: after the take-over at start)
+      const removed = await this.retireMerged();
+      const pass = body.refile === false ? null : await this.refilePass();
+      return [200, { ok: true, removed, refile: pass }];
+    }
     if (name === 'prompt-context') { // a one-time line in front of this chat's next prompt (a landing told it what changed)
       const connection = this.#connection(body);
       this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, 2000).join(''));
@@ -2641,7 +2860,10 @@ export class Studio {
       const payload: Json = { ok: true, ...result };
       if (deletedRef && result.done === 'delete') payload._deleted = deletedRef; // the web layer owns conversation marks and removes this key
       return [200, payload];
-    } else if (name === 'disconnect') await connection.close();
+    } else if (name === 'disconnect') {
+      await connection.close();
+      if (connection.worktree) void this.retireMerged().catch((error) => log.exception(error, 'Removing merged copies failed'));
+    }
     return [200, { ok: true }];
   }
 
