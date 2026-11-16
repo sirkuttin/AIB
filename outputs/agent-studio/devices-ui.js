@@ -346,7 +346,7 @@
 
     // ---- 4. Add a phone ----
     const ready = !!ts.signedIn && !!ts.serving && !!v.listening && !problem;
-    const four = step(4, 'Add a phone', ready ? 'now' : 'later', ready ? { notes: ['Use Add a phone under Phones below.'] } : {});
+    const four = step(4, 'Add a phone or computer', ready ? 'now' : 'later', ready ? { notes: ['Use Add a phone or computer under Devices below.'] } : {});
 
     // ---- the status line ----
     let status;
@@ -1015,8 +1015,8 @@
     const open = v.pairing && v.pairing.open;
     if (!open || !D.pair) return;
     const box = el('section', null, 'dv-pair');
-    box.setAttribute('aria-label', 'Add a phone');
-    box.append(el('h4', 'Add a phone', 'dv-sub'));
+    box.setAttribute('aria-label', 'Add a phone or computer');
+    box.append(el('h4', 'Add a phone or computer', 'dv-sub'));
     box.append(el('p', "Scan with your phone's camera. Or open the address on the phone and type the six words.", 'st-note'));
     const grid = el('div', null, 'dv-pair-grid');
     const img = el('img', null, 'dv-qr');
@@ -1128,7 +1128,7 @@
     frag.append(list);
     const ready = v.on && v.listening;
     const row = el('div', null, 'st-actions');
-    const add = btn(D.busy === 'pair' ? 'Opening…' : 'Add a phone', () => {
+    const add = btn(D.busy === 'pair' ? 'Opening…' : 'Add a phone or computer', () => {
       D.busy = 'pair';
       draw();
       Promise.resolve(D.host.post('devices/pair', {}))
