@@ -644,7 +644,7 @@
       }
       // split view keeps the × at the panel's top right (chat.js renderSplitActivity): the hidden list must not take it back
       const hideBtn = hideButton();
-      if (hideBtn && !document.body.classList.contains('split-on')) h.append(hideBtn);
+      if (hideBtn && !document.body.classList.contains('split-panel')) h.append(hideBtn);
       frag.append(h);
     }
     if (!ctx.rows.length) {
