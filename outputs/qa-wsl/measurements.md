@@ -1,6 +1,6 @@
 # AIB WSL screens: measuring QA (looks)
 
-Run 2026-11-16T01:49:53.486Z. Real page code (outputs/agent-studio/*.js + *.css) against fake routes of the contract shapes, headless Chrome, 1280 x 860 (the desktop window's default size, server/desktop/window.ts:29), device scale 1. Themes: teal-dark (AIB's default, THEMES.md) and teal-light. Reference: outputs/wsl-linking-mockup.html (embeds its own copy of theme.css/settings.css). Numbers are computed styles of the first visible matching element; colours as #rrggbb.
+Run 2026-11-16T02:09:18.149Z. Real page code (outputs/agent-studio/*.js + *.css) against fake routes of the contract shapes, headless Chrome, 1280 x 860 (the desktop window's default size, server/desktop/window.ts:29), device scale 1. Themes: teal-dark (AIB's default, THEMES.md) and teal-light. Reference: outputs/wsl-linking-mockup.html (embeds its own copy of theme.css/settings.css). Numbers are computed styles of the first visible matching element; colours as #rrggbb.
 
 ## Findings (ranked)
 
@@ -36,12 +36,13 @@ Run 2026-11-16T01:49:53.486Z. Real page code (outputs/agent-studio/*.js + *.css)
 
 ### good vs mockup "good" (teal-dark)
 
-Matched exactly (35): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, chip dim, group heading, facts dt, facts dd, note (plain), note dim, checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button danger, switch input, command code, copy row, limits line, limits value, usage dt, footer, hint, actions row.
+Matched exactly (36): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, chip dim, group heading, facts dt, facts dd, note (plain), checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button danger, switch input, command code, copy row, limits line, limits value, usage list, usage dt, usage dd, footer, hint, actions row.
 
 Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu terminal").
 
 | element | property | mockup | page |
 | --- | --- | --- | --- |
+| note dim | opacity | 0.8 | 1 |
 | button link | lineHeight | normal | 18px |
 | button link | display | block | inline-block |
 | button link | h | 16 | 18 |
@@ -50,37 +51,33 @@ Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu termi
 | switch label | marginBottom | 0px | 18px |
 | switch label | borderTopColor | #edeae2 | #cac6bb |
 | switch label | w | 41.2 | 105.9 |
-| usage list | marginTop | 4px | 0px |
-| usage list | gap | 4px 18px | 6px 18px |
-| usage dd | textAlign | right | start |
 | page: page heading h2 | fontWeight | 700 | 550 |
 
 ### node-missing vs mockup "node" (teal-dark)
 
-Matched exactly (32): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), note dim, checks list, check row, check head, check mark ok, check mark bad, check state, agent row, agent head, agent letter, agent name, button primary (off), button danger, button link, button primary (card), switch input, usage dt, footer, actions row.
+Matched exactly (33): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), checks list, check row, check head, check mark ok, check mark bad, check state, agent row, agent head, agent letter, agent name, button primary (off), button danger, button link, button primary (card), switch input, usage list, usage dt, usage dd, footer, actions row.
 
 Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu terminal"); command code ("curl -fsSLo "$t" https://raw.githubuserc"); copy row ("curl -fsSLo "$t" https://raw.githubuserc"); hint ("Needs first:"); needs first ("Needs first: Node.js 22 or newer: missin").
 
 | element | property | mockup | page |
 | --- | --- | --- | --- |
+| note dim | opacity | 0.8 | 1 |
 | switch label | color | #edeae2 | #cac6bb |
 | switch label | marginTop | 0px | 18px |
 | switch label | marginBottom | 0px | 18px |
 | switch label | borderTopColor | #edeae2 | #cac6bb |
 | switch label | w | 41.2 | 105.9 |
-| usage list | marginTop | 4px | 0px |
-| usage list | gap | 4px 18px | 6px 18px |
-| usage dd | textAlign | right | start |
 | page: page heading h2 | fontWeight | 700 | 550 |
 
 ### installing vs mockup "installing" (teal-dark)
 
-Matched exactly (33): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), note dim, checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button danger, button cancel, switch input, progress, progress fill, usage dt, footer, hint, actions row.
+Matched exactly (34): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button danger, button cancel, switch input, progress, progress fill, usage list, usage dt, usage dd, footer, hint, actions row.
 
 Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu terminal"); limits line ("Usage limits of Ubuntu's Codex sign-in: "); limits value ("5 h 32% used").
 
 | element | property | mockup | page |
 | --- | --- | --- | --- |
+| note dim | opacity | 0.8 | 1 |
 | button link | color | #edeae2 | #33bcab |
 | button link | backgroundColor | #1f2028 | transparent |
 | button link | paddingTop | 6px | 0px |
@@ -102,19 +99,17 @@ Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu termi
 | copy row | fontSize | 14px | 12px |
 | copy row | h | 30 | 16 |
 | copy row | w | 708 | 704 |
-| usage list | marginTop | 4px | 0px |
-| usage list | gap | 4px 18px | 6px 18px |
-| usage dd | textAlign | right | start |
 | page: page heading h2 | fontWeight | 700 | 550 |
 
 ### update vs mockup "update" (teal-dark)
 
-Matched exactly (33): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), note dim, checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button primary, button danger, switch input, command code, copy row, usage dt, footer, hint, actions row.
+Matched exactly (34): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button primary, button danger, switch input, command code, copy row, usage list, usage dt, usage dd, footer, hint, actions row.
 
 Only in the mockup: button plain ("Open Ubuntu terminal").
 
 | element | property | mockup | page |
 | --- | --- | --- | --- |
+| note dim | opacity | 0.8 | 1 |
 | button link | lineHeight | normal | 18px |
 | button link | display | block | inline-block |
 | button link | h | 16 | 18 |
@@ -123,27 +118,22 @@ Only in the mockup: button plain ("Open Ubuntu terminal").
 | switch label | marginBottom | 0px | 18px |
 | switch label | borderTopColor | #edeae2 | #cac6bb |
 | switch label | w | 41.2 | 105.9 |
-| usage list | marginTop | 4px | 0px |
-| usage list | gap | 4px 18px | 6px 18px |
-| usage dd | textAlign | right | start |
 | page: page heading h2 | fontWeight | 700 | 550 |
 
 ### error vs mockup "error" (teal-dark)
 
-Matched exactly (37): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), note dim, note bad, checks list, check row, check head, check mark ok, check mark bad, check state, agent row, agent head, agent letter, agent name, agent tag, button primary, button danger, button link, button plain, switch input, command code, copy row, usage dt, footer, hint, actions row.
+Matched exactly (38): card, card title, lead (C1), distro row, distro letter, distro name, distro tag, chip ok (Ready), chip warn, group heading, facts dt, facts dd, note (plain), note bad, checks list, check row, check head, check mark ok, check mark bad, check state, agent row, agent head, agent letter, agent name, agent tag, button primary, button danger, button link, button plain, switch input, command code, copy row, usage list, usage dt, usage dd, footer, hint, actions row.
 
 Only in the page: chip bad ("Install failed").
 
 | element | property | mockup | page |
 | --- | --- | --- | --- |
+| note dim | opacity | 0.8 | 1 |
 | switch label | color | #edeae2 | #cac6bb |
 | switch label | marginTop | 0px | 18px |
 | switch label | marginBottom | 0px | 18px |
 | switch label | borderTopColor | #edeae2 | #cac6bb |
 | switch label | w | 41.2 | 105.9 |
-| usage list | marginTop | 4px | 0px |
-| usage list | gap | 4px 18px | 6px 18px |
-| usage dd | textAlign | right | start |
 | page: page heading h2 | fontWeight | 700 | 550 |
 
 ### stopped vs mockup "stopped" (teal-dark)
@@ -164,13 +154,14 @@ Matched exactly (7): card, card title, note (plain), button link, command code, 
 
 ### two vs mockup "two" (teal-dark)
 
-Matched exactly (31): card, card title, lead (C1), distro letter, distro name, distro tag, chip ok (Ready), chip warn, chip dim, group heading, facts dt, facts dd, note (plain), note dim, checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button danger, switch input, copy row, usage dt, footer, hint, actions row.
+Matched exactly (32): card, card title, lead (C1), distro letter, distro name, distro tag, chip ok (Ready), chip warn, chip dim, group heading, facts dt, facts dd, note (plain), checks list, check row, check head, check mark ok, check state, agent row, agent head, agent letter, agent name, agent tag, button danger, switch input, copy row, usage list, usage dt, usage dd, footer, hint, actions row.
 
 Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu terminal"); button primary (card) ("Start Debian and check"); limits line ("Usage limits of Ubuntu's Codex sign-in: "); limits value ("5 h 32% used").
 
 | element | property | mockup | page |
 | --- | --- | --- | --- |
 | distro row | h | 92 | 110.9 |
+| note dim | opacity | 0.8 | 1 |
 | button link | lineHeight | normal | 18px |
 | button link | display | block | inline-block |
 | button link | h | 16 | 18 |
@@ -180,9 +171,6 @@ Only in the mockup: button primary ("Install"); button plain ("Open Ubuntu termi
 | switch label | borderTopColor | #edeae2 | #cac6bb |
 | switch label | w | 41.2 | 105.9 |
 | command code | marginTop | 6px | 2px |
-| usage list | marginTop | 4px | 0px |
-| usage list | gap | 4px 18px | 6px 18px |
-| usage dd | textAlign | right | start |
 | page: page heading h2 | fontWeight | 700 | 550 |
 
 The mockup embeds only the teal-dark theme (its copy of theme.css has no teal-light block), so teal-light is compared with the app's own Windows AIB Linking cards below.
@@ -209,7 +197,7 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 
 | element | property | delete-project | Remove AIB |
 | --- | --- | --- | --- |
-| dialog yes | opacity | 1 | 0.5 |
+| dialog yes | opacity | 1 | 0.75 |
 
 ### Remove dialog vs the delete-project dialog (teal-light)
 
@@ -217,7 +205,7 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 
 | element | property | delete-project | Remove AIB |
 | --- | --- | --- | --- |
-| dialog yes | opacity | 1 | 0.5 |
+| dialog yes | opacity | 1 | 0.75 |
 
 ### States the mockup does not cover: key measurements (teal-dark)
 
@@ -234,7 +222,7 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 | rm-check | dialog yes | 12px 400 "Segoe UI" lh normal | #f0a0b0 | transparent | 5px 10px 5px 10px | 6px | 28 x 157.2 |
 | rm-check | dialog cancel | 12px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 5px 10px 5px 10px | 6px | 28 x 57.1 |
 | rm-check | scrim | 14px 400 "Segoe UI" lh normal | #edeae2 | #000000 @67% | 0px 0px 0px 0px | 0px | 860 x 1280 |
-| rm-blocked | dialog | 14px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 16px 18px 16px 18px | 10px | 558.3 x 460 |
+| rm-blocked | dialog | 14px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 16px 18px 16px 18px | 10px | 566.3 x 460 |
 | rm-blocked | dialog title | 15px 600 "Segoe UI" lh normal | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 20 x 422 |
 | rm-blocked | dialog main | 13px 400 "Segoe UI" lh 18.85px | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 37.7 x 422 |
 | rm-blocked | dialog list head | 13px 400 "Segoe UI" lh 18.85px | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 18.8 x 422 |
@@ -283,12 +271,14 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 | rm-removing | dialog yes | 12px 400 "Segoe UI" lh normal | #f0a0b0 | transparent | 5px 10px 5px 10px | 6px | 28 x 83.8 |
 | rm-removing | dialog cancel | 12px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 5px 10px 5px 10px | 6px | 28 x 57.1 |
 | rm-removing | scrim | 14px 400 "Segoe UI" lh normal | #edeae2 | #000000 @67% | 0px 0px 0px 0px | 0px | 860 x 1280 |
-| rm-partial | dialog | 14px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 16px 18px 16px 18px | 10px | 340.9 x 460 |
+| rm-partial | dialog | 14px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 16px 18px 16px 18px | 10px | 331.9 x 460 |
 | rm-partial | dialog title | 15px 600 "Segoe UI" lh normal | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 20 x 422 |
 | rm-partial | dialog main | 13px 400 "Segoe UI" lh 18.85px | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 18.8 x 422 |
 | rm-partial | dialog list head | 13px 400 "Segoe UI" lh 18.85px | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 18.8 x 422 |
+| rm-partial | dialog path | 12px 400 Consolas lh normal | #a9a497 | transparent | 0px 0px 0px 0px | 0px | 14 x 730 |
 | rm-partial | dialog cancel | 12px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 5px 10px 5px 10px | 6px | 28 x 50.7 |
 | rm-partial | scrim | 14px 400 "Segoe UI" lh normal | #edeae2 | #000000 @67% | 0px 0px 0px 0px | 0px | 860 x 1280 |
+| rm-partial-closed | dialog path | 12px 400 Consolas lh normal | #a9a497 | transparent | 0px 0px 0px 0px | 0px | 14 x 730 |
 | rm-long | dialog | 14px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 16px 18px 16px 18px | 10px | 602 x 460 |
 | rm-long | dialog title | 15px 600 "Segoe UI" lh normal | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 20 x 422 |
 | rm-long | dialog main | 13px 400 "Segoe UI" lh 18.85px | #edeae2 | transparent | 0px 0px 0px 0px | 0px | 37.7 x 422 |
@@ -355,75 +345,63 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 | del-wsl-refused | dp tick input | 13px 400 "Segoe UI" lh normal | #edeae2 | #1f2028 | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 13 x 13 |
 | del-wsl-refused | dp note | 13px 400 "Segoe UI" lh 18.85px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 37.7 x 422 |
 | del-wsl-refused | dp yes | 12px 400 "Segoe UI" lh normal | #f0a0b0 | transparent | 1px solid #8f3b4d | 5px 10px 5px 10px | 6px | 28 x 114.2 |
-| nc-missing | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 123 x 728 |
-| nc-missing | nc line bad | 12px 400 "Segoe UI" lh 18px | #efa3a1 | transparent | 0px none #efa3a1 | 0px 0px 0px 0px | 0px | 18 x 728 |
-| nc-missing | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 19 x 728 |
+| nc-missing | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 134 x 380 |
+| nc-missing | nc line bad | 12px 400 "Segoe UI" lh 18px | #efa3a1 | transparent | 0px none #efa3a1 | 0px 0px 0px 0px | 0px | 18 x 380 |
+| nc-missing | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 38 x 380 |
 | nc-missing | nc link | 12px 400 "Segoe UI" lh 18px | #33bcab | transparent | 0px none #33bcab | 0px 0px 0px 0px | 6px | 18 x 27.3 |
-| nc-missing | nc cmd | 12px 400 monospace lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 14 x 303.5 |
+| nc-missing | nc cmd | 12px 400 monospace lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 33 x 244.1 |
 | nc-missing | nc grid (form) | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 172 x 380 |
 | nc-missing | nc folder | 11px 400 "Segoe UI" lh 15.4px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 15.4 x 380 |
 | nc-missing | nc agent select | 12px 400 "Segoe UI" lh normal | #edeae2 | #23242c | 1px solid #3e3e43 | 0px 8px 0px 8px | 6px | 30 x 310 |
-| nc-node | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 191 x 728 |
-| nc-node | nc line bad | 12px 400 "Segoe UI" lh 18px | #efa3a1 | transparent | 0px none #efa3a1 | 0px 0px 0px 0px | 0px | 18 x 728 |
-| nc-node | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 19 x 728 |
+| nc-node | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 257 x 380 |
+| nc-node | nc line bad | 12px 400 "Segoe UI" lh 18px | #efa3a1 | transparent | 0px none #efa3a1 | 0px 0px 0px 0px | 0px | 18 x 380 |
+| nc-node | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 38 x 380 |
 | nc-node | nc link | 12px 400 "Segoe UI" lh 18px | #33bcab | transparent | 0px none #33bcab | 0px 0px 0px 0px | 6px | 18 x 27.3 |
-| nc-node | nc cmd | 12px 400 monospace lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 33 x 716.8 |
+| nc-node | nc cmd | 12px 400 monospace lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 52 x 349.7 |
 | nc-node | nc grid (form) | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 172 x 380 |
 | nc-node | nc folder | 11px 400 "Segoe UI" lh 15.4px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 15.4 x 380 |
 | nc-node | nc agent select | 12px 400 "Segoe UI" lh normal | #edeae2 | #23242c | 1px solid #3e3e43 | 0px 8px 0px 8px | 6px | 30 x 310 |
-| nc-installing | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 143 x 728 |
-| nc-installing | nc line bad | 12px 400 "Segoe UI" lh 18px | #efa3a1 | transparent | 0px none #efa3a1 | 0px 0px 0px 0px | 0px | 18 x 728 |
-| nc-installing | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 19 x 728 |
+| nc-installing | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 162 x 380 |
+| nc-installing | nc line bad | 12px 400 "Segoe UI" lh 18px | #efa3a1 | transparent | 0px none #efa3a1 | 0px 0px 0px 0px | 0px | 18 x 380 |
+| nc-installing | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 38 x 380 |
 | nc-installing | nc link | 12px 400 "Segoe UI" lh 18px | #33bcab | transparent | 0px none #33bcab | 0px 0px 0px 0px | 6px | 18 x 35.1 |
-| nc-installing | nc cmd | 12px 400 monospace lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 14 x 257.3 |
-| nc-installing | nc progress | 14px 400 "Segoe UI" lh normal | #edeae2 | #272830 | 0px none #edeae2 | 0px 0px 0px 0px | 3px | 6 x 728 |
+| nc-installing | nc cmd | 12px 400 monospace lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 33 x 217.3 |
+| nc-installing | nc progress | 14px 400 "Segoe UI" lh normal | #edeae2 | #272830 | 0px none #edeae2 | 0px 0px 0px 0px | 3px | 6 x 380 |
 | nc-installing | nc grid (form) | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 172 x 380 |
 | nc-installing | nc folder | 11px 400 "Segoe UI" lh 15.4px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 15.4 x 380 |
 | nc-installing | nc agent select | 12px 400 "Segoe UI" lh normal | #edeae2 | #23242c | 1px solid #3e3e43 | 0px 8px 0px 8px | 6px | 30 x 310 |
-| nc-found | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 54 x 728 |
-| nc-found | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 18 x 728 |
+| nc-found | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 54 x 380 |
+| nc-found | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 18 x 380 |
 | nc-found | nc link | 12px 400 "Segoe UI" lh 18px | #33bcab | transparent | 0px none #33bcab | 0px 0px 0px 0px | 6px | 18 x 36.1 |
 | nc-found | nc grid (form) | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 172 x 380 |
 | nc-found | nc folder | 11px 400 "Segoe UI" lh 15.4px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 15.4 x 380 |
 | nc-found | nc agent select | 12px 400 "Segoe UI" lh normal | #edeae2 | #23242c | 1px solid #3e3e43 | 0px 8px 0px 8px | 6px | 30 x 310 |
-| nc-update | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 122 x 728 |
-| nc-update | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 18 x 728 |
+| nc-update | nc box | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 114 x 380 |
+| nc-update | nc line | 12px 400 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 18 x 380 |
 | nc-update | nc link | 12px 400 "Segoe UI" lh 18px | #33bcab | transparent | 0px none #33bcab | 0px 0px 0px 0px | 6px | 18 x 36.1 |
 | nc-update | nc grid (form) | 14px 400 "Segoe UI" lh normal | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 172 x 380 |
 | nc-update | nc folder | 11px 400 "Segoe UI" lh 15.4px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 15.4 x 380 |
 | nc-update | nc agent select | 12px 400 "Segoe UI" lh normal | #edeae2 | #23242c | 1px solid #3e3e43 | 0px 8px 0px 8px | 6px | 30 x 310 |
 | status-words | row phrase | 12px 600 "Segoe UI" lh 18px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 18 x 33.1 |
 | project-menu | distro chip | 11px 600 "Segoe UI" lh 16px | #a9a497 | #23242c | 1px solid #2c2d36 | 0px 7px 0px 7px | 12px | 18 x 51.4 |
-| publish-failed | art card | 12px 400 "Segoe UI" lh 17.4px | #edeae2 | #191a21 | 1px dashed #2a7c72 | 8px 10px 8px 10px | 12px | 67.3 x 680 |
+| publish-failed | art card | 12px 400 "Segoe UI" lh 17.4px | #edeae2 | #191a21 | 1px dashed #2a7c72 | 8px 10px 8px 10px | 12px | 99.1 x 680 |
 | publish-failed | art card title | 12px 600 "Segoe UI" lh 17.4px | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 17.4 x 560.8 |
 | publish-failed | art card sub | 11px 400 "Segoe UI" lh 15.95px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 15.9 x 560.8 |
-| publish-failed | art card err | 11px 400 "Segoe UI" lh 15.95px | #edeae2 | transparent | 0px none #edeae2 | 0px 0px 0px 0px | 0px | 15.9 x 560.8 |
+| publish-failed | art card err | 11px 400 "Segoe UI" lh 15.95px | #a9a497 | transparent | 0px none #a9a497 | 0px 0px 0px 0px | 0px | 47.8 x 560.8 |
 
 ## C. Contrast (WCAG 2 ratio; target 4.5 text, 3 large text)
 
 | theme | state | element | text | fg | bg | ratio | target | pass |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| teal-light | rm-blocked | dialog destructive button, off | Remove AIB from Ubuntu | #d79a97 | #ffffff | 2.34 | 4.5 | **NO** |
-| teal-dark | rm-blocked | dialog destructive button, off | Remove AIB from Ubuntu | #87606c | #1f2028 | 3.03 | 4.5 | **NO** |
-| teal-light | nc-missing | new chat: link | Copy | #3e8f88 | #f7f4ee | 3.48 | 4.5 | **NO** |
-| teal-light | good | button link (Check again, Copy) | Check again | #3e9089 | #faf9f6 | 3.59 | 4.5 | **NO** |
-| teal-light | nc-missing | new chat: dim copy line | Or install it yourself in Ubuntu: npm i -g @agentc | #7c7569 | #f7f4ee | 4.15 | 4.5 | **NO** |
-| teal-light | good | node path (.wl-path) | /home/u/.nvm/versions/node/v24.11.1/bin/node | #7c766a | #faf9f6 | 4.28 | 4.5 | **NO** |
-| teal-light | good | Checked with line | Checked with: zsh login shell (interactive). Check | #7c766a | #faf9f6 | 4.28 | 4.5 | **NO** |
-| teal-light | node-missing | muted note (.st-note.dim) | Checked with: zsh login shell (interactive). Check | #7c766a | #faf9f6 | 4.28 | 4.5 | **NO** |
-| teal-light | good | muted note (.st-note.dim) | docker-desktop is Docker's own distro; AIB cannot  | #7d776c | #ffffff | 4.44 | 4.5 | **NO** |
+| teal-light | rm-blocked | dialog destructive button, off | Remove AIB from Ubuntu | #c46863 | #ffffff | 3.81 | 4.5 | **NO** |
 | teal-light | good | agent letter | U | #0f766e | #dcefea | 4.58 | 4.5 | yes |
-| teal-dark | good | muted note (.st-note.dim) | docker-desktop is Docker's own distro; AIB cannot  | #8d8980 | #1e1f26 | 4.71 | 4.5 | yes |
 | teal-light | good | chip Not signed in / Not installed (warn) | in use | #b8381c | #ffe4dc | 4.8 | 4.5 | yes |
 | teal-light | good | in use chip | in use | #b8381c | #ffe4dc | 4.8 | 4.5 | yes |
-| teal-dark | good | node path (.wl-path) | /home/u/.nvm/versions/node/v24.11.1/bin/node | #8c887f | #191a21 | 4.91 | 4.5 | yes |
-| teal-dark | good | Checked with line | Checked with: zsh login shell (interactive). Check | #8c887f | #191a21 | 4.91 | 4.5 | yes |
-| teal-dark | node-missing | muted note (.st-note.dim) | Checked with: zsh login shell (interactive). Check | #8c887f | #191a21 | 4.91 | 4.5 | yes |
+| teal-light | nc-missing | new chat: link | Copy | #0f766e | #f7f4ee | 4.99 | 4.5 | yes |
 | teal-light | good | chip Ready / Signed in (ok) | Ready | #08706a | #ddf1ec | 5.05 | 4.5 | yes |
-| teal-dark | nc-missing | new chat: dim copy line | Or install it yourself in Ubuntu: npm i -g @agentc | #8a867d | #121318 | 5.11 | 4.5 | yes |
-| teal-dark | good | button link (Check again, Copy) | Check again | #2e9b8f | #191a21 | 5.12 | 4.5 | yes |
-| teal-light | two | drop-down disabled option (list box) | docker-desktop (not supported: docker-desktop is D | #6d6d6d | #ffffff | 5.17 | 4.5 | yes |
-| teal-dark | nc-missing | new chat: link | Copy | #2c998d | #121318 | 5.34 | 4.5 | yes |
+| teal-dark | rm-blocked | dialog destructive button, off | Remove AIB from Ubuntu | #bb808e | #1f2028 | 5.09 | 4.5 | yes |
+| teal-light | two | drop-down disabled option (list box) | docker-desktop (not supported) | #6d6d6d | #ffffff | 5.17 | 4.5 | yes |
+| teal-light | good | button link (Check again, Copy) | Check again | #0f766e | #faf9f6 | 5.2 | 4.5 | yes |
 | teal-dark | good | chip Ready / Signed in (ok) | Ready | #2bb3a3 | #12302c | 5.44 | 4.5 | yes |
 | teal-light | error | button primary | Retry | #ffffff | #0f766e | 5.47 | 4.5 | yes |
 | teal-light | two | button link (Check again, Copy) | Copy | #0f766e | #ffffff | 5.47 | 4.5 | yes |
@@ -441,27 +419,39 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 | teal-dark | del-wsl-refused | delete: note | Deleting the folder is not possible: This distro h | #a9a497 | #1f2028 | 6.52 | 4.5 | yes |
 | teal-dark | error | button primary | Retry | #0b1f1d | #2bb3a3 | 6.58 | 4.5 | yes |
 | teal-dark | good | tag (Installed by AIB, WSL 2 · WSL default) | WSL 2 · WSL default | #a9a497 | #1e1f26 | 6.6 | 4.5 | yes |
+| teal-dark | good | muted note (.st-note.dim) | docker-desktop is Docker's own distro; AIB cannot  | #a9a497 | #1e1f26 | 6.6 | 4.5 | yes |
 | teal-dark | good | limits line | Usage limits of Ubuntu's Codex sign-in: 5h 32% · w | #a9a497 | #1e1f26 | 6.6 | 4.5 | yes |
 | teal-dark | good | hint | Version | #a9a497 | #1e1f26 | 6.6 | 4.5 | yes |
 | teal-dark | good | check state found (ok) | found 24.11.1 (nvm) | #2bb3a3 | #191a21 | 6.67 | 4.5 | yes |
+| teal-light | publish-failed | publish card reason | In a WSL project, publish by `content`: AIB cannot | #5c5547 | #f6f3ee | 6.67 | 4.5 | yes |
 | teal-light | publish-failed | publish card sub | The publish did not finish | #5c5547 | #f6f3ee | 6.67 | 4.5 | yes |
 | teal-light | good | group heading | UBUNTU | #5c5547 | #f7f4ee | 6.72 | 4.5 | yes |
+| teal-light | nc-missing | new chat: dim copy line | Or install it yourself in Ubuntu: npm i -g @agentc | #5c5547 | #f7f4ee | 6.72 | 4.5 | yes |
 | teal-dark | node-missing | button primary, off | Install in Ubuntu | #8fd9cf | #1f423d | 6.82 | 4.5 | yes |
 | teal-dark | status-words | row phrase | Ready | #a9a497 | #1b1c23 | 6.83 | 4.5 | yes |
 | teal-light | np-browse | folder list here | Ubuntu: /home/u | #5c5547 | #faf8f3 | 6.95 | 4.5 | yes |
 | teal-dark | good | note | Run Claude Code, Codex and the other ACP agents in | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
+| teal-dark | good | node path (.wl-path) | /home/u/.nvm/versions/node/v24.11.1/bin/node | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
+| teal-dark | good | Checked with line | Checked with: zsh login shell (interactive). Check | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
 | teal-dark | good | usage dt | AIB programs (keeper, helper) | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
 | teal-dark | good | size (.wl-size) | 40 MB | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
 | teal-dark | good | facts dt | State | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
+| teal-dark | node-missing | muted note (.st-note.dim) | Checked with: zsh login shell (interactive). Check | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
 | teal-dark | two | button link (Check again, Copy) | Copy | #33bcab | #1e1f26 | 6.97 | 4.5 | yes |
+| teal-dark | publish-failed | publish card reason | In a WSL project, publish by `content`: AIB cannot | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
 | teal-dark | publish-failed | publish card sub | The publish did not finish | #a9a497 | #191a21 | 6.97 | 4.5 | yes |
-| teal-dark | two | drop-down disabled option (list box) | docker-desktop (not supported: docker-desktop is D | #aaaaaa | #1f2028 | 6.98 | 4.5 | yes |
+| teal-dark | two | drop-down disabled option (list box) | docker-desktop (not supported) | #aaaaaa | #1f2028 | 6.98 | 4.5 | yes |
 | teal-light | good | note | Run Claude Code, Codex and the other ACP agents in | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
+| teal-light | good | node path (.wl-path) | /home/u/.nvm/versions/node/v24.11.1/bin/node | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
+| teal-light | good | Checked with line | Checked with: zsh login shell (interactive). Check | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
 | teal-light | good | usage dt | AIB programs (keeper, helper) | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
 | teal-light | good | size (.wl-size) | 40 MB | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
 | teal-light | good | facts dt | State | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
+| teal-light | node-missing | muted note (.st-note.dim) | Checked with: zsh login shell (interactive). Check | #5c5547 | #faf9f6 | 7.01 | 4.5 | yes |
 | teal-dark | np-browse | folder list here | Ubuntu: /home/u | #a9a497 | #16171d | 7.19 | 4.5 | yes |
+| teal-dark | good | button link (Check again, Copy) | Check again | #33bcab | #191a21 | 7.37 | 4.5 | yes |
 | teal-light | good | tag (Installed by AIB, WSL 2 · WSL default) | WSL 2 · WSL default | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
+| teal-light | good | muted note (.st-note.dim) | docker-desktop is Docker's own distro; AIB cannot  | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
 | teal-light | good | limits line | Usage limits of Ubuntu's Codex sign-in: 5h 32% · w | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
 | teal-light | good | hint | Version | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
 | teal-light | rm-check | dialog path (.wl-rm-path) | /home/u/.aib-server/data-1a2b3c4d | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
@@ -472,10 +462,12 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 | teal-light | status-words | row phrase | Ready | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
 | teal-light | project-menu | distro chip | Debian | #5c5547 | #ffffff | 7.38 | 4.5 | yes |
 | teal-dark | good | group heading | UBUNTU | #a9a497 | #121318 | 7.46 | 4.5 | yes |
+| teal-dark | nc-missing | new chat: dim copy line | Or install it yourself in Ubuntu: npm i -g @agentc | #a9a497 | #121318 | 7.46 | 4.5 | yes |
 | teal-dark | rm-blocked | dialog warn | AIB cannot be removed from Ubuntu now: | #f09998 | #1f2028 | 7.5 | 4.5 | yes |
 | teal-dark | rm-blocked | dialog reason | A WSL chat is working in Ubuntu (app · Fix login). | #f09998 | #1f2028 | 7.5 | 4.5 | yes |
 | teal-dark | del-wsl-ticked | delete: warn | This moves the folder Ubuntu: /home/u/app and ever | #f09998 | #1f2028 | 7.5 | 4.5 | yes |
 | teal-light | good | chip Not running / Not supported (dim) | Not supported | #4a4740 | #ece9e2 | 7.64 | 4.5 | yes |
+| teal-dark | nc-missing | new chat: link | Copy | #33bcab | #121318 | 7.88 | 4.5 | yes |
 | teal-dark | rm-check | dialog destructive button (dp-ok) | Remove AIB from Ubuntu | #f0a0b0 | #1f2028 | 8 | 4.5 | yes |
 | teal-dark | del-wsl-ticked | delete: destructive button | Remove and move folder to trash | #f0a0b0 | #1f2028 | 8 | 4.5 | yes |
 | teal-dark | good | button danger (Uninstall / Remove AIB) | Uninstall | #efa3a1 | #1f2028 | 8.05 | 4.5 | yes |
@@ -507,9 +499,7 @@ Identical: dialog, dialog title, dialog main, dialog cancel, dialog tick, dialog
 | teal-dark | node-missing | button link (Check again, Copy) | Check again | #edeae2 | #1f2028 | 13.48 | 4.5 | yes |
 | teal-dark | del-wsl-ticked | delete: tick label | Move folder to trash in Ubuntu | #edeae2 | #1f2028 | 13.48 | 4.5 | yes |
 | teal-dark | good | limits value | 5h 32% · wk 10% | #edeae2 | #1e1f26 | 13.66 | 4.5 | yes |
-| teal-dark | publish-failed | publish card reason | In a WSL project, publish by `content`: AIB cannot | #edeae2 | #191a21 | 14.42 | 4.5 | yes |
 | teal-dark | np-browse | folder list row | .. | #edeae2 | #16171d | 14.87 | 4.5 | yes |
-| teal-light | publish-failed | publish card reason | In a WSL project, publish by `content`: AIB cannot | #16151b | #f6f3ee | 16.4 | 4.5 | yes |
 | teal-light | np-browse | folder list row | .. | #16151b | #faf8f3 | 17.1 | 4.5 | yes |
 | teal-light | good | limits value | 5h 32% · wk 10% | #16151b | #ffffff | 18.15 | 4.5 | yes |
 | teal-light | good | drop-down | Ubuntu (WSL default) docker-desktop (not supported | #16151b | #ffffff | 18.15 | 4.5 | yes |
@@ -546,9 +536,7 @@ No overflow found.
 
 Content box 700 px wide; nav 700 x 134; drop-down 360 px.
 
-| kind | element | text | by px |
-| --- | --- | --- | --- |
-| clipped | select | Debian Ubuntu (WSL default) docker-desktop (not supported: d | 189 |
+No overflow found.
 
 ### error at 700 px
 
@@ -584,9 +572,7 @@ No overflow found.
 
 Content box 860 px wide; nav 900 x 99; drop-down 360 px.
 
-| kind | element | text | by px |
-| --- | --- | --- | --- |
-| clipped | select | Debian Ubuntu (WSL default) docker-desktop (not supported: d | 189 |
+No overflow found.
 
 ### error at 900 px
 
@@ -640,9 +626,7 @@ No overflow found.
 
 Content box 860 px wide; nav 220 x 860; drop-down 360 px.
 
-| kind | element | text | by px |
-| --- | --- | --- | --- |
-| clipped | select | Debian Ubuntu (WSL default) docker-desktop (not supported: d | 189 |
+No overflow found.
 
 ### error at 1400 px
 
@@ -707,8 +691,8 @@ No overflow found.
 {
  "select": {
   "role": "(implicit combobox)",
-  "ariaLabel": "The distro this page shows",
-  "label": "DistroUbuntu (WSL default)docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there)",
+  "ariaLabel": "Distro",
+  "label": "DistroUbuntu (WSL default)docker-desktop (not supported)",
   "options": [
    {
     "text": "Ubuntu (WSL default)",
@@ -716,7 +700,7 @@ No overflow found.
     "selected": true
    },
    {
-    "text": "docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there)",
+    "text": "docker-desktop (not supported)",
     "disabled": true,
     "selected": false
    }
@@ -752,8 +736,8 @@ No overflow found.
  "chips": [
   {
    "text": "Ready",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
@@ -764,20 +748,20 @@ No overflow found.
   },
   {
    "text": "Signed in",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Signed in",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Found",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
@@ -846,6 +830,26 @@ No overflow found.
   {
    "cls": "attachment-list",
    "role": null,
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
    "live": "polite"
   },
   {
@@ -917,7 +921,7 @@ No overflow found.
 {
  "select": {
   "role": "(implicit combobox)",
-  "ariaLabel": "The distro this page shows",
+  "ariaLabel": "Distro",
   "label": "DistroUbuntu (WSL default)",
   "options": [
    {
@@ -965,20 +969,20 @@ No overflow found.
  "chips": [
   {
    "text": "Ready",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Found",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Not installed",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
@@ -1047,6 +1051,21 @@ No overflow found.
   {
    "cls": "attachment-list",
    "role": null,
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status warn",
+   "role": "status",
    "live": "polite"
   },
   {
@@ -1118,8 +1137,8 @@ No overflow found.
 {
  "select": {
   "role": "(implicit combobox)",
-  "ariaLabel": "The distro this page shows",
-  "label": "DistroDebianUbuntu (WSL default)docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there)Ubuntu-20.04 (not supported: Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2)",
+  "ariaLabel": "Distro",
+  "label": "DistroDebianUbuntu (WSL default)docker-desktop (not supported)Ubuntu-20.04 (not supported)",
   "options": [
    {
     "text": "Debian",
@@ -1132,12 +1151,12 @@ No overflow found.
     "selected": true
    },
    {
-    "text": "docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there)",
+    "text": "docker-desktop (not supported)",
     "disabled": true,
     "selected": false
    },
    {
-    "text": "Ubuntu-20.04 (not supported: Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2)",
+    "text": "Ubuntu-20.04 (not supported)",
     "disabled": true,
     "selected": false
    }
@@ -1173,14 +1192,14 @@ No overflow found.
  "chips": [
   {
    "text": "Not running",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Ready",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
@@ -1197,20 +1216,20 @@ No overflow found.
   },
   {
    "text": "Signed in",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Found",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
    "text": "Not installed",
-   "role": "",
-   "live": "",
+   "role": "status",
+   "live": "polite",
    "title": ""
   },
   {
@@ -1279,6 +1298,31 @@ No overflow found.
   {
    "cls": "attachment-list",
    "role": null,
+   "live": "polite"
+  },
+  {
+   "cls": "st-status dim",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status ok",
+   "role": "status",
+   "live": "polite"
+  },
+  {
+   "cls": "st-status warn",
+   "role": "status",
    "live": "polite"
   },
   {
@@ -1503,7 +1547,7 @@ No overflow found.
   "modal": "true",
   "labelledby": "wlRemoveTitle",
   "title": "Remove AIB from Ubuntu?",
-  "describedby": null
+  "describedby": "wlRemoveMain"
  },
  "afterEscape": {
   "open": false,
@@ -1636,21 +1680,21 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | WSL on this PC | text | wsl-settings-ui.js:5 | A good, A node-missing, A node-old, A asdf +32 |
 | Run Claude Code, Codex and the other ACP agents inside your WSL distros, next to your Windows agents, all on this PC. AIB installs them into its own folder in each distro (~/.aib-server), with the versions it reviewed. | text | wsl-settings-ui.js:25 | A good, A node-missing, A node-old, A asdf +30 |
 | Ubuntu | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +30 |
-| WSL 2 · WSL default | text | wsl-settings-ui.js:381 | A good, A node-missing, A node-old, A asdf +30 |
+| WSL 2 · WSL default | text | wsl-settings-ui.js:391 | A good, A node-missing, A node-old, A asdf +30 |
 | Ready | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +24 |
 | docker-desktop | text | (dynamic / fixture) | A good, A two, A rm-check, A rm-blocked +7 |
-| Not supported | text | wsl-settings-ui.js:392 | A good, A two, A rm-check, A rm-blocked +8 |
+| Not supported | text | wsl-settings-ui.js:402 | A good, A two, A rm-check, A rm-blocked +8 |
 | docker-desktop is Docker's own distro; AIB cannot run there. | text | (dynamic / fixture) | A good, A two, A rm-check, A rm-blocked +7 |
 | A distro keeps running while a WSL project is open or a WSL chat works, also after you quit AIB. When nothing works, AIB lets go and WSL stops it by its own rules. | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +30 |
 | UBUNTU | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +28 |
-| State | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +30 |
-| AIB helper | text | wsl-settings-ui.js:432 | A good, A node-missing, A node-old, A asdf +23 |
+| State | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +27 |
+| AIB helper | text | wsl-settings-ui.js:447 | A good, A node-missing, A node-old, A asdf +23 |
 | 0.1.0-ab12cd34 | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
 | Home | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
 | /home/u | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | What Ubuntu needs | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
-| AIB looks in Ubuntu's login shell, the way your terminal there sees it. It installs nothing by itself. | text | wsl-settings-ui.js:692 | A good, A node-missing, A node-old, A asdf +21 |
-| Node.js 22.19 or newer | text | wsl-settings-ui.js:64 | A good, A node-missing, A node-old, A asdf +23 |
+| AIB looks in Ubuntu's login shell, the way your terminal there sees it. It installs nothing by itself. | text | wsl-settings-ui.js:707 | A good, A node-missing, A node-old, A asdf +21 |
+| Node.js 22.19 or newer | text | wsl-settings-ui.js:65 | A good, A node-missing, A node-old, A asdf +23 |
 | found 24.11.1 (nvm) | text | (dynamic / fixture) | A good, A pkg-missing, A installing, A update +19 |
 | /home/u/.nvm/versions/node/v24.11.1/bin/node | text | (dynamic / fixture) | A good, A pkg-missing, A installing, A update +18 |
 | npm | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
@@ -1659,36 +1703,36 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | found 2.43.0 | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | curl | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
 | found | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +22 |
-| Free space in your home folder | text | wsl-settings-ui.js:711 | A good, A node-missing, A node-old, A asdf +23 |
+| Free space in your home folder | text | wsl-settings-ui.js:726 | A good, A node-missing, A node-old, A asdf +23 |
 | 802.7 GB free | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +22 |
 | Checked with: zsh login shell (interactive). Check again | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +22 |
-| Check again | text | wsl-settings-ui.js:419 | A good, A node-missing, A node-old, A asdf +26 |
+| Check again | text | wsl-settings-ui.js:434 | A good, A node-missing, A node-old, A asdf +26 |
 | Agents in Ubuntu | text | wsl-settings-ui.js:7 | A good, A node-missing, A node-old, A asdf +21 |
 | Claude Code | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
-| Installed by AIB | text | wsl-settings-ui.js:882 | A good, A pkg-missing, A update, A error +18 |
-| Signed in | text | wsl-settings-ui.js:869 | A good, A pkg-missing, A error, A signin +16 |
-| Version | text | wsl-settings-ui.js:54 | A good, A node-old, A asdf, A pkg-missing +22 |
+| Installed by AIB | text | wsl-settings-ui.js:898 | A good, A pkg-missing, A update, A error +18 |
+| Signed in | text | wsl-settings-ui.js:885 | A good, A pkg-missing, A error, A signin +16 |
+| Version | text | wsl-settings-ui.js:55 | A good, A node-old, A asdf, A pkg-missing +22 |
 | 0.102.0 | text | (dynamic / fixture) | A good, A pkg-missing, A error, A signin +17 |
-| Signed in to Claude Code in Ubuntu as me@example.com. | text | wsl-settings-ui.js:944 | A good, A signin, A rm-check, A rm-blocked +6 |
+| Signed in to Claude Code in Ubuntu as me@example.com. | text | wsl-settings-ui.js:960 | A good, A signin, A rm-check, A rm-blocked +6 |
 | The standalone claude command is not needed: AIB chats use the copy that comes with Claude Code in Ubuntu. | text | (dynamic / fixture) | A good, A pkg-missing, A update, A error +16 |
 | Use in Ubuntu | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | Uninstall | text | wsl-settings-ui.js:9 | A good, A pkg-missing, A update, A error +18 |
 | Codex | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
-| Your own install | text | wsl-settings-ui.js:800 | A good, A node-old, A asdf, A pkg-missing +20 |
+| Your own install | text | wsl-settings-ui.js:816 | A good, A node-old, A asdf, A pkg-missing +20 |
 | 2.6.0 | text | (dynamic / fixture) | A good, A node-old, A asdf, A pkg-missing +21 |
-| Signed in to Codex in Ubuntu. | text | wsl-settings-ui.js:944 | A good, A rm-check, A rm-blocked, A rm-second +5 |
-| Usage limits of Ubuntu's Codex sign-in: 5h 32% · wk 10% (updated 4 min ago). Same ChatGPT account as on Windows means the same limits. | text | wsl-settings-ui.js:931 | A good, A rm-check, A rm-blocked, A rm-second +5 |
+| Signed in to Codex in Ubuntu. | text | wsl-settings-ui.js:960 | A good, A rm-check, A rm-blocked, A rm-second +5 |
+| Usage limits of Ubuntu's Codex sign-in: 5h 32% · wk 10% (updated 4 min ago). Same ChatGPT account as on Windows means the same limits. | text | wsl-settings-ui.js:947 | A good, A rm-check, A rm-blocked, A rm-second +5 |
 | 5h 32% · wk 10% | text | (dynamic / fixture) | A good, A rm-check, A rm-blocked, A rm-second +6 |
-| Optional: to use Codex in your own Ubuntu terminal, install the codex command yourself: | text | wsl-settings-ui.js:1040 | A good, A node-old, A asdf, A pkg-missing +19 |
-| npm install -g @openai/codex | text | wsl-settings-ui.js:40 | A good, A node-old, A asdf, A pkg-missing +21 |
+| Optional: to use Codex in your own Ubuntu terminal, install the codex command yourself: | text | wsl-settings-ui.js:1056 | A good, A node-old, A asdf, A pkg-missing +19 |
+| npm install -g @openai/codex | text | wsl-settings-ui.js:41 | A good, A node-old, A asdf, A pkg-missing +21 |
 | Codex docs | text | (dynamic / fixture) | A good, A node-old, A asdf, A pkg-missing +21 |
 | OMP | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +23 |
 | Found | text | (dynamic / fixture) | A good, A node-old, A asdf, A pkg-missing +19 |
 | 1.2.0 | text | (dynamic / fixture) | A good, A signin, A rm-check, A rm-blocked +7 |
-| Sign-in is checked in Ubuntu each time this page reads its agents. "Use in Ubuntu" is Ubuntu's own switch; the Windows one stays as it is. Your Windows agents are in AIB Linking. | text | wsl-settings-ui.js:1078 | A good, A node-missing, A node-old, A asdf +21 |
+| Sign-in is checked in Ubuntu each time this page reads its agents. "Use in Ubuntu" is Ubuntu's own switch; the Windows one stays as it is. Your Windows agents are in AIB Linking. | text | wsl-settings-ui.js:1098 | A good, A node-missing, A node-old, A asdf +21 |
 | AIB Linking | text | wsl-settings-ui.js:3 | A good, A node-missing, A node-old, A asdf +23 |
 | AIB in Ubuntu | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
-| Everything AIB keeps in Ubuntu, in /home/u/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it. | text | wsl-settings-ui.js:1191 | A good, A node-missing, A node-old, A asdf +19 |
+| Everything AIB keeps in Ubuntu, in /home/u/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it. | text | wsl-settings-ui.js:1214 | A good, A node-missing, A node-old, A asdf +19 |
 | AIB programs (keeper, helper) | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | 190 MB | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | Agents installed by AIB | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
@@ -1707,22 +1751,21 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | 512 KB | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | In all | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | 1.5 GB | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
-| AIB versions installed: 0.1.0-ab12cd34 (current), 0.0.9-ffee0011 | text | wsl-settings-ui.js:1213 | A good, A node-missing, A node-old, A asdf +20 |
-| Chat copies: 3, 1 with unsaved changes | text | wsl-settings-ui.js:1219 | A good, A node-missing, A node-old, A asdf +20 |
-| Chats working now: 0 | text | wsl-settings-ui.js:1223 | A good, A node-missing, A node-old, A asdf +19 |
-| Other AIB data folders in Ubuntu | text | wsl-settings-ui.js:1227 | A good, A node-missing, A node-old, A asdf +18 |
+| AIB versions installed: 0.1.0-ab12cd34 (current), 0.0.9-ffee0011 | text | wsl-settings-ui.js:1236 | A good, A node-missing, A node-old, A asdf +20 |
+| Chat copies: 3, 1 with uncommitted changes | text | wsl-settings-ui.js:1242 | A good, A node-missing, A node-old, A asdf +20 |
+| Chats working now: 0 | text | wsl-settings-ui.js:1246 | A good, A node-missing, A node-old, A asdf +19 |
+| Other AIB folders in Ubuntu | text | wsl-settings-ui.js:1250 | A good, A node-missing, A node-old, A asdf +18 |
 | data-9f8e7d6c | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +20 |
 | 40 MB | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +20 |
 | in use | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +20 |
 | data-55aa66bb | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +20 |
 | 3 MB | text | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +20 |
-| These belong to another AIB build or data folder. Remove here never touches them. | text | wsl-settings-ui.js:1235 | A good, A node-missing, A node-old, A asdf +20 |
-| Remove AIB from Ubuntu | text | wsl-settings-ui.js:1172 | A good, A node-missing, A node-old, A asdf +20 |
-| Refresh | text | wsl-settings-ui.js:250 | A good, A node-missing, A node-old, A asdf +22 |
-| The distro this page shows | aria | wsl-settings-ui.js:338 | A good, A node-missing, A node-old, A asdf +30 |
-| Ubuntu (WSL default) | option | wsl-settings-ui.js:340 | A good, A node-missing, A node-old, A asdf +29 |
-| docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there) | option | (dynamic / fixture) | A good, A two, A rm-check, A rm-blocked +7 |
-| 5-hour: 32% used · resets 19:47 (in 59m) Weekly: 10% used · resets Mon 18:47 (in 23h 59m) Updated 4 min ago | title | (dynamic / fixture) | A good, A rm-check, A rm-blocked, A rm-second +6 |
+| These belong to another AIB build or folder. Remove here never touches them. | text | wsl-settings-ui.js:1258 | A good, A node-missing, A node-old, A asdf +20 |
+| Remove AIB from Ubuntu | text | wsl-settings-ui.js:1195 | A good, A node-missing, A node-old, A asdf +20 |
+| Refresh | text | wsl-settings-ui.js:257 | A good, A node-missing, A node-old, A asdf +22 |
+| Ubuntu (WSL default) | option | wsl-settings-ui.js:347 | A good, A node-missing, A node-old, A asdf +29 |
+| docker-desktop (not supported) | option | wsl-settings-ui.js:353 | A good, A two, A rm-check, A rm-blocked +7 |
+| 5-hour: 32% used · resets 20:09 (in 59m) Weekly: 10% used · resets Mon 19:09 (in 23h 59m) Updated 4 min ago | title | (dynamic / fixture) | A good, A rm-check, A rm-blocked, A rm-second +6 |
 | Copy the command that installs the codex command | aria | (dynamic / fixture) | A good, A node-old, A asdf, A pkg-missing +21 |
 | /home/u/.aib-server/0.1.0-ab12cd34 | title | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | /home/u/.aib-server/agents | title | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
@@ -1730,111 +1773,111 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | /home/u/.aib-server/data-1a2b3c4d | title | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +22 |
 | /home/u/.aib-server/data-1a2b3c4d/worktrees | title | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
 | /home/u/.aib-server/data-1a2b3c4d/logs | title | (dynamic / fixture) | A good, A node-missing, A node-old, A asdf +21 |
-| Shows exactly what would be deleted from Ubuntu and what is kept, before anything is deleted | title | wsl-settings-ui.js:1173 | A good, A node-missing, A node-old, A asdf +20 |
-| Measure what AIB keeps in Ubuntu again | title | wsl-settings-ui.js:1170 | A good, A node-missing, A node-old, A asdf +20 |
-| missing | text | wsl-settings-ui.js:279 | A node-missing, A pkg-missing, A error, A node-term |
-| Needed to install Claude Code, Codex and the other npm agents in Ubuntu. | text | wsl-settings-ui.js:637 | A node-missing, A node-term |
-| Install runs nvm's official installer in a terminal here, in Ubuntu, then installs the current LTS Node.js. It adds nvm to your home folder and shell start-up file; it needs no password. | text | wsl-settings-ui.js:644 | A node-missing, A node-term |
-| Install Node.js in Ubuntu | text | wsl-settings-ui.js:542 | A node-missing, A node-old, A node-term |
-| Not installed | text | wsl-settings-ui.js:866 | A node-missing, A node-old, A asdf, A pkg-missing +12 |
-| Install in Ubuntu | text | wsl-settings-ui.js:900 | A node-missing, A node-old, A asdf, A node-term +3 |
-| Needs Node.js first: see What Ubuntu needs above. | text | wsl-settings-ui.js:981 | A node-missing, A node-old, A asdf, A node-term |
-| AIB does not install OMP. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A node-missing, A node-old, A asdf, A pkg-missing +11 |
-| Needs Node.js first | title | wsl-settings-ui.js:901 | A node-missing, A node-old, A asdf, A node-term |
+| Shows exactly what would be deleted from Ubuntu and what is kept, before anything is deleted | title | wsl-settings-ui.js:1196 | A good, A node-missing, A node-old, A asdf +20 |
+| Measure what AIB keeps in Ubuntu again | title | wsl-settings-ui.js:1193 | A good, A node-missing, A node-old, A asdf +20 |
+| missing | text | wsl-settings-ui.js:286 | A node-missing, A pkg-missing, A error, A node-term |
+| Needed to install Claude Code, Codex and the other npm agents in Ubuntu. | text | wsl-settings-ui.js:652 | A node-missing, A node-term |
+| Install runs nvm's official installer in a terminal here, in Ubuntu, then installs the current LTS Node.js. It adds nvm to your home folder and shell start-up file; it needs no password. | text | wsl-settings-ui.js:659 | A node-missing, A node-term |
+| Install Node.js in Ubuntu | text | wsl-settings-ui.js:557 | A node-missing, A node-old, A node-term |
+| Not installed | text | wsl-settings-ui.js:882 | A node-missing, A node-old, A asdf, A pkg-missing +12 |
+| Install in Ubuntu | text | wsl-settings-ui.js:916 | A node-missing, A node-old, A asdf, A node-term +2 |
+| Needs Node.js first: see What Ubuntu needs above. | text | wsl-settings-ui.js:997 | A node-missing, A node-old, A asdf, A node-term |
+| AIB does not install OMP. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A node-missing, A node-old, A asdf, A pkg-missing +11 |
+| Needs Node.js first | title | wsl-settings-ui.js:917 | A node-missing, A node-old, A asdf, A node-term |
 | too old (18.19.1) | text | (dynamic / fixture) | A node-old |
-| AIB needs Node.js 22.19 or newer in Ubuntu to install Claude Code, Codex and the other npm agents. | text | wsl-settings-ui.js:634 | A node-old |
-| Install runs nvm's official installer in a terminal here, in Ubuntu, then installs the current LTS Node.js. It adds nvm to your home folder and shell start-up file; it needs no password. nvm is already in Ubuntu; it is used. | text | wsl-settings-ui.js:644 | A node-old |
+| AIB needs Node.js 22.19 or newer in Ubuntu to install Claude Code, Codex and the other npm agents. | text | wsl-settings-ui.js:649 | A node-old |
+| Install runs nvm's official installer in a terminal here, in Ubuntu, then installs the current LTS Node.js. It adds nvm to your home folder and shell start-up file; it needs no password. nvm is already in Ubuntu; it is used. | text | wsl-settings-ui.js:659 | A node-old |
 | asdf has no Node.js version set | text | (dynamic / fixture) | A asdf |
-| Node.js in Ubuntu comes from asdf, and asdf has no Node.js version set, so node does not run. Set one in Ubuntu (no password needed), then choose Check again: | text | wsl-settings-ui.js:617 | A asdf |
-| asdf 0.16 or newer: | text | wsl-settings-ui.js:64 | A asdf |
-| asdf install nodejs latest && asdf set -u nodejs latest | text | wsl-settings-ui.js:55 | A asdf |
-| asdf 0.15 or older: | text | wsl-settings-ui.js:65 | A asdf |
-| asdf install nodejs latest && asdf global nodejs latest | text | wsl-settings-ui.js:56 | A asdf |
+| Node.js in Ubuntu comes from asdf, and asdf has no Node.js version set, so node does not run. Set one in Ubuntu (no password needed), then choose Check again: | text | wsl-settings-ui.js:632 | A asdf |
+| asdf 0.16 or newer: | text | wsl-settings-ui.js:65 | A asdf |
+| asdf install nodejs latest && asdf set -u nodejs latest | text | wsl-settings-ui.js:56 | A asdf |
+| asdf 0.15 or older: | text | wsl-settings-ui.js:66 | A asdf |
+| asdf install nodejs latest && asdf global nodejs latest | text | wsl-settings-ui.js:57 | A asdf |
 | Node.js comes from asdf in Ubuntu, so AIB does not install another one. | text | (dynamic / fixture) | A asdf |
 | Open Ubuntu terminal | text | wsl-settings-ui.js:7 | A asdf, A pkg-missing, A error, B nc-missing +2 |
 | Copy the command that sets a Node.js version in asdf | aria | (dynamic / fixture) | A asdf |
-| Needed for a chat's own copy, Changes and Merge; until then chats work in the project folder. It needs your password, so AIB does not run it. Run it yourself in Ubuntu: | text | wsl-settings-ui.js:707 | A pkg-missing, A error |
+| Needed for a chat's own copy, Changes and Merge; until then chats work in the project folder. It needs your password, so AIB does not run it. Run it yourself in Ubuntu: | text | wsl-settings-ui.js:722 | A pkg-missing, A error |
 | sudo dnf install git | text | (dynamic / fixture) | A pkg-missing |
-| Needed by nvm's installer and the vendors' install scripts. It needs your password, so AIB does not run it. Run it yourself in Ubuntu: | text | wsl-settings-ui.js:708 | A pkg-missing |
+| Needed by nvm's installer and the vendors' install scripts. It needs your password, so AIB does not run it. Run it yourself in Ubuntu: | text | wsl-settings-ui.js:723 | A pkg-missing |
 | sudo dnf install curl | text | (dynamic / fixture) | A pkg-missing |
 | 380 MB free | text | (dynamic / fixture) | A pkg-missing |
-| Installs need room in Ubuntu: Claude Code about 1 GB, Codex about 600 MB. | text | wsl-settings-ui.js:716 | A pkg-missing |
+| Installs need room in Ubuntu: Claude Code about 1 GB, Codex about 600 MB. | text | wsl-settings-ui.js:731 | A pkg-missing |
 | Checked with: plain shell, without your login profile. A version manager set up only in your shell profile is not seen this way. Check again | text | (dynamic / fixture) | A pkg-missing |
-| Signed in to Claude Code in Ubuntu. | text | wsl-settings-ui.js:944 | A pkg-missing, A update, A error, A two +5 |
+| Signed in to Claude Code in Ubuntu. | text | wsl-settings-ui.js:960 | A pkg-missing, A update, A error, A two +5 |
 | Copy the command that installs git | aria | (dynamic / fixture) | A pkg-missing, A error |
 | Copy the command that installs curl | aria | (dynamic / fixture) | A pkg-missing |
 | Cancel | text | (dynamic / fixture) | A installing, A rm-check, A rm-second, A rm-tick +7 |
-| Installing Claude Code in Ubuntu… Downloading and unpacking… It goes on if you close Settings or restart AIB. | text | wsl-settings-ui.js:553 | A installing |
-| Installing Claude Code in Ubuntu | aria | wsl-settings-ui.js:553 | A installing |
-| Update available | text | wsl-settings-ui.js:867 | A update |
-| Update in Ubuntu | text | wsl-settings-ui.js:900 | A update, B nc-update |
+| Installing Claude Code in Ubuntu… Downloading and unpacking… It goes on if you close Settings or restart AIB. | text | wsl-settings-ui.js:107 | A installing |
+| Installing Claude Code in Ubuntu | aria | wsl-settings-ui.js:107 | A installing |
+| Update available | text | wsl-settings-ui.js:883 | A update |
+| Update in Ubuntu | text | wsl-settings-ui.js:916 | A update, B nc-update |
 | 0.98.1 | text | (dynamic / fixture) | A update |
-| AIB now uses Claude Code 0.102.0; Ubuntu has 0.98.1. The old copy keeps working until the new one is complete. | text | wsl-settings-ui.js:996 | A update |
-| Not signed in | text | wsl-settings-ui.js:870 | A update, A signin, A signin-term, A long |
+| AIB now uses Claude Code 0.102.0; Ubuntu has 0.98.1. The old copy keeps working until the new one is complete. | text | wsl-settings-ui.js:1012 | A update |
+| Not signed in | text | wsl-settings-ui.js:886 | A update, A signin, A signin-term, A long |
 | Sign in | text | wsl-settings-ui.js:9 | A update, A signin, A long, B nc-found +1 |
-| Not signed in to Codex in Ubuntu yet. Sign in runs Codex's own sign-in in a Ubuntu terminal here; its page opens in your Windows browser. Ubuntu signs in separately from Windows. AIB does not see your password or sign-in details. | text | wsl-settings-ui.js:948 | A update, A signin, A signin-term |
-| AIB installs Claude Code 0.102.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A update, B nc-missing, B nc-update |
+| Not signed in to Codex in Ubuntu yet. Sign in runs Codex's own sign-in in a Ubuntu terminal here; its page opens in your Windows browser. Ubuntu signs in separately from Windows. AIB does not see your password or sign-in details. | text | wsl-settings-ui.js:964 | A update, A signin, A signin-term |
+| AIB installs Claude Code 0.102.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:920 | A update, B nc-missing, B nc-update |
 | sudo apt install git | text | (dynamic / fixture) | A error |
-| Install failed | text | wsl-settings-ui.js:562 | A error |
+| Install failed | text | wsl-settings-ui.js:577 | A error |
 | Retry | text | (dynamic / fixture) | A error |
 | The install failed: npm could not reach registry.npmjs.org (ETIMEDOUT). | text | (dynamic / fixture) | A error |
-| AIB installs Codex 2.6.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A error |
-| Sign-in in Ubuntu: unknown (AIB has no sign-in check for OMP). | text | wsl-settings-ui.js:952 | A signin |
-| Installed | text | wsl-settings-ui.js:565 | A switch-fail |
+| AIB installs Codex 2.6.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:920 | A error |
+| Sign-in in Ubuntu: unknown (AIB has no sign-in check for OMP). | text | wsl-settings-ui.js:968 | A signin |
+| Installed | text | wsl-settings-ui.js:580 | A switch-fail |
 | The switch could not be saved: The settings file could not be written. Codex stays on in Ubuntu. | text | (dynamic / fixture) | A switch-fail |
-| Stopped | text | wsl-settings-ui.js:364 | A stopped |
-| Ubuntu stopped (Windows restart or wsl --shutdown). Chats in Ubuntu stopped with it; their history is kept. | text | wsl-settings-ui.js:456 | A stopped |
-| Reconnect | text | wsl-settings-ui.js:462 | A stopped, A problem, B state-stopped |
-| Start Ubuntu and connect AIB to it again | title | wsl-settings-ui.js:468 | A stopped, A problem, B state-stopped |
-| Not running | text | wsl-settings-ui.js:360 | A off, A two |
-| Ubuntu is not running. AIB starts it when a WSL project needs it. Its agents show here once it runs. | text | wsl-settings-ui.js:436 | A off |
-| Starts Ubuntu, copies AIB's helper there the first time (about 100 MB, into ~/.aib-server) and starts it. Then AIB looks at the agents in Ubuntu. | text | wsl-settings-ui.js:439 | A off |
+| Stopped | text | wsl-settings-ui.js:374 | A stopped |
+| Ubuntu stopped (Windows restart or wsl --shutdown). Chats in Ubuntu stopped with it; their history is kept. | text | wsl-settings-ui.js:471 | A stopped |
+| Reconnect | text | wsl-settings-ui.js:477 | A stopped, A problem, B state-stopped |
+| Start Ubuntu and connect AIB to it again | title | wsl-settings-ui.js:483 | A stopped, A problem, B state-stopped |
+| Not running | text | wsl-settings-ui.js:370 | A off, A two |
+| Ubuntu is not running. AIB starts it when a WSL project needs it. Its agents show here once it runs. | text | wsl-settings-ui.js:451 | A off |
+| Starts Ubuntu, copies AIB's helper there the first time (about 100 MB, into ~/.aib-server) and starts it. Then AIB looks at the agents in Ubuntu. | text | wsl-settings-ui.js:454 | A off |
 | Start Ubuntu and check | text | wsl-settings-ui.js:11 | A off |
-| Starts Ubuntu, copies AIB's helper there the first time (about 100 MB, into ~/.aib-server) and starts it. | title | wsl-settings-ui.js:439 | A off |
-| Starting | text | wsl-settings-ui.js:361 | A starting |
-| Setting up AIB in Ubuntu (first time, ~100 MB) | text | wsl-settings-ui.js:1140 | A starting, B state-setup |
-| Problem | text | wsl-settings-ui.js:365 | A problem |
+| Starts Ubuntu, copies AIB's helper there the first time (about 100 MB, into ~/.aib-server) and starts it. | title | wsl-settings-ui.js:454 | A off |
+| Starting | text | wsl-settings-ui.js:107 | A starting |
+| Setting up AIB in Ubuntu (first time, ~100 MB) | text | wsl-settings-ui.js:1163 | A starting, B state-setup |
+| Problem | text | wsl-settings-ui.js:375 | A problem |
 | The AIB helper in Ubuntu failed its checksum. | text | (dynamic / fixture) | A problem |
 | WSL is not installed on this PC. With it, AIB runs agents in Linux on this PC, in projects inside a distro, next to your Windows agents. Install it in an administrator PowerShell, then restart Windows: | text | (dynamic / fixture) | A nowsl |
-| wsl --install | text | wsl-settings-ui.js:414 | A nowsl |
-| How to install WSL (Microsoft) | text | wsl-settings-ui.js:418 | A nowsl, A nodistro |
-| Copy the command that installs WSL | aria | wsl-settings-ui.js:414 | A nowsl, A nodistro |
+| wsl --install | text | wsl-settings-ui.js:429 | A nowsl |
+| How to install WSL (Microsoft) | text | wsl-settings-ui.js:433 | A nowsl, A nodistro |
+| Copy the command that installs WSL | aria | wsl-settings-ui.js:429 | A nowsl, A nodistro |
 | WSL is on this PC, but it has no Linux distro yet. Install Ubuntu in PowerShell, then open it once to make your Linux user: | text | wsl-settings-ui.js:33 | A nodistro |
-| wsl --install -d Ubuntu | text | wsl-settings-ui.js:414 | A nodistro |
+| wsl --install -d Ubuntu | text | wsl-settings-ui.js:429 | A nodistro |
 | Debian | text | (dynamic / fixture) | A two, A two-debian, B project-menu |
-| Ubuntu-20.04 (not supported: Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2) | text | wsl-settings-ui.js:398 | A two |
+| Ubuntu-20.04 (not supported) | text | wsl-settings-ui.js:353 | A two |
 | WSL 2 | text | (dynamic / fixture) | A two, A two-debian |
 | Ubuntu-20.04 | text | (dynamic / fixture) | A two |
 | WSL 1 | text | (dynamic / fixture) | A two, A long |
-| Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2. | text | wsl-settings-ui.js:398 | A two |
-| AIB needs WSL 2. Convert it in PowerShell (takes a few minutes; back it up first): | text | wsl-settings-ui.js:398 | A two, A long |
-| wsl --set-version Ubuntu-20.04 2 | text | wsl-settings-ui.js:399 | A two |
-| Copy the command that converts Ubuntu-20.04 to WSL 2 | aria | wsl-settings-ui.js:399 | A two |
+| Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2. | text | wsl-settings-ui.js:410 | A two |
+| Convert it in PowerShell (takes a few minutes; back it up first): | text | wsl-settings-ui.js:411 | A two, A long |
+| wsl --set-version Ubuntu-20.04 2 | text | wsl-settings-ui.js:414 | A two |
+| Copy the command that converts Ubuntu-20.04 to WSL 2 | aria | wsl-settings-ui.js:414 | A two |
 | DEBIAN | text | (dynamic / fixture) | A two-debian |
 | /home/d | text | (dynamic / fixture) | A two-debian |
 | What Debian needs | text | (dynamic / fixture) | A two-debian |
-| AIB looks in Debian's login shell, the way your terminal there sees it. It installs nothing by itself. | text | wsl-settings-ui.js:692 | A two-debian |
+| AIB looks in Debian's login shell, the way your terminal there sees it. It installs nothing by itself. | text | wsl-settings-ui.js:707 | A two-debian |
 | Agents in Debian | text | wsl-settings-ui.js:7 | A two-debian |
-| Signed in to Claude Code in Debian. | text | wsl-settings-ui.js:944 | A two-debian |
+| Signed in to Claude Code in Debian. | text | wsl-settings-ui.js:960 | A two-debian |
 | The standalone claude command is not needed: AIB chats use the copy that comes with Claude Code in Debian. | text | (dynamic / fixture) | A two-debian |
 | Use in Debian | text | (dynamic / fixture) | A two-debian |
-| Optional: to use Codex in your own Debian terminal, install the codex command yourself: | text | wsl-settings-ui.js:1040 | A two-debian |
-| AIB does not install OMP. Install it in Debian as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A two-debian |
-| Sign-in is checked in Debian each time this page reads its agents. "Use in Debian" is Debian's own switch; the Windows one stays as it is. Your Windows agents are in AIB Linking. | text | wsl-settings-ui.js:1078 | A two-debian |
+| Optional: to use Codex in your own Debian terminal, install the codex command yourself: | text | wsl-settings-ui.js:1056 | A two-debian |
+| AIB does not install OMP. Install it in Debian as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A two-debian |
+| Sign-in is checked in Debian each time this page reads its agents. "Use in Debian" is Debian's own switch; the Windows one stays as it is. Your Windows agents are in AIB Linking. | text | wsl-settings-ui.js:1098 | A two-debian |
 | AIB in Debian | text | (dynamic / fixture) | A two-debian |
-| Everything AIB keeps in Debian, in /home/u/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it. | text | wsl-settings-ui.js:1191 | A two-debian |
-| Other AIB data folders in Debian | text | wsl-settings-ui.js:1227 | A two-debian |
-| Remove AIB from Debian | text | wsl-settings-ui.js:1172 | A two-debian |
-| Shows exactly what would be deleted from Debian and what is kept, before anything is deleted | title | wsl-settings-ui.js:1173 | A two-debian |
-| Measure what AIB keeps in Debian again | title | wsl-settings-ui.js:1170 | A two-debian |
-| AIB versions installed: 0.1.0-ab12cd34 (current) | text | wsl-settings-ui.js:1213 | A aib-clean |
-| Chat copies: 2, none with unsaved changes | text | wsl-settings-ui.js:1219 | A aib-clean |
-| Chats working now: 2 | text | wsl-settings-ui.js:1223 | A aib-clean |
-| Starting Ubuntu… | text | wsl-settings-ui.js:361 | A aib-notready, B state-starting |
-| What AIB keeps in Ubuntu could not be read: Ubuntu did not answer. | text | wsl-settings-ui.js:686 | A aib-error |
-| Remove AIB from Ubuntu? | text | wsl-settings-ui.js:1172 | A rm-check, A rm-blocked, A rm-second, A rm-tick +3 |
-| This stops AIB's helper in Ubuntu and deletes what is listed here. Nothing is deleted before you confirm. | text | wsl-settings-ui.js:1265 | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
-| Deleted (203 MB in all): | text | wsl-settings-ui.js:1339 | A rm-check, A rm-second, A rm-tick, A rm-removing |
+| Everything AIB keeps in Debian, in /home/u/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it. | text | wsl-settings-ui.js:1214 | A two-debian |
+| Other AIB folders in Debian | text | wsl-settings-ui.js:1250 | A two-debian |
+| Remove AIB from Debian | text | wsl-settings-ui.js:1195 | A two-debian |
+| Shows exactly what would be deleted from Debian and what is kept, before anything is deleted | title | wsl-settings-ui.js:1196 | A two-debian |
+| Measure what AIB keeps in Debian again | title | wsl-settings-ui.js:1193 | A two-debian |
+| AIB versions installed: 0.1.0-ab12cd34 (current) | text | wsl-settings-ui.js:1236 | A aib-clean |
+| Chat copies: 2, none with uncommitted changes | text | wsl-settings-ui.js:1242 | A aib-clean |
+| Chats working now: 2 | text | wsl-settings-ui.js:1246 | A aib-clean |
+| Starting Ubuntu… | text | wsl-settings-ui.js:107 | A aib-notready, B state-starting |
+| What AIB keeps in Ubuntu could not be read: Ubuntu did not answer. | text | wsl-settings-ui.js:701 | A aib-error |
+| Remove AIB from Ubuntu? | text | wsl-settings-ui.js:1195 | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
+| This stops AIB's helper in Ubuntu and deletes what is listed here. Nothing is deleted before you confirm. | text | wsl-settings-ui.js:1289 | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
+| Deleted (203 MB in all): | text | wsl-settings-ui.js:1364 | A rm-check, A rm-second, A rm-tick, A rm-removing |
 | Chat copies of this AIB (2) | text | (dynamic / fixture) | A rm-check, A rm-blocked, A rm-second, A rm-tick +1 |
 | /home/u/.aib-server/data-1a2b3c4d/worktrees/app/chat-1 | text | (dynamic / fixture) | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
 | /home/u/.aib-server/data-1a2b3c4d/worktrees/api/chat-2 | text | (dynamic / fixture) | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
@@ -1843,131 +1886,122 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | /home/u/.aib-server/0.0.9-ffee0011 | text | (dynamic / fixture) | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
 | Kept: | text | (dynamic / fixture) | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
 | Another AIB data folder (data-9f8e7d6c) is in use: its keeper is running. | text | (dynamic / fixture) | A rm-check, A rm-blocked, A rm-second, A rm-tick +2 |
-| Your projects, ~/.claude, ~/.codex, nvm and asdf are not touched. | text | wsl-settings-ui.js:1271 | A rm-check, A rm-blocked, A rm-second, A rm-tick +3 |
-| Chat branches stay in your repos. | text | wsl-settings-ui.js:1272 | A rm-check, A rm-blocked, A rm-second, A rm-tick +3 |
-| AIB cannot be removed from Ubuntu now: | text | wsl-settings-ui.js:1330 | A rm-blocked, A rm-long |
+| Your projects, ~/.claude, ~/.codex, nvm and asdf are not touched. | text | wsl-settings-ui.js:1296 | A rm-check, A rm-blocked, A rm-second, A rm-tick +3 |
+| Chat branches stay in your repos. | text | wsl-settings-ui.js:1297 | A rm-check, A rm-blocked, A rm-second, A rm-tick +3 |
+| AIB cannot be removed from Ubuntu now: | text | wsl-settings-ui.js:1355 | A rm-blocked, A rm-long |
 | A WSL chat is working in Ubuntu (app · Fix login). Wait for it or stop it first. | text | (dynamic / fixture) | A rm-blocked |
 | 1 chat copy has changes that are not committed: api · Add tests. Merge or discard them first. | text | (dynamic / fixture) | A rm-blocked |
-| Remove would delete (203 MB in all): | text | wsl-settings-ui.js:1339 | A rm-blocked |
+| Remove would delete (203 MB in all): | text | wsl-settings-ui.js:1364 | A rm-blocked |
 | Close | text | (dynamic / fixture) | A rm-blocked, A rm-partial, A rm-long, A node-term +1 |
-| Choose Remove AIB from Ubuntu again to delete these. This cannot be undone. | text | wsl-settings-ui.js:1307 | A rm-second |
-| Chats working now: 1 | text | wsl-settings-ui.js:1223 | A rm-tick |
-| I understand chats running in Ubuntu will stop | text | wsl-settings-ui.js:1280 | A rm-tick |
-| Removing AIB from Ubuntu… | text | wsl-settings-ui.js:1240 | A rm-removing |
-| Removing… | text | wsl-settings-ui.js:1310 | A rm-removing |
-| Not set up | text | wsl-settings-ui.js:377 | A rm-done, A rm-partial, A rm-partial-closed |
-| AIB not set up | text | wsl-settings-ui.js:1120 | A rm-done, A rm-partial, A rm-partial-closed |
-| AIB is not set up in Ubuntu. | text | wsl-settings-ui.js:1115 | A rm-done, A rm-partial, A rm-partial-closed |
-| Your projects, sign-ins and your own installs in Ubuntu are as they were. Set up again copies AIB's helper to Ubuntu (about 100 MB, into ~/.aib-server) and starts it. Opening a WSL project in Ubuntu does the same. | text | wsl-settings-ui.js:1124 | A rm-done, A rm-partial, A rm-partial-closed |
-| Set up again | text | wsl-settings-ui.js:97 | A rm-done, A rm-partial, A rm-partial-closed |
-| Copies AIB's helper to Ubuntu (about 100 MB, into ~/.aib-server) and starts it | title | wsl-settings-ui.js:439 | A rm-done, A rm-partial, A rm-partial-closed |
+| Choose Remove AIB from Ubuntu again to delete these. This cannot be undone. | text | wsl-settings-ui.js:1332 | A rm-second |
+| Chats working now: 1 | text | wsl-settings-ui.js:1246 | A rm-tick |
+| I understand chats running in Ubuntu will stop | text | wsl-settings-ui.js:1305 | A rm-tick |
+| Removing AIB from Ubuntu… | text | wsl-settings-ui.js:1263 | A rm-removing |
+| Removing… | text | wsl-settings-ui.js:1335 | A rm-removing |
+| Not set up | text | wsl-settings-ui.js:387 | A rm-done, A rm-partial, A rm-partial-closed |
+| AIB is not set up in Ubuntu. | text | wsl-settings-ui.js:1135 | A rm-done, A rm-partial, A rm-partial-closed |
+| Your projects, sign-ins and your own installs in Ubuntu are as they were. Set up again copies AIB's helper to Ubuntu (about 100 MB, into ~/.aib-server) and starts it. Opening a WSL project in Ubuntu does the same. | text | wsl-settings-ui.js:1143 | A rm-done, A rm-partial, A rm-partial-closed |
+| Set up again | text | wsl-settings-ui.js:98 | A rm-done, A rm-partial, A rm-partial-closed |
+| Copies AIB's helper to Ubuntu (about 100 MB, into ~/.aib-server) and starts it | title | wsl-settings-ui.js:454 | A rm-done, A rm-partial, A rm-partial-closed |
 | AIB could not delete 1 folder in Ubuntu. Delete it yourself, or try again after a restart of Ubuntu. | text | wsl-settings-ui.js:25 | A rm-partial, A rm-partial-closed |
-| Left in Ubuntu: | text | wsl-settings-ui.js:1133 | A rm-partial, A rm-partial-closed |
+| Left in Ubuntu: | text | wsl-settings-ui.js:1152 | A rm-partial, A rm-partial-closed |
 | /home/u/.aib-server/data-1a2b3c4d/worktrees/app/chat-1: permission denied | text | (dynamic / fixture) | A rm-partial, A rm-partial-closed |
-| AIB could not remove everything from Ubuntu. | text | wsl-settings-ui.js:1369 | A rm-partial |
-| Removed: | text | wsl-settings-ui.js:1372 | A rm-partial |
+| AIB could not remove everything from Ubuntu | text | wsl-settings-ui.js:1395 | A rm-partial |
+| What AIB removed and what it left in Ubuntu is listed here. | text | wsl-settings-ui.js:1396 | A rm-partial |
+| Removed: | text | wsl-settings-ui.js:1404 | A rm-partial |
 | A WSL chat is working in Ubuntu (a-project-with-a-rather-long-folder-name · Refactor the whole authentication layer to use the new session tokens and keep the old ones working). Wait for it or stop it first. | text | (dynamic / fixture) | A rm-long |
-| Remove would delete (210 MB in all): | text | wsl-settings-ui.js:1339 | A rm-long |
+| Remove would delete (210 MB in all): | text | wsl-settings-ui.js:1364 | A rm-long |
 | Chat copies of this AIB (3) | text | (dynamic / fixture) | A rm-long |
 | 103 MB | text | (dynamic / fixture) | A rm-long |
 | /home/u/.aib-server/data-1a2b3c4d/worktrees/a-project-with-a-rather-long-folder-name/chat-claude-pensive-ritchie-26be75-and-some-more/node_modules/.cache | text | (dynamic / fixture) | A rm-long |
 | /home/u/.aib-server/agents/claude/0.102.0/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64 | text | (dynamic / fixture) | A rm-long |
 | A process of another AIB data folder (data-9f8e7d6c) runs from it: /home/u/.aib-server/agents/claude/0.102.0/node_modules/.bin/claude-agent-acp --stdio. | text | (dynamic / fixture) | A rm-long |
 | A chat runs from Claude Code in Ubuntu (app · Fix login). End it first. | text | (dynamic / fixture) | A uninstall-refused |
-| Installing Node.js in Ubuntu: nvm's official installer, then nvm install --lts | text | wsl-settings-ui.js:553 | A node-term |
-| Installing. Answer here if the installer asks something. | text | wsl-settings-ui.js:558 | A node-term |
-| Signing in to Codex in Ubuntu | text | wsl-settings-ui.js:838 | A signin-term |
-| Finish the sign-in in this terminal; its page opens in your Windows browser. AIB does not see what you type here. | text | wsl-settings-ui.js:843 | A signin-term |
+| Installing Node.js in Ubuntu: nvm's official installer, then nvm install --lts | text | wsl-settings-ui.js:568 | A node-term |
+| Installing. Answer here if the installer asks something. | text | wsl-settings-ui.js:573 | A node-term |
+| Signing in to Codex in Ubuntu | text | wsl-settings-ui.js:854 | A signin-term |
+| Finish the sign-in in this terminal; its page opens in your Windows browser. AIB does not see what you type here. | text | wsl-settings-ui.js:859 | A signin-term |
 | Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | (dynamic / fixture) | A long |
 | Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit | text | (dynamic / fixture) | A long |
-| Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit runs on WSL 1. AIB needs WSL 2. | text | wsl-settings-ui.js:398 | A long |
-| wsl --set-version Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit 2 | text | wsl-settings-ui.js:399 | A long |
+| Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit runs on WSL 1. AIB needs WSL 2. | text | wsl-settings-ui.js:410 | A long |
+| wsl --set-version Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit 2 | text | wsl-settings-ui.js:414 | A long |
 | UBUNTU-24.04-DEVELOPER-WORKSTATION-WITH-A-VERY-LONG-DISTRO-NAME | text | (dynamic / fixture) | A long |
 | /home/someone-with-a-long-user-name | text | (dynamic / fixture) | A long |
 | What Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name needs | text | (dynamic / fixture) | A long |
-| AIB looks in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name's login shell, the way your terminal there sees it. It installs nothing by itself. | text | wsl-settings-ui.js:692 | A long |
+| AIB looks in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name's login shell, the way your terminal there sees it. It installs nothing by itself. | text | wsl-settings-ui.js:707 | A long |
 | /home/someone-with-a-long-user-name/.local/share/version-managers/nvm/versions/node/v24.11.1/bin/node | text | (dynamic / fixture) | A long |
 | Agents in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | wsl-settings-ui.js:7 | A long |
-| Signed in to Claude Code in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name as a.very.long.email.address.for.testing@some-company-with-a-long-domain.example.com. | text | wsl-settings-ui.js:944 | A long |
+| Signed in to Claude Code in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name as a.very.long.email.address.for.testing@some-company-with-a-long-domain.example.com. | text | wsl-settings-ui.js:960 | A long |
 | The standalone claude command is not needed: AIB chats use the copy that comes with Claude Code in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name. | text | (dynamic / fixture) | A long |
 | Use in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | (dynamic / fixture) | A long |
-| Not signed in to Codex in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name yet. Sign in runs Codex's own sign-in in a Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name terminal here; its page opens in your Windows browser. Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name signs in separately from Windows. AIB does not see your password or sign-in details. | text | wsl-settings-ui.js:948 | A long |
-| Usage limits of Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name's Codex sign-in: 5h 32% · wk 10% (updated 4 min ago). Same ChatGPT account as on Windows means the same limits. | text | wsl-settings-ui.js:931 | A long |
-| Optional: to use Codex in your own Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name terminal, install the codex command yourself: | text | wsl-settings-ui.js:1040 | A long |
-| Sign-in in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name: unknown (AIB has no sign-in check for OMP, and this note is long on purpose to see how a long reason wraps in a narrow window). | text | wsl-settings-ui.js:952 | A long |
-| Sign-in is checked in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name each time this page reads its agents. "Use in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name" is Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name's own switch; the Windows one stays as it is. Your Windows agents are in AIB Linking. | text | wsl-settings-ui.js:1078 | A long |
+| Not signed in to Codex in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name yet. Sign in runs Codex's own sign-in in a Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name terminal here; its page opens in your Windows browser. Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name signs in separately from Windows. AIB does not see your password or sign-in details. | text | wsl-settings-ui.js:964 | A long |
+| Usage limits of Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name's Codex sign-in: 5h 32% · wk 10% (updated 4 min ago). Same ChatGPT account as on Windows means the same limits. | text | wsl-settings-ui.js:947 | A long |
+| Optional: to use Codex in your own Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name terminal, install the codex command yourself: | text | wsl-settings-ui.js:1056 | A long |
+| Sign-in in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name: unknown (AIB has no sign-in check for OMP, and this note is long on purpose to see how a long reason wraps in a narrow window). | text | wsl-settings-ui.js:968 | A long |
+| Sign-in is checked in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name each time this page reads its agents. "Use in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name" is Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name's own switch; the Windows one stays as it is. Your Windows agents are in AIB Linking. | text | wsl-settings-ui.js:1098 | A long |
 | AIB in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | (dynamic / fixture) | A long |
-| Everything AIB keeps in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name, in /home/someone-with-a-long-user-name/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it. | text | wsl-settings-ui.js:1191 | A long |
-| Other AIB data folders in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | wsl-settings-ui.js:1227 | A long |
-| Remove AIB from Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | wsl-settings-ui.js:1172 | A long |
-| Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name (WSL default) | option | wsl-settings-ui.js:340 | A long |
-| Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit (not supported: Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit runs on WSL 1. AIB needs WSL 2) | option | wsl-settings-ui.js:398 | A long |
-| Copy the command that converts Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit to WSL 2 | aria | wsl-settings-ui.js:399 | A long |
-| Shows exactly what would be deleted from Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name and what is kept, before anything is deleted | title | wsl-settings-ui.js:1173 | A long |
-| Measure what AIB keeps in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name again | title | wsl-settings-ui.js:1170 | A long |
-| agent1 | text | (dynamic / fixture) | A many-agents |
+| Everything AIB keeps in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name, in /home/someone-with-a-long-user-name/.aib-server on this PC. Your projects, ~/.claude, ~/.codex and anything you installed yourself are not in it. | text | wsl-settings-ui.js:1214 | A long |
+| Other AIB folders in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | wsl-settings-ui.js:1250 | A long |
+| Remove AIB from Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name | text | wsl-settings-ui.js:1195 | A long |
+| Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name (WSL default) | option | wsl-settings-ui.js:347 | A long |
+| Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit (not supported) | option | wsl-settings-ui.js:353 | A long |
+| Copy the command that converts Some-Other-Distro-With-A-Very-Long-Name-That-Will-Not-Fit to WSL 2 | aria | wsl-settings-ui.js:414 | A long |
+| Shows exactly what would be deleted from Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name and what is kept, before anything is deleted | title | wsl-settings-ui.js:1196 | A long |
+| Measure what AIB keeps in Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name again | title | wsl-settings-ui.js:1193 | A long |
+| Agent number 1 | text | (dynamic / fixture) | A many-agents |
 | 1.0.0 | text | (dynamic / fixture) | A many-agents |
-| agent2 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent2. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent3 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent3 1.2.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent4 | text | (dynamic / fixture) | A many-agents |
+| Agent number 2 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 2. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 3 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 3. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 4 | text | (dynamic / fixture) | A many-agents |
 | 1.3.0 | text | (dynamic / fixture) | A many-agents |
-| agent5 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent5 1.4.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent6 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent6. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent7 | text | (dynamic / fixture) | A many-agents |
+| Agent number 5 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 5. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 6 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 6. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 7 | text | (dynamic / fixture) | A many-agents |
 | 1.6.0 | text | (dynamic / fixture) | A many-agents |
-| agent8 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent8. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent9 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent9 1.8.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent10 | text | (dynamic / fixture) | A many-agents |
+| Agent number 8 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 8. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 9 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 9. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 10 | text | (dynamic / fixture) | A many-agents |
 | 1.9.0 | text | (dynamic / fixture) | A many-agents |
-| agent11 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent11 1.10.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent12 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent12. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent13 | text | (dynamic / fixture) | A many-agents |
+| Agent number 11 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 11. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 12 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 12. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 13 | text | (dynamic / fixture) | A many-agents |
 | 1.12.0 | text | (dynamic / fixture) | A many-agents |
-| agent14 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent14. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent15 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent15 1.14.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent16 | text | (dynamic / fixture) | A many-agents |
+| Agent number 14 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 14. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 15 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 15. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 16 | text | (dynamic / fixture) | A many-agents |
 | 1.15.0 | text | (dynamic / fixture) | A many-agents |
-| agent17 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent17 1.16.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent18 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent18. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent19 | text | (dynamic / fixture) | A many-agents |
+| Agent number 17 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 17. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 18 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 18. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 19 | text | (dynamic / fixture) | A many-agents |
 | 1.18.0 | text | (dynamic / fixture) | A many-agents |
-| agent20 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent20. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent21 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent21 1.20.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent22 | text | (dynamic / fixture) | A many-agents |
+| Agent number 20 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 20. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 21 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 21. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 22 | text | (dynamic / fixture) | A many-agents |
 | 1.21.0 | text | (dynamic / fixture) | A many-agents |
-| agent23 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent23 1.22.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| agent24 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent24. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent25 | text | (dynamic / fixture) | A many-agents |
+| Agent number 23 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 23. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 24 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 24. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 25 | text | (dynamic / fixture) | A many-agents |
 | 1.24.0 | text | (dynamic / fixture) | A many-agents |
-| agent26 | text | (dynamic / fixture) | A many-agents |
-| AIB does not install agent26. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1011 | A many-agents |
-| agent27 | text | (dynamic / fixture) | A many-agents |
-| One click: AIB installs agent27 1.26.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions it reviewed. Nothing else in Ubuntu changes. | text | wsl-settings-ui.js:1004 | A many-agents |
-| AIB installs agent3 1.2.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent5 1.4.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent9 1.8.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent11 1.10.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent15 1.14.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent17 1.16.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent21 1.20.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent23 1.22.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
-| AIB installs agent27 1.26.0 into its own folder in Ubuntu (~/.aib-server/agents), with the versions AIB reviewed. Nothing else in Ubuntu changes. | title | wsl-settings-ui.js:904 | A many-agents |
+| Agent number 26 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 26. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
+| Agent number 27 | text | (dynamic / fixture) | A many-agents |
+| AIB does not install Agent number 27. Install it in Ubuntu as its docs say, then choose Check again. | text | wsl-settings-ui.js:1027 | A many-agents |
 | Your conversations | text | (dynamic / fixture) | B state-starting, B state-setup, B state-stopped, B open-url +7 |
 | Ready to browse | text | (dynamic / fixture) | B state-starting, B state-setup, B state-stopped, B open-url +7 |
 | Rename conversation | title | chat.js:1194 | B state-starting, B state-setup, B state-stopped, B open-url +13 |
@@ -1987,7 +2021,7 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | Existing folder | text | (dynamic / fixture) | B np-wsl, B np-browse |
 | Project name (optional) | text | new-project-ui.js:119 | B np-wsl, B np-browse |
 | A folder with this name is made inside Folder, or used if it is already there. Leave empty to use Folder itself. | text | new-project-ui.js:129 | B np-wsl, B np-browse |
-| Uses wsl://ubuntu/home/u/ (already there) | text | (dynamic / fixture) | B np-wsl, B np-browse |
+| Uses Ubuntu: /home/u/ (already there) | text | (dynamic / fixture) | B np-wsl, B np-browse |
 | Open project | text | new-project-ui.js:189 | B np-wsl, B np-browse |
 | Windows | option | wsl-settings-ui.js:3 | B np-wsl, B np-browse |
 | WSL: Ubuntu | option | (dynamic / fixture) | B np-wsl, B np-browse |
@@ -2000,39 +2034,39 @@ Source = first file:line holding the string's longest fixed part (dynamic parts 
 | notes | text | (dynamic / fixture) | B np-browse |
 | a-project-folder-with-a-really-long-name-to-check-wrapping (git) | text | (dynamic / fixture) | B np-browse |
 | scratch | text | settings-ui.js:200 | B np-browse |
-| Delete project app? | text | (dynamic / fixture) | B del-wsl, B del-wsl-ticked, B del-wsl-refused |
+| Remove project app from AIB? | text | (dynamic / fixture) | B del-wsl, B del-wsl-ticked, B del-wsl-refused |
 | Removes app from AIB. Its 2 chats move to Recently deleted. The folder Ubuntu: /home/u/app stays in Ubuntu. | text | delete-project-ui.js:33 | B del-wsl, B del-wsl-refused |
 | 1 chat is running and will be stopped. | text | delete-project-ui.js:40 | B del-wsl, B del-wsl-ticked, B del-wsl-refused |
-| Move folder to trash in Ubuntu | text | delete-project-ui.js:99 | B del-wsl, B del-wsl-ticked, B del-wsl-refused |
-| Remove from AIB | text | delete-project-ui.js:112 | B del-wsl, B del-wsl-refused |
+| Move folder to trash in Ubuntu | text | delete-project-ui.js:100 | B del-wsl, B del-wsl-ticked, B del-wsl-refused |
+| Remove from AIB | text | delete-project-ui.js:113 | B del-wsl, B del-wsl-refused |
 | Removes app from AIB. Its 2 chats move to Recently deleted. | text | (dynamic / fixture) | B del-wsl-ticked |
 | This moves the folder Ubuntu: /home/u/app and everything in it to the trash in Ubuntu, so you can still get it back from there. | text | delete-project-ui.js:44 | B del-wsl-ticked |
-| Remove and move folder to trash | text | delete-project-ui.js:125 | B del-wsl-ticked |
+| Remove and move folder to trash | text | delete-project-ui.js:126 | B del-wsl-ticked |
 | Deleting the folder is not possible: This distro has no trash AIB can use for this folder | text | (dynamic / fixture) | B del-wsl-refused |
 | Claude Code is not installed in Ubuntu. | text | chat.js:3613 | B nc-missing, B nc-node |
-| Or install it yourself in Ubuntu: npm i -g @agentclientprotocol/claude-agent-acp Copy | text | wsl-settings-ui.js:1019 | B nc-missing, B nc-node |
+| Or install it yourself in Ubuntu: npm i -g @agentclientprotocol/claude-agent-acp Copy | text | wsl-settings-ui.js:1035 | B nc-missing, B nc-node |
 | npm i -g @agentclientprotocol/claude-agent-acp | text | (dynamic / fixture) | B nc-missing, B nc-node |
-| Set up Ubuntu in Settings | text | wsl-settings-ui.js:101 | B nc-missing, B nc-node, B nc-installing |
-| A terminal in Ubuntu to install Claude Code | title | wsl-settings-ui.js:523 | B nc-missing, B nc-node |
+| Set up Ubuntu in Settings | text | wsl-settings-ui.js:102 | B nc-missing, B nc-node, B nc-installing |
+| A terminal in Ubuntu to install Claude Code | title | wsl-settings-ui.js:538 | B nc-missing, B nc-node |
 | Settings > AIB Linking (WSL): the agents in Ubuntu, their installs and updates | title | chat.js:3744 | B nc-missing, B nc-node, B nc-installing |
 | New chat | text | settings-ui.js:1163 | B nc-missing, B nc-node, B nc-installing, B nc-found +1 |
-| Node.js 22 or newer is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js. | text | wsl-settings-ui.js:418 | B nc-node |
-| Install Node.js in Ubuntu: curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh \| bash && nvm install --lts Copy | text | wsl-settings-ui.js:542 | B nc-node |
-| curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh \| bash && nvm install --lts | text | wsl-settings-ui.js:39 | B nc-node |
+| Node.js 22 or newer is needed in Ubuntu to install Claude Code, and Ubuntu has no Node.js. | text | wsl-settings-ui.js:433 | B nc-node |
+| Install Node.js in Ubuntu: curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh \| bash && nvm install --lts Copy | text | wsl-settings-ui.js:557 | B nc-node |
+| curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh \| bash && nvm install --lts | text | wsl-settings-ui.js:40 | B nc-node |
 | Needs Node.js in Ubuntu first | title | wsl-ui.js:434 | B nc-node |
 | Look for Node.js in Ubuntu again | title | wsl-ui.js:445 | B nc-node |
 | Codex is not installed in Ubuntu. | text | chat.js:3613 | B nc-installing |
-| Installing Codex in Ubuntu… Downloading and unpacking… | text | wsl-settings-ui.js:553 | B nc-installing |
-| Or install it yourself in Ubuntu: npm i -g @agentclientprotocol/codex-acp Copy | text | wsl-settings-ui.js:1019 | B nc-installing |
+| Installing Codex in Ubuntu… Downloading and unpacking… | text | wsl-settings-ui.js:107 | B nc-installing |
+| Or install it yourself in Ubuntu: npm i -g @agentclientprotocol/codex-acp Copy | text | wsl-settings-ui.js:1035 | B nc-installing |
 | npm i -g @agentclientprotocol/codex-acp | text | (dynamic / fixture) | B nc-installing |
-| Installing Codex in Ubuntu | aria | wsl-settings-ui.js:553 | B nc-installing |
+| Installing Codex in Ubuntu | aria | wsl-settings-ui.js:107 | B nc-installing |
 | Stop the install and remove what it downloaded so far | title | wsl-ui.js:399 | B nc-installing |
-| A terminal in Ubuntu to install Codex | title | wsl-settings-ui.js:523 | B nc-installing |
+| A terminal in Ubuntu to install Codex | title | wsl-settings-ui.js:538 | B nc-installing |
 | Codex in Ubuntu (2.6.0), installed by AIB. | text | (dynamic / fixture) | B nc-found |
-| Run Codex's own sign-in in a Ubuntu terminal | title | wsl-settings-ui.js:947 | B nc-found |
+| Run Codex's own sign-in in a Ubuntu terminal | title | wsl-settings-ui.js:963 | B nc-found |
 | Claude Code in Ubuntu (0.101.0), installed by AIB. | text | (dynamic / fixture) | B nc-update |
-| AIB now uses Claude Code 0.102.0; Ubuntu has 0.101.0. | text | wsl-settings-ui.js:995 | B nc-update |
-| Run Claude Code's own sign-in in a Ubuntu terminal | title | wsl-settings-ui.js:947 | B nc-update |
+| AIB now uses Claude Code 0.102.0; Ubuntu has 0.101.0. | text | wsl-settings-ui.js:1011 | B nc-update |
+| Run Claude Code's own sign-in in a Ubuntu terminal | title | wsl-settings-ui.js:963 | B nc-update |
 | Live, idle: fix the login form | text | (dynamic / fixture) | B status-words |
 | 1h | text | (dynamic / fixture) | B status-words |
 | · Claude Code | text | (dynamic / fixture) | B status-words |
