@@ -387,3 +387,62 @@ Deno.test({
     assertEquals((await box.studio.refilePass())?.moved, [], 'once done, the orphan part does not run again');
   },
 });
+
+Deno.test({
+  ...T,
+  name: "MF 5: a stopped or failed helper's copy goes 7 days after it stopped, only when closed and with nothing unmerged",
+  async fn() {
+    const { Registry } = await import('../../outputs/agent-studio/server/swarm/registry.ts');
+    const { STOPPED_HELPER_DAYS } = await import('../../outputs/agent-studio/server/host/studio.ts');
+    assertEquals(STOPPED_HELPER_DAYS, 7);
+    await using box = new Box();
+    const registry = new Registry(box.state);
+    const now = Date.now() / 1000, day = 86_400;
+    const helper = async (id: string, sessionId: string, state: 'stopped' | 'failed' | 'done', endedAt?: number) => {
+      const made = await box.existing(sessionId, 'helper');
+      await registry.update(id, () => ({
+        id,
+        title: id,
+        project: box.project,
+        parent: { live: 'parent-live', lasting: 'claude:parent' },
+        chat: { live: '', lasting: `claude:${sessionId}`, provider: 'claude', model: '', mode: '' },
+        worktree: { path: made.path, branch: made.branch, base: 'main', start: '' },
+        state,
+        reason: '',
+        createdAt: now - 30 * day,
+        ...(endedAt ? { endedAt } : {}),
+      } as never));
+      return made;
+    };
+    const old = await helper('h_old', 'sess-old', 'stopped', now - 8 * day); // clean, 8 days: goes
+    const failed = await helper('h_fail', 'sess-fail', 'failed', now - 9 * day); // clean, failed 9 days ago: goes
+    const recent = await helper('h_new', 'sess-new', 'stopped', now - 2 * day); // 2 days: kept
+    const busy = await helper('h_work', 'sess-work', 'stopped', now - 8 * day); // committed work kept by the stop: kept
+    write(busy.path, 'kept.txt', 'work\n');
+    runGit(busy.path, 'add', '-A');
+    runGit(busy.path, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'AIB: helper stopped, work kept');
+    const legacy = await helper('h_legacy', 'sess-legacy', 'stopped'); // stopped before this build: no stop time yet
+    const done = await helper('h_done', 'sess-done', 'done', now - 20 * day); // not stopped: never by this rule
+    const open = await helper('h_open', 'sess-open', 'stopped', now - 8 * day); // its chat is open: kept
+    const c = await box.studio.connect('claude', open.path, 'sess-open');
+
+    const removed = await box.studio.retireStoppedHelpers(now);
+    assertEquals(removed.sort(), ['h_fail', 'h_old']);
+    assert(!exists(old.path) && !exists(failed.path));
+    assertEquals(runGit(box.project, 'branch', '--list', old.branch).trim(), '', 'its branch went with it');
+    for (const kept of [recent, busy, legacy, done, open]) assert(exists(kept.path), kept.path);
+    assertEquals(read(busy.path, 'kept.txt'), 'work\n');
+    const stamped = Number((await registry.get('h_legacy'))?.endedAt);
+    assert(Math.abs(stamped - now) < 1, 'a helper stopped before this build is counted from now');
+    assert(exists(pathOf(box.state, 'cleanup.log')));
+
+    // closing its chat runs the rule: the copy goes
+    await box.studio.liveCall('disconnect', { id: c.id });
+    for (let i = 0; i < 50 && exists(open.path); i++) await pause(200);
+    assert(!exists(open.path), 'removed once its chat closed');
+    // 8 days on: the legacy one goes too; the one with commits never does silently
+    const later = await box.studio.retireStoppedHelpers(now + 8 * day);
+    assertEquals(later.sort(), ['h_legacy', 'h_new']);
+    assert(exists(busy.path) && exists(done.path));
+  },
+});

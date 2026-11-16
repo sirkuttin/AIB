@@ -63,6 +63,8 @@ export interface Helper {
   state: HelperState;
   reason: string;
   createdAt: number;
+  /** When it stopped or failed (seconds; build plan 1b 5.3 MF 5: its copy goes 7 days later when nothing is unmerged). */
+  endedAt?: number;
   /** The helper's last turn end that has been reported (its attention.turnEndedAt), and the event cursor read up to. */
   turnEndedAt: string;
   cursor: number;

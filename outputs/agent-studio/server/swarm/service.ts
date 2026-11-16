@@ -338,7 +338,7 @@ export class Swarm {
   }
 
   async #fail(id: string, reason: string): Promise<void> {
-    const h = await this.registry.patch(id, { state: 'failed', reason });
+    const h = await this.registry.patch(id, { state: 'failed', reason, endedAt: Date.now() / 1000 });
     if (h) await this.note(id, 'swarm-fail', `Helper “${h.title}” (${providerName(h.chat.provider)}) failed: ${reason}`);
   }
 
@@ -386,7 +386,7 @@ export class Swarm {
     for (const h of targets) {
       if (h.chat.live) await this.ctx.host.liveCall('cancel', { id: h.chat.live }).catch(() => {});
       const commits = await this.#keepWork(h, 'AIB: helper stopped, work kept');
-      await this.registry.patch(h.id, { state: 'stopped', reason: reason || 'stopped by the main agent' });
+      await this.registry.patch(h.id, { state: 'stopped', reason: reason || 'stopped by the main agent', endedAt: Date.now() / 1000 });
       stopped.push(h.id);
       kept.push({ id: h.id, branch: h.worktree.branch, commits });
       await this.note(

@@ -70,11 +70,11 @@ import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import * as refile from '../worktrees/refile.ts';
-import { dropChatRefs } from '../worktrees/cleanup.ts';
+import { applyProject as cleanupApply, dropChatRefs, logLine as cleanupLog } from '../worktrees/cleanup.ts';
 import { testHomeEnv } from '../acp/connection.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
-import { helperOf, readHelpers } from '../swarm/registry.ts';
+import { helperOf, readHelpers, Registry as HelperRegistry } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import type { WslSpawn } from '../acp/connection.ts';
@@ -120,6 +120,7 @@ type Json = Record<string, unknown>;
 export const ARTIFACT_URL_FILE = 'artifact-web.json'; // the web server writes its URL here so agents find it after a restart
 export const CLOSED_GRACE_SECONDS = 10 * 60; // a closed connection stays listed this long so the page can still show "disconnected"
 export const MAX_CLOSED_CONNECTIONS = 20; // ...and never more than this many closed ones are kept (oldest go first)
+export const STOPPED_HELPER_DAYS = 7; // a stopped or failed helper's copy goes this long after it stopped (nothing unmerged; build plan 1b 5.3)
 export const RECONNECT_TRIES = 3;
 /** The longest a page's request for a chat waits while chats are taken over from the keeper (chat.js GET_TIMEOUT_MS is longer). */
 export const ADOPT_WAIT_MS = 20_000;
@@ -2460,6 +2461,53 @@ export class Studio {
   #retiring: Promise<string[]> | null = null;
 
   /**
+   * Build plan 1b 5.3 (MF 5): the copies of helpers that stopped or failed go 7 days after they stopped, when their chat is closed (not
+   * open anywhere), their main chat is not open here and nothing in the copy is unmerged. The removal is cleanup.ts applyProject for
+   * that one copy: this install's records only (per-install scope), a fresh scan under the repo lock, silent only without unmerged
+   * work (5.2: files against the user base, commits on the branch count), never a running chat's copy. A helper that stopped before
+   * this build has no stop time: its 7 days count from the first time this runs. WSL has no helpers. Returns the helper ids done.
+   */
+  async retireStoppedHelpers(now = Date.now() / 1000): Promise<string[]> {
+    const done: string[] = [];
+    if (!this.worktrees || !this.hasStateDir || this.takingOver()) return done;
+    const helpers = new HelperRegistry(this.stateDir);
+    for (const h of Object.values(readHelpers(this.stateDir))) {
+      if (h.state !== 'stopped' && h.state !== 'failed') continue;
+      const path = String(h.worktree?.path ?? '');
+      if (!path || wslLoc(path)) continue;
+      if (!(Number(h.endedAt) > 0)) {
+        await helpers.patch(h.id, { endedAt: now });
+        continue;
+      }
+      if (now - Number(h.endedAt) < STOPPED_HELPER_DAYS * 86_400) continue;
+      const record = this.worktrees.registry.find(path, null);
+      if (!record || record.status !== 'ready' || !record.project) continue;
+      if (this.#connectionsIn(path).length) continue;
+      const lasting = String(h.chat?.lasting ?? '');
+      const at = lasting.indexOf(':');
+      if (at > 0 && (await this.#openAnywhere(lasting.slice(0, at), lasting.slice(at + 1), path))) continue;
+      const open = [...this.connections.values()].filter((c) => !c.closed);
+      if (open.some((c) => c.id === h.parent?.live || (!!c.sessionId && `${c.provider}:${c.sessionId}` === h.parent?.lasting))) continue;
+      const live = open.flatMap((c) => [c.cwd, ...(c.sessionId ? [`${c.provider}:${c.sessionId}`] : [])]);
+      const id = `copy:${record.key}`;
+      try {
+        const result = await cleanupApply(this.stateDir, String(record.project), [], { live, only: [id] });
+        if (result.removed.includes(id)) {
+          done.push(h.id);
+          cleanupLog(this.stateDir, `stopped helper ${h.id} (${h.state} ${Math.floor((now - Number(h.endedAt)) / 86_400)} days ago): removed its copy ${path}`);
+        } else {
+          const item = result.scan.items.find((i) => i.id === id);
+          const why = result.left[id] || result.scan.skipped || (item?.unmerged ? 'unmerged work' : item?.live ? 'in use' : 'not found');
+          log.info('Kept the copy of stopped helper %s: %s', h.id, why);
+        }
+      } catch (error) {
+        log.exception(error, 'Removing the copy of stopped helper %s failed', h.id);
+      }
+    }
+    return done;
+  }
+
+  /**
    * P4b (decision 6, 5.3; MF 5): the copies of merged chats and helpers whose chat is closed (not open anywhere) and that hold
    * nothing new since the merge are removed (worktree, branch, refs, git's record); a main chat then carries on in the project folder
    * (moveChatToFolder). A copy with work after its merge is kept: unmerged work is never removed silently. Runs when a chat is
@@ -2840,8 +2888,9 @@ export class Studio {
     }
     if (name === 'worktree-retire') { // P4b: merged copies of closed chats; then the re-file pass (web: after the take-over at start)
       const removed = await this.retireMerged();
+      const stopped = await this.retireStoppedHelpers().catch((error) => (log.exception(error, 'Stopped helpers failed'), [] as string[]));
       const pass = body.refile === false ? null : await this.refilePass();
-      return [200, { ok: true, removed, refile: pass }];
+      return [200, { ok: true, removed, stopped, refile: pass }];
     }
     if (name === 'prompt-context') { // a one-time line in front of this chat's next prompt (a landing told it what changed)
       const connection = this.#connection(body);
@@ -2936,7 +2985,9 @@ export class Studio {
       return [200, payload];
     } else if (name === 'disconnect') {
       await connection.close();
-      if (connection.worktree) void this.retireMerged().catch((error) => log.exception(error, 'Removing merged copies failed'));
+      if (connection.worktree) {
+        void this.retireMerged().then(() => this.retireStoppedHelpers()).catch((error) => log.exception(error, 'Removing merged copies failed'));
+      }
     }
     return [200, { ok: true }];
   }
