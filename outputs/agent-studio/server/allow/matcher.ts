@@ -18,7 +18,7 @@ import {
   scratchWrite,
   syntaxCheck,
 } from './catalogue.ts';
-import { checkPath, fromGitBash, inside, type PathOps, realish, WIN_OPS } from './paths.ts';
+import { checkPath, fromGitBash, type PathOps, WIN_OPS } from './paths.ts';
 import type { LinuxView } from './linux.ts';
 import { isWslRef, locKey, wslLocOf } from '../platform/location.ts';
 import { pinHash } from './pin.ts';

@@ -7,7 +7,7 @@
 import type { WslHost } from '../wsl/contract.ts';
 import type { AgentConfigFacts } from './agent_config.ts';
 import type { AllowGate } from './gate.ts';
-import { LinuxFacts, LinuxNeeds, LinuxView } from './linux.ts';
+import { factsNow, LinuxFacts, LinuxNeeds, LinuxView } from './linux.ts';
 import type { MatchContext } from './matcher.ts';
 
 /** Where a WSL chat's facts come from. */
@@ -49,7 +49,7 @@ export async function fetchFacts(facts: LinuxFacts, needs: LinuxNeeds, src: WslF
       ...(src.claude ? { claude: { cwd: src.cwd(), ...(dir && dir.startsWith('/') ? { dir } : {}) } } : {}),
     };
   }
-  const at = Date.now();
+  const at = factsNow();
   let res: Record<string, unknown>;
   try {
     res = await host.call('allow.facts', params as never, { timeoutMs: FACTS_TIMEOUT_MS }) as unknown as Record<string, unknown>;
@@ -123,4 +123,3 @@ export async function warm(facts: LinuxFacts, src: WslFactsSource): Promise<void
   needs.paths.add(src.cwd());
   await fetchFacts(facts, needs, src);
 }
-

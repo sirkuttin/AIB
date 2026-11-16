@@ -112,7 +112,8 @@ export function allowFactsMethods(deps: AllowFactsDeps): Handlers {
             throw new RpcError('claude needs an absolute cwd', BAD_PARAMS);
           }
           const home = login.home || login.env.HOME || '';
-          const configDir = (dir as string | undefined) || login.env.CLAUDE_CONFIG_DIR || (home ? `${home.replace(/\/+$/, '')}/.claude` : '');
+          const configDir = (dir as string | undefined) || login.env.CLAUDE_CONFIG_DIR ||
+            (home ? `${home.replace(/\/+$/, '')}/.claude` : '');
           try {
             const f = claudeFacts(cwd, configDir);
             claude = { askPrograms: [...f.askPrograms], askTools: [...f.askTools], riskyEnv: f.riskyEnv };

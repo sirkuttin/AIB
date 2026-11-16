@@ -36,6 +36,13 @@ interface Stamped<T> {
 
 const MAX_KEYS = 4000;
 
+let clock = 0;
+/**
+ * The facts clock: each call is later than every one before. A request takes its `since` from it, and a fetch stamps its facts
+ * with it before it asks, so only facts asked for after the request arrived count for its decision (milliseconds could tie).
+ */
+export const factsNow = (): number => ++clock;
+
 /** What AIB has learnt of one WSL chat's distro, each fact with the time it was read. */
 export class LinuxFacts {
   readonly paths = new Map<string, Stamped<LinuxPathFact>>();

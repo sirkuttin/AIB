@@ -23,6 +23,7 @@ import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { factsNow } from '../../outputs/agent-studio/server/allow/linux.ts';
 import { type AllowRule, match, type MatchContext, rulesHere } from '../../outputs/agent-studio/server/allow/matcher.ts';
 
 type Json = Record<string, unknown>;
@@ -50,7 +51,7 @@ class WslLab {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
     const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
-    studio.connectionFactory = (command, cwd, provider, options) => {
+    studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
     };
@@ -129,7 +130,7 @@ Deno.test({
   async fn() {
     await withWslChat(async (studio, c, ctx) => {
       for (const p of [EDIT_ABS, EDIT_REL]) {
-        await c.allowPrefetch(p, Date.now());
+        await c.allowPrefetch(p, factsNow());
         const d = studio.allow!.drafts(p, ctx(p)) as unknown as Drafts;
         assertEquals([d.project.available, d.project.hideAgentAlways], [true, true], JSON.stringify(d.project));
         assertEquals((d.project.rules as Json[])[0], { scope: 'project', project: REF, kind: 'edit', folder: 'src', label: 'Edits in src/' });

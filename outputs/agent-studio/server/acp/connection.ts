@@ -11,7 +11,7 @@
 import type { AllowGate } from '../allow/gate.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
-import { LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
+import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
 import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
@@ -5338,7 +5338,7 @@ export class Connection {
     };
   }
 
-  /** Fetch the distro facts deciding `params` needs (facts read before `since` count as unknown). */
+  /** Fetch the distro facts deciding `params` needs (facts read before `since`, a factsNow() value, count as unknown). */
   async allowPrefetch(params: Json, since: number): Promise<void> {
     if (!this.allowGate || !this.wsl) return;
     await prefetchWslFacts(
@@ -5361,7 +5361,7 @@ export class Connection {
 
   /** A WSL chat's live request: the facts first, then the same decision as #allowByRule, else a card. */
   async #allowByRuleWsl(message: Json, params: Json, seenKey: string): Promise<void> {
-    const since = Date.now();
+    const since = factsNow();
     try {
       await this.allowPrefetch(params, since);
     } catch (error) {
@@ -5428,7 +5428,7 @@ export class Connection {
     if (!this.allowGate || this.#replaying || !this.wsl) return 0;
     let n = 0;
     for (const [key, pending] of [...this.permissions]) {
-      const since = Date.now();
+      const since = factsNow();
       try {
         await this.allowPrefetch(pending.params, since);
       } catch { /* unknown facts: it keeps asking */ }
