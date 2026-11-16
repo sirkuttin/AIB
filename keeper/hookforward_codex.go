@@ -8,7 +8,8 @@ package main
 //
 //	codex-pre-tool        PreToolUse, every tool. The main agent's own calls other than spawn_agent pass here, without AIB (the
 //	                      input has no agent_id). spawn_agent (AIB prepares the subagent's worktree) and every call of a subagent
-//	                      (agent_id set) go to AIB; AIB down, slow or unconfirmed -> exit 2 (blocked).
+//	                      (agent_id set) go to AIB; AIB down, slow or unconfirmed -> a JSON deny, exit 0 (Codex 0.166 RUNS a call
+//	                      whose hook exits 2: work/cx_codex_subagent_probe.py spawn-exit2).
 //	codex-subagent-start  SubagentStart: AIB binds a prepared worktree to the agent_id and names it in additionalContext. Never
 //	                      blocks: a subagent with no worktree has every call refused by codex-pre-tool instead.
 //	codex-subagent-stop   SubagentStop: a hint for AIB (the work lands at the parent's turn end); nothing is printed.
@@ -18,16 +19,19 @@ package main
 //	pre-tool        {} for spawn_agent, or for a subagent's tool other than Bash and apply_patch; for apply_patch only when every
 //	                file in the patch is an absolute path inside an AIB subagent worktree; a deny with a reason; for a subagent's
 //	                Bash call only, allow with updatedInput {command: "cd '<worktree>'; " + the call's own command}, <worktree> an
-//	                AIB subagent worktree folder (checkWorktreePath; forward slashes, so PowerShell and bash both read it, and
+//	                AIB subagent worktree folder (checkCodexWorktreePath: also in the chat's own .cx-<chat> folder; forward slashes, so PowerShell and bash both read it, and
 //	                cmd.exe runs nothing: it takes the whole line as cd's folder).
 //	subagent-start  {} or additionalContext text.
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -56,18 +60,29 @@ func (h *hookForwarder) codexAnswer(input []byte, status int, body []byte, stdou
 	case "codex-pre-tool":
 		if status != http.StatusOK {
 			fmt.Fprintln(stderr, hookRestarting)
-			return 2
+			stdout.Write(codexDeny(hookRestarting))
+			return 0
 		}
 		out, ok := checkCodexPreToolAnswer(input, body, h.worktreesRoot())
 		if !ok {
 			fmt.Fprintln(stderr, hookUnconfirmed)
-			return 2
+			stdout.Write(codexDeny(hookUnconfirmed))
+			return 0
 		}
 		stdout.Write(out)
 		return 0
 	default:
 		return 0 // codex-subagent-stop: a hint
 	}
+}
+
+// codexDeny: the JSON deny that refuses a Codex PreToolUse call. Codex runs a call whose hook exits 2 (verified on 0.166:
+// work/cx_codex_subagent_probe.py spawn-exit2), so every refusal of the forwarder (AIB down, slow, unconfirmed) is this, exit 0.
+func codexDeny(reason string) []byte {
+	b, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason,
+	}})
+	return b
 }
 
 // checkCodexStartAnswer: nil to print for {}, the rebuilt additionalContext answer, or false.
@@ -150,7 +165,7 @@ func checkCodexPreToolAnswer(input, body []byte, root string) ([]byte, bool) {
 			return nil, false
 		}
 		folder, rest, ok := cutCdPrefix(command)
-		if !ok || rest != *call.ToolInput.Command || checkWorktreePath(filepath.FromSlash(folder), root) != nil {
+		if !ok || rest != *call.ToolInput.Command || checkCodexWorktreePath(filepath.FromSlash(folder), root) != nil {
 			return nil, false
 		}
 		answer, err := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
@@ -218,5 +233,45 @@ func insideSubagentWorktree(path, root string) bool {
 	if len(parts) < 3 || parts[0] == ".." {
 		return false
 	}
+	if codexChatFolder.MatchString(parts[1]) { // <root>/<repo hash>/.cx-<chat>/sub-*/<file>
+		return len(parts) >= 4 && checkCodexWorktreePath(filepath.Join(filepath.Clean(root), parts[0], parts[1], parts[2]), root) == nil
+	}
 	return checkWorktreePath(filepath.Join(filepath.Clean(root), parts[0], parts[1]), root) == nil
+}
+
+// codexChatFolder: a Codex chat's own folder for its subagents' worktrees (server/subagents/codex.ts subagentFolder), a writable
+// root of that chat's sandbox.
+var codexChatFolder = regexp.MustCompile(`^\.cx-[A-Za-z0-9_-]{1,64}$`)
+
+// checkCodexWorktreePath: an AIB subagent worktree folder, <root>/<repo hash>/sub-* (checkWorktreePath) or a Codex chat's
+// <root>/<repo hash>/.cx-<chat>/sub-*, every folder on the way plain (no link, no reparse point).
+func checkCodexWorktreePath(path, root string) error {
+	if checkWorktreePath(path, root) == nil {
+		return nil
+	}
+	if path == "" || strings.ContainsAny(path, "\r\n\x00") || !filepath.IsAbs(path) {
+		return errors.New("not an absolute path")
+	}
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == "." || part == ".." {
+			return errors.New("not a plain path")
+		}
+	}
+	clean := filepath.Clean(path)
+	chat := filepath.Dir(clean)
+	repo := filepath.Dir(chat)
+	if !samePath(filepath.Dir(repo), filepath.Clean(root)) {
+		return errors.New("not under AIB's worktrees folder")
+	}
+	if !subFolderName.MatchString(filepath.Base(clean)) || !codexChatFolder.MatchString(filepath.Base(chat)) ||
+		!repoFolderName.MatchString(filepath.Base(repo)) {
+		return errors.New("not a Codex subagent worktree's name")
+	}
+	for _, p := range []string{repo, chat, clean} {
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.IsDir() || isReparsePoint(fi) {
+			return fmt.Errorf("%s is not a plain folder", p)
+		}
+	}
+	return nil
 }

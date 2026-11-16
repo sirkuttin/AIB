@@ -130,6 +130,12 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		fmt.Fprintln(stderr, message)
+		if h.event == "codex-pre-tool" {
+			// Codex 0.166 runs a PreToolUse call whose hook exits 2 (work/cx_codex_subagent_probe.py spawn-exit2: the subagent's
+			// command ran in the main folder); it honours a JSON deny. So Codex is refused with one, exit 0.
+			stdout.Write(codexDeny(message))
+			return 0
+		}
 		return 2
 	}
 	input, err := readAllWithin(ctx, in, hookMaxInput)

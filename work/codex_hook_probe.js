@@ -10,6 +10,7 @@
  *                     Bash (exec_command): the command gets a "Set-Location -LiteralPath DIR;" (PowerShell) or "cd DIR &&" prefix;
  *                     apply_patch: every relative "*** Add/Update/Delete File: <path>" becomes DIR/<path>.
  *   --deny-subagent   PreToolUse from a subagent: deny every Bash / apply_patch call (exit 0, permissionDecision "deny").
+ *   --exit2-subagent  PreToolUse from a subagent: exit 2 with a reason on stderr (the keeper forwarder's "AIB unreachable" answer).
  * The parent agent's calls (no agent_id) are only logged.
  */
 'use strict';
@@ -21,6 +22,7 @@ const log = args[0];
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
 const worktree = opt('--worktree');
 const deny = args.includes('--deny-subagent');
+const exit2 = args.includes('--exit2-subagent');
 
 let raw = '';
 process.stdin.on('data', (d) => { raw += d; });
@@ -40,6 +42,12 @@ process.stdin.on('end', () => {
   if (event !== 'PreToolUse' || !sub) return;
   const tool = input.tool_name;
   if (tool !== 'Bash' && tool !== 'apply_patch') return;
+  if (exit2) {
+    fs.appendFileSync(log, JSON.stringify({ at: Date.now(), answered: 'exit 2' }) + '\n');
+    process.stderr.write('AIB is restarting; try the subagent again in a moment.\n');
+    process.exitCode = 2;
+    return;
+  }
   if (deny) {
     out({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'AIB: subagents may not edit here' } });
     return;

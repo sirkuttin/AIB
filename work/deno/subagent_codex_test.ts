@@ -9,6 +9,7 @@
  *   the routes: spawn_agent prepares a worktree; SubagentStart binds it and names it; a subagent's Bash runs there (cd prefix), is
  *        denied when it names the main folder; apply_patch only with absolute paths inside; other MCP tools denied; a subagent AIB
  *        has no worktree for is denied; SubagentStop makes it done (P2 lands it)
+ *   the chat's own subagent folder (.cx-<chat>, a writable root of its sandbox): its worktrees there are AIB's own paths
  */
 import { assert, assertEquals } from './_assert.ts';
 import {
@@ -19,12 +20,14 @@ import {
   namesFolder,
   patchInside,
   readCodexSetup,
+  removeSubagentFolder,
   requirementsManagedOnly,
+  subagentFolder,
   tomlTurnsHooksOff,
   withCodexHooks,
   withSubagentsOff,
 } from '../../outputs/agent-studio/server/subagents/codex.ts';
-import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { ownSubagentPath, readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
 
 const WIN = Deno.build.os === 'windows';
@@ -270,5 +273,33 @@ Deno.test('Codex routes: spawn prepares, start binds and names it, Bash runs the
       } catch { /* not locked */ }
     }
     Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("a Codex chat's own subagent folder: <root>/<repo hash>/.cx-<chat>; its worktrees are AIB's own paths; removed only empty", async () => {
+  const { repoHash } = await import('../../outputs/agent-studio/server/worktrees/worktrees.ts');
+  const temp = Deno.makeTempDirSync({ prefix: 'aib-cx-own-', dir: Deno.env.get('TEMP') ?? undefined });
+  try {
+    const root = join(temp, 'worktrees'), project = join(temp, 'proj');
+    const folder = subagentFolder(root, project, 'c1');
+    assertEquals(folder, join(root, repoHash(project), '.cx-c1'));
+    const sub = join(folder, 'sub-c1-1');
+    Deno.mkdirSync(sub, { recursive: true });
+    assert(ownSubagentPath(root, { path: sub, project }));
+    assert(!ownSubagentPath(root, { path: folder, project }), 'the chat folder itself is no worktree');
+    assert(!ownSubagentPath(root, { path: join(root, repoHash(project), 'cx-c1', 'sub-c1-1'), project }), 'any other middle folder');
+    removeSubagentFolder(folder);
+    assert(Deno.statSync(sub).isDirectory, 'a folder with a worktree in it stays');
+    Deno.removeSync(sub);
+    removeSubagentFolder(folder);
+    let gone = false;
+    try {
+      Deno.statSync(folder);
+    } catch {
+      gone = true;
+    }
+    assert(gone, 'an empty chat folder goes');
+  } finally {
+    Deno.removeSync(temp, { recursive: true });
   }
 });

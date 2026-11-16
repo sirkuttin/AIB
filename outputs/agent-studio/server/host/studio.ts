@@ -1461,6 +1461,7 @@ export class Studio {
         .then(() => { // after its spare went: the Gemini chat's home (junctions unlinked first), policy and empty subagent folder
           this.geminiSubagents?.chatClosed(conn.id);
           if (conn.geminiSubagents) gemini.tearDown(conn.geminiSubagents);
+          if (conn.provider === 'codex' && conn.subagentHooks?.subFolder) codexSub.removeSubagentFolder(conn.subagentHooks.subFolder);
         });
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
@@ -2163,10 +2164,13 @@ export class Studio {
       const id = crypto.randomUUID().replaceAll('-', '');
       const key = artifactKeys.issueHookKey(id);
       if (!key) return off('AIB has no key secret', 'AIB has no key secret');
+      // its subagents' worktrees go in a folder of this chat's own, a writable root of its sandbox (Connection.extraFolders)
+      const subFolder = codexSub.subagentFolder(this.subagents.root, project, id);
+      Deno.mkdirSync(subFolder, { recursive: true });
       return {
         id,
         env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(setup.config, hooks)) },
-        hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT },
+        hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder },
       };
     } catch (error) {
       log.exception(error, 'Could not set up Codex subagent hooks; its subagents are off');
@@ -2193,13 +2197,18 @@ export class Studio {
     }
     const h = c.subagentHooks!;
     const on = !!h.settings?.hooks || h.adopted === true; // hooks were given (a later "hooks are off" still lets them answer)
+    const project = c.projectRoot || c.cwd;
+    // a Codex chat's own subagent folder: given at the start, or (taken over from the keeper) the one made for its id, if it exists
+    const own = c.provider === 'codex' && on ? h.subFolder ?? codexSub.subagentFolder(this.subagents!.root, project, c.id) : '';
+    const subFolder = own && wt.lexists(own) ? own : '';
     return {
       id: c.id,
       provider: c.provider,
       lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
       folder: c.cwd,
-      project: c.projectRoot || c.cwd,
+      project,
       hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}) } : null,
+      ...(subFolder ? { subFolder } : {}),
     };
   }
 

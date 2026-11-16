@@ -952,6 +952,11 @@ export class Connection {
     deny?: Json;
     /** Codex (subagents/codex.ts): the system prompt line about its subagents (worktrees, or off). */
     prompt?: string;
+    /**
+     * Codex with hooks on: this chat's own folder for its subagents' worktrees (<state>/worktrees/<repo hash>/.cx-<chat>), sent as an
+     * ACP additionalDirectories entry so its sandbox (Workspace mode) may write there as in the chat's folder, without a prompt.
+     */
+    subFolder?: string;
   } | null = null;
 
   /** Isolation is on: AIB's hooks run in this chat (given at the start, or a taken-over chat that had them) and are not off now. */
@@ -5547,11 +5552,15 @@ export class Connection {
   /**
    * {additionalDirectories: [...]} for a worktree chat whose project has local-only folders, when the agent advertises the ACP
    * session capability (Claude Code's and Codex's adapters do): those folders of the main folder become writable for it. Never the
-   * main folder itself. {} otherwise.
+   * main folder itself. Also the chat's scratch folder, and a Codex chat's own subagent-worktree folder (codex-acp adds each to the
+   * sandbox's writable roots: Workspace mode then lets its subagents write in their worktrees as the chat writes in its folder).
+   * {} otherwise.
    */
   extraFolders(): Json {
     const own = this.worktree ? [...(this.localOnly?.dirs ?? []), ...(this.localOnly?.ignored?.dirs ?? [])] : [];
-    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : [])];
+    // a Codex chat's subagent folder: only its own subagents' worktrees go there (never the folder's parent or other chats' copies)
+    const sub = this.provider === 'codex' && this.subagentHooks?.subFolder ? [this.subagentHooks.subFolder] : [];
+    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : []), ...sub];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };
   }

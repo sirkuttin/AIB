@@ -35,6 +35,8 @@
 import { createHash } from 'node:crypto';
 import { isDict } from '../core/py.ts';
 import { join } from '../platform/path.ts';
+import { pathOf } from '../state/paths.ts';
+import * as wt from '../worktrees/worktrees.ts';
 import { deny, type HookAnswer, type SubagentChat, type SubagentWorktrees } from './service.ts';
 
 type Json = Record<string, unknown>;
@@ -134,6 +136,22 @@ export function codexHooks(
   }
   out.state = state;
   return out;
+}
+
+/**
+ * The chat's own folder for its subagents' worktrees: <root>/<repo hash>/.cx-<chat id>. It is a writable root of the chat's sandbox
+ * (an ACP additionalDirectories entry), so in Workspace mode a subagent writes in its worktree as the chat writes in its folder,
+ * with no prompt; anything outside still asks. Only this chat's subagents' worktrees go there.
+ */
+export function subagentFolder(root: string, project: string, chatId: string): string {
+  return pathOf(root, wt.repoHash(project), `.cx-${chatId}`);
+}
+
+/** The chat is gone: its subagent folder goes when empty (a worktree still in it is landing's). Never throws. */
+export function removeSubagentFolder(folder: string): void {
+  try {
+    Deno.removeSync(folder); // not recursive: only an empty folder
+  } catch { /* not empty, or gone */ }
 }
 
 /** The user's CODEX_CONFIG with AIB's hooks merged in. */

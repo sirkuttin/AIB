@@ -16,6 +16,8 @@ Scenarios
   spawn-redirect  The same, the hook rewrites the subagent's exec_command into a worktree AIB made (updatedInput) and tells
                it about the worktree at SubagentStart (additionalContext). Does the file land in the worktree?
   spawn-deny   The same, the hook denies the subagent's exec_command. Does anything land in the main folder?
+  spawn-exit2  The same, the hook exits 2 with a reason on stderr for the subagent's exec_command (AIB's forwarder when AIB is
+               down or its answer is unconfirmed). Is the call blocked?
 Owner guard: before and after, the owner's ~/.codex sessions and config files, ~/.claude/projects and ~/.gemini mtimes are checked.
 """
 import json
@@ -122,7 +124,8 @@ def spawn_scenario(base, name, mode):
                     '--script', str(script), '--dump', str(base / 'dump')], 'STUB_PORT')
     env = p0.temp_env(base, f'http://127.0.0.1:{stub.port}')
     write_config(base, stub.port)
-    flags = {'log': (), 'redirect': ('--worktree', str(wt)), 'deny': ('--deny-subagent',)}[mode]
+    flags = {'log': (), 'redirect': ('--worktree', str(wt)), 'deny': ('--deny-subagent',), 'exit2': ('--exit2-subagent',),
+             'exit2-cmd': ('--exit2-subagent',)}[mode]
     hooks, listing = trusted_hooks(base, env, project, hooks_block(base, *flags))
     env['CODEX_CONFIG'] = json.dumps({'hooks': hooks})
     try:
@@ -163,6 +166,7 @@ SCENARIOS = {
     'spawn-log': lambda b: spawn_scenario(b, 'spawn-log', 'log'),
     'spawn-redirect': lambda b: spawn_scenario(b, 'spawn-redirect', 'redirect'),
     'spawn-deny': lambda b: spawn_scenario(b, 'spawn-deny', 'deny'),
+    'spawn-exit2': lambda b: spawn_scenario(b, 'spawn-exit2', 'exit2'),
 }
 
 

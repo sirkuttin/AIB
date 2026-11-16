@@ -107,7 +107,8 @@ export interface SubagentChat {
   hooks: { readOnly: Set<string>; userWorktreeHook: boolean; configDir?: string } | null;
   /**
    * Where this chat's subagent worktrees go when not <root>/<repo hash>/: a Gemini chat's own <root>/<repo hash>/.gem-<chat> folder,
-   * the one folder its agent was given with --include-directories (subagents/gemini.ts).
+   * the one folder its agent was given with --include-directories (subagents/gemini.ts); a Codex chat's .cx-<chat>, a writable root
+   * of its sandbox (subagents/codex.ts subagentFolder).
    */
   subFolder?: string;
 }
@@ -851,8 +852,8 @@ export function ownSubagentPath(root: string, rec: { path: string; project?: str
   const path = rec.path;
   if (!path || pathFormProblem(path)) return false;
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
-  // a Gemini chat's: <root>\<repo hash>\.gem-<chat>\sub-<...> (subagents/gemini.ts)
-  const chatFolder = /^\.gem-[A-Za-z0-9_-]{1,64}$/.test(parts[parts.length - 2] ?? '') ? parts.splice(parts.length - 2, 1)[0] : '';
+  // a Gemini or Codex chat's: <root>\<repo hash>\.gem-<chat>\sub-<...> (subagents/gemini.ts), .cx-<chat> (subagents/codex.ts)
+  const chatFolder = /^\.(gem|cx)-[A-Za-z0-9_-]{1,64}$/.test(parts[parts.length - 2] ?? '') ? parts.splice(parts.length - 2, 1)[0] : '';
   const name = parts[parts.length - 1], hash = parts[parts.length - 2];
   if (!/^sub-[\w.-]+$/.test(name) || !hash) return false;
   if (rec.project && hash !== wt.repoHash(rec.project)) return false;
